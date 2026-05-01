@@ -1,0 +1,55 @@
+# Minimal test configuration for home_io_control component
+# This provides just enough to compile the component and one entity of each type.
+substitutions:
+  device_name: test_common
+
+esphome:
+  name: ${device_name}
+
+# Minimal esp32 config; framework (arduino/esp-idf) set in platform-specific files
+esp32:
+  variant: esp32
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-ssid"
+  password: "test12345"
+
+api:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+spi:
+  # Heltec WiFi LoRa32 v2 pinout (SX1276)
+  clk_pin: 5
+  mosi_pin: 27
+  miso_pin: 19
+
+home_io_control:
+  cs_pin: 18
+  rst_pin: 14
+  dio0_pin: 26
+  node_id: C0FFEE
+  system_key: 0123456789ABCDEF0123456789ABCDEF
+
+# At least one entity of each type is needed to ensure all platform code compiles
+cover:
+  - platform: home_io_control
+    name: "Test Cover"
+    io_device_id: "FEEB1E"
+    device_class: awning
+
+light:
+  - platform: home_io_control
+    name: "Test Light"
+    io_device_id: "FEEB1F"
+
+switch:
+  - platform: home_io_control
+    name: "Test Switch"
+    io_device_id: "FEEB20"

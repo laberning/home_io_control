@@ -285,8 +285,8 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     } else {
       dev.next_update = millis() + 60000;
     }
-    ESP_LOGI(TAG, "Device %s: position=%s target=%s %s", id.c_str(), format_position(dev.position).c_str(), format_position(dev.target).c_str(),
-             dev.is_stopped ? "stopped" : "moving");
+    ESP_LOGI(TAG, "Device %s: position=%s target=%s %s", id.c_str(), format_position(dev.position).c_str(),
+             format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving");
     this->notify_device_update_(id);
   } else if (frame.cmd == CMD_STATUS_UPDATE && frame.data_len >= 11) {
     dev.is_stopped = (frame.data[0] & STATUS_STOPPED) != 0;
@@ -295,7 +295,8 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     uint16_t cur = (frame.data[7] << 8) | frame.data[8];
     decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
     dev.next_update = dev.is_stopped ? millis() + 3600000 : millis() + 60000;
-    ESP_LOGI(TAG, "Device %s: position=%s target=%s %s (status update)", id.c_str(), format_position(dev.position).c_str(), format_position(dev.target).c_str(),
+    ESP_LOGI(TAG, "Device %s: position=%s target=%s %s (status update)", id.c_str(),
+             format_position(dev.position).c_str(), format_position(dev.target).c_str(),
              dev.is_stopped ? "stopped" : "moving");
     this->notify_device_update_(id);
   } else if (frame.cmd == CMD_GET_INFO2_RESP && frame.data_len >= 12) {

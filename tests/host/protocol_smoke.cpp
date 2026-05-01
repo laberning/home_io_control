@@ -37,7 +37,8 @@ void expect_mem_eq(const uint8_t *actual, const uint8_t *expected, size_t len, c
 
 // Keep frame fabrication tiny and explicit so the decision tests below read like protocol cases
 // rather than serializer/parser tests.
-IoFrame make_frame(const uint8_t src[NODE_ID_SIZE], const uint8_t dst[NODE_ID_SIZE], uint8_t cmd, uint8_t data_len = 0) {
+IoFrame make_frame(const uint8_t src[NODE_ID_SIZE], const uint8_t dst[NODE_ID_SIZE], uint8_t cmd,
+                   uint8_t data_len = 0) {
   IoFrame frame{};
   init_frame(frame, true, false, false, false);
   set_src(frame, src);
@@ -99,7 +100,8 @@ void test_challenge_response_hmac() {
   expect_true(create_execute(origin, own, dst, true, 0), "origin execute should be created");
 
   IoFrame auth_resp{};
-  expect_true(create_challenge_resp(auth_resp, dst, own, challenge, origin, key), "challenge response should be created");
+  expect_true(create_challenge_resp(auth_resp, dst, own, challenge, origin, key),
+              "challenge response should be created");
   expect_equal_u8(auth_resp.cmd, CMD_CHALLENGE_RESP, "challenge response command should match");
   expect_equal_u8(auth_resp.data_len, HMAC_SIZE, "challenge response HMAC length should match");
 
@@ -124,8 +126,10 @@ void test_crypt_key_round_trip() {
   uint8_t decrypted[AES_KEY_SIZE] = {0};
   uint8_t iv_seed[1] = {CMD_KEY_INIT};
 
-  expect_true(crypto::crypt_key(iv_seed, sizeof(iv_seed), challenge, plaintext, encrypted), "key encryption should succeed");
-  expect_true(crypto::crypt_key(iv_seed, sizeof(iv_seed), challenge, encrypted, decrypted), "key decryption should succeed");
+  expect_true(crypto::crypt_key(iv_seed, sizeof(iv_seed), challenge, plaintext, encrypted),
+              "key encryption should succeed");
+  expect_true(crypto::crypt_key(iv_seed, sizeof(iv_seed), challenge, encrypted, decrypted),
+              "key decryption should succeed");
   expect_mem_eq(decrypted, plaintext, AES_KEY_SIZE, "crypt_key should round-trip");
 }
 
@@ -172,7 +176,8 @@ void test_parse_rejects_length_mismatch() {
   uint8_t serialized_len = serialize(frame, serialized, sizeof(serialized));
   expect_true(serialized_len > 0, "status request should serialize for malformed-length test");
 
-  serialized[0] = static_cast<uint8_t>((serialized[0] & ~CTRL0_LENGTH_MASK) | ((serialized_len - 2) & CTRL0_LENGTH_MASK));
+  serialized[0] =
+      static_cast<uint8_t>((serialized[0] & ~CTRL0_LENGTH_MASK) | ((serialized_len - 2) & CTRL0_LENGTH_MASK));
 
   IoFrame parsed{};
   expect_true(!parse(serialized, serialized_len, parsed), "parse should reject mismatched CTRL0 length metadata");
@@ -220,7 +225,8 @@ void test_serialize_rejects_inconsistent_metadata() {
   init_frame(frame, true, true, false, false);
   frame.cmd = CMD_PRIVATE;
   frame.data_len = 3;
-  frame.ctrl0 = static_cast<uint8_t>((frame.ctrl0 & ~CTRL0_LENGTH_MASK) | ((FRAME_MIN_SIZE + 1 - 1) & CTRL0_LENGTH_MASK));
+  frame.ctrl0 =
+      static_cast<uint8_t>((frame.ctrl0 & ~CTRL0_LENGTH_MASK) | ((FRAME_MIN_SIZE + 1 - 1) & CTRL0_LENGTH_MASK));
 
   uint8_t serialized[FRAME_MAX_SIZE] = {0};
   expect_equal_u8(serialize(frame, serialized, sizeof(serialized)), 0,
@@ -268,20 +274,21 @@ void test_exchange_transition_decisions() {
   const IoFrame challenge = make_frame(dst, own, CMD_CHALLENGE_REQ, HMAC_SIZE);
   const IoFrame unrelated = make_frame(foreign, own, CMD_PRIVATE_RESP, 6);
 
-    expect_true(decisions::classify_exchange_first_response(request, direct) ==
-            decisions::ExchangeFirstResponseDisposition::COMPLETE_DIRECT,
+  expect_true(decisions::classify_exchange_first_response(request, direct) ==
+                  decisions::ExchangeFirstResponseDisposition::COMPLETE_DIRECT,
               "matching non-challenge first response should complete directly");
-    expect_true(decisions::classify_exchange_first_response(request, challenge) ==
-            decisions::ExchangeFirstResponseDisposition::REQUIRE_AUTH,
+  expect_true(decisions::classify_exchange_first_response(request, challenge) ==
+                  decisions::ExchangeFirstResponseDisposition::REQUIRE_AUTH,
               "matching challenge first response should require auth");
-    expect_true(decisions::classify_exchange_first_response(request, unrelated) ==
-            decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED,
+  expect_true(decisions::classify_exchange_first_response(request, unrelated) ==
+                  decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED,
               "unrelated first response should be ignored");
 
-    expect_true(decisions::classify_exchange_final_response(request, direct) == decisions::ExchangeFinalResponseDisposition::ACCEPT,
+  expect_true(decisions::classify_exchange_final_response(request, direct) ==
+                  decisions::ExchangeFinalResponseDisposition::ACCEPT,
               "matching final response should be accepted");
-    expect_true(decisions::classify_exchange_final_response(request, unrelated) ==
-            decisions::ExchangeFinalResponseDisposition::IGNORE_UNRELATED,
+  expect_true(decisions::classify_exchange_final_response(request, unrelated) ==
+                  decisions::ExchangeFinalResponseDisposition::IGNORE_UNRELATED,
               "unrelated final response should be ignored");
 }
 
@@ -297,22 +304,24 @@ void test_pairing_transition_decisions() {
   const IoFrame wrong_len = make_frame(device, controller, CMD_CHALLENGE_REQ, HMAC_SIZE - 1);
   const IoFrame wrong_nodes = make_frame(foreign, controller, CMD_CHALLENGE_REQ, HMAC_SIZE);
 
-    expect_true(decisions::classify_pairing_discovery_response(discovery) == decisions::PairingDiscoveryDisposition::ACCEPT,
-              "discovery response should be accepted during pairing discovery wait");
-    expect_true(decisions::classify_pairing_discovery_response(ignored_discovery) == decisions::PairingDiscoveryDisposition::IGNORE,
+  expect_true(
+      decisions::classify_pairing_discovery_response(discovery) == decisions::PairingDiscoveryDisposition::ACCEPT,
+      "discovery response should be accepted during pairing discovery wait");
+  expect_true(decisions::classify_pairing_discovery_response(ignored_discovery) ==
+                  decisions::PairingDiscoveryDisposition::IGNORE,
               "non-discovery frame should be ignored during pairing discovery wait");
 
-    expect_true(decisions::classify_pairing_key_challenge(key_challenge, device, controller) ==
-            decisions::PairingKeyChallengeDisposition::ACCEPT,
+  expect_true(decisions::classify_pairing_key_challenge(key_challenge, device, controller) ==
+                  decisions::PairingKeyChallengeDisposition::ACCEPT,
               "matching key challenge should be accepted during pairing key wait");
-    expect_true(decisions::classify_pairing_key_challenge(wrong_cmd, device, controller) ==
-            decisions::PairingKeyChallengeDisposition::IGNORE,
+  expect_true(decisions::classify_pairing_key_challenge(wrong_cmd, device, controller) ==
+                  decisions::PairingKeyChallengeDisposition::IGNORE,
               "wrong command should be ignored during pairing key wait");
-    expect_true(decisions::classify_pairing_key_challenge(wrong_len, device, controller) ==
-            decisions::PairingKeyChallengeDisposition::IGNORE,
+  expect_true(decisions::classify_pairing_key_challenge(wrong_len, device, controller) ==
+                  decisions::PairingKeyChallengeDisposition::IGNORE,
               "wrong length challenge should be ignored during pairing key wait");
-    expect_true(decisions::classify_pairing_key_challenge(wrong_nodes, device, controller) ==
-            decisions::PairingKeyChallengeDisposition::IGNORE,
+  expect_true(decisions::classify_pairing_key_challenge(wrong_nodes, device, controller) ==
+                  decisions::PairingKeyChallengeDisposition::IGNORE,
               "wrong node pairing challenge should be ignored during pairing key wait");
 }
 

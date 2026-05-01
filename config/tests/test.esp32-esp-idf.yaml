@@ -1,0 +1,10 @@
+# ESP32 ESP-IDF test configuration
+substitutions:
+  device_name: test_esp32-esp-idf
+
+<<: !include common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf

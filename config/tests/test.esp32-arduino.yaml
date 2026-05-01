@@ -1,0 +1,10 @@
+# ESP32 Arduino test configuration
+substitutions:
+  device_name: test_esp32-arduino
+
+<<: !include common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: arduino

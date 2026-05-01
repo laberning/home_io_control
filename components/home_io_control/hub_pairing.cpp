@@ -124,13 +124,14 @@ bool IOHomeControlComponent::discover_and_pair() {
     if (!parse(context.packet.data, context.packet.len, context.rx))
       continue;
     if (decisions::classify_pairing_key_challenge(context.rx, context.device.node_id, this->node_id_) !=
-      decisions::PairingKeyChallengeDisposition::ACCEPT)
+        decisions::PairingKeyChallengeDisposition::ACCEPT)
       continue;
     got_key_challenge = true;
     break;
   }
   if (!got_key_challenge) {
-    ESP_LOGW(TAG, saw_key_traffic ? "Key exchange: no valid challenge received" : "Key exchange: no challenge received");
+    ESP_LOGW(TAG,
+             saw_key_traffic ? "Key exchange: no valid challenge received" : "Key exchange: no challenge received");
     this->busy_ = false;
     return false;
   }

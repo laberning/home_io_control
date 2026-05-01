@@ -45,7 +45,8 @@ std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]) {
 
 bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HORIZONTAL_AWNING; }
 
-void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target, float &position) {
+void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target,
+                            float &position) {
   target = (target_raw <= STATUS_POS_MAX) ? target_raw * 100.0f / STATUS_POS_MAX : UNKNOWN_POSITION;
   if (current_raw <= STATUS_POS_MAX) {
     position = current_raw * 100.0f / STATUS_POS_MAX;

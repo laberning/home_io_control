@@ -184,7 +184,7 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
         continue;
       }
       // Ignore unrelated traffic while waiting for the authenticated reply.
-        if (decisions::classify_exchange_final_response(request, context.rx) !=
+      if (decisions::classify_exchange_final_response(request, context.rx) !=
           decisions::ExchangeFinalResponseDisposition::ACCEPT) {
         this->record_exchange_debug_("final_wrong_exchange", context.try_index, true);
         log_exchange_frame_("Ignored final response", tries + 1, context.rx, packet.len);

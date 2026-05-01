@@ -1,4 +1,4 @@
-config/.esphome/
+config/**/.esphome/
 config/.pio/
 config/secrets.yaml
 *.pyc
