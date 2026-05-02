@@ -13,9 +13,9 @@ namespace home_io_control {
 
 namespace {
 
-static const char *const TAG = "home_io_control";
+const char *const TAG = "home_io_control";
 
-static const char *pairing_stage_name(pairing::PairingState state) {
+const char *pairing_stage_name(pairing::PairingState state) {
   switch (state) {
     case pairing::PairingState::IDLE:
       return "idle";
@@ -41,11 +41,11 @@ static const char *pairing_stage_name(pairing::PairingState state) {
   }
 }
 
-static uint32_t response_wait_slice_ms_(uint32_t remaining_ms) {
+uint32_t response_wait_slice_ms(uint32_t remaining_ms) {
   return std::min<uint32_t>(remaining_ms, RESPONSE_CHANNEL_WAIT_MS);
 }
 
-static bool frame_is_key_confirm_(const IoFrame &frame) { return frame.cmd == CMD_KEY_CONFIRM; }
+bool frame_is_key_confirm(const IoFrame &frame) { return frame.cmd == CMD_KEY_CONFIRM; }
 
 }  // namespace
 
@@ -71,7 +71,7 @@ bool IOHomeControlComponent::discover_and_pair() {
   const uint32_t discovery_deadline_ms = millis() + 2000;
   while ((int32_t) (discovery_deadline_ms - millis()) > 0) {
     const uint32_t remaining_ms = discovery_deadline_ms - millis();
-    if (!this->radio_->wait_for_packet(context.packet, response_wait_slice_ms_(remaining_ms)))
+    if (!this->radio_->wait_for_packet(context.packet, response_wait_slice_ms(remaining_ms)))
       continue;
     saw_discovery_traffic = true;
     if (!parse(context.packet.data, context.packet.len, context.rx))
@@ -118,7 +118,7 @@ bool IOHomeControlComponent::discover_and_pair() {
   const uint32_t key_deadline_ms = millis() + 500;
   while ((int32_t) (key_deadline_ms - millis()) > 0) {
     const uint32_t remaining_ms = key_deadline_ms - millis();
-    if (!this->radio_->wait_for_packet(context.packet, response_wait_slice_ms_(remaining_ms)))
+    if (!this->radio_->wait_for_packet(context.packet, response_wait_slice_ms(remaining_ms)))
       continue;
     saw_key_traffic = true;
     if (!parse(context.packet.data, context.packet.len, context.rx))
@@ -147,7 +147,7 @@ bool IOHomeControlComponent::discover_and_pair() {
   context.state = pairing::PairingState::WAIT_KEY_CONFIRM;
   this->record_exchange_debug_(pairing_stage_name(context.state), 1, true);
   // Reuse the normal authenticated exchange so pairing inherits the same retry logic.
-  if (!this->send_and_receive_(context.req, context.resp, FREQ_CH2) || !frame_is_key_confirm_(context.resp)) {
+  if (!this->send_and_receive_(context.req, context.resp, FREQ_CH2) || !frame_is_key_confirm(context.resp)) {
     ESP_LOGW(TAG, "Key exchange failed");
     this->busy_ = false;
     return false;

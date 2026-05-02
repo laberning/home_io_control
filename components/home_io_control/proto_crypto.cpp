@@ -19,7 +19,7 @@ namespace {
 
 // Forward substitution box defined by AES. Each input byte is replaced by its
 // corresponding non-linear S-box value during SubBytes.
-static const uint8_t AES_SBOX[256] = {
+const uint8_t AES_SBOX[256] = {
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76, 0xCA, 0x82, 0xC9,
     0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0, 0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F,
     0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71, 0xD8, 0x31, 0x15, 0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07,
@@ -38,7 +38,7 @@ static const uint8_t AES_SBOX[256] = {
 
 // Inverse substitution box defined by AES. This is required for the inverse
 // cipher path used by AES-128 decryption.
-static const uint8_t AES_INV_SBOX[256] = {
+const uint8_t AES_INV_SBOX[256] = {
     0x52, 0x09, 0x6A, 0xD5, 0x30, 0x36, 0xA5, 0x38, 0xBF, 0x40, 0xA3, 0x9E, 0x81, 0xF3, 0xD7, 0xFB, 0x7C, 0xE3, 0x39,
     0x82, 0x9B, 0x2F, 0xFF, 0x87, 0x34, 0x8E, 0x43, 0x44, 0xC4, 0xDE, 0xE9, 0xCB, 0x54, 0x7B, 0x94, 0x32, 0xA6, 0xC2,
     0x23, 0x3D, 0xEE, 0x4C, 0x95, 0x0B, 0x42, 0xFA, 0xC3, 0x4E, 0x08, 0x2E, 0xA1, 0x66, 0x28, 0xD9, 0x24, 0xB2, 0x76,
@@ -58,11 +58,11 @@ static const uint8_t AES_INV_SBOX[256] = {
 // AES round constants used only by the key schedule. Each non-zero entry is the
 // Rcon value for one expansion round; entry 0 is unused and kept as padding so
 // the round index can be used directly.
-static const uint8_t AES_RCON[11] = {0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36};
+const uint8_t AES_RCON[11] = {0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36};
 
 // Multiply two bytes in AES's GF(2^8) finite field. MixColumns and inverse
 // MixColumns are defined in terms of this field arithmetic.
-uint8_t aes_mul_(uint8_t value, uint8_t factor) {
+uint8_t aes_mul(uint8_t value, uint8_t factor) {
   uint8_t result = 0;
   while (factor != 0) {
     if ((factor & 1U) != 0)
@@ -76,23 +76,23 @@ uint8_t aes_mul_(uint8_t value, uint8_t factor) {
   return result;
 }
 
-void aes_add_round_key_(uint8_t *state, const uint8_t *round_keys, uint8_t round) {
+void aes_add_round_key(uint8_t *state, const uint8_t *round_keys, uint8_t round) {
   const uint8_t *round_key = &round_keys[round * AES_BLOCK_SIZE];
   for (uint8_t i = 0; i < AES_BLOCK_SIZE; i++)
     state[i] ^= round_key[i];
 }
 
-void aes_sub_bytes_(uint8_t *state) {
+void aes_sub_bytes(uint8_t *state) {
   for (uint8_t i = 0; i < AES_BLOCK_SIZE; i++)
     state[i] = AES_SBOX[state[i]];
 }
 
-void aes_inv_sub_bytes_(uint8_t *state) {
+void aes_inv_sub_bytes(uint8_t *state) {
   for (uint8_t i = 0; i < AES_BLOCK_SIZE; i++)
     state[i] = AES_INV_SBOX[state[i]];
 }
 
-void aes_shift_rows_(uint8_t *state) {
+void aes_shift_rows(uint8_t *state) {
   uint8_t tmp[AES_BLOCK_SIZE];
   memcpy(tmp, state, AES_BLOCK_SIZE);
   state[0] = tmp[0];
@@ -113,7 +113,7 @@ void aes_shift_rows_(uint8_t *state) {
   state[15] = tmp[11];
 }
 
-void aes_inv_shift_rows_(uint8_t *state) {
+void aes_inv_shift_rows(uint8_t *state) {
   uint8_t tmp[AES_BLOCK_SIZE];
   memcpy(tmp, state, AES_BLOCK_SIZE);
   state[0] = tmp[0];
@@ -134,35 +134,35 @@ void aes_inv_shift_rows_(uint8_t *state) {
   state[15] = tmp[3];
 }
 
-void aes_mix_columns_(uint8_t *state) {
+void aes_mix_columns(uint8_t *state) {
   for (uint8_t column = 0; column < 4; column++) {
     uint8_t *col = &state[column * 4];
     uint8_t a0 = col[0];
     uint8_t a1 = col[1];
     uint8_t a2 = col[2];
     uint8_t a3 = col[3];
-    col[0] = aes_mul_(a0, 0x02) ^ aes_mul_(a1, 0x03) ^ a2 ^ a3;
-    col[1] = a0 ^ aes_mul_(a1, 0x02) ^ aes_mul_(a2, 0x03) ^ a3;
-    col[2] = a0 ^ a1 ^ aes_mul_(a2, 0x02) ^ aes_mul_(a3, 0x03);
-    col[3] = aes_mul_(a0, 0x03) ^ a1 ^ a2 ^ aes_mul_(a3, 0x02);
+    col[0] = aes_mul(a0, 0x02) ^ aes_mul(a1, 0x03) ^ a2 ^ a3;
+    col[1] = a0 ^ aes_mul(a1, 0x02) ^ aes_mul(a2, 0x03) ^ a3;
+    col[2] = a0 ^ a1 ^ aes_mul(a2, 0x02) ^ aes_mul(a3, 0x03);
+    col[3] = aes_mul(a0, 0x03) ^ a1 ^ a2 ^ aes_mul(a3, 0x02);
   }
 }
 
-void aes_inv_mix_columns_(uint8_t *state) {
+void aes_inv_mix_columns(uint8_t *state) {
   for (uint8_t column = 0; column < 4; column++) {
     uint8_t *col = &state[column * 4];
     uint8_t a0 = col[0];
     uint8_t a1 = col[1];
     uint8_t a2 = col[2];
     uint8_t a3 = col[3];
-    col[0] = aes_mul_(a0, 0x0E) ^ aes_mul_(a1, 0x0B) ^ aes_mul_(a2, 0x0D) ^ aes_mul_(a3, 0x09);
-    col[1] = aes_mul_(a0, 0x09) ^ aes_mul_(a1, 0x0E) ^ aes_mul_(a2, 0x0B) ^ aes_mul_(a3, 0x0D);
-    col[2] = aes_mul_(a0, 0x0D) ^ aes_mul_(a1, 0x09) ^ aes_mul_(a2, 0x0E) ^ aes_mul_(a3, 0x0B);
-    col[3] = aes_mul_(a0, 0x0B) ^ aes_mul_(a1, 0x0D) ^ aes_mul_(a2, 0x09) ^ aes_mul_(a3, 0x0E);
+    col[0] = aes_mul(a0, 0x0E) ^ aes_mul(a1, 0x0B) ^ aes_mul(a2, 0x0D) ^ aes_mul(a3, 0x09);
+    col[1] = aes_mul(a0, 0x09) ^ aes_mul(a1, 0x0E) ^ aes_mul(a2, 0x0B) ^ aes_mul(a3, 0x0D);
+    col[2] = aes_mul(a0, 0x0D) ^ aes_mul(a1, 0x09) ^ aes_mul(a2, 0x0E) ^ aes_mul(a3, 0x0B);
+    col[3] = aes_mul(a0, 0x0B) ^ aes_mul(a1, 0x0D) ^ aes_mul(a2, 0x09) ^ aes_mul(a3, 0x0E);
   }
 }
 
-void aes_expand_key_(const uint8_t key[AES_KEY_SIZE], uint8_t round_keys[176]) {
+void aes_expand_key(const uint8_t key[AES_KEY_SIZE], uint8_t round_keys[176]) {
   memcpy(round_keys, key, AES_KEY_SIZE);
   uint8_t bytes_generated = AES_KEY_SIZE;
   uint8_t rcon_index = 1;
@@ -178,51 +178,51 @@ void aes_expand_key_(const uint8_t key[AES_KEY_SIZE], uint8_t round_keys[176]) {
       temp[2] = AES_SBOX[temp[3]];
       temp[3] = AES_SBOX[rotated];
     }
-    for (uint8_t i = 0; i < 4; i++) {
-      round_keys[bytes_generated] = round_keys[bytes_generated - AES_KEY_SIZE] ^ temp[i];
+    for (uint8_t value : temp) {
+      round_keys[bytes_generated] = round_keys[bytes_generated - AES_KEY_SIZE] ^ value;
       bytes_generated++;
     }
   }
 }
 
-bool aes128_encrypt_block_(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE],
-                           uint8_t out[AES_BLOCK_SIZE]) {
+bool aes128_encrypt_block(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE],
+                          uint8_t out[AES_BLOCK_SIZE]) {
   uint8_t state[AES_BLOCK_SIZE];
   uint8_t round_keys[176];
   memcpy(state, in, AES_BLOCK_SIZE);
-  aes_expand_key_(key, round_keys);
+  aes_expand_key(key, round_keys);
 
-  aes_add_round_key_(state, round_keys, 0);
+  aes_add_round_key(state, round_keys, 0);
   for (uint8_t round = 1; round < 10; round++) {
-    aes_sub_bytes_(state);
-    aes_shift_rows_(state);
-    aes_mix_columns_(state);
-    aes_add_round_key_(state, round_keys, round);
+    aes_sub_bytes(state);
+    aes_shift_rows(state);
+    aes_mix_columns(state);
+    aes_add_round_key(state, round_keys, round);
   }
-  aes_sub_bytes_(state);
-  aes_shift_rows_(state);
-  aes_add_round_key_(state, round_keys, 10);
+  aes_sub_bytes(state);
+  aes_shift_rows(state);
+  aes_add_round_key(state, round_keys, 10);
   memcpy(out, state, AES_BLOCK_SIZE);
   return true;
 }
 
-bool aes128_decrypt_block_(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE],
-                           uint8_t out[AES_BLOCK_SIZE]) {
+bool aes128_decrypt_block(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE],
+                          uint8_t out[AES_BLOCK_SIZE]) {
   uint8_t state[AES_BLOCK_SIZE];
   uint8_t round_keys[176];
   memcpy(state, in, AES_BLOCK_SIZE);
-  aes_expand_key_(key, round_keys);
+  aes_expand_key(key, round_keys);
 
-  aes_add_round_key_(state, round_keys, 10);
+  aes_add_round_key(state, round_keys, 10);
   for (int round = 9; round >= 1; round--) {
-    aes_inv_shift_rows_(state);
-    aes_inv_sub_bytes_(state);
-    aes_add_round_key_(state, round_keys, static_cast<uint8_t>(round));
-    aes_inv_mix_columns_(state);
+    aes_inv_shift_rows(state);
+    aes_inv_sub_bytes(state);
+    aes_add_round_key(state, round_keys, static_cast<uint8_t>(round));
+    aes_inv_mix_columns(state);
   }
-  aes_inv_shift_rows_(state);
-  aes_inv_sub_bytes_(state);
-  aes_add_round_key_(state, round_keys, 0);
+  aes_inv_shift_rows(state);
+  aes_inv_sub_bytes(state);
+  aes_add_round_key(state, round_keys, 0);
   memcpy(out, state, AES_BLOCK_SIZE);
   return true;
 }
@@ -271,11 +271,11 @@ void construct_iv(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC
 
 /// AES-128 ECB encrypt a single 16-byte block.
 bool aes128_encrypt(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE], uint8_t out[AES_BLOCK_SIZE]) {
-  return aes128_encrypt_block_(in, key, out);
+  return aes128_encrypt_block(in, key, out);
 }
 
 bool aes128_decrypt(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE], uint8_t out[AES_BLOCK_SIZE]) {
-  return aes128_decrypt_block_(in, key, out);
+  return aes128_decrypt_block(in, key, out);
 }
 
 /// Create a 6-byte HMAC for authentication.

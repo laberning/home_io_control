@@ -102,7 +102,7 @@ class RadioSX1276 : public RadioDriver {
                           uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
 
   /// DIO0 ISR — sets dio_fired flag. Runs in interrupt context.
-  static void IRAM_ATTR gpio_intr_(RadioSX1276 *arg);
+  static void gpio_intr(RadioSX1276 *arg);
 
   SpiAccess *spi_;
   InternalGPIOPin *rst_pin_;

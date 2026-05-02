@@ -127,11 +127,10 @@ class RadioSX1262 : public RadioDriver {
   bool read_rx_packet_(RadioRxPacket &packet, bool blocking_wait, uint16_t irq_status);
 
   /// Software CRC helper kept for transmit framing parity with the current implementation.
-  static uint16_t crc_ccitt_(const uint8_t *data, uint8_t len);
-  static uint8_t uart_encode_packet_(const uint8_t *data, uint8_t len, uint8_t *encoded, uint8_t encoded_max_len);
+  static uint8_t uart_encode_packet(const uint8_t *data, uint8_t len, uint8_t *encoded, uint8_t encoded_max_len);
 
   /// DIO1 ISR — sets dio_fired flag. Runs in interrupt context.
-  static void IRAM_ATTR gpio_intr_(RadioSX1262 *arg);
+  static void gpio_intr(RadioSX1262 *arg);
 
   SpiAccess *spi_;
   InternalGPIOPin *rst_pin_;

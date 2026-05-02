@@ -35,23 +35,23 @@ static const uint8_t SX1262_SYNC_WORD_PARAM_24_BITS = 0x18;
 static const uint8_t SX1262_RX_PROBE_PACKET_LEN = 32;
 static const uint8_t UART_PROBE_MAX_BIT_OFFSET = 10;
 
-static uint8_t get_bit_msb_(const uint8_t *data, uint16_t bit_pos) {
+static uint8_t get_bit_msb(const uint8_t *data, uint16_t bit_pos) {
   return (data[bit_pos / 8] >> (7 - (bit_pos % 8))) & 0x01;
 }
 
-static uint8_t decode_uart_probe_(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offset, uint8_t *decoded,
-                                  uint8_t decoded_max_len) {
+static uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offset, uint8_t *decoded,
+                                 uint8_t decoded_max_len) {
   uint16_t bit_pos = bit_offset;
   uint16_t total_bits = raw_len * 8;
   uint8_t decoded_len = 0;
 
   while (bit_pos + 10 <= total_bits && decoded_len < decoded_max_len) {
-    if (get_bit_msb_(raw, bit_pos) != 0 || get_bit_msb_(raw, bit_pos + 9) != 1)
+    if (get_bit_msb(raw, bit_pos) != 0 || get_bit_msb(raw, bit_pos + 9) != 1)
       break;
 
     uint8_t value = 0;
     for (uint8_t index = 0; index < 8; index++)
-      value |= get_bit_msb_(raw, bit_pos + 1 + index) << index;
+      value |= get_bit_msb(raw, bit_pos + 1 + index) << index;
 
     decoded[decoded_len++] = value;
     bit_pos += 10;
@@ -69,7 +69,7 @@ struct UartProbeResult {
   uint8_t decoded[64]{};
 };
 
-static bool is_known_io_command_(uint8_t cmd) {
+static bool is_known_io_command(uint8_t cmd) {
   switch (cmd) {
     case CMD_EXECUTE:
     case CMD_PRIVATE:
@@ -100,22 +100,22 @@ static bool is_known_io_command_(uint8_t cmd) {
   }
 }
 
-static bool is_plausible_uart_frame_(const IoFrame &frame, uint8_t candidate_len) {
+static bool is_plausible_uart_frame(const IoFrame &frame, uint8_t candidate_len) {
   if (candidate_len < 15)
     return false;
-  if (is_known_io_command_(frame.cmd))
+  if (is_known_io_command(frame.cmd))
     return true;
   return (frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0;
 }
 
-static UartProbeResult find_uart_probe_(const uint8_t *raw, uint8_t raw_len) {
+static UartProbeResult find_uart_probe(const uint8_t *raw, uint8_t raw_len) {
   UartProbeResult best{};
 
   // Current captures consistently decode at bit_offset=0, but keeping a short probe window makes
   // the recovery path robust against future boards or slightly different front-end timing.
   for (uint8_t bit_offset = 0; bit_offset < UART_PROBE_MAX_BIT_OFFSET; bit_offset++) {
     uint8_t decoded[64] = {0};
-    uint8_t decoded_len = decode_uart_probe_(raw, raw_len, bit_offset, decoded, sizeof(decoded));
+    uint8_t decoded_len = decode_uart_probe(raw, raw_len, bit_offset, decoded, sizeof(decoded));
     if (decoded_len == 0)
       continue;
 
@@ -131,7 +131,7 @@ static UartProbeResult find_uart_probe_(const uint8_t *raw, uint8_t raw_len) {
         IoFrame frame;
         if (!parse(decoded + start, candidate_len, frame))
           continue;
-        if (!is_plausible_uart_frame_(frame, candidate_len))
+        if (!is_plausible_uart_frame(frame, candidate_len))
           continue;
 
         best.valid = true;
@@ -150,9 +150,7 @@ static UartProbeResult find_uart_probe_(const uint8_t *raw, uint8_t raw_len) {
 
 // === Software CRC-CCITT ===
 
-uint16_t RadioSX1262::crc_ccitt_(const uint8_t *data, uint8_t len) { return crc_ccitt(data, len); }
-
-uint8_t RadioSX1262::uart_encode_packet_(const uint8_t *data, uint8_t len, uint8_t *encoded, uint8_t encoded_max_len) {
+uint8_t RadioSX1262::uart_encode_packet(const uint8_t *data, uint8_t len, uint8_t *encoded, uint8_t encoded_max_len) {
   if (len == 0 || encoded_max_len == 0)
     return 0;
 
@@ -338,7 +336,7 @@ void RadioSX1262::fill_capture_info_(bool blocking_wait, uint16_t irq_status, ui
 
 // === ISR ===
 
-void IRAM_ATTR RadioSX1262::gpio_intr_(RadioSX1262 *arg) { arg->mark_dio_fired_from_isr(); }
+void IRAM_ATTR RadioSX1262::gpio_intr(RadioSX1262 *arg) { arg->mark_dio_fired_from_isr(); }
 
 // === Initialization ===
 
@@ -459,7 +457,7 @@ void RadioSX1262::configure_radio_() {
 
   // 8. Set frequency to channel 2 (868.95 MHz)
   //    freq_reg = freq_hz * 2^25 / 32e6
-  uint32_t freq_reg = (uint32_t) ((double) FREQ_CH2 * (1 << 25) / 32e6);
+  auto freq_reg = (uint32_t) ((double) FREQ_CH2 * (1 << 25) / 32e6);
   uint8_t freq_params[4] = {
       (uint8_t) (freq_reg >> 24),
       (uint8_t) (freq_reg >> 16),
@@ -531,7 +529,7 @@ void RadioSX1262::configure_radio_() {
   this->write_opcode_(SX1262_SET_DIO_IRQ_PARAMS, irq_params, sizeof(irq_params));
 
   // 17. Attach DIO1 interrupt
-  this->dio1_pin_->attach_interrupt(&RadioSX1262::gpio_intr_, this, gpio::INTERRUPT_RISING_EDGE);
+  this->dio1_pin_->attach_interrupt(&RadioSX1262::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
 
   // 18. Clear any pending IRQs
   this->clear_irq_status_(0xFFFF);
@@ -558,7 +556,7 @@ void RadioSX1262::set_mode_rx() {
 
 void RadioSX1262::change_frequency(uint32_t freq_hz) {
   this->set_mode_standby();
-  uint32_t freq_reg = (uint32_t) ((double) freq_hz * (1 << 25) / 32e6);
+  auto freq_reg = (uint32_t) ((double) freq_hz * (1 << 25) / 32e6);
   uint8_t params[4] = {
       (uint8_t) (freq_reg >> 24),
       (uint8_t) (freq_reg >> 16),
@@ -583,7 +581,7 @@ bool RadioSX1262::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
   this->set_mode_standby();
 
   // Change frequency (without going back to RX)
-  uint32_t freq_reg = (uint32_t) ((double) tx_config.freq_hz * (1 << 25) / 32e6);
+  auto freq_reg = (uint32_t) ((double) tx_config.freq_hz * (1 << 25) / 32e6);
   uint8_t freq_params[4] = {
       (uint8_t) (freq_reg >> 24),
       (uint8_t) (freq_reg >> 16),
@@ -599,11 +597,11 @@ bool RadioSX1262::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
     return false;
 
   memcpy(frame_with_crc, data, len);
-  const uint16_t crc = crc_ccitt_(data, len);
+  const uint16_t crc = crc_ccitt(data, len);
   frame_with_crc[len] = crc & 0xFF;
   frame_with_crc[len + 1] = (crc >> 8) & 0xFF;
 
-  const uint8_t encoded_len = uart_encode_packet_(frame_with_crc, len + 2, tx_buf, sizeof(tx_buf));
+  const uint8_t encoded_len = uart_encode_packet(frame_with_crc, len + 2, tx_buf, sizeof(tx_buf));
   if (encoded_len == 0)
     return false;
 
@@ -750,12 +748,13 @@ bool RadioSX1262::read_rx_packet_(RadioRxPacket &packet, bool blocking_wait, uin
   uint8_t reported_len = std::min(rx_status[0], (uint8_t) sizeof(rx_buf));
   uint8_t rx_offset = rx_status[1];
   uint8_t raw_probe_len = reported_len;
-  if (reported_len > 0 && reported_len < 32)
+  if (reported_len > 0 && reported_len < 32) {
     // When the SX1262 reports a short packet length, still pull the full raw window. Earlier
     // bring-up on this chip showed that trimming this probe too aggressively makes the recovered
     // post-auth response less reliable because the useful UART-packed tail may sit past the
     // chip-reported boundary.
     raw_probe_len = sizeof(rx_buf);
+  }
   if (reported_len == SX1262_RX_PROBE_PACKET_LEN)
     raw_probe_len = SX1262_RX_PROBE_PACKET_LEN;
   if (raw_probe_len > 0)
@@ -764,7 +763,7 @@ bool RadioSX1262::read_rx_packet_(RadioRxPacket &packet, bool blocking_wait, uin
   // SX1262 does not expose the already-decoded IO-homecontrol frame the way SX1276 does. We first
   // capture the raw bytes exactly as reported by the chip, then recover the UART-packed protocol
   // stream in software and only pass a plausible frame up to the parser.
-  UartProbeResult probe = find_uart_probe_(rx_buf, raw_probe_len);
+  UartProbeResult probe = find_uart_probe(rx_buf, raw_probe_len);
   if (probe.valid) {
     memcpy(recovered_buf, probe.decoded + probe.frame_start, probe.frame_len);
     memcpy(packet.data, recovered_buf, probe.frame_len);

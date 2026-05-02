@@ -15,9 +15,9 @@ namespace home_io_control {
 
 namespace {
 
-static const char *const TAG = "home_io_control";
+const char *const TAG = "home_io_control";
 
-static const char *outbound_stage_name(exchange::OutboundExchangeState state) {
+const char *outbound_stage_name(exchange::OutboundExchangeState state) {
   switch (state) {
     case exchange::OutboundExchangeState::IDLE:
       return "idle";
@@ -39,7 +39,7 @@ static const char *outbound_stage_name(exchange::OutboundExchangeState state) {
   }
 }
 
-static const char *inbound_stage_name(exchange::InboundAuthState state) {
+const char *inbound_stage_name(exchange::InboundAuthState state) {
   switch (state) {
     case exchange::InboundAuthState::IDLE:
       return "idle";
@@ -55,19 +55,19 @@ static const char *inbound_stage_name(exchange::InboundAuthState state) {
   }
 }
 
-static uint32_t response_wait_slice_ms_(uint32_t remaining_ms) {
+uint32_t response_wait_slice_ms(uint32_t remaining_ms) {
   return std::min<uint32_t>(remaining_ms, RESPONSE_CHANNEL_WAIT_MS);
 }
 
-static uint16_t auth_response_preamble_(const RadioDriver *radio) {
+uint16_t auth_response_preamble(const RadioDriver *radio) {
   // SX1276 is the baseline waveform. The longer 0x3D preamble stays scoped to SX1262 so the radio-
   // specific lock-on workaround does not silently perturb the SX1276 behavior.
   return strcmp(radio->chip_name(), "sx1262") == 0 ? SX1262_AUTH_RESPONSE_PREAMBLE : SHORT_PREAMBLE;
 }
 
-static bool frame_is_challenge_response_(const IoFrame &frame) { return frame.cmd == CMD_CHALLENGE_RESP; }
+bool frame_is_challenge_response(const IoFrame &frame) { return frame.cmd == CMD_CHALLENGE_RESP; }
 
-static void log_exchange_frame_(const char *stage, int tries, const IoFrame &frame, uint8_t len) {
+void log_exchange_frame(const char *stage, int tries, const IoFrame &frame, uint8_t len) {
   ESP_LOGD(TAG, "%s try=%d cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X len=%u", stage, tries, frame.cmd, frame.src[0],
            frame.src[1], frame.src[2], frame.dst[0], frame.dst[1], frame.dst[2], len);
 }
@@ -107,7 +107,7 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
     bool got_first_response = false;
     while ((int32_t) (first_deadline_ms - millis()) > 0) {
       uint32_t remaining_ms = first_deadline_ms - millis();
-      if (!this->radio_->wait_for_packet(packet, response_wait_slice_ms_(remaining_ms))) {
+      if (!this->radio_->wait_for_packet(packet, response_wait_slice_ms(remaining_ms))) {
         if ((int32_t) (first_deadline_ms - millis()) > 0)
           this->hop_frequency_();
         continue;
@@ -120,7 +120,7 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
       const auto first_disposition = decisions::classify_exchange_first_response(request, context.rx);
       if (first_disposition == decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED) {
         this->record_exchange_debug_("first_wrong_exchange", context.try_index, false);
-        log_exchange_frame_("Ignored first response", tries + 1, context.rx, packet.len);
+        log_exchange_frame("Ignored first response", tries + 1, context.rx, packet.len);
         continue;
       }
       context.first_response_ms = millis();
@@ -162,7 +162,7 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
 
     context.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
     this->record_exchange_debug_(outbound_stage_name(context.state), context.try_index, true);
-    if (!this->transmit_frame_(auth_resp, freq, auth_response_preamble_(this->radio_))) {
+    if (!this->transmit_frame_(auth_resp, freq, auth_response_preamble(this->radio_))) {
       context.state = exchange::OutboundExchangeState::FAILED;
       this->record_exchange_debug_("tx_auth_failed", context.try_index, true);
       continue;
@@ -174,7 +174,7 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
     bool got_final_response = false;
     while ((int32_t) (final_deadline_ms - millis()) > 0) {
       uint32_t remaining_ms = final_deadline_ms - millis();
-      if (!this->radio_->wait_for_packet(packet, response_wait_slice_ms_(remaining_ms))) {
+      if (!this->radio_->wait_for_packet(packet, response_wait_slice_ms(remaining_ms))) {
         if ((int32_t) (final_deadline_ms - millis()) > 0)
           this->hop_frequency_();
         continue;
@@ -187,7 +187,7 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
       if (decisions::classify_exchange_final_response(request, context.rx) !=
           decisions::ExchangeFinalResponseDisposition::ACCEPT) {
         this->record_exchange_debug_("final_wrong_exchange", context.try_index, true);
-        log_exchange_frame_("Ignored final response", tries + 1, context.rx, packet.len);
+        log_exchange_frame("Ignored final response", tries + 1, context.rx, packet.len);
         continue;
       }
       got_final_response = true;
@@ -241,7 +241,7 @@ bool IOHomeControlComponent::authenticate_request_(const IoFrame &request, uint3
   }
 
   IoFrame rx;
-  if (!parse(packet.data, packet.len, rx) || !frame_is_challenge_response_(rx)) {
+  if (!parse(packet.data, packet.len, rx) || !frame_is_challenge_response(rx)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_exchange_debug_(inbound_stage_name(context.state), 1, true);
     return false;

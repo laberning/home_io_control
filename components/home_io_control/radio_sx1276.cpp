@@ -62,7 +62,7 @@ void RadioSX1276::run_image_cal_() {
   }
 }
 
-void IRAM_ATTR RadioSX1276::gpio_intr_(RadioSX1276 *arg) { arg->mark_dio_fired_from_isr(); }
+void IRAM_ATTR RadioSX1276::gpio_intr(RadioSX1276 *arg) { arg->mark_dio_fired_from_isr(); }
 
 void RadioSX1276::fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, uint8_t rssi, const uint8_t *raw,
                                      uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
@@ -98,7 +98,7 @@ void RadioSX1276::change_frequency(uint32_t freq_hz) {
 bool RadioSX1276::init() {
   this->rst_pin_->setup();
   this->dio0_pin_->setup();
-  this->dio0_pin_->attach_interrupt(&RadioSX1276::gpio_intr_, this, gpio::INTERRUPT_RISING_EDGE);
+  this->dio0_pin_->attach_interrupt(&RadioSX1276::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
   if (this->dio4_pin_ != nullptr)
     this->dio4_pin_->setup();
 
@@ -165,7 +165,7 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_BITRATE_LSB, br & 0xFF);
 
   // Deviation 19200 Hz
-  uint32_t fd = (uint32_t) ((19200.0f / FXOSC) * (1 << 19));
+  auto fd = (uint32_t) ((19200.0f / FXOSC) * (1 << 19));
   this->write_register_(REG_FDEV_MSB, (fd >> 8) & 0xFF);
   this->write_register_(REG_FDEV_LSB, fd & 0xFF);
 

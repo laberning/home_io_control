@@ -18,28 +18,28 @@ static const uint32_t STATUS_RETRY_AFTER_FAIL_MS = 5000;
 static const uint8_t BINARY_ENTITY_ON_POSITION = 0;
 static const uint8_t BINARY_ENTITY_OFF_POSITION = 100;
 
-static bool is_binary_entity_position_(uint8_t position) {
+static bool is_binary_entity_position(uint8_t position) {
   return position == BINARY_ENTITY_ON_POSITION || position == BINARY_ENTITY_OFF_POSITION;
 }
 
-static bool known_device_matches_entity_class_(const IoDevice &dev, DeviceCapabilityClass expected) {
+static bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabilityClass expected) {
   return dev.type == DeviceType::UNKNOWN || device_capability_class(dev.type) == expected;
 }
 
-static bool known_device_supports_status_requests_(const IoDevice &dev) {
+static bool known_device_supports_status_requests(const IoDevice &dev) {
   return dev.type == DeviceType::UNKNOWN || device_supports_status_requests(dev.type);
 }
 
-static bool known_device_accepts_execute_position_(const IoDevice &dev, uint8_t position) {
+static bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t position) {
   if (dev.type == DeviceType::UNKNOWN)
     return true;
   if (device_supports_position_control(dev.type))
     return true;
-  return is_binary_entity_position_(position) && device_supports_binary_control(dev.type);
+  return is_binary_entity_position(position) && device_supports_binary_control(dev.type);
 }
 
-static void log_rejected_operation_(const std::string &device_id, const IoDevice &dev, const char *operation,
-                                    const char *expected) {
+static void log_rejected_operation(const std::string &device_id, const IoDevice &dev, const char *operation,
+                                   const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
            device_id.c_str(), device_type_name(dev.type), static_cast<uint8_t>(dev.type),
            device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
@@ -54,7 +54,7 @@ static std::string format_position(float pos) {
   return buf;
 }
 
-static bool persisted_node_id_is_valid_(const uint8_t id[NODE_ID_SIZE]) {
+static bool persisted_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
   bool all_zero = true;
   bool all_ff = true;
   for (uint8_t i = 0; i < NODE_ID_SIZE; i++) {
@@ -64,16 +64,16 @@ static bool persisted_node_id_is_valid_(const uint8_t id[NODE_ID_SIZE]) {
   return !all_zero && !all_ff;
 }
 
-static uint32_t saved_device_pref_hash_(uint8_t index) {
+static uint32_t saved_device_pref_hash(uint8_t index) {
   char key[16];
   snprintf(key, sizeof(key), "iohome_dev_%u", index);
   return fnv1_hash(key);
 }
 
-static uint32_t legacy_saved_device_pref_hash_(uint8_t index) { return fnv1_hash("iohome_dev") + index; }
+static uint32_t legacy_saved_device_pref_hash(uint8_t index) { return fnv1_hash("iohome_dev") + index; }
 
-static void log_component_capture_(const RadioDriver *radio, const char *stage, const uint8_t *buf, uint8_t len,
-                                   const IoFrame *frame = nullptr) {
+static void log_component_capture(const RadioDriver *radio, const char *stage, const uint8_t *buf, uint8_t len,
+                                  const IoFrame *frame = nullptr) {
   const RadioCaptureInfo &capture = radio->get_last_capture();
   char payload_hex[220];
   bytes_to_hex(buf, len, payload_hex, sizeof(payload_hex));
@@ -89,8 +89,8 @@ static void log_component_capture_(const RadioDriver *radio, const char *stage, 
            capture.freq_hz, capture.timestamp_ms, len, payload_hex);
 }
 
-static void log_frame_issue_(IOHomeControlComponent *component, const char *direction, const char *reason,
-                             const IoFrame &frame, uint8_t len) {
+static void log_frame_issue(IOHomeControlComponent *component, const char *direction, const char *reason,
+                            const IoFrame &frame, uint8_t len) {
   const std::string src_id = node_id_to_string(frame.src);
   const std::string dst_id = node_id_to_string(frame.dst);
   const bool src_registered = component->get_device(src_id) != nullptr;
@@ -213,7 +213,7 @@ void IOHomeControlComponent::setup() {
   this->initialized_ = true;
   this->last_hop_us_ = micros();
   this->load_devices_();
-  ESP_LOGI(TAG, "Radio initialized (%s), Node ID: %s, %u device(s)", use_sx1262 ? "SX1262" : "SX1276",
+  ESP_LOGI(TAG, "Radio initialized (%s), Node ID: %s, %zu device(s)", use_sx1262 ? "SX1262" : "SX1276",
            this->node_id_str_.c_str(), this->devices_.size());
 }
 
@@ -243,15 +243,15 @@ bool IOHomeControlComponent::transmit_frame_(const IoFrame &frame, uint32_t freq
   uint8_t buf[FRAME_MAX_SIZE];
   uint8_t len = serialize(frame, buf, sizeof(buf));
   if (len == 0) {
-    log_frame_issue_(this, "tx", "serialize_failed", frame, 0);
+    log_frame_issue(this, "tx", "serialize_failed", frame, 0);
     return false;
   }
-  log_component_capture_(this->radio_, "tx_frame", buf, len, &frame);
+  log_component_capture(this->radio_, "tx_frame", buf, len, &frame);
   RadioTxConfig tx_config{};
   tx_config.freq_hz = freq;
   tx_config.preamble_len = preamble;
   if (!this->radio_->send_packet(buf, len, tx_config)) {
-    log_frame_issue_(this, "tx", "send_failed", frame, len);
+    log_frame_issue(this, "tx", "send_failed", frame, len);
     return false;
   }
   return true;
@@ -263,7 +263,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
   const std::string id = node_id_to_string(frame.src);
   auto it = this->devices_.find(id);
   if (it == this->devices_.end()) {
-    log_frame_issue_(this, "rx", "unregistered_device", frame, frame_length(frame));
+    log_frame_issue(this, "rx", "unregistered_device", frame, frame_length(frame));
     return;
   }
   IoDevice &dev = it->second;
@@ -276,15 +276,13 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     uint16_t tgt = (frame.data[2] << 8) | frame.data[3];
     uint16_t cur = (frame.data[4] << 8) | frame.data[5];
     decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
+    uint32_t update_delay_ms = 60000;  // default: standard poll interval
     if (dev.is_stopped) {
-      dev.next_update = millis() + 3600000;
-    } else if (frame.data[1] & STATUS_EXPECTED) {
-      dev.next_update = millis() + 60000;
+      update_delay_ms = 3600000;
     } else if (frame.data[7] != 0xFF && frame.data[7] != 0x00) {
-      dev.next_update = millis() + frame.data[7] * 1000 + 1000;
-    } else {
-      dev.next_update = millis() + 60000;
+      update_delay_ms = frame.data[7] * 1000 + 1000;
     }
+    dev.next_update = millis() + update_delay_ms;
     ESP_LOGI(TAG, "Device %s: position=%s target=%s %s", id.c_str(), format_position(dev.position).c_str(),
              format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving");
     this->notify_device_update_(id);
@@ -308,24 +306,24 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
              (uint8_t) dev.type, device_capability_class_name(dev.type), device_operation_profile_name(dev.type),
              dev.subtype);
   } else if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE || frame.cmd == CMD_GET_INFO2_RESP) {
-    log_frame_issue_(this, "rx", "unsupported_payload", frame, frame_length(frame));
+    log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
   }
 }
 
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
   IoFrame frame;
   if (!parse(packet.data, packet.len, frame)) {
-    log_component_capture_(this->radio_, "parse_fail", packet.data, packet.len);
+    log_component_capture(this->radio_, "parse_fail", packet.data, packet.len);
     return;
   }
 
-  log_component_capture_(this->radio_, "parse_ok", packet.data, packet.len, &frame);
+  log_component_capture(this->radio_, "parse_ok", packet.data, packet.len, &frame);
 
   if (frame.cmd == CMD_STATUS_UPDATE && memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0) {
     if (this->authenticate_request_(frame, packet.freq_hz)) {
       IoFrame resp;
       if (!create_status_update_resp(resp, this->node_id_, frame.src)) {
-        log_frame_issue_(this, "rx", "ack_build_failed", frame, packet.len);
+        log_frame_issue(this, "rx", "ack_build_failed", frame, packet.len);
         return;
       }
       // Device-originated updates may arrive while the sender and receiver are not aligned on the
@@ -336,7 +334,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
       this->transmit_frame_(resp, FREQ_CH3, SHORT_PREAMBLE);
       this->update_device_status_(frame);
     } else {
-      log_frame_issue_(this, "rx", "auth_failed", frame, packet.len);
+      log_frame_issue(this, "rx", "auth_failed", frame, packet.len);
     }
     return;
   }
@@ -346,7 +344,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     return;
   }
 
-  log_frame_issue_(this, "rx", "unhandled_cmd", frame, packet.len);
+  log_frame_issue(this, "rx", "unhandled_cmd", frame, packet.len);
 }
 
 void IOHomeControlComponent::notify_device_update_(const std::string &id) {
@@ -383,20 +381,20 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
     return false;
 
   const char *action = "set position";
-  if (position == 0)
+  if (position == 0) {
     action = "open";
-  else if (position == 100)
+  } else if (position == 100) {
     action = "close";
-  else if (position == POS_STOP)
+  } else if (position == POS_STOP) {
     action = "stop";
+  }
 
   // Once a device family is known, use the profile helpers to reject YAML/entity mismatches
   // before they hit the radio path. Unknown types still pass through so discovery and imported
   // devices keep working as before.
-  if (!known_device_accepts_execute_position_(*dev, position)) {
-    log_rejected_operation_(
-        device_id, *dev, action,
-        is_binary_entity_position_(position) ? "cover_position or binary_on_off" : "cover_position");
+  if (!known_device_accepts_execute_position(*dev, position)) {
+    log_rejected_operation(device_id, *dev, action,
+                           is_binary_entity_position(position) ? "cover_position or binary_on_off" : "cover_position");
     return false;
   }
 
@@ -420,8 +418,8 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   if (!dev || !this->initialized_)
     return false;
 
-  if (!known_device_supports_status_requests_(*dev)) {
-    log_rejected_operation_(device_id, *dev, "status request", "status-capable actuator");
+  if (!known_device_supports_status_requests(*dev)) {
+    log_rejected_operation(device_id, *dev, "status request", "status-capable actuator");
     return false;
   }
 
@@ -442,8 +440,8 @@ bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool 
   if (!dev || !this->initialized_)
     return false;
 
-  if (!known_device_matches_entity_class_(*dev, DeviceCapabilityClass::LIGHT)) {
-    log_rejected_operation_(device_id, *dev, "light command", "light entity");
+  if (!known_device_matches_entity_class(*dev, DeviceCapabilityClass::LIGHT)) {
+    log_rejected_operation(device_id, *dev, "light command", "light entity");
     return false;
   }
 
@@ -457,8 +455,8 @@ bool IOHomeControlComponent::set_switch_state(const std::string &device_id, bool
   if (!dev || !this->initialized_)
     return false;
 
-  if (!known_device_matches_entity_class_(*dev, DeviceCapabilityClass::SWITCH)) {
-    log_rejected_operation_(device_id, *dev, "switch command", "switch entity");
+  if (!known_device_matches_entity_class(*dev, DeviceCapabilityClass::SWITCH)) {
+    log_rejected_operation(device_id, *dev, "switch command", "switch entity");
     return false;
   }
 
@@ -468,8 +466,8 @@ bool IOHomeControlComponent::set_switch_state(const std::string &device_id, bool
 
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {
   IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !known_device_matches_entity_class_(*dev, DeviceCapabilityClass::COVER)) {
-    log_rejected_operation_(device_id, *dev, "queued cover command", "cover entity");
+  if (dev != nullptr && !known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
+    log_rejected_operation(device_id, *dev, "queued cover command", "cover entity");
     return;
   }
   this->pending_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
@@ -477,8 +475,8 @@ void IOHomeControlComponent::queue_set_device_position(const std::string &device
 
 void IOHomeControlComponent::queue_request_device_status(const std::string &device_id) {
   IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !known_device_supports_status_requests_(*dev)) {
-    log_rejected_operation_(device_id, *dev, "queued status request", "status-capable actuator");
+  if (dev != nullptr && !known_device_supports_status_requests(*dev)) {
+    log_rejected_operation(device_id, *dev, "queued status request", "status-capable actuator");
     return;
   }
   this->pending_operations_.push_back({PendingOperationType::REQUEST_STATUS, device_id, 0});
@@ -494,8 +492,8 @@ void IOHomeControlComponent::queue_discover_and_pair() {
 
 void IOHomeControlComponent::queue_set_light_state(const std::string &device_id, bool on) {
   IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !known_device_matches_entity_class_(*dev, DeviceCapabilityClass::LIGHT)) {
-    log_rejected_operation_(device_id, *dev, "queued light command", "light entity");
+  if (dev != nullptr && !known_device_matches_entity_class(*dev, DeviceCapabilityClass::LIGHT)) {
+    log_rejected_operation(device_id, *dev, "queued light command", "light entity");
     return;
   }
 
@@ -507,8 +505,8 @@ void IOHomeControlComponent::queue_set_light_state(const std::string &device_id,
 
 void IOHomeControlComponent::queue_set_switch_state(const std::string &device_id, bool on) {
   IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !known_device_matches_entity_class_(*dev, DeviceCapabilityClass::SWITCH)) {
-    log_rejected_operation_(device_id, *dev, "queued switch command", "switch entity");
+  if (dev != nullptr && !known_device_matches_entity_class(*dev, DeviceCapabilityClass::SWITCH)) {
+    log_rejected_operation(device_id, *dev, "queued switch command", "switch entity");
     return;
   }
 
@@ -590,7 +588,7 @@ void IOHomeControlComponent::dump_config() {
     LOG_PIN("  DIO4 Pin: ", this->dio4_pin_);
   if (this->busy_pin_ != nullptr)
     LOG_PIN("  BUSY Pin: ", this->busy_pin_);
-  ESP_LOGCONFIG(TAG, "  Devices: %u", this->devices_.size());
+  ESP_LOGCONFIG(TAG, "  Devices: %zu", this->devices_.size());
   for (const auto &pair : this->devices_) {
     const auto &device = pair.second;
     ESP_LOGCONFIG(TAG, "    - %s: type=%s (%u) class=%s profile=%s subtype=%u inverted=%s", pair.first.c_str(),
@@ -625,7 +623,7 @@ void IOHomeControlComponent::save_devices_() {
     sd.type = (uint8_t) pair.second.type;
     sd.subtype = pair.second.subtype;
     sd.inverted = pair.second.inverted;
-    auto pref = global_preferences->make_preference<SavedDevice>(saved_device_pref_hash_(i));
+    auto pref = global_preferences->make_preference<SavedDevice>(saved_device_pref_hash(i));
     pref.save(&sd);
     i++;
   }
@@ -639,16 +637,16 @@ void IOHomeControlComponent::load_devices_() {
     return;
   for (uint8_t i = 0; i < count && i < 16; i++) {
     SavedDevice sd{};
-    auto pref = global_preferences->make_preference<SavedDevice>(saved_device_pref_hash_(i));
+    auto pref = global_preferences->make_preference<SavedDevice>(saved_device_pref_hash(i));
     bool loaded = pref.load(&sd);
     if (!loaded) {
-      auto legacy_pref = global_preferences->make_preference<SavedDevice>(legacy_saved_device_pref_hash_(i));
+      auto legacy_pref = global_preferences->make_preference<SavedDevice>(legacy_saved_device_pref_hash(i));
       if (!legacy_pref.load(&sd))
         continue;
     }
     // Ignore obviously invalid persisted IDs so stale or partially written flash data does not
     // resurrect phantom devices that the runtime can never communicate with.
-    if (!persisted_node_id_is_valid_(sd.node_id)) {
+    if (!persisted_node_id_is_valid(sd.node_id)) {
       ESP_LOGW(TAG, "Skipping invalid persisted device entry %u", i);
       continue;
     }

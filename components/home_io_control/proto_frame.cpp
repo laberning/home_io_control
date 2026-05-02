@@ -9,7 +9,7 @@
 namespace esphome {
 namespace home_io_control {
 
-static int hex_nibble_(char ch) {
+static int hex_nibble(char ch) {
   if (ch >= '0' && ch <= '9')
     return ch - '0';
   ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
@@ -27,8 +27,8 @@ bool hex_to_bytes(const std::string &hex, uint8_t *out, uint8_t len) {
     return false;
 
   for (uint8_t i = 0; i < len; i++) {
-    const int high = hex_nibble_(hex[i * 2]);
-    const int low = hex_nibble_(hex[i * 2 + 1]);
+    const int high = hex_nibble(hex[i * 2]);
+    const int low = hex_nibble(hex[i * 2 + 1]);
     if (high < 0 || low < 0)
       return false;
     out[i] = static_cast<uint8_t>((high << 4) | low);
