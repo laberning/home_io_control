@@ -30,6 +30,10 @@ FILTERED_DB="build/clang-tidy/compile_commands.json"
 TOOLCHAIN_PKG_ROOT="$REPO_ROOT/config/.pio/packages/toolchain-xtensa-esp-elf"
 XTENSA_TOOLCHAIN="$TOOLCHAIN_PKG_ROOT/xtensa-esp-elf"
 PICOLIBC_TOOLCHAIN="$TOOLCHAIN_PKG_ROOT/picolibc/xtensa-esp-elf"
+# Ubuntu's clang build lists an Xtensa backend but does not accept the ESP-IDF
+# Xtensa target triple. A generic 32-bit target keeps pointer-width diagnostics
+# in ESP-IDF headers consistent with ESP32 while clang-tidy analyzes our code.
+TARGET_TRIPLE="${CLANG_TIDY_TARGET:-i386-pc-linux-gnu}"
 
 mkdir -p "$(dirname "$FILTERED_DB")"
 
@@ -66,6 +70,7 @@ sed -i 's|"command": "xtensa-esp32-elf-g++|"command": "clang++|' "$FILTERED_DB"
 
 # Build clang-tidy extra args
 EXTRA_ARGS=(
+  --target="$TARGET_TRIPLE"
   -nostdinc
   -nostdinc++
   -D__XTENSA__
@@ -106,7 +111,7 @@ for a in "${EXTRA_ARGS[@]}"; do
   CLANG_TIDY_EXTRA+=( -extra-arg="$a" )
 done
 
-# Collect source files
+# Collect translation units.
 mapfile -t FILES_ARRAY < <(find components/home_io_control -type f \( -name '*.cpp' -o -name '*.h' \))
 if [ ${#FILES_ARRAY[@]} -eq 0 ]; then
   echo "No source files found in components/home_io_control"
