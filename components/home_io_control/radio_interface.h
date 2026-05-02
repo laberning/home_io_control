@@ -96,19 +96,19 @@ class RadioDriver {
   virtual void set_mode_standby() = 0;
 
   /// Returns true if the radio failed to initialize or encountered a fatal error.
-  virtual bool is_failed() const = 0;
+  [[nodiscard]] virtual bool is_failed() const = 0;
 
-  virtual const char *chip_name() const = 0;
+  [[nodiscard]] virtual const char *chip_name() const = 0;
 
   /// Optional chip-specific diagnostics emitted from dump_config.
   virtual void dump_debug() {}
 
-  uint32_t get_current_freq() const { return this->current_freq_; }
-  const RadioCaptureInfo &get_last_capture() const { return this->last_capture_; }
+  [[nodiscard]] uint32_t get_current_freq() const { return this->current_freq_; }
+  [[nodiscard]] const RadioCaptureInfo &get_last_capture() const { return this->last_capture_; }
 
   /// Set by the ISR when DIO fires. Using access helpers instead of touching the flag directly
   /// keeps the ISR/main-loop handoff explicit and lets ESP32 builds use atomic storage.
-  bool is_dio_fired() const {
+  [[nodiscard]] bool is_dio_fired() const {
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
     return this->dio_fired_.load(std::memory_order_acquire);
 #else

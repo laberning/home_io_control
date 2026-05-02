@@ -62,7 +62,7 @@ static constexpr uint8_t MODE_MASK = 0x07;
 
 /// SX1276 crystal oscillator frequency (32 MHz). Used to calculate register values
 /// for bitrate, frequency deviation, and carrier frequency.
-static constexpr uint32_t FXOSC = 32000000u;
+static constexpr uint32_t FXOSC = 32000000U;
 
 // ============================================================================
 // SX1276 Radio Driver
@@ -85,8 +85,8 @@ class RadioSX1276 : public RadioDriver {
   void change_frequency(uint32_t freq_hz) override;
   void set_mode_rx() override;
   void set_mode_standby() override;
-  bool is_failed() const override { return this->failed_; }
-  const char *chip_name() const override { return "sx1276"; }
+  [[nodiscard]] bool is_failed() const override { return this->failed_; }
+  [[nodiscard]] const char *chip_name() const override { return "sx1276"; }
   void dump_debug() override;
 
  protected:

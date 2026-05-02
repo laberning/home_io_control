@@ -14,7 +14,7 @@ class IOHomeSwitch : public switch_::Switch, public Component {
  public:
   void setup() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 
   void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
   void set_device_id(const std::string &id) { this->device_id_ = id; }

@@ -22,7 +22,7 @@ class IOHomeCover : public cover::Cover, public Component {
  public:
   void setup() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 
   cover::CoverTraits get_traits() override;
 

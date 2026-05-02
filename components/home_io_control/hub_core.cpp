@@ -358,7 +358,7 @@ void IOHomeControlComponent::notify_device_update_(const std::string &id) {
 // === Device management ===
 
 void IOHomeControlComponent::add_device(const std::string &device_id) {
-  if (this->devices_.count(device_id))
+  if (this->devices_.count(device_id) != 0)
     return;
   IoDevice dev{};
   if (!hex_to_bytes(device_id, dev.node_id, NODE_ID_SIZE)) {
@@ -377,7 +377,7 @@ IoDevice *IOHomeControlComponent::get_device(const std::string &device_id) {
 
 bool IOHomeControlComponent::set_device_position(const std::string &device_id, uint8_t position) {
   auto *dev = this->get_device(device_id);
-  if (!dev || !this->initialized_)
+  if (dev == nullptr || !this->initialized_)
     return false;
 
   const char *action = "set position";
@@ -401,7 +401,8 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
   ESP_LOGI(TAG, "Sending %s to device %s (profile=%s)", action, device_id.c_str(),
            device_operation_profile_name(dev->type));
 
-  IoFrame req, resp;
+  IoFrame req;
+  IoFrame resp;
   if (!create_execute(req, this->node_id_, dev->node_id, true, position))
     return false;
   if (!this->send_and_receive_(req, resp, FREQ_CH2)) {
@@ -415,7 +416,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
 
 bool IOHomeControlComponent::request_device_status(const std::string &device_id) {
   auto *dev = this->get_device(device_id);
-  if (!dev || !this->initialized_)
+  if (dev == nullptr || !this->initialized_)
     return false;
 
   if (!known_device_supports_status_requests(*dev)) {
@@ -423,7 +424,8 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
     return false;
   }
 
-  IoFrame req, resp;
+  IoFrame req;
+  IoFrame resp;
   if (!create_get_status(req, this->node_id_, dev->node_id))
     return false;
   if (!this->send_and_receive_(req, resp, FREQ_CH2)) {
@@ -437,7 +439,7 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
 
 bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool on) {
   auto *dev = this->get_device(device_id);
-  if (!dev || !this->initialized_)
+  if (dev == nullptr || !this->initialized_)
     return false;
 
   if (!known_device_matches_entity_class(*dev, DeviceCapabilityClass::LIGHT)) {
@@ -452,7 +454,7 @@ bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool 
 
 bool IOHomeControlComponent::set_switch_state(const std::string &device_id, bool on) {
   auto *dev = this->get_device(device_id);
-  if (!dev || !this->initialized_)
+  if (dev == nullptr || !this->initialized_)
     return false;
 
   if (!known_device_matches_entity_class(*dev, DeviceCapabilityClass::SWITCH)) {
@@ -651,7 +653,7 @@ void IOHomeControlComponent::load_devices_() {
       continue;
     }
     std::string id(node_id_to_string(sd.node_id));
-    if (this->devices_.count(id)) {
+    if (this->devices_.count(id) != 0) {
       auto &dev = this->devices_[id];
       if (dev.type == DeviceType::UNKNOWN)
         dev.type = static_cast<DeviceType>(sd.type);

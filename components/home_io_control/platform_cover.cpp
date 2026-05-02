@@ -42,9 +42,9 @@ void IOHomeCover::control(const cover::CoverCall &call) {
     // (used for devices like horizontal awnings where the IO convention is reversed)
     uint8_t io_pos;
     if (this->invert_) {
-      io_pos = (uint8_t) (ha_pos * 100.0f);
+      io_pos = (uint8_t) (ha_pos * 100.0F);
     } else {
-      io_pos = (uint8_t) ((1.0f - ha_pos) * 100.0f);
+      io_pos = (uint8_t) ((1.0F - ha_pos) * 100.0F);
     }
 
     this->parent_->queue_set_device_position(this->device_id_, io_pos);
@@ -61,9 +61,9 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   // Convert IO position (0-100) back to HA position (0.0-1.0)
   float ha_pos;
   if (this->invert_) {
-    ha_pos = dev.position / 100.0f;
+    ha_pos = dev.position / 100.0F;
   } else {
-    ha_pos = 1.0f - (dev.position / 100.0f);
+    ha_pos = 1.0F - (dev.position / 100.0F);
   }
 
   this->position = ha_pos;

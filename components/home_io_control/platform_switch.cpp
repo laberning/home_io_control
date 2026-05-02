@@ -30,7 +30,7 @@ void IOHomeSwitch::on_device_update_(const std::string &id, const IoDevice &dev)
     return;
 
   // Binary endpoints share the same on/off encoding as the light wrapper.
-  this->publish_state(dev.position < 50.0f);
+  this->publish_state(dev.position < 50.0F);
 }
 
 void IOHomeSwitch::dump_config() {

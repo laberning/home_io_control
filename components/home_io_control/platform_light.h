@@ -14,7 +14,7 @@ class IOHomeLight : public light::LightOutput, public Component {
  public:
   void setup() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 
   light::LightTraits get_traits() override;
   void setup_state(light::LightState *state) override { this->state_ = state; }

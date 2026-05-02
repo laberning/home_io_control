@@ -47,9 +47,9 @@ bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HOR
 
 void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target,
                             float &position) {
-  target = (target_raw <= STATUS_POS_MAX) ? target_raw * 100.0f / STATUS_POS_MAX : UNKNOWN_POSITION;
+  target = (target_raw <= STATUS_POS_MAX) ? target_raw * 100.0F / STATUS_POS_MAX : UNKNOWN_POSITION;
   if (current_raw <= STATUS_POS_MAX) {
-    position = current_raw * 100.0f / STATUS_POS_MAX;
+    position = current_raw * 100.0F / STATUS_POS_MAX;
   } else if (is_stopped && target_raw <= STATUS_POS_MAX) {
     position = target;
   } else {
@@ -62,7 +62,7 @@ uint16_t crc_ccitt(const uint8_t *data, uint8_t len) {
   for (uint8_t i = 0; i < len; i++) {
     crc ^= data[i];
     for (uint8_t j = 0; j < 8; j++)
-      crc = (crc & 0x0001) ? (crc >> 1) ^ 0x8408 : crc >> 1;
+      crc = ((crc & 0x0001) != 0) ? (crc >> 1) ^ 0x8408 : crc >> 1;
   }
   return crc;
 }

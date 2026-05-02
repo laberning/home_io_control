@@ -47,7 +47,7 @@ class IOHomeControlComponent : public Component,
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::HARDWARE; }
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::HARDWARE; }
 
   // --- SpiAccess implementation (delegates to SPIDevice) ---
   void spi_enable() override { this->enable(); }

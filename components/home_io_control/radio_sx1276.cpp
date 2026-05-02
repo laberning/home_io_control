@@ -53,7 +53,7 @@ void RadioSX1276::run_image_cal_() {
   this->set_mode_(MODE_STDBY);
   this->write_register_(REG_IMAGE_CAL, 0x40);
   uint32_t start = millis();
-  while (this->read_register_(REG_IMAGE_CAL) & 0x20) {
+  while ((this->read_register_(REG_IMAGE_CAL) & 0x20) != 0) {
     if (millis() - start > 20) {
       ESP_LOGE(TAG, "Image calibration timeout");
       this->failed_ = true;
@@ -165,7 +165,7 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_BITRATE_LSB, br & 0xFF);
 
   // Deviation 19200 Hz
-  auto fd = (uint32_t) ((19200.0f / FXOSC) * (1 << 19));
+  auto fd = (uint32_t) ((19200.0F / FXOSC) * (1 << 19));
   this->write_register_(REG_FDEV_MSB, (fd >> 8) & 0xFF);
   this->write_register_(REG_FDEV_LSB, fd & 0xFF);
 
@@ -251,7 +251,7 @@ bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
 
     irq1 = this->read_register_(REG_IRQ_FLAGS1);
     irq2 = this->read_register_(REG_IRQ_FLAGS2);
-    if (irq2 & 0x04)
+    if ((irq2 & 0x04) != 0)
       break;
 
     if (millis() - start > timeout_ms) {
@@ -266,12 +266,12 @@ bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
     irq2 = this->read_register_(REG_IRQ_FLAGS2);
   }
   uint8_t rssi = this->read_register_(REG_RSSI_VALUE);
-  if (!(irq2 & 0x04)) {
+  if ((irq2 & 0x04) == 0) {
     this->fill_capture_info_(true, irq1, irq2, rssi, nullptr, 0, nullptr, 0);
     return false;
   }
   // In IoHomeOn mode the FIFO already contains protocol bytes, so RX is just a straight FIFO read.
-  while (!(this->read_register_(REG_IRQ_FLAGS2) & 0x40) && packet.len < sizeof(packet.data))  // FifoEmpty bit
+  while (((this->read_register_(REG_IRQ_FLAGS2) & 0x40) == 0) && packet.len < sizeof(packet.data))  // FifoEmpty bit
     packet.data[packet.len++] = this->read_register_(REG_FIFO);
   packet.freq_hz = this->current_freq_;
   this->fill_capture_info_(true, irq1, irq2, rssi, packet.data, packet.len, packet.data, packet.len);
@@ -291,8 +291,8 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
   uint8_t irq1 = this->read_register_(REG_IRQ_FLAGS1);
   uint8_t irq2 = this->read_register_(REG_IRQ_FLAGS2);
   uint8_t rssi = this->read_register_(REG_RSSI_VALUE);
-  if (irq2 & 0x04) {                                                                            // PayloadReady
-    while (!(this->read_register_(REG_IRQ_FLAGS2) & 0x40) && packet.len < sizeof(packet.data))  // FifoEmpty
+  if ((irq2 & 0x04) != 0) {                                                                           // PayloadReady
+    while (((this->read_register_(REG_IRQ_FLAGS2) & 0x40) == 0) && packet.len < sizeof(packet.data))  // FifoEmpty
       packet.data[packet.len++] = this->read_register_(REG_FIFO);
     packet.freq_hz = this->current_freq_;
     this->fill_capture_info_(false, irq1, irq2, rssi, packet.data, packet.len, packet.data, packet.len);
@@ -303,7 +303,7 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
     return packet.len > 0;
   }
   this->fill_capture_info_(false, irq1, irq2, rssi, nullptr, 0, nullptr, 0);
-  if (irq2 & 0x10) {  // FifoOverrun — clear it
+  if ((irq2 & 0x10) != 0) {  // FifoOverrun — clear it
     this->write_register_(REG_IRQ_FLAGS2, 0x10);
   }
   return false;

@@ -49,7 +49,7 @@ void IOHomeLight::on_device_update_(const std::string &id, const IoDevice &dev) 
 
   // Binary endpoints report on/off via the shared 0-100 position field.
   // Position < 50 is treated as "on", >= 50 as "off".
-  const bool on = dev.position < 50.0f;
+  const bool on = dev.position < 50.0F;
   if (this->state_->current_values.is_on() == on && this->state_->remote_values.is_on() == on)
     return;
 

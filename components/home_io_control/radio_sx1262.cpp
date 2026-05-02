@@ -161,7 +161,7 @@ uint8_t RadioSX1262::uart_encode_packet(const uint8_t *data, uint8_t len, uint8_
     return 0;
 
   auto write_bit = [encoded](uint16_t pos, uint8_t bit) {
-    if (bit)
+    if (bit != 0)
       encoded[pos / 8] |= 1U << (7 - (pos % 8));
   };
 
@@ -403,6 +403,8 @@ void RadioSX1262::dump_debug() {
     case 6:
       mode_str = "TX";
       break;
+    default:
+      break;
   }
 
   uint8_t sync[3];
@@ -641,7 +643,7 @@ bool RadioSX1262::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
 
     this->clear_dio_fired();
     tx_irq = read_irq_status();
-    if (tx_irq & SX1262_IRQ_TX_DONE)
+    if ((tx_irq & SX1262_IRQ_TX_DONE) != 0)
       break;
 
     if (tx_irq != 0) {
@@ -705,12 +707,12 @@ bool RadioSX1262::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
     irq = read_irq_status();
   }
 
-  if ((irq & SX1262_IRQ_SYNC_WORD_VALID) && !(irq & SX1262_IRQ_RX_DONE)) {
+  if ((irq & SX1262_IRQ_SYNC_WORD_VALID) != 0 && (irq & SX1262_IRQ_RX_DONE) == 0) {
     this->clear_irq_status_(SX1262_IRQ_SYNC_WORD_VALID);
     while (millis() - start <= timeout_ms) {
       if (!this->is_dio_fired()) {
         irq = read_irq_status();
-        if (irq & SX1262_IRQ_RX_DONE)
+        if ((irq & SX1262_IRQ_RX_DONE) != 0)
           break;
         App.feed_wdt();
         delay(1);
@@ -720,7 +722,7 @@ bool RadioSX1262::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
       this->clear_dio_fired();
       irq = read_irq_status();
 
-      if (irq & SX1262_IRQ_RX_DONE)
+      if ((irq & SX1262_IRQ_RX_DONE) != 0)
         break;
 
       if (irq != 0)
@@ -728,7 +730,7 @@ bool RadioSX1262::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
     }
   }
 
-  if (!(irq & SX1262_IRQ_RX_DONE)) {
+  if ((irq & SX1262_IRQ_RX_DONE) == 0) {
     this->fill_capture_info_(true, irq, 0, 0, nullptr, 0, nullptr, 0);
     this->reset_rx_state_();
     return false;
@@ -799,12 +801,12 @@ bool RadioSX1262::check_for_packet(RadioRxPacket &packet) {
   this->read_opcode_(SX1262_GET_IRQ_STATUS, irq_raw, 2);
   uint16_t irq = ((uint16_t) irq_raw[0] << 8) | irq_raw[1];
 
-  if ((irq & SX1262_IRQ_SYNC_WORD_VALID) && !(irq & SX1262_IRQ_RX_DONE)) {
+  if ((irq & SX1262_IRQ_SYNC_WORD_VALID) != 0 && (irq & SX1262_IRQ_RX_DONE) == 0) {
     this->clear_irq_status_(SX1262_IRQ_SYNC_WORD_VALID);
     return false;
   }
 
-  if (irq & SX1262_IRQ_RX_DONE) {
+  if ((irq & SX1262_IRQ_RX_DONE) != 0) {
     return this->read_rx_packet_(packet, false, irq);
   }
 

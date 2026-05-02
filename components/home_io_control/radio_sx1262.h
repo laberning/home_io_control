@@ -97,8 +97,8 @@ class RadioSX1262 : public RadioDriver {
   void change_frequency(uint32_t freq_hz) override;
   void set_mode_rx() override;
   void set_mode_standby() override;
-  bool is_failed() const override { return this->failed_; }
-  const char *chip_name() const override { return "sx1262"; }
+  [[nodiscard]] bool is_failed() const override { return this->failed_; }
+  [[nodiscard]] const char *chip_name() const override { return "sx1262"; }
   void dump_debug() override;
 
   /// Diagnostic: log chip status, sync word, pin states. Called from dump_config.
