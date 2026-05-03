@@ -1,43 +1,53 @@
-compile:
-	docker compose run --rm esphome compile heltec_wifi_lora_32_v2.yaml
+# === Makefile for Home IO Control ===============================================
+# Default goal: compile firmware for the default device (v2 / sx1276)
+.DEFAULT_GOAL := compile
 
-upload:
-	docker compose run --rm esphome run heltec_wifi_lora_32_v2.yaml
 
-logs:
-	docker compose run --rm esphome logs heltec_wifi_lora_32_v2.yaml
+# === Recipe fragments (shared) ==========================================================
+# $1 is the device stem (e.g., v2, v3-monitor)
+define compile_recipe
+	@file="heltec-wifi-lora-32-$1.yaml"; \
+	echo "Compiling $$$$file"; \
+	docker compose run --rm esphome compile "$$$$file"
+endef
 
-clean:
-	docker compose run --rm esphome clean heltec_wifi_lora_32_v2.yaml
+define upload_recipe
+	@file="heltec-wifi-lora-32-$1.yaml"; \
+	echo "Uploading to $$$$file"; \
+	docker compose run --rm esphome run "$$$$file"
+endef
 
-compile-v3:
-	docker compose run --rm esphome compile heltec_wifi_lora_32_v3.yaml
+define logs_recipe
+	@file="heltec-wifi-lora-32-$1.yaml"; \
+	echo "Streaming logs from $$$$file"; \
+	docker compose run --rm esphome logs "$$$$file"
+endef
 
-upload-v3:
-	docker compose run --rm esphome run heltec_wifi_lora_32_v3.yaml
+define clean_recipe
+	@file="heltec-wifi-lora-32-$1.yaml"; \
+	echo "Cleaning build artifacts for $$$$file"; \
+	docker compose run --rm esphome clean "$$$$file"
+endef
 
-logs-v3:
-	docker compose run --rm esphome logs heltec_wifi_lora_32_v3.yaml
+# === Explicit device-variant targets (for tab completion & direct invocation) ===
+DEVICE_VARIANTS := v2 v3 v3-monitor
 
-clean-v3:
-	docker compose run --rm esphome clean heltec_wifi_lora_32_v3.yaml
+$(foreach v,$(DEVICE_VARIANTS),$(eval compile-$(v): ; $(call compile_recipe,$(v))))
+$(foreach v,$(DEVICE_VARIANTS),$(eval upload-$(v): ; $(call upload_recipe,$(v))))
+$(foreach v,$(DEVICE_VARIANTS),$(eval logs-$(v): ; $(call logs_recipe,$(v))))
+$(foreach v,$(DEVICE_VARIANTS),$(eval clean-$(v): ; $(call clean_recipe,$(v))))
 
-compile-v3-monitor:
-	docker compose run --rm esphome compile heltec_wifi_lora_32_v3_monitor.yaml
+# === Convenience defaults (delegate to v2) ====================================
+compile: compile-v2
+upload: upload-v2
+logs: logs-v2
+clean: clean-v2
 
-upload-v3-monitor:
-	docker compose run --rm esphome run heltec_wifi_lora_32_v3_monitor.yaml
 
-logs-v3-monitor:
-	docker compose run --rm esphome logs heltec_wifi_lora_32_v3_monitor.yaml
-
-clean-v3-monitor:
-	docker compose run --rm esphome clean heltec_wifi_lora_32_v3_monitor.yaml
+# === QA targets ================================================================
 
 dashboard:
 	docker compose up
-
-# --- QA targets --------------------------------------------------------------
 
 # Formatting
 format:
@@ -67,7 +77,7 @@ firmware-test:
 	  docker compose run --rm esphome compile "/config/tests/$$name" || exit 1; \
 	done
 
-# --- Unit test configuration ------------------------------------------------
+# === Unit test configuration ===================================================
 
 # All component source files needed for tests (protocol + platform + hub)
 # Exclude radio drivers — we provide stubs in tests/stubs/
@@ -96,7 +106,9 @@ unit-test:
 	@echo "Linking complete. Running tests..."
 	@./build/test_home_io_control
 
-# Composite targets
+
+# === Composite targets =========================================================
+
 lint: format-check yamllint clang-tidy
 test: unit-test firmware-test
 check: lint test
@@ -105,8 +117,10 @@ check: lint test
 test-compile: firmware-test
 test-unit: unit-test
 
-.PHONY: compile upload logs clean compile-v3 upload-v3 logs-v3 clean-v3 \
-		compile-v3-monitor upload-v3-monitor logs-v3-monitor clean-v3-monitor dashboard \
+
+# === Phony declarations ========================================================
+
+.PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy \
 		firmware-test unit-test lint test check \
 		test-compile test-unit
