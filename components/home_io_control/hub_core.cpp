@@ -45,25 +45,6 @@ static void log_rejected_operation(const std::string &device_id, const IoDevice 
            device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
 }
 
-static std::string format_position(float pos) {
-  if (pos == UNKNOWN_POSITION) {
-    return "unknown";
-  }
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%.0f%%", pos);
-  return buf;
-}
-
-static bool persisted_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
-  bool all_zero = true;
-  bool all_ff = true;
-  for (uint8_t i = 0; i < NODE_ID_SIZE; i++) {
-    all_zero = all_zero && id[i] == 0x00;
-    all_ff = all_ff && id[i] == 0xFF;
-  }
-  return !all_zero && !all_ff;
-}
-
 static uint32_t saved_device_pref_hash(uint8_t index) {
   char key[16];
   snprintf(key, sizeof(key), "iohome_dev_%u", index);

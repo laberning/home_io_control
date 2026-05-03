@@ -24,17 +24,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: make tidy
+      - run: make clang-tidy
 
   test-compile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: make test-compile
+      - run: make firmware-test
 
-  test-host:
+  unit-test:
     runs-on: ubuntu-latest
-    needs: [format, yamllint]
     steps:
       - uses: actions/checkout@v4
-      - run: make test-host
+      - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
+      - run: make unit-test

@@ -73,28 +73,28 @@ class IOHomeControlComponent : public Component,
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
 
   // --- Device management (called by cover platform) ---
-  void add_device(const std::string &device_id);
-  IoDevice *get_device(const std::string &device_id);
-  void register_device_callback(DeviceUpdateCallback cb) { this->callbacks_.push_back(std::move(cb)); }
+  virtual void add_device(const std::string &device_id);
+  virtual IoDevice *get_device(const std::string &device_id);
+  virtual void register_device_callback(DeviceUpdateCallback cb) { this->callbacks_.push_back(std::move(cb)); }
 
   // --- High-level operations ---
   /// Send a position command to a device. Returns true if device acknowledged.
-  bool set_device_position(const std::string &device_id, uint8_t position);
+  virtual bool set_device_position(const std::string &device_id, uint8_t position);
   /// Request current status from a device. Returns true if status received.
-  bool request_device_status(const std::string &device_id);
+  virtual bool request_device_status(const std::string &device_id);
   /// Discover and pair a device that is in pairing mode. Returns true on success.
-  bool discover_and_pair();
+  virtual bool discover_and_pair();
   /// Semantic binary helper for light entities. Internally mapped to the shared execute path.
-  bool set_light_state(const std::string &device_id, bool on);
+  virtual bool set_light_state(const std::string &device_id, bool on);
   /// Semantic binary helper for switch entities. Internally mapped to the shared execute path.
-  bool set_switch_state(const std::string &device_id, bool on);
-  void queue_set_device_position(const std::string &device_id, uint8_t position);
-  void queue_request_device_status(const std::string &device_id);
-  void queue_discover_and_pair();
+  virtual bool set_switch_state(const std::string &device_id, bool on);
+  virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
+  virtual void queue_request_device_status(const std::string &device_id);
+  virtual void queue_discover_and_pair();
   /// Async form of set_light_state() that keeps radio work serialized on the main loop.
-  void queue_set_light_state(const std::string &device_id, bool on);
+  virtual void queue_set_light_state(const std::string &device_id, bool on);
   /// Async form of set_switch_state() that keeps radio work serialized on the main loop.
-  void queue_set_switch_state(const std::string &device_id, bool on);
+  virtual void queue_set_switch_state(const std::string &device_id, bool on);
 
  protected:
   // --- Protocol-level operations ---
@@ -194,6 +194,33 @@ class DiscoverButton : public button::Button, public Component {
   void press_action() override { this->parent_->queue_discover_and_pair(); }
   IOHomeControlComponent *parent_{nullptr};
 };
+
+// ----------------------------------------------------------------------------
+// Test-visible helpers (inline for host unit tests)
+// These are also defined as static in hub_core.cpp; inline definitions here
+// allow tests to call them directly without violating ODR.
+// ----------------------------------------------------------------------------
+
+/// Check if a persisted node ID is valid (not all-zero, not all-0xFF).
+inline bool persisted_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
+  bool all_zero = true;
+  bool all_ff = true;
+  for (uint8_t i = 0; i < NODE_ID_SIZE; i++) {
+    all_zero = all_zero && id[i] == 0x00;
+    all_ff = all_ff && id[i] == 0xFF;
+  }
+  return !all_zero && !all_ff;
+}
+
+/// Format a position float as a human-readable string (e.g. "50%", "unknown").
+inline std::string format_position(float pos) {
+  if (pos == UNKNOWN_POSITION) {
+    return "unknown";
+  }
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%.0f%%", pos);
+  return buf;
+}
 
 }  // namespace home_io_control
 }  // namespace esphome

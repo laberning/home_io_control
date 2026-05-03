@@ -92,7 +92,7 @@ bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, con
 /// Build a challenge request (0x3C) containing 6 random bytes.
 /// Used when WE need to authenticate an incoming request from a device.
 bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src) {
-  init_frame(f);
+  init_frame(f, true, true, false, false);  // start=true, end=false
   set_dst(f, dst);
   set_src(f, src);
   uint8_t challenge[HMAC_SIZE];

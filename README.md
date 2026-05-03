@@ -156,13 +156,13 @@ The current code keeps the high-level protocol flow shared between both radios a
 - **SX1276** is the reference implementation. It uses the chip's IoHomeOn support and remains the baseline for known-good on-air behavior.
 - **SX1262** uses software CRC and software UART recovery on RX. That path was validated against the SX1276 reference captures.
 
-### Important SX1262 Design Decisions
+### SX1262 Design Decisions
 
 - The SX1262 RX path still treats short reported packet lengths defensively and now restores the full raw probe window in that case. That larger recovery read materially improved post-auth reply reliability without changing the controller exchange flow.
 - The SX1262 TX path keeps a longer preamble only for `0x3D` challenge responses. That workaround improved authenticated 2W reliability substantially, and it is intentionally scoped to SX1262 so the working SX1276 waveform stays unchanged.
 - Exchange waits ignore unrelated packets instead of aborting the transaction. In practice this made 2W exchanges much more reliable because other on-air traffic can appear while waiting for a matching challenge or final response.
 
-### Logging Philosophy
+### Logging
 
 - Normal operation keeps informational logs for setup, command send attempts, authentication challenges, retries/timeouts, discovery/pairing, and decoded device state updates.
 - Deep packet/frame dumps stay behind debug logging or the optional `IOHOME_FRAME_LOG` build flag.
@@ -170,12 +170,43 @@ The current code keeps the high-level protocol flow shared between both radios a
 
 ## Development
 
-### Docker Development Environment
+### Setup and Prerequisites
+
+The build system uses Docker for firmware compilation and host tools for testing/linting. After setup, run `make check` to verify the full toolchain.
+
+#### Ubuntu / Debian
+```bash
+sudo apt-get update && sudo apt-get install -y clang-format clang-tidy yamllint libgtest-dev
+```
+
+#### macOS(Homebrew):
+```bash
+brew install clang-format clang-tidy yamllint googletest
+```
+
+#### Windows (WSL2)
+
+Use the Ubuntu command above inside a WSL2 distribution.
+
+### Testing
 
 ```bash
-# Run host-side protocol smoke tests (no ESP32 needed)
-make test-host
+# Run host-based Google Test unit tests (no ESP32 needed)
+make unit-test
 
+# Compile all platform configurations (firmware test)
+make firmware-test
+
+# Run all tests (unit + firmware compilation)
+make test
+
+# Full QA: lint + tests
+make check
+```
+
+### Firmware Build & Flash
+
+```bash
 # Compile the firmware (SX1276 / Heltec V2)
 make compile
 

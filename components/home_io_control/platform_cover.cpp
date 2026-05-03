@@ -55,7 +55,7 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   if (id != this->device_id_)
     return;
 
-  if (dev.position == UNKNOWN_POSITION)
+  if (dev.position == UNKNOWN_POSITION || !dev.is_stopped)
     return;
 
   // Convert IO position (0-100) back to HA position (0.0-1.0)

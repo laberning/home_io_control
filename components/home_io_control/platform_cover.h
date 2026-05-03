@@ -20,6 +20,7 @@ namespace home_io_control {
 
 class IOHomeCover : public cover::Cover, public Component {
  public:
+  IOHomeCover() { this->position = UNKNOWN_POSITION; }
   void setup() override;
   void dump_config() override;
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
