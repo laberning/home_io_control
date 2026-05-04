@@ -8,7 +8,6 @@
 #define ESPHOME_ATTRIBUTE_FORMAT(x, y, z)
 #endif
 
-// NOLINT macros
 #ifndef ESPHOME_IGNORE_FORMAT
 #define ESPHOME_IGNORE_FORMAT(x, y) ((void) sizeof(x), (void) sizeof(y))
 #endif

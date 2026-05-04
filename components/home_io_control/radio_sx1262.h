@@ -42,6 +42,7 @@ static constexpr uint8_t SX1262_SET_DIO3_AS_TCXO_CTRL = 0x97;
 static constexpr uint8_t SX1262_CALIBRATE = 0x89;
 static constexpr uint8_t SX1262_CALIBRATE_IMAGE = 0x98;
 static constexpr uint8_t SX1262_GET_RX_BUFFER_STATUS = 0x13;
+static constexpr uint8_t SX1262_GET_RSSI_INST = 0x15;
 static constexpr uint8_t SX1262_SET_REGULATOR_MODE = 0x96;
 static constexpr uint8_t SX1262_GET_STATUS = 0xC0;
 
@@ -80,8 +81,8 @@ class RadioSX1262 : public RadioDriver {
   RadioSX1262(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *dio1_pin, InternalGPIOPin *busy_pin,
               uint8_t tx_power, uint8_t tcxo_voltage, InternalGPIOPin *fem_en_pin = nullptr,
               InternalGPIOPin *vfem_pin = nullptr, InternalGPIOPin *fem_pa_pin = nullptr)
-      : spi_(spi),
-        rst_pin_(rst_pin),
+      : RadioDriver(rst_pin),
+        spi_(spi),
         dio1_pin_(dio1_pin),
         busy_pin_(busy_pin),
         tx_power_(tx_power),
@@ -95,6 +96,7 @@ class RadioSX1262 : public RadioDriver {
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
   bool check_for_packet(RadioRxPacket &packet) override;
   void change_frequency(uint32_t freq_hz) override;
+  int16_t read_rssi() override;
   void set_mode_rx() override;
   void set_mode_standby() override;
   [[nodiscard]] bool is_failed() const override { return this->failed_; }
@@ -114,6 +116,7 @@ class RadioSX1262 : public RadioDriver {
 
   // --- Radio configuration ---
   void configure_radio_();
+  void set_frequency_register_(uint32_t freq_hz);
   void set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type, uint8_t crc_type);
   void set_rx_packet_params_();
   void clear_irq_status_(uint16_t irq_mask);
@@ -122,9 +125,8 @@ class RadioSX1262 : public RadioDriver {
   void reset_rx_state_(bool force_standby = true);
   void fill_capture_info_(bool blocking_wait, uint16_t irq_status, uint8_t rx_offset, uint8_t reported_len,
                           const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
-
   /// Read a received packet from the buffer and return the raw bytes reported by the chip.
-  bool read_rx_packet_(RadioRxPacket &packet, bool blocking_wait, uint16_t irq_status);
+  virtual bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint16_t irq_status);
 
   /// Software CRC helper kept for transmit framing parity with the current implementation.
   static uint8_t uart_encode_packet(const uint8_t *data, uint8_t len, uint8_t *encoded, uint8_t encoded_max_len);
@@ -132,8 +134,16 @@ class RadioSX1262 : public RadioDriver {
   /// DIO1 ISR — sets dio_fired flag. Runs in interrupt context.
   static void gpio_intr(RadioSX1262 *arg);
 
+  /// Read the IRQ status from the radio. Used internally by wait_for_packet.
+  virtual uint16_t read_irq_status_raw();
+
+  // === wait_for_packet helpers (private) ===
+ private:
+  bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool &saw_dio1, uint16_t &irq);
+  bool resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint16_t &irq);
+  bool finalize_receive_(RadioRxPacket &packet, uint16_t irq);
+
   SpiAccess *spi_;
-  InternalGPIOPin *rst_pin_;
   InternalGPIOPin *dio1_pin_;
   InternalGPIOPin *busy_pin_;
   InternalGPIOPin *fem_en_pin_;

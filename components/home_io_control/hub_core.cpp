@@ -13,8 +13,7 @@ namespace home_io_control {
 
 static const char *const TAG = "home_io_control";
 static const uint32_t STATUS_RETRY_AFTER_FAIL_MS = 5000;
-// Binary devices (lights, switches) reuse the same execute/status path as covers.
-// The public entity APIs translate between on/off and the underlying 0/100 positions.
+// Binary on/off maps to position 0/100.
 static const uint8_t BINARY_ENTITY_ON_POSITION = 0;
 static const uint8_t BINARY_ENTITY_OFF_POSITION = 100;
 
@@ -148,7 +147,7 @@ void IOHomeControlComponent::setup() {
     // Falls back to SX1262 if the version does not match.
     this->enable();
     this->write_byte(0x42 & 0x7F);  // REG_VERSION read
-    uint8_t version = this->read_byte();
+    uint8_t const version = this->read_byte();
     this->disable();
     if (version == 0x12) {
       ESP_LOGI(TAG, "Auto-detected SX1276 (version=0x%02X)", version);
@@ -201,7 +200,7 @@ void IOHomeControlComponent::setup() {
 // === Frequency hopping ===
 
 void IOHomeControlComponent::hop_frequency_() {
-  uint32_t cur = this->radio_->get_current_freq();
+  uint32_t const cur = this->radio_->get_current_freq();
   uint32_t next;
   switch (cur) {
     case FREQ_CH1:
@@ -220,12 +219,25 @@ void IOHomeControlComponent::hop_frequency_() {
 
 // === Protocol send/receive ===
 
+// Listen-before-talk (LBT) for ETSI EN 300 220 compliance on 868 MHz SRD band.
+// Before transmitting, read instantaneous RSSI to check channel occupancy. If
+// above threshold, back off and retry up to LBT_MAX_RETRIES times. If the channel
+// remains busy after all retries, transmit anyway — our duty cycle is very low and
+// failing silently would be worse than a potential collision.
 bool IOHomeControlComponent::transmit_frame_(const IoFrame &frame, uint32_t freq, uint16_t preamble) {
   uint8_t buf[FRAME_MAX_SIZE];
-  uint8_t len = serialize(frame, buf, sizeof(buf));
+  uint8_t const len = serialize(frame, buf, sizeof(buf));
   if (len == 0) {
     log_frame_issue(this, "tx", "serialize_failed", frame, 0);
     return false;
+  }
+  // LBT: check channel is clear before transmitting
+  for (uint8_t lbt = 0; lbt < LBT_MAX_RETRIES; lbt++) {
+    int16_t const rssi = this->radio_->read_rssi();
+    if (rssi < LBT_RSSI_THRESHOLD_DBM)
+      break;
+    ESP_LOGD("home_io_control", "LBT: channel busy (RSSI %d dBm), retry %u/%u", rssi, lbt + 1, LBT_MAX_RETRIES);
+    delay(LBT_RETRY_DELAY_MS);
   }
   log_component_capture(this->radio_, "tx_frame", buf, len, &frame);
   RadioTxConfig tx_config{};
@@ -254,8 +266,8 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     // commands (0x00). The position fields below are shared across both response types.
     dev.is_stopped = (frame.data[0] & STATUS_STOPPED) != 0;
     dev.last_status = millis();
-    uint16_t tgt = (frame.data[2] << 8) | frame.data[3];
-    uint16_t cur = (frame.data[4] << 8) | frame.data[5];
+    uint16_t const tgt = (frame.data[2] << 8) | frame.data[3];
+    uint16_t const cur = (frame.data[4] << 8) | frame.data[5];
     decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
     uint32_t update_delay_ms = 60000;  // default: standard poll interval
     if (dev.is_stopped) {
@@ -270,8 +282,8 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
   } else if (frame.cmd == CMD_STATUS_UPDATE && frame.data_len >= 11) {
     dev.is_stopped = (frame.data[0] & STATUS_STOPPED) != 0;
     dev.last_status = millis();
-    uint16_t tgt = (frame.data[5] << 8) | frame.data[6];
-    uint16_t cur = (frame.data[7] << 8) | frame.data[8];
+    uint16_t const tgt = (frame.data[5] << 8) | frame.data[6];
+    uint16_t const cur = (frame.data[7] << 8) | frame.data[8];
     decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
     dev.next_update = dev.is_stopped ? millis() + 3600000 : millis() + 60000;
     ESP_LOGI(TAG, "Device %s: position=%s target=%s %s (status update)", id.c_str(),
@@ -503,7 +515,7 @@ void IOHomeControlComponent::process_pending_operation_() {
   if (this->busy_ || this->pending_operations_.empty())
     return;
 
-  PendingOperation operation = std::move(this->pending_operations_.front());
+  PendingOperation const operation = std::move(this->pending_operations_.front());
   this->pending_operations_.pop_front();
 
   switch (operation.type) {
@@ -541,13 +553,17 @@ void IOHomeControlComponent::loop() {
   if (!this->busy_)
     this->process_pending_operation_();
 
-  // Frequency hopping
+  // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
+  // loop() every ~16-30ms. This is acceptable for a controller: we initiate all
+  // exchanges with a long preamble (1024 bytes ≈ 330ms airtime) so the device has
+  // time to detect us regardless of channel alignment. Precise hopping would only
+  // matter for a passive receiver scanning for unsolicited frames.
   if (!this->busy_ && (micros() - this->last_hop_us_) > HOP_TIME_US)
     this->hop_frequency_();
 
   // Periodic status polling
   if (!this->busy_) {
-    uint32_t now = millis();
+    uint32_t const now = millis();
     for (auto &pair : this->devices_) {
       if (pair.second.next_update != 0 && now > pair.second.next_update) {
         this->queue_request_device_status(pair.first);
@@ -594,7 +610,7 @@ struct SavedDevice {
 };
 
 void IOHomeControlComponent::save_devices_() {
-  uint8_t count = std::min((uint8_t) this->devices_.size(), (uint8_t) 16);
+  uint8_t const count = std::min((uint8_t) this->devices_.size(), (uint8_t) 16);
   auto pref_count = global_preferences->make_preference<uint8_t>(fnv1_hash("iohome_dev_count"));
   pref_count.save(&count);
   uint8_t i = 0;
@@ -621,7 +637,7 @@ void IOHomeControlComponent::load_devices_() {
   for (uint8_t i = 0; i < count && i < 16; i++) {
     SavedDevice sd{};
     auto pref = global_preferences->make_preference<SavedDevice>(saved_device_pref_hash(i));
-    bool loaded = pref.load(&sd);
+    bool const loaded = pref.load(&sd);
     if (!loaded) {
       auto legacy_pref = global_preferences->make_preference<SavedDevice>(legacy_saved_device_pref_hash(i));
       if (!legacy_pref.load(&sd))
@@ -633,7 +649,7 @@ void IOHomeControlComponent::load_devices_() {
       ESP_LOGW(TAG, "Skipping invalid persisted device entry %u", i);
       continue;
     }
-    std::string id(node_id_to_string(sd.node_id));
+    std::string const id(node_id_to_string(sd.node_id));
     if (this->devices_.count(id) != 0) {
       auto &dev = this->devices_[id];
       if (dev.type == DeviceType::UNKNOWN)

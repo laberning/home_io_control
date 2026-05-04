@@ -1,8 +1,10 @@
 #include "hub_core.h"
 #include "radio_interface.h"
+#include "proto_frame.h"
 #include "esphome/core/component.h"
 
 #include "test_helpers.h"
+#include "stubs/radio_test_common.h"
 
 #include <cstring>
 
@@ -12,48 +14,6 @@ using namespace esphome::home_io_control;
 // HubCore test suite
 // ============================================================================
 // Device registry, persistence helpers, and pending operation queuing.
-
-// Mock radio driver for testing hub_core without real hardware
-class MockRadio : public RadioDriver {
- public:
-  MockRadio() : failed_(false), current_freq_(FREQ_CH1) {}
-  ~MockRadio() override = default;
-
-  // RadioDriver interface (virtual where marked)
-  bool init() override { return true; }
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
-    (void) data;
-    (void) len;
-    (void) tx_config;
-    return true;
-  }
-  bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override {
-    (void) packet;
-    (void) timeout_ms;
-    return false;
-  }
-  bool check_for_packet(RadioRxPacket &packet) override {
-    (void) packet;
-    return false;
-  }
-  void change_frequency(uint32_t freq_hz) override { current_freq_ = freq_hz; }
-  void set_mode_rx() override {}
-  void set_mode_standby() override {}
-  bool is_failed() const override { return failed_; }
-  const char *chip_name() const override { return "MockRadio"; }
-  void dump_debug() override {}
-
-  uint32_t get_current_freq() const { return current_freq_; }
-  const RadioCaptureInfo &get_last_capture() const {
-    static RadioCaptureInfo info;
-    return info;
-  }
-  bool is_dio_fired() const { return false; }
-  void clear_dio_fired() {}
-
-  uint32_t current_freq_;
-  bool failed_;
-};
 
 // ========================================================================================
 // Device management tests
@@ -178,4 +138,99 @@ TEST(HubCore, FormatPositionHelper) {
   EXPECT_STREQ(format_position(50.0f).c_str(), "50%") << "fifty should format as '50%'";
   EXPECT_STREQ(format_position(100.0f).c_str(), "100%") << "hundred should format as '100%'";
   EXPECT_STREQ(format_position(37.5f).c_str(), "38%") << "37.5 should round to '38%'";
+}
+
+// ============================================================================
+// Listen-before-talk (LBT) tests
+// ============================================================================
+
+namespace {
+
+class LBTTestableComponent : public IOHomeControlComponent {
+ public:
+  using IOHomeControlComponent::transmit_frame_;
+};
+
+IoFrame make_simple_frame() {
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  uint8_t src[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t dst[3] = {0x9C, 0xA3, 0x9C};
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, 0x30);
+  return f;
+}
+
+}  // namespace
+
+TEST(HubCore, LBT_ChannelClear_TransmitsImmediately) {
+  LBTTestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  radio.set_rssi_default(-100);  // below -90 threshold
+
+  IoFrame frame = make_simple_frame();
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_EQ(radio.get_send_count(), 1) << "should transmit once when channel is clear";
+}
+
+TEST(HubCore, LBT_ChannelBusy_BacksOffThenTransmits) {
+  LBTTestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+
+  // First 3 reads: busy (-80 dBm), then clear (-100 dBm)
+  radio.queue_rssi(-80);
+  radio.queue_rssi(-80);
+  radio.queue_rssi(-80);
+  radio.set_rssi_default(-100);
+
+  IoFrame frame = make_simple_frame();
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_EQ(radio.get_send_count(), 1) << "should still transmit after backoff";
+}
+
+TEST(HubCore, LBT_ChannelBusyAllRetries_TransmitsAnyway) {
+  LBTTestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+
+  // All reads return busy — should still transmit after exhausting retries
+  radio.set_rssi_default(-50);
+
+  IoFrame frame = make_simple_frame();
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_EQ(radio.get_send_count(), 1) << "should transmit even if channel stays busy";
+}
+
+TEST(HubCore, LBT_ExactThreshold_IsConsideredClear) {
+  LBTTestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+
+  // Exactly at threshold (-90) should NOT be considered clear (>=, not >)
+  radio.set_rssi_default(-90);
+
+  IoFrame frame = make_simple_frame();
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  // -90 is NOT < -90, so it should retry all LBT_MAX_RETRIES times then transmit
+  EXPECT_EQ(radio.get_send_count(), 1);
+}
+
+TEST(HubCore, LBT_JustBelowThreshold_TransmitsImmediately) {
+  LBTTestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+
+  radio.set_rssi_default(-91);  // just below threshold
+
+  IoFrame frame = make_simple_frame();
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_EQ(radio.get_send_count(), 1);
 }

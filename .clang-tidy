@@ -18,7 +18,6 @@ Checks:
   # --- Bugprone ---
   - -bugprone-derived-method-shadowing-base-method
   - -bugprone-easily-swappable-parameters
-  - -bugprone-implicit-widening-of-multiplication-result
   - -bugprone-invalid-enum-default-initialization
   - -bugprone-multi-level-implicit-pointer-conversion
   - -bugprone-narrowing-conversions
@@ -71,7 +70,7 @@ Checks:
   - -cppcoreguidelines-pro-bounds-constant-array-index
   - -cppcoreguidelines-pro-bounds-pointer-arithmetic  # Needed for hardware register arithmetic
 
-   # --- C++ Core Guidelines: Pro-Type-* (enabled: const-cast, reinterpret-cast, static-cast-downcast) ---
+  # --- C++ Core Guidelines: Pro-Type-* (enabled: const-cast, reinterpret-cast, static-cast-downcast) ---
   - -cppcoreguidelines-pro-type-cstyle-cast  # C-style casts retained for bit manipulation and hardware access; idiomatic in embedded
   - -cppcoreguidelines-pro-type-member-init
   - -cppcoreguidelines-pro-type-union-access  # Unions used for hardware register overlays
@@ -102,7 +101,6 @@ Checks:
   - -llvmlibc-*
 
   # --- Misc (project-specific decisions) ---
-  - -misc-const-correctness  # todo: might be nice to enable, but currently lots of conflicts
   - -misc-include-cleaner  # Include management differs in PlatformIO/ESPHome environment
   - -misc-multiple-inheritance
   - -misc-no-recursion
@@ -122,11 +120,9 @@ Checks:
   - -modernize-return-braced-init-list
   - -modernize-type-traits  # Not applicable: no heavy type-trait metaprogramming in use
   - -modernize-use-constraints  # C++20 concepts; toolchain is C++17
-  - -modernize-use-default-member-init
   - -modernize-use-designated-initializers  # C++20 feature unavailable in C++17
-  - -modernize-use-integer-sign-comparison  # todo: maybe enable
   - -modernize-use-ranges  # C++20 ranges + STL algorithms not used
-  - -modernize-use-trailing-return-type
+  - -modernize-use-trailing-return-type  # Keep traditional style for consistency
 
   # --- Portability (not relevant for single-target embedded) ---
   - -portability-avoid-pragma-once
@@ -135,7 +131,6 @@ Checks:
   # --- Readability ---
   - -readability-container-contains  # Not applicable: std::map::contains() is C++20; our toolchain is C++17
   - -readability-container-data-pointer  # Not applicable: no STL container data() pointer access patterns used
-  - -readability-function-cognitive-complexity  # todo: would be nice to enable but needs refactoring
   - -readability-magic-numbers  # todo: would be nice to enable but needs refactoring
 
 WarningsAsErrors: '*'

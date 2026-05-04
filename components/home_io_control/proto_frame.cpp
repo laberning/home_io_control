@@ -57,6 +57,10 @@ void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_s
   }
 }
 
+/// CRC-CCITT used by the IO-Homecontrol protocol for frame validation.
+/// Polynomial: 0x1021 (reversed 0x8408), initial value: 0x0000.
+/// On SX1276 this is computed in hardware (IoHomeOn mode); on SX1262 it is
+/// computed in software by the radio driver.
 uint16_t crc_ccitt(const uint8_t *data, uint8_t len) {
   uint16_t crc = 0x0000;
   for (uint8_t i = 0; i < len; i++) {
@@ -89,7 +93,7 @@ bool set_cmd(IoFrame &f, uint8_t cmd, const uint8_t *params, uint8_t params_len)
   f.data_len = params_len;
   if (params != nullptr && params_len > 0)
     memcpy(f.data, params, params_len);
-  uint8_t total = FRAME_MIN_SIZE + f.data_len;
+  uint8_t const total = FRAME_MIN_SIZE + f.data_len;
   // Refuse to encode inconsistent frame metadata here so malformed commands never make it onto
   // the radio path and later confuse the serializer or on-air retries.
   if (total > FRAME_MAX_SIZE)
@@ -105,7 +109,7 @@ bool is_end(const IoFrame &f) { return (f.ctrl0 & CTRL0_END) != 0; }
 uint8_t serialize(const IoFrame &f, uint8_t *buf, uint8_t buf_size) {
   if (buf == nullptr)
     return 0;
-  uint8_t len = frame_length(f);
+  uint8_t const len = frame_length(f);
   if (len < FRAME_MIN_SIZE || len > FRAME_MAX_SIZE)
     return 0;
   if (f.data_len > FRAME_MAX_DATA_SIZE)
@@ -138,7 +142,7 @@ bool parse(const uint8_t *buf, uint8_t buf_len, IoFrame &f) {
   uint8_t offset = 0;
   f.ctrl0 = buf[offset++];
   f.ctrl1 = buf[offset++];
-  uint8_t len = frame_length(f);
+  uint8_t const len = frame_length(f);
   if (len < FRAME_MIN_SIZE || len > FRAME_MAX_SIZE)
     return false;
   if (buf_len != len)
@@ -292,7 +296,7 @@ bool device_supports_position_control(DeviceType type) {
 }
 
 bool device_supports_binary_control(DeviceType type) {
-  DeviceCapabilityClass capability_class = device_capability_class(type);
+  DeviceCapabilityClass const capability_class = device_capability_class(type);
   return capability_class == DeviceCapabilityClass::LIGHT || capability_class == DeviceCapabilityClass::SWITCH;
 }
 

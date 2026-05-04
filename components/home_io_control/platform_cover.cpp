@@ -34,7 +34,7 @@ void IOHomeCover::control(const cover::CoverCall &call) {
 
   const auto &position_opt = call.get_position();
   if (position_opt.has_value()) {
-    float ha_pos = *position_opt;  // HA: 1.0 = fully open, 0.0 = fully closed
+    float const ha_pos = *position_opt;  // HA: 1.0 = fully open, 0.0 = fully closed
 
     // Convert HA position (0.0-1.0) to IO position (0-100)
     // Standard: HA 1.0 (open) → IO 0 (open), HA 0.0 (closed) → IO 100 (closed)

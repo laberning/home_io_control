@@ -16,7 +16,7 @@ static const char *const TAG = "home_io_control.sx1276";
 uint8_t RadioSX1276::read_register_(uint8_t reg) {
   this->spi_->spi_enable();
   this->spi_->spi_write(reg & 0x7F);
-  uint8_t value = this->spi_->spi_read();
+  uint8_t const value = this->spi_->spi_read();
   this->spi_->spi_disable();
   return value;
 }
@@ -31,11 +31,11 @@ void RadioSX1276::write_register_(uint8_t reg, uint8_t value) {
 // === Radio mode control ===
 
 void RadioSX1276::set_mode_(uint8_t mode) {
-  uint8_t current = this->read_register_(REG_OP_MODE);
+  uint8_t const current = this->read_register_(REG_OP_MODE);
   this->write_register_(REG_OP_MODE, (current & ~MODE_MASK) | (mode & MODE_MASK));
-  uint32_t start = millis();
+  uint32_t const start = millis();
   while (true) {
-    uint8_t cur_mode = this->read_register_(REG_OP_MODE) & MODE_MASK;
+    uint8_t const cur_mode = this->read_register_(REG_OP_MODE) & MODE_MASK;
     if (cur_mode == mode || (mode == MODE_RX && cur_mode == 0x04))
       break;
     if (millis() - start > 50) {
@@ -52,7 +52,7 @@ void RadioSX1276::set_mode_standby() { this->set_mode_(MODE_STDBY); }
 void RadioSX1276::run_image_cal_() {
   this->set_mode_(MODE_STDBY);
   this->write_register_(REG_IMAGE_CAL, 0x40);
-  uint32_t start = millis();
+  uint32_t const start = millis();
   while ((this->read_register_(REG_IMAGE_CAL) & 0x20) != 0) {
     if (millis() - start > 20) {
       ESP_LOGE(TAG, "Image calibration timeout");
@@ -66,47 +66,37 @@ void IRAM_ATTR RadioSX1276::gpio_intr(RadioSX1276 *arg) { arg->mark_dio_fired_fr
 
 void RadioSX1276::fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, uint8_t rssi, const uint8_t *raw,
                                      uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
-  this->last_capture_ = RadioCaptureInfo{};
-  this->last_capture_.valid = true;
-  this->last_capture_.blocking_wait = blocking_wait;
+  this->populate_capture_base_(blocking_wait, this->current_freq_, -(int16_t) (rssi) / 2, raw, raw_len, frame,
+                               frame_len);
   this->last_capture_.rx_done = (irq2 & 0x04) != 0;
-  this->last_capture_.timestamp_ms = millis();
-  this->last_capture_.freq_hz = this->current_freq_;
   this->last_capture_.irq_flags1 = irq1;
   this->last_capture_.irq_flags2 = irq2;
-  this->last_capture_.rssi_dbm = -157 + (rssi / 2);
   this->last_capture_.crc_error = (irq2 & 0x02) == 0;
   this->last_capture_.reported_len = raw_len;
-  this->last_capture_.raw_len = raw_len;
-  this->last_capture_.frame_len = frame_len;
-  if (raw != nullptr && raw_len > 0)
-    memcpy(this->last_capture_.raw, raw, raw_len);
-  if (frame != nullptr && frame_len > 0)
-    memcpy(this->last_capture_.frame, frame, frame_len);
 }
 
 void RadioSX1276::change_frequency(uint32_t freq_hz) {
-  uint64_t frf = ((uint64_t) freq_hz << 19) / FXOSC;
+  uint64_t const frf = ((uint64_t) freq_hz << 19) / FXOSC;
   this->write_register_(REG_FRF_MSB, (uint8_t) ((frf >> 16) & 0xFF));
   this->write_register_(REG_FRF_MID, (uint8_t) ((frf >> 8) & 0xFF));
   this->write_register_(REG_FRF_LSB, (uint8_t) (frf & 0xFF));
   this->current_freq_ = freq_hz;
 }
 
+int16_t RadioSX1276::read_rssi() { return -(int16_t) this->read_register_(REG_RSSI_VALUE) / 2; }
+
 // === Initialization ===
 
 bool RadioSX1276::init() {
   this->rst_pin_->setup();
   this->dio0_pin_->setup();
+  // Attach DIO0 interrupt
   this->dio0_pin_->attach_interrupt(&RadioSX1276::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
   if (this->dio4_pin_ != nullptr)
     this->dio4_pin_->setup();
 
   // Hardware reset
-  this->rst_pin_->digital_write(false);
-  delay(1);
-  this->rst_pin_->digital_write(true);
-  delay(10);
+  this->reset_hardware_();
 
   // Version check — SX1276 should return 0x12
   if (this->read_register_(REG_VERSION) != 0x12) {
@@ -128,7 +118,7 @@ void RadioSX1276::configure_radio_() {
   delay(10);
 
   // Frequency: channel 2 (868.95 MHz)
-  uint64_t frf = ((uint64_t) FREQ_CH2 << 19) / FXOSC;
+  uint64_t const frf = ((uint64_t) FREQ_CH2 << 19) / FXOSC;
   this->write_register_(REG_FRF_MSB, (uint8_t) ((frf >> 16) & 0xFF));
   this->write_register_(REG_FRF_MID, (uint8_t) ((frf >> 8) & 0xFF));
   this->write_register_(REG_FRF_LSB, (uint8_t) (frf & 0xFF));
@@ -160,7 +150,7 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_RX_BW, 0x01);                                      // 250 kHz
 
   // Bitrate 38400 bps
-  uint32_t br = FXOSC / 38400;
+  uint32_t const br = FXOSC / 38400;
   this->write_register_(REG_BITRATE_MSB, (br >> 8) & 0xFF);
   this->write_register_(REG_BITRATE_LSB, br & 0xFF);
 
@@ -184,7 +174,7 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_PREAMBLE_LSB, 0x00);
 
   // Sync word: 0x55, 0xFF, 0x33 (SyncSize=2 with IoHomeOn = 2 bytes used)
-  uint8_t sc = this->read_register_(REG_SYNC_CONFIG);
+  uint8_t const sc = this->read_register_(REG_SYNC_CONFIG);
   this->write_register_(REG_SYNC_CONFIG, (sc & 0xF8) | 0x02);
   this->write_register_(REG_SYNC_VALUE1, 0x55);
   this->write_register_(REG_SYNC_VALUE1 + 1, 0xFF);
@@ -214,10 +204,10 @@ bool RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
   this->spi_->spi_disable();
 
   this->clear_dio_fired();
-  uint8_t opmode = this->read_register_(REG_OP_MODE);
+  uint8_t const opmode = this->read_register_(REG_OP_MODE);
   this->write_register_(REG_OP_MODE, (opmode & 0xF8) | MODE_TX);
 
-  uint32_t start = millis();
+  uint32_t const start = millis();
   while (!this->is_dio_fired()) {
     if (millis() - start > 4000) {
       ESP_LOGE(TAG, "TX timeout");
@@ -235,28 +225,19 @@ bool RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
   return true;
 }
 
-bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
-  this->clear_last_capture_();
-  packet = RadioRxPacket{};
-  this->clear_dio_fired();
-  uint32_t start = millis();
-  bool saw_dio0 = false;
-  uint8_t irq1 = 0;
-  uint8_t irq2 = 0;
+bool RadioSX1276::poll_until_payload_ready_(uint32_t timeout_ms, bool &saw_dio0, uint8_t &irq1, uint8_t &irq2) {
+  uint32_t const start = millis();
   while (true) {
     if (this->is_dio_fired()) {
       saw_dio0 = true;
       break;
     }
-
     irq1 = this->read_register_(REG_IRQ_FLAGS1);
     irq2 = this->read_register_(REG_IRQ_FLAGS2);
     if ((irq2 & 0x04) != 0)
       break;
-
-    if (millis() - start > timeout_ms) {
+    if (millis() - start > timeout_ms)
       return false;
-    }
     App.feed_wdt();
     delay(1);
   }
@@ -265,14 +246,33 @@ bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
     irq1 = this->read_register_(REG_IRQ_FLAGS1);
     irq2 = this->read_register_(REG_IRQ_FLAGS2);
   }
-  uint8_t rssi = this->read_register_(REG_RSSI_VALUE);
+  return true;
+}
+
+uint8_t RadioSX1276::read_fifo_packet_(uint8_t *buf, uint8_t buf_size) {
+  uint8_t len = 0;
+  while (((this->read_register_(REG_IRQ_FLAGS2) & 0x40) == 0) && len < buf_size)
+    buf[len++] = this->read_register_(REG_FIFO);
+  return len;
+}
+
+bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
+  this->prepare_blocking_receive_(packet);
+  this->clear_dio_fired();
+
+  bool saw_dio0 = false;
+  uint8_t irq1 = 0;
+  uint8_t irq2 = 0;
+  if (!this->poll_until_payload_ready_(timeout_ms, saw_dio0, irq1, irq2))
+    return false;
+
+  uint8_t const rssi = this->read_register_(REG_RSSI_VALUE);
   if ((irq2 & 0x04) == 0) {
     this->fill_capture_info_(true, irq1, irq2, rssi, nullptr, 0, nullptr, 0);
     return false;
   }
-  // In IoHomeOn mode the FIFO already contains protocol bytes, so RX is just a straight FIFO read.
-  while (((this->read_register_(REG_IRQ_FLAGS2) & 0x40) == 0) && packet.len < sizeof(packet.data))  // FifoEmpty bit
-    packet.data[packet.len++] = this->read_register_(REG_FIFO);
+
+  packet.len = this->read_fifo_packet_(packet.data, sizeof(packet.data));
   packet.freq_hz = this->current_freq_;
   this->fill_capture_info_(true, irq1, irq2, rssi, packet.data, packet.len, packet.data, packet.len);
 #ifdef IOHOME_FRAME_LOG
@@ -285,15 +285,13 @@ bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
 bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
   if (!this->is_dio_fired())
     return false;
-  this->clear_last_capture_();
-  packet = RadioRxPacket{};
-  this->clear_dio_fired();
-  uint8_t irq1 = this->read_register_(REG_IRQ_FLAGS1);
-  uint8_t irq2 = this->read_register_(REG_IRQ_FLAGS2);
-  uint8_t rssi = this->read_register_(REG_RSSI_VALUE);
-  if ((irq2 & 0x04) != 0) {                                                                           // PayloadReady
-    while (((this->read_register_(REG_IRQ_FLAGS2) & 0x40) == 0) && packet.len < sizeof(packet.data))  // FifoEmpty
-      packet.data[packet.len++] = this->read_register_(REG_FIFO);
+  this->prepare_nonblocking_receive_(packet);
+
+  uint8_t const irq1 = this->read_register_(REG_IRQ_FLAGS1);
+  uint8_t const irq2 = this->read_register_(REG_IRQ_FLAGS2);
+  uint8_t const rssi = this->read_register_(REG_RSSI_VALUE);
+  if ((irq2 & 0x04) != 0) {
+    packet.len = this->read_fifo_packet_(packet.data, sizeof(packet.data));
     packet.freq_hz = this->current_freq_;
     this->fill_capture_info_(false, irq1, irq2, rssi, packet.data, packet.len, packet.data, packet.len);
 #ifdef IOHOME_FRAME_LOG

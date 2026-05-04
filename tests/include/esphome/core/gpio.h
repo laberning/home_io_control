@@ -42,8 +42,11 @@ class GPIOPin {
 
 class InternalGPIOPin : public GPIOPin {
  public:
-  // Inherit constructors
   using GPIOPin::GPIOPin;
+  using GPIOPin::attach_interrupt;  // unhide base overload set
+
+  // Typed overload mirrors esphome::InternalGPIOPin — no-op in unit tests.
+  template<typename T> void attach_interrupt(void (*func)(T *), T *arg, gpio::InterruptMode type) const {}
 };
 
 // Simple no-op LOG_PIN macro

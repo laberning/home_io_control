@@ -11,6 +11,7 @@
 #include "proto_frame.h"
 #include <atomic>
 #include <cstdint>
+#include "esphome/core/hal.h"
 
 namespace esphome {
 namespace home_io_control {
@@ -70,6 +71,7 @@ struct RadioCaptureInfo {
 /// RadioSX1262) handle the register-level details for each chip.
 class RadioDriver {
  public:
+  explicit RadioDriver(InternalGPIOPin *rst_pin = nullptr) : rst_pin_(rst_pin) {}
   virtual ~RadioDriver() = default;
 
   /// Initialize the radio hardware. Returns true on success.
@@ -80,11 +82,24 @@ class RadioDriver {
   virtual bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) = 0;
 
   /// Wait (blocking) for a packet with timeout. Returns true if a packet was received.
+  /// Contract:
+  /// - Clears last_capture_ and output packet before waiting.
+  /// - On success: populates packet and last_capture_, returns true.
+  /// - On timeout/failure: may populate last_capture_ for diagnostics, returns false.
+  /// - Radio remains in RX mode on return (regardless of outcome).
   virtual bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) = 0;
 
   /// Non-blocking check for a received packet. Called from loop().
   /// Returns true if a packet was read into packet.
+  /// Contract:
+  /// - Returns false immediately if no DIO interrupt has fired.
+  /// - On success: populates packet and last_capture_, returns true.
+  /// - On failure: may populate last_capture_ for diagnostics, returns false.
   virtual bool check_for_packet(RadioRxPacket &packet) = 0;
+
+  /// Read instantaneous RSSI (in dBm) while in RX mode.
+  /// Used for listen-before-talk (LBT) carrier sense before transmitting.
+  virtual int16_t read_rssi() = 0;
 
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
@@ -138,8 +153,47 @@ class RadioDriver {
  protected:
   void clear_last_capture_() { this->last_capture_ = RadioCaptureInfo{}; }
 
+  /// Common preamble for blocking receive: clear diagnostics and output packet.
+  void prepare_blocking_receive_(RadioRxPacket &packet) {
+    this->clear_last_capture_();
+    packet = RadioRxPacket{};
+  }
+
+  /// Common preamble for non-blocking receive: clear diagnostics, output packet, and DIO latch.
+  void prepare_nonblocking_receive_(RadioRxPacket &packet) {
+    this->clear_last_capture_();
+    packet = RadioRxPacket{};
+    this->clear_dio_fired();
+  }
+
+  /// Hardware reset sequence common to all SX chips.
+  /// Drives RST pin low → 10ms → high → 10ms.
+  void reset_hardware_();
+
+  /// Populate the common fields of RadioCaptureInfo from raw telemetry.
+  /// Chip-specific fields (rx_done, crc_error, irq_flags*, irq_status, packet_status, etc.)
+  /// must be set by the derived driver after calling this helper.
+  void populate_capture_base_(bool blocking_wait, uint32_t freq_hz, int16_t rssi_dbm, const uint8_t *raw,
+                              uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
+    this->last_capture_ = RadioCaptureInfo{};
+    this->last_capture_.valid = true;
+    this->last_capture_.blocking_wait = blocking_wait;
+    this->last_capture_.timestamp_ms = millis();
+    this->last_capture_.freq_hz = freq_hz;
+    this->last_capture_.rssi_dbm = rssi_dbm;
+    if (raw != nullptr && raw_len > 0) {
+      this->last_capture_.raw_len = std::min(raw_len, (uint8_t) sizeof(this->last_capture_.raw));
+      memcpy(this->last_capture_.raw, raw, this->last_capture_.raw_len);
+    }
+    if (frame != nullptr && frame_len > 0) {
+      this->last_capture_.frame_len = std::min(frame_len, (uint8_t) sizeof(this->last_capture_.frame));
+      memcpy(this->last_capture_.frame, frame, this->last_capture_.frame_len);
+    }
+  }
+
   uint32_t current_freq_{FREQ_CH2};
   RadioCaptureInfo last_capture_{};
+  InternalGPIOPin *rst_pin_{nullptr};
 
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
   std::atomic<bool> dio_fired_{false};

@@ -1,6 +1,6 @@
 # ESP32 ESP-IDF test configuration
 substitutions:
-  device_name: test_esp32-esp-idf
+  device_name: test-esp32-esp-idf
 
 <<: !include common.yaml
 

@@ -23,10 +23,12 @@ namespace home_io_control {
 // ============================================================================
 
 /// The protocol uses 3 frequency channels in the 868 MHz ISM band.
-/// The controller hops between channels every ~2.7ms when idle, listening for
-/// incoming frames. Commands are typically sent on channel 2.
+/// IO-Homecontrol uses 3 channels in the 868 MHz SRD band. In 1W (one-way) mode,
+/// only CH2 is used. In 2W (two-way) mode, the controller hops across all three
+/// channels every ~2.7ms when idle. Commands are sent on CH2; responses may arrive
+/// on any channel within the exchange wait window.
 static constexpr uint32_t FREQ_CH1 = 868250000;  ///< Channel 1: 868.25 MHz (2W only)
-static constexpr uint32_t FREQ_CH2 = 868950000;  ///< Channel 2: 868.95 MHz (1W and 2W, primary)
+static constexpr uint32_t FREQ_CH2 = 868950000;  ///< Channel 2: 868.95 MHz (1W and 2W, TX channel)
 static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W only)
 
 /// Preamble is a sequence of 0xAA bytes that precedes every frame.
@@ -48,6 +50,14 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 100;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 4;       ///< Attempts per command before reporting failure
 
+/// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.
+/// Before transmitting, the radio checks that the channel RSSI is below the
+/// threshold. If the channel is busy, TX is deferred by LBT_RETRY_DELAY_MS
+/// up to LBT_MAX_RETRIES times.
+static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -90;  ///< Channel-free threshold (ETSI: ≤ -90 dBm)
+static constexpr uint8_t LBT_MAX_RETRIES = 5;           ///< Max carrier-sense attempts before TX anyway
+static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT checks (≥ 5ms per ETSI)
+
 // ============================================================================
 // Frame Constants
 // ============================================================================
@@ -66,12 +76,18 @@ static constexpr uint8_t FRAME_MAX_DATA_SIZE = 23;  ///< Maximum data bytes afte
 /// Control byte 0 (CTRL0) bit definitions.
 /// CTRL0 encodes frame flags and the total frame length.
 /// Bits [4:0] = frame_length - 1 (so 0x08 means 9 bytes total).
+/// - START (bit 6): first frame in an exchange; uses long preamble (1024 bytes).
+/// - END (bit 7): last frame in an exchange; set on responses and command completions.
+/// - 1W (bit 5): 1=OneWay protocol (no response expected), 0=TwoWay (response expected).
+/// For 2W operation, the controller sets START on initial command and device replies with END; subsequent frames in an
+/// authenticated exchange also carry END.
 static constexpr uint8_t CTRL0_END = 0x80;          ///< Bit 7: last frame in exchange
 static constexpr uint8_t CTRL0_START = 0x40;        ///< Bit 6: first frame in exchange (uses long preamble)
 static constexpr uint8_t CTRL0_PROTOCOL_1W = 0x20;  ///< Bit 5: 1=OneWay protocol, 0=TwoWay protocol
 static constexpr uint8_t CTRL0_LENGTH_MASK = 0x1F;  ///< Bits [4:0]: frame length - 1
 
 /// Control byte 1 (CTRL1) bit definitions.
+/// - LOW_POWER (bit 5): device is battery/solar powered; may sleep and requires long preamble to wake.
 static constexpr uint8_t CTRL1_LOW_POWER = 0x20;  ///< Bit 5: low-power device (e.g., solar-powered)
 
 // ============================================================================
@@ -143,6 +159,7 @@ static constexpr uint8_t TRANSFER_KEY[AES_KEY_SIZE] = {0x34, 0xC3, 0x46, 0x6E, 0
                                                        0x16, 0xAA, 0x47, 0x39, 0x49, 0x88, 0x43, 0x73};
 
 /// Broadcast address for device discovery (0x00003B).
+/// Used as destination in CMD_DISCOVER_REQ frames to trigger all pairable devices to respond.
 static constexpr uint8_t BROADCAST_DISCOVER[NODE_ID_SIZE] = {0x00, 0x00, 0x3B};
 
 // ============================================================================

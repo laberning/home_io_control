@@ -67,7 +67,7 @@ uint8_t aes_mul(uint8_t value, uint8_t factor) {
   while (factor != 0) {
     if ((factor & 1U) != 0)
       result ^= value;
-    bool high_bit = (value & 0x80U) != 0;
+    bool const high_bit = (value & 0x80U) != 0;
     value <<= 1;
     if (high_bit)
       value ^= 0x1BU;
@@ -137,10 +137,10 @@ void aes_inv_shift_rows(uint8_t *state) {
 void aes_mix_columns(uint8_t *state) {
   for (uint8_t column = 0; column < 4; column++) {
     uint8_t *col = &state[column * 4];
-    uint8_t a0 = col[0];
-    uint8_t a1 = col[1];
-    uint8_t a2 = col[2];
-    uint8_t a3 = col[3];
+    uint8_t const a0 = col[0];
+    uint8_t const a1 = col[1];
+    uint8_t const a2 = col[2];
+    uint8_t const a3 = col[3];
     col[0] = aes_mul(a0, 0x02) ^ aes_mul(a1, 0x03) ^ a2 ^ a3;
     col[1] = a0 ^ aes_mul(a1, 0x02) ^ aes_mul(a2, 0x03) ^ a3;
     col[2] = a0 ^ a1 ^ aes_mul(a2, 0x02) ^ aes_mul(a3, 0x03);
@@ -151,10 +151,10 @@ void aes_mix_columns(uint8_t *state) {
 void aes_inv_mix_columns(uint8_t *state) {
   for (uint8_t column = 0; column < 4; column++) {
     uint8_t *col = &state[column * 4];
-    uint8_t a0 = col[0];
-    uint8_t a1 = col[1];
-    uint8_t a2 = col[2];
-    uint8_t a3 = col[3];
+    uint8_t const a0 = col[0];
+    uint8_t const a1 = col[1];
+    uint8_t const a2 = col[2];
+    uint8_t const a3 = col[3];
     col[0] = aes_mul(a0, 0x0E) ^ aes_mul(a1, 0x0B) ^ aes_mul(a2, 0x0D) ^ aes_mul(a3, 0x09);
     col[1] = aes_mul(a0, 0x09) ^ aes_mul(a1, 0x0E) ^ aes_mul(a2, 0x0B) ^ aes_mul(a3, 0x0D);
     col[2] = aes_mul(a0, 0x0D) ^ aes_mul(a1, 0x09) ^ aes_mul(a2, 0x0E) ^ aes_mul(a3, 0x0B);
@@ -172,13 +172,13 @@ void aes_expand_key(const uint8_t key[AES_KEY_SIZE], uint8_t round_keys[176]) {
     for (uint8_t i = 0; i < 4; i++)
       temp[i] = round_keys[bytes_generated - 4 + i];
     if ((bytes_generated % AES_KEY_SIZE) == 0) {
-      uint8_t rotated = temp[0];
+      uint8_t const rotated = temp[0];
       temp[0] = AES_SBOX[temp[1]] ^ AES_RCON[rcon_index++];
       temp[1] = AES_SBOX[temp[2]];
       temp[2] = AES_SBOX[temp[3]];
       temp[3] = AES_SBOX[rotated];
     }
-    for (uint8_t value : temp) {
+    for (uint8_t const value : temp) {
       round_keys[bytes_generated] = round_keys[bytes_generated - AES_KEY_SIZE] ^ value;
       bytes_generated++;
     }
@@ -233,7 +233,7 @@ bool aes128_decrypt_block(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AE
 /// This is NOT a standard CRC - it's a custom accumulator used by the IO-Homecontrol
 /// protocol to mix frame data into the initialization vector for AES encryption.
 void compute_checksum(uint8_t byte, uint8_t &c1, uint8_t &c2) {
-  uint8_t tmp = byte ^ c2;
+  uint8_t const tmp = byte ^ c2;
   c2 = ((c1 & 0x7F) << 1) & 0xFF;
   if ((c1 & 0x80) == 0) {
     if (tmp >= 128)

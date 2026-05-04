@@ -8,7 +8,7 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
 
 # Config file to build (default: stable test config)
-CONFIG_FILE="${1:-config/tests/test.esp32-esp-idf.yaml}"
+CONFIG_FILE="${1:-config/tests/test-esp32-esp-idf.yaml}"
 # Container path: host's config/... maps to /config/...
 CONTAINER_CONFIG="/${CONFIG_FILE}"
 

@@ -1,6 +1,6 @@
 # ESP32 Arduino test configuration
 substitutions:
-  device_name: test_esp32-arduino
+  device_name: test-esp32-arduino
 
 <<: !include common.yaml
 

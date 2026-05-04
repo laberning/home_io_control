@@ -19,6 +19,9 @@
 #include "esphome/components/button/button.h"
 #include "proto_frame.h"
 #include "radio_interface.h"
+#include "hub_exchange.h"
+#include "hub_decisions.h"
+#include "hub_pairing.h"
 #include <deque>
 #include <map>
 #include <vector>
@@ -73,8 +76,11 @@ class IOHomeControlComponent : public Component,
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
 
   // --- Device management (called by cover platform) ---
+  /// Add a device to the registry (called by platform entities during setup).
   virtual void add_device(const std::string &device_id);
+  /// Retrieve a device by ID; returns nullptr if not found.
   virtual IoDevice *get_device(const std::string &device_id);
+  /// Register a callback invoked when any device updates.
   virtual void register_device_callback(DeviceUpdateCallback cb) { this->callbacks_.push_back(std::move(cb)); }
 
   // --- High-level operations ---
@@ -88,8 +94,11 @@ class IOHomeControlComponent : public Component,
   virtual bool set_light_state(const std::string &device_id, bool on);
   /// Semantic binary helper for switch entities. Internally mapped to the shared execute path.
   virtual bool set_switch_state(const std::string &device_id, bool on);
+  /// Queue an async position update; returns immediately, executed in loop().
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
+  /// Queue an async status request; returns immediately, executed in loop().
   virtual void queue_request_device_status(const std::string &device_id);
+  /// Queue a pairing operation; executed in loop() when radio idle.
   virtual void queue_discover_and_pair();
   /// Async form of set_light_state() that keeps radio work serialized on the main loop.
   virtual void queue_set_light_state(const std::string &device_id, bool on);
@@ -98,13 +107,52 @@ class IOHomeControlComponent : public Component,
 
  protected:
   // --- Protocol-level operations ---
+  /// Transmit a raw IoFrame on the current frequency with given preamble length.
   bool transmit_frame_(const IoFrame &frame, uint32_t freq, uint16_t preamble);
+  /// Main request/response exchange with retry and automatic authentication.
   bool send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq);
+  /// Handle an inbound authenticated command from a device (status updates, etc.).
   bool authenticate_request_(const IoFrame &request, uint32_t freq);
+  /// Parse received packet, update device state if it's a status frame, and notify covers.
   void process_received_packet_(const RadioRxPacket &packet);
+  /// Extract position/status info from a status or status-update frame and merge into device record.
   void update_device_status_(const IoFrame &frame);
+  /// Fire all registered device update callbacks for the given device ID.
   void notify_device_update_(const std::string &id);
+  /// Pop next pending operation from the queue and execute it (set position, request status, discover).
   void process_pending_operation_();
+
+  // --- Outbound exchange helpers ---
+  /// Wrap transmit_frame_ and mark context failed on error.
+  bool transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
+                         exchange::OutboundExchangeContext &ctx);
+  /// Wait loop for the first response packet; classifies via decisions::classify_exchange_first_response.
+  decisions::ExchangeFirstResponseDisposition wait_for_first_response_(const IoFrame &request,
+                                                                       exchange::OutboundExchangeContext &ctx);
+  /// Perform challenge-response (TX auth response) after a 0x3C is received.
+  bool handle_authentication_(const IoFrame &request, uint32_t freq, exchange::OutboundExchangeContext &ctx);
+  /// Wait loop for the final authenticated response; uses is_valid_final_response().
+  decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,
+                                                                       exchange::OutboundExchangeContext &ctx);
+
+  // --- Pairing helpers ---
+  /// Wait for a discovery response (0x29) during pairing.
+  decisions::PairingDiscoveryDisposition wait_for_discovery_response_(uint32_t timeout_ms, RadioRxPacket &packet,
+                                                                      IoFrame &response_frame);
+  /// Wait for a key-challenge (0x3C) from target device during pairing key exchange.
+  bool wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet, IoFrame &challenge_frame,
+                               const uint8_t device_node_id[NODE_ID_SIZE]);
+
+  // Parse a discovery response frame into device metadata and ID.
+  static void parse_device_from_discovery(const IoFrame &frame, IoDevice &device, std::string &device_id);
+
+  // --- Pairing phase helpers ---
+  /// Phase 1: broadcast discovery (0x28) and wait for a device response (0x29).
+  decisions::PairingDiscoveryDisposition run_discovery_phase_(pairing::PairingContext &context);
+  /// Phase 2: authenticated key exchange (0x31 → 0x3C → 0x32 → 0x33).
+  bool run_key_exchange_phase_(pairing::PairingContext &context);
+  /// Phase 3: send SetConfig1 (0x71) to finalize device configuration.
+  bool finalize_pairing_configuration_(pairing::PairingContext &context);
 
   enum class PendingOperationType : uint8_t {
     SET_POSITION,

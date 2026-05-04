@@ -71,7 +71,7 @@ clang-tidy:
 # Compilation tests for all platform configs
 firmware-test:
 	@echo "Compiling test configurations in config/tests/"
-	@for cfg in config/tests/test.*.yaml; do \
+	@for cfg in config/tests/test-*.yaml; do \
 	  name=$$(basename "$$cfg"); \
 	  echo "=== Compiling $$name ==="; \
 	  docker compose run --rm esphome compile "/config/tests/$$name" || exit 1; \
@@ -79,13 +79,11 @@ firmware-test:
 
 # === Unit test configuration ===================================================
 
-# All component source files needed for tests (protocol + platform + hub)
-# Exclude radio drivers — we provide stubs in tests/stubs/
+# All component source files needed for tests (protocol + platform + hub + radio drivers)
 COMPONENT_SRCS := $(wildcard components/home_io_control/*.cpp)
-COMPONENT_SRCS := $(filter-out components/home_io_control/radio_%.cpp,$(COMPONENT_SRCS))
 
-# Test stubs (minimal implementations for host-side unit tests)
-STUB_SRCS := $(wildcard tests/stubs/*.cpp)
+# Test stubs (only global symbols — App, global_preferences, fnv1_hash)
+STUB_SRCS := tests/stubs/stubs.cpp
 
 # All test files (*_test.cpp) in tests/ root
 TEST_SRCS := $(wildcard tests/*_test.cpp)

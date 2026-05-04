@@ -10,6 +10,19 @@
 #include <algorithm>
 #include <cstring>
 
+/// @file hub_exchange.cpp
+/// @brief Outbound authenticated exchange state machine (non-pairing flows).
+///
+/// Implements IOHomeControlComponent::send_and_receive_() and its stepwise
+/// helpers: transmit_request_(), wait_for_first_response_(),
+/// handle_authentication_(), wait_for_final_response_(). These functions
+/// encapsulate the retry loop, challenge-response authentication, and final
+/// response handling for commands sent to paired devices.
+///
+/// The exchange logic is separated from hub_core.cpp to keep the main loop
+/// and device-management concerns distinct from the protocol state machine.
+/// Pairing flows (discovery/key exchange) live in hub_pairing.cpp.
+
 namespace esphome {
 namespace home_io_control {
 
@@ -17,6 +30,7 @@ namespace {
 
 const char *const TAG = "home_io_control";
 
+/// Map OutboundExchangeState enum to string for debug logging.
 const char *outbound_stage_name(exchange::OutboundExchangeState state) {
   switch (state) {
     case exchange::OutboundExchangeState::IDLE:
@@ -39,6 +53,7 @@ const char *outbound_stage_name(exchange::OutboundExchangeState state) {
   }
 }
 
+/// Map InboundAuthState enum to string for debug logging.
 const char *inbound_stage_name(exchange::InboundAuthState state) {
   switch (state) {
     case exchange::InboundAuthState::IDLE:
@@ -55,21 +70,51 @@ const char *inbound_stage_name(exchange::InboundAuthState state) {
   }
 }
 
-uint32_t response_wait_slice_ms(uint32_t remaining_ms) {
-  return std::min<uint32_t>(remaining_ms, RESPONSE_CHANNEL_WAIT_MS);
-}
+// response_wait_slice_ms provided by decisions namespace (hub_decisions.h)
 
+/// Return preamble length for authenticated challenge response (0x3D).
+///
+/// SX1262 requires a longer preamble for the challenge response to improve
+/// lock-on reliability. For SX1276 we use the short preamble to match the
+/// baseline waveform.
+///
+/// @param radio Radio driver instance (used to query chip name).
+/// @return Preamble length in symbol periods.
 uint16_t auth_response_preamble(const RadioDriver *radio) {
   // SX1276 is the baseline waveform. The longer 0x3D preamble stays scoped to SX1262 so the radio-
   // specific lock-on workaround does not silently perturb the SX1276 behavior.
   return strcmp(radio->chip_name(), "sx1262") == 0 ? SX1262_AUTH_RESPONSE_PREAMBLE : SHORT_PREAMBLE;
 }
 
+/// Check if frame is a 0x3D challenge response.
 bool frame_is_challenge_response(const IoFrame &frame) { return frame.cmd == CMD_CHALLENGE_RESP; }
 
+/// Log an exchanged frame with context (stage, try index, length).
+///
+/// Used to trace both first responses and final responses. Intended for
+/// debugging packet flows where unrelated frames are ignored.
+///
+/// @param stage  String label for the current stage (e.g., "first_response").
+/// @param tries  Attempt number (1‑based).
+/// @param frame Parsed IoFrame to log.
+/// @param len   Length of raw packet (for correlation with capture info).
 void log_exchange_frame(const char *stage, int tries, const IoFrame &frame, uint8_t len) {
   ESP_LOGD(TAG, "%s try=%d cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X len=%u", stage, tries, frame.cmd, frame.src[0],
            frame.src[1], frame.src[2], frame.dst[0], frame.dst[1], frame.dst[2], len);
+}
+
+/// Determine if a candidate frame is a valid final response for the request.
+///
+/// Used by `wait_for_final_response_()` to accept a frame. The check validates
+/// endpoint matching (dst == request.src, src == request.dst) via the decisions
+/// namespace.
+///
+/// @param candidate Parsed IoFrame from the device.
+/// @param request  Original outbound request.
+/// @return true if candidate is acceptable as final response; false otherwise.
+bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
+  return decisions::classify_exchange_final_response(request, candidate) ==
+         decisions::ExchangeFinalResponseDisposition::ACCEPT;
 }
 
 }  // namespace
@@ -79,8 +124,6 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
   this->reset_exchange_debug_(request.cmd);
   const uint16_t request_preamble = is_start(request) ? LONG_PREAMBLE : SHORT_PREAMBLE;
 
-  // Retry loop with explicit state context. Each iteration is self-contained: transmit request,
-  // wait for first response, optionally authenticate, then wait for the final response.
   for (int tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
     exchange::OutboundExchangeContext context;
     context.try_index = tries + 1;
@@ -93,123 +136,194 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
       delay(EXCHANGE_RETRY_DELAY_MS);
     }
 
-    if (!this->transmit_frame_(request, freq, request_preamble)) {
-      context.state = exchange::OutboundExchangeState::FAILED;
-      this->record_exchange_debug_("tx_request_failed", context.try_index, false);
-      continue;
+    // Step 1: Transmit request
+    if (!this->transmit_request_(request, freq, request_preamble, context)) {
+      continue;  // state already set to FAILED by helper
     }
 
+    // Step 2: Wait for first response
     context.state = exchange::OutboundExchangeState::WAIT_FIRST_RESPONSE;
     this->record_exchange_debug_(outbound_stage_name(context.state), context.try_index, false);
-
-    RadioRxPacket packet{};
-    const uint32_t first_deadline_ms = millis() + context.wait_ms;
-    bool got_first_response = false;
-    while ((int32_t) (first_deadline_ms - millis()) > 0) {
-      uint32_t remaining_ms = first_deadline_ms - millis();
-      if (!this->radio_->wait_for_packet(packet, response_wait_slice_ms(remaining_ms))) {
-        if ((int32_t) (first_deadline_ms - millis()) > 0)
-          this->hop_frequency_();
-        continue;
-      }
-      if (!parse(packet.data, packet.len, context.rx)) {
-        this->record_exchange_debug_("first_parse_fail", context.try_index, false);
-        continue;
-      }
-      // Ignore foreign traffic and keep waiting rather than aborting the exchange.
-      const auto first_disposition = decisions::classify_exchange_first_response(request, context.rx);
-      if (first_disposition == decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED) {
-        this->record_exchange_debug_("first_wrong_exchange", context.try_index, false);
-        log_exchange_frame("Ignored first response", tries + 1, context.rx, packet.len);
-        continue;
-      }
-      context.first_response_ms = millis();
-      got_first_response = true;
-      break;
+    auto first_disp = this->wait_for_first_response_(request, context);
+    if (first_disp == decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED) {
+      continue;  // timeout or no valid response
     }
-    if (!got_first_response) {
-      context.state = exchange::OutboundExchangeState::FAILED;
-      this->record_exchange_debug_("wait_first_timeout", context.try_index, false);
-      ESP_LOGI(TAG, "Try %d ended: no first response for cmd=0x%02X within %u ms", tries + 1, request.cmd,
-               context.wait_ms);
-      continue;
-    }
-
-    const auto first_disposition = decisions::classify_exchange_first_response(request, context.rx);
-    if (first_disposition == decisions::ExchangeFirstResponseDisposition::COMPLETE_DIRECT) {
+    if (first_disp == decisions::ExchangeFirstResponseDisposition::COMPLETE_DIRECT) {
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_exchange_debug_("success_direct", context.try_index, false);
-      memcpy(&response, &context.rx, sizeof(IoFrame));
+      response = context.rx;
       this->busy_ = false;
       return true;
     }
 
-    context.saw_challenge = true;
-    context.state = exchange::OutboundExchangeState::BUILD_AUTH_RESPONSE;
-    this->record_exchange_debug_(outbound_stage_name(context.state), context.try_index, true);
-
-    IoFrame auth_resp;
-    if (!create_challenge_resp(auth_resp, request.dst, this->node_id_, context.rx.data, request, this->system_key_)) {
-      context.state = exchange::OutboundExchangeState::FAILED;
-      this->record_exchange_debug_("auth_build_failed", context.try_index, true);
+    // Step 3: Handle authentication challenge
+    if (!this->handle_authentication_(request, freq, context)) {
       continue;
     }
 
-    ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%u challenge=%02X%02X%02X%02X%02X%02X req_cmd=0x%02X req_len=%u",
-             tries + 1, context.first_response_ms - context.exchange_start_ms, context.rx.data[0], context.rx.data[1],
-             context.rx.data[2], context.rx.data[3], context.rx.data[4], context.rx.data[5], request.cmd,
-             request.data_len);
-
-    context.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
-    this->record_exchange_debug_(outbound_stage_name(context.state), context.try_index, true);
-    if (!this->transmit_frame_(auth_resp, freq, auth_response_preamble(this->radio_))) {
-      context.state = exchange::OutboundExchangeState::FAILED;
-      this->record_exchange_debug_("tx_auth_failed", context.try_index, true);
-      continue;
-    }
-
+    // Step 4: Wait for final authenticated response
     context.state = exchange::OutboundExchangeState::WAIT_FINAL_RESPONSE;
     this->record_exchange_debug_(outbound_stage_name(context.state), context.try_index, true);
-    const uint32_t final_deadline_ms = millis() + RESPONSE_AUTH_WAIT_MS;
-    bool got_final_response = false;
-    while ((int32_t) (final_deadline_ms - millis()) > 0) {
-      uint32_t remaining_ms = final_deadline_ms - millis();
-      if (!this->radio_->wait_for_packet(packet, response_wait_slice_ms(remaining_ms))) {
-        if ((int32_t) (final_deadline_ms - millis()) > 0)
-          this->hop_frequency_();
-        continue;
-      }
-      if (!parse(packet.data, packet.len, context.rx)) {
-        this->record_exchange_debug_("final_parse_fail", context.try_index, true);
-        continue;
-      }
-      // Ignore unrelated traffic while waiting for the authenticated reply.
-      if (decisions::classify_exchange_final_response(request, context.rx) !=
-          decisions::ExchangeFinalResponseDisposition::ACCEPT) {
-        this->record_exchange_debug_("final_wrong_exchange", context.try_index, true);
-        log_exchange_frame("Ignored final response", tries + 1, context.rx, packet.len);
-        continue;
-      }
-      got_final_response = true;
-      break;
-    }
-    if (!got_final_response) {
-      context.state = exchange::OutboundExchangeState::FAILED;
-      this->record_exchange_debug_("wait_final_timeout", context.try_index, true);
-      ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=0x%02X within %u ms", tries + 1, request.cmd,
-               RESPONSE_AUTH_WAIT_MS);
+    auto final_disp = this->wait_for_final_response_(request, context);
+    if (final_disp != decisions::ExchangeFinalResponseDisposition::ACCEPT) {
       continue;
     }
 
+    // Success
     context.state = exchange::OutboundExchangeState::SUCCESS;
     this->record_exchange_debug_("success_auth", context.try_index, true);
-    memcpy(&response, &context.rx, sizeof(IoFrame));
+    response = context.rx;
     this->busy_ = false;
     return true;
   }
 
   this->busy_ = false;
   return false;
+}
+
+// --- Outbound exchange helper implementations ---
+
+/// Transmit the initial request frame and update exchange context on failure.
+///
+/// This helper isolates the one-shot TX operation from the retry loop. It does
+/// NOT implement retries itself — the orchestrator (`send_and_receive_`) calls
+/// this repeatedly until success or retry exhaustion. On failure we mark the
+/// context state as FAILED and record debug info; success returns true.
+///
+/// @param request  Outbound IoFrame to transmit.
+/// @param freq     RF channel frequency in Hz.
+/// @param preamble Preamble length (LONG_PREAMBLE for start frames, SHORT_PREAMBLE otherwise).
+/// @param ctx      Exchange context updated on failure.
+/// @return true if transmit succeeded, false otherwise.
+bool IOHomeControlComponent::transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
+                                               exchange::OutboundExchangeContext &ctx) {
+  if (!this->transmit_frame_(request, freq, preamble)) {
+    ctx.state = exchange::OutboundExchangeState::FAILED;
+    this->record_exchange_debug_("tx_request_failed", ctx.try_index, false);
+    return false;
+  }
+  return true;
+}
+
+/// Wait for the first response packet within the configured timeout window.
+///
+/// Listens on the current RF channel, hopping to the next channel after each
+/// slice if no packet arrives. Parses incoming frames and classifies them via
+/// `decisions::classify_exchange_first_response()`:
+///   - COMPLETE_DIRECT  → matching non‑challenge frame (operation complete, no auth)
+///   - REQUIRE_AUTH     → matching 0x3C challenge (device demands authentication)
+///   - IGNORE_UNRELATED  → all others (timeout, wrong endpoints, unparsable)
+///
+/// @param request Original request frame (used for endpoint matching).
+/// @param ctx     Exchange context (provides deadline and receives rx frame on accept).
+/// @return Disposition indicating how the first response should be handled.
+decisions::ExchangeFirstResponseDisposition IOHomeControlComponent::wait_for_first_response_(
+    const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
+  RadioRxPacket packet{};
+  const uint32_t deadline = millis() + ctx.wait_ms;
+  while ((int32_t) (deadline - millis()) > 0) {
+    const uint32_t remaining = deadline - millis();
+    const uint32_t slice = decisions::response_wait_slice_ms(remaining);
+    if (!this->radio_->wait_for_packet(packet, slice)) {
+      if ((int32_t) (deadline - millis()) > 0)
+        this->hop_frequency_();
+      continue;
+    }
+    if (!parse(packet.data, packet.len, ctx.rx)) {
+      this->record_exchange_debug_("first_parse_fail", ctx.try_index, false);
+      continue;
+    }
+    auto disp = decisions::classify_exchange_first_response(request, ctx.rx);
+    if (disp == decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED) {
+      this->record_exchange_debug_("first_wrong_exchange", ctx.try_index, false);
+      log_exchange_frame("Ignored first response", ctx.try_index, ctx.rx, packet.len);
+      continue;
+    }
+    ctx.first_response_ms = millis();
+    return disp;
+  }
+  ctx.state = exchange::OutboundExchangeState::FAILED;
+  this->record_exchange_debug_("wait_first_timeout", ctx.try_index, false);
+  ESP_LOGI(TAG, "Try %d ended: no first response for cmd=0x%02X within %u ms", ctx.try_index, request.cmd, ctx.wait_ms);
+  return decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED;
+}
+
+/// Handle device authentication challenge (0x3C → 0x3D exchange).
+///
+/// When the first response is a challenge request (0x3C), this helper builds
+/// the HMAC challenge response using `create_challenge_resp()` and transmits
+/// it with the SX1262‑specific longer preamble. The exchange context is
+/// updated with the BUILD_AUTH_RESPONSE and TX_AUTH_RESPONSE states.
+///
+/// @param request Original request frame (needed for HMAC derivation).
+/// @param freq    RF channel frequency (same channel used for the request).
+/// @param ctx     Exchange context holding the challenge frame and state.
+/// @return true if challenge response was sent successfully; false otherwise.
+bool IOHomeControlComponent::handle_authentication_(const IoFrame &request, uint32_t freq,
+                                                    exchange::OutboundExchangeContext &ctx) {
+  ctx.saw_challenge = true;
+  ctx.state = exchange::OutboundExchangeState::BUILD_AUTH_RESPONSE;
+  this->record_exchange_debug_(outbound_stage_name(ctx.state), ctx.try_index, true);
+
+  IoFrame auth_resp;
+  if (!create_challenge_resp(auth_resp, request.dst, this->node_id_, ctx.rx.data, request, this->system_key_)) {
+    ctx.state = exchange::OutboundExchangeState::FAILED;
+    this->record_exchange_debug_("auth_build_failed", ctx.try_index, true);
+    return false;
+  }
+
+  ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%u challenge=%02X%02X%02X%02X%02X%02X req_cmd=0x%02X req_len=%u",
+           ctx.try_index, ctx.first_response_ms - ctx.exchange_start_ms, ctx.rx.data[0], ctx.rx.data[1], ctx.rx.data[2],
+           ctx.rx.data[3], ctx.rx.data[4], ctx.rx.data[5], request.cmd, request.data_len);
+
+  ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
+  this->record_exchange_debug_(outbound_stage_name(ctx.state), ctx.try_index, true);
+  if (!this->transmit_frame_(auth_resp, freq, auth_response_preamble(this->radio_))) {
+    ctx.state = exchange::OutboundExchangeState::FAILED;
+    this->record_exchange_debug_("tx_auth_failed", ctx.try_index, true);
+    return false;
+  }
+  return true;
+}
+
+/// Wait for the final (authenticated) response after challenge has been answered.
+///
+/// After sending the 0x3D challenge response, the device will reply with the
+/// actual command response (e.g. 0x04 status) signed using the shared system
+/// key. This helper loops within `RESPONSE_AUTH_WAIT_MS`, hopping channels on
+/// each slice, parsing and validating that the frame matches the original
+/// request endpoints. Non‑matching frames are logged and ignored.
+///
+/// @param request Original request frame (used for endpoint matching).
+/// @param ctx     Exchange context (receives final rx frame on accept).
+/// @return ACCEPT if a matching final response arrives; IGNORE_UNRELATED on timeout.
+decisions::ExchangeFinalResponseDisposition IOHomeControlComponent::wait_for_final_response_(
+    const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
+  RadioRxPacket packet{};
+  const uint32_t deadline = millis() + RESPONSE_AUTH_WAIT_MS;
+  while ((int32_t) (deadline - millis()) > 0) {
+    const uint32_t remaining = deadline - millis();
+    const uint32_t slice = decisions::response_wait_slice_ms(remaining);
+    if (!this->radio_->wait_for_packet(packet, slice)) {
+      if ((int32_t) (deadline - millis()) > 0)
+        this->hop_frequency_();
+      continue;
+    }
+    if (!parse(packet.data, packet.len, ctx.rx)) {
+      this->record_exchange_debug_("final_parse_fail", ctx.try_index, true);
+      continue;
+    }
+    if (is_valid_final_response(ctx.rx, request)) {
+      return decisions::ExchangeFinalResponseDisposition::ACCEPT;
+    }
+    this->record_exchange_debug_("final_wrong_exchange", ctx.try_index, true);
+    log_exchange_frame("Ignored final response", ctx.try_index, ctx.rx, packet.len);
+  }
+  ctx.state = exchange::OutboundExchangeState::FAILED;
+  this->record_exchange_debug_("wait_final_timeout", ctx.try_index, true);
+  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=0x%02X within %u ms", ctx.try_index, request.cmd,
+           RESPONSE_AUTH_WAIT_MS);
+  return decisions::ExchangeFinalResponseDisposition::IGNORE_UNRELATED;
 }
 
 bool IOHomeControlComponent::authenticate_request_(const IoFrame &request, uint32_t freq) {

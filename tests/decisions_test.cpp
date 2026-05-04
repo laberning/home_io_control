@@ -76,11 +76,11 @@ TEST(Decisions, PairingDiscoveryAccept) {
       << "discovery response should be accepted during pairing discovery wait";
 }
 
-TEST(Decisions, PairingDiscoveryIgnoreNonDiscovery) {
+TEST(Decisions, PairingDiscoveryInvalidNonDiscovery) {
   const IoFrame ignored = make_frame(DST_ID, OWN_ID, CMD_PRIVATE_RESP, 6);
 
-  EXPECT_EQ(decisions::classify_pairing_discovery_response(ignored), decisions::PairingDiscoveryDisposition::IGNORE)
-      << "non-discovery frame should be ignored during pairing discovery wait";
+  EXPECT_EQ(decisions::classify_pairing_discovery_response(ignored), decisions::PairingDiscoveryDisposition::INVALID)
+      << "non-discovery frame should be invalid during pairing discovery wait";
 }
 
 // ========================================================================================

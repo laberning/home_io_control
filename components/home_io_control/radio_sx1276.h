@@ -76,13 +76,19 @@ class RadioSX1276 : public RadioDriver {
  public:
   RadioSX1276(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *dio0_pin, InternalGPIOPin *dio4_pin,
               uint8_t tx_power, uint8_t pa_pin)
-      : spi_(spi), rst_pin_(rst_pin), dio0_pin_(dio0_pin), dio4_pin_(dio4_pin), tx_power_(tx_power), pa_pin_(pa_pin) {}
+      : RadioDriver(rst_pin),
+        spi_(spi),
+        dio0_pin_(dio0_pin),
+        dio4_pin_(dio4_pin),
+        tx_power_(tx_power),
+        pa_pin_(pa_pin) {}
 
   bool init() override;
   bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
   bool check_for_packet(RadioRxPacket &packet) override;
   void change_frequency(uint32_t freq_hz) override;
+  int16_t read_rssi() override;
   void set_mode_rx() override;
   void set_mode_standby() override;
   [[nodiscard]] bool is_failed() const override { return this->failed_; }
@@ -98,6 +104,8 @@ class RadioSX1276 : public RadioDriver {
   void set_mode_(uint8_t mode);
   void configure_radio_();
   void run_image_cal_();
+  bool poll_until_payload_ready_(uint32_t timeout_ms, bool &saw_dio0, uint8_t &irq1, uint8_t &irq2);
+  uint8_t read_fifo_packet_(uint8_t *buf, uint8_t buf_size);
   void fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, uint8_t rssi, const uint8_t *raw,
                           uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
 
@@ -105,7 +113,6 @@ class RadioSX1276 : public RadioDriver {
   static void gpio_intr(RadioSX1276 *arg);
 
   SpiAccess *spi_;
-  InternalGPIOPin *rst_pin_;
   InternalGPIOPin *dio0_pin_;
   InternalGPIOPin *dio4_pin_;
   uint8_t tx_power_;
