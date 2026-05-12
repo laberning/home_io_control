@@ -15,10 +15,15 @@ class Component {
   virtual float get_setup_priority() const { return 0; }
 
   void set_timeout(const char *name, uint32_t timeout, std::function<void()> &&f) {
-    (void) name;
-    (void) timeout;
-    (void) f;
+    last_timeout_name_ = name ? name : "";
+    last_timeout_ms_ = timeout;
+    last_timeout_callback_ = std::move(f);
   }
+
+  // Test helpers for verifying set_timeout calls
+  std::function<void()> last_timeout_callback_;
+  std::string last_timeout_name_;
+  uint32_t last_timeout_ms_{0};
 
   void mark_failed() { this->failed_ = true; }
   bool is_failed() const { return this->failed_; }

@@ -312,6 +312,13 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
 
   log_component_capture(this->radio_, "parse_ok", packet.data, packet.len, &frame);
 
+  // Exchange-internal frames (0x3C challenge request, 0x3D challenge response) are part of
+  // another controller's authenticated exchange. They carry no extractable status data for
+  // a passive observer — skip silently. They remain visible in io_capture (stage=parse_ok).
+  if (decisions::is_exchange_internal_command(frame.cmd)) {
+    return;
+  }
+
   if (frame.cmd == CMD_STATUS_UPDATE && memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0) {
     if (this->authenticate_request_(frame, packet.freq_hz)) {
       IoFrame resp;
@@ -334,6 +341,36 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
 
   if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE) {
     this->update_device_status_(frame);
+    return;
+  }
+
+  // Check if this frame targets one of our registered devices (e.g., a physical remote
+  // commanding a shutter we also control). If so, schedule a status poll after 2 seconds
+  // to pick up the resulting position change. The timeout name includes the device ID so
+  // repeated remote activity resets the timer rather than stacking redundant polls.
+  // The 2-second delay gives the device time to complete the exchange and start moving.
+  const std::string dst_id = node_id_to_string(frame.dst);
+  if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
+    ESP_LOGD(TAG, "rx remote_activity src=%s dst=%s cmd=0x%02X, scheduling status poll",
+             node_id_to_string(frame.src).c_str(), dst_id.c_str(), frame.cmd);
+    const std::string timeout_name = "remote_poll_" + dst_id;
+    this->set_timeout(timeout_name.c_str(), 2000, [this, dst_id]() { this->queue_request_device_status(dst_id); });
+    return;
+  }
+
+  // Check if the frame source is a linked remote (e.g., a 1W remote whose destination address
+  // differs from the device's 2W ID). When a linked remote is active, schedule status polls
+  // for all devices it controls.
+  const std::string src_id = node_id_to_string(frame.src);
+  auto remote_it = this->linked_remotes_.find(src_id);
+  if (remote_it != this->linked_remotes_.end()) {
+    for (const auto &device_id : remote_it->second) {
+      ESP_LOGD(TAG, "rx remote_activity (linked) remote=%s device=%s cmd=0x%02X, scheduling status poll",
+               src_id.c_str(), device_id.c_str(), frame.cmd);
+      const std::string timeout_name = "remote_poll_" + device_id;
+      this->set_timeout(timeout_name.c_str(), 2000,
+                        [this, device_id]() { this->queue_request_device_status(device_id); });
+    }
     return;
   }
 
@@ -594,6 +631,14 @@ void IOHomeControlComponent::dump_config() {
                   device_type_name(device.type), static_cast<uint8_t>(device.type),
                   device_capability_class_name(device.type), device_operation_profile_name(device.type), device.subtype,
                   YESNO(device.inverted));
+  }
+  if (!this->linked_remotes_.empty()) {
+    ESP_LOGCONFIG(TAG, "  Linked Remotes: %zu", this->linked_remotes_.size());
+    for (const auto &pair : this->linked_remotes_) {
+      for (const auto &device_id : pair.second) {
+        ESP_LOGCONFIG(TAG, "    - remote %s -> device %s", pair.first.c_str(), device_id.c_str());
+      }
+    }
   }
 
   if (this->radio_ != nullptr)

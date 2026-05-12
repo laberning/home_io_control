@@ -102,6 +102,8 @@ cover:
     device_class: awning
     io_device_id: "FEEB1E"
     invert_position: true
+    linked_remotes:
+      - "ABCDEF"
 ```
 
 Configuration variables:
@@ -109,6 +111,7 @@ Configuration variables:
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
 - `invert_position` (Optional, default: `false`): Swap the open/close position mapping. This is commonly needed for horizontal awnings.
+- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. When activity from a linked remote is overheard on the radio, the controller automatically polls the device for fresh status 2 seconds later. This is particularly useful for 1W (one-way) remotes whose radio address differs from the device's 2W ID.
 - All standard options from the ESPHome cover base schema also apply, including `id`, `name`, `device_class`, `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
 
 Notes:
@@ -132,6 +135,7 @@ Configuration variables:
 
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
+- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the cover platform for details.
 - All standard options from the ESPHome light schema also apply.
 
 Notes:
@@ -156,6 +160,7 @@ Configuration variables:
 
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
+- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the cover platform for details.
 - All standard options from the ESPHome switch schema also apply.
 
 Notes:

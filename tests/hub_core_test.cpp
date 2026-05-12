@@ -234,3 +234,264 @@ TEST(HubCore, LBT_JustBelowThreshold_TransmitsImmediately) {
   EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
   EXPECT_EQ(radio.get_send_count(), 1);
 }
+
+// ============================================================================
+// Exchange-internal filtering tests (Issue #3)
+// ============================================================================
+
+namespace {
+
+/// Helper to set up a component with a registered device for RX tests.
+class RxTestableComponent : public IOHomeControlComponent {
+ public:
+  using IOHomeControlComponent::process_received_packet_;
+};
+
+/// Build a RadioRxPacket from a constructed IoFrame.
+RadioRxPacket make_rx_packet(const IoFrame &frame) {
+  RadioRxPacket pkt{};
+  pkt.len = serialize(frame, pkt.data, sizeof(pkt.data));
+  pkt.freq_hz = FREQ_CH2;
+  return pkt;
+}
+
+/// Create a minimal component with one registered device and a mock radio.
+void setup_rx_test_component(RxTestableComponent &comp, MockRadio &radio) {
+  comp.node_id_[0] = 0xC0;
+  comp.node_id_[1] = 0xFF;
+  comp.node_id_[2] = 0xEE;
+  static const uint8_t key[] = {0xD1, 0x74, 0x34, 0x93, 0xFA, 0x94, 0x38, 0x45,
+                                0xAC, 0x43, 0x50, 0xEE, 0xFF, 0x34, 0x29, 0x34};
+  std::memcpy(comp.system_key_, key, AES_KEY_SIZE);
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  comp.add_device("054E17");
+}
+
+}  // namespace
+
+TEST(HubCore, FilterExchangeInternal_ChallengeRequest) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // Construct a 0x3C challenge request frame (src=device, dst=some remote)
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};  // our registered device
+  uint8_t dst[3] = {0x43, 0x44, 0xE3};  // some remote
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t challenge[6] = {0x0F, 0x76, 0x11, 0x69, 0x64, 0x9E};
+  set_cmd(f, CMD_CHALLENGE_REQ, challenge, 6);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // Should be silently filtered — no pending operations, no timeout
+  EXPECT_TRUE(comp.pending_operations_.empty()) << "0x3C should not trigger any operation";
+  EXPECT_TRUE(comp.last_timeout_name_.empty()) << "0x3C should not schedule a timeout";
+}
+
+TEST(HubCore, FilterExchangeInternal_ChallengeResponse) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // Construct a 0x3D challenge response frame (src=remote, dst=device)
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  uint8_t src[3] = {0x43, 0x44, 0xE3};  // some remote
+  uint8_t dst[3] = {0x05, 0x4E, 0x17};  // our registered device
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t hmac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  set_cmd(f, CMD_CHALLENGE_RESP, hmac, 6);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // Should be silently filtered — no pending operations, no timeout
+  EXPECT_TRUE(comp.pending_operations_.empty()) << "0x3D should not trigger any operation";
+  EXPECT_TRUE(comp.last_timeout_name_.empty()) << "0x3D should not schedule a timeout";
+}
+
+// ============================================================================
+// Remote activity detection tests (Issue #3)
+// ============================================================================
+
+TEST(HubCore, RemoteActivity_TriggersDelayedPoll) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // Construct a 0x00 execute command from a remote to our registered device
+  IoFrame f{};
+  init_frame(f, true, true, false, false);  // 2W, start frame
+  uint8_t src[3] = {0x43, 0x44, 0xE3};      // some remote
+  uint8_t dst[3] = {0x05, 0x4E, 0x17};      // our registered device
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t exec_data[3] = {0xC8, 0x00, 0x00};
+  set_cmd(f, CMD_EXECUTE, exec_data, 3);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // Should schedule a 2-second timeout for the device
+  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
+  EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
+  ASSERT_TRUE(comp.last_timeout_callback_) << "callback should be set";
+
+  // Invoke the callback — should queue a status request
+  comp.last_timeout_callback_();
+  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "callback should queue one operation";
+  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.pending_operations_.front().device_id, "054E17");
+}
+
+TEST(HubCore, RemoteActivity_UnregisteredDevice_NoTrigger) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // Frame addressed to an unregistered device
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  uint8_t src[3] = {0x43, 0x44, 0xE3};
+  uint8_t dst[3] = {0xAA, 0xBB, 0xCC};  // not registered
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_EXECUTE);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // Should NOT schedule a timeout — falls through to unhandled_cmd
+  EXPECT_TRUE(comp.last_timeout_name_.empty()) << "unregistered dst should not trigger timeout";
+  EXPECT_TRUE(comp.pending_operations_.empty()) << "should not queue any operation";
+}
+
+TEST(HubCore, RemoteActivity_OwnEcho_NoTrigger) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // Frame where src is our own node ID (echo of our own TX)
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  uint8_t src[3] = {0xC0, 0xFF, 0xEE};  // our node ID
+  uint8_t dst[3] = {0x05, 0x4E, 0x17};  // our registered device
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_PRIVATE);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // Should NOT schedule a timeout — it's our own frame
+  EXPECT_TRUE(comp.last_timeout_name_.empty()) << "own echo should not trigger timeout";
+  EXPECT_TRUE(comp.pending_operations_.empty()) << "should not queue any operation";
+}
+
+TEST(HubCore, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // Link remote 9D6085 to device 054E17
+  comp.add_linked_remote("9D6085", "054E17");
+
+  // Construct a 1W frame from the linked remote to a different address (1W addressing)
+  IoFrame f{};
+  init_frame(f, false, true, true, false);  // 1W mode
+  uint8_t src[3] = {0x9D, 0x60, 0x85};      // linked remote
+  uint8_t dst[3] = {0x00, 0x01, 0xBF};      // 1W device address (different from 2W ID)
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t exec_data[3] = {0x00, 0x00, 0x00};
+  set_cmd(f, CMD_EXECUTE, exec_data, 3);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // Should schedule a 2-second timeout for the linked device
+  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
+  EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos)
+      << "timeout name should contain linked device ID";
+  ASSERT_TRUE(comp.last_timeout_callback_) << "callback should be set";
+
+  // Invoke the callback — should queue a status request
+  comp.last_timeout_callback_();
+  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "callback should queue one operation";
+  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.pending_operations_.front().device_id, "054E17");
+}
+
+TEST(HubCore, LinkedRemotes_MultipleRemotesOneDevice) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // Link two remotes to the same device
+  comp.add_linked_remote("AABBCC", "054E17");
+  comp.add_linked_remote("DDEEFF", "054E17");
+
+  // Frame from second remote
+  IoFrame f{};
+  init_frame(f, false, true, true, false);
+  uint8_t src[3] = {0xDD, 0xEE, 0xFF};
+  uint8_t dst[3] = {0x00, 0x01, 0xBF};
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_EXECUTE);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
+  EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
+}
+
+TEST(HubCore, LinkedRemotes_OneRemoteMultipleDevices) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.add_device("415684");  // second device
+
+  // One remote controls two devices
+  comp.add_linked_remote("AABBCC", "054E17");
+  comp.add_linked_remote("AABBCC", "415684");
+
+  // Frame from the shared remote
+  IoFrame f{};
+  init_frame(f, false, true, true, false);
+  uint8_t src[3] = {0xAA, 0xBB, 0xCC};
+  uint8_t dst[3] = {0x00, 0x01, 0xBF};
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_EXECUTE);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // The last set_timeout call wins in our stub, but both should have been called.
+  // Verify at least one timeout was scheduled with 2s delay.
+  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
+}

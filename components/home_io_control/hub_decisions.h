@@ -42,6 +42,14 @@ enum class PairingKeyChallengeDisposition : uint8_t {
   ACCEPT,  ///< Valid 0x3C challenge from target device.
 };
 
+// == Passive RX filtering ==
+
+/// Returns true for commands that are internal to an exchange handshake and carry
+/// no useful information for a passive observer (challenge request/response).
+/// These frames appear in every authenticated exchange between other controllers and
+/// devices on the network, but contain only ephemeral cryptographic data.
+inline bool is_exchange_internal_command(uint8_t cmd) { return cmd == CMD_CHALLENGE_REQ || cmd == CMD_CHALLENGE_RESP; }
+
 // == Utility: endpoint matching ==
 
 /// Check if two frames have identical src/dst node IDs.

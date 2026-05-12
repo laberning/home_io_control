@@ -8,6 +8,7 @@ from . import home_io_control_ns, IOHomeControlComponent, CONF_HOME_IO_CONTROL_I
 DEPENDENCIES = ["home_io_control"]
 
 CONF_DEVICE_ID = "io_device_id"
+CONF_LINKED_REMOTES = "linked_remotes"
 
 IOHomeLight = home_io_control_ns.class_("IOHomeLight", light.LightOutput, cg.Component)
 
@@ -21,6 +22,7 @@ CONFIG_SCHEMA = (
                 IOHomeControlComponent
             ),
             cv.Required(CONF_DEVICE_ID): validate_device_id,
+            cv.Optional(CONF_LINKED_REMOTES): cv.ensure_list(validate_device_id),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -35,3 +37,7 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_HOME_IO_CONTROL_ID])
     cg.add(var.set_parent(parent))
     cg.add(var.set_device_id(config[CONF_DEVICE_ID]))
+
+    if CONF_LINKED_REMOTES in config:
+        for remote_id in config[CONF_LINKED_REMOTES]:
+            cg.add(parent.add_linked_remote(remote_id, config[CONF_DEVICE_ID]))

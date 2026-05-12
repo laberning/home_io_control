@@ -9,6 +9,7 @@ DEPENDENCIES = ["home_io_control"]
 
 CONF_DEVICE_ID = "io_device_id"
 CONF_INVERT_POSITION = "invert_position"
+CONF_LINKED_REMOTES = "linked_remotes"
 
 IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component)
 
@@ -21,6 +22,7 @@ CONFIG_SCHEMA = (
             ),
             cv.Required(CONF_DEVICE_ID): validate_device_id,
             cv.Optional(CONF_INVERT_POSITION, default=False): cv.boolean,
+            cv.Optional(CONF_LINKED_REMOTES): cv.ensure_list(validate_device_id),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -35,3 +37,7 @@ async def to_code(config):
     cg.add(var.set_parent(parent))
     cg.add(var.set_device_id(config[CONF_DEVICE_ID]))
     cg.add(var.set_invert_position(config[CONF_INVERT_POSITION]))
+
+    if CONF_LINKED_REMOTES in config:
+        for remote_id in config[CONF_LINKED_REMOTES]:
+            cg.add(parent.add_linked_remote(remote_id, config[CONF_DEVICE_ID]))

@@ -75,6 +75,13 @@ class IOHomeControlComponent : public Component,
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
 
+  /// Declare that a remote (identified by its node ID) controls a registered device.
+  /// When activity from this remote is overheard, a status poll is scheduled for the device.
+  /// This is needed for 1W remotes whose destination address differs from the device's 2W ID.
+  void add_linked_remote(const std::string &remote_id, const std::string &device_id) {
+    this->linked_remotes_[remote_id].push_back(device_id);
+  }
+
   // --- Device management (called by cover platform) ---
   /// Add a device to the registry (called by platform entities during setup).
   virtual void add_device(const std::string &device_id);
@@ -226,6 +233,9 @@ class IOHomeControlComponent : public Component,
   std::map<std::string, IoDevice> devices_;
   std::vector<DeviceUpdateCallback> callbacks_;
   std::deque<PendingOperation> pending_operations_;
+  /// Maps remote node IDs to lists of device IDs they control.
+  /// Used to trigger status polls when 1W remote activity is overheard.
+  std::map<std::string, std::vector<std::string>> linked_remotes_;
 };
 
 // ============================================================================
