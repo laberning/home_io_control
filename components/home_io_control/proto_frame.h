@@ -143,6 +143,10 @@ static constexpr uint8_t POS_FAVORITE = 0xD8;  ///< Move to favorite/"My" positi
 /// In status responses, position is encoded as a 16-bit value where
 /// 0x0000 = fully open (0%) and 0xC800 = fully closed (100%).
 static constexpr uint16_t STATUS_POS_MAX = 0xC800;
+/// Target-reached tolerance expressed in raw IO-homecontrol position units.
+/// 100 raw units out of 51200 full-scale is about 0.195%, so this only absorbs
+/// tiny target/current mismatches from device rounding or early stopped flags.
+static constexpr uint16_t STATUS_POS_TOLERANCE_RAW = 100;
 
 /// Status byte flags in CMD_PRIVATE_RESP and CMD_STATUS_UPDATE.
 static constexpr uint8_t STATUS_STOPPED = 0x01;   ///< Byte 0 bit 0: device is not moving
@@ -276,6 +280,7 @@ bool hex_to_bytes(const std::string &hex, uint8_t *out, uint8_t len);
 std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]);
 bool default_inverted_for_type(DeviceType type);
 void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target, float &position);
+bool has_reached_target_position(float target, float position);
 float decode_tilt_report(uint16_t tilt_raw);
 uint16_t crc_ccitt(const uint8_t *data, uint8_t len);
 

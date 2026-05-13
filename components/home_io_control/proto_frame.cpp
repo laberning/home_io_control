@@ -4,6 +4,7 @@
 #include "proto_frame.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 
 namespace esphome {
@@ -47,14 +48,35 @@ bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HOR
 
 void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target,
                             float &position) {
-  target = (target_raw <= STATUS_POS_MAX) ? target_raw * 100.0F / STATUS_POS_MAX : UNKNOWN_POSITION;
-  if (current_raw <= STATUS_POS_MAX) {
-    position = current_raw * 100.0F / STATUS_POS_MAX;
-  } else if (is_stopped && target_raw <= STATUS_POS_MAX) {
+  bool const target_valid = target_raw <= STATUS_POS_MAX;
+  bool const current_valid = current_raw <= STATUS_POS_MAX;
+  float const decoded_current = current_valid ? current_raw * 100.0F / STATUS_POS_MAX : UNKNOWN_POSITION;
+
+  if (target_valid) {
+    target = target_raw * 100.0F / STATUS_POS_MAX;
+  } else if (is_stopped && current_valid) {
+    // Marker values such as D2 (stop) and D4 (keep position during tilt) exceed STATUS_POS_MAX.
+    // When the device says it is stopped and still gives a valid current position, use that as
+    // the effective target instead of discarding the target entirely.
+    target = decoded_current;
+  } else {
+    target = UNKNOWN_POSITION;
+  }
+
+  if (current_valid) {
+    position = decoded_current;
+  } else if (is_stopped && target_valid) {
     position = target;
   } else {
     position = UNKNOWN_POSITION;
   }
+}
+
+bool has_reached_target_position(float target, float position) {
+  if (target == UNKNOWN_POSITION || position == UNKNOWN_POSITION)
+    return false;
+  float const tolerance = STATUS_POS_TOLERANCE_RAW * 100.0F / STATUS_POS_MAX;
+  return std::fabs(target - position) <= tolerance;
 }
 
 float decode_tilt_report(uint16_t tilt_raw) {

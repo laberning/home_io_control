@@ -173,17 +173,18 @@ TEST(PlatformCover, TiltControlQueuesTiltCommand) {
 
   hub.add_device("9CA39C");
   auto *dev = hub.get_device("9CA39C");
-  ASSERT_NE(dev, nullptr);
+  ASSERT_NE(dev, nullptr) << "test device should be retrievable after add_device";
   dev->type = DeviceType::VENETIAN_BLIND;
 
   CoverCall call(&cover);
   call.set_tilt(0.25f);
   cover.control(call);
 
-  EXPECT_EQ(hub.last_set_device_id(), "9CA39C");
+  EXPECT_EQ(hub.last_set_device_id(), "9CA39C") << "tilt command should target the configured device";
   EXPECT_EQ(hub.last_set_tilt(), 25u) << "tilt 0.25 should map to 25% open";
-  ASSERT_FALSE(hub.queued_operations().empty());
-  EXPECT_EQ(hub.queued_operations().back().type, IOHomeControlComponent::PendingOperationType::SET_TILT);
+  ASSERT_FALSE(hub.queued_operations().empty()) << "tilt control should enqueue an operation";
+  EXPECT_EQ(hub.queued_operations().back().type, IOHomeControlComponent::PendingOperationType::SET_TILT)
+      << "queued operation should be SET_TILT";
 }
 
 TEST(PlatformCover, DeviceUpdatePublishesTilt) {
@@ -194,7 +195,7 @@ TEST(PlatformCover, DeviceUpdatePublishesTilt) {
 
   hub.add_device("9CA39C");
   auto *registered = hub.get_device("9CA39C");
-  ASSERT_NE(registered, nullptr);
+  ASSERT_NE(registered, nullptr) << "registered device should be available for type configuration";
   registered->type = DeviceType::VENETIAN_BLIND;
 
   cover.setup();
@@ -209,7 +210,7 @@ TEST(PlatformCover, DeviceUpdatePublishesTilt) {
   EXPECT_FLOAT_EQ(cover.tilt, 0.40f) << "tilt 40% open should map to HA 0.40";
 }
 
-TEST(PlatformCover, IgnoresMovingDevice) {
+TEST(PlatformCover, MovingDevicePublishesPositionAndOperation) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
@@ -217,14 +218,40 @@ TEST(PlatformCover, IgnoresMovingDevice) {
 
   cover.setup();
 
-  // Moving device with position 50%
+  // Moving device with position 50% and target 25%: standard mapping means opening.
   IoDevice dev{};
   dev.position = 50.0f;
+  dev.target = 25.0f;
   dev.is_stopped = false;
   hub.trigger_device_update("9CA39C", dev);
 
-  // Should not publish (position stays UNKNOWN_POSITION)
-  EXPECT_FLOAT_EQ(cover.position, UNKNOWN_POSITION) << "moving device position should remain unknown";
+  EXPECT_FLOAT_EQ(cover.position, 0.50f) << "moving device position should still be published to HA";
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING) << "target below current should indicate opening";
+}
+
+TEST(PlatformCover, StoppedDeviceReturnsToIdleOperation) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("9CA39C");
+
+  cover.setup();
+
+  IoDevice moving{};
+  moving.position = 50.0f;
+  moving.target = 75.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("9CA39C", moving);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_CLOSING)
+      << "target above current should set closing before the stopped update arrives";
+
+  IoDevice stopped{};
+  stopped.position = 75.0f;
+  stopped.target = 75.0f;
+  stopped.is_stopped = true;
+  hub.trigger_device_update("9CA39C", stopped);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE) << "stopped updates should return the cover to idle";
 }
 
 TEST(PlatformCover, UnknownPositionNotPublished) {

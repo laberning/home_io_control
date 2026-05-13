@@ -70,18 +70,18 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   if (id != this->device_id_)
     return;
 
-  if (dev.position == UNKNOWN_POSITION || !dev.is_stopped)
-    return;
+  if (dev.position != UNKNOWN_POSITION) {
+    // Convert IO position (0-100) back to HA position (0.0-1.0)
+    float ha_pos;
+    if (this->invert_) {
+      ha_pos = dev.position / 100.0F;
+    } else {
+      ha_pos = 1.0F - (dev.position / 100.0F);
+    }
 
-  // Convert IO position (0-100) back to HA position (0.0-1.0)
-  float ha_pos;
-  if (this->invert_) {
-    ha_pos = dev.position / 100.0F;
-  } else {
-    ha_pos = 1.0F - (dev.position / 100.0F);
+    this->position = ha_pos;
   }
 
-  this->position = ha_pos;
   if (this->supports_tilt() && dev.tilt != UNKNOWN_POSITION) {
     this->tilt = dev.tilt / 100.0F;
   }
@@ -89,7 +89,7 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   // Determine movement direction for the HA UI animation
   if (dev.is_stopped) {
     this->current_operation = cover::COVER_OPERATION_IDLE;
-  } else if (dev.target != UNKNOWN_POSITION) {
+  } else if (dev.target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION) {
     // Figure out if we're opening or closing based on target vs current position
     if (this->invert_) {
       this->current_operation =

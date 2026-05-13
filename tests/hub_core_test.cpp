@@ -140,6 +140,50 @@ TEST(HubCore, FormatPositionHelper) {
   EXPECT_STREQ(format_position(37.5f).c_str(), "38%") << "37.5 should round to '38%'";
 }
 
+TEST(HubCore, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
+  IOHomeControlComponent comp;
+  comp.add_device("9CA39C");
+
+  IoFrame frame{};
+  init_frame(frame, true, false, false, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t device[3] = {0x9C, 0xA3, 0x9C};
+  set_dst(frame, own);
+  set_src(frame, device);
+  uint8_t payload[8] = {STATUS_STOPPED, 0x00, POS_UNKNOWN, 0x00, 0x64, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  comp.update_device_status_(frame);
+
+  auto *dev = comp.get_device("9CA39C");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->position, 50.0f) << "valid current should decode to 50 percent";
+  EXPECT_FLOAT_EQ(dev->target, 50.0f) << "marker target should normalize to current when stopped";
+  EXPECT_TRUE(dev->is_stopped) << "matching normalized target/current should remain stopped";
+}
+
+TEST(HubCore, StoppedFlagMismatchKeepsDeviceMoving) {
+  IOHomeControlComponent comp;
+  comp.add_device("9CA39C");
+
+  IoFrame frame{};
+  init_frame(frame, true, false, false, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t device[3] = {0x9C, 0xA3, 0x9C};
+  set_dst(frame, own);
+  set_src(frame, device);
+  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0x64, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  comp.update_device_status_(frame);
+
+  auto *dev = comp.get_device("9CA39C");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->target, 100.0f) << "valid target should decode to 100 percent";
+  EXPECT_FLOAT_EQ(dev->position, 50.0f) << "valid current should decode to 50 percent";
+  EXPECT_FALSE(dev->is_stopped) << "stopped flag should be overridden when target and current are still far apart";
+}
+
 // ============================================================================
 // Listen-before-talk (LBT) tests
 // ============================================================================

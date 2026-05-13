@@ -153,9 +153,20 @@ TEST(ProtoFrame, StatusPositionDecoding) {
   EXPECT_FLOAT_EQ(target, 25.0f) << "quarter target raw value should decode to 25 percent";
   EXPECT_FLOAT_EQ(position, 25.0f) << "stopped device with invalid current raw value should fall back to target";
 
+  decode_position_report(POS_UNKNOWN << 8, STATUS_POS_MAX / 2, true, target, position);
+  EXPECT_FLOAT_EQ(target, 50.0f) << "marker target should fall back to current position when stopped";
+  EXPECT_FLOAT_EQ(position, 50.0f) << "valid current raw value should still decode normally";
+
   decode_position_report(STATUS_POS_MAX + 1, STATUS_POS_MAX + 1, false, target, position);
   EXPECT_FLOAT_EQ(target, UNKNOWN_POSITION) << "invalid target raw value should stay unknown";
   EXPECT_FLOAT_EQ(position, UNKNOWN_POSITION) << "invalid current raw value should stay unknown while moving";
+}
+
+TEST(ProtoFrame, ReachedTargetTolerance) {
+  EXPECT_TRUE(has_reached_target_position(50.0f, 50.1f))
+      << "small differences inside tolerance should count as reached";
+  EXPECT_FALSE(has_reached_target_position(50.0f, 51.0f)) << "larger differences should not count as reached";
+  EXPECT_FALSE(has_reached_target_position(UNKNOWN_POSITION, 50.0f)) << "unknown target should never count as reached";
 }
 
 TEST(ProtoFrame, CrcCcittKnownVector) {

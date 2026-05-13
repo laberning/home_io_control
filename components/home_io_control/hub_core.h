@@ -128,6 +128,11 @@ class IOHomeControlComponent : public Component,
   void process_received_packet_(const RadioRxPacket &packet);
   /// Extract position/status info from a status or status-update frame and merge into device record.
   void update_device_status_(const IoFrame &frame);
+  /// Schedule a delayed status poll for a registered device using the Component timeout API.
+  void schedule_status_poll_(const std::string &device_id, uint32_t delay_ms);
+  /// Shared request/response helper for high-level operations.
+  bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
+                                   uint32_t retry_after_fail_ms = 0);
   /// Fire all registered device update callbacks for the given device ID.
   void notify_device_update_(const std::string &id);
   /// Pop next pending operation from the queue and execute it (set position, request status, discover).
