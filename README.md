@@ -15,13 +15,13 @@ An [ESPHome](https://esphome.io/) external component that implements the **IO-Ho
 ## Features
 
 - **Cover control**: Open, close, stop, and set position (0–100%) for shutters, blinds, awnings, window openers, garage openers, gate openers, rolling doors, curtain tracks, and related position-based devices
+- **Tilt support for venetian-style blinds**: Tilt-capable device types expose slat-angle control automatically in Home Assistant when the paired device reports tilt support
 - **Experimental binary light support**: On/off-only light entities for IO-Homecontrol light devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
 - **Position feedback**: Real-time position updates from devices (2-Way protocol)
 - **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity
-- **Home Assistant integration**: Cover devices appear as native cover entities with full position support
+- **Home Assistant integration**: Cover devices appear as native cover entities with full position support, and tilt-capable blinds also expose slat-angle control
 - **SX1276 & SX1262 support**: Works with both radio chips — SX1276 uses hardware IoHomeOn mode, SX1262 uses software CRC
-- **Shared protocol layer**: The same high-level exchange logic runs on both radios, with chip-specific workarounds kept local to the radio boundary
 - **Auto-detection**: Automatically detects which radio chip is connected, or configure explicitly
 
 ## Hardware Requirements

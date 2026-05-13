@@ -57,6 +57,12 @@ void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_s
   }
 }
 
+float decode_tilt_report(uint16_t tilt_raw) {
+  if (tilt_raw > STATUS_POS_MAX)
+    return UNKNOWN_POSITION;
+  return 100.0F - (tilt_raw * 100.0F / STATUS_POS_MAX);
+}
+
 /// CRC-CCITT used by the IO-Homecontrol protocol for frame validation.
 /// Polynomial: 0x1021 (reversed 0x8408), initial value: 0x0000.
 /// On SX1276 this is computed in hardware (IoHomeOn mode); on SX1262 it is
@@ -304,9 +310,21 @@ bool device_supports_status_requests(DeviceType type) {
   return device_supports_position_control(type) || device_supports_binary_control(type);
 }
 
+bool device_supports_tilt(DeviceType type) {
+  switch (type) {
+    case DeviceType::VENETIAN_BLIND:
+    case DeviceType::BLIND:
+    case DeviceType::EXTERNAL_VENETIAN_BLIND:
+    case DeviceType::LOUVRE_BLIND:
+      return true;
+    default:
+      return false;
+  }
+}
+
 const char *device_operation_profile_name(DeviceType type) {
   if (device_supports_position_control(type))
-    return "cover_position";
+    return device_supports_tilt(type) ? "cover_position_tilt" : "cover_position";
   if (device_supports_binary_control(type))
     return "binary_on_off";
 

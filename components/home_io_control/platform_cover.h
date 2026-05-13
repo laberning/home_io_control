@@ -32,6 +32,7 @@ class IOHomeCover : public cover::Cover, public Component {
   /// If true, the position mapping is inverted (some devices like horizontal awnings
   /// report 0 as closed and 100 as open, opposite to the standard).
   void set_invert_position(bool invert) { this->invert_ = invert; }
+  [[nodiscard]] bool supports_tilt() const;
 
  protected:
   /// Called when Home Assistant sends a cover command (open/close/stop/set position).

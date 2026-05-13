@@ -245,6 +245,7 @@ const char *device_capability_class_name(DeviceType type);
 bool device_supports_position_control(DeviceType type);
 bool device_supports_binary_control(DeviceType type);
 bool device_supports_status_requests(DeviceType type);
+bool device_supports_tilt(DeviceType type);
 const char *device_operation_profile_name(DeviceType type);
 
 // ============================================================================
@@ -262,6 +263,7 @@ struct IoDevice {
   uint8_t subtype{0};                    ///< Device subtype (manufacturer-specific)
   char name[32]{};                       ///< Device name (from device, Latin-1 encoded)
   float position{UNKNOWN_POSITION};      ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION
+  float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION
   float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward
   bool is_stopped{true};                 ///< True if device is not currently moving
   bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning)
@@ -274,6 +276,7 @@ bool hex_to_bytes(const std::string &hex, uint8_t *out, uint8_t len);
 std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]);
 bool default_inverted_for_type(DeviceType type);
 void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target, float &position);
+float decode_tilt_report(uint16_t tilt_raw);
 uint16_t crc_ccitt(const uint8_t *data, uint8_t len);
 
 }  // namespace home_io_control

@@ -55,6 +55,34 @@ bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   return set_cmd(f, CMD_PRIVATE, d, 3);
 }
 
+/// Build a tilt execute command (0x00) for devices that support slat angle control.
+/// @param tilt_percent 0=fully closed, 100=fully open.
+bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t tilt_percent) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+
+  auto const tilt_value = static_cast<uint16_t>((100 - tilt_percent) * STATUS_POS_MAX / 100);
+  uint8_t d[8] = {0x01,
+                  0xE7,
+                  POS_UNKNOWN,
+                  0x00,
+                  0x20,
+                  static_cast<uint8_t>((tilt_value >> 8) & 0xFF),
+                  static_cast<uint8_t>(tilt_value & 0xFF),
+                  0x00};
+  return set_cmd(f, CMD_EXECUTE, d, 8);
+}
+
+/// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
+bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+  init_frame(f, true, true, false, true);
+  set_dst(f, dst);
+  set_src(f, own);
+  uint8_t d[4] = {0x03, 0x20, 0x01, 0x00};
+  return set_cmd(f, CMD_PRIVATE, d, 4);
+}
+
 /// Build a discovery broadcast (0x28). Sent to the broadcast address 0x00003B.
 /// Only devices in pairing mode (PROG button pressed) will respond.
 bool create_discover(IoFrame &f, const uint8_t *own) {

@@ -93,6 +93,8 @@ class IOHomeControlComponent : public Component,
   // --- High-level operations ---
   /// Send a position command to a device. Returns true if device acknowledged.
   virtual bool set_device_position(const std::string &device_id, uint8_t position);
+  /// Send a tilt command to a tilt-capable cover. Returns true if device acknowledged.
+  virtual bool set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
   /// Request current status from a device. Returns true if status received.
   virtual bool request_device_status(const std::string &device_id);
   /// Discover and pair a device that is in pairing mode. Returns true on success.
@@ -103,6 +105,8 @@ class IOHomeControlComponent : public Component,
   virtual bool set_switch_state(const std::string &device_id, bool on);
   /// Queue an async position update; returns immediately, executed in loop().
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
+  /// Queue an async tilt update; returns immediately, executed in loop().
+  virtual void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
   /// Queue an async status request; returns immediately, executed in loop().
   virtual void queue_request_device_status(const std::string &device_id);
   /// Queue a pairing operation; executed in loop() when radio idle.
@@ -163,6 +167,7 @@ class IOHomeControlComponent : public Component,
 
   enum class PendingOperationType : uint8_t {
     SET_POSITION,
+    SET_TILT,
     SET_LIGHT_STATE,
     SET_SWITCH_STATE,
     REQUEST_STATUS,

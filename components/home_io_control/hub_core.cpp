@@ -37,6 +37,10 @@ static bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t p
   return is_binary_entity_position(position) && device_supports_binary_control(dev.type);
 }
 
+static bool known_device_accepts_execute_tilt(const IoDevice &dev) {
+  return dev.type != DeviceType::UNKNOWN && device_supports_tilt(dev.type);
+}
+
 static void log_rejected_operation(const std::string &device_id, const IoDevice &dev, const char *operation,
                                    const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
@@ -269,6 +273,10 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     uint16_t const tgt = (frame.data[2] << 8) | frame.data[3];
     uint16_t const cur = (frame.data[4] << 8) | frame.data[5];
     decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
+    if (device_supports_tilt(dev.type) && frame.data_len >= 15 && frame.data[12] == 0x20) {
+      uint16_t const tilt_raw = (frame.data[13] << 8) | frame.data[14];
+      dev.tilt = decode_tilt_report(tilt_raw);
+    }
     uint32_t update_delay_ms = 60000;  // default: standard poll interval
     if (dev.is_stopped) {
       update_delay_ms = 3600000;
@@ -444,6 +452,32 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
   return true;
 }
 
+bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  if (!known_device_accepts_execute_tilt(*dev)) {
+    log_rejected_operation(device_id, *dev, "set tilt", "tilt-capable cover");
+    return false;
+  }
+
+  ESP_LOGI(TAG, "Sending tilt=%u%% to device %s (profile=%s)", tilt_percent, device_id.c_str(),
+           device_operation_profile_name(dev->type));
+
+  IoFrame req;
+  IoFrame resp;
+  if (!create_execute_tilt(req, this->node_id_, dev->node_id, true, tilt_percent))
+    return false;
+  if (!this->send_and_receive_(req, resp, FREQ_CH2)) {
+    this->log_exchange_debug_(device_id.c_str());
+    ESP_LOGW(TAG, "No response from device %s", device_id.c_str());
+    return false;
+  }
+  this->update_device_status_(resp);
+  return true;
+}
+
 bool IOHomeControlComponent::request_device_status(const std::string &device_id) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
@@ -456,7 +490,9 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
 
   IoFrame req;
   IoFrame resp;
-  if (!create_get_status(req, this->node_id_, dev->node_id))
+  bool const request_ok = device_supports_tilt(dev->type) ? create_get_status_tilt(req, this->node_id_, dev->node_id)
+                                                          : create_get_status(req, this->node_id_, dev->node_id);
+  if (!request_ok)
     return false;
   if (!this->send_and_receive_(req, resp, FREQ_CH2)) {
     dev->next_update = millis() + STATUS_RETRY_AFTER_FAIL_MS;
@@ -503,6 +539,15 @@ void IOHomeControlComponent::queue_set_device_position(const std::string &device
     return;
   }
   this->pending_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
+}
+
+void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
+  IoDevice *dev = this->get_device(device_id);
+  if (dev != nullptr && !known_device_accepts_execute_tilt(*dev)) {
+    log_rejected_operation(device_id, *dev, "queued tilt command", "tilt-capable cover");
+    return;
+  }
+  this->pending_operations_.push_back({PendingOperationType::SET_TILT, device_id, tilt_percent});
 }
 
 void IOHomeControlComponent::queue_request_device_status(const std::string &device_id) {
@@ -558,6 +603,9 @@ void IOHomeControlComponent::process_pending_operation_() {
   switch (operation.type) {
     case PendingOperationType::SET_POSITION:
       this->set_device_position(operation.device_id, operation.position);
+      break;
+    case PendingOperationType::SET_TILT:
+      this->set_device_tilt(operation.device_id, operation.position);
       break;
     case PendingOperationType::SET_LIGHT_STATE:
       this->set_light_state(operation.device_id, operation.position == BINARY_ENTITY_ON_POSITION);

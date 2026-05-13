@@ -53,6 +53,13 @@ cover:
     io_device_id: "A1B2C3"
     invert_position: true
 
+  - platform: home_io_control
+    home_io_control_id: home_io_hub
+    id: demo_blind_cover
+    name: "Demo Blind"
+    device_class: blind
+    io_device_id: "A1B2C4"
+
 light:
   - platform: home_io_control
     home_io_control_id: home_io_hub

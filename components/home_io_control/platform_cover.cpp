@@ -22,13 +22,28 @@ cover::CoverTraits IOHomeCover::get_traits() {
   auto traits = cover::CoverTraits();
   traits.set_supports_position(true);  // Slider in HA UI
   traits.set_supports_stop(true);      // Stop button in HA UI
+  traits.set_supports_tilt(this->supports_tilt());
   traits.set_is_assumed_state(false);  // We hopefully get real feedback from the device
   return traits;
+}
+
+bool IOHomeCover::supports_tilt() const {
+  if (this->parent_ == nullptr)
+    return false;
+  const auto *dev = this->parent_->get_device(this->device_id_);
+  return dev != nullptr && device_supports_tilt(dev->type);
 }
 
 void IOHomeCover::control(const cover::CoverCall &call) {
   if (call.get_stop()) {
     this->parent_->queue_set_device_position(this->device_id_, POS_STOP);
+    return;
+  }
+
+  const auto &tilt_opt = call.get_tilt();
+  if (tilt_opt.has_value()) {
+    auto const tilt = static_cast<uint8_t>(*tilt_opt * 100.0F);
+    this->parent_->queue_set_device_tilt(this->device_id_, tilt);
     return;
   }
 
@@ -67,6 +82,9 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   }
 
   this->position = ha_pos;
+  if (this->supports_tilt() && dev.tilt != UNKNOWN_POSITION) {
+    this->tilt = dev.tilt / 100.0F;
+  }
 
   // Determine movement direction for the HA UI animation
   if (dev.is_stopped) {
@@ -90,6 +108,7 @@ void IOHomeCover::dump_config() {
   LOG_COVER("", "IO-Homecontrol Cover", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Invert Position: %s", YESNO(this->invert_));
+  ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt()));
 }
 
 }  // namespace home_io_control

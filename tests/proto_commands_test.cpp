@@ -123,6 +123,32 @@ TEST(ProtoCommands, CreateGetStatus) {
   EXPECT_FALSE(is_end(frame)) << "get-status should not be an end frame";
 }
 
+TEST(ProtoCommands, CreateGetStatusTilt) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_get_status_tilt(frame, test::OWN_ID, test::DST_ID)) << "create_get_status_tilt should succeed";
+  EXPECT_EQ(frame.cmd, CMD_PRIVATE) << "tilt-aware get-status should still use CMD_PRIVATE (0x03)";
+  EXPECT_EQ(frame.data_len, 4) << "tilt-aware get-status should have 4-byte payload";
+  EXPECT_EQ(frame.data[0], 0x03);
+  EXPECT_EQ(frame.data[1], 0x20);
+  EXPECT_EQ(frame.data[2], 0x01);
+  EXPECT_EQ(frame.data[3], 0x00);
+}
+
+TEST(ProtoCommands, CreateExecuteTilt) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute_tilt(frame, test::OWN_ID, test::DST_ID, true, 25)) << "create_execute_tilt should succeed";
+  EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "tilt execute should still use CMD_EXECUTE (0x00)";
+  EXPECT_EQ(frame.data_len, 8) << "tilt execute should use 8-byte payload";
+  EXPECT_EQ(frame.data[0], 0x01) << "tilt originator should be user";
+  EXPECT_EQ(frame.data[1], 0xE7) << "tilt ACEI should match observed tilt traffic";
+  EXPECT_EQ(frame.data[2], POS_UNKNOWN) << "tilt execute should keep position unchanged via unknown marker";
+  EXPECT_EQ(frame.data[3], 0x00);
+  EXPECT_EQ(frame.data[4], 0x20) << "tilt execute should set the tilt separator flag";
+  EXPECT_EQ(frame.data[5], 0x96) << "25% open corresponds to 75% closed => 0x9600";
+  EXPECT_EQ(frame.data[6], 0x00);
+  EXPECT_EQ(frame.data[7], 0x00);
+}
+
 // ========================================================================================
 // Key transfer and challenge response
 // ========================================================================================

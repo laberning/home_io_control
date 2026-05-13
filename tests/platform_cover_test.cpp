@@ -26,6 +26,11 @@ class MockHub : public IOHomeControlComponent {
     last_set_position_ = position;
     return true;
   }
+  bool set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override {
+    last_set_device_id_ = device_id;
+    last_set_tilt_ = tilt_percent;
+    return true;
+  }
   bool request_device_status(const std::string &device_id) override {
     last_request_device_id_ = device_id;
     return true;
@@ -46,6 +51,11 @@ class MockHub : public IOHomeControlComponent {
     last_set_device_id_ = device_id;
     last_set_position_ = position;
     queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_POSITION, device_id, position});
+  }
+  void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override {
+    last_set_device_id_ = device_id;
+    last_set_tilt_ = tilt_percent;
+    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_TILT, device_id, tilt_percent});
   }
   void queue_request_device_status(const std::string &device_id) override {
     queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::REQUEST_STATUS, device_id, 0});
@@ -76,6 +86,7 @@ class MockHub : public IOHomeControlComponent {
   // Test accessors
   const std::string &last_set_device_id() const { return last_set_device_id_; }
   uint8_t last_set_position() const { return last_set_position_; }
+  uint8_t last_set_tilt() const { return last_set_tilt_; }
   const std::string &last_request_device_id() const { return last_request_device_id_; }
   const std::deque<PendingOperation> &queued_operations() const { return queued_operations_; }
 
@@ -89,6 +100,7 @@ class MockHub : public IOHomeControlComponent {
  private:
   std::string last_set_device_id_;
   uint8_t last_set_position_{0};
+  uint8_t last_set_tilt_{0};
   std::string last_request_device_id_;
   std::deque<PendingOperation> queued_operations_;
 };
@@ -151,6 +163,50 @@ TEST(PlatformCover, DeviceUpdateToHAPosition) {
   cover.set_invert_position(true);
   hub.trigger_device_update("9CA39C", dev);
   EXPECT_FLOAT_EQ(cover.position, 0.75f) << "with invert=true, IO position 75% should map to HA 0.75";
+}
+
+TEST(PlatformCover, TiltControlQueuesTiltCommand) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("9CA39C");
+
+  hub.add_device("9CA39C");
+  auto *dev = hub.get_device("9CA39C");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;
+
+  CoverCall call(&cover);
+  call.set_tilt(0.25f);
+  cover.control(call);
+
+  EXPECT_EQ(hub.last_set_device_id(), "9CA39C");
+  EXPECT_EQ(hub.last_set_tilt(), 25u) << "tilt 0.25 should map to 25% open";
+  ASSERT_FALSE(hub.queued_operations().empty());
+  EXPECT_EQ(hub.queued_operations().back().type, IOHomeControlComponent::PendingOperationType::SET_TILT);
+}
+
+TEST(PlatformCover, DeviceUpdatePublishesTilt) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("9CA39C");
+
+  hub.add_device("9CA39C");
+  auto *registered = hub.get_device("9CA39C");
+  ASSERT_NE(registered, nullptr);
+  registered->type = DeviceType::VENETIAN_BLIND;
+
+  cover.setup();
+
+  IoDevice dev{};
+  dev.type = DeviceType::VENETIAN_BLIND;
+  dev.position = 75.0f;
+  dev.tilt = 40.0f;
+  dev.is_stopped = true;
+  hub.trigger_device_update("9CA39C", dev);
+
+  EXPECT_FLOAT_EQ(cover.tilt, 0.40f) << "tilt 40% open should map to HA 0.40";
 }
 
 TEST(PlatformCover, IgnoresMovingDevice) {
