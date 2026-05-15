@@ -93,11 +93,6 @@ void log_discovery_diagnostic(decisions::PairingDiscoveryDisposition disp) {
 ///
 /// The function distinguishes between NO_RESPONSE (no packets seen at all) and
 /// INVALID (some packets seen but none were valid discovery responses).
-///
-/// @param timeout_ms       Maximum time to wait in milliseconds.
-/// @param packet           Output: raw RadioRxPacket of the accepted frame.
-/// @param response_frame   Output: parsed IoFrame of the accepted frame.
-/// @return PairingDiscoveryDisposition: ACCEPT on success; NO_RESPONSE or INVALID otherwise.
 decisions::PairingDiscoveryDisposition IOHomeControlComponent::wait_for_discovery_response_(uint32_t timeout_ms,
                                                                                             RadioRxPacket &packet,
                                                                                             IoFrame &response_frame) {
@@ -126,12 +121,6 @@ decisions::PairingDiscoveryDisposition IOHomeControlComponent::wait_for_discover
 /// challenge. This helper loops until such a frame is received and validated
 /// by `decisions::classify_pairing_key_challenge()` — it must be a 0x3C
 /// command, 6 bytes long, and come from the discovered device node ID.
-///
-/// @param timeout_ms        Maximum time to wait in milliseconds.
-/// @param packet            Output: raw RadioRxPacket of the challenge frame.
-/// @param challenge_frame   Output: parsed IoFrame containing the challenge.
-/// @param device_node_id    Node ID of the device we are pairing (expected sender).
-/// @return true if a valid challenge was received; false on timeout.
 bool IOHomeControlComponent::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet,
                                                      IoFrame &challenge_frame,
                                                      const uint8_t device_node_id[NODE_ID_SIZE]) {
@@ -161,10 +150,6 @@ bool IOHomeControlComponent::wait_for_key_challenge_(uint32_t timeout_ms, RadioR
 ///   type    = data[0] << 2 | data[1] >> 6
 ///   subtype = data[1] & 0x3F
 /// The inversion flag is derived from the type via `default_inverted_for_type()`.
-///
-/// @param frame       Parsed discovery response.
-/// @param device      Output: populated IoDevice (node_id, type, subtype, inverted, position/target/stopped).
-/// @param device_id   Output: hex string representation of node ID.
 void IOHomeControlComponent::parse_device_from_discovery(const IoFrame &frame, IoDevice &device,
                                                          std::string &device_id) {
   memcpy(device.node_id, frame.src, NODE_ID_SIZE);
@@ -190,9 +175,6 @@ void IOHomeControlComponent::parse_device_from_discovery(const IoFrame &frame, I
 /// `context.device` and `context.device_id` and the function returns ACCEPT.
 /// On failure returns NO_RESPONSE (no packets) or INVALID (packets seen but
 /// none were valid discovery frames).
-///
-/// @param context Pairing context modified on success.
-/// @return PairingDiscoveryDisposition: ACCEPT, NO_RESPONSE, or INVALID.
 decisions::PairingDiscoveryDisposition IOHomeControlComponent::run_discovery_phase_(pairing::PairingContext &context) {
   context.state = pairing::PairingState::TX_DISCOVER;
   this->record_exchange_debug_(pairing_stage_name(context.state), 1, false);
@@ -220,9 +202,6 @@ decisions::PairingDiscoveryDisposition IOHomeControlComponent::run_discovery_pha
 ///
 /// Each step updates the pairing state for observability. Any failure returns
 /// false immediately; the orchestrator will clean up and abort pairing.
-///
-/// @param context Pairing context populated by run_discovery_phase_().
-/// @return true if key exchange completes successfully; false otherwise.
 bool IOHomeControlComponent::run_key_exchange_phase_(pairing::PairingContext &context) {
   context.state = pairing::PairingState::TX_KEY_INIT;
   this->record_exchange_debug_(pairing_stage_name(context.state), 1, false);
@@ -260,9 +239,6 @@ bool IOHomeControlComponent::run_key_exchange_phase_(pairing::PairingContext &co
 /// `create_set_config1()` returns false, but the pairing itself is already
 /// complete at this point. The function always returns true to avoid aborting
 /// a successfully paired device.
-///
-/// @param context Pairing context with device information.
-/// @return true (pairing proceeds regardless of set‑config outcome).
 bool IOHomeControlComponent::finalize_pairing_configuration_(pairing::PairingContext &context) {
   if (create_set_config1(context.req, this->node_id_, context.device.node_id))
     this->send_and_receive_(context.req, context.resp, FREQ_CH2);
@@ -302,11 +278,8 @@ bool IOHomeControlComponent::discover_and_pair() {
     return false;
   }
 
-  // Phase 3: Final configuration
-  if (!this->finalize_pairing_configuration_(context)) {
-    this->busy_ = false;
-    return false;
-  }
+  // Phase 3: Final configuration — best-effort SetConfig1
+  this->finalize_pairing_configuration_(context);
 
   // Persist device
   this->devices_[context.device_id] = context.device;

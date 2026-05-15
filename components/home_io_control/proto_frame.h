@@ -44,11 +44,11 @@ static constexpr uint16_t SX1262_AUTH_RESPONSE_PREAMBLE = 46;  ///< SX1262-speci
 static constexpr int32_t HOP_TIME_US = 2700;             ///< Time per channel when hopping (2.7ms)
 static constexpr int32_t RESPONSE_CHANNEL_WAIT_MS = 50;  ///< Per-channel dwell while waiting for an exchange response
 static constexpr int32_t RESPONSE_WAIT_MS = 500;         ///< Wait for response to non-start frame
-static constexpr int32_t RESPONSE_START_WAIT_MS = 800;   ///< Wait for response to start frame (longer)
+static constexpr int32_t RESPONSE_START_WAIT_MS = 300;   ///< Wait for response to start frame (longer)
 static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
     RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response
-static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 100;  ///< Gap between retries within one HA command
-static constexpr uint8_t EXCHANGE_RETRY_COUNT = 4;       ///< Attempts per command before reporting failure
+static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
+static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
 
 /// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.
 /// Before transmitting, the radio checks that the channel RSSI is below the
@@ -170,118 +170,214 @@ static constexpr uint8_t BROADCAST_DISCOVER[NODE_ID_SIZE] = {0x00, 0x00, 0x3B};
 // Frame Structure
 // ============================================================================
 
-/// An IO-Homecontrol frame as parsed from the radio.
-/// Over the air: [CTRL0][CTRL1][DST 3B][SRC 3B][CMD][DATA 0-23B][CRC 2B]
-/// The CRC is handled by the SX1276 hardware (IoHomeOn mode) and is not
-/// included in this struct.
+/// @brief Parsed IO‑Homecontrol frame (CTRL0/1 + addresses + command + data).
+///
+/// Over the air layout: [CTRL0][CTRL1][DST 3B][SRC 3B][CMD][DATA 0-23B][CRC 2B].
+/// The CRC is handled by hardware on SX1276 (IoHomeOn) and by software on SX1262;
+/// it is not included in this struct.
 struct IoFrame {
-  uint8_t ctrl0;                      ///< Control byte 0: flags + length
+  uint8_t ctrl0;                      ///< Control byte 0: flags + length.
   uint8_t ctrl1;                      ///< Control byte 1: low power, beacon, etc.
-  uint8_t dst[NODE_ID_SIZE];          ///< Destination node ID (3 bytes)
-  uint8_t src[NODE_ID_SIZE];          ///< Source node ID (3 bytes)
-  uint8_t cmd;                        ///< Command ID
-  uint8_t data[FRAME_MAX_DATA_SIZE];  ///< Command parameters (0-23 bytes)
-  uint8_t data_len;                   ///< Actual length of data
+  uint8_t dst[NODE_ID_SIZE];          ///< Destination node ID (3 bytes).
+  uint8_t src[NODE_ID_SIZE];          ///< Source node ID (3 bytes).
+  uint8_t cmd;                        ///< Command ID.
+  uint8_t data[FRAME_MAX_DATA_SIZE];  ///< Command parameters (0–23 bytes).
+  uint8_t data_len;                   ///< Actual length of data.
 };
 
 // --- Frame construction and parsing ---
+/// Initialize an IoFrame header (ctrl0/ctrl1) with flags.
+/// @param f Frame to initialize.
+/// @param is_2w True for 2‑way (default), false for 1‑way.
+/// @param start Set START flag (first frame in exchange).
+/// @param end Set END flag (final frame in exchange).
+/// @param low_power Set LOW_POWER flag.
 void init_frame(IoFrame &f, bool is_2w = true, bool start = false, bool end = false, bool low_power = false);
+/// Set destination node ID.
+/// @param f Frame to modify.
+/// @param id 3‑byte destination address.
 void set_dst(IoFrame &f, const uint8_t id[NODE_ID_SIZE]);
+/// Set source node ID.
+/// @param f Frame to modify.
+/// @param id 3‑byte source address.
 void set_src(IoFrame &f, const uint8_t id[NODE_ID_SIZE]);
+/// Set command and payload.
+/// @param f Frame to modify.
+/// @param cmd Command ID.
+/// @param params Pointer to payload bytes (may be nullptr for zero‑length).
+/// @param params_len Payload length (0–23).
+/// @return true if frame fits within size limits; false otherwise.
 bool set_cmd(IoFrame &f, uint8_t cmd, const uint8_t *params = nullptr, uint8_t params_len = 0);
+/// Get total frame length from ctrl0.
+/// @param f Parsed frame.
+/// @return Length in bytes.
 uint8_t frame_length(const IoFrame &f);
+/// Check START flag.
+/// @param f Parsed frame.
+/// @return true if START flag is set.
 bool is_start(const IoFrame &f);
+/// Check END flag.
+/// @param f Parsed frame.
+/// @return true if END flag is set.
 bool is_end(const IoFrame &f);
+/// Serialize a parsed frame into a wire buffer (without CRC).
+/// @param f Parsed frame.
+/// @param buf Output buffer (must be at least frame_length(f) bytes).
+/// @param buf_size Size of buf.
+/// @return Number of bytes written, or 0 on failure.
 uint8_t serialize(const IoFrame &f, uint8_t *buf, uint8_t buf_size);
+/// Parse a wire buffer into a parsed IoFrame (validates length and CTRL0).
+/// @param buf Raw byte buffer.
+/// @param buf_len Number of bytes in buf.
+/// @param f Output parsed frame.
+/// @return true if parse succeeded; false otherwise.
 bool parse(const uint8_t *buf, uint8_t buf_len, IoFrame &f);
 
 // ============================================================================
-// Device Types — from the KLF 200 API / Velux specification
+// Device Types — from the IO-Homecontrol specification
 // ============================================================================
 
+/// @brief Device type identifiers reported by IO‑Homecontrol products.
+/// The numeric values follow the official specification. Do not reassign or reorder these.
 enum class DeviceType : uint8_t {
-  UNKNOWN = 0x00,
-  ADJUSTABLE_SLAT_SHUTTER = 0x09,
-  VENETIAN_BLIND = 0x01,
-  ROLLER_SHUTTER = 0x02,
-  SCREEN = 0x0B,
-  AWNING = 0x03,
-  WINDOW_OPENER = 0x04,
-  GARAGE_OPENER = 0x05,
-  LIGHT = 0x06,
-  GATE_OPENER = 0x07,
-  ROLLING_DOOR_OPENER = 0x08,
-  BLIND = 0x0A,
-  DUAL_SHUTTER = 0x0D,
-  ON_OFF_SWITCH = 0x0F,
-  HORIZONTAL_AWNING = 0x10,  ///< Note: horizontal awnings have inverted open/close
-  EXTERIOR_BLIND = 0x14,
-  EXTERNAL_VENETIAN_BLIND = 0x11,
-  LOUVRE_BLIND = 0x12,
-  CURTAIN = 0x15,
-  CURTAIN_TRACK = 0x13,
-  PERGOLA = 0x16,
-  EXTERIOR_SCREEN = 0x17,
-  SWINGING_SHUTTER = 0x18,
-  LOCK = 0x19,
-  HEATING = 0x1A,
-  BEACON = 0x1B,
-  SENSOR = 0x1C,
+  UNKNOWN = 0x00,                        ///< Unknown/unspecified device.
+  VENETIAN_BLIND = 0x01,                 ///< Venetian blind.
+  ROLLER_SHUTTER = 0x02,                 ///< Roller shutter.
+  AWNING = 0x03,                         ///< Awning.
+  WINDOW_OPENER = 0x04,                  ///< Window opening actuator.
+  GARAGE_OPENER = 0x05,                  ///< Garage door opener.
+  LIGHT = 0x06,                          ///< Binary light.
+  GATE_OPENER = 0x07,                    ///< Gate opener.
+  ROLLING_DOOR_OPENER = 0x08,            ///< Rolling door opener.
+  LOCK = 0x09,                           ///< Lock.
+  BLIND = 0x0A,                          ///< Generic blind.
+  SCREEN = 0x0B,                         ///< Insect/privacy screen.
+  BEACON = 0x0C,                         ///< Beacon (unpaired/announcement).
+  DUAL_SHUTTER = 0x0D,                   ///< Dual-section shutter.
+  HEATING_TEMPERATURE_INTERFACE = 0x0E,  ///< Heating temperature interface.
+  ON_OFF_SWITCH = 0x0F,                  ///< Generic on/off switch.
+  HORIZONTAL_AWNING = 0x10,              ///< Horizontal awning (open/close inverted).
+  EXTERNAL_VENETIAN_BLIND = 0x11,        ///< External venetian blind.
+  LOUVRE_BLIND = 0x12,                   ///< Louvre blind.
+  CURTAIN_TRACK = 0x13,                  ///< Curtain track.
+  VENTILATION_POINT = 0x14,              ///< Ventilation point.
+  EXTERIOR_HEATING = 0x15,               ///< Exterior heating.
+  HEAT_PUMP = 0x16,                      ///< Heat pump.
+  INTRUSION_ALARM = 0x17,                ///< Intrusion alarm.
+  SWINGING_SHUTTER = 0x18,               ///< Swinging shutter.
 };
 
+/// @brief High‑level capability class derived from DeviceType.
 enum class DeviceCapabilityClass : uint8_t {
-  UNKNOWN = 0x00,
-  COVER = 0x01,
-  LIGHT = 0x02,
-  SWITCH = 0x03,
-  SENSOR = 0x04,
-  BEACON = 0x05,
-  CLIMATE = 0x06,
-  LOCK = 0x07,
+  UNKNOWN = 0x00,  ///< Unknown capability.
+  COVER = 0x01,    ///< Position‑controlled cover (shutter/blind/awning).
+  LIGHT = 0x02,    ///< Binary on/off light.
+  SWITCH = 0x03,   ///< Binary on/off switch.
+  SENSOR = 0x04,   ///< Sensor device.
+  BEACON = 0x05,   ///< Beacon.
+  CLIMATE = 0x06,  ///< Climate device (heating/cooling).
+  LOCK = 0x07,     ///< Lock.
 };
 
+/// @brief Convert a DeviceType to a lowercase string identifier.
+/// @param type Device type enum.
+/// @return Null‑terminated string name (e.g., "roller_shutter").
 const char *device_type_name(DeviceType type);
-/// Map a raw IO-homecontrol type to the closest ESPHome/Home Assistant entity family.
+
+/// @brief Map a raw IO‑Homecontrol type to the closest ESPHome/Home Assistant entity family.
+/// @param type Raw device type.
+/// @return Capability class (COVER, LIGHT, SWITCH, etc.).
 DeviceCapabilityClass device_capability_class(DeviceType type);
+
+/// @brief Get a human‑readable name for a capability class.
+/// @param type Device type (unused, kept for signature compatibility).
+/// @return String like "cover", "light", "switch", "unknown".
 const char *device_capability_class_name(DeviceType type);
-/// Operation helpers answer the stricter question of which runtime commands we have enough
-/// evidence to expose safely for a known device family.
+
+/// @brief Does this device type support precise position control (0–100)?
+/// @param type Device type.
+/// @return true for cover‑family devices.
 bool device_supports_position_control(DeviceType type);
+
+/// @brief Does this device type support binary on/off control?
+/// @param type Device type.
+/// @return true for lights and switches.
 bool device_supports_binary_control(DeviceType type);
+
+/// @brief Does this device type support status request commands (0x03)?
+/// @param type Device type.
+/// @return true for covers and binary devices.
 bool device_supports_status_requests(DeviceType type);
+
+/// @brief Does this device type support tilt (slat angle) control?
+/// @param type Device type.
+/// @return true for venetian blinds, blinds, external venetian blinds, louvre blinds.
 bool device_supports_tilt(DeviceType type);
+
+/// @brief Human‑readable operation profile name for a device type.
+/// Used for logging and diagnostics.
+/// @param type Device type.
+/// @return String such as "cover_position", "cover_position_tilt", "binary_on_off", "lock", etc.
 const char *device_operation_profile_name(DeviceType type);
 
 // ============================================================================
 // Device State
 // ============================================================================
 
-/// Sentinel value meaning "position is not known yet".
+/// @brief Sentinel value meaning "position is not known yet".
 /// Matches POS_UNKNOWN (0xD4 = 212 decimal) for easy debugging.
 static constexpr float UNKNOWN_POSITION = 212.0F;
 
-/// Runtime state of a paired IO-Homecontrol device.
+/// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
-  uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3-byte radio address
-  DeviceType type{DeviceType::UNKNOWN};  ///< Device type (shutter, awning, etc.)
-  uint8_t subtype{0};                    ///< Device subtype (manufacturer-specific)
-  char name[32]{};                       ///< Device name (from device, Latin-1 encoded)
-  float position{UNKNOWN_POSITION};      ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION
-  float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION
-  float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward
-  bool is_stopped{true};                 ///< True if device is not currently moving
-  bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning)
-  uint32_t last_status{0};               ///< millis() timestamp of last received status
-  uint32_t next_update{0};               ///< millis() timestamp when we should poll for status next
+  uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
+  DeviceType type{DeviceType::UNKNOWN};  ///< Device type (shutter, awning, etc.).
+  uint8_t subtype{0};                    ///< Device subtype (manufacturer‑specific).
+  char name[32]{};                       ///< Device name (from device, Latin‑1 encoded).
+  float position{UNKNOWN_POSITION};      ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION.
+  float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
+  float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.
+  bool is_stopped{true};                 ///< True if device is not moving.
+  bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning).
+  uint32_t last_status{0};               ///< millis() timestamp of last received status.
+  uint32_t next_update{0};               ///< millis() timestamp when we should poll for status next.
 };
 
-/// Convert a hex string (e.g., "123ABC") to a byte array.
+/// @brief Convert a hex string (e.g., "123ABC") to a byte array.
+/// @param hex Hex string (must be exactly len*2 characters).
+/// @param out Output buffer (at least len bytes).
+/// @param len Number of bytes to produce.
+/// @return true on success; false if hex length mismatch or non‑hex characters.
 bool hex_to_bytes(const std::string &hex, uint8_t *out, uint8_t len);
+/// @brief Format a 3‑byte node ID as a 6‑character uppercase hex string.
+/// @param id 3‑byte node ID.
+/// @return Hex string (e.g., "123ABC").
 std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]);
+/// @brief Determine whether a device type has inverted position mapping by default.
+/// @param type Device type.
+/// @return true for horizontal awnings; false otherwise.
 bool default_inverted_for_type(DeviceType type);
+/// @brief Decode target/current position values from a status frame.
+/// @param target_raw 16‑bit raw target value.
+/// @param current_raw 16‑bit raw current value.
+/// @param is_stopped True if device reports stopped.
+/// @param target Output target position (0–100 or UNKNOWN_POSITION).
+/// @param position Output current position (0–100 or UNKNOWN_POSITION).
 void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target, float &position);
+/// @brief Has the device reached its target within tolerance?
+/// @param target Target position (0–100 or UNKNOWN_POSITION).
+/// @param position Current position (0–100 or UNKNOWN_POSITION).
+/// @return true if positions match within STATUS_POS_TOLERANCE_RAW.
 bool has_reached_target_position(float target, float position);
+/// @brief Decode tilt angle from raw 16‑bit value.
+/// @param tilt_raw Raw tilt value from status frame.
+/// @return Tilt percentage (0 = closed, 100 = open) or UNKNOWN_POSITION.
 float decode_tilt_report(uint16_t tilt_raw);
+/// @brief Compute CRC‑CCITT (poly 0x1021, init 0x0000) over a buffer.
+/// On SX1276 this is done in hardware; on SX1262 it is computed in software.
+/// @param data Pointer to data bytes.
+/// @param len Number of bytes.
+/// @return 16‑bit CRC value.
 uint16_t crc_ccitt(const uint8_t *data, uint8_t len);
 
 }  // namespace home_io_control

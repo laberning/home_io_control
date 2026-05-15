@@ -1,5 +1,8 @@
 #pragma once
 
+/// @file log_frame.h
+/// @brief Shared frame logging helpers for IO-Homecontrol.
+
 #include "esphome/core/log.h"
 #include <cstddef>
 #include <cstdint>

@@ -11,7 +11,6 @@ namespace esphome {
 namespace home_io_control {
 
 /// Build an execute command (0x00) to control a device.
-/// @param position 0=open, 100=closed, POS_STOP=stop, POS_FAVORITE=favorite position
 /// For real positions (0-100), the value is doubled in the frame (0x00=0%, 0xC8=100%).
 /// For special commands (stop/favorite), a shorter 6-byte payload is used.
 bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position) {
@@ -22,7 +21,7 @@ bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low
   uint8_t plen;
   // Command originator: 0x01 = User (remote control action).
   d[0] = 0x01;
-  // ACEI: priority "User Level 2", IsValid flag (observed from Somfy connectivity kit).
+  // ACEI: priority "User Level 2", IsValid flag (protocol-determined).
   d[1] = 0x67;
   if (position <= 100) {
     // Real position: doubled value (0-200 maps to 0-100%).
@@ -56,7 +55,6 @@ bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
 }
 
 /// Build a tilt execute command (0x00) for devices that support slat angle control.
-/// @param tilt_percent 0=fully closed, 100=fully open.
 bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t tilt_percent) {
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
@@ -102,8 +100,6 @@ bool create_key_init(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
 }
 
 /// Build a key-transfer frame (0x32) containing the system key encrypted with the transfer key.
-/// @param old_frame The previous frame sent (key-init), used to derive the encryption IV.
-/// @param challenge The 6-byte challenge received from the device in its 0x3C response.
 bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, const uint8_t *src,
                          const uint8_t key[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE]) {
   init_frame(f, true, false, false, false);
@@ -153,7 +149,7 @@ bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *ds
   init_frame(f, true, false, true, false);
   set_dst(f, dst);
   set_src(f, own);
-  // Acknowledgment data (observed from Somfy connectivity kit).
+  // Status update acknowledgment payload (protocol-defined).
   uint8_t d[2] = {0x05, 0x00};
   return set_cmd(f, CMD_STATUS_UPDATE_RESP, d, 2);
 }
@@ -164,7 +160,7 @@ bool create_set_config1(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   init_frame(f, true, true, false, false);
   set_dst(f, dst);
   set_src(f, own);
-  // Observed from Somfy connectivity kit.
+  // Set-config payload (protocol-defined).
   uint8_t d[5] = {0xE0, 0x10, 0x0A, 0x08, 0x00};
   return set_cmd(f, CMD_SET_CONFIG1, d, 5);
 }

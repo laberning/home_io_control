@@ -65,8 +65,8 @@ yamllint:
 
 # Static analysis (local clang-tidy after building inside Docker)
 clang-tidy:
-	@echo "Running clang-tidy via helper script..."
-	@./scripts/run-clang-tidy.sh
+	@echo "Running clang-tidy..."
+	@scripts/run-clang-tidy.sh
 
 # Compilation tests for all platform configs
 firmware-test:
@@ -105,6 +105,15 @@ unit-test:
 	@./build/test_home_io_control
 
 
+# === Documentation =============================================================
+
+DOXYGEN_OUTPUT := docs/doxygen
+
+doxygen:
+	@echo "Generating Doxygen documentation..."
+	@scripts/generate-doxygen.sh
+
+
 # === Composite targets =========================================================
 
 lint: format-check yamllint clang-tidy
@@ -121,4 +130,5 @@ test-unit: unit-test
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy \
 		firmware-test unit-test lint test check \
-		test-compile test-unit
+		test-compile test-unit \
+		doxygen

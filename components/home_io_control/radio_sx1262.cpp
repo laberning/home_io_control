@@ -12,7 +12,7 @@
 /// - UART-pack frames for TX and recover UART-packed on-air bytes on RX,
 /// - detect plausible frame boundaries before handing bytes to the parser,
 /// - preserve raw capture data and metadata for debugging against the SX1276
-///   reference path.
+///   baseline capture path.
 ///
 /// The chip interface itself is also different: SX1262 uses opcode-based SPI
 /// instead of the SX1276 register model, and every transaction must respect the
@@ -38,27 +38,32 @@ static const uint8_t SX1262_RX_PROBE_PACKET_LEN = 32;
 /// we probe up to 10 bits offset to recover the correct framing.
 static const uint8_t UART_PROBE_MAX_BIT_OFFSET = 10;
 
-/// Extract a single bit (MSB-first) from a byte buffer.
+/// Extract a single bit (MSB‑first) from a byte buffer.
 /// Used by UART decoding to scan raw radio samples.
+/// @param data Input byte buffer.
+/// @param bit_pos Global bit index within buffer.
+/// @return The bit value (0 or 1).
 static uint8_t get_bit_msb(const uint8_t *data, uint16_t bit_pos) {
   return (data[bit_pos / 8] >> (7 - (bit_pos % 8))) & 0x01;
 }
 
-/// Decode a raw UART-encoded bitstream into bytes.
-///
-/// IO-Homecontrol uses a UART-like encoding over the air: each byte is represented
-/// by a 10-bit sequence (start bit 0, 8 data bits LSB-first, stop bit 1). This
+/// Decode a raw UART‑encoded bitstream into bytes.
+/// IO‑Homecontrol uses a UART‑like encoding over the air: each byte is represented
+/// by a 10‑bit sequence (start bit 0, 8 data bits LSB‑first, stop bit 1). This
 /// function slides a window across the raw bitstream and attempts to recover the
 /// original bytes. It stops when the sync pattern (0 followed by 1) is not found.
-///
-/// @param raw            Raw bytes from the radio buffer.
-/// @param raw_len        Number of raw bytes available.
-/// @param bit_offset     Initial bit position to start decoding (probe offset).
-/// @param decoded        Output buffer for decoded bytes.
+/// @param raw Raw bytes from the radio buffer.
+/// @param raw_len Number of raw bytes available.
+/// @param bit_offset Initial bit position to start decoding (probe offset).
+/// @param decoded Output buffer for decoded bytes.
 /// @param decoded_max_len Capacity of decoded buffer.
 /// @return Number of bytes successfully decoded.
 static uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offset, uint8_t *decoded,
                                  uint8_t decoded_max_len) {
+  // Bit numbering: we read MSB-first across byte boundaries. The UART frame structure
+  // within the bitstream is: start(0), data0, data1, ..., data7, stop(1). Byte values
+  // are LSB-first within the 8 data bits (bit 0 arrives first after start).
+  // We verify the start bit is 0 and stop bit is 1; if not, the probe offset is wrong.
   uint16_t bit_pos = bit_offset;
   uint16_t const total_bits = raw_len * 8;
   uint8_t decoded_len = 0;
@@ -78,15 +83,19 @@ static uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bi
   return decoded_len;
 }
 
+/// @brief Result of the UART probe: best candidate frame within a raw capture.
 struct UartProbeResult {
-  bool valid{false};
-  uint8_t bit_offset{0};
-  uint8_t decoded_len{0};
-  uint8_t frame_start{0};
-  uint8_t frame_len{0};
-  uint8_t decoded[64]{};
+  bool valid{false};       ///< A plausible frame was found.
+  uint8_t bit_offset{0};   ///< Bit offset where the best decode started.
+  uint8_t decoded_len{0};  ///< Total number of bytes decoded at that offset.
+  uint8_t frame_start{0};  ///< Index into decoded buffer where the frame begins.
+  uint8_t frame_len{0};    ///< Length of the candidate IoFrame (decoded bytes).
+  uint8_t decoded[64]{};   ///< Full decoded UART stream at the chosen offset.
 };
 
+/// @brief Check if a command ID is one of the known IO‑Homecontrol commands.
+/// @param cmd Command byte.
+/// @return true if cmd matches a known command constant.
 static bool is_known_io_command(uint8_t cmd) {
   switch (cmd) {
     case CMD_EXECUTE:
@@ -126,7 +135,19 @@ static bool is_plausible_uart_frame(const IoFrame &frame, uint8_t candidate_len)
   return (frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0;
 }
 
+/// @brief Search a raw capture for the most plausible IoFrame using UART decoding.
+/// Probes multiple bit offsets and candidate lengths to find a valid parse that
+/// looks like a real IO‑Homecontrol frame.
+/// @param raw Pointer to raw radio buffer bytes.
+/// @param raw_len Number of bytes in raw.
+/// @return UartProbeResult with best candidate (may have valid=false if none found).
 static UartProbeResult find_uart_probe(const uint8_t *raw, uint8_t raw_len) {
+  // The SX1262 RX buffer contains the raw GFSK‑demodulated bits packed as bytes.
+  // Due to unknown bit alignment, we probe up to UART_PROBE_MAX_BIT_OFFSET (10) different
+  // starting positions. For each offset we attempt UART decoding; if decoding yields
+  // a plausible frame length (>= minimum) and contains a known command ID or indicates
+  // a 1W frame, we keep it as a candidate. The best (longest valid) candidate wins.
+  // This approach tolerates the SX1262's lack of IoHomeOn framing assistance.
   UartProbeResult best{};
 
   // Current captures consistently decode at bit_offset=0, but keeping a short probe window makes
@@ -241,12 +262,6 @@ uint16_t RadioSX1262::read_irq_status_raw() {
 /// Checks the DIO1 pin latch and the raw IRQ status register repeatedly until
 /// either activity is detected or the timeout expires. On timeout, clears the
 /// DIO latch and resets the RX state machine for the next receive cycle.
-///
-/// @param start       Millis timestamp when wait began.
-/// @param timeout_ms  Maximum time to wait.
-/// @param saw_dio1    Output: true if DIO1 interrupt fired.
-/// @param irq         Output: last read IRQ status (valid if returned true).
-/// @return true if activity detected before timeout; false on timeout.
 bool RadioSX1262::poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool &saw_dio1, uint16_t &irq) {
   while (true) {
     if (this->is_dio_fired()) {
@@ -271,11 +286,6 @@ bool RadioSX1262::poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool
 /// On SX1262 the SYNC_WORD_VALID IRQ can assert before the packet is fully
 /// received. If we observe SYNC without RX_DONE, clear the sticky SYNC flag
 /// and spin until RX_DONE arrives or the remaining timeout elapses.
-///
-/// @param start       Millis timestamp when the original wait began.
-/// @param timeout_ms  Total timeout budget.
-/// @param irq         In/out: IRQ status; updated during spin.
-/// @return true if RX_DONE seen; false on timeout.
 bool RadioSX1262::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint16_t &irq) {
   // If RX_DONE already set or SYNC not set, nothing to resolve.
   if ((irq & SX1262_IRQ_SYNC_WORD_VALID) == 0 || (irq & SX1262_IRQ_RX_DONE) != 0) {
@@ -303,10 +313,6 @@ bool RadioSX1262::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint16
 }
 
 /// Finalize receive: read the packet if RX_DONE is set, otherwise record failure.
-///
-/// @param packet  Output RadioRxPacket.
-/// @param irq     IRQ status at time of call.
-/// @return true if packet read successfully; false otherwise.
 bool RadioSX1262::finalize_receive_(RadioRxPacket &packet, uint16_t irq) {
   if ((irq & SX1262_IRQ_RX_DONE) == 0) {
     this->fill_capture_info_(true, irq, 0, 0, nullptr, 0, nullptr, 0);
@@ -813,7 +819,8 @@ bool RadioSX1262::read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint
 
   // SX1262 does not expose the already-decoded IO-homecontrol frame the way SX1276 does. We first
   // capture the raw bytes exactly as reported by the chip, then recover the UART-packed protocol
-  // stream in software and only pass a plausible frame up to the parser.
+  // stream in software and only pass a plausible frame up to the parser. This software recovery
+  // path is the SX1262-specific adaptation to the same protocol.
   UartProbeResult probe = find_uart_probe(rx_buf, raw_probe_len);
   if (probe.valid) {
     memcpy(recovered_buf, probe.decoded + probe.frame_start, probe.frame_len);

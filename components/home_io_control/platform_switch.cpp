@@ -1,3 +1,6 @@
+/// @file platform_switch.cpp
+/// @brief Experimental binary switch entity for IO-Homecontrol devices.
+
 #include "platform_switch.h"
 #include "esphome/core/log.h"
 

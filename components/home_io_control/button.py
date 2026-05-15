@@ -7,13 +7,13 @@ from . import home_io_control_ns, IOHomeControlComponent, CONF_HOME_IO_CONTROL_I
 
 DEPENDENCIES = ["home_io_control"]
 
-DiscoverButton = home_io_control_ns.class_(
-    "DiscoverButton", button.Button, cg.Component
+IOHomeDiscoverButton = home_io_control_ns.class_(
+    "IOHomeDiscoverButton", button.Button, cg.Component
 )
 
 CONFIG_SCHEMA = (
     button.button_schema(
-        DiscoverButton,
+        IOHomeDiscoverButton,
         entity_category=ENTITY_CATEGORY_CONFIG,
     )
     .extend(

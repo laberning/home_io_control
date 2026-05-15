@@ -199,8 +199,6 @@ const char *device_type_name(DeviceType type) {
   switch (type) {
     case DeviceType::UNKNOWN:
       return "unknown";
-    case DeviceType::ADJUSTABLE_SLAT_SHUTTER:
-      return "adjustable_slat_shutter";
     case DeviceType::VENETIAN_BLIND:
       return "venetian_blind";
     case DeviceType::ROLLER_SHUTTER:
@@ -227,30 +225,28 @@ const char *device_type_name(DeviceType type) {
       return "on_off_switch";
     case DeviceType::HORIZONTAL_AWNING:
       return "horizontal_awning";
-    case DeviceType::EXTERIOR_BLIND:
-      return "exterior_blind";
     case DeviceType::EXTERNAL_VENETIAN_BLIND:
       return "external_venetian_blind";
     case DeviceType::LOUVRE_BLIND:
       return "louvre_blind";
-    case DeviceType::CURTAIN:
-      return "curtain";
     case DeviceType::CURTAIN_TRACK:
       return "curtain_track";
-    case DeviceType::PERGOLA:
-      return "pergola";
-    case DeviceType::EXTERIOR_SCREEN:
-      return "exterior_screen";
     case DeviceType::SWINGING_SHUTTER:
       return "swinging_shutter";
     case DeviceType::LOCK:
       return "lock";
-    case DeviceType::HEATING:
-      return "heating";
     case DeviceType::BEACON:
       return "beacon";
-    case DeviceType::SENSOR:
-      return "sensor";
+    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
+      return "heating_temperature_interface";
+    case DeviceType::VENTILATION_POINT:
+      return "ventilation_point";
+    case DeviceType::EXTERIOR_HEATING:
+      return "exterior_heating";
+    case DeviceType::HEAT_PUMP:
+      return "heat_pump";
+    case DeviceType::INTRUSION_ALARM:
+      return "intrusion_alarm";
   }
 
   return "unknown";
@@ -258,7 +254,7 @@ const char *device_type_name(DeviceType type) {
 
 DeviceCapabilityClass device_capability_class(DeviceType type) {
   switch (type) {
-    case DeviceType::ADJUSTABLE_SLAT_SHUTTER:
+    // Cover types (position-controlled)
     case DeviceType::VENETIAN_BLIND:
     case DeviceType::ROLLER_SHUTTER:
     case DeviceType::SCREEN:
@@ -270,27 +266,31 @@ DeviceCapabilityClass device_capability_class(DeviceType type) {
     case DeviceType::BLIND:
     case DeviceType::DUAL_SHUTTER:
     case DeviceType::HORIZONTAL_AWNING:
-    case DeviceType::EXTERIOR_BLIND:
     case DeviceType::EXTERNAL_VENETIAN_BLIND:
     case DeviceType::LOUVRE_BLIND:
-    case DeviceType::CURTAIN:
     case DeviceType::CURTAIN_TRACK:
-    case DeviceType::PERGOLA:
-    case DeviceType::EXTERIOR_SCREEN:
     case DeviceType::SWINGING_SHUTTER:
       return DeviceCapabilityClass::COVER;
+
+    // Binary and other capabilities
     case DeviceType::LIGHT:
       return DeviceCapabilityClass::LIGHT;
     case DeviceType::ON_OFF_SWITCH:
       return DeviceCapabilityClass::SWITCH;
     case DeviceType::LOCK:
       return DeviceCapabilityClass::LOCK;
-    case DeviceType::HEATING:
+    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
+    case DeviceType::EXTERIOR_HEATING:
+    case DeviceType::HEAT_PUMP:
       return DeviceCapabilityClass::CLIMATE;
+    case DeviceType::VENTILATION_POINT:
+      // Binary ventilation on/off; treated as switch
+      return DeviceCapabilityClass::SWITCH;
     case DeviceType::BEACON:
       return DeviceCapabilityClass::BEACON;
-    case DeviceType::SENSOR:
+    case DeviceType::INTRUSION_ALARM:
       return DeviceCapabilityClass::SENSOR;
+
     case DeviceType::UNKNOWN:
     default:
       return DeviceCapabilityClass::UNKNOWN;

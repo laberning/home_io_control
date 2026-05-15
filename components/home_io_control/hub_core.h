@@ -11,6 +11,14 @@
 /// SPI configuration: MSB first, CPOL=0, CPHA=0 (Mode 0), 8 MHz clock.
 /// The component inherits SPIDevice and implements SpiAccess to bridge
 /// the ESPHome SPI framework to the radio driver.
+///
+/// Architecture notes:
+///   - setup() initializes radio, loads persisted devices, and enters RX mode.
+///   - loop() processes the pending_operations_ queue (serializes all radio work).
+///   - All outbound commands go through send_and_receive_ which handles retry & auth.
+///   - Inbound frames are processed in process_received_packet_ and may trigger
+///     inbound authentication (hub_exchange.h) if the device proves itself.
+///   - Device registry and callbacks provide fan‑out to platform entities (covers/lights/switches).
 
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
@@ -47,158 +55,274 @@ class IOHomeControlComponent : public Component,
                                                      spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_8MHZ>,
                                public SpiAccess {
  public:
+  /// @brief Initialize hardware (radio, persistence, device registry).
   void setup() override;
+  /// @brief Main loop: process pending operations and drive radio state machine.
   void loop() override;
+  /// @brief Dump configuration and radio debug info to the log.
   void dump_config() override;
+  /// @brief Get setup priority (HARDWARE to initialize early).
+  /// @return setup_priority::HARDWARE.
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::HARDWARE; }
 
   // --- SpiAccess implementation (delegates to SPIDevice) ---
+  /// @brief Enable the SPI bus.
   void spi_enable() override { this->enable(); }
+  /// @brief Disable the SPI bus.
   void spi_disable() override { this->disable(); }
+  /// @brief Transfer one byte full‑duplex.
+  /// @param data Byte to send.
+  /// @return Received byte.
   uint8_t spi_transfer(uint8_t data) override { return this->transfer_byte(data); }
+  /// @brief Write one byte (MOSI only).
+  /// @param data Byte to send.
   void spi_write(uint8_t data) override { this->write_byte(data); }
+  /// @brief Read one byte (MISO only).
+  /// @return Received byte.
   uint8_t spi_read() override { return this->read_byte(); }
 
   // --- YAML configuration setters (called by generated code) ---
+  /// Set the radio reset pin.
   void set_rst_pin(InternalGPIOPin *pin) { this->rst_pin_ = pin; }
+  /// Set the DIO0 interrupt pin (SX1276).
   void set_dio0_pin(InternalGPIOPin *pin) { this->dio0_pin_ = pin; }
+  /// Set the DIO4 preamble‑detect pin (SX1276, optional).
   void set_dio4_pin(InternalGPIOPin *pin) { this->dio4_pin_ = pin; }
+  /// Set the DIO1 interrupt pin (SX1262).
   void set_dio1_pin(InternalGPIOPin *pin) { this->dio1_pin_ = pin; }
+  /// Set the BUSY pin (SX1262).
   void set_busy_pin(InternalGPIOPin *pin) { this->busy_pin_ = pin; }
+  /// Set the front‑end module enable pin.
   void set_fem_en_pin(InternalGPIOPin *pin) { this->fem_en_pin_ = pin; }
+  /// Set the VFEM power pin.
   void set_vfem_pin(InternalGPIOPin *pin) { this->vfem_pin_ = pin; }
+  /// Set the FEM PA switch pin.
   void set_fem_pa_pin(InternalGPIOPin *pin) { this->fem_pa_pin_ = pin; }
+  /// Set the controller's node ID (hex string).
   void set_node_id(const std::string &id) { this->node_id_str_ = id; }
+  /// Set the system key (hex string).
   void set_system_key(const std::string &key) { this->system_key_str_ = key; }
+  /// Set transmit power (dBm).
   void set_tx_power(uint8_t power) { this->tx_power_ = power; }
+  /// Set PA boost pin configuration.
   void set_pa_pin(uint8_t pa_pin) { this->pa_pin_ = pa_pin; }
+  /// Set radio type ("sx1276" or "sx1262"); empty string means auto‑detect.
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
+  /// Set TCXO voltage for SX1262 (1.8V / 3.3V).
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
 
   /// Declare that a remote (identified by its node ID) controls a registered device.
   /// When activity from this remote is overheard, a status poll is scheduled for the device.
   /// This is needed for 1W remotes whose destination address differs from the device's 2W ID.
+  /// @param remote_id Node ID of the remote control.
+  /// @param device_id Node ID of the device it controls.
   void add_linked_remote(const std::string &remote_id, const std::string &device_id) {
     this->linked_remotes_[remote_id].push_back(device_id);
   }
 
   // --- Device management (called by cover platform) ---
   /// Add a device to the registry (called by platform entities during setup).
+  /// @param device_id Hexadecimal node ID string.
   virtual void add_device(const std::string &device_id);
   /// Retrieve a device by ID; returns nullptr if not found.
+  /// @param device_id Hexadecimal node ID.
+  /// @return Pointer to IoDevice, or nullptr.
   virtual IoDevice *get_device(const std::string &device_id);
   /// Register a callback invoked when any device updates.
+  /// @param cb Callable with signature void(const std::string&, const IoDevice&).
   virtual void register_device_callback(DeviceUpdateCallback cb) { this->callbacks_.push_back(std::move(cb)); }
 
   // --- High-level operations ---
-  /// Send a position command to a device. Returns true if device acknowledged.
+  /// Send a position command to a device.
+  /// @param device_id Target device ID.
+  /// @param position Desired position (0–100, or POS_STOP/POS_FAVORITE).
+  /// @return true if device acknowledged; false on timeout or radio error.
   virtual bool set_device_position(const std::string &device_id, uint8_t position);
-  /// Send a tilt command to a tilt-capable cover. Returns true if device acknowledged.
+  /// Send a tilt command to a tilt‑capable cover.
+  /// @param device_id Target device ID.
+  /// @param tilt_percent Desired tilt (0–100).
+  /// @return true if device acknowledged; false otherwise.
   virtual bool set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
-  /// Request current status from a device. Returns true if status received.
+  /// Request current status from a device.
+  /// @param device_id Target device ID.
+  /// @return true if status frame was received and processed.
   virtual bool request_device_status(const std::string &device_id);
-  /// Discover and pair a device that is in pairing mode. Returns true on success.
+  /// Discover and pair a device that is in pairing mode.
+  /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
   /// Semantic binary helper for light entities. Internally mapped to the shared execute path.
+  /// @param device_id Target device ID.
+  /// @param on Desired on/off state.
+  /// @return true if device acknowledged.
   virtual bool set_light_state(const std::string &device_id, bool on);
   /// Semantic binary helper for switch entities. Internally mapped to the shared execute path.
+  /// @param device_id Target device ID.
+  /// @param on Desired on/off state.
+  /// @return true if device acknowledged.
   virtual bool set_switch_state(const std::string &device_id, bool on);
   /// Queue an async position update; returns immediately, executed in loop().
+  /// @param device_id Target device ID.
+  /// @param position Desired position.
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
   /// Queue an async tilt update; returns immediately, executed in loop().
+  /// @param device_id Target device ID.
+  /// @param tilt_percent Desired tilt.
   virtual void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
   /// Queue an async status request; returns immediately, executed in loop().
+  /// @param device_id Target device ID.
   virtual void queue_request_device_status(const std::string &device_id);
   /// Queue a pairing operation; executed in loop() when radio idle.
   virtual void queue_discover_and_pair();
   /// Async form of set_light_state() that keeps radio work serialized on the main loop.
+  /// @param device_id Target device ID.
+  /// @param on Desired on/off state.
   virtual void queue_set_light_state(const std::string &device_id, bool on);
   /// Async form of set_switch_state() that keeps radio work serialized on the main loop.
+  /// @param device_id Target device ID.
+  /// @param on Desired on/off state.
   virtual void queue_set_switch_state(const std::string &device_id, bool on);
 
  protected:
   // --- Protocol-level operations ---
   /// Transmit a raw IoFrame on the current frequency with given preamble length.
+  /// @param frame IoFrame to transmit.
+  /// @param freq RF frequency in Hz.
+  /// @param preamble Preamble length in bytes (LONG_PREAMBLE or SHORT_PREAMBLE).
   bool transmit_frame_(const IoFrame &frame, uint32_t freq, uint16_t preamble);
   /// Main request/response exchange with retry and automatic authentication.
+  /// @param request Outbound request IoFrame.
+  /// @param response Output: received response IoFrame.
+  /// @param freq RF frequency in Hz.
+  /// @return true if exchange succeeded; false otherwise.
   bool send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq);
   /// Handle an inbound authenticated command from a device (status updates, etc.).
+  /// @param request Inbound authenticated request (e.g., CMD_STATUS_UPDATE).
+  /// @param freq RF frequency the packet arrived on.
+  /// @return true if authentication succeeded; false otherwise.
   bool authenticate_request_(const IoFrame &request, uint32_t freq);
   /// Parse received packet, update device state if it's a status frame, and notify covers.
+  /// @param packet Raw radio packet containing a parsed IoFrame.
   void process_received_packet_(const RadioRxPacket &packet);
   /// Extract position/status info from a status or status-update frame and merge into device record.
+  /// @param frame IoFrame containing a status-bearing command (CMD_PRIVATE_RESP or CMD_STATUS_UPDATE).
   void update_device_status_(const IoFrame &frame);
   /// Schedule a delayed status poll for a registered device using the Component timeout API.
+  /// @param device_id ID of the device to poll.
+  /// @param delay_ms Delay in milliseconds before polling.
+  /// @note Uses ESPHome's set_timeout() mechanism; the callback executes in loop().
+  ///       A zero delay schedules immediately on the next loop iteration.
   void schedule_status_poll_(const std::string &device_id, uint32_t delay_ms);
   /// Shared request/response helper for high-level operations.
+  /// @param device_id Target device ID.
+  /// @param request Outbound request frame.
+  /// @param warn_on_no_response If true, logs a warning when no response is received.
+  /// @param retry_after_fail_ms If non-zero, schedules next status poll after this delay on failure.
+  /// @return true if device acknowledged; false otherwise.
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
                                    uint32_t retry_after_fail_ms = 0);
   /// Fire all registered device update callbacks for the given device ID.
+  /// @param id Device ID that updated.
   void notify_device_update_(const std::string &id);
   /// Pop next pending operation from the queue and execute it (set position, request status, discover).
   void process_pending_operation_();
 
   // --- Outbound exchange helpers ---
   /// Wrap transmit_frame_ and mark context failed on error.
+  /// @param request Outbound IoFrame to transmit.
+  /// @param freq RF frequency in Hz.
+  /// @param preamble Preamble length in bytes.
+  /// @param ctx Exchange context (state updated on failure).
+  /// @return true if transmit succeeded; false otherwise.
   bool transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
                          exchange::OutboundExchangeContext &ctx);
   /// Wait loop for the first response packet; classifies via decisions::classify_exchange_first_response.
+  /// @param request Original request frame (used for endpoint matching).
+  /// @param ctx Exchange context (provides deadline and receives rx frame on accept).
+  /// @return Disposition indicating next step.
   decisions::ExchangeFirstResponseDisposition wait_for_first_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
   /// Perform challenge-response (TX auth response) after a 0x3C is received.
+  /// @param request Original request frame (needed for HMAC derivation).
+  /// @param freq RF channel frequency (same channel used for the request).
+  /// @param ctx Exchange context holding the challenge frame and state.
+  /// @return true if challenge response was sent successfully; false otherwise.
   bool handle_authentication_(const IoFrame &request, uint32_t freq, exchange::OutboundExchangeContext &ctx);
   /// Wait loop for the final authenticated response; uses is_valid_final_response().
+  /// @param request Original request frame (used for endpoint matching).
+  /// @param ctx Exchange context (receives final rx frame on accept).
+  /// @return ACCEPT if a matching final response arrives; IGNORE_UNRELATED on timeout.
   decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
 
   // --- Pairing helpers ---
   /// Wait for a discovery response (0x29) during pairing.
+  /// @param timeout_ms Maximum time to wait in milliseconds.
+  /// @param packet Output: raw RadioRxPacket of the accepted frame.
+  /// @param response_frame Output: parsed IoFrame of the accepted frame.
+  /// @return PairingDiscoveryDisposition: ACCEPT on success; NO_RESPONSE or INVALID otherwise.
   decisions::PairingDiscoveryDisposition wait_for_discovery_response_(uint32_t timeout_ms, RadioRxPacket &packet,
                                                                       IoFrame &response_frame);
   /// Wait for a key-challenge (0x3C) from target device during pairing key exchange.
+  /// @param timeout_ms Maximum time to wait in milliseconds.
+  /// @param packet Output: raw RadioRxPacket of the challenge frame.
+  /// @param challenge_frame Output: parsed IoFrame containing the challenge.
+  /// @param device_node_id Node ID of the device we are pairing (expected sender).
+  /// @return true if a valid challenge was received; false on timeout.
   bool wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet, IoFrame &challenge_frame,
                                const uint8_t device_node_id[NODE_ID_SIZE]);
 
-  // Parse a discovery response frame into device metadata and ID.
+  /// Parse a discovery response frame into device metadata and ID.
+  /// @param frame       Parsed discovery response.
+  /// @param device      Output: populated IoDevice (node_id, type, subtype, inverted, position/target/stopped).
+  /// @param device_id   Output: hex string representation of node ID.
   static void parse_device_from_discovery(const IoFrame &frame, IoDevice &device, std::string &device_id);
 
   // --- Pairing phase helpers ---
   /// Phase 1: broadcast discovery (0x28) and wait for a device response (0x29).
+  /// @param context Pairing context modified on success.
+  /// @return PairingDiscoveryDisposition: ACCEPT, NO_RESPONSE, or INVALID.
   decisions::PairingDiscoveryDisposition run_discovery_phase_(pairing::PairingContext &context);
   /// Phase 2: authenticated key exchange (0x31 → 0x3C → 0x32 → 0x33).
+  /// @param context Pairing context populated by run_discovery_phase_().
+  /// @return true if key exchange completes successfully; false otherwise.
   bool run_key_exchange_phase_(pairing::PairingContext &context);
   /// Phase 3: send SetConfig1 (0x71) to finalize device configuration.
+  /// @param context Pairing context with device information.
+  /// @return true (pairing proceeds regardless of set‑config outcome).
   bool finalize_pairing_configuration_(pairing::PairingContext &context);
 
+  /// @brief Type of queued pending operation for the main loop.
   enum class PendingOperationType : uint8_t {
-    SET_POSITION,
-    SET_TILT,
-    SET_LIGHT_STATE,
-    SET_SWITCH_STATE,
-    REQUEST_STATUS,
-    DISCOVER_AND_PAIR,
+    SET_POSITION,       ///< Queue a set_device_position call (position 0–100 or special values).
+    SET_TILT,           ///< Queue a set_device_tilt call (tilt percentage 0–100).
+    SET_LIGHT_STATE,    ///< Queue a set_light_state call (binary on/off).
+    SET_SWITCH_STATE,   ///< Queue a set_switch_state call (binary on/off).
+    REQUEST_STATUS,     ///< Queue a request_device_status call (poll for current position).
+    DISCOVER_AND_PAIR,  ///< Queue a discover_and_pair call (starts 3‑phase pairing flow).
   };
 
+  /// @brief A single queued operation to be processed in loop().
   struct PendingOperation {
-    PendingOperationType type;
-    std::string device_id;
-    uint8_t position{0};
+    PendingOperationType type;  ///< Operation type (determines which queue handler to invoke).
+    std::string device_id;      ///< Target device ID (hex string, e.g., "123ABC").
+    uint8_t position{0};        ///< Position/tilt value (0–100) or binary state (ON=0, OFF=100 for lights/switches).
   };
 
+  /// @brief Debug snapshot of the last exchange attempt.
   struct ExchangeDebugInfo {
-    const char *stage{"idle"};
-    uint8_t tries{0};
-    uint8_t request_cmd{0};
-    bool saw_challenge{false};
-    bool capture_valid{false};
-    bool capture_rx_done{false};
-    bool capture_crc_error{false};
-    uint32_t capture_freq_hz{0};
-    uint16_t capture_irq_status{0};
-    uint8_t capture_packet_status{0};
-    uint8_t capture_reported_len{0};
-    uint8_t capture_frame_len{0};
-    int16_t capture_rssi_dbm{0};
+    const char *stage{"idle"};       ///< Current stage name (e.g., "TX_REQUEST", "WAIT_FIRST_RESPONSE", "FAILED").
+    uint8_t tries{0};                ///< Try number (1‑based; increments on each retry within EXCHANGE_RETRY_COUNT).
+    uint8_t request_cmd{0};          ///< Command ID of the original request (e.g., CMD_EXECUTE=0x00).
+    bool saw_challenge{false};       ///< True if a challenge (0x3C) was seen during the exchange.
+    bool capture_valid{false};       ///< True if radio capture data is valid for the last packet seen.
+    bool capture_rx_done{false};     ///< True if RxDone interrupt fired (packet fully received).
+    bool capture_crc_error{false};   ///< True if CRC error flagged (SX1262 only; SX1276 IoHomeOn filters in hardware).
+    uint32_t capture_freq_hz{0};     ///< RF frequency of the captured packet (Hz).
+    uint16_t capture_irq_status{0};  ///< Raw IRQ status register value from the radio chip.
+    uint8_t capture_packet_status{0};  ///< Packet status byte (chip-specific; SX1262 includes CRC flag).
+    uint8_t capture_reported_len{0};   ///< Length reported by the radio's packet engine.
+    uint8_t capture_frame_len{0};      ///< Length of the parsed protocol frame after recovery/UART decoding.
+    int16_t capture_rssi_dbm{0};       ///< Received signal strength of the captured packet (dBm, negative).
   };
 
   void reset_exchange_debug_(uint8_t request_cmd);
@@ -253,12 +377,13 @@ class IOHomeControlComponent : public Component,
 // ============================================================================
 
 /// Button entity that triggers device discovery and pairing when pressed in Home Assistant.
-class DiscoverButton : public button::Button, public Component {
+class IOHomeDiscoverButton : public button::Button, public Component {
  public:
   void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
   void dump_config() override {}
 
  protected:
+  /// @brief When button is pressed, queue a discovery/pair operation.
   void press_action() override { this->parent_->queue_discover_and_pair(); }
   IOHomeControlComponent *parent_{nullptr};
 };
@@ -270,6 +395,8 @@ class DiscoverButton : public button::Button, public Component {
 // ----------------------------------------------------------------------------
 
 /// Check if a persisted node ID is valid (not all-zero, not all-0xFF).
+/// @param id 3‑byte node ID buffer.
+/// @return true if the ID is non-zero and non-0xFF.
 inline bool persisted_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
   bool all_zero = true;
   bool all_ff = true;
@@ -280,7 +407,9 @@ inline bool persisted_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
   return !all_zero && !all_ff;
 }
 
-/// Format a position float as a human-readable string (e.g. "50%", "unknown").
+/// Format a position float as a human‑readable string (e.g. "50%", "unknown").
+/// @param pos Position value (0–100 or UNKNOWN_POSITION).
+/// @return String like "50%" or "unknown".
 inline std::string format_position(float pos) {
   if (pos == UNKNOWN_POSITION) {
     return "unknown";

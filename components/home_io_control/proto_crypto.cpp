@@ -60,8 +60,10 @@ const uint8_t AES_INV_SBOX[256] = {
 // the round index can be used directly.
 const uint8_t AES_RCON[11] = {0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36};
 
-// Multiply two bytes in AES's GF(2^8) finite field. MixColumns and inverse
-// MixColumns are defined in terms of this field arithmetic.
+/// Multiply two bytes in AES's GF(2^8) finite field (used by MixColumns).
+/// @param value First operand.
+/// @param factor Second operand (usually 0x02 or 0x03).
+/// @return Product in the field.
 uint8_t aes_mul(uint8_t value, uint8_t factor) {
   uint8_t result = 0;
   while (factor != 0) {
@@ -76,22 +78,32 @@ uint8_t aes_mul(uint8_t value, uint8_t factor) {
   return result;
 }
 
+/// Add round key to state (AES AddRoundKey step).
+/// @param state Current AES state (16 bytes).
+/// @param round_keys Expanded key schedule.
+/// @param round Round index (0 for initial, 10 for final).
 void aes_add_round_key(uint8_t *state, const uint8_t *round_keys, uint8_t round) {
   const uint8_t *round_key = &round_keys[round * AES_BLOCK_SIZE];
   for (uint8_t i = 0; i < AES_BLOCK_SIZE; i++)
     state[i] ^= round_key[i];
 }
 
+/// AES SubBytes: apply S‑box to every byte of the state.
+/// @param state 16‑byte state buffer.
 void aes_sub_bytes(uint8_t *state) {
   for (uint8_t i = 0; i < AES_BLOCK_SIZE; i++)
     state[i] = AES_SBOX[state[i]];
 }
 
+/// AES Inverse SubBytes (uses inverse S‑box).
+/// @param state 16‑byte state buffer.
 void aes_inv_sub_bytes(uint8_t *state) {
   for (uint8_t i = 0; i < AES_BLOCK_SIZE; i++)
     state[i] = AES_INV_SBOX[state[i]];
 }
 
+/// AES ShiftRows: cyclically shift rows 1‑3 left by their row index.
+/// @param state 16‑byte state buffer (4×4 matrix).
 void aes_shift_rows(uint8_t *state) {
   uint8_t tmp[AES_BLOCK_SIZE];
   memcpy(tmp, state, AES_BLOCK_SIZE);
@@ -113,6 +125,8 @@ void aes_shift_rows(uint8_t *state) {
   state[15] = tmp[11];
 }
 
+/// AES InvShiftRows: inverse cyclic shift of rows.
+/// @param state 16‑byte state buffer.
 void aes_inv_shift_rows(uint8_t *state) {
   uint8_t tmp[AES_BLOCK_SIZE];
   memcpy(tmp, state, AES_BLOCK_SIZE);
@@ -134,6 +148,8 @@ void aes_inv_shift_rows(uint8_t *state) {
   state[15] = tmp[3];
 }
 
+/// AES MixColumns: mix each column with GF(2^8) multiplication.
+/// @param state 16‑byte state buffer (treated as 4 columns).
 void aes_mix_columns(uint8_t *state) {
   for (uint8_t column = 0; column < 4; column++) {
     uint8_t *col = &state[column * 4];
@@ -148,6 +164,8 @@ void aes_mix_columns(uint8_t *state) {
   }
 }
 
+/// AES InvMixColumns: inverse mix each column.
+/// @param state 16‑byte state buffer.
 void aes_inv_mix_columns(uint8_t *state) {
   for (uint8_t column = 0; column < 4; column++) {
     uint8_t *col = &state[column * 4];
@@ -162,6 +180,9 @@ void aes_inv_mix_columns(uint8_t *state) {
   }
 }
 
+/// Expand a 16‑byte AES key into an 11‑round key schedule (176 bytes).
+/// @param key Input 16‑byte key.
+/// @param round_keys Output buffer (must be 176 bytes).
 void aes_expand_key(const uint8_t key[AES_KEY_SIZE], uint8_t round_keys[176]) {
   memcpy(round_keys, key, AES_KEY_SIZE);
   uint8_t bytes_generated = AES_KEY_SIZE;
@@ -185,6 +206,11 @@ void aes_expand_key(const uint8_t key[AES_KEY_SIZE], uint8_t round_keys[176]) {
   }
 }
 
+/// Perform one AES‑128 encryption block (full 10 rounds).
+/// @param in 16‑byte plaintext.
+/// @param key 16‑byte AES key.
+/// @param out Output: 16‑byte ciphertext.
+/// @return true on success.
 bool aes128_encrypt_block(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE],
                           uint8_t out[AES_BLOCK_SIZE]) {
   uint8_t state[AES_BLOCK_SIZE];
@@ -206,6 +232,11 @@ bool aes128_encrypt_block(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AE
   return true;
 }
 
+/// Perform one AES‑128 decryption block (full 10 inverse rounds).
+/// @param in 16‑byte ciphertext.
+/// @param key 16‑byte AES key.
+/// @param out Output: 16‑byte plaintext.
+/// @return true on success.
 bool aes128_decrypt_block(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE],
                           uint8_t out[AES_BLOCK_SIZE]) {
   uint8_t state[AES_BLOCK_SIZE];
@@ -278,9 +309,8 @@ bool aes128_decrypt(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_
   return aes128_decrypt_block(in, key, out);
 }
 
-/// Create a 6-byte HMAC for authentication.
-/// Process: build IV from frame data + challenge -> AES-128-ECB encrypt IV with system key -> take first 6 bytes.
-/// This is not a standard HMAC - it's a proprietary scheme specific to IO-Homecontrol.
+/// Create a 6-byte HMAC for authentication (proprietary IO-Homecontrol scheme).
+/// See proto_crypto.h for full parameter documentation and construction details.
 bool create_hmac(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC_SIZE], const uint8_t key[AES_KEY_SIZE],
                  uint8_t hmac[HMAC_SIZE]) {
   uint8_t iv[IV_SIZE];
@@ -293,15 +323,18 @@ bool create_hmac(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC_
   return true;
 }
 
-/// Verify a received HMAC using constant-time comparison (prevents timing attacks).
+/// Verify a received HMAC using constant-time comparison.
+/// Full documentation in proto_crypto.h.
 bool verify_hmac(const uint8_t *data, uint8_t len, const uint8_t hmac[HMAC_SIZE], const uint8_t challenge[HMAC_SIZE],
                  const uint8_t key[AES_KEY_SIZE]) {
-  uint8_t calc[HMAC_SIZE];
-  if (!create_hmac(data, len, challenge, key, calc))
+  uint8_t expected[HMAC_SIZE];
+  if (!create_hmac(data, len, challenge, key, expected))
     return false;
+  // Constant‑time comparison: OR all difference bytes.
   uint8_t diff = 0;
-  for (int i = 0; i < HMAC_SIZE; i++)
-    diff |= calc[i] ^ hmac[i];
+  for (uint8_t i = 0; i < HMAC_SIZE; i++) {
+    diff |= hmac[i] ^ expected[i];
+  }
   return diff == 0;
 }
 

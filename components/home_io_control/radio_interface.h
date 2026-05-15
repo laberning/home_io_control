@@ -23,45 +23,61 @@ namespace home_io_control {
 class SpiAccess {
  public:
   virtual ~SpiAccess() = default;
+  /// Enable the SPI bus (assert CS low).
   virtual void spi_enable() = 0;
+  /// Disable the SPI bus (deassert CS).
   virtual void spi_disable() = 0;
+  /// Transfer one byte full‑duplex (MOSI→MISO).
+  /// @param data Byte to send.
+  /// @return Byte received from MISO.
   virtual uint8_t spi_transfer(uint8_t data) = 0;
+  /// Write one byte (MOSI only, MISO ignored).
+  /// @param data Byte to send.
   virtual void spi_write(uint8_t data) = 0;
+  /// Read one byte (MISO only, MOSI driven with 0).
+  /// @return Byte received.
   virtual uint8_t spi_read() = 0;
 };
 
+/// Configuration for transmitting a packet: carrier frequency and preamble length.
 struct RadioTxConfig {
-  uint32_t freq_hz{FREQ_CH2};
-  uint16_t preamble_len{SHORT_PREAMBLE};
+  uint32_t freq_hz{FREQ_CH2};             ///< Carrier frequency in Hz.
+  uint16_t preamble_len{SHORT_PREAMBLE};  ///< Preamble length in symbol periods (bytes).
 };
 
+/// Raw packet received from the radio.
 struct RadioRxPacket {
-  uint32_t freq_hz{0};
-  uint8_t len{0};
-  uint8_t data[64]{};
+  uint32_t freq_hz{0};  ///< Frequency the packet was received on (Hz).
+  uint8_t len{0};       ///< Length of packet in bytes.
+  uint8_t data[64]{};   ///< Raw packet data buffer.
 };
 
+/// Diagnostic capture from a radio operation.
+///
+/// Populated after every wait_for_packet / check_for_packet. Contains both the
+/// raw bytes reported by the chip (before any protocol-specific recovery) and
+/// the parsed frame handed to the protocol layer.
 struct RadioCaptureInfo {
-  bool valid{false};
-  bool blocking_wait{false};
-  bool rx_done{false};
-  bool crc_error{false};
-  uint32_t timestamp_ms{0};
-  uint32_t freq_hz{0};
-  int16_t rssi_dbm{0};
-  uint16_t irq_status{0};
-  uint8_t irq_flags1{0};
-  uint8_t irq_flags2{0};
-  uint8_t packet_status{0};
-  uint8_t rx_offset{0};
-  uint8_t reported_len{0};
-  // raw[] preserves the chip-reported bytes before any protocol-specific recovery, while frame[]
-  // stores the bytes handed to parse(). Keeping both made it possible to compare SX1262 recovery
-  // output against the SX1276 reference path during bring-up.
-  uint8_t raw_len{0};
-  uint8_t frame_len{0};
-  uint8_t raw[64]{};
-  uint8_t frame[64]{};
+  bool valid{false};          ///< True if capture is valid.
+  bool blocking_wait{false};  ///< True if captured during a blocking wait.
+  bool rx_done{false};        ///< True if RxDone IRQ fired.
+  bool crc_error{false};  ///< True if CRC error detected (SX1276: never set in IoHomeOn mode; SX1262: set on bad CRC).
+  uint32_t timestamp_ms{0};  ///< Timestamp of capture (millis).
+  uint32_t freq_hz{0};       ///< RF frequency of capture (Hz).
+  int16_t rssi_dbm{0};       ///< Received signal strength (dBm).
+  uint16_t irq_status{0};    ///< Raw IRQ status register value.
+  uint8_t irq_flags1{0};     ///< IRQ flags group 1 (chip-specific).
+  uint8_t irq_flags2{0};     ///< IRQ flags group 2 (chip-specific, includes CRC flag).
+  uint8_t packet_status{0};  ///< Packet status byte (chip-specific).
+  uint8_t rx_offset{0};      ///< RX buffer offset where frame starts (SX1262).
+  uint8_t reported_len{0};   ///< Length reported by the radio chip.
+                             // raw[] preserves the chip-reported bytes before any protocol-specific recovery, while
+                             // frame[] stores the bytes handed to parse(). Keeping both made it possible to compare
+                             // SX1262 recovery output against SX1276 captures during bring-up.
+  uint8_t raw_len{0};        ///< Number of valid bytes in raw[].
+  uint8_t frame_len{0};      ///< Number of valid bytes in frame[].
+  uint8_t raw[64]{};         ///< Raw radio buffer bytes.
+  uint8_t frame[64]{};       ///< Parsed protocol frame bytes.
 };
 
 /// Abstract radio driver for IO-Homecontrol.
@@ -99,6 +115,7 @@ class RadioDriver {
 
   /// Read instantaneous RSSI (in dBm) while in RX mode.
   /// Used for listen-before-talk (LBT) carrier sense before transmitting.
+  /// @return RSSI in dBm (negative value).
   virtual int16_t read_rssi() = 0;
 
   /// Change the carrier frequency using fast hop (no standby transition needed).
@@ -111,14 +128,21 @@ class RadioDriver {
   virtual void set_mode_standby() = 0;
 
   /// Returns true if the radio failed to initialize or encountered a fatal error.
+  /// @return true on failure.
   [[nodiscard]] virtual bool is_failed() const = 0;
 
+  /// @brief Get a human‑readable chip name.
+  /// @return "sx1276" or "sx1262".
   [[nodiscard]] virtual const char *chip_name() const = 0;
 
   /// Optional chip-specific diagnostics emitted from dump_config.
   virtual void dump_debug() {}
 
+  /// @brief Get the current RF frequency.
+  /// @return Frequency in Hz.
   [[nodiscard]] uint32_t get_current_freq() const { return this->current_freq_; }
+  /// @brief Get the most recent radio capture info.
+  /// @return const reference to RadioCaptureInfo.
   [[nodiscard]] const RadioCaptureInfo &get_last_capture() const { return this->last_capture_; }
 
   /// Set by the ISR when DIO fires. Using access helpers instead of touching the flag directly
@@ -151,15 +175,18 @@ class RadioDriver {
   }
 
  protected:
+  /// Clear the last capture info (resets diagnostic buffer).
   void clear_last_capture_() { this->last_capture_ = RadioCaptureInfo{}; }
 
   /// Common preamble for blocking receive: clear diagnostics and output packet.
+  /// @param packet Output packet buffer to zero and prepare.
   void prepare_blocking_receive_(RadioRxPacket &packet) {
     this->clear_last_capture_();
     packet = RadioRxPacket{};
   }
 
-  /// Common preamble for non-blocking receive: clear diagnostics, output packet, and DIO latch.
+  /// Common preamble for non‑blocking receive: clear diagnostics, output packet, and DIO latch.
+  /// @param packet Output packet buffer to zero and prepare.
   void prepare_nonblocking_receive_(RadioRxPacket &packet) {
     this->clear_last_capture_();
     packet = RadioRxPacket{};
@@ -167,12 +194,19 @@ class RadioDriver {
   }
 
   /// Hardware reset sequence common to all SX chips.
-  /// Drives RST pin low → 10ms → high → 10ms.
+  /// Drives RST pin low → 10 ms → high → 10 ms. Called from derived driver init().
   void reset_hardware_();
 
   /// Populate the common fields of RadioCaptureInfo from raw telemetry.
-  /// Chip-specific fields (rx_done, crc_error, irq_flags*, irq_status, packet_status, etc.)
+  /// Chip‑specific fields (rx_done, crc_error, irq_flags*, irq_status, packet_status, etc.)
   /// must be set by the derived driver after calling this helper.
+  /// @param blocking_wait if this was a blocking receive.
+  /// @param freq_hz RF frequency of the capture.
+  /// @param rssi_dbm Received signal strength.
+  /// @param raw Pointer to raw bytes (may be nullptr).
+  /// @param raw_len Length of raw buffer.
+  /// @param frame Pointer to parsed frame bytes (may be nullptr).
+  /// @param frame_len Length of parsed frame.
   void populate_capture_base_(bool blocking_wait, uint32_t freq_hz, int16_t rssi_dbm, const uint8_t *raw,
                               uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
     this->last_capture_ = RadioCaptureInfo{};

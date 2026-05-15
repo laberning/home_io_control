@@ -5,3 +5,4 @@ config/secrets.yaml
 __pycache__/
 .pio/
 build/
+docs/doxygen/

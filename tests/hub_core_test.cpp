@@ -539,3 +539,130 @@ TEST(HubCore, LinkedRemotes_OneRemoteMultipleDevices) {
   // Verify at least one timeout was scheduled with 2s delay.
   EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
 }
+
+// ============================================================================
+// Inbound status update tests (update_device_status_ paths)
+// ============================================================================
+
+TEST(HubCore, StatusUpdateFrameHandling) {
+  // The CMD_STATUS_UPDATE path through process_received_packet_ triggers
+  // authentication (authenticate_request_) which requires a challenge response
+  // from the mock radio. Test update_device_status_ directly instead.
+  IOHomeControlComponent comp;
+  comp.add_device("054E17");
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // Status update payload: stopped, target at [5..6]=0xC800 (100%), current at [7..8]=0xC800 (100%)
+  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->position, 100.0f) << "status update should decode position to 100%";
+  EXPECT_TRUE(dev->is_stopped) << "device should be stopped";
+}
+
+TEST(HubCore, StatusUpdateMovingFrameHandling) {
+  IOHomeControlComponent comp;
+  comp.add_device("054E17");
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // Status update: moving (STATUS_STOPPED NOT set), target at [5..6]=0xC800 (100%), current at [7..8]=0x3200 (25%)
+  uint8_t payload[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->target, 100.0f) << "target should decode to 100%";
+  EXPECT_FLOAT_EQ(dev->position, 25.0f) << "position should decode to 25%";
+  EXPECT_FALSE(dev->is_stopped) << "device should be moving";
+}
+
+TEST(HubCore, GetInfo2RespUpdatesDeviceType) {
+  IOHomeControlComponent comp;
+  comp.add_device("054E17");
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // INFO2 response: data[10..11] encode type/subtype.
+  // ROLLER_SHUTTER = 0x02. Encoding: type = data[10] << 2 | data[11] >> 6
+  // data[10]=0x00, data[11]=0x80 → type=0x02=ROLLER_SHUTTER, subtype=0
+  uint8_t payload[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x80};
+  set_cmd(f, CMD_GET_INFO2_RESP, payload, sizeof(payload));
+
+  // update_device_status_ is called directly (not through process_received_packet_)
+  comp.update_device_status_(f);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->type, DeviceType::ROLLER_SHUTTER) << "INFO2 response should update device type";
+  EXPECT_EQ(dev->subtype, 0u) << "INFO2 response should update device subtype";
+}
+
+TEST(HubCore, OwnControllerStatusUpdateSchedulesPoll) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // A CMD_PRIVATE_RESP addressed to our registered device from a remote controller
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  uint8_t src[3] = {0x43, 0x44, 0xE3};  // some remote
+  uint8_t dst[3] = {0x05, 0x4E, 0x17};  // our registered device
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_EXECUTE);
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "execute frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // Remote commanding our device → schedule 2s poll
+  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "remote activity should schedule 2s poll";
+  EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should reference our device";
+}
+
+TEST(HubCore, StatusUpdateWithShortPayloadIgnored) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  // CMD_STATUS_UPDATE with payload < 11 bytes — should be logged as unsupported
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[5] = {0, 0, 0, 0, 0};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "short status update should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  // Should not crash — short payload silently handled
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "short status update should not change position";
+}

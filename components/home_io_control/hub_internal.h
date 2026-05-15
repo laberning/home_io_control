@@ -33,18 +33,35 @@ inline constexpr uint8_t BINARY_ENTITY_OFF_POSITION = 100;
 // Capability and entity-profile helpers
 // ============================================================================
 
+/// @brief Is the given position value an on/off binary encoding?
+/// @param position Position value to test.
+/// @return true if position equals BINARY_ENTITY_ON_POSITION or BINARY_ENTITY_OFF_POSITION.
 inline bool is_binary_entity_position(uint8_t position) {
   return position == BINARY_ENTITY_ON_POSITION || position == BINARY_ENTITY_OFF_POSITION;
 }
 
+/// @brief Does the device's type match the expected HA entity class?
+/// UNKNOWN devices always match to keep imported/discovered devices working.
+/// @param dev IoDevice to check.
+/// @param expected Desired capability class (COVER, LIGHT, SWITCH, etc.).
+/// @return true if device type matches or is UNKNOWN.
 inline bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabilityClass expected) {
   return dev.type == DeviceType::UNKNOWN || device_capability_class(dev.type) == expected;
 }
 
+/// @brief Does the device support status requests?
+/// UNKNOWN devices pass through.
+/// @param dev IoDevice to check.
+/// @return true if device type supports status requests or is UNKNOWN.
 inline bool known_device_supports_status_requests(const IoDevice &dev) {
   return dev.type == DeviceType::UNKNOWN || device_supports_status_requests(dev.type);
 }
 
+/// @brief Can this device accept an execute (position) command?
+/// Checks capability and, for unknown types, allows binary positions for light/switch.
+/// @param dev IoDevice to check.
+/// @param position Position value being sent.
+/// @return true if operation is appropriate for this device type.
 inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t position) {
   if (dev.type == DeviceType::UNKNOWN)
     return true;
@@ -53,6 +70,9 @@ inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t p
   return is_binary_entity_position(position) && device_supports_binary_control(dev.type);
 }
 
+/// @brief Can this device accept a tilt command?
+/// @param dev IoDevice to check.
+/// @return true only if device type is known to support tilt.
 inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
   return dev.type != DeviceType::UNKNOWN && device_supports_tilt(dev.type);
 }
@@ -61,6 +81,11 @@ inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
 // Logging helpers
 // ============================================================================
 
+/// @brief Log a rejected operation with capability mismatch details.
+/// @param device_id Device ID string.
+/// @param dev IoDevice that rejected the command.
+/// @param operation Human‑readable operation name (e.g., "set position").
+/// @param expected Expected capability class or profile name.
 inline void log_rejected_operation(const std::string &device_id, const IoDevice &dev, const char *operation,
                                    const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
@@ -72,14 +97,27 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
 // Persistence key helpers
 // ============================================================================
 
+/// @brief Compute the preference key hash for a saved device slot.
+/// @param index Slot index (0–15).
+/// @return FNV‑1 hash value.
 inline uint32_t saved_device_pref_hash(uint8_t index) {
   char key[16];
   snprintf(key, sizeof(key), "iohome_dev_%u", index);
   return fnv1_hash(key);
 }
 
+/// @brief Legacy preference key (for migration).
+/// @param index Slot index.
+/// @return Hash value (previous formula).
 inline uint32_t legacy_saved_device_pref_hash(uint8_t index) { return fnv1_hash("iohome_dev") + index; }
 
+/// @brief Log a frame at the "io_capture" tag with structured fields.
+/// Used for protocol‑level debugging (phases: component, tx, rx, parse_ok/parse_fail).
+/// @param radio Radio driver instance (provides chip name and capture).
+/// @param stage String label for the current phase.
+/// @param buf Raw bytes being logged.
+/// @param len Length of buf.
+/// @param frame Optional parsed IoFrame for decoded fields (cmd, src, dst).
 inline void log_component_capture(const RadioDriver *radio, const char *stage, const uint8_t *buf, uint8_t len,
                                   const IoFrame *frame = nullptr) {
   const RadioCaptureInfo &capture = radio->get_last_capture();
@@ -97,6 +135,12 @@ inline void log_component_capture(const RadioDriver *radio, const char *stage, c
            capture.freq_hz, capture.timestamp_ms, len, payload_hex);
 }
 
+/// @brief Log a frame‑level issue (unregistered endpoints, unsupported commands).
+/// @param component Pointer to the component (for device lookup).
+/// @param direction "tx" or "rx".
+/// @param reason Short issue label (e.g., "unregistered_device").
+/// @param frame Parsed frame.
+/// @param len Serialized length.
 inline void log_frame_issue(IOHomeControlComponent *component, const char *direction, const char *reason,
                             const IoFrame &frame, uint8_t len) {
   const std::string src_id = node_id_to_string(frame.src);
@@ -119,6 +163,8 @@ inline void log_frame_issue(IOHomeControlComponent *component, const char *direc
 // Status normalization helpers
 // ============================================================================
 
+/// @brief Normalize stopped state: some devices briefly report stopped before target/current converge.
+/// @param dev Device record to update (may clear is_stopped if positions differ).
 inline void normalize_stopped_state(IoDevice &dev) {
   // Some devices briefly report STATUS_STOPPED before current and target have numerically
   // converged. Keep the device in the moving state until the decoded values are effectively equal.
@@ -128,6 +174,10 @@ inline void normalize_stopped_state(IoDevice &dev) {
   }
 }
 
+/// @brief Log a concise status‑update line used by inbound handlers.
+/// @param id Device ID.
+/// @param dev Current device state.
+/// @param suffix Optional suffix added after the state string (e.g., " (status update)").
 inline void log_status_update(const std::string &id, const IoDevice &dev, const char *suffix = "") {
   ESP_LOGI(TAG, "Device %s: position=%s target=%s %s%s", id.c_str(), format_position(dev.position).c_str(),
            format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving", suffix);

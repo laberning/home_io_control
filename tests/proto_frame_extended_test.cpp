@@ -109,8 +109,7 @@ TEST(ProtoFrame, CrcCcittAllOnes) {
 TEST(ProtoFrame, DeviceCapabilityClassClassification) {
   EXPECT_EQ(device_capability_class(DeviceType::UNKNOWN), DeviceCapabilityClass::UNKNOWN)
       << "UNKNOWN should map to UNKNOWN";
-  EXPECT_EQ(device_capability_class(DeviceType::ADJUSTABLE_SLAT_SHUTTER), DeviceCapabilityClass::COVER)
-      << "adjustable slat shutter should be COVER";
+  EXPECT_EQ(device_capability_class(DeviceType::BLIND), DeviceCapabilityClass::COVER) << "blind should be COVER";
   EXPECT_EQ(device_capability_class(DeviceType::VENETIAN_BLIND), DeviceCapabilityClass::COVER)
       << "venetian blind should be COVER";
   EXPECT_EQ(device_capability_class(DeviceType::ROLLER_SHUTTER), DeviceCapabilityClass::COVER)
@@ -121,10 +120,11 @@ TEST(ProtoFrame, DeviceCapabilityClassClassification) {
   EXPECT_EQ(device_capability_class(DeviceType::ON_OFF_SWITCH), DeviceCapabilityClass::SWITCH)
       << "on/off switch should be SWITCH";
   EXPECT_EQ(device_capability_class(DeviceType::LOCK), DeviceCapabilityClass::LOCK) << "lock should be LOCK";
-  EXPECT_EQ(device_capability_class(DeviceType::HEATING), DeviceCapabilityClass::CLIMATE)
-      << "heating should be CLIMATE";
+  EXPECT_EQ(device_capability_class(DeviceType::HEATING_TEMPERATURE_INTERFACE), DeviceCapabilityClass::CLIMATE)
+      << "heating temperature interface should be CLIMATE";
   EXPECT_EQ(device_capability_class(DeviceType::BEACON), DeviceCapabilityClass::BEACON) << "beacon should be BEACON";
-  EXPECT_EQ(device_capability_class(DeviceType::SENSOR), DeviceCapabilityClass::SENSOR) << "sensor should be SENSOR";
+  EXPECT_EQ(device_capability_class(DeviceType::INTRUSION_ALARM), DeviceCapabilityClass::SENSOR)
+      << "intrusion alarm should be SENSOR";
 }
 
 TEST(ProtoFrame, DeviceCapabilityClassName) {
@@ -135,4 +135,50 @@ TEST(ProtoFrame, DeviceCapabilityClassName) {
       << "switch class name should be 'switch'";
   EXPECT_STREQ(device_capability_class_name(DeviceType::UNKNOWN), "unknown")
       << "unknown class name should be 'unknown'";
+}
+
+// ========================================================================================
+// Tilt report decoding
+// ========================================================================================
+
+TEST(ProtoFrame, DecodeTiltReport) {
+  // STATUS_POS_MAX = 0xC800 = 51200, tilt_raw = 0 → closed (100 - 0) = 100% tilt → 100
+  EXPECT_FLOAT_EQ(decode_tilt_report(0), 100.0f) << "tilt_raw=0 should decode to 100% (fully closed in tilt)";
+
+  // tilt_raw = STATUS_POS_MAX → open (100 - 100) = 0% tilt → 0
+  EXPECT_FLOAT_EQ(decode_tilt_report(STATUS_POS_MAX), 0.0f)
+      << "tilt_raw=STATUS_POS_MAX should decode to 0% (fully open in tilt)";
+
+  // tilt_raw = STATUS_POS_MAX / 2 → halfway: 100 - 50 = 50%
+  EXPECT_FLOAT_EQ(decode_tilt_report(STATUS_POS_MAX / 2), 50.0f)
+      << "tilt_raw=half should decode to 50% (mid position in tilt)";
+
+  // tilt_raw > STATUS_POS_MAX → UNKNOWN_POSITION
+  EXPECT_FLOAT_EQ(decode_tilt_report(STATUS_POS_MAX + 1), UNKNOWN_POSITION)
+      << "tilt_raw exceeding max should return UNKNOWN_POSITION";
+}
+
+TEST(ProtoFrame, FrameLengthAndFlagGetters) {
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  EXPECT_TRUE(is_start(f)) << "start flag should be set after init with start=true";
+  EXPECT_FALSE(is_end(f)) << "end flag should not be set after init with end=false";
+
+  init_frame(f, true, false, true, false);
+  EXPECT_FALSE(is_start(f)) << "start should be false";
+  EXPECT_TRUE(is_end(f)) << "end should be true";
+
+  init_frame(f, true, true, true, false);
+  EXPECT_TRUE(is_start(f)) << "start should be true when both set";
+  EXPECT_TRUE(is_end(f)) << "end should be true when both set";
+
+  // Length is set by set_cmd, not init_frame. After set_cmd with 0 data bytes,
+  // length = FRAME_MIN_SIZE (9).
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t dst[3] = {0x9C, 0xA3, 0x9C};
+  init_frame(f, true, true, false, false);
+  set_src(f, own);
+  set_dst(f, dst);
+  set_cmd(f, CMD_PRIVATE);
+  EXPECT_EQ(frame_length(f), FRAME_MIN_SIZE) << "set_cmd should set frame length to minimum (9)";
 }

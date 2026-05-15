@@ -1,3 +1,6 @@
+/// @file platform_cover.cpp
+/// @brief ESPHome cover entity for IO-Homecontrol devices.
+
 #include "platform_cover.h"
 #include "esphome/core/log.h"
 

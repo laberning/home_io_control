@@ -68,10 +68,10 @@ static constexpr uint32_t FXOSC = 32000000U;
 // SX1276 Radio Driver
 // ============================================================================
 
-/// SX1276 implementation of RadioDriver.
+/// @brief SX1276 implementation of RadioDriver.
 ///
 /// Manages the SX1276 via SPI using the SpiAccess interface. Configures the chip
-/// in FSK mode with IoHomeOn for hardware CRC and IO-Homecontrol packet framing.
+/// in FSK mode with IoHomeOn for hardware CRC and IO‑Homecontrol packet framing.
 class RadioSX1276 : public RadioDriver {
  public:
   RadioSX1276(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *dio0_pin, InternalGPIOPin *dio4_pin,
@@ -83,29 +83,81 @@ class RadioSX1276 : public RadioDriver {
         tx_power_(tx_power),
         pa_pin_(pa_pin) {}
 
+  /// @brief Initialize the SX1276 radio (reset, calibrate, configure registers).
+  /// @return true on success; false on failure (e.g., version check).
   bool init() override;
+  /// @brief Transmit a frame with specified frequency and preamble.
+  /// @param data Pointer to payload bytes.
+  /// @param len Payload length.
+  /// @param tx_config Transmission config (frequency, preamble).
+  /// @return true if transmit succeeded.
   bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
+  /// @brief Blocking wait for a packet with timeout.
+  /// @param packet Output: received packet (freq, len, data).
+  /// @param timeout_ms Maximum time to wait.
+  /// @return true if a packet was received; false on timeout.
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
+  /// @brief Non‑blocking check for a received packet (called from loop).
+  /// @param packet Output: received packet if any.
+  /// @return true if a packet was read; false if no interrupt fired.
   bool check_for_packet(RadioRxPacket &packet) override;
+  /// @brief Change RF frequency using fast hop (no standby needed).
+  /// @param freq_hz New frequency in Hz.
   void change_frequency(uint32_t freq_hz) override;
+  /// @brief Read instantaneous RSSI (dBm) while in RX mode (used for LBT).
+  /// @return RSSI in dBm (negative).
   int16_t read_rssi() override;
+  /// @brief Switch radio into continuous receive mode.
   void set_mode_rx() override;
+  /// @brief Switch radio into standby mode.
   void set_mode_standby() override;
+  /// @copydoc RadioDriver::is_failed
   [[nodiscard]] bool is_failed() const override { return this->failed_; }
+  /// @copydoc RadioDriver::chip_name
   [[nodiscard]] const char *chip_name() const override { return "sx1276"; }
+  /// @brief Dump radio‑specific debug info to log.
   void dump_debug() override;
 
  protected:
   // --- SPI register access ---
+  /// Read an SX1276 register over SPI.
+  /// @param reg Register address (7 bits, MSB clear for read).
+  /// @return Register value.
   uint8_t read_register_(uint8_t reg);
+  /// Write an SX1276 register over SPI.
+  /// @param reg Register address (7 bits, MSB set for write).
+  /// @param value Byte to write.
   void write_register_(uint8_t reg, uint8_t value);
 
   // --- Radio hardware control ---
+  /// Set the operating mode (sleep/standby/tx/rx) and wait for mode completion.
+  /// @param mode One of MODE_SLEEP, MODE_STDBY, MODE_TX, or MODE_RX.
   void set_mode_(uint8_t mode);
+  /// Perform full radio configuration (called during init).
   void configure_radio_();
+  /// Run image calibration routine (required after reset).
   void run_image_cal_();
+  /// Wait until FIFO payload is ready (polling for TX/RX readiness).
+  /// @param timeout_ms How long to wait.
+  /// @param saw_dio0 Output: true if DIO0 fired.
+  /// @param irq1 Output: IRQ flags 1.
+  /// @param irq2 Output: IRQ flags 2.
+  /// @return true if payload ready before timeout; false otherwise.
   bool poll_until_payload_ready_(uint32_t timeout_ms, bool &saw_dio0, uint8_t &irq1, uint8_t &irq2);
+  /// Read a packet from the RX FIFO into a buffer.
+  /// @param buf Output buffer.
+  /// @param buf_size Size of buf.
+  /// @return Number of bytes read.
   uint8_t read_fifo_packet_(uint8_t *buf, uint8_t buf_size);
+  /// Populate last_capture_ from raw telemetry.
+  /// @param blocking_wait if this was a blocking receive.
+  /// @param irq1 IRQ flags 1.
+  /// @param irq2 IRQ flags 2.
+  /// @param rssi RSSI value.
+  /// @param raw Pointer to raw bytes (may be nullptr).
+  /// @param raw_len Length of raw buffer.
+  /// @param frame Pointer to parsed frame bytes (may be nullptr).
+  /// @param frame_len Length of parsed frame.
   void fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, uint8_t rssi, const uint8_t *raw,
                           uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
 

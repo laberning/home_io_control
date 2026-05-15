@@ -1,15 +1,3 @@
-#include "hub_internal.h"
-
-#include "radio_sx1276.h"
-#include "radio_sx1262.h"
-
-#include <new>
-
-namespace esphome {
-namespace home_io_control {
-
-static const char *const TAG = detail::TAG;
-
 /// @file hub_core.cpp
 /// @brief Component lifecycle, persistence, and main-loop scheduling.
 ///
@@ -23,6 +11,18 @@ static const char *const TAG = detail::TAG;
 /// Protocol exchange, pairing, inbound status handling, and outbound operations live
 /// in dedicated translation units so this file remains the place to understand how the
 /// component is brought up and driven over time.
+
+#include "hub_internal.h"
+
+#include "radio_sx1276.h"
+#include "radio_sx1262.h"
+
+#include <new>
+
+namespace esphome {
+namespace home_io_control {
+
+static const char *const TAG = detail::TAG;
 
 void IOHomeControlComponent::reset_exchange_debug_(uint8_t request_cmd) {
   this->last_exchange_debug_ = ExchangeDebugInfo{};
@@ -58,6 +58,24 @@ void IOHomeControlComponent::log_exchange_debug_(const char *device_id) const {
 
 // === Setup ===
 
+/// Initialize the IO‑Homecontrol component and radio hardware.
+///
+/// This is the main setup entry point called by ESPHome during startup.
+/// The sequence:
+///   1. Parse node_id and system_key from hex strings (fails early if malformed).
+///   2. Initialize the SPI bus via spi_setup().
+///   3. Auto‑detect or explicitly select the radio chip:
+///      - If radio_type is "sx1276" or "sx1262", select that driver.
+///      - If empty (default), attempt to read SX1276 version register (0x42 = 0x12).
+///        If the read fails or returns wrong version, fall back to SX1262.
+///   4. Allocate the appropriate RadioDriver (SX1276 needs DIO0; SX1262 needs BUSY+DIO1).
+///   5. Call radio_->init() which performs chip reset, calibration, and register configuration.
+///   6. Load persisted device registry from flash preferences.
+///   7. Enter normal loop() operation with radio in RX mode.
+///
+/// @note Blocking operations in setup() temporarily raise the ESPHome WDT threshold
+///       to 250 ms (warn_if_blocking_over_) because radio init and flash access can
+///       exceed the default 30–50 ms budget.
 void IOHomeControlComponent::setup() {
   // IO-homecontrol exchanges are intentionally blocking and often take a few hundred
   // milliseconds, so use a higher warning threshold than ESPHome's generic 30-50 ms.
@@ -136,6 +154,11 @@ void IOHomeControlComponent::setup() {
 
 // === Frequency hopping ===
 
+/// Hop to the next channel in the 3‑channel sequence: CH1 → CH2 → CH3 → CH1.
+/// Called periodically by the main loop when idle to maintain synchronization
+/// with the protocol's ~2.7 ms hopping schedule. Devices also hop, so the controller
+/// must hop even while waiting for a response; the next transmit will use whatever
+/// channel is current.
 void IOHomeControlComponent::hop_frequency_() {
   uint32_t const cur = this->radio_->get_current_freq();
   uint32_t next;
@@ -286,11 +309,13 @@ void IOHomeControlComponent::dump_config() {
 
 // === Persistence ===
 
+/// @brief Minimal device record persisted to flash (truncated runtime state).
+/// Stored as a preference; converted to full IoDevice on load.
 struct SavedDevice {
-  uint8_t node_id[NODE_ID_SIZE];
-  uint8_t type;
-  uint8_t subtype;
-  bool inverted;
+  uint8_t node_id[NODE_ID_SIZE];  ///< 3‑byte node ID.
+  uint8_t type;                   ///< DeviceType (uint8_t value).
+  uint8_t subtype;                ///< Device subtype.
+  bool inverted;                  ///< Position inversion flag.
 };
 
 void IOHomeControlComponent::save_devices_() {

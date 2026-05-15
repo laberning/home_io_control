@@ -20,9 +20,13 @@ namespace home_io_control {
 
 namespace {
 
-// Decode the shared target/current position fields used by both private responses and
-// unsolicited status updates. The two frame types use different byte offsets, but once the
-// offsets are known the normalization policy is identical.
+/// @brief Decode the shared target/current position fields used by private response and status‑update frames.
+/// Different frame types use different byte offsets, but the normalization policy is identical once offsets known.
+/// @param dev Device record to update.
+/// @param frame IoFrame containing a status‑bearing command.
+/// @param target_offset Byte offset of target MSB within frame.data.
+/// @param current_offset Byte offset of current MSB within frame.data.
+/// @param allow_tilt_from_extended_response If true and frame is extended, decode tilt from bytes 13–14.
 void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_offset, uint8_t current_offset,
                           bool allow_tilt_from_extended_response) {
   uint16_t const tgt = (frame.data[target_offset] << 8) | frame.data[target_offset + 1];
@@ -37,12 +41,16 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
   }
 }
 
+/// @brief Compute the delay before the next status poll for a private‑response device.
+/// @param dev Device record.
+/// @param frame The private response frame (may contain a coarse retry hint in byte 7).
+/// @return Delay in milliseconds.
 uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame) {
   if (dev.is_stopped) {
     return 3600000;
   }
 
-  // Private responses carry a coarse follow-up timer in byte 7 on many devices.
+  // Private responses carry a coarse follow‑up timer in byte 7 on many devices.
   // When it is missing or clearly invalid, fall back to the standard short retry.
   if (frame.data[7] != 0xFF && frame.data[7] != 0x00) {
     return frame.data[7] * 1000 + 1000;
@@ -50,8 +58,9 @@ uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &f
   return 60000;
 }
 
-// Device-originated status updates do not carry the same coarse retry hint as private responses,
-// so keep their follow-up policy simple: long interval when idle, short interval while moving.
+/// @brief Compute the delay before the next status poll for a device‑originated status update.
+/// @param dev Device record.
+/// @return Delay in milliseconds (long when idle, short while moving).
 uint32_t compute_status_update_delay_ms(const IoDevice &dev) { return dev.is_stopped ? 3600000 : 60000; }
 
 }  // namespace

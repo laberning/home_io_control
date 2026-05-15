@@ -10,6 +10,11 @@
 #include <algorithm>
 #include <cstring>
 
+namespace esphome {
+namespace home_io_control {
+
+static const char *const TAG = "home_io_control.exchange";
+
 /// @file hub_exchange.cpp
 /// @brief Outbound authenticated exchange state machine (non-pairing flows).
 ///
@@ -23,14 +28,11 @@
 /// and device-management concerns distinct from the protocol state machine.
 /// Pairing flows (discovery/key exchange) live in hub_pairing.cpp.
 
-namespace esphome {
-namespace home_io_control {
-
 namespace {
 
-const char *const TAG = "home_io_control";
-
-/// Map OutboundExchangeState enum to string for debug logging.
+/// @brief Map OutboundExchangeState enum to a short string for debug logging.
+/// @param state State value.
+/// @return Null‑terminated string label.
 const char *outbound_stage_name(exchange::OutboundExchangeState state) {
   switch (state) {
     case exchange::OutboundExchangeState::IDLE:
@@ -53,7 +55,9 @@ const char *outbound_stage_name(exchange::OutboundExchangeState state) {
   }
 }
 
-/// Map InboundAuthState enum to string for debug logging.
+/// @brief Map InboundAuthState enum to a short string for debug logging.
+/// @param state State value.
+/// @return Null‑terminated string label.
 const char *inbound_stage_name(exchange::InboundAuthState state) {
   switch (state) {
     case exchange::InboundAuthState::IDLE:
@@ -189,12 +193,6 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
 /// NOT implement retries itself — the orchestrator (`send_and_receive_`) calls
 /// this repeatedly until success or retry exhaustion. On failure we mark the
 /// context state as FAILED and record debug info; success returns true.
-///
-/// @param request  Outbound IoFrame to transmit.
-/// @param freq     RF channel frequency in Hz.
-/// @param preamble Preamble length (LONG_PREAMBLE for start frames, SHORT_PREAMBLE otherwise).
-/// @param ctx      Exchange context updated on failure.
-/// @return true if transmit succeeded, false otherwise.
 bool IOHomeControlComponent::transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
                                                exchange::OutboundExchangeContext &ctx) {
   if (!this->transmit_frame_(request, freq, preamble)) {
@@ -213,10 +211,6 @@ bool IOHomeControlComponent::transmit_request_(const IoFrame &request, uint32_t 
 ///   - COMPLETE_DIRECT  → matching non‑challenge frame (operation complete, no auth)
 ///   - REQUIRE_AUTH     → matching 0x3C challenge (device demands authentication)
 ///   - IGNORE_UNRELATED  → all others (timeout, wrong endpoints, unparsable)
-///
-/// @param request Original request frame (used for endpoint matching).
-/// @param ctx     Exchange context (provides deadline and receives rx frame on accept).
-/// @return Disposition indicating how the first response should be handled.
 decisions::ExchangeFirstResponseDisposition IOHomeControlComponent::wait_for_first_response_(
     const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
   RadioRxPacket packet{};
@@ -254,11 +248,6 @@ decisions::ExchangeFirstResponseDisposition IOHomeControlComponent::wait_for_fir
 /// the HMAC challenge response using `create_challenge_resp()` and transmits
 /// it with the SX1262‑specific longer preamble. The exchange context is
 /// updated with the BUILD_AUTH_RESPONSE and TX_AUTH_RESPONSE states.
-///
-/// @param request Original request frame (needed for HMAC derivation).
-/// @param freq    RF channel frequency (same channel used for the request).
-/// @param ctx     Exchange context holding the challenge frame and state.
-/// @return true if challenge response was sent successfully; false otherwise.
 bool IOHomeControlComponent::handle_authentication_(const IoFrame &request, uint32_t freq,
                                                     exchange::OutboundExchangeContext &ctx) {
   ctx.saw_challenge = true;
@@ -293,10 +282,6 @@ bool IOHomeControlComponent::handle_authentication_(const IoFrame &request, uint
 /// key. This helper loops within `RESPONSE_AUTH_WAIT_MS`, hopping channels on
 /// each slice, parsing and validating that the frame matches the original
 /// request endpoints. Non‑matching frames are logged and ignored.
-///
-/// @param request Original request frame (used for endpoint matching).
-/// @param ctx     Exchange context (receives final rx frame on accept).
-/// @return ACCEPT if a matching final response arrives; IGNORE_UNRELATED on timeout.
 decisions::ExchangeFinalResponseDisposition IOHomeControlComponent::wait_for_final_response_(
     const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
   RadioRxPacket packet{};

@@ -1,3 +1,6 @@
+/// @file platform_light.cpp
+/// @brief Experimental binary light entity for IO-Homecontrol devices.
+
 #include "platform_light.h"
 #include "esphome/core/log.h"
 

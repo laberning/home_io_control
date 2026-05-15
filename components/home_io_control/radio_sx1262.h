@@ -71,11 +71,11 @@ static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 // SX1262 Radio Driver
 // ============================================================================
 
-/// SX1262 implementation of RadioDriver.
+/// @brief SX1262 implementation of RadioDriver.
 ///
-/// Manages the SX1262 via opcode-based SPI using the SpiAccess interface.
-/// Configures the chip in FSK mode with software CRC-CCITT to match the
-/// IO-Homecontrol protocol (the SX1262 lacks the SX1276's IoHomeOn mode).
+/// Manages the SX1262 via opcode‑based SPI using the SpiAccess interface.
+/// Configures the chip in FSK mode with software CRC‑CCITT to match the
+/// IO‑Homecontrol protocol (the SX1262 lacks the SX1276's IoHomeOn mode).
 class RadioSX1262 : public RadioDriver {
  public:
   RadioSX1262(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *dio1_pin, InternalGPIOPin *busy_pin,
@@ -91,56 +91,138 @@ class RadioSX1262 : public RadioDriver {
         vfem_pin_(vfem_pin),
         fem_pa_pin_(fem_pa_pin) {}
 
+  /// @copydoc RadioDriver::init
   bool init() override;
+  /// @copydoc RadioDriver::send_packet
   bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
+  /// @copydoc RadioDriver::wait_for_packet
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
+  /// @copydoc RadioDriver::check_for_packet
   bool check_for_packet(RadioRxPacket &packet) override;
+  /// @copydoc RadioDriver::change_frequency
   void change_frequency(uint32_t freq_hz) override;
+  /// @copydoc RadioDriver::read_rssi
   int16_t read_rssi() override;
+  /// @copydoc RadioDriver::set_mode_rx
   void set_mode_rx() override;
+  /// @copydoc RadioDriver::set_mode_standby
   void set_mode_standby() override;
   [[nodiscard]] bool is_failed() const override { return this->failed_; }
   [[nodiscard]] const char *chip_name() const override { return "sx1262"; }
+  /// @brief Dump SX1262‑specific debug info.
   void dump_debug() override;
 
-  /// Diagnostic: log chip status, sync word, pin states. Called from dump_config.
  protected:
-  // --- SPI communication (opcode-based) ---
+  // --- SPI communication (opcode‑based) ---
+  /// Wait until BUSY pin is low before any SPI transaction.
   void wait_busy_();
+  /// Write an opcode with optional parameter bytes.
+  /// @param opcode SX1262 opcode.
+  /// @param params Pointer to parameter buffer (may be nullptr).
+  /// @param len Parameter length.
   void write_opcode_(uint8_t opcode, const uint8_t *params, uint8_t len);
+  /// Read response from an opcode.
+  /// @param opcode Opcode that was previously written.
+  /// @param data Output buffer.
+  /// @param len Expected number of bytes to read.
   void read_opcode_(uint8_t opcode, uint8_t *data, uint8_t len);
+  /// Write to a register (SX1262 uses opcodes for register access).
+  /// @param addr 16‑bit register address.
+  /// @param data Pointer to data bytes.
+  /// @param len Number of bytes.
   void write_register_(uint16_t addr, const uint8_t *data, uint8_t len);
+  /// Read from a register.
+  /// @param addr 16‑bit register address.
+  /// @param data Output buffer.
+  /// @param len Number of bytes to read.
   void read_register_(uint16_t addr, uint8_t *data, uint8_t len);
+  /// Write into the SX1262 TX/RX buffer at a given offset.
+  /// @param offset Buffer offset.
+  /// @param data Payload bytes.
+  /// @param len Payload length.
   void write_buffer_(uint8_t offset, const uint8_t *data, uint8_t len);
+  /// Read from the SX1262 RX buffer.
+  /// @param offset Buffer offset.
+  /// @param data Output buffer.
+  /// @param len Number of bytes to read.
   void read_buffer_(uint8_t offset, uint8_t *data, uint8_t len);
 
   // --- Radio configuration ---
+  /// Full radio initialization (called from init()).
   void configure_radio_();
+  /// Set RF frequency via the frequency register.
+  /// @param freq_hz Frequency in Hz.
   void set_frequency_register_(uint32_t freq_hz);
+  /// Configure packet parameters (preamble, payload length, CRC).
+  /// @param preamble_len Preamble length in symbols.
+  /// @param payload_len Expected payload length.
+  /// @param packet_type Fixed for GFSK.
+  /// @param crc_type CRC configuration (off or on).
   void set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type, uint8_t crc_type);
+  /// Apply RX‑specific packet parameters (calls set_packet_params_ for RX).
   void set_rx_packet_params_();
+  /// Clear all IRQ status bits.
+  /// @param irq_mask Bitmask of IRQs to clear.
   void clear_irq_status_(uint16_t irq_mask);
+  /// @brief Read device error flags (and clear them).
+  /// @return Error bitmask.
   uint16_t get_device_errors_();
+  /// @brief Clear device error flags.
   void clear_device_errors_();
+  /// Reset RX state machine and buffer. Optionally force standby first.
+  /// @param force_standby If true, switch to standby before reset.
   void reset_rx_state_(bool force_standby = true);
+  /// Populate the RadioCaptureInfo from SX1262‑specific telemetry.
+  /// @param blocking_wait true if this was a blocking wait.
+  /// @param irq_status Raw IRQ status.
+  /// @param rx_offset Reported RX buffer offset.
+  /// @param reported_len Length reported by the radio.
+  /// @param raw Pointer to raw buffer bytes (may be nullptr).
+  /// @param raw_len Length of raw buffer.
+  /// @param frame Pointer to parsed frame bytes (may be nullptr).
+  /// @param frame_len Length of parsed frame.
   void fill_capture_info_(bool blocking_wait, uint16_t irq_status, uint8_t rx_offset, uint8_t reported_len,
                           const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
+
   /// Read a received packet from the buffer and return the raw bytes reported by the chip.
+  /// This is virtual to allow test doubles.
+  /// @param packet Output RadioRxPacket.
+  /// @param blocking_wait true if called from a blocking wait path.
+  /// @param irq_status Raw IRQ status word.
+  /// @return true if a valid packet was extracted; false otherwise.
   virtual bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint16_t irq_status);
 
   /// Software CRC helper kept for transmit framing parity with the current implementation.
+  /// @return Number of encoded bytes, or 0 if buffer too small.
   static uint8_t uart_encode_packet(const uint8_t *data, uint8_t len, uint8_t *encoded, uint8_t encoded_max_len);
 
   /// DIO1 ISR — sets dio_fired flag. Runs in interrupt context.
   static void gpio_intr(RadioSX1262 *arg);
 
-  /// Read the IRQ status from the radio. Used internally by wait_for_packet.
+  /// @brief Read the raw IRQ status from the radio.
+  /// @return 16‑bit IRQ status word.
   virtual uint16_t read_irq_status_raw();
 
-  // === wait_for_packet helpers (private) ===
  private:
+  // === wait_for_packet helpers (private) ===
+  /// Poll until any radio activity (DIO1) or timeout.
+  /// @param start Starting timestamp.
+  /// @param timeout_ms Maximum wait.
+  /// @param saw_dio1 Output: true if DIO1 fired.
+  /// @param irq Output: captured IRQ status.
+  /// @return true if activity detected before timeout; false otherwise.
   bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool &saw_dio1, uint16_t &irq);
+  /// Resolve the race between SYNC word detection and payload‑ready by peeking
+  /// the RX buffer status and potentially restarting RX.
+  /// @param start Starting timestamp.
+  /// @param timeout_ms Maximum wait.
+  /// @param irq Output: final IRQ status when success is determined.
+  /// @return true if a frame boundary is resolved; false on timeout or error.
   bool resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint16_t &irq);
+  /// Finalize receive: populate packet from the RX buffer and telemetry.
+  /// @param packet Output RadioRxPacket.
+  /// @param irq IRQ status at completion.
+  /// @return true if packet extraction succeeded; false otherwise.
   bool finalize_receive_(RadioRxPacket &packet, uint16_t irq);
 
   SpiAccess *spi_;
