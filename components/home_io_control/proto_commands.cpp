@@ -21,7 +21,7 @@ bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low
   uint8_t plen;
   // Command originator: 0x01 = User (remote control action).
   d[0] = 0x01;
-  // ACEI: priority "User Level 2", IsValid flag (protocol-determined).
+  // ACEI byte matched from working controller captures for execute commands.
   d[1] = 0x67;
   if (position <= 100) {
     // Real position: doubled value (0-200 maps to 0-100%).
@@ -149,7 +149,7 @@ bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *ds
   init_frame(f, true, false, true, false);
   set_dst(f, dst);
   set_src(f, own);
-  // Status update acknowledgment payload (protocol-defined).
+  // Status update acknowledgment payload matched from working controller captures.
   uint8_t d[2] = {0x05, 0x00};
   return set_cmd(f, CMD_STATUS_UPDATE_RESP, d, 2);
 }
@@ -160,7 +160,7 @@ bool create_set_config1(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   init_frame(f, true, true, false, false);
   set_dst(f, dst);
   set_src(f, own);
-  // Set-config payload (protocol-defined).
+  // Set-config payload matched from working controller captures.
   uint8_t d[5] = {0xE0, 0x10, 0x0A, 0x08, 0x00};
   return set_cmd(f, CMD_SET_CONFIG1, d, 5);
 }

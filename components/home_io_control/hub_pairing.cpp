@@ -234,7 +234,7 @@ bool IOHomeControlComponent::run_key_exchange_phase_(pairing::PairingContext &co
 
 /// Execute Phase 3: finalize pairing configuration on the device.
 ///
-/// Sends a SetConfig1 command (0x71) using the authenticated exchange path.
+/// Sends a SetConfig1 command (0x6F) using the authenticated exchange path.
 /// This step is optional in the sense that the command may be skipped if
 /// `create_set_config1()` returns false, but the pairing itself is already
 /// complete at this point. The function always returns true to avoid aborting

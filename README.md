@@ -2,23 +2,12 @@
 
 An [ESPHome](https://esphome.io/) external component that implements the **IO-Homecontrol 2W** (two-way, with device feedback) protocol. Control shutters, blinds, awnings, openers, curtains, and other IO-Homecontrol devices directly from ESPHome and Home Assistant using an ESP32 board with an SX1276 or SX1262 radio module.
 
-\if doxygen
-\note **Experimental Project — Use With Caution**
-This project is in early development. You may encounter edge cases where certain features do not yet function as expected.
-I can't verify pairing at the moment due to some pairing issues with my IO-Homecontrol devices.
-
-\note
-However, if you reuse the same `node_id` and `system_key` from a previously paired hub, you can bypass pairing entirely - and that path is known to function correctly.
-\endif
-
-\if NOT doxygen
 > [!NOTE]
 > **Experimental Project — Use With Caution**
 > This project is in early development. You may encounter edge cases where certain features do not yet function as expected.
 >  
 > I can't verify pairing at the moment due to some pairing issues with my IO-Homecontrol devices.
 > However, if you reuse the same `node_id` and `system_key` from a previously paired hub, you can bypass pairing entirely - and that path is known to function correctly.
-\endif
 
 **Get Involved**  
 Support is greatly appreciated - whether you're helping with testing devices that I don't own, give feedback or submit pull requests.
@@ -263,16 +252,8 @@ This project is only possible thanks to the effort and shared knowledge from the
 
 ## Disclaimer & Regulatory Warning
 
-\if doxygen
-\warning
-**This tool is designed for educational and testing purposes, provided "as is", without warranty of any kind.
-It is forbidden in most countries to interact with IO-Homecontrol devices that are not yours.**
-\endif
-
-\if NOT doxygen
 > [!WARNING]
 > **This tool is designed for educational and testing purposes, provided "as is", without warranty of any kind. It is forbidden in most countries to interact with IO-Homecontrol devices that are not yours.**
-\endif
 
 ## License
 

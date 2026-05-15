@@ -286,7 +286,7 @@ class IOHomeControlComponent : public Component,
   /// @param context Pairing context populated by run_discovery_phase_().
   /// @return true if key exchange completes successfully; false otherwise.
   bool run_key_exchange_phase_(pairing::PairingContext &context);
-  /// Phase 3: send SetConfig1 (0x71) to finalize device configuration.
+  /// Phase 3: send SetConfig1 (0x6F) to finalize device configuration.
   /// @param context Pairing context with device information.
   /// @return true (pairing proceeds regardless of set‑config outcome).
   bool finalize_pairing_configuration_(pairing::PairingContext &context);

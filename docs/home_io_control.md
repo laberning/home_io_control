@@ -1,4 +1,4 @@
-# Home IO Control Configuration
+# YAML Configuration
 
 This page documents the YAML configuration for the `home_io_control` external component and its ESPHome platforms.
 
@@ -44,7 +44,7 @@ button:
     name: "Discover & Pair"
 ```
 
-## `home_io_control` Component
+## Home IO Control Component
 
 The `home_io_control:` block defines the shared radio/controller hub. All cover, light, switch, and button entities attach to this hub.
 
@@ -90,7 +90,7 @@ Notes:
 | SX1276 | `cs_pin`, `rst_pin`, `dio0_pin` | `dio4_pin` | `pa_pin: BOOST` |
 | SX1262 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | `fem_en_pin`, `vfem_pin`, `fem_pa_pin` | `radio_type: sx1262`, `tcxo_voltage: 1_8V` |
 
-## `cover` Platform
+## Cover Platform
 
 Use the cover platform for position-capable IO-homecontrol devices such as shutters, awnings, blinds, openers, curtains, and related families.
 
@@ -119,7 +119,7 @@ Notes:
 - This is the primary and best-validated platform in the repo.
 - Additional families recognized by the component include venetian blinds, dual shutters, louvre blinds, rolling door openers, curtain tracks, and swinging shutters.
 
-## `light` Platform
+## Light Platform
 
 Use the light platform for binary on/off IO-homecontrol light devices.
 
@@ -144,7 +144,7 @@ Notes:
 - The current implementation is still experimental and untested on local hardware in this repo.
 - Known non-light device families will be rejected once the device type is known.
 
-## `switch` Platform
+## Switch Platform
 
 Use the switch platform for binary on/off IO-homecontrol switch devices.
 
@@ -168,7 +168,7 @@ Notes:
 - This platform is also experimental and currently limited to binary on/off semantics.
 - Known non-switch device families will be rejected once the device type is known.
 
-## `button` Platform
+## Button Platform
 
 Use the button platform to expose a Home Assistant button that starts discovery and pairing.
 
@@ -351,7 +351,6 @@ For larger working examples, see the configs already in this repo:
 
 ## See Also
 
-- [README.md](../README.md)
 - [ESPHome External Components](https://esphome.io/components/external_components/)
 - [ESPHome Cover Component](https://esphome.io/components/cover/)
 - [ESPHome Light Component](https://esphome.io/components/light/)
