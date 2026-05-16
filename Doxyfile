@@ -1,10 +1,11 @@
-# Doxyfile 1.13 — Home IO Control
+# Doxyfile 1.14 — Home IO Control
 # Run `doxygen Doxyfile` to generate HTML docs.
 
 PROJECT_NAME           = "Home IO Control"
-PROJECT_BRIEF          = "IO-Homecontrol 2W ESPHome external component"
+PROJECT_BRIEF          = "ESPHome add-on for IO-Homecontrol devices"
 OUTPUT_DIRECTORY       = docs/doxygen
-INPUT                  = components/home_io_control/ README.md docs/home_io_control.md
+INPUT                  = components/home_io_control/ README.md docs/home_io_control.md LICENSE
+USE_MDFILE_AS_MAINPAGE = README.md
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.cpp
 
@@ -40,10 +41,16 @@ REFERENCES_LINK_SOURCE  = YES
 HTML_COLORSTYLE         = LIGHT
 HTML_EXTRA_STYLESHEET   = build/doxygen-resources/doxygen-awesome.css \
                           build/doxygen-resources/doxygen-awesome-sidebar-only.css \
-                          build/doxygen-resources/doxygen-awesome-sidebar-only-darkmode-toggle.css
+                          build/doxygen-resources/doxygen-awesome-sidebar-only-darkmode-toggle.css \
+                          doxygen-custom/custom.css
+
 HTML_EXTRA_FILES        = build/doxygen-resources/doxygen-awesome-darkmode-toggle.js \
-                          build/doxygen-resources/doxygen-awesome-fragment-copy-button.js
-HTML_HEADER             = build/doxygen-resources/header.html
+                          build/doxygen-resources/doxygen-awesome-fragment-copy-button.js \
+                          build/doxygen-resources/doxygen-awesome-paragraph-link.js \
+                          build/doxygen-resources/doxygen-awesome-interactive-toc.js \
+                          build/doxygen-resources/doxygen-awesome-tabs.js
+
+HTML_HEADER              = doxygen-custom/header.html
 
 # Graphviz call graphs
 HAVE_DOT                = YES

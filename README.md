@@ -1,6 +1,8 @@
-# Home IO Control ESPHome Component
+# Home IO Control
+[![GitHub](https://img.shields.io/github/license/laberning/home_io_control)](https://github.com/laberning/home_io_control/blob/main/LICENSE)
+![GitHub Repo stars](https://img.shields.io/github/stars/laberning/home_io_control)
 
-An [ESPHome](https://esphome.io/) external component that implements the **IO-Homecontrol 2W** (two-way, with device feedback) protocol. Control shutters, blinds, awnings, openers, curtains, and other IO-Homecontrol devices directly from ESPHome and Home Assistant using an ESP32 board with an SX1276 or SX1262 radio module.
+An [ESPHome](https://esphome.io/) external component for controlling IO-Homecontrol 2W devices (two-way, with device feedback). Control shutters, blinds, awnings, openers, curtains, and other IO-Homecontrol devices directly from ESPHome and Home Assistant using an ESP32 board with an SX1276 or SX1262 radio module.
 
 > [!NOTE]
 > **Experimental Project — Use With Caution**
@@ -177,17 +179,15 @@ The build system uses Docker for firmware compilation and host tools for testing
 #### Ubuntu / Debian
 ```bash
 sudo apt-get update && sudo apt-get install -y clang-format clang-tidy yamllint libgtest-dev
-
 # Optional: for API documentation generation
-sudo apt-get install doxygen graphviz
+sudo apt-get install graphviz
 ```
-
 #### macOS(Homebrew):
 ```bash
 brew install clang-format clang-tidy yamllint googletest
 
 # Optional: for API documentation generation
-brew install doxygen graphviz
+brew install graphviz
 ```
 
 #### Windows (WSL2)
@@ -257,4 +257,4 @@ This project is only possible thanks to the effort and shared knowledge from the
 
 ## License
 
-This project is licensed under the [MIT License](./LICENSE).
+This project is licensed under the [MIT License](https://github.com/laberning/home_io_control/blob/main/LICENSE).

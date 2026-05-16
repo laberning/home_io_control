@@ -184,13 +184,14 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_PREAMBLE_MSB, 0x04);
   this->write_register_(REG_PREAMBLE_LSB, 0x00);
 
-  // Sync word: 0x33, 0xFF, 0x55 (3 bytes). This is the standard IO-Homecontrol sync word.
-  // With IoHomeOn=1 and SyncSize configured to 3 bytes, these bytes are transmitted in order.
+  // Sync word: 0x55, 0xFF, 0x33 in registers → on‑air `55 FF 33`. This is the real-Deal confirmed-working sync for
+  // IO‑Homecontrol with the SX1276. SyncSize=2 (REG_SYNC_CONFIG bits 2:0 = 0x2) matches the first 2 bytes {0x55, 0xFF}.
+  // The 3rd byte 0x33 is transmitted on‑air but not compared by the chip in SyncSize=2 mode.
   uint8_t const sc = this->read_register_(REG_SYNC_CONFIG);
-  this->write_register_(REG_SYNC_CONFIG, (sc & 0xF8) | 0x02);  // SyncSize=3 (0x02) => 3 bytes used
-  this->write_register_(REG_SYNC_VALUE1, 0x33);
+  this->write_register_(REG_SYNC_CONFIG, (sc & 0xF8) | 0x02);  // SyncSize=2: 2 matched bytes `55 FF`; 3rd `33` unused
+  this->write_register_(REG_SYNC_VALUE1, 0x55);
   this->write_register_(REG_SYNC_VALUE1 + 1, 0xFF);
-  this->write_register_(REG_SYNC_VALUE1 + 2, 0x55);
+  this->write_register_(REG_SYNC_VALUE1 + 2, 0x33);
 
   this->set_mode_rx();
 }

@@ -6,12 +6,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
 
+# === Configuration ===
+DOXYGEN_VERSION="1.16.1"
+DOXYGEN_RELEASE_TAG="Release_$(echo "$DOXYGEN_VERSION" | tr '.' '_')"
+DOXYGEN_URL="https://github.com/doxygen/doxygen/releases/download/${DOXYGEN_RELEASE_TAG}/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz"
+DOXYGEN_BIN_DIR="build/doxygen-resources"
+DOXYGEN_BIN="$DOXYGEN_BIN_DIR/doxygen"
+
 DOXYGEN_AWESOME_VERSION="v2.4.2"
 DOXYGEN_AWESOME_BASE_URL="https://raw.githubusercontent.com/jothepro/doxygen-awesome-css/$DOXYGEN_AWESOME_VERSION"
-BUILD_DIR="build/doxygen-resources"
 OUTPUT_DIR="docs/doxygen"
 
-mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
+mkdir -p "$DOXYGEN_BIN_DIR" "$OUTPUT_DIR"
+
+# === Download doxygen binary if missing ===
+if [ ! -f "$DOXYGEN_BIN" ]; then
+  echo "==> Downloading doxygen ($DOXYGEN_VERSION)..."
+  tmp_tar="$(mktemp)"
+  curl -sL -o "$tmp_tar" "$DOXYGEN_URL"
+  tmp_dir="$(mktemp -d)"
+  tar -xzf "$tmp_tar" -C "$tmp_dir"
+  # Move the extracted binary into place (handles tarballs that embed a versioned directory)
+  found="$(find "$tmp_dir" -maxdepth 3 -type f -name doxygen | head -n1)"
+  mv "$found" "$DOXYGEN_BIN"
+  chmod +x "$DOXYGEN_BIN"
+  rm -rf "$tmp_dir" "$tmp_tar"
+fi
+
+DOXYGEN_CMD="$DOXYGEN_BIN"
 
 # === Download theme files if missing ===
 FILES=(
@@ -20,38 +42,24 @@ FILES=(
   doxygen-awesome-sidebar-only-darkmode-toggle.css
   doxygen-awesome-darkmode-toggle.js
   doxygen-awesome-fragment-copy-button.js
+  doxygen-awesome-paragraph-link.js
+  doxygen-awesome-interactive-toc.js
+  doxygen-awesome-tabs.js
 )
 
 needed=false
 for f in "${FILES[@]}"; do
-  [ -f "$BUILD_DIR/$f" ] || { needed=true; break; }
+  [ -f "$DOXYGEN_BIN_DIR/$f" ] || { needed=true; break; }
 done
 
 if [ "$needed" = true ]; then
   echo "==> Downloading doxygen-awesome-css ($DOXYGEN_AWESOME_VERSION)..."
   for f in "${FILES[@]}"; do
-    curl -sL -o "$BUILD_DIR/$f" "$DOXYGEN_AWESOME_BASE_URL/$f"
+    curl -sL -o "$DOXYGEN_BIN_DIR/$f" "$DOXYGEN_AWESOME_BASE_URL/$f"
   done
-fi
-
-# === Generate custom header with JS extensions ===
-HEADER_FILE="$BUILD_DIR/header.html"
-if [ ! -f "$HEADER_FILE" ]; then
-  echo "==> Generating custom header template..."
-  doxygen -w html "$HEADER_FILE" /dev/null /dev/null
-
-  # Inject dark mode toggle + fragment copy button before </head>
-  # Init class names are documented at:
-  #   https://jothepro.github.io/doxygen-awesome-css/md_docs_2extensions.html
-  sed -i 's|</head>|\
-<script type="text/javascript" src="$relpath^doxygen-awesome-darkmode-toggle.js"></script>\
-<script type="text/javascript" src="$relpath^doxygen-awesome-fragment-copy-button.js"></script>\
-<script type="text/javascript">DoxygenAwesomeDarkModeToggle.init()</script>\
-<script type="text/javascript">DoxygenAwesomeFragmentCopyButton.init()</script>\
-</head>|' "$HEADER_FILE"
 fi
 
 # === Generate docs ===
 echo "==> Generating API docs..."
-doxygen Doxyfile
+"$DOXYGEN_CMD" Doxyfile
 echo "Done. Open file://$REPO_ROOT/$OUTPUT_DIR/html/index.html in a browser."
