@@ -9,6 +9,40 @@
     z-index: unset !important;
 }
 
+/* ================================================================
+ * Pygments token colour rules for YAML highlighted blocks.
+ *
+ * With class-based Pygments output (noclasses=False) the YAML lexer
+ * emits these CSS classes on the <span> tokens inside each fragment:
+ *   .nt   Node Tag     — the YAML key name (before the colon)
+ *   .l                — plain scalar / value
+ *   .kt   Keyword Type — YAML type tag, e.g. !!str !!int
+ *   .c1   Comment 1    — YAML inline comment (# …)
+ *
+ * Colours use doxygen-awesome's own CSS fragment variables so they
+ * decide light vs. dark depending on the active mode.
+ *
+ * Punctuation (.p, .p-Indicator) and whitespace (.w) fall through to
+ * var(--fragment-foreground), which doxygen-awesome already sets to
+ * readable values in both schemes.
+ * ================================================================ */
+
+div.fragment .nt {       /* YAML key name (before the colon)  */
+    color: var(--fragment-keyword);
+}
+
+div.fragment .l {        /* YAML plain scalar / value          */
+    color: var(--fragment-token);
+}
+
+div.fragment .kt {       /* YAML type tag, e.g. !!str          */
+    color: var(--fragment-keywordtype);
+}
+
+div.fragment .c1 {       /* YAML inline comment (# …)          */
+    color: var(--fragment-comment);
+}
+
 @media screen and (max-width: 767px) {
     .github-corner svg {
         width: 50px;

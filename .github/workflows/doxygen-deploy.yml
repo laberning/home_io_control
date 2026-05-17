@@ -18,16 +18,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz python3-pygments
 
       - name: Generate Doxygen documentation
         run: make doxygen
 
       - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs/doxygen/html
 
@@ -40,4 +40,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

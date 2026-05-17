@@ -1,11 +1,16 @@
 # Doxyfile 1.14 — Home IO Control
-# Run `doxygen Doxyfile` to generate HTML docs.
+# Run `make doxygen` to generate HTML docs.
+# YAML fenced code blocks in Markdown are pre-processed by scripts/pygmentize-md-yaml.py
+# (run before doxygen) to produce Pygments HTML with syntax highlighting.
 
 PROJECT_NAME           = "Home IO Control"
 PROJECT_BRIEF          = "ESPHome add-on for IO-Homecontrol devices"
 OUTPUT_DIRECTORY       = docs/doxygen
-INPUT                  = components/home_io_control/ README.md docs/home_io_control.md LICENSE
-USE_MDFILE_AS_MAINPAGE = README.md
+INPUT                  = components/home_io_control/ \
+                          build/docs/README.md \
+                          build/docs/home_io_control.md \
+                          LICENSE
+USE_MDFILE_AS_MAINPAGE = build/docs/README.md
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.cpp
 

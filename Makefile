@@ -43,6 +43,10 @@ upload: upload-v2
 logs: logs-v2
 clean: clean-v2
 
+# Remove generated docs (doxygen HTML, pre-processed markdown, downloaded tools)
+clean-docs:
+	rm -rf docs/doxygen/ build/docs/ build/doxygen-resources/
+
 
 # === QA targets ================================================================
 
@@ -118,7 +122,7 @@ doxygen:
 
 lint: format-check yamllint clang-tidy
 test: unit-test firmware-test
-check: lint test
+check: lint test doxygen
 
 # Backward compatibility aliases (deprecated, use new names)
 test-compile: firmware-test
@@ -131,4 +135,4 @@ test-unit: unit-test
 		format format-check yamllint clang-tidy tidy \
 		firmware-test unit-test lint test check \
 		test-compile test-unit \
-		doxygen
+		doxygen clean-docs

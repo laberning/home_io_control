@@ -180,14 +180,14 @@ The build system uses Docker for firmware compilation and host tools for testing
 ```bash
 sudo apt-get update && sudo apt-get install -y clang-format clang-tidy yamllint libgtest-dev
 # Optional: for API documentation generation
-sudo apt-get install graphviz
+sudo apt-get install graphviz python3-pygments
 ```
 #### macOS(Homebrew):
 ```bash
 brew install clang-format clang-tidy yamllint googletest
 
 # Optional: for API documentation generation
-brew install graphviz
+brew install graphviz python3-pygments
 ```
 
 #### Windows (WSL2)

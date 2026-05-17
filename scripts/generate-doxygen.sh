@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Generate Doxygen HTML documentation with doxygen-awesome-css theme.
+# YAML code blocks in Markdown are pre-processed by scripts/pygmentize-md-yaml.py
+# to produce Pygments HTML before Doxygen runs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,6 +60,12 @@ if [ "$needed" = true ]; then
     curl -sL -o "$DOXYGEN_BIN_DIR/$f" "$DOXYGEN_AWESOME_BASE_URL/$f"
   done
 fi
+
+# === Pre-process Markdown: yaml → Pygments HTML ===
+echo "==> Highlighting YAML blocks in Markdown..."
+PYTHON_CMD="python3"
+"$PYTHON_CMD" "$SCRIPT_DIR/pygmentize-md-yaml.py"
+echo ""
 
 # === Generate docs ===
 echo "==> Generating API docs..."

@@ -10,38 +10,38 @@ jobs:
   format:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: make format-check
 
   yamllint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: sudo apt-get update && sudo apt-get install -y yamllint
       - run: make yamllint
 
   tidy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: make clang-tidy
 
   test-compile:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: make firmware-test
 
   unit-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
       - run: make unit-test
 
   doxygen:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y graphviz
+      - uses: actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y graphviz python3-pygments
       - run: make doxygen
