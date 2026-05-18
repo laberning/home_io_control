@@ -13,7 +13,7 @@
 /// the ESPHome SPI framework to the radio driver.
 ///
 /// Architecture notes:
-///   - setup() initializes radio, loads persisted devices, and enters RX mode.
+///   - setup() initializes radio, waits for YAML-driven device registration, and enters RX mode.
 ///   - loop() processes the pending_operations_ queue (serializes all radio work).
 ///   - All outbound commands go through send_and_receive_ which handles retry & auth.
 ///   - Inbound frames are processed in process_received_packet_ and may trigger
@@ -22,7 +22,6 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
-#include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
 #include "esphome/components/button/button.h"
 #include "proto_frame.h"
@@ -55,7 +54,7 @@ class IOHomeControlComponent : public Component,
                                                      spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_8MHZ>,
                                public SpiAccess {
  public:
-  /// @brief Initialize hardware (radio, persistence, device registry).
+  /// @brief Initialize hardware (radio and device registry).
   void setup() override;
   /// @brief Main loop: process pending operations and drive radio state machine.
   void loop() override;
@@ -120,10 +119,18 @@ class IOHomeControlComponent : public Component,
     this->linked_remotes_[remote_id].push_back(device_id);
   }
 
-  // --- Device management (called by cover platform) ---
-  /// Add a device to the registry (called by platform entities during setup).
+  // --- Device management (called by platform entities during setup) ---
+  /// Add a device to the registry by device ID only (legacy/delegating overload).
+  /// Type, subtype, and inverted default to UNKNOWN / 0 / false; use the 4-arg
+  /// overload when type/subtype/inverted come from YAML declarations.
   /// @param device_id Hexadecimal node ID string.
   virtual void add_device(const std::string &device_id);
+  /// Add a device to the registry with full metadata from YAML.
+  /// @param device_id Hexadecimal node ID string.
+  /// @param type Device type from YAML declaration (UNKNOWN if not specified).
+  /// @param subtype Device subtype from YAML declaration.
+  /// @param inverted Position inversion flag from YAML declaration.
+  virtual void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted);
   /// Retrieve a device by ID; returns nullptr if not found.
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
@@ -332,10 +339,6 @@ class IOHomeControlComponent : public Component,
   // --- Frequency hopping ---
   void hop_frequency_();
 
-  // --- Flash persistence ---
-  void save_devices_();
-  void load_devices_();
-
   // --- Radio driver ---
   RadioDriver *radio_{nullptr};
 
@@ -390,14 +393,12 @@ class IOHomeDiscoverButton : public button::Button, public Component {
 
 // ----------------------------------------------------------------------------
 // Test-visible helpers (inline for host unit tests)
-// These are also defined as static in hub_core.cpp; inline definitions here
-// allow tests to call them directly without violating ODR.
 // ----------------------------------------------------------------------------
 
-/// Check if a persisted node ID is valid (not all-zero, not all-0xFF).
+/// Check if a stored node ID is valid (not all-zero, not all-0xFF).
 /// @param id 3‑byte node ID buffer.
 /// @return true if the ID is non-zero and non-0xFF.
-inline bool persisted_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
+inline bool stored_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
   bool all_zero = true;
   bool all_ff = true;
   for (uint8_t i = 0; i < NODE_ID_SIZE; i++) {

@@ -6,6 +6,7 @@
 #include "esphome/core/log.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 /// @file hub_pairing.cpp
@@ -45,8 +46,8 @@ const char *pairing_stage_name(pairing::PairingState state) {
       return "tx_key_transfer";
     case pairing::PairingState::WAIT_KEY_CONFIRM:
       return "wait_key_confirm";
-    case pairing::PairingState::PERSIST_DEVICE:
-      return "persist_device";
+    case pairing::PairingState::REGISTER_DEVICE:
+      return "register_device";
     case pairing::PairingState::COMPLETE:
       return "complete";
     case pairing::PairingState::FAILED:
@@ -77,6 +78,88 @@ void log_discovery_diagnostic(decisions::PairingDiscoveryDisposition disp) {
       break;
     case decisions::PairingDiscoveryDisposition::ACCEPT:
       break;
+  }
+}
+
+/// Return the YAML-friendly device-type name when the schema exposes a symbolic alias.
+/// Types without a symbolic alias can still be configured via raw numeric values such as 0x11.
+const char *yaml_device_type_name(DeviceType type) {
+  switch (type) {
+    case DeviceType::VENETIAN_BLIND:
+      return "venetian_blind";
+    case DeviceType::ROLLER_SHUTTER:
+      return "roller_shutter";
+    case DeviceType::AWNING:
+      return "awning";
+    case DeviceType::WINDOW_OPENER:
+      return "window_opener";
+    case DeviceType::GARAGE_OPENER:
+      return "garage_opener";
+    case DeviceType::LIGHT:
+      return "light";
+    case DeviceType::GATE_OPENER:
+      return "gate_opener";
+    case DeviceType::ROLLING_DOOR_OPENER:
+      return "rolling_door_opener";
+    case DeviceType::LOCK:
+      return "lock";
+    case DeviceType::BLIND:
+      return "blind";
+    case DeviceType::SCREEN:
+      return "screen";
+    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
+      return "heating_temperature_interface";
+    case DeviceType::ON_OFF_SWITCH:
+      return "on_off_switch";
+    case DeviceType::HORIZONTAL_AWNING:
+      return "horizontal_awning";
+    case DeviceType::CURTAIN_TRACK:
+      return "curtain_track";
+    case DeviceType::INTRUSION_ALARM:
+      return "intrusion_alarm";
+    default:
+      return nullptr;
+  }
+}
+
+/// Format a raw device type as hexadecimal for YAML and diagnostics.
+std::string format_device_type_hex(DeviceType type) {
+  char buf[8];
+  snprintf(buf, sizeof(buf), "0x%02X", static_cast<uint8_t>(type));
+  return std::string(buf);
+}
+
+/// Return a human-readable device type string including the raw numeric value.
+std::string format_device_type_diagnostic(DeviceType type) {
+  const char *name = device_type_name(type);
+  std::string raw = format_device_type_hex(type);
+  if (name != nullptr && strcmp(name, "unknown") != 0) {
+    return std::string(name) + " (" + raw + ")";
+  }
+  return raw;
+}
+
+/// Build the YAML value for io_device_type.
+/// Supported symbolic aliases stay readable; all other types fall back to raw hex.
+std::string format_device_type_for_yaml(DeviceType type) {
+  const char *name = yaml_device_type_name(type);
+  if (name != nullptr) {
+    return std::string("\"") + name + "\"";
+  }
+  return format_device_type_hex(type);
+}
+
+/// Map a supported capability class to the corresponding YAML platform name.
+const char *pairing_platform_name(DeviceCapabilityClass capability_class) {
+  switch (capability_class) {
+    case DeviceCapabilityClass::COVER:
+      return "cover";
+    case DeviceCapabilityClass::LIGHT:
+      return "light";
+    case DeviceCapabilityClass::SWITCH:
+      return "switch";
+    default:
+      return nullptr;
   }
 }
 
@@ -187,6 +270,7 @@ decisions::PairingDiscoveryDisposition IOHomeControlComponent::run_discovery_pha
   auto result = this->wait_for_discovery_response_(2000, context.packet, context.rx);
   if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
     parse_device_from_discovery(context.rx, context.device, context.device_id);
+    context.discovery_metadata_complete = context.rx.data_len >= 2;
   }
   return result;
 }
@@ -252,8 +336,9 @@ bool IOHomeControlComponent::finalize_pairing_configuration_(pairing::PairingCon
 ///   key establishment using the challenge‑response protocol.
 /// Phase 3: Finalization (finalize_pairing_configuration_) sends SetConfig1.
 ///
-/// On success the device is persisted to flash and the function returns true.
-/// Any phase failure aborts early, logging an appropriate warning.
+/// On success the device is added to the current runtime registry and either a valid
+/// YAML snippet or a follow-up guidance message is printed in the logs. Any phase
+/// failure aborts early, logging an appropriate warning.
 ///
 /// @return true if pairing completed; false otherwise.
 bool IOHomeControlComponent::discover_and_pair() {
@@ -281,10 +366,78 @@ bool IOHomeControlComponent::discover_and_pair() {
   // Phase 3: Final configuration — best-effort SetConfig1
   this->finalize_pairing_configuration_(context);
 
-  // Persist device
+  context.state = pairing::PairingState::REGISTER_DEVICE;
+  this->record_exchange_debug_(pairing_stage_name(context.state), 1, true);
+
+  // Register device in runtime (user still needs to add it to YAML manually)
   this->devices_[context.device_id] = context.device;
-  this->save_devices_();
-  ESP_LOGI(TAG, "Device %s paired successfully!", context.device_id.c_str());
+
+  const auto capability_class = device_capability_class(context.device.type);
+  const char *platform = pairing_platform_name(capability_class);
+  const std::string type_diag = format_device_type_diagnostic(context.device.type);
+  const std::string type_yaml = format_device_type_for_yaml(context.device.type);
+  std::string extra_lines;
+
+  if (platform == nullptr) {
+    if (context.discovery_metadata_complete) {
+      ESP_LOGW(TAG,
+               "Device %s paired successfully, but this repo does not yet expose an ESPHome platform for type=%s "
+               "class=%s subtype=%u.",
+               context.device_id.c_str(), type_diag.c_str(), device_capability_class_name(context.device.type),
+               context.device.subtype);
+      ESP_LOGW(TAG,
+               "No ready-to-paste YAML was generated. If you want to experiment manually, choose the most likely "
+               "platform and set io_device_type: %s.",
+               type_yaml.c_str());
+      ESP_LOGW(TAG, "Please file a GitHub issue with this device type, subtype, model, and the pairing log so support "
+                    "can be added.");
+    } else {
+      ESP_LOGW(TAG, "Device %s paired successfully, but the discovery response did not include type/subtype metadata.",
+               context.device_id.c_str());
+      ESP_LOGW(TAG, "No ready-to-paste YAML was generated. Add the device ID to the correct cover/light/switch entry "
+                    "manually and leave io_device_type/io_subtype unset for now.");
+      ESP_LOGW(TAG, "Please file a GitHub issue with the pairing log and device model so this discovery edge case can "
+                    "be investigated.");
+    }
+
+    context.state = pairing::PairingState::COMPLETE;
+    this->record_exchange_debug_(pairing_stage_name(context.state), 1, true);
+    this->busy_ = false;
+    return true;
+  }
+
+  if (capability_class == DeviceCapabilityClass::COVER && context.device.inverted)
+    extra_lines += "    invert_position: true\n";
+
+  std::string subtype_line;
+  if (context.discovery_metadata_complete) {
+    subtype_line = "    io_subtype: " + std::to_string(context.device.subtype) + "\n";
+  }
+
+  ESP_LOGI(TAG,
+           "Device %s paired successfully! Add this to your YAML:\n"
+           "  %s:\n"
+           "  - platform: home_io_control\n"
+           "    id: my_device\n"
+           "    home_io_control_id: home_io_hub\n"
+           "    io_device_id: \"%s\"\n"
+           "    io_device_type: %s\n"
+           "%s"
+           "%s",
+           context.device_id.c_str(), platform, context.device_id.c_str(), type_yaml.c_str(), subtype_line.c_str(),
+           extra_lines.c_str());
+
+  if (!context.discovery_metadata_complete) {
+    ESP_LOGW(TAG, "This device did not report a subtype during discovery, so io_subtype was omitted. The controller "
+                  "will try to learn it later at runtime.");
+  } else if (yaml_device_type_name(context.device.type) == nullptr) {
+    ESP_LOGW(TAG,
+             "This snippet uses the raw device type %s because the project does not yet expose a named YAML alias "
+             "for %s.",
+             type_yaml.c_str(), type_diag.c_str());
+    ESP_LOGW(TAG, "Please file a GitHub issue with this type, subtype, device model, and the pairing log so support "
+                  "can be added.");
+  }
 
   context.state = pairing::PairingState::COMPLETE;
   this->record_exchange_debug_(pairing_stage_name(context.state), 1, true);

@@ -3,13 +3,22 @@ import esphome.config_validation as cv
 from esphome.components import cover
 from esphome.const import CONF_ID
 
-from . import home_io_control_ns, IOHomeControlComponent, CONF_HOME_IO_CONTROL_ID, validate_device_id
+from . import (
+    home_io_control_ns,
+    IOHomeControlComponent,
+    CONF_HOME_IO_CONTROL_ID,
+    validate_device_id,
+    validate_device_type,
+    device_type_expression,
+)
 
 DEPENDENCIES = ["home_io_control"]
 
 CONF_DEVICE_ID = "io_device_id"
 CONF_INVERT_POSITION = "invert_position"
 CONF_LINKED_REMOTES = "linked_remotes"
+CONF_DEVICE_TYPE = "io_device_type"
+CONF_SUBTYPE = "io_subtype"
 
 IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component)
 
@@ -21,7 +30,9 @@ CONFIG_SCHEMA = (
                 IOHomeControlComponent
             ),
             cv.Required(CONF_DEVICE_ID): validate_device_id,
-            cv.Optional(CONF_INVERT_POSITION, default=False): cv.boolean,
+            cv.Optional(CONF_INVERT_POSITION): cv.boolean,
+            cv.Optional(CONF_DEVICE_TYPE): validate_device_type,
+            cv.Optional(CONF_SUBTYPE): cv.int_range(min=0, max=63),
             cv.Optional(CONF_LINKED_REMOTES): cv.ensure_list(validate_device_id),
         }
     )
@@ -36,7 +47,14 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_HOME_IO_CONTROL_ID])
     cg.add(var.set_parent(parent))
     cg.add(var.set_device_id(config[CONF_DEVICE_ID]))
-    cg.add(var.set_invert_position(config[CONF_INVERT_POSITION]))
+
+    if CONF_INVERT_POSITION in config:
+        cg.add(var.set_invert_position(config[CONF_INVERT_POSITION]))
+
+    if CONF_DEVICE_TYPE in config:
+        cg.add(var.set_device_type(device_type_expression(config[CONF_DEVICE_TYPE])))
+    if CONF_SUBTYPE in config:
+        cg.add(var.set_subtype(config[CONF_SUBTYPE]))
 
     if CONF_LINKED_REMOTES in config:
         for remote_id in config[CONF_LINKED_REMOTES]:

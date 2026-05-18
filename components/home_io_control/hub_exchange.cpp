@@ -79,8 +79,9 @@ const char *inbound_stage_name(exchange::InboundAuthState state) {
 /// Return preamble length for authenticated challenge response (0x3D).
 ///
 /// SX1262 requires a longer preamble for the challenge response to improve
-/// lock-on reliability. For SX1276 we use the short preamble to match the
-/// baseline waveform.
+/// lock-on reliability in the RX->TX turn-around after receiving 0x3C. For
+/// SX1276 we keep the short preamble because its IoHomeOn hardware path already
+/// matches the baseline waveform.
 ///
 /// @param radio Radio driver instance (used to query chip name).
 /// @return Preamble length in symbol periods.
@@ -88,6 +89,22 @@ uint16_t auth_response_preamble(const RadioDriver *radio) {
   // SX1276 is the baseline waveform. The longer 0x3D preamble stays scoped to SX1262 so the radio-
   // specific lock-on workaround does not silently perturb the SX1276 behavior.
   return strcmp(radio->chip_name(), "sx1262") == 0 ? SX1262_AUTH_RESPONSE_PREAMBLE : SHORT_PREAMBLE;
+}
+
+/// Return the per-channel response dwell to use while waiting for exchange packets.
+///
+/// The generic 50 ms slice remains correct for the baseline protocol flow and for pairing.
+/// SX1262 authenticated exchanges are the special case: after we send 0x3D, some devices reply
+/// slightly later than 50 ms on the same channel. Keeping the receiver parked for 90 ms avoids
+/// hopping away just before that final response arrives.
+///
+/// @param radio Radio driver instance (used to scope the workaround to SX1262 only).
+/// @param remaining_ms Total time left in the current wait window.
+/// @return Slice length in milliseconds, capped by the remaining wait budget.
+uint32_t exchange_response_wait_slice_ms(const RadioDriver *radio, uint32_t remaining_ms) {
+  const uint32_t max_slice =
+      strcmp(radio->chip_name(), "sx1262") == 0 ? SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS : RESPONSE_CHANNEL_WAIT_MS;
+  return std::min<uint32_t>(remaining_ms, max_slice);
 }
 
 /// Check if frame is a 0x3D challenge response.
@@ -217,7 +234,7 @@ decisions::ExchangeFirstResponseDisposition IOHomeControlComponent::wait_for_fir
   const uint32_t deadline = millis() + ctx.wait_ms;
   while ((int32_t) (deadline - millis()) > 0) {
     const uint32_t remaining = deadline - millis();
-    const uint32_t slice = decisions::response_wait_slice_ms(remaining);
+    const uint32_t slice = exchange_response_wait_slice_ms(this->radio_, remaining);
     if (!this->radio_->wait_for_packet(packet, slice)) {
       if ((int32_t) (deadline - millis()) > 0)
         this->hop_frequency_();
@@ -288,7 +305,7 @@ decisions::ExchangeFinalResponseDisposition IOHomeControlComponent::wait_for_fin
   const uint32_t deadline = millis() + RESPONSE_AUTH_WAIT_MS;
   while ((int32_t) (deadline - millis()) > 0) {
     const uint32_t remaining = deadline - millis();
-    const uint32_t slice = decisions::response_wait_slice_ms(remaining);
+    const uint32_t slice = exchange_response_wait_slice_ms(this->radio_, remaining);
     if (!this->radio_->wait_for_packet(packet, slice)) {
       if ((int32_t) (deadline - millis()) > 0)
         this->hop_frequency_();

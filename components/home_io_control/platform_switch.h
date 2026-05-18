@@ -34,6 +34,12 @@ class IOHomeSwitch : public switch_::Switch, public Component {
   /// @brief Set device ID from YAML.
   /// @param id Hex string node ID.
   void set_device_id(const std::string &id) { this->device_id_ = id; }
+  /// @brief Set the declared device type (from YAML).
+  /// @param type Device type enum.
+  void set_device_type(DeviceType type) { this->device_type_ = type; }
+  /// @brief Set the declared device subtype (from YAML).
+  /// @param subtype Subtype value.
+  void set_subtype(uint8_t subtype) { this->subtype_ = subtype; }
 
  protected:
   /// @brief Write state change to the device.
@@ -46,6 +52,8 @@ class IOHomeSwitch : public switch_::Switch, public Component {
 
   IOHomeControlComponent *parent_{nullptr};
   std::string device_id_;
+  DeviceType device_type_{DeviceType::UNKNOWN};
+  uint8_t subtype_{0};
 };
 
 }  // namespace home_io_control

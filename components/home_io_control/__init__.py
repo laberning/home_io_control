@@ -50,6 +50,52 @@ TCXO_VOLTAGE_OPTIONS = {
     "3_3V": 0x08,
 }
 
+DEVICE_TYPE_OPTIONS = {
+    "unknown": 0x00,
+    "venetian_blind": 0x01,
+    "roller_shutter": 0x02,
+    "awning": 0x03,
+    "window_opener": 0x04,
+    "garage_opener": 0x05,
+    "light": 0x06,
+    "gate_opener": 0x07,
+    "rolling_door_opener": 0x08,
+    "lock": 0x09,
+    "blind": 0x0A,
+    "screen": 0x0B,
+    "heating_temperature_interface": 0x0E,
+    "on_off_switch": 0x0F,
+    "horizontal_awning": 0x10,
+    "curtain_track": 0x13,
+    "intrusion_alarm": 0x17,
+}
+
+
+def validate_device_type(value):
+    if isinstance(value, int):
+        return cv.int_range(min=0, max=0xFF)(value)
+
+    if isinstance(value, str):
+        normalized = cv.string_strict(value).strip().lower()
+        if normalized in DEVICE_TYPE_OPTIONS:
+            return DEVICE_TYPE_OPTIONS[normalized]
+        try:
+            return cv.int_range(min=0, max=0xFF)(int(normalized, 0))
+        except ValueError as err:
+            raise cv.Invalid(
+                "Device type must be a known name or an integer in the range 0..255 (for example 0x11)"
+            ) from err
+
+    raise cv.Invalid(
+        "Device type must be a known name or an integer in the range 0..255"
+    )
+
+
+def device_type_expression(value):
+    return cg.RawExpression(
+        f"static_cast<esphome::home_io_control::DeviceType>(0x{value:02X})"
+    )
+
 
 def validate_node_id(value):
     value = cv.string_strict(value).upper()

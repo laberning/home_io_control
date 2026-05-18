@@ -18,6 +18,40 @@
 namespace esphome {
 namespace home_io_control {
 
+namespace {
+
+/// @brief Apply adaptive backoff after a failed background status poll.
+///
+/// The backoff is per-device and per-failure-class. Plain timeouts ramp up gradually, while
+/// auth-shaped failures ramp up faster because they already prove the device answered with 0x3C
+/// and we are likely just burning airtime with repeated 0x3D responses.
+///
+/// @param dev Device record to update.
+/// @param auth_like_failure True if the failed exchange saw a challenge request.
+/// @return Delay in milliseconds until the next automatic poll.
+uint32_t apply_status_poll_failure_backoff(IoDevice &dev, bool auth_like_failure) {
+  if (auth_like_failure) {
+    dev.status_poll_failures = 0;
+    if (dev.auth_poll_failures < UINT8_MAX)
+      dev.auth_poll_failures++;
+    return detail::status_poll_retry_delay_ms(dev.auth_poll_failures, true);
+  }
+
+  dev.auth_poll_failures = 0;
+  if (dev.status_poll_failures < UINT8_MAX)
+    dev.status_poll_failures++;
+  return detail::status_poll_retry_delay_ms(dev.status_poll_failures, false);
+}
+
+/// @brief Clear background status-poll failure streaks after a successful reply.
+/// @param dev Device record to reset.
+void clear_status_poll_failure_backoff(IoDevice &dev) {
+  dev.status_poll_failures = 0;
+  dev.auth_poll_failures = 0;
+}
+
+}  // namespace
+
 // Execute an authenticated request on the standard command channel and, on success, feed the
 // device's reply back through the normal inbound status parser so all state normalization stays
 // in one place.
@@ -26,14 +60,27 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   IoFrame response;
   if (!this->send_and_receive_(request, response, FREQ_CH2)) {
     if (retry_after_fail_ms != 0) {
-      if (auto *dev = this->get_device(device_id); dev != nullptr)
-        dev->next_update = millis() + retry_after_fail_ms;
+      if (auto *dev = this->get_device(device_id); dev != nullptr) {
+        const bool auth_like_failure = this->last_exchange_debug_.saw_challenge;
+        const uint32_t backoff_ms = apply_status_poll_failure_backoff(*dev, auth_like_failure);
+        dev->next_update = millis() + backoff_ms;
+        ESP_LOGD(detail::TAG,
+                 "Background status poll backoff for device %s: delay=%u ms auth_like=%s status_failures=%u "
+                 "auth_failures=%u",
+                 device_id.c_str(), backoff_ms, YESNO(auth_like_failure), dev->status_poll_failures,
+                 dev->auth_poll_failures);
+      }
     }
     this->log_exchange_debug_(device_id.c_str());
     if (warn_on_no_response) {
       ESP_LOGW(detail::TAG, "No response from device %s", device_id.c_str());
     }
     return false;
+  }
+
+  if (retry_after_fail_ms != 0) {
+    if (auto *dev = this->get_device(device_id); dev != nullptr)
+      clear_status_poll_failure_backoff(*dev);
   }
 
   this->update_device_status_(response);
@@ -168,6 +215,14 @@ void IOHomeControlComponent::queue_request_device_status(const std::string &devi
     detail::log_rejected_operation(device_id, *dev, "queued status request", "status-capable actuator");
     return;
   }
+
+  // Keep at most one pending status poll per device. Without this, an overdue next_update can add
+  // the same poll on every main-loop iteration until the first queued request is finally processed.
+  for (const auto &operation : this->pending_operations_) {
+    if (operation.type == PendingOperationType::REQUEST_STATUS && operation.device_id == device_id)
+      return;
+  }
+
   this->pending_operations_.push_back({PendingOperationType::REQUEST_STATUS, device_id, 0});
 }
 

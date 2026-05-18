@@ -24,6 +24,13 @@ namespace detail {
 
 inline constexpr const char *TAG = "home_io_control";
 inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MS = 5000;
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP2_MS = 15000;
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP3_MS = 30000;
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP4_MS = 60000;
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MAX_MS = 300000;
+inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MS = 30000;
+inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS = 120000;
+inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS = 300000;
 
 // Binary on/off entities reuse the proven position transport encoding.
 inline constexpr uint8_t BINARY_ENTITY_ON_POSITION = 0;
@@ -77,6 +84,36 @@ inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
   return dev.type != DeviceType::UNKNOWN && device_supports_tilt(dev.type);
 }
 
+/// @brief Compute the next background status-poll retry delay after a failed exchange.
+///
+/// Plain silence is treated as a soft reachability problem and ramps up gradually so sleeping
+/// or temporarily busy devices are retried soon. Exchanges that reached the 0x3C challenge but
+/// never completed are much more likely to represent an invalid system key or pairing mismatch,
+/// so they back off more aggressively to avoid repeated 0x3D HMAC traffic.
+///
+/// @param consecutive_failures 1-based count of consecutive failures in the current failure class.
+/// @param auth_like_failure True when the failed exchange saw a 0x3C challenge.
+/// @return Delay in milliseconds before the next automatic status poll.
+inline uint32_t status_poll_retry_delay_ms(uint8_t consecutive_failures, bool auth_like_failure) {
+  if (auth_like_failure) {
+    if (consecutive_failures <= 1)
+      return STATUS_AUTH_RETRY_AFTER_FAIL_MS;
+    if (consecutive_failures == 2)
+      return STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS;
+    return STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS;
+  }
+
+  if (consecutive_failures <= 1)
+    return STATUS_RETRY_AFTER_FAIL_MS;
+  if (consecutive_failures == 2)
+    return STATUS_RETRY_AFTER_FAIL_STEP2_MS;
+  if (consecutive_failures == 3)
+    return STATUS_RETRY_AFTER_FAIL_STEP3_MS;
+  if (consecutive_failures == 4)
+    return STATUS_RETRY_AFTER_FAIL_STEP4_MS;
+  return STATUS_RETRY_AFTER_FAIL_MAX_MS;
+}
+
 // ============================================================================
 // Logging helpers
 // ============================================================================
@@ -92,24 +129,6 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
            device_id.c_str(), device_type_name(dev.type), static_cast<uint8_t>(dev.type),
            device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
 }
-
-// ============================================================================
-// Persistence key helpers
-// ============================================================================
-
-/// @brief Compute the preference key hash for a saved device slot.
-/// @param index Slot index (0–15).
-/// @return FNV‑1 hash value.
-inline uint32_t saved_device_pref_hash(uint8_t index) {
-  char key[16];
-  snprintf(key, sizeof(key), "iohome_dev_%u", index);
-  return fnv1_hash(key);
-}
-
-/// @brief Legacy preference key (for migration).
-/// @param index Slot index.
-/// @return Hash value (previous formula).
-inline uint32_t legacy_saved_device_pref_hash(uint8_t index) { return fnv1_hash("iohome_dev") + index; }
 
 /// @brief Log a frame at the "io_capture" tag with structured fields.
 /// Used for protocol‑level debugging (phases: component, tx, rx, parse_ok/parse_fail).

@@ -81,6 +81,15 @@ class MockHub : public IOHomeControlComponent {
       return;
     devices_[device_id] = IoDevice{};
   }
+  void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) override {
+    if (devices_.count(device_id))
+      return;
+    devices_[device_id] = IoDevice{};
+    devices_[device_id].type = type;
+    devices_[device_id].subtype = subtype;
+    if (inverted)
+      devices_[device_id].inverted = true;
+  }
   void register_device_callback(DeviceUpdateCallback cb) override { callbacks_.push_back(std::move(cb)); }
 
   // Test accessors
@@ -92,6 +101,7 @@ class MockHub : public IOHomeControlComponent {
 
   // Helpers for tests
   void trigger_device_update(const std::string &device_id, const IoDevice &dev) {
+    devices_[device_id] = dev;
     for (auto &cb : callbacks_) {
       cb(device_id, dev);
     }
@@ -113,7 +123,7 @@ TEST(PlatformCover, InvertsPositionWhenConfigured) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
-  cover.set_device_id("9CA39C");
+  cover.set_device_id("ABC123");
   cover.set_invert_position(true);
 
   // Simulate HA calling cover->control()->set_position(0.25)
@@ -122,7 +132,7 @@ TEST(PlatformCover, InvertsPositionWhenConfigured) {
   cover.control(call);
 
   // With invert=true: ha_pos -> io_pos = ha_pos * 100 = 25
-  EXPECT_EQ(hub.last_set_device_id(), "9CA39C") << "device ID should match configured ID";
+  EXPECT_EQ(hub.last_set_device_id(), "ABC123") << "device ID should match configured ID";
   EXPECT_EQ(hub.last_set_position(), 25u) << "inverted position 0.25 HA should map to 25 IO";
 }
 
@@ -130,7 +140,7 @@ TEST(PlatformCover, NonInvertedPosition) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
-  cover.set_device_id("9CA39C");
+  cover.set_device_id("ABC123");
   cover.set_invert_position(false);
 
   CoverCall call(&cover);
@@ -138,7 +148,7 @@ TEST(PlatformCover, NonInvertedPosition) {
   cover.control(call);
 
   // Without invert: io_pos = (1.0 - ha_pos) * 100 = 25
-  EXPECT_EQ(hub.last_set_device_id(), "9CA39C") << "device ID should match configured ID";
+  EXPECT_EQ(hub.last_set_device_id(), "ABC123") << "device ID should match configured ID";
   EXPECT_EQ(hub.last_set_position(), 25u) << "non-inverted position 0.75 HA should map to 25 IO";
 }
 
@@ -146,7 +156,7 @@ TEST(PlatformCover, DeviceUpdateToHAPosition) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
-  cover.set_device_id("9CA39C");
+  cover.set_device_id("ABC123");
 
   cover.setup();  // register device and callback
 
@@ -154,25 +164,62 @@ TEST(PlatformCover, DeviceUpdateToHAPosition) {
   IoDevice dev{};
   dev.position = 75.0f;
   dev.is_stopped = true;
-  hub.trigger_device_update("9CA39C", dev);
+  hub.trigger_device_update("ABC123", dev);
 
   // HA position = 1.0 - (io_pos/100) = 0.25 open
   EXPECT_FLOAT_EQ(cover.position, 0.25f) << "IO position 75% should map to HA 0.25 (open) when not inverted";
 
   // With invert=true: HA position = io_pos/100 = 0.75
   cover.set_invert_position(true);
-  hub.trigger_device_update("9CA39C", dev);
+  hub.trigger_device_update("ABC123", dev);
   EXPECT_FLOAT_EQ(cover.position, 0.75f) << "with invert=true, IO position 75% should map to HA 0.75";
+}
+
+TEST(PlatformCover, LearnedInversionAppliesWhenNoOverrideIsConfigured) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+
+  cover.setup();
+
+  IoDevice dev{};
+  dev.position = 75.0f;
+  dev.is_stopped = true;
+  dev.inverted = true;
+  hub.trigger_device_update("ABC123", dev);
+
+  EXPECT_FLOAT_EQ(cover.position, 0.75f)
+      << "when invert_position is not configured, learned device inversion should drive HA mapping";
+}
+
+TEST(PlatformCover, ExplicitInvertFalseOverridesLearnedInversion) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_invert_position(false);
+
+  cover.setup();
+
+  IoDevice dev{};
+  dev.position = 75.0f;
+  dev.is_stopped = true;
+  dev.inverted = true;
+  hub.trigger_device_update("ABC123", dev);
+
+  EXPECT_FLOAT_EQ(cover.position, 0.25f)
+      << "an explicit invert_position: false should override any inversion learned from radio metadata";
 }
 
 TEST(PlatformCover, TiltControlQueuesTiltCommand) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
-  cover.set_device_id("9CA39C");
+  cover.set_device_id("ABC123");
 
-  hub.add_device("9CA39C");
-  auto *dev = hub.get_device("9CA39C");
+  hub.add_device("ABC123");
+  auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr) << "test device should be retrievable after add_device";
   dev->type = DeviceType::VENETIAN_BLIND;
 
@@ -180,7 +227,7 @@ TEST(PlatformCover, TiltControlQueuesTiltCommand) {
   call.set_tilt(0.25f);
   cover.control(call);
 
-  EXPECT_EQ(hub.last_set_device_id(), "9CA39C") << "tilt command should target the configured device";
+  EXPECT_EQ(hub.last_set_device_id(), "ABC123") << "tilt command should target the configured device";
   EXPECT_EQ(hub.last_set_tilt(), 25u) << "tilt 0.25 should map to 25% open";
   ASSERT_FALSE(hub.queued_operations().empty()) << "tilt control should enqueue an operation";
   EXPECT_EQ(hub.queued_operations().back().type, IOHomeControlComponent::PendingOperationType::SET_TILT)
@@ -191,10 +238,10 @@ TEST(PlatformCover, DeviceUpdatePublishesTilt) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
-  cover.set_device_id("9CA39C");
+  cover.set_device_id("ABC123");
 
-  hub.add_device("9CA39C");
-  auto *registered = hub.get_device("9CA39C");
+  hub.add_device("ABC123");
+  auto *registered = hub.get_device("ABC123");
   ASSERT_NE(registered, nullptr) << "registered device should be available for type configuration";
   registered->type = DeviceType::VENETIAN_BLIND;
 
@@ -205,7 +252,7 @@ TEST(PlatformCover, DeviceUpdatePublishesTilt) {
   dev.position = 75.0f;
   dev.tilt = 40.0f;
   dev.is_stopped = true;
-  hub.trigger_device_update("9CA39C", dev);
+  hub.trigger_device_update("ABC123", dev);
 
   EXPECT_FLOAT_EQ(cover.tilt, 0.40f) << "tilt 40% open should map to HA 0.40";
 }
@@ -214,7 +261,7 @@ TEST(PlatformCover, MovingDevicePublishesPositionAndOperation) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
-  cover.set_device_id("9CA39C");
+  cover.set_device_id("ABC123");
 
   cover.setup();
 
@@ -223,7 +270,7 @@ TEST(PlatformCover, MovingDevicePublishesPositionAndOperation) {
   dev.position = 50.0f;
   dev.target = 25.0f;
   dev.is_stopped = false;
-  hub.trigger_device_update("9CA39C", dev);
+  hub.trigger_device_update("ABC123", dev);
 
   EXPECT_FLOAT_EQ(cover.position, 0.50f) << "moving device position should still be published to HA";
   EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING) << "target below current should indicate opening";
@@ -233,7 +280,7 @@ TEST(PlatformCover, StoppedDeviceReturnsToIdleOperation) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
-  cover.set_device_id("9CA39C");
+  cover.set_device_id("ABC123");
 
   cover.setup();
 
@@ -241,7 +288,7 @@ TEST(PlatformCover, StoppedDeviceReturnsToIdleOperation) {
   moving.position = 50.0f;
   moving.target = 75.0f;
   moving.is_stopped = false;
-  hub.trigger_device_update("9CA39C", moving);
+  hub.trigger_device_update("ABC123", moving);
   ASSERT_EQ(cover.current_operation, COVER_OPERATION_CLOSING)
       << "target above current should set closing before the stopped update arrives";
 
@@ -249,7 +296,7 @@ TEST(PlatformCover, StoppedDeviceReturnsToIdleOperation) {
   stopped.position = 75.0f;
   stopped.target = 75.0f;
   stopped.is_stopped = true;
-  hub.trigger_device_update("9CA39C", stopped);
+  hub.trigger_device_update("ABC123", stopped);
 
   EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE) << "stopped updates should return the cover to idle";
 }
@@ -258,14 +305,14 @@ TEST(PlatformCover, UnknownPositionNotPublished) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
-  cover.set_device_id("9CA39C");
+  cover.set_device_id("ABC123");
 
   cover.setup();
 
   IoDevice dev{};
   dev.position = UNKNOWN_POSITION;
   dev.is_stopped = true;
-  hub.trigger_device_update("9CA39C", dev);
+  hub.trigger_device_update("ABC123", dev);
 
   EXPECT_FLOAT_EQ(cover.position, UNKNOWN_POSITION) << "UNKNOWN_POSITION from device should not update HA position";
 }

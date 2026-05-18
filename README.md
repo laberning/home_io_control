@@ -7,9 +7,6 @@ An [ESPHome](https://esphome.io/) external component for controlling IO-Homecont
 > [!NOTE]
 > **Experimental Project — Use With Caution**
 > This project is in early development. You may encounter edge cases where certain features do not yet function as expected.
->  
-> I can't verify pairing at the moment due to some pairing issues with my IO-Homecontrol devices.
-> However, if you reuse the same `node_id` and `system_key` from a previously paired hub, you can bypass pairing entirely - and that path is known to function correctly.
 
 **Get Involved**  
 Support is greatly appreciated - whether you're helping with testing devices that I don't own, give feedback or submit pull requests.
@@ -70,6 +67,8 @@ external_components:
 
 The full configuration reference lives in [docs/home_io_control.md](docs/home_io_control.md). That page contains all component parameters, platform-specific options and the pairing workflow.
 
+`io_device_type` accepts both named values such as `awning` and raw numeric values such as `0x11`. Pairing logs will use the named form when the schema exposes one, otherwise they will print the raw numeric type and ask you to report it upstream.
+
 Both `esp-idf` and `arduino` framework are supported, but testing and development mostly happens on `esp-idf`.
 
 ### Simple Example
@@ -124,6 +123,10 @@ cover:
     name: "Awning"
     # If the device ID is unknown, use the "Discover & Pair" button to discover it.
     io_device_id: "FEEB1E"
+    io_device_type: "awning"
+    io_subtype: 0
+    # Optional explicit override. If omitted, inversion follows the learned device type.
+    invert_position: true
 
 button:
   - platform: home_io_control

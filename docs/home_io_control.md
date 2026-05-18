@@ -12,7 +12,7 @@ Key concepts:
 - **System key**: A 16-byte AES key shared between the controller and all paired devices. Commands that change device state (open, close, set position) are authenticated with this key using a challenge-response exchange.
 - **Frequency hopping**: The controller hops between three 868 MHz channels (~2.7 ms per channel) while idle, listening for incoming status updates.
 - **Pairing**: Before a device can be controlled, it must be paired — the controller transmits the system key to the device over a short encrypted exchange. The device must be in pairing mode (PROG button) during this step.
-- **Device persistence**: Paired devices are saved to the ESP32's flash. They survive reboots and OTA updates without re-pairing.
+- **YAML as source of truth**: Device type and subtype live in the YAML config. Cover inversion can be forced with `invert_position`, otherwise the controller falls back to the learned device profile. Pairing prints a ready-to-paste YAML snippet in the logs when enough metadata is known.
 - **Automatic status polling**: The controller periodically polls each device for its current position. Devices can also push unsolicited status updates, which the controller authenticates and processes automatically.
 
 ## Minimal Example
@@ -81,7 +81,6 @@ Notes:
 - The SPI bus itself is configured separately in the top-level `spi:` block.
 - The component extends ESPHome's SPI device schema, so standard SPI-device options apply in addition to the keys above.
 - SX1276 and SX1262 use different interrupt pin sets. Only configure the pins for the radio you actually have.
-- Paired devices are automatically persisted to flash and restored on boot. Up to 16 devices can be stored.
 
 ### Radio-Specific Pin Requirements
 
@@ -110,14 +109,16 @@ Configuration variables:
 
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
-- `invert_position` (Optional, default: `false`): Swap the open/close position mapping. This is commonly needed for horizontal awnings.
+- `io_device_type` (Optional): Declare the IO-homecontrol device type. Use a named value such as `awning` when available, or a raw integer such as `0x11` if pairing reports a type that does not yet have a named YAML alias. When omitted, the controller may learn the type later from radio metadata.
+- `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
+- `invert_position` (Optional): Explicitly override the open/close position mapping. When omitted, the controller uses the learned device profile and automatically inverts families such as horizontal awnings once their type is known.
 - `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. When activity from a linked remote is overheard on the radio, the controller automatically polls the device for fresh status 2 seconds later. This is particularly useful for 1W (one-way) remotes whose radio address differs from the device's 2W ID.
 - All standard options from the ESPHome cover base schema also apply, including `id`, `name`, `device_class`, `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
 
 Notes:
 
 - This is the primary and best-validated platform in the repo.
-- Additional families recognized by the component include venetian blinds, dual shutters, louvre blinds, rolling door openers, curtain tracks, and swinging shutters.
+- Additional recognized cover families include venetian blinds, dual shutters, louvre blinds, rolling door openers, curtain tracks, and swinging shutters.
 
 ## Light Platform
 
@@ -135,6 +136,8 @@ Configuration variables:
 
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
+- `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `light` when known, or a raw integer such as `0x06` if you are working from a pairing log that reports a not-yet-exposed alias. When omitted, the controller may learn the type later from radio metadata.
+- `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
 - `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the cover platform for details.
 - All standard options from the ESPHome light schema also apply.
 
@@ -160,6 +163,8 @@ Configuration variables:
 
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
+- `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `on_off_switch` when known, or a raw integer such as `0x0F` if pairing reports a type without a named YAML alias yet. When omitted, the controller may learn the type later from radio metadata.
+- `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
 - `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the cover platform for details.
 - All standard options from the ESPHome switch schema also apply.
 
@@ -230,6 +235,8 @@ cover:
     name: "Awning"
     device_class: awning
     io_device_id: "FEEB1E"
+    io_device_type: "awning"
+    io_subtype: 0
     invert_position: true
 
 button:
@@ -280,6 +287,8 @@ cover:
     name: "Awning"
     device_class: awning
     io_device_id: "FEEB1E"
+    io_device_type: "awning"
+    io_subtype: 0
     invert_position: true
 
 button:
@@ -303,18 +312,24 @@ cover:
     name: "Patio Awning"
     device_class: awning
     io_device_id: "123ABC"
+    io_device_type: "awning"
+    io_subtype: 0
 
 light:
   - platform: home_io_control
     id: garden_light
     name: "Garden Light"
     io_device_id: "D15C05"
+    io_device_type: "light"
+    io_subtype: 0
 
 switch:
   - platform: home_io_control
     id: irrigation_switch
     name: "Irrigation Switch"
     io_device_id: "D0661E"
+    io_device_type: "on_off_switch"
+    io_subtype: 0
 
 button:
   - platform: home_io_control
@@ -336,17 +351,18 @@ For larger working examples, see the configs already in this repo:
 2. Flash the firmware with at least the `home_io_control:` hub and a `button:` entity configured.
 3. Put exactly **one** target device into pairing mode by pressing its PROG button. The pairing window is short — typically a few seconds.
 4. Press the **Discover & Pair** button entity in Home Assistant within that window.
-5. Watch the ESPHome logs. On success you will see the discovered device ID (e.g., `123ABC`), its type, and a "paired successfully" message.
-6. The device is now paired and persisted to flash — it will survive reboots. However, it does not yet have an ESPHome entity (cover, light, or switch) bound to it.
-7. Add the discovered `io_device_id` to the appropriate `cover:`, `light:`, or `switch:` entry in your YAML.
-8. Reflash with the updated YAML. The entity will appear in Home Assistant and the controller will begin polling the device for status.
+5. Watch the ESPHome logs. On success you will either get a ready-to-paste YAML snippet with `io_device_id`, `io_device_type`, and `io_subtype`, or a follow-up message explaining why a snippet could not be generated.
+6. Copy `io_device_type` and `io_subtype` from the log snippet and add them, together with `io_device_id`, to the appropriate `cover:`, `light:`, or `switch:` entry in your YAML. If the log uses a raw numeric type such as `0x11`, keep that exact value in YAML.
+7. Reflash with the updated YAML. The entity will appear in Home Assistant and the controller will begin polling the device for status.
+8. If pairing reports that the type is unsupported or that discovery metadata was incomplete, follow the log guidance and please file a GitHub issue with the raw type/subtype, device model, and pairing log so support can be added.
 
 ## Device Type and Capability Notes
 
 - **Cover-like families** (shutters, awnings, blinds, openers, curtains) are the primary supported path today. These support full position control (0–100%).
 - **Binary light and switch** support exists, but remains experimental and has not been validated against real hardware.
-- **Device type learning**: The controller learns each device's type during pairing or from the first status response. The type is persisted to flash and restored on reboot. Once learned, the controller uses it to reject obvious entity mismatches (e.g., configuring a light-type device as a cover) before sending commands.
-- **Inversion defaults**: Some device families (e.g., horizontal awnings) default to inverted position mapping. This is applied automatically when the device type is learned, and can be overridden with the `invert_position` option on cover entities.
+- **Raw type IDs in YAML**: `io_device_type` accepts both named values such as `awning` and raw integers such as `0x11`. Raw values are useful when pairing discovers a valid IO-homecontrol type that this project does not yet expose under a named YAML alias.
+- **Device type learning**: The YAML-declared `io_device_type` is the permanent, authoritative type. The controller may still learn a device's type from radio for runtime profile selection when the type is not declared in YAML, but it will never overwrite a YAML-declared type.
+- **Inversion defaults**: Some device families (e.g., horizontal awnings) default to inverted position mapping. When `invert_position` is omitted, the cover entity follows that learned device profile automatically. Setting `invert_position` explicitly overrides the learned value.
 - Additional reference-derived device types such as locks, heating devices, sensors, and beacons are recognized for classification and logging, but they do not yet have dedicated ESPHome platform support.
 
 ## See Also

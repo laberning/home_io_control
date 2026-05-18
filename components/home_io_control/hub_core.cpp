@@ -1,11 +1,10 @@
 /// @file hub_core.cpp
-/// @brief Component lifecycle, persistence, and main-loop scheduling.
+/// @brief Component lifecycle and main-loop scheduling.
 ///
 /// The core file owns the parts of IOHomeControlComponent that are primarily about
 /// runtime orchestration rather than protocol interpretation:
 /// - hardware/radio setup,
 /// - main loop scheduling,
-/// - persistence,
 /// - device registry and callback fan-out.
 ///
 /// Protocol exchange, pairing, inbound status handling, and outbound operations live
@@ -32,7 +31,7 @@ void IOHomeControlComponent::reset_exchange_debug_(uint8_t request_cmd) {
 void IOHomeControlComponent::record_exchange_debug_(const char *stage, uint8_t tries, bool saw_challenge) {
   this->last_exchange_debug_.stage = stage;
   this->last_exchange_debug_.tries = tries;
-  this->last_exchange_debug_.saw_challenge = saw_challenge;
+  this->last_exchange_debug_.saw_challenge = this->last_exchange_debug_.saw_challenge || saw_challenge;
 
   const RadioCaptureInfo &capture = this->radio_->get_last_capture();
   this->last_exchange_debug_.capture_valid = capture.valid;
@@ -70,11 +69,10 @@ void IOHomeControlComponent::log_exchange_debug_(const char *device_id) const {
 ///        If the read fails or returns wrong version, fall back to SX1262.
 ///   4. Allocate the appropriate RadioDriver (SX1276 needs DIO0; SX1262 needs BUSY+DIO1).
 ///   5. Call radio_->init() which performs chip reset, calibration, and register configuration.
-///   6. Load persisted device registry from flash preferences.
-///   7. Enter normal loop() operation with radio in RX mode.
+///   6. Enter normal loop() operation with radio in RX mode.
 ///
 /// @note Blocking operations in setup() temporarily raise the ESPHome WDT threshold
-///       to 250 ms (warn_if_blocking_over_) because radio init and flash access can
+///       to 250 ms (warn_if_blocking_over_) because radio init can
 ///       exceed the default 30–50 ms budget.
 void IOHomeControlComponent::setup() {
   // IO-homecontrol exchanges are intentionally blocking and often take a few hundred
@@ -147,9 +145,8 @@ void IOHomeControlComponent::setup() {
 
   this->initialized_ = true;
   this->last_hop_us_ = micros();
-  this->load_devices_();
-  ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s, %zu device(s)", use_sx1262 ? "SX1262" : "SX1276",
-           this->node_id_str_.c_str(), this->devices_.size());
+  ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", use_sx1262 ? "SX1262" : "SX1276",
+           this->node_id_str_.c_str());
 }
 
 // === Frequency hopping ===
@@ -221,6 +218,10 @@ void IOHomeControlComponent::notify_device_update_(const std::string &id) {
 // === Device management ===
 
 void IOHomeControlComponent::add_device(const std::string &device_id) {
+  this->add_device(device_id, DeviceType::UNKNOWN, 0, false);
+}
+
+void IOHomeControlComponent::add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) {
   if (this->devices_.count(device_id) != 0)
     return;
   IoDevice dev{};
@@ -228,6 +229,10 @@ void IOHomeControlComponent::add_device(const std::string &device_id) {
     ESP_LOGW(detail::TAG, "Ignoring invalid device ID %s", device_id.c_str());
     return;
   }
+  dev.type = type;
+  dev.subtype = subtype;
+  if (inverted)
+    dev.inverted = true;
   this->devices_[device_id] = dev;
 }
 
@@ -265,6 +270,9 @@ void IOHomeControlComponent::loop() {
     uint32_t const now = millis();
     for (auto &pair : this->devices_) {
       if (pair.second.next_update != 0 && now > pair.second.next_update) {
+        // Mark the poll as handed to the main-loop queue so an overdue timestamp does not enqueue
+        // the same status request again on every loop iteration while the first request is pending.
+        pair.second.next_update = 0;
         this->queue_request_device_status(pair.first);
         break;
       }
@@ -287,13 +295,6 @@ void IOHomeControlComponent::dump_config() {
   if (this->busy_pin_ != nullptr)
     LOG_PIN("  BUSY Pin: ", this->busy_pin_);
   ESP_LOGCONFIG(detail::TAG, "  Devices: %zu", this->devices_.size());
-  for (const auto &pair : this->devices_) {
-    const auto &device = pair.second;
-    ESP_LOGCONFIG(detail::TAG, "    - %s: type=%s (%u) class=%s profile=%s subtype=%u inverted=%s", pair.first.c_str(),
-                  device_type_name(device.type), static_cast<uint8_t>(device.type),
-                  device_capability_class_name(device.type), device_operation_profile_name(device.type), device.subtype,
-                  YESNO(device.inverted));
-  }
   if (!this->linked_remotes_.empty()) {
     ESP_LOGCONFIG(detail::TAG, "  Linked Remotes: %zu", this->linked_remotes_.size());
     for (const auto &pair : this->linked_remotes_) {
@@ -305,78 +306,6 @@ void IOHomeControlComponent::dump_config() {
 
   if (this->radio_ != nullptr)
     this->radio_->dump_debug();
-}
-
-// === Persistence ===
-
-/// @brief Minimal device record persisted to flash (truncated runtime state).
-/// Stored as a preference; converted to full IoDevice on load.
-struct SavedDevice {
-  uint8_t node_id[NODE_ID_SIZE];  ///< 3‑byte node ID.
-  uint8_t type;                   ///< DeviceType (uint8_t value).
-  uint8_t subtype;                ///< Device subtype.
-  bool inverted;                  ///< Position inversion flag.
-};
-
-void IOHomeControlComponent::save_devices_() {
-  uint8_t const count = std::min((uint8_t) this->devices_.size(), (uint8_t) 16);
-  auto pref_count = global_preferences->make_preference<uint8_t>(fnv1_hash("iohome_dev_count"));
-  pref_count.save(&count);
-  uint8_t i = 0;
-  for (auto &pair : this->devices_) {
-    if (i >= 16)
-      break;
-    SavedDevice sd{};
-    memcpy(sd.node_id, pair.second.node_id, NODE_ID_SIZE);
-    sd.type = (uint8_t) pair.second.type;
-    sd.subtype = pair.second.subtype;
-    sd.inverted = pair.second.inverted;
-    auto pref = global_preferences->make_preference<SavedDevice>(detail::saved_device_pref_hash(i));
-    pref.save(&sd);
-    i++;
-  }
-  global_preferences->sync();
-}
-
-void IOHomeControlComponent::load_devices_() {
-  uint8_t count = 0;
-  auto pref_count = global_preferences->make_preference<uint8_t>(fnv1_hash("iohome_dev_count"));
-  if (!pref_count.load(&count))
-    return;
-  for (uint8_t i = 0; i < count && i < 16; i++) {
-    SavedDevice sd{};
-    auto pref = global_preferences->make_preference<SavedDevice>(detail::saved_device_pref_hash(i));
-    bool const loaded = pref.load(&sd);
-    if (!loaded) {
-      auto legacy_pref = global_preferences->make_preference<SavedDevice>(detail::legacy_saved_device_pref_hash(i));
-      if (!legacy_pref.load(&sd))
-        continue;
-    }
-    // Ignore obviously invalid persisted IDs so stale or partially written flash data does not
-    // resurrect phantom devices that the runtime can never communicate with.
-    if (!persisted_node_id_is_valid(sd.node_id)) {
-      ESP_LOGW(detail::TAG, "Skipping invalid persisted device entry %u", i);
-      continue;
-    }
-    std::string const id(node_id_to_string(sd.node_id));
-    if (this->devices_.count(id) != 0) {
-      auto &dev = this->devices_[id];
-      if (dev.type == DeviceType::UNKNOWN)
-        dev.type = static_cast<DeviceType>(sd.type);
-      // Persisted devices may have been saved before we added automatic inversion defaults for
-      // newly recognized families, so recompute them during restore as well.
-      if (sd.inverted || default_inverted_for_type(static_cast<DeviceType>(sd.type)))
-        dev.inverted = true;
-      dev.subtype = sd.subtype;
-    } else {
-      IoDevice dev{};
-      memcpy(dev.node_id, sd.node_id, NODE_ID_SIZE);
-      dev.type = static_cast<DeviceType>(sd.type);
-      dev.subtype = sd.subtype;
-      dev.inverted = sd.inverted || default_inverted_for_type(dev.type);
-      this->devices_[id] = dev;
-    }
-  }
 }
 
 }  // namespace home_io_control

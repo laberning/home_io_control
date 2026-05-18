@@ -3,8 +3,8 @@
 /// @file hub_pairing.h
 /// @brief Internal pairing-state model for hub‑owned discovery and key‑exchange flows.
 ///
-/// This module implements the three‑phase pairing procedure that establishes a
-/// new device in the controller's registry and installs the system key on the device:
+/// This module implements the three‑phase pairing procedure that temporarily tracks a
+/// newly paired device in the controller's runtime registry and installs the system key on the device:
 ///
 /// Phase 1 — Discovery (broadcast 0x28 → device responds 0x29):
 ///   Controller broadcasts a discovery packet on the primary channel. A device in
@@ -23,7 +23,8 @@
 ///   the device will still operate in polled mode.
 ///
 /// All frames use the standard authenticated exchange flow defined in hub_exchange.h.
-/// The pairing state machine serializes these phases and persists the device on success.
+/// The pairing state machine serializes these phases, logs the YAML metadata the user should add,
+/// and keeps the paired device in the current runtime registry until reboot.
 
 #include "proto_frame.h"
 #include "radio_interface.h"
@@ -44,7 +45,7 @@ enum class PairingState : uint8_t {
   WAIT_KEY_CHALLENGE,      ///< Waiting for challenge (0x3C) from device as part of key transfer.
   TX_KEY_TRANSFER,         ///< Key‑transfer (0x32) sent with encrypted system key.
   WAIT_KEY_CONFIRM,        ///< Waiting for key‑confirm (0x33) from device (key receipt acknowledgement).
-  PERSIST_DEVICE,          ///< Persisting device metadata and node ID to flash.
+  REGISTER_DEVICE,         ///< Registering device in the runtime registry for the current boot.
   COMPLETE,                ///< Pairing completed successfully; device ready for use.
   FAILED,                  ///< Pairing failed (timeout, radio error, or protocol violation).
 };
@@ -59,6 +60,7 @@ struct PairingContext {
   IoFrame key_init{};                      ///< Key‑init frame retained for key‑transfer IV derivation.
   RadioRxPacket packet{};                  ///< Raw radio capture for the current phase.
   std::string device_id;                   ///< Hex string representation of the paired node ID.
+  bool discovery_metadata_complete{false};  ///< True when discovery carried type/subtype bytes.
 };
 
 }  // namespace pairing

@@ -13,7 +13,7 @@ using namespace esphome::home_io_control;
 // ============================================================================
 // HubCore test suite
 // ============================================================================
-// Device registry, persistence helpers, and pending operation queuing.
+// Device registry, stored-ID helpers, and pending operation queuing.
 
 // ========================================================================================
 // Device management tests
@@ -35,12 +35,12 @@ TEST(HubCore, DeviceAddAndLookup) {
   comp.radio_ = new MockRadio();
 
   // Add device
-  comp.add_device("9CA39C");  // valid node ID
-  EXPECT_NE(comp.get_device("9CA39C"), nullptr) << "device should be found after add";
+  comp.add_device("ABC123");  // valid node ID
+  EXPECT_NE(comp.get_device("ABC123"), nullptr) << "device should be found after add";
 
   // Adding same device twice should be no-op
-  comp.add_device("9CA39C");
-  EXPECT_NE(comp.get_device("9CA39C"), nullptr) << "device should still be found after duplicate add";
+  comp.add_device("ABC123");
+  EXPECT_NE(comp.get_device("ABC123"), nullptr) << "device should still be found after duplicate add";
 
   // Unknown device returns nullptr
   EXPECT_EQ(comp.get_device("000000"), nullptr) << "all-zero node ID should not be found";
@@ -60,12 +60,27 @@ TEST(HubCore, AddDeviceClearsUnknownType) {
   comp.initialized_ = true;
   comp.radio_ = new MockRadio();
 
-  comp.add_device("9CA39C");
-  auto *dev = comp.get_device("9CA39C");
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::UNKNOWN) << "newly added device should start as UNKNOWN type";
   EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "newly added device should have UNKNOWN_POSITION";
   EXPECT_TRUE(dev->is_stopped) << "newly added device should be marked stopped";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, AddDeviceStoresDeclaredMetadata) {
+  IOHomeControlComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = new MockRadio();
+
+  comp.add_device("ABC123", DeviceType::HORIZONTAL_AWNING, 5, true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->type, DeviceType::HORIZONTAL_AWNING) << "declared device type should be stored";
+  EXPECT_EQ(dev->subtype, 5u) << "declared subtype should be stored";
+  EXPECT_TRUE(dev->inverted) << "explicit inversion should be stored";
 
   delete comp.radio_;
 }
@@ -85,22 +100,22 @@ TEST(HubCore, QueueOperations) {
   EXPECT_TRUE(comp.pending_operations_.empty()) << "pending operations should start empty";
 
   // Queue a position command
-  comp.queue_set_device_position("9CA39C", 50);
+  comp.queue_set_device_position("ABC123", 50);
   EXPECT_EQ(comp.pending_operations_.size(), 1u) << "should have one pending operation after queue_set_device_position";
   auto op = comp.pending_operations_.front();
   EXPECT_EQ(op.type, IOHomeControlComponent::PendingOperationType::SET_POSITION)
       << "operation type should be SET_POSITION";
-  EXPECT_EQ(op.device_id, "9CA39C") << "device ID should match queued device";
+  EXPECT_EQ(op.device_id, "ABC123") << "device ID should match queued device";
   EXPECT_EQ(op.position, 50u) << "position should be 50";
 
   // Queue a status request
-  comp.queue_request_device_status("9CA39C");
+  comp.queue_request_device_status("ABC123");
   EXPECT_EQ(comp.pending_operations_.size(), 2u)
       << "should have two pending operations after queue_request_device_status";
   op = comp.pending_operations_.back();
   EXPECT_EQ(op.type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS)
       << "operation type should be REQUEST_STATUS";
-  EXPECT_EQ(op.device_id, "9CA39C") << "device ID should match queued device";
+  EXPECT_EQ(op.device_id, "ABC123") << "device ID should match queued device";
 
   // Dequeue in-place
   comp.process_pending_operation_();  // processes front
@@ -112,24 +127,24 @@ TEST(HubCore, QueueOperations) {
   delete comp.radio_;
 }
 
-TEST(HubCore, PersistedNodeIdIsValid) {
+TEST(HubCore, StoredNodeIdIsValid) {
   // Valid: not all zeros, not all 0xFF
   uint8_t valid[3] = {0xC0, 0xFF, 0xEE};
-  EXPECT_TRUE(persisted_node_id_is_valid(valid)) << "mixed non-zero bytes should be valid";
+  EXPECT_TRUE(stored_node_id_is_valid(valid)) << "mixed non-zero bytes should be valid";
 
   uint8_t not_all_ff[3] = {0xFE, 0xFF, 0xFF};
-  EXPECT_TRUE(persisted_node_id_is_valid(not_all_ff)) << "not all 0xFF should be valid";
+  EXPECT_TRUE(stored_node_id_is_valid(not_all_ff)) << "not all 0xFF should be valid";
 
   uint8_t not_all_zero[3] = {0x01, 0x00, 0x00};
-  EXPECT_TRUE(persisted_node_id_is_valid(not_all_zero)) << "not all zero should be valid";
+  EXPECT_TRUE(stored_node_id_is_valid(not_all_zero)) << "not all zero should be valid";
 
   // Invalid: all zeros
   uint8_t all_zero[3] = {0x00, 0x00, 0x00};
-  EXPECT_FALSE(persisted_node_id_is_valid(all_zero)) << "all zeros should be invalid";
+  EXPECT_FALSE(stored_node_id_is_valid(all_zero)) << "all zeros should be invalid";
 
   // Invalid: all 0xFF
   uint8_t all_ff[3] = {0xFF, 0xFF, 0xFF};
-  EXPECT_FALSE(persisted_node_id_is_valid(all_ff)) << "all 0xFF should be invalid";
+  EXPECT_FALSE(stored_node_id_is_valid(all_ff)) << "all 0xFF should be invalid";
 }
 
 TEST(HubCore, FormatPositionHelper) {
@@ -142,12 +157,12 @@ TEST(HubCore, FormatPositionHelper) {
 
 TEST(HubCore, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
   IOHomeControlComponent comp;
-  comp.add_device("9CA39C");
+  comp.add_device("ABC123");
 
   IoFrame frame{};
   init_frame(frame, true, false, false, false);
   uint8_t own[3] = {0xC0, 0xFF, 0xEE};
-  uint8_t device[3] = {0x9C, 0xA3, 0x9C};
+  uint8_t device[3] = {0xAB, 0xC1, 0x23};
   set_dst(frame, own);
   set_src(frame, device);
   uint8_t payload[8] = {STATUS_STOPPED, 0x00, POS_UNKNOWN, 0x00, 0x64, 0x00, 0x00, 0x00};
@@ -155,7 +170,7 @@ TEST(HubCore, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
 
   comp.update_device_status_(frame);
 
-  auto *dev = comp.get_device("9CA39C");
+  auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_FLOAT_EQ(dev->position, 50.0f) << "valid current should decode to 50 percent";
   EXPECT_FLOAT_EQ(dev->target, 50.0f) << "marker target should normalize to current when stopped";
@@ -164,12 +179,12 @@ TEST(HubCore, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
 
 TEST(HubCore, StoppedFlagMismatchKeepsDeviceMoving) {
   IOHomeControlComponent comp;
-  comp.add_device("9CA39C");
+  comp.add_device("ABC123");
 
   IoFrame frame{};
   init_frame(frame, true, false, false, false);
   uint8_t own[3] = {0xC0, 0xFF, 0xEE};
-  uint8_t device[3] = {0x9C, 0xA3, 0x9C};
+  uint8_t device[3] = {0xAB, 0xC1, 0x23};
   set_dst(frame, own);
   set_src(frame, device);
   uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0x64, 0x00, 0x00, 0x00};
@@ -177,7 +192,7 @@ TEST(HubCore, StoppedFlagMismatchKeepsDeviceMoving) {
 
   comp.update_device_status_(frame);
 
-  auto *dev = comp.get_device("9CA39C");
+  auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_FLOAT_EQ(dev->target, 100.0f) << "valid target should decode to 100 percent";
   EXPECT_FLOAT_EQ(dev->position, 50.0f) << "valid current should decode to 50 percent";
@@ -615,6 +630,27 @@ TEST(HubCore, GetInfo2RespUpdatesDeviceType) {
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::ROLLER_SHUTTER) << "INFO2 response should update device type";
   EXPECT_EQ(dev->subtype, 0u) << "INFO2 response should update device subtype";
+}
+
+TEST(HubCore, GetInfo2RespDoesNotOverwriteDeclaredType) {
+  IOHomeControlComponent comp;
+  comp.add_device("054E17", DeviceType::AWNING, 7, false);
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x80};
+  set_cmd(f, CMD_GET_INFO2_RESP, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->type, DeviceType::AWNING) << "INFO2 must not overwrite a YAML-declared device type";
+  EXPECT_EQ(dev->subtype, 7u) << "INFO2 must not overwrite a YAML-declared subtype";
 }
 
 TEST(HubCore, OwnControllerStatusUpdateSchedulesPoll) {

@@ -36,9 +36,24 @@ static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W 
 /// so the receiver has time to detect it while hopping. Subsequent frames in the
 /// same exchange use a short preamble (8 bytes) since both sides are already
 /// on the same channel. Solar-powered devices need the long preamble to wake up.
-static constexpr uint16_t LONG_PREAMBLE = 1024;                ///< 1024 bytes for initial/start frames
-static constexpr uint16_t SHORT_PREAMBLE = 8;                  ///< 8 bytes for response/continuation frames
-static constexpr uint16_t SX1262_AUTH_RESPONSE_PREAMBLE = 46;  ///< SX1262-specific 0x3D preamble workaround
+static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes for initial/start frames
+static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
+/// SX1262-specific preamble for the outbound 0x3D challenge response.
+///
+/// The SX1262 path has to rebuild the IO-homecontrol framing details in software and the
+/// 0x3D auth response is sent immediately after we switch from RX to TX upon receiving the
+/// device's 0x3C challenge. Real-device tuning showed that 64 preamble bytes gives the peer
+/// enough lock-on margin in that tight turn-around window, while leaving the proven SX1276
+/// short-response waveform untouched.
+static constexpr uint16_t SX1262_AUTH_RESPONSE_PREAMBLE = 64;
+
+/// SX1262-specific per-channel dwell while waiting for authenticated exchange responses.
+///
+/// A 50 ms dwell was short enough that the controller could hop away from the request channel
+/// just before the device emitted its post-auth reply. Using 90 ms keeps the SX1262 receiver on
+/// that channel long enough for the observed device turn-around after 0x3D, without inflating the
+/// overall 300/500 ms exchange windows for the rest of the protocol.
+static constexpr int32_t SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS = 90;
 
 /// Timing constants for frequency hopping and response waiting.
 static constexpr int32_t HOP_TIME_US = 2700;             ///< Time per channel when hopping (2.7ms)
@@ -341,6 +356,8 @@ struct IoDevice {
   bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning).
   uint32_t last_status{0};               ///< millis() timestamp of last received status.
   uint32_t next_update{0};               ///< millis() timestamp when we should poll for status next.
+  uint8_t status_poll_failures{0};       ///< Consecutive background status-poll failures without a valid reply.
+  uint8_t auth_poll_failures{0};         ///< Consecutive background poll failures that reached 0x3C auth challenge.
 };
 
 /// @brief Convert a hex string (e.g., "123ABC") to a byte array.

@@ -51,6 +51,8 @@ cover:
     name: "Demo Awning"
     device_class: awning
     io_device_id: "A1B2C3"
+    io_device_type: "awning"
+    io_subtype: 0
     invert_position: true
 
   - platform: home_io_control
@@ -59,6 +61,8 @@ cover:
     name: "Demo Blind"
     device_class: blind
     io_device_id: "A1B2C4"
+    io_device_type: "blind"
+    io_subtype: 0
 
 light:
   - platform: home_io_control
@@ -66,6 +70,8 @@ light:
     id: demo_light
     name: "Demo Light"
     io_device_id: "D15C05"
+    io_device_type: "light"
+    io_subtype: 0
 
 switch:
   - platform: home_io_control
@@ -73,6 +79,8 @@ switch:
     id: demo_switch
     name: "Demo Switch"
     io_device_id: "D0661E"
+    io_device_type: "on_off_switch"
+    io_subtype: 0
 
 button:
   - platform: home_io_control

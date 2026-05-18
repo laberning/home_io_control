@@ -49,6 +49,15 @@ class MockHubSwitch : public IOHomeControlComponent {
       return;
     devices_[device_id] = IoDevice{};
   }
+  void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) override {
+    if (devices_.count(device_id))
+      return;
+    devices_[device_id] = IoDevice{};
+    devices_[device_id].type = type;
+    devices_[device_id].subtype = subtype;
+    if (inverted)
+      devices_[device_id].inverted = true;
+  }
   void register_device_callback(DeviceUpdateCallback cb) override { callbacks_.push_back(std::move(cb)); }
 
   const std::string &last_switch_device_id() const { return last_switch_device_id_; }
@@ -75,11 +84,11 @@ TEST(PlatformSwitch, WriteStateSendsOnOff) {
   MockHubSwitch hub;
   IOHomeSwitch sw;
   sw.set_parent(&hub);
-  sw.set_device_id("9CA39C");
+  sw.set_device_id("ABC123");
 
   // Turn on
   sw.write_state(true);
-  EXPECT_EQ(hub.last_switch_device_id(), "9CA39C") << "device ID should match configured ID for on command";
+  EXPECT_EQ(hub.last_switch_device_id(), "ABC123") << "device ID should match configured ID for on command";
   EXPECT_TRUE(hub.last_switch_on()) << "last_switch_on should be true after on command";
 
   // Turn off
@@ -91,21 +100,21 @@ TEST(PlatformSwitch, DeviceUpdatePublishesState) {
   MockHubSwitch hub;
   IOHomeSwitch sw;
   sw.set_parent(&hub);
-  sw.set_device_id("9CA39C");
+  sw.set_device_id("ABC123");
   sw.setup();  // register callback
 
   // Device reports ON (position < 50)
   IoDevice dev{};
   dev.position = 30.0f;
   dev.is_stopped = true;
-  hub.trigger_device_update("9CA39C", dev);
+  hub.trigger_device_update("ABC123", dev);
 
   // Switch state should be on
   EXPECT_TRUE(sw.get_state()) << "position < 50 should set switch state ON";
 
   // Device reports OFF
   dev.position = 70.0f;
-  hub.trigger_device_update("9CA39C", dev);
+  hub.trigger_device_update("ABC123", dev);
   EXPECT_FALSE(sw.get_state()) << "position >= 50 should set switch state OFF";
 }
 
@@ -113,12 +122,12 @@ TEST(PlatformSwitch, IgnoresMovingDevice) {
   MockHubSwitch hub;
   IOHomeSwitch sw;
   sw.set_parent(&hub);
-  sw.set_device_id("9CA39C");
+  sw.set_device_id("ABC123");
 
   IoDevice dev{};
   dev.position = 30.0f;
   dev.is_stopped = false;
-  hub.trigger_device_update("9CA39C", dev);
+  hub.trigger_device_update("ABC123", dev);
 
   // Should not change state (remains off initially)
   EXPECT_FALSE(sw.get_state()) << "moving device should not change switch state";

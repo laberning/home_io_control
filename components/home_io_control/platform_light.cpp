@@ -12,7 +12,7 @@ static const char *const TAG = "home_io_control.light";
 void IOHomeLight::setup() {
   // Binary lights still need the shared device registry so discovery/status handling can find
   // their node metadata the same way covers do.
-  this->parent_->add_device(this->device_id_);
+  this->parent_->add_device(this->device_id_, device_type_, subtype_, /*inverted=*/false);
 
   // Subscribe to controller updates so HA state follows radio-originated changes too.
   this->parent_->register_device_callback(

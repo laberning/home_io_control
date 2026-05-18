@@ -42,6 +42,12 @@ class IOHomeLight : public light::LightOutput, public Component {
   /// @brief Set device ID from YAML.
   /// @param id Hex string node ID.
   void set_device_id(const std::string &id) { this->device_id_ = id; }
+  /// @brief Set the declared device type (from YAML).
+  /// @param type Device type enum.
+  void set_device_type(DeviceType type) { this->device_type_ = type; }
+  /// @brief Set the declared device subtype (from YAML).
+  /// @param subtype Subtype value.
+  void set_subtype(uint8_t subtype) { this->subtype_ = subtype; }
 
  protected:
   /// @brief Handle inbound device status updates.
@@ -52,6 +58,8 @@ class IOHomeLight : public light::LightOutput, public Component {
   IOHomeControlComponent *parent_{nullptr};
   light::LightState *state_{nullptr};
   std::string device_id_;
+  DeviceType device_type_{DeviceType::UNKNOWN};
+  uint8_t subtype_{0};
   /// Guard so that an inbound radio status does not echo back as a new outbound command.
   bool suppress_write_{false};
 };

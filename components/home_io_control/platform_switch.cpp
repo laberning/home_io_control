@@ -12,7 +12,7 @@ static const char *const TAG = "home_io_control.switch";
 void IOHomeSwitch::setup() {
   // Register and subscribe exactly like covers so the controller keeps one shared view of all
   // known IO-homecontrol devices, regardless of which ESPHome entity type wraps them.
-  this->parent_->add_device(this->device_id_);
+  this->parent_->add_device(this->device_id_, device_type_, subtype_, /*inverted=*/false);
   this->parent_->register_device_callback(
       [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
   this->set_timeout("init_status", 5000, [this]() { this->parent_->queue_request_device_status(this->device_id_); });

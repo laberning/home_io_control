@@ -12,7 +12,7 @@
 /// - ACK authenticated device-initiated status updates.
 ///
 /// The goal of the split is to keep hub_core.cpp focused on lifecycle,
-/// persistence, and scheduling while leaving the protocol-specific receive
+/// device registry, and scheduling while leaving the protocol-specific receive
 /// interpretation in one place.
 
 namespace esphome {
@@ -102,12 +102,14 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     detail::log_status_update(id, dev, " (status update)");
     this->notify_device_update_(id);
   } else if (frame.cmd == CMD_GET_INFO2_RESP && frame.data_len >= 12) {
-    // INFO2 is metadata, not movement state. Keep the logging here because this is the only
-    // inbound path that upgrades an UNKNOWN device into a typed runtime profile.
-    dev.type = static_cast<DeviceType>(frame.data[10] << 2 | frame.data[11] >> 6);
-    dev.subtype = frame.data[11] & 0x3F;
-    if (default_inverted_for_type(dev.type))
-      dev.inverted = true;
+    // INFO2 is metadata, not movement state. Only learn type from radio if still UNKNOWN;
+    // YAML-declared type takes priority.
+    if (dev.type == DeviceType::UNKNOWN) {
+      dev.type = static_cast<DeviceType>(frame.data[10] << 2 | frame.data[11] >> 6);
+      dev.subtype = frame.data[11] & 0x3F;
+      if (default_inverted_for_type(dev.type))
+        dev.inverted = true;
+    }
     ESP_LOGI(detail::TAG, "Device %s: type=%s (%u) class=%s profile=%s subtype=%u", id.c_str(),
              device_type_name(dev.type), (uint8_t) dev.type, device_capability_class_name(dev.type),
              device_operation_profile_name(dev.type), dev.subtype);

@@ -45,10 +45,19 @@ class IOHomeCover : public cover::Cover, public Component {
   /// @brief Set the unique device ID (from YAML).
   /// @param id Hexadecimal node ID string (e.g., "123ABC").
   void set_device_id(const std::string &id) { this->device_id_ = id; }
+  /// @brief Set the declared device type (from YAML).
+  /// @param type Device type enum.
+  void set_device_type(DeviceType type) { this->device_type_ = type; }
+  /// @brief Set the declared device subtype (from YAML).
+  /// @param subtype Subtype value.
+  void set_subtype(uint8_t subtype) { this->subtype_ = subtype; }
   /// @brief Enable or disable position inversion.
   /// Some devices (e.g., horizontal awnings) report reversed open/close semantics.
   /// @param invert True to invert the mapping (HA 1.0 → IO 0, HA 0.0 → IO 100).
-  void set_invert_position(bool invert) { this->invert_ = invert; }
+  void set_invert_position(bool invert) {
+    this->invert_ = invert;
+    this->invert_explicit_ = true;
+  }
   /// @brief Query whether this device supports tilt (slat angle) control.
   /// @return true if the underlying device type supports tilt.
   [[nodiscard]] bool supports_tilt() const;
@@ -61,10 +70,16 @@ class IOHomeCover : public cover::Cover, public Component {
   /// @param id Device ID that updated.
   /// @param dev Updated IoDevice state.
   void on_device_update_(const std::string &id, const IoDevice &dev);
+  /// @brief Resolve the current inversion mode.
+  /// @return Explicit YAML override when set, otherwise the runtime device profile.
+  [[nodiscard]] bool effective_invert_() const;
 
   IOHomeControlComponent *parent_{nullptr};
   std::string device_id_;
+  DeviceType device_type_{DeviceType::UNKNOWN};
+  uint8_t subtype_{0};
   bool invert_{false};
+  bool invert_explicit_{false};
 };
 
 }  // namespace home_io_control

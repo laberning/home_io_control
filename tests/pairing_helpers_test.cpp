@@ -35,7 +35,6 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
   using IOHomeControlComponent::devices_;
-  using IOHomeControlComponent::save_devices_;
 };
 
 // --- Frame builders ---------------------------------------------------------
