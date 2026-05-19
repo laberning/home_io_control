@@ -2,6 +2,7 @@
 /// @brief ESPHome cover entity for IO-Homecontrol devices.
 
 #include "platform_cover.h"
+#include "hub_internal.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -19,7 +20,8 @@ void IOHomeCover::setup() {
       [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
 
   // Request initial status after a short delay (give radio time to start hopping)
-  this->set_timeout("init_status", 5000, [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+  this->set_timeout("init_status", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
+                    [this]() { this->parent_->queue_request_device_status(this->device_id_); });
 }
 
 cover::CoverTraits IOHomeCover::get_traits() {

@@ -77,12 +77,14 @@ static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT
 // Frame Constants
 // ============================================================================
 
-static constexpr uint8_t NODE_ID_SIZE = 3;     ///< Device/node addresses are 3 bytes (e.g., "123ABC")
+static constexpr uint8_t NODE_ID_SIZE = 3;  ///< Device/node addresses are 3 bytes (e.g., "123ABC")
+static constexpr uint8_t NODE_ID_STRING_SIZE = NODE_ID_SIZE * 2 + 1;  ///< Uppercase hex node ID plus null terminator
 static constexpr uint8_t HMAC_SIZE = 6;        ///< Authentication HMAC is 6 bytes (truncated AES output)
 static constexpr uint8_t AES_KEY_SIZE = 16;    ///< AES-128 key size
 static constexpr uint8_t AES_BLOCK_SIZE = 16;  ///< AES block size
 static constexpr uint8_t IV_SIZE = 16;         ///< Initialization vector size for AES
 static constexpr uint8_t IV_PADDING = 0x55;    ///< Padding byte used in IV construction
+static constexpr uint8_t BITS_PER_BYTE = 8;    ///< Number of bits in one protocol byte
 
 static constexpr uint8_t FRAME_MIN_SIZE = 9;        ///< Minimum frame: CTRL0+CTRL1+DST(3)+SRC(3)+CMD(1)
 static constexpr uint8_t FRAME_MAX_SIZE = 32;       ///< Maximum frame size (9 header + 23 data)
@@ -164,8 +166,16 @@ static constexpr uint16_t STATUS_POS_MAX = 0xC800;
 static constexpr uint16_t STATUS_POS_TOLERANCE_RAW = 100;
 
 /// Status byte flags in CMD_PRIVATE_RESP and CMD_STATUS_UPDATE.
-static constexpr uint8_t STATUS_STOPPED = 0x01;   ///< Byte 0 bit 0: device is not moving
-static constexpr uint8_t STATUS_EXPECTED = 0x80;  ///< Byte 1 bit 7: device will send auto status update
+static constexpr uint8_t STATUS_STOPPED = 0x01;        ///< Byte 0 bit 0: device is not moving
+static constexpr uint8_t STATUS_EXPECTED = 0x80;       ///< Byte 1 bit 7: device will send auto status update
+static constexpr uint8_t STATUS_TILT_SELECTOR = 0x20;  ///< Extended status payload marker for tilt-capable devices
+
+/// Packed device metadata uses two bytes where the high 8 bits carry the upper type bits and the
+/// low byte carries both the remaining type bits and the 6-bit manufacturer subtype.
+static constexpr uint8_t DEVICE_METADATA_SIZE = 2;
+static constexpr uint8_t DEVICE_TYPE_LOW_BITS_SHIFT = 2;
+static constexpr uint8_t DEVICE_TYPE_HIGH_BITS_SHIFT = 6;
+static constexpr uint8_t DEVICE_SUBTYPE_MASK = 0x3F;
 
 // ============================================================================
 // Cryptographic Constants
@@ -176,6 +186,8 @@ static constexpr uint8_t STATUS_EXPECTED = 0x80;  ///< Byte 1 bit 7: device will
 /// This is the same across all IO-Homecontrol devices worldwide.
 static constexpr uint8_t TRANSFER_KEY[AES_KEY_SIZE] = {0x34, 0xC3, 0x46, 0x6E, 0xD8, 0x8F, 0x4E, 0x8E,
                                                        0x16, 0xAA, 0x47, 0x39, 0x49, 0x88, 0x43, 0x73};
+static constexpr uint16_t CRC_POLYNOMIAL_REVERSED = 0x8408;  ///< Reversed CRC-CCITT polynomial used by IO-homecontrol
+static constexpr uint16_t CRC_LSB_MASK = 0x0001;             ///< Least-significant-bit mask for reflected CRC update
 
 /// Broadcast address for device discovery (0x00003B).
 /// Used as destination in CMD_DISCOVER_REQ frames to trigger all pairable devices to respond.
@@ -329,6 +341,17 @@ bool device_supports_status_requests(DeviceType type);
 /// @return true for venetian blinds, blinds, external venetian blinds, louvre blinds.
 bool device_supports_tilt(DeviceType type);
 
+/// @brief Decode a protocol-packed device type from two metadata bytes.
+/// @param type_msb First metadata byte.
+/// @param type_subtype Second metadata byte containing the remaining type bits and subtype.
+/// @return Decoded device type.
+DeviceType decode_packed_device_type(uint8_t type_msb, uint8_t type_subtype);
+
+/// @brief Decode a protocol-packed device subtype from the second metadata byte.
+/// @param type_subtype Second metadata byte containing subtype in bits [5:0].
+/// @return Manufacturer-specific subtype.
+uint8_t decode_packed_device_subtype(uint8_t type_subtype);
+
 /// @brief Human‑readable operation profile name for a device type.
 /// Used for logging and diagnostics.
 /// @param type Device type.
@@ -342,13 +365,14 @@ const char *device_operation_profile_name(DeviceType type);
 /// @brief Sentinel value meaning "position is not known yet".
 /// Matches POS_UNKNOWN (0xD4 = 212 decimal) for easy debugging.
 static constexpr float UNKNOWN_POSITION = 212.0F;
+static constexpr uint8_t DEVICE_NAME_BUFFER_SIZE = 32;  ///< Device name storage including null terminator
 
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
   DeviceType type{DeviceType::UNKNOWN};  ///< Device type (shutter, awning, etc.).
   uint8_t subtype{0};                    ///< Device subtype (manufacturer‑specific).
-  char name[32]{};                       ///< Device name (from device, Latin‑1 encoded).
+  char name[DEVICE_NAME_BUFFER_SIZE]{};  ///< Device name (from device, Latin‑1 encoded).
   float position{UNKNOWN_POSITION};      ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION.
   float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
   float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.

@@ -129,7 +129,7 @@ TEST(ProtoCommands, CreateGetStatusTilt) {
   EXPECT_EQ(frame.cmd, CMD_PRIVATE) << "tilt-aware get-status should still use CMD_PRIVATE (0x03)";
   EXPECT_EQ(frame.data_len, 4) << "tilt-aware get-status should have 4-byte payload";
   EXPECT_EQ(frame.data[0], 0x03);
-  EXPECT_EQ(frame.data[1], 0x20);
+  EXPECT_EQ(frame.data[1], STATUS_TILT_SELECTOR);
   EXPECT_EQ(frame.data[2], 0x01);
   EXPECT_EQ(frame.data[3], 0x00);
 }
@@ -143,7 +143,7 @@ TEST(ProtoCommands, CreateExecuteTilt) {
   EXPECT_EQ(frame.data[1], 0xE7) << "tilt ACEI should match observed tilt traffic";
   EXPECT_EQ(frame.data[2], POS_UNKNOWN) << "tilt execute should keep position unchanged via unknown marker";
   EXPECT_EQ(frame.data[3], 0x00);
-  EXPECT_EQ(frame.data[4], 0x20) << "tilt execute should set the tilt separator flag";
+  EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt execute should set the tilt separator flag";
   EXPECT_EQ(frame.data[5], 0x96) << "25% open corresponds to 75% closed => 0x9600";
   EXPECT_EQ(frame.data[6], 0x00);
   EXPECT_EQ(frame.data[7], 0x00);

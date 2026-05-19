@@ -93,9 +93,9 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
     return false;
 
   const char *action = "set position";
-  if (position == 0) {
+  if (position == detail::BINARY_ENTITY_ON_POSITION) {
     action = "open";
-  } else if (position == 100) {
+  } else if (position == detail::BINARY_ENTITY_OFF_POSITION) {
     action = "close";
   } else if (position == POS_STOP) {
     action = "stop";

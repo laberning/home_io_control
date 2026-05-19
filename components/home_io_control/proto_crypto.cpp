@@ -1,6 +1,9 @@
 /// @file proto_crypto.cpp
 /// @brief Cryptographic helpers for the IO-Homecontrol protocol.
 
+// The AES helper intentionally mirrors the byte-level structure of the algorithm.
+// NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+
 #include "proto_crypto.h"
 
 #include <esp_random.h>
@@ -362,3 +365,5 @@ void generate_challenge(uint8_t out[HMAC_SIZE]) {
 }  // namespace crypto
 }  // namespace home_io_control
 }  // namespace esphome
+
+// NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)

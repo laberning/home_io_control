@@ -1,4 +1,5 @@
 #include "hub_core.h"
+#include "hub_internal.h"
 #include "hub_pairing.h"
 #include "proto_frame.h"
 #include "radio_interface.h"
@@ -6,6 +7,7 @@
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
+#include <array>
 #include <cstring>
 #include <deque>
 
@@ -38,13 +40,19 @@ class TestableComponent : public IOHomeControlComponent {
 };
 
 // --- Frame builders ---------------------------------------------------------
-static IoFrame build_discovery_response(const uint8_t src[3], const uint8_t dst[3], uint8_t type, uint8_t subtype) {
+static std::array<uint8_t, DEVICE_METADATA_SIZE> encode_device_metadata(DeviceType type, uint8_t subtype) {
+  return {static_cast<uint8_t>(static_cast<uint8_t>(type) >> DEVICE_TYPE_LOW_BITS_SHIFT),
+          static_cast<uint8_t>(subtype | ((static_cast<uint8_t>(type) & ((1U << DEVICE_TYPE_LOW_BITS_SHIFT) - 1U))
+                                          << DEVICE_TYPE_HIGH_BITS_SHIFT))};
+}
+
+static IoFrame build_discovery_response(const uint8_t src[3], const uint8_t dst[3], DeviceType type, uint8_t subtype) {
   IoFrame f{};
   init_frame(f, true, true, true, false);
   set_dst(f, dst);
   set_src(f, src);
-  uint8_t payload[2] = {type, subtype};
-  set_cmd(f, CMD_DISCOVER_RESP, payload, 2);
+  auto payload = encode_device_metadata(type, subtype);
+  set_cmd(f, CMD_DISCOVER_RESP, payload.data(), payload.size());
   return f;
 }
 
@@ -70,8 +78,7 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_Success) {
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
 
-  IoFrame resp =
-      build_discovery_response(test::DST_ID, comp.node_id_, static_cast<uint8_t>(DeviceType::ROLLER_SHUTTER), 0x01);
+  IoFrame resp = build_discovery_response(test::DST_ID, comp.node_id_, DeviceType::ROLLER_SHUTTER, 0x01);
   uint8_t raw[64];
   uint8_t raw_len = serialize(resp, raw, sizeof(raw));
   RadioRxPacket pkt{};
@@ -82,7 +89,7 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_Success) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  auto result = comp.wait_for_discovery_response_(2000, out_pkt, out_frame);
+  auto result = comp.wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
 
   // Expect: valid discovery response yields ACCEPT disposition and populates outputs
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::ACCEPT)
@@ -90,7 +97,8 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_Success) {
   EXPECT_EQ(out_pkt.len, raw_len) << "output packet length should match input raw length";
   EXPECT_EQ(memcmp(out_pkt.data, raw, raw_len), 0) << "output packet data should match input raw bytes";
   EXPECT_EQ(out_frame.cmd, CMD_DISCOVER_RESP) << "parsed frame command should be CMD_DISCOVER_RESP";
-  EXPECT_EQ(out_frame.data_len, 2u) << "discovery response data length should be 2 bytes (type+subtype)";
+  EXPECT_EQ(out_frame.data_len, DEVICE_METADATA_SIZE)
+      << "discovery response data length should be 2 bytes (packed type+subtype)";
 }
 
 TEST(PairingHelpers, WaitForDiscoveryResponse_TimeoutNoTraffic) {
@@ -102,7 +110,7 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_TimeoutNoTraffic) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  auto result = comp.wait_for_discovery_response_(500, out_pkt, out_frame);
+  auto result = comp.wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
 
   // Expect: no packets seen → NO_RESPONSE disposition
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE)
@@ -130,8 +138,7 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_InvalidFramesIgnoredThenAccept) {
   radio.queue_rx(pkt1);
 
   // Valid discovery response
-  IoFrame valid =
-      build_discovery_response(test::DST_ID, comp.node_id_, static_cast<uint8_t>(DeviceType::ROLLER_SHUTTER), 0x02);
+  IoFrame valid = build_discovery_response(test::DST_ID, comp.node_id_, DeviceType::ROLLER_SHUTTER, 0x02);
   uint8_t raw2[64];
   uint8_t len2 = serialize(valid, raw2, sizeof(raw2));
   RadioRxPacket pkt2{};
@@ -141,12 +148,13 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_InvalidFramesIgnoredThenAccept) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  auto result = comp.wait_for_discovery_response_(2000, out_pkt, out_frame);
+  auto result = comp.wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
 
   // Expect: invalid frames ignored; first valid discovery response yields ACCEPT
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::ACCEPT)
       << "after invalid frames, first valid discovery response should be accepted";
-  EXPECT_EQ(out_frame.data[1], 0x02u) << "subtype from valid frame should be preserved in parsed output";
+  EXPECT_EQ(decode_packed_device_subtype(out_frame.data[1]), 0x02u)
+      << "subtype from valid frame should be preserved in parsed output";
 }
 
 TEST(PairingHelpers, WaitForDiscoveryResponse_AllInvalidReturnsInvalid) {
@@ -183,7 +191,7 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_AllInvalidReturnsInvalid) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  auto result = comp.wait_for_discovery_response_(2000, out_pkt, out_frame);
+  auto result = comp.wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
 
   // Expect: traffic seen but no valid discovery response → INVALID disposition
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::INVALID)
@@ -211,7 +219,7 @@ TEST(PairingHelpers, WaitForKeyChallenge_Success) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  bool ok = comp.wait_for_key_challenge_(500, out_pkt, out_frame, device_id);
+  bool ok = comp.wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame, device_id);
 
   // Expect: challenge frame accepted and parsed correctly
   EXPECT_TRUE(ok) << "valid key challenge from expected device should be accepted";
@@ -243,7 +251,8 @@ TEST(PairingHelpers, WaitForKeyChallenge_WrongDeviceIgnored) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  bool ok = comp.wait_for_key_challenge_(500, out_pkt, out_frame, expected_device_id);
+  bool ok =
+      comp.wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame, expected_device_id);
 
   // Expect: frame from wrong device is ignored → failure return
   EXPECT_FALSE(ok) << "challenge from wrong node ID should be ignored and cause failure";
@@ -274,7 +283,7 @@ TEST(PairingHelpers, WaitForKeyChallenge_NonChallengeIgnored) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  bool ok = comp.wait_for_key_challenge_(500, out_pkt, out_frame, device_id);
+  bool ok = comp.wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame, device_id);
 
   // Expect: non‑challenge command is ignored → failure return
   EXPECT_FALSE(ok) << "non‑challenge frame should be ignored during key‑challenge wait";
@@ -294,10 +303,8 @@ TEST(PairingHelpers, ParseDeviceFromDiscovery_SetsBasicFields) {
   init_frame(frame, true, true, true, false);
   set_src(frame, node_id);
   set_dst(frame, test::DST_ID);
-  // ROLLER_SHUTTER = 0x02. Encoding: type = data[0] << 2 | data[1] >> 6.
-  // To decode to 0x02: data[0] = 0x02 >> 2 = 0x00; data[1] = subtype(0) | ((0x02 & 0x03) << 6) = 0x80.
-  uint8_t payload[2] = {0x00, 0x80};
-  set_cmd(frame, CMD_DISCOVER_RESP, payload, 2);
+  auto payload = encode_device_metadata(DeviceType::ROLLER_SHUTTER, 0);
+  set_cmd(frame, CMD_DISCOVER_RESP, payload.data(), payload.size());
 
   comp.parse_device_from_discovery(frame, device, device_id);
 
@@ -322,11 +329,8 @@ TEST(PairingHelpers, ParseDeviceFromDiscovery_InvertedType) {
   init_frame(frame, true, true, true, false);
   set_src(frame, node_id);
   set_dst(frame, test::DST_ID);
-  // HORIZONTAL_AWNING = 0x10.
-  // Encoding: data[0] = type >> 2 = 0x10 >> 2 = 0x04.
-  // data[1] = subtype | ((type & 0x03) << 6). type & 0x03 = 0, so data[1] = subtype (5).
-  uint8_t payload[2] = {0x04, 0x05};
-  set_cmd(frame, CMD_DISCOVER_RESP, payload, 2);
+  auto payload = encode_device_metadata(DeviceType::HORIZONTAL_AWNING, 5);
+  set_cmd(frame, CMD_DISCOVER_RESP, payload.data(), payload.size());
 
   comp.parse_device_from_discovery(frame, device, device_id);
 

@@ -21,6 +21,16 @@
 namespace esphome {
 namespace home_io_control {
 
+namespace {
+
+constexpr uint32_t BLOCKING_WARNING_THRESHOLD_MS =
+    250;  ///< setup() and exchanges can legitimately block longer than generic ESPHome components.
+constexpr uint8_t SX1276_VERSION_REGISTER = 0x42;            ///< SX1276 version register used for auto-detection.
+constexpr uint8_t SX1276_VERSION_REGISTER_READ_MASK = 0x7F;  ///< SX1276 SPI read transactions clear bit 7.
+constexpr uint8_t SX1276_EXPECTED_VERSION = 0x12;            ///< Known chip ID returned by SX1276 silicon.
+
+}  // namespace
+
 static const char *const TAG = detail::TAG;
 
 void IOHomeControlComponent::reset_exchange_debug_(uint8_t request_cmd) {
@@ -77,7 +87,7 @@ void IOHomeControlComponent::log_exchange_debug_(const char *device_id) const {
 void IOHomeControlComponent::setup() {
   // IO-homecontrol exchanges are intentionally blocking and often take a few hundred
   // milliseconds, so use a higher warning threshold than ESPHome's generic 30-50 ms.
-  this->warn_if_blocking_over_ = 250;
+  this->warn_if_blocking_over_ = BLOCKING_WARNING_THRESHOLD_MS;
   ESP_LOGI(detail::TAG, "Initializing...");
   if (!hex_to_bytes(this->node_id_str_, this->node_id_, NODE_ID_SIZE) ||
       !hex_to_bytes(this->system_key_str_, this->system_key_, AES_KEY_SIZE)) {
@@ -96,13 +106,13 @@ void IOHomeControlComponent::setup() {
   } else if (this->radio_type_ == "sx1276") {
     use_sx1262 = false;
   } else {
-    // Auto-detect: read SX1276 version register (REG_VERSION = 0x42, expected 0x12).
+    // Auto-detect: read SX1276 version register and compare against the known chip ID.
     // Falls back to SX1262 if the version does not match.
     this->enable();
-    this->write_byte(0x42 & 0x7F);  // REG_VERSION read
+    this->write_byte(SX1276_VERSION_REGISTER & SX1276_VERSION_REGISTER_READ_MASK);
     uint8_t const version = this->read_byte();
     this->disable();
-    if (version == 0x12) {
+    if (version == SX1276_EXPECTED_VERSION) {
       ESP_LOGI(detail::TAG, "Auto-detected SX1276 (version=0x%02X)", version);
       use_sx1262 = false;
     } else {

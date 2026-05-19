@@ -7,12 +7,19 @@
 namespace esphome {
 namespace home_io_control {
 
+namespace {
+
+constexpr uint32_t RADIO_RESET_PULSE_DELAY_MS =
+    10;  ///< Reset low/high pulse used by both radio drivers during hardware reset.
+
+}  // namespace
+
 void RadioDriver::reset_hardware_() {
   if (this->rst_pin_ != nullptr) {
     this->rst_pin_->digital_write(false);
-    delay(10);
+    delay(RADIO_RESET_PULSE_DELAY_MS);
     this->rst_pin_->digital_write(true);
-    delay(10);
+    delay(RADIO_RESET_PULSE_DELAY_MS);
   }
 }
 

@@ -22,15 +22,30 @@ namespace detail {
 // Shared constants
 // ============================================================================
 
-inline constexpr const char *TAG = "home_io_control";
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MS = 5000;
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP2_MS = 15000;
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP3_MS = 30000;
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP4_MS = 60000;
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MAX_MS = 300000;
-inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MS = 30000;
-inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS = 120000;
-inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS = 300000;
+inline constexpr const char *TAG = "home_io_control";         ///< Shared log tag for hub-level messages.
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MS = 5000;  ///< First retry after a silent status-poll failure.
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP2_MS =
+    15000;  ///< Second retry after a silent status-poll failure.
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP3_MS =
+    30000;  ///< Third retry after a silent status-poll failure.
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP4_MS =
+    60000;  ///< Fourth retry after a silent status-poll failure.
+inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MAX_MS =
+    300000;  ///< Steady-state backoff for repeated silent status-poll failures.
+inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MS =
+    30000;  ///< First retry after a challenge-seen auth-like failure.
+inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS =
+    120000;  ///< Second retry after a challenge-seen auth-like failure.
+inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS =
+    300000;  ///< Steady-state backoff after repeated auth-like failures.
+inline constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS =
+    5000;  ///< Delay before the first post-boot status request from an entity.
+inline constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS =
+    2000;  ///< Delay before polling after overheard remote traffic.
+inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Discovery wait window after sending 0x28.
+inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
+inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
+    50.0F;  ///< Shared 0-100 cutoff: values below this mean binary "on".
 
 // Binary on/off entities reuse the proven position transport encoding.
 inline constexpr uint8_t BINARY_ENTITY_ON_POSITION = 0;
@@ -140,7 +155,7 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
 inline void log_component_capture(const RadioDriver *radio, const char *stage, const uint8_t *buf, uint8_t len,
                                   const IoFrame *frame = nullptr) {
   const RadioCaptureInfo &capture = radio->get_last_capture();
-  char payload_hex[220];
+  char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
   bytes_to_hex(buf, len, payload_hex, sizeof(payload_hex));
   if (frame != nullptr) {
     ESP_LOGD(

@@ -20,13 +20,39 @@ namespace home_io_control {
 
 namespace {
 
+constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 8;     ///< Minimum payload length for 0x04 position-bearing replies.
+constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for 0x71 device-initiated updates.
+constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload length for 0x57 type/subtype metadata.
+constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
+    15;  ///< Minimum payload length for tilt-capable extended status replies.
+constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;         ///< Byte containing STATUS_STOPPED.
+constexpr uint8_t PRIVATE_RESPONSE_DELAY_HINT_OFFSET = 7;  ///< Coarse follow-up delay hint byte in many 0x04 replies.
+constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;      ///< Target-position MSB offset in 0x04 replies.
+constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;     ///< Current-position MSB offset in 0x04 replies.
+constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;         ///< Target-position MSB offset in 0x71 updates.
+constexpr uint8_t STATUS_UPDATE_CURRENT_OFFSET = 7;        ///< Current-position MSB offset in 0x71 updates.
+constexpr uint8_t GET_INFO2_TYPE_OFFSET = 10;              ///< Packed device type byte in 0x57 replies.
+constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;      ///< Packed type low bits plus subtype byte in 0x57 replies.
+constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;      ///< Selector byte announcing extended tilt payload.
+constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;           ///< Tilt-position MSB within extended replies.
+constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;           ///< Tilt-position LSB within extended replies.
+constexpr uint8_t PRIVATE_RESPONSE_HINT_UNUSED = 0xFF;  ///< Value used by devices that do not expose a follow-up timer.
+constexpr uint8_t PRIVATE_RESPONSE_HINT_ZERO =
+    0x00;  ///< Value treated as invalid or uninformative for follow-up timing.
+constexpr uint32_t MOVING_STATUS_POLL_DELAY_MS =
+    60000;  ///< Fallback poll interval while movement is still in progress.
+constexpr uint32_t IDLE_STATUS_POLL_DELAY_MS = 3600000;    ///< Low-frequency refresh interval once the device is idle.
+constexpr uint32_t PRIVATE_RESPONSE_HINT_SCALE_MS = 1000;  ///< Private-response delay hint is expressed in seconds.
+constexpr uint32_t PRIVATE_RESPONSE_HINT_BIAS_MS =
+    1000;  ///< Observed devices need an extra second beyond the hint value.
+
 /// @brief Decode the shared target/current position fields used by private response and status‑update frames.
 /// Different frame types use different byte offsets, but the normalization policy is identical once offsets known.
 /// @param dev Device record to update.
 /// @param frame IoFrame containing a status‑bearing command.
 /// @param target_offset Byte offset of target MSB within frame.data.
 /// @param current_offset Byte offset of current MSB within frame.data.
-/// @param allow_tilt_from_extended_response If true and frame is extended, decode tilt from bytes 13–14.
+/// @param allow_tilt_from_extended_response If true and frame is extended, decode tilt from the extended tilt bytes.
 void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_offset, uint8_t current_offset,
                           bool allow_tilt_from_extended_response) {
   uint16_t const tgt = (frame.data[target_offset] << 8) | frame.data[target_offset + 1];
@@ -34,9 +60,10 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
   decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
   detail::normalize_stopped_state(dev);
 
-  if (allow_tilt_from_extended_response && device_supports_tilt(dev.type) && frame.data_len >= 15 &&
-      frame.data[12] == 0x20) {
-    uint16_t const tilt_raw = (frame.data[13] << 8) | frame.data[14];
+  if (allow_tilt_from_extended_response && device_supports_tilt(dev.type) &&
+      frame.data_len >= EXTENDED_TILT_RESPONSE_MIN_DATA_LEN &&
+      frame.data[EXTENDED_TILT_SELECTOR_OFFSET] == STATUS_TILT_SELECTOR) {
+    uint16_t const tilt_raw = (frame.data[EXTENDED_TILT_MSB_OFFSET] << 8) | frame.data[EXTENDED_TILT_LSB_OFFSET];
     dev.tilt = decode_tilt_report(tilt_raw);
   }
 }
@@ -47,21 +74,25 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
 /// @return Delay in milliseconds.
 uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame) {
   if (dev.is_stopped) {
-    return 3600000;
+    return IDLE_STATUS_POLL_DELAY_MS;
   }
 
   // Private responses carry a coarse follow‑up timer in byte 7 on many devices.
   // When it is missing or clearly invalid, fall back to the standard short retry.
-  if (frame.data[7] != 0xFF && frame.data[7] != 0x00) {
-    return frame.data[7] * 1000 + 1000;
+  if (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_UNUSED &&
+      frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_ZERO) {
+    return frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS +
+           PRIVATE_RESPONSE_HINT_BIAS_MS;
   }
-  return 60000;
+  return MOVING_STATUS_POLL_DELAY_MS;
 }
 
 /// @brief Compute the delay before the next status poll for a device‑originated status update.
 /// @param dev Device record.
 /// @return Delay in milliseconds (long when idle, short while moving).
-uint32_t compute_status_update_delay_ms(const IoDevice &dev) { return dev.is_stopped ? 3600000 : 60000; }
+uint32_t compute_status_update_delay_ms(const IoDevice &dev) {
+  return dev.is_stopped ? IDLE_STATUS_POLL_DELAY_MS : MOVING_STATUS_POLL_DELAY_MS;
+}
 
 }  // namespace
 
@@ -82,31 +113,32 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
   }
   IoDevice &dev = it->second;
 
-  if (frame.cmd == CMD_PRIVATE_RESP && frame.data_len >= 8) {
+  if (frame.cmd == CMD_PRIVATE_RESP && frame.data_len >= PRIVATE_RESPONSE_MIN_DATA_LEN) {
     // CMD_PRIVATE_RESP (0x04) serves as the reply to both status polls (0x03) and execute
     // commands (0x00). The position fields below are shared across both response types, so
     // normalize them once here before the entity layer decides how to present the state.
-    dev.is_stopped = (frame.data[0] & STATUS_STOPPED) != 0;
+    dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
     dev.last_status = millis();
-    decode_status_fields(dev, frame, 2, 4, true);
+    decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true);
     dev.next_update = millis() + compute_private_response_delay_ms(dev, frame);
     detail::log_status_update(id, dev);
     this->notify_device_update_(id);
-  } else if (frame.cmd == CMD_STATUS_UPDATE && frame.data_len >= 11) {
+  } else if (frame.cmd == CMD_STATUS_UPDATE && frame.data_len >= STATUS_UPDATE_MIN_DATA_LEN) {
     // Status-update frames come from the device itself rather than from a direct controller poll.
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
-    dev.is_stopped = (frame.data[0] & STATUS_STOPPED) != 0;
+    dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
     dev.last_status = millis();
-    decode_status_fields(dev, frame, 5, 7, false);
+    decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
     dev.next_update = millis() + compute_status_update_delay_ms(dev);
     detail::log_status_update(id, dev, " (status update)");
     this->notify_device_update_(id);
-  } else if (frame.cmd == CMD_GET_INFO2_RESP && frame.data_len >= 12) {
+  } else if (frame.cmd == CMD_GET_INFO2_RESP && frame.data_len >= GET_INFO2_RESPONSE_MIN_DATA_LEN) {
     // INFO2 is metadata, not movement state. Only learn type from radio if still UNKNOWN;
     // YAML-declared type takes priority.
     if (dev.type == DeviceType::UNKNOWN) {
-      dev.type = static_cast<DeviceType>(frame.data[10] << 2 | frame.data[11] >> 6);
-      dev.subtype = frame.data[11] & 0x3F;
+      dev.type =
+          decode_packed_device_type(frame.data[GET_INFO2_TYPE_OFFSET], frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
+      dev.subtype = decode_packed_device_subtype(frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
       if (default_inverted_for_type(dev.type))
         dev.inverted = true;
     }
@@ -170,7 +202,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
     ESP_LOGD(detail::TAG, "rx remote_activity src=%s dst=%s cmd=0x%02X, scheduling status poll",
              node_id_to_string(frame.src).c_str(), dst_id.c_str(), frame.cmd);
-    this->schedule_status_poll_(dst_id, 2000);
+    this->schedule_status_poll_(dst_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     return;
   }
 
@@ -183,7 +215,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     for (const auto &device_id : remote_it->second) {
       ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s device=%s cmd=0x%02X, scheduling status poll",
                src_id.c_str(), device_id.c_str(), frame.cmd);
-      this->schedule_status_poll_(device_id, 2000);
+      this->schedule_status_poll_(device_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     }
     return;
   }

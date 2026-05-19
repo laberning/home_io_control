@@ -2,6 +2,7 @@
 
 #include "hub_decisions.h"
 #include "hub_core.h"
+#include "hub_internal.h"
 #include "proto_commands.h"
 #include "esphome/core/log.h"
 
@@ -28,6 +29,7 @@ namespace home_io_control {
 namespace {
 
 const char *const TAG = "home_io_control";
+constexpr size_t DEVICE_TYPE_HEX_STRING_BUFFER_SIZE = 8;  ///< Buffer for strings such as "0x11" plus terminator.
 
 /// Map PairingState enum to string for debug logging.
 const char *pairing_stage_name(pairing::PairingState state) {
@@ -124,7 +126,7 @@ const char *yaml_device_type_name(DeviceType type) {
 
 /// Format a raw device type as hexadecimal for YAML and diagnostics.
 std::string format_device_type_hex(DeviceType type) {
-  char buf[8];
+  char buf[DEVICE_TYPE_HEX_STRING_BUFFER_SIZE];
   snprintf(buf, sizeof(buf), "0x%02X", static_cast<uint8_t>(type));
   return std::string(buf);
 }
@@ -229,16 +231,14 @@ bool IOHomeControlComponent::wait_for_key_challenge_(uint32_t timeout_ms, RadioR
 /// Parse a discovery response frame into device metadata and ID.
 ///
 /// Extracts node ID, device type, and subtype from a CMD_DISCOVER_RESP frame.
-/// The two-byte payload encodes:
-///   type    = data[0] << 2 | data[1] >> 6
-///   subtype = data[1] & 0x3F
+/// The two-byte payload uses the shared packed device metadata layout defined in proto_frame.h.
 /// The inversion flag is derived from the type via `default_inverted_for_type()`.
 void IOHomeControlComponent::parse_device_from_discovery(const IoFrame &frame, IoDevice &device,
                                                          std::string &device_id) {
   memcpy(device.node_id, frame.src, NODE_ID_SIZE);
-  if (frame.data_len >= 2) {
-    device.type = static_cast<DeviceType>((frame.data[0] << 2) | (frame.data[1] >> 6));
-    device.subtype = frame.data[1] & 0x3F;
+  if (frame.data_len >= DEVICE_METADATA_SIZE) {
+    device.type = decode_packed_device_type(frame.data[0], frame.data[1]);
+    device.subtype = decode_packed_device_subtype(frame.data[1]);
     device.inverted = default_inverted_for_type(device.type);
   } else {
     device.type = DeviceType::UNKNOWN;
@@ -253,7 +253,7 @@ void IOHomeControlComponent::parse_device_from_discovery(const IoFrame &frame, I
 
 /// Execute Phase 1: discover a pairable device on channel 2.
 ///
-/// Transmits a discovery broadcast (0x28) and waits up to 2000 ms for a valid
+/// Transmits a discovery broadcast (0x28) and waits up to the configured discovery timeout for a valid
 /// discovery response (0x29). On success the response is parsed into
 /// `context.device` and `context.device_id` and the function returns ACCEPT.
 /// On failure returns NO_RESPONSE (no packets) or INVALID (packets seen but
@@ -267,10 +267,11 @@ decisions::PairingDiscoveryDisposition IOHomeControlComponent::run_discovery_pha
 
   context.state = pairing::PairingState::WAIT_DISCOVER_RESPONSE;
   this->record_exchange_debug_(pairing_stage_name(context.state), 1, false);
-  auto result = this->wait_for_discovery_response_(2000, context.packet, context.rx);
+  auto result =
+      this->wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, context.packet, context.rx);
   if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
     parse_device_from_discovery(context.rx, context.device, context.device_id);
-    context.discovery_metadata_complete = context.rx.data_len >= 2;
+    context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
   }
   return result;
 }
@@ -296,7 +297,8 @@ bool IOHomeControlComponent::run_key_exchange_phase_(pairing::PairingContext &co
 
   context.state = pairing::PairingState::WAIT_KEY_CHALLENGE;
   this->record_exchange_debug_(pairing_stage_name(context.state), 1, true);
-  if (!this->wait_for_key_challenge_(500, context.packet, context.rx, context.device.node_id)) {
+  if (!this->wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
+                                     context.device.node_id)) {
     return false;
   }
 

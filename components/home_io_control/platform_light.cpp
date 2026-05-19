@@ -2,6 +2,7 @@
 /// @brief Experimental binary light entity for IO-Homecontrol devices.
 
 #include "platform_light.h"
+#include "hub_internal.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -19,7 +20,8 @@ void IOHomeLight::setup() {
       [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
 
   // Ask for one delayed poll after boot, matching the cover platform behavior.
-  this->set_timeout("init_status", 5000, [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+  this->set_timeout("init_status", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
+                    [this]() { this->parent_->queue_request_device_status(this->device_id_); });
 }
 
 light::LightTraits IOHomeLight::get_traits() {
@@ -52,7 +54,7 @@ void IOHomeLight::on_device_update_(const std::string &id, const IoDevice &dev) 
 
   // Binary endpoints report on/off via the shared 0-100 position field.
   // Position < 50 is treated as "on", >= 50 as "off".
-  const bool on = dev.position < 50.0F;
+  const bool on = dev.position < detail::BINARY_ENTITY_ON_POSITION_THRESHOLD;
   if (this->state_->current_values.is_on() == on && this->state_->remote_values.is_on() == on)
     return;
 

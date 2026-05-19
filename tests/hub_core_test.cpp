@@ -1,4 +1,5 @@
 #include "hub_core.h"
+#include "hub_internal.h"
 #include "radio_interface.h"
 #include "proto_frame.h"
 #include "esphome/core/component.h"
@@ -327,6 +328,12 @@ void setup_rx_test_component(RxTestableComponent &comp, MockRadio &radio) {
   comp.add_device("054E17");
 }
 
+void encode_device_metadata(DeviceType type, uint8_t subtype, uint8_t *payload) {
+  payload[0] = static_cast<uint8_t>(static_cast<uint8_t>(type) >> DEVICE_TYPE_LOW_BITS_SHIFT);
+  payload[1] = static_cast<uint8_t>(subtype | ((static_cast<uint8_t>(type) & ((1U << DEVICE_TYPE_LOW_BITS_SHIFT) - 1U))
+                                               << DEVICE_TYPE_HIGH_BITS_SHIFT));
+}
+
 }  // namespace
 
 TEST(HubCore, FilterExchangeInternal_ChallengeRequest) {
@@ -403,8 +410,8 @@ TEST(HubCore, RemoteActivity_TriggersDelayedPoll) {
 
   comp.process_received_packet_(pkt);
 
-  // Should schedule a 2-second timeout for the device
-  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
+  // Should schedule the standard remote-activity timeout for the device.
+  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
   ASSERT_TRUE(comp.last_timeout_callback_) << "callback should be set";
 
@@ -486,8 +493,8 @@ TEST(HubCore, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
 
   comp.process_received_packet_(pkt);
 
-  // Should schedule a 2-second timeout for the linked device
-  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
+  // Should schedule the standard remote-activity timeout for the linked device.
+  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos)
       << "timeout name should contain linked device ID";
   ASSERT_TRUE(comp.last_timeout_callback_) << "callback should be set";
@@ -522,7 +529,7 @@ TEST(HubCore, LinkedRemotes_MultipleRemotesOneDevice) {
 
   comp.process_received_packet_(pkt);
 
-  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
+  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
 }
 
@@ -552,7 +559,7 @@ TEST(HubCore, LinkedRemotes_OneRemoteMultipleDevices) {
 
   // The last set_timeout call wins in our stub, but both should have been called.
   // Verify at least one timeout was scheduled with 2s delay.
-  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "should schedule 2s timeout";
+  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
 }
 
 // ============================================================================
@@ -617,10 +624,9 @@ TEST(HubCore, GetInfo2RespUpdatesDeviceType) {
   uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
   set_src(f, src);
   set_dst(f, dst);
-  // INFO2 response: data[10..11] encode type/subtype.
-  // ROLLER_SHUTTER = 0x02. Encoding: type = data[10] << 2 | data[11] >> 6
-  // data[10]=0x00, data[11]=0x80 → type=0x02=ROLLER_SHUTTER, subtype=0
-  uint8_t payload[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x80};
+  // INFO2 response: data[10..11] use the shared packed type/subtype metadata layout.
+  uint8_t payload[12] = {0};
+  encode_device_metadata(DeviceType::ROLLER_SHUTTER, 0, &payload[10]);
   set_cmd(f, CMD_GET_INFO2_RESP, payload, sizeof(payload));
 
   // update_device_status_ is called directly (not through process_received_packet_)
@@ -642,7 +648,8 @@ TEST(HubCore, GetInfo2RespDoesNotOverwriteDeclaredType) {
   uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
   set_src(f, src);
   set_dst(f, dst);
-  uint8_t payload[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x80};
+  uint8_t payload[12] = {0};
+  encode_device_metadata(DeviceType::ROLLER_SHUTTER, 0, &payload[10]);
   set_cmd(f, CMD_GET_INFO2_RESP, payload, sizeof(payload));
 
   comp.update_device_status_(f);
@@ -673,7 +680,8 @@ TEST(HubCore, OwnControllerStatusUpdateSchedulesPoll) {
   comp.process_received_packet_(pkt);
 
   // Remote commanding our device → schedule 2s poll
-  EXPECT_EQ(comp.last_timeout_ms_, 2000u) << "remote activity should schedule 2s poll";
+  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS)
+      << "remote activity should schedule 2s poll";
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should reference our device";
 }
 

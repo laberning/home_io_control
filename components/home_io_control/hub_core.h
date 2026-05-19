@@ -40,6 +40,11 @@ namespace home_io_control {
 /// Callback type for notifying covers of device state changes.
 using DeviceUpdateCallback = std::function<void(const std::string &device_id, const IoDevice &device)>;
 
+inline constexpr uint8_t DEFAULT_TX_POWER_DBM = 17;       ///< Default TX power used unless YAML overrides it.
+inline constexpr uint8_t DEFAULT_PA_PIN_PA_BOOST = 0x80;  ///< SX1276 PA_CONFIG selector for the PA_BOOST output path.
+inline constexpr uint8_t DEFAULT_TCXO_VOLTAGE_SETTING_1P8V = 0x03;  ///< SX1262 DIO3 setting value for a 1.8 V TCXO.
+inline constexpr size_t POSITION_TEXT_BUFFER_SIZE = 16;  ///< Buffer for formatted position strings such as "100%".
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -358,9 +363,9 @@ class IOHomeControlComponent : public Component,
   std::string radio_type_;  ///< "sx1276", "sx1262", or "" (auto-detect)
   uint8_t node_id_[NODE_ID_SIZE]{};
   uint8_t system_key_[AES_KEY_SIZE]{};
-  uint8_t tx_power_{17};
-  uint8_t pa_pin_{0x80};
-  uint8_t tcxo_voltage_{0x03};  ///< SX1262 TCXO voltage (default 1.8V)
+  uint8_t tx_power_{DEFAULT_TX_POWER_DBM};
+  uint8_t pa_pin_{DEFAULT_PA_PIN_PA_BOOST};
+  uint8_t tcxo_voltage_{DEFAULT_TCXO_VOLTAGE_SETTING_1P8V};  ///< SX1262 TCXO voltage setting (default 1.8 V)
 
   // --- Runtime state ---
   bool initialized_{false};
@@ -402,8 +407,8 @@ inline bool stored_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
   bool all_zero = true;
   bool all_ff = true;
   for (uint8_t i = 0; i < NODE_ID_SIZE; i++) {
-    all_zero = all_zero && id[i] == 0x00;
-    all_ff = all_ff && id[i] == 0xFF;
+    all_zero = all_zero && id[i] == 0;
+    all_ff = all_ff && id[i] == UINT8_MAX;
   }
   return !all_zero && !all_ff;
 }
@@ -415,7 +420,7 @@ inline std::string format_position(float pos) {
   if (pos == UNKNOWN_POSITION) {
     return "unknown";
   }
-  char buf[16];
+  char buf[POSITION_TEXT_BUFFER_SIZE];
   snprintf(buf, sizeof(buf), "%.0f%%", pos);
   return buf;
 }

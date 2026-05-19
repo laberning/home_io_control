@@ -10,12 +10,18 @@
 namespace esphome {
 namespace home_io_control {
 
+namespace {
+
+constexpr int HEX_ALPHA_OFFSET = 10;
+
+}  // namespace
+
 static int hex_nibble(char ch) {
   if (ch >= '0' && ch <= '9')
     return ch - '0';
   ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
   if (ch >= 'A' && ch <= 'F')
-    return 10 + (ch - 'A');
+    return HEX_ALPHA_OFFSET + (ch - 'A');
   return -1;
 }
 
@@ -39,12 +45,19 @@ bool hex_to_bytes(const std::string &hex, uint8_t *out, uint8_t len) {
 }
 
 std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]) {
-  char buf[7];
+  char buf[NODE_ID_STRING_SIZE];
   snprintf(buf, sizeof(buf), "%02X%02X%02X", id[0], id[1], id[2]);
   return std::string(buf);
 }
 
 bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HORIZONTAL_AWNING; }
+
+DeviceType decode_packed_device_type(uint8_t type_msb, uint8_t type_subtype) {
+  return static_cast<DeviceType>((type_msb << DEVICE_TYPE_LOW_BITS_SHIFT) |
+                                 (type_subtype >> DEVICE_TYPE_HIGH_BITS_SHIFT));
+}
+
+uint8_t decode_packed_device_subtype(uint8_t type_subtype) { return type_subtype & DEVICE_SUBTYPE_MASK; }
 
 void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target,
                             float &position) {
@@ -93,8 +106,8 @@ uint16_t crc_ccitt(const uint8_t *data, uint8_t len) {
   uint16_t crc = 0x0000;
   for (uint8_t i = 0; i < len; i++) {
     crc ^= data[i];
-    for (uint8_t j = 0; j < 8; j++)
-      crc = ((crc & 0x0001) != 0) ? (crc >> 1) ^ 0x8408 : crc >> 1;
+    for (uint8_t j = 0; j < BITS_PER_BYTE; j++)
+      crc = ((crc & CRC_LSB_MASK) != 0) ? (crc >> 1) ^ CRC_POLYNOMIAL_REVERSED : crc >> 1;
   }
   return crc;
 }

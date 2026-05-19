@@ -10,6 +10,35 @@
 namespace esphome {
 namespace home_io_control {
 
+namespace {
+
+// === Command payload templates ===
+
+/// The protocol uses 0-100 for percentage-style position inputs before encoding them on wire.
+constexpr uint8_t POSITION_PERCENT_MAX = 100;
+/// Byte 0 in execute-family payloads identifies a user-originated remote action.
+constexpr uint8_t EXECUTE_USER_ORIGINATOR = 0x01;
+/// ACEI/profile byte observed on normal execute commands.
+constexpr uint8_t EXECUTE_POSITION_ACEI = 0x67;
+/// Standard payload length for full execute-family commands.
+constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
+/// Bit flag that marks the standard position payload layout after the encoded position byte.
+constexpr uint8_t EXECUTE_POSITION_LAYOUT_FLAG = 0x80;
+/// Controller-capture matched helper byte used in normal execute payloads.
+constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
+/// ACEI/profile byte observed on tilt execute commands.
+constexpr uint8_t EXECUTE_TILT_ACEI = 0xE7;
+/// Short payload length for special execute commands such as stop/favorite.
+constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;
+/// Private sub-command for position status requests.
+constexpr uint8_t PRIVATE_GET_POSITION_STATUS = 0x03;
+/// Status-update acknowledgement payload matched from controller traffic.
+constexpr uint8_t STATUS_UPDATE_ACK_PAYLOAD[] = {0x05, 0x00};
+/// Set-config payload that enables automatic status updates from the device.
+constexpr uint8_t SET_CONFIG1_STATUS_BROADCAST_PAYLOAD[] = {0xE0, 0x10, 0x0A, 0x08, 0x00};
+
+}  // namespace
+
 /// Build an execute command (0x00) to control a device.
 /// For real positions (0-100), the value is doubled in the frame (0x00=0%, 0xC8=100%).
 /// For special commands (stop/favorite), a shorter 6-byte payload is used.
@@ -17,30 +46,18 @@ bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
-  uint8_t d[8];
-  uint8_t plen;
-  // Command originator: 0x01 = User (remote control action).
-  d[0] = 0x01;
-  // ACEI byte matched from working controller captures for execute commands.
-  d[1] = 0x67;
-  if (position <= 100) {
+  if (position <= POSITION_PERCENT_MAX) {
     // Real position: doubled value (0-200 maps to 0-100%).
-    d[2] = 2 * position;
-    d[3] = 0x00;
-    d[4] = 0x80;
-    d[5] = 0xD8;
-    d[6] = 0x06;
-    d[7] = 0x00;
-    plen = 8;
-  } else {
-    // Special command (stop=0xD2, favorite=0xD8).
-    d[2] = position;
-    d[3] = 0x00;
-    d[4] = 0x00;
-    d[5] = 0x00;
-    plen = 6;
+    const uint8_t payload[EXECUTE_PAYLOAD_SIZE] = {
+        EXECUTE_USER_ORIGINATOR,      EXECUTE_POSITION_ACEI, static_cast<uint8_t>(2 * position), 0x00,
+        EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE,          EXECUTE_POSITION_PROFILE,           0x00};
+    return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
   }
-  return set_cmd(f, CMD_EXECUTE, d, plen);
+
+  // Special command (stop=0xD2, favorite=0xD8).
+  const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {
+      EXECUTE_USER_ORIGINATOR, EXECUTE_POSITION_ACEI, position, 0x00, 0x00, 0x00};
+  return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
 }
 
 /// Build a get-status request (0x03). The device responds with its current position.
@@ -49,9 +66,9 @@ bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, own);
-  // Sub-command 0x03 = get position status.
-  uint8_t d[3] = {0x03, 0x00, 0x00};
-  return set_cmd(f, CMD_PRIVATE, d, 3);
+  // Private sub-command = get position status.
+  uint8_t d[3] = {PRIVATE_GET_POSITION_STATUS, 0x00, 0x00};
+  return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
 
 /// Build a tilt execute command (0x00) for devices that support slat angle control.
@@ -60,16 +77,17 @@ bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, boo
   set_dst(f, dst);
   set_src(f, own);
 
-  auto const tilt_value = static_cast<uint16_t>((100 - tilt_percent) * STATUS_POS_MAX / 100);
-  uint8_t d[8] = {0x01,
-                  0xE7,
-                  POS_UNKNOWN,
-                  0x00,
-                  0x20,
-                  static_cast<uint8_t>((tilt_value >> 8) & 0xFF),
-                  static_cast<uint8_t>(tilt_value & 0xFF),
-                  0x00};
-  return set_cmd(f, CMD_EXECUTE, d, 8);
+  auto const tilt_value =
+      static_cast<uint16_t>((POSITION_PERCENT_MAX - tilt_percent) * STATUS_POS_MAX / POSITION_PERCENT_MAX);
+  uint8_t d[EXECUTE_PAYLOAD_SIZE] = {EXECUTE_USER_ORIGINATOR,
+                                     EXECUTE_TILT_ACEI,
+                                     POS_UNKNOWN,
+                                     0x00,
+                                     STATUS_TILT_SELECTOR,
+                                     static_cast<uint8_t>(tilt_value >> BITS_PER_BYTE),
+                                     static_cast<uint8_t>(tilt_value),
+                                     0x00};
+  return set_cmd(f, CMD_EXECUTE, d, sizeof(d));
 }
 
 /// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
@@ -77,8 +95,9 @@ bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst) 
   init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, own);
-  uint8_t d[4] = {0x03, 0x20, 0x01, 0x00};
-  return set_cmd(f, CMD_PRIVATE, d, 4);
+  // The selector byte switches the private status response to the extended tilt layout.
+  uint8_t d[4] = {PRIVATE_GET_POSITION_STATUS, STATUS_TILT_SELECTOR, 0x01, 0x00};
+  return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
 
 /// Build a discovery broadcast (0x28). Sent to the broadcast address 0x00003B.
@@ -150,8 +169,7 @@ bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *ds
   set_dst(f, dst);
   set_src(f, own);
   // Status update acknowledgment payload matched from working controller captures.
-  uint8_t d[2] = {0x05, 0x00};
-  return set_cmd(f, CMD_STATUS_UPDATE_RESP, d, 2);
+  return set_cmd(f, CMD_STATUS_UPDATE_RESP, STATUS_UPDATE_ACK_PAYLOAD, sizeof(STATUS_UPDATE_ACK_PAYLOAD));
 }
 
 /// Build a set-config command (0x6F) to tell the device to automatically send status updates
@@ -161,8 +179,8 @@ bool create_set_config1(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   set_dst(f, dst);
   set_src(f, own);
   // Set-config payload matched from working controller captures.
-  uint8_t d[5] = {0xE0, 0x10, 0x0A, 0x08, 0x00};
-  return set_cmd(f, CMD_SET_CONFIG1, d, 5);
+  return set_cmd(f, CMD_SET_CONFIG1, SET_CONFIG1_STATUS_BROADCAST_PAYLOAD,
+                 sizeof(SET_CONFIG1_STATUS_BROADCAST_PAYLOAD));
 }
 
 }  // namespace home_io_control

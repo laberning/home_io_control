@@ -1,6 +1,11 @@
 /// @file radio_sx1276.cpp
 /// @brief SX1276 radio driver implementation for IO-Homecontrol.
 
+// This file is mostly chip-register programming and packed bit masks. Naming every literal that
+// mirrors the datasheet hurts readability more than it helps, so the magic-number checks are
+// suppressed at file scope here.
+// NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+
 #include "radio_sx1276.h"
 #include "log_frame.h"
 #include "esphome/core/log.h"
@@ -199,7 +204,7 @@ void RadioSX1276::configure_radio_() {
 // === Packet TX/RX ===
 
 bool RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) {
-  if (len == 0 || len > 64)
+  if (len == 0 || len > RADIO_PACKET_BUFFER_SIZE)
     return false;
 #ifdef IOHOME_FRAME_LOG
   log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);
@@ -328,3 +333,5 @@ void RadioSX1276::dump_debug() {
 
 }  // namespace home_io_control
 }  // namespace esphome
+
+// NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)

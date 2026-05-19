@@ -19,6 +19,10 @@
 /// BUSY line. For experiment builds, the RX path prioritizes preserving the
 /// chip-reported bytes and metadata verbatim.
 
+// The SX1262 path is intentionally low-level: opcode payloads, line-coding widths, and recovery
+// thresholds are written in the same shape as the chip protocol and on-air framing.
+// NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+
 #include "radio_sx1262.h"
 #include "log_frame.h"
 #include "esphome/core/log.h"
@@ -85,12 +89,12 @@ static uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bi
 
 /// @brief Result of the UART probe: best candidate frame within a raw capture.
 struct UartProbeResult {
-  bool valid{false};       ///< A plausible frame was found.
-  uint8_t bit_offset{0};   ///< Bit offset where the best decode started.
-  uint8_t decoded_len{0};  ///< Total number of bytes decoded at that offset.
-  uint8_t frame_start{0};  ///< Index into decoded buffer where the frame begins.
-  uint8_t frame_len{0};    ///< Length of the candidate IoFrame (decoded bytes).
-  uint8_t decoded[64]{};   ///< Full decoded UART stream at the chosen offset.
+  bool valid{false};                            ///< A plausible frame was found.
+  uint8_t bit_offset{0};                        ///< Bit offset where the best decode started.
+  uint8_t decoded_len{0};                       ///< Total number of bytes decoded at that offset.
+  uint8_t frame_start{0};                       ///< Index into decoded buffer where the frame begins.
+  uint8_t frame_len{0};                         ///< Length of the candidate IoFrame (decoded bytes).
+  uint8_t decoded[RADIO_PACKET_BUFFER_SIZE]{};  ///< Full decoded UART stream at the chosen offset.
 };
 
 /// @brief Check if a command ID is one of the known IO‑Homecontrol commands.
@@ -153,7 +157,7 @@ static UartProbeResult find_uart_probe(const uint8_t *raw, uint8_t raw_len) {
   // Current captures consistently decode at bit_offset=0, but keeping a short probe window makes
   // the recovery path robust against future boards or slightly different front-end timing.
   for (uint8_t bit_offset = 0; bit_offset < UART_PROBE_MAX_BIT_OFFSET; bit_offset++) {
-    uint8_t decoded[64] = {0};
+    uint8_t decoded[RADIO_PACKET_BUFFER_SIZE] = {0};
     uint8_t const decoded_len = decode_uart_probe(raw, raw_len, bit_offset, decoded, sizeof(decoded));
     if (decoded_len == 0)
       continue;
@@ -689,7 +693,7 @@ bool RadioSX1262::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
   this->set_frequency_register_(tx_config.freq_hz);
 
   uint8_t frame_with_crc[FRAME_MAX_SIZE + 2] = {0};
-  uint8_t tx_buf[64];
+  uint8_t tx_buf[RADIO_PACKET_BUFFER_SIZE];
   if ((uint16_t) len + 2 > (uint16_t) sizeof(frame_with_crc))
     return false;
 
@@ -798,8 +802,8 @@ bool RadioSX1262::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
 
 bool RadioSX1262::read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint16_t irq_status) {
   uint8_t rx_status[2] = {0};
-  uint8_t rx_buf[64] = {0};
-  uint8_t recovered_buf[64] = {0};
+  uint8_t rx_buf[RADIO_PACKET_BUFFER_SIZE] = {0};
+  uint8_t recovered_buf[RADIO_PACKET_BUFFER_SIZE] = {0};
 
   this->read_opcode_(SX1262_GET_RX_BUFFER_STATUS, rx_status, sizeof(rx_status));
   uint8_t const reported_len = std::min(rx_status[0], (uint8_t) sizeof(rx_buf));
@@ -871,3 +875,5 @@ bool RadioSX1262::check_for_packet(RadioRxPacket &packet) {
 
 }  // namespace home_io_control
 }  // namespace esphome
+
+// NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)

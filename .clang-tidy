@@ -54,7 +54,6 @@ Checks:
   - -cppcoreguidelines-avoid-c-arrays  # C arrays required for hardware buffers, protocol frames; no STL in freestanding
   - -cppcoreguidelines-avoid-const-or-ref-data-members  # Pointer members required for ESPHome component model
   - -cppcoreguidelines-avoid-do-while
-  - -cppcoreguidelines-avoid-magic-numbers # todo: would be nice to enable but needs refactoring
   - -cppcoreguidelines-init-variables
   - -cppcoreguidelines-macro-to-enum  # Macros used for protocol constants that must be usable in preprocessor expressions and as array sizes
   - -cppcoreguidelines-macro-usage  # Macros are idiomatic in this low-level codebase
@@ -131,7 +130,6 @@ Checks:
   # --- Readability ---
   - -readability-container-contains  # Not applicable: std::map::contains() is C++20; our toolchain is C++17
   - -readability-container-data-pointer  # Not applicable: no STL container data() pointer access patterns used
-  - -readability-magic-numbers  # todo: would be nice to enable but needs refactoring
 
 WarningsAsErrors: '*'
 FormatStyle:     google

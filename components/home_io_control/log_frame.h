@@ -11,6 +11,8 @@
 namespace esphome {
 namespace home_io_control {
 
+inline constexpr size_t FRAME_LOG_HEX_BUFFER_SIZE = 220;  ///< Fits a full 32-byte frame rendered as spaced hex text.
+
 inline void bytes_to_hex(const uint8_t *data, uint8_t len, char *out, size_t out_size) {
   size_t pos = 0;
   if (out_size == 0)
@@ -22,7 +24,7 @@ inline void bytes_to_hex(const uint8_t *data, uint8_t len, char *out, size_t out
 
 #ifdef IOHOME_FRAME_LOG
 inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint32_t freq, uint16_t preamble = 0) {
-  char hex[220];
+  char hex[FRAME_LOG_HEX_BUFFER_SIZE];
   bytes_to_hex(data, len, hex, sizeof(hex));
   if (preamble > 0)
     ESP_LOGI("io_frame", "%s [%u bytes] freq=%u preamble=%u: %s", prefix, len, freq, preamble, hex);

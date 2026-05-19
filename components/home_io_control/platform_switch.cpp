@@ -2,6 +2,7 @@
 /// @brief Experimental binary switch entity for IO-Homecontrol devices.
 
 #include "platform_switch.h"
+#include "hub_internal.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -15,7 +16,8 @@ void IOHomeSwitch::setup() {
   this->parent_->add_device(this->device_id_, device_type_, subtype_, /*inverted=*/false);
   this->parent_->register_device_callback(
       [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
-  this->set_timeout("init_status", 5000, [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+  this->set_timeout("init_status", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
+                    [this]() { this->parent_->queue_request_device_status(this->device_id_); });
 }
 
 void IOHomeSwitch::write_state(bool state) {
@@ -33,7 +35,7 @@ void IOHomeSwitch::on_device_update_(const std::string &id, const IoDevice &dev)
     return;
 
   // Binary endpoints share the same on/off encoding as the light wrapper.
-  this->publish_state(dev.position < 50.0F);
+  this->publish_state(dev.position < detail::BINARY_ENTITY_ON_POSITION_THRESHOLD);
 }
 
 void IOHomeSwitch::dump_config() {

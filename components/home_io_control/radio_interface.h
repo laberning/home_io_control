@@ -16,6 +16,9 @@
 namespace esphome {
 namespace home_io_control {
 
+inline constexpr uint8_t RADIO_PACKET_BUFFER_SIZE =
+    64;  ///< Scratch buffer size for raw radio packets and recovered frames.
+
 /// Interface for SPI bus access.
 /// The ESPHome component implements this by delegating to its SPIDevice methods,
 /// allowing radio drivers to perform SPI transactions without depending on the
@@ -47,9 +50,9 @@ struct RadioTxConfig {
 
 /// Raw packet received from the radio.
 struct RadioRxPacket {
-  uint32_t freq_hz{0};  ///< Frequency the packet was received on (Hz).
-  uint8_t len{0};       ///< Length of packet in bytes.
-  uint8_t data[64]{};   ///< Raw packet data buffer.
+  uint32_t freq_hz{0};                       ///< Frequency the packet was received on (Hz).
+  uint8_t len{0};                            ///< Length of packet in bytes.
+  uint8_t data[RADIO_PACKET_BUFFER_SIZE]{};  ///< Raw packet data buffer.
 };
 
 /// Diagnostic capture from a radio operation.
@@ -76,8 +79,8 @@ struct RadioCaptureInfo {
                              // SX1262 recovery output against SX1276 captures during bring-up.
   uint8_t raw_len{0};        ///< Number of valid bytes in raw[].
   uint8_t frame_len{0};      ///< Number of valid bytes in frame[].
-  uint8_t raw[64]{};         ///< Raw radio buffer bytes.
-  uint8_t frame[64]{};       ///< Parsed protocol frame bytes.
+  uint8_t raw[RADIO_PACKET_BUFFER_SIZE]{};    ///< Raw radio buffer bytes.
+  uint8_t frame[RADIO_PACKET_BUFFER_SIZE]{};  ///< Parsed protocol frame bytes.
 };
 
 /// Abstract radio driver for IO-Homecontrol.
