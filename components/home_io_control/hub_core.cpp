@@ -227,6 +227,13 @@ void IOHomeControlComponent::notify_device_update_(const std::string &id) {
 
 // === Device management ===
 
+void IOHomeControlComponent::set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return;
+  dev->status_poll_interval_ms = poll_interval_ms;
+}
+
 void IOHomeControlComponent::add_device(const std::string &device_id) {
   this->add_device(device_id, DeviceType::UNKNOWN, 0, false);
 }
@@ -280,6 +287,11 @@ void IOHomeControlComponent::loop() {
     uint32_t const now = millis();
     for (auto &pair : this->devices_) {
       if (pair.second.next_update != 0 && now > pair.second.next_update) {
+        bool const should_dispatch_one_shot_poll = pair.second.status_poll_interval_ms == 0;
+        if (!should_dispatch_one_shot_poll && !detail::status_poll_tracking_active(pair.second, now)) {
+          detail::clear_status_poll_tracking(pair.second);
+          continue;
+        }
         // Mark the poll as handed to the main-loop queue so an overdue timestamp does not enqueue
         // the same status request again on every loop iteration while the first request is pending.
         pair.second.next_update = 0;

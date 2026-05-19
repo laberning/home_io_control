@@ -14,6 +14,7 @@ void IOHomeCover::setup() {
   // Register this device with the controller so it's included in the device map
   const bool initial_invert = this->invert_explicit_ ? this->invert_ : default_inverted_for_type(this->device_type_);
   this->parent_->add_device(this->device_id_, device_type_, subtype_, initial_invert);
+  this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
 
   // Subscribe to status updates from the controller
   this->parent_->register_device_callback(
@@ -126,6 +127,11 @@ void IOHomeCover::dump_config() {
   LOG_COVER("", "IO-Homecontrol Cover", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Invert Position Override: %s", this->invert_explicit_ ? YESNO(this->invert_) : "AUTO");
+  if (this->status_poll_interval_ms_ == 0) {
+    ESP_LOGCONFIG(TAG, "  Status Poll Interval: default single settle poll");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
+  }
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt()));
 }
 

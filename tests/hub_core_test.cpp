@@ -86,6 +86,43 @@ TEST(HubCore, AddDeviceStoresDeclaredMetadata) {
   delete comp.radio_;
 }
 
+TEST(HubCore, SetDeviceStatusPollIntervalStoresValue) {
+  IOHomeControlComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = new MockRadio();
+
+  comp.add_device("ABC123");
+  comp.set_device_status_poll_interval("ABC123", 2500);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->status_poll_interval_ms, 2500u) << "configured poll interval should be stored on the device record";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, LoopQueuesSingleFollowUpPollWithoutConfiguredInterval) {
+  IOHomeControlComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = new MockRadio();
+
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::HORIZONTAL_AWNING;
+  dev->next_update = esphome::millis();
+
+  comp.loop();
+
+  ASSERT_EQ(comp.pending_operations_.size(), 1u)
+      << "due no-interval settle polls should still be queued by the main loop";
+  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
+  EXPECT_EQ(dev->next_update, 0u) << "queued one-shot polls should clear their due timestamp";
+
+  delete comp.radio_;
+}
+
 TEST(HubCore, QueueOperations) {
   IOHomeControlComponent comp;
   comp.node_id_[0] = 0xC0;
@@ -420,6 +457,45 @@ TEST(HubCore, RemoteActivity_TriggersDelayedPoll) {
   ASSERT_EQ(comp.pending_operations_.size(), 1u) << "callback should queue one operation";
   EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
   EXPECT_EQ(comp.pending_operations_.front().device_id, "054E17");
+}
+
+TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsSingleSettlePoll) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  IoFrame trigger{};
+  init_frame(trigger, true, true, false, false);
+  uint8_t remote[3] = {0x43, 0x44, 0xE3};
+  uint8_t device[3] = {0x05, 0x4E, 0x17};
+  set_src(trigger, remote);
+  set_dst(trigger, device);
+  uint8_t exec_data[3] = {0xC8, 0x00, 0x00};
+  set_cmd(trigger, CMD_EXECUTE, exec_data, sizeof(exec_data));
+
+  RadioRxPacket trigger_pkt = make_rx_packet(trigger);
+  ASSERT_GT(trigger_pkt.len, 0) << "frame should serialize";
+  comp.process_received_packet_(trigger_pkt);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->single_follow_up_poll_pending)
+      << "remote activity without an explicit interval should arm the legacy one-shot settle poll";
+
+  IoFrame moving{};
+  init_frame(moving, true, false, true, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  set_src(moving, device);
+  set_dst(moving, own);
+  uint8_t payload[8] = {0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x05};
+  set_cmd(moving, CMD_PRIVATE_RESP, payload, sizeof(payload));
+
+  comp.update_device_status_(moving);
+
+  EXPECT_NE(dev->next_update, 0u)
+      << "the first moving poll response after remote activity should schedule one settle follow-up";
+  EXPECT_FALSE(dev->single_follow_up_poll_pending)
+      << "the legacy one-shot settle poll flag should be consumed once the follow-up is scheduled";
 }
 
 TEST(HubCore, RemoteActivity_UnregisteredDevice_NoTrigger) {

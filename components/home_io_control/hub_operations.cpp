@@ -63,12 +63,17 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
       if (auto *dev = this->get_device(device_id); dev != nullptr) {
         const bool auth_like_failure = this->last_exchange_debug_.saw_challenge;
         const uint32_t backoff_ms = apply_status_poll_failure_backoff(*dev, auth_like_failure);
-        dev->next_update = millis() + backoff_ms;
-        ESP_LOGD(detail::TAG,
-                 "Background status poll backoff for device %s: delay=%u ms auth_like=%s status_failures=%u "
-                 "auth_failures=%u",
-                 device_id.c_str(), backoff_ms, YESNO(auth_like_failure), dev->status_poll_failures,
-                 dev->auth_poll_failures);
+        uint32_t const now = millis();
+        if (detail::status_poll_tracking_active(*dev, now) && now + backoff_ms <= dev->poll_deadline) {
+          dev->next_update = now + backoff_ms;
+          ESP_LOGD(detail::TAG,
+                   "Background status poll backoff for device %s: delay=%u ms auth_like=%s status_failures=%u "
+                   "auth_failures=%u",
+                   device_id.c_str(), backoff_ms, YESNO(auth_like_failure), dev->status_poll_failures,
+                   dev->auth_poll_failures);
+        } else {
+          detail::clear_status_poll_tracking(*dev);
+        }
       }
     }
     this->log_exchange_debug_(device_id.c_str());
@@ -111,13 +116,31 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
     return false;
   }
 
+  if (position == POS_STOP) {
+    detail::clear_status_poll_tracking(*dev);
+  } else {
+    dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
+    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  }
+
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", action, device_id.c_str(),
            device_operation_profile_name(dev->type));
 
   IoFrame request;
-  if (!create_execute(request, this->node_id_, dev->node_id, true, position))
+  if (!create_execute(request, this->node_id_, dev->node_id, true, position)) {
+    if (position != POS_STOP)
+      detail::clear_status_poll_tracking(*dev);
     return false;
-  return this->execute_request_and_update_(device_id, request, true, 0);
+  }
+  bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
+  if (!ok) {
+    if (position != POS_STOP)
+      detail::clear_status_poll_tracking(*dev);
+    return false;
+  }
+  if (position != POS_STOP && dev->status_poll_interval_ms != 0 && dev->next_update == 0)
+    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  return true;
 }
 
 bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
@@ -130,13 +153,25 @@ bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8
     return false;
   }
 
+  dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
+  this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+
   ESP_LOGI(detail::TAG, "Sending tilt=%u%% to device %s (profile=%s)", tilt_percent, device_id.c_str(),
            device_operation_profile_name(dev->type));
 
   IoFrame request;
-  if (!create_execute_tilt(request, this->node_id_, dev->node_id, true, tilt_percent))
+  if (!create_execute_tilt(request, this->node_id_, dev->node_id, true, tilt_percent)) {
+    detail::clear_status_poll_tracking(*dev);
     return false;
-  return this->execute_request_and_update_(device_id, request, true, 0);
+  }
+  bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
+  if (!ok) {
+    detail::clear_status_poll_tracking(*dev);
+    return false;
+  }
+  if (dev->status_poll_interval_ms != 0 && dev->next_update == 0)
+    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  return true;
 }
 
 bool IOHomeControlComponent::request_device_status(const std::string &device_id) {
@@ -157,7 +192,9 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
                               : create_get_status(request, this->node_id_, dev->node_id);
   if (!request_ok)
     return false;
-  return this->execute_request_and_update_(device_id, request, false, detail::STATUS_RETRY_AFTER_FAIL_MS);
+  uint32_t const retry_after_fail_ms =
+      detail::status_poll_tracking_active(*dev, millis()) ? detail::STATUS_RETRY_AFTER_FAIL_MS : 0;
+  return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms);
 }
 
 bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool on) {

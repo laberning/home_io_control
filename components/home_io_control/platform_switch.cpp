@@ -14,6 +14,7 @@ void IOHomeSwitch::setup() {
   // Register and subscribe exactly like covers so the controller keeps one shared view of all
   // known IO-homecontrol devices, regardless of which ESPHome entity type wraps them.
   this->parent_->add_device(this->device_id_, device_type_, subtype_, /*inverted=*/false);
+  this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
   this->parent_->register_device_callback(
       [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
   this->set_timeout("init_status", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
@@ -41,6 +42,11 @@ void IOHomeSwitch::on_device_update_(const std::string &id, const IoDevice &dev)
 void IOHomeSwitch::dump_config() {
   LOG_SWITCH("", "IO-Homecontrol Binary Switch", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+  if (this->status_poll_interval_ms_ == 0) {
+    ESP_LOGCONFIG(TAG, "  Status Poll Interval: default single settle poll");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
+  }
   ESP_LOGCONFIG(TAG, "  Status: experimental and untested");
 }
 

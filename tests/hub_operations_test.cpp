@@ -26,6 +26,7 @@ namespace {
 
 class TestableComponent : public IOHomeControlComponent {
  public:
+  using IOHomeControlComponent::begin_status_poll_tracking_;
   using IOHomeControlComponent::send_and_receive_;
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::initialized_;
@@ -45,6 +46,17 @@ static IoFrame build_status_response(const uint8_t dst[3]) {
   set_dst(f, dst);
   set_src(f, device_node_id);
   uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+  return f;
+}
+
+static IoFrame build_moving_status_response(const uint8_t dst[3], uint8_t delay_hint_seconds) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  uint8_t payload[8] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, delay_hint_seconds};
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
   return f;
 }
@@ -164,13 +176,32 @@ TEST(HubOperations, RequestDeviceStatusRejectsUnknownDevice) {
   EXPECT_FALSE(ok) << "request_device_status should fail for unregistered device";
 }
 
-TEST(HubOperations, RequestDeviceStatusTimeoutBackoffEscalates) {
+TEST(HubOperations, RequestDeviceStatusOneShotFailureDoesNotArmRetries) {
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
 
   bool ok = comp.request_device_status("ABC123");
-  EXPECT_FALSE(ok) << "request_device_status should fail when the device stays silent";
+  EXPECT_FALSE(ok) << "one-shot request_device_status should fail when the device stays silent";
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->next_update, 0u) << "one-shot status requests should not schedule background retries";
+  EXPECT_EQ(dev->poll_deadline, 0u) << "one-shot status requests should not start tracked polling";
+  EXPECT_EQ(dev->status_poll_failures, 0u) << "one-shot failures should not affect tracked polling backoff";
+  EXPECT_EQ(dev->auth_poll_failures, 0u) << "one-shot failures should not affect tracked polling backoff";
+}
+
+TEST(HubOperations, RequestDeviceStatusTimeoutBackoffEscalatesDuringTrackedPolling) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+
+  bool ok = comp.request_device_status("ABC123");
+  EXPECT_FALSE(ok) << "tracked request_device_status should fail when the device stays silent";
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
@@ -198,6 +229,9 @@ TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
   MockRadio radio;
   setup_cover_component(comp, radio);
 
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
 
@@ -222,6 +256,53 @@ TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
       << "first auth-shaped failure should use the configured auth backoff";
   EXPECT_EQ(dev->status_poll_failures, 0u) << "auth-shaped failures should reset the silent-failure streak";
   EXPECT_EQ(dev->auth_poll_failures, 1u) << "auth-shaped failures should increment their own streak";
+}
+
+TEST(HubOperations, SetDevicePositionArmsTrackedPollingWhenConfigured) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 1500);
+
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.set_device_position("ABC123", 50));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_NE(dev->poll_deadline, 0u) << "successful change commands should start bounded follow-up polling";
+  EXPECT_NE(dev->next_update, 0u) << "successful change commands should schedule the first follow-up poll";
+}
+
+TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalSchedulesSingleFollowUpPoll) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  IoFrame resp = build_moving_status_response(comp.node_id_, 5);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.set_device_position("ABC123", 50));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->poll_deadline, 0u) << "legacy one-shot follow-up should not start tracked interval polling";
+  EXPECT_NE(dev->next_update, 0u) << "moving execute replies should still schedule one settle poll without config";
+  EXPECT_FALSE(dev->single_follow_up_poll_pending)
+      << "the legacy one-shot follow-up flag should be consumed once the settle poll is scheduled";
 }
 
 TEST(HubOperations, QueueRequestDeviceStatusDeduplicatesPerDevice) {

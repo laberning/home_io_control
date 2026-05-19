@@ -143,6 +143,10 @@ class IOHomeControlComponent : public Component,
   /// Register a callback invoked when any device updates.
   /// @param cb Callable with signature void(const std::string&, const IoDevice&).
   virtual void register_device_callback(DeviceUpdateCallback cb) { this->callbacks_.push_back(std::move(cb)); }
+  /// Configure the optional follow-up polling interval for a registered device.
+  /// @param device_id Target device ID.
+  /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the legacy one-shot settle poll only.
+  virtual void set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms);
 
   // --- High-level operations ---
   /// Send a position command to a device.
@@ -224,6 +228,10 @@ class IOHomeControlComponent : public Component,
   /// @note Uses ESPHome's set_timeout() mechanism; the callback executes in loop().
   ///       A zero delay schedules immediately on the next loop iteration.
   void schedule_status_poll_(const std::string &device_id, uint32_t delay_ms);
+  /// Begin bounded follow-up polling for a device after a command or overheard remote activity.
+  /// @param device_id ID of the device to poll.
+  /// @param initial_delay_ms Delay before the first follow-up poll.
+  void begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms);
   /// Shared request/response helper for high-level operations.
   /// @param device_id Target device ID.
   /// @param request Outbound request frame.

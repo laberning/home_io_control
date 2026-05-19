@@ -369,19 +369,22 @@ static constexpr uint8_t DEVICE_NAME_BUFFER_SIZE = 32;  ///< Device name storage
 
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
-  uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
-  DeviceType type{DeviceType::UNKNOWN};  ///< Device type (shutter, awning, etc.).
-  uint8_t subtype{0};                    ///< Device subtype (manufacturer‑specific).
-  char name[DEVICE_NAME_BUFFER_SIZE]{};  ///< Device name (from device, Latin‑1 encoded).
-  float position{UNKNOWN_POSITION};      ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION.
-  float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
-  float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.
-  bool is_stopped{true};                 ///< True if device is not moving.
-  bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning).
-  uint32_t last_status{0};               ///< millis() timestamp of last received status.
-  uint32_t next_update{0};               ///< millis() timestamp when we should poll for status next.
-  uint8_t status_poll_failures{0};       ///< Consecutive background status-poll failures without a valid reply.
-  uint8_t auth_poll_failures{0};         ///< Consecutive background poll failures that reached 0x3C auth challenge.
+  uint8_t node_id[NODE_ID_SIZE]{};            ///< Device's 3‑byte radio address.
+  DeviceType type{DeviceType::UNKNOWN};       ///< Device type (shutter, awning, etc.).
+  uint8_t subtype{0};                         ///< Device subtype (manufacturer‑specific).
+  char name[DEVICE_NAME_BUFFER_SIZE]{};       ///< Device name (from device, Latin‑1 encoded).
+  float position{UNKNOWN_POSITION};           ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION.
+  float tilt{UNKNOWN_POSITION};               ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
+  float target{UNKNOWN_POSITION};             ///< Target position the device is moving toward.
+  bool is_stopped{true};                      ///< True if device is not moving.
+  bool inverted{false};                       ///< True if open/close positions are swapped (e.g., horizontal awning).
+  bool single_follow_up_poll_pending{false};  ///< True when one legacy settle poll should still be scheduled.
+  uint32_t last_status{0};                    ///< millis() timestamp of last received status.
+  uint32_t status_poll_interval_ms{0};        ///< Configured follow-up poll interval while a state change is expected.
+  uint32_t next_update{0};                    ///< millis() timestamp when we should poll for status next.
+  uint32_t poll_deadline{0};        ///< Hard stop for bounded follow-up polling after a command or remote activity.
+  uint8_t status_poll_failures{0};  ///< Consecutive background status-poll failures without a valid reply.
+  uint8_t auth_poll_failures{0};    ///< Consecutive background poll failures that reached 0x3C auth challenge.
 };
 
 /// @brief Convert a hex string (e.g., "123ABC") to a byte array.

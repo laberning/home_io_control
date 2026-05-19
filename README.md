@@ -127,6 +127,8 @@ cover:
     io_subtype: 0
     # Optional explicit override. If omitted, inversion follows the learned device type.
     invert_position: true
+    # Optional bounded follow-up polling while movement is expected.
+    status_poll_interval: 500ms
 
 button:
   - platform: home_io_control
@@ -134,6 +136,8 @@ button:
 ```
 
 For all other examples, platform-specific options, and pairing instructions, use [docs/home_io_control.md](docs/home_io_control.md).
+
+If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected `cover:`, `light:`, or `switch:` entry. Without that option, the hub still keeps the legacy single follow-up settle poll after a local command or overheard remote activity. With the option set, it continues polling only while the device still appears to be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires. The minimum supported interval is 500ms.
 
 ## Troubleshooting
 

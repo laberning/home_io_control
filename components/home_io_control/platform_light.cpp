@@ -14,6 +14,7 @@ void IOHomeLight::setup() {
   // Binary lights still need the shared device registry so discovery/status handling can find
   // their node metadata the same way covers do.
   this->parent_->add_device(this->device_id_, device_type_, subtype_, /*inverted=*/false);
+  this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
 
   // Subscribe to controller updates so HA state follows radio-originated changes too.
   this->parent_->register_device_callback(
@@ -69,6 +70,11 @@ void IOHomeLight::on_device_update_(const std::string &id, const IoDevice &dev) 
 void IOHomeLight::dump_config() {
   ESP_LOGCONFIG(TAG, "IO-Homecontrol Binary Light");
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+  if (this->status_poll_interval_ms_ == 0) {
+    ESP_LOGCONFIG(TAG, "  Status Poll Interval: default single settle poll");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
+  }
   ESP_LOGCONFIG(TAG, "  Status: experimental and untested");
 }
 

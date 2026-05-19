@@ -8,6 +8,7 @@ from . import (
     IOHomeControlComponent,
     CONF_HOME_IO_CONTROL_ID,
     validate_device_id,
+    validate_status_poll_interval,
     validate_device_type,
     device_type_expression,
 )
@@ -18,6 +19,7 @@ CONF_DEVICE_ID = "io_device_id"
 CONF_LINKED_REMOTES = "linked_remotes"
 CONF_DEVICE_TYPE = "io_device_type"
 CONF_SUBTYPE = "io_subtype"
+CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
 
 IOHomeSwitch = home_io_control_ns.class_("IOHomeSwitch", switch.Switch, cg.Component)
 
@@ -34,6 +36,7 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_DEVICE_TYPE): validate_device_type,
             cv.Optional(CONF_SUBTYPE): cv.int_range(min=0, max=63),
             cv.Optional(CONF_LINKED_REMOTES): cv.ensure_list(validate_device_id),
+            cv.Optional(CONF_STATUS_POLL_INTERVAL): validate_status_poll_interval,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -55,6 +58,8 @@ async def to_code(config):
         cg.add(var.set_device_type(device_type_expression(config[CONF_DEVICE_TYPE])))
     if CONF_SUBTYPE in config:
         cg.add(var.set_subtype(config[CONF_SUBTYPE]))
+    if CONF_STATUS_POLL_INTERVAL in config:
+        cg.add(var.set_status_poll_interval(config[CONF_STATUS_POLL_INTERVAL].total_milliseconds))
 
     if CONF_LINKED_REMOTES in config:
         for remote_id in config[CONF_LINKED_REMOTES]:

@@ -58,6 +58,9 @@ class IOHomeCover : public cover::Cover, public Component {
     this->invert_ = invert;
     this->invert_explicit_ = true;
   }
+  /// @brief Configure bounded follow-up polling while a state change is expected.
+  /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
+  void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
   /// @brief Query whether this device supports tilt (slat angle) control.
   /// @return true if the underlying device type supports tilt.
   [[nodiscard]] bool supports_tilt() const;
@@ -78,6 +81,7 @@ class IOHomeCover : public cover::Cover, public Component {
   std::string device_id_;
   DeviceType device_type_{DeviceType::UNKNOWN};
   uint8_t subtype_{0};
+  uint32_t status_poll_interval_ms_{0};
   bool invert_{false};
   bool invert_explicit_{false};
 };

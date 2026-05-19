@@ -48,6 +48,9 @@ class IOHomeLight : public light::LightOutput, public Component {
   /// @brief Set the declared device subtype (from YAML).
   /// @param subtype Subtype value.
   void set_subtype(uint8_t subtype) { this->subtype_ = subtype; }
+  /// @brief Configure bounded follow-up polling while a state change is expected.
+  /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
+  void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
 
  protected:
   /// @brief Handle inbound device status updates.
@@ -60,6 +63,7 @@ class IOHomeLight : public light::LightOutput, public Component {
   std::string device_id_;
   DeviceType device_type_{DeviceType::UNKNOWN};
   uint8_t subtype_{0};
+  uint32_t status_poll_interval_ms_{0};
   /// Guard so that an inbound radio status does not echo back as a new outbound command.
   bool suppress_write_{false};
 };

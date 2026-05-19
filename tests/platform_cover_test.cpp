@@ -193,6 +193,21 @@ TEST(PlatformCover, LearnedInversionAppliesWhenNoOverrideIsConfigured) {
       << "when invert_position is not configured, learned device inversion should drive HA mapping";
 }
 
+TEST(PlatformCover, SetupStoresConfiguredStatusPollInterval) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_status_poll_interval(3000);
+
+  cover.setup();
+
+  auto *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->status_poll_interval_ms, 3000u)
+      << "entity setup should store the configured status poll interval in the shared device registry";
+}
+
 TEST(PlatformCover, ExplicitInvertFalseOverridesLearnedInversion) {
   MockHub hub;
   IOHomeCover cover;

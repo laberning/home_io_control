@@ -8,7 +8,7 @@
 ///
 /// This file owns the receive-side state path for the hub:
 /// - decode status-bearing frames into normalized device state,
-/// - decide when unsolicited traffic should trigger follow-up polls,
+/// - decide when passive traffic should arm one-shot or tracked follow-up polls,
 /// - ACK authenticated device-initiated status updates.
 ///
 /// The goal of the split is to keep hub_core.cpp focused on lifecycle,
@@ -39,12 +39,11 @@ constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;           ///< Tilt-position LS
 constexpr uint8_t PRIVATE_RESPONSE_HINT_UNUSED = 0xFF;  ///< Value used by devices that do not expose a follow-up timer.
 constexpr uint8_t PRIVATE_RESPONSE_HINT_ZERO =
     0x00;  ///< Value treated as invalid or uninformative for follow-up timing.
-constexpr uint32_t MOVING_STATUS_POLL_DELAY_MS =
-    60000;  ///< Fallback poll interval while movement is still in progress.
-constexpr uint32_t IDLE_STATUS_POLL_DELAY_MS = 3600000;    ///< Low-frequency refresh interval once the device is idle.
 constexpr uint32_t PRIVATE_RESPONSE_HINT_SCALE_MS = 1000;  ///< Private-response delay hint is expressed in seconds.
 constexpr uint32_t PRIVATE_RESPONSE_HINT_BIAS_MS =
     1000;  ///< Observed devices need an extra second beyond the hint value.
+constexpr uint32_t DEFAULT_SINGLE_FOLLOW_UP_POLL_DELAY_MS =
+    60000;  ///< Legacy worst-case settle poll when neither a device hint nor an explicit interval is available.
 
 /// @brief Decode the shared target/current position fields used by private response and status‑update frames.
 /// Different frame types use different byte offsets, but the normalization policy is identical once offsets known.
@@ -73,28 +72,95 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
 /// @param frame The private response frame (may contain a coarse retry hint in byte 7).
 /// @return Delay in milliseconds.
 uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame) {
-  if (dev.is_stopped) {
-    return IDLE_STATUS_POLL_DELAY_MS;
-  }
+  if (dev.is_stopped)
+    return 0;
 
   // Private responses carry a coarse follow‑up timer in byte 7 on many devices.
-  // When it is missing or clearly invalid, fall back to the standard short retry.
+  // Delay priority is: device hint when present, otherwise the configured interval, otherwise the
+  // legacy one-shot settle delay. When both a hint and an explicit interval exist, cap the next
+  // poll to the shorter of the two so YAML cannot stretch a device-reported settle window.
   if (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_UNUSED &&
       frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_ZERO) {
-    return frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS +
-           PRIVATE_RESPONSE_HINT_BIAS_MS;
+    uint32_t const hinted_delay_ms =
+        frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS + PRIVATE_RESPONSE_HINT_BIAS_MS;
+    if (dev.status_poll_interval_ms == 0)
+      return hinted_delay_ms;
+    return hinted_delay_ms < dev.status_poll_interval_ms ? hinted_delay_ms : dev.status_poll_interval_ms;
   }
-  return MOVING_STATUS_POLL_DELAY_MS;
+  return dev.status_poll_interval_ms != 0 ? dev.status_poll_interval_ms : DEFAULT_SINGLE_FOLLOW_UP_POLL_DELAY_MS;
 }
 
 /// @brief Compute the delay before the next status poll for a device‑originated status update.
 /// @param dev Device record.
-/// @return Delay in milliseconds (long when idle, short while moving).
+/// @return Delay in milliseconds for tracked polling; no-interval devices stop after the unsolicited update.
 uint32_t compute_status_update_delay_ms(const IoDevice &dev) {
-  return dev.is_stopped ? IDLE_STATUS_POLL_DELAY_MS : MOVING_STATUS_POLL_DELAY_MS;
+  return dev.is_stopped ? 0 : dev.status_poll_interval_ms;
+}
+
+/// @brief Apply a private-response frame to the device record.
+/// @param dev Device record to update.
+/// @param frame Private-response frame.
+void apply_private_response_status(IoDevice &dev, const IoFrame &frame) {
+  dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
+  dev.last_status = millis();
+  decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true);
+
+  const bool tracked_polling_active = detail::status_poll_tracking_active(dev, dev.last_status);
+  if (dev.is_stopped || !tracked_polling_active) {
+    if (!dev.is_stopped && dev.single_follow_up_poll_pending) {
+      dev.next_update = dev.last_status + compute_private_response_delay_ms(dev, frame);
+      dev.single_follow_up_poll_pending = false;
+      return;
+    }
+    detail::clear_status_poll_tracking(dev);
+    return;
+  }
+
+  dev.next_update = dev.last_status + compute_private_response_delay_ms(dev, frame);
+}
+
+/// @brief Apply a device-originated status-update frame to the device record.
+/// @param dev Device record to update.
+/// @param frame Status-update frame.
+void apply_unsolicited_status_update(IoDevice &dev, const IoFrame &frame) {
+  dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
+  dev.last_status = millis();
+  decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
+
+  if (dev.is_stopped || !detail::status_poll_tracking_active(dev, dev.last_status)) {
+    detail::clear_status_poll_tracking(dev);
+    return;
+  }
+
+  dev.next_update = dev.last_status + compute_status_update_delay_ms(dev);
+}
+
+/// @brief Apply INFO2 metadata to the device record when YAML has not already declared it.
+/// @param dev Device record to update.
+/// @param frame INFO2 response frame.
+void apply_info2_response(IoDevice &dev, const IoFrame &frame) {
+  if (dev.type != DeviceType::UNKNOWN)
+    return;
+
+  dev.type = decode_packed_device_type(frame.data[GET_INFO2_TYPE_OFFSET], frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
+  dev.subtype = decode_packed_device_subtype(frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
+  if (default_inverted_for_type(dev.type))
+    dev.inverted = true;
 }
 
 }  // namespace
+
+void IOHomeControlComponent::begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr || dev->status_poll_interval_ms == 0)
+    return;
+
+  uint32_t const now = millis();
+  dev->poll_deadline = now + detail::MAX_TRACKED_STATUS_POLL_WINDOW_MS;
+  dev->next_update = initial_delay_ms == 0 ? 0 : now + initial_delay_ms;
+  dev->status_poll_failures = 0;
+  dev->auth_poll_failures = 0;
+}
 
 void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id, uint32_t delay_ms) {
   // The timeout name is per-device so repeated remote traffic resets the pending poll instead of
@@ -113,39 +179,51 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
   }
   IoDevice &dev = it->second;
 
-  if (frame.cmd == CMD_PRIVATE_RESP && frame.data_len >= PRIVATE_RESPONSE_MIN_DATA_LEN) {
+  if (frame.cmd == CMD_PRIVATE_RESP) {
+    if (frame.data_len < PRIVATE_RESPONSE_MIN_DATA_LEN) {
+      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      return;
+    }
+
     // CMD_PRIVATE_RESP (0x04) serves as the reply to both status polls (0x03) and execute
     // commands (0x00). The position fields below are shared across both response types, so
     // normalize them once here before the entity layer decides how to present the state.
-    dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
-    dev.last_status = millis();
-    decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true);
-    dev.next_update = millis() + compute_private_response_delay_ms(dev, frame);
+    apply_private_response_status(dev, frame);
     detail::log_status_update(id, dev);
     this->notify_device_update_(id);
-  } else if (frame.cmd == CMD_STATUS_UPDATE && frame.data_len >= STATUS_UPDATE_MIN_DATA_LEN) {
+    return;
+  }
+
+  if (frame.cmd == CMD_STATUS_UPDATE) {
+    if (frame.data_len < STATUS_UPDATE_MIN_DATA_LEN) {
+      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      return;
+    }
+
     // Status-update frames come from the device itself rather than from a direct controller poll.
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
-    dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
-    dev.last_status = millis();
-    decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
-    dev.next_update = millis() + compute_status_update_delay_ms(dev);
+    apply_unsolicited_status_update(dev, frame);
     detail::log_status_update(id, dev, " (status update)");
     this->notify_device_update_(id);
-  } else if (frame.cmd == CMD_GET_INFO2_RESP && frame.data_len >= GET_INFO2_RESPONSE_MIN_DATA_LEN) {
+    return;
+  }
+
+  if (frame.cmd == CMD_GET_INFO2_RESP) {
+    if (frame.data_len < GET_INFO2_RESPONSE_MIN_DATA_LEN) {
+      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      return;
+    }
+
     // INFO2 is metadata, not movement state. Only learn type from radio if still UNKNOWN;
     // YAML-declared type takes priority.
-    if (dev.type == DeviceType::UNKNOWN) {
-      dev.type =
-          decode_packed_device_type(frame.data[GET_INFO2_TYPE_OFFSET], frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
-      dev.subtype = decode_packed_device_subtype(frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
-      if (default_inverted_for_type(dev.type))
-        dev.inverted = true;
-    }
+    apply_info2_response(dev, frame);
     ESP_LOGI(detail::TAG, "Device %s: type=%s (%u) class=%s profile=%s subtype=%u", id.c_str(),
              device_type_name(dev.type), (uint8_t) dev.type, device_capability_class_name(dev.type),
              device_operation_profile_name(dev.type), dev.subtype);
-  } else if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE || frame.cmd == CMD_GET_INFO2_RESP) {
+    return;
+  }
+
+  if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE || frame.cmd == CMD_GET_INFO2_RESP) {
     detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
   }
 }
@@ -200,8 +278,11 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // The 2-second delay gives the device time to complete the exchange and start moving.
   const std::string dst_id = node_id_to_string(frame.dst);
   if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
+    if (auto *dev = this->get_device(dst_id); dev != nullptr)
+      dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
     ESP_LOGD(detail::TAG, "rx remote_activity src=%s dst=%s cmd=0x%02X, scheduling status poll",
              node_id_to_string(frame.src).c_str(), dst_id.c_str(), frame.cmd);
+    this->begin_status_poll_tracking_(dst_id, 0);
     this->schedule_status_poll_(dst_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     return;
   }
@@ -213,8 +294,11 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   auto remote_it = this->linked_remotes_.find(src_id);
   if (remote_it != this->linked_remotes_.end()) {
     for (const auto &device_id : remote_it->second) {
+      if (auto *dev = this->get_device(device_id); dev != nullptr)
+        dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
       ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s device=%s cmd=0x%02X, scheduling status poll",
                src_id.c_str(), device_id.c_str(), frame.cmd);
+      this->begin_status_poll_tracking_(device_id, 0);
       this->schedule_status_poll_(device_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     }
     return;

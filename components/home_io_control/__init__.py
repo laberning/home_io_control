@@ -23,6 +23,7 @@ CONF_FEM_EN_PIN = "fem_en_pin"
 CONF_VFEM_PIN = "vfem_pin"
 CONF_FEM_PA_PIN = "fem_pa_pin"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
+MIN_STATUS_POLL_INTERVAL_MS = 500
 
 home_io_control_ns = cg.esphome_ns.namespace("home_io_control")
 IOHomeControlComponent = home_io_control_ns.class_(
@@ -127,6 +128,15 @@ def validate_device_id(value):
         int(value, 16)
     except ValueError:
         raise cv.Invalid("Device ID must be valid hexadecimal")
+    return value
+
+
+def validate_status_poll_interval(value):
+    value = cv.positive_time_period_milliseconds(value)
+    if value.total_milliseconds < MIN_STATUS_POLL_INTERVAL_MS:
+        raise cv.Invalid(
+            f"status_poll_interval must be at least {MIN_STATUS_POLL_INTERVAL_MS}ms"
+        )
     return value
 
 

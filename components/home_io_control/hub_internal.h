@@ -42,6 +42,8 @@ inline constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS =
     5000;  ///< Delay before the first post-boot status request from an entity.
 inline constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS =
     2000;  ///< Delay before polling after overheard remote traffic.
+inline constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS =
+    600000;  ///< Hard stop for follow-up polling after a command or remote activity.
 inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Discovery wait window after sending 0x28.
 inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
 inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
@@ -50,6 +52,24 @@ inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
 // Binary on/off entities reuse the proven position transport encoding.
 inline constexpr uint8_t BINARY_ENTITY_ON_POSITION = 0;
 inline constexpr uint8_t BINARY_ENTITY_OFF_POSITION = 100;
+
+/// @brief Clear all bounded follow-up polling state for a device.
+/// @param dev Device record to reset.
+inline void clear_status_poll_tracking(IoDevice &dev) {
+  dev.single_follow_up_poll_pending = false;
+  dev.next_update = 0;
+  dev.poll_deadline = 0;
+  dev.status_poll_failures = 0;
+  dev.auth_poll_failures = 0;
+}
+
+/// @brief Check whether a device remains inside its bounded follow-up polling window.
+/// @param dev Device record.
+/// @param now Current millis() timestamp.
+/// @return true when repeated polling may continue.
+inline bool status_poll_tracking_active(const IoDevice &dev, uint32_t now) {
+  return dev.status_poll_interval_ms != 0 && dev.poll_deadline != 0 && now <= dev.poll_deadline;
+}
 
 // ============================================================================
 // Capability and entity-profile helpers
