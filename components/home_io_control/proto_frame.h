@@ -2,6 +2,7 @@
 
 /// @file proto_frame.h
 /// @brief IO-Homecontrol 2W protocol definitions.
+/// @ingroup hioc_protocol
 ///
 /// IO-Homecontrol is a proprietary wireless protocol used by Somfy, Velux, and other
 /// manufacturers for controlling shutters, awnings, blinds, and similar devices.
@@ -198,6 +199,7 @@ static constexpr uint8_t BROADCAST_DISCOVER[NODE_ID_SIZE] = {0x00, 0x00, 0x3B};
 // ============================================================================
 
 /// @brief Parsed IO‑Homecontrol frame (CTRL0/1 + addresses + command + data).
+/// @ingroup hioc_protocol
 ///
 /// Over the air layout: [CTRL0][CTRL1][DST 3B][SRC 3B][CMD][DATA 0-23B][CRC 2B].
 /// The CRC is handled by hardware on SX1276 (IoHomeOn) and by software on SX1262;

@@ -1,5 +1,6 @@
 /// @file radio_sx1262.cpp
 /// @brief SX1262 radio driver implementation for IO-Homecontrol.
+/// @ingroup hioc_radio
 ///
 /// Unlike the SX1276, the SX1262 does not provide Semtech's IoHomeOn mode for
 /// IO-Homecontrol. On SX1276 that mode handles key protocol details in hardware:

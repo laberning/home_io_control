@@ -1,5 +1,6 @@
 /// @file platform_light.cpp
 /// @brief Experimental binary light entity for IO-Homecontrol devices.
+/// @ingroup hioc_platforms
 
 #include "platform_light.h"
 #include "hub_internal.h"

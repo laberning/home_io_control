@@ -1,5 +1,6 @@
 /// @file proto_crypto.cpp
 /// @brief Cryptographic helpers for the IO-Homecontrol protocol.
+/// @ingroup hioc_protocol
 
 // The AES helper intentionally mirrors the byte-level structure of the algorithm.
 // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)

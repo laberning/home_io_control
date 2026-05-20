@@ -9,10 +9,11 @@ OUTPUT_DIRECTORY       = docs/doxygen
 INPUT                  = components/home_io_control/ \
                           build/docs/README.md \
                           build/docs/home_io_control.md \
-                          LICENSE
+                          build/docs/architecture_overview.md
 USE_MDFILE_AS_MAINPAGE = build/docs/README.md
 RECURSIVE              = YES
-FILE_PATTERNS          = *.h *.cpp
+FILE_PATTERNS          = *.h *.cpp *.py
+EXTENSION_MAPPING      = py=Python
 
 # Parse /// and /** */ comments (Javadoc style)
 JAVADOC_AUTOBRIEF      = YES
@@ -28,15 +29,21 @@ EXTRACT_LOCAL_CLASSES  = YES
 CASE_SENSE_NAMES       = YES
 SORT_MEMBER_DOCS       = YES
 SORT_BRIEF_DOCS        = NO
+SUBGROUPING            = YES
+PYTHON_DOCSTRING       = YES
 
 # Output: HTML only (no LaTeX/PDF)
 GENERATE_HTML           = YES
 GENERATE_LATEX          = NO
+GENERATE_TODOLIST       = YES
+GENERATE_BUGLIST        = YES
 
 # Use treeview sidebar for easier navigation
 GENERATE_TREEVIEW       = YES
 DISABLE_INDEX           = NO
 FULL_SIDEBAR            = NO
+HTML_DYNAMIC_SECTIONS   = YES
+TOC_INCLUDE_HEADINGS    = 4
 
 # Source browser: show line-numbered source in docs
 SOURCE_BROWSER          = YES

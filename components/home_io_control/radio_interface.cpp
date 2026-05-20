@@ -1,5 +1,6 @@
 /// @file radio_interface.cpp
 /// @brief Implementation of non-inline RadioDriver methods.
+/// @ingroup hioc_radio
 
 #include "radio_interface.h"
 #include "esphome/core/application.h"

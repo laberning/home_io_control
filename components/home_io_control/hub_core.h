@@ -2,6 +2,7 @@
 
 /// @file hub_core.h
 /// @brief IO-Homecontrol ESPHome component — protocol controller.
+/// @ingroup hioc_hub
 ///
 /// This component manages the IO-Homecontrol 2W protocol: sending commands,
 /// receiving responses with automatic authentication, device discovery/pairing,
@@ -54,6 +55,7 @@ inline constexpr size_t POSITION_TEXT_BUFFER_SIZE = 16;  ///< Buffer for formatt
 ///
 /// Inherits SPIDevice so that ESPHome's Python codegen can configure SPI pins.
 /// Implements SpiAccess to provide the radio driver with SPI bus access.
+/// @ingroup hioc_hub
 class IOHomeControlComponent : public Component,
                                public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                                      spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_8MHZ>,
@@ -393,6 +395,7 @@ class IOHomeControlComponent : public Component,
 // ============================================================================
 
 /// Button entity that triggers device discovery and pairing when pressed in Home Assistant.
+/// @ingroup hioc_platforms
 class IOHomeDiscoverButton : public button::Button, public Component {
  public:
   void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }

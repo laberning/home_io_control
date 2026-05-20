@@ -1,3 +1,9 @@
+## @file
+## @brief ESPHome cover platform schema and code generation.
+## @ingroup hioc_codegen
+##
+## Bridges the YAML ``cover:`` platform declaration to the runtime IOHomeCover entity.
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import cover

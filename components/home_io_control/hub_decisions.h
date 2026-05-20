@@ -2,6 +2,7 @@
 
 /// @file hub_decisions.h
 /// @brief Pure transition helpers for hub-owned exchange and pairing frame decisions.
+/// @ingroup hioc_hub
 ///
 /// This header contains inline, testable decision logic: frame classification
 /// for exchange and pairing flows, plus shared timing utilities. No state, no

@@ -1,5 +1,6 @@
 /// @file radio_sx1276.cpp
 /// @brief SX1276 radio driver implementation for IO-Homecontrol.
+/// @ingroup hioc_radio
 
 // This file is mostly chip-register programming and packed bit masks. Naming every literal that
 // mirrors the datasheet hurts readability more than it helps, so the magic-number checks are

@@ -17,6 +17,7 @@ static const char *const TAG = "home_io_control.exchange";
 
 /// @file hub_exchange.cpp
 /// @brief Outbound authenticated exchange state machine (non-pairing flows).
+/// @ingroup hioc_hub
 ///
 /// Implements IOHomeControlComponent::send_and_receive_() and its stepwise
 /// helpers: transmit_request_(), wait_for_first_response_(),

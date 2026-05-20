@@ -1,3 +1,10 @@
+## @file
+## @brief ESPHome hub schema and code generation for Home IO Control.
+## @ingroup hioc_codegen
+##
+## Defines the top-level ``home_io_control:`` YAML schema, shared validators, and the
+## generated C++ hub component wiring used by the platform modules.
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins

@@ -2,11 +2,14 @@
 
 /// @file radio_sx1262.h
 /// @brief SX1262 radio driver for IO-Homecontrol.
+/// @ingroup hioc_radio
 ///
 /// Implements the RadioDriver interface for the Semtech SX1262 transceiver.
 /// Unlike the SX1276, the SX1262 uses opcode-based SPI commands and requires a
 /// BUSY pin check before every SPI transaction. The capture path preserves the
 /// radio-reported RX metadata so offline analysis can work from trustworthy data.
+/// @todo Validate Heltec V4-family boards on real hardware, especially the assumed
+///       front-end module enable pins and the required TCXO voltage selection.
 
 #include "radio_interface.h"
 #include "esphome/core/hal.h"
@@ -72,10 +75,13 @@ static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 // ============================================================================
 
 /// @brief SX1262 implementation of RadioDriver.
+/// @ingroup hioc_radio
 ///
 /// Manages the SX1262 via opcode‑based SPI using the SpiAccess interface.
 /// Configures the chip in FSK mode with software CRC‑CCITT to match the
 /// IO‑Homecontrol protocol (the SX1262 lacks the SX1276's IoHomeOn mode).
+/// @todo Confirm whether additional SX1262 board variants need board-specific FEM
+///       defaults beyond the currently documented Heltec V3/V4 assumptions.
 class RadioSX1262 : public RadioDriver {
  public:
   RadioSX1262(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *dio1_pin, InternalGPIOPin *busy_pin,

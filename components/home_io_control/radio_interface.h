@@ -2,6 +2,7 @@
 
 /// @file radio_interface.h
 /// @brief Radio abstraction layer for IO-Homecontrol.
+/// @ingroup hioc_radio
 ///
 /// Defines the SpiAccess interface for SPI bus access and the RadioDriver abstract
 /// class that encapsulates all chip-specific radio operations. This allows the
@@ -23,6 +24,7 @@ inline constexpr uint8_t RADIO_PACKET_BUFFER_SIZE =
 /// The ESPHome component implements this by delegating to its SPIDevice methods,
 /// allowing radio drivers to perform SPI transactions without depending on the
 /// ESPHome SPI framework directly.
+/// @ingroup hioc_radio
 class SpiAccess {
  public:
   virtual ~SpiAccess() = default;
@@ -88,6 +90,7 @@ struct RadioCaptureInfo {
 /// Encapsulates all chip-specific operations: initialization, packet TX/RX,
 /// frequency control, and mode switching. Concrete implementations (RadioSX1276,
 /// RadioSX1262) handle the register-level details for each chip.
+/// @ingroup hioc_radio
 class RadioDriver {
  public:
   explicit RadioDriver(InternalGPIOPin *rst_pin = nullptr) : rst_pin_(rst_pin) {}

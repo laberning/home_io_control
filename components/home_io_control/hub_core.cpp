@@ -1,5 +1,6 @@
 /// @file hub_core.cpp
 /// @brief Component lifecycle and main-loop scheduling.
+/// @ingroup hioc_hub
 ///
 /// The core file owns the parts of IOHomeControlComponent that are primarily about
 /// runtime orchestration rather than protocol interpretation:

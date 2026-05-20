@@ -1,3 +1,9 @@
+## @file
+## @brief ESPHome binary light platform schema and code generation.
+## @ingroup hioc_codegen
+##
+## Defines the experimental binary light integration and wires it to the shared hub.
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import light

@@ -1,5 +1,6 @@
 /// @file platform_cover.cpp
 /// @brief ESPHome cover entity for IO-Homecontrol devices.
+/// @ingroup hioc_platforms
 
 #include "platform_cover.h"
 #include "hub_internal.h"

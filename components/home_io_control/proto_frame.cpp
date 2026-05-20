@@ -1,5 +1,6 @@
 /// @file proto_frame.cpp
 /// @brief IO-Homecontrol 2W protocol implementation.
+/// @ingroup hioc_protocol
 
 #include "proto_frame.h"
 

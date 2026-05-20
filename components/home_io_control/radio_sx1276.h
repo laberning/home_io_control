@@ -2,6 +2,7 @@
 
 /// @file radio_sx1276.h
 /// @brief SX1276 radio driver for IO-Homecontrol.
+/// @ingroup hioc_radio
 ///
 /// Implements the RadioDriver interface for the Semtech SX1276 transceiver.
 /// Configures the chip in FSK mode with the IoHomeOn hardware feature that
@@ -69,6 +70,7 @@ static constexpr uint32_t FXOSC = 32000000U;
 // ============================================================================
 
 /// @brief SX1276 implementation of RadioDriver.
+/// @ingroup hioc_radio
 ///
 /// Manages the SX1276 via SPI using the SpiAccess interface. Configures the chip
 /// in FSK mode with IoHomeOn for hardware CRC and IO‑Homecontrol packet framing.

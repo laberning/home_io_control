@@ -12,6 +12,7 @@
 
 /// @file hub_pairing.cpp
 /// @brief Device pairing orchestration — discovery, key exchange, and finalization.
+/// @ingroup hioc_hub
 ///
 /// Implements IOHomeControlComponent::discover_and_pair() and the three-phase
 /// helper methods: run_discovery_phase_(), run_key_exchange_phase_(),
@@ -22,6 +23,12 @@
 ///
 /// Pairing is separated from the normal exchange path to keep authenticated
 /// command execution independent from the one-time key-establishment flow.
+/// @todo Validate the full discovery and re-pair flow on freshly reset SX1276-backed devices,
+///       including discovery response capture, key exchange, and the final configuration step.
+/// @todo Validate the full discovery and re-pair flow on freshly reset SX1262-backed devices,
+///       including discovery response capture, key exchange, and the final configuration step.
+/// @todo Add first-class platform coverage for additional paired device classes once real
+///       hardware is available to validate their command semantics and status reporting.
 
 namespace esphome {
 namespace home_io_control {

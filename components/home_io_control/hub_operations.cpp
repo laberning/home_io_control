@@ -4,6 +4,7 @@
 
 /// @file hub_operations.cpp
 /// @brief High-level command execution and queued operation dispatch.
+/// @ingroup hioc_hub
 ///
 /// This file owns the outbound user-facing operations on the hub:
 /// - cover position and tilt commands,

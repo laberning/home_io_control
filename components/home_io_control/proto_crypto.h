@@ -2,6 +2,7 @@
 
 /// @file proto_crypto.h
 /// @brief Cryptographic helpers for the IO‑Homecontrol protocol.
+/// @ingroup hioc_protocol
 ///
 /// IO‑Homecontrol uses AES‑128 encryption and a proprietary 6‑byte HMAC construction
 /// derived from the original Somfy implementation. The "HMAC" here is not a standard

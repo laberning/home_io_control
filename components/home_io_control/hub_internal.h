@@ -2,6 +2,7 @@
 
 /// @file hub_internal.h
 /// @brief Internal helpers shared by the hub implementation .cpp files.
+/// @ingroup hioc_hub
 ///
 /// This header is intentionally private to the component implementation. It keeps
 /// small cross-file helpers in one place while leaving hub_core.h focused on the

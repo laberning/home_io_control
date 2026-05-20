@@ -2,6 +2,7 @@
 
 /// @file platform_cover.h
 /// @brief ESPHome cover entity for IO‑Homecontrol devices.
+/// @ingroup hioc_platforms
 ///
 /// Maps IO‑Homecontrol devices (shutters, awnings, blinds) to Home Assistant cover entities
 /// with position control and real‑time feedback.
@@ -24,6 +25,7 @@ namespace esphome {
 namespace home_io_control {
 
 /// @brief Cover entity representing an IO‑Homecontrol shutter/awning/blind.
+/// @ingroup hioc_platforms
 class IOHomeCover : public cover::Cover, public Component {
  public:
   IOHomeCover() { this->position = UNKNOWN_POSITION; }

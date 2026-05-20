@@ -2,6 +2,7 @@
 
 /// @file hub_pairing.h
 /// @brief Internal pairing-state model for hub‑owned discovery and key‑exchange flows.
+/// @ingroup hioc_hub
 ///
 /// This module implements the three‑phase pairing procedure that temporarily tracks a
 /// newly paired device in the controller's runtime registry and installs the system key on the device:

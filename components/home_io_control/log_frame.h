@@ -2,6 +2,7 @@
 
 /// @file log_frame.h
 /// @brief Shared frame logging helpers for IO-Homecontrol.
+/// @ingroup hioc_protocol
 
 #include "esphome/core/log.h"
 #include <cstddef>

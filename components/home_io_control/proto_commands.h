@@ -2,6 +2,7 @@
 
 /// @file proto_commands.h
 /// @brief Command builders for the IO‑Homecontrol protocol.
+/// @ingroup hioc_protocol
 ///
 /// This module provides builder functions that populate IoFrame structures for
 /// the various commands used in discovery, pairing, control, and status operations.
@@ -139,6 +140,8 @@ bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *ds
 ///       it is controlled by any remote (including the paired controller). This enables
 ///       HA to receive unsolicited position updates. The controller must still
 ///       authenticate the status update using the inbound auth flow (hub_exchange.h).
+/// @todo Confirm on real hardware which device families actually honor this SetConfig1
+///       payload and emit unsolicited status updates after pairing.
 /// @return true on success.
 bool create_set_config1(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 

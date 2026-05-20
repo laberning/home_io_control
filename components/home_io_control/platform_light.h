@@ -2,9 +2,13 @@
 
 /// @file platform_light.h
 /// @brief Experimental binary light entity for IO‑Homecontrol devices.
+/// @ingroup hioc_platforms
 ///
 /// Provides a minimal on/off light representation. Position < 50 is treated as on.
 /// This platform is experimental and not yet validated on real hardware.
+/// @todo Validate end-to-end behavior with physical IO-Homecontrol light devices,
+///       including passive state updates, startup state restoration, and any vendor-specific
+///       position encodings that do not map cleanly to binary on/off semantics.
 ///
 /// @warning This platform has not been tested with physical IO‑Homecontrol light devices.
 ///          Behavior is inferred from the protocol specification and may be incomplete.
@@ -18,6 +22,7 @@ namespace esphome {
 namespace home_io_control {
 
 /// @brief Binary light entity for IO‑Homecontrol on/off devices.
+/// @ingroup hioc_platforms
 class IOHomeLight : public light::LightOutput, public Component {
  public:
   /// @brief Initialize the light entity.

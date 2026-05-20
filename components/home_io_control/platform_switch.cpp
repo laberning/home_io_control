@@ -1,5 +1,6 @@
 /// @file platform_switch.cpp
 /// @brief Experimental binary switch entity for IO-Homecontrol devices.
+/// @ingroup hioc_platforms
 
 #include "platform_switch.h"
 #include "hub_internal.h"

@@ -1,3 +1,9 @@
+## @file
+## @brief ESPHome pairing-button schema and code generation.
+## @ingroup hioc_codegen
+##
+## Exposes the Home Assistant button entity that starts device discovery and pairing.
+
 import esphome.codegen as cg
 from esphome.components import button
 import esphome.config_validation as cv

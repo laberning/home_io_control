@@ -1,5 +1,6 @@
 /// @file proto_commands.cpp
 /// @brief Command builders for the IO-Homecontrol protocol.
+/// @ingroup hioc_protocol
 
 #include "proto_commands.h"
 

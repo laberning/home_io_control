@@ -19,6 +19,29 @@ DOXYGEN_AWESOME_VERSION="v2.4.2"
 DOXYGEN_AWESOME_BASE_URL="https://raw.githubusercontent.com/jothepro/doxygen-awesome-css/$DOXYGEN_AWESOME_VERSION"
 OUTPUT_DIR="docs/doxygen"
 
+check_dependency() {
+  local command_name="$1"
+  local install_hint="$2"
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    MISSING_DEPENDENCIES+=("  - $command_name ($install_hint)")
+  fi
+}
+
+MISSING_DEPENDENCIES=()
+check_dependency "python3" "install python3"
+check_dependency "pygmentize" "install python3-pygments"
+check_dependency "dot" "install graphviz"
+
+if [[ ${#MISSING_DEPENDENCIES[@]} -gt 0 ]]; then
+  echo "Error: missing required documentation dependencies:" >&2
+  printf '%s\n' "${MISSING_DEPENDENCIES[@]}" >&2
+  echo >&2
+  echo "On Debian/Ubuntu install them with:" >&2
+  echo "  sudo apt-get install -y python3 python3-pygments graphviz" >&2
+  exit 1
+fi
+
 mkdir -p "$DOXYGEN_BIN_DIR" "$OUTPUT_DIR"
 
 # === Download doxygen binary if missing ===
@@ -69,5 +92,7 @@ echo ""
 
 # === Generate docs ===
 echo "==> Generating API docs..."
+rm -rf "$OUTPUT_DIR/html"
+rm -f "$OUTPUT_DIR"/*.tag
 "$DOXYGEN_CMD" Doxyfile
 echo "Done. Open file://$REPO_ROOT/$OUTPUT_DIR/html/index.html in a browser."

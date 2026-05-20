@@ -2,6 +2,7 @@
 
 /// @file hub_exchange.h
 /// @brief Internal exchange-state model for hub-owned authenticated non‑pairing flows.
+/// @ingroup hioc_hub
 ///
 /// This module defines the state machines and context structures used for
 /// outbound authenticated exchanges (controller → device) and inbound authentication

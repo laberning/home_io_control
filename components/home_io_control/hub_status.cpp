@@ -5,11 +5,16 @@
 
 /// @file hub_status.cpp
 /// @brief Inbound status handling and passive receive-side state updates.
+/// @ingroup hioc_hub
 ///
 /// This file owns the receive-side state path for the hub:
 /// - decode status-bearing frames into normalized device state,
 /// - decide when passive traffic should arm one-shot or tracked follow-up polls,
 /// - ACK authenticated device-initiated status updates.
+///
+/// @todo Validate the unsolicited CMD_STATUS_UPDATE path on hardware that actually emits
+///       device-initiated updates after pairing, including inbound authentication,
+///       three-channel ACK broadcast, and Home Assistant state publication without polling.
 ///
 /// The goal of the split is to keep hub_core.cpp focused on lifecycle,
 /// device registry, and scheduling while leaving the protocol-specific receive
