@@ -97,11 +97,18 @@ INCLUDES := -Icomponents/home_io_control \
             -Itests/include \
             -Itests/support
 
+# Mirror the ESPHome API defines that the component injects during firmware codegen.
+# Without these, host builds silently compile out the rename-action registration path and
+# the associated unit tests only exercise a reduced slice of the recovered feature.
+UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
+			 -DUSE_API_CUSTOM_SERVICES \
+			 -DUSE_API_HOMEASSISTANT_SERVICES
+
 unit-test:
 	@echo "Building Google Test unit tests for home_io_control (host-only)..."
 	@mkdir -p build
 	g++ -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable -Wno-unused-variable -Wno-reorder -fno-access-control -DIRAM_ATTR= \
-		$(INCLUDES) \
+		$(UNIT_TEST_DEFINES) $(INCLUDES) \
 		$(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS) \
 		-lgtest -lgtest_main -pthread \
 		-o build/test_home_io_control

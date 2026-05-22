@@ -11,8 +11,8 @@ from esphome import pins
 from esphome.components import spi
 from esphome.const import CONF_ID
 
-DEPENDENCIES = ["spi"]
-AUTO_LOAD = ["button", "cover", "light", "switch"]
+DEPENDENCIES = ["api", "spi"]
+AUTO_LOAD = ["button", "cover", "light", "switch", "text_sensor"]
 MULTI_CONF = False
 
 CONF_HOME_IO_CONTROL_ID = "home_io_control_id"
@@ -177,6 +177,15 @@ CONFIG_SCHEMA = (
 
 
 async def to_code(config):
+    # Hub-level management actions and result events are compiled behind native API
+    # feature flags. Home IO Control enables the required compile-time switches here
+    # so users only need a normal `api:` block in YAML.
+    # ESPHome 2026.x additionally gates user-defined actions behind
+    # USE_API_USER_DEFINED_ACTIONS.
+    cg.add_define("USE_API_USER_DEFINED_ACTIONS")
+    cg.add_define("USE_API_CUSTOM_SERVICES")
+    cg.add_define("USE_API_HOMEASSISTANT_SERVICES")
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await spi.register_spi_device(var, config)

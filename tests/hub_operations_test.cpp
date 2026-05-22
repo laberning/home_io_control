@@ -72,6 +72,16 @@ static IoFrame build_error_response(const uint8_t dst[3], uint8_t result) {
   return f;
 }
 
+static IoFrame build_name_response(const uint8_t dst[3], const uint8_t *payload, uint8_t payload_len) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  set_cmd(f, CMD_GET_NAME_RESP, payload, payload_len);
+  return f;
+}
+
 static IoFrame build_challenge_request(const uint8_t src[3], const uint8_t dst[3]) {
   IoFrame f{};
   init_frame(f, true, false, false, false);
@@ -176,6 +186,64 @@ TEST(HubOperations, RequestDeviceStatusSuccess) {
 
   bool ok = comp.request_device_status("ABC123");
   EXPECT_TRUE(ok) << "request_device_status should succeed for cover device";
+}
+
+TEST(HubOperations, RequestDeviceNameSuccessStoresDecodedUtf8Name) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  const uint8_t payload[] = {0x00, 'R', 0xE9, 's', 'u', 'm', 0xE9, 0x20, 0x00};
+  IoFrame resp = build_name_response(comp.node_id_, payload, sizeof(payload));
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.request_device_name("ABC123")) << "request_device_name should succeed with a valid response";
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_STREQ(dev->name, "R\xC3\xA9sum\xC3\xA9") << "stored name should be cached as UTF-8";
+}
+
+TEST(HubOperations, QueueRequestDeviceNameDeduplicatesPerDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.queue_request_device_name("ABC123");
+  comp.queue_request_device_name("ABC123");
+
+  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "duplicate queued name requests should collapse";
+  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_NAME);
+  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
+}
+
+TEST(HubOperations, ProcessPendingRequestNameDispatchesOperation) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  const uint8_t payload[] = {'D', 'e', 'x', 'x', 'o', 0x00};
+  IoFrame resp = build_name_response(comp.node_id_, payload, sizeof(payload));
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  comp.queue_request_device_name("ABC123");
+  comp.process_pending_operation_();
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_STREQ(dev->name, "Dexxo") << "queued request-name operation should flow through the shared dispatcher";
 }
 
 TEST(HubOperations, SetDevicePositionFailsOnExplicitErrorResponse) {

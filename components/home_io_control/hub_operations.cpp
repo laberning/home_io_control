@@ -219,6 +219,17 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms);
 }
 
+bool IOHomeControlComponent::request_device_name(const std::string &device_id) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  IoFrame request;
+  if (!create_get_name(request, this->node_id_, dev->node_id, true))
+    return false;
+  return this->execute_request_and_update_(device_id, request, false, 0);
+}
+
 bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool on) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
@@ -285,6 +296,18 @@ void IOHomeControlComponent::queue_request_device_status(const std::string &devi
   this->pending_operations_.push_back({PendingOperationType::REQUEST_STATUS, device_id, 0});
 }
 
+void IOHomeControlComponent::queue_request_device_name(const std::string &device_id) {
+  if (this->get_device(device_id) == nullptr)
+    return;
+
+  for (const auto &operation : this->pending_operations_) {
+    if (operation.type == PendingOperationType::REQUEST_NAME && operation.device_id == device_id)
+      return;
+  }
+
+  this->pending_operations_.push_back({PendingOperationType::REQUEST_NAME, device_id, 0});
+}
+
 void IOHomeControlComponent::queue_discover_and_pair() {
   // Pairing is globally exclusive work. Keep at most one queued request so repeated button presses
   // while the radio is busy do not stack duplicate discovery attempts.
@@ -345,6 +368,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::REQUEST_STATUS:
       this->request_device_status(operation.device_id);
+      break;
+    case PendingOperationType::REQUEST_NAME:
+      this->request_device_name(operation.device_id);
       break;
     case PendingOperationType::DISCOVER_AND_PAIR:
       this->discover_and_pair();

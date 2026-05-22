@@ -72,6 +72,21 @@ bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
 
+bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, CMD_GET_NAME);
+}
+
+bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
+                     const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]) {
+  init_frame(f, true, true, false, false);
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, CMD_SET_NAME, payload, DEVICE_NAME_WRITE_PAYLOAD_SIZE);
+}
+
 /// Build a tilt execute command (0x00) for devices that support slat angle control.
 bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t tilt_percent) {
   init_frame(f, true, true, false, low_power);

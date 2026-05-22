@@ -139,6 +139,33 @@ TEST(ProtoCommands, CreateGetStatus) {
   EXPECT_FALSE(is_end(frame)) << "get-status should not be an end frame";
 }
 
+TEST(ProtoCommands, CreateGetName) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_get_name(frame, test::OWN_ID, test::DST_ID, true)) << "create_get_name should succeed";
+  EXPECT_EQ(frame.cmd, CMD_GET_NAME) << "get-name command should be CMD_GET_NAME (0x50)";
+  EXPECT_EQ(frame.data_len, 0) << "get-name should have no payload";
+  EXPECT_TRUE(is_start(frame)) << "get-name should be a start frame";
+  EXPECT_FALSE(is_end(frame)) << "get-name should not be an end frame";
+}
+
+TEST(ProtoCommands, CreateSetName) {
+  IoFrame frame{};
+  const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {'P', 'a', 't', 'i', 'o'};
+
+  ASSERT_TRUE(create_set_name(frame, test::OWN_ID, test::DST_ID, payload)) << "create_set_name should succeed";
+  EXPECT_EQ(frame.cmd, CMD_SET_NAME) << "set-name command should be CMD_SET_NAME (0x52)";
+  EXPECT_EQ(frame.data_len, DEVICE_NAME_WRITE_PAYLOAD_SIZE) << "set-name should use the fixed 16-byte payload";
+  EXPECT_EQ(frame.data[0], 'P');
+  EXPECT_EQ(frame.data[1], 'a');
+  EXPECT_EQ(frame.data[2], 't');
+  EXPECT_EQ(frame.data[3], 'i');
+  EXPECT_EQ(frame.data[4], 'o');
+  for (size_t index = 5; index < DEVICE_NAME_WRITE_PAYLOAD_SIZE; index++)
+    EXPECT_EQ(frame.data[index], 0x00) << "set-name payload should preserve zero padding";
+  EXPECT_TRUE(is_start(frame)) << "set-name should be a start frame";
+  EXPECT_FALSE(is_end(frame)) << "set-name should not be an end frame";
+}
+
 TEST(ProtoCommands, CreateGetStatusTilt) {
   IoFrame frame{};
   ASSERT_TRUE(create_get_status_tilt(frame, test::OWN_ID, test::DST_ID)) << "create_get_status_tilt should succeed";

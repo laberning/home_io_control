@@ -14,6 +14,8 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 
 - **Cover control**: Open, close, stop, and set position (0–100%) for shutters, blinds, awnings, window openers, garage openers, gate openers, rolling doors, curtain tracks, and related position-based devices
 - **Favorite or My position action for covers**: Covers with a declared position-capable `io_device_type` automatically get a companion Home Assistant button named `<Cover Name> Favorite Position`
+- **Stored device-name diagnostics**: Covers, lights, and switches now auto-generate a diagnostic text sensor named `<Entity Name> Device Name`, disabled by default to reduce clutter and populated from the actuator's internally stored name via a protocol read on boot
+- **On-demand device rename action**: The hub now exposes a native ESPHome API action named `esphome.<node_name>_rename_device` so Home Assistant can rename a paired actuator without adding persistent helper entities
 - **Tilt support for venetian-style blinds**: Tilt-capable device types expose slat-angle control automatically in Home Assistant when the paired device reports tilt support
 - **Experimental binary light support**: On/off-only light entities for IO-Homecontrol light devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
@@ -134,13 +136,55 @@ button:
     name: "Discover & Pair"
 ```
 
-With `io_device_type: "awning"` declared, the cover above also generates a separate Home Assistant button named `Awning Favorite Position`. Pressing it sends the protocol's built-in favorite or My-position command. There is currently no separate sensor for reading back the stored favorite value because the protocol support for that has not been identified.
+With `io_device_type: "awning"` declared, the cover above also generates a separate Home Assistant button named `Awning Favorite Position`. Pressing it sends the protocol's built-in favorite or My-position command. The same cover also generates a diagnostic text sensor named `Awning Device Name`, disabled by default, which requests and displays the actuator's stored device name after boot when enabled. There is currently no separate sensor for reading back the stored favorite value because the protocol support for that has not been identified.
+
+When `api:` is enabled, the hub also exposes a node-scoped Home Assistant action named `esphome.<node_name>_rename_device` with two string fields: `device_id` and `new_name`. `device_id` must be the 6-character IO-homecontrol device ID, and `new_name` must fit within the protocol's Latin-1 write limit of 15 visible characters after trimming ASCII whitespace. The action emits an `esphome.home_io_control_action_result` event with fields including `action`, `device_id`, `success`, `verified`, `message`, `requested_name`, `applied_name`, and optional `result_code` metadata when the device explicitly rejects the rename.
+
+## Home Assistant Actions
+
+Home IO Control currently exposes one hub-level Home Assistant action through ESPHome's native API: `esphome.<node_name>_rename_device`.
+
+`<node_name>` comes from `esphome.name`, not `friendly_name`. Home Assistant normalizes that node name to snake case. For example, the sample V2 config uses `name: hioc-heltec-v2`, so the action becomes `esphome.hioc_heltec_v2_rename_device`.
+
+Home IO Control enables the required native API feature flags internally, so the YAML only needs a normal `api:` block:
+
+```yaml
+api:
+  encryption:
+    key: !secret api_key
+```
+
+In Home Assistant Developer Tools -> Actions, use the plain action block directly:
+
+```yaml
+action: esphome.hioc_heltec_v2_rename_device
+data:
+  device_id: "FEEB1E"
+  new_name: "Patio Awning"
+```
+
+Use the same `device_id` value that you configured as `io_device_id` in your Home IO Control `cover:`, `light:`, or `switch:` entry. If the device was paired through discovery first, the same 6-character ID also appears in the pairing log snippet that Home IO Control prints for the generated YAML. This is the protocol-level actuator ID, not the Home Assistant entity ID.
+
+For automations and scripts, wrap the same block in a normal `action:` step:
+
+```yaml
+alias: Rename Patio Awning
+sequence:
+  - action: esphome.hioc_heltec_v2_rename_device
+    data:
+      device_id: "FEEB1E"
+      new_name: "Patio Awning"
+```
+
+Each rename attempt emits the Home Assistant event `esphome.home_io_control_action_result`, so an automation can react to `success`, `verified`, `message`, `requested_name`, `applied_name`, and optional `result_code` fields.
 
 For all other examples, platform-specific options, and pairing instructions, use [docs/home_io_control.md](docs/home_io_control.md).
 
 If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected `cover:`, `light:`, or `switch:` entry. Without that option, the hub still keeps the legacy single follow-up settle poll after a local command or overheard remote activity. With the option set, it continues polling only while the device still appears to be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires. The minimum supported interval is 500ms.
 
 Explicit device refusals show up as decoded warn-level ESPHome logs. For example, a command blocked by weather can log `LIMITATION_BY_RAIN` or `LIMITATION_BY_WIND` instead of looking like a silent no-op.
+
+Device-name support now has two surfaces: the generated diagnostic text sensor for low-noise readback, and the hub-level `esphome.<node_name>_rename_device` action for on-demand writes. Rename requests are authenticated, validated as UTF-8 text that can be represented in Latin-1, sent as fixed-size protocol payloads, and then verified through the same cached readback path used by the diagnostic sensor. If a device ignores the verification readback or reports a different final value, the rename action still reports the acknowledgement but marks the result as unverified.
 
 ## Development
 

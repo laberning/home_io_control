@@ -27,6 +27,7 @@ namespace {
 
 constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 8;     ///< Minimum payload length for 0x04 position-bearing replies.
 constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for 0x71 device-initiated updates.
+constexpr uint8_t GET_NAME_RESPONSE_MIN_DATA_LEN = 1;    ///< Minimum payload length for 0x51 name-bearing replies.
 constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload length for 0x57 type/subtype metadata.
 constexpr uint8_t ERROR_RESPONSE_MIN_DATA_LEN = 1;       ///< Minimum payload length for 0xFE result-bearing replies.
 constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
@@ -154,6 +155,16 @@ void apply_info2_response(IoDevice &dev, const IoFrame &frame) {
     dev.inverted = true;
 }
 
+/// @brief Apply a name response frame to the device record.
+/// @param dev Device record to update.
+/// @param frame Name response frame.
+void apply_name_response(IoDevice &dev, const IoFrame &frame) {
+  std::string const name = decode_device_name_payload(frame.data, frame.data_len);
+  memset(dev.name, 0, sizeof(dev.name));
+  if (!name.empty())
+    memcpy(dev.name, name.c_str(), name.length());
+}
+
 }  // namespace
 
 void IOHomeControlComponent::begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms) {
@@ -210,6 +221,18 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
     apply_unsolicited_status_update(dev, frame);
     detail::log_status_update(id, dev, " (status update)");
+    this->notify_device_update_(id);
+    return;
+  }
+
+  if (frame.cmd == CMD_GET_NAME_RESP) {
+    if (frame.data_len < GET_NAME_RESPONSE_MIN_DATA_LEN) {
+      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      return;
+    }
+
+    apply_name_response(dev, frame);
+    ESP_LOGI(detail::TAG, "Device %s: name=%s", id.c_str(), dev.name[0] == '\0' ? "" : dev.name);
     this->notify_device_update_(id);
     return;
   }

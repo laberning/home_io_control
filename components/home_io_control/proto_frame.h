@@ -137,6 +137,8 @@ static constexpr uint8_t CMD_CHALLENGE_RESP = 0x3D;  ///< Controller responds wi
 // Device info commands
 static constexpr uint8_t CMD_GET_NAME = 0x50;        ///< Request device name
 static constexpr uint8_t CMD_GET_NAME_RESP = 0x51;   ///< Device name response
+static constexpr uint8_t CMD_SET_NAME = 0x52;        ///< Set device name (authenticated)
+static constexpr uint8_t CMD_SET_NAME_RESP = 0x53;   ///< Device-name write response
 static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info
 static constexpr uint8_t CMD_GET_INFO2_RESP = 0x57;  ///< Device type/model response
 
@@ -419,14 +421,27 @@ const char *device_operation_profile_name(DeviceType type);
 /// @brief Sentinel value meaning "position is not known yet".
 /// Matches POS_UNKNOWN (0xD4 = 212 decimal) for easy debugging.
 static constexpr float UNKNOWN_POSITION = 212.0F;
-static constexpr uint8_t DEVICE_NAME_BUFFER_SIZE = 32;  ///< Device name storage including null terminator
+static constexpr uint8_t DEVICE_NAME_BUFFER_SIZE = 32;       ///< Device name storage including null terminator
+static constexpr uint8_t DEVICE_NAME_WRITE_CHAR_LIMIT = 15;  ///< Reference write limit before the trailing null.
+static constexpr uint8_t DEVICE_NAME_WRITE_PAYLOAD_SIZE =
+    DEVICE_NAME_WRITE_CHAR_LIMIT + 1;  ///< Fixed write payload: 15 visible chars plus trailing null/padding.
+static constexpr uint16_t LATIN1_CODEPOINT_MAX = 0x00FF;  ///< Highest Unicode code point representable in Latin-1.
+
+/// @brief Validation result for outbound device-name writes.
+enum class DeviceNameValidationError : uint8_t {
+  NONE = 0x00,              ///< Name is valid and encodable.
+  EMPTY = 0x01,             ///< Name is empty after normalization.
+  TOO_LONG = 0x02,          ///< Name exceeds the 15-character write limit.
+  INVALID_UTF8 = 0x03,      ///< Name contains malformed UTF-8 bytes.
+  UNSUPPORTED_CHAR = 0x04,  ///< Name contains characters outside Latin-1.
+};
 
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};            ///< Device's 3‑byte radio address.
   DeviceType type{DeviceType::UNKNOWN};       ///< Device type (shutter, awning, etc.).
   uint8_t subtype{0};                         ///< Device subtype (manufacturer‑specific).
-  char name[DEVICE_NAME_BUFFER_SIZE]{};       ///< Device name (from device, Latin‑1 encoded).
+  char name[DEVICE_NAME_BUFFER_SIZE]{};       ///< Cached UTF-8 device name decoded from Latin-1 wire payloads.
   float position{UNKNOWN_POSITION};           ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION.
   float tilt{UNKNOWN_POSITION};               ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
   float target{UNKNOWN_POSITION};             ///< Target position the device is moving toward.
@@ -451,6 +466,39 @@ bool hex_to_bytes(const std::string &hex, uint8_t *out, uint8_t len);
 /// @param id 3‑byte node ID.
 /// @return Hex string (e.g., "123ABC").
 std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]);
+/// @brief Decode a device-name payload from IO-homecontrol's Latin-1 wire format into UTF-8.
+/// Some devices prepend an extra byte before the first character and many pad the payload with
+/// trailing 0x00 or 0x20 bytes. This helper normalizes those quirks and truncates the result to
+/// fit DEVICE_NAME_BUFFER_SIZE - 1 bytes when copied into IoDevice::name.
+/// @param data Raw payload pointer from CMD_GET_NAME_RESP.
+/// @param len Raw payload length in bytes.
+/// @return Normalized UTF-8 name, or an empty string when the payload carries no usable characters.
+std::string decode_device_name_payload(const uint8_t *data, uint8_t len);
+/// @brief Trim leading and trailing ASCII whitespace from a string.
+/// This is shared by device-name validation and management actions so both paths normalize input
+/// consistently before comparing or writing device metadata.
+/// @param value Input string.
+/// @return Copy of the string with leading and trailing ASCII whitespace removed.
+std::string trim_ascii_whitespace(const std::string &value);
+/// @brief Validate and encode a user-supplied UTF-8 device name into the fixed Latin-1 write payload.
+/// The outbound payload is a fixed 16-byte field: up to 15 Latin-1 characters followed by trailing
+/// zero padding. Leading and trailing ASCII whitespace are trimmed before validation so write-back
+/// verification against the device's padded storage is deterministic.
+/// @param name User-supplied UTF-8 device name.
+/// @param payload Output buffer for the fixed write payload (16 bytes, zero-padded on success).
+/// @param normalized_name Output normalized UTF-8 name used for later verification/logging.
+/// @return Validation status indicating success or the reason the name cannot be written.
+DeviceNameValidationError encode_device_name_payload(const std::string &name,
+                                                     uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE],
+                                                     std::string &normalized_name);
+/// @brief Return a stable symbolic name for a device-name validation result.
+/// @param error Validation result.
+/// @return Uppercase symbolic name.
+const char *device_name_validation_error_name(DeviceNameValidationError error);
+/// @brief Return a human-readable explanation for a device-name validation result.
+/// @param error Validation result.
+/// @return Short message suitable for logs and Home Assistant action events.
+const char *device_name_validation_error_description(DeviceNameValidationError error);
 /// @brief Determine whether a device type has inverted position mapping by default.
 /// @param type Device type.
 /// @return true for horizontal awnings; false otherwise.

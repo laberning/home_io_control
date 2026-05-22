@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 
 namespace esphome {
 namespace home_io_control {
@@ -14,6 +15,62 @@ namespace home_io_control {
 namespace {
 
 constexpr int HEX_ALPHA_OFFSET = 10;
+constexpr uint8_t UTF8_SINGLE_BYTE_MAX = 0x80;
+constexpr uint8_t UTF8_TWO_BYTE_LEAD_BASE = 0xC0;
+constexpr uint8_t UTF8_CONTINUATION_BASE = 0x80;
+constexpr uint8_t UTF8_CONTINUATION_MASK = 0x3F;
+constexpr uint8_t UTF8_TWO_BYTE_SHIFT = 6;
+constexpr uint8_t NAME_PADDING_NUL = 0x00;
+constexpr uint8_t NAME_PADDING_SPACE = 0x20;
+constexpr uint8_t UTF8_TWO_BYTE_MASK = 0xE0;
+constexpr uint8_t UTF8_TWO_BYTE_PREFIX = 0xC0;
+constexpr uint8_t UTF8_THREE_BYTE_MASK = 0xF0;
+constexpr uint8_t UTF8_THREE_BYTE_PREFIX = 0xE0;
+constexpr uint8_t UTF8_FOUR_BYTE_MASK = 0xF8;
+constexpr uint8_t UTF8_FOUR_BYTE_PREFIX = 0xF0;
+constexpr uint8_t UTF8_CONTINUATION_PREFIX_MASK = 0xC0;
+constexpr uint8_t UTF8_CONTINUATION_PREFIX = 0x80;
+constexpr uint8_t UTF8_TWO_BYTE_VALUE_MASK = 0x1F;
+constexpr uint8_t ASCII_MAX = 0x7F;
+
+}  // namespace
+
+std::string trim_ascii_whitespace(const std::string &value) {
+  size_t begin = 0;
+  while (begin < value.length() && std::isspace(static_cast<unsigned char>(value[begin])) != 0)
+    begin++;
+
+  size_t end = value.length();
+  while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0)
+    end--;
+
+  return value.substr(begin, end - begin);
+}
+
+namespace {
+
+std::string latin1_to_utf8(const uint8_t *data, size_t len) {
+  std::string result;
+  result.reserve(len * 2);
+
+  for (size_t index = 0; index < len; index++) {
+    uint8_t const byte = data[index];
+    if (byte < UTF8_SINGLE_BYTE_MAX) {
+      if (result.length() + 1 >= DEVICE_NAME_BUFFER_SIZE)
+        break;
+      result.push_back(static_cast<char>(byte));
+      continue;
+    }
+
+    if (result.length() + 2 >= DEVICE_NAME_BUFFER_SIZE)
+      break;
+
+    result.push_back(static_cast<char>(UTF8_TWO_BYTE_LEAD_BASE | (byte >> UTF8_TWO_BYTE_SHIFT)));
+    result.push_back(static_cast<char>(UTF8_CONTINUATION_BASE | (byte & UTF8_CONTINUATION_MASK)));
+  }
+
+  return result;
+}
 
 }  // namespace
 
@@ -49,6 +106,114 @@ std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]) {
   char buf[NODE_ID_STRING_SIZE];
   snprintf(buf, sizeof(buf), "%02X%02X%02X", id[0], id[1], id[2]);
   return std::string(buf);
+}
+
+std::string decode_device_name_payload(const uint8_t *data, uint8_t len) {
+  if (data == nullptr || len == 0)
+    return {};
+
+  const uint8_t begin = data[0] > NAME_PADDING_SPACE ? 0 : 1;
+  if (begin >= len)
+    return {};
+
+  size_t raw_len = len - begin;
+  while (raw_len > 0 &&
+         (data[begin + raw_len - 1] == NAME_PADDING_NUL || data[begin + raw_len - 1] == NAME_PADDING_SPACE))
+    raw_len--;
+
+  if (raw_len == 0)
+    return {};
+
+  return latin1_to_utf8(data + begin, raw_len);
+}
+
+DeviceNameValidationError encode_device_name_payload(const std::string &name,
+                                                     uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE],
+                                                     std::string &normalized_name) {
+  if (payload == nullptr)
+    return DeviceNameValidationError::INVALID_UTF8;
+
+  std::memset(payload, 0, DEVICE_NAME_WRITE_PAYLOAD_SIZE);
+  normalized_name.clear();
+
+  const std::string trimmed_name = trim_ascii_whitespace(name);
+  if (trimmed_name.empty())
+    return DeviceNameValidationError::EMPTY;
+
+  uint8_t latin1_len = 0;
+  for (size_t index = 0; index < trimmed_name.length();) {
+    const auto byte = static_cast<uint8_t>(trimmed_name[index]);
+    uint16_t codepoint = 0;
+    size_t advance = 1;
+
+    if (byte <= ASCII_MAX) {
+      codepoint = byte;
+    } else if ((byte & UTF8_TWO_BYTE_MASK) == UTF8_TWO_BYTE_PREFIX) {
+      if (index + 1 >= trimmed_name.length())
+        return DeviceNameValidationError::INVALID_UTF8;
+
+      const auto continuation = static_cast<uint8_t>(trimmed_name[index + 1]);
+      if ((continuation & UTF8_CONTINUATION_PREFIX_MASK) != UTF8_CONTINUATION_PREFIX)
+        return DeviceNameValidationError::INVALID_UTF8;
+
+      codepoint = static_cast<uint16_t>(((byte & UTF8_TWO_BYTE_VALUE_MASK) << UTF8_TWO_BYTE_SHIFT) |
+                                        (continuation & UTF8_CONTINUATION_MASK));
+      if (codepoint < UTF8_SINGLE_BYTE_MAX)
+        return DeviceNameValidationError::INVALID_UTF8;
+      advance = 2;
+    } else if ((byte & UTF8_THREE_BYTE_MASK) == UTF8_THREE_BYTE_PREFIX ||
+               (byte & UTF8_FOUR_BYTE_MASK) == UTF8_FOUR_BYTE_PREFIX) {
+      return DeviceNameValidationError::UNSUPPORTED_CHAR;
+    } else {
+      return DeviceNameValidationError::INVALID_UTF8;
+    }
+
+    if (codepoint > LATIN1_CODEPOINT_MAX)
+      return DeviceNameValidationError::UNSUPPORTED_CHAR;
+
+    if (latin1_len >= DEVICE_NAME_WRITE_CHAR_LIMIT)
+      return DeviceNameValidationError::TOO_LONG;
+
+    payload[latin1_len++] = static_cast<uint8_t>(codepoint);
+    index += advance;
+  }
+
+  normalized_name = latin1_to_utf8(payload, latin1_len);
+  return DeviceNameValidationError::NONE;
+}
+
+const char *device_name_validation_error_name(DeviceNameValidationError error) {
+  switch (error) {
+    case DeviceNameValidationError::NONE:
+      return "NONE";
+    case DeviceNameValidationError::EMPTY:
+      return "EMPTY";
+    case DeviceNameValidationError::TOO_LONG:
+      return "TOO_LONG";
+    case DeviceNameValidationError::INVALID_UTF8:
+      return "INVALID_UTF8";
+    case DeviceNameValidationError::UNSUPPORTED_CHAR:
+      return "UNSUPPORTED_CHAR";
+    default:
+      return "UNKNOWN_DEVICE_NAME_VALIDATION_ERROR";
+  }
+}
+
+const char *device_name_validation_error_description(DeviceNameValidationError error) {
+  switch (error) {
+    case DeviceNameValidationError::NONE:
+      return "name accepted";
+    case DeviceNameValidationError::EMPTY:
+      return "device name must not be empty";
+    case DeviceNameValidationError::TOO_LONG:
+      return "device name exceeds the 15-character write limit";
+    case DeviceNameValidationError::INVALID_UTF8:
+      return "device name must be valid UTF-8";
+    case DeviceNameValidationError::UNSUPPORTED_CHAR:
+      return "device name contains characters outside Latin-1";
+    default:
+      return "unknown device-name validation error";
+  }
 }
 
 bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HORIZONTAL_AWNING; }

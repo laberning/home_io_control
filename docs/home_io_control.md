@@ -18,6 +18,8 @@ Key concepts:
 ## Minimal Example
 
 ```yaml
+api:
+
 external_components:
   - source: github://laberning/home_io_control
 
@@ -43,6 +45,8 @@ button:
   - platform: home_io_control
     name: "Discover & Pair"
 ```
+
+When `api:` is enabled, Home IO Control also exposes hub-level Home Assistant actions. The component currently exposes one such action: device rename.
 
 ## Home IO Control Component
 
@@ -123,11 +127,90 @@ Notes:
 - This is the primary and best-validated platform in the repo.
 - Additional recognized cover families include venetian blinds, dual shutters, louvre blinds, rolling door openers, curtain tracks, and swinging shutters.
 - Covers with a declared position-capable `io_device_type` automatically generate a companion Home Assistant button named `<Cover Name> Favorite Position`. That button sends the protocol's favorite or My-position command (`POS_FAVORITE`).
+- Covers also automatically generate a diagnostic text sensor named `<Cover Name> Device Name`. That entity is disabled by default to avoid clutter. When enabled, it queues a boot-time `GET_NAME` protocol request, caches the returned UTF-8 device name, and publishes it to Home Assistant.
 - Automatic favorite-button generation is compile-time only. If `io_device_type` is omitted and learned later from radio traffic, the controller can still operate the cover normally, but it cannot add a new ESPHome entity at runtime after boot.
+- Automatic device-name sensor generation is also compile-time only for the same reason.
 - The protocol support currently exposed here is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh. The hub only keeps polling while a local command or overheard remote activity suggests that the device should still be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires.
 - Unsolicited `0x71` device status updates are always applied to the entity state. They only extend automatic repeated polling when `status_poll_interval` is configured; without it, the hub falls back to the single settle poll armed by the original command or remote activity.
 - Explicit `0xFE` device refusals are decoded into warn-level ESPHome logs. Common examples include `LIMITATION_BY_RAIN`, `LIMITATION_BY_WIND`, and `THERMAL_PROTECTION`. This release keeps those diagnostics log-only rather than exposing a dedicated sensor.
+- Devices that do not support `GET_NAME` simply keep an empty cached name. Name-request failures are intentionally isolated from normal control and status behavior.
+
+## Home Assistant Actions
+
+Home IO Control exposes hub-level actions through ESPHome's native API. These are intended for advanced workflows that should stay out of the default entity UI.
+
+Required ESPHome API configuration:
+
+```yaml
+api:
+  encryption:
+    key: !secret api_key
+```
+
+Trigger an action from a Home Assistant automation or script by adding an `action:` step that calls the node-scoped ESPHome action name.
+
+Generic pattern:
+
+```yaml
+action: esphome.<node_name>_<action_name>
+data:
+  ... action-specific fields ...
+```
+
+The component enables the required native API feature flags internally, so you do not need to add `custom_services:` or `homeassistant_services:` manually.
+
+The first Home IO Control action is `rename_device`.
+
+## Rename Device Action
+
+When the node has `api:` enabled, the hub registers a native ESPHome action named `esphome.<node_name>_rename_device`.
+
+`<node_name>` is derived from `esphome.name`, not `friendly_name`. Home Assistant normalizes that node name to snake case. For example, the sample V2 config uses `name: hioc-heltec-v2`, so the action becomes `esphome.hioc_heltec_v2_rename_device`.
+
+Action fields:
+
+- `device_id` (Required): Target IO-homecontrol device ID as exactly 6 hexadecimal characters. This is the protocol-level actuator ID, not the Home Assistant entity ID.
+- `new_name` (Required): Requested device name as UTF-8 text. Leading and trailing ASCII whitespace is trimmed before validation. The final name must be representable in Latin-1 and fit within the protocol's 15-character write limit.
+
+Behavior notes:
+
+- The rename request uses the authenticated `SET_NAME` protocol exchange.
+- The hub rejects unknown devices before transmitting anything.
+- A successful protocol acknowledgement triggers an immediate `GET_NAME` readback through the same cached-name path used by the generated diagnostic text sensors.
+- The result is considered `verified` only when that readback matches the normalized requested name exactly.
+- If the target device returns `CMD_ERROR_RESP`, the hub surfaces the decoded result code in logs and in the emitted Home Assistant event.
+
+Home Assistant event reporting:
+
+- Every rename attempt fires `esphome.home_io_control_action_result`.
+- Event fields always include `action`, `device_id`, `success`, `verified`, and `message`.
+- Successful validations also include `requested_name` and, when available, `applied_name`.
+- Explicit device refusals also include `result_code` and `result_code_name`.
+
+Home Assistant Developer Tools -> Actions expects the direct action block below, without `alias:` or `sequence:`:
+
+```yaml
+action: esphome.hioc_heltec_v2_rename_device
+data:
+  device_id: "FEEB1E"
+  new_name: "Patio Awning"
+```
+
+Use the same `device_id` value that you configured as `io_device_id` in the Home IO Control entity YAML. If you paired the device through discovery first, the pairing log also prints that same 6-character ID in the generated YAML snippet.
+
+Example automation or script call:
+
+```yaml
+alias: Rename Patio Awning
+sequence:
+  - action: esphome.hioc_heltec_v2_rename_device
+    data:
+      device_id: "FEEB1E"
+      new_name: "Patio Awning"
+```
+
+Home Assistant derives the action name from the node and the registered service name, so multiple Home IO Control hubs on different ESPHome nodes do not collide.
 
 ## Light Platform
 
@@ -156,6 +239,7 @@ Notes:
 - This platform is intentionally binary only. Dimming is not exposed.
 - The current implementation is still experimental and untested on local hardware in this repo.
 - Known non-light device families will be rejected once the device type is known.
+- Lights automatically generate a diagnostic text sensor named `<Light Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 
 ## Switch Platform
 
@@ -183,6 +267,7 @@ Notes:
 
 - This platform is also experimental and currently limited to binary on/off semantics.
 - Known non-switch device families will be rejected once the device type is known.
+- Switches automatically generate a diagnostic text sensor named `<Switch Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 
 ## Button Platform
 
@@ -258,6 +343,8 @@ button:
 
 With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position` button automatically.
 
+If `api:` is enabled, the same node also exposes `esphome.<node_name>_rename_device` for on-demand device renames.
+
 ### Minimal SX1262 Cover Controller
 
 ```yaml
@@ -312,6 +399,8 @@ button:
 
 With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position` button automatically.
 
+If `api:` is enabled, the same node also exposes `esphome.<node_name>_rename_device` for on-demand device renames.
+
 ### Minimal Example with all Device Types: Cover, Light, and Switch
 
 ```yaml
@@ -364,7 +453,7 @@ For larger working examples, see the configs already in this repo:
 ## Diagnostics and Unknown Position
 
 - Warn-level logs now decode explicit `CMD_ERROR_RESP (0xFE)` replies instead of collapsing them into generic command failures. A refused command will look like `Device ABC123: command 0x00 returned limitation result=0xEB LIMITATION_BY_WIND (parameter was limited by a wind sensor)`.
-- The component's unknown-position sentinel is `212.0F`, matching protocol value `POS_UNKNOWN (0xD4)`. Custom ESPHome lambdas should compare against that value rather than using a `NaN` check.
+- The component's internal unknown-position sentinel is `212.0F`, matching protocol value `POS_UNKNOWN (0xD4)`. Generated ESPHome cover entities still expose normal `cover.position` values in the `0.0..1.0` range, so custom lambdas should multiply valid values by `100` and treat `212.0F` or any other out-of-range value as unknown rather than using a `NaN` check.
 - The OLED example configs in this repo already follow that rule and render `--` plus `Unknown` when a cover has not reported a usable position yet.
 
 Example custom-lambda pattern:
@@ -373,7 +462,7 @@ Example custom-lambda pattern:
 lambda: |-
   const float unknown_position = 212.0f;
   const float position = id(patio_awning).position;
-  if (position == unknown_position) {
+  if (position == unknown_position || position < 0.0f || position > 1.0f) {
     ESP_LOGI("example", "position is unknown");
   } else {
     ESP_LOGI("example", "position %.0f%%", position * 100.0f);

@@ -72,6 +72,112 @@ TEST(ProtoFrame, NodeIdFromString) {
   EXPECT_EQ(out[2], 0xEE) << "byte 2 should be 0xEE";
 }
 
+TEST(ProtoFrame, DecodeDeviceNamePayloadSkipsLeadingPaddingAndTrailingSpaces) {
+  const uint8_t payload[] = {0x00, 'P', 'a', 't', 'i', 'o', ' ', 0x20, 0x00};
+  EXPECT_EQ(decode_device_name_payload(payload, sizeof(payload)), "Patio")
+      << "name decoder should skip the extra leading byte and trim trailing space/null padding";
+}
+
+TEST(ProtoFrame, DecodeDeviceNamePayloadKeepsLeadingCharacterWhenPresent) {
+  const uint8_t payload[] = {'D', 'e', 'x', 'x', 'o', 0x20, 0x00};
+  EXPECT_EQ(decode_device_name_payload(payload, sizeof(payload)), "Dexxo")
+      << "name decoder should preserve the first byte when it already contains the first character";
+}
+
+TEST(ProtoFrame, DecodeDeviceNamePayloadConvertsLatin1ToUtf8) {
+  const uint8_t payload[] = {0x00, 'R', 0xE9, 's', 'u', 'm', 0xE9, 0x00};
+  EXPECT_EQ(decode_device_name_payload(payload, sizeof(payload)), "R\xC3\xA9sum\xC3\xA9")
+      << "name decoder should convert Latin-1 bytes to UTF-8";
+}
+
+TEST(ProtoFrame, DecodeDeviceNamePayloadReturnsEmptyWhenOnlyPaddingRemains) {
+  const uint8_t payload[] = {0x00, 0x20, 0x00, 0x20};
+  EXPECT_TRUE(decode_device_name_payload(payload, sizeof(payload)).empty())
+      << "name decoder should return an empty string when the payload contains only padding";
+}
+
+TEST(ProtoFrame, DecodeDeviceNamePayloadTruncatesWithoutBreakingUtf8Sequence) {
+  uint8_t payload[18] = {0x00};
+  for (size_t index = 1; index < sizeof(payload); index++)
+    payload[index] = 0xE9;
+
+  EXPECT_EQ(decode_device_name_payload(payload, sizeof(payload)),
+            "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9"
+            "\xC3\xA9\xC3\xA9")
+      << "name decoder should stop before exceeding the fixed device-name buffer and keep valid UTF-8";
+}
+
+TEST(ProtoFrame, EncodeDeviceNamePayloadAsciiNameZeroPadsPayload) {
+  uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {0xFF};
+  std::string normalized_name;
+
+  EXPECT_EQ(encode_device_name_payload("Patio", payload, normalized_name), DeviceNameValidationError::NONE);
+  EXPECT_EQ(normalized_name, "Patio");
+  EXPECT_EQ(payload[0], 'P');
+  EXPECT_EQ(payload[1], 'a');
+  EXPECT_EQ(payload[2], 't');
+  EXPECT_EQ(payload[3], 'i');
+  EXPECT_EQ(payload[4], 'o');
+  for (size_t index = 5; index < DEVICE_NAME_WRITE_PAYLOAD_SIZE; index++)
+    EXPECT_EQ(payload[index], 0x00) << "unused write-payload bytes should be zero padded";
+}
+
+TEST(ProtoFrame, EncodeDeviceNamePayloadTrimsAsciiWhitespaceBeforeEncoding) {
+  uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {0};
+  std::string normalized_name;
+
+  EXPECT_EQ(encode_device_name_payload("  Velux East  ", payload, normalized_name), DeviceNameValidationError::NONE);
+  EXPECT_EQ(normalized_name, "Velux East");
+}
+
+TEST(ProtoFrame, EncodeDeviceNamePayloadAcceptsLatin1Utf8Characters) {
+  uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {0};
+  std::string normalized_name;
+
+  EXPECT_EQ(encode_device_name_payload("R\xC3\xA9sum\xC3\xA9", payload, normalized_name),
+            DeviceNameValidationError::NONE);
+  EXPECT_EQ(normalized_name, "R\xC3\xA9sum\xC3\xA9");
+  EXPECT_EQ(payload[0], 'R');
+  EXPECT_EQ(payload[1], 0xE9);
+  EXPECT_EQ(payload[2], 's');
+  EXPECT_EQ(payload[3], 'u');
+  EXPECT_EQ(payload[4], 'm');
+  EXPECT_EQ(payload[5], 0xE9);
+}
+
+TEST(ProtoFrame, EncodeDeviceNamePayloadRejectsEmptyName) {
+  uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {0};
+  std::string normalized_name;
+
+  EXPECT_EQ(encode_device_name_payload("   ", payload, normalized_name), DeviceNameValidationError::EMPTY);
+  EXPECT_TRUE(normalized_name.empty());
+}
+
+TEST(ProtoFrame, EncodeDeviceNamePayloadRejectsTooLongName) {
+  uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {0};
+  std::string normalized_name;
+
+  EXPECT_EQ(encode_device_name_payload("1234567890ABCDEF", payload, normalized_name),
+            DeviceNameValidationError::TOO_LONG);
+}
+
+TEST(ProtoFrame, EncodeDeviceNamePayloadRejectsUnsupportedUnicodeCharacter) {
+  uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {0};
+  std::string normalized_name;
+
+  EXPECT_EQ(encode_device_name_payload("Door \xE2\x82\xAC", payload, normalized_name),
+            DeviceNameValidationError::UNSUPPORTED_CHAR);
+}
+
+TEST(ProtoFrame, EncodeDeviceNamePayloadRejectsMalformedUtf8) {
+  uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {0};
+  std::string normalized_name;
+  const std::string malformed_name = std::string("Bad\xC3", 4);
+
+  EXPECT_EQ(encode_device_name_payload(malformed_name, payload, normalized_name),
+            DeviceNameValidationError::INVALID_UTF8);
+}
+
 // ========================================================================================
 // Default inversion for device types
 // ========================================================================================

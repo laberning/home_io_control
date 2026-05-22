@@ -6,8 +6,14 @@
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import switch
-from esphome.const import CONF_ID
+from esphome.components import switch, text_sensor
+from esphome.const import (
+    CONF_DISABLED_BY_DEFAULT,
+    CONF_ID,
+    CONF_NAME,
+    ENTITY_CATEGORY_DIAGNOSTIC,
+)
+from esphome.core import CORE, ID
 
 from . import (
     home_io_control_ns,
@@ -28,6 +34,24 @@ CONF_SUBTYPE = "io_subtype"
 CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
 
 IOHomeSwitch = home_io_control_ns.class_("IOHomeSwitch", switch.Switch, cg.Component)
+IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
+    "IOHomeDeviceNameTextSensor", text_sensor.TextSensor, cg.Component
+)
+
+
+def device_name_sensor_id(parent_id):
+    return ID(
+        f"{parent_id.id}_device_name_sensor",
+        is_declaration=True,
+        type=IOHomeDeviceNameTextSensor,
+    )
+
+
+def device_name_sensor_name(config):
+    base_name = config.get(CONF_NAME, "")
+    if base_name:
+        return f"{base_name} Device Name"
+    return "Device Name"
 
 CONFIG_SCHEMA = (
     # Switches are exposed as binary entities; a richer state model needs real-device evidence
@@ -70,3 +94,15 @@ async def to_code(config):
     if CONF_LINKED_REMOTES in config:
         for remote_id in config[CONF_LINKED_REMOTES]:
             cg.add(parent.add_linked_remote(remote_id, config[CONF_DEVICE_ID]))
+
+    device_name_config = {
+        CONF_ID: device_name_sensor_id(config[CONF_ID]),
+        CONF_NAME: device_name_sensor_name(config),
+        CONF_DISABLED_BY_DEFAULT: True,
+        "entity_category": ENTITY_CATEGORY_DIAGNOSTIC,
+    }
+    device_name = await text_sensor.new_text_sensor(device_name_config)
+    CORE.component_ids.add(str(device_name.base))
+    await cg.register_component(device_name, device_name_config)
+    cg.add(device_name.set_parent(parent))
+    cg.add(device_name.set_device_id(config[CONF_DEVICE_ID]))

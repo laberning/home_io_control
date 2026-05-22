@@ -46,6 +46,23 @@ bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low
 /// @return true on success.
 bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 
+/// Build a get-name request (0x50). The device responds with its stored display name.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param low_power True if target is battery/solar-powered (uses long preamble).
+/// @return true on success.
+bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
+
+/// Build an authenticated set-name request (0x52) using a fixed zero-padded Latin-1 payload.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param payload Pre-validated fixed payload produced by encode_device_name_payload().
+/// @return true on success.
+bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
+                     const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]);
+
 /// Build an execute‑tilt command (0x00) for slat angle control.
 /// @param f IoFrame to populate.
 /// @param own Controller node ID.

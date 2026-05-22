@@ -155,6 +155,7 @@ void IOHomeControlComponent::setup() {
   }
 
   this->initialized_ = true;
+  this->register_management_actions_();
   this->last_hop_us_ = micros();
   ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", use_sx1262 ? "SX1262" : "SX1276",
            this->node_id_str_.c_str());

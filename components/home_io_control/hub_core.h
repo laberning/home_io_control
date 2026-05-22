@@ -23,6 +23,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
+#include "esphome/components/api/custom_api_device.h"
 #include "esphome/components/spi/spi.h"
 #include "esphome/components/button/button.h"
 #include "proto_frame.h"
@@ -37,6 +38,10 @@
 
 namespace esphome {
 namespace home_io_control {
+
+namespace detail {
+class RenameDeviceServiceDescriptor;
+}
 
 /// Callback type for notifying covers of device state changes.
 using DeviceUpdateCallback = std::function<void(const std::string &device_id, const IoDevice &device)>;
@@ -57,10 +62,26 @@ inline constexpr size_t POSITION_TEXT_BUFFER_SIZE = 16;  ///< Buffer for formatt
 /// Implements SpiAccess to provide the radio driver with SPI bus access.
 /// @ingroup hioc_hub
 class IOHomeControlComponent : public Component,
+                               public api::CustomAPIDevice,
                                public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                                      spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_8MHZ>,
                                public SpiAccess {
+  friend class detail::RenameDeviceServiceDescriptor;
+
  public:
+  /// @brief Result payload used by hub-level management actions such as rename.
+  struct ManagementActionResult {
+    bool success{false};          ///< Whether the requested management action succeeded.
+    bool verified{false};         ///< Whether a follow-up readback verified the applied state.
+    bool has_result_code{false};  ///< True when result_code contains a decoded CMD_ERROR_RESP byte.
+    uint8_t result_code{0};       ///< Optional CMD_ERROR_RESP result byte from the device.
+    std::string action;           ///< Action name, for example "rename_device".
+    std::string device_id;        ///< Target IO-homecontrol device ID.
+    std::string message;          ///< Human-readable outcome summary.
+    std::string requested_name;   ///< Requested normalized UTF-8 name for rename actions.
+    std::string applied_name;     ///< Verified cached UTF-8 name after a readback, when available.
+  };
+
   /// @brief Initialize hardware (radio and device registry).
   void setup() override;
   /// @brief Main loop: process pending operations and drive radio state machine.
@@ -165,6 +186,15 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @return true if status frame was received and processed.
   virtual bool request_device_status(const std::string &device_id);
+  /// Request the stored device name from a device.
+  /// @param device_id Target device ID.
+  /// @return true if a name response frame was received and processed.
+  virtual bool request_device_name(const std::string &device_id);
+  /// Rename a device and verify the result by reading the name back.
+  /// @param device_id Target device ID.
+  /// @param new_name Requested UTF-8 device name.
+  /// @return Structured result describing success, verification, and any validation failure.
+  virtual ManagementActionResult rename_device(const std::string &device_id, const std::string &new_name);
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
@@ -189,6 +219,9 @@ class IOHomeControlComponent : public Component,
   /// Queue an async status request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   virtual void queue_request_device_status(const std::string &device_id);
+  /// Queue an async device-name request; returns immediately, executed in loop().
+  /// @param device_id Target device ID.
+  virtual void queue_request_device_name(const std::string &device_id);
   /// Queue a pairing operation; executed in loop() when radio idle.
   virtual void queue_discover_and_pair();
   /// Async form of set_light_state() that keeps radio work serialized on the main loop.
@@ -218,11 +251,12 @@ class IOHomeControlComponent : public Component,
   /// @param freq RF frequency the packet arrived on.
   /// @return true if authentication succeeded; false otherwise.
   bool authenticate_request_(const IoFrame &request, uint32_t freq);
-  /// Parse received packet, update device state if it's a status frame, and notify covers.
+  /// Parse a received frame, merge supported device state or metadata, and notify callbacks.
   /// @param packet Raw radio packet containing a parsed IoFrame.
   void process_received_packet_(const RadioRxPacket &packet);
-  /// Extract position/status info from a status or status-update frame and merge into device record.
-  /// @param frame IoFrame containing a status-bearing command (CMD_PRIVATE_RESP or CMD_STATUS_UPDATE).
+  /// Extract supported position or metadata info from a response frame and merge it into the device record.
+  /// @param frame IoFrame containing a supported inbound command such as CMD_PRIVATE_RESP,
+  /// CMD_STATUS_UPDATE, CMD_GET_NAME_RESP, or CMD_GET_INFO2_RESP.
   void update_device_status_(const IoFrame &frame);
   /// Schedule a delayed status poll for a registered device using the Component timeout API.
   /// @param device_id ID of the device to poll.
@@ -242,6 +276,17 @@ class IOHomeControlComponent : public Component,
   /// @return true if device acknowledged; false otherwise.
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
                                    uint32_t retry_after_fail_ms = 0);
+  /// Register hub-level Home Assistant actions exposed through ESPHome's native API.
+  void register_management_actions_();
+  /// Publish the outcome of a management action as a Home Assistant event and structured logs.
+  /// @param result Management action result to emit.
+  void publish_management_result_(const ManagementActionResult &result);
+  /// Native API action callback: rename a registered device.
+  /// @param device_id Target device ID as provided by Home Assistant.
+  /// @param new_name Requested UTF-8 device name.
+  /// @note This callback is wired from the native API service descriptor and forwards
+  ///       the decoded string arguments directly into rename_device().
+  void api_rename_device_(const std::string &device_id, const std::string &new_name);
   /// Fire all registered device update callbacks for the given device ID.
   /// @param id Device ID that updated.
   void notify_device_update_(const std::string &id);
@@ -320,6 +365,7 @@ class IOHomeControlComponent : public Component,
     SET_LIGHT_STATE,    ///< Queue a set_light_state call (binary on/off).
     SET_SWITCH_STATE,   ///< Queue a set_switch_state call (binary on/off).
     REQUEST_STATUS,     ///< Queue a request_device_status call (poll for current position).
+    REQUEST_NAME,       ///< Queue a request_device_name call (poll for stored device name).
     DISCOVER_AND_PAIR,  ///< Queue a discover_and_pair call (starts 3‑phase pairing flow).
   };
 
