@@ -42,6 +42,8 @@ IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
     "IOHomeDeviceNameTextSensor", text_sensor.TextSensor, cg.Component
 )
 
+# Device types that support 0-100% position control (maps to DeviceCapabilityClass::COVER in C++).
+# Used to decide whether a favorite-position button companion should be generated.
 POSITION_CONTROL_DEVICE_TYPES = {
     0x01,  # venetian_blind
     0x02,  # roller_shutter
@@ -62,10 +64,12 @@ POSITION_CONTROL_DEVICE_TYPES = {
 
 
 def device_supports_position_control(value):
+    """Check if the given device type value supports 0-100% position control."""
     return value in POSITION_CONTROL_DEVICE_TYPES
 
 
 def favorite_button_id(parent_id):
+    """Generate a unique ID for the favorite-position button child entity."""
     return ID(
         f"{parent_id.id}_favorite_button",
         is_declaration=True,
@@ -74,6 +78,7 @@ def favorite_button_id(parent_id):
 
 
 def favorite_button_name(config):
+    """Derive the favorite-position button name from the parent cover name."""
     base_name = config.get(CONF_NAME, "")
     if base_name:
         return f"{base_name} Favorite Position"
@@ -81,6 +86,7 @@ def favorite_button_name(config):
 
 
 def device_name_sensor_id(parent_id):
+    """Generate a unique ID for the diagnostic device-name text sensor."""
     return ID(
         f"{parent_id.id}_device_name_sensor",
         is_declaration=True,
@@ -89,6 +95,7 @@ def device_name_sensor_id(parent_id):
 
 
 def device_name_sensor_name(config):
+    """Derive the device-name sensor name from the parent entity name."""
     base_name = config.get(CONF_NAME, "")
     if base_name:
         return f"{base_name} Device Name"

@@ -71,15 +71,20 @@ DEVICE_TYPE_OPTIONS = {
     "lock": 0x09,
     "blind": 0x0A,
     "screen": 0x0B,
+    "dual_shutter": 0x0D,
     "heating_temperature_interface": 0x0E,
     "on_off_switch": 0x0F,
     "horizontal_awning": 0x10,
+    "external_venetian_blind": 0x11,
+    "louvre_blind": 0x12,
     "curtain_track": 0x13,
     "intrusion_alarm": 0x17,
+    "swinging_shutter": 0x18,
 }
 
 
 def validate_device_type(value):
+    """Validate io_device_type as a named string or integer 0-255."""
     if isinstance(value, int):
         return cv.int_range(min=0, max=0xFF)(value)
 
@@ -100,12 +105,14 @@ def validate_device_type(value):
 
 
 def device_type_expression(value):
+    """Generate a C++ static_cast expression for a validated device type."""
     return cg.RawExpression(
         f"static_cast<esphome::home_io_control::DeviceType>(0x{value:02X})"
     )
 
 
 def validate_node_id(value):
+    """Validate node_id as exactly 6 hex characters (3 bytes)."""
     value = cv.string_strict(value).upper()
     if len(value) != 6:
         raise cv.Invalid("Node ID must be exactly 6 hex characters (3 bytes)")
@@ -117,6 +124,7 @@ def validate_node_id(value):
 
 
 def validate_system_key(value):
+    """Validate system_key as exactly 32 hex characters (16 bytes)."""
     value = cv.string_strict(value).upper()
     if len(value) != 32:
         raise cv.Invalid("System key must be exactly 32 hex characters (16 bytes)")
@@ -128,6 +136,7 @@ def validate_system_key(value):
 
 
 def validate_device_id(value):
+    """Validate io_device_id as exactly 6 hex characters (3 bytes)."""
     value = cv.string_strict(value).upper()
     if len(value) != 6:
         raise cv.Invalid("Device ID must be exactly 6 hex characters (3 bytes)")
@@ -139,6 +148,7 @@ def validate_device_id(value):
 
 
 def validate_status_poll_interval(value):
+    """Validate status_poll_interval is at least MIN_STATUS_POLL_INTERVAL_MS."""
     value = cv.positive_time_period_milliseconds(value)
     if value.total_milliseconds < MIN_STATUS_POLL_INTERVAL_MS:
         raise cv.Invalid(

@@ -41,6 +41,7 @@ IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
 
 
 def device_name_sensor_id(parent_id):
+    """Generate a unique ID for the diagnostic device-name text sensor."""
     return ID(
         f"{parent_id.id}_device_name_sensor",
         is_declaration=True,
@@ -49,6 +50,7 @@ def device_name_sensor_id(parent_id):
 
 
 def device_name_sensor_name(config):
+    """Derive the device-name sensor name from the parent entity name."""
     base_name = config.get(CONF_NAME, "")
     if base_name:
         return f"{base_name} Device Name"

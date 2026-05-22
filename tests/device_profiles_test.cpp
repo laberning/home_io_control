@@ -51,8 +51,11 @@ TEST(DeviceProfile, StatusRequestsSupportedForControllableDevices) {
 
 TEST(DeviceProfile, OperationProfileNames) {
   EXPECT_STREQ(device_operation_profile_name(DeviceType::AWNING), "cover_position") << "awning profile should match";
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::VENETIAN_BLIND), "cover_position_tilt")
+      << "venetian blind profile should include tilt";
   EXPECT_STREQ(device_operation_profile_name(DeviceType::LIGHT), "binary_on_off") << "light profile should match";
   EXPECT_STREQ(device_operation_profile_name(DeviceType::ON_OFF_SWITCH), "binary_on_off")
       << "switch profile should match";
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::LOCK), "lock") << "lock profile should match";
   EXPECT_STREQ(device_operation_profile_name(DeviceType::UNKNOWN), "unknown") << "unknown profile should match";
 }
