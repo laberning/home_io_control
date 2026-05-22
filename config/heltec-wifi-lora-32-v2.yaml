@@ -1,6 +1,7 @@
 substitutions:
   device_name: hioc-heltec-v2
   device_friendly_name: Home IO Control WiFi LoRa32 V2
+  oled_unknown_position: '212.0f'
 
 esphome:
   name: ${device_name}
@@ -103,17 +104,19 @@ script:
       position: float
     then:
       - lambda: |-
+          const float unknown_position = ${oled_unknown_position};
+          const bool is_unknown = position == unknown_position || position < 0.0f || position > 1.0f;
           id(oled_active_cover) = cover_label;
-          if (position == position) {
-            if (position >= 0.99f) {
+          if (!is_unknown) {
+            if (position == 1.0f) {
               id(oled_status_text) = "Open";
-            } else if (position <= 0.01f) {
+            } else if (position == 0.0f) {
               id(oled_status_text) = "Closed";
             } else {
               id(oled_status_text) = "Stopped";
             }
           } else {
-            id(oled_status_text) = "Stopped";
+            id(oled_status_text) = "Unknown";
           }
       - script.execute: oled_refresh
 
@@ -136,14 +139,19 @@ display:
     reset_pin: 16
     update_interval: 500ms
     lambda: |-
+      const float unknown_position = ${oled_unknown_position};
       const uint32_t now = millis();
       if ((now - id(oled_last_activity_ms)) > 5000) {
         it.fill(COLOR_OFF);
         return;
       }
 
+      auto is_unknown_position = [&](float position) {
+        return position == unknown_position || position < 0.0f || position > 1.0f;
+      };
+
       auto print_cover_line = [&](int y, const char *label, float position) {
-        if (position == position) {
+        if (!is_unknown_position(position)) {
           it.printf(0, y, id(oled_font_small), "%s %.0f%%", label, position * 100.0f);
         } else {
           it.printf(0, y, id(oled_font_small), "%s --", label);

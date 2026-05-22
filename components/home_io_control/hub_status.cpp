@@ -28,6 +28,7 @@ namespace {
 constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 8;     ///< Minimum payload length for 0x04 position-bearing replies.
 constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for 0x71 device-initiated updates.
 constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload length for 0x57 type/subtype metadata.
+constexpr uint8_t ERROR_RESPONSE_MIN_DATA_LEN = 1;       ///< Minimum payload length for 0xFE result-bearing replies.
 constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
     15;  ///< Minimum payload length for tilt-capable extended status replies.
 constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;         ///< Byte containing STATUS_STOPPED.
@@ -228,8 +229,14 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     return;
   }
 
-  if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE || frame.cmd == CMD_GET_INFO2_RESP) {
-    detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+  if (frame.cmd == CMD_ERROR_RESP) {
+    if (frame.data_len < ERROR_RESPONSE_MIN_DATA_LEN) {
+      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      return;
+    }
+
+    detail::log_command_result(id, frame.data[0]);
+    return;
   }
 }
 

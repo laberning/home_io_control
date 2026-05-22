@@ -169,6 +169,23 @@ TEST(ProtoFrame, ReachedTargetTolerance) {
   EXPECT_FALSE(has_reached_target_position(UNKNOWN_POSITION, 50.0f)) << "unknown target should never count as reached";
 }
 
+TEST(ProtoFrame, CommandResultDecodeHelpers) {
+  EXPECT_STREQ(command_result_name(RESULT_LIMITATION_BY_RAIN), "LIMITATION_BY_RAIN");
+  EXPECT_STREQ(command_result_description(RESULT_LIMITATION_BY_RAIN), "parameter was limited by a rain sensor");
+  EXPECT_TRUE(is_limitation_result(RESULT_LIMITATION_BY_RAIN)) << "rain lockouts should be classified as limitations";
+
+  EXPECT_STREQ(command_result_name(RESULT_MOTION_TIME_TOO_LONG), "MOTION_TIME_TOO_LONG");
+  EXPECT_STREQ(command_result_description(RESULT_MOTION_TIME_TOO_LONG), "target was not reached in time");
+
+  EXPECT_STREQ(command_result_name(RESULT_THERMAL_PROTECTION), "THERMAL_PROTECTION");
+  EXPECT_STREQ(command_result_description(RESULT_THERMAL_PROTECTION), "node has gone into thermal protection mode");
+  EXPECT_FALSE(is_limitation_result(RESULT_THERMAL_PROTECTION))
+      << "thermal protection should stay in the generic error bucket";
+
+  EXPECT_STREQ(command_result_name(0xFF), "UNKNOWN_RESULT_CODE");
+  EXPECT_STREQ(command_result_description(0xFF), "unknown result code");
+}
+
 TEST(ProtoFrame, CrcCcittKnownVector) {
   const uint8_t sample[] = {0x40, 0x20, 0x9C, 0xA3, 0x9C, 0xC0, 0xFF, 0xEE, 0x03, 0x03, 0x00, 0x00};
   EXPECT_EQ(crc_ccitt(sample, sizeof(sample)), 0x6E2C) << "CRC-CCITT should match the known IO-homecontrol vector";

@@ -97,6 +97,15 @@ static IoFrame build_challenge(const uint8_t src[3], const uint8_t dst[3], const
   return f;
 }
 
+static IoFrame build_error_response(const uint8_t src[3], const uint8_t dst[3], uint8_t result) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  set_dst(f, dst);
+  set_src(f, src);
+  set_cmd(f, CMD_ERROR_RESP, &result, 1);
+  return f;
+}
+
 }  // anonymous namespace
 
 // ============================================================================
@@ -232,6 +241,72 @@ TEST(Exchange, SendAndReceive_ChallengeSuccess) {
   EXPECT_TRUE(ok);
   EXPECT_EQ(response.cmd, CMD_PRIVATE_RESP);
   EXPECT_GE(radio.get_send_count(), 2);  // request + auth response
+}
+
+TEST(Exchange, SendAndReceive_DirectErrorResponseIsAccepted) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+
+  IoFrame resp = build_error_response(test::DST_ID, comp.node_id_, RESULT_LIMITATION_BY_RAIN);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  IoFrame response{};
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_TRUE(ok) << "transport layer should surface explicit device refusals to the caller";
+  EXPECT_EQ(response.cmd, CMD_ERROR_RESP);
+  ASSERT_EQ(response.data_len, 1u);
+  EXPECT_EQ(response.data[0], RESULT_LIMITATION_BY_RAIN);
+}
+
+TEST(Exchange, SendAndReceive_FinalErrorResponseAfterChallengeIsAccepted) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+
+  uint8_t chal_data[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  uint8_t len_chal = serialize(challenge, raw_chal, sizeof(raw_chal));
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = len_chal;
+  memcpy(chal_pkt.data, raw_chal, len_chal);
+  radio.queue_rx(chal_pkt);
+
+  IoFrame final_resp = build_error_response(test::DST_ID, comp.node_id_, RESULT_THERMAL_PROTECTION);
+  uint8_t raw_final[64];
+  uint8_t len_final = serialize(final_resp, raw_final, sizeof(raw_final));
+  RadioRxPacket final_pkt{};
+  final_pkt.len = len_final;
+  memcpy(final_pkt.data, raw_final, len_final);
+  radio.queue_rx(final_pkt);
+
+  IoFrame response{};
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_TRUE(ok) << "authenticated exchanges should also surface explicit device refusals";
+  EXPECT_EQ(response.cmd, CMD_ERROR_RESP);
+  ASSERT_EQ(response.data_len, 1u);
+  EXPECT_EQ(response.data[0], RESULT_THERMAL_PROTECTION);
 }
 
 TEST(Exchange, SendAndReceive_AuthTransmitFailure) {

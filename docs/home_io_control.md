@@ -127,6 +127,7 @@ Notes:
 - The protocol support currently exposed here is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh. The hub only keeps polling while a local command or overheard remote activity suggests that the device should still be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires.
 - Unsolicited `0x71` device status updates are always applied to the entity state. They only extend automatic repeated polling when `status_poll_interval` is configured; without it, the hub falls back to the single settle poll armed by the original command or remote activity.
+- Explicit `0xFE` device refusals are decoded into warn-level ESPHome logs. Common examples include `LIMITATION_BY_RAIN`, `LIMITATION_BY_WIND`, and `THERMAL_PROTECTION`. This release keeps those diagnostics log-only rather than exposing a dedicated sensor.
 
 ## Light Platform
 
@@ -359,6 +360,25 @@ For larger working examples, see the configs already in this repo:
 - [config/heltec-wifi-lora-32-v2-all-types.yaml](../config/heltec-wifi-lora-32-v2-all-types.yaml): SX1276 Heltec LoRa32 V2 controller config without OLED support that exercises every currently supported ESPHome platform in this component: cover, light, switch, and the Discover & Pair button, all with dummy device IDs ready to replace.
 - [config/heltec-wifi-lora-32-v3.yaml](../config/heltec-wifi-lora-32-v3.yaml): SX1262 Heltec WiFi LoRa32 V3/V3.2 controller config with one awning cover, a Discover & Pair button, and an OLED status display tuned for the V3 pinout and TCXO settings.
 - [config/heltec-wifi-lora-32-v3-monitor.yaml](../config/heltec-wifi-lora-32-v3-monitor.yaml): SX1262 passive monitor config for Heltec WiFi LoRa32 V3/V3.2 that keeps the radio in RX, enables `IOHOME_FRAME_LOG`, and logs parsed traffic without creating entities or exposing a pairing button.
+
+## Diagnostics and Unknown Position
+
+- Warn-level logs now decode explicit `CMD_ERROR_RESP (0xFE)` replies instead of collapsing them into generic command failures. A refused command will look like `Device ABC123: command 0x00 returned limitation result=0xEB LIMITATION_BY_WIND (parameter was limited by a wind sensor)`.
+- The component's unknown-position sentinel is `212.0F`, matching protocol value `POS_UNKNOWN (0xD4)`. Custom ESPHome lambdas should compare against that value rather than using a `NaN` check.
+- The OLED example configs in this repo already follow that rule and render `--` plus `Unknown` when a cover has not reported a usable position yet.
+
+Example custom-lambda pattern:
+
+```yaml
+lambda: |-
+  const float unknown_position = 212.0f;
+  const float position = id(patio_awning).position;
+  if (position == unknown_position) {
+    ESP_LOGI("example", "position is unknown");
+  } else {
+    ESP_LOGI("example", "position %.0f%%", position * 100.0f);
+  }
+```
 
 ## Pairing Workflow
 

@@ -238,6 +238,24 @@ inline void log_status_update(const std::string &id, const IoDevice &dev, const 
            format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving", suffix);
 }
 
+/// @brief Log a decoded CMD_ERROR_RESP result with optional request-command context.
+/// @param id Device ID.
+/// @param result Result byte from CMD_ERROR_RESP data[0].
+/// @param request_cmd Original outbound request command when known.
+/// @param include_request_cmd True to include request_cmd in the log line.
+inline void log_command_result(const std::string &id, uint8_t result, uint8_t request_cmd = 0,
+                               bool include_request_cmd = false) {
+  const char *kind = is_limitation_result(result) ? "limitation" : "error";
+  if (include_request_cmd) {
+    ESP_LOGW(TAG, "Device %s: command 0x%02X returned %s result=0x%02X %s (%s)", id.c_str(), request_cmd, kind, result,
+             command_result_name(result), command_result_description(result));
+    return;
+  }
+
+  ESP_LOGW(TAG, "Device %s: explicit %s result=0x%02X %s (%s)", id.c_str(), kind, result, command_result_name(result),
+           command_result_description(result));
+}
+
 }  // namespace detail
 }  // namespace home_io_control
 }  // namespace esphome

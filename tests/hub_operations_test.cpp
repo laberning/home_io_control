@@ -61,6 +61,17 @@ static IoFrame build_moving_status_response(const uint8_t dst[3], uint8_t delay_
   return f;
 }
 
+static IoFrame build_error_response(const uint8_t dst[3], uint8_t result) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  uint8_t payload[1] = {result};
+  set_cmd(f, CMD_ERROR_RESP, payload, sizeof(payload));
+  return f;
+}
+
 static IoFrame build_challenge_request(const uint8_t src[3], const uint8_t dst[3]) {
   IoFrame f{};
   init_frame(f, true, false, false, false);
@@ -165,6 +176,49 @@ TEST(HubOperations, RequestDeviceStatusSuccess) {
 
   bool ok = comp.request_device_status("ABC123");
   EXPECT_TRUE(ok) << "request_device_status should succeed for cover device";
+}
+
+TEST(HubOperations, SetDevicePositionFailsOnExplicitErrorResponse) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  IoFrame resp = build_error_response(comp.node_id_, RESULT_LIMITATION_BY_WIND);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.set_device_position("ABC123", 50)) << "explicit device refusals should fail the high-level command";
+}
+
+TEST(HubOperations, RequestDeviceStatusExplicitErrorBacksOffTrackedPolling) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+
+  IoFrame resp = build_error_response(comp.node_id_, RESULT_THERMAL_PROTECTION);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"))
+      << "tracked status polls should treat explicit device errors as failures";
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_NE(dev->next_update, 0u) << "explicit errors during tracked polling should schedule backoff";
+  EXPECT_EQ(dev->status_poll_failures, 1u) << "explicit non-auth errors should use the normal failure streak";
 }
 
 TEST(HubOperations, RequestDeviceStatusRejectsUnknownDevice) {

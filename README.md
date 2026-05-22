@@ -140,6 +140,8 @@ For all other examples, platform-specific options, and pairing instructions, use
 
 If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected `cover:`, `light:`, or `switch:` entry. Without that option, the hub still keeps the legacy single follow-up settle poll after a local command or overheard remote activity. With the option set, it continues polling only while the device still appears to be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires. The minimum supported interval is 500ms.
 
+Explicit device refusals show up as decoded warn-level ESPHome logs. For example, a command blocked by weather can log `LIMITATION_BY_RAIN` or `LIMITATION_BY_WIND` instead of looking like a silent no-op.
+
 ## Development
 
 ### Setup and Prerequisites

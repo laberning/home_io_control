@@ -736,6 +736,32 @@ TEST(HubCore, GetInfo2RespDoesNotOverwriteDeclaredType) {
   EXPECT_EQ(dev->subtype, 7u) << "INFO2 must not overwrite a YAML-declared subtype";
 }
 
+TEST(HubCore, ErrorRespDoesNotMutateTrackedPosition) {
+  IOHomeControlComponent comp;
+  comp.add_device("054E17");
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  dev->position = 25.0f;
+  dev->target = 40.0f;
+  dev->is_stopped = false;
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[1] = {RESULT_LIMITATION_BY_WIND};
+  set_cmd(f, CMD_ERROR_RESP, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_FLOAT_EQ(dev->position, 25.0f) << "error responses should not overwrite last known position";
+  EXPECT_FLOAT_EQ(dev->target, 40.0f) << "error responses should not overwrite last known target";
+  EXPECT_FALSE(dev->is_stopped) << "error responses should not change movement state";
+}
+
 TEST(HubCore, OwnControllerStatusUpdateSchedulesPoll) {
   RxTestableComponent comp;
   MockRadio radio;

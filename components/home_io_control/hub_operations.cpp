@@ -51,6 +51,32 @@ void clear_status_poll_failure_backoff(IoDevice &dev) {
   dev.auth_poll_failures = 0;
 }
 
+/// @brief Apply tracked-poll failure bookkeeping after an explicit exchange failure.
+/// @param component Owning hub component.
+/// @param device_id Target device ID.
+/// @param retry_after_fail_ms Non-zero only for tracked background status polling.
+/// @param auth_like_failure True when the failed exchange saw an auth challenge.
+void handle_failed_exchange(IOHomeControlComponent *component, const std::string &device_id,
+                            uint32_t retry_after_fail_ms, bool auth_like_failure) {
+  if (retry_after_fail_ms == 0)
+    return;
+
+  if (auto *dev = component->get_device(device_id); dev != nullptr) {
+    const uint32_t backoff_ms = apply_status_poll_failure_backoff(*dev, auth_like_failure);
+    uint32_t const now = millis();
+    if (detail::status_poll_tracking_active(*dev, now) && now + backoff_ms <= dev->poll_deadline) {
+      dev->next_update = now + backoff_ms;
+      ESP_LOGD(detail::TAG,
+               "Background status poll backoff for device %s: delay=%u ms auth_like=%s status_failures=%u "
+               "auth_failures=%u",
+               device_id.c_str(), backoff_ms, YESNO(auth_like_failure), dev->status_poll_failures,
+               dev->auth_poll_failures);
+    } else {
+      detail::clear_status_poll_tracking(*dev);
+    }
+  }
+}
+
 }  // namespace
 
 // Execute an authenticated request on the standard command channel and, on success, feed the
@@ -60,27 +86,22 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
                                                          bool warn_on_no_response, uint32_t retry_after_fail_ms) {
   IoFrame response;
   if (!this->send_and_receive_(request, response, FREQ_CH2)) {
-    if (retry_after_fail_ms != 0) {
-      if (auto *dev = this->get_device(device_id); dev != nullptr) {
-        const bool auth_like_failure = this->last_exchange_debug_.saw_challenge;
-        const uint32_t backoff_ms = apply_status_poll_failure_backoff(*dev, auth_like_failure);
-        uint32_t const now = millis();
-        if (detail::status_poll_tracking_active(*dev, now) && now + backoff_ms <= dev->poll_deadline) {
-          dev->next_update = now + backoff_ms;
-          ESP_LOGD(detail::TAG,
-                   "Background status poll backoff for device %s: delay=%u ms auth_like=%s status_failures=%u "
-                   "auth_failures=%u",
-                   device_id.c_str(), backoff_ms, YESNO(auth_like_failure), dev->status_poll_failures,
-                   dev->auth_poll_failures);
-        } else {
-          detail::clear_status_poll_tracking(*dev);
-        }
-      }
-    }
+    handle_failed_exchange(this, device_id, retry_after_fail_ms, this->last_exchange_debug_.saw_challenge);
     this->log_exchange_debug_(device_id.c_str());
     if (warn_on_no_response) {
-      ESP_LOGW(detail::TAG, "No response from device %s", device_id.c_str());
+      ESP_LOGW(detail::TAG, "Command 0x%02X failed for device %s: no valid response (stage=%s tries=%u)", request.cmd,
+               device_id.c_str(), this->last_exchange_debug_.stage, this->last_exchange_debug_.tries);
     }
+    return false;
+  }
+
+  if (response.cmd == CMD_ERROR_RESP) {
+    if (response.data_len == 0) {
+      detail::log_frame_issue(this, "rx", "unsupported_payload", response, frame_length(response));
+    } else {
+      detail::log_command_result(device_id, response.data[0], request.cmd, true);
+    }
+    handle_failed_exchange(this, device_id, retry_after_fail_ms, this->last_exchange_debug_.saw_challenge);
     return false;
   }
 

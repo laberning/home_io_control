@@ -147,6 +147,58 @@ static constexpr uint8_t CMD_STATUS_UPDATE = 0x71;       ///< Device-initiated s
 static constexpr uint8_t CMD_STATUS_UPDATE_RESP = 0x72;  ///< Acknowledge status update
 static constexpr uint8_t CMD_ERROR_RESP = 0xFE;          ///< Error response to any command
 
+// Command-result / limitation codes carried in CMD_ERROR_RESP DATA[0].
+static constexpr uint8_t RESULT_UNKNOWN_STATUS_REPLY = 0x00;        ///< Device returned an unknown status reply.
+static constexpr uint8_t RESULT_COMMAND_COMPLETED_OK = 0x01;        ///< No errors detected.
+static constexpr uint8_t RESULT_NO_CONTACT = 0x02;                  ///< No communication to node.
+static constexpr uint8_t RESULT_MANUALLY_OPERATED = 0x03;           ///< Manually operated by a user.
+static constexpr uint8_t RESULT_BLOCKED = 0x04;                     ///< Node blocked by an object.
+static constexpr uint8_t RESULT_WRONG_SYSTEMKEY = 0x05;             ///< Node contains the wrong system key.
+static constexpr uint8_t RESULT_PRIORITY_LEVEL_LOCKED = 0x06;       ///< Node is locked on this priority level.
+static constexpr uint8_t RESULT_REACHED_WRONG_POSITION = 0x07;      ///< Node stopped in another position than expected.
+static constexpr uint8_t RESULT_ERROR_DURING_EXECUTION = 0x08;      ///< Generic execution failure.
+static constexpr uint8_t RESULT_NO_EXECUTION = 0x09;                ///< Node did not move.
+static constexpr uint8_t RESULT_CALIBRATING = 0x0A;                 ///< Node is calibrating.
+static constexpr uint8_t RESULT_POWER_CONSUMPTION_TOO_HIGH = 0x0B;  ///< Node power consumption is too high.
+static constexpr uint8_t RESULT_POWER_CONSUMPTION_TOO_LOW = 0x0C;   ///< Node power consumption is too low.
+static constexpr uint8_t RESULT_LOCK_POSITION_OPEN = 0x0D;          ///< Lock command failed because the door is open.
+static constexpr uint8_t RESULT_MOTION_TIME_TOO_LONG = 0x0E;        ///< Target was not reached in time.
+static constexpr uint8_t RESULT_THERMAL_PROTECTION = 0x0F;          ///< Node entered thermal protection mode.
+static constexpr uint8_t RESULT_PRODUCT_NOT_OPERATIONAL = 0x10;     ///< Node is not currently operational.
+static constexpr uint8_t RESULT_FILTER_MAINTENANCE_NEEDED = 0x11;   ///< Filter needs maintenance.
+static constexpr uint8_t RESULT_BATTERY_LEVEL = 0x12;               ///< Battery level is low.
+static constexpr uint8_t RESULT_TARGET_MODIFIED = 0x13;             ///< Node modified the requested target value.
+static constexpr uint8_t RESULT_MODE_NOT_IMPLEMENTED = 0x14;        ///< Mode is not supported by the node.
+static constexpr uint8_t RESULT_COMMAND_INCOMPATIBLE_TO_MOVEMENT = 0x15;  ///< Command cannot move the node that way.
+static constexpr uint8_t RESULT_USER_ACTION = 0x16;                       ///< User action overrode the command.
+static constexpr uint8_t RESULT_DEAD_BOLT_ERROR = 0x17;                   ///< Dead bolt error.
+static constexpr uint8_t RESULT_AUTOMATIC_CYCLE_ENGAGED = 0x18;           ///< Node entered automatic cycle mode.
+static constexpr uint8_t RESULT_WRONG_LOAD_CONNECTED = 0x19;              ///< Wrong load connected to node.
+static constexpr uint8_t RESULT_COLOUR_NOT_REACHABLE = 0x1A;              ///< Requested colour not reachable.
+static constexpr uint8_t RESULT_TARGET_NOT_REACHABLE = 0x1B;              ///< Requested target not reachable.
+static constexpr uint8_t RESULT_BAD_INDEX_RECEIVED = 0x1C;                ///< Invalid index received.
+static constexpr uint8_t RESULT_COMMAND_OVERRULED = 0x1D;                 ///< Command was overruled by a newer command.
+static constexpr uint8_t RESULT_NODE_WAITING_FOR_POWER = 0x1E;            ///< Node is waiting for power.
+static constexpr uint8_t RESULT_NODE_LOCKED = 0x20;                       ///< Node is locked.
+static constexpr uint8_t RESULT_WRONG_POSITION = 0x21;                    ///< Node reports wrong position.
+static constexpr uint8_t RESULT_LIMITS_NOT_SET = 0x22;                    ///< Device limits are not set.
+static constexpr uint8_t RESULT_IP_NOT_SET = 0x23;                        ///< Intermediate position is not set.
+static constexpr uint8_t RESULT_OUT_OF_RANGE = 0x24;                      ///< Requested value is out of range.
+static constexpr uint8_t RESULT_INFORMATION_CODE = 0xDF;              ///< Information-only code with unknown semantics.
+static constexpr uint8_t RESULT_PARAMETER_LIMITED = 0xE0;             ///< Parameter limited by an unknown device.
+static constexpr uint8_t RESULT_LIMITATION_BY_LOCAL_USER = 0xE1;      ///< Parameter limited by local button.
+static constexpr uint8_t RESULT_LIMITATION_BY_USER = 0xE2;            ///< Parameter limited by a remote control.
+static constexpr uint8_t RESULT_LIMITATION_BY_RAIN = 0xE3;            ///< Parameter limited by a rain sensor.
+static constexpr uint8_t RESULT_LIMITATION_BY_TIMER = 0xE4;           ///< Parameter limited by a timer.
+static constexpr uint8_t RESULT_LIMITATION_BY_SCD = 0xE5;             ///< Parameter limited by a security actuator.
+static constexpr uint8_t RESULT_LIMITATION_BY_UPS = 0xE6;             ///< Parameter limited by a power supply.
+static constexpr uint8_t RESULT_LIMITATION_BY_UNKNOWN_DEVICE = 0xE7;  ///< Parameter limited by an unknown device.
+static constexpr uint8_t RESULT_LIMITATION_BY_SAAC = 0xEA;  ///< Parameter limited by a standalone automatic controller.
+static constexpr uint8_t RESULT_LIMITATION_BY_WIND = 0xEB;  ///< Parameter limited by a wind sensor.
+static constexpr uint8_t RESULT_LIMITATION_BY_MYSELF = 0xEC;           ///< Parameter limited by the node itself.
+static constexpr uint8_t RESULT_LIMITATION_BY_AUTOMATIC_CYCLE = 0xED;  ///< Parameter limited by an automatic cycle.
+static constexpr uint8_t RESULT_LIMITATION_BY_EMERGENCY = 0xEE;        ///< Parameter limited by an emergency.
+
 // ============================================================================
 // Position and Status Constants
 // ============================================================================
@@ -403,6 +455,18 @@ std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]);
 /// @param type Device type.
 /// @return true for horizontal awnings; false otherwise.
 bool default_inverted_for_type(DeviceType type);
+/// @brief Return a stable symbolic name for a CMD_ERROR_RESP result code.
+/// @param result Result byte from CMD_ERROR_RESP data[0].
+/// @return Uppercase symbolic name, or "UNKNOWN_RESULT_CODE" when unmapped.
+const char *command_result_name(uint8_t result);
+/// @brief Return a human-readable explanation for a CMD_ERROR_RESP result code.
+/// @param result Result byte from CMD_ERROR_RESP data[0].
+/// @return Short description suitable for warn-level logs.
+const char *command_result_description(uint8_t result);
+/// @brief Check whether a result code represents an environmental or control limitation.
+/// @param result Result byte from CMD_ERROR_RESP data[0].
+/// @return true when the response reports a limitation rather than a generic execution error.
+bool is_limitation_result(uint8_t result);
 /// @brief Decode target/current position values from a status frame.
 /// @param target_raw 16‑bit raw target value.
 /// @param current_raw 16‑bit raw current value.
