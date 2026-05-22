@@ -389,8 +389,13 @@ bool device_supports_binary_control(DeviceType type);
 
 /// @brief Does this device type support status request commands (0x03)?
 /// @param type Device type.
-/// @return true for covers and binary devices.
+/// @return true for covers, binary devices, and lock devices.
 bool device_supports_status_requests(DeviceType type);
+
+/// @brief Does this device type support binary lock/unlock control via execute commands?
+/// @param type Device type.
+/// @return true for lock devices.
+bool device_supports_lock_control(DeviceType type);
 
 /// @brief Does this device type support tilt (slat angle) control?
 /// @param type Device type.

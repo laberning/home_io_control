@@ -110,7 +110,8 @@ inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t p
     return true;
   if (device_supports_position_control(dev.type))
     return true;
-  return is_binary_entity_position(position) && device_supports_binary_control(dev.type);
+  return is_binary_entity_position(position) &&
+         (device_supports_binary_control(dev.type) || device_supports_lock_control(dev.type));
 }
 
 /// @brief Can this device accept a tilt command?

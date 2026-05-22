@@ -14,10 +14,11 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 
 - **Cover control**: Open, close, stop, and set position (0–100%) for shutters, blinds, awnings, window openers, garage openers, gate openers, rolling doors, curtain tracks, and related position-based devices
 - **Favorite or My position action for covers**: Covers with a declared position-capable `io_device_type` automatically get a companion Home Assistant button named `<Cover Name> Favorite Position`
-- **Stored device-name diagnostics**: Covers, lights, and switches now auto-generate a diagnostic text sensor named `<Entity Name> Device Name`, disabled by default to reduce clutter and populated from the actuator's internally stored name via a protocol read on boot
+- **Stored device-name diagnostics**: Covers, lights, locks, and switches now auto-generate a diagnostic text sensor named `<Entity Name> Device Name`, disabled by default to reduce clutter and populated from the actuator's internally stored name via a protocol read on boot
 - **On-demand device rename action**: The hub now exposes a native ESPHome API action named `esphome.<node_name>_rename_device` so Home Assistant can rename a paired actuator without adding persistent helper entities
 - **Tilt support for venetian-style blinds**: Tilt-capable device types expose slat-angle control automatically in Home Assistant when the paired device reports tilt support
 - **Experimental binary light support**: On/off-only light entities for IO-Homecontrol light devices
+- **Experimental lock support**: Lock/unlock entities for IO-Homecontrol lock devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
 - **Position feedback**: Real-time position updates from devices (2-Way protocol)
 - **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity
@@ -163,7 +164,7 @@ data:
   new_name: "Patio Awning"
 ```
 
-Use the same `device_id` value that you configured as `io_device_id` in your Home IO Control `cover:`, `light:`, or `switch:` entry. If the device was paired through discovery first, the same 6-character ID also appears in the pairing log snippet that Home IO Control prints for the generated YAML. This is the protocol-level actuator ID, not the Home Assistant entity ID.
+Use the same `device_id` value that you configured as `io_device_id` in your Home IO Control `cover:`, `light:`, `lock:`, or `switch:` entry. If the device was paired through discovery first, the same 6-character ID also appears in the pairing log snippet that Home IO Control prints for the generated YAML. This is the protocol-level actuator ID, not the Home Assistant entity ID.
 
 For automations and scripts, wrap the same block in a normal `action:` step:
 
@@ -180,7 +181,7 @@ Each rename attempt emits the Home Assistant event `esphome.home_io_control_acti
 
 For all other examples, platform-specific options, and pairing instructions, use [docs/home_io_control.md](docs/home_io_control.md).
 
-If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected `cover:`, `light:`, or `switch:` entry. Without that option, the hub still keeps the legacy single follow-up settle poll after a local command or overheard remote activity. With the option set, it continues polling only while the device still appears to be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires. The minimum supported interval is 500ms.
+If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected `cover:`, `light:`, `lock:`, or `switch:` entry. Without that option, the hub still keeps the legacy single follow-up settle poll after a local command or overheard remote activity. With the option set, it continues polling only while the device still appears to be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires. The minimum supported interval is 500ms.
 
 Explicit device refusals show up as decoded warn-level ESPHome logs. For example, a command blocked by weather can log `LIMITATION_BY_RAIN` or `LIMITATION_BY_WIND` instead of looking like a silent no-op.
 

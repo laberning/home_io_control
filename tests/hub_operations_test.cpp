@@ -17,7 +17,7 @@ using namespace esphome::home_io_control;
 // HubOperations test suite
 // ============================================================================
 // Tests for set_device_position, set_device_tilt, request_device_status,
-// set_light_state, set_switch_state, and the queued operation dispatch.
+// set_light_state, set_switch_state, set_lock_state, and the queued operation dispatch.
 //
 // These tests verify capability-gating and correct command construction
 // using mock radio and a testable component subclass.
@@ -166,6 +166,38 @@ TEST(HubOperations, LightBinaryPositionExchangeFails) {
   EXPECT_FALSE(ok) << "set_device_position fails because send_and_receive_ gets no response";
 }
 
+TEST(HubOperations, SetLockStateSuccess) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::LOCK;
+
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.set_lock_state("ABC123", true))
+      << "lock devices should support lock commands via shared execute path";
+}
+
+TEST(HubOperations, SetLockStateRejectsLightDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::LIGHT;
+
+  EXPECT_FALSE(comp.set_lock_state("ABC123", true)) << "non-lock devices should be rejected by lock entity gating";
+}
+
 // ========================================================================================
 // request_device_status tests
 // ========================================================================================
@@ -296,6 +328,26 @@ TEST(HubOperations, RequestDeviceStatusRejectsUnknownDevice) {
 
   bool ok = comp.request_device_status("000000");
   EXPECT_FALSE(ok) << "request_device_status should fail for unregistered device";
+}
+
+TEST(HubOperations, RequestDeviceStatusAcceptsLockDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::LOCK;
+
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.request_device_status("ABC123")) << "lock devices should allow the normal status request flow";
 }
 
 TEST(HubOperations, RequestDeviceStatusOneShotFailureDoesNotArmRetries) {
@@ -496,6 +548,40 @@ TEST(HubOperations, QueueDevicePositionRejectedForLight) {
 
   comp.queue_set_device_position("ABC123", 50);
   EXPECT_TRUE(comp.pending_operations_.empty()) << "non-cover device should be rejected in queue check";
+}
+
+TEST(HubOperations, QueueSetLockStateRejectsNonLockDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.queue_set_lock_state("ABC123", true);
+  EXPECT_TRUE(comp.pending_operations_.empty()) << "non-lock devices should be rejected in queued lock commands";
+}
+
+TEST(HubOperations, ProcessPendingLockOperationDispatchesLockCommand) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::LOCK;
+
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  comp.queue_set_lock_state("ABC123", true);
+  ASSERT_EQ(comp.pending_operations_.size(), 1u);
+  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::SET_LOCK_STATE);
+
+  comp.process_pending_operation_();
+  EXPECT_TRUE(comp.pending_operations_.empty()) << "queued lock operation should be consumed by the dispatcher";
 }
 
 TEST(HubOperations, QueueDeviceTiltRejectedForNonTilt) {

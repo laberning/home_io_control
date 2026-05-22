@@ -742,8 +742,13 @@ bool device_supports_binary_control(DeviceType type) {
   return capability_class == DeviceCapabilityClass::LIGHT || capability_class == DeviceCapabilityClass::SWITCH;
 }
 
+bool device_supports_lock_control(DeviceType type) {
+  return device_capability_class(type) == DeviceCapabilityClass::LOCK;
+}
+
 bool device_supports_status_requests(DeviceType type) {
-  return device_supports_position_control(type) || device_supports_binary_control(type);
+  return device_supports_position_control(type) || device_supports_binary_control(type) ||
+         device_supports_lock_control(type);
 }
 
 bool device_supports_tilt(DeviceType type) {

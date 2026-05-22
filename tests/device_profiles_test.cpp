@@ -37,10 +37,16 @@ TEST(DeviceProfile, BinaryControlNotSupportedForCovers) {
   EXPECT_FALSE(device_supports_binary_control(DeviceType::AWNING)) << "cover should not support binary control";
 }
 
+TEST(DeviceProfile, LockControlSupportedForLocksOnly) {
+  EXPECT_TRUE(device_supports_lock_control(DeviceType::LOCK)) << "lock should support lock control";
+  EXPECT_FALSE(device_supports_lock_control(DeviceType::LIGHT)) << "light should not report lock control";
+}
+
 TEST(DeviceProfile, StatusRequestsSupportedForControllableDevices) {
   EXPECT_TRUE(device_supports_status_requests(DeviceType::AWNING)) << "cover should support status requests";
   EXPECT_TRUE(device_supports_status_requests(DeviceType::LIGHT)) << "light should support status requests";
   EXPECT_TRUE(device_supports_status_requests(DeviceType::ON_OFF_SWITCH)) << "switch should support status requests";
+  EXPECT_TRUE(device_supports_status_requests(DeviceType::LOCK)) << "lock should support status requests";
 }
 
 TEST(DeviceProfile, OperationProfileNames) {

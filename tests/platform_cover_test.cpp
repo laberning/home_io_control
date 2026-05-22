@@ -16,7 +16,7 @@ using namespace esphome::cover;
 // callbacks. Covers standard/inverted mapping, movement state, and unknown-position handling.
 
 // Mock IOHomeControlComponent with minimal implementation for testing IOHomeCover
-class MockHub : public IOHomeControlComponent {
+class MockHub : public test::MockPlatformHubBase {
  public:
   MockHub() {}
   ~MockHub() override = default;
@@ -39,6 +39,11 @@ class MockHub : public IOHomeControlComponent {
   bool set_light_state(const std::string &device_id, bool on) override {
     (void) device_id;
     (void) on;
+    return false;
+  }
+  bool set_lock_state(const std::string &device_id, bool locked) override {
+    (void) device_id;
+    (void) locked;
     return false;
   }
   bool set_switch_state(const std::string &device_id, bool on) override {
@@ -67,30 +72,14 @@ class MockHub : public IOHomeControlComponent {
     queued_operations_.push_back(
         {IOHomeControlComponent::PendingOperationType::SET_LIGHT_STATE, device_id, static_cast<uint8_t>(on ? 0 : 100)});
   }
+  void queue_set_lock_state(const std::string &device_id, bool locked) override {
+    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_LOCK_STATE, device_id,
+                                  static_cast<uint8_t>(locked ? 100 : 0)});
+  }
   void queue_set_switch_state(const std::string &device_id, bool on) override {
     queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_SWITCH_STATE, device_id,
                                   static_cast<uint8_t>(on ? 0 : 100)});
   }
-
-  IoDevice *get_device(const std::string &device_id) override {
-    auto it = devices_.find(device_id);
-    return it != devices_.end() ? &it->second : nullptr;
-  }
-  void add_device(const std::string &device_id) override {
-    if (devices_.count(device_id))
-      return;
-    devices_[device_id] = IoDevice{};
-  }
-  void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) override {
-    if (devices_.count(device_id))
-      return;
-    devices_[device_id] = IoDevice{};
-    devices_[device_id].type = type;
-    devices_[device_id].subtype = subtype;
-    if (inverted)
-      devices_[device_id].inverted = true;
-  }
-  void register_device_callback(DeviceUpdateCallback cb) override { callbacks_.push_back(std::move(cb)); }
 
   // Test accessors
   const std::string &last_set_device_id() const { return last_set_device_id_; }
@@ -101,10 +90,7 @@ class MockHub : public IOHomeControlComponent {
 
   // Helpers for tests
   void trigger_device_update(const std::string &device_id, const IoDevice &dev) {
-    devices_[device_id] = dev;
-    for (auto &cb : callbacks_) {
-      cb(device_id, dev);
-    }
+    test::MockPlatformHubBase::trigger_device_update(device_id, dev, true);
   }
 
  private:

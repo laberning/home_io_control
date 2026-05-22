@@ -77,6 +77,71 @@ void handle_failed_exchange(IOHomeControlComponent *component, const std::string
   }
 }
 
+/// @brief Return the human-readable verb for a position-style command.
+/// @param dev Device receiving the command.
+/// @param position Requested execute position.
+/// @return Log-friendly action string such as "open", "turn on", or "lock".
+const char *position_command_action(const IoDevice &dev, uint8_t position) {
+  if (position == POS_STOP)
+    return "stop";
+
+  if (!detail::is_binary_entity_position(position))
+    return "set position";
+
+  bool const active_state = position == detail::BINARY_ENTITY_ON_POSITION;
+  switch (device_capability_class(dev.type)) {
+    case DeviceCapabilityClass::LIGHT:
+    case DeviceCapabilityClass::SWITCH:
+      return active_state ? "turn on" : "turn off";
+    case DeviceCapabilityClass::LOCK:
+      return active_state ? "unlock" : "lock";
+    case DeviceCapabilityClass::UNKNOWN:
+    case DeviceCapabilityClass::COVER:
+    case DeviceCapabilityClass::CLIMATE:
+    case DeviceCapabilityClass::SENSOR:
+    case DeviceCapabilityClass::BEACON:
+    default:
+      return active_state ? "open" : "close";
+  }
+}
+
+/// @brief Return the accepted entity/profile label for rejected execute-position logs.
+/// @param position Requested execute position.
+/// @return Expected profile label for detail::log_rejected_operation().
+const char *position_rejection_profile(uint8_t position) {
+  return detail::is_binary_entity_position(position) ? "cover_position or binary_on_off" : "cover_position";
+}
+
+/// @brief Update device poll-tracking state before an execute-position request is sent.
+/// @param dev Device record to update.
+/// @param position Requested execute position.
+/// @return true when active tracked polling should be started immediately by the caller.
+bool prepare_position_poll_tracking(IoDevice &dev, uint8_t position) {
+  if (position == POS_STOP) {
+    detail::clear_status_poll_tracking(dev);
+    return false;
+  }
+
+  dev.single_follow_up_poll_pending = dev.status_poll_interval_ms == 0;
+  return true;
+}
+
+/// @brief Roll back tracked polling after a failed execute-position request.
+/// @param dev Device record to update.
+/// @param position Requested execute position.
+void rollback_position_poll_tracking(IoDevice &dev, uint8_t position) {
+  if (position != POS_STOP)
+    detail::clear_status_poll_tracking(dev);
+}
+
+/// @brief Decide whether post-success tracked polling should be scheduled.
+/// @param dev Device record to update.
+/// @param position Requested execute position.
+/// @return true when the caller should arm tracked polling after a successful request.
+bool should_finalize_position_poll_tracking(const IoDevice &dev, uint8_t position) {
+  return position != POS_STOP && dev.status_poll_interval_ms != 0 && dev.next_update == 0;
+}
+
 }  // namespace
 
 // Execute an authenticated request on the standard command channel and, on success, feed the
@@ -119,48 +184,33 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
   if (dev == nullptr || !this->initialized_)
     return false;
 
-  const char *action = "set position";
-  if (position == detail::BINARY_ENTITY_ON_POSITION) {
-    action = "open";
-  } else if (position == detail::BINARY_ENTITY_OFF_POSITION) {
-    action = "close";
-  } else if (position == POS_STOP) {
-    action = "stop";
-  }
+  const char *action = position_command_action(*dev, position);
 
   // Once a device family is known, use the profile helpers to reject YAML/entity mismatches
   // before they hit the radio path. Unknown types still pass through so discovery and imported
   // devices keep working as before.
   if (!detail::known_device_accepts_execute_position(*dev, position)) {
-    detail::log_rejected_operation(
-        device_id, *dev, action,
-        detail::is_binary_entity_position(position) ? "cover_position or binary_on_off" : "cover_position");
+    detail::log_rejected_operation(device_id, *dev, action, position_rejection_profile(position));
     return false;
   }
 
-  if (position == POS_STOP) {
-    detail::clear_status_poll_tracking(*dev);
-  } else {
-    dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
+  if (prepare_position_poll_tracking(*dev, position))
     this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
-  }
 
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", action, device_id.c_str(),
            device_operation_profile_name(dev->type));
 
   IoFrame request;
   if (!create_execute(request, this->node_id_, dev->node_id, true, position)) {
-    if (position != POS_STOP)
-      detail::clear_status_poll_tracking(*dev);
+    rollback_position_poll_tracking(*dev, position);
     return false;
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
-    if (position != POS_STOP)
-      detail::clear_status_poll_tracking(*dev);
+    rollback_position_poll_tracking(*dev, position);
     return false;
   }
-  if (position != POS_STOP && dev->status_poll_interval_ms != 0 && dev->next_update == 0)
+  if (should_finalize_position_poll_tracking(*dev, position))
     this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
   return true;
 }
@@ -261,6 +311,22 @@ bool IOHomeControlComponent::set_switch_state(const std::string &device_id, bool
                                    on ? detail::BINARY_ENTITY_ON_POSITION : detail::BINARY_ENTITY_OFF_POSITION);
 }
 
+bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool locked) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  if (!detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::LOCK)) {
+    detail::log_rejected_operation(device_id, *dev, "lock command", "lock entity");
+    return false;
+  }
+
+  // Lock entities currently reuse the protocol's proven binary execute encoding:
+  // unlock maps to 0 and lock maps to 100.
+  return this->set_device_position(device_id,
+                                   locked ? detail::BINARY_ENTITY_OFF_POSITION : detail::BINARY_ENTITY_ON_POSITION);
+}
+
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {
   IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
@@ -331,6 +397,18 @@ void IOHomeControlComponent::queue_set_light_state(const std::string &device_id,
                                        on ? detail::BINARY_ENTITY_ON_POSITION : detail::BINARY_ENTITY_OFF_POSITION});
 }
 
+void IOHomeControlComponent::queue_set_lock_state(const std::string &device_id, bool locked) {
+  IoDevice *dev = this->get_device(device_id);
+  if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::LOCK)) {
+    detail::log_rejected_operation(device_id, *dev, "queued lock command", "lock entity");
+    return;
+  }
+
+  this->pending_operations_.push_back(
+      {PendingOperationType::SET_LOCK_STATE, device_id,
+       locked ? detail::BINARY_ENTITY_OFF_POSITION : detail::BINARY_ENTITY_ON_POSITION});
+}
+
 void IOHomeControlComponent::queue_set_switch_state(const std::string &device_id, bool on) {
   IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::SWITCH)) {
@@ -362,6 +440,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::SET_LIGHT_STATE:
       this->set_light_state(operation.device_id, operation.position == detail::BINARY_ENTITY_ON_POSITION);
+      break;
+    case PendingOperationType::SET_LOCK_STATE:
+      this->set_lock_state(operation.device_id, operation.position == detail::BINARY_ENTITY_OFF_POSITION);
       break;
     case PendingOperationType::SET_SWITCH_STATE:
       this->set_switch_state(operation.device_id, operation.position == detail::BINARY_ENTITY_ON_POSITION);

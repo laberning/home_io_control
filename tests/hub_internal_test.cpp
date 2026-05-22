@@ -73,6 +73,12 @@ TEST(HubInternal, KnownDeviceAcceptsExecutePosition) {
   EXPECT_TRUE(detail::known_device_accepts_execute_position(light_dev, 100))
       << "light should accept binary OFF position";
 
+  IoDevice lock_dev{};
+  lock_dev.type = DeviceType::LOCK;
+  EXPECT_FALSE(detail::known_device_accepts_execute_position(lock_dev, 50)) << "lock should reject mid-range position";
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(lock_dev, 0)) << "lock should accept unlock position";
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(lock_dev, 100)) << "lock should accept lock position";
+
   IoDevice unknown_dev{};
   unknown_dev.type = DeviceType::UNKNOWN;
   EXPECT_TRUE(detail::known_device_accepts_execute_position(unknown_dev, 50))
@@ -103,6 +109,10 @@ TEST(HubInternal, KnownDeviceSupportsStatusRequests) {
   IoDevice light_dev{};
   light_dev.type = DeviceType::LIGHT;
   EXPECT_TRUE(detail::known_device_supports_status_requests(light_dev)) << "light should support status requests";
+
+  IoDevice lock_dev{};
+  lock_dev.type = DeviceType::LOCK;
+  EXPECT_TRUE(detail::known_device_supports_status_requests(lock_dev)) << "lock should support status requests";
 
   IoDevice unknown_dev{};
   unknown_dev.type = DeviceType::UNKNOWN;

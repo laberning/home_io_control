@@ -73,6 +73,15 @@ light:
     io_device_type: "light"
     io_subtype: 0
 
+lock:
+  - platform: home_io_control
+    home_io_control_id: home_io_hub
+    id: demo_lock
+    name: "Demo Lock"
+    io_device_id: "D0A9C0"
+    io_device_type: "lock"
+    io_subtype: 0
+
 switch:
   - platform: home_io_control
     home_io_control_id: home_io_hub

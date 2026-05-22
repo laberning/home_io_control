@@ -15,54 +15,22 @@ using namespace esphome::home_io_control;
 // queuing, and inbound status updates. Covers moving vs stopped filtering.
 
 // Mock hub similar to test_platform_cover.cpp but with light state
-class MockHubLight : public IOHomeControlComponent {
+class MockHubLight : public test::MockPlatformHubBase {
  public:
   MockHubLight() {}
   ~MockHubLight() override = default;
 
-  bool set_device_position(const std::string &, uint8_t) override { return false; }
-  bool request_device_status(const std::string &) override { return false; }
-  bool discover_and_pair() override { return false; }
   bool set_light_state(const std::string &device_id, bool on) override {
     last_light_device_id_ = device_id;
     last_light_on_ = on;
     return true;
   }
-  bool set_switch_state(const std::string &device_id, bool on) override {
-    (void) device_id;
-    (void) on;
-    return false;
-  }
 
-  void queue_set_device_position(const std::string &, uint8_t) override {}
-  void queue_request_device_status(const std::string &) override {}
-  void queue_discover_and_pair() override {}
   void queue_set_light_state(const std::string &device_id, bool on) override {
     last_light_device_id_ = device_id;
     last_light_on_ = on;
     queued_light_ops_.push_back({device_id, on});
   }
-  void queue_set_switch_state(const std::string &, bool) override {}
-
-  IoDevice *get_device(const std::string &device_id) override {
-    auto it = devices_.find(device_id);
-    return it != devices_.end() ? &it->second : nullptr;
-  }
-  void add_device(const std::string &device_id) override {
-    if (devices_.count(device_id))
-      return;
-    devices_[device_id] = IoDevice{};
-  }
-  void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) override {
-    if (devices_.count(device_id))
-      return;
-    devices_[device_id] = IoDevice{};
-    devices_[device_id].type = type;
-    devices_[device_id].subtype = subtype;
-    if (inverted)
-      devices_[device_id].inverted = true;
-  }
-  void register_device_callback(DeviceUpdateCallback cb) override { callbacks_.push_back(std::move(cb)); }
 
   // Test accessors
   const std::string &last_light_device_id() const { return last_light_device_id_; }
@@ -70,9 +38,7 @@ class MockHubLight : public IOHomeControlComponent {
   const std::deque<std::pair<std::string, bool>> &queued_light_ops() const { return queued_light_ops_; }
 
   void trigger_device_update(const std::string &device_id, const IoDevice &dev) {
-    for (auto &cb : callbacks_) {
-      cb(device_id, dev);
-    }
+    test::MockPlatformHubBase::trigger_device_update(device_id, dev);
   }
 
  private:

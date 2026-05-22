@@ -50,7 +50,7 @@ When `api:` is enabled, Home IO Control also exposes hub-level Home Assistant ac
 
 ## Home IO Control Component
 
-The `home_io_control:` block defines the shared radio/controller hub. All cover, light, switch, and button entities attach to this hub.
+The `home_io_control:` block defines the shared radio/controller hub. All cover, light, lock, switch, and button entities attach to this hub.
 
 ```yaml
 home_io_control:
@@ -241,6 +241,38 @@ Notes:
 - Known non-light device families will be rejected once the device type is known.
 - Lights automatically generate a diagnostic text sensor named `<Light Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 
+## Lock Platform
+
+Use the lock platform for IO-homecontrol lock devices that should appear in Home Assistant as native ESPHome locks.
+
+```yaml
+lock:
+  - platform: home_io_control
+    id: front_door_lock
+    name: "Front Door Lock"
+    io_device_id: "D0A9C0"
+    io_device_type: "lock"
+    status_poll_interval: 2s
+```
+
+Configuration variables:
+
+- `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
+- `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
+- `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `lock` when known, or a raw integer such as `0x09` if pairing reports a type without a named YAML alias yet. When omitted, the controller may learn the type later from radio metadata.
+- `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
+- `status_poll_interval` (Optional): Poll interval used for bounded follow-up status checks while this device is expected to be changing state. The minimum supported value is 500ms. When omitted, the controller keeps the default single settle poll after a local command or overheard remote activity.
+- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the cover platform for details.
+- All standard options from the ESPHome lock schema also apply.
+
+Notes:
+
+- The current implementation exposes lock and unlock behavior and maps it onto the protocol's shared 0/100 execute encoding.
+- The platform does not advertise ESPHome's optional `open` or code-required lock features because those command semantics are not validated here yet.
+- The current implementation is experimental and untested on local hardware in this repo.
+- Known non-lock device families will be rejected once the device type is known.
+- Locks automatically generate a diagnostic text sensor named `<Lock Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
+
 ## Switch Platform
 
 Use the switch platform for binary on/off IO-homecontrol switch devices.
@@ -401,7 +433,7 @@ With `io_device_type: "awning"`, the example above also generates an `Awning Fav
 
 If `api:` is enabled, the same node also exposes `esphome.<node_name>_rename_device` for on-demand device renames.
 
-### Minimal Example with all Device Types: Cover, Light, and Switch
+### Minimal Example with all Device Types: Cover, Light, Lock, and Switch
 
 ```yaml
 home_io_control:
@@ -428,6 +460,14 @@ light:
     io_device_type: "light"
     io_subtype: 0
 
+lock:
+  - platform: home_io_control
+    id: front_door_lock
+    name: "Front Door Lock"
+    io_device_id: "D0A9C0"
+    io_device_type: "lock"
+    io_subtype: 0
+
 switch:
   - platform: home_io_control
     id: irrigation_switch
@@ -446,7 +486,7 @@ button:
 For larger working examples, see the configs already in this repo:
 
 - [config/heltec-wifi-lora-32-v2.yaml](../config/heltec-wifi-lora-32-v2.yaml): SX1276 Heltec LoRa32 V2 controller config with one awning cover, a Discover & Pair button, and an OLED status display that shows recent activity.
-- [config/heltec-wifi-lora-32-v2-all-types.yaml](../config/heltec-wifi-lora-32-v2-all-types.yaml): SX1276 Heltec LoRa32 V2 controller config without OLED support that exercises every currently supported ESPHome platform in this component: cover, light, switch, and the Discover & Pair button, all with dummy device IDs ready to replace.
+- [config/heltec-wifi-lora-32-v2-all-types.yaml](../config/heltec-wifi-lora-32-v2-all-types.yaml): SX1276 Heltec LoRa32 V2 controller config without OLED support that exercises every currently supported ESPHome platform in this component: cover, light, lock, switch, and the Discover & Pair button, all with dummy device IDs ready to replace.
 - [config/heltec-wifi-lora-32-v3.yaml](../config/heltec-wifi-lora-32-v3.yaml): SX1262 Heltec WiFi LoRa32 V3/V3.2 controller config with one awning cover, a Discover & Pair button, and an OLED status display tuned for the V3 pinout and TCXO settings.
 - [config/heltec-wifi-lora-32-v3-monitor.yaml](../config/heltec-wifi-lora-32-v3-monitor.yaml): SX1262 passive monitor config for Heltec WiFi LoRa32 V3/V3.2 that keeps the radio in RX, enables `IOHOME_FRAME_LOG`, and logs parsed traffic without creating entities or exposing a pairing button.
 
@@ -476,23 +516,24 @@ lambda: |-
 3. Put exactly **one** target device into pairing mode by pressing its PROG button. The pairing window is short — typically a few seconds.
 4. Press the **Discover & Pair** button entity in Home Assistant within that window.
 5. Watch the ESPHome logs. On success you will either get a ready-to-paste YAML snippet with `io_device_id`, `io_device_type`, and `io_subtype`, or a follow-up message explaining why a snippet could not be generated.
-6. Copy `io_device_type` and `io_subtype` from the log snippet and add them, together with `io_device_id`, to the appropriate `cover:`, `light:`, or `switch:` entry in your YAML. If the log uses a raw numeric type such as `0x11`, keep that exact value in YAML.
+6. Copy `io_device_type` and `io_subtype` from the log snippet and add them, together with `io_device_id`, to the appropriate `cover:`, `light:`, `lock:`, or `switch:` entry in your YAML. If the log uses a raw numeric type such as `0x11`, keep that exact value in YAML.
 7. Reflash with the updated YAML. The entity will appear in Home Assistant and the controller will begin polling the device for status.
 8. If pairing reports that the type is unsupported or that discovery metadata was incomplete, follow the log guidance and please file a GitHub issue with the raw type/subtype, device model, and pairing log so support can be added.
 
 ## Device Type and Capability Notes
 
 - **Cover-like families** (shutters, awnings, blinds, openers, curtains) are the primary supported path today. These support full position control (0–100%).
-- **Binary light and switch** support exists, but remains experimental and has not been validated against real hardware.
+- **Binary light, lock, and switch** support exists, but remains experimental and has not been validated against real hardware.
 - **Raw type IDs in YAML**: `io_device_type` accepts both named values such as `awning` and raw integers such as `0x11`. Raw values are useful when pairing discovers a valid IO-homecontrol type that this project does not yet expose under a named YAML alias.
 - **Device type learning**: The YAML-declared `io_device_type` is the permanent, authoritative type. The controller may still learn a device's type from radio for runtime profile selection when the type is not declared in YAML, but it will never overwrite a YAML-declared type.
 - **Inversion defaults**: Some device families (e.g., horizontal awnings) default to inverted position mapping. When `invert_position` is omitted, the cover entity follows that learned device profile automatically. Setting `invert_position` explicitly overrides the learned value.
-- Additional reference-derived device types such as locks, heating devices, sensors, and beacons are recognized for classification and logging, but they do not yet have dedicated ESPHome platform support.
+- Additional reference-derived device types such as heating devices, sensors, and beacons are recognized for classification and logging, but they do not yet have dedicated ESPHome platform support.
 
 ## See Also
 
 - [ESPHome External Components](https://esphome.io/components/external_components/)
 - [ESPHome Cover Component](https://esphome.io/components/cover/)
 - [ESPHome Light Component](https://esphome.io/components/light/)
+- [ESPHome Lock Component](https://esphome.io/components/lock/)
 - [ESPHome Switch Component](https://esphome.io/components/switch/)
 - [ESPHome Button Component](https://esphome.io/components/button/)

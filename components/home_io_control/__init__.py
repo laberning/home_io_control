@@ -12,7 +12,7 @@ from esphome.components import spi
 from esphome.const import CONF_ID
 
 DEPENDENCIES = ["api", "spi"]
-AUTO_LOAD = ["button", "cover", "light", "switch", "text_sensor"]
+AUTO_LOAD = ["button", "cover", "light", "lock", "switch", "text_sensor"]
 MULTI_CONF = False
 
 CONF_HOME_IO_CONTROL_ID = "home_io_control_id"

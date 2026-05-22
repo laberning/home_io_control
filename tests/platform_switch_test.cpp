@@ -15,59 +15,29 @@ using namespace esphome::home_io_control;
 // updates. Simple on/off mapping based on position < 50.
 
 // Minimal mock hub for switch tests
-class MockHubSwitch : public IOHomeControlComponent {
+class MockHubSwitch : public test::MockPlatformHubBase {
  public:
   MockHubSwitch() {}
   ~MockHubSwitch() override = default;
 
-  bool set_device_position(const std::string &, uint8_t) override { return false; }
-  bool request_device_status(const std::string &) override { return false; }
-  bool discover_and_pair() override { return false; }
-  bool set_light_state(const std::string &, bool) override { return false; }
   bool set_switch_state(const std::string &device_id, bool on) override {
     last_switch_device_id_ = device_id;
     last_switch_on_ = on;
     return true;
   }
 
-  void queue_set_device_position(const std::string &, uint8_t) override {}
-  void queue_request_device_status(const std::string &) override {}
-  void queue_discover_and_pair() override {}
-  void queue_set_light_state(const std::string &, bool) override {}
   void queue_set_switch_state(const std::string &device_id, bool on) override {
     last_switch_device_id_ = device_id;
     last_switch_on_ = on;
     queued_switch_ops_.push_back({device_id, on});
   }
 
-  IoDevice *get_device(const std::string &device_id) override {
-    auto it = devices_.find(device_id);
-    return it != devices_.end() ? &it->second : nullptr;
-  }
-  void add_device(const std::string &device_id) override {
-    if (devices_.count(device_id))
-      return;
-    devices_[device_id] = IoDevice{};
-  }
-  void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) override {
-    if (devices_.count(device_id))
-      return;
-    devices_[device_id] = IoDevice{};
-    devices_[device_id].type = type;
-    devices_[device_id].subtype = subtype;
-    if (inverted)
-      devices_[device_id].inverted = true;
-  }
-  void register_device_callback(DeviceUpdateCallback cb) override { callbacks_.push_back(std::move(cb)); }
-
   const std::string &last_switch_device_id() const { return last_switch_device_id_; }
   bool last_switch_on() const { return last_switch_on_; }
   const std::deque<std::pair<std::string, bool>> &queued_switch_ops() const { return queued_switch_ops_; }
 
   void trigger_device_update(const std::string &device_id, const IoDevice &dev) {
-    for (auto &cb : callbacks_) {
-      cb(device_id, dev);
-    }
+    test::MockPlatformHubBase::trigger_device_update(device_id, dev);
   }
 
  private:

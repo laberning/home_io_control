@@ -12,7 +12,7 @@ This page gives a contributor-oriented map of the Home IO Control component and 
 ## Request Flow
 
 1. A YAML declaration is validated by the Python code-generation modules in \ref hioc_codegen "Python Code Generation".
-2. ESPHome codegen wires those declarations to runtime C++ objects such as `IOHomeControlComponent`, `IOHomeCover`, `IOHomeLight`, `IOHomeSwitch`, `IOHomeDiscoverButton`, and the generated `IOHomeDeviceNameTextSensor` companions.
+2. ESPHome codegen wires those declarations to runtime C++ objects such as `IOHomeControlComponent`, `IOHomeCover`, `IOHomeLight`, `IOHomeLock`, `IOHomeSwitch`, `IOHomeDiscoverButton`, and the generated `IOHomeDeviceNameTextSensor` companions.
 3. Runtime entities call into the hub through the high-level operation methods documented in \ref hioc_hub "Controller Layer".
 4. The hub builds protocol frames using helpers from \ref hioc_protocol "Protocol Layer" and sends them through a concrete radio backend from \ref hioc_radio "Radio Driver Layer".
 5. Replies, passive updates, and authenticated inbound messages are parsed back through the same protocol layer and merged into the shared device registry before the entity callbacks publish state to Home Assistant.
@@ -44,7 +44,7 @@ Replace `hioc_heltec_v2` with the normalized `esphome.name` of the ESPHome node 
 
 ### Read Path
 
-1. Each configured cover, light, or switch generates a companion diagnostic text sensor.
+1. Each configured cover, light, lock, or switch generates a companion diagnostic text sensor.
 2. That sensor schedules a boot-time `GET_NAME` request through the hub's normal queued-operation path.
 3. `CMD_GET_NAME_RESP` is decoded from Latin-1 wire bytes into cached UTF-8 text in the shared `IoDevice` record.
 4. The same device callback fan-out used by the primary entities updates the generated text sensor in Home Assistant.

@@ -208,6 +208,11 @@ class IOHomeControlComponent : public Component,
   /// @param on Desired on/off state.
   /// @return true if device acknowledged.
   virtual bool set_switch_state(const std::string &device_id, bool on);
+  /// Semantic lock helper for lock entities. Internally mapped to the shared execute path.
+  /// @param device_id Target device ID.
+  /// @param locked Desired locked/unlocked state.
+  /// @return true if device acknowledged.
+  virtual bool set_lock_state(const std::string &device_id, bool locked);
   /// Queue an async position update; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   /// @param position Desired position.
@@ -232,6 +237,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
   virtual void queue_set_switch_state(const std::string &device_id, bool on);
+  /// Async form of set_lock_state() that keeps radio work serialized on the main loop.
+  /// @param device_id Target device ID.
+  /// @param locked Desired locked/unlocked state.
+  virtual void queue_set_lock_state(const std::string &device_id, bool locked);
 
  protected:
   // --- Protocol-level operations ---
@@ -363,6 +372,7 @@ class IOHomeControlComponent : public Component,
     SET_POSITION,       ///< Queue a set_device_position call (position 0–100 or special values).
     SET_TILT,           ///< Queue a set_device_tilt call (tilt percentage 0–100).
     SET_LIGHT_STATE,    ///< Queue a set_light_state call (binary on/off).
+    SET_LOCK_STATE,     ///< Queue a set_lock_state call (locked/unlocked).
     SET_SWITCH_STATE,   ///< Queue a set_switch_state call (binary on/off).
     REQUEST_STATUS,     ///< Queue a request_device_status call (poll for current position).
     REQUEST_NAME,       ///< Queue a request_device_name call (poll for stored device name).
@@ -373,7 +383,7 @@ class IOHomeControlComponent : public Component,
   struct PendingOperation {
     PendingOperationType type;  ///< Operation type (determines which queue handler to invoke).
     std::string device_id;      ///< Target device ID (hex string, e.g., "123ABC").
-    uint8_t position{0};        ///< Position/tilt value (0–100) or binary state (ON=0, OFF=100 for lights/switches).
+    uint8_t position{0};        ///< Position/tilt value (0–100) or binary state (ON/UNLOCK=0, OFF/LOCK=100).
   };
 
   /// @brief Debug snapshot of the last exchange attempt.
