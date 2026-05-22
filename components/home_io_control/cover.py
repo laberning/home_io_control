@@ -6,8 +6,9 @@
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import cover
-from esphome.const import CONF_ID
+from esphome.components import button, cover
+from esphome.const import CONF_DISABLED_BY_DEFAULT, CONF_ID, CONF_NAME
+from esphome.core import CORE, ID
 
 from . import (
     home_io_control_ns,
@@ -29,6 +30,46 @@ CONF_SUBTYPE = "io_subtype"
 CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
 
 IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component)
+IOHomeCoverFavoriteButton = home_io_control_ns.class_(
+    "IOHomeCoverFavoriteButton", button.Button, cg.Component
+)
+
+POSITION_CONTROL_DEVICE_TYPES = {
+    0x01,  # venetian_blind
+    0x02,  # roller_shutter
+    0x03,  # awning
+    0x04,  # window_opener
+    0x05,  # garage_opener
+    0x07,  # gate_opener
+    0x08,  # rolling_door_opener
+    0x0A,  # blind
+    0x0B,  # screen
+    0x0D,  # dual_shutter
+    0x10,  # horizontal_awning
+    0x11,  # external_venetian_blind
+    0x12,  # louvre_blind
+    0x13,  # curtain_track
+    0x18,  # swinging_shutter
+}
+
+
+def device_supports_position_control(value):
+    return value in POSITION_CONTROL_DEVICE_TYPES
+
+
+def favorite_button_id(parent_id):
+    return ID(
+        f"{parent_id.id}_favorite_button",
+        is_declaration=True,
+        type=IOHomeCoverFavoriteButton,
+    )
+
+
+def favorite_button_name(config):
+    base_name = config.get(CONF_NAME, "")
+    if base_name:
+        return f"{base_name} Favorite Position"
+    return "Favorite Position"
 
 CONFIG_SCHEMA = (
     cover.cover_schema(IOHomeCover)
@@ -70,3 +111,17 @@ async def to_code(config):
     if CONF_LINKED_REMOTES in config:
         for remote_id in config[CONF_LINKED_REMOTES]:
             cg.add(parent.add_linked_remote(remote_id, config[CONF_DEVICE_ID]))
+
+    if CONF_DEVICE_TYPE in config and device_supports_position_control(
+        config[CONF_DEVICE_TYPE]
+    ):
+        favorite_config = {
+            CONF_ID: favorite_button_id(config[CONF_ID]),
+            CONF_NAME: favorite_button_name(config),
+            CONF_DISABLED_BY_DEFAULT: False,
+        }
+        favorite = await button.new_button(favorite_config)
+        CORE.component_ids.add(str(favorite.base))
+        await cg.register_component(favorite, favorite_config)
+        cg.add(favorite.set_parent(parent))
+        cg.add(favorite.set_device_id(config[CONF_DEVICE_ID]))

@@ -51,6 +51,21 @@ bool IOHomeCover::effective_invert_() const {
   return dev != nullptr && dev->inverted;
 }
 
+cover::CoverOperation IOHomeCover::infer_operation_from_position_delta_(bool invert, float current_io_position) const {
+  if (this->last_io_position_ == UNKNOWN_POSITION || current_io_position == UNKNOWN_POSITION ||
+      current_io_position == this->last_io_position_) {
+    return cover::COVER_OPERATION_IDLE;
+  }
+
+  if (invert) {
+    return (current_io_position > this->last_io_position_) ? cover::COVER_OPERATION_OPENING
+                                                           : cover::COVER_OPERATION_CLOSING;
+  }
+
+  return (current_io_position < this->last_io_position_) ? cover::COVER_OPERATION_OPENING
+                                                         : cover::COVER_OPERATION_CLOSING;
+}
+
 void IOHomeCover::control(const cover::CoverCall &call) {
   if (call.get_stop()) {
     this->parent_->queue_set_device_position(this->device_id_, POS_STOP);
@@ -89,6 +104,7 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
     return;
 
   const bool invert = this->effective_invert_();
+  const float previous_io_position = this->last_io_position_;
 
   if (dev.position != UNKNOWN_POSITION) {
     // Convert IO position (0-100) back to HA position (0.0-1.0)
@@ -119,6 +135,14 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
       this->current_operation =
           (dev.target < dev.position) ? cover::COVER_OPERATION_OPENING : cover::COVER_OPERATION_CLOSING;
     }
+  } else if (dev.position != UNKNOWN_POSITION) {
+    this->current_operation = this->infer_operation_from_position_delta_(invert, dev.position);
+  }
+
+  if (dev.position != UNKNOWN_POSITION) {
+    this->last_io_position_ = dev.position;
+  } else {
+    this->last_io_position_ = previous_io_position;
   }
 
   this->publish_state();

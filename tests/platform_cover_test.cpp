@@ -291,6 +291,54 @@ TEST(PlatformCover, MovingDevicePublishesPositionAndOperation) {
   EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING) << "target below current should indicate opening";
 }
 
+TEST(PlatformCover, MovingDeviceWithUnknownTargetInfersDirectionFromPositionDelta) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+
+  cover.setup();
+
+  IoDevice first{};
+  first.position = 50.0f;
+  first.is_stopped = true;
+  hub.trigger_device_update("ABC123", first);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_IDLE) << "stopped baseline update should leave the cover idle";
+
+  IoDevice moving{};
+  moving.position = 60.0f;
+  moving.target = UNKNOWN_POSITION;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING)
+      << "with standard mapping, increasing IO position and unknown target should infer closing";
+}
+
+TEST(PlatformCover, MovingInvertedDeviceWithUnknownTargetInfersDirectionFromPositionDelta) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_invert_position(true);
+
+  cover.setup();
+
+  IoDevice first{};
+  first.position = 50.0f;
+  first.is_stopped = true;
+  hub.trigger_device_update("ABC123", first);
+
+  IoDevice moving{};
+  moving.position = 60.0f;
+  moving.target = UNKNOWN_POSITION;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING)
+      << "with inverted mapping, increasing IO position and unknown target should infer opening";
+}
+
 TEST(PlatformCover, StoppedDeviceReturnsToIdleOperation) {
   MockHub hub;
   IOHomeCover cover;

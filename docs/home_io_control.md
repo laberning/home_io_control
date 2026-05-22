@@ -100,6 +100,7 @@ cover:
     name: "Patio Awning"
     device_class: awning
     io_device_id: "FEEB1E"
+    io_device_type: "awning"
     invert_position: true
     status_poll_interval: 2s
     linked_remotes:
@@ -121,6 +122,9 @@ Notes:
 
 - This is the primary and best-validated platform in the repo.
 - Additional recognized cover families include venetian blinds, dual shutters, louvre blinds, rolling door openers, curtain tracks, and swinging shutters.
+- Covers with a declared position-capable `io_device_type` automatically generate a companion Home Assistant button named `<Cover Name> Favorite Position`. That button sends the protocol's favorite or My-position command (`POS_FAVORITE`).
+- Automatic favorite-button generation is compile-time only. If `io_device_type` is omitted and learned later from radio traffic, the controller can still operate the cover normally, but it cannot add a new ESPHome entity at runtime after boot.
+- The protocol support currently exposed here is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh. The hub only keeps polling while a local command or overheard remote activity suggests that the device should still be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires.
 - Unsolicited `0x71` device status updates are always applied to the entity state. They only extend automatic repeated polling when `status_poll_interval` is configured; without it, the hub falls back to the single settle poll armed by the original command or remote activity.
 
@@ -198,6 +202,7 @@ Notes:
 
 - The generated button defaults to the `config` entity category.
 - Pair devices one at a time.
+- This `button:` platform is only for the hub-level `Discover & Pair` action. Cover favorite buttons are generated automatically from eligible `cover:` entries and do not need a separate YAML block.
 
 ## Complete Examples
 
@@ -250,6 +255,8 @@ button:
     name: "Discover & Pair"
 ```
 
+With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position` button automatically.
+
 ### Minimal SX1262 Cover Controller
 
 ```yaml
@@ -301,6 +308,8 @@ button:
   - platform: home_io_control
     name: "Discover & Pair"
 ```
+
+With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position` button automatically.
 
 ### Minimal Example with all Device Types: Cover, Light, and Switch
 

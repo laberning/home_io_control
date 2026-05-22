@@ -111,6 +111,22 @@ TEST(ProtoCommands, CreateExecutePositionHalf) {
   EXPECT_FALSE(is_end(frame)) << "execute should not be an end frame";
 }
 
+TEST(ProtoCommands, CreateExecuteFavoriteUsesSpecialPayload) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute(frame, test::OWN_ID, test::DST_ID, true, POS_FAVORITE))
+      << "create_execute(POS_FAVORITE) should succeed";
+  EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "favorite command should still use CMD_EXECUTE (0x00)";
+  EXPECT_EQ(frame.data_len, 6) << "favorite command should use the short special payload";
+  EXPECT_EQ(frame.data[0], 0x01) << "favorite payload byte 0 (origin) should be 0x01";
+  EXPECT_EQ(frame.data[1], 0x67) << "favorite payload byte 1 (ACEI) should be 0x67";
+  EXPECT_EQ(frame.data[2], POS_FAVORITE) << "favorite payload byte 2 should carry POS_FAVORITE";
+  EXPECT_EQ(frame.data[3], 0x00);
+  EXPECT_EQ(frame.data[4], 0x00);
+  EXPECT_EQ(frame.data[5], 0x00);
+  EXPECT_TRUE(is_start(frame)) << "favorite execute should be a start frame";
+  EXPECT_FALSE(is_end(frame)) << "favorite execute should not be an end frame";
+}
+
 TEST(ProtoCommands, CreateGetStatus) {
   IoFrame frame{};
   ASSERT_TRUE(create_get_status(frame, test::OWN_ID, test::DST_ID)) << "create_get_status should succeed";

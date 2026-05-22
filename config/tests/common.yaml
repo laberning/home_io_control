@@ -43,6 +43,7 @@ cover:
     name: "Test Cover"
     io_device_id: "FEEB1E"
     device_class: awning
+    io_device_type: "awning"
 
 light:
   - platform: home_io_control

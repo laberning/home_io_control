@@ -13,6 +13,7 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 ## Features
 
 - **Cover control**: Open, close, stop, and set position (0–100%) for shutters, blinds, awnings, window openers, garage openers, gate openers, rolling doors, curtain tracks, and related position-based devices
+- **Favorite or My position action for covers**: Covers with a declared position-capable `io_device_type` automatically get a companion Home Assistant button named `<Cover Name> Favorite Position`
 - **Tilt support for venetian-style blinds**: Tilt-capable device types expose slat-angle control automatically in Home Assistant when the paired device reports tilt support
 - **Experimental binary light support**: On/off-only light entities for IO-Homecontrol light devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
@@ -132,6 +133,8 @@ button:
   - platform: home_io_control
     name: "Discover & Pair"
 ```
+
+With `io_device_type: "awning"` declared, the cover above also generates a separate Home Assistant button named `Awning Favorite Position`. Pressing it sends the protocol's built-in favorite or My-position command. There is currently no separate sensor for reading back the stored favorite value because the protocol support for that has not been identified.
 
 For all other examples, platform-specific options, and pairing instructions, use [docs/home_io_control.md](docs/home_io_control.md).
 
