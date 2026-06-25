@@ -185,26 +185,57 @@ const char *pairing_platform_name(DeviceCapabilityClass capability_class) {
 ///
 /// The function distinguishes between NO_RESPONSE (no packets seen at all) and
 /// INVALID (some packets seen but none were valid discovery responses).
+///
+/// Frequency hopping: hops between the 3 IO-homecontrol channels after each
+/// wait slice (5ms for SX1276 with FastHop, 50ms for SX1262 whose frequency
+/// change requires a full standby→SetRf→RX cycle). When preamble or sync word
+/// detection fires, the dwell is extended to 15ms so the incoming frame can
+/// complete without being interrupted by a hop.
 decisions::PairingDiscoveryDisposition IOHomeControlComponent::wait_for_discovery_response_(uint32_t timeout_ms,
                                                                                             RadioRxPacket &packet,
                                                                                             IoFrame &response_frame) {
+  // SX1262 frequency changes require standby→SetRf→RX (~10-15ms), so the listen
+  // slice must be long enough that we spend more time listening than switching.
+  // SX1276 uses FastHop (no standby needed), so short slices are fine.
+  const uint32_t hop_slice_ms = strcmp(this->radio_->chip_name(), "sx1262") == 0
+                                    ? detail::SX1262_PAIRING_DISCOVERY_HOP_SLICE_MS
+                                    : detail::PAIRING_DISCOVERY_HOP_SLICE_MS;
+  static constexpr uint32_t PREAMBLE_DWELL_MS = 15;
+
+  // Helper: attempt to receive and classify a discovery response.
+  auto try_accept = [&]() {
+    return parse(packet.data, packet.len, response_frame) &&
+           decisions::classify_pairing_discovery_response(response_frame) ==
+               decisions::PairingDiscoveryDisposition::ACCEPT;
+  };
+
   bool saw_traffic = false;
   const uint32_t deadline = millis() + timeout_ms;
   while ((int32_t) (deadline - millis()) > 0) {
-    const uint32_t remaining_ms = deadline - millis();
-    const uint32_t slice = decisions::response_wait_slice_ms(remaining_ms);
-    if (!this->radio_->wait_for_packet(packet, slice))
+    const uint32_t slice = std::min((uint32_t) (deadline - millis()), hop_slice_ms);
+    if (this->radio_->wait_for_packet(packet, slice)) {
+      saw_traffic = true;
+      if (try_accept())
+        return decisions::PairingDiscoveryDisposition::ACCEPT;
       continue;
-    saw_traffic = true;
-    if (!parse(packet.data, packet.len, response_frame))
+    }
+    // No complete packet within slice — decide whether to hop or dwell.
+    if ((int32_t) (deadline - millis()) <= 0)
+      break;
+    if (!this->radio_->is_preamble_detected() && !this->radio_->is_sync_detected()) {
+      this->hop_frequency_();
       continue;
-    auto disp = decisions::classify_pairing_discovery_response(response_frame);
-    if (disp == decisions::PairingDiscoveryDisposition::ACCEPT)
-      return disp;
+    }
+    // Signal activity detected — stay on this channel with extended dwell.
+    const uint32_t ext = std::min((uint32_t) (deadline - millis()), PREAMBLE_DWELL_MS);
+    if (this->radio_->wait_for_packet(packet, ext)) {
+      saw_traffic = true;
+      if (try_accept())
+        return decisions::PairingDiscoveryDisposition::ACCEPT;
+    }
   }
-  if (!saw_traffic)
-    return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
-  return decisions::PairingDiscoveryDisposition::INVALID;
+  return saw_traffic ? decisions::PairingDiscoveryDisposition::INVALID
+                     : decisions::PairingDiscoveryDisposition::NO_RESPONSE;
 }
 
 /// Wait for a valid key‑challenge frame (0x3C from the target device).
@@ -260,27 +291,35 @@ void IOHomeControlComponent::parse_device_from_discovery(const IoFrame &frame, I
 
 /// Execute Phase 1: discover a pairable device on channel 2.
 ///
-/// Transmits a discovery broadcast (0x28) and waits up to the configured discovery timeout for a valid
+/// Transmits a discovery broadcast (0x28) up to PAIRING_DISCOVERY_MAX_ATTEMPTS times,
+/// waiting up to PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS after each TX for a valid
 /// discovery response (0x29). On success the response is parsed into
 /// `context.device` and `context.device_id` and the function returns ACCEPT.
-/// On failure returns NO_RESPONSE (no packets) or INVALID (packets seen but
-/// none were valid discovery frames).
+/// If all attempts fail, returns NO_RESPONSE or INVALID.
 decisions::PairingDiscoveryDisposition IOHomeControlComponent::run_discovery_phase_(pairing::PairingContext &context) {
-  context.state = pairing::PairingState::TX_DISCOVER;
-  this->record_exchange_debug_(pairing_stage_name(context.state), 1, false);
-  if (!create_discover(context.req, this->node_id_) || !this->transmit_frame_(context.req, FREQ_CH2, LONG_PREAMBLE)) {
-    return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
-  }
+  for (uint8_t attempt = 1; attempt <= detail::PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {
+    context.state = pairing::PairingState::TX_DISCOVER;
+    this->record_exchange_debug_(pairing_stage_name(context.state), attempt, false);
+    if (!create_discover(context.req, this->node_id_) || !this->transmit_frame_(context.req, FREQ_CH2, LONG_PREAMBLE)) {
+      return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
+    }
 
-  context.state = pairing::PairingState::WAIT_DISCOVER_RESPONSE;
-  this->record_exchange_debug_(pairing_stage_name(context.state), 1, false);
-  auto result =
-      this->wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, context.packet, context.rx);
-  if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
-    parse_device_from_discovery(context.rx, context.device, context.device_id);
-    context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
+    context.state = pairing::PairingState::WAIT_DISCOVER_RESPONSE;
+    this->record_exchange_debug_(pairing_stage_name(context.state), attempt, false);
+    auto result =
+        this->wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, context.packet, context.rx);
+    if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
+      parse_device_from_discovery(context.rx, context.device, context.device_id);
+      context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
+      return result;
+    }
+
+    if (attempt < detail::PAIRING_DISCOVERY_MAX_ATTEMPTS) {
+      ESP_LOGI(TAG, "Discovery attempt %u/%u: no response, retrying...", attempt,
+               detail::PAIRING_DISCOVERY_MAX_ATTEMPTS);
+    }
   }
-  return result;
+  return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
 }
 
 /// Execute Phase 2: perform authenticated key exchange with the discovered device.

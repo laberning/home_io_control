@@ -193,3 +193,53 @@ TEST(RadioSX1262, WaitForPacketReadFailure) {
   // Even though IRQ indicated RX_DONE, the packet read itself fails (e.g., CRC)
   EXPECT_FALSE(ok) << "packet read failure (CRC error) should cause wait_for_packet to return false";
 }
+
+// ============================================================================
+// is_sync_detected / is_preamble_detected tests
+// ============================================================================
+
+TEST(RadioSX1262, IsSyncDetected_True) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+  EXPECT_TRUE(radio.is_sync_detected()) << "should return true when SyncWordValid IRQ bit is set";
+}
+
+TEST(RadioSX1262, IsSyncDetected_False) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.set_irq_sequence({0x0000});
+  EXPECT_FALSE(radio.is_sync_detected()) << "should return false when no IRQ bits are set";
+}
+
+TEST(RadioSX1262, IsPreambleDetected_True) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.set_irq_sequence({SX1262_IRQ_PREAMBLE_DETECTED});
+  EXPECT_TRUE(radio.is_preamble_detected()) << "should return true when PreambleDetected IRQ bit is set";
+}
+
+TEST(RadioSX1262, IsPreambleDetected_False) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.set_irq_sequence({SX1262_IRQ_RX_DONE});  // other bits set, not preamble
+  EXPECT_FALSE(radio.is_preamble_detected()) << "should return false when only other IRQ bits are set";
+}
+
+TEST(RadioSX1262, IsSyncDetected_WithOtherBits) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  // Sync + preamble + RX done all set
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID | SX1262_IRQ_PREAMBLE_DETECTED | SX1262_IRQ_RX_DONE});
+  EXPECT_TRUE(radio.is_sync_detected()) << "should detect sync even when other IRQ bits are also set";
+}

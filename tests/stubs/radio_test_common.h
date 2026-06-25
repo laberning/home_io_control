@@ -71,6 +71,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     rssi_queue_.pop_front();
     return val;
   }
+  bool is_sync_detected() override { return false; }
+  bool is_preamble_detected() override { return false; }
   void set_mode_rx() override {}
   void set_mode_standby() override {}
   bool is_failed() const override { return false; }

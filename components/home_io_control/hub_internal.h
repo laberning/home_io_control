@@ -46,6 +46,11 @@ inline constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS =
 inline constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS =
     600000;  ///< Hard stop for follow-up polling after a command or remote activity.
 inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Discovery wait window after sending 0x28.
+inline constexpr uint32_t PAIRING_DISCOVERY_HOP_SLICE_MS =
+    5;  ///< Per-channel dwell during discovery hopping (SX1276 fast cycle).
+inline constexpr uint32_t SX1262_PAIRING_DISCOVERY_HOP_SLICE_MS =
+    50;  ///< SX1262: longer dwell because freq switch needs standby→SetRf→RX (~10-15ms).
+inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;       ///< Retry discovery TX up to this many times.
 inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
 inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
     50.0F;  ///< Shared 0-100 cutoff: values below this mean binary "on".

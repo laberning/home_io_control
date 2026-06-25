@@ -2,6 +2,8 @@
 
 #include "proto_commands.h"
 
+#include <algorithm>
+
 /// @file hub_operations.cpp
 /// @brief High-level command execution and queued operation dispatch.
 /// @ingroup hioc_hub
@@ -374,6 +376,11 @@ void IOHomeControlComponent::queue_request_device_name(const std::string &device
   this->pending_operations_.push_back({PendingOperationType::REQUEST_NAME, device_id, 0});
 }
 
+/// Queue a discovery-and-pair request with elevated priority.
+///
+/// Flushes any pending status/name poll operations (which would consume time
+/// during the device's limited pairing window) and pushes discovery to the
+/// front of the queue. Duplicate requests are suppressed.
 void IOHomeControlComponent::queue_discover_and_pair() {
   // Pairing is globally exclusive work. Keep at most one queued request so repeated button presses
   // while the radio is busy do not stack duplicate discovery attempts.
@@ -381,7 +388,16 @@ void IOHomeControlComponent::queue_discover_and_pair() {
     if (operation.type == PendingOperationType::DISCOVER_AND_PAIR)
       return;
   }
-  this->pending_operations_.push_back({PendingOperationType::DISCOVER_AND_PAIR, {}, 0});
+  // Flush pending status/name polls — they can be retried after pairing completes, and
+  // their blocking exchange time would eat into the device's limited pairing window.
+  this->pending_operations_.erase(std::remove_if(this->pending_operations_.begin(), this->pending_operations_.end(),
+                                                 [](const PendingOperation &op) {
+                                                   return op.type == PendingOperationType::REQUEST_STATUS ||
+                                                          op.type == PendingOperationType::REQUEST_NAME;
+                                                 }),
+                                  this->pending_operations_.end());
+  // Push discovery to front so it executes immediately after any currently-running operation.
+  this->pending_operations_.push_front({PendingOperationType::DISCOVER_AND_PAIR, {}, 0});
 }
 
 void IOHomeControlComponent::queue_set_light_state(const std::string &device_id, bool on) {

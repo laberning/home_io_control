@@ -21,7 +21,7 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 - **Experimental lock support**: Lock/unlock entities for IO-Homecontrol lock devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
 - **Position feedback**: Real-time position updates from devices (2-Way protocol)
-- **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity
+- **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity (confirmed on SX1276; SX1262 under investigation)
 - **Home Assistant integration**: Cover devices appear as native cover entities with full position support, and tilt-capable blinds also expose slat-angle control
 - **SX1276 & SX1262 support**: Works with both radio chips — SX1276 uses hardware IoHomeOn mode, SX1262 uses software CRC
 
@@ -43,8 +43,8 @@ The table below lists board mappings that are known to be plausible for this com
 
 ### Confirmed Board Notes
 
-- Heltec LoRa32 v2 is the confirmed SX1276 reference platform used during development.
-- Heltec WiFi LoRa32 V3.2 is the confirmed SX1262 platform used for the current authenticated 2W validation work.
+- Heltec LoRa32 v2 is the confirmed SX1276 reference platform used during development. Pairing (discover & pair) is confirmed working on this board.
+- Heltec WiFi LoRa32 V3.2 is the confirmed SX1262 platform for authenticated 2W exchanges. Pairing does not yet work on SX1262 (under investigation).
 - The Heltec V4 family is closely related to V3 electrically, so it should also work, but this has not been validated yet.
 
 ## Installation

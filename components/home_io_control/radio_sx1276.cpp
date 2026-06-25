@@ -94,6 +94,14 @@ void RadioSX1276::change_frequency(uint32_t freq_hz) {
 
 int16_t RadioSX1276::read_rssi() { return -(int16_t) this->read_register_(REG_RSSI_VALUE) / 2; }
 
+bool RadioSX1276::is_sync_detected() {
+  return (this->read_register_(REG_IRQ_FLAGS1) & 0x01) != 0;  // Bit 0 = SyncAddressMatch
+}
+
+bool RadioSX1276::is_preamble_detected() {
+  return (this->read_register_(REG_IRQ_FLAGS1) & 0x02) != 0;  // Bit 1 = PreambleDetect
+}
+
 // === Initialization ===
 
 bool RadioSX1276::init() {
@@ -151,20 +159,24 @@ void RadioSX1276::configure_radio_() {
                                 // IoHomeOn is the crucial difference from a generic FSK setup: Semtech's SX1276 can
                                 // speak the protocol natively enough to handle CRC and frame boundaries for us. This
                                 // path serves as the baseline against which SX1262 captures are compared.
-  this->write_register_(REG_PACKET_CONFIG2, 0x70);                             // Packet mode, IoHomeOn, PowerFrame
-  this->write_register_(REG_SYNC_CONFIG, 0x50);                                // Auto restart PLL off, AA, sync on
-  this->write_register_(REG_DIO_MAPPING1, 0x39);                               // DIO0: PayloadReady/PacketSent
-  this->write_register_(REG_DIO_MAPPING2, 0xF1);                               // DIO4: PreambleDetect
+  this->write_register_(REG_PACKET_CONFIG2, 0x70);  // Packet mode, IoHomeOn, PowerFrame
+  this->write_register_(REG_SYNC_CONFIG, 0x50);     // Auto restart PLL off, AA, sync on
+  this->write_register_(REG_DIO_MAPPING1, 0x3D);    // DIO0: PayloadReady/PacketSent, DIO2: SyncAddress (for gated hop)
+  this->write_register_(REG_DIO_MAPPING2, 0xF1);    // DIO4: PreambleDetect
   this->write_register_(REG_PLLHOP, this->read_register_(REG_PLLHOP) | 0x80);  // Fast hop
-  this->write_register_(REG_PA_RAMP, 0x0E);                                    // No shaping, 12us
-  this->write_register_(REG_FIFO_THRESH, 0x80);                                // TX start FIFO not empty
-  this->write_register_(REG_PAYLOAD_LENGTH, 0xFF);                             // Max payload
-  this->write_register_(REG_RSSI_CONFIG, 0x02);                                // RSSI smoothing 8
-  this->write_register_(REG_RX_CONFIG, 0x9E);                                  // Restart collision, AFC, AGC, preamble
-  this->write_register_(REG_AFC_FEI, 0x01);                                    // AFC auto clear
-  this->write_register_(REG_LNA, 0x23);                                        // Max gain, boost on
-  this->write_register_(REG_PREAMBLE_DETECT, 0xAA);                            // Detect on, 2 bytes, tol 10
-  this->write_register_(REG_RX_BW, 0x01);                                      // 250 kHz
+  this->write_register_(REG_PA_RAMP, 0x2D);          // Gaussian BT=1.0 shaping (0x20) | 15μs ramp (0x0D)
+  this->write_register_(REG_FIFO_THRESH, 0x80);      // TX start FIFO not empty
+  this->write_register_(REG_PAYLOAD_LENGTH, 0xFF);   // Max payload
+  this->write_register_(REG_RSSI_CONFIG, 0x02);      // RSSI smoothing 8
+  this->write_register_(REG_RX_CONFIG, 0x9E);        // Restart collision, AFC, AGC, preamble
+  this->write_register_(REG_AFC_FEI, 0x01);          // AFC auto clear
+  this->write_register_(REG_LNA, 0x23);              // Max gain, boost on
+  this->write_register_(REG_PREAMBLE_DETECT, 0xAA);  // Detect on, 2 bytes, tol 10
+  // RX bandwidth: 50 kHz (Mant=01, Exp=3). Carson rule bandwidth for 38400 bps +
+  // 19200 Hz deviation is ~77 kHz; 50 kHz is tighter than theoretical but maximizes
+  // sensitivity by rejecting out-of-band noise. Validated against real devices.
+  this->write_register_(REG_RX_BW, 0x13);   // 50 kHz RX bandwidth
+  this->write_register_(REG_AFC_BW, 0x13);  // 50 kHz AFC bandwidth (matches RX BW)
 
   // Bitrate 38400 bps
   uint32_t const br = FXOSC / 38400;

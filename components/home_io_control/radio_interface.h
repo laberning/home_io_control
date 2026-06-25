@@ -124,6 +124,14 @@ class RadioDriver {
   /// @return RSSI in dBm (negative value).
   virtual int16_t read_rssi() = 0;
 
+  /// @brief Check if sync word has been detected (while in RX).
+  /// Used to gate frequency hopping — prevents hopping away mid-frame.
+  virtual bool is_sync_detected() = 0;
+
+  /// @brief Check if preamble has been detected (while in RX).
+  /// Used together with sync detection to gate frequency hopping.
+  virtual bool is_preamble_detected() = 0;
+
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
 

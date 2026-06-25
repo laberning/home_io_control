@@ -576,13 +576,14 @@ void RadioSX1262::configure_radio_() {
 
   // 10. FSK modulation params:
   //     BitRate = 32 * Fxosc / BR_reg → BR_reg = 32 * 32MHz / 38400 = 26667 = 0x00682B
-  //     Pulse shape: no shaping (0x00)
-  //     Bandwidth: 312.0 kHz (0x19) — wider than needed but safe margin
+  //     Pulse shape: Gaussian BT=1.0 (0x0B) — reduces TX spectral occupation
+  //     Bandwidth: 58.6 kHz (0x0C) — Carson rule BW ≈ 77 kHz; tighter filtering
+  //       maximizes sensitivity and rejects out-of-band noise during discovery
   //     Fdev = fdev_hz * 2^25 / 32e6 → 19200 * 2^25 / 32e6 = 20133 = 0x004EA5
   uint8_t mod_params[8] = {
       0x00, 0x68, 0x2B,  // Bitrate: 38400 bps
-      0x00,              // Pulse shape: no shaping
-      0x19,              // Bandwidth: 312.0 kHz
+      0x0B,              // Pulse shape: Gaussian BT=1.0
+      0x0C,              // Bandwidth: 58.6 kHz
       0x00, 0x4E, 0xA5,  // Fdev: 19200 Hz
   };
   this->write_opcode_(SX1262_SET_MODULATION_PARAMS, mod_params, sizeof(mod_params));
@@ -671,6 +672,8 @@ void RadioSX1262::set_frequency_register_(uint32_t freq_hz) {
 void RadioSX1262::change_frequency(uint32_t freq_hz) {
   this->set_mode_standby();
   this->set_frequency_register_(freq_hz);
+  this->clear_irq_status_(0xFFFF);  // Clear stale preamble/sync bits from previous channel
+  this->clear_dio_fired();          // Clear stale DIO1 latch from previous channel activity
   this->set_mode_rx();
 }
 
@@ -679,6 +682,10 @@ int16_t RadioSX1262::read_rssi() {
   this->read_opcode_(SX1262_GET_RSSI_INST, &raw, 1);
   return -(int16_t) raw / 2;
 }
+
+bool RadioSX1262::is_sync_detected() { return (this->read_irq_status_raw() & SX1262_IRQ_SYNC_WORD_VALID) != 0; }
+
+bool RadioSX1262::is_preamble_detected() { return (this->read_irq_status_raw() & SX1262_IRQ_PREAMBLE_DETECTED) != 0; }
 
 // === Packet TX ===
 

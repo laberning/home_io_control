@@ -34,6 +34,7 @@ static constexpr uint8_t REG_LNA = 0x0C;              ///< Low noise amplifier g
 static constexpr uint8_t REG_RX_CONFIG = 0x0D;        ///< Receiver configuration (AFC, AGC, trigger)
 static constexpr uint8_t REG_RSSI_CONFIG = 0x0E;      ///< RSSI smoothing
 static constexpr uint8_t REG_RX_BW = 0x12;            ///< Receiver bandwidth
+static constexpr uint8_t REG_AFC_BW = 0x13;           ///< AFC bandwidth
 static constexpr uint8_t REG_AFC_FEI = 0x1A;          ///< AFC auto clear
 static constexpr uint8_t REG_PREAMBLE_DETECT = 0x1F;  ///< Preamble detector config
 static constexpr uint8_t REG_OSC = 0x24;              ///< Oscillator / clock output
@@ -109,6 +110,10 @@ class RadioSX1276 : public RadioDriver {
   /// @brief Read instantaneous RSSI (dBm) while in RX mode (used for LBT).
   /// @return RSSI in dBm (negative).
   int16_t read_rssi() override;
+  /// @copydoc RadioDriver::is_sync_detected
+  bool is_sync_detected() override;
+  /// @copydoc RadioDriver::is_preamble_detected
+  bool is_preamble_detected() override;
   /// @brief Switch radio into continuous receive mode.
   void set_mode_rx() override;
   /// @brief Switch radio into standby mode.

@@ -59,6 +59,7 @@ static constexpr uint8_t SX1262_READ_REGISTER = 0x1D;
 
 static constexpr uint16_t SX1262_IRQ_TX_DONE = 0x0001;
 static constexpr uint16_t SX1262_IRQ_RX_DONE = 0x0002;
+static constexpr uint16_t SX1262_IRQ_PREAMBLE_DETECTED = 0x0004;
 static constexpr uint16_t SX1262_IRQ_SYNC_WORD_VALID = 0x0008;
 static constexpr uint16_t SX1262_IRQ_CRC_ERR = 0x0040;
 // Sync word register base address
@@ -109,6 +110,10 @@ class RadioSX1262 : public RadioDriver {
   void change_frequency(uint32_t freq_hz) override;
   /// @copydoc RadioDriver::read_rssi
   int16_t read_rssi() override;
+  /// @copydoc RadioDriver::is_sync_detected
+  bool is_sync_detected() override;
+  /// @copydoc RadioDriver::is_preamble_detected
+  bool is_preamble_detected() override;
   /// @copydoc RadioDriver::set_mode_rx
   void set_mode_rx() override;
   /// @copydoc RadioDriver::set_mode_standby

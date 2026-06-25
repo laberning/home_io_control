@@ -31,6 +31,9 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::wait_for_key_challenge_;
   using IOHomeControlComponent::parse_device_from_discovery;
   using IOHomeControlComponent::discover_and_pair;
+  using IOHomeControlComponent::run_discovery_phase_;
+  using IOHomeControlComponent::queue_discover_and_pair;
+  using IOHomeControlComponent::pending_operations_;
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::radio_;
@@ -362,4 +365,173 @@ TEST(PairingHelpers, ParseDeviceFromDiscovery_ShortPayloadFallsBackToUnknown) {
   EXPECT_EQ(device.subtype, 0u) << "subtype should be zero when payload insufficient";
   EXPECT_FALSE(device.inverted) << "inverted flag should be false for UNKNOWN type";
   EXPECT_EQ(device_id, "112233") << "node ID string should still be extracted from source address";
+}
+
+// ============================================================================
+// Frequency hopping and preamble/sync gating tests
+// ============================================================================
+
+namespace {
+
+/// MockRadio variant that tracks hop count and simulates preamble/sync detection.
+class HopTrackingRadio : public MockRadio {
+ public:
+  bool is_sync_detected() override { return sync_detected_; }
+  bool is_preamble_detected() override { return preamble_detected_; }
+
+  void set_sync_detected(bool v) { sync_detected_ = v; }
+  void set_preamble_detected(bool v) { preamble_detected_ = v; }
+
+  void change_frequency(uint32_t freq_hz) override {
+    MockRadio::change_frequency(freq_hz);
+    hop_count_++;
+  }
+
+  int get_hop_count() const { return hop_count_; }
+
+ private:
+  bool sync_detected_{false};
+  bool preamble_detected_{false};
+  int hop_count_{0};
+};
+
+}  // anonymous namespace
+
+TEST(PairingHelpers, WaitForDiscoveryResponse_HopsBetweenSlicesWhenIdle) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  HopTrackingRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  // No packets queued → wait_for_packet returns false each slice, should trigger hops
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+  auto result = comp.wait_for_discovery_response_(150, out_pkt, out_frame);
+
+  EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
+  EXPECT_GT(radio.get_hop_count(), 0) << "should hop at least once when no signal detected";
+}
+
+TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenPreambleDetected) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  HopTrackingRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  // Simulate preamble detected — radio should NOT hop
+  radio.set_preamble_detected(true);
+
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+  auto result = comp.wait_for_discovery_response_(150, out_pkt, out_frame);
+
+  EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
+  EXPECT_EQ(radio.get_hop_count(), 0) << "should not hop when preamble is detected (signal arriving)";
+}
+
+TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenSyncDetected) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  HopTrackingRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  // Simulate sync word detected — radio should NOT hop
+  radio.set_sync_detected(true);
+
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+  auto result = comp.wait_for_discovery_response_(150, out_pkt, out_frame);
+
+  EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
+  EXPECT_EQ(radio.get_hop_count(), 0) << "should not hop when sync word is detected (frame arriving)";
+}
+
+// ============================================================================
+// Discovery retry tests
+// ============================================================================
+
+TEST(PairingHelpers, RunDiscoveryPhase_RetriesOnNoResponse) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  // No packets queued — all attempts will fail
+  pairing::PairingContext context;
+  auto result = comp.run_discovery_phase_(context);
+
+  EXPECT_NE(result, decisions::PairingDiscoveryDisposition::ACCEPT);
+  // Should have sent one discovery TX per attempt (3 attempts)
+  EXPECT_EQ(radio.get_send_count(), detail::PAIRING_DISCOVERY_MAX_ATTEMPTS)
+      << "should transmit discovery frame once per retry attempt";
+}
+
+TEST(PairingHelpers, RunDiscoveryPhase_SucceedsOnFirstAttempt) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  // Queue a valid discovery response that will be found after the TX
+  IoFrame resp = build_discovery_response(test::DST_ID, comp.node_id_, DeviceType::ROLLER_SHUTTER, 0x01);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  radio.queue_rx(pkt);
+
+  pairing::PairingContext context;
+  auto result = comp.run_discovery_phase_(context);
+
+  EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::ACCEPT);
+  EXPECT_EQ(radio.get_send_count(), 1) << "should stop after first successful discovery";
+  EXPECT_EQ(context.device_id, node_id_to_string(test::DST_ID));
+}
+
+// ============================================================================
+// Queue priority tests
+// ============================================================================
+
+TEST(PairingHelpers, QueueDiscoverAndPair_FlushesStatusPolls) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+
+  // Pre-fill queue with status and name requests
+  comp.pending_operations_.push_back({IOHomeControlComponent::PendingOperationType::REQUEST_STATUS, "AABBCC", 0});
+  comp.pending_operations_.push_back({IOHomeControlComponent::PendingOperationType::REQUEST_NAME, "DDEEFF", 0});
+  comp.pending_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_POSITION, "112233", 50});
+
+  comp.queue_discover_and_pair();
+
+  // Status and name polls should be flushed, position command kept
+  EXPECT_EQ(comp.pending_operations_.size(), 2u) << "status/name polls should be removed, position + discovery remain";
+  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::DISCOVER_AND_PAIR)
+      << "discovery should be at the front of the queue";
+  EXPECT_EQ(comp.pending_operations_.back().type, IOHomeControlComponent::PendingOperationType::SET_POSITION)
+      << "position command should be preserved";
+}
+
+TEST(PairingHelpers, QueueDiscoverAndPair_NoDuplicates) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+
+  comp.queue_discover_and_pair();
+  comp.queue_discover_and_pair();  // second call should be ignored
+
+  int count = 0;
+  for (const auto &op : comp.pending_operations_) {
+    if (op.type == IOHomeControlComponent::PendingOperationType::DISCOVER_AND_PAIR)
+      count++;
+  }
+  EXPECT_EQ(count, 1) << "should not queue duplicate discovery requests";
 }
