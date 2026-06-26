@@ -30,7 +30,7 @@ define clean_recipe
 endef
 
 # === Explicit device-variant targets (for tab completion & direct invocation) ===
-DEVICE_VARIANTS := v2 v3 v3-monitor
+DEVICE_VARIANTS := v2 v2-monitor v3 v3-monitor
 
 $(foreach v,$(DEVICE_VARIANTS),$(eval compile-$(v): ; $(call compile_recipe,$(v))))
 $(foreach v,$(DEVICE_VARIANTS),$(eval upload-$(v): ; $(call upload_recipe,$(v))))

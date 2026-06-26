@@ -1,8 +1,8 @@
 substitutions:
-  device_name: hioc-heltec-v3
-  device_friendly_name: Home IO Control WiFi LoRa32 V3 Monitor
+  device_name: hioc-heltec-v2
+  device_friendly_name: Home IO Control WiFi LoRa32 V2 Monitor
 
-## Passive IO-Homecontrol monitor for Heltec WiFi LoRa32 V3.2.
+## Passive IO-Homecontrol monitor for Heltec WiFi LoRa32 V2.
 ## This config intentionally defines no IO entities and no pairing button.
 ## The component still keeps the radio in RX, hops channels, and logs parsed traffic.
 
@@ -14,7 +14,7 @@ esphome:
       - -DIOHOME_FRAME_LOG
 
 esp32:
-  variant: esp32s3
+  variant: esp32
   framework:
     type: esp-idf
 
@@ -34,9 +34,9 @@ ota:
     password: !secret ota_password
 
 spi:
-  clk_pin: 9
-  mosi_pin: 10
-  miso_pin: 11
+  clk_pin: 5
+  mosi_pin: 27
+  miso_pin: 19
 
 external_components:
   - source:
@@ -44,12 +44,8 @@ external_components:
       path: components
 
 home_io_control:
-  cs_pin: 8
-  rst_pin: 12
-  dio1_pin: 14
-  busy_pin: 13
-  radio_type: sx1262
-  tcxo_voltage: 1_8V
-  node_id: ABC124
-  system_key: ABCDEF1234567890ABCDEF1234567890
-
+  cs_pin: 18
+  rst_pin: 14
+  dio0_pin: 26
+  node_id: ABC123
+  system_key: ABCDEF1234567890ABCDEF1234567891

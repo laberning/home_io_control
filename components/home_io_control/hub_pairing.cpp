@@ -90,47 +90,6 @@ void log_discovery_diagnostic(decisions::PairingDiscoveryDisposition disp) {
   }
 }
 
-/// Return the YAML-friendly device-type name when the schema exposes a symbolic alias.
-/// Types without a symbolic alias can still be configured via raw numeric values such as 0x11.
-const char *yaml_device_type_name(DeviceType type) {
-  switch (type) {
-    case DeviceType::VENETIAN_BLIND:
-      return "venetian_blind";
-    case DeviceType::ROLLER_SHUTTER:
-      return "roller_shutter";
-    case DeviceType::AWNING:
-      return "awning";
-    case DeviceType::WINDOW_OPENER:
-      return "window_opener";
-    case DeviceType::GARAGE_OPENER:
-      return "garage_opener";
-    case DeviceType::LIGHT:
-      return "light";
-    case DeviceType::GATE_OPENER:
-      return "gate_opener";
-    case DeviceType::ROLLING_DOOR_OPENER:
-      return "rolling_door_opener";
-    case DeviceType::LOCK:
-      return "lock";
-    case DeviceType::BLIND:
-      return "blind";
-    case DeviceType::SCREEN:
-      return "screen";
-    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
-      return "heating_temperature_interface";
-    case DeviceType::ON_OFF_SWITCH:
-      return "on_off_switch";
-    case DeviceType::HORIZONTAL_AWNING:
-      return "horizontal_awning";
-    case DeviceType::CURTAIN_TRACK:
-      return "curtain_track";
-    case DeviceType::INTRUSION_ALARM:
-      return "intrusion_alarm";
-    default:
-      return nullptr;
-  }
-}
-
 /// Format a raw device type as hexadecimal for YAML and diagnostics.
 std::string format_device_type_hex(DeviceType type) {
   char buf[DEVICE_TYPE_HEX_STRING_BUFFER_SIZE];

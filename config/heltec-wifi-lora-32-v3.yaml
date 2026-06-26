@@ -181,7 +181,7 @@ cover:
     name: "Patio Awning"
     device_class: awning
     io_device_id: !secret example_io_device_id
-    io_device_type: "awning"
+    io_device_type: "horizontal_awning"
     io_subtype: 0
     invert_position: true
     linked_remotes:

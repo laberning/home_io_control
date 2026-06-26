@@ -367,6 +367,12 @@ enum class DeviceCapabilityClass : uint8_t {
 /// @return Null‑terminated string name (e.g., "roller_shutter").
 const char *device_type_name(DeviceType type);
 
+/// @brief Return the YAML-friendly device-type name for types exposed in the Python schema.
+/// @param type Device type enum.
+/// @return Null‑terminated string (e.g., "external_venetian_blind"), or nullptr if the type
+///         has no symbolic YAML alias (user must use a raw numeric value).
+const char *yaml_device_type_name(DeviceType type);
+
 /// @brief Map a raw IO‑Homecontrol type to the closest ESPHome/Home Assistant entity family.
 /// @param type Raw device type.
 /// @return Capability class (COVER, LIGHT, SWITCH, etc.).

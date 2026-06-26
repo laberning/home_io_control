@@ -666,6 +666,55 @@ const char *device_type_name(DeviceType type) {
   return "unknown";
 }
 
+const char *yaml_device_type_name(DeviceType type) {
+  switch (type) {
+    case DeviceType::UNKNOWN:
+      return "unknown";
+    case DeviceType::VENETIAN_BLIND:
+      return "venetian_blind";
+    case DeviceType::ROLLER_SHUTTER:
+      return "roller_shutter";
+    case DeviceType::AWNING:
+      return "awning";
+    case DeviceType::WINDOW_OPENER:
+      return "window_opener";
+    case DeviceType::GARAGE_OPENER:
+      return "garage_opener";
+    case DeviceType::LIGHT:
+      return "light";
+    case DeviceType::GATE_OPENER:
+      return "gate_opener";
+    case DeviceType::ROLLING_DOOR_OPENER:
+      return "rolling_door_opener";
+    case DeviceType::LOCK:
+      return "lock";
+    case DeviceType::BLIND:
+      return "blind";
+    case DeviceType::SCREEN:
+      return "screen";
+    case DeviceType::DUAL_SHUTTER:
+      return "dual_shutter";
+    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
+      return "heating_temperature_interface";
+    case DeviceType::ON_OFF_SWITCH:
+      return "on_off_switch";
+    case DeviceType::HORIZONTAL_AWNING:
+      return "horizontal_awning";
+    case DeviceType::EXTERNAL_VENETIAN_BLIND:
+      return "external_venetian_blind";
+    case DeviceType::LOUVRE_BLIND:
+      return "louvre_blind";
+    case DeviceType::CURTAIN_TRACK:
+      return "curtain_track";
+    case DeviceType::INTRUSION_ALARM:
+      return "intrusion_alarm";
+    case DeviceType::SWINGING_SHUTTER:
+      return "swinging_shutter";
+    default:
+      return nullptr;
+  }
+}
+
 DeviceCapabilityClass device_capability_class(DeviceType type) {
   switch (type) {
     // Cover types (position-controlled)

@@ -14,14 +14,14 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 
 - **Cover control**: Open, close, stop, and set position (0–100%) for shutters, blinds, awnings, window openers, garage openers, gate openers, rolling doors, curtain tracks, and related position-based devices
 - **Favorite or My position action for covers**: Covers with a declared position-capable `io_device_type` automatically get a companion Home Assistant button named `<Cover Name> Favorite Position`
-- **Stored device-name diagnostics**: Covers, lights, locks, and switches now auto-generate a diagnostic text sensor named `<Entity Name> Device Name`, disabled by default to reduce clutter and populated from the actuator's internally stored name via a protocol read on boot
-- **On-demand device rename action**: The hub now exposes a native ESPHome API action named `esphome.<node_name>_rename_device` so Home Assistant can rename a paired actuator without adding persistent helper entities
+- **Stored device-name diagnostics**: Covers, lights, locks, and switches auto-generate a diagnostic text sensor named `<Entity Name> Device Name`, disabled by default to reduce clutter and populated from the actuator's internally stored name via a protocol read on boot
+- **On-demand device rename action**: The hub exposes a native ESPHome API action named `esphome.<node_name>_rename_device` so Home Assistant can rename a paired actuator without adding persistent helper entities
 - **Tilt support for venetian-style blinds**: Tilt-capable device types expose slat-angle control automatically in Home Assistant when the paired device reports tilt support
 - **Experimental binary light support**: On/off-only light entities for IO-Homecontrol light devices
 - **Experimental lock support**: Lock/unlock entities for IO-Homecontrol lock devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
 - **Position feedback**: Real-time position updates from devices (2-Way protocol)
-- **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity (confirmed on SX1276; SX1262 under investigation)
+- **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity (confirmed on SX1276; currently not working on SX1262)
 - **Home Assistant integration**: Cover devices appear as native cover entities with full position support, and tilt-capable blinds also expose slat-angle control
 - **SX1276 & SX1262 support**: Works with both radio chips — SX1276 uses hardware IoHomeOn mode, SX1262 uses software CRC
 
@@ -34,7 +34,7 @@ The table below lists board mappings that are known to be plausible for this com
 | Board | Radio | Status | `spi:` pins | `home_io_control:` pins | Notes |
 |-------|-------|--------|-------------|-------------------------|-------|
 | **Heltec WiFi LoRa32 v2** | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | Matches [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml), the SX1276 cover example with OLED status display |
-| **Heltec WiFi LoRa32 V3 / V3.2** | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `radio_type: sx1262` and `tcxo_voltage: 1_8V`; matches [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml), the SX1262 cover example with OLED status display |
+| **Heltec WiFi LoRa32 V3 / V3.2** | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `radio_type: sx1262` and `tcxo_voltage: 1_8V`; matches [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml), the SX1262 cover example with OLED status display; pairing does not yet work on SX1262 |
 | LilyGO T3-S3 SX1262 | SX1262 | Untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 33`, `busy_pin: 34` | should have the same mapping on v1.2 and v1.3; start with `radio_type: sx1262` |
 | LilyGO T3-S3 SX1276 | SX1276 | Untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio0_pin: 9` | |
 | LilyGO LoRa32 V1.3 SX1276 | SX1276 | Untested | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | |
