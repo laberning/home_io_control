@@ -243,3 +243,80 @@ TEST(RadioSX1262, IsSyncDetected_WithOtherBits) {
   radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID | SX1262_IRQ_PREAMBLE_DETECTED | SX1262_IRQ_RX_DONE});
   EXPECT_TRUE(radio.is_sync_detected()) << "should detect sync even when other IRQ bits are also set";
 }
+
+// ============================================================================
+// UART encode/decode and CRC validation tests
+// ============================================================================
+
+TEST(RadioSX1262, UartEncodeDecodeRoundTrip) {
+  // A valid IO-homecontrol frame with CRC appended should encode and decode cleanly.
+  const uint8_t frame[] = {0xCE, 0x00, 0xC0, 0xFF, 0xEE, 0xAA, 0xBB, 0xCC, 0x3C, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  const uint8_t frame_len = sizeof(frame);
+
+  // Append CRC
+  uint16_t crc = crc_ccitt(frame, frame_len);
+  uint8_t frame_with_crc[32];
+  memcpy(frame_with_crc, frame, frame_len);
+  frame_with_crc[frame_len] = crc & 0xFF;
+  frame_with_crc[frame_len + 1] = (crc >> 8) & 0xFF;
+
+  // UART-encode
+  uint8_t encoded[64] = {0};
+  uint8_t encoded_len = RadioSX1262::uart_encode_packet(frame_with_crc, frame_len + 2, encoded, sizeof(encoded));
+  ASSERT_GT(encoded_len, 0u);
+
+  // Decode and verify via find_uart_probe (which includes CRC validation)
+  UartProbeResult probe = find_uart_probe(encoded, encoded_len);
+  ASSERT_TRUE(probe.valid) << "CRC-valid frame should be accepted by find_uart_probe";
+  EXPECT_EQ(probe.frame_len, frame_len);
+  EXPECT_EQ(memcmp(probe.decoded + probe.frame_start, frame, frame_len), 0)
+      << "Decoded frame should match original byte-for-byte";
+}
+
+TEST(RadioSX1262, UartProbeRejectsBitErrors) {
+  // Encode a valid frame, then flip a bit — CRC should reject it.
+  const uint8_t frame[] = {0xCE, 0x00, 0xC0, 0xFF, 0xEE, 0xAA, 0xBB, 0xCC, 0x3C, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  const uint8_t frame_len = sizeof(frame);
+
+  uint16_t crc = crc_ccitt(frame, frame_len);
+  uint8_t frame_with_crc[32];
+  memcpy(frame_with_crc, frame, frame_len);
+  frame_with_crc[frame_len] = crc & 0xFF;
+  frame_with_crc[frame_len + 1] = (crc >> 8) & 0xFF;
+
+  uint8_t encoded[64] = {0};
+  uint8_t encoded_len = RadioSX1262::uart_encode_packet(frame_with_crc, frame_len + 2, encoded, sizeof(encoded));
+  ASSERT_GT(encoded_len, 0u);
+
+  // Flip a bit in the middle of the encoded stream (simulates demodulator error)
+  encoded[encoded_len / 2] ^= 0x20;
+
+  UartProbeResult probe = find_uart_probe(encoded, encoded_len);
+  // The probe should either not find a valid frame, or find one at a wrong offset
+  // that doesn't match our original. In either case, it must NOT return our frame
+  // with corrupted bytes.
+  if (probe.valid) {
+    // If something was found, it should NOT match the original (wrong CRC would reject the real frame)
+    bool matches_original =
+        (probe.frame_len == frame_len && memcmp(probe.decoded + probe.frame_start, frame, frame_len) == 0);
+    EXPECT_FALSE(matches_original) << "Bit-corrupted frame should not pass CRC validation";
+  }
+  // Either probe.valid==false (rejected entirely) or it found a different candidate — both are acceptable
+}
+
+TEST(RadioSX1262, UartDecodeFixedStride) {
+  // Verify decode_uart_probe correctly decodes a known UART-encoded byte.
+  // UART frame for byte 0xA5: start(0), 1,0,1,0,0,1,0,1, stop(1) = 10 bits
+  // LSB first: bit0=1, bit1=0, bit2=1, bit3=0, bit4=0, bit5=1, bit6=0, bit7=1
+  // Bitstream MSB-first in bytes: 0_10100101_1 = 0b0101001011... packed into bytes
+  // Let's just use uart_encode_packet for a single byte and verify decode.
+  uint8_t input[] = {0xA5};
+  uint8_t encoded[2] = {0};
+  uint8_t elen = RadioSX1262::uart_encode_packet(input, 1, encoded, sizeof(encoded));
+  ASSERT_GT(elen, 0u);
+
+  uint8_t decoded[4] = {0};
+  uint8_t dlen = decode_uart_probe(encoded, elen, 0, decoded, sizeof(decoded));
+  ASSERT_GE(dlen, 1u);
+  EXPECT_EQ(decoded[0], 0xA5);
+}

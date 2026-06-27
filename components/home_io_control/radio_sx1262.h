@@ -71,6 +71,12 @@ static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 
+/// Microseconds to wait after TX before the demodulator can reliably decode incoming frames.
+/// The SX1262's GFSK demodulator needs this settling time after the TX→STDBY→RX transition
+/// to avoid bit errors in the UART-decoded bitstream. Validated at 500µs via real-device
+/// pairing tests (challenge decode corruption eliminated).
+static constexpr uint16_t POST_TX_SETTLE_US = 500;
+
 // ============================================================================
 // SX1262 Radio Driver
 // ============================================================================
@@ -114,6 +120,8 @@ class RadioSX1262 : public RadioDriver {
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
   bool is_preamble_detected() override;
+  /// @copydoc RadioDriver::response_preamble
+  [[nodiscard]] uint16_t response_preamble() const override { return SX1262_RESPONSE_PREAMBLE; }
   /// @copydoc RadioDriver::set_mode_rx
   void set_mode_rx() override;
   /// @copydoc RadioDriver::set_mode_standby
@@ -246,6 +254,27 @@ class RadioSX1262 : public RadioDriver {
   uint8_t tcxo_voltage_;
   bool failed_{false};
 };
+
+// ============================================================================
+// UART probe helpers (non-member, declared here for unit-test access)
+// ============================================================================
+
+/// @brief Result of the UART probe: best candidate frame within a raw capture.
+struct UartProbeResult {
+  bool valid{false};                            ///< A plausible frame was found.
+  uint8_t bit_offset{0};                        ///< Bit offset where the best decode started.
+  uint8_t decoded_len{0};                       ///< Total number of bytes decoded at that offset.
+  uint8_t frame_start{0};                       ///< Index into decoded buffer where the frame begins.
+  uint8_t frame_len{0};                         ///< Length of the candidate IoFrame (decoded bytes).
+  uint8_t decoded[RADIO_PACKET_BUFFER_SIZE]{};  ///< Full decoded UART stream at the chosen offset.
+};
+
+/// @brief Decode a UART-encoded bitstream from the given bit offset.
+uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offset, uint8_t *decoded,
+                          uint8_t decoded_max_len);
+
+/// @brief Search raw RX buffer for the best CRC-validated IO-Homecontrol frame.
+UartProbeResult find_uart_probe(const uint8_t *raw, uint8_t raw_len);
 
 }  // namespace home_io_control
 }  // namespace esphome

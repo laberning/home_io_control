@@ -380,3 +380,135 @@ TEST(Exchange, SendAndReceive_FinalResponseTimeout) {
   // No final response received within auth wait window
   EXPECT_FALSE(ok) << "final response timeout after successful challenge should cause exchange failure";
 }
+
+// ============================================================================
+// response_preamble() behavior tests
+// ============================================================================
+// Validate that RadioDriver::response_preamble() correctly influences the
+// preamble length used by send_and_receive_ for both START and non-START frames,
+// and that the SX1262 override returns the longer preamble while the default
+// (SX1276-like) returns SHORT_PREAMBLE.
+
+TEST(Exchange, ResponsePreamble_DefaultReturnsShortPreamble) {
+  MockRadio radio;
+  EXPECT_EQ(radio.response_preamble(), SHORT_PREAMBLE)
+      << "base RadioDriver (SX1276-like) should return SHORT_PREAMBLE for response frames";
+}
+
+TEST(Exchange, ResponsePreamble_SX1262ReturnsLongerPreamble) {
+  MockRadioSX1262 radio;
+  EXPECT_EQ(radio.response_preamble(), SX1262_RESPONSE_PREAMBLE)
+      << "SX1262 should return the configured response preamble";
+  EXPECT_GT(radio.response_preamble(), SHORT_PREAMBLE)
+      << "SX1262 needs a longer preamble for device lock-on during tight turnaround";
+}
+
+TEST(Exchange, SendAndReceive_StartFrameUsesLongPreamble) {
+  // START frames must always use LONG_PREAMBLE regardless of chip type.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  // create_execute sets START flag — verify it
+  ASSERT_TRUE(is_start(request)) << "execute command should have START flag set";
+
+  // No RX → times out after retries, but we can inspect the TX config
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  ASSERT_GE(radio.get_tx_configs().size(), 1u) << "at least one TX should have been attempted";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
+      << "START frame should always use LONG_PREAMBLE regardless of radio type";
+}
+
+TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_Default) {
+  // Non-START frames on the default radio (SX1276-like) should use SHORT_PREAMBLE.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  // Build a non-START frame (key_transfer style: 2W, no start, no end)
+  IoFrame request{};
+  init_frame(request, true, false, false, false);
+  set_dst(request, test::DST_ID);
+  set_src(request, comp.node_id_);
+  uint8_t payload[16] = {0};
+  set_cmd(request, CMD_KEY_TRANSFER, payload, sizeof(payload));
+  ASSERT_FALSE(is_start(request)) << "key_transfer should NOT have START flag";
+
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  ASSERT_GE(radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, SHORT_PREAMBLE)
+      << "non-START frame on default radio should use SHORT_PREAMBLE";
+}
+
+TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_SX1262) {
+  // Non-START frames on SX1262 should use the longer SX1262_RESPONSE_PREAMBLE.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  // Build a non-START frame (key_transfer style)
+  IoFrame request{};
+  init_frame(request, true, false, false, false);
+  set_dst(request, test::DST_ID);
+  set_src(request, comp.node_id_);
+  uint8_t payload[16] = {0};
+  set_cmd(request, CMD_KEY_TRANSFER, payload, sizeof(payload));
+  ASSERT_FALSE(is_start(request));
+
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  ASSERT_GE(radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, SX1262_RESPONSE_PREAMBLE)
+      << "non-START frame on SX1262 should use SX1262_RESPONSE_PREAMBLE (64)";
+}
+
+TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
+  // When SX1262 radio handles a challenge, the 0x3D auth response should use the longer preamble.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+
+  // Queue a challenge from device
+  uint8_t chal_data[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  uint8_t len_chal = serialize(challenge, raw_chal, sizeof(raw_chal));
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = len_chal;
+  memcpy(chal_pkt.data, raw_chal, len_chal);
+  radio.queue_rx(chal_pkt);
+
+  // No final response — will timeout, but we can inspect the auth response TX config
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  // TX 0 = request (LONG_PREAMBLE, start frame)
+  // TX 1 = auth response (should use SX1262_RESPONSE_PREAMBLE)
+  ASSERT_GE(radio.get_tx_configs().size(), 2u) << "should have sent at least request + auth response";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
+      << "initial request (START) should use LONG_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, SX1262_RESPONSE_PREAMBLE)
+      << "auth response on SX1262 should use SX1262_RESPONSE_PREAMBLE";
+}

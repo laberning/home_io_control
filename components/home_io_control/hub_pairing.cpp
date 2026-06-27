@@ -4,6 +4,7 @@
 #include "hub_core.h"
 #include "hub_internal.h"
 #include "proto_commands.h"
+#include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
 #include <algorithm>
@@ -176,6 +177,12 @@ decisions::PairingDiscoveryDisposition IOHomeControlComponent::wait_for_discover
       saw_traffic = true;
       if (try_accept())
         return decisions::PairingDiscoveryDisposition::ACCEPT;
+      // Non-discovery frame (e.g., beacon) — hop only if no further signal activity
+      // is present, otherwise stay to catch a back-to-back frame on this channel.
+      if ((int32_t) (deadline - millis()) > 0 && !this->radio_->is_preamble_detected() &&
+          !this->radio_->is_sync_detected()) {
+        this->hop_frequency_();
+      }
       continue;
     }
     // No complete packet within slice — decide whether to hop or dwell.
@@ -197,12 +204,13 @@ decisions::PairingDiscoveryDisposition IOHomeControlComponent::wait_for_discover
                      : decisions::PairingDiscoveryDisposition::NO_RESPONSE;
 }
 
-/// Wait for a valid key‑challenge frame (0x3C from the target device).
+/// Wait for a valid key‑challenge frame (0x3C) or key‑confirm (0x33) from the target device.
 ///
-/// During key exchange the device responds to our key‑init with a random 6‑byte
-/// challenge. This helper loops until such a frame is received and validated
-/// by `decisions::classify_pairing_key_challenge()` — it must be a 0x3C
-/// command, 6 bytes long, and come from the discovered device node ID.
+/// During key exchange the device typically responds to our key‑init with a random 6‑byte
+/// challenge (0x3C). However, some devices (particularly on SX1262 where preamble timing
+/// differs) may skip the challenge and send 0x33 (key confirm) directly — indicating
+/// immediate key acceptance without requiring 0x32 key transfer.
+/// Both responses are accepted; the caller checks which was received.
 bool IOHomeControlComponent::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet,
                                                      IoFrame &challenge_frame,
                                                      const uint8_t device_node_id[NODE_ID_SIZE]) {
@@ -216,12 +224,66 @@ bool IOHomeControlComponent::wait_for_key_challenge_(uint32_t timeout_ms, RadioR
     saw_traffic = true;
     if (!parse(packet.data, packet.len, challenge_frame))
       continue;
+    // Accept 0x3C (challenge) or 0x33 (immediate confirm) from the target device to us
+    if (challenge_frame.cmd == CMD_KEY_CONFIRM && memcmp(challenge_frame.src, device_node_id, NODE_ID_SIZE) == 0 &&
+        memcmp(challenge_frame.dst, this->node_id_, NODE_ID_SIZE) == 0)
+      return true;
     if (decisions::classify_pairing_key_challenge(challenge_frame, device_node_id, this->node_id_) !=
         decisions::PairingKeyChallengeDisposition::ACCEPT)
       continue;
     return true;
   }
   ESP_LOGW(TAG, saw_traffic ? "Key exchange: no valid challenge received" : "Key exchange: no challenge received");
+  return false;
+}
+
+/// Transmit the 0x32 key transfer and wait for 0x33 key confirm.
+///
+/// Uses a dedicated wait loop with frequency hopping and the platform's
+/// response preamble length. SX1262 needs a longer preamble than the reference
+/// SHORT_PREAMBLE for the device to lock on. Retries up to EXCHANGE_RETRY_COUNT
+/// times on timeout.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+bool IOHomeControlComponent::wait_for_key_confirm_(pairing::PairingContext &context) {
+  for (int tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
+    if (tries > 0) {
+      App.feed_wdt();
+      delay(EXCHANGE_RETRY_DELAY_MS);
+    }
+    if (!this->transmit_frame_(context.req, FREQ_CH2, this->radio_->response_preamble()))
+      continue;
+
+    const uint32_t deadline = millis() + detail::PAIRING_KEY_CONFIRM_TIMEOUT_MS;
+    bool saw_any = false;
+    while ((int32_t) (deadline - millis()) > 0) {
+      const uint32_t remaining = deadline - millis();
+      const uint32_t slice = std::min<uint32_t>(remaining, detail::PAIRING_KEY_CONFIRM_SLICE_MS);
+      if (!this->radio_->wait_for_packet(context.packet, slice)) {
+        if ((int32_t) (deadline - millis()) > 0)
+          this->hop_frequency_();
+        continue;
+      }
+      saw_any = true;
+      ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%u", context.packet.len, context.packet.freq_hz);
+      if (!parse(context.packet.data, context.packet.len, context.resp)) {
+        ESP_LOGD(TAG, "Key confirm wait: parse failed");
+        continue;
+      }
+      ESP_LOGD(TAG, "Key confirm wait: parsed cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X", context.resp.cmd,
+               context.resp.src[0], context.resp.src[1], context.resp.src[2], context.resp.dst[0], context.resp.dst[1],
+               context.resp.dst[2]);
+      if (!decisions::frame_matches_exchange_endpoints(context.req, context.resp))
+        continue;
+      if (frame_is_key_confirm(context.resp))
+        return true;
+      ESP_LOGW(TAG, "Key transfer: device responded with cmd=0x%02X (expected 0x33)", context.resp.cmd);
+      if (context.resp.cmd == CMD_ERROR_RESP && context.resp.data_len > 0)
+        ESP_LOGW(TAG, "Key transfer: error code=0x%02X", context.resp.data[0]);
+      return false;
+    }
+    ESP_LOGI(TAG, "Try %d ended: no response for key transfer (0x32) within %u ms (saw_any=%d)", tries + 1,
+             detail::PAIRING_KEY_CONFIRM_TIMEOUT_MS, saw_any);
+  }
   return false;
 }
 
@@ -307,6 +369,22 @@ bool IOHomeControlComponent::run_key_exchange_phase_(pairing::PairingContext &co
     return false;
   }
 
+  // Some devices send 0x33 (key confirm) directly after 0x31 without requiring 0x32.
+  // If we received 0x33 instead of 0x3C, pairing is already complete.
+  if (context.rx.cmd == CMD_KEY_CONFIRM) {
+    ESP_LOGI(TAG, "Device accepted key immediately (0x33 without 0x32 exchange)");
+    context.resp = context.rx;
+    return true;
+  }
+
+  // Debug: log the challenge bytes we received from the device
+  ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u bytes=[%02X %02X %02X %02X %02X %02X] freq=%u rssi=%d",
+           context.rx.data_len, context.rx.data_len > 0 ? context.rx.data[0] : 0,
+           context.rx.data_len > 1 ? context.rx.data[1] : 0, context.rx.data_len > 2 ? context.rx.data[2] : 0,
+           context.rx.data_len > 3 ? context.rx.data[3] : 0, context.rx.data_len > 4 ? context.rx.data[4] : 0,
+           context.rx.data_len > 5 ? context.rx.data[5] : 0, context.packet.freq_hz,
+           this->radio_->get_last_capture().rssi_dbm);
+
   context.state = pairing::PairingState::TX_KEY_TRANSFER;
   this->record_exchange_debug_(pairing_stage_name(context.state), 1, true);
   if (!create_key_transfer(context.req, context.key_init, context.device.node_id, this->node_id_, this->system_key_,
@@ -316,7 +394,31 @@ bool IOHomeControlComponent::run_key_exchange_phase_(pairing::PairingContext &co
 
   context.state = pairing::PairingState::WAIT_KEY_CONFIRM;
   this->record_exchange_debug_(pairing_stage_name(context.state), 1, true);
-  if (!this->send_and_receive_(context.req, context.resp, FREQ_CH2) || !frame_is_key_confirm(context.resp)) {
+  // SX1276 uses the proven send_and_receive_ path. SX1262 has a timing issue where
+  // the device responds with 0x33 faster than the TX→RX transition completes. Strategy:
+  // send 0x32 once (device accepts the key), then if we miss the 0x33, re-send 0x31
+  // which triggers the auto-confirm path (device already has the key, responds with 0x33).
+  bool key_ok = false;
+  if (strcmp(this->radio_->chip_name(), "sx1262") == 0) {
+    // First attempt: send 0x32 and try to catch 0x33
+    key_ok = this->wait_for_key_confirm_(context);
+    // If that failed, retry by re-sending 0x31 — device should auto-confirm with 0x33
+    for (int re = 0; !key_ok && re < 2; re++) {
+      ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %d/2)", re + 1);
+      App.feed_wdt();
+      delay(EXCHANGE_RETRY_DELAY_MS);
+      if (!this->transmit_frame_(context.key_init, FREQ_CH2, LONG_PREAMBLE))
+        continue;
+      if (this->wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
+                                        context.device.node_id) &&
+          context.rx.cmd == CMD_KEY_CONFIRM) {
+        key_ok = true;
+      }
+    }
+  } else {
+    key_ok = this->send_and_receive_(context.req, context.resp, FREQ_CH2) && frame_is_key_confirm(context.resp);
+  }
+  if (!key_ok) {
     ESP_LOGW(TAG, "Key exchange failed");
     return false;
   }
@@ -365,7 +467,23 @@ bool IOHomeControlComponent::discover_and_pair() {
   }
 
   // Phase 2: Key exchange — establish shared system key
-  if (!this->run_key_exchange_phase_(context)) {
+  // Retry up to 3 times as defense-in-depth against transient RX decode failures.
+  // Each attempt gets a fresh challenge (0x3C) from the device via a full
+  // 0x31 → 0x3C → 0x32 → 0x33 sequence, so a corrupted challenge on one attempt
+  // does not poison subsequent tries.
+  bool key_exchanged = false;
+  for (int ke_attempt = 0; ke_attempt < 3; ke_attempt++) {
+    if (ke_attempt > 0) {
+      ESP_LOGI(TAG, "Retrying key exchange (attempt %d/3)...", ke_attempt + 1);
+      App.feed_wdt();
+      delay(EXCHANGE_RETRY_DELAY_MS);
+    }
+    if (this->run_key_exchange_phase_(context)) {
+      key_exchanged = true;
+      break;
+    }
+  }
+  if (!key_exchanged) {
     this->busy_ = false;
     return false;
   }

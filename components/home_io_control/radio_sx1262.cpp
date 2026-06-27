@@ -48,9 +48,7 @@ static const uint8_t UART_PROBE_MAX_BIT_OFFSET = 10;
 /// @param data Input byte buffer.
 /// @param bit_pos Global bit index within buffer.
 /// @return The bit value (0 or 1).
-static uint8_t get_bit_msb(const uint8_t *data, uint16_t bit_pos) {
-  return (data[bit_pos / 8] >> (7 - (bit_pos % 8))) & 0x01;
-}
+uint8_t get_bit_msb(const uint8_t *data, uint16_t bit_pos) { return (data[bit_pos / 8] >> (7 - (bit_pos % 8))) & 0x01; }
 
 /// Decode a raw UART‑encoded bitstream into bytes.
 /// IO‑Homecontrol uses a UART‑like encoding over the air: each byte is represented
@@ -63,8 +61,8 @@ static uint8_t get_bit_msb(const uint8_t *data, uint16_t bit_pos) {
 /// @param decoded Output buffer for decoded bytes.
 /// @param decoded_max_len Capacity of decoded buffer.
 /// @return Number of bytes successfully decoded.
-static uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offset, uint8_t *decoded,
-                                 uint8_t decoded_max_len) {
+uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offset, uint8_t *decoded,
+                          uint8_t decoded_max_len) {
   // Bit numbering: we read MSB-first across byte boundaries. The UART frame structure
   // within the bitstream is: start(0), data0, data1, ..., data7, stop(1). Byte values
   // are LSB-first within the 8 data bits (bit 0 arrives first after start).
@@ -88,20 +86,10 @@ static uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bi
   return decoded_len;
 }
 
-/// @brief Result of the UART probe: best candidate frame within a raw capture.
-struct UartProbeResult {
-  bool valid{false};                            ///< A plausible frame was found.
-  uint8_t bit_offset{0};                        ///< Bit offset where the best decode started.
-  uint8_t decoded_len{0};                       ///< Total number of bytes decoded at that offset.
-  uint8_t frame_start{0};                       ///< Index into decoded buffer where the frame begins.
-  uint8_t frame_len{0};                         ///< Length of the candidate IoFrame (decoded bytes).
-  uint8_t decoded[RADIO_PACKET_BUFFER_SIZE]{};  ///< Full decoded UART stream at the chosen offset.
-};
-
 /// @brief Check if a command ID is one of the known IO‑Homecontrol commands.
 /// @param cmd Command byte.
 /// @return true if cmd matches a known command constant.
-static bool is_known_io_command(uint8_t cmd) {
+bool is_known_io_command(uint8_t cmd) {
   switch (cmd) {
     case CMD_EXECUTE:
     case CMD_PRIVATE:
@@ -134,8 +122,15 @@ static bool is_known_io_command(uint8_t cmd) {
   }
 }
 
-static bool is_plausible_uart_frame(const IoFrame &frame, uint8_t candidate_len) {
-  if (candidate_len < 15)
+/// @brief Check if a UART-decoded frame is plausible as an IO-Homecontrol packet.
+/// Accepts frames at or above FRAME_MIN_SIZE (9 bytes) that contain a known command
+/// or have the 1W protocol bit set. This allows short frames like CMD_KEY_CONFIRM (9 bytes)
+/// and CMD_ERROR_RESP (10 bytes) to pass through when CRC validates.
+/// @param frame Parsed IoFrame candidate.
+/// @param candidate_len Total decoded length of the candidate.
+/// @return true if the frame looks like a real protocol packet.
+bool is_plausible_uart_frame(const IoFrame &frame, uint8_t candidate_len) {
+  if (candidate_len < FRAME_MIN_SIZE)
     return false;
   if (is_known_io_command(frame.cmd))
     return true;
@@ -148,46 +143,63 @@ static bool is_plausible_uart_frame(const IoFrame &frame, uint8_t candidate_len)
 /// @param raw Pointer to raw radio buffer bytes.
 /// @param raw_len Number of bytes in raw.
 /// @return UartProbeResult with best candidate (may have valid=false if none found).
-static UartProbeResult find_uart_probe(const uint8_t *raw, uint8_t raw_len) {
+/// @brief Try to find a CRC-valid IO-Homecontrol frame within a decoded UART byte stream.
+/// @param decoded Decoded byte buffer from UART probe.
+/// @param decoded_len Number of decoded bytes.
+/// @return Frame start index and length if found, or {0, 0} if no valid frame.
+static std::pair<uint8_t, uint8_t> find_crc_valid_frame(const uint8_t *decoded, uint8_t decoded_len) {
+  for (uint8_t start = 0; start < decoded_len; start++) {
+    const uint8_t max_candidate_len = std::min<uint8_t>(decoded_len - start, FRAME_MAX_SIZE);
+    for (int candidate_len = max_candidate_len; candidate_len >= FRAME_MIN_SIZE; candidate_len--) {
+      IoFrame frame;
+      if (!parse(decoded + start, candidate_len, frame))
+        continue;
+      if (!is_plausible_uart_frame(frame, candidate_len))
+        continue;
+      if (start + candidate_len + 2 > decoded_len)
+        continue;
+      const uint16_t computed_crc = crc_ccitt(decoded + start, candidate_len);
+      const uint16_t received_crc =
+          (uint16_t) decoded[start + candidate_len] | ((uint16_t) decoded[start + candidate_len + 1] << 8);
+      if (computed_crc != received_crc)
+        continue;
+      return {start, (uint8_t) candidate_len};
+    }
+  }
+  return {0, 0};
+}
+
+UartProbeResult find_uart_probe(const uint8_t *raw, uint8_t raw_len) {
   // The SX1262 RX buffer contains the raw GFSK‑demodulated bits packed as bytes.
   // Due to unknown bit alignment, we probe up to UART_PROBE_MAX_BIT_OFFSET (10) different
   // starting positions. For each offset we attempt UART decoding; if decoding yields
   // a plausible frame length (>= minimum) and contains a known command ID or indicates
-  // a 1W frame, we keep it as a candidate. The best (longest valid) candidate wins.
-  // This approach tolerates the SX1262's lack of IoHomeOn framing assistance.
+  // a 1W frame, we keep it as a candidate. CRC-CCITT validation is used as the primary
+  // selection criterion: a frame that passes CRC is preferred over one that merely parses.
+  // This rejects frames corrupted by demodulator bit errors after TX→RX transitions.
   UartProbeResult best{};
 
-  // Current captures consistently decode at bit_offset=0, but keeping a short probe window makes
-  // the recovery path robust against future boards or slightly different front-end timing.
   for (uint8_t bit_offset = 0; bit_offset < UART_PROBE_MAX_BIT_OFFSET; bit_offset++) {
     uint8_t decoded[RADIO_PACKET_BUFFER_SIZE] = {0};
     uint8_t const decoded_len = decode_uart_probe(raw, raw_len, bit_offset, decoded, sizeof(decoded));
     if (decoded_len == 0)
       continue;
 
-    if (decoded_len > best.decoded_len) {
+    if (decoded_len > best.decoded_len && !best.valid) {
       best.bit_offset = bit_offset;
       best.decoded_len = decoded_len;
       memcpy(best.decoded, decoded, decoded_len);
     }
 
-    for (uint8_t start = 0; start < decoded_len; start++) {
-      uint8_t const max_candidate_len = std::min<uint8_t>(decoded_len - start, FRAME_MAX_SIZE);
-      for (int candidate_len = max_candidate_len; candidate_len >= FRAME_MIN_SIZE; candidate_len--) {
-        IoFrame frame;
-        if (!parse(decoded + start, candidate_len, frame))
-          continue;
-        if (!is_plausible_uart_frame(frame, candidate_len))
-          continue;
-
-        best.valid = true;
-        best.bit_offset = bit_offset;
-        best.decoded_len = decoded_len;
-        best.frame_start = start;
-        best.frame_len = candidate_len;
-        memcpy(best.decoded, decoded, decoded_len);
-        return best;
-      }
+    auto [frame_start, frame_len] = find_crc_valid_frame(decoded, decoded_len);
+    if (frame_len > 0) {
+      best.valid = true;
+      best.bit_offset = bit_offset;
+      best.decoded_len = decoded_len;
+      best.frame_start = frame_start;
+      best.frame_len = frame_len;
+      memcpy(best.decoded, decoded, decoded_len);
+      return best;
     }
   }
 
@@ -577,13 +589,15 @@ void RadioSX1262::configure_radio_() {
   // 10. FSK modulation params:
   //     BitRate = 32 * Fxosc / BR_reg → BR_reg = 32 * 32MHz / 38400 = 26667 = 0x00682B
   //     Pulse shape: Gaussian BT=1.0 (0x0B) — reduces TX spectral occupation
-  //     Bandwidth: 58.6 kHz (0x0C) — Carson rule BW ≈ 77 kHz; tighter filtering
-  //       maximizes sensitivity and rejects out-of-band noise during discovery
+  //     Bandwidth: 117.3 kHz (0x0B) — wider than Carson rule minimum (77 kHz) but
+  //       needed to tolerate the SX1262 LO frequency offset after TX→RX transition.
+  //       At 58.6 kHz the demodulator produced ~50% bit errors on post-TX frames;
+  //       117.3 kHz gives 100% clean decode (confirmed via loopback turnaround test).
   //     Fdev = fdev_hz * 2^25 / 32e6 → 19200 * 2^25 / 32e6 = 20133 = 0x004EA5
   uint8_t mod_params[8] = {
       0x00, 0x68, 0x2B,  // Bitrate: 38400 bps
       0x0B,              // Pulse shape: Gaussian BT=1.0
-      0x0C,              // Bandwidth: 58.6 kHz
+      0x0B,              // Bandwidth: 117.3 kHz
       0x00, 0x4E, 0xA5,  // Fdev: 19200 Hz
   };
   this->write_opcode_(SX1262_SET_MODULATION_PARAMS, mod_params, sizeof(mod_params));
@@ -769,11 +783,19 @@ bool RadioSX1262::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
   // re-arming RX so an immediate reply remains visible to wait_for_packet().
   this->clear_dio_fired();
 
-  // Clear IRQs, restore default packet params, return to RX. TxDone already
-  // left the radio in fallback standby mode, so avoid an extra explicit
-  // standby command here.
+  // Clear IRQs, restore default packet params, return to RX. The TxDone fallback
+  // leaves the chip in STDBY_XOSC, but issuing an explicit standby command ensures
+  // deterministic state before reconfiguring the buffer base address and re-entering RX.
   this->clear_irq_status_(0xFFFF);
-  this->reset_rx_state_(false);
+  this->reset_rx_state_(true);
+
+  // Post-TX settling delay: the GFSK demodulator needs time to stabilize after
+  // the TX→STDBY→RX transition. Without this, frames received immediately after TX
+  // (e.g., the 0x3C challenge during pairing) suffer UART decode bit errors because
+  // the demodulator's frequency discrimination hasn't settled. 500µs eliminates
+  // the issue completely (confirmed via loopback and real-device testing).
+  delayMicroseconds(POST_TX_SETTLE_US);
+
   return true;
 }
 
@@ -840,7 +862,37 @@ bool RadioSX1262::read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint
     memcpy(recovered_buf, probe.decoded + probe.frame_start, probe.frame_len);
     memcpy(packet.data, recovered_buf, probe.frame_len);
     packet.len = probe.frame_len;
+#ifdef IOHOME_FRAME_LOG
+    ESP_LOGD(TAG, "UART probe: valid=1 bit_offset=%u frame_start=%u frame_len=%u decoded_len=%u", probe.bit_offset,
+             probe.frame_start, probe.frame_len, probe.decoded_len);
+#endif
   } else {
+#ifdef IOHOME_FRAME_LOG
+    // Log diagnostic info when CRC validation rejects all decode attempts — helps identify
+    // whether post-TX RX corruption is being correctly caught by CRC or slipping through.
+    char hex_buf[97] = {0};  // 32 bytes * 3 chars + null
+    uint8_t dump_len = std::min(raw_probe_len, (uint8_t) 32);
+    for (uint8_t i = 0; i < dump_len; i++)
+      snprintf(hex_buf + i * 3, 4, "%02X ", rx_buf[i]);
+    ESP_LOGW(TAG, "UART probe: valid=0 decoded_len=%u raw_probe_len=%u", probe.decoded_len, raw_probe_len);
+    ESP_LOGW(TAG, "  raw[0..%u]: %s", dump_len - 1, hex_buf);
+    // Try to show why CRC failed at best offset
+    if (probe.decoded_len >= FRAME_MIN_SIZE) {
+      int best_len = std::min<int>(probe.decoded_len, FRAME_MAX_SIZE);
+      IoFrame test_frame;
+      for (int cl = best_len; cl >= FRAME_MIN_SIZE; cl--) {
+        if (!parse(probe.decoded, cl, test_frame))
+          continue;
+        if (cl + 2 <= (int) probe.decoded_len) {
+          uint16_t computed = crc_ccitt(probe.decoded, cl);
+          uint16_t received = (uint16_t) probe.decoded[cl] | ((uint16_t) probe.decoded[cl + 1] << 8);
+          ESP_LOGW(TAG, "  CRC check: candidate_len=%d cmd=0x%02X crc_computed=0x%04X crc_received=0x%04X %s", cl,
+                   test_frame.cmd, computed, received, computed == received ? "MATCH" : "MISMATCH");
+        }
+        break;
+      }
+    }
+#endif
     uint8_t const copy_len = std::min(reported_len, FRAME_MAX_SIZE);
     if (copy_len > 0)
       memcpy(packet.data, rx_buf, copy_len);

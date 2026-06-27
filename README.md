@@ -21,7 +21,7 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 - **Experimental lock support**: Lock/unlock entities for IO-Homecontrol lock devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
 - **Position feedback**: Real-time position updates from devices (2-Way protocol)
-- **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity (confirmed on SX1276; currently not working on SX1262)
+- **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity
 - **Home Assistant integration**: Cover devices appear as native cover entities with full position support, and tilt-capable blinds also expose slat-angle control
 - **SX1276 & SX1262 support**: Works with both radio chips — SX1276 uses hardware IoHomeOn mode, SX1262 uses software CRC
 
@@ -34,7 +34,7 @@ The table below lists board mappings that are known to be plausible for this com
 | Board | Radio | Status | `spi:` pins | `home_io_control:` pins | Notes |
 |-------|-------|--------|-------------|-------------------------|-------|
 | **Heltec WiFi LoRa32 v2** | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | Matches [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml), the SX1276 cover example with OLED status display |
-| **Heltec WiFi LoRa32 V3 / V3.2** | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `radio_type: sx1262` and `tcxo_voltage: 1_8V`; matches [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml), the SX1262 cover example with OLED status display; pairing does not yet work on SX1262 |
+| **Heltec WiFi LoRa32 V3 / V3.2** | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `radio_type: sx1262` and `tcxo_voltage: 1_8V`; matches [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml), the SX1262 cover example with OLED status display |
 | LilyGO T3-S3 SX1262 | SX1262 | Untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 33`, `busy_pin: 34` | should have the same mapping on v1.2 and v1.3; start with `radio_type: sx1262` |
 | LilyGO T3-S3 SX1276 | SX1276 | Untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio0_pin: 9` | |
 | LilyGO LoRa32 V1.3 SX1276 | SX1276 | Untested | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | |
@@ -44,7 +44,7 @@ The table below lists board mappings that are known to be plausible for this com
 ### Confirmed Board Notes
 
 - Heltec LoRa32 v2 is the confirmed SX1276 reference platform used during development. Pairing (discover & pair) is confirmed working on this board.
-- Heltec WiFi LoRa32 V3.2 is the confirmed SX1262 platform for authenticated 2W exchanges. Pairing does not yet work on SX1262 (under investigation).
+- Heltec WiFi LoRa32 V3.2 is the confirmed SX1262 platform for authenticated 2W exchanges and pairing.
 - The Heltec V4 family is closely related to V3 electrically, so it should also work, but this has not been validated yet.
 
 ## Installation

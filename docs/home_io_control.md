@@ -524,7 +524,6 @@ lambda: |-
 
 - Press the device's PROG button first, then press "Discover & Pair" in Home Assistant within 2–3 seconds. The device's pairing window is time-limited.
 - The controller retries discovery up to 3 times per button press. If pairing fails on the first press, try again — the timing between PROG and Discover & Pair matters.
-- Pairing is currently confirmed working on SX1276. SX1262 pairing is under investigation.
 
 ## Device Type and Capability Notes
 

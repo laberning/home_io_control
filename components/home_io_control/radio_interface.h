@@ -132,6 +132,22 @@ class RadioDriver {
   /// Used together with sync detection to gate frequency hopping.
   virtual bool is_preamble_detected() = 0;
 
+  /// @brief Return the preamble length for response/continuation frames.
+  ///
+  /// On SX1276 the IoHomeOn hardware mode produces a waveform that devices lock
+  /// onto quickly, so the standard SHORT_PREAMBLE (8 bytes) suffices for all
+  /// non-START frames. On SX1262 the software UART-encoded waveform requires a
+  /// longer preamble when the frame immediately follows a received packet (tight
+  /// RX→TX turnaround), because the peer device needs additional synchronization
+  /// margin after switching from its own TX back to RX.
+  ///
+  /// Callers use this instead of hardcoding SHORT_PREAMBLE for any frame sent as
+  /// an immediate reply within an exchange (challenge responses, key transfers,
+  /// and any future non-START continuation frames).
+  ///
+  /// @return Preamble length in bytes (SHORT_PREAMBLE for SX1276, longer for SX1262).
+  [[nodiscard]] virtual uint16_t response_preamble() const { return SHORT_PREAMBLE; }
+
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
 

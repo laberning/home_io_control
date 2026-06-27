@@ -1,0 +1,201 @@
+## Radio Loopback Test — V2 (SX1276) RX
+## Listens on CH2 (868.95 MHz) and logs received frames with byte-level comparison.
+## Flash this on the Heltec V2, then flash loopback-tx-v3.yaml on the V3.
+
+esphome:
+  name: loopback-rx-v2
+  friendly_name: Loopback RX V2
+  platformio_options:
+    build_flags:
+      - -DIOHOME_FRAME_LOG
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+spi:
+  clk_pin: 5
+  mosi_pin: 27
+  miso_pin: 19
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+home_io_control:
+  id: hioc
+  cs_pin: 18
+  rst_pin: 14
+  dio0_pin: 26
+  node_id: "C0FFEE"
+  system_key: "00112233445566778899AABBCCDDEEFF"
+
+globals:
+  - id: rx_count
+    type: int
+    initial_value: '0'
+  - id: rx_match
+    type: int
+    initial_value: '0'
+  - id: rx_mismatch
+    type: int
+    initial_value: '0'
+  - id: rx_listening
+    type: bool
+    initial_value: 'false'
+
+button:
+  - platform: template
+    name: "Start RX Listener"
+    on_press:
+      - lambda: |-
+          using namespace esphome::home_io_control;
+          id(hioc)->set_radio_test_mode(true);
+          auto *radio = id(hioc)->get_radio();
+          if (radio == nullptr) {
+            ESP_LOGE("loopback", "Radio not initialized!");
+            return;
+          }
+          radio->change_frequency(FREQ_CH2);
+          radio->set_mode_rx();
+          id(rx_listening) = true;
+          id(rx_count) = 0;
+          id(rx_match) = 0;
+          id(rx_mismatch) = 0;
+          ESP_LOGI("loopback", "========================================");
+          ESP_LOGI("loopback", "  LOOPBACK RX START — SX1276");
+          ESP_LOGI("loopback", "  Locked to CH2 (868.95 MHz)");
+          ESP_LOGI("loopback", "  Waiting for frames...");
+          ESP_LOGI("loopback", "========================================");
+
+interval:
+  - interval: 50ms
+    then:
+      - lambda: |-
+          using namespace esphome::home_io_control;
+          if (!id(rx_listening)) return;
+
+          auto *radio = id(hioc)->get_radio();
+          if (radio == nullptr) return;
+
+          // Keep on CH2 (override hub's hopping)
+          if (radio->get_current_freq() != FREQ_CH2) {
+            radio->change_frequency(FREQ_CH2);
+            radio->set_mode_rx();
+          }
+
+          RadioRxPacket packet;
+          if (!radio->check_for_packet(packet)) return;
+
+          id(rx_count)++;
+          int count = id(rx_count);
+          auto &cap = radio->get_last_capture();
+
+          // Log received frame
+          char hex[120];
+          int pos = 0;
+          for (int i = 0; i < packet.len && pos < 118; i++) {
+            pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X ", packet.data[i]);
+          }
+          ESP_LOGI("loopback", "");
+          ESP_LOGI("loopback", "=== RX #%d === len=%u rssi=%d dBm", count, packet.len, cap.rssi_dbm);
+          ESP_LOGI("loopback", "  received: %s", hex);
+
+          // Expected frames (must match TX side)
+          static const uint8_t F_ZEROS[] = {0xC8,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00, 0x00};
+          static const uint8_t F_ONES[] = {0xFF,0xFF, 0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF, 0xFF};
+          static const uint8_t F_PATTERN[] = {0xC8,0x00, 0x55,0xAA,0xFF, 0x00,0x55,0xAA, 0x28};
+          static const uint8_t F_KEY[] = {
+            0x51,0x00, 0xAA,0xBB,0xCC, 0xC0,0xFF,0xEE, 0x32,
+            0x01,0x23,0x45,0x67, 0x89,0xAB,0xCD,0xEF, 0xDE
+          };
+
+          struct Expected { const char *name; const uint8_t *data; uint8_t len; };
+          static const Expected expected[] = {
+            {"zeros",   F_ZEROS,   9},
+            {"ones",    F_ONES,    9},
+            {"pattern", F_PATTERN, 9},
+            {"key_xfer",F_KEY,     18},
+          };
+
+          // Find match
+          bool matched = false;
+          for (auto &exp : expected) {
+            if (packet.len != exp.len) continue;
+            if (memcmp(packet.data, exp.data, exp.len) == 0) {
+              ESP_LOGI("loopback", "  ✓ MATCH: \"%s\"", exp.name);
+              id(rx_match)++;
+              matched = true;
+              break;
+            }
+          }
+
+          if (!matched) {
+            // Find closest by length and report bit errors
+            for (auto &exp : expected) {
+              if (packet.len != exp.len) continue;
+              int bit_errs = 0;
+              int byte_errs = 0;
+              for (int j = 0; j < exp.len; j++) {
+                uint8_t diff = packet.data[j] ^ exp.data[j];
+                if (diff) {
+                  byte_errs++;
+                  while (diff) { bit_errs++; diff &= diff - 1; }
+                }
+              }
+              if (byte_errs > 0) {
+                id(rx_mismatch)++;
+                ESP_LOGW("loopback", "  ✗ BIT ERRORS vs \"%s\": %d bytes, %d bits differ",
+                         exp.name, byte_errs, bit_errs);
+                // Show expected
+                char exp_hex[120];
+                int p = 0;
+                for (int i = 0; i < exp.len && p < 118; i++) {
+                  p += snprintf(exp_hex + p, sizeof(exp_hex) - p, "%02X ", exp.data[i]);
+                }
+                ESP_LOGW("loopback", "  expected: %s", exp_hex);
+                // Show per-byte diffs
+                for (int j = 0; j < exp.len; j++) {
+                  if (packet.data[j] != exp.data[j]) {
+                    ESP_LOGW("loopback", "    byte[%d]: got 0x%02X want 0x%02X (XOR 0x%02X)",
+                             j, packet.data[j], exp.data[j], packet.data[j] ^ exp.data[j]);
+                  }
+                }
+                matched = true;
+                break;
+              }
+            }
+            if (!matched) {
+              ESP_LOGW("loopback", "  ? UNKNOWN FRAME (no length match)");
+              id(rx_mismatch)++;
+            }
+          }
+
+          // Log capture details
+          if (cap.valid) {
+            ESP_LOGD("loopback", "  irq_flags1=0x%02X irq_flags2=0x%02X raw_len=%u",
+                     cap.irq_flags1, cap.irq_flags2, cap.raw_len);
+          }
+
+          // Periodic summary
+          if (count % 5 == 0) {
+            ESP_LOGI("loopback", "--- STATS: %d rx, %d match, %d mismatch ---",
+                     count, (int)id(rx_match), (int)id(rx_mismatch));
+          }

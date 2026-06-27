@@ -4,6 +4,7 @@
 #include <esphome/core/gpio.h>
 
 #include <deque>
+#include <vector>
 
 // ============================================================================
 // Common test doubles for radio drivers
@@ -41,12 +42,12 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
                    const esphome::home_io_control::RadioTxConfig &tx_config) override {
     (void) data;
     (void) len;
-    (void) tx_config;
     bool result = true;
     if (!tx_results_.empty()) {
       result = tx_results_.front();
       tx_results_.pop_front();
     }
+    tx_configs_.push_back(tx_config);
     send_count_++;
     return result;
   }
@@ -85,9 +86,11 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
   int get_send_count() const { return send_count_; }
+  const std::vector<esphome::home_io_control::RadioTxConfig> &get_tx_configs() const { return tx_configs_; }
   void clear() {
     rx_queue_.clear();
     tx_results_.clear();
+    tx_configs_.clear();
     rssi_queue_.clear();
     send_count_ = 0;
   }
@@ -96,6 +99,15 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::deque<bool> tx_results_;
   std::deque<esphome::home_io_control::RadioRxPacket> rx_queue_;
   std::deque<int16_t> rssi_queue_;
+  std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
   int16_t rssi_default_{-120};
   int send_count_;
+};
+
+// --- SX1262 mock — inherits MockRadio but overrides chip-specific behavior ----
+/// Simulates SX1262 response_preamble() returning the longer preamble.
+class MockRadioSX1262 : public MockRadio {
+ public:
+  const char *chip_name() const override { return "sx1262"; }
+  uint16_t response_preamble() const override { return esphome::home_io_control::SX1262_RESPONSE_PREAMBLE; }
 };

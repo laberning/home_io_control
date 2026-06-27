@@ -265,6 +265,8 @@ IoDevice *IOHomeControlComponent::get_device(const std::string &device_id) {
 void IOHomeControlComponent::loop() {
   if (!this->initialized_)
     return;
+  if (this->radio_test_mode_)
+    return;
 
   // Check for received packets (non-blocking)
   if (!this->busy_) {

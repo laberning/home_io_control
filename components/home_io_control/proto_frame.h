@@ -39,14 +39,17 @@ static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W 
 /// on the same channel. Solar-powered devices need the long preamble to wake up.
 static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes for initial/start frames
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
-/// SX1262-specific preamble for the outbound 0x3D challenge response.
+/// SX1262-specific preamble for response/continuation frames within an exchange.
 ///
-/// The SX1262 path has to rebuild the IO-homecontrol framing details in software and the
-/// 0x3D auth response is sent immediately after we switch from RX to TX upon receiving the
-/// device's 0x3C challenge. Real-device tuning showed that 64 preamble bytes gives the peer
-/// enough lock-on margin in that tight turn-around window, while leaving the proven SX1276
-/// short-response waveform untouched.
-static constexpr uint16_t SX1262_AUTH_RESPONSE_PREAMBLE = 64;
+/// The SX1262 software UART-encoded waveform requires a longer preamble than the
+/// protocol's standard 8-byte SHORT_PREAMBLE when the peer device has just finished
+/// transmitting and is switching back to RX. This applies to any tight-turnaround
+/// frame: 0x3D challenge responses, 0x32 key transfers after receiving 0x3C, and
+/// any future protocol frames sent immediately after receiving from the device.
+///
+/// 64 bytes was validated on real hardware (Heltec V3.2 ↔ Device actuator) as the
+/// minimum that gives reliable lock-on without perturbing exchange timing.
+static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 64;
 
 /// SX1262-specific per-channel dwell while waiting for authenticated exchange responses.
 ///

@@ -108,6 +108,13 @@ class IOHomeControlComponent : public Component,
   /// @return Received byte.
   uint8_t spi_read() override { return this->read_byte(); }
 
+  /// @brief Suspend the hub's normal loop (packet processing, hopping, polling).
+  /// Used by loopback test configs to take exclusive control of the radio.
+  void set_radio_test_mode(bool active) { this->radio_test_mode_ = active; }
+
+  /// @brief Get the underlying radio driver (for diagnostics and test tooling).
+  [[nodiscard]] RadioDriver *get_radio() const { return this->radio_; }
+
   // --- YAML configuration setters (called by generated code) ---
   /// Set the radio reset pin.
   void set_rst_pin(InternalGPIOPin *pin) { this->rst_pin_ = pin; }
@@ -347,6 +354,10 @@ class IOHomeControlComponent : public Component,
   bool wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet, IoFrame &challenge_frame,
                                const uint8_t device_node_id[NODE_ID_SIZE]);
 
+  /// Transmit 0x32 key transfer with SHORT_PREAMBLE and wait for 0x33 key confirm.
+  /// Uses a dedicated wait loop: no frequency hopping, longer timeout than generic exchanges.
+  bool wait_for_key_confirm_(pairing::PairingContext &context);
+
   /// Parse a discovery response frame into device metadata and ID.
   /// @param frame       Parsed discovery response.
   /// @param device      Output: populated IoDevice (node_id, type, subtype, inverted, position/target/stopped).
@@ -436,6 +447,7 @@ class IOHomeControlComponent : public Component,
   // --- Runtime state ---
   bool initialized_{false};
   bool busy_{false};
+  bool radio_test_mode_{false};  ///< When true, loop() is suspended for loopback testing.
   uint32_t last_hop_us_{0};
   ExchangeDebugInfo last_exchange_debug_{};
   std::map<std::string, IoDevice> devices_;

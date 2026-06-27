@@ -77,21 +77,6 @@ const char *inbound_stage_name(exchange::InboundAuthState state) {
 
 // response_wait_slice_ms provided by decisions namespace (hub_decisions.h)
 
-/// Return preamble length for authenticated challenge response (0x3D).
-///
-/// SX1262 requires a longer preamble for the challenge response to improve
-/// lock-on reliability in the RX->TX turn-around after receiving 0x3C. For
-/// SX1276 we keep the short preamble because its IoHomeOn hardware path already
-/// matches the baseline waveform.
-///
-/// @param radio Radio driver instance (used to query chip name).
-/// @return Preamble length in symbol periods.
-uint16_t auth_response_preamble(const RadioDriver *radio) {
-  // SX1276 is the baseline waveform. The longer 0x3D preamble stays scoped to SX1262 so the radio-
-  // specific lock-on workaround does not silently perturb the SX1276 behavior.
-  return strcmp(radio->chip_name(), "sx1262") == 0 ? SX1262_AUTH_RESPONSE_PREAMBLE : SHORT_PREAMBLE;
-}
-
 /// Return the per-channel response dwell to use while waiting for exchange packets.
 ///
 /// The generic 50 ms slice remains correct for the baseline protocol flow and for pairing.
@@ -144,7 +129,7 @@ bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
 bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq) {
   this->busy_ = true;
   this->reset_exchange_debug_(request.cmd);
-  const uint16_t request_preamble = is_start(request) ? LONG_PREAMBLE : SHORT_PREAMBLE;
+  const uint16_t request_preamble = is_start(request) ? LONG_PREAMBLE : this->radio_->response_preamble();
 
   for (int tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
     exchange::OutboundExchangeContext context;
@@ -285,7 +270,7 @@ bool IOHomeControlComponent::handle_authentication_(const IoFrame &request, uint
 
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_exchange_debug_(outbound_stage_name(ctx.state), ctx.try_index, true);
-  if (!this->transmit_frame_(auth_resp, freq, auth_response_preamble(this->radio_))) {
+  if (!this->transmit_frame_(auth_resp, freq, this->radio_->response_preamble())) {
     ctx.state = exchange::OutboundExchangeState::FAILED;
     this->record_exchange_debug_("tx_auth_failed", ctx.try_index, true);
     return false;
