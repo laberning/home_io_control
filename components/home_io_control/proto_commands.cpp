@@ -19,16 +19,15 @@ namespace {
 constexpr uint8_t POSITION_PERCENT_MAX = 100;
 /// Byte 0 in execute-family payloads identifies a user-originated remote action.
 constexpr uint8_t EXECUTE_USER_ORIGINATOR = 0x01;
-/// ACEI/profile byte observed on normal execute commands.
-constexpr uint8_t EXECUTE_POSITION_ACEI = 0x67;
+/// ACEI byte for execute commands — User Level 2 priority (0x67).
+/// This is the standard priority level for user-initiated controller commands.
+constexpr uint8_t EXECUTE_ACEI = 0x67;
 /// Standard payload length for full execute-family commands.
 constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
 /// Bit flag that marks the standard position payload layout after the encoded position byte.
 constexpr uint8_t EXECUTE_POSITION_LAYOUT_FLAG = 0x80;
 /// Controller-capture matched helper byte used in normal execute payloads.
 constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
-/// ACEI/profile byte observed on tilt execute commands.
-constexpr uint8_t EXECUTE_TILT_ACEI = 0xE7;
 /// Short payload length for special execute commands such as stop/favorite.
 constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;
 /// Private sub-command for position status requests.
@@ -50,14 +49,14 @@ bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low
   if (position <= POSITION_PERCENT_MAX) {
     // Real position: doubled value (0-200 maps to 0-100%).
     const uint8_t payload[EXECUTE_PAYLOAD_SIZE] = {
-        EXECUTE_USER_ORIGINATOR,      EXECUTE_POSITION_ACEI, static_cast<uint8_t>(2 * position), 0x00,
-        EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE,          EXECUTE_POSITION_PROFILE,           0x00};
+        EXECUTE_USER_ORIGINATOR,      EXECUTE_ACEI, static_cast<uint8_t>(2 * position), 0x00,
+        EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
     return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
   }
 
   // Special command (stop=0xD2, favorite=0xD8).
   const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {
-      EXECUTE_USER_ORIGINATOR, EXECUTE_POSITION_ACEI, position, 0x00, 0x00, 0x00};
+      EXECUTE_USER_ORIGINATOR, EXECUTE_ACEI, position, 0x00, 0x00, 0x00};
   return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
 }
 
@@ -96,8 +95,30 @@ bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, boo
   auto const tilt_value =
       static_cast<uint16_t>((POSITION_PERCENT_MAX - tilt_percent) * STATUS_POS_MAX / POSITION_PERCENT_MAX);
   uint8_t d[EXECUTE_PAYLOAD_SIZE] = {EXECUTE_USER_ORIGINATOR,
-                                     EXECUTE_TILT_ACEI,
+                                     EXECUTE_ACEI,
                                      POS_UNKNOWN,
+                                     0x00,
+                                     STATUS_TILT_SELECTOR,
+                                     static_cast<uint8_t>(tilt_value >> BITS_PER_BYTE),
+                                     static_cast<uint8_t>(tilt_value),
+                                     0x00};
+  return set_cmd(f, CMD_EXECUTE, d, sizeof(d));
+}
+
+/// Build a combined position-and-tilt execute command (0x00) — setClosureAndOrientation.
+bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                      uint8_t position, uint8_t tilt_percent) {
+  if (position > POSITION_PERCENT_MAX)
+    return false;
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+
+  auto const tilt_value =
+      static_cast<uint16_t>((POSITION_PERCENT_MAX - tilt_percent) * STATUS_POS_MAX / POSITION_PERCENT_MAX);
+  uint8_t d[EXECUTE_PAYLOAD_SIZE] = {EXECUTE_USER_ORIGINATOR,
+                                     EXECUTE_ACEI,
+                                     static_cast<uint8_t>(2 * position),
                                      0x00,
                                      STATUS_TILT_SELECTOR,
                                      static_cast<uint8_t>(tilt_value >> BITS_PER_BYTE),

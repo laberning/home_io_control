@@ -183,13 +183,55 @@ TEST(ProtoCommands, CreateExecuteTilt) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "tilt execute should still use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "tilt execute should use 8-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "tilt originator should be user";
-  EXPECT_EQ(frame.data[1], 0xE7) << "tilt ACEI should match observed tilt traffic";
+  EXPECT_EQ(frame.data[1], 0x67) << "tilt ACEI should use User Level 2 (same as position commands)";
   EXPECT_EQ(frame.data[2], POS_UNKNOWN) << "tilt execute should keep position unchanged via unknown marker";
   EXPECT_EQ(frame.data[3], 0x00);
   EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt execute should set the tilt separator flag";
   EXPECT_EQ(frame.data[5], 0x96) << "25% open corresponds to 75% closed => 0x9600";
   EXPECT_EQ(frame.data[6], 0x00);
   EXPECT_EQ(frame.data[7], 0x00);
+}
+
+TEST(ProtoCommands, CreateExecutePositionAndTilt) {
+  IoFrame frame{};
+  // Position 50% (IO closed) + tilt 75% open
+  ASSERT_TRUE(create_execute_position_and_tilt(frame, test::OWN_ID, test::DST_ID, true, 50, 75))
+      << "create_execute_position_and_tilt should succeed";
+  EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "combined command should use CMD_EXECUTE (0x00)";
+  EXPECT_EQ(frame.data_len, 8) << "combined command should use 8-byte payload";
+  EXPECT_EQ(frame.data[0], 0x01) << "originator should be user";
+  EXPECT_EQ(frame.data[1], 0x67) << "ACEI should be User Level 2 (position-class command)";
+  EXPECT_EQ(frame.data[2], 100) << "position 50% => 2*50 = 100 (0x64)";
+  EXPECT_EQ(frame.data[3], 0x00);
+  EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt separator flag (FP3 bitmap)";
+  // tilt 75% open = 25% closed => 25 * 0xC800 / 100 = 0x3200
+  EXPECT_EQ(frame.data[5], 0x32) << "tilt MSB for 75% open (25% closed)";
+  EXPECT_EQ(frame.data[6], 0x00) << "tilt LSB";
+  EXPECT_EQ(frame.data[7], 0x00);
+}
+
+TEST(ProtoCommands, CreateExecutePositionAndTilt_FullOpen) {
+  IoFrame frame{};
+  // Position 0% (fully open) + tilt 100% (fully open)
+  ASSERT_TRUE(create_execute_position_and_tilt(frame, test::OWN_ID, test::DST_ID, false, 0, 100));
+  EXPECT_EQ(frame.data[2], 0x00) << "position 0% => 2*0 = 0";
+  EXPECT_EQ(frame.data[5], 0x00) << "tilt 100% open = 0% closed => 0x0000";
+  EXPECT_EQ(frame.data[6], 0x00);
+}
+
+TEST(ProtoCommands, CreateExecutePositionAndTilt_FullClosed) {
+  IoFrame frame{};
+  // Position 100% (fully closed) + tilt 0% (fully closed)
+  ASSERT_TRUE(create_execute_position_and_tilt(frame, test::OWN_ID, test::DST_ID, false, 100, 0));
+  EXPECT_EQ(frame.data[2], 200) << "position 100% => 2*100 = 200 (0xC8)";
+  EXPECT_EQ(frame.data[5], 0xC8) << "tilt 0% open = 100% closed => 0xC800 MSB";
+  EXPECT_EQ(frame.data[6], 0x00) << "tilt 0% open = 100% closed => 0xC800 LSB";
+}
+
+TEST(ProtoCommands, CreateExecutePositionAndTilt_RejectsOverLimit) {
+  IoFrame frame{};
+  EXPECT_FALSE(create_execute_position_and_tilt(frame, test::OWN_ID, test::DST_ID, true, 101, 50))
+      << "position > 100 should be rejected";
 }
 
 // ========================================================================================

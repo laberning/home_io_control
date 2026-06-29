@@ -189,6 +189,8 @@ static constexpr uint8_t RESULT_WRONG_POSITION = 0x21;                    ///< N
 static constexpr uint8_t RESULT_LIMITS_NOT_SET = 0x22;                    ///< Device limits are not set.
 static constexpr uint8_t RESULT_IP_NOT_SET = 0x23;                        ///< Intermediate position is not set.
 static constexpr uint8_t RESULT_OUT_OF_RANGE = 0x24;                      ///< Requested value is out of range.
+static constexpr uint8_t RESULT_PRIORITY_LOCKED_NON_EXEC =
+    0x38;  ///< Priority locked, command not executed (ACEI priority too low).
 static constexpr uint8_t RESULT_INFORMATION_CODE = 0xDF;              ///< Information-only code with unknown semantics.
 static constexpr uint8_t RESULT_PARAMETER_LIMITED = 0xE0;             ///< Parameter limited by an unknown device.
 static constexpr uint8_t RESULT_LIMITATION_BY_LOCAL_USER = 0xE1;      ///< Parameter limited by local button.

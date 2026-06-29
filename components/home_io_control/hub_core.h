@@ -189,6 +189,12 @@ class IOHomeControlComponent : public Component,
   /// @param tilt_percent Desired tilt (0–100).
   /// @return true if device acknowledged; false otherwise.
   virtual bool set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
+  /// Set both position and tilt of a tilt-capable cover in one atomic command.
+  /// @param device_id Target device ID.
+  /// @param position Desired position (0–100, open→closed).
+  /// @param tilt_percent Desired tilt (0–100).
+  /// @return true if device acknowledged; false otherwise.
+  virtual bool set_device_position_and_tilt(const std::string &device_id, uint8_t position, uint8_t tilt_percent);
   /// Request current status from a device.
   /// @param device_id Target device ID.
   /// @return true if status frame was received and processed.
@@ -228,6 +234,11 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param tilt_percent Desired tilt.
   virtual void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
+  /// Queue an async combined position+tilt update; returns immediately, executed in loop().
+  /// @param device_id Target device ID.
+  /// @param position Desired position (0–100).
+  /// @param tilt_percent Desired tilt (0–100).
+  virtual void queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position, uint8_t tilt_percent);
   /// Queue an async status request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   virtual void queue_request_device_status(const std::string &device_id);
@@ -380,14 +391,15 @@ class IOHomeControlComponent : public Component,
 
   /// @brief Type of queued pending operation for the main loop.
   enum class PendingOperationType : uint8_t {
-    SET_POSITION,       ///< Queue a set_device_position call (position 0–100 or special values).
-    SET_TILT,           ///< Queue a set_device_tilt call (tilt percentage 0–100).
-    SET_LIGHT_STATE,    ///< Queue a set_light_state call (binary on/off).
-    SET_LOCK_STATE,     ///< Queue a set_lock_state call (locked/unlocked).
-    SET_SWITCH_STATE,   ///< Queue a set_switch_state call (binary on/off).
-    REQUEST_STATUS,     ///< Queue a request_device_status call (poll for current position).
-    REQUEST_NAME,       ///< Queue a request_device_name call (poll for stored device name).
-    DISCOVER_AND_PAIR,  ///< Queue a discover_and_pair call (starts 3‑phase pairing flow).
+    SET_POSITION,           ///< Queue a set_device_position call (position 0–100 or special values).
+    SET_TILT,               ///< Queue a set_device_tilt call (tilt percentage 0–100).
+    SET_POSITION_AND_TILT,  ///< Queue a combined set_device_position_and_tilt call.
+    SET_LIGHT_STATE,        ///< Queue a set_light_state call (binary on/off).
+    SET_LOCK_STATE,         ///< Queue a set_lock_state call (locked/unlocked).
+    SET_SWITCH_STATE,       ///< Queue a set_switch_state call (binary on/off).
+    REQUEST_STATUS,         ///< Queue a request_device_status call (poll for current position).
+    REQUEST_NAME,           ///< Queue a request_device_name call (poll for stored device name).
+    DISCOVER_AND_PAIR,      ///< Queue a discover_and_pair call (starts 3‑phase pairing flow).
   };
 
   /// @brief A single queued operation to be processed in loop().
@@ -395,6 +407,7 @@ class IOHomeControlComponent : public Component,
     PendingOperationType type;  ///< Operation type (determines which queue handler to invoke).
     std::string device_id;      ///< Target device ID (hex string, e.g., "123ABC").
     uint8_t position{0};        ///< Position/tilt value (0–100) or binary state (ON/UNLOCK=0, OFF/LOCK=100).
+    uint8_t tilt{0};            ///< Tilt value for SET_POSITION_AND_TILT (0–100).
   };
 
   /// @brief Debug snapshot of the last exchange attempt.

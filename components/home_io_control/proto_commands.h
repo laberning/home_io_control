@@ -76,6 +76,19 @@ bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// @return true on success.
 bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t tilt_percent);
 
+/// Build a combined position‑and‑tilt execute command (0x00).
+/// Sets both the cover position and the slat angle atomically in one frame,
+/// corresponding to the protocol's setClosureAndOrientation use case.
+/// @param f IoFrame to populate.
+/// @param own Controller node ID.
+/// @param dst Target device node ID.
+/// @param low_power True for long preamble (battery/solar devices).
+/// @param position Desired position 0–100 (open→closed).
+/// @param tilt_percent 0 = fully closed, 100 = fully open.
+/// @return true on success; false if position exceeds limits.
+bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                      uint8_t position, uint8_t tilt_percent);
+
 /// Build a tilt‑aware get‑status request (0x03 with extended payload) that returns
 /// the 16‑byte tilt block in the response.
 /// @param f IoFrame to populate.

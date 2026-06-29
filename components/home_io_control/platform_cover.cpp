@@ -70,13 +70,24 @@ void IOHomeCover::control(const cover::CoverCall &call) {
   }
 
   const auto &tilt_opt = call.get_tilt();
+  const auto &position_opt = call.get_position();
+
+  // Combined position+tilt in one atomic command when both are present.
+  if (position_opt.has_value() && tilt_opt.has_value() && this->supports_tilt()) {
+    float const ha_pos = *position_opt;
+    const bool invert = this->effective_invert_();
+    uint8_t const io_pos = invert ? (uint8_t) (ha_pos * 100.0F) : (uint8_t) ((1.0F - ha_pos) * 100.0F);
+    auto const tilt = static_cast<uint8_t>(*tilt_opt * 100.0F);
+    this->parent_->queue_set_device_position_and_tilt(this->device_id_, io_pos, tilt);
+    return;
+  }
+
   if (tilt_opt.has_value()) {
     auto const tilt = static_cast<uint8_t>(*tilt_opt * 100.0F);
     this->parent_->queue_set_device_tilt(this->device_id_, tilt);
     return;
   }
 
-  const auto &position_opt = call.get_position();
   if (position_opt.has_value()) {
     float const ha_pos = *position_opt;  // HA: 1.0 = fully open, 0.0 = fully closed
     const bool invert = this->effective_invert_();
