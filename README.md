@@ -16,7 +16,7 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 - **Favorite or My position action for covers**: Covers with a declared position-capable `io_device_type` automatically get a companion Home Assistant button named `<Cover Name> Favorite Position`
 - **Stored device-name diagnostics**: Covers, lights, locks, and switches auto-generate a diagnostic text sensor named `<Entity Name> Device Name`, disabled by default to reduce clutter and populated from the actuator's internally stored name via a protocol read on boot
 - **On-demand device rename action**: The hub exposes a native ESPHome API action named `esphome.<node_name>_rename_device` so Home Assistant can rename a paired actuator without adding persistent helper entities
-- **Tilt support for venetian-style blinds**: Tilt-capable device types expose slat-angle control automatically in Home Assistant when the paired device reports tilt support
+- **Tilt support for venetian-style blinds**: Tilt-capable device types (venetian blind, external venetian blind, blind, louvre blind) expose slat-angle control automatically in Home Assistant when `io_device_type` is declared in YAML
 - **Experimental binary light support**: On/off-only light entities for IO-Homecontrol light devices
 - **Experimental lock support**: Lock/unlock entities for IO-Homecontrol lock devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices

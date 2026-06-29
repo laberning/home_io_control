@@ -61,6 +61,7 @@ CONFIG_SCHEMA = (
     switch.switch_schema(IOHomeSwitch)
     .extend(
         {
+            cv.Required(CONF_NAME): cv.string,
             cv.GenerateID(CONF_HOME_IO_CONTROL_ID): cv.use_id(
                 IOHomeControlComponent
             ),

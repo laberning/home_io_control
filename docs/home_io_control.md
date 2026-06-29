@@ -113,6 +113,7 @@ cover:
 
 Configuration variables:
 
+- `name` (Required): The entity name as shown in Home Assistant. Without a name the entity would be invisible to HA, so this field is enforced at compile time.
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
 - `io_device_type` (Optional): Declare the IO-homecontrol device type. Use a named value such as `awning` when available, or a raw integer such as `0x11` if pairing reports a type that does not yet have a named YAML alias. When omitted, the controller may learn the type later from radio metadata.
@@ -120,7 +121,7 @@ Configuration variables:
 - `invert_position` (Optional): Explicitly override the open/close position mapping. When omitted, the controller uses the learned device profile and automatically inverts families such as horizontal awnings once their type is known.
 - `status_poll_interval` (Optional): Poll interval used for bounded follow-up status checks while this device is expected to be changing state. The minimum supported value is 500ms. When omitted, the controller keeps the legacy single follow-up settle poll after local commands or overheard remote activity, but does not continue repeated movement polling.
 - `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. When activity from a linked remote is overheard on the radio, the controller automatically polls the device for fresh status 2 seconds later. This is particularly useful for 1W (one-way) remotes whose radio address differs from the device's 2W ID.
-- All standard options from the ESPHome cover base schema also apply, including `id`, `name`, `device_class`, `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
+- All standard options from the ESPHome cover base schema also apply, including `id`, `device_class`, `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
 
 Notes:
 
@@ -226,6 +227,7 @@ light:
 
 Configuration variables:
 
+- `name` (Required): The entity name as shown in Home Assistant.
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
 - `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `light` when known, or a raw integer such as `0x06` if you are working from a pairing log that reports a not-yet-exposed alias. When omitted, the controller may learn the type later from radio metadata.
@@ -257,6 +259,7 @@ lock:
 
 Configuration variables:
 
+- `name` (Required): The entity name as shown in Home Assistant.
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
 - `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `lock` when known, or a raw integer such as `0x09` if pairing reports a type without a named YAML alias yet. When omitted, the controller may learn the type later from radio metadata.
@@ -287,6 +290,7 @@ switch:
 
 Configuration variables:
 
+- `name` (Required): The entity name as shown in Home Assistant.
 - `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
 - `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `on_off_switch` when known, or a raw integer such as `0x0F` if pairing reports a type without a named YAML alias yet. When omitted, the controller may learn the type later from radio metadata.
@@ -493,16 +497,15 @@ For larger working examples, see the configs already in this repo:
 ## Diagnostics and Unknown Position
 
 - Warn-level logs now decode explicit `CMD_ERROR_RESP (0xFE)` replies instead of collapsing them into generic command failures. A refused command will look like `Device ABC123: command 0x00 returned limitation result=0xEB LIMITATION_BY_WIND (parameter was limited by a wind sensor)`.
-- The component's internal unknown-position sentinel is `212.0F`, matching protocol value `POS_UNKNOWN (0xD4)`. Generated ESPHome cover entities still expose normal `cover.position` values in the `0.0..1.0` range, so custom lambdas should multiply valid values by `100` and treat `212.0F` or any other out-of-range value as unknown rather than using a `NaN` check.
-- The OLED example configs in this repo already follow that rule and render `--` plus `Unknown` when a cover has not reported a usable position yet.
+- The component's internal protocol layer uses `212.0F` as an unknown-position sentinel (matching `POS_UNKNOWN (0xD4)`), but this value is **never** exposed through the ESPHome cover's `position` field. Cover entities start at `1.0` (fully open) and update to the real device position once the first status response arrives. Custom lambdas can therefore treat any value in [0.0, 1.0] as valid.
+- The OLED example configs in this repo render `--` plus `Unknown` when a cover position is out of range, which now only applies before the first status poll completes on a fresh boot.
 
 Example custom-lambda pattern:
 
 ```yaml
 lambda: |-
-  const float unknown_position = 212.0f;
   const float position = id(patio_awning).position;
-  if (position == unknown_position || position < 0.0f || position > 1.0f) {
+  if (position < 0.0f || position > 1.0f) {
     ESP_LOGI("example", "position is unknown");
   } else {
     ESP_LOGI("example", "position %.0f%%", position * 100.0f);

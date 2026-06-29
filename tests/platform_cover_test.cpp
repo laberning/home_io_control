@@ -235,11 +235,33 @@ TEST(PlatformCover, TiltControlQueuesTiltCommand) {
       << "queued operation should be SET_TILT";
 }
 
+TEST(PlatformCover, SupportsTiltBasedOnDeviceType) {
+  MockHub hub;
+  IOHomeCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+
+  // Before set_device_type: no tilt support
+  EXPECT_FALSE(cover.supports_tilt()) << "UNKNOWN device type should not support tilt";
+
+  // After set_device_type with a tilt-capable type: tilt support even without registry
+  cover.set_device_type(DeviceType::EXTERNAL_VENETIAN_BLIND);
+  EXPECT_TRUE(cover.supports_tilt()) << "EXTERNAL_VENETIAN_BLIND should support tilt without registry lookup";
+
+  // Non-tilt type
+  IOHomeCover cover2;
+  cover2.set_parent(&hub);
+  cover2.set_device_id("DEF456");
+  cover2.set_device_type(DeviceType::ROLLER_SHUTTER);
+  EXPECT_FALSE(cover2.supports_tilt()) << "ROLLER_SHUTTER should not support tilt";
+}
+
 TEST(PlatformCover, DeviceUpdatePublishesTilt) {
   MockHub hub;
   IOHomeCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
+  cover.set_device_type(DeviceType::VENETIAN_BLIND);
 
   hub.add_device("ABC123");
   auto *registered = hub.get_device("ABC123");
@@ -363,5 +385,5 @@ TEST(PlatformCover, UnknownPositionNotPublished) {
   dev.is_stopped = true;
   hub.trigger_device_update("ABC123", dev);
 
-  EXPECT_FLOAT_EQ(cover.position, UNKNOWN_POSITION) << "UNKNOWN_POSITION from device should not update HA position";
+  EXPECT_FLOAT_EQ(cover.position, 0.0f) << "UNKNOWN_POSITION from device should not update HA position";
 }

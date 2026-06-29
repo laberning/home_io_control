@@ -36,10 +36,7 @@ cover::CoverTraits IOHomeCover::get_traits() {
 }
 
 bool IOHomeCover::supports_tilt() const {
-  if (this->parent_ == nullptr)
-    return false;
-  const auto *dev = this->parent_->get_device(this->device_id_);
-  return dev != nullptr && device_supports_tilt(dev->type);
+  return this->device_type_ != DeviceType::UNKNOWN && device_supports_tilt(this->device_type_);
 }
 
 bool IOHomeCover::effective_invert_() const {

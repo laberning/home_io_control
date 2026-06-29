@@ -62,6 +62,7 @@ CONFIG_SCHEMA = (
     light.light_schema(IOHomeLight, light.LightType.BINARY)
     .extend(
         {
+            cv.Required(CONF_NAME): cv.string,
             cv.GenerateID(CONF_HOME_IO_CONTROL_ID): cv.use_id(
                 IOHomeControlComponent
             ),

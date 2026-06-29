@@ -28,7 +28,7 @@ namespace home_io_control {
 /// @ingroup hioc_platforms
 class IOHomeCover : public cover::Cover, public Component {
  public:
-  IOHomeCover() { this->position = UNKNOWN_POSITION; }
+  IOHomeCover() = default;
   /// @brief Initialize the cover entity (register device, subscribe to updates, schedule initial status poll).
   void setup() override;
   /// @brief Dump configuration to log.
@@ -64,7 +64,7 @@ class IOHomeCover : public cover::Cover, public Component {
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
   void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
   /// @brief Query whether this device supports tilt (slat angle) control.
-  /// @return true if the underlying device type supports tilt.
+  /// @return true if the YAML‑declared device type is tilt‑capable.
   [[nodiscard]] bool supports_tilt() const;
 
  protected:
