@@ -403,6 +403,25 @@ void IOHomeControlComponent::queue_set_device_position(const std::string &device
     detail::log_rejected_operation(device_id, *dev, "queued cover command", "cover entity");
     return;
   }
+
+  // Coalesce with a pending SET_TILT for the same device into a single SET_POSITION_AND_TILT.
+  // This handles the case where Home Assistant sends set_cover_position and set_cover_tilt_position
+  // as two rapid sequential calls — merging them avoids two separate radio exchanges.
+  for (auto &op : this->pending_operations_) {
+    if (op.type == PendingOperationType::SET_TILT && op.device_id == device_id) {
+      // Note: standalone SET_TILT stores the tilt value in op.position (see dispatch logic).
+      uint8_t const pending_tilt = op.position;
+      ESP_LOGI(detail::TAG,
+               "Coalesced SET_POSITION (pos=%u) + pending SET_TILT (tilt=%u) → SET_POSITION_AND_TILT for "
+               "device %s",
+               position, pending_tilt, device_id.c_str());
+      op.type = PendingOperationType::SET_POSITION_AND_TILT;
+      op.position = position;
+      op.tilt = pending_tilt;
+      return;
+    }
+  }
+
   this->pending_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
 }
 
@@ -425,6 +444,23 @@ void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id,
     detail::log_rejected_operation(device_id, *dev, "queued tilt command", "tilt-capable cover");
     return;
   }
+
+  // Coalesce with a pending SET_POSITION for the same device into a single SET_POSITION_AND_TILT.
+  // This handles the case where Home Assistant sends set_cover_position and set_cover_tilt_position
+  // as two rapid sequential calls — merging them avoids two separate radio exchanges.
+  for (auto &op : this->pending_operations_) {
+    if (op.type == PendingOperationType::SET_POSITION && op.device_id == device_id) {
+      ESP_LOGI(detail::TAG,
+               "Coalesced pending SET_POSITION (pos=%u) + SET_TILT (tilt=%u) → "
+               "SET_POSITION_AND_TILT for device %s",
+               op.position, tilt_percent, device_id.c_str());
+      op.type = PendingOperationType::SET_POSITION_AND_TILT;
+      op.tilt = tilt_percent;
+      // op.position already holds the correct value from the original SET_POSITION enqueue
+      return;
+    }
+  }
+
   this->pending_operations_.push_back({PendingOperationType::SET_TILT, device_id, tilt_percent});
 }
 

@@ -592,3 +592,127 @@ TEST(HubOperations, QueueDeviceTiltRejectedForNonTilt) {
   comp.queue_set_device_tilt("ABC123", 50);
   EXPECT_TRUE(comp.pending_operations_.empty()) << "non-tilt device should be rejected in queue check";
 }
+
+// ========================================================================================
+// Queue coalescing tests — SET_POSITION + SET_TILT → SET_POSITION_AND_TILT
+// ========================================================================================
+
+TEST(HubOperations, CoalescePositionThenTilt) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;  // supports tilt
+
+  // Queue position first, then tilt for the same device
+  comp.queue_set_device_position("ABC123", 50);
+  comp.queue_set_device_tilt("ABC123", 75);
+
+  // Should coalesce into a single SET_POSITION_AND_TILT
+  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "coalesced ops should produce one entry";
+  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::SET_POSITION_AND_TILT);
+  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
+  EXPECT_EQ(comp.pending_operations_.front().position, 50u);
+  EXPECT_EQ(comp.pending_operations_.front().tilt, 75u);
+}
+
+TEST(HubOperations, CoalesceTiltThenPosition) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;
+
+  // Queue tilt first, then position for the same device
+  comp.queue_set_device_tilt("ABC123", 80);
+  comp.queue_set_device_position("ABC123", 30);
+
+  // Should coalesce into a single SET_POSITION_AND_TILT
+  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "coalesced ops should produce one entry";
+  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::SET_POSITION_AND_TILT);
+  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
+  EXPECT_EQ(comp.pending_operations_.front().position, 30u);
+  EXPECT_EQ(comp.pending_operations_.front().tilt, 80u);
+}
+
+TEST(HubOperations, NoCoalesceForDifferentDevices) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;
+
+  // Register a second tilt-capable device
+  comp.add_device("DEF456");
+  auto *dev2 = comp.get_device("DEF456");
+  ASSERT_NE(dev2, nullptr);
+  dev2->type = DeviceType::VENETIAN_BLIND;
+
+  // Queue position for one device, tilt for another — should NOT coalesce
+  comp.queue_set_device_position("ABC123", 50);
+  comp.queue_set_device_tilt("DEF456", 75);
+
+  ASSERT_EQ(comp.pending_operations_.size(), 2u) << "different devices should not coalesce";
+  EXPECT_EQ(comp.pending_operations_[0].type, IOHomeControlComponent::PendingOperationType::SET_POSITION);
+  EXPECT_EQ(comp.pending_operations_[0].device_id, "ABC123");
+  EXPECT_EQ(comp.pending_operations_[1].type, IOHomeControlComponent::PendingOperationType::SET_TILT);
+  EXPECT_EQ(comp.pending_operations_[1].device_id, "DEF456");
+}
+
+TEST(HubOperations, NoCoalescePositionWithPosition) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;
+
+  // Queue two positions — should not coalesce (no tilt involved)
+  comp.queue_set_device_position("ABC123", 50);
+  comp.queue_set_device_position("ABC123", 70);
+
+  ASSERT_EQ(comp.pending_operations_.size(), 2u) << "two SET_POSITION ops should not coalesce with each other";
+  EXPECT_EQ(comp.pending_operations_[0].type, IOHomeControlComponent::PendingOperationType::SET_POSITION);
+  EXPECT_EQ(comp.pending_operations_[1].type, IOHomeControlComponent::PendingOperationType::SET_POSITION);
+}
+
+TEST(HubOperations, NoCoalesceTiltWithTilt) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;
+
+  // Queue two tilts — should not coalesce (no position involved)
+  comp.queue_set_device_tilt("ABC123", 50);
+  comp.queue_set_device_tilt("ABC123", 70);
+
+  ASSERT_EQ(comp.pending_operations_.size(), 2u) << "two SET_TILT ops should not coalesce with each other";
+  EXPECT_EQ(comp.pending_operations_[0].type, IOHomeControlComponent::PendingOperationType::SET_TILT);
+  EXPECT_EQ(comp.pending_operations_[1].type, IOHomeControlComponent::PendingOperationType::SET_TILT);
+}
+
+TEST(HubOperations, CoalesceDoesNotAffectOtherPendingOps) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;
+
+  // Queue a status request, then position, then tilt
+  comp.queue_request_device_status("ABC123");
+  comp.queue_set_device_position("ABC123", 40);
+  comp.queue_set_device_tilt("ABC123", 60);
+
+  // The tilt should coalesce with the position, leaving status + combined
+  ASSERT_EQ(comp.pending_operations_.size(), 2u) << "status request + coalesced position_and_tilt = 2 ops";
+  EXPECT_EQ(comp.pending_operations_[0].type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.pending_operations_[1].type, IOHomeControlComponent::PendingOperationType::SET_POSITION_AND_TILT);
+  EXPECT_EQ(comp.pending_operations_[1].position, 40u);
+  EXPECT_EQ(comp.pending_operations_[1].tilt, 60u);
+}

@@ -73,6 +73,10 @@ void IOHomeCover::control(const cover::CoverCall &call) {
   const auto &position_opt = call.get_position();
 
   // Combined position+tilt in one atomic command when both are present.
+  /// @todo Monitor https://github.com/home-assistant/core/issues/174533 — if HA adds a combined
+  ///       cover.set_cover_position_and_tilt action, this branch would be exercised directly from
+  ///       a single CoverCall. The queue coalescing in queue_set_device_position/tilt remains a
+  ///       useful optimization for the two-separate-calls path regardless.
   if (position_opt.has_value() && tilt_opt.has_value() && this->supports_tilt()) {
     float const ha_pos = *position_opt;
     const bool invert = this->effective_invert_();

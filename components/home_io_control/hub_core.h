@@ -226,17 +226,27 @@ class IOHomeControlComponent : public Component,
   /// @param locked Desired locked/unlocked state.
   /// @return true if device acknowledged.
   virtual bool set_lock_state(const std::string &device_id, bool locked);
-  /// Queue an async position update; returns immediately, executed in loop().
+  /// @brief Queue an async position update; returns immediately, executed in loop().
+  ///
+  /// If a pending SET_TILT operation for the same device is already in the queue, the two are
+  /// coalesced into a single SET_POSITION_AND_TILT command to avoid two radio exchanges.
+  /// This transparently handles Home Assistant sending cover.set_cover_position and
+  /// cover.set_cover_tilt_position as separate rapid calls.
   /// @param device_id Target device ID.
-  /// @param position Desired position.
+  /// @param position Desired position (0–100).
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
   /// Queue an async named command (STOP, FAVORITE, VENT, FORCE_OPEN); returns immediately, executed in loop().
   /// @param device_id Target device ID.
   /// @param cmd Named command to send.
   virtual void queue_device_command(const std::string &device_id, CoverCommand cmd);
-  /// Queue an async tilt update; returns immediately, executed in loop().
+  /// @brief Queue an async tilt update; returns immediately, executed in loop().
+  ///
+  /// If a pending SET_POSITION operation for the same device is already in the queue, the two are
+  /// coalesced into a single SET_POSITION_AND_TILT command to avoid two radio exchanges.
+  /// This transparently handles Home Assistant sending cover.set_cover_position and
+  /// cover.set_cover_tilt_position as separate rapid calls.
   /// @param device_id Target device ID.
-  /// @param tilt_percent Desired tilt.
+  /// @param tilt_percent Desired tilt (0–100).
   virtual void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
   /// Queue an async combined position+tilt update; returns immediately, executed in loop().
   /// @param device_id Target device ID.
