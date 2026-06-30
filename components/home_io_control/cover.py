@@ -38,6 +38,9 @@ IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component
 IOHomeCoverFavoriteButton = home_io_control_ns.class_(
     "IOHomeCoverFavoriteButton", button.Button, cg.Component
 )
+IOHomeCoverVentButton = home_io_control_ns.class_(
+    "IOHomeCoverVentButton", button.Button, cg.Component
+)
 IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
     "IOHomeDeviceNameTextSensor", text_sensor.TextSensor, cg.Component
 )
@@ -68,6 +71,19 @@ def device_supports_position_control(value):
     return value in POSITION_CONTROL_DEVICE_TYPES
 
 
+# Device types that support the ventilation position command.
+# These are window-type actuators that can move to a predefined vent opening.
+VENT_DEVICE_TYPES = {
+    0x04,  # window_opener
+    0x14,  # ventilation_point
+}
+
+
+def device_supports_vent(value):
+    """Check if the given device type value supports the ventilation command."""
+    return value in VENT_DEVICE_TYPES
+
+
 def favorite_button_id(parent_id):
     """Generate a unique ID for the favorite-position button child entity."""
     return ID(
@@ -83,6 +99,23 @@ def favorite_button_name(config):
     if base_name:
         return f"{base_name} Favorite Position"
     return "Favorite Position"
+
+
+def vent_button_id(parent_id):
+    """Generate a unique ID for the ventilation-position button child entity."""
+    return ID(
+        f"{parent_id.id}_vent_button",
+        is_declaration=True,
+        type=IOHomeCoverVentButton,
+    )
+
+
+def vent_button_name(config):
+    """Derive the ventilation-position button name from the parent cover name."""
+    base_name = config.get(CONF_NAME, "")
+    if base_name:
+        return f"{base_name} Ventilation Position"
+    return "Ventilation Position"
 
 
 def device_name_sensor_id(parent_id):
@@ -156,6 +189,20 @@ async def to_code(config):
         await cg.register_component(favorite, favorite_config)
         cg.add(favorite.set_parent(parent))
         cg.add(favorite.set_device_id(config[CONF_DEVICE_ID]))
+
+    if CONF_DEVICE_TYPE in config and device_supports_vent(
+        config[CONF_DEVICE_TYPE]
+    ):
+        vent_config = {
+            CONF_ID: vent_button_id(config[CONF_ID]),
+            CONF_NAME: vent_button_name(config),
+            CONF_DISABLED_BY_DEFAULT: False,
+        }
+        vent = await button.new_button(vent_config)
+        CORE.component_ids.add(str(vent.base))
+        await cg.register_component(vent, vent_config)
+        cg.add(vent.set_parent(parent))
+        cg.add(vent.set_device_id(config[CONF_DEVICE_ID]))
 
     device_name_config = {
         CONF_ID: device_name_sensor_id(config[CONF_ID]),

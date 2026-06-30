@@ -14,6 +14,7 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 
 - **Cover control**: Open, close, stop, and set position (0–100%) for shutters, blinds, awnings, window openers, garage openers, gate openers, rolling doors, curtain tracks, and related position-based devices
 - **Favorite or My position action for covers**: Covers with a declared position-capable `io_device_type` automatically get a companion Home Assistant button named `<Cover Name> Favorite Position`
+- **Ventilation position action for window covers**: Covers with `io_device_type` set to `window_opener` or `ventilation_point` automatically get a companion button named `<Cover Name> Ventilation Position` that moves the actuator to its predefined ventilation opening
 - **Stored device-name diagnostics**: Covers, lights, locks, and switches auto-generate a diagnostic text sensor named `<Entity Name> Device Name`, disabled by default to reduce clutter and populated from the actuator's internally stored name via a protocol read on boot
 - **On-demand device rename action**: The hub exposes a native ESPHome API action named `esphome.<node_name>_rename_device` so Home Assistant can rename a paired actuator without adding persistent helper entities
 - **Tilt support for venetian-style blinds**: Tilt-capable device types (venetian blind, external venetian blind, blind, louvre blind) expose slat-angle control automatically in Home Assistant when `io_device_type` is declared in YAML
@@ -138,6 +139,8 @@ button:
 ```
 
 With `io_device_type: "awning"` declared, the cover above also generates a separate Home Assistant button named `Awning Favorite Position`. Pressing it sends the protocol's built-in favorite or My-position command. The same cover also generates a diagnostic text sensor named `Awning Device Name`, disabled by default, which requests and displays the actuator's stored device name after boot when enabled. There is currently no separate sensor for reading back the stored favorite value because the protocol support for that has not been identified.
+
+For window-type devices (`io_device_type: "window_opener"` or `"ventilation_point"`), a second button named `<Cover Name> Ventilation Position` is generated in addition to the favorite button. That button moves the actuator to its predefined ventilation opening without fully opening the window.
 
 When `api:` is enabled, the hub also exposes a node-scoped Home Assistant action named `esphome.<node_name>_rename_device` with two string fields: `device_id` and `new_name`. `device_id` must be the 6-character IO-homecontrol device ID, and `new_name` must fit within the protocol's Latin-1 write limit of 15 visible characters after trimming ASCII whitespace. The action emits an `esphome.home_io_control_action_result` event with fields including `action`, `device_id`, `success`, `verified`, `message`, `requested_name`, `applied_name`, and optional `result_code` metadata when the device explicitly rejects the rename.
 

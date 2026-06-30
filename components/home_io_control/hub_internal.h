@@ -212,14 +212,14 @@ inline void log_frame_issue(IOHomeControlComponent *component, const char *direc
   const bool dst_registered = component->get_device(dst_id) != nullptr;
 
   if (src_registered || dst_registered) {
-    ESP_LOGW(TAG, "%s issue=%s cmd=0x%02X src=%s%s dst=%s%s len=%u data_len=%u", direction, reason, frame.cmd,
-             src_id.c_str(), src_registered ? " (registered)" : "", dst_id.c_str(),
+    ESP_LOGW(TAG, "%s issue=%s cmd=%s(0x%02X) src=%s%s dst=%s%s len=%u data_len=%u", direction, reason,
+             command_name(frame.cmd), frame.cmd, src_id.c_str(), src_registered ? " (registered)" : "", dst_id.c_str(),
              dst_registered ? " (registered)" : "", len, frame.data_len);
     return;
   }
 
-  ESP_LOGD(TAG, "%s issue=%s cmd=0x%02X src=%s dst=%s len=%u data_len=%u", direction, reason, frame.cmd, src_id.c_str(),
-           dst_id.c_str(), len, frame.data_len);
+  ESP_LOGD(TAG, "%s issue=%s cmd=%s(0x%02X) src=%s dst=%s len=%u data_len=%u", direction, reason,
+           command_name(frame.cmd), frame.cmd, src_id.c_str(), dst_id.c_str(), len, frame.data_len);
 }
 
 // ============================================================================
@@ -255,8 +255,8 @@ inline void log_command_result(const std::string &id, uint8_t result, uint8_t re
                                bool include_request_cmd = false) {
   const char *kind = is_limitation_result(result) ? "limitation" : "error";
   if (include_request_cmd) {
-    ESP_LOGW(TAG, "Device %s: command 0x%02X returned %s result=0x%02X %s (%s)", id.c_str(), request_cmd, kind, result,
-             command_result_name(result), command_result_description(result));
+    ESP_LOGW(TAG, "Device %s: %s (0x%02X) returned %s result=0x%02X %s (%s)", id.c_str(), command_name(request_cmd),
+             request_cmd, kind, result, command_result_name(result), command_result_description(result));
     return;
   }
 

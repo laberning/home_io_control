@@ -84,7 +84,7 @@ TEST(ProtoCommands, CreateExecutePositionZero) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "execute command should be CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "execute position command should use 8-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "execute payload byte 0 (origin) should be 0x01";
-  EXPECT_EQ(frame.data[1], 0x67) << "execute payload byte 1 (ACEI) should be 0x67";
+  EXPECT_EQ(frame.data[1], 0x43) << "execute payload byte 1 (ACEI) should be 0x43 (user_high priority)";
   EXPECT_EQ(frame.data[2], 0x00) << "execute position LSB should be 0x00 for position 0";
   EXPECT_EQ(frame.data[3], 0x00) << "execute position MSB should be 0x00 for position 0";
   EXPECT_TRUE(is_start(frame)) << "execute should be a start frame";
@@ -118,7 +118,7 @@ TEST(ProtoCommands, CreateExecuteFavoriteUsesSpecialPayload) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "favorite command should still use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 6) << "favorite command should use the short special payload";
   EXPECT_EQ(frame.data[0], 0x01) << "favorite payload byte 0 (origin) should be 0x01";
-  EXPECT_EQ(frame.data[1], 0x67) << "favorite payload byte 1 (ACEI) should be 0x67";
+  EXPECT_EQ(frame.data[1], 0x43) << "favorite payload byte 1 (ACEI) should be 0x43 (user_high priority)";
   EXPECT_EQ(frame.data[2], POS_FAVORITE) << "favorite payload byte 2 should carry POS_FAVORITE";
   EXPECT_EQ(frame.data[3], 0x00);
   EXPECT_EQ(frame.data[4], 0x00);
@@ -183,7 +183,7 @@ TEST(ProtoCommands, CreateExecuteTilt) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "tilt execute should still use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "tilt execute should use 8-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "tilt originator should be user";
-  EXPECT_EQ(frame.data[1], 0x67) << "tilt ACEI should use User Level 2 (same as position commands)";
+  EXPECT_EQ(frame.data[1], 0x43) << "tilt ACEI should use user_high priority (0x43)";
   EXPECT_EQ(frame.data[2], POS_UNKNOWN) << "tilt execute should keep position unchanged via unknown marker";
   EXPECT_EQ(frame.data[3], 0x00);
   EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt execute should set the tilt separator flag";
@@ -200,7 +200,7 @@ TEST(ProtoCommands, CreateExecutePositionAndTilt) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "combined command should use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "combined command should use 8-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "originator should be user";
-  EXPECT_EQ(frame.data[1], 0x67) << "ACEI should be User Level 2 (position-class command)";
+  EXPECT_EQ(frame.data[1], 0x43) << "ACEI should be user_high priority (0x43)";
   EXPECT_EQ(frame.data[2], 100) << "position 50% => 2*50 = 100 (0x64)";
   EXPECT_EQ(frame.data[3], 0x00);
   EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt separator flag (FP3 bitmap)";
@@ -261,4 +261,149 @@ TEST(ProtoCommands, CreateChallengeRespHmacSize) {
   EXPECT_EQ(auth_resp.data_len, HMAC_SIZE) << "challenge-resp should carry 6-byte HMAC";
   EXPECT_FALSE(is_start(auth_resp)) << "challenge-resp should not be a start frame";
   EXPECT_FALSE(is_end(auth_resp)) << "challenge-resp should not be an end frame (continuation)";
+}
+
+// ========================================================================================
+// Typed execute command builders (create_execute_position / create_execute_command)
+// ========================================================================================
+
+TEST(ProtoCommands, CreateExecutePositionZeroMatches) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute_position(frame, test::OWN_ID, test::DST_ID, true, 0))
+      << "create_execute_position(0) should succeed";
+  EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "position execute should use CMD_EXECUTE (0x00)";
+  EXPECT_EQ(frame.data_len, 8) << "position execute should use 8-byte payload";
+  EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
+  EXPECT_EQ(frame.data[2], 0x00) << "position 0 doubles to 0x00";
+  EXPECT_EQ(frame.data[3], 0x00) << "position 0 second byte should be 0x00";
+  EXPECT_TRUE(is_start(frame)) << "position execute should be a start frame";
+  EXPECT_FALSE(is_end(frame)) << "position execute should not be an end frame";
+}
+
+TEST(ProtoCommands, CreateExecutePositionHundredMatches) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute_position(frame, test::OWN_ID, test::DST_ID, false, 100))
+      << "create_execute_position(100) should succeed";
+  EXPECT_EQ(frame.data[2], 0xC8) << "position 100 doubles to 0xC8";
+  EXPECT_EQ(frame.data[3], 0x00);
+  EXPECT_EQ(frame.data_len, 8);
+}
+
+TEST(ProtoCommands, CreateExecutePositionFiftyMatches) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute_position(frame, test::OWN_ID, test::DST_ID, true, 50))
+      << "create_execute_position(50) should succeed";
+  EXPECT_EQ(frame.data[2], 0x64) << "position 50 doubles to 0x64";
+  EXPECT_EQ(frame.data[3], 0x00);
+}
+
+TEST(ProtoCommands, CreateExecutePositionRejectsAboveHundred) {
+  IoFrame frame{};
+  EXPECT_FALSE(create_execute_position(frame, test::OWN_ID, test::DST_ID, true, 101))
+      << "create_execute_position should reject position > 100";
+  EXPECT_FALSE(create_execute_position(frame, test::OWN_ID, test::DST_ID, true, 200))
+      << "create_execute_position should reject position > 100";
+  EXPECT_FALSE(create_execute_position(frame, test::OWN_ID, test::DST_ID, true, POS_STOP))
+      << "create_execute_position should reject POS_STOP (use create_execute_command instead)";
+}
+
+TEST(ProtoCommands, CreateExecutePositionMatchesLegacyCreateExecute) {
+  // Verify that create_execute_position produces identical output to the legacy create_execute
+  // for all normal position values.
+  IoFrame new_frame{}, old_frame{};
+  for (uint8_t pos = 0; pos <= 100; pos++) {
+    ASSERT_TRUE(create_execute_position(new_frame, test::OWN_ID, test::DST_ID, true, pos));
+    ASSERT_TRUE(create_execute(old_frame, test::OWN_ID, test::DST_ID, true, pos));
+    EXPECT_EQ(new_frame.cmd, old_frame.cmd) << "cmd mismatch at position " << (int) pos;
+    EXPECT_EQ(new_frame.data_len, old_frame.data_len) << "data_len mismatch at position " << (int) pos;
+    for (uint8_t i = 0; i < new_frame.data_len; i++) {
+      EXPECT_EQ(new_frame.data[i], old_frame.data[i]) << "data[" << (int) i << "] mismatch at position " << (int) pos;
+    }
+  }
+}
+
+TEST(ProtoCommands, CreateExecuteCommandStop) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute_command(frame, test::OWN_ID, test::DST_ID, true, CoverCommand::STOP))
+      << "create_execute_command(STOP) should succeed";
+  EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "command execute should use CMD_EXECUTE (0x00)";
+  EXPECT_EQ(frame.data_len, 6) << "command execute should use 6-byte special payload";
+  EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
+  EXPECT_EQ(frame.data[2], POS_STOP) << "stop command main byte should be POS_STOP (0xD2)";
+  EXPECT_EQ(frame.data[3], 0x00) << "stop command modifier should be 0x00";
+  EXPECT_TRUE(is_start(frame));
+  EXPECT_FALSE(is_end(frame));
+}
+
+TEST(ProtoCommands, CreateExecuteCommandFavorite) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute_command(frame, test::OWN_ID, test::DST_ID, false, CoverCommand::FAVORITE))
+      << "create_execute_command(FAVORITE) should succeed";
+  EXPECT_EQ(frame.cmd, CMD_EXECUTE);
+  EXPECT_EQ(frame.data_len, 6) << "favorite should use 6-byte special payload";
+  EXPECT_EQ(frame.data[2], POS_FAVORITE) << "favorite main byte should be POS_FAVORITE (0xD8)";
+  EXPECT_EQ(frame.data[3], 0x00) << "favorite modifier should be 0x00";
+}
+
+TEST(ProtoCommands, CreateExecuteCommandVent) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute_command(frame, test::OWN_ID, test::DST_ID, true, CoverCommand::VENT))
+      << "create_execute_command(VENT) should succeed";
+  EXPECT_EQ(frame.cmd, CMD_EXECUTE);
+  EXPECT_EQ(frame.data_len, 6) << "vent should use 6-byte special payload";
+  EXPECT_EQ(frame.data[2], POS_FAVORITE) << "vent shares main byte 0xD8 with favorite";
+  EXPECT_EQ(frame.data[3], POS_VENT_MODIFIER) << "vent modifier should be POS_VENT_MODIFIER (0x03)";
+}
+
+TEST(ProtoCommands, CreateExecuteCommandForceOpen) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_execute_command(frame, test::OWN_ID, test::DST_ID, false, CoverCommand::FORCE_OPEN))
+      << "create_execute_command(FORCE_OPEN) should succeed";
+  EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "force open should use CMD_EXECUTE (0x00)";
+  EXPECT_EQ(frame.data_len, 6) << "force open should use 6-byte special payload";
+  EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
+  EXPECT_EQ(frame.data[2], POS_FORCE_OPEN) << "force open main byte should be POS_FORCE_OPEN (0x64)";
+  EXPECT_EQ(frame.data[3], 0x00) << "force open modifier should be 0x00";
+  EXPECT_TRUE(is_start(frame));
+  EXPECT_FALSE(is_end(frame));
+}
+
+TEST(ProtoCommands, CreateExecuteCommandStopMatchesLegacy) {
+  // Verify STOP produces identical output to legacy create_execute(POS_STOP)
+  IoFrame new_frame{}, old_frame{};
+  ASSERT_TRUE(create_execute_command(new_frame, test::OWN_ID, test::DST_ID, true, CoverCommand::STOP));
+  ASSERT_TRUE(create_execute(old_frame, test::OWN_ID, test::DST_ID, true, POS_STOP));
+  EXPECT_EQ(new_frame.data_len, old_frame.data_len);
+  for (uint8_t i = 0; i < new_frame.data_len; i++) {
+    EXPECT_EQ(new_frame.data[i], old_frame.data[i]) << "data[" << (int) i << "] mismatch for STOP";
+  }
+}
+
+TEST(ProtoCommands, CreateExecuteCommandFavoriteMatchesLegacy) {
+  // Verify FAVORITE produces identical output to legacy create_execute(POS_FAVORITE)
+  IoFrame new_frame{}, old_frame{};
+  ASSERT_TRUE(create_execute_command(new_frame, test::OWN_ID, test::DST_ID, true, CoverCommand::FAVORITE));
+  ASSERT_TRUE(create_execute(old_frame, test::OWN_ID, test::DST_ID, true, POS_FAVORITE));
+  EXPECT_EQ(new_frame.data_len, old_frame.data_len);
+  for (uint8_t i = 0; i < new_frame.data_len; i++) {
+    EXPECT_EQ(new_frame.data[i], old_frame.data[i]) << "data[" << (int) i << "] mismatch for FAVORITE";
+  }
+}
+
+TEST(ProtoCommands, CreateExecuteCommandVentDiffersFromFavoriteInModifier) {
+  IoFrame vent_frame{}, fav_frame{};
+  ASSERT_TRUE(create_execute_command(vent_frame, test::OWN_ID, test::DST_ID, true, CoverCommand::VENT));
+  ASSERT_TRUE(create_execute_command(fav_frame, test::OWN_ID, test::DST_ID, true, CoverCommand::FAVORITE));
+  // Both share the same main byte (0xD8) but differ in the modifier (byte 3)
+  EXPECT_EQ(vent_frame.data[2], fav_frame.data[2]) << "main byte should be same (POS_FAVORITE/0xD8)";
+  EXPECT_NE(vent_frame.data[3], fav_frame.data[3]) << "modifier byte should differ between vent and favorite";
+  EXPECT_EQ(vent_frame.data[3], POS_VENT_MODIFIER) << "vent modifier should be 0x03";
+  EXPECT_EQ(fav_frame.data[3], 0x00) << "favorite modifier should be 0x00";
+}
+
+TEST(ProtoCommands, CoverCommandNameLookup) {
+  EXPECT_STREQ(cover_command_name(CoverCommand::STOP), "STOP");
+  EXPECT_STREQ(cover_command_name(CoverCommand::FAVORITE), "FAVORITE");
+  EXPECT_STREQ(cover_command_name(CoverCommand::VENT), "VENT");
+  EXPECT_STREQ(cover_command_name(CoverCommand::FORCE_OPEN), "FORCE_OPEN");
 }

@@ -11,7 +11,9 @@
 ///
 /// Position encoding:
 ///   - IO protocol position values: 0 = fully open, 100 = fully closed.
-///   - Special values: POS_STOP (0xD2), POS_FAVORITE (0xD8), POS_UNKNOWN (0xD4).
+///   - Use create_execute_position() for numeric positions (0–100).
+///   - Use create_execute_command() for named commands: CoverCommand::STOP,
+///     CoverCommand::FAVORITE, CoverCommand::VENT, CoverCommand::FORCE_OPEN.
 ///   - The Home Assistant layer maps HA's 1.0=open/0.0=closed to the IO scale via
 ///     ha_position = 1.0 - (io_position / 100.0). Some devices (horizontal awnings)
 ///     have inverted mapping; see platform_cover.h.
@@ -28,16 +30,49 @@ namespace esphome {
 namespace home_io_control {
 
 /// Build an execute command (0x00) to control a device (set position or special).
+///
+/// @deprecated Prefer create_execute_position() for numeric positions and
+///             create_execute_command() for named commands (STOP, FAVORITE, VENT).
+///             This function is retained for backward compatibility but new code
+///             should use the typed alternatives.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
 /// @param low_power True if target is battery/solar‑powered (uses long preamble).
 /// @param position Desired position: 0–100 (open→closed), or POS_STOP/POS_FAVORITE.
-/// @note For solar/battery devices, low_power must be true to use the 1024‑byte preamble
-///       required for the receiver to wake up. Mains‑powered devices should use false
-///       (8‑byte preamble). See proto_frame.h for LONG_PREAMBLE and SHORT_PREAMBLE.
 /// @return true on success; false if position exceeds limits.
 bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position);
+
+/// @brief Build a position execute command (0x00) to move a device to a numeric position.
+///
+/// Encodes a 0–100 position value into the standard 8-byte execute payload with
+/// originator, ACEI, and functional parameter fields. The wire encoding doubles
+/// the position value (0→0x00, 100→0xC8).
+/// @param f IoFrame to populate.
+/// @param own Controller's 3‑byte node ID (source address).
+/// @param dst Target device's 3‑byte node ID (destination address).
+/// @param low_power True if target is battery/solar‑powered (uses long preamble).
+/// @param position Desired position 0–100 (0=fully open, 100=fully closed).
+/// @return true on success; false if position > 100.
+bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position);
+
+/// @brief Build a named-command execute frame (0x00) for STOP, FAVORITE, VENT, or FORCE_OPEN.
+///
+/// Each named command maps to a specific wire encoding in the CMD_EXECUTE payload:
+///   - STOP:       main=0xD2, modifier=0x00 (6-byte special payload)
+///   - FAVORITE:   main=0xD8, modifier=0x00 (6-byte special payload)
+///   - VENT:       main=0xD8, modifier=0x03 (6-byte special payload)
+///   - FORCE_OPEN: main=0x64, modifier=0x00 (6-byte special payload)
+///
+/// This cleanly separates "move to position X" from "execute named action"
+/// without overloading a single numeric parameter.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3‑byte node ID (source address).
+/// @param dst Target device's 3‑byte node ID (destination address).
+/// @param low_power True if target is battery/solar‑powered (uses long preamble).
+/// @param cmd Named command to execute.
+/// @return true on success; false for invalid command.
+bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd);
 
 /// Build a get‑status request (0x03). The device responds with its current position.
 /// @param f IoFrame to populate.

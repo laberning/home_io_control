@@ -276,7 +276,8 @@ bool IOHomeControlComponent::wait_for_key_confirm_(pairing::PairingContext &cont
         continue;
       if (frame_is_key_confirm(context.resp))
         return true;
-      ESP_LOGW(TAG, "Key transfer: device responded with cmd=0x%02X (expected 0x33)", context.resp.cmd);
+      ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
+               command_name(context.resp.cmd), context.resp.cmd);
       if (context.resp.cmd == CMD_ERROR_RESP && context.resp.data_len > 0)
         ESP_LOGW(TAG, "Key transfer: error code=0x%02X", context.resp.data[0]);
       return false;
@@ -291,6 +292,8 @@ bool IOHomeControlComponent::wait_for_key_confirm_(pairing::PairingContext &cont
 ///
 /// Extracts node ID, device type, and subtype from a CMD_DISCOVER_RESP frame.
 /// The two-byte payload uses the shared packed device metadata layout defined in proto_frame.h.
+/// When the full 9-byte discovery payload is present, also logs the manufacturer name
+/// and backbone address for diagnostic purposes.
 /// The inversion flag is derived from the type via `default_inverted_for_type()`.
 void IOHomeControlComponent::parse_device_from_discovery(const IoFrame &frame, IoDevice &device,
                                                          std::string &device_id) {
@@ -308,6 +311,36 @@ void IOHomeControlComponent::parse_device_from_discovery(const IoFrame &frame, I
   device.target = UNKNOWN_POSITION;
   device.is_stopped = true;
   device_id = node_id_to_string(device.node_id);
+
+  // Log extended discovery fields when the full payload is present
+  if (frame.data_len > DISCOVERY_RESP_MANUFACTURER_OFFSET) {
+    uint8_t const mfr_id = frame.data[DISCOVERY_RESP_MANUFACTURER_OFFSET];
+    const char *mfr_name = manufacturer_name(mfr_id);
+    ESP_LOGI(TAG, "Discovery: device %s manufacturer=%u (%s)", device_id.c_str(), mfr_id, mfr_name);
+    if (mfr_id == 0 || mfr_id > MANUFACTURER_ID_MAX) {
+      ESP_LOGW(TAG,
+               "Unknown manufacturer ID %u reported by device %s. "
+               "Please file a GitHub issue with this ID and your device model so support can be added.",
+               mfr_id, device_id.c_str());
+    }
+  }
+  if (frame.data_len > DISCOVERY_RESP_BACKBONE_OFFSET + NODE_ID_SIZE - 1) {
+    ESP_LOGD(TAG, "Discovery: backbone=%02X%02X%02X", frame.data[DISCOVERY_RESP_BACKBONE_OFFSET],
+             frame.data[DISCOVERY_RESP_BACKBONE_OFFSET + 1], frame.data[DISCOVERY_RESP_BACKBONE_OFFSET + 2]);
+  }
+  if (frame.data_len > DISCOVERY_RESP_FLAGS_OFFSET) {
+    uint8_t const flags = frame.data[DISCOVERY_RESP_FLAGS_OFFSET];
+    uint8_t const att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+    uint8_t const power_save = flags & DISCOVERY_FLAGS_POWER_SAVE_MASK;
+    ESP_LOGI(TAG, "Discovery: device %s turnaround=%s power_save=%s flags=0x%02X", device_id.c_str(),
+             att_class_name(att), power_save_mode_name(power_save), flags);
+    if (power_save == POWER_SAVE_LOW_POWER) {
+      ESP_LOGI(TAG,
+               "Device %s reports low-power mode. "
+               "Consider adding 'low_power: true' to YAML if commands are unreliable.",
+               device_id.c_str());
+    }
+  }
 }
 
 /// Execute Phase 1: discover a pairable device on channel 2.

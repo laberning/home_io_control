@@ -23,7 +23,7 @@ void IOHomeCoverFavoriteButton::press_action() {
     return;
   }
 
-  this->parent_->queue_set_device_position(this->device_id_, POS_FAVORITE);
+  this->parent_->queue_device_command(this->device_id_, CoverCommand::FAVORITE);
 }
 
 void IOHomeCoverFavoriteButton::dump_config() {

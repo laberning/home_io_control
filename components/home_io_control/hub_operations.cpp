@@ -217,6 +217,42 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
   return true;
 }
 
+bool IOHomeControlComponent::execute_device_command_(const std::string &device_id, CoverCommand cmd) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  if (!detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
+    detail::log_rejected_operation(device_id, *dev, cover_command_name(cmd), "cover entity");
+    return false;
+  }
+
+  // STOP does not initiate movement tracking; FAVORITE and VENT do.
+  if (cmd != CoverCommand::STOP) {
+    dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
+    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  }
+
+  ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", cover_command_name(cmd), device_id.c_str(),
+           device_operation_profile_name(dev->type));
+
+  IoFrame request;
+  if (!create_execute_command(request, this->node_id_, dev->node_id, true, cmd)) {
+    if (cmd != CoverCommand::STOP)
+      detail::clear_status_poll_tracking(*dev);
+    return false;
+  }
+  bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
+  if (!ok) {
+    if (cmd != CoverCommand::STOP)
+      detail::clear_status_poll_tracking(*dev);
+    return false;
+  }
+  if (cmd != CoverCommand::STOP && dev->status_poll_interval_ms != 0 && dev->next_update == 0)
+    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  return true;
+}
+
 bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
@@ -370,6 +406,19 @@ void IOHomeControlComponent::queue_set_device_position(const std::string &device
   this->pending_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
 }
 
+void IOHomeControlComponent::queue_device_command(const std::string &device_id, CoverCommand cmd) {
+  IoDevice *dev = this->get_device(device_id);
+  if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
+    detail::log_rejected_operation(device_id, *dev, cover_command_name(cmd), "cover entity");
+    return;
+  }
+  PendingOperation op{};
+  op.type = PendingOperationType::DEVICE_COMMAND;
+  op.device_id = device_id;
+  op.command = cmd;
+  this->pending_operations_.push_back(op);
+}
+
 void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
   IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_accepts_execute_tilt(*dev)) {
@@ -498,6 +547,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::SET_POSITION_AND_TILT:
       this->set_device_position_and_tilt(operation.device_id, operation.position, operation.tilt);
+      break;
+    case PendingOperationType::DEVICE_COMMAND:
+      this->execute_device_command_(operation.device_id, operation.command);
       break;
     case PendingOperationType::SET_LIGHT_STATE:
       this->set_light_state(operation.device_id, operation.position == detail::BINARY_ENTITY_ON_POSITION);

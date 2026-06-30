@@ -230,6 +230,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired position.
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
+  /// Queue an async named command (STOP, FAVORITE, VENT, FORCE_OPEN); returns immediately, executed in loop().
+  /// @param device_id Target device ID.
+  /// @param cmd Named command to send.
+  virtual void queue_device_command(const std::string &device_id, CoverCommand cmd);
   /// Queue an async tilt update; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   /// @param tilt_percent Desired tilt.
@@ -303,6 +307,11 @@ class IOHomeControlComponent : public Component,
   /// @return true if device acknowledged; false otherwise.
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
                                    uint32_t retry_after_fail_ms = 0);
+  /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.
+  /// @param device_id Target device ID.
+  /// @param cmd Named command to execute.
+  /// @return true if device acknowledged; false otherwise.
+  bool execute_device_command_(const std::string &device_id, CoverCommand cmd);
   /// Register hub-level Home Assistant actions exposed through ESPHome's native API.
   void register_management_actions_();
   /// Publish the outcome of a management action as a Home Assistant event and structured logs.
@@ -394,6 +403,7 @@ class IOHomeControlComponent : public Component,
     SET_POSITION,           ///< Queue a set_device_position call (position 0–100 or special values).
     SET_TILT,               ///< Queue a set_device_tilt call (tilt percentage 0–100).
     SET_POSITION_AND_TILT,  ///< Queue a combined set_device_position_and_tilt call.
+    DEVICE_COMMAND,         ///< Queue a named device command (STOP, FAVORITE, VENT).
     SET_LIGHT_STATE,        ///< Queue a set_light_state call (binary on/off).
     SET_LOCK_STATE,         ///< Queue a set_lock_state call (locked/unlocked).
     SET_SWITCH_STATE,       ///< Queue a set_switch_state call (binary on/off).
@@ -408,6 +418,7 @@ class IOHomeControlComponent : public Component,
     std::string device_id;      ///< Target device ID (hex string, e.g., "123ABC").
     uint8_t position{0};        ///< Position/tilt value (0–100) or binary state (ON/UNLOCK=0, OFF/LOCK=100).
     uint8_t tilt{0};            ///< Tilt value for SET_POSITION_AND_TILT (0–100).
+    CoverCommand command{CoverCommand::STOP};  ///< Named command for DEVICE_COMMAND operations.
   };
 
   /// @brief Debug snapshot of the last exchange attempt.

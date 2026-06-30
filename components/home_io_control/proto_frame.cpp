@@ -218,6 +218,247 @@ const char *device_name_validation_error_description(DeviceNameValidationError e
 
 bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HORIZONTAL_AWNING; }
 
+const char *cover_command_name(CoverCommand cmd) {
+  switch (cmd) {
+    case CoverCommand::STOP:
+      return "STOP";
+    case CoverCommand::FAVORITE:
+      return "FAVORITE";
+    case CoverCommand::VENT:
+      return "VENT";
+    case CoverCommand::FORCE_OPEN:
+      return "FORCE_OPEN";
+    default:
+      return "UNKNOWN_COVER_CMD";
+  }
+}
+
+const char *command_name(uint8_t cmd) {
+  switch (cmd) {
+    case CMD_EXECUTE:
+      return "EXECUTE";
+    case CMD_ACTIVATE_MODE:
+      return "ACTIVATE_MODE";
+    case CMD_PRIVATE:
+      return "PRIVATE";
+    case CMD_PRIVATE_RESP:
+      return "PRIVATE_RESP";
+    case CMD_SET_SENSOR:
+      return "SET_SENSOR";
+    case CMD_SET_SENSOR_ACK:
+      return "SET_SENSOR_ACK";
+    case CMD_WRITE_PRIVATE:
+      return "WRITE_PRIVATE";
+    case CMD_WRITE_PRIVATE_ACK:
+      return "WRITE_PRIVATE_ACK";
+    case CMD_DISCOVER_REQ:
+      return "DISCOVER_REQ";
+    case CMD_DISCOVER_RESP:
+      return "DISCOVER_RESP";
+    case CMD_DISCOVER_SPE_REQ:
+      return "DISCOVER_SPE_REQ";
+    case CMD_DISCOVER_SPE_RESP:
+      return "DISCOVER_SPE_RESP";
+    case CMD_DISCOVER_CONFIRM:
+      return "DISCOVER_CONFIRM";
+    case CMD_DISCOVER_CONFIRM_ACK:
+      return "DISCOVER_CONFIRM_ACK";
+    case CMD_KEY_INIT:
+      return "KEY_INIT";
+    case CMD_KEY_TRANSFER:
+      return "KEY_TRANSFER";
+    case CMD_KEY_CONFIRM:
+      return "KEY_CONFIRM";
+    case CMD_ADDRESS_REQ:
+      return "ADDRESS_REQ";
+    case CMD_ADDRESS_RESP:
+      return "ADDRESS_RESP";
+    case CMD_LAUNCH_KEY_TRANSFER:
+      return "LAUNCH_KEY_TRANSFER";
+    case CMD_CHALLENGE_REQ:
+      return "CHALLENGE_REQ";
+    case CMD_CHALLENGE_RESP:
+      return "CHALLENGE_RESP";
+    case CMD_GET_NAME:
+      return "GET_NAME";
+    case CMD_GET_NAME_RESP:
+      return "GET_NAME_RESP";
+    case CMD_SET_NAME:
+      return "SET_NAME";
+    case CMD_SET_NAME_RESP:
+      return "SET_NAME_RESP";
+    case CMD_GET_INFO2:
+      return "GET_INFO2";
+    case CMD_GET_INFO2_RESP:
+      return "GET_INFO2_RESP";
+    case CMD_SET_CONFIG1:
+      return "SET_CONFIG1";
+    case CMD_SET_CONFIG1_RESP:
+      return "SET_CONFIG1_RESP";
+    case CMD_STATUS_UPDATE:
+      return "STATUS_UPDATE";
+    case CMD_STATUS_UPDATE_RESP:
+      return "STATUS_UPDATE_RESP";
+    case CMD_ERROR_RESP:
+      return "ERROR_RESP";
+    default:
+      return "UNKNOWN_CMD";
+  }
+}
+
+const char *manufacturer_name(uint8_t id) {
+  switch (id) {
+    case MANUFACTURER_VELUX:
+      return "VELUX";
+    case MANUFACTURER_SOMFY:
+      return "Somfy";
+    case MANUFACTURER_HONEYWELL:
+      return "Honeywell";
+    case MANUFACTURER_HORMANN:
+      return "Hörmann";
+    case MANUFACTURER_ASSA_ABLOY:
+      return "ASSA ABLOY";
+    case MANUFACTURER_NIKO:
+      return "Niko";
+    case MANUFACTURER_WINDOW_MASTER:
+      return "WINDOW MASTER";
+    case MANUFACTURER_RENSON:
+      return "Renson";
+    case MANUFACTURER_CIAT:
+      return "CIAT";
+    case MANUFACTURER_SECUYOU:
+      return "Secuyou";
+    case MANUFACTURER_OVERKIZ:
+      return "OVERKIZ";
+    case MANUFACTURER_ATLANTIC_GROUP:
+      return "Atlantic Group";
+    default:
+      return "unknown";
+  }
+}
+
+const char *att_class_name(uint8_t att_class) {
+  switch (att_class) {
+    case ATT_CLASS_5S:
+      return "5s";
+    case ATT_CLASS_10S:
+      return "10s";
+    case ATT_CLASS_20S:
+      return "20s";
+    case ATT_CLASS_40S:
+      return "40s";
+    default:
+      return "unknown";
+  }
+}
+
+const char *power_save_mode_name(uint8_t mode) {
+  switch (mode) {
+    case POWER_SAVE_ALWAYS_ALIVE:
+      return "always_alive";
+    case POWER_SAVE_LOW_POWER:
+      return "low_power";
+    default:
+      return "unknown";
+  }
+}
+
+const char *originator_name(uint8_t originator) {
+  switch (originator) {
+    case ORIGINATOR_LOCAL_USER:
+      return "local_user";
+    case ORIGINATOR_USER_REMOTE:
+      return "user_remote";
+    case ORIGINATOR_RAIN_SENSOR:
+      return "rain_sensor";
+    case ORIGINATOR_TIMER:
+      return "timer";
+    case ORIGINATOR_SECURITY:
+      return "security";
+    case ORIGINATOR_UPS:
+      return "ups";
+    case ORIGINATOR_SMART_CONTROLLER:
+      return "smart_controller";
+    case ORIGINATOR_LIFESTYLE:
+      return "lifestyle";
+    case ORIGINATOR_SAAC:
+      return "saac";
+    case ORIGINATOR_WIND_SENSOR:
+      return "wind_sensor";
+    case ORIGINATOR_LOAD_SHEDDING:
+      return "load_shedding";
+    case ORIGINATOR_LOCAL_LIGHT:
+      return "local_light";
+    case ORIGINATOR_ENVIRONMENT:
+      return "environment";
+    case ORIGINATOR_MYSELF:
+      return "myself";
+    case ORIGINATOR_AUTOMATIC_CYCLE:
+      return "automatic_cycle";
+    case ORIGINATOR_EMERGENCY:
+      return "emergency";
+    default:
+      return "unknown";
+  }
+}
+
+const char *acei_level_name(uint8_t level) {
+  switch (level) {
+    case ACEI_LEVEL_PROTECTION_HUMAN:
+      return "protection_human";
+    case ACEI_LEVEL_PROTECTION_SENSOR:
+      return "protection_sensor";
+    case ACEI_LEVEL_USER_HIGH:
+      return "user_high";
+    case ACEI_LEVEL_USER_DEFAULT:
+      return "user_default";
+    case ACEI_LEVEL_COMFORT_1:
+      return "comfort_1";
+    case ACEI_LEVEL_COMFORT_2:
+      return "comfort_2";
+    case ACEI_LEVEL_AUTO_SAAC:
+      return "auto_saac";
+    case ACEI_LEVEL_AUTO_DEFAULT:
+      return "auto_default";
+    default:
+      return "unknown";
+  }
+}
+
+AddressClass classify_address(const uint8_t addr[NODE_ID_SIZE]) {
+  if (addr[0] != 0x00)
+    return AddressClass::UNICAST;
+
+  uint8_t const suffix = addr[2] & ADDRESS_SUFFIX_MASK;
+  bool const has_type_bits = (addr[1] != 0) || ((addr[2] & 0xC0) != 0);
+
+  if (suffix == ADDRESS_SUFFIX_BROADCAST)
+    return AddressClass::BROADCAST_ALL;
+  if (suffix == ADDRESS_SUFFIX_DISCOVERY)
+    return AddressClass::DISCOVERY;
+  if (has_type_bits)
+    return AddressClass::BROADCAST_TYPE;
+  if (addr[1] == 0 && addr[2] == 0)
+    return AddressClass::BROADCAST_ALL;
+
+  return AddressClass::UNKNOWN_BROADCAST;
+}
+
+DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]) {
+  if (addr[0] != 0x00)
+    return DeviceType::UNKNOWN;
+
+  // Device type is encoded in bits [9:2] of the combined bytes 1–2:
+  // type = (addr[1] << 2) | (addr[2] >> 6)
+  uint16_t const type_raw =
+      (static_cast<uint16_t>(addr[1]) << DEVICE_TYPE_LOW_BITS_SHIFT) | (addr[2] >> DEVICE_TYPE_HIGH_BITS_SHIFT);
+
+  if (type_raw > static_cast<uint16_t>(DeviceType::SWINGING_SHUTTER))
+    return DeviceType::UNKNOWN;
+
+  return static_cast<DeviceType>(type_raw);
+}
+
 const char *command_result_name(uint8_t result) {
   switch (result) {
     case RESULT_UNKNOWN_STATUS_REPLY:
@@ -810,6 +1051,16 @@ bool device_supports_tilt(DeviceType type) {
     case DeviceType::BLIND:
     case DeviceType::EXTERNAL_VENETIAN_BLIND:
     case DeviceType::LOUVRE_BLIND:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool device_supports_vent(DeviceType type) {
+  switch (type) {
+    case DeviceType::WINDOW_OPENER:
+    case DeviceType::VENTILATION_POINT:
       return true;
     default:
       return false;

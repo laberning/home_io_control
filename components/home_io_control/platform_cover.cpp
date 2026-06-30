@@ -65,7 +65,7 @@ cover::CoverOperation IOHomeCover::infer_operation_from_position_delta_(bool inv
 
 void IOHomeCover::control(const cover::CoverCall &call) {
   if (call.get_stop()) {
-    this->parent_->queue_set_device_position(this->device_id_, POS_STOP);
+    this->parent_->queue_device_command(this->device_id_, CoverCommand::STOP);
     return;
   }
 

@@ -1,4 +1,4 @@
-#include "platform_cover_favorite_button.h"
+#include "platform_cover_vent_button.h"
 
 #include "hub_core.h"
 #include "proto_frame.h"
@@ -10,23 +10,23 @@
 using namespace esphome::home_io_control;
 
 // ============================================================================
-// PlatformCoverFavoriteButton test suite
+// PlatformCoverVentButton test suite
 // ============================================================================
-// Covers the generated favorite-position button entity and its hub queueing behavior.
+// Covers the generated ventilation-position button entity and its hub queueing behavior.
 
-class TestableIOHomeCoverFavoriteButton : public IOHomeCoverFavoriteButton {
+class TestableIOHomeCoverVentButton : public IOHomeCoverVentButton {
  public:
   void trigger_press() { this->press_action(); }
 };
 
-class FavoriteButtonMockHub : public IOHomeControlComponent {
+class VentButtonMockHub : public IOHomeControlComponent {
  public:
-  FavoriteButtonMockHub() = default;
-  ~FavoriteButtonMockHub() override = default;
+  VentButtonMockHub() = default;
+  ~VentButtonMockHub() override = default;
 
   bool set_device_position(const std::string &device_id, uint8_t position) override {
-    last_set_device_id_ = device_id;
-    last_set_position_ = position;
+    (void) device_id;
+    (void) position;
     return true;
   }
   bool set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override {
@@ -51,12 +51,12 @@ class FavoriteButtonMockHub : public IOHomeControlComponent {
   }
 
   void queue_set_device_position(const std::string &device_id, uint8_t position) override {
-    last_set_device_id_ = device_id;
-    last_set_position_ = position;
-    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_POSITION, device_id, position});
+    (void) device_id;
+    (void) position;
   }
   void queue_device_command(const std::string &device_id, CoverCommand cmd) override {
-    last_set_device_id_ = device_id;
+    last_device_id_ = device_id;
+    last_command_ = cmd;
     PendingOperation op{};
     op.type = IOHomeControlComponent::PendingOperationType::DEVICE_COMMAND;
     op.device_id = device_id;
@@ -65,6 +65,12 @@ class FavoriteButtonMockHub : public IOHomeControlComponent {
   }
   void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override {
     (void) device_id;
+    (void) tilt_percent;
+  }
+  void queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position,
+                                          uint8_t tilt_percent) override {
+    (void) device_id;
+    (void) position;
     (void) tilt_percent;
   }
   void queue_request_device_status(const std::string &device_id) override { (void) device_id; }
@@ -97,44 +103,71 @@ class FavoriteButtonMockHub : public IOHomeControlComponent {
   }
   void register_device_callback(DeviceUpdateCallback cb) override { callbacks_.push_back(std::move(cb)); }
 
-  const std::string &last_set_device_id() const { return last_set_device_id_; }
-  uint8_t last_set_position() const { return last_set_position_; }
+  const std::string &last_device_id() const { return last_device_id_; }
+  CoverCommand last_command() const { return last_command_; }
   const std::deque<PendingOperation> &queued_operations() const { return queued_operations_; }
 
  private:
-  std::string last_set_device_id_;
-  uint8_t last_set_position_{0};
+  std::string last_device_id_;
+  CoverCommand last_command_{CoverCommand::STOP};
   std::deque<PendingOperation> queued_operations_;
+  std::map<std::string, IoDevice> devices_;
+  std::vector<DeviceUpdateCallback> callbacks_;
 };
 
-TEST(PlatformCoverFavoriteButton, PressQueuesFavoritePosition) {
-  FavoriteButtonMockHub hub;
-  hub.add_device("ABC123", DeviceType::AWNING, 0, false);
+TEST(PlatformCoverVentButton, PressQueuesVentCommand) {
+  VentButtonMockHub hub;
+  hub.add_device("ABC123", DeviceType::WINDOW_OPENER, 0, false);
 
-  TestableIOHomeCoverFavoriteButton button;
+  TestableIOHomeCoverVentButton button;
   button.set_parent(&hub);
   button.set_device_id("ABC123");
 
   button.trigger_press();
 
-  ASSERT_FALSE(hub.queued_operations().empty()) << "pressing the favorite button should queue a hub operation";
+  ASSERT_FALSE(hub.queued_operations().empty()) << "pressing the vent button should queue a hub operation";
   EXPECT_EQ(hub.queued_operations().back().type, IOHomeControlComponent::PendingOperationType::DEVICE_COMMAND)
-      << "favorite button should queue a DEVICE_COMMAND operation";
-  EXPECT_EQ(hub.queued_operations().back().command, CoverCommand::FAVORITE)
-      << "favorite button should queue CoverCommand::FAVORITE";
-  EXPECT_EQ(hub.queued_operations().back().device_id, "ABC123")
-      << "favorite button should target the configured device";
+      << "vent button should queue a DEVICE_COMMAND operation";
+  EXPECT_EQ(hub.queued_operations().back().command, CoverCommand::VENT)
+      << "vent button should queue CoverCommand::VENT";
+  EXPECT_EQ(hub.queued_operations().back().device_id, "ABC123") << "vent button should target the configured device";
 }
 
-TEST(PlatformCoverFavoriteButton, PressIsSafeWhenDeviceMissing) {
-  FavoriteButtonMockHub hub;
+TEST(PlatformCoverVentButton, PressIsSafeWhenDeviceMissing) {
+  VentButtonMockHub hub;
 
-  TestableIOHomeCoverFavoriteButton button;
+  TestableIOHomeCoverVentButton button;
   button.set_parent(&hub);
   button.set_device_id("ABC123");
 
   button.trigger_press();
 
   EXPECT_TRUE(hub.queued_operations().empty())
-      << "favorite button should not queue an operation when the device is not registered";
+      << "vent button should not queue an operation when the device is not registered";
+}
+
+TEST(PlatformCoverVentButton, PressIsSafeWhenParentNull) {
+  TestableIOHomeCoverVentButton button;
+  button.set_device_id("ABC123");
+
+  // Should not crash
+  button.trigger_press();
+}
+
+// ========================================================================================
+// device_supports_vent() tests
+// ========================================================================================
+
+TEST(DeviceProfile, VentSupportedForWindowTypes) {
+  EXPECT_TRUE(device_supports_vent(DeviceType::WINDOW_OPENER)) << "window opener should support vent";
+  EXPECT_TRUE(device_supports_vent(DeviceType::VENTILATION_POINT)) << "ventilation point should support vent";
+}
+
+TEST(DeviceProfile, VentNotSupportedForOtherTypes) {
+  EXPECT_FALSE(device_supports_vent(DeviceType::ROLLER_SHUTTER)) << "roller shutter should not support vent";
+  EXPECT_FALSE(device_supports_vent(DeviceType::AWNING)) << "awning should not support vent";
+  EXPECT_FALSE(device_supports_vent(DeviceType::LIGHT)) << "light should not support vent";
+  EXPECT_FALSE(device_supports_vent(DeviceType::VENETIAN_BLIND)) << "venetian blind should not support vent";
+  EXPECT_FALSE(device_supports_vent(DeviceType::GARAGE_OPENER)) << "garage opener should not support vent";
+  EXPECT_FALSE(device_supports_vent(DeviceType::UNKNOWN)) << "unknown should not support vent";
 }

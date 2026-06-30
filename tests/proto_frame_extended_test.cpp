@@ -288,3 +288,337 @@ TEST(ProtoFrame, FrameLengthAndFlagGetters) {
   set_cmd(f, CMD_PRIVATE);
   EXPECT_EQ(frame_length(f), FRAME_MIN_SIZE) << "set_cmd should set frame length to minimum (9)";
 }
+
+// ========================================================================================
+// Command name lookup
+// ========================================================================================
+
+TEST(ProtoFrame, CommandNameKnownCommands) {
+  EXPECT_STREQ(command_name(CMD_EXECUTE), "EXECUTE");
+  EXPECT_STREQ(command_name(CMD_ACTIVATE_MODE), "ACTIVATE_MODE");
+  EXPECT_STREQ(command_name(CMD_PRIVATE), "PRIVATE");
+  EXPECT_STREQ(command_name(CMD_PRIVATE_RESP), "PRIVATE_RESP");
+  EXPECT_STREQ(command_name(CMD_SET_SENSOR), "SET_SENSOR");
+  EXPECT_STREQ(command_name(CMD_SET_SENSOR_ACK), "SET_SENSOR_ACK");
+  EXPECT_STREQ(command_name(CMD_WRITE_PRIVATE), "WRITE_PRIVATE");
+  EXPECT_STREQ(command_name(CMD_WRITE_PRIVATE_ACK), "WRITE_PRIVATE_ACK");
+  EXPECT_STREQ(command_name(CMD_DISCOVER_REQ), "DISCOVER_REQ");
+  EXPECT_STREQ(command_name(CMD_DISCOVER_RESP), "DISCOVER_RESP");
+  EXPECT_STREQ(command_name(CMD_DISCOVER_SPE_REQ), "DISCOVER_SPE_REQ");
+  EXPECT_STREQ(command_name(CMD_DISCOVER_SPE_RESP), "DISCOVER_SPE_RESP");
+  EXPECT_STREQ(command_name(CMD_DISCOVER_CONFIRM), "DISCOVER_CONFIRM");
+  EXPECT_STREQ(command_name(CMD_DISCOVER_CONFIRM_ACK), "DISCOVER_CONFIRM_ACK");
+  EXPECT_STREQ(command_name(CMD_KEY_INIT), "KEY_INIT");
+  EXPECT_STREQ(command_name(CMD_KEY_TRANSFER), "KEY_TRANSFER");
+  EXPECT_STREQ(command_name(CMD_KEY_CONFIRM), "KEY_CONFIRM");
+  EXPECT_STREQ(command_name(CMD_ADDRESS_REQ), "ADDRESS_REQ");
+  EXPECT_STREQ(command_name(CMD_ADDRESS_RESP), "ADDRESS_RESP");
+  EXPECT_STREQ(command_name(CMD_LAUNCH_KEY_TRANSFER), "LAUNCH_KEY_TRANSFER");
+  EXPECT_STREQ(command_name(CMD_CHALLENGE_REQ), "CHALLENGE_REQ");
+  EXPECT_STREQ(command_name(CMD_CHALLENGE_RESP), "CHALLENGE_RESP");
+  EXPECT_STREQ(command_name(CMD_GET_NAME), "GET_NAME");
+  EXPECT_STREQ(command_name(CMD_GET_NAME_RESP), "GET_NAME_RESP");
+  EXPECT_STREQ(command_name(CMD_SET_NAME), "SET_NAME");
+  EXPECT_STREQ(command_name(CMD_SET_NAME_RESP), "SET_NAME_RESP");
+  EXPECT_STREQ(command_name(CMD_GET_INFO2), "GET_INFO2");
+  EXPECT_STREQ(command_name(CMD_GET_INFO2_RESP), "GET_INFO2_RESP");
+  EXPECT_STREQ(command_name(CMD_SET_CONFIG1), "SET_CONFIG1");
+  EXPECT_STREQ(command_name(CMD_SET_CONFIG1_RESP), "SET_CONFIG1_RESP");
+  EXPECT_STREQ(command_name(CMD_STATUS_UPDATE), "STATUS_UPDATE");
+  EXPECT_STREQ(command_name(CMD_STATUS_UPDATE_RESP), "STATUS_UPDATE_RESP");
+  EXPECT_STREQ(command_name(CMD_ERROR_RESP), "ERROR_RESP");
+}
+
+TEST(ProtoFrame, CommandNameUnknownCommand) {
+  EXPECT_STREQ(command_name(0xAB), "UNKNOWN_CMD") << "unknown command ID should return fallback string";
+}
+
+// ========================================================================================
+// Manufacturer name lookup
+// ========================================================================================
+
+TEST(ProtoFrame, ManufacturerNameKnownIds) {
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_VELUX), "VELUX");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_SOMFY), "Somfy");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_HONEYWELL), "Honeywell");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_HORMANN), "Hörmann");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_ASSA_ABLOY), "ASSA ABLOY");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_NIKO), "Niko");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_WINDOW_MASTER), "WINDOW MASTER");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_RENSON), "Renson");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_CIAT), "CIAT");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_SECUYOU), "Secuyou");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_OVERKIZ), "OVERKIZ");
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_ATLANTIC_GROUP), "Atlantic Group");
+}
+
+TEST(ProtoFrame, ManufacturerNameUnknownIds) {
+  EXPECT_STREQ(manufacturer_name(0), "unknown") << "ID 0 should return unknown";
+  EXPECT_STREQ(manufacturer_name(MANUFACTURER_ID_MAX + 1), "unknown") << "ID above max should return unknown";
+  EXPECT_STREQ(manufacturer_name(255), "unknown") << "ID 255 should return unknown";
+}
+
+// ========================================================================================
+// Originator name lookup
+// ========================================================================================
+
+TEST(ProtoFrame, OriginatorNameKnownCodes) {
+  EXPECT_STREQ(originator_name(ORIGINATOR_LOCAL_USER), "local_user");
+  EXPECT_STREQ(originator_name(ORIGINATOR_USER_REMOTE), "user_remote");
+  EXPECT_STREQ(originator_name(ORIGINATOR_RAIN_SENSOR), "rain_sensor");
+  EXPECT_STREQ(originator_name(ORIGINATOR_TIMER), "timer");
+  EXPECT_STREQ(originator_name(ORIGINATOR_SECURITY), "security");
+  EXPECT_STREQ(originator_name(ORIGINATOR_UPS), "ups");
+  EXPECT_STREQ(originator_name(ORIGINATOR_SMART_CONTROLLER), "smart_controller");
+  EXPECT_STREQ(originator_name(ORIGINATOR_LIFESTYLE), "lifestyle");
+  EXPECT_STREQ(originator_name(ORIGINATOR_SAAC), "saac");
+  EXPECT_STREQ(originator_name(ORIGINATOR_WIND_SENSOR), "wind_sensor");
+  EXPECT_STREQ(originator_name(ORIGINATOR_LOAD_SHEDDING), "load_shedding");
+  EXPECT_STREQ(originator_name(ORIGINATOR_LOCAL_LIGHT), "local_light");
+  EXPECT_STREQ(originator_name(ORIGINATOR_ENVIRONMENT), "environment");
+  EXPECT_STREQ(originator_name(ORIGINATOR_MYSELF), "myself");
+  EXPECT_STREQ(originator_name(ORIGINATOR_AUTOMATIC_CYCLE), "automatic_cycle");
+  EXPECT_STREQ(originator_name(ORIGINATOR_EMERGENCY), "emergency");
+}
+
+TEST(ProtoFrame, OriginatorNameUnknownCodes) {
+  EXPECT_STREQ(originator_name(0x0A), "unknown") << "undefined originator should return unknown";
+  EXPECT_STREQ(originator_name(0x50), "unknown") << "undefined originator should return unknown";
+}
+
+// ========================================================================================
+// ACEI priority level parsing
+// ========================================================================================
+
+TEST(ProtoFrame, AceiLevelNameAllLevels) {
+  EXPECT_STREQ(acei_level_name(ACEI_LEVEL_PROTECTION_HUMAN), "protection_human");
+  EXPECT_STREQ(acei_level_name(ACEI_LEVEL_PROTECTION_SENSOR), "protection_sensor");
+  EXPECT_STREQ(acei_level_name(ACEI_LEVEL_USER_HIGH), "user_high");
+  EXPECT_STREQ(acei_level_name(ACEI_LEVEL_USER_DEFAULT), "user_default");
+  EXPECT_STREQ(acei_level_name(ACEI_LEVEL_COMFORT_1), "comfort_1");
+  EXPECT_STREQ(acei_level_name(ACEI_LEVEL_COMFORT_2), "comfort_2");
+  EXPECT_STREQ(acei_level_name(ACEI_LEVEL_AUTO_SAAC), "auto_saac");
+  EXPECT_STREQ(acei_level_name(ACEI_LEVEL_AUTO_DEFAULT), "auto_default");
+}
+
+TEST(ProtoFrame, AceiLevelNameOutOfRange) {
+  EXPECT_STREQ(acei_level_name(8), "unknown") << "level > 7 should return unknown";
+  EXPECT_STREQ(acei_level_name(255), "unknown") << "level 255 should return unknown";
+}
+
+TEST(ProtoFrame, AceiByteExtraction) {
+  // Example ACEI byte: 0x43 = 0b01000011
+  // level = (0x43 >> 5) & 0x07 = 0b010 = 2 (user_high)
+  // service = (0x43 >> 3) & 0x03 = 0b00 = 0
+  // extended = (0x43 >> 1) & 0x03 = 0b01 = 1
+  // valid = 0x43 & 0x01 = 1
+  uint8_t acei = 0x43;
+  uint8_t level = (acei & ACEI_LEVEL_MASK) >> ACEI_LEVEL_SHIFT;
+  uint8_t service = (acei & ACEI_SERVICE_MASK) >> ACEI_SERVICE_SHIFT;
+  uint8_t extended = (acei & ACEI_EXTENDED_MASK) >> ACEI_EXTENDED_SHIFT;
+  uint8_t valid = acei & ACEI_VALID_BIT;
+  EXPECT_EQ(level, 2) << "ACEI 0x43 level should be 2";
+  EXPECT_EQ(service, 0) << "ACEI 0x43 service should be 0";
+  EXPECT_EQ(extended, 1) << "ACEI 0x43 extended should be 1";
+  EXPECT_EQ(valid, 1) << "ACEI 0x43 valid should be 1";
+  EXPECT_STREQ(acei_level_name(level), "user_high");
+
+  // Example ACEI byte: 0xE7 = 0b11100111
+  // level = (0xE7 >> 5) & 0x07 = 0b111 = 7 (auto_default)
+  // service = (0xE7 >> 3) & 0x03 = 0b00 = 0
+  // extended = (0xE7 >> 1) & 0x03 = 0b11 = 3
+  // valid = 0xE7 & 0x01 = 1
+  acei = 0xE7;
+  level = (acei & ACEI_LEVEL_MASK) >> ACEI_LEVEL_SHIFT;
+  service = (acei & ACEI_SERVICE_MASK) >> ACEI_SERVICE_SHIFT;
+  extended = (acei & ACEI_EXTENDED_MASK) >> ACEI_EXTENDED_SHIFT;
+  valid = acei & ACEI_VALID_BIT;
+  EXPECT_EQ(level, 7) << "ACEI 0xE7 level should be 7";
+  EXPECT_EQ(service, 0) << "ACEI 0xE7 service should be 0";
+  EXPECT_EQ(extended, 3) << "ACEI 0xE7 extended should be 3";
+  EXPECT_EQ(valid, 1) << "ACEI 0xE7 valid should be 1";
+  EXPECT_STREQ(acei_level_name(level), "auto_default");
+
+  // Our default outbound ACEI: 0x67 = 0b01100111
+  // This is the value used in proto_commands.cpp for execute commands.
+  // level = 3 (user_default), service = 0, extended = 3, valid = 1
+  acei = 0x67;
+  level = (acei & ACEI_LEVEL_MASK) >> ACEI_LEVEL_SHIFT;
+  service = (acei & ACEI_SERVICE_MASK) >> ACEI_SERVICE_SHIFT;
+  extended = (acei & ACEI_EXTENDED_MASK) >> ACEI_EXTENDED_SHIFT;
+  valid = acei & ACEI_VALID_BIT;
+  EXPECT_EQ(level, ACEI_LEVEL_USER_DEFAULT) << "ACEI 0x67 level should be user_default (3)";
+  EXPECT_EQ(service, 0) << "ACEI 0x67 service should be 0";
+  EXPECT_EQ(extended, 3) << "ACEI 0x67 extended should be 3";
+  EXPECT_EQ(valid, 1) << "ACEI 0x67 valid should be 1";
+  EXPECT_STREQ(acei_level_name(level), "user_default");
+}
+
+// ========================================================================================
+// Address classification
+// ========================================================================================
+
+TEST(ProtoFrame, ClassifyAddressUnicast) {
+  uint8_t addr[3] = {0xC0, 0xFF, 0xEE};
+  EXPECT_EQ(classify_address(addr), AddressClass::UNICAST) << "non-zero first byte should be UNICAST";
+}
+
+TEST(ProtoFrame, ClassifyAddressBroadcastAll) {
+  // {0x00, 0x00, 0x3F} is all-devices broadcast
+  uint8_t addr1[3] = {0x00, 0x00, 0x3F};
+  EXPECT_EQ(classify_address(addr1), AddressClass::BROADCAST_ALL) << "suffix 0x3F with no type bits should be ALL";
+
+  // {0x00, 0x00, 0xBF} = type bits set + suffix 0x3F → also BROADCAST_ALL
+  uint8_t addr2[3] = {0x00, 0x00, 0xBF};
+  EXPECT_EQ(classify_address(addr2), AddressClass::BROADCAST_ALL) << "suffix 0x3F with type bits should be ALL";
+
+  // {0x00, 0x01, 0xBF} = type bits in byte 1 + suffix 0x3F → BROADCAST_ALL
+  uint8_t addr3[3] = {0x00, 0x01, 0xBF};
+  EXPECT_EQ(classify_address(addr3), AddressClass::BROADCAST_ALL)
+      << "suffix 0x3F with type bits in byte 1 should be ALL";
+
+  // {0x00, 0x00, 0x00} = zero address → BROADCAST_ALL
+  uint8_t addr4[3] = {0x00, 0x00, 0x00};
+  EXPECT_EQ(classify_address(addr4), AddressClass::BROADCAST_ALL) << "all-zero address should be BROADCAST_ALL";
+}
+
+TEST(ProtoFrame, ClassifyAddressDiscovery) {
+  // {0x00, 0x00, 0x3B} = discovery broadcast
+  uint8_t addr1[3] = {0x00, 0x00, 0x3B};
+  EXPECT_EQ(classify_address(addr1), AddressClass::DISCOVERY) << "suffix 0x3B should be DISCOVERY";
+
+  // {0x00, 0x01, 0x3B} = typed discovery broadcast
+  uint8_t addr2[3] = {0x00, 0x01, 0x3B};
+  EXPECT_EQ(classify_address(addr2), AddressClass::DISCOVERY) << "suffix 0x3B with type bits should be DISCOVERY";
+}
+
+TEST(ProtoFrame, ClassifyAddressBroadcastType) {
+  // {0x00, 0x01, 0x00} = has type bits in byte 1, suffix is 0x00 → BROADCAST_TYPE
+  uint8_t addr[3] = {0x00, 0x01, 0x00};
+  EXPECT_EQ(classify_address(addr), AddressClass::BROADCAST_TYPE)
+      << "type bits in byte 1 with non-standard suffix should be BROADCAST_TYPE";
+}
+
+TEST(ProtoFrame, BroadcastTargetTypeExtraction) {
+  // Unicast → UNKNOWN
+  uint8_t unicast[3] = {0xC0, 0xFF, 0xEE};
+  EXPECT_EQ(broadcast_target_type(unicast), DeviceType::UNKNOWN) << "unicast should return UNKNOWN";
+
+  // Type=2 (roller_shutter): (2 << 6) + 0x3F = 0xBF → addr = {0x00, 0x00, 0xBF}
+  uint8_t roller[3] = {0x00, 0x00, 0xBF};
+  EXPECT_EQ(broadcast_target_type(roller), DeviceType::ROLLER_SHUTTER)
+      << "address encoding type 2 should extract ROLLER_SHUTTER";
+
+  // Type=6 (light): (6 << 6) = 0x180 → addr[1] = 0x01, addr[2] = (0x80 | 0x3F) = 0xBF
+  // Actually: type 6 → type_raw = (addr[1] << 2) | (addr[2] >> 6)
+  // For type=6: we need (addr[1] << 2) | (addr[2] >> 6) == 6
+  // addr[1] = 1, addr[2] >> 6 = 2 → 1*4 + 2 = 6. addr[2] = (2 << 6) | 0x3F = 0xBF
+  uint8_t light[3] = {0x00, 0x01, 0xBF};
+  EXPECT_EQ(broadcast_target_type(light), DeviceType::LIGHT) << "address encoding type 6 should extract LIGHT";
+
+  // Type=0 (unknown/all): addr = {0x00, 0x00, 0x3F} → type bits = 0
+  uint8_t all[3] = {0x00, 0x00, 0x3F};
+  EXPECT_EQ(broadcast_target_type(all), DeviceType::UNKNOWN) << "type 0 should extract UNKNOWN";
+}
+
+// ========================================================================================
+// CTRL1 bit definitions
+// ========================================================================================
+
+TEST(ProtoFrame, Ctrl1BitsNoOverlap) {
+  // Verify that CTRL1 bit constants don't collide
+  EXPECT_EQ(CTRL1_VERSION_MASK & CTRL1_PRIORITY, 0) << "VERSION_MASK should not overlap PRIORITY";
+  EXPECT_EQ(CTRL1_VERSION_MASK & CTRL1_ACK, 0) << "VERSION_MASK should not overlap ACK";
+  EXPECT_EQ(CTRL1_VERSION_MASK & CTRL1_LOW_POWER, 0) << "VERSION_MASK should not overlap LOW_POWER";
+  EXPECT_EQ(CTRL1_VERSION_MASK & CTRL1_ROUTED, 0) << "VERSION_MASK should not overlap ROUTED";
+  EXPECT_EQ(CTRL1_VERSION_MASK & CTRL1_BEACON, 0) << "VERSION_MASK should not overlap BEACON";
+  EXPECT_EQ(CTRL1_PRIORITY & CTRL1_ACK, 0) << "PRIORITY should not overlap ACK";
+  EXPECT_EQ(CTRL1_PRIORITY & CTRL1_LOW_POWER, 0) << "PRIORITY should not overlap LOW_POWER";
+  EXPECT_EQ(CTRL1_PRIORITY & CTRL1_ROUTED, 0) << "PRIORITY should not overlap ROUTED";
+  EXPECT_EQ(CTRL1_PRIORITY & CTRL1_BEACON, 0) << "PRIORITY should not overlap BEACON";
+  EXPECT_EQ(CTRL1_ACK & CTRL1_LOW_POWER, 0) << "ACK should not overlap LOW_POWER";
+  EXPECT_EQ(CTRL1_ACK & CTRL1_ROUTED, 0) << "ACK should not overlap ROUTED";
+  EXPECT_EQ(CTRL1_ACK & CTRL1_BEACON, 0) << "ACK should not overlap BEACON";
+  EXPECT_EQ(CTRL1_LOW_POWER & CTRL1_ROUTED, 0) << "LOW_POWER should not overlap ROUTED";
+  EXPECT_EQ(CTRL1_LOW_POWER & CTRL1_BEACON, 0) << "LOW_POWER should not overlap BEACON";
+  EXPECT_EQ(CTRL1_ROUTED & CTRL1_BEACON, 0) << "ROUTED should not overlap BEACON";
+}
+
+TEST(ProtoFrame, Ctrl1LowPowerSetByInitFrame) {
+  IoFrame f{};
+  init_frame(f, true, true, false, true);
+  EXPECT_EQ(f.ctrl1 & CTRL1_LOW_POWER, CTRL1_LOW_POWER) << "init_frame with low_power=true should set LOW_POWER bit";
+  EXPECT_EQ(f.ctrl1 & CTRL1_PRIORITY, 0) << "init_frame should not set PRIORITY";
+  EXPECT_EQ(f.ctrl1 & CTRL1_ROUTED, 0) << "init_frame should not set ROUTED";
+  EXPECT_EQ(f.ctrl1 & CTRL1_BEACON, 0) << "init_frame should not set BEACON";
+  EXPECT_EQ(f.ctrl1 & CTRL1_ACK, 0) << "init_frame should not auto-set ACK";
+}
+
+TEST(ProtoFrame, Ctrl1ClearWhenNotLowPower) {
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  EXPECT_EQ(f.ctrl1, 0) << "2W frame with low_power=false should have ctrl1 == 0";
+}
+
+TEST(ProtoFrame, Ctrl1AckNotAutoSetOnOutboundFrames) {
+  // ACK bit (0x10) is defined but NOT automatically set on outbound frames.
+  // Some devices reject frames with unexpected CTRL1 bits set.
+  // The constant remains available for inbound frame parsing/logging.
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  EXPECT_EQ(f.ctrl1 & CTRL1_ACK, 0) << "2W frame should NOT auto-set ACK bit";
+
+  init_frame(f, false, false, false, false);
+  EXPECT_EQ(f.ctrl1 & CTRL1_ACK, 0) << "1W frame should NOT have ACK bit set";
+}
+
+// ========================================================================================
+// Discovery Multi Information Byte — ATT and power-save lookup
+// ========================================================================================
+
+TEST(ProtoFrame, AttClassNameAllValues) {
+  EXPECT_STREQ(att_class_name(ATT_CLASS_5S), "5s");
+  EXPECT_STREQ(att_class_name(ATT_CLASS_10S), "10s");
+  EXPECT_STREQ(att_class_name(ATT_CLASS_20S), "20s");
+  EXPECT_STREQ(att_class_name(ATT_CLASS_40S), "40s");
+  EXPECT_STREQ(att_class_name(0xFF), "unknown");
+  EXPECT_STREQ(att_class_name(4), "unknown");
+}
+
+TEST(ProtoFrame, PowerSaveModeNameAllValues) {
+  EXPECT_STREQ(power_save_mode_name(POWER_SAVE_ALWAYS_ALIVE), "always_alive");
+  EXPECT_STREQ(power_save_mode_name(POWER_SAVE_LOW_POWER), "low_power");
+  EXPECT_STREQ(power_save_mode_name(2), "unknown");
+  EXPECT_STREQ(power_save_mode_name(0xFF), "unknown");
+}
+
+TEST(ProtoFrame, DiscoveryFlagsBitExtraction) {
+  // flags=0xEC: ATT=11 (40s), sync_ctrl=1, bit4=0, rf_support=1, io_member=0, power_save=00
+  uint8_t flags = 0xEC;
+  uint8_t att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+  uint8_t power_save = flags & DISCOVERY_FLAGS_POWER_SAVE_MASK;
+  EXPECT_EQ(att, ATT_CLASS_40S) << "ATT bits 11 should decode to 40s class";
+  EXPECT_NE(flags & DISCOVERY_FLAGS_SYNC_CTRL_GRP, 0) << "Sync ctrl group bit should be set";
+  EXPECT_EQ(power_save, POWER_SAVE_ALWAYS_ALIVE) << "Power save bits 00 = always alive";
+
+  // flags=0x01: ATT=00 (5s), no sync, power_save=01 (low power)
+  flags = 0x01;
+  att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+  power_save = flags & DISCOVERY_FLAGS_POWER_SAVE_MASK;
+  EXPECT_EQ(att, ATT_CLASS_5S) << "ATT bits 00 should decode to 5s class";
+  EXPECT_EQ(flags & DISCOVERY_FLAGS_SYNC_CTRL_GRP, 0) << "Sync ctrl group bit should be clear";
+  EXPECT_EQ(power_save, POWER_SAVE_LOW_POWER) << "Power save bits 01 = low power";
+
+  // flags=0x48: ATT=01 (10s), no sync, rf_support=1, power_save=00
+  flags = 0x48;
+  att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+  power_save = flags & DISCOVERY_FLAGS_POWER_SAVE_MASK;
+  EXPECT_EQ(att, ATT_CLASS_10S) << "ATT bits 01 should decode to 10s class";
+  EXPECT_NE(flags & DISCOVERY_FLAGS_RF_SUPPORT, 0) << "RF support bit should be set";
+  EXPECT_EQ(power_save, POWER_SAVE_ALWAYS_ALIVE);
+
+  // flags=0x80: ATT=10 (20s), all other bits clear
+  flags = 0x80;
+  att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+  EXPECT_EQ(att, ATT_CLASS_20S) << "ATT bits 10 should decode to 20s class";
+}

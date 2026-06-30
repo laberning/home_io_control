@@ -220,6 +220,14 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     // Status-update frames come from the device itself rather than from a direct controller poll.
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
     apply_unsolicited_status_update(dev, frame);
+
+    // The originator byte at data[1] tells us what caused the device to move.
+    // Log it so users can understand device-initiated movements (e.g., wind sensor, timer).
+    if (frame.data_len > 1) {
+      ESP_LOGD(detail::TAG, "Device %s: status update originator=%s(0x%02X)", id.c_str(),
+               originator_name(frame.data[1]), frame.data[1]);
+    }
+
     detail::log_status_update(id, dev, " (status update)");
     this->notify_device_update_(id);
     return;
@@ -315,8 +323,8 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
     if (auto *dev = this->get_device(dst_id); dev != nullptr)
       dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
-    ESP_LOGD(detail::TAG, "rx remote_activity src=%s dst=%s cmd=0x%02X, scheduling status poll",
-             node_id_to_string(frame.src).c_str(), dst_id.c_str(), frame.cmd);
+    ESP_LOGD(detail::TAG, "rx remote_activity src=%s dst=%s cmd=%s(0x%02X), scheduling status poll",
+             node_id_to_string(frame.src).c_str(), dst_id.c_str(), command_name(frame.cmd), frame.cmd);
     this->begin_status_poll_tracking_(dst_id, 0);
     this->schedule_status_poll_(dst_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     return;
@@ -331,8 +339,8 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     for (const auto &device_id : remote_it->second) {
       if (auto *dev = this->get_device(device_id); dev != nullptr)
         dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
-      ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s device=%s cmd=0x%02X, scheduling status poll",
-               src_id.c_str(), device_id.c_str(), frame.cmd);
+      ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s device=%s cmd=%s(0x%02X), scheduling status poll",
+               src_id.c_str(), device_id.c_str(), command_name(frame.cmd), frame.cmd);
       this->begin_status_poll_tracking_(device_id, 0);
       this->schedule_status_poll_(device_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     }
@@ -340,6 +348,17 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   }
 
   detail::log_frame_issue(this, "rx", "unhandled_cmd", frame, packet.len);
+
+  // If the command is not in our known set, it may be a protocol extension we haven't documented.
+  // Ask the user to report it so we can add support.
+  if (std::strcmp(command_name(frame.cmd), "UNKNOWN_CMD") == 0) {
+    const std::string src_id = node_id_to_string(frame.src);
+    ESP_LOGW(detail::TAG,
+             "Received unknown command 0x%02X from %s. "
+             "If you see this repeatedly, please file a GitHub issue with this command ID, "
+             "your device model, and the log context so protocol support can be extended.",
+             frame.cmd, src_id.c_str());
+  }
 }
 
 }  // namespace home_io_control

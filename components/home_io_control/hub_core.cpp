@@ -59,11 +59,12 @@ void IOHomeControlComponent::record_exchange_debug_(const char *stage, uint8_t t
 void IOHomeControlComponent::log_exchange_debug_(const char *device_id) const {
   const auto &debug = this->last_exchange_debug_;
   ESP_LOGW(detail::TAG,
-           "Exchange failed: device=%s cmd=0x%02X stage=%s tries=%u saw_challenge=%u cap_valid=%u cap_rx_done=%u "
+           "Exchange failed: device=%s cmd=%s(0x%02X) stage=%s tries=%u saw_challenge=%u cap_valid=%u cap_rx_done=%u "
            "cap_crc_err=%u cap_freq=%u cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d",
-           device_id, debug.request_cmd, debug.stage, debug.tries, debug.saw_challenge, debug.capture_valid,
-           debug.capture_rx_done, debug.capture_crc_error, debug.capture_freq_hz, debug.capture_irq_status,
-           debug.capture_packet_status, debug.capture_reported_len, debug.capture_frame_len, debug.capture_rssi_dbm);
+           device_id, command_name(debug.request_cmd), debug.request_cmd, debug.stage, debug.tries, debug.saw_challenge,
+           debug.capture_valid, debug.capture_rx_done, debug.capture_crc_error, debug.capture_freq_hz,
+           debug.capture_irq_status, debug.capture_packet_status, debug.capture_reported_len, debug.capture_frame_len,
+           debug.capture_rssi_dbm);
 }
 
 // === Setup ===

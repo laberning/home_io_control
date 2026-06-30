@@ -108,17 +108,36 @@ static constexpr uint8_t CTRL0_PROTOCOL_1W = 0x20;  ///< Bit 5: 1=OneWay protoco
 static constexpr uint8_t CTRL0_LENGTH_MASK = 0x1F;  ///< Bits [4:0]: frame length - 1
 
 /// Control byte 1 (CTRL1) bit definitions.
+/// CTRL1 carries protocol metadata flags that describe the frame's routing,
+/// power mode, and priority characteristics.
+/// - VERSION (bits [1:0]): protocol version number (usually 0 for current devices).
+/// - PRIORITY (bit 2): marks a high-priority frame (e.g., discovery, security commands).
+/// - ACK (bit 4): sender can handle 2W responses (set on all outbound 2W frames).
 /// - LOW_POWER (bit 5): device is battery/solar powered; may sleep and requires long preamble to wake.
-static constexpr uint8_t CTRL1_LOW_POWER = 0x20;  ///< Bit 5: low-power device (e.g., solar-powered)
+/// - ROUTED (bit 6): frame was relayed through a repeater node rather than direct.
+/// - BEACON (bit 7): beacon announcement frame (device presence advertisement).
+static constexpr uint8_t CTRL1_VERSION_MASK = 0x03;  ///< Bits [1:0]: protocol version (usually 0).
+static constexpr uint8_t CTRL1_PRIORITY = 0x04;      ///< Bit 2: high-priority frame.
+static constexpr uint8_t CTRL1_ACK = 0x10;           ///< Bit 4: sender can handle 2W responses (ACK-capable).
+static constexpr uint8_t CTRL1_LOW_POWER = 0x20;     ///< Bit 5: low-power device (e.g., solar-powered).
+static constexpr uint8_t CTRL1_ROUTED = 0x40;        ///< Bit 6: frame was relayed through a repeater.
+static constexpr uint8_t CTRL1_BEACON = 0x80;        ///< Bit 7: beacon announcement frame.
 
 // ============================================================================
 // Command IDs
 // ============================================================================
 
 // Normal operation commands
-static constexpr uint8_t CMD_EXECUTE = 0x00;       ///< Set position/open/close/stop — requires authentication
-static constexpr uint8_t CMD_PRIVATE = 0x03;       ///< Get device status — no authentication needed
-static constexpr uint8_t CMD_PRIVATE_RESP = 0x04;  ///< Response to 0x00 and 0x03 (contains position data)
+static constexpr uint8_t CMD_EXECUTE = 0x00;        ///< Set position/open/close/stop — requires authentication
+static constexpr uint8_t CMD_ACTIVATE_MODE = 0x01;  ///< Activate device mode (scene, ventilation) — requires auth
+static constexpr uint8_t CMD_PRIVATE = 0x03;        ///< Get device status — no authentication needed
+static constexpr uint8_t CMD_PRIVATE_RESP = 0x04;   ///< Response to 0x00 and 0x03 (contains position data)
+
+// Sensor and private register commands
+static constexpr uint8_t CMD_SET_SENSOR = 0x19;         ///< Inject sensor value into a device
+static constexpr uint8_t CMD_SET_SENSOR_ACK = 0x1A;     ///< Acknowledgment to CMD_SET_SENSOR
+static constexpr uint8_t CMD_WRITE_PRIVATE = 0x20;      ///< Write private register (climate/heating devices)
+static constexpr uint8_t CMD_WRITE_PRIVATE_ACK = 0x21;  ///< Acknowledgment to CMD_WRITE_PRIVATE
 
 // Discovery and pairing commands
 static constexpr uint8_t CMD_DISCOVER_REQ = 0x28;          ///< Broadcast discovery request
@@ -132,6 +151,11 @@ static constexpr uint8_t CMD_DISCOVER_CONFIRM_ACK = 0x2D;  ///< Device acknowled
 static constexpr uint8_t CMD_KEY_INIT = 0x31;      ///< Initiate key transfer to device
 static constexpr uint8_t CMD_KEY_TRANSFER = 0x32;  ///< Send encrypted system key to device
 static constexpr uint8_t CMD_KEY_CONFIRM = 0x33;   ///< Device confirms key was received
+
+// Address and device-initiated key exchange
+static constexpr uint8_t CMD_ADDRESS_REQ = 0x36;          ///< Address assignment request
+static constexpr uint8_t CMD_ADDRESS_RESP = 0x37;         ///< Address assignment response
+static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER = 0x38;  ///< Device-initiated key transfer request
 
 // Authentication commands (challenge-response for secured commands)
 static constexpr uint8_t CMD_CHALLENGE_REQ = 0x3C;   ///< Device sends 6-byte random challenge
@@ -212,10 +236,42 @@ static constexpr uint8_t RESULT_LIMITATION_BY_EMERGENCY = 0xEE;        ///< Para
 
 /// Position values in the IO protocol.
 /// Normal positions are 0-100 (0=fully open, 100=fully closed).
-/// Special values above 100 are control commands.
-static constexpr uint8_t POS_STOP = 0xD2;      ///< Stop movement
-static constexpr uint8_t POS_UNKNOWN = 0xD4;   ///< Position unknown
-static constexpr uint8_t POS_FAVORITE = 0xD8;  ///< Move to favorite/"My" position
+/// Special values above 100 are control commands encoded as the "main" parameter
+/// byte in CMD_EXECUTE payloads. These are internal wire constants — callers should
+/// prefer CoverCommand for type-safe command dispatch.
+static constexpr uint8_t POS_STOP = 0xD2;      ///< Wire value: stop movement.
+static constexpr uint8_t POS_UNKNOWN = 0xD4;   ///< Wire value: position unknown / keep current.
+static constexpr uint8_t POS_FAVORITE = 0xD8;  ///< Wire value: move to favorite/"My" position.
+
+/// @brief Wire value for the force-open command.
+///
+/// Force-open (0x64 = 100 decimal) commands the actuator to fully open, bypassing
+/// soft locks and environmental limitations (e.g., wind/rain restrictions). The device
+/// may still refuse if a hardware safety limit prevents movement.
+static constexpr uint8_t POS_FORCE_OPEN = 0x64;
+
+/// @brief Modifier byte for the ventilation command.
+///
+/// Both favorite and ventilation use POS_FAVORITE (0xD8) as the main parameter byte,
+/// but ventilation sets the secondary byte (main[1]) to 0x03 while favorite leaves it 0x00.
+static constexpr uint8_t POS_VENT_MODIFIER = 0x03;
+
+/// @brief Named device commands for cover-type actuators.
+///
+/// These represent the discrete non-positional actions a controller can send to
+/// a cover device. Each maps to a specific wire encoding in the CMD_EXECUTE payload.
+/// Using this enum avoids conflating numeric positions (0–100) with command codes.
+enum class CoverCommand : uint8_t {
+  STOP = 0,        ///< Stop movement immediately.
+  FAVORITE = 1,    ///< Move to stored favorite/"My" position.
+  VENT = 2,        ///< Move to ventilation position (window-type devices).
+  FORCE_OPEN = 3,  ///< Force fully open, bypassing soft locks and environmental limits.
+};
+
+/// @brief Get a human-readable name for a CoverCommand.
+/// @param cmd The cover command to name.
+/// @return Null-terminated string such as "STOP", "FAVORITE", or "VENT".
+const char *cover_command_name(CoverCommand cmd);
 
 /// In status responses, position is encoded as a 16-bit value where
 /// 0x0000 = fully open (0%) and 0xC800 = fully closed (100%).
@@ -275,6 +331,10 @@ struct IoFrame {
 
 // --- Frame construction and parsing ---
 /// Initialize an IoFrame header (ctrl0/ctrl1) with flags.
+///
+/// Note: CTRL1_ACK is NOT automatically set on outbound frames. Some real-world
+/// devices reject frames with unexpected CTRL1 bits, causing total communication
+/// failure. The ACK constant is retained for inbound frame parsing and logging only.
 /// @param f Frame to initialize.
 /// @param is_2w True for 2‑way (default), false for 1‑way.
 /// @param start Set START flag (first frame in exchange).
@@ -413,6 +473,14 @@ bool device_supports_lock_control(DeviceType type);
 /// @return true for venetian blinds, blinds, external venetian blinds, louvre blinds.
 bool device_supports_tilt(DeviceType type);
 
+/// @brief Does this device type support the ventilation position command?
+///
+/// The ventilation command moves window-type actuators to a predefined
+/// partially-open position suitable for air exchange without fully opening.
+/// @param type Device type.
+/// @return true for WINDOW_OPENER and VENTILATION_POINT.
+bool device_supports_vent(DeviceType type);
+
 /// @brief Decode a protocol-packed device type from two metadata bytes.
 /// @param type_msb First metadata byte.
 /// @param type_subtype Second metadata byte containing the remaining type bits and subtype.
@@ -519,6 +587,235 @@ const char *device_name_validation_error_description(DeviceNameValidationError e
 /// @param type Device type.
 /// @return true for horizontal awnings; false otherwise.
 bool default_inverted_for_type(DeviceType type);
+
+// ============================================================================
+// Command Name Lookup
+// ============================================================================
+
+/// @brief Get a human-readable name for any IO-Homecontrol command ID.
+///
+/// Returns a short uppercase identifier suitable for log lines (e.g., "EXECUTE",
+/// "DISCOVER_REQ", "CHALLENGE_RESP"). Unknown commands return "UNKNOWN_CMD".
+/// @param cmd Command byte from the frame header.
+/// @return Null-terminated string.
+const char *command_name(uint8_t cmd);
+
+// ============================================================================
+// Manufacturer ID Lookup
+// ============================================================================
+
+/// @brief Maximum manufacturer ID with a known name in the lookup table.
+static constexpr uint8_t MANUFACTURER_ID_MAX = 12;
+
+/// @brief IO-Homecontrol manufacturer ID constants.
+///
+/// These 1-based identifiers are assigned by the IO-Homecontrol alliance and
+/// appear in the discovery response payload at DISCOVERY_RESP_MANUFACTURER_OFFSET.
+/// @{
+static constexpr uint8_t MANUFACTURER_VELUX = 1;            ///< VELUX (roof windows, skylights).
+static constexpr uint8_t MANUFACTURER_SOMFY = 2;            ///< Somfy (shutters, awnings, blinds).
+static constexpr uint8_t MANUFACTURER_HONEYWELL = 3;        ///< Honeywell.
+static constexpr uint8_t MANUFACTURER_HORMANN = 4;          ///< Hörmann (garage doors, gates).
+static constexpr uint8_t MANUFACTURER_ASSA_ABLOY = 5;       ///< ASSA ABLOY (locks, access).
+static constexpr uint8_t MANUFACTURER_NIKO = 6;             ///< Niko (switches, home automation).
+static constexpr uint8_t MANUFACTURER_WINDOW_MASTER = 7;    ///< WINDOW MASTER (ventilation).
+static constexpr uint8_t MANUFACTURER_RENSON = 8;           ///< Renson (ventilation, sun protection).
+static constexpr uint8_t MANUFACTURER_CIAT = 9;             ///< CIAT (HVAC).
+static constexpr uint8_t MANUFACTURER_SECUYOU = 10;         ///< Secuyou (security).
+static constexpr uint8_t MANUFACTURER_OVERKIZ = 11;         ///< OVERKIZ (Somfy connectivity platform).
+static constexpr uint8_t MANUFACTURER_ATLANTIC_GROUP = 12;  ///< Atlantic Group (heating, hot water).
+/// @}
+
+/// @brief Get a human-readable manufacturer name from the protocol manufacturer byte.
+///
+/// The manufacturer ID is a 1-based index assigned by the IO-Homecontrol alliance.
+/// IDs outside the known range return "unknown". When an unknown ID appears at runtime,
+/// the pairing flow logs a warning suggesting the user file a GitHub issue.
+/// @param id Manufacturer ID byte (1–12 for known manufacturers).
+/// @return Null-terminated lowercase string such as "unknown", or mixed-case name like "Somfy".
+const char *manufacturer_name(uint8_t id);
+
+// ============================================================================
+// Command Originator Codes
+// ============================================================================
+
+/// @brief Command originator codes indicating what or who triggered a command.
+///
+/// The originator byte is the first byte of the CMD_EXECUTE payload. It tells
+/// the actuator (and any eavesdropping controller) who initiated the movement.
+/// This is useful for understanding device-initiated status updates.
+/// @{
+static constexpr uint8_t ORIGINATOR_LOCAL_USER = 0x00;        ///< User pressed a button on the actuator.
+static constexpr uint8_t ORIGINATOR_USER_REMOTE = 0x01;       ///< User sent command from a remote control.
+static constexpr uint8_t ORIGINATOR_RAIN_SENSOR = 0x02;       ///< Rain sensor triggered the movement.
+static constexpr uint8_t ORIGINATOR_TIMER = 0x03;             ///< Timer or schedule triggered the movement.
+static constexpr uint8_t ORIGINATOR_SECURITY = 0x04;          ///< Security controlling device (SCD) action.
+static constexpr uint8_t ORIGINATOR_UPS = 0x05;               ///< Uninterruptible power supply action.
+static constexpr uint8_t ORIGINATOR_SMART_CONTROLLER = 0x06;  ///< Smart function controller.
+static constexpr uint8_t ORIGINATOR_LIFESTYLE = 0x07;         ///< Lifestyle scenario controller.
+static constexpr uint8_t ORIGINATOR_SAAC = 0x08;              ///< Stand-alone automatic controller (SAAC).
+static constexpr uint8_t ORIGINATOR_WIND_SENSOR = 0x09;       ///< Wind sensor triggered the movement.
+static constexpr uint8_t ORIGINATOR_LOAD_SHEDDING = 0x0B;     ///< Load-shedding manager.
+static constexpr uint8_t ORIGINATOR_LOCAL_LIGHT = 0x0C;       ///< Local light sensor.
+static constexpr uint8_t ORIGINATOR_ENVIRONMENT = 0x0D;       ///< Unspecified environment sensor.
+static constexpr uint8_t ORIGINATOR_MYSELF = 0x10;            ///< Actuator decided to move by itself.
+static constexpr uint8_t ORIGINATOR_AUTOMATIC_CYCLE = 0xFE;   ///< Automatic cycle / external access.
+static constexpr uint8_t ORIGINATOR_EMERGENCY = 0xFF;         ///< Emergency command (never disabled).
+/// @}
+
+/// @brief Get a human-readable name for a command originator byte.
+///
+/// @param originator Originator code from the first data byte of CMD_EXECUTE.
+/// @return Null-terminated string such as "rain_sensor" or "user_remote".
+const char *originator_name(uint8_t originator);
+
+// ============================================================================
+// ACEI (Application Command Execution Interface)
+// ============================================================================
+
+/// @brief ACEI byte bit-field definitions.
+///
+/// The ACEI byte is the second byte of the CMD_EXECUTE payload. It encodes the
+/// priority level and service class of the command, controlling which commands
+/// can override others. Devices reject commands with lower priority than their
+/// current locked level (resulting in RESULT_PRIORITY_LEVEL_LOCKED).
+/// @{
+static constexpr uint8_t ACEI_VALID_BIT = 0x01;      ///< Bit 0: command validity flag.
+static constexpr uint8_t ACEI_EXTENDED_MASK = 0x06;  ///< Bits [2:1]: extended field.
+static constexpr uint8_t ACEI_EXTENDED_SHIFT = 1;    ///< Shift for extended field extraction.
+static constexpr uint8_t ACEI_SERVICE_MASK = 0x18;   ///< Bits [4:3]: service type.
+static constexpr uint8_t ACEI_SERVICE_SHIFT = 3;     ///< Shift for service field extraction.
+static constexpr uint8_t ACEI_LEVEL_MASK = 0xE0;     ///< Bits [7:5]: priority level (0–7).
+static constexpr uint8_t ACEI_LEVEL_SHIFT = 5;       ///< Shift for priority level extraction.
+/// @}
+
+/// @brief ACEI priority level values (0–7).
+///
+/// These values are extracted from the ACEI byte via (acei & ACEI_LEVEL_MASK) >> ACEI_LEVEL_SHIFT.
+/// @{
+static constexpr uint8_t ACEI_LEVEL_PROTECTION_HUMAN = 0;   ///< Personal safety (highest, overrides all).
+static constexpr uint8_t ACEI_LEVEL_PROTECTION_SENSOR = 1;  ///< Goods/environment protection via sensors.
+static constexpr uint8_t ACEI_LEVEL_USER_HIGH = 2;          ///< High-priority user controller.
+static constexpr uint8_t ACEI_LEVEL_USER_DEFAULT = 3;       ///< Default remote controller priority.
+static constexpr uint8_t ACEI_LEVEL_COMFORT_1 = 4;          ///< Comfort automation level 1.
+static constexpr uint8_t ACEI_LEVEL_COMFORT_2 = 5;          ///< Comfort automation level 2.
+static constexpr uint8_t ACEI_LEVEL_AUTO_SAAC = 6;          ///< Stand-alone automatic controller.
+static constexpr uint8_t ACEI_LEVEL_AUTO_DEFAULT = 7;       ///< Default automatic level (lowest).
+/// @}
+
+/// @brief Get a human-readable name for an ACEI priority level (0–7).
+///
+/// Priority levels form a hierarchy: level 0 (human protection) is highest
+/// and overrides all others. Level 3 is the default for remote controllers.
+/// @param level Priority level value (0–7).
+/// @return Null-terminated string such as "user_default" or "protection_sensor".
+const char *acei_level_name(uint8_t level);
+
+// ============================================================================
+// Address Classification
+// ============================================================================
+
+/// @brief Well-known address suffix values in the broadcast address space.
+///
+/// When the first byte of a 3-byte IO-Homecontrol address is 0x00, the low 6 bits
+/// of the third byte carry a suffix that identifies the broadcast category.
+/// @{
+static constexpr uint8_t ADDRESS_SUFFIX_MASK = 0x3F;       ///< Mask to extract the 6-bit suffix from addr[2].
+static constexpr uint8_t ADDRESS_SUFFIX_BROADCAST = 0x3F;  ///< Suffix for "all devices of this type" broadcast.
+static constexpr uint8_t ADDRESS_SUFFIX_DISCOVERY = 0x3B;  ///< Suffix for discovery-related broadcasts.
+/// @}
+
+/// @brief Address classification categories for diagnostic purposes.
+///
+/// IO-Homecontrol uses the target address field to encode both unicast
+/// device addresses and broadcast targets. The first byte being 0x00
+/// indicates a broadcast; the remaining bytes encode the target device type.
+enum class AddressClass : uint8_t {
+  UNICAST = 0,        ///< Normal device-to-device unicast address (first byte != 0x00).
+  BROADCAST_ALL,      ///< Broadcast to all devices of a type (address suffix 0x3F).
+  BROADCAST_TYPE,     ///< Broadcast to specific device type with non-standard suffix.
+  DISCOVERY,          ///< Discovery-related broadcast (address suffix 0x3B).
+  UNKNOWN_BROADCAST,  ///< Broadcast pattern that does not match known suffixes.
+};
+
+/// @brief Classify an IO-Homecontrol 3-byte address.
+///
+/// Determines whether an address is unicast, a typed broadcast, or a
+/// discovery-related broadcast based on protocol addressing rules.
+/// @param addr Three-byte node address to classify.
+/// @return Classification indicating the address type.
+AddressClass classify_address(const uint8_t addr[NODE_ID_SIZE]);
+
+/// @brief Extract the target device type from a typed broadcast address.
+///
+/// Broadcast addresses encode the device type in bits [9:2] of the combined
+/// address bytes 1–2. This function extracts that type. Returns UNKNOWN
+/// if the address is not a broadcast (first byte != 0x00).
+/// @param addr Three-byte broadcast address.
+/// @return DeviceType encoded in the address, or DeviceType::UNKNOWN for unicast.
+DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]);
+
+// ============================================================================
+// Discovery Response Extended Fields
+// ============================================================================
+
+/// @brief Byte offsets within CMD_DISCOVER_RESP (0x29) payload data.
+///
+/// The full discovery response carries up to 9 bytes of device metadata:
+/// bytes 0–1 hold the packed device type/subtype (already parsed by
+/// decode_packed_device_type()), and bytes 2–8 hold additional fields.
+/// @{
+static constexpr uint8_t DISCOVERY_RESP_BACKBONE_OFFSET = 2;      ///< Backbone address starts at data[2] (3 bytes).
+static constexpr uint8_t DISCOVERY_RESP_MANUFACTURER_OFFSET = 5;  ///< Manufacturer ID at data[5].
+static constexpr uint8_t DISCOVERY_RESP_FLAGS_OFFSET = 6;         ///< Flags byte at data[6].
+static constexpr uint8_t DISCOVERY_RESP_TIMESTAMP_OFFSET = 7;     ///< Timestamp starts at data[7] (2 bytes).
+static constexpr uint8_t DISCOVERY_RESP_FULL_SIZE = 9;            ///< Full discovery response payload size.
+/// @}
+
+// === Multi Information Byte (Discovery Response data[6]) ===
+// The flags byte in the discovery response encodes device capabilities and timing
+// characteristics that help a controller tune its interaction with the actuator.
+
+/// @brief Bit masks and shifts for the Multi Information Byte fields.
+/// @{
+static constexpr uint8_t DISCOVERY_FLAGS_ATT_MASK = 0xC0;         ///< Bits [7:6]: actuator turnaround time class.
+static constexpr uint8_t DISCOVERY_FLAGS_ATT_SHIFT = 6;           ///< Shift for ATT field extraction.
+static constexpr uint8_t DISCOVERY_FLAGS_SYNC_CTRL_GRP = 0x20;    ///< Bit 5: supports sync control group.
+static constexpr uint8_t DISCOVERY_FLAGS_RF_SUPPORT = 0x08;       ///< Bit 3: RF support in node (0=yes, 1=no).
+static constexpr uint8_t DISCOVERY_FLAGS_POWER_SAVE_MASK = 0x03;  ///< Bits [1:0]: power save mode.
+/// @}
+
+/// @brief Actuator Turnaround Time (ATT) class values.
+///
+/// Indicates the maximum time window in which the actuator normally responds after
+/// receiving a command. Extracted from the Multi Information Byte via
+/// `(flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT`.
+/// @{
+static constexpr uint8_t ATT_CLASS_5S = 0;   ///< Response within 5 seconds.
+static constexpr uint8_t ATT_CLASS_10S = 1;  ///< Response within 10 seconds.
+static constexpr uint8_t ATT_CLASS_20S = 2;  ///< Response within 20 seconds.
+static constexpr uint8_t ATT_CLASS_40S = 3;  ///< Response within 40 seconds.
+/// @}
+
+/// @brief Power save mode values from the Multi Information Byte.
+///
+/// Extracted from `flags & DISCOVERY_FLAGS_POWER_SAVE_MASK`.
+/// Devices in low-power mode require long preamble (1024 bytes) to wake their receiver.
+/// @{
+static constexpr uint8_t POWER_SAVE_ALWAYS_ALIVE = 0;  ///< Device is always listening — short preamble works.
+static constexpr uint8_t POWER_SAVE_LOW_POWER = 1;     ///< Device sleeps — needs long preamble to wake.
+/// @}
+
+/// @brief Get a human-readable turnaround time string for an ATT class value.
+/// @param att_class ATT class (0–3) extracted from the Multi Information Byte.
+/// @return Null-terminated string such as "5s", "10s", "20s", or "40s".
+const char *att_class_name(uint8_t att_class);
+
+/// @brief Get a human-readable power save mode name.
+/// @param mode Power save value (0–1) extracted from the Multi Information Byte.
+/// @return Null-terminated string such as "always_alive" or "low_power".
+const char *power_save_mode_name(uint8_t mode);
+
 /// @brief Return a stable symbolic name for a CMD_ERROR_RESP result code.
 /// @param result Result byte from CMD_ERROR_RESP data[0].
 /// @return Uppercase symbolic name, or "UNKNOWN_RESULT_CODE" when unmapped.

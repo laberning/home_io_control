@@ -241,7 +241,8 @@ decisions::ExchangeFirstResponseDisposition IOHomeControlComponent::wait_for_fir
   }
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_exchange_debug_("wait_first_timeout", ctx.try_index, false);
-  ESP_LOGI(TAG, "Try %d ended: no first response for cmd=0x%02X within %u ms", ctx.try_index, request.cmd, ctx.wait_ms);
+  ESP_LOGI(TAG, "Try %d ended: no first response for cmd=%s(0x%02X) within %u ms", ctx.try_index,
+           command_name(request.cmd), request.cmd, ctx.wait_ms);
   return decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED;
 }
 
@@ -309,8 +310,8 @@ decisions::ExchangeFinalResponseDisposition IOHomeControlComponent::wait_for_fin
   }
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_exchange_debug_("wait_final_timeout", ctx.try_index, true);
-  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=0x%02X within %u ms", ctx.try_index, request.cmd,
-           RESPONSE_AUTH_WAIT_MS);
+  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=%s(0x%02X) within %u ms", ctx.try_index,
+           command_name(request.cmd), request.cmd, RESPONSE_AUTH_WAIT_MS);
   return decisions::ExchangeFinalResponseDisposition::IGNORE_UNRELATED;
 }
 
