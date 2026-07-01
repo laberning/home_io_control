@@ -61,15 +61,16 @@ sed -e 's/ -mlongcalls//g' \
 # Translate Docker paths to host paths
 HOST_CONFIG_DIR="$REPO_ROOT/config"
 echo "==> Adjusting paths: /config/ -> $HOST_CONFIG_DIR/"
-sed -i -e "s|\"directory\": \"/config/|\"directory\": \"${HOST_CONFIG_DIR}/|" \
-       -e "s|-I/config/|-I${HOST_CONFIG_DIR}/|g" \
-       -e "s| /config/| ${HOST_CONFIG_DIR}/|g" \
-       -e "s|^/config/|${HOST_CONFIG_DIR}/|" \
-  "$RAW_DB"
+sed \
+    -e "s|\"directory\": \"/config/|\"directory\": \"${HOST_CONFIG_DIR}/|" \
+    -e "s|-I/config/|-I${HOST_CONFIG_DIR}/|g" \
+    -e "s| /config/| ${HOST_CONFIG_DIR}/|g" \
+    -e "s|^/config/|${HOST_CONFIG_DIR}/|" \
+  "$RAW_DB" > "$RAW_DB.tmp" && mv "$RAW_DB.tmp" "$RAW_DB"
 
 # Replace cross-compiler with clang++
 echo "==> Replacing cross-compiler with clang++..."
-sed -i 's|"command": "xtensa-esp32-elf-g++|"command": "clang++|' "$RAW_DB"
+sed 's|"command": "xtensa-esp32-elf-g++|"command": "clang++|' "$RAW_DB" > "$RAW_DB.tmp" && mv "$RAW_DB.tmp" "$RAW_DB"
 
 # Keep only this component's translation units and map them back to repository sources.
 echo "==> Reducing compile_commands.json to project sources..."
@@ -134,7 +135,7 @@ echo "Retained ${RETAINED_COUNT} project translation units"
 # ESPHome copy. Updating only the "file" field is not enough for clang-tidy.
 for src_file in "$COMPONENT_DIR"/*.cpp; do
   base_name=$(basename "$src_file")
-  sed -i "s| src/esphome/components/home_io_control/${base_name}\"| ${src_file}\"|g" "$FILTERED_DB"
+  sed "s| src/esphome/components/home_io_control/${base_name}\"| ${src_file}\"|g" "$FILTERED_DB" > "$FILTERED_DB.tmp" && mv "$FILTERED_DB.tmp" "$FILTERED_DB"
 done
 
 if [ ! -s "$FILTERED_DB" ]; then
@@ -186,7 +187,10 @@ for a in "${EXTRA_ARGS[@]}"; do
 done
 
 # Collect translation units.
-mapfile -t FILES_ARRAY < <(find "$COMPONENT_DIR" -type f -name '*.cpp' | sort)
+FILES_ARRAY=()
+while IFS= read -r f; do
+  FILES_ARRAY+=("$f")
+done < <(find "$COMPONENT_DIR" -type f -name '*.cpp' | sort)
 if [ ${#FILES_ARRAY[@]} -eq 0 ]; then
   echo "No source files found in components/home_io_control"
   exit 1

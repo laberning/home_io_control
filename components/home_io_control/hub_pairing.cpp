@@ -245,7 +245,7 @@ bool IOHomeControlComponent::wait_for_key_challenge_(uint32_t timeout_ms, RadioR
 /// times on timeout.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool IOHomeControlComponent::wait_for_key_confirm_(pairing::PairingContext &context) {
-  for (int tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
+  for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
     if (tries > 0) {
       App.feed_wdt();
       delay(EXCHANGE_RETRY_DELAY_MS);

@@ -72,8 +72,7 @@ void IRAM_ATTR RadioSX1276::gpio_intr(RadioSX1276 *arg) { arg->mark_dio_fired_fr
 
 void RadioSX1276::fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, uint8_t rssi, const uint8_t *raw,
                                      uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
-  this->populate_capture_base_(blocking_wait, this->current_freq_, -(int16_t) (rssi) / 2, raw, raw_len, frame,
-                               frame_len);
+  this->populate_capture_base_(blocking_wait, this->current_freq_, -(int16_t) rssi / 2, raw, raw_len, frame, frame_len);
   this->last_capture_.rx_done = (irq2 & 0x04) != 0;
   this->last_capture_.irq_flags1 = irq1;
   this->last_capture_.irq_flags2 = irq2;

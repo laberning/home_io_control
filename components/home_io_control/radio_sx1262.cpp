@@ -150,7 +150,7 @@ bool is_plausible_uart_frame(const IoFrame &frame, uint8_t candidate_len) {
 static std::pair<uint8_t, uint8_t> find_crc_valid_frame(const uint8_t *decoded, uint8_t decoded_len) {
   for (uint8_t start = 0; start < decoded_len; start++) {
     const uint8_t max_candidate_len = std::min<uint8_t>(decoded_len - start, FRAME_MAX_SIZE);
-    for (int candidate_len = max_candidate_len; candidate_len >= FRAME_MIN_SIZE; candidate_len--) {
+    for (uint8_t candidate_len = max_candidate_len; candidate_len >= FRAME_MIN_SIZE; candidate_len--) {
       IoFrame frame;
       if (!parse(decoded + start, candidate_len, frame))
         continue;
@@ -163,7 +163,7 @@ static std::pair<uint8_t, uint8_t> find_crc_valid_frame(const uint8_t *decoded, 
           (uint16_t) decoded[start + candidate_len] | ((uint16_t) decoded[start + candidate_len + 1] << 8);
       if (computed_crc != received_crc)
         continue;
-      return {start, (uint8_t) candidate_len};
+      return {start, candidate_len};
     }
   }
   return {0, 0};
@@ -391,7 +391,7 @@ void RadioSX1262::set_packet_params_(uint16_t preamble_len, uint8_t payload_len,
                                      uint8_t crc_type) {
   uint8_t params[9] = {
       (uint8_t) (preamble_len >> 8),   // Preamble length MSB
-      (uint8_t) (preamble_len),        // Preamble length LSB
+      (uint8_t) preamble_len,          // Preamble length LSB
       0x04,                            // Preamble detector: 8 bits (1 byte)
       SX1262_SYNC_WORD_PARAM_24_BITS,  // Sync word length: 24 bits (3 bytes)
       0x00,                            // Address comparison: off
@@ -873,7 +873,7 @@ bool RadioSX1262::read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint
     char hex_buf[97] = {0};  // 32 bytes * 3 chars + null
     uint8_t dump_len = std::min(raw_probe_len, (uint8_t) 32);
     for (uint8_t i = 0; i < dump_len; i++)
-      snprintf(hex_buf + i * 3, 4, "%02X ", rx_buf[i]);
+      snprintf(hex_buf + (i * 3), 4, "%02X ", rx_buf[i]);
     ESP_LOGW(TAG, "UART probe: valid=0 decoded_len=%u raw_probe_len=%u", probe.decoded_len, raw_probe_len);
     ESP_LOGW(TAG, "  raw[0..%u]: %s", dump_len - 1, hex_buf);
     // Try to show why CRC failed at best offset

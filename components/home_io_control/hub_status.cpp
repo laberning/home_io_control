@@ -88,8 +88,8 @@ uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &f
   // poll to the shorter of the two so YAML cannot stretch a device-reported settle window.
   if (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_UNUSED &&
       frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_ZERO) {
-    uint32_t const hinted_delay_ms =
-        frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS + PRIVATE_RESPONSE_HINT_BIAS_MS;
+    uint32_t const hinted_delay_ms = (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS) +
+                                     PRIVATE_RESPONSE_HINT_BIAS_MS;
     if (dev.status_poll_interval_ms == 0)
       return hinted_delay_ms;
     return hinted_delay_ms < dev.status_poll_interval_ms ? hinted_delay_ms : dev.status_poll_interval_ms;

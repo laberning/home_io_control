@@ -131,7 +131,7 @@ bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &
   this->reset_exchange_debug_(request.cmd);
   const uint16_t request_preamble = is_start(request) ? LONG_PREAMBLE : this->radio_->response_preamble();
 
-  for (int tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
+  for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
     exchange::OutboundExchangeContext context;
     context.try_index = tries + 1;
     context.exchange_start_ms = millis();

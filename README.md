@@ -204,10 +204,10 @@ sudo apt-get install graphviz python3-pygments
 ```
 #### macOS(Homebrew):
 ```bash
-brew install clang-format clang-tidy yamllint googletest
+brew install clang-format llvm yamllint googletest
 
 # Optional: for API documentation generation
-brew install graphviz python3-pygments
+brew install graphviz pygments
 ```
 
 #### Windows (WSL2)

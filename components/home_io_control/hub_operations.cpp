@@ -398,7 +398,7 @@ bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool l
 }
 
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {
-  IoDevice *dev = this->get_device(device_id);
+  const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
     detail::log_rejected_operation(device_id, *dev, "queued cover command", "cover entity");
     return;
@@ -426,7 +426,7 @@ void IOHomeControlComponent::queue_set_device_position(const std::string &device
 }
 
 void IOHomeControlComponent::queue_device_command(const std::string &device_id, CoverCommand cmd) {
-  IoDevice *dev = this->get_device(device_id);
+  const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
     detail::log_rejected_operation(device_id, *dev, cover_command_name(cmd), "cover entity");
     return;
@@ -439,7 +439,7 @@ void IOHomeControlComponent::queue_device_command(const std::string &device_id, 
 }
 
 void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
-  IoDevice *dev = this->get_device(device_id);
+  const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_accepts_execute_tilt(*dev)) {
     detail::log_rejected_operation(device_id, *dev, "queued tilt command", "tilt-capable cover");
     return;
@@ -466,7 +466,7 @@ void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id,
 
 void IOHomeControlComponent::queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position,
                                                                 uint8_t tilt_percent) {
-  IoDevice *dev = this->get_device(device_id);
+  const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_accepts_execute_tilt(*dev)) {
     detail::log_rejected_operation(device_id, *dev, "queued position+tilt command", "tilt-capable cover");
     return;
@@ -475,7 +475,7 @@ void IOHomeControlComponent::queue_set_device_position_and_tilt(const std::strin
 }
 
 void IOHomeControlComponent::queue_request_device_status(const std::string &device_id) {
-  IoDevice *dev = this->get_device(device_id);
+  const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_supports_status_requests(*dev)) {
     detail::log_rejected_operation(device_id, *dev, "queued status request", "status-capable actuator");
     return;
@@ -528,7 +528,7 @@ void IOHomeControlComponent::queue_discover_and_pair() {
 }
 
 void IOHomeControlComponent::queue_set_light_state(const std::string &device_id, bool on) {
-  IoDevice *dev = this->get_device(device_id);
+  const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::LIGHT)) {
     detail::log_rejected_operation(device_id, *dev, "queued light command", "light entity");
     return;
@@ -541,7 +541,7 @@ void IOHomeControlComponent::queue_set_light_state(const std::string &device_id,
 }
 
 void IOHomeControlComponent::queue_set_lock_state(const std::string &device_id, bool locked) {
-  IoDevice *dev = this->get_device(device_id);
+  const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::LOCK)) {
     detail::log_rejected_operation(device_id, *dev, "queued lock command", "lock entity");
     return;
@@ -553,7 +553,7 @@ void IOHomeControlComponent::queue_set_lock_state(const std::string &device_id, 
 }
 
 void IOHomeControlComponent::queue_set_switch_state(const std::string &device_id, bool on) {
-  IoDevice *dev = this->get_device(device_id);
+  const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::SWITCH)) {
     detail::log_rejected_operation(device_id, *dev, "queued switch command", "switch entity");
     return;

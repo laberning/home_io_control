@@ -52,7 +52,7 @@ class CoverCall {
   const std::optional<float> &get_tilt() const { return tilt_; }
 
  private:
-  Cover *parent_;
+  [[maybe_unused]] Cover *parent_;
   std::optional<float> position_;
   std::optional<float> tilt_;
   bool stop_{false};

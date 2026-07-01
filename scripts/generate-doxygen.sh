@@ -11,9 +11,17 @@ cd "$REPO_ROOT"
 # === Configuration ===
 DOXYGEN_VERSION="1.16.1"
 DOXYGEN_RELEASE_TAG="Release_$(echo "$DOXYGEN_VERSION" | tr '.' '_')"
-DOXYGEN_URL="https://github.com/doxygen/doxygen/releases/download/${DOXYGEN_RELEASE_TAG}/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz"
 DOXYGEN_BIN_DIR="build/doxygen-resources"
 DOXYGEN_BIN="$DOXYGEN_BIN_DIR/doxygen"
+
+# Determine platform-specific download URL
+DOXYGEN_BASE="https://github.com/doxygen/doxygen/releases/download/${DOXYGEN_RELEASE_TAG}"
+case "$(uname -s)-$(uname -m)" in
+  Linux-*)        DOXYGEN_URL="${DOXYGEN_BASE}/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz" ;;
+  Darwin-arm64)   DOXYGEN_URL="${DOXYGEN_BASE}/doxygen-${DOXYGEN_VERSION}-mac-arm.zip" ;;
+  Darwin-x86_64)  DOXYGEN_URL="${DOXYGEN_BASE}/doxygen-${DOXYGEN_VERSION}-mac-intel.zip" ;;
+  *)              echo "ERROR: unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+esac
 
 DOXYGEN_AWESOME_VERSION="v2.4.2"
 DOXYGEN_AWESOME_BASE_URL="https://raw.githubusercontent.com/jothepro/doxygen-awesome-css/$DOXYGEN_AWESOME_VERSION"
@@ -44,21 +52,30 @@ fi
 
 mkdir -p "$DOXYGEN_BIN_DIR" "$OUTPUT_DIR"
 
-# === Download doxygen binary if missing ===
-if [ ! -f "$DOXYGEN_BIN" ]; then
+# === Locate or download doxygen binary ===
+if [ -f "$DOXYGEN_BIN" ]; then
+  DOXYGEN_CMD="$DOXYGEN_BIN"
+else
   echo "==> Downloading doxygen ($DOXYGEN_VERSION)..."
-  tmp_tar="$(mktemp)"
-  curl -sL -o "$tmp_tar" "$DOXYGEN_URL"
+  tmp_archive="$(mktemp)"
+  curl -sL -o "$tmp_archive" "$DOXYGEN_URL"
   tmp_dir="$(mktemp -d)"
-  tar -xzf "$tmp_tar" -C "$tmp_dir"
-  # Move the extracted binary into place (handles tarballs that embed a versioned directory)
-  found="$(find "$tmp_dir" -maxdepth 3 -type f -name doxygen | head -n1)"
+  case "$DOXYGEN_URL" in
+    *.tar.gz) tar -xzf "$tmp_archive" -C "$tmp_dir" ;;
+    *.zip)    unzip -q "$tmp_archive" -d "$tmp_dir" ;;
+  esac
+  # Find the doxygen binary in the extracted tree
+  found="$(find "$tmp_dir" -maxdepth 4 -type f -name doxygen ! -name '*.h' | head -n1)"
+  if [ -z "$found" ]; then
+    echo "ERROR: could not find doxygen binary in downloaded archive" >&2
+    rm -rf "$tmp_dir" "$tmp_archive"
+    exit 1
+  fi
   mv "$found" "$DOXYGEN_BIN"
   chmod +x "$DOXYGEN_BIN"
-  rm -rf "$tmp_dir" "$tmp_tar"
+  rm -rf "$tmp_dir" "$tmp_archive"
+  DOXYGEN_CMD="$DOXYGEN_BIN"
 fi
-
-DOXYGEN_CMD="$DOXYGEN_BIN"
 
 # === Download theme files if missing ===
 FILES=(

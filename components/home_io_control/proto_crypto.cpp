@@ -352,14 +352,14 @@ bool crypt_key(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC_SI
   uint8_t enc_iv[AES_BLOCK_SIZE];
   if (!aes128_encrypt(iv, TRANSFER_KEY, enc_iv))
     return false;
-  for (int i = 0; i < AES_KEY_SIZE; i++)
+  for (uint8_t i = 0; i < AES_KEY_SIZE; i++)
     out[i] = in[i] ^ enc_iv[i];
   return true;
 }
 
 /// Generate 6 random bytes for a challenge using the ESP32 hardware RNG.
 void generate_challenge(uint8_t out[HMAC_SIZE]) {
-  for (int i = 0; i < HMAC_SIZE; i++)
+  for (uint8_t i = 0; i < HMAC_SIZE; i++)
     out[i] = static_cast<uint8_t>(esp_random() & 0xFF);
 }
 

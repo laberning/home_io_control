@@ -93,7 +93,7 @@ bool hex_to_bytes(const std::string &hex, uint8_t *out, uint8_t len) {
 
   for (uint8_t i = 0; i < len; i++) {
     const int high = hex_nibble(hex[i * 2]);
-    const int low = hex_nibble(hex[i * 2 + 1]);
+    const int low = hex_nibble(hex[(i * 2) + 1]);
     if (high < 0 || low < 0)
       return false;
     out[i] = static_cast<uint8_t>((high << 4) | low);

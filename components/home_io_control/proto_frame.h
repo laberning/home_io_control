@@ -82,7 +82,7 @@ static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT
 // ============================================================================
 
 static constexpr uint8_t NODE_ID_SIZE = 3;  ///< Device/node addresses are 3 bytes (e.g., "123ABC")
-static constexpr uint8_t NODE_ID_STRING_SIZE = NODE_ID_SIZE * 2 + 1;  ///< Uppercase hex node ID plus null terminator
+static constexpr uint8_t NODE_ID_STRING_SIZE = (NODE_ID_SIZE * 2) + 1;  ///< Uppercase hex node ID plus null terminator
 static constexpr uint8_t HMAC_SIZE = 6;        ///< Authentication HMAC is 6 bytes (truncated AES output)
 static constexpr uint8_t AES_KEY_SIZE = 16;    ///< AES-128 key size
 static constexpr uint8_t AES_BLOCK_SIZE = 16;  ///< AES block size
