@@ -13,7 +13,7 @@ from esphome.const import (
     CONF_NAME,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
-from esphome.core import CORE, ID
+from esphome.core import ID
 
 from . import (
     home_io_control_ns,
@@ -33,6 +33,11 @@ CONF_LINKED_REMOTES = "linked_remotes"
 CONF_DEVICE_TYPE = "io_device_type"
 CONF_SUBTYPE = "io_subtype"
 CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
+
+# Internal config keys for companion entity IDs (injected by post-validator).
+CONF_FAVORITE_BUTTON_ID = "_favorite_button_id"
+CONF_VENT_BUTTON_ID = "_vent_button_id"
+CONF_DEVICE_NAME_SENSOR_ID = "_device_name_sensor_id"
 
 IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component)
 IOHomeCoverFavoriteButton = home_io_control_ns.class_(
@@ -84,30 +89,12 @@ def device_supports_vent(value):
     return value in VENT_DEVICE_TYPES
 
 
-def favorite_button_id(parent_id):
-    """Generate a unique ID for the favorite-position button child entity."""
-    return ID(
-        f"{parent_id.id}_favorite_button",
-        is_declaration=True,
-        type=IOHomeCoverFavoriteButton,
-    )
-
-
 def favorite_button_name(config):
     """Derive the favorite-position button name from the parent cover name."""
     base_name = config.get(CONF_NAME, "")
     if base_name:
         return f"{base_name} Favorite Position"
     return "Favorite Position"
-
-
-def vent_button_id(parent_id):
-    """Generate a unique ID for the ventilation-position button child entity."""
-    return ID(
-        f"{parent_id.id}_vent_button",
-        is_declaration=True,
-        type=IOHomeCoverVentButton,
-    )
 
 
 def vent_button_name(config):
@@ -118,15 +105,6 @@ def vent_button_name(config):
     return "Ventilation Position"
 
 
-def device_name_sensor_id(parent_id):
-    """Generate a unique ID for the diagnostic device-name text sensor."""
-    return ID(
-        f"{parent_id.id}_device_name_sensor",
-        is_declaration=True,
-        type=IOHomeDeviceNameTextSensor,
-    )
-
-
 def device_name_sensor_name(config):
     """Derive the device-name sensor name from the parent entity name."""
     base_name = config.get(CONF_NAME, "")
@@ -134,7 +112,58 @@ def device_name_sensor_name(config):
         return f"{base_name} Device Name"
     return "Device Name"
 
-CONFIG_SCHEMA = (
+
+def _inject_companion_ids(config):
+    """Declare companion entity IDs during schema validation for StaticVector sizing.
+
+    ESPHome 2026.x sizes its runtime component vector (StaticVector) from the number of
+    component IDs known at the end of schema validation — before to_code() runs.  If
+    companion entities are only created inside to_code(), their IDs are not counted and
+    the StaticVector overflows at runtime, silently dropping later components whose
+    setup() then never executes.
+
+    This post-validator injects declared IDs into the config dict so ESPHome's core
+    infrastructure counts them toward ESPHOME_COMPONENT_COUNT.  The actual entity objects
+    are still constructed in to_code() using these pre-declared IDs.
+    """
+    from esphome.helpers import sanitize
+
+    parent_id = config[CONF_ID]
+    # When no explicit id: is given, ESPHome auto-generates it after validation.
+    # At this point .id may still be None, so derive from the entity name instead.
+    base = parent_id.id if parent_id.id else sanitize(config[CONF_NAME]).lower()
+
+    # Favorite-position button — only for position-capable device types.
+    if CONF_DEVICE_TYPE in config and device_supports_position_control(
+        config[CONF_DEVICE_TYPE]
+    ):
+        config[CONF_FAVORITE_BUTTON_ID] = ID(
+            f"{base}_favorite_button",
+            is_declaration=True,
+            type=IOHomeCoverFavoriteButton,
+        )
+
+    # Ventilation-position button — only for window-type device types.
+    if CONF_DEVICE_TYPE in config and device_supports_vent(
+        config[CONF_DEVICE_TYPE]
+    ):
+        config[CONF_VENT_BUTTON_ID] = ID(
+            f"{base}_vent_button",
+            is_declaration=True,
+            type=IOHomeCoverVentButton,
+        )
+
+    # Device-name diagnostic text sensor — always generated.
+    config[CONF_DEVICE_NAME_SENSOR_ID] = ID(
+        f"{base}_device_name_sensor",
+        is_declaration=True,
+        type=IOHomeDeviceNameTextSensor,
+    )
+
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
     cover.cover_schema(IOHomeCover)
     .extend(
         {
@@ -150,7 +179,8 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_STATUS_POLL_INTERVAL): validate_status_poll_interval,
         }
     )
-    .extend(cv.COMPONENT_SCHEMA)
+    .extend(cv.COMPONENT_SCHEMA),
+    _inject_companion_ids,
 )
 
 
@@ -176,42 +206,35 @@ async def to_code(config):
         for remote_id in config[CONF_LINKED_REMOTES]:
             cg.add(parent.add_linked_remote(remote_id, config[CONF_DEVICE_ID]))
 
-    if CONF_DEVICE_TYPE in config and device_supports_position_control(
-        config[CONF_DEVICE_TYPE]
-    ):
+    if CONF_FAVORITE_BUTTON_ID in config:
         favorite_config = {
-            CONF_ID: favorite_button_id(config[CONF_ID]),
+            CONF_ID: config[CONF_FAVORITE_BUTTON_ID],
             CONF_NAME: favorite_button_name(config),
             CONF_DISABLED_BY_DEFAULT: False,
         }
         favorite = await button.new_button(favorite_config)
-        CORE.component_ids.add(str(favorite.base))
         await cg.register_component(favorite, favorite_config)
         cg.add(favorite.set_parent(parent))
         cg.add(favorite.set_device_id(config[CONF_DEVICE_ID]))
 
-    if CONF_DEVICE_TYPE in config and device_supports_vent(
-        config[CONF_DEVICE_TYPE]
-    ):
+    if CONF_VENT_BUTTON_ID in config:
         vent_config = {
-            CONF_ID: vent_button_id(config[CONF_ID]),
+            CONF_ID: config[CONF_VENT_BUTTON_ID],
             CONF_NAME: vent_button_name(config),
             CONF_DISABLED_BY_DEFAULT: False,
         }
         vent = await button.new_button(vent_config)
-        CORE.component_ids.add(str(vent.base))
         await cg.register_component(vent, vent_config)
         cg.add(vent.set_parent(parent))
         cg.add(vent.set_device_id(config[CONF_DEVICE_ID]))
 
     device_name_config = {
-        CONF_ID: device_name_sensor_id(config[CONF_ID]),
+        CONF_ID: config[CONF_DEVICE_NAME_SENSOR_ID],
         CONF_NAME: device_name_sensor_name(config),
         CONF_DISABLED_BY_DEFAULT: True,
         "entity_category": ENTITY_CATEGORY_DIAGNOSTIC,
     }
     device_name = await text_sensor.new_text_sensor(device_name_config)
-    CORE.component_ids.add(str(device_name.base))
     await cg.register_component(device_name, device_name_config)
     cg.add(device_name.set_parent(parent))
     cg.add(device_name.set_device_id(config[CONF_DEVICE_ID]))

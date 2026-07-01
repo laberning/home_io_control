@@ -14,7 +14,7 @@ from esphome.const import (
     CONF_OUTPUT_ID,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
-from esphome.core import CORE, ID
+from esphome.core import ID
 
 from . import (
     home_io_control_ns,
@@ -34,19 +34,13 @@ CONF_DEVICE_TYPE = "io_device_type"
 CONF_SUBTYPE = "io_subtype"
 CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
 
+# Internal config key for the companion entity ID (injected by post-validator).
+CONF_DEVICE_NAME_SENSOR_ID = "_device_name_sensor_id"
+
 IOHomeLight = home_io_control_ns.class_("IOHomeLight", light.LightOutput, cg.Component)
 IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
     "IOHomeDeviceNameTextSensor", text_sensor.TextSensor, cg.Component
 )
-
-
-def device_name_sensor_id(parent_id):
-    """Generate a unique ID for the diagnostic device-name text sensor."""
-    return ID(
-        f"{parent_id.id}_device_name_sensor",
-        is_declaration=True,
-        type=IOHomeDeviceNameTextSensor,
-    )
 
 
 def device_name_sensor_name(config):
@@ -56,7 +50,35 @@ def device_name_sensor_name(config):
         return f"{base_name} Device Name"
     return "Device Name"
 
-CONFIG_SCHEMA = (
+
+def _inject_companion_ids(config):
+    """Declare companion entity IDs during schema validation for StaticVector sizing.
+
+    ESPHome 2026.x sizes its runtime component vector (StaticVector) from the number of
+    component IDs known at the end of schema validation — before to_code() runs.  If
+    companion entities are only created inside to_code(), their IDs are not counted and
+    the StaticVector overflows at runtime, silently dropping later components whose
+    setup() then never executes.
+
+    This post-validator injects declared IDs into the config dict so ESPHome's core
+    infrastructure counts them toward ESPHOME_COMPONENT_COUNT.  The actual entity objects
+    are still constructed in to_code() using these pre-declared IDs.
+    """
+    from esphome.helpers import sanitize
+
+    parent_id = config[CONF_OUTPUT_ID]
+    # When no explicit id: is given, ESPHome auto-generates it after validation.
+    # At this point .id may still be None, so derive from the entity name instead.
+    base = parent_id.id if parent_id.id else sanitize(config[CONF_NAME]).lower()
+    config[CONF_DEVICE_NAME_SENSOR_ID] = ID(
+        f"{base}_device_name_sensor",
+        is_declaration=True,
+        type=IOHomeDeviceNameTextSensor,
+    )
+    return config
+
+
+CONFIG_SCHEMA = cv.All(
     # Expose this as a binary light on purpose. The transport may carry 0-100 values, but only
     # on/off semantics are backed by current protocol evidence, needs real device to verify
     light.light_schema(IOHomeLight, light.LightType.BINARY)
@@ -73,7 +95,8 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_STATUS_POLL_INTERVAL): validate_status_poll_interval,
         }
     )
-    .extend(cv.COMPONENT_SCHEMA)
+    .extend(cv.COMPONENT_SCHEMA),
+    _inject_companion_ids,
 )
 
 
@@ -98,13 +121,12 @@ async def to_code(config):
             cg.add(parent.add_linked_remote(remote_id, config[CONF_DEVICE_ID]))
 
     device_name_config = {
-        CONF_ID: device_name_sensor_id(config[CONF_OUTPUT_ID]),
+        CONF_ID: config[CONF_DEVICE_NAME_SENSOR_ID],
         CONF_NAME: device_name_sensor_name(config),
         CONF_DISABLED_BY_DEFAULT: True,
         "entity_category": ENTITY_CATEGORY_DIAGNOSTIC,
     }
     device_name = await text_sensor.new_text_sensor(device_name_config)
-    CORE.component_ids.add(str(device_name.base))
     await cg.register_component(device_name, device_name_config)
     cg.add(device_name.set_parent(parent))
     cg.add(device_name.set_device_id(config[CONF_DEVICE_ID]))
