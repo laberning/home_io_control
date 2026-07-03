@@ -43,6 +43,8 @@ inline constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS =
     5000;  ///< Delay before the first post-boot status request from an entity.
 inline constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS =
     2000;  ///< Delay before polling after overheard remote traffic.
+inline constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS =
+    2000;  ///< Suppress duplicate 1W log/poll for same remote+cmd within this window.
 inline constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS =
     600000;  ///< Hard stop for follow-up polling after a command or remote activity.
 inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Discovery wait window after sending 0x28.
@@ -220,6 +222,47 @@ inline void log_frame_issue(IOHomeControlComponent *component, const char *direc
 
   ESP_LOGD(TAG, "%s issue=%s cmd=%s(0x%02X) src=%s dst=%s len=%u data_len=%u", direction, reason,
            command_name(frame.cmd), frame.cmd, src_id.c_str(), dst_id.c_str(), len, frame.data_len);
+}
+
+// ============================================================================
+// 1W remote frame decode
+// ============================================================================
+
+/// @brief Log a decoded 1W remote frame at DEBUG level.
+///
+/// Uses decode_1w_frame() to extract structured fields, then formats a concise
+/// DEBUG log line showing remote ID, target type, command intent, and priority.
+/// When the remote is linked to devices, appends the linked device IDs.
+/// @param frame Parsed 1W frame.
+/// @param linked_devices Optional pointer to device IDs this remote is linked to.
+inline void log_1w_remote_frame(const IoFrame &frame, const std::vector<std::string> *linked_devices = nullptr) {
+  const OneWayFrameInfo info = decode_1w_frame(frame);
+  const std::string src_id = node_id_to_string(info.src);
+
+  // Resolve the broadcast target label: "all" for BROADCAST_ALL, otherwise the device type name.
+  const char *target_label =
+      (info.address_class == AddressClass::BROADCAST_ALL) ? "all" : device_type_name(info.target_type);
+
+  // Build optional suffix showing linked devices.
+  std::string suffix;
+  if (linked_devices != nullptr && !linked_devices->empty()) {
+    suffix = " (linked →";
+    for (const auto &dev_id : *linked_devices) {
+      suffix += ' ';
+      suffix += dev_id;
+    }
+    suffix += ')';
+  }
+
+  if (info.has_intent) {
+    ESP_LOGD(TAG, "rx 1W remote %s targets %s: %s(0x%02X) %s originator=%s priority=%s%s", src_id.c_str(), target_label,
+             command_name(info.cmd), info.cmd, info.intent, originator_name(info.originator),
+             acei_level_name(info.acei_level), suffix.c_str());
+    return;
+  }
+
+  ESP_LOGD(TAG, "rx 1W remote %s targets %s: %s(0x%02X) data_len=%u%s", src_id.c_str(), target_label,
+           command_name(info.cmd), info.cmd, info.data_len, suffix.c_str());
 }
 
 // ============================================================================

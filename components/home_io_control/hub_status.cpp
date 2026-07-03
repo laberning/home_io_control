@@ -187,6 +187,18 @@ void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id,
                     [this, device_id]() { this->queue_request_device_status(device_id); });
 }
 
+void IOHomeControlComponent::schedule_linked_remote_polls_(const std::string &remote_id) {
+  auto remote_it = this->linked_remotes_.find(remote_id);
+  if (remote_it == this->linked_remotes_.end())
+    return;
+  for (const auto &device_id : remote_it->second) {
+    if (auto *dev = this->get_device(device_id); dev != nullptr)
+      dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
+    this->begin_status_poll_tracking_(device_id, 0);
+    this->schedule_status_poll_(device_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+  }
+}
+
 void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
   const std::string id = node_id_to_string(frame.src);
   auto it = this->devices_.find(id);
@@ -287,6 +299,31 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     return;
   }
 
+  // === 1W remote frame decode ===
+  // 1W remotes broadcast commands to a typed device-class address (e.g., "all awnings").
+  // Decode the frame content for diagnostic logging, then fall through to linked_remotes
+  // handling which may schedule a status poll for devices this remote controls.
+  if ((frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0) {
+    // 1W remotes repeat each command 4× at 40ms intervals across channels. Suppress
+    // duplicate logging and poll scheduling within a 2-second window per remote+cmd.
+    const std::string src_id = node_id_to_string(frame.src);
+    const uint32_t now = millis();
+    if (src_id == this->last_1w_logged_.src_id && frame.cmd == this->last_1w_logged_.cmd &&
+        (now - this->last_1w_logged_.timestamp) < detail::ONEWAY_DEDUP_WINDOW_MS) {
+      return;
+    }
+    this->last_1w_logged_.src_id = src_id;
+    this->last_1w_logged_.cmd = frame.cmd;
+    this->last_1w_logged_.timestamp = now;
+
+    // Log decoded frame and schedule linked remote polls.
+    auto remote_it = this->linked_remotes_.find(src_id);
+    const std::vector<std::string> *linked = (remote_it != this->linked_remotes_.end()) ? &remote_it->second : nullptr;
+    detail::log_1w_remote_frame(frame, linked);
+    this->schedule_linked_remote_polls_(src_id);
+    return;
+  }
+
   if (frame.cmd == CMD_STATUS_UPDATE && memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0) {
     if (this->authenticate_request_(frame, packet.freq_hz)) {
       IoFrame resp;
@@ -330,20 +367,15 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     return;
   }
 
-  // Check if the frame source is a linked remote (e.g., a 1W remote whose destination address
-  // differs from the device's 2W ID). When a linked remote is active, schedule status polls
-  // for all devices it controls.
+  // Check if the frame source is a linked remote using 2W protocol (e.g., a 2W controller
+  // whose commands target a device at an address we don't have registered). 1W remotes are
+  // already handled above via the CTRL0_PROTOCOL_1W check.
   const std::string src_id = node_id_to_string(frame.src);
   auto remote_it = this->linked_remotes_.find(src_id);
   if (remote_it != this->linked_remotes_.end()) {
-    for (const auto &device_id : remote_it->second) {
-      if (auto *dev = this->get_device(device_id); dev != nullptr)
-        dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
-      ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s device=%s cmd=%s(0x%02X), scheduling status poll",
-               src_id.c_str(), device_id.c_str(), command_name(frame.cmd), frame.cmd);
-      this->begin_status_poll_tracking_(device_id, 0);
-      this->schedule_status_poll_(device_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
-    }
+    ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s cmd=%s(0x%02X), scheduling status poll",
+             src_id.c_str(), command_name(frame.cmd), frame.cmd);
+    this->schedule_linked_remote_polls_(src_id);
     return;
   }
 

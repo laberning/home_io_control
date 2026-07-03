@@ -137,12 +137,6 @@ bool is_plausible_uart_frame(const IoFrame &frame, uint8_t candidate_len) {
   return (frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0;
 }
 
-/// @brief Search a raw capture for the most plausible IoFrame using UART decoding.
-/// Probes multiple bit offsets and candidate lengths to find a valid parse that
-/// looks like a real IO‑Homecontrol frame.
-/// @param raw Pointer to raw radio buffer bytes.
-/// @param raw_len Number of bytes in raw.
-/// @return UartProbeResult with best candidate (may have valid=false if none found).
 /// @brief Try to find a CRC-valid IO-Homecontrol frame within a decoded UART byte stream.
 /// @param decoded Decoded byte buffer from UART probe.
 /// @param decoded_len Number of decoded bytes.

@@ -120,7 +120,7 @@ Configuration variables:
 - `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
 - `invert_position` (Optional): Explicitly override the open/close position mapping. When omitted, the controller uses the learned device profile and automatically inverts families such as horizontal awnings once their type is known.
 - `status_poll_interval` (Optional): Poll interval used for bounded follow-up status checks while this device is expected to be changing state. The minimum supported value is 500ms. When omitted, the controller keeps the legacy single follow-up settle poll after local commands or overheard remote activity, but does not continue repeated movement polling.
-- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. When activity from a linked remote is overheard on the radio, the controller automatically polls the device for fresh status 2 seconds later. This is particularly useful for 1W (one-way) remotes whose radio address differs from the device's 2W ID.
+- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. When activity from a linked remote is overheard on the radio, the controller automatically polls the device for fresh status. See the Linked Remotes section below for how to find and configure remote IDs.
 - All standard options from the ESPHome cover base schema also apply, including `id`, `device_class`, `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
 
 Notes:
@@ -235,7 +235,7 @@ Configuration variables:
 - `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `light` when known, or a raw integer such as `0x06` if you are working from a pairing log that reports a not-yet-exposed alias. When omitted, the controller may learn the type later from radio metadata.
 - `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
 - `status_poll_interval` (Optional): Poll interval used for bounded follow-up status checks while this device is expected to be changing state. The minimum supported value is 500ms. When omitted, the controller keeps the default single settle poll after a local command or overheard remote activity.
-- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the cover platform for details.
+- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the Linked Remotes section below for details.
 - All standard options from the ESPHome light schema also apply.
 
 Notes:
@@ -267,7 +267,7 @@ Configuration variables:
 - `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `lock` when known, or a raw integer such as `0x09` if pairing reports a type without a named YAML alias yet. When omitted, the controller may learn the type later from radio metadata.
 - `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
 - `status_poll_interval` (Optional): Poll interval used for bounded follow-up status checks while this device is expected to be changing state. The minimum supported value is 500ms. When omitted, the controller keeps the default single settle poll after a local command or overheard remote activity.
-- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the cover platform for details.
+- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the Linked Remotes section below for details.
 - All standard options from the ESPHome lock schema also apply.
 
 Notes:
@@ -298,7 +298,7 @@ Configuration variables:
 - `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `on_off_switch` when known, or a raw integer such as `0x0F` if pairing reports a type without a named YAML alias yet. When omitted, the controller may learn the type later from radio metadata.
 - `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
 - `status_poll_interval` (Optional): Poll interval used for bounded follow-up status checks while this device is expected to be changing state. The minimum supported value is 500ms. When omitted, the controller keeps the default single settle poll after a local command or overheard remote activity.
-- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the cover platform for details.
+- `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the Linked Remotes section below for details.
 - All standard options from the ESPHome switch schema also apply.
 
 Notes:
@@ -535,6 +535,84 @@ lambda: |-
 - **Cover-like families** (shutters, awnings, blinds, openers, curtains) are the primary supported path today. These support full position control (0–100%).
 - **Binary light, lock, and switch** support exists, but remains experimental and has not been validated against real hardware.
 - **Raw type IDs in YAML**: `io_device_type` accepts both named values such as `awning` and raw integers such as `0x11`. Raw values are useful when pairing discovers a valid IO-homecontrol type that this project does not yet expose under a named YAML alias.
+
+## Linked Remotes
+
+Physical IO-Homecontrol remotes (wall switches, handheld remotes, wind sensors) use the 1W (one-way) protocol to send commands. Unlike 2W devices that address a specific device ID, 1W remotes broadcast to a type-class address (e.g., "all awning devices"). This means the controller cannot automatically detect which of your devices a particular remote controls — you need to configure the link explicitly.
+
+### Why link a remote?
+
+Without `linked_remotes`, when someone presses a wall remote, the device moves but the controller doesn't know about it until the next scheduled poll. With `linked_remotes` configured, the controller overhears the remote's radio traffic and immediately polls the device for its new position (with a configurable poll interval).
+
+### Finding your remote's node ID
+
+1. Set the logger to DEBUG level in your YAML:
+
+```yaml
+logger:
+  level: DEBUG
+```
+
+2. Flash the firmware and open the serial log or ESPHome logs.
+
+3. Press a button on the physical remote.
+
+4. Look for a log line like:
+
+```
+[D][home_io_control] rx 1W remote 9D6085 targets all: EXECUTE(0x00) CLOSE originator=user_remote priority=user_high
+```
+
+5. The 6-character hex ID after `1W remote` is your remote's node ID — in this example, `9D6085`.
+
+**Notes:**
+- Each button press may produce multiple log lines (a CMD 0x20 beacon and a CMD 0x00 execute). The source ID is the same on all of them — use either one.
+- Wind and rain sensors also show up with `originator=wind_sensor` or `originator=rain_sensor`. These can be linked the same way if you want the controller to react to sensor-triggered movements.
+- If you have multiple remotes, press each one separately and note which ID appears for each.
+- Devices nearby on the same frequency will also appear in the log. If you're unsure which ID belongs to your remote, press the button a few times and look for the ID that consistently appears at the same time.
+
+### Configuring linked remotes
+
+Add the remote's node ID to the `linked_remotes` list on the entity it controls:
+
+```yaml
+cover:
+  - platform: home_io_control
+    name: "Patio Awning"
+    io_device_id: "30E1F2"
+    io_device_type: "awning"
+    linked_remotes:
+      - "9D6085"
+```
+
+Multiple remotes can be linked to the same device, and the same remote can be linked to multiple devices if it controls more than one:
+
+```yaml
+cover:
+  - platform: home_io_control
+    name: "Patio Awning"
+    io_device_id: "30E1F2"
+    linked_remotes:
+      - "9D6085"
+      - "A0A9A1"
+
+  - platform: home_io_control
+    name: "Bedroom Shutter"
+    io_device_id: "054E17"
+    linked_remotes:
+      - "9D6085"
+```
+
+### What the decoded log tells you
+
+| Field | Meaning |
+|-------|---------|
+| `1W remote XXXXXX` | The remote's 6-character node ID |
+| `targets all` / `targets awning` | The broadcast device-type class the remote addresses |
+| `EXECUTE(0x00) CLOSE` | The command: OPEN, CLOSE, STOP, FAVORITE, VENT, or a numeric position |
+| `originator=user_remote` | Who triggered the command (user, wind sensor, rain sensor, timer, etc.) |
+| `priority=user_high` | The ACEI priority level of the command |
+| `(linked → 30E1F2)` | Shown when the remote is already configured — confirms the link is active |
 - **Device type learning**: The YAML-declared `io_device_type` is the permanent, authoritative type. The controller may still learn a device's type from radio for runtime profile selection when the type is not declared in YAML, but it will never overwrite a YAML-declared type.
 - **Inversion defaults**: Some device families (e.g., horizontal awnings) default to inverted position mapping. When `invert_position` is omitted, the cover entity follows that learned device profile automatically. Setting `invert_position` explicitly overrides the learned value.
 - Additional reference-derived device types such as heating devices, sensors, and beacons are recognized for classification and logging, but they do not yet have dedicated ESPHome platform support.

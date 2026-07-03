@@ -468,14 +468,16 @@ TEST(ProtoFrame, ClassifyAddressBroadcastAll) {
   uint8_t addr1[3] = {0x00, 0x00, 0x3F};
   EXPECT_EQ(classify_address(addr1), AddressClass::BROADCAST_ALL) << "suffix 0x3F with no type bits should be ALL";
 
-  // {0x00, 0x00, 0xBF} = type bits set + suffix 0x3F → also BROADCAST_ALL
+  // {0x00, 0x00, 0xBF} = type bits set in addr[2] high bits + suffix 0x3F → typed broadcast
+  // (all devices of the type encoded in bits [9:2]), not global "all types"
   uint8_t addr2[3] = {0x00, 0x00, 0xBF};
-  EXPECT_EQ(classify_address(addr2), AddressClass::BROADCAST_ALL) << "suffix 0x3F with type bits should be ALL";
+  EXPECT_EQ(classify_address(addr2), AddressClass::BROADCAST_TYPE)
+      << "suffix 0x3F with type bits in addr[2] should be BROADCAST_TYPE";
 
-  // {0x00, 0x01, 0xBF} = type bits in byte 1 + suffix 0x3F → BROADCAST_ALL
+  // {0x00, 0x01, 0xBF} = type bits in byte 1 + suffix 0x3F → typed broadcast (e.g., "all lights")
   uint8_t addr3[3] = {0x00, 0x01, 0xBF};
-  EXPECT_EQ(classify_address(addr3), AddressClass::BROADCAST_ALL)
-      << "suffix 0x3F with type bits in byte 1 should be ALL";
+  EXPECT_EQ(classify_address(addr3), AddressClass::BROADCAST_TYPE)
+      << "suffix 0x3F with type bits in byte 1 should be BROADCAST_TYPE";
 
   // {0x00, 0x00, 0x00} = zero address → BROADCAST_ALL
   uint8_t addr4[3] = {0x00, 0x00, 0x00};
@@ -487,7 +489,7 @@ TEST(ProtoFrame, ClassifyAddressDiscovery) {
   uint8_t addr1[3] = {0x00, 0x00, 0x3B};
   EXPECT_EQ(classify_address(addr1), AddressClass::DISCOVERY) << "suffix 0x3B should be DISCOVERY";
 
-  // {0x00, 0x01, 0x3B} = typed discovery broadcast
+  // {0x00, 0x01, 0x3B} = typed discovery broadcast — still DISCOVERY
   uint8_t addr2[3] = {0x00, 0x01, 0x3B};
   EXPECT_EQ(classify_address(addr2), AddressClass::DISCOVERY) << "suffix 0x3B with type bits should be DISCOVERY";
 }
@@ -621,4 +623,187 @@ TEST(ProtoFrame, DiscoveryFlagsBitExtraction) {
   flags = 0x80;
   att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
   EXPECT_EQ(att, ATT_CLASS_20S) << "ATT bits 10 should decode to 20s class";
+}
+
+// ============================================================================
+// 1W Frame Decode Tests
+// ============================================================================
+
+TEST(ProtoFrame, Decode1wMainIntentSpecialCommands) {
+  char buf[ONEWAY_INTENT_BUFFER_SIZE];
+
+  decode_1w_main_intent(POS_STOP, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "STOP");
+
+  decode_1w_main_intent(POS_FAVORITE, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "FAVORITE");
+
+  decode_1w_main_intent(POS_FAVORITE, POS_VENT_MODIFIER, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "VENT");
+
+  decode_1w_main_intent(POS_UNKNOWN, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "UNCHANGED");
+
+  decode_1w_main_intent(POS_FORCE_OPEN, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "FORCE_OPEN");
+
+  decode_1w_main_intent(POS_SECURED_TARGET, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "SECURED_TARGET");
+
+  decode_1w_main_intent(POS_DEFAULT, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "DEFAULT");
+}
+
+TEST(ProtoFrame, Decode1wMainIntentPositions) {
+  char buf[ONEWAY_INTENT_BUFFER_SIZE];
+
+  // 0x00 = fully open
+  decode_1w_main_intent(0x00, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "OPEN");
+
+  // 0xC8 = 200 = fully closed
+  decode_1w_main_intent(0xC8, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "CLOSE");
+
+  // 0x32 = 50 → 25%
+  decode_1w_main_intent(0x32, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "position 25%");
+
+  // 0x96 = 150 → 75%
+  decode_1w_main_intent(0x96, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "position 75%");
+}
+
+TEST(ProtoFrame, Decode1wMainIntentUnknownCode) {
+  char buf[ONEWAY_INTENT_BUFFER_SIZE];
+
+  // Values above 200 that aren't recognized special codes → show raw hex
+  decode_1w_main_intent(0xE0, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "0xE0");
+
+  decode_1w_main_intent(0xFF, 0x00, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "0xFF");
+}
+
+TEST(ProtoFrame, Decode1wMainIntentEdgeCases) {
+  char buf[ONEWAY_INTENT_BUFFER_SIZE];
+
+  // Zero-length buffer: should not crash
+  decode_1w_main_intent(POS_STOP, 0x00, buf, 0);
+  // No assertion needed — just verify no crash
+
+  // Buffer size 1: should null-terminate safely
+  char tiny[1] = {'X'};
+  decode_1w_main_intent(POS_STOP, 0x00, tiny, sizeof(tiny));
+  EXPECT_EQ(tiny[0], '\0');
+}
+
+TEST(ProtoFrame, Decode1wFrameExecuteCommand) {
+  IoFrame frame{};
+  frame.ctrl0 = CTRL0_PROTOCOL_1W | CTRL0_START | CTRL0_END | 0x0F;  // 1W, 16 bytes total
+  frame.ctrl1 = 0x00;
+  // dst = 00 01 BF (light-type broadcast)
+  frame.dst[0] = 0x00;
+  frame.dst[1] = 0x01;
+  frame.dst[2] = 0xBF;
+  // src = 9D 60 85
+  frame.src[0] = 0x9D;
+  frame.src[1] = 0x60;
+  frame.src[2] = 0x85;
+  frame.cmd = CMD_EXECUTE;
+  // data: originator=0x01 ACEI=0x43 main={0xC8, 0x00} (close)
+  frame.data[0] = ORIGINATOR_USER_REMOTE;
+  frame.data[1] = 0x43;
+  frame.data[2] = 0xC8;
+  frame.data[3] = 0x00;
+  frame.data_len = 14;
+
+  OneWayFrameInfo info = decode_1w_frame(frame);
+
+  EXPECT_EQ(info.src[0], 0x9D);
+  EXPECT_EQ(info.src[1], 0x60);
+  EXPECT_EQ(info.src[2], 0x85);
+  EXPECT_EQ(info.address_class, AddressClass::BROADCAST_TYPE);
+  EXPECT_EQ(info.target_type, DeviceType::LIGHT);
+  EXPECT_EQ(info.cmd, CMD_EXECUTE);
+  EXPECT_TRUE(info.has_intent);
+  EXPECT_EQ(info.originator, ORIGINATOR_USER_REMOTE);
+  EXPECT_EQ(info.acei_level, ACEI_LEVEL_USER_HIGH);
+  EXPECT_STREQ(info.intent, "CLOSE");
+}
+
+TEST(ProtoFrame, Decode1wFrameAllBroadcast) {
+  IoFrame frame{};
+  frame.ctrl0 = CTRL0_PROTOCOL_1W | CTRL0_START | CTRL0_END | 0x08;
+  frame.ctrl1 = 0x00;
+  // dst = 00 00 3F (all devices broadcast)
+  frame.dst[0] = 0x00;
+  frame.dst[1] = 0x00;
+  frame.dst[2] = 0x3F;
+  frame.src[0] = 0xA0;
+  frame.src[1] = 0xA9;
+  frame.src[2] = 0xA1;
+  frame.cmd = CMD_EXECUTE;
+  // data: originator=wind_sensor ACEI=0x23 main={0xD1, 0x00} (secured target)
+  frame.data[0] = ORIGINATOR_WIND_SENSOR;
+  frame.data[1] = 0x23;  // level=1 (protection_sensor)
+  frame.data[2] = POS_SECURED_TARGET;
+  frame.data[3] = 0x00;
+  frame.data_len = 14;
+
+  OneWayFrameInfo info = decode_1w_frame(frame);
+
+  EXPECT_EQ(info.address_class, AddressClass::BROADCAST_ALL);
+  EXPECT_EQ(info.target_type, DeviceType::UNKNOWN);  // type 0 from 00003F
+  EXPECT_TRUE(info.has_intent);
+  EXPECT_EQ(info.originator, ORIGINATOR_WIND_SENSOR);
+  EXPECT_EQ(info.acei_level, ACEI_LEVEL_PROTECTION_SENSOR);
+  EXPECT_STREQ(info.intent, "SECURED_TARGET");
+}
+
+TEST(ProtoFrame, Decode1wFrameNonExecuteCommand) {
+  IoFrame frame{};
+  frame.ctrl0 = CTRL0_PROTOCOL_1W | CTRL0_START | CTRL0_END | 0x10;
+  frame.ctrl1 = 0x00;
+  frame.dst[0] = 0x00;
+  frame.dst[1] = 0x00;
+  frame.dst[2] = 0x3F;
+  frame.src[0] = 0x9D;
+  frame.src[1] = 0x60;
+  frame.src[2] = 0x85;
+  frame.cmd = CMD_WRITE_PRIVATE;
+  frame.data[0] = 0x02;
+  frame.data[1] = 0xFF;
+  frame.data[2] = 0x01;
+  frame.data[3] = 0x43;
+  frame.data_len = 16;
+
+  OneWayFrameInfo info = decode_1w_frame(frame);
+
+  EXPECT_EQ(info.cmd, CMD_WRITE_PRIVATE);
+  EXPECT_FALSE(info.has_intent) << "CMD 0x20 should not decode intent (different payload layout)";
+  EXPECT_EQ(info.data_len, 16);
+  EXPECT_EQ(info.address_class, AddressClass::BROADCAST_ALL);
+}
+
+TEST(ProtoFrame, Decode1wFrameShortPayload) {
+  IoFrame frame{};
+  frame.ctrl0 = CTRL0_PROTOCOL_1W | CTRL0_START | CTRL0_END | 0x08;
+  frame.ctrl1 = 0x00;
+  frame.dst[0] = 0x00;
+  frame.dst[1] = 0x00;
+  frame.dst[2] = 0x3F;
+  frame.src[0] = 0x9D;
+  frame.src[1] = 0x60;
+  frame.src[2] = 0x85;
+  frame.cmd = CMD_EXECUTE;
+  frame.data[0] = 0x01;
+  frame.data[1] = 0x43;
+  frame.data_len = 2;  // Too short for intent decode (needs >= 4)
+
+  OneWayFrameInfo info = decode_1w_frame(frame);
+
+  EXPECT_EQ(info.cmd, CMD_EXECUTE);
+  EXPECT_FALSE(info.has_intent) << "Short payload should not attempt intent decode";
+  EXPECT_EQ(info.data_len, 2);
 }

@@ -243,6 +243,18 @@ static constexpr uint8_t POS_STOP = 0xD2;      ///< Wire value: stop movement.
 static constexpr uint8_t POS_UNKNOWN = 0xD4;   ///< Wire value: position unknown / keep current.
 static constexpr uint8_t POS_FAVORITE = 0xD8;  ///< Wire value: move to favorite/"My" position.
 
+/// @brief Wire value for the secured target position command.
+///
+/// Moves the actuator to its pre-programmed secured/safety position from the
+/// Execution Parameter Buffer. Typically sent by environmental sensors (wind, rain)
+/// to retract an awning or close a shutter to a wind-safe state.
+static constexpr uint8_t POS_SECURED_TARGET = 0xD1;
+
+/// @brief Wire value for the default position command.
+///
+/// Moves the actuator to its factory or user-configured default position.
+static constexpr uint8_t POS_DEFAULT = 0xD3;
+
 /// @brief Wire value for the force-open command.
 ///
 /// Force-open (0x64 = 100 decimal) commands the actuator to fully open, bypassing
@@ -828,6 +840,49 @@ const char *command_result_description(uint8_t result);
 /// @param result Result byte from CMD_ERROR_RESP data[0].
 /// @return true when the response reports a limitation rather than a generic execution error.
 bool is_limitation_result(uint8_t result);
+/// @brief Decode the "main" position/command bytes from a 1W execute payload.
+///
+/// 1W remotes encode their command intent in a 2-byte main field:
+/// - main[0]: position (0–200 mapped to 0–100%), or a special command code.
+/// - main[1]: modifier byte (0x03 = ventilation for POS_FAVORITE).
+///
+/// @param main0 First main byte (position or special code).
+/// @param main1 Second main byte (modifier).
+/// @param out Buffer to write the decoded string into (e.g., "CLOSE", "position 75%").
+/// @param out_size Size of the output buffer.
+void decode_1w_main_intent(uint8_t main0, uint8_t main1, char *out, size_t out_size);
+
+// ============================================================================
+// 1W Remote Frame Decode
+// ============================================================================
+
+/// @brief Buffer size for the decoded 1W main-intent string.
+static constexpr size_t ONEWAY_INTENT_BUFFER_SIZE = 24;
+
+/// @brief Decoded representation of a 1W remote frame.
+///
+/// Captures all fields extractable from a 1W broadcast frame in a structured form
+/// that can be used for logging, events, or future sensor exposure.
+struct OneWayFrameInfo {
+  uint8_t src[NODE_ID_SIZE]{};                                  ///< Remote source node ID (3 bytes).
+  AddressClass address_class{AddressClass::UNKNOWN_BROADCAST};  ///< Classification of the broadcast address.
+  DeviceType target_type{DeviceType::UNKNOWN};                  ///< Target device class from broadcast address.
+  uint8_t cmd{0};                                               ///< Command ID (e.g., CMD_EXECUTE, CMD_ACTIVATE_MODE).
+  bool has_intent{false};                                       ///< True if originator/ACEI/intent fields were decoded.
+  uint8_t originator{0};                     ///< Command originator byte (e.g., ORIGINATOR_USER_REMOTE).
+  uint8_t acei_level{0};                     ///< ACEI priority level (0–7).
+  char intent[ONEWAY_INTENT_BUFFER_SIZE]{};  ///< Human-readable command intent (e.g., "CLOSE").
+  uint8_t data_len{0};                       ///< Raw data length (for commands without decoded intent).
+};
+
+/// @brief Decode a parsed 1W frame into a structured OneWayFrameInfo.
+///
+/// Extracts target device type from the broadcast address. For execute/activate-mode
+/// commands, also decodes originator, ACEI priority, and position/command intent.
+/// @param frame Parsed IoFrame with CTRL0_PROTOCOL_1W set.
+/// @return Populated OneWayFrameInfo.
+OneWayFrameInfo decode_1w_frame(const IoFrame &frame);
+
 /// @brief Decode target/current position values from a status frame.
 /// @param target_raw 16‑bit raw target value.
 /// @param current_raw 16‑bit raw current value.

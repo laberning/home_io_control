@@ -432,12 +432,17 @@ AddressClass classify_address(const uint8_t addr[NODE_ID_SIZE]) {
   uint8_t const suffix = addr[2] & ADDRESS_SUFFIX_MASK;
   bool const has_type_bits = (addr[1] != 0) || ((addr[2] & 0xC0) != 0);
 
-  if (suffix == ADDRESS_SUFFIX_BROADCAST)
-    return AddressClass::BROADCAST_ALL;
+  // Discovery suffix (0x3B) takes priority — typed discovery (e.g., 00 01 3B) is still DISCOVERY.
   if (suffix == ADDRESS_SUFFIX_DISCOVERY)
     return AddressClass::DISCOVERY;
+
+  // When type bits are present with broadcast suffix (0x3F), this is a typed broadcast
+  // addressing all devices of a specific type (e.g., 00 01 BF = "all light devices").
+  // Only 00 00 3F (no type bits) is the true "all device types" broadcast.
   if (has_type_bits)
     return AddressClass::BROADCAST_TYPE;
+  if (suffix == ADDRESS_SUFFIX_BROADCAST)
+    return AddressClass::BROADCAST_ALL;
   if (addr[1] == 0 && addr[2] == 0)
     return AddressClass::BROADCAST_ALL;
 
@@ -1086,6 +1091,84 @@ const char *device_operation_profile_name(DeviceType type) {
     default:
       return "unknown";
   }
+}
+
+void decode_1w_main_intent(uint8_t main0, uint8_t main1, char *out, size_t out_size) {
+  if (out_size == 0)
+    return;
+  // Special command codes (same wire values as 2W).
+  if (main0 == POS_STOP) {
+    snprintf(out, out_size, "STOP");
+    return;
+  }
+  if (main0 == POS_FAVORITE) {
+    if (main1 == POS_VENT_MODIFIER) {
+      snprintf(out, out_size, "VENT");
+    } else {
+      snprintf(out, out_size, "FAVORITE");
+    }
+    return;
+  }
+  if (main0 == POS_UNKNOWN) {
+    snprintf(out, out_size, "UNCHANGED");
+    return;
+  }
+  if (main0 == POS_FORCE_OPEN) {
+    // Note: 0x64 (100) is also the wire value for position 50% (50*2=100). The protocol
+    // uses the same byte value for both. In practice, physical remotes rarely send numeric
+    // 50% positions — they use open/close/stop/favorite. FORCE_OPEN is the more likely
+    // interpretation for diagnostic decode of overheard 1W traffic.
+    snprintf(out, out_size, "FORCE_OPEN");
+    return;
+  }
+  if (main0 == POS_SECURED_TARGET) {
+    snprintf(out, out_size, "SECURED_TARGET");
+    return;
+  }
+  if (main0 == POS_DEFAULT) {
+    snprintf(out, out_size, "DEFAULT");
+    return;
+  }
+  // Numeric position: wire value is position_percent * 2 (0=open, 200=closed).
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+  if (main0 <= 200) {
+    uint8_t const percent = main0 / 2;
+    if (percent == 0) {
+      snprintf(out, out_size, "OPEN");
+      // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+    } else if (percent == 100) {
+      snprintf(out, out_size, "CLOSE");
+    } else {
+      snprintf(out, out_size, "position %u%%", percent);
+    }
+    return;
+  }
+  // Unknown special code.
+  snprintf(out, out_size, "0x%02X", main0);
+}
+
+/// @brief Minimum data bytes for decode of execute/activate‑mode intent fields.
+static constexpr uint8_t ONEWAY_EXECUTE_MIN_DATA_LEN = 4;  // originator(1) + ACEI(1) + main[2].
+
+OneWayFrameInfo decode_1w_frame(const IoFrame &frame) {
+  OneWayFrameInfo info{};
+  memcpy(info.src, frame.src, NODE_ID_SIZE);
+  info.address_class = classify_address(frame.dst);
+  info.target_type = broadcast_target_type(frame.dst);
+  info.cmd = frame.cmd;
+  info.data_len = frame.data_len;
+
+  // CMD 0x00 (execute) and 0x01 (activate mode) share the same initial payload layout:
+  // originator(1) + ACEI(1) + main[2]. CMD 0x20 (write private) has a different layout
+  // (register-based) and is not decoded here.
+  if ((frame.cmd == CMD_EXECUTE || frame.cmd == CMD_ACTIVATE_MODE) && frame.data_len >= ONEWAY_EXECUTE_MIN_DATA_LEN) {
+    info.has_intent = true;
+    info.originator = frame.data[0];
+    info.acei_level = (frame.data[1] & ACEI_LEVEL_MASK) >> ACEI_LEVEL_SHIFT;
+    decode_1w_main_intent(frame.data[2], frame.data[3], info.intent, sizeof(info.intent));
+  }
+
+  return info;
 }
 
 }  // namespace home_io_control

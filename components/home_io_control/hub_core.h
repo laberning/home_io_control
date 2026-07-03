@@ -309,6 +309,9 @@ class IOHomeControlComponent : public Component,
   /// @param device_id ID of the device to poll.
   /// @param initial_delay_ms Delay before the first follow-up poll.
   void begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms);
+  /// Schedule status polls for all devices associated with a linked remote.
+  /// @param remote_id Source node ID of the remote.
+  void schedule_linked_remote_polls_(const std::string &remote_id);
   /// Shared request/response helper for high-level operations.
   /// @param device_id Target device ID.
   /// @param request Outbound request frame.
@@ -490,6 +493,17 @@ class IOHomeControlComponent : public Component,
   /// Maps remote node IDs to lists of device IDs they control.
   /// Used to trigger status polls when 1W remote activity is overheard.
   std::map<std::string, std::vector<std::string>> linked_remotes_;
+
+  /// @brief Tracks the last logged 1W frame per remote to suppress duplicates.
+  ///
+  /// 1W remotes repeat each command 4× at 40ms intervals (protocol requirement for
+  /// reliability). Without dedup, a single button press generates 4+ identical log lines.
+  struct OneWayDedup {
+    std::string src_id;     ///< Last seen remote source ID.
+    uint8_t cmd{0};         ///< Last seen command byte.
+    uint32_t timestamp{0};  ///< millis() when last logged.
+  };
+  OneWayDedup last_1w_logged_{};
 };
 
 // ============================================================================
