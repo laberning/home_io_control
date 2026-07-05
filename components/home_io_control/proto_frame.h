@@ -51,6 +51,14 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/conti
 /// minimum that gives reliable lock-on without perturbing exchange timing.
 static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 64;
 
+/// SX1262-specific post-TX settling delay before re-entering RX.
+///
+/// The SX1262 GFSK demodulator needs time to stabilize after TX before it can
+/// reliably receive the next frame. A 500 µs delay was validated as the minimum
+/// that prevents challenge-byte corruption during pairing and tight-turnaround
+/// authenticated exchanges.
+static constexpr uint16_t SX1262_POST_TX_SETTLE_US = 500;
+
 /// SX1262-specific per-channel dwell while waiting for authenticated exchange responses.
 ///
 /// A 50 ms dwell was short enough that the controller could hop away from the request channel
@@ -76,6 +84,18 @@ static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per comma
 static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -90;  ///< Channel-free threshold (ETSI: ≤ -90 dBm)
 static constexpr uint8_t LBT_MAX_RETRIES = 5;           ///< Max carrier-sense attempts before TX anyway
 static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT checks (≥ 5ms per ETSI)
+
+/// Canonical defaults for the runtime-tunable pairing/discovery parameters.
+///
+/// These are the single source of truth for the diagnostics tuning layer: `TuningConfig`
+/// initializes its fields from them, and the ESPHome YAML schema falls back to them when a
+/// key is omitted. Adjust a value here and both the compiled default and the documented
+/// YAML default follow. See @ref hioc_tuning.
+static constexpr uint16_t SX1276_DISCOVERY_HOP_SLICE_MS = 5;    ///< SX1276 per-channel dwell while discovery hops.
+static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 200;  ///< SX1262 per-channel dwell while discovery hops.
+static constexpr uint16_t PAIRING_DISCOVERY_WAIT_MS = 2000;     ///< Wait window after sending each discovery command.
+static constexpr uint16_t PAIRING_DISCOVERY_INITIAL_DWELL_MS = 300;  ///< Dwell on CH2 before discovery hopping begins.
+static constexpr uint8_t PAIRING_KEY_EXCHANGE_RETRIES = 3;  ///< Retries for the authenticated key-exchange phase.
 
 // ============================================================================
 // Frame Constants
@@ -146,6 +166,8 @@ static constexpr uint8_t CMD_DISCOVER_SPE_REQ = 0x2A;      ///< Discover sub-dev
 static constexpr uint8_t CMD_DISCOVER_SPE_RESP = 0x2B;     ///< Sub-device response
 static constexpr uint8_t CMD_DISCOVER_CONFIRM = 0x2C;      ///< Confirm discovery to device
 static constexpr uint8_t CMD_DISCOVER_CONFIRM_ACK = 0x2D;  ///< Device acknowledges confirmation
+static constexpr uint8_t CMD_DISCOVER_ALT_REQ =
+    0x2E;  ///< Alternate broadcast discovery (to 0x00003F); response is 0x29
 
 // Key exchange commands (used during pairing)
 static constexpr uint8_t CMD_KEY_INIT = 0x31;      ///< Initiate key transfer to device
@@ -320,6 +342,12 @@ static constexpr uint16_t CRC_LSB_MASK = 0x0001;             ///< Least-signific
 /// Broadcast address for device discovery (0x00003B).
 /// Used as destination in CMD_DISCOVER_REQ frames to trigger all pairable devices to respond.
 static constexpr uint8_t BROADCAST_DISCOVER[NODE_ID_SIZE] = {0x00, 0x00, 0x3B};
+
+/// Alternate discovery / 1W broadcast address (0x00003F).
+/// Used as destination for CMD_DISCOVER_ALT_REQ (0x2E) alternate discovery, and the address
+/// on which devices in 1W-triggered pairing mode listen. Distinct from the 2W discovery
+/// broadcast BROADCAST_DISCOVER (0x00003B).
+static constexpr uint8_t BROADCAST_DISCOVER_ALT[NODE_ID_SIZE] = {0x00, 0x00, 0x3F};
 
 // ============================================================================
 // Frame Structure

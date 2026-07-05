@@ -1,0 +1,50 @@
+# ESP32 ESP-IDF test configuration with the diagnostics tuning UI controls enabled.
+#
+# Exercises the tuning.py code-generation path that the host unit tests cannot reach:
+#   - _inject_tuning_companion_ids (ESPHome 2026.x companion-entity ID sizing)
+#   - _create_tuning_entities (number.new_number / select.new_select for every parameter)
+#   - _apply_tuning_config (one override of each shape below so all branches compile)
+# Kept esp-idf-only to limit Docker compile cost; the plain (no-tuning) path stays covered
+# by the other test-*.yaml configs.
+substitutions:
+  device_name: test-esp32-esp-idf-tuning
+
+<<: !include common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+# Re-declare home_io_control to add the tuning block. The YAML merge key (<<:) replaces this
+# key wholesale rather than deep-merging, so the core pins/ids from common.yaml are restated
+# here (same override pattern the framework-specific files use for the esp32: key).
+home_io_control:
+  cs_pin: 18
+  rst_pin: 14
+  dio0_pin: 26
+  node_id: C0FFEE
+  system_key: 0123456789ABCDEF0123456789ABCDEF
+  tuning:
+    ui_controls: true
+    # Every tunable is set so that each `if CONF_x in config` branch in _apply_tuning_config
+    # emits its (stringly-typed) field assignment and is thus checked against the real C++
+    # struct member at compile time. This exercises every code shape: select-string enum,
+    # plain ints, a negative int, a bool, an ordered command list (clear + push_back), and
+    # an explicit destination + enabled payload (byte parsing).
+    sx1262_rx_bandwidth: 78.2   # unquoted number exercises the numeric-coercion validator path
+    sx1262_response_preamble: 96
+    sx1262_post_tx_settle_us: 750
+    sx1276_discovery_hop_slice_ms: 10
+    sx1262_discovery_hop_slice_ms: 250
+    lbt_max_retries: 3
+    lbt_rssi_threshold_dbm: -85
+    pairing_discovery_commands:
+      - "0x28"
+      - "0x2E"
+    pairing_discovery_destination: "0x00003F"
+    pairing_discovery_payload: "0x00"
+    pairing_discovery_low_power: true
+    pairing_discovery_wait_ms: 3000
+    pairing_discovery_initial_dwell_ms: 200
+    pairing_key_exchange_retries: 5

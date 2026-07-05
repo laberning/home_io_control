@@ -79,6 +79,7 @@ Configuration variables:
 - `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end.
 - `fem_pa_pin` (Optional): Front-end module PA select pin for boards with an external RF front-end.
 - `tcxo_voltage` (Optional, default: `1_8V`): SX1262 TCXO voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, and `3_3V`.
+- `tuning` (Optional): Diagnostics block for pairing/radio parameters. See [Radio Diagnostics Tuning](radio_diagnostics.md).
 
 Notes:
 
@@ -529,6 +530,7 @@ lambda: |-
 
 - Press the device's PROG button first, then press "Discover & Pair" in Home Assistant within 2–3 seconds. The device's pairing window is time-limited.
 - The controller retries discovery up to 3 times per button press. If pairing fails on the first press, try again — the timing between PROG and Discover & Pair matters.
+- If a device in pairing mode does not respond to the default discovery command, use the `tuning:` block to experiment with alternate discovery commands and radio timings. See [Radio Diagnostics Tuning](radio_diagnostics.md).
 
 ## Device Type and Capability Notes
 

@@ -1,0 +1,173 @@
+#pragma once
+
+/// @file tuning_config.h
+/// @brief Runtime tuning configuration for pairing and radio diagnostics.
+/// @ingroup hioc_tuning
+///
+/// Provides a centralized, non-persistent tuning layer used by the hub and radio
+/// drivers. The `TuningConfig` struct carries all tunable parameters and helpers
+/// for logging and applying defaults.
+
+#include "proto_frame.h"
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace esphome {
+namespace home_io_control {
+
+/// @brief Valid SX1262 RX bandwidth options (kHz register values).
+///
+/// The numeric values are the register-encoded (double-sideband) bandwidth selectors used by
+/// `RadioSX1262::set_rx_bandwidth()`.
+enum class SX1262RxBandwidth : uint8_t {
+  BW_58_6_KHZ = 0x0C,  ///< 58.6 kHz — narrowest; SX1276-equivalent width, marginal on the default TX→RX turnaround.
+  BW_78_2_KHZ = 0x1B,  ///< 78.2 kHz — narrow.
+  BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — default.
+  BW_156_2_KHZ = 0x09,  ///< 156.2 kHz — wider tolerance for LO offset.
+  BW_187_2_KHZ = 0x07,  ///< 187.2 kHz — widest selectable option.
+};
+
+/// @brief Discovery request command codes selectable by the tuning layer.
+enum class DiscoveryCommand : uint8_t {
+  DISCOVER = 0x28,      ///< Standard broadcast discovery request (to 0x00003B).
+  DISCOVER_SPE = 0x2A,  ///< Sub-device / SPE discovery request (authenticated).
+  DISCOVER_ALT = 0x2E,  ///< Alternate broadcast discovery (to 0x00003F), with optional payload byte.
+};
+
+/// @brief All runtime tunable parameters for pairing and radio diagnostics.
+///
+/// Values reset to their defaults on every boot. Each field initializes from the
+/// canonical constant in `proto_frame.h` — that header is the single source of truth
+/// for the defaults, shared with the ESPHome YAML schema. The hub stores a single
+/// `TuningConfig` instance and passes it to the radio driver and pairing flow. UI
+/// callbacks update the hub instance directly; the snapshot helpers emit the current
+/// values in YAML-compatible form so a working combination can be copied back into the
+/// configuration file.
+struct TuningConfig {
+  // --- Radio / physical layer ---
+  SX1262RxBandwidth sx1262_rx_bandwidth{SX1262RxBandwidth::BW_117_3_KHZ};  ///< SX1262 RX bandwidth selector.
+  uint16_t sx1262_response_preamble{SX1262_RESPONSE_PREAMBLE};             ///< SX1262 response preamble in bytes.
+  uint16_t sx1262_post_tx_settle_us{SX1262_POST_TX_SETTLE_US};             ///< Delay after SX1262 TX before RX (µs).
+  uint16_t sx1276_discovery_hop_slice_ms{
+      SX1276_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while SX1276 discovery hops.
+  uint16_t sx1262_discovery_hop_slice_ms{
+      SX1262_DISCOVERY_HOP_SLICE_MS};                      ///< Per-channel dwell while SX1262 discovery hops.
+  uint8_t lbt_max_retries{LBT_MAX_RETRIES};                ///< LBT retries before forced TX.
+  int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
+
+  // --- Pairing protocol ---
+  std::vector<DiscoveryCommand> pairing_discovery_commands{
+      DiscoveryCommand::DISCOVER};                                       ///< Ordered discovery commands.
+  std::vector<uint8_t> pairing_discovery_destination{0x00, 0x00, 0x00};  ///< Destination when auto=false.
+  bool pairing_discovery_destination_auto{true};  ///< When true, map commands to conventional addresses.
+  uint8_t pairing_discovery_payload{0};           ///< Optional payload byte (used for 0x2E).
+  bool pairing_discovery_payload_enabled{false};  ///< Whether the optional payload is enabled.
+  bool pairing_discovery_low_power{false};        ///< Set LOW_POWER flag in discovery frames.
+  uint16_t pairing_discovery_wait_ms{
+      PAIRING_DISCOVERY_WAIT_MS};  ///< Total wait window after sending discovery commands.
+  uint16_t pairing_discovery_initial_dwell_ms{
+      PAIRING_DISCOVERY_INITIAL_DWELL_MS};  ///< Initial dwell on CH2 before discovery hopping begins.
+  uint8_t pairing_key_exchange_retries{
+      PAIRING_KEY_EXCHANGE_RETRIES};  ///< Retries for the authenticated key exchange phase.
+
+  // --- Internal state ---
+  bool active{false};  ///< True when the YAML `tuning:` block is present.
+};
+
+/// @brief Convert a bandwidth enum to the numeric kHz value used in YAML/logs.
+/// @param bw SX1262 bandwidth enum.
+/// @return Floating-point kHz value (58.6, 78.2, 117.3, 156.2, or 187.2).
+float sx1262_bandwidth_to_khz(SX1262RxBandwidth bw);
+
+/// @brief Format a bandwidth enum as its YAML/UI option string (bare kHz number, e.g. "117.3").
+/// @param bw SX1262 bandwidth enum.
+/// @return Bandwidth rendered with one decimal place and a "kHz" suffix.
+std::string sx1262_bandwidth_to_string(SX1262RxBandwidth bw);
+
+/// @brief Convert a YAML bandwidth string to the enum value.
+/// @param value YAML string such as "117.3kHz" or "156.2kHz".
+/// @return Bandwidth enum, or std::nullopt on invalid input.
+std::optional<SX1262RxBandwidth> sx1262_bandwidth_from_string(const std::string &value);
+
+/// @brief Format the current tuning configuration as a one-line YAML-compatible snapshot.
+///
+/// Only values that differ from the default are emitted, so the line can be copied
+/// back into YAML with minimal editing. When all values are default, an empty string
+/// is returned.
+///
+/// @param cfg Current tuning configuration.
+/// @return One-line snapshot string, or empty when no overrides are active.
+std::string tuning_config_snapshot(const TuningConfig &cfg);
+
+/// @brief Format the current tuning configuration as a full one-line snapshot.
+///
+/// Emits every non-default value, regardless of whether it was changed from YAML or
+/// from the HA UI. This is logged at the start of every pairing attempt.
+///
+/// @param cfg Current tuning configuration.
+/// @return One-line snapshot string, or a "defaults" marker when nothing is overridden.
+std::string tuning_config_full_snapshot(const TuningConfig &cfg);
+
+/// @brief Format a single tuning update for the log.
+///
+/// @param name YAML key name of the updated parameter.
+/// @param value YAML-compatible string representation of the new value.
+/// @return One-line log string suitable for ESP_LOGI.
+std::string tuning_update_log_line(const std::string &name, const std::string &value);
+
+/// @brief Resolve the destination address for a discovery command.
+///
+/// When `destination_auto` is true, returns the conventional address for the
+/// given command code. Otherwise returns the configured `destination` value.
+///
+/// @param command Discovery command code.
+/// @param destination_auto Whether to use the automatic mapping.
+/// @param destination Explicit 3-byte destination when auto is false.
+/// @return Pointer to the resolved 3-byte node ID.
+const uint8_t *resolve_discovery_destination(uint8_t command, bool destination_auto,
+                                             const uint8_t destination[NODE_ID_SIZE]);
+
+/// @brief Parse a discovery command string (e.g., "0x28") into the enum.
+/// @param value String to parse.
+/// @return Discovery command enum, or std::nullopt on invalid input.
+std::optional<DiscoveryCommand> discovery_command_from_string(const std::string &value);
+
+/// @brief Format a discovery command enum for YAML/logs.
+/// @param cmd Discovery command enum.
+/// @return Lowercase hex string such as "0x28".
+std::string discovery_command_to_string(DiscoveryCommand cmd);
+
+/// @brief Format a destination option for YAML/logs.
+///
+/// @param destination_auto Whether automatic destination mapping is used.
+/// @param destination Explicit 3-byte destination when auto is false.
+/// @return "auto" or a hex address such as "0x00003B".
+std::string discovery_destination_to_string(bool destination_auto, const uint8_t destination[NODE_ID_SIZE]);
+
+/// @brief Format a payload option for YAML/logs.
+///
+/// @param payload_enabled Whether the optional payload is enabled.
+/// @param payload The payload byte when enabled.
+/// @return "none" or a hex byte such as "0x00".
+std::string discovery_payload_to_string(bool payload_enabled, uint8_t payload);
+
+/// @brief Format the ordered discovery command list for logs.
+///
+/// @param commands Ordered list of discovery commands.
+/// @return Bracketed comma-separated list such as "[0x28,0x2E]".
+std::string discovery_commands_to_string(const std::vector<DiscoveryCommand> &commands);
+
+/// @brief Format the ordered discovery command list as a UI/preset option string.
+///
+/// Matches the comma-separated `select` option labels (no brackets) so a boot-time
+/// snapshot round-trips to a selectable dropdown value.
+///
+/// @param commands Ordered list of discovery commands.
+/// @return Comma-separated list such as "0x28,0x2E" (empty string when the list is empty).
+std::string discovery_commands_to_csv(const std::vector<DiscoveryCommand> &commands);
+
+}  // namespace home_io_control
+}  // namespace esphome

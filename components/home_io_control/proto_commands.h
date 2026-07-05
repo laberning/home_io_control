@@ -132,6 +132,24 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 /// @return true on success.
 bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 
+/// @brief Build a discovery request with configurable command, destination, and payload.
+///
+/// Supports the command codes 0x28 (DISCOVER_REQ), 0x2A (DISCOVER_SPE_REQ), and
+/// 0x2E (DISCOVER_ALT_REQ, alternate discovery). For 0x2A the payload is a 6-byte random nonce
+/// followed by a 6-byte HMAC computed over [cmd + nonce] using the supplied system key.
+///
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param command Discovery command code (0x28, 0x2A, or 0x2E).
+/// @param dst Destination node ID (broadcast or explicit).
+/// @param low_power True to set the LOW_POWER flag in CTRL1.
+/// @param payload_enabled True when the optional payload byte is enabled.
+/// @param payload Optional payload byte (only used when command requires a payload).
+/// @param system_key 16-byte system key; only used for 0x2A HMAC computation.
+/// @return true on success; false for unsupported command or missing key for 0x2A.
+bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, const uint8_t *dst, bool low_power,
+                              bool payload_enabled, uint8_t payload, const uint8_t *system_key);
+
 /// Build a discovery broadcast (0x28). Sent to the broadcast address; only devices
 /// in pairing mode (PROG button pressed) will respond.
 /// @param f IoFrame to populate.

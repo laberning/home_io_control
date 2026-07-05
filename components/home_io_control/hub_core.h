@@ -28,6 +28,7 @@
 #include "esphome/components/button/button.h"
 #include "proto_frame.h"
 #include "radio_interface.h"
+#include "tuning_config.h"
 #include "hub_exchange.h"
 #include "hub_decisions.h"
 #include "hub_pairing.h"
@@ -144,6 +145,21 @@ class IOHomeControlComponent : public Component,
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
   /// Set TCXO voltage for SX1262 (1.8V / 3.3V).
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
+
+  /// Apply the tuning configuration generated from YAML / UI entities.
+  void set_tuning_config(const TuningConfig &config) { this->tuning_ = config; }
+  /// Receive a numeric tuning update from a HA `number` entity.
+  void update_tuning_number(const std::string &name, float value);
+  /// Receive a select tuning update from a HA `select` entity.
+  void update_tuning_select(const std::string &name, const std::string &value);
+  /// Current value of a numeric tuning parameter, used to seed a HA `number` entity on boot.
+  /// @param name YAML key of the parameter.
+  /// @return Current value, or 0 for an unknown key.
+  [[nodiscard]] float get_tuning_number_value(const std::string &name) const;
+  /// Current option string of a select tuning parameter, used to seed a HA `select` entity on boot.
+  /// @param name YAML key of the parameter.
+  /// @return Current value formatted as its YAML option string, or empty for an unknown key.
+  [[nodiscard]] std::string get_tuning_select_value(const std::string &name) const;
 
   /// Declare that a remote (identified by its node ID) controls a registered device.
   /// When activity from this remote is overheard, a status poll is scheduled for the device.
@@ -397,6 +413,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id   Output: hex string representation of node ID.
   static void parse_device_from_discovery(const IoFrame &frame, IoDevice &device, std::string &device_id);
 
+  // --- Tuning ---
+  /// Apply the current tuning configuration to the active radio driver.
+  void apply_tuning_to_radio_();
+
   // --- Pairing phase helpers ---
   /// Phase 1: broadcast discovery (0x28) and wait for a device response (0x29).
   /// @param context Pairing context modified on success.
@@ -487,6 +507,7 @@ class IOHomeControlComponent : public Component,
   bool radio_test_mode_{false};  ///< When true, loop() is suspended for loopback testing.
   uint32_t last_hop_us_{0};
   ExchangeDebugInfo last_exchange_debug_{};
+  TuningConfig tuning_{};  ///< Runtime tuning overrides.
   std::map<std::string, IoDevice> devices_;
   std::vector<DeviceUpdateCallback> callbacks_;
   std::deque<PendingOperation> pending_operations_;

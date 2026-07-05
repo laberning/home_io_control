@@ -158,8 +158,8 @@ decisions::PairingDiscoveryDisposition IOHomeControlComponent::wait_for_discover
   // slice must be long enough that we spend more time listening than switching.
   // SX1276 uses FastHop (no standby needed), so short slices are fine.
   const uint32_t hop_slice_ms = strcmp(this->radio_->chip_name(), "sx1262") == 0
-                                    ? detail::SX1262_PAIRING_DISCOVERY_HOP_SLICE_MS
-                                    : detail::PAIRING_DISCOVERY_HOP_SLICE_MS;
+                                    ? this->tuning_.sx1262_discovery_hop_slice_ms
+                                    : this->tuning_.sx1276_discovery_hop_slice_ms;
   static constexpr uint32_t PREAMBLE_DWELL_MS = 15;
 
   // Helper: attempt to receive and classify a discovery response.
@@ -345,32 +345,53 @@ void IOHomeControlComponent::parse_device_from_discovery(const IoFrame &frame, I
 
 /// Execute Phase 1: discover a pairable device on channel 2.
 ///
-/// Transmits a discovery broadcast (0x28) up to PAIRING_DISCOVERY_MAX_ATTEMPTS times,
-/// waiting up to PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS after each TX for a valid
-/// discovery response (0x29). On success the response is parsed into
-/// `context.device` and `context.device_id` and the function returns ACCEPT.
-/// If all attempts fail, returns NO_RESPONSE or INVALID.
+/// Sends each configured discovery command in order, waiting up to
+/// `pairing_discovery_wait_ms` for a valid discovery response (0x29) after each
+/// transmission. The first command gets an optional `pairing_discovery_initial_dwell_ms`
+/// delay before TX to let the receiver settle. Each command is retried up to
+/// `PAIRING_DISCOVERY_MAX_ATTEMPTS` times.
+///
+/// On success the response is parsed into `context.device` and `context.device_id` and
+/// the function returns ACCEPT. If all commands fail, returns NO_RESPONSE or INVALID.
 decisions::PairingDiscoveryDisposition IOHomeControlComponent::run_discovery_phase_(pairing::PairingContext &context) {
-  for (uint8_t attempt = 1; attempt <= detail::PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {
-    context.state = pairing::PairingState::TX_DISCOVER;
-    this->record_exchange_debug_(pairing_stage_name(context.state), attempt, false);
-    if (!create_discover(context.req, this->node_id_) || !this->transmit_frame_(context.req, FREQ_CH2, LONG_PREAMBLE)) {
-      return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
-    }
+  // Optional initial dwell before the first TX.
+  if (this->tuning_.pairing_discovery_initial_dwell_ms > 0) {
+    ESP_LOGD(TAG, "Discovery: initial dwell %u ms", this->tuning_.pairing_discovery_initial_dwell_ms);
+    delay(this->tuning_.pairing_discovery_initial_dwell_ms);
+  }
 
-    context.state = pairing::PairingState::WAIT_DISCOVER_RESPONSE;
-    this->record_exchange_debug_(pairing_stage_name(context.state), attempt, false);
-    auto result =
-        this->wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, context.packet, context.rx);
-    if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
-      parse_device_from_discovery(context.rx, context.device, context.device_id);
-      context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
-      return result;
-    }
+  for (size_t command_index = 0; command_index < this->tuning_.pairing_discovery_commands.size(); ++command_index) {
+    auto command = static_cast<uint8_t>(this->tuning_.pairing_discovery_commands[command_index]);
+    const uint8_t *destination = resolve_discovery_destination(
+        command, this->tuning_.pairing_discovery_destination_auto, this->tuning_.pairing_discovery_destination.data());
+    ESP_LOGD(TAG, "Discovery command %u/%zu: cmd=0x%02X dst=%02X%02X%02X", command_index + 1,
+             this->tuning_.pairing_discovery_commands.size(), command, destination[0], destination[1], destination[2]);
 
-    if (attempt < detail::PAIRING_DISCOVERY_MAX_ATTEMPTS) {
-      ESP_LOGI(TAG, "Discovery attempt %u/%u: no response, retrying...", attempt,
-               detail::PAIRING_DISCOVERY_MAX_ATTEMPTS);
+    for (uint8_t attempt = 1; attempt <= detail::PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {
+      context.state = pairing::PairingState::TX_DISCOVER;
+      this->record_exchange_debug_(pairing_stage_name(context.state), attempt, false);
+      if (!create_discovery_request(context.req, this->node_id_, command, destination,
+                                    this->tuning_.pairing_discovery_low_power,
+                                    this->tuning_.pairing_discovery_payload_enabled,
+                                    this->tuning_.pairing_discovery_payload, this->system_key_) ||
+          !this->transmit_frame_(context.req, FREQ_CH2, LONG_PREAMBLE)) {
+        return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
+      }
+
+      context.state = pairing::PairingState::WAIT_DISCOVER_RESPONSE;
+      this->record_exchange_debug_(pairing_stage_name(context.state), attempt, false);
+      auto result =
+          this->wait_for_discovery_response_(this->tuning_.pairing_discovery_wait_ms, context.packet, context.rx);
+      if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
+        parse_device_from_discovery(context.rx, context.device, context.device_id);
+        context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
+        return result;
+      }
+
+      if (attempt < detail::PAIRING_DISCOVERY_MAX_ATTEMPTS) {
+        ESP_LOGI(TAG, "Discovery attempt %u/%u for cmd=0x%02X: no response, retrying...", attempt,
+                 detail::PAIRING_DISCOVERY_MAX_ATTEMPTS, command);
+      }
     }
   }
   return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
@@ -487,6 +508,7 @@ bool IOHomeControlComponent::discover_and_pair() {
   if (!this->initialized_)
     return false;
   ESP_LOGI(TAG, "Starting device discovery...");
+  ESP_LOGI(TAG, "%s", tuning_config_full_snapshot(this->tuning_).c_str());
 
   this->busy_ = true;
   pairing::PairingContext context;
@@ -500,14 +522,15 @@ bool IOHomeControlComponent::discover_and_pair() {
   }
 
   // Phase 2: Key exchange — establish shared system key
-  // Retry up to 3 times as defense-in-depth against transient RX decode failures.
-  // Each attempt gets a fresh challenge (0x3C) from the device via a full
-  // 0x31 → 0x3C → 0x32 → 0x33 sequence, so a corrupted challenge on one attempt
-  // does not poison subsequent tries.
+  // Retry up to the configured number of times as defense-in-depth against transient
+  // RX decode failures. Each attempt gets a fresh challenge (0x3C) from the device
+  // via a full 0x31 → 0x3C → 0x32 → 0x33 sequence, so a corrupted challenge on one
+  // attempt does not poison subsequent tries.
   bool key_exchanged = false;
-  for (int ke_attempt = 0; ke_attempt < 3; ke_attempt++) {
+  for (int ke_attempt = 0; ke_attempt < this->tuning_.pairing_key_exchange_retries; ke_attempt++) {
     if (ke_attempt > 0) {
-      ESP_LOGI(TAG, "Retrying key exchange (attempt %d/3)...", ke_attempt + 1);
+      ESP_LOGI(TAG, "Retrying key exchange (attempt %d/%u)...", ke_attempt + 1,
+               this->tuning_.pairing_key_exchange_retries);
       App.feed_wdt();
       delay(EXCHANGE_RETRY_DELAY_MS);
     }

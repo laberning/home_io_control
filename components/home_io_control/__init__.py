@@ -11,8 +11,10 @@ from esphome import pins
 from esphome.components import spi
 from esphome.const import CONF_ID
 
+from . import tuning as tuning_module
+
 DEPENDENCIES = ["api", "spi"]
-AUTO_LOAD = ["button", "cover", "light", "lock", "switch", "text_sensor"]
+AUTO_LOAD = ["button", "cover", "light", "lock", "number", "select", "switch", "text_sensor"]
 MULTI_CONF = False
 
 CONF_HOME_IO_CONTROL_ID = "home_io_control_id"
@@ -179,6 +181,7 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_TCXO_VOLTAGE, default="1_8V"): cv.enum(
                 TCXO_VOLTAGE_OPTIONS, upper=True
             ),
+            cv.Optional(tuning_module.CONF_TUNING): tuning_module.TUNING_CONFIG_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -240,3 +243,6 @@ async def to_code(config):
         cg.add(var.set_radio_type(config[CONF_RADIO_TYPE]))
 
     cg.add(var.set_tcxo_voltage(config[CONF_TCXO_VOLTAGE]))
+
+    if tuning_module.CONF_TUNING in config:
+        await tuning_module.to_code(config[tuning_module.CONF_TUNING], var)

@@ -10,6 +10,7 @@
 /// without knowing the hardware details.
 
 #include "proto_frame.h"
+#include "tuning_config.h"
 #include <atomic>
 #include <cstdint>
 #include "esphome/core/hal.h"
@@ -147,6 +148,27 @@ class RadioDriver {
   ///
   /// @return Preamble length in bytes (SHORT_PREAMBLE for SX1276, longer for SX1262).
   [[nodiscard]] virtual uint16_t response_preamble() const { return SHORT_PREAMBLE; }
+
+  /// @brief Set the RX bandwidth for chips that support runtime bandwidth changes.
+  ///
+  /// Default implementation is a no-op for chips where the bandwidth is fixed at
+  /// init time. SX1262 overrides this to update the modulation parameters.
+  /// @param bandwidth Bandwidth selector enum.
+  virtual void set_rx_bandwidth(SX1262RxBandwidth bandwidth) {}
+
+  /// @brief Set the response preamble length for chips that support it.
+  ///
+  /// Default implementation is a no-op. SX1262 overrides this to change the
+  /// preamble used for continuation frames.
+  /// @param preamble Preamble length in bytes.
+  virtual void set_response_preamble(uint16_t preamble) {}
+
+  /// @brief Set the post-TX settling delay for chips that need it.
+  ///
+  /// Default implementation is a no-op. SX1262 overrides this to change the
+  /// delay between TX completion and re-entering RX.
+  /// @param delay_us Delay in microseconds.
+  virtual void set_post_tx_settle_us(uint16_t delay_us) {}
 
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;

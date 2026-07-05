@@ -27,6 +27,10 @@
 /// @ingroup hioc_arch
 /// @brief ESPHome-facing entity backends and YAML/code-generation modules.
 
+/// @defgroup hioc_tuning Pairing/Radio Diagnostics Tuning
+/// @ingroup hioc_hub
+/// @brief Runtime-tunable pairing and radio diagnostics layer and its Home Assistant entities.
+
 /// @defgroup hioc_platforms Runtime Entities
 /// @ingroup hioc_entities
 /// @brief C++ entity implementations exposed to Home Assistant through ESPHome.

@@ -9,7 +9,8 @@ OUTPUT_DIRECTORY       = docs/doxygen
 INPUT                  = components/home_io_control/ \
                           build/docs/README.md \
                           build/docs/home_io_control.md \
-                          build/docs/architecture_overview.md
+                          build/docs/architecture_overview.md \
+                          build/docs/radio_diagnostics.md
 USE_MDFILE_AS_MAINPAGE = build/docs/README.md
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.cpp *.py

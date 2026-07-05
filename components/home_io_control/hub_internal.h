@@ -48,11 +48,7 @@ inline constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS =
 inline constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS =
     600000;  ///< Hard stop for follow-up polling after a command or remote activity.
 inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Discovery wait window after sending 0x28.
-inline constexpr uint32_t PAIRING_DISCOVERY_HOP_SLICE_MS =
-    5;  ///< Per-channel dwell during discovery hopping (SX1276 fast cycle).
-inline constexpr uint32_t SX1262_PAIRING_DISCOVERY_HOP_SLICE_MS =
-    200;  ///< SX1262: 200ms per-channel dwell ensures short-preamble responses are caught while hopping.
-inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;       ///< Retry discovery TX up to this many times.
+inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;             ///< Retry discovery TX up to this many times.
 inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
 inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for 0x33 key confirm after sending 0x32.
 inline constexpr uint32_t PAIRING_KEY_CONFIRM_SLICE_MS = 150;  ///< RX slice during key confirm wait (hop each slice).

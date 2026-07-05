@@ -195,6 +195,51 @@ bool create_discover(IoFrame &f, const uint8_t *own) {
   return set_cmd(f, CMD_DISCOVER_REQ);
 }
 
+/// Build a configurable discovery request command (0x28, 0x2A, or 0x2E).
+///
+/// For 0x2A (Discover SPE), the payload is a 6-byte random nonce followed by a 6-byte
+/// HMAC computed over [cmd + nonce] using the nonce as the challenge and the supplied
+/// system key. This requires a valid system key; it will not work for a motor that has
+/// never been paired with this controller's key.
+bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, const uint8_t *dst, bool low_power,
+                              bool payload_enabled, uint8_t payload, const uint8_t *system_key) {
+  init_frame(f, true, true, true, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+
+  switch (command) {
+    case CMD_DISCOVER_REQ:
+      return set_cmd(f, CMD_DISCOVER_REQ);
+
+    case CMD_DISCOVER_SPE_REQ: {
+      if (system_key == nullptr)
+        return false;
+      uint8_t nonce[HMAC_SIZE];
+      crypto::generate_challenge(nonce);
+      uint8_t data[HMAC_SIZE + 1];
+      data[0] = command;
+      memcpy(data + 1, nonce, HMAC_SIZE);
+      uint8_t hmac[HMAC_SIZE];
+      if (!crypto::create_hmac(data, sizeof(data), nonce, system_key, hmac))
+        return false;
+      uint8_t payload_buf[HMAC_SIZE * 2];
+      memcpy(payload_buf, nonce, HMAC_SIZE);
+      memcpy(payload_buf + HMAC_SIZE, hmac, HMAC_SIZE);
+      return set_cmd(f, CMD_DISCOVER_SPE_REQ, payload_buf, sizeof(payload_buf));
+    }
+
+    case CMD_DISCOVER_ALT_REQ: {
+      // 0x2E may carry an optional single-byte payload (e.g., 0x00) or be sent with no payload.
+      if (payload_enabled)
+        return set_cmd(f, CMD_DISCOVER_ALT_REQ, &payload, 1);
+      return set_cmd(f, CMD_DISCOVER_ALT_REQ);
+    }
+
+    default:
+      return false;
+  }
+}
+
 /// Build a key-init request (0x31) to start the pairing key exchange with a discovered device.
 bool create_key_init(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   init_frame(f, true, true, false, true);

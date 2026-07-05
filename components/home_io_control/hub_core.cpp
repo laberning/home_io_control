@@ -16,8 +16,10 @@
 
 #include "radio_sx1276.h"
 #include "radio_sx1262.h"
+#include "tuning_config.h"
 
 #include <new>
+#include <vector>
 
 namespace esphome {
 namespace home_io_control {
@@ -158,8 +160,170 @@ void IOHomeControlComponent::setup() {
   this->initialized_ = true;
   this->register_management_actions_();
   this->last_hop_us_ = micros();
+  this->apply_tuning_to_radio_();
+  if (this->tuning_.active) {
+    std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
+    ESP_LOGI(detail::TAG, "%s", snapshot.c_str());
+  }
   ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", use_sx1262 ? "SX1262" : "SX1276",
            this->node_id_str_.c_str());
+}
+
+// === Tuning layer ===
+
+/// Apply the current tuning configuration to the active radio driver.
+///
+/// Only chip-specific parameters are forwarded; the rest are consumed by the
+/// pairing flow and LBT logic. This is called once at the end of setup() and
+/// again whenever a UI-driven change modifies a radio parameter.
+void IOHomeControlComponent::apply_tuning_to_radio_() {
+  if (this->radio_ == nullptr)
+    return;
+  this->radio_->set_rx_bandwidth(this->tuning_.sx1262_rx_bandwidth);
+  this->radio_->set_response_preamble(this->tuning_.sx1262_response_preamble);
+  this->radio_->set_post_tx_settle_us(this->tuning_.sx1262_post_tx_settle_us);
+}
+
+/// Update a numeric tuning parameter from a Home Assistant `number` entity.
+///
+/// Parses the parameter name and applies the new value to the in-memory tuning
+/// configuration. Radio-affecting parameters are forwarded to the active driver
+/// immediately; the change is logged in YAML-compatible form so it can be copied
+/// back into the configuration file.
+void IOHomeControlComponent::update_tuning_number(const std::string &name, float value) {
+  if (name == "sx1262_response_preamble") {
+    this->tuning_.sx1262_response_preamble = static_cast<uint16_t>(value);
+    this->apply_tuning_to_radio_();
+  } else if (name == "sx1262_post_tx_settle_us") {
+    this->tuning_.sx1262_post_tx_settle_us = static_cast<uint16_t>(value);
+    this->apply_tuning_to_radio_();
+  } else if (name == "sx1276_discovery_hop_slice_ms") {
+    this->tuning_.sx1276_discovery_hop_slice_ms = static_cast<uint16_t>(value);
+  } else if (name == "sx1262_discovery_hop_slice_ms") {
+    this->tuning_.sx1262_discovery_hop_slice_ms = static_cast<uint16_t>(value);
+  } else if (name == "lbt_max_retries") {
+    this->tuning_.lbt_max_retries = static_cast<uint8_t>(value);
+  } else if (name == "lbt_rssi_threshold_dbm") {
+    this->tuning_.lbt_rssi_threshold_dbm = static_cast<int16_t>(value);
+  } else if (name == "pairing_discovery_wait_ms") {
+    this->tuning_.pairing_discovery_wait_ms = static_cast<uint16_t>(value);
+  } else if (name == "pairing_discovery_initial_dwell_ms") {
+    this->tuning_.pairing_discovery_initial_dwell_ms = static_cast<uint16_t>(value);
+  } else if (name == "pairing_key_exchange_retries") {
+    this->tuning_.pairing_key_exchange_retries = static_cast<uint8_t>(value);
+  } else {
+    ESP_LOGW(detail::TAG, "Unknown tuning number parameter: %s", name.c_str());
+    return;
+  }
+  ESP_LOGI(detail::TAG, "%s", tuning_update_log_line(name, std::to_string(static_cast<int>(value))).c_str());
+}
+
+/// Update a select tuning parameter from a Home Assistant `select` entity.
+///
+/// Parses the selected option string and applies it to the in-memory tuning
+/// configuration. Radio-affecting parameters are forwarded to the active driver
+/// immediately; the change is logged in YAML-compatible form.
+void IOHomeControlComponent::update_tuning_select(const std::string &name, const std::string &value) {
+  if (name == "sx1262_rx_bandwidth") {
+    auto bw = sx1262_bandwidth_from_string(value);
+    if (bw.has_value()) {
+      this->tuning_.sx1262_rx_bandwidth = bw.value();
+      this->apply_tuning_to_radio_();
+    }
+  } else if (name == "pairing_discovery_commands") {
+    this->tuning_.pairing_discovery_commands.clear();
+    // Support both individual commands and comma-separated preset strings.
+    size_t start = 0;
+    while (start < value.size()) {
+      const size_t comma = value.find(',', start);
+      std::string token = value.substr(start, comma - start);
+      // Trim whitespace.
+      token.erase(0, token.find_first_not_of(" \t"));
+      token.erase(token.find_last_not_of(" \t") + 1);
+      auto cmd = discovery_command_from_string(token);
+      if (cmd.has_value())
+        this->tuning_.pairing_discovery_commands.push_back(cmd.value());
+      if (comma == std::string::npos)
+        break;
+      start = comma + 1;
+    }
+  } else if (name == "pairing_discovery_destination") {
+    if (value == "auto") {
+      this->tuning_.pairing_discovery_destination_auto = true;
+    } else if (value == "0x00003B") {
+      this->tuning_.pairing_discovery_destination_auto = false;
+      this->tuning_.pairing_discovery_destination = {0x00, 0x00, ADDRESS_SUFFIX_DISCOVERY};
+    } else if (value == "0x00003F") {
+      this->tuning_.pairing_discovery_destination_auto = false;
+      this->tuning_.pairing_discovery_destination = {0x00, 0x00, ADDRESS_SUFFIX_BROADCAST};
+    }
+  } else if (name == "pairing_discovery_payload") {
+    if (value == "none") {
+      this->tuning_.pairing_discovery_payload_enabled = false;
+    } else if (value == "0x00") {
+      this->tuning_.pairing_discovery_payload_enabled = true;
+      this->tuning_.pairing_discovery_payload = 0x00;
+    }
+  } else if (name == "pairing_discovery_low_power") {
+    this->tuning_.pairing_discovery_low_power = (value == "On");
+  } else {
+    ESP_LOGW(detail::TAG, "Unknown tuning select parameter: %s", name.c_str());
+    return;
+  }
+  ESP_LOGI(detail::TAG, "%s", tuning_update_log_line(name, value).c_str());
+}
+
+/// Return the current value of a numeric tuning parameter.
+///
+/// Mirror of update_tuning_number(); used by IOHomeTuningNumber::setup() to publish
+/// the boot-time value so the Home Assistant slider reflects the active configuration
+/// (default or YAML override) without restating any default on the Python side.
+float IOHomeControlComponent::get_tuning_number_value(const std::string &name) const {
+  if (name == "sx1262_response_preamble")
+    return this->tuning_.sx1262_response_preamble;
+  if (name == "sx1262_post_tx_settle_us")
+    return this->tuning_.sx1262_post_tx_settle_us;
+  if (name == "sx1276_discovery_hop_slice_ms")
+    return this->tuning_.sx1276_discovery_hop_slice_ms;
+  if (name == "sx1262_discovery_hop_slice_ms")
+    return this->tuning_.sx1262_discovery_hop_slice_ms;
+  if (name == "lbt_max_retries")
+    return this->tuning_.lbt_max_retries;
+  if (name == "lbt_rssi_threshold_dbm")
+    return this->tuning_.lbt_rssi_threshold_dbm;
+  if (name == "pairing_discovery_wait_ms")
+    return this->tuning_.pairing_discovery_wait_ms;
+  if (name == "pairing_discovery_initial_dwell_ms")
+    return this->tuning_.pairing_discovery_initial_dwell_ms;
+  if (name == "pairing_key_exchange_retries")
+    return this->tuning_.pairing_key_exchange_retries;
+  ESP_LOGW(detail::TAG, "Unknown tuning number parameter: %s", name.c_str());
+  return 0.0F;
+}
+
+/// Return the current option string of a select tuning parameter.
+///
+/// Mirror of update_tuning_select(); used by IOHomeTuningSelect::setup() to publish the
+/// boot-time option so the Home Assistant dropdown reflects the active configuration. The
+/// returned strings match the YAML/UI option labels exactly. The command list is returned
+/// as a comma-separated preset string (e.g. "0x28,0x2E") matching the dropdown options.
+std::string IOHomeControlComponent::get_tuning_select_value(const std::string &name) const {
+  if (name == "sx1262_rx_bandwidth")
+    return sx1262_bandwidth_to_string(this->tuning_.sx1262_rx_bandwidth);
+  if (name == "pairing_discovery_commands")
+    return discovery_commands_to_csv(this->tuning_.pairing_discovery_commands);
+  if (name == "pairing_discovery_destination") {
+    return discovery_destination_to_string(this->tuning_.pairing_discovery_destination_auto,
+                                           this->tuning_.pairing_discovery_destination.data());
+  }
+  if (name == "pairing_discovery_payload") {
+    return discovery_payload_to_string(this->tuning_.pairing_discovery_payload_enabled,
+                                       this->tuning_.pairing_discovery_payload);
+  }
+  if (name == "pairing_discovery_low_power")
+    return this->tuning_.pairing_discovery_low_power ? "On" : "Off";
+  ESP_LOGW(detail::TAG, "Unknown tuning select parameter: %s", name.c_str());
+  return "";
 }
 
 // === Frequency hopping ===
@@ -202,11 +366,11 @@ bool IOHomeControlComponent::transmit_frame_(const IoFrame &frame, uint32_t freq
     return false;
   }
   // LBT: check channel is clear before transmitting
-  for (uint8_t lbt = 0; lbt < LBT_MAX_RETRIES; lbt++) {
+  for (uint8_t lbt = 0; lbt < this->tuning_.lbt_max_retries; lbt++) {
     int16_t const rssi = this->radio_->read_rssi();
-    if (rssi < LBT_RSSI_THRESHOLD_DBM)
+    if (rssi < this->tuning_.lbt_rssi_threshold_dbm)
       break;
-    ESP_LOGD(detail::TAG, "LBT: channel busy (RSSI %d dBm), retry %u/%u", rssi, lbt + 1, LBT_MAX_RETRIES);
+    ESP_LOGD(detail::TAG, "LBT: channel busy (RSSI %d dBm), retry %u/%u", rssi, lbt + 1, this->tuning_.lbt_max_retries);
     delay(LBT_RETRY_DELAY_MS);
   }
   detail::log_component_capture(this->radio_, "tx_frame", buf, len, &frame);

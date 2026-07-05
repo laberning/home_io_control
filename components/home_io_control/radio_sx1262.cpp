@@ -405,6 +405,30 @@ void RadioSX1262::set_rx_packet_params_() {
   this->set_packet_params_(8, SX1262_RX_PROBE_PACKET_LEN, SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH, SX1262_GFSK_CRC_OFF);
 }
 
+void RadioSX1262::write_modulation_params_() {
+  // SX1262 GFSK modulation parameters for the IO-Homecontrol 868 MHz waveform.
+  //
+  // BitRate = 32 * Fxosc / BR_reg → BR_reg = 32 * 32MHz / 38400 = 26667 = 0x00682B
+  // Pulse shape: Gaussian BT=1.0 (0x0B) — reduces TX spectral occupation.
+  // Bandwidth: the register byte is runtime-tunable via rx_bandwidth_. The default
+  //   117.3 kHz (0x0B) is wider than the Carson-rule minimum (77 kHz) but needed
+  //   to tolerate the SX1262 LO frequency offset after the TX→RX transition. At
+  //   58.6 kHz the demodulator produced ~50% bit errors on post-TX frames; 117.3 kHz
+  //   gives a clean decode (confirmed via loopback turnaround test).
+  // Fdev = fdev_hz * 2^25 / 32e6 → 19200 * 2^25 / 32e6 = 20133 = 0x004EA5
+  uint8_t mod_params[8] = {
+      0x00,
+      0x68,
+      0x2B,                                       // Bitrate: 38400 bps
+      0x0B,                                       // Pulse shape: Gaussian BT=1.0
+      static_cast<uint8_t>(this->rx_bandwidth_),  // Bandwidth: runtime-tunable
+      0x00,
+      0x4E,
+      0xA5,  // Fdev: 19200 Hz
+  };
+  this->write_opcode_(SX1262_SET_MODULATION_PARAMS, mod_params, sizeof(mod_params));
+}
+
 void RadioSX1262::clear_irq_status_(uint16_t irq_mask) {
   uint8_t clear_irq[2] = {
       (uint8_t) ((irq_mask >> 8) & 0xFF),
@@ -580,21 +604,8 @@ void RadioSX1262::configure_radio_() {
   uint8_t const rx_gain = 0x96;
   this->write_register_(SX1262_REG_RX_GAIN, &rx_gain, 1);
 
-  // 10. FSK modulation params:
-  //     BitRate = 32 * Fxosc / BR_reg → BR_reg = 32 * 32MHz / 38400 = 26667 = 0x00682B
-  //     Pulse shape: Gaussian BT=1.0 (0x0B) — reduces TX spectral occupation
-  //     Bandwidth: 117.3 kHz (0x0B) — wider than Carson rule minimum (77 kHz) but
-  //       needed to tolerate the SX1262 LO frequency offset after TX→RX transition.
-  //       At 58.6 kHz the demodulator produced ~50% bit errors on post-TX frames;
-  //       117.3 kHz gives 100% clean decode (confirmed via loopback turnaround test).
-  //     Fdev = fdev_hz * 2^25 / 32e6 → 19200 * 2^25 / 32e6 = 20133 = 0x004EA5
-  uint8_t mod_params[8] = {
-      0x00, 0x68, 0x2B,  // Bitrate: 38400 bps
-      0x0B,              // Pulse shape: Gaussian BT=1.0
-      0x0B,              // Bandwidth: 117.3 kHz
-      0x00, 0x4E, 0xA5,  // Fdev: 19200 Hz
-  };
-  this->write_opcode_(SX1262_SET_MODULATION_PARAMS, mod_params, sizeof(mod_params));
+  // 10. Apply GFSK modulation parameters (detailed values live in write_modulation_params_()).
+  this->write_modulation_params_();
 
   // 11. Default RX packet params: variable-size GFSK with hardware CCITT CRC validation.
   this->set_rx_packet_params_();
@@ -683,6 +694,11 @@ void RadioSX1262::change_frequency(uint32_t freq_hz) {
   this->clear_irq_status_(0xFFFF);  // Clear stale preamble/sync bits from previous channel
   this->clear_dio_fired();          // Clear stale DIO1 latch from previous channel activity
   this->set_mode_rx();
+}
+
+void RadioSX1262::set_rx_bandwidth(SX1262RxBandwidth bandwidth) {
+  this->rx_bandwidth_ = bandwidth;
+  this->write_modulation_params_();
 }
 
 int16_t RadioSX1262::read_rssi() {
@@ -788,7 +804,7 @@ bool RadioSX1262::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
   // (e.g., the 0x3C challenge during pairing) suffer UART decode bit errors because
   // the demodulator's frequency discrimination hasn't settled. 500µs eliminates
   // the issue completely (confirmed via loopback and real-device testing).
-  delayMicroseconds(POST_TX_SETTLE_US);
+  delayMicroseconds(this->post_tx_settle_us_);
 
   return true;
 }

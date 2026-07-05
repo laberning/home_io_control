@@ -381,9 +381,12 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
 
   detail::log_frame_issue(this, "rx", "unhandled_cmd", frame, packet.len);
 
-  // If the command is not in our known set, it may be a protocol extension we haven't documented.
-  // Ask the user to report it so we can add support.
-  if (std::strcmp(command_name(frame.cmd), "UNKNOWN_CMD") == 0) {
+  // If the command is not in our known set AND the frame was addressed to our hub, it may be a
+  // protocol extension we should support — ask the user to report it. Frames merely overheard
+  // between other devices (not addressed to us) are still logged above at debug level, but do
+  // not warrant a warning: we are not a party to that exchange, so there is nothing to add.
+  const bool addressed_to_us = memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0;
+  if (addressed_to_us && std::strcmp(command_name(frame.cmd), "UNKNOWN_CMD") == 0) {
     const std::string src_id = node_id_to_string(frame.src);
     ESP_LOGW(detail::TAG,
              "Received unknown command 0x%02X from %s. "

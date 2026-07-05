@@ -263,6 +263,8 @@ const char *command_name(uint8_t cmd) {
       return "DISCOVER_CONFIRM";
     case CMD_DISCOVER_CONFIRM_ACK:
       return "DISCOVER_CONFIRM_ACK";
+    case CMD_DISCOVER_ALT_REQ:
+      return "DISCOVER_ALT_REQ";
     case CMD_KEY_INIT:
       return "KEY_INIT";
     case CMD_KEY_TRANSFER:

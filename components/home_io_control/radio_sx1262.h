@@ -71,12 +71,6 @@ static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 
-/// Microseconds to wait after TX before the demodulator can reliably decode incoming frames.
-/// The SX1262's GFSK demodulator needs this settling time after the TX→STDBY→RX transition
-/// to avoid bit errors in the UART-decoded bitstream. Validated at 500µs via real-device
-/// pairing tests (challenge decode corruption eliminated).
-static constexpr uint16_t POST_TX_SETTLE_US = 500;
-
 // ============================================================================
 // SX1262 Radio Driver
 // ============================================================================
@@ -121,7 +115,13 @@ class RadioSX1262 : public RadioDriver {
   /// @copydoc RadioDriver::is_preamble_detected
   bool is_preamble_detected() override;
   /// @copydoc RadioDriver::response_preamble
-  [[nodiscard]] uint16_t response_preamble() const override { return SX1262_RESPONSE_PREAMBLE; }
+  [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
+  /// @copydoc RadioDriver::set_rx_bandwidth
+  void set_rx_bandwidth(SX1262RxBandwidth bandwidth) override;
+  /// @copydoc RadioDriver::set_response_preamble
+  void set_response_preamble(uint16_t preamble) override { this->response_preamble_ = preamble; }
+  /// @copydoc RadioDriver::set_post_tx_settle_us
+  void set_post_tx_settle_us(uint16_t delay_us) override { this->post_tx_settle_us_ = delay_us; }
   /// @copydoc RadioDriver::set_mode_rx
   void set_mode_rx() override;
   /// @copydoc RadioDriver::set_mode_standby
@@ -178,6 +178,8 @@ class RadioSX1262 : public RadioDriver {
   /// @param packet_type Fixed for GFSK.
   /// @param crc_type CRC configuration (off or on).
   void set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type, uint8_t crc_type);
+  /// Apply the runtime bandwidth setting to the SX1262 modulation parameters.
+  void write_modulation_params_();
   /// Apply RX‑specific packet parameters (calls set_packet_params_ for RX).
   void set_rx_packet_params_();
   /// Clear all IRQ status bits.
@@ -253,6 +255,9 @@ class RadioSX1262 : public RadioDriver {
   uint8_t tx_power_;
   uint8_t tcxo_voltage_;
   bool failed_{false};
+  SX1262RxBandwidth rx_bandwidth_{SX1262RxBandwidth::BW_117_3_KHZ};  ///< Runtime-tunable RX bandwidth.
+  uint16_t response_preamble_{SX1262_RESPONSE_PREAMBLE};             ///< Runtime-tunable response preamble.
+  uint16_t post_tx_settle_us_{SX1262_POST_TX_SETTLE_US};             ///< Runtime-tunable post-TX settling delay.
 };
 
 // ============================================================================
