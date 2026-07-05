@@ -14,12 +14,9 @@ static const char *const TAG = "home_io_control.lock";
 
 void IOHomeLock::setup() {
   // Locks participate in the same shared registry and callback fan-out as the other entity types.
-  this->parent_->add_device(this->device_id_, device_type_, subtype_, /*inverted=*/false);
-  this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
-  this->parent_->register_device_callback(
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
-  this->set_timeout("init_status", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
-                    [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+  this->register_device_binding_(this, /*inverted=*/false, [this](const std::string &id, const IoDevice &dev) {
+    this->on_device_update_(id, dev);
+  });
 
   this->traits.set_assumed_state(false);
   this->traits.set_requires_code(false);
@@ -68,11 +65,7 @@ void IOHomeLock::on_device_update_(const std::string &id, const IoDevice &dev) {
 void IOHomeLock::dump_config() {
   LOG_LOCK("", "IO-Homecontrol Lock", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  if (this->status_poll_interval_ms_ == 0) {
-    ESP_LOGCONFIG(TAG, "  Status Poll Interval: default single settle poll");
-  } else {
-    ESP_LOGCONFIG(TAG, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
-  }
+  this->log_poll_interval_config_(TAG);
   ESP_LOGCONFIG(TAG, "  Status: experimental and untested");
 }
 

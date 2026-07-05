@@ -37,6 +37,30 @@ enum class DiscoveryCommand : uint8_t {
   DISCOVER_ALT = 0x2E,  ///< Alternate broadcast discovery (to 0x00003F), with optional payload byte.
 };
 
+// SX1262 radio defaults live here beside the TuningConfig fields they initialize, keeping the
+// "single source of truth for defaults" rule intact after these were moved out of the generic
+// protocol timing layer. Only RadioSX1262 consumes them (via apply_tuning).
+
+/// SX1262-specific preamble for response/continuation frames within an exchange.
+///
+/// The SX1262 software UART-encoded waveform requires a longer preamble than the
+/// protocol's standard 8-byte SHORT_PREAMBLE when the peer device has just finished
+/// transmitting and is switching back to RX. This applies to any tight-turnaround
+/// frame: 0x3D challenge responses, 0x32 key transfers after receiving 0x3C, and
+/// any future protocol frames sent immediately after receiving from the device.
+///
+/// 64 bytes was validated on real hardware (Heltec V3.2 ↔ Device actuator) as the
+/// minimum that gives reliable lock-on without perturbing exchange timing.
+static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 64;
+
+/// SX1262-specific post-TX settling delay before re-entering RX.
+///
+/// The SX1262 GFSK demodulator needs time to stabilize after TX before it can
+/// reliably receive the next frame. A 500 µs delay was validated as the minimum
+/// that prevents challenge-byte corruption during pairing and tight-turnaround
+/// authenticated exchanges.
+static constexpr uint16_t SX1262_POST_TX_SETTLE_US = 500;
+
 /// @brief All runtime tunable parameters for pairing and radio diagnostics.
 ///
 /// Values reset to their defaults on every boot. Each field initializes from the

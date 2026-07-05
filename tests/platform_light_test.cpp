@@ -47,6 +47,12 @@ class MockHubLight : public test::MockPlatformHubBase {
   std::deque<std::pair<std::string, bool>> queued_light_ops_;
 };
 
+/// Exposes protected state_ for direct assertion in tests.
+class TestableLight : public IOHomeLight {
+ public:
+  using IOHomeLight::state_;
+};
+
 // ========================================================================================
 // IOHomeLight: binary on/off via position mapping
 // ========================================================================================
@@ -74,7 +80,7 @@ TEST(PlatformLight, WriteStateSendsOnOff) {
 
 TEST(PlatformLight, DeviceUpdateSetsHAPosition) {
   MockHubLight hub;
-  IOHomeLight light;
+  TestableLight light;
   light.set_parent(&hub);
   light.set_device_id("ABC123");
   light.setup_state(new esphome::light::LightState());
@@ -97,7 +103,7 @@ TEST(PlatformLight, DeviceUpdateSetsHAPosition) {
 
 TEST(PlatformLight, IgnoresMovingDevice) {
   MockHubLight hub;
-  IOHomeLight light;
+  TestableLight light;
   light.set_parent(&hub);
   light.set_device_id("ABC123");
   light.setup_state(new esphome::light::LightState());

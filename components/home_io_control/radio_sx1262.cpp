@@ -696,7 +696,7 @@ void RadioSX1262::change_frequency(uint32_t freq_hz) {
   this->set_mode_rx();
 }
 
-void RadioSX1262::set_rx_bandwidth(SX1262RxBandwidth bandwidth) {
+void RadioSX1262::set_rx_bandwidth_(SX1262RxBandwidth bandwidth) {
   this->rx_bandwidth_ = bandwidth;
   this->write_modulation_params_();
 }

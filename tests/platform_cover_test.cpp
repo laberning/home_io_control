@@ -12,6 +12,12 @@ using namespace esphome::cover;
 // ============================================================================
 // PlatformCover test suite
 // ============================================================================
+/// Exposes protected control() for direct call in tests.
+class TestableCover : public IOHomeCover {
+ public:
+  using IOHomeCover::control;
+};
+
 // IOHomeCover entity: HA ↔ IO position conversion, command queuing, and device update
 // callbacks. Covers standard/inverted mapping, movement state, and unknown-position handling.
 
@@ -55,12 +61,12 @@ class MockHub : public test::MockPlatformHubBase {
   void queue_set_device_position(const std::string &device_id, uint8_t position) override {
     last_set_device_id_ = device_id;
     last_set_position_ = position;
-    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_POSITION, device_id, position});
+    queued_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
   }
   void queue_device_command(const std::string &device_id, CoverCommand cmd) override {
     last_set_device_id_ = device_id;
     PendingOperation op{};
-    op.type = IOHomeControlComponent::PendingOperationType::DEVICE_COMMAND;
+    op.type = PendingOperationType::DEVICE_COMMAND;
     op.device_id = device_id;
     op.command = cmd;
     queued_operations_.push_back(op);
@@ -68,25 +74,25 @@ class MockHub : public test::MockPlatformHubBase {
   void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override {
     last_set_device_id_ = device_id;
     last_set_tilt_ = tilt_percent;
-    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_TILT, device_id, tilt_percent});
+    queued_operations_.push_back({PendingOperationType::SET_TILT, device_id, tilt_percent});
   }
   void queue_request_device_status(const std::string &device_id) override {
-    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::REQUEST_STATUS, device_id, 0});
+    queued_operations_.push_back({PendingOperationType::REQUEST_STATUS, device_id, 0});
   }
   void queue_discover_and_pair() override {
-    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::DISCOVER_AND_PAIR, "", 0});
+    queued_operations_.push_back({PendingOperationType::DISCOVER_AND_PAIR, "", 0});
   }
   void queue_set_light_state(const std::string &device_id, bool on) override {
     queued_operations_.push_back(
-        {IOHomeControlComponent::PendingOperationType::SET_LIGHT_STATE, device_id, static_cast<uint8_t>(on ? 0 : 100)});
+        {PendingOperationType::SET_LIGHT_STATE, device_id, static_cast<uint8_t>(on ? 0 : 100)});
   }
   void queue_set_lock_state(const std::string &device_id, bool locked) override {
-    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_LOCK_STATE, device_id,
-                                  static_cast<uint8_t>(locked ? 100 : 0)});
+    queued_operations_.push_back(
+        {PendingOperationType::SET_LOCK_STATE, device_id, static_cast<uint8_t>(locked ? 100 : 0)});
   }
   void queue_set_switch_state(const std::string &device_id, bool on) override {
-    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_SWITCH_STATE, device_id,
-                                  static_cast<uint8_t>(on ? 0 : 100)});
+    queued_operations_.push_back(
+        {PendingOperationType::SET_SWITCH_STATE, device_id, static_cast<uint8_t>(on ? 0 : 100)});
   }
 
   // Test accessors
@@ -115,7 +121,7 @@ class MockHub : public test::MockPlatformHubBase {
 
 TEST(PlatformCover, InvertsPositionWhenConfigured) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_invert_position(true);
@@ -132,7 +138,7 @@ TEST(PlatformCover, InvertsPositionWhenConfigured) {
 
 TEST(PlatformCover, NonInvertedPosition) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_invert_position(false);
@@ -148,7 +154,7 @@ TEST(PlatformCover, NonInvertedPosition) {
 
 TEST(PlatformCover, DeviceUpdateToHAPosition) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
 
@@ -171,7 +177,7 @@ TEST(PlatformCover, DeviceUpdateToHAPosition) {
 
 TEST(PlatformCover, LearnedInversionAppliesWhenNoOverrideIsConfigured) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
 
@@ -189,7 +195,7 @@ TEST(PlatformCover, LearnedInversionAppliesWhenNoOverrideIsConfigured) {
 
 TEST(PlatformCover, SetupStoresConfiguredStatusPollInterval) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_status_poll_interval(3000);
@@ -198,13 +204,13 @@ TEST(PlatformCover, SetupStoresConfiguredStatusPollInterval) {
 
   auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->status_poll_interval_ms, 3000u)
+  EXPECT_EQ(hub.poll_policy_.get_interval("ABC123"), 3000u)
       << "entity setup should store the configured status poll interval in the shared device registry";
 }
 
 TEST(PlatformCover, ExplicitInvertFalseOverridesLearnedInversion) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_invert_position(false);
@@ -223,7 +229,7 @@ TEST(PlatformCover, ExplicitInvertFalseOverridesLearnedInversion) {
 
 TEST(PlatformCover, TiltControlQueuesTiltCommand) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
 
@@ -239,13 +245,13 @@ TEST(PlatformCover, TiltControlQueuesTiltCommand) {
   EXPECT_EQ(hub.last_set_device_id(), "ABC123") << "tilt command should target the configured device";
   EXPECT_EQ(hub.last_set_tilt(), 25u) << "tilt 0.25 should map to 25% open";
   ASSERT_FALSE(hub.queued_operations().empty()) << "tilt control should enqueue an operation";
-  EXPECT_EQ(hub.queued_operations().back().type, IOHomeControlComponent::PendingOperationType::SET_TILT)
+  EXPECT_EQ(hub.queued_operations().back().type, PendingOperationType::SET_TILT)
       << "queued operation should be SET_TILT";
 }
 
 TEST(PlatformCover, SupportsTiltBasedOnDeviceType) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
 
@@ -257,7 +263,7 @@ TEST(PlatformCover, SupportsTiltBasedOnDeviceType) {
   EXPECT_TRUE(cover.supports_tilt()) << "EXTERNAL_VENETIAN_BLIND should support tilt without registry lookup";
 
   // Non-tilt type
-  IOHomeCover cover2;
+  TestableCover cover2;
   cover2.set_parent(&hub);
   cover2.set_device_id("DEF456");
   cover2.set_device_type(DeviceType::ROLLER_SHUTTER);
@@ -266,7 +272,7 @@ TEST(PlatformCover, SupportsTiltBasedOnDeviceType) {
 
 TEST(PlatformCover, DeviceUpdatePublishesTilt) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_device_type(DeviceType::VENETIAN_BLIND);
@@ -290,7 +296,7 @@ TEST(PlatformCover, DeviceUpdatePublishesTilt) {
 
 TEST(PlatformCover, MovingDevicePublishesPositionAndOperation) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
 
@@ -309,7 +315,7 @@ TEST(PlatformCover, MovingDevicePublishesPositionAndOperation) {
 
 TEST(PlatformCover, MovingDeviceWithUnknownTargetInfersDirectionFromPositionDelta) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
 
@@ -333,7 +339,7 @@ TEST(PlatformCover, MovingDeviceWithUnknownTargetInfersDirectionFromPositionDelt
 
 TEST(PlatformCover, MovingInvertedDeviceWithUnknownTargetInfersDirectionFromPositionDelta) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_invert_position(true);
@@ -357,7 +363,7 @@ TEST(PlatformCover, MovingInvertedDeviceWithUnknownTargetInfersDirectionFromPosi
 
 TEST(PlatformCover, StoppedDeviceReturnsToIdleOperation) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
 
@@ -382,7 +388,7 @@ TEST(PlatformCover, StoppedDeviceReturnsToIdleOperation) {
 
 TEST(PlatformCover, UnknownPositionNotPublished) {
   MockHub hub;
-  IOHomeCover cover;
+  TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
 

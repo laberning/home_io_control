@@ -22,7 +22,7 @@ void IOHomeDeviceNameTextSensor::setup() {
   if (const auto *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
     this->publish_state(dev->name);
 
-  this->set_timeout("init_name", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
+  this->set_timeout("init_name", INITIAL_STATUS_REQUEST_DELAY_MS,
                     [this]() { this->parent_->queue_request_device_name(this->device_id_); });
 }
 

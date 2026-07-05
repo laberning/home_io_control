@@ -72,6 +72,11 @@ clang-tidy:
 	@echo "Running clang-tidy..."
 	@scripts/run-clang-tidy.sh
 
+# Cross-language check: tuning parameter names must match between tuning.py and the C++ registry
+tuning-sync:
+	@echo "Checking tuning parameter sync (tuning.py <-> tuning_registry.cpp)..."
+	@python3 scripts/check-tuning-sync.py
+
 # Compilation tests for all platform configs
 firmware-test:
 	@echo "Compiling test configurations in config/tests/"
@@ -107,7 +112,7 @@ UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 unit-test:
 	@echo "Building Google Test unit tests for home_io_control (host-only)..."
 	@mkdir -p build
-	g++ -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable -Wno-unused-variable -Wno-reorder -fno-access-control -DIRAM_ATTR= \
+	g++ -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable -Wno-unused-variable -Wno-reorder -DIRAM_ATTR= \
 		$(UNIT_TEST_DEFINES) $(INCLUDES) \
 		$(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS) \
 		-lgtest -lgtest_main -pthread \
@@ -127,7 +132,7 @@ doxygen:
 
 # === Composite targets =========================================================
 
-lint: format-check yamllint clang-tidy
+lint: format-check yamllint clang-tidy tuning-sync
 test: unit-test firmware-test
 check: lint test doxygen
 
@@ -139,7 +144,7 @@ test-unit: unit-test
 # === Phony declarations ========================================================
 
 .PHONY: dashboard \
-		format format-check yamllint clang-tidy tidy \
+		format format-check yamllint clang-tidy tidy tuning-sync \
 		firmware-test unit-test lint test check \
 		test-compile test-unit \
 		doxygen clean-docs

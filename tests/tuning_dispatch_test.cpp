@@ -3,8 +3,8 @@
 ///
 /// Exercises IOHomeControlComponent::update_tuning_number() and
 /// update_tuning_select(), including the comma-separated discovery command
-/// parser and the enum/destination/payload string decoding. Private members are
-/// reachable because the host test build compiles with -fno-access-control.
+/// parser and the enum/destination/payload string decoding. Protected hub members
+/// are accessed through TestableHubComponent, which promotes them via using declarations.
 
 #include "hub_core.h"
 #include "proto_frame.h"
@@ -15,15 +15,12 @@
 #include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
+using test::TestableHubComponent;
 
 namespace {
 
-/// Build a component with a mock radio so radio-affecting updates have a target.
-IOHomeControlComponent make_component() {
-  IOHomeControlComponent comp;
-  comp.radio_ = new MockRadio();
-  return comp;
-}
+/// Set up a component with a mock radio so radio-affecting updates have a target.
+void setup_component(TestableHubComponent &comp) { comp.radio_ = new MockRadio(); }
 
 }  // namespace
 
@@ -32,7 +29,8 @@ IOHomeControlComponent make_component() {
 // ============================================================================
 
 TEST(TuningDispatch, NumberUpdatesEachParameter) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
 
   comp.update_tuning_number("sx1262_response_preamble", 96);
   EXPECT_EQ(comp.tuning_.sx1262_response_preamble, 96);
@@ -63,7 +61,8 @@ TEST(TuningDispatch, NumberUpdatesEachParameter) {
 }
 
 TEST(TuningDispatch, NumberIgnoresUnknownParameter) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
   comp.update_tuning_number("does_not_exist", 123);
   // Defaults remain untouched.
   EXPECT_EQ(comp.tuning_.sx1262_response_preamble, SX1262_RESPONSE_PREAMBLE);
@@ -74,13 +73,15 @@ TEST(TuningDispatch, NumberIgnoresUnknownParameter) {
 // ============================================================================
 
 TEST(TuningDispatch, SelectBandwidth) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
   comp.update_tuning_select("sx1262_rx_bandwidth", "156.2");
   EXPECT_EQ(comp.tuning_.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_156_2_KHZ);
 }
 
 TEST(TuningDispatch, SelectDiscoveryCommandsCommaSeparated) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
   comp.update_tuning_select("pairing_discovery_commands", "0x28, 0x2E");
   ASSERT_EQ(comp.tuning_.pairing_discovery_commands.size(), 2);
   EXPECT_EQ(comp.tuning_.pairing_discovery_commands[0], DiscoveryCommand::DISCOVER);
@@ -88,14 +89,16 @@ TEST(TuningDispatch, SelectDiscoveryCommandsCommaSeparated) {
 }
 
 TEST(TuningDispatch, SelectDiscoveryCommandsSingle) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
   comp.update_tuning_select("pairing_discovery_commands", "0x2E");
   ASSERT_EQ(comp.tuning_.pairing_discovery_commands.size(), 1);
   EXPECT_EQ(comp.tuning_.pairing_discovery_commands[0], DiscoveryCommand::DISCOVER_ALT);
 }
 
 TEST(TuningDispatch, SelectDiscoveryCommandsDropsInvalidTokens) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
   comp.update_tuning_select("pairing_discovery_commands", "0x28,bogus,0x2A");
   ASSERT_EQ(comp.tuning_.pairing_discovery_commands.size(), 2);
   EXPECT_EQ(comp.tuning_.pairing_discovery_commands[0], DiscoveryCommand::DISCOVER);
@@ -103,7 +106,8 @@ TEST(TuningDispatch, SelectDiscoveryCommandsDropsInvalidTokens) {
 }
 
 TEST(TuningDispatch, SelectDestinationExplicitAndAuto) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
 
   comp.update_tuning_select("pairing_discovery_destination", "0x00003F");
   EXPECT_FALSE(comp.tuning_.pairing_discovery_destination_auto);
@@ -118,7 +122,8 @@ TEST(TuningDispatch, SelectDestinationExplicitAndAuto) {
 }
 
 TEST(TuningDispatch, SelectPayload) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
 
   comp.update_tuning_select("pairing_discovery_payload", "0x00");
   EXPECT_TRUE(comp.tuning_.pairing_discovery_payload_enabled);
@@ -129,7 +134,8 @@ TEST(TuningDispatch, SelectPayload) {
 }
 
 TEST(TuningDispatch, SelectLowPower) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
 
   comp.update_tuning_select("pairing_discovery_low_power", "On");
   EXPECT_TRUE(comp.tuning_.pairing_discovery_low_power);
@@ -143,7 +149,8 @@ TEST(TuningDispatch, SelectLowPower) {
 // ============================================================================
 
 TEST(TuningDispatch, GetNumberValueReturnsDefaultsThenUpdates) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
 
   // Defaults come from the single-source constants in proto_frame.h.
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("sx1262_post_tx_settle_us"), SX1262_POST_TX_SETTLE_US);
@@ -155,12 +162,14 @@ TEST(TuningDispatch, GetNumberValueReturnsDefaultsThenUpdates) {
 }
 
 TEST(TuningDispatch, GetNumberValueUnknownReturnsZero) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("nope"), 0.0F);
 }
 
 TEST(TuningDispatch, GetSelectValueMatchesOptionStrings) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
 
   // Defaults.
   EXPECT_EQ(comp.get_tuning_select_value("sx1262_rx_bandwidth"), "117.3");
@@ -182,6 +191,7 @@ TEST(TuningDispatch, GetSelectValueMatchesOptionStrings) {
 }
 
 TEST(TuningDispatch, GetSelectValueUnknownReturnsEmpty) {
-  IOHomeControlComponent comp = make_component();
+  TestableHubComponent comp;
+  setup_component(comp);
   EXPECT_EQ(comp.get_tuning_select_value("nope"), "");
 }

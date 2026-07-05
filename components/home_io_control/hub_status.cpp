@@ -77,11 +77,15 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
 /// @brief Compute the delay before the next status poll for a private‑response device.
 /// @param dev Device record.
 /// @param frame The private response frame (may contain a coarse retry hint in byte 7).
+/// @param policy Policy used to look up the configured poll interval.
+/// @param id Device ID for policy lookup.
 /// @return Delay in milliseconds.
-uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame) {
+uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame, const StatusPollPolicy &policy,
+                                           const std::string &id) {
   if (dev.is_stopped)
     return 0;
 
+  const uint32_t interval_ms = policy.get_interval(id);
   // Private responses carry a coarse follow‑up timer in byte 7 on many devices.
   // Delay priority is: device hint when present, otherwise the configured interval, otherwise the
   // legacy one-shot settle delay. When both a hint and an explicit interval exist, cap the next
@@ -90,56 +94,64 @@ uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &f
       frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_ZERO) {
     uint32_t const hinted_delay_ms = (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS) +
                                      PRIVATE_RESPONSE_HINT_BIAS_MS;
-    if (dev.status_poll_interval_ms == 0)
+    if (interval_ms == 0)
       return hinted_delay_ms;
-    return hinted_delay_ms < dev.status_poll_interval_ms ? hinted_delay_ms : dev.status_poll_interval_ms;
+    return hinted_delay_ms < interval_ms ? hinted_delay_ms : interval_ms;
   }
-  return dev.status_poll_interval_ms != 0 ? dev.status_poll_interval_ms : DEFAULT_SINGLE_FOLLOW_UP_POLL_DELAY_MS;
+  return interval_ms != 0 ? interval_ms : DEFAULT_SINGLE_FOLLOW_UP_POLL_DELAY_MS;
 }
 
 /// @brief Compute the delay before the next status poll for a device‑originated status update.
 /// @param dev Device record.
+/// @param policy Policy used to look up the configured poll interval.
+/// @param id Device ID for policy lookup.
 /// @return Delay in milliseconds for tracked polling; no-interval devices stop after the unsolicited update.
-uint32_t compute_status_update_delay_ms(const IoDevice &dev) {
-  return dev.is_stopped ? 0 : dev.status_poll_interval_ms;
+uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPolicy &policy, const std::string &id) {
+  return dev.is_stopped ? 0 : policy.get_interval(id);
 }
 
 /// @brief Apply a private-response frame to the device record.
+/// @param id Device ID for policy lookup.
 /// @param dev Device record to update.
 /// @param frame Private-response frame.
-void apply_private_response_status(IoDevice &dev, const IoFrame &frame) {
+/// @param policy Poll policy for scheduling follow-up polls.
+void apply_private_response_status(const std::string &id, IoDevice &dev, const IoFrame &frame,
+                                   StatusPollPolicy &policy) {
   dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
   dev.last_status = millis();
   decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true);
 
-  const bool tracked_polling_active = detail::status_poll_tracking_active(dev, dev.last_status);
+  const bool tracked_polling_active = policy.is_tracking_active(id, dev.last_status);
   if (dev.is_stopped || !tracked_polling_active) {
-    if (!dev.is_stopped && dev.single_follow_up_poll_pending) {
-      dev.next_update = dev.last_status + compute_private_response_delay_ms(dev, frame);
-      dev.single_follow_up_poll_pending = false;
+    if (!dev.is_stopped && policy.is_one_shot_pending(id)) {
+      policy.set_next_update(id, dev.last_status + compute_private_response_delay_ms(dev, frame, policy, id));
+      policy.clear_one_shot_pending(id);
       return;
     }
-    detail::clear_status_poll_tracking(dev);
+    policy.clear(id);
     return;
   }
 
-  dev.next_update = dev.last_status + compute_private_response_delay_ms(dev, frame);
+  policy.set_next_update(id, dev.last_status + compute_private_response_delay_ms(dev, frame, policy, id));
 }
 
 /// @brief Apply a device-originated status-update frame to the device record.
+/// @param id Device ID for policy lookup.
 /// @param dev Device record to update.
 /// @param frame Status-update frame.
-void apply_unsolicited_status_update(IoDevice &dev, const IoFrame &frame) {
+/// @param policy Poll policy for scheduling follow-up polls.
+void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const IoFrame &frame,
+                                     StatusPollPolicy &policy) {
   dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
   dev.last_status = millis();
   decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
 
-  if (dev.is_stopped || !detail::status_poll_tracking_active(dev, dev.last_status)) {
-    detail::clear_status_poll_tracking(dev);
+  if (dev.is_stopped || !policy.is_tracking_active(id, dev.last_status)) {
+    policy.clear(id);
     return;
   }
 
-  dev.next_update = dev.last_status + compute_status_update_delay_ms(dev);
+  policy.set_next_update(id, dev.last_status + compute_status_update_delay_ms(dev, policy, id));
 }
 
 /// @brief Apply INFO2 metadata to the device record when YAML has not already declared it.
@@ -168,15 +180,9 @@ void apply_name_response(IoDevice &dev, const IoFrame &frame) {
 }  // namespace
 
 void IOHomeControlComponent::begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms) {
-  auto *dev = this->get_device(device_id);
-  if (dev == nullptr || dev->status_poll_interval_ms == 0)
+  if (this->get_device(device_id) == nullptr)
     return;
-
-  uint32_t const now = millis();
-  dev->poll_deadline = now + detail::MAX_TRACKED_STATUS_POLL_WINDOW_MS;
-  dev->next_update = initial_delay_ms == 0 ? 0 : now + initial_delay_ms;
-  dev->status_poll_failures = 0;
-  dev->auth_poll_failures = 0;
+  this->poll_policy_.begin_tracking(device_id, initial_delay_ms, millis());
 }
 
 void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id, uint32_t delay_ms) {
@@ -188,25 +194,24 @@ void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id,
 }
 
 void IOHomeControlComponent::schedule_linked_remote_polls_(const std::string &remote_id) {
-  auto remote_it = this->linked_remotes_.find(remote_id);
-  if (remote_it == this->linked_remotes_.end())
+  const std::vector<std::string> *linked = this->registry_.linked_devices(remote_id);
+  if (linked == nullptr)
     return;
-  for (const auto &device_id : remote_it->second) {
-    if (auto *dev = this->get_device(device_id); dev != nullptr)
-      dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
+  for (const auto &device_id : *linked) {
+    this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
     this->begin_status_poll_tracking_(device_id, 0);
-    this->schedule_status_poll_(device_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+    this->schedule_status_poll_(device_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
   }
 }
 
 void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
   const std::string id = node_id_to_string(frame.src);
-  auto it = this->devices_.find(id);
-  if (it == this->devices_.end()) {
+  IoDevice *device_ptr = this->registry_.get(id);
+  if (device_ptr == nullptr) {
     detail::log_frame_issue(this, "rx", "unregistered_device", frame, frame_length(frame));
     return;
   }
-  IoDevice &dev = it->second;
+  IoDevice &dev = *device_ptr;
 
   if (frame.cmd == CMD_PRIVATE_RESP) {
     if (frame.data_len < PRIVATE_RESPONSE_MIN_DATA_LEN) {
@@ -217,7 +222,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
     // CMD_PRIVATE_RESP (0x04) serves as the reply to both status polls (0x03) and execute
     // commands (0x00). The position fields below are shared across both response types, so
     // normalize them once here before the entity layer decides how to present the state.
-    apply_private_response_status(dev, frame);
+    apply_private_response_status(id, dev, frame, this->poll_policy_);
     detail::log_status_update(id, dev);
     this->notify_device_update_(id);
     return;
@@ -231,7 +236,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
 
     // Status-update frames come from the device itself rather than from a direct controller poll.
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
-    apply_unsolicited_status_update(dev, frame);
+    apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
 
     // The originator byte at data[1] tells us what caused the device to move.
     // Log it so users can understand device-initiated movements (e.g., wind sensor, timer).
@@ -317,8 +322,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     this->last_1w_logged_.timestamp = now;
 
     // Log decoded frame and schedule linked remote polls.
-    auto remote_it = this->linked_remotes_.find(src_id);
-    const std::vector<std::string> *linked = (remote_it != this->linked_remotes_.end()) ? &remote_it->second : nullptr;
+    const std::vector<std::string> *linked = this->registry_.linked_devices(src_id);
     detail::log_1w_remote_frame(frame, linked);
     this->schedule_linked_remote_polls_(src_id);
     return;
@@ -358,12 +362,11 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // The 2-second delay gives the device time to complete the exchange and start moving.
   const std::string dst_id = node_id_to_string(frame.dst);
   if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
-    if (auto *dev = this->get_device(dst_id); dev != nullptr)
-      dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
+    this->poll_policy_.set_one_shot_pending(dst_id, this->poll_policy_.get_interval(dst_id) == 0);
     ESP_LOGD(detail::TAG, "rx remote_activity src=%s dst=%s cmd=%s(0x%02X), scheduling status poll",
              node_id_to_string(frame.src).c_str(), dst_id.c_str(), command_name(frame.cmd), frame.cmd);
     this->begin_status_poll_tracking_(dst_id, 0);
-    this->schedule_status_poll_(dst_id, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+    this->schedule_status_poll_(dst_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     return;
   }
 
@@ -371,8 +374,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // whose commands target a device at an address we don't have registered). 1W remotes are
   // already handled above via the CTRL0_PROTOCOL_1W check.
   const std::string src_id = node_id_to_string(frame.src);
-  auto remote_it = this->linked_remotes_.find(src_id);
-  if (remote_it != this->linked_remotes_.end()) {
+  if (this->registry_.linked_devices(src_id) != nullptr) {
     ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s cmd=%s(0x%02X), scheduling status poll",
              src_id.c_str(), command_name(frame.cmd), frame.cmd);
     this->schedule_linked_remote_polls_(src_id);

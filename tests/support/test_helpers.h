@@ -44,6 +44,51 @@ inline IoFrame make_frame(const uint8_t src[3], const uint8_t dst[3], uint8_t cm
   return frame;
 }
 
+/// PairingEngine subclass that promotes protected phase helpers to public.
+///
+/// Used by the pairing test suite as a shadow member in TestableComponent so
+/// tests can script individual phases (discovery, key exchange, confirm wait)
+/// without going through the discover_and_pair() orchestrator.
+class TestablePairingEngine : public PairingEngine {
+ public:
+  using PairingEngine::PairingEngine;
+  using PairingEngine::run_discovery_phase_;
+  using PairingEngine::run_key_exchange_phase_;
+  using PairingEngine::finalize_pairing_configuration_;
+  using PairingEngine::wait_for_discovery_response_;
+  using PairingEngine::wait_for_key_challenge_;
+  using PairingEngine::wait_for_key_confirm_;
+};
+
+/// Hub subclass exposing protected members and methods for unit tests.
+///
+/// Use in place of IOHomeControlComponent in tests that need to inject a mock
+/// radio, preset node-ID/key, or call internal helper methods without setup().
+/// All promoted members/methods remain protected in the production hub.
+class TestableHubComponent : public IOHomeControlComponent {
+ public:
+  using IOHomeControlComponent::initialized_;
+  using IOHomeControlComponent::busy_;
+  using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::node_id_;
+  using IOHomeControlComponent::system_key_;
+  using IOHomeControlComponent::tuning_;
+  using IOHomeControlComponent::op_queue_;
+  using IOHomeControlComponent::poll_policy_;
+  using IOHomeControlComponent::exchange_engine_;
+  using IOHomeControlComponent::pairing_engine_;
+  using IOHomeControlComponent::transmit_frame_;
+  using IOHomeControlComponent::process_received_packet_;
+  using IOHomeControlComponent::update_device_status_;
+  using IOHomeControlComponent::notify_device_update_;
+  using IOHomeControlComponent::begin_status_poll_tracking_;
+  using IOHomeControlComponent::send_and_receive_;
+  using IOHomeControlComponent::process_pending_operation_;
+  using IOHomeControlComponent::authenticate_request_;
+  using IOHomeControlComponent::api_rename_device_;
+  using IOHomeControlComponent::register_management_actions_;
+};
+
 /// Shared mock hub base for platform entity tests.
 ///
 /// The concrete platform test doubles override only the semantic command paths
@@ -72,34 +117,39 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   void queue_set_lock_state(const std::string &, bool) override {}
 
   IoDevice *get_device(const std::string &device_id) override {
-    auto it = this->devices_.find(device_id);
-    return it != this->devices_.end() ? &it->second : nullptr;
+    auto it = devices_.find(device_id);
+    return it != devices_.end() ? &it->second : nullptr;
   }
 
   void add_device(const std::string &device_id) override {
-    if (this->devices_.count(device_id))
+    if (devices_.count(device_id))
       return;
-    this->devices_[device_id] = IoDevice{};
+    devices_[device_id] = IoDevice{};
   }
 
   void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) override {
-    if (this->devices_.count(device_id))
+    if (devices_.count(device_id))
       return;
-    auto &device = this->devices_[device_id];
+    auto &device = devices_[device_id];
     device = IoDevice{};
     device.type = type;
     device.subtype = subtype;
     device.inverted = inverted;
   }
 
-  void register_device_callback(DeviceUpdateCallback cb) override { this->callbacks_.push_back(std::move(cb)); }
+  void register_device_callback(DeviceUpdateCallback cb) override { callbacks_.push_back(std::move(cb)); }
+
+  using IOHomeControlComponent::poll_policy_;
 
   void trigger_device_update(const std::string &device_id, const IoDevice &dev, bool cache_device = false) {
     if (cache_device)
-      this->devices_[device_id] = dev;
-    for (auto &cb : this->callbacks_) {
+      devices_[device_id] = dev;
+    for (auto &cb : callbacks_)
       cb(device_id, dev);
-    }
   }
+
+ private:
+  std::map<std::string, IoDevice> devices_;
+  std::vector<DeviceUpdateCallback> callbacks_;
 };
 }  // namespace test

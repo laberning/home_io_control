@@ -1,6 +1,7 @@
 #pragma once
 
 #include "radio_interface.h"
+#include "radio_sx1262.h"  // SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS for the SX1262 mock
 #include <esphome/core/gpio.h>
 
 #include <deque>
@@ -40,14 +41,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   bool init() override { return true; }
   bool send_packet(const uint8_t *data, uint8_t len,
                    const esphome::home_io_control::RadioTxConfig &tx_config) override {
-    (void) data;
-    (void) len;
     bool result = true;
     if (!tx_results_.empty()) {
       result = tx_results_.front();
       tx_results_.pop_front();
     }
     tx_configs_.push_back(tx_config);
+    sent_data_.push_back(std::vector<uint8_t>(data, data + len));
     send_count_++;
     return result;
   }
@@ -87,11 +87,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
   int get_send_count() const { return send_count_; }
   const std::vector<esphome::home_io_control::RadioTxConfig> &get_tx_configs() const { return tx_configs_; }
+  const std::vector<std::vector<uint8_t>> &get_sent_data() const { return sent_data_; }
   void clear() {
     rx_queue_.clear();
     tx_results_.clear();
     tx_configs_.clear();
     rssi_queue_.clear();
+    sent_data_.clear();
     send_count_ = 0;
   }
 
@@ -100,6 +102,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::deque<esphome::home_io_control::RadioRxPacket> rx_queue_;
   std::deque<int16_t> rssi_queue_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
+  std::vector<std::vector<uint8_t>> sent_data_;
   int16_t rssi_default_{-120};
   int send_count_;
 };
@@ -110,4 +113,10 @@ class MockRadioSX1262 : public MockRadio {
  public:
   const char *chip_name() const override { return "sx1262"; }
   uint16_t response_preamble() const override { return esphome::home_io_control::SX1262_RESPONSE_PREAMBLE; }
+  uint32_t exchange_wait_slice_ms() const override {
+    return esphome::home_io_control::SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS;
+  }
+  uint16_t discovery_hop_slice_ms(const esphome::home_io_control::TuningConfig &tuning) const override {
+    return tuning.sx1262_discovery_hop_slice_ms;
+  }
 };

@@ -58,7 +58,7 @@ class VentButtonMockHub : public IOHomeControlComponent {
     last_device_id_ = device_id;
     last_command_ = cmd;
     PendingOperation op{};
-    op.type = IOHomeControlComponent::PendingOperationType::DEVICE_COMMAND;
+    op.type = PendingOperationType::DEVICE_COMMAND;
     op.device_id = device_id;
     op.command = cmd;
     queued_operations_.push_back(op);
@@ -126,7 +126,7 @@ TEST(PlatformCoverVentButton, PressQueuesVentCommand) {
   button.trigger_press();
 
   ASSERT_FALSE(hub.queued_operations().empty()) << "pressing the vent button should queue a hub operation";
-  EXPECT_EQ(hub.queued_operations().back().type, IOHomeControlComponent::PendingOperationType::DEVICE_COMMAND)
+  EXPECT_EQ(hub.queued_operations().back().type, PendingOperationType::DEVICE_COMMAND)
       << "vent button should queue a DEVICE_COMMAND operation";
   EXPECT_EQ(hub.queued_operations().back().command, CoverCommand::VENT)
       << "vent button should queue CoverCommand::VENT";

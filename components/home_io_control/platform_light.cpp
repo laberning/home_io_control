@@ -13,17 +13,10 @@ static const char *const TAG = "home_io_control.light";
 
 void IOHomeLight::setup() {
   // Binary lights still need the shared device registry so discovery/status handling can find
-  // their node metadata the same way covers do.
-  this->parent_->add_device(this->device_id_, device_type_, subtype_, /*inverted=*/false);
-  this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
-
-  // Subscribe to controller updates so HA state follows radio-originated changes too.
-  this->parent_->register_device_callback(
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
-
-  // Ask for one delayed poll after boot, matching the cover platform behavior.
-  this->set_timeout("init_status", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
-                    [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+  // their node metadata the same way covers do; the delayed initial poll matches the cover path.
+  this->register_device_binding_(this, /*inverted=*/false, [this](const std::string &id, const IoDevice &dev) {
+    this->on_device_update_(id, dev);
+  });
 }
 
 light::LightTraits IOHomeLight::get_traits() {
@@ -46,12 +39,9 @@ void IOHomeLight::write_state(light::LightState *state) {
 }
 
 void IOHomeLight::on_device_update_(const std::string &id, const IoDevice &dev) {
-  if (id != this->device_id_ || this->state_ == nullptr)
-    return;
-
-  // Ignore unknown or in-flight positions. For binary devices we only want to publish a stable
-  // HA state once the device reports a settled status.
-  if (dev.position == UNKNOWN_POSITION || !dev.is_stopped)
+  // For binary devices we only publish a stable HA state once the device reports a settled
+  // status (shared filter), and only once the LightState object is available.
+  if (this->state_ == nullptr || !this->passes_binary_update_filter_(id, dev))
     return;
 
   // Binary endpoints report on/off via the shared 0-100 position field.
@@ -71,11 +61,7 @@ void IOHomeLight::on_device_update_(const std::string &id, const IoDevice &dev) 
 void IOHomeLight::dump_config() {
   ESP_LOGCONFIG(TAG, "IO-Homecontrol Binary Light");
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  if (this->status_poll_interval_ms_ == 0) {
-    ESP_LOGCONFIG(TAG, "  Status Poll Interval: default single settle poll");
-  } else {
-    ESP_LOGCONFIG(TAG, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
-  }
+  this->log_poll_interval_config_(TAG);
   ESP_LOGCONFIG(TAG, "  Status: experimental and untested");
 }
 

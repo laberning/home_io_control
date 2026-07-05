@@ -14,12 +14,9 @@ static const char *const TAG = "home_io_control.switch";
 void IOHomeSwitch::setup() {
   // Register and subscribe exactly like covers so the controller keeps one shared view of all
   // known IO-homecontrol devices, regardless of which ESPHome entity type wraps them.
-  this->parent_->add_device(this->device_id_, device_type_, subtype_, /*inverted=*/false);
-  this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
-  this->parent_->register_device_callback(
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
-  this->set_timeout("init_status", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
-                    [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+  this->register_device_binding_(this, /*inverted=*/false, [this](const std::string &id, const IoDevice &dev) {
+    this->on_device_update_(id, dev);
+  });
 }
 
 void IOHomeSwitch::write_state(bool state) {
@@ -29,11 +26,8 @@ void IOHomeSwitch::write_state(bool state) {
 }
 
 void IOHomeSwitch::on_device_update_(const std::string &id, const IoDevice &dev) {
-  if (id != this->device_id_)
-    return;
-
-  // Like the light entity, only publish a stable state once the device has stopped moving.
-  if (dev.position == UNKNOWN_POSITION || !dev.is_stopped)
+  // Only publish a stable state for this device once it has stopped moving with a known position.
+  if (!this->passes_binary_update_filter_(id, dev))
     return;
 
   // Binary endpoints share the same on/off encoding as the light wrapper.
@@ -43,11 +37,7 @@ void IOHomeSwitch::on_device_update_(const std::string &id, const IoDevice &dev)
 void IOHomeSwitch::dump_config() {
   LOG_SWITCH("", "IO-Homecontrol Binary Switch", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  if (this->status_poll_interval_ms_ == 0) {
-    ESP_LOGCONFIG(TAG, "  Status Poll Interval: default single settle poll");
-  } else {
-    ESP_LOGCONFIG(TAG, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
-  }
+  this->log_poll_interval_config_(TAG);
   ESP_LOGCONFIG(TAG, "  Status: experimental and untested");
 }
 

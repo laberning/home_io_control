@@ -46,13 +46,19 @@ class MockHubSwitch : public test::MockPlatformHubBase {
   std::deque<std::pair<std::string, bool>> queued_switch_ops_;
 };
 
+/// Exposes protected write_state(bool) for direct invocation in tests.
+class TestableSwitch : public IOHomeSwitch {
+ public:
+  using IOHomeSwitch::write_state;
+};
+
 // ========================================================================================
 // IOHomeSwitch: binary on/off via position mapping
 // ========================================================================================
 
 TEST(PlatformSwitch, WriteStateSendsOnOff) {
   MockHubSwitch hub;
-  IOHomeSwitch sw;
+  TestableSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
 

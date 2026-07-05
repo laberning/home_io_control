@@ -71,6 +71,14 @@ static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 
+/// SX1262-specific per-channel dwell while waiting for authenticated exchange responses.
+///
+/// A 50 ms dwell was short enough that the controller could hop away from the request channel
+/// just before the device emitted its post-auth reply. Using 90 ms keeps the SX1262 receiver on
+/// that channel long enough for the observed device turn-around after 0x3D, without inflating the
+/// overall 300/500 ms exchange windows for the rest of the protocol.
+static constexpr int32_t SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS = 90;
+
 // ============================================================================
 // SX1262 Radio Driver
 // ============================================================================
@@ -116,12 +124,18 @@ class RadioSX1262 : public RadioDriver {
   bool is_preamble_detected() override;
   /// @copydoc RadioDriver::response_preamble
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
-  /// @copydoc RadioDriver::set_rx_bandwidth
-  void set_rx_bandwidth(SX1262RxBandwidth bandwidth) override;
-  /// @copydoc RadioDriver::set_response_preamble
-  void set_response_preamble(uint16_t preamble) override { this->response_preamble_ = preamble; }
-  /// @copydoc RadioDriver::set_post_tx_settle_us
-  void set_post_tx_settle_us(uint16_t delay_us) override { this->post_tx_settle_us_ = delay_us; }
+  /// @copydoc RadioDriver::apply_tuning
+  void apply_tuning(const TuningConfig &tuning) override {
+    this->set_rx_bandwidth_(tuning.sx1262_rx_bandwidth);
+    this->set_response_preamble_(tuning.sx1262_response_preamble);
+    this->set_post_tx_settle_us_(tuning.sx1262_post_tx_settle_us);
+  }
+  /// @copydoc RadioDriver::exchange_wait_slice_ms
+  [[nodiscard]] uint32_t exchange_wait_slice_ms() const override { return SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS; }
+  /// @copydoc RadioDriver::discovery_hop_slice_ms
+  [[nodiscard]] uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const override {
+    return tuning.sx1262_discovery_hop_slice_ms;
+  }
   /// @copydoc RadioDriver::set_mode_rx
   void set_mode_rx() override;
   /// @copydoc RadioDriver::set_mode_standby
@@ -132,6 +146,17 @@ class RadioSX1262 : public RadioDriver {
   void dump_debug() override;
 
  protected:
+  // --- Tuning helpers (applied via apply_tuning) ---
+  /// Apply the RX bandwidth selector and rewrite the modulation parameters.
+  /// @param bandwidth Bandwidth selector enum.
+  void set_rx_bandwidth_(SX1262RxBandwidth bandwidth);
+  /// Set the preamble length used for response/continuation frames within an exchange.
+  /// @param preamble Preamble length in bytes.
+  void set_response_preamble_(uint16_t preamble) { this->response_preamble_ = preamble; }
+  /// Set the delay between TX completion and re-entering RX.
+  /// @param delay_us Delay in microseconds.
+  void set_post_tx_settle_us_(uint16_t delay_us) { this->post_tx_settle_us_ = delay_us; }
+
   // --- SPI communication (opcode‑based) ---
   /// Wait until BUSY pin is low before any SPI transaction.
   void wait_busy_();

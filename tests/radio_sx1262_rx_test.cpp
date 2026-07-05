@@ -20,6 +20,7 @@ using namespace esphome::home_io_control;
 class TestableRadioSX1262 : public RadioSX1262 {
  public:
   using RadioSX1262::RadioSX1262;
+  using RadioSX1262::uart_encode_packet;
 
   // Configure the sequence of IRQ status values returned by read_irq_status_raw().
   void set_irq_sequence(std::initializer_list<uint16_t> seq) {
@@ -262,7 +263,8 @@ TEST(RadioSX1262, UartEncodeDecodeRoundTrip) {
 
   // UART-encode
   uint8_t encoded[64] = {0};
-  uint8_t encoded_len = RadioSX1262::uart_encode_packet(frame_with_crc, frame_len + 2, encoded, sizeof(encoded));
+  uint8_t encoded_len =
+      TestableRadioSX1262::uart_encode_packet(frame_with_crc, frame_len + 2, encoded, sizeof(encoded));
   ASSERT_GT(encoded_len, 0u);
 
   // Decode and verify via find_uart_probe (which includes CRC validation)
@@ -285,7 +287,8 @@ TEST(RadioSX1262, UartProbeRejectsBitErrors) {
   frame_with_crc[frame_len + 1] = (crc >> 8) & 0xFF;
 
   uint8_t encoded[64] = {0};
-  uint8_t encoded_len = RadioSX1262::uart_encode_packet(frame_with_crc, frame_len + 2, encoded, sizeof(encoded));
+  uint8_t encoded_len =
+      TestableRadioSX1262::uart_encode_packet(frame_with_crc, frame_len + 2, encoded, sizeof(encoded));
   ASSERT_GT(encoded_len, 0u);
 
   // Flip a bit in the middle of the encoded stream (simulates demodulator error)
@@ -312,7 +315,7 @@ TEST(RadioSX1262, UartDecodeFixedStride) {
   // Let's just use uart_encode_packet for a single byte and verify decode.
   uint8_t input[] = {0xA5};
   uint8_t encoded[2] = {0};
-  uint8_t elen = RadioSX1262::uart_encode_packet(input, 1, encoded, sizeof(encoded));
+  uint8_t elen = TestableRadioSX1262::uart_encode_packet(input, 1, encoded, sizeof(encoded));
   ASSERT_GT(elen, 0u);
 
   uint8_t decoded[4] = {0};

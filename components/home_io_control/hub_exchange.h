@@ -4,10 +4,15 @@
 /// @brief Internal exchange-state model for hub-owned authenticated non‑pairing flows.
 /// @ingroup hioc_hub
 ///
-/// This module defines the state machines and context structures used for
+/// This module defines the progress-stage enums and context structures used for
 /// outbound authenticated exchanges (controller → device) and inbound authentication
 /// (device → controller). These are the building blocks that power commands like
 /// set_position, request_status, and handling unsolicited status‑update frames.
+///
+/// Note on the enums: ExchangeEngine's blocking helpers drive control flow through
+/// the decisions:: classifiers; the state enums below are written at each step but
+/// only read back by the exchange debug snapshot, so log lines can name the stage
+/// an exchange reached before failing.
 ///
 /// Exchange lifecycle (outbound):
 ///   1. Controller sends a command with START flag (e.g., CMD_EXECUTE, CMD_PRIVATE).
@@ -34,7 +39,10 @@ namespace home_io_control {
 
 namespace exchange {
 
-/// @brief State machine for an outbound authenticated exchange (non‑pairing).
+/// @brief Progress stages of an outbound authenticated exchange (non‑pairing).
+///
+/// Recorded for the exchange debug snapshot; never branched on. See the file
+/// header note for why this is a stage marker rather than a driving state machine.
 enum class OutboundExchangeState : uint8_t {
   IDLE,                 ///< No active exchange; idle state.
   TX_REQUEST,           ///< Request frame transmitted; awaiting first response from device.
@@ -46,7 +54,10 @@ enum class OutboundExchangeState : uint8_t {
   FAILED,               ///< Exchange failed (timeout, retries exhausted, or radio error).
 };
 
-/// @brief State machine for inbound authentication (device‑initiated commands).
+/// @brief Progress stages of inbound authentication (device‑initiated commands).
+///
+/// Recorded for the exchange debug snapshot; never branched on. See the file
+/// header note for why this is a stage marker rather than a driving state machine.
 enum class InboundAuthState : uint8_t {
   IDLE,                     ///< No inbound authentication in progress.
   TX_CHALLENGE,             ///< Challenge (0x3C) sent to device; awaiting 0x3D response.

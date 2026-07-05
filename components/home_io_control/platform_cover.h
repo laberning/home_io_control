@@ -19,14 +19,18 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/cover/cover.h"
-#include "hub_core.h"
+#include "platform_entity_base.h"
 
 namespace esphome {
 namespace home_io_control {
 
 /// @brief Cover entity representing an IO‑Homecontrol shutter/awning/blind.
 /// @ingroup hioc_platforms
-class IOHomeCover : public cover::Cover, public Component {
+///
+/// The device-binding setters, setup() registration ritual and poll-interval dump line come
+/// from DeviceBoundEntity; the richer position/tilt/movement mapping and the invert option
+/// stay here.
+class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEntity {
  public:
   IOHomeCover() = default;
   /// @brief Initialize the cover entity (register device, subscribe to updates, schedule initial status poll).
@@ -41,18 +45,6 @@ class IOHomeCover : public cover::Cover, public Component {
   /// @return CoverTraits configured for position, stop, and optional tilt.
   cover::CoverTraits get_traits() override;
 
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-  /// @brief Set the unique device ID (from YAML).
-  /// @param id Hexadecimal node ID string (e.g., "123ABC").
-  void set_device_id(const std::string &id) { this->device_id_ = id; }
-  /// @brief Set the declared device type (from YAML).
-  /// @param type Device type enum.
-  void set_device_type(DeviceType type) { this->device_type_ = type; }
-  /// @brief Set the declared device subtype (from YAML).
-  /// @param subtype Subtype value.
-  void set_subtype(uint8_t subtype) { this->subtype_ = subtype; }
   /// @brief Enable or disable position inversion.
   /// Some devices (e.g., horizontal awnings) report reversed open/close semantics.
   /// @param invert True to invert the mapping (HA 1.0 → IO 0, HA 0.0 → IO 100).
@@ -60,9 +52,6 @@ class IOHomeCover : public cover::Cover, public Component {
     this->invert_ = invert;
     this->invert_explicit_ = true;
   }
-  /// @brief Configure bounded follow-up polling while a state change is expected.
-  /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
-  void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
   /// @brief Query whether this device supports tilt (slat angle) control.
   /// @return true if the YAML‑declared device type is tilt‑capable.
   [[nodiscard]] bool supports_tilt() const;
@@ -85,11 +74,6 @@ class IOHomeCover : public cover::Cover, public Component {
   [[nodiscard]] cover::CoverOperation infer_operation_from_position_delta_(bool invert,
                                                                            float current_io_position) const;
 
-  IOHomeControlComponent *parent_{nullptr};
-  std::string device_id_;
-  DeviceType device_type_{DeviceType::UNKNOWN};
-  uint8_t subtype_{0};
-  uint32_t status_poll_interval_ms_{0};
   bool invert_{false};
   bool invert_explicit_{false};
   float last_io_position_{UNKNOWN_POSITION};

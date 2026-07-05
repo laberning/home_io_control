@@ -6,7 +6,7 @@ This page gives a contributor-oriented map of the Home IO Control component and 
 
 - \ref hioc_protocol "Protocol Layer": frame layout, command builders, cryptographic helpers, and shared protocol utilities.
 - \ref hioc_radio "Radio Driver Layer": the `RadioDriver` abstraction and the SX1276 / SX1262 implementations.
-- \ref hioc_hub "Controller Layer": setup, loop scheduling, authenticated exchanges, pairing, passive status handling, and queued operations.
+- \ref hioc_hub "Controller Layer": `IOHomeControlComponent` orchestrates setup and loop scheduling through six collaborator objects — `ExchangeEngine` (authenticated exchanges), `PairingEngine` (discovery and pairing), `ManagementActions` (rename-device), `DeviceRegistry` (device table and callbacks), `OperationQueue` (pending-operation coalescing), and `StatusPollPolicy` (per-device poll scheduling).
 - \ref hioc_entities "ESPHome Integration Layer": the runtime entities plus the Python schema/codegen modules that expose the component to ESPHome.
 
 ## Request Flow
@@ -27,7 +27,7 @@ Hub-level operations that should not become permanent entities are exposed throu
 
 1. The ESPHome node needs a normal `api:` block so the Home Assistant native API is available.
 2. Home Assistant triggers an action with a normal automation or script step such as `action: esphome.<node_name>_rename_device`.
-3. `IOHomeControlComponent` registers the descriptor directly with `api::APIServer`, then emits `esphome.home_io_control_action_result` so the automation can inspect success and verification details.
+3. `IOHomeControlComponent` registers the descriptor with `api::APIServer` through its `ManagementActions` collaborator, which then emits `esphome.home_io_control_action_result` so the automation can inspect success and verification details.
 
 Home IO Control enables the required native API compile-time flags internally, so user YAML only needs a normal `api:` block.
 
@@ -61,8 +61,14 @@ Replace `hioc_heltec_v2` with the normalized `esphome.name` of the ESPHome node 
 ## Main Source Anchors
 
 - Hub entry point: `IOHomeControlComponent` in [hub_core.h](../components/home_io_control/hub_core.h)
-- Exchange state model: [hub_exchange.h](../components/home_io_control/hub_exchange.h)
-- Pairing state model: [hub_pairing.h](../components/home_io_control/hub_pairing.h)
+- Authenticated exchange engine: [exchange_engine.h](../components/home_io_control/exchange_engine.h)
+- Pairing engine: [pairing_engine.h](../components/home_io_control/pairing_engine.h)
+- Exchange/auth state types: [hub_exchange.h](../components/home_io_control/hub_exchange.h)
+- Pairing state types: [hub_pairing.h](../components/home_io_control/hub_pairing.h)
+- Device registry: [device_registry.h](../components/home_io_control/device_registry.h)
+- Operation queue: [operation_queue.h](../components/home_io_control/operation_queue.h)
+- Status poll policy: [status_poll_policy.h](../components/home_io_control/status_poll_policy.h)
+- Management actions: [management_actions.h](../components/home_io_control/management_actions.h)
 - Radio abstraction: [radio_interface.h](../components/home_io_control/radio_interface.h)
 - Protocol frame model: [proto_frame.h](../components/home_io_control/proto_frame.h)
 - ESPHome hub schema: [__init__.py](../components/home_io_control/__init__.py)

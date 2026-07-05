@@ -12,18 +12,11 @@ namespace home_io_control {
 static const char *const TAG = "home_io_control.cover";
 
 void IOHomeCover::setup() {
-  // Register this device with the controller so it's included in the device map
+  // Covers compute their initial inversion from the explicit YAML override or the device-type
+  // default; the rest of the registration ritual is shared with the other entity types.
   const bool initial_invert = this->invert_explicit_ ? this->invert_ : default_inverted_for_type(this->device_type_);
-  this->parent_->add_device(this->device_id_, device_type_, subtype_, initial_invert);
-  this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
-
-  // Subscribe to status updates from the controller
-  this->parent_->register_device_callback(
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
-
-  // Request initial status after a short delay (give radio time to start hopping)
-  this->set_timeout("init_status", detail::INITIAL_STATUS_REQUEST_DELAY_MS,
-                    [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+  this->register_device_binding_(
+      this, initial_invert, [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
 }
 
 cover::CoverTraits IOHomeCover::get_traits() {
@@ -164,11 +157,7 @@ void IOHomeCover::dump_config() {
   LOG_COVER("", "IO-Homecontrol Cover", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Invert Position Override: %s", this->invert_explicit_ ? YESNO(this->invert_) : "AUTO");
-  if (this->status_poll_interval_ms_ == 0) {
-    ESP_LOGCONFIG(TAG, "  Status Poll Interval: default single settle poll");
-  } else {
-    ESP_LOGCONFIG(TAG, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
-  }
+  this->log_poll_interval_config_(TAG);
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt()));
 }
 

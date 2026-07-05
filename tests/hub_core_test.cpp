@@ -10,6 +10,7 @@
 #include <cstring>
 
 using namespace esphome::home_io_control;
+using test::TestableHubComponent;
 
 // ============================================================================
 // HubCore test suite
@@ -21,7 +22,7 @@ using namespace esphome::home_io_control;
 // ========================================================================================
 
 TEST(HubCore, DeviceAddAndLookup) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.set_node_id("C0FFEE");                               // 3 bytes
   comp.set_system_key("D1743493FA943845AC4350EEFF342934");  // 16 bytes
 
@@ -51,7 +52,7 @@ TEST(HubCore, DeviceAddAndLookup) {
 }
 
 TEST(HubCore, AddDeviceClearsUnknownType) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.node_id_[0] = 0xC0;
   comp.node_id_[1] = 0xFF;
   comp.node_id_[2] = 0xEE;
@@ -72,7 +73,7 @@ TEST(HubCore, AddDeviceClearsUnknownType) {
 }
 
 TEST(HubCore, AddDeviceStoresDeclaredMetadata) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.initialized_ = true;
   comp.radio_ = new MockRadio();
 
@@ -87,22 +88,21 @@ TEST(HubCore, AddDeviceStoresDeclaredMetadata) {
 }
 
 TEST(HubCore, SetDeviceStatusPollIntervalStoresValue) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.initialized_ = true;
   comp.radio_ = new MockRadio();
 
   comp.add_device("ABC123");
   comp.set_device_status_poll_interval("ABC123", 2500);
 
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->status_poll_interval_ms, 2500u) << "configured poll interval should be stored on the device record";
+  EXPECT_EQ(comp.poll_policy_.get_interval("ABC123"), 2500u)
+      << "configured poll interval should be stored in the poll policy";
 
   delete comp.radio_;
 }
 
 TEST(HubCore, LoopQueuesSingleFollowUpPollWithoutConfiguredInterval) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.initialized_ = true;
   comp.radio_ = new MockRadio();
 
@@ -110,21 +110,21 @@ TEST(HubCore, LoopQueuesSingleFollowUpPollWithoutConfiguredInterval) {
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   dev->type = DeviceType::HORIZONTAL_AWNING;
-  dev->next_update = esphome::millis();
+  comp.poll_policy_.set_next_update("ABC123", esphome::millis());
 
   comp.loop();
 
-  ASSERT_EQ(comp.pending_operations_.size(), 1u)
-      << "due no-interval settle polls should still be queued by the main loop";
-  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
-  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
-  EXPECT_EQ(dev->next_update, 0u) << "queued one-shot polls should clear their due timestamp";
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "due no-interval settle polls should still be queued by the main loop";
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.op_queue_.front().device_id, "ABC123");
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "queued one-shot polls should clear their due timestamp";
 
   delete comp.radio_;
 }
 
 TEST(HubCore, QueueOperations) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.node_id_[0] = 0xC0;
   comp.node_id_[1] = 0xFF;
   comp.node_id_[2] = 0xEE;
@@ -135,32 +135,28 @@ TEST(HubCore, QueueOperations) {
   comp.radio_ = new MockRadio();
 
   // Initially empty
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "pending operations should start empty";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "pending operations should start empty";
 
   // Queue a position command
   comp.queue_set_device_position("ABC123", 50);
-  EXPECT_EQ(comp.pending_operations_.size(), 1u) << "should have one pending operation after queue_set_device_position";
-  auto op = comp.pending_operations_.front();
-  EXPECT_EQ(op.type, IOHomeControlComponent::PendingOperationType::SET_POSITION)
-      << "operation type should be SET_POSITION";
+  EXPECT_EQ(comp.op_queue_.size(), 1u) << "should have one pending operation after queue_set_device_position";
+  auto op = comp.op_queue_.front();
+  EXPECT_EQ(op.type, PendingOperationType::SET_POSITION) << "operation type should be SET_POSITION";
   EXPECT_EQ(op.device_id, "ABC123") << "device ID should match queued device";
   EXPECT_EQ(op.position, 50u) << "position should be 50";
 
   // Queue a status request
   comp.queue_request_device_status("ABC123");
-  EXPECT_EQ(comp.pending_operations_.size(), 2u)
-      << "should have two pending operations after queue_request_device_status";
-  op = comp.pending_operations_.back();
-  EXPECT_EQ(op.type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS)
-      << "operation type should be REQUEST_STATUS";
+  EXPECT_EQ(comp.op_queue_.size(), 2u) << "should have two pending operations after queue_request_device_status";
+  op = comp.op_queue_.back();
+  EXPECT_EQ(op.type, PendingOperationType::REQUEST_STATUS) << "operation type should be REQUEST_STATUS";
   EXPECT_EQ(op.device_id, "ABC123") << "device ID should match queued device";
 
   // Dequeue in-place
   comp.process_pending_operation_();  // processes front
-  EXPECT_EQ(comp.pending_operations_.size(), 1u) << "should have one pending operation after processing first";
-  op = comp.pending_operations_.front();
-  EXPECT_EQ(op.type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS)
-      << "remaining operation should be REQUEST_STATUS";
+  EXPECT_EQ(comp.op_queue_.size(), 1u) << "should have one pending operation after processing first";
+  op = comp.op_queue_.front();
+  EXPECT_EQ(op.type, PendingOperationType::REQUEST_STATUS) << "remaining operation should be REQUEST_STATUS";
 
   delete comp.radio_;
 }
@@ -194,7 +190,7 @@ TEST(HubCore, FormatPositionHelper) {
 }
 
 TEST(HubCore, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.add_device("ABC123");
 
   IoFrame frame{};
@@ -216,7 +212,7 @@ TEST(HubCore, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
 }
 
 TEST(HubCore, StoppedFlagMismatchKeepsDeviceMoving) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.add_device("ABC123");
 
   IoFrame frame{};
@@ -246,6 +242,8 @@ namespace {
 class LBTTestableComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::transmit_frame_;
+  using IOHomeControlComponent::initialized_;
+  using IOHomeControlComponent::radio_;
 };
 
 IoFrame make_simple_frame() {
@@ -342,6 +340,13 @@ namespace {
 class RxTestableComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::process_received_packet_;
+  using IOHomeControlComponent::update_device_status_;
+  using IOHomeControlComponent::node_id_;
+  using IOHomeControlComponent::system_key_;
+  using IOHomeControlComponent::initialized_;
+  using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::op_queue_;
+  using IOHomeControlComponent::poll_policy_;
 };
 
 /// Build a RadioRxPacket from a constructed IoFrame.
@@ -394,7 +399,7 @@ TEST(HubCore, FilterExchangeInternal_ChallengeRequest) {
   comp.process_received_packet_(pkt);
 
   // Should be silently filtered — no pending operations, no timeout
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "0x3C should not trigger any operation";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "0x3C should not trigger any operation";
   EXPECT_TRUE(comp.last_timeout_name_.empty()) << "0x3C should not schedule a timeout";
 }
 
@@ -419,7 +424,7 @@ TEST(HubCore, FilterExchangeInternal_ChallengeResponse) {
   comp.process_received_packet_(pkt);
 
   // Should be silently filtered — no pending operations, no timeout
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "0x3D should not trigger any operation";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "0x3D should not trigger any operation";
   EXPECT_TRUE(comp.last_timeout_name_.empty()) << "0x3D should not schedule a timeout";
 }
 
@@ -448,15 +453,15 @@ TEST(HubCore, RemoteActivity_TriggersDelayedPoll) {
   comp.process_received_packet_(pkt);
 
   // Should schedule the standard remote-activity timeout for the device.
-  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
+  EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
   ASSERT_TRUE(comp.last_timeout_callback_) << "callback should be set";
 
   // Invoke the callback — should queue a status request
   comp.last_timeout_callback_();
-  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "callback should queue one operation";
-  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
-  EXPECT_EQ(comp.pending_operations_.front().device_id, "054E17");
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "callback should queue one operation";
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.op_queue_.front().device_id, "054E17");
 }
 
 TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsSingleSettlePoll) {
@@ -477,9 +482,8 @@ TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsSingleSettlePoll) {
   ASSERT_GT(trigger_pkt.len, 0) << "frame should serialize";
   comp.process_received_packet_(trigger_pkt);
 
-  auto *dev = comp.get_device("054E17");
-  ASSERT_NE(dev, nullptr);
-  EXPECT_TRUE(dev->single_follow_up_poll_pending)
+  ASSERT_NE(comp.get_device("054E17"), nullptr);
+  EXPECT_TRUE(comp.poll_policy_.is_one_shot_pending("054E17"))
       << "remote activity without an explicit interval should arm the legacy one-shot settle poll";
 
   IoFrame moving{};
@@ -492,9 +496,9 @@ TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsSingleSettlePoll) {
 
   comp.update_device_status_(moving);
 
-  EXPECT_NE(dev->next_update, 0u)
+  EXPECT_NE(comp.poll_policy_.get_next_update("054E17"), 0u)
       << "the first moving poll response after remote activity should schedule one settle follow-up";
-  EXPECT_FALSE(dev->single_follow_up_poll_pending)
+  EXPECT_FALSE(comp.poll_policy_.is_one_shot_pending("054E17"))
       << "the legacy one-shot settle poll flag should be consumed once the follow-up is scheduled";
 }
 
@@ -519,7 +523,7 @@ TEST(HubCore, RemoteActivity_UnregisteredDevice_NoTrigger) {
 
   // Should NOT schedule a timeout — falls through to unhandled_cmd
   EXPECT_TRUE(comp.last_timeout_name_.empty()) << "unregistered dst should not trigger timeout";
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "should not queue any operation";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "should not queue any operation";
 }
 
 TEST(HubCore, RemoteActivity_OwnEcho_NoTrigger) {
@@ -543,7 +547,7 @@ TEST(HubCore, RemoteActivity_OwnEcho_NoTrigger) {
 
   // Should NOT schedule a timeout — it's our own frame
   EXPECT_TRUE(comp.last_timeout_name_.empty()) << "own echo should not trigger timeout";
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "should not queue any operation";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "should not queue any operation";
 }
 
 TEST(HubCore, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
@@ -570,16 +574,16 @@ TEST(HubCore, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
   comp.process_received_packet_(pkt);
 
   // Should schedule the standard remote-activity timeout for the linked device.
-  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
+  EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos)
       << "timeout name should contain linked device ID";
   ASSERT_TRUE(comp.last_timeout_callback_) << "callback should be set";
 
   // Invoke the callback — should queue a status request
   comp.last_timeout_callback_();
-  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "callback should queue one operation";
-  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
-  EXPECT_EQ(comp.pending_operations_.front().device_id, "054E17");
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "callback should queue one operation";
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.op_queue_.front().device_id, "054E17");
 }
 
 TEST(HubCore, LinkedRemotes_MultipleRemotesOneDevice) {
@@ -605,7 +609,7 @@ TEST(HubCore, LinkedRemotes_MultipleRemotesOneDevice) {
 
   comp.process_received_packet_(pkt);
 
-  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
+  EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
 }
 
@@ -635,7 +639,7 @@ TEST(HubCore, LinkedRemotes_OneRemoteMultipleDevices) {
 
   // The last set_timeout call wins in our stub, but both should have been called.
   // Verify at least one timeout was scheduled with 2s delay.
-  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
+  EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
 }
 
 // ============================================================================
@@ -646,7 +650,7 @@ TEST(HubCore, StatusUpdateFrameHandling) {
   // The CMD_STATUS_UPDATE path through process_received_packet_ triggers
   // authentication (authenticate_request_) which requires a challenge response
   // from the mock radio. Test update_device_status_ directly instead.
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.add_device("054E17");
 
   IoFrame f{};
@@ -668,7 +672,7 @@ TEST(HubCore, StatusUpdateFrameHandling) {
 }
 
 TEST(HubCore, StatusUpdateMovingFrameHandling) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.add_device("054E17");
 
   IoFrame f{};
@@ -691,7 +695,7 @@ TEST(HubCore, StatusUpdateMovingFrameHandling) {
 }
 
 TEST(HubCore, GetInfo2RespUpdatesDeviceType) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.add_device("054E17");
 
   IoFrame f{};
@@ -715,7 +719,7 @@ TEST(HubCore, GetInfo2RespUpdatesDeviceType) {
 }
 
 TEST(HubCore, GetInfo2RespDoesNotOverwriteDeclaredType) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.add_device("054E17", DeviceType::AWNING, 7, false);
 
   IoFrame f{};
@@ -737,7 +741,7 @@ TEST(HubCore, GetInfo2RespDoesNotOverwriteDeclaredType) {
 }
 
 TEST(HubCore, ErrorRespDoesNotMutateTrackedPosition) {
-  IOHomeControlComponent comp;
+  TestableHubComponent comp;
   comp.add_device("054E17");
 
   auto *dev = comp.get_device("054E17");
@@ -782,8 +786,7 @@ TEST(HubCore, OwnControllerStatusUpdateSchedulesPoll) {
   comp.process_received_packet_(pkt);
 
   // Remote commanding our device → schedule 2s poll
-  EXPECT_EQ(comp.last_timeout_ms_, detail::REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS)
-      << "remote activity should schedule 2s poll";
+  EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "remote activity should schedule 2s poll";
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should reference our device";
 }
 

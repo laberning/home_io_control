@@ -23,30 +23,9 @@ namespace detail {
 // Shared constants
 // ============================================================================
 
-inline constexpr const char *TAG = "home_io_control";         ///< Shared log tag for hub-level messages.
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MS = 5000;  ///< First retry after a silent status-poll failure.
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP2_MS =
-    15000;  ///< Second retry after a silent status-poll failure.
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP3_MS =
-    30000;  ///< Third retry after a silent status-poll failure.
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP4_MS =
-    60000;  ///< Fourth retry after a silent status-poll failure.
-inline constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MAX_MS =
-    300000;  ///< Steady-state backoff for repeated silent status-poll failures.
-inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MS =
-    30000;  ///< First retry after a challenge-seen auth-like failure.
-inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS =
-    120000;  ///< Second retry after a challenge-seen auth-like failure.
-inline constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS =
-    300000;  ///< Steady-state backoff after repeated auth-like failures.
-inline constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS =
-    5000;  ///< Delay before the first post-boot status request from an entity.
-inline constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS =
-    2000;  ///< Delay before polling after overheard remote traffic.
+inline constexpr const char *TAG = "home_io_control";  ///< Shared log tag for hub-level messages.
 inline constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS =
     2000;  ///< Suppress duplicate 1W log/poll for same remote+cmd within this window.
-inline constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS =
-    600000;  ///< Hard stop for follow-up polling after a command or remote activity.
 inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Discovery wait window after sending 0x28.
 inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;             ///< Retry discovery TX up to this many times.
 inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
@@ -54,28 +33,6 @@ inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for
 inline constexpr uint32_t PAIRING_KEY_CONFIRM_SLICE_MS = 150;  ///< RX slice during key confirm wait (hop each slice).
 inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
     50.0F;  ///< Shared 0-100 cutoff: values below this mean binary "on".
-
-// Binary on/off entities reuse the proven position transport encoding.
-inline constexpr uint8_t BINARY_ENTITY_ON_POSITION = 0;
-inline constexpr uint8_t BINARY_ENTITY_OFF_POSITION = 100;
-
-/// @brief Clear all bounded follow-up polling state for a device.
-/// @param dev Device record to reset.
-inline void clear_status_poll_tracking(IoDevice &dev) {
-  dev.single_follow_up_poll_pending = false;
-  dev.next_update = 0;
-  dev.poll_deadline = 0;
-  dev.status_poll_failures = 0;
-  dev.auth_poll_failures = 0;
-}
-
-/// @brief Check whether a device remains inside its bounded follow-up polling window.
-/// @param dev Device record.
-/// @param now Current millis() timestamp.
-/// @return true when repeated polling may continue.
-inline bool status_poll_tracking_active(const IoDevice &dev, uint32_t now) {
-  return dev.status_poll_interval_ms != 0 && dev.poll_deadline != 0 && now <= dev.poll_deadline;
-}
 
 // ============================================================================
 // Capability and entity-profile helpers
@@ -124,36 +81,6 @@ inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t p
 /// @return true only if device type is known to support tilt.
 inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
   return dev.type != DeviceType::UNKNOWN && device_supports_tilt(dev.type);
-}
-
-/// @brief Compute the next background status-poll retry delay after a failed exchange.
-///
-/// Plain silence is treated as a soft reachability problem and ramps up gradually so sleeping
-/// or temporarily busy devices are retried soon. Exchanges that reached the 0x3C challenge but
-/// never completed are much more likely to represent an invalid system key or pairing mismatch,
-/// so they back off more aggressively to avoid repeated 0x3D HMAC traffic.
-///
-/// @param consecutive_failures 1-based count of consecutive failures in the current failure class.
-/// @param auth_like_failure True when the failed exchange saw a 0x3C challenge.
-/// @return Delay in milliseconds before the next automatic status poll.
-inline uint32_t status_poll_retry_delay_ms(uint8_t consecutive_failures, bool auth_like_failure) {
-  if (auth_like_failure) {
-    if (consecutive_failures <= 1)
-      return STATUS_AUTH_RETRY_AFTER_FAIL_MS;
-    if (consecutive_failures == 2)
-      return STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS;
-    return STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS;
-  }
-
-  if (consecutive_failures <= 1)
-    return STATUS_RETRY_AFTER_FAIL_MS;
-  if (consecutive_failures == 2)
-    return STATUS_RETRY_AFTER_FAIL_STEP2_MS;
-  if (consecutive_failures == 3)
-    return STATUS_RETRY_AFTER_FAIL_STEP3_MS;
-  if (consecutive_failures == 4)
-    return STATUS_RETRY_AFTER_FAIL_STEP4_MS;
-  return STATUS_RETRY_AFTER_FAIL_MAX_MS;
 }
 
 // ============================================================================

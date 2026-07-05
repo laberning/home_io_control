@@ -2,6 +2,7 @@
 #include "hub_core.h"
 #include "proto_frame.h"
 #include "proto_commands.h"
+#include "proto_crypto.h"
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -70,10 +71,15 @@ TEST(Exchange, InboundAuthStateTransitions) {
 
 namespace {
 
-// --- Testable component exposing protected send_and_receive_ -----------------
+// --- Testable component exposing protected exchange internals -----------------
 class TestableComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::send_and_receive_;
+  using IOHomeControlComponent::authenticate_request_;
+  using IOHomeControlComponent::initialized_;
+  using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::node_id_;
+  using IOHomeControlComponent::system_key_;
 };
 
 // --- Frame builders ---------------------------------------------------------
@@ -511,4 +517,254 @@ TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
       << "initial request (START) should use LONG_PREAMBLE";
   EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, SX1262_RESPONSE_PREAMBLE)
       << "auth response on SX1262 should use SX1262_RESPONSE_PREAMBLE";
+}
+
+// ============================================================================
+// Step 11a — pinning tests: verify exchange HMAC content, retry exhaustion,
+// unrelated-frame filtering during auth wait, and inbound authenticate_request_.
+// These tests must pass before and after the ExchangeEngine extraction.
+// ============================================================================
+
+namespace {
+
+/// @brief Mock radio that auto-responds to outbound 0x3C with a 0x3D built
+/// from a captured request frame, letting tests verify inbound auth without
+/// knowing the RNG-generated challenge in advance.
+class RespondOnChallengeMockRadio : public MockRadio {
+ public:
+  /// Arm the responder. On the next 0x3C transmitted by the hub, it will
+  /// build a 0x3D using @p system_key and queue it. If @p valid is false the
+  /// HMAC bytes are intentionally wrong (to exercise rejection).
+  void arm(const IoFrame &request, const uint8_t *system_key, bool valid) {
+    request_ = request;
+    system_key_ = system_key;
+    valid_ = valid;
+    armed_ = true;
+  }
+
+  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx) override {
+    bool result = MockRadio::send_packet(data, len, tx);
+    if (!armed_)
+      return result;
+    IoFrame frame;
+    if (!parse(data, len, frame) || frame.cmd != CMD_CHALLENGE_REQ)
+      return result;
+    armed_ = false;
+
+    // Build a 0x3D response: src=device, dst=controller (reverse of the 0x3C).
+    uint8_t hmac[HMAC_SIZE];
+    if (valid_) {
+      uint8_t frame_data[FRAME_MAX_SIZE];
+      frame_data[0] = request_.cmd;
+      memcpy(frame_data + 1, request_.data, request_.data_len);
+      // frame.data holds the 6 challenge bytes the hub put in its 0x3C.
+      crypto::create_hmac(frame_data, request_.data_len + 1, frame.data, system_key_, hmac);
+    } else {
+      memset(hmac, 0xAB, HMAC_SIZE);
+    }
+    IoFrame resp;
+    init_frame(resp);
+    set_dst(resp, frame.src);  // hub's node_id → controller is dst
+    set_src(resp, frame.dst);  // device is src
+    set_cmd(resp, CMD_CHALLENGE_RESP, hmac, HMAC_SIZE);
+
+    uint8_t raw[RADIO_PACKET_BUFFER_SIZE];
+    uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+    RadioRxPacket pkt{};
+    pkt.len = raw_len;
+    memcpy(pkt.data, raw, raw_len);
+    queue_rx(pkt);
+    return result;
+  }
+
+ private:
+  IoFrame request_{};
+  const uint8_t *system_key_{nullptr};
+  bool valid_{false};
+  bool armed_{false};
+};
+
+/// Build a CMD_STATUS_UPDATE frame arriving from a device (src=device, dst=controller).
+/// Used to exercise authenticate_request_() without going through process_received_packet_().
+static IoFrame build_status_update_from_device(const uint8_t device_id[NODE_ID_SIZE],
+                                               const uint8_t controller_id[NODE_ID_SIZE]) {
+  IoFrame f{};
+  init_frame(f, true, true, false, false);  // 2W, start
+  set_dst(f, controller_id);
+  set_src(f, device_id);
+  uint8_t payload[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+  return f;
+}
+
+}  // namespace
+
+// --- Pinning test 1: HMAC content of the transmitted 0x3D is correct ---------
+
+TEST(Exchange, SendAndReceive_ChallengeResponseCarriesCorrectHmac) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+
+  // Challenge from device with known bytes.
+  uint8_t chal_data[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  uint8_t len_chal = serialize(challenge, raw_chal, sizeof(raw_chal));
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = len_chal;
+  memcpy(chal_pkt.data, raw_chal, len_chal);
+  radio.queue_rx(chal_pkt);
+
+  // Final response after challenge.
+  IoFrame final_resp = build_status_response(test::DST_ID, comp.node_id_);
+  uint8_t raw_final[64];
+  uint8_t len_final = serialize(final_resp, raw_final, sizeof(raw_final));
+  RadioRxPacket final_pkt{};
+  final_pkt.len = len_final;
+  memcpy(final_pkt.data, raw_final, len_final);
+  radio.queue_rx(final_pkt);
+
+  IoFrame response{};
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  ASSERT_TRUE(ok) << "challenge+response exchange should succeed";
+
+  // TX 0 = initial request, TX 1 = 0x3D auth response.
+  ASSERT_GE(radio.get_sent_data().size(), 2u) << "at least request + auth response should have been transmitted";
+  const auto &auth_raw = radio.get_sent_data()[1];
+
+  IoFrame auth_resp{};
+  ASSERT_TRUE(parse(auth_raw.data(), static_cast<uint8_t>(auth_raw.size()), auth_resp))
+      << "auth response frame must parse cleanly";
+  EXPECT_EQ(auth_resp.cmd, CMD_CHALLENGE_RESP) << "transmitted frame must be a 0x3D challenge response";
+  ASSERT_EQ(auth_resp.data_len, HMAC_SIZE) << "0x3D payload must be exactly HMAC_SIZE bytes";
+
+  // Recompute expected HMAC: [request.cmd, request.data...] + challenge + system_key.
+  uint8_t frame_data[FRAME_MAX_SIZE];
+  frame_data[0] = request.cmd;
+  memcpy(frame_data + 1, request.data, request.data_len);
+  uint8_t expected_hmac[HMAC_SIZE];
+  ASSERT_TRUE(crypto::create_hmac(frame_data, request.data_len + 1, chal_data, test::TEST_SYSTEM_KEY, expected_hmac));
+  EXPECT_EQ(memcmp(auth_resp.data, expected_hmac, HMAC_SIZE), 0)
+      << "transmitted HMAC in 0x3D must match create_hmac([cmd+payload], challenge, system_key)";
+}
+
+// --- Pinning test 2: retry exhaustion when TX succeeds but no response -------
+
+TEST(Exchange, SendAndReceive_RetryExhaustion_NoResponse) {
+  // TX always succeeds (no queued results → MockRadio defaults to true),
+  // but no RX packets are queued so wait_for_first_response_ times out each try.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute(request, comp.node_id_, test::DST_ID, false, 50);
+
+  IoFrame response{};
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_FALSE(ok) << "exchange with no device response should fail after exhausting all retries";
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
+      << "should attempt exactly EXCHANGE_RETRY_COUNT transmissions before giving up";
+}
+
+// --- Pinning test 3: unrelated frame ignored during the auth-wait window -----
+
+TEST(Exchange, SendAndReceive_UnrelatedFrameIgnoredDuringFinalWait) {
+  // After sending the 0x3D, an unrelated frame from a foreign device arrives
+  // before the legitimate final response. The exchange should ignore it and
+  // ultimately succeed when the correct frame arrives.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+
+  // 1. Challenge from the correct device.
+  uint8_t chal_data[6] = {0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x01};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  uint8_t len_chal = serialize(challenge, raw_chal, sizeof(raw_chal));
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = len_chal;
+  memcpy(chal_pkt.data, raw_chal, len_chal);
+  radio.queue_rx(chal_pkt);
+
+  // 2. Unrelated frame (wrong src) that arrives during the final-response wait.
+  IoFrame noise = build_status_response(test::FOREIGN_ID, comp.node_id_);
+  uint8_t raw_noise[64];
+  uint8_t len_noise = serialize(noise, raw_noise, sizeof(raw_noise));
+  RadioRxPacket noise_pkt{};
+  noise_pkt.len = len_noise;
+  memcpy(noise_pkt.data, raw_noise, len_noise);
+  radio.queue_rx(noise_pkt);
+
+  // 3. Correct final response from the actual device.
+  IoFrame final_resp = build_status_response(test::DST_ID, comp.node_id_);
+  uint8_t raw_final[64];
+  uint8_t len_final = serialize(final_resp, raw_final, sizeof(raw_final));
+  RadioRxPacket final_pkt{};
+  final_pkt.len = len_final;
+  memcpy(final_pkt.data, raw_final, len_final);
+  radio.queue_rx(final_pkt);
+
+  IoFrame response{};
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_TRUE(ok) << "unrelated frames in the auth-wait window must be ignored; exchange should still succeed";
+  EXPECT_EQ(response.cmd, CMD_PRIVATE_RESP) << "final accepted response must be the legitimate device reply";
+  EXPECT_EQ(memcmp(response.src, test::DST_ID, NODE_ID_SIZE), 0)
+      << "accepted response must originate from the correct device";
+}
+
+// --- Pinning test 4: inbound authenticate_request_ with valid HMAC -----------
+
+TEST(Exchange, AuthenticateRequest_ValidHmacAccepted) {
+  // Device sends a CMD_STATUS_UPDATE. Hub challenges with 0x3C; the mock radio
+  // intercepts the 0x3C, computes the correct HMAC, and queues the 0x3D reply.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  RespondOnChallengeMockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame status_update = build_status_update_from_device(test::DST_ID, comp.node_id_);
+  radio.arm(status_update, test::TEST_SYSTEM_KEY, /*valid=*/true);
+
+  bool ok = comp.authenticate_request_(status_update, FREQ_CH2);
+
+  EXPECT_TRUE(ok) << "authenticate_request_ with correct HMAC must return true";
+}
+
+// --- Pinning test 5: inbound authenticate_request_ rejects wrong HMAC --------
+
+TEST(Exchange, AuthenticateRequest_InvalidHmacRejected) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  RespondOnChallengeMockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame status_update = build_status_update_from_device(test::DST_ID, comp.node_id_);
+  radio.arm(status_update, test::TEST_SYSTEM_KEY, /*valid=*/false);
+
+  bool ok = comp.authenticate_request_(status_update, FREQ_CH2);
+
+  EXPECT_FALSE(ok) << "authenticate_request_ with wrong HMAC must return false";
 }

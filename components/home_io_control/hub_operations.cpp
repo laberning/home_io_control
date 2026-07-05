@@ -23,62 +23,6 @@ namespace home_io_control {
 
 namespace {
 
-/// @brief Apply adaptive backoff after a failed background status poll.
-///
-/// The backoff is per-device and per-failure-class. Plain timeouts ramp up gradually, while
-/// auth-shaped failures ramp up faster because they already prove the device answered with 0x3C
-/// and we are likely just burning airtime with repeated 0x3D responses.
-///
-/// @param dev Device record to update.
-/// @param auth_like_failure True if the failed exchange saw a challenge request.
-/// @return Delay in milliseconds until the next automatic poll.
-uint32_t apply_status_poll_failure_backoff(IoDevice &dev, bool auth_like_failure) {
-  if (auth_like_failure) {
-    dev.status_poll_failures = 0;
-    if (dev.auth_poll_failures < UINT8_MAX)
-      dev.auth_poll_failures++;
-    return detail::status_poll_retry_delay_ms(dev.auth_poll_failures, true);
-  }
-
-  dev.auth_poll_failures = 0;
-  if (dev.status_poll_failures < UINT8_MAX)
-    dev.status_poll_failures++;
-  return detail::status_poll_retry_delay_ms(dev.status_poll_failures, false);
-}
-
-/// @brief Clear background status-poll failure streaks after a successful reply.
-/// @param dev Device record to reset.
-void clear_status_poll_failure_backoff(IoDevice &dev) {
-  dev.status_poll_failures = 0;
-  dev.auth_poll_failures = 0;
-}
-
-/// @brief Apply tracked-poll failure bookkeeping after an explicit exchange failure.
-/// @param component Owning hub component.
-/// @param device_id Target device ID.
-/// @param retry_after_fail_ms Non-zero only for tracked background status polling.
-/// @param auth_like_failure True when the failed exchange saw an auth challenge.
-void handle_failed_exchange(IOHomeControlComponent *component, const std::string &device_id,
-                            uint32_t retry_after_fail_ms, bool auth_like_failure) {
-  if (retry_after_fail_ms == 0)
-    return;
-
-  if (auto *dev = component->get_device(device_id); dev != nullptr) {
-    const uint32_t backoff_ms = apply_status_poll_failure_backoff(*dev, auth_like_failure);
-    uint32_t const now = millis();
-    if (detail::status_poll_tracking_active(*dev, now) && now + backoff_ms <= dev->poll_deadline) {
-      dev->next_update = now + backoff_ms;
-      ESP_LOGD(detail::TAG,
-               "Background status poll backoff for device %s: delay=%u ms auth_like=%s status_failures=%u "
-               "auth_failures=%u",
-               device_id.c_str(), backoff_ms, YESNO(auth_like_failure), dev->status_poll_failures,
-               dev->auth_poll_failures);
-    } else {
-      detail::clear_status_poll_tracking(*dev);
-    }
-  }
-}
-
 /// @brief Return the human-readable verb for a position-style command.
 /// @param dev Device receiving the command.
 /// @param position Requested execute position.
@@ -90,7 +34,7 @@ const char *position_command_action(const IoDevice &dev, uint8_t position) {
   if (!detail::is_binary_entity_position(position))
     return "set position";
 
-  bool const active_state = position == detail::BINARY_ENTITY_ON_POSITION;
+  bool const active_state = position == BINARY_ENTITY_ON_POSITION;
   switch (device_capability_class(dev.type)) {
     case DeviceCapabilityClass::LIGHT:
     case DeviceCapabilityClass::SWITCH:
@@ -114,36 +58,6 @@ const char *position_rejection_profile(uint8_t position) {
   return detail::is_binary_entity_position(position) ? "cover_position or binary_on_off" : "cover_position";
 }
 
-/// @brief Update device poll-tracking state before an execute-position request is sent.
-/// @param dev Device record to update.
-/// @param position Requested execute position.
-/// @return true when active tracked polling should be started immediately by the caller.
-bool prepare_position_poll_tracking(IoDevice &dev, uint8_t position) {
-  if (position == POS_STOP) {
-    detail::clear_status_poll_tracking(dev);
-    return false;
-  }
-
-  dev.single_follow_up_poll_pending = dev.status_poll_interval_ms == 0;
-  return true;
-}
-
-/// @brief Roll back tracked polling after a failed execute-position request.
-/// @param dev Device record to update.
-/// @param position Requested execute position.
-void rollback_position_poll_tracking(IoDevice &dev, uint8_t position) {
-  if (position != POS_STOP)
-    detail::clear_status_poll_tracking(dev);
-}
-
-/// @brief Decide whether post-success tracked polling should be scheduled.
-/// @param dev Device record to update.
-/// @param position Requested execute position.
-/// @return true when the caller should arm tracked polling after a successful request.
-bool should_finalize_position_poll_tracking(const IoDevice &dev, uint8_t position) {
-  return position != POS_STOP && dev.status_poll_interval_ms != 0 && dev.next_update == 0;
-}
-
 }  // namespace
 
 // Execute an authenticated request on the standard command channel and, on success, feed the
@@ -153,11 +67,13 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
                                                          bool warn_on_no_response, uint32_t retry_after_fail_ms) {
   IoFrame response;
   if (!this->send_and_receive_(request, response, FREQ_CH2)) {
-    handle_failed_exchange(this, device_id, retry_after_fail_ms, this->last_exchange_debug_.saw_challenge);
+    const auto &dbg = this->exchange_engine_.get_debug();
+    if (retry_after_fail_ms != 0)
+      this->schedule_background_poll_backoff_(device_id, dbg.saw_challenge);
     this->log_exchange_debug_(device_id.c_str());
     if (warn_on_no_response) {
       ESP_LOGW(detail::TAG, "Command 0x%02X failed for device %s: no valid response (stage=%s tries=%u)", request.cmd,
-               device_id.c_str(), this->last_exchange_debug_.stage, this->last_exchange_debug_.tries);
+               device_id.c_str(), dbg.stage, dbg.tries);
     }
     return false;
   }
@@ -168,14 +84,13 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
     } else {
       detail::log_command_result(device_id, response.data[0], request.cmd, true);
     }
-    handle_failed_exchange(this, device_id, retry_after_fail_ms, this->last_exchange_debug_.saw_challenge);
+    if (retry_after_fail_ms != 0)
+      this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
 
-  if (retry_after_fail_ms != 0) {
-    if (auto *dev = this->get_device(device_id); dev != nullptr)
-      clear_status_poll_failure_backoff(*dev);
-  }
+  if (retry_after_fail_ms != 0)
+    this->poll_policy_.clear_failure_streaks(device_id);
 
   this->update_device_status_(response);
   return true;
@@ -196,24 +111,31 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
     return false;
   }
 
-  if (prepare_position_poll_tracking(*dev, position))
-    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  if (position == POS_STOP) {
+    this->poll_policy_.clear(device_id);
+  } else {
+    this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
+    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
+  }
 
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", action, device_id.c_str(),
            device_operation_profile_name(dev->type));
 
   IoFrame request;
   if (!create_execute(request, this->node_id_, dev->node_id, true, position)) {
-    rollback_position_poll_tracking(*dev, position);
+    if (position != POS_STOP)
+      this->poll_policy_.clear(device_id);
     return false;
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
-    rollback_position_poll_tracking(*dev, position);
+    if (position != POS_STOP)
+      this->poll_policy_.clear(device_id);
     return false;
   }
-  if (should_finalize_position_poll_tracking(*dev, position))
-    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  if (position != POS_STOP && this->poll_policy_.get_interval(device_id) != 0 &&
+      this->poll_policy_.get_next_update(device_id) == 0)
+    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
   return true;
 }
 
@@ -229,8 +151,8 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
 
   // STOP does not initiate movement tracking; FAVORITE and VENT do.
   if (cmd != CoverCommand::STOP) {
-    dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
-    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+    this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
+    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
   }
 
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", cover_command_name(cmd), device_id.c_str(),
@@ -239,17 +161,18 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
   IoFrame request;
   if (!create_execute_command(request, this->node_id_, dev->node_id, true, cmd)) {
     if (cmd != CoverCommand::STOP)
-      detail::clear_status_poll_tracking(*dev);
+      this->poll_policy_.clear(device_id);
     return false;
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
     if (cmd != CoverCommand::STOP)
-      detail::clear_status_poll_tracking(*dev);
+      this->poll_policy_.clear(device_id);
     return false;
   }
-  if (cmd != CoverCommand::STOP && dev->status_poll_interval_ms != 0 && dev->next_update == 0)
-    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  if (cmd != CoverCommand::STOP && this->poll_policy_.get_interval(device_id) != 0 &&
+      this->poll_policy_.get_next_update(device_id) == 0)
+    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
   return true;
 }
 
@@ -263,24 +186,24 @@ bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8
     return false;
   }
 
-  dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
-  this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
+  this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending tilt=%u%% to device %s (profile=%s)", tilt_percent, device_id.c_str(),
            device_operation_profile_name(dev->type));
 
   IoFrame request;
   if (!create_execute_tilt(request, this->node_id_, dev->node_id, true, tilt_percent)) {
-    detail::clear_status_poll_tracking(*dev);
+    this->poll_policy_.clear(device_id);
     return false;
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
-    detail::clear_status_poll_tracking(*dev);
+    this->poll_policy_.clear(device_id);
     return false;
   }
-  if (dev->status_poll_interval_ms != 0 && dev->next_update == 0)
-    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  if (this->poll_policy_.get_interval(device_id) != 0 && this->poll_policy_.get_next_update(device_id) == 0)
+    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
   return true;
 }
 
@@ -295,24 +218,24 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
     return false;
   }
 
-  dev->single_follow_up_poll_pending = dev->status_poll_interval_ms == 0;
-  this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
+  this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending position=%u%% tilt=%u%% to device %s (profile=%s)", position, tilt_percent,
            device_id.c_str(), device_operation_profile_name(dev->type));
 
   IoFrame request;
   if (!create_execute_position_and_tilt(request, this->node_id_, dev->node_id, true, position, tilt_percent)) {
-    detail::clear_status_poll_tracking(*dev);
+    this->poll_policy_.clear(device_id);
     return false;
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
-    detail::clear_status_poll_tracking(*dev);
+    this->poll_policy_.clear(device_id);
     return false;
   }
-  if (dev->status_poll_interval_ms != 0 && dev->next_update == 0)
-    this->begin_status_poll_tracking_(device_id, dev->status_poll_interval_ms);
+  if (this->poll_policy_.get_interval(device_id) != 0 && this->poll_policy_.get_next_update(device_id) == 0)
+    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
   return true;
 }
 
@@ -335,7 +258,7 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   if (!request_ok)
     return false;
   uint32_t const retry_after_fail_ms =
-      detail::status_poll_tracking_active(*dev, millis()) ? detail::STATUS_RETRY_AFTER_FAIL_MS : 0;
+      this->poll_policy_.is_tracking_active(device_id, millis()) ? STATUS_RETRY_AFTER_FAIL_MS : 0;
   return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms);
 }
 
@@ -362,8 +285,7 @@ bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool 
 
   // Light entities are binary-only for now, so they intentionally reuse the controller's
   // existing execute path with the proven on/off position encoding.
-  return this->set_device_position(device_id,
-                                   on ? detail::BINARY_ENTITY_ON_POSITION : detail::BINARY_ENTITY_OFF_POSITION);
+  return this->set_device_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
 }
 
 bool IOHomeControlComponent::set_switch_state(const std::string &device_id, bool on) {
@@ -377,8 +299,7 @@ bool IOHomeControlComponent::set_switch_state(const std::string &device_id, bool
   }
 
   // Switches share the same transport-level representation as binary lights.
-  return this->set_device_position(device_id,
-                                   on ? detail::BINARY_ENTITY_ON_POSITION : detail::BINARY_ENTITY_OFF_POSITION);
+  return this->set_device_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
 }
 
 bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool locked) {
@@ -393,8 +314,7 @@ bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool l
 
   // Lock entities currently reuse the protocol's proven binary execute encoding:
   // unlock maps to 0 and lock maps to 100.
-  return this->set_device_position(device_id,
-                                   locked ? detail::BINARY_ENTITY_OFF_POSITION : detail::BINARY_ENTITY_ON_POSITION);
+  return this->set_device_position(device_id, locked ? BINARY_ENTITY_OFF_POSITION : BINARY_ENTITY_ON_POSITION);
 }
 
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {
@@ -404,25 +324,20 @@ void IOHomeControlComponent::queue_set_device_position(const std::string &device
     return;
   }
 
-  // Coalesce with a pending SET_TILT for the same device into a single SET_POSITION_AND_TILT.
-  // This handles the case where Home Assistant sends set_cover_position and set_cover_tilt_position
-  // as two rapid sequential calls — merging them avoids two separate radio exchanges.
-  for (auto &op : this->pending_operations_) {
+  // Pre-scan for a pending SET_TILT so we can log its value if coalescing happens.
+  uint8_t pending_tilt = 0;
+  for (const auto &op : this->op_queue_) {
     if (op.type == PendingOperationType::SET_TILT && op.device_id == device_id) {
-      // Note: standalone SET_TILT stores the tilt value in op.position (see dispatch logic).
-      uint8_t const pending_tilt = op.position;
-      ESP_LOGI(detail::TAG,
-               "Coalesced SET_POSITION (pos=%u) + pending SET_TILT (tilt=%u) → SET_POSITION_AND_TILT for "
-               "device %s",
-               position, pending_tilt, device_id.c_str());
-      op.type = PendingOperationType::SET_POSITION_AND_TILT;
-      op.position = position;
-      op.tilt = pending_tilt;
-      return;
+      pending_tilt = op.position;  // SET_TILT stores tilt in op.position
+      break;
     }
   }
-
-  this->pending_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
+  if (this->op_queue_.enqueue_set_position(device_id, position)) {
+    ESP_LOGI(detail::TAG,
+             "Coalesced SET_POSITION (pos=%u) + pending SET_TILT (tilt=%u) → SET_POSITION_AND_TILT for "
+             "device %s",
+             position, pending_tilt, device_id.c_str());
+  }
 }
 
 void IOHomeControlComponent::queue_device_command(const std::string &device_id, CoverCommand cmd) {
@@ -431,11 +346,7 @@ void IOHomeControlComponent::queue_device_command(const std::string &device_id, 
     detail::log_rejected_operation(device_id, *dev, cover_command_name(cmd), "cover entity");
     return;
   }
-  PendingOperation op{};
-  op.type = PendingOperationType::DEVICE_COMMAND;
-  op.device_id = device_id;
-  op.command = cmd;
-  this->pending_operations_.push_back(op);
+  this->op_queue_.enqueue_device_command(device_id, cmd);
 }
 
 void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
@@ -445,23 +356,20 @@ void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id,
     return;
   }
 
-  // Coalesce with a pending SET_POSITION for the same device into a single SET_POSITION_AND_TILT.
-  // This handles the case where Home Assistant sends set_cover_position and set_cover_tilt_position
-  // as two rapid sequential calls — merging them avoids two separate radio exchanges.
-  for (auto &op : this->pending_operations_) {
+  // Pre-scan for a pending SET_POSITION so we can log its value if coalescing happens.
+  uint8_t pending_pos = 0;
+  for (const auto &op : this->op_queue_) {
     if (op.type == PendingOperationType::SET_POSITION && op.device_id == device_id) {
-      ESP_LOGI(detail::TAG,
-               "Coalesced pending SET_POSITION (pos=%u) + SET_TILT (tilt=%u) → "
-               "SET_POSITION_AND_TILT for device %s",
-               op.position, tilt_percent, device_id.c_str());
-      op.type = PendingOperationType::SET_POSITION_AND_TILT;
-      op.tilt = tilt_percent;
-      // op.position already holds the correct value from the original SET_POSITION enqueue
-      return;
+      pending_pos = op.position;
+      break;
     }
   }
-
-  this->pending_operations_.push_back({PendingOperationType::SET_TILT, device_id, tilt_percent});
+  if (this->op_queue_.enqueue_set_tilt(device_id, tilt_percent)) {
+    ESP_LOGI(detail::TAG,
+             "Coalesced pending SET_POSITION (pos=%u) + SET_TILT (tilt=%u) → "
+             "SET_POSITION_AND_TILT for device %s",
+             pending_pos, tilt_percent, device_id.c_str());
+  }
 }
 
 void IOHomeControlComponent::queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position,
@@ -471,7 +379,7 @@ void IOHomeControlComponent::queue_set_device_position_and_tilt(const std::strin
     detail::log_rejected_operation(device_id, *dev, "queued position+tilt command", "tilt-capable cover");
     return;
   }
-  this->pending_operations_.push_back({PendingOperationType::SET_POSITION_AND_TILT, device_id, position, tilt_percent});
+  this->op_queue_.enqueue_set_position_and_tilt(device_id, position, tilt_percent);
 }
 
 void IOHomeControlComponent::queue_request_device_status(const std::string &device_id) {
@@ -480,27 +388,15 @@ void IOHomeControlComponent::queue_request_device_status(const std::string &devi
     detail::log_rejected_operation(device_id, *dev, "queued status request", "status-capable actuator");
     return;
   }
-
   // Keep at most one pending status poll per device. Without this, an overdue next_update can add
   // the same poll on every main-loop iteration until the first queued request is finally processed.
-  for (const auto &operation : this->pending_operations_) {
-    if (operation.type == PendingOperationType::REQUEST_STATUS && operation.device_id == device_id)
-      return;
-  }
-
-  this->pending_operations_.push_back({PendingOperationType::REQUEST_STATUS, device_id, 0});
+  this->op_queue_.enqueue_request_status(device_id);
 }
 
 void IOHomeControlComponent::queue_request_device_name(const std::string &device_id) {
   if (this->get_device(device_id) == nullptr)
     return;
-
-  for (const auto &operation : this->pending_operations_) {
-    if (operation.type == PendingOperationType::REQUEST_NAME && operation.device_id == device_id)
-      return;
-  }
-
-  this->pending_operations_.push_back({PendingOperationType::REQUEST_NAME, device_id, 0});
+  this->op_queue_.enqueue_request_name(device_id);
 }
 
 /// Queue a discovery-and-pair request with elevated priority.
@@ -508,24 +404,7 @@ void IOHomeControlComponent::queue_request_device_name(const std::string &device
 /// Flushes any pending status/name poll operations (which would consume time
 /// during the device's limited pairing window) and pushes discovery to the
 /// front of the queue. Duplicate requests are suppressed.
-void IOHomeControlComponent::queue_discover_and_pair() {
-  // Pairing is globally exclusive work. Keep at most one queued request so repeated button presses
-  // while the radio is busy do not stack duplicate discovery attempts.
-  for (const auto &operation : this->pending_operations_) {
-    if (operation.type == PendingOperationType::DISCOVER_AND_PAIR)
-      return;
-  }
-  // Flush pending status/name polls — they can be retried after pairing completes, and
-  // their blocking exchange time would eat into the device's limited pairing window.
-  this->pending_operations_.erase(std::remove_if(this->pending_operations_.begin(), this->pending_operations_.end(),
-                                                 [](const PendingOperation &op) {
-                                                   return op.type == PendingOperationType::REQUEST_STATUS ||
-                                                          op.type == PendingOperationType::REQUEST_NAME;
-                                                 }),
-                                  this->pending_operations_.end());
-  // Push discovery to front so it executes immediately after any currently-running operation.
-  this->pending_operations_.push_front({PendingOperationType::DISCOVER_AND_PAIR, {}, 0});
-}
+void IOHomeControlComponent::queue_discover_and_pair() { this->op_queue_.enqueue_discover_and_pair(); }
 
 void IOHomeControlComponent::queue_set_light_state(const std::string &device_id, bool on) {
   const IoDevice *dev = this->get_device(device_id);
@@ -533,11 +412,7 @@ void IOHomeControlComponent::queue_set_light_state(const std::string &device_id,
     detail::log_rejected_operation(device_id, *dev, "queued light command", "light entity");
     return;
   }
-
-  // Queue through the same scheduler as covers so radio work stays serialized while still keeping
-  // the light-vs-switch semantics available for capability checks at dispatch time.
-  this->pending_operations_.push_back({PendingOperationType::SET_LIGHT_STATE, device_id,
-                                       on ? detail::BINARY_ENTITY_ON_POSITION : detail::BINARY_ENTITY_OFF_POSITION});
+  this->op_queue_.enqueue_set_light_state(device_id, on);
 }
 
 void IOHomeControlComponent::queue_set_lock_state(const std::string &device_id, bool locked) {
@@ -546,10 +421,7 @@ void IOHomeControlComponent::queue_set_lock_state(const std::string &device_id, 
     detail::log_rejected_operation(device_id, *dev, "queued lock command", "lock entity");
     return;
   }
-
-  this->pending_operations_.push_back(
-      {PendingOperationType::SET_LOCK_STATE, device_id,
-       locked ? detail::BINARY_ENTITY_OFF_POSITION : detail::BINARY_ENTITY_ON_POSITION});
+  this->op_queue_.enqueue_set_lock_state(device_id, locked);
 }
 
 void IOHomeControlComponent::queue_set_switch_state(const std::string &device_id, bool on) {
@@ -558,21 +430,19 @@ void IOHomeControlComponent::queue_set_switch_state(const std::string &device_id
     detail::log_rejected_operation(device_id, *dev, "queued switch command", "switch entity");
     return;
   }
-
-  // Queue through the same scheduler as covers so radio work stays serialized while still keeping
-  // the light-vs-switch semantics available for capability checks at dispatch time.
-  this->pending_operations_.push_back({PendingOperationType::SET_SWITCH_STATE, device_id,
-                                       on ? detail::BINARY_ENTITY_ON_POSITION : detail::BINARY_ENTITY_OFF_POSITION});
+  this->op_queue_.enqueue_set_switch_state(device_id, on);
 }
 
 void IOHomeControlComponent::process_pending_operation_() {
-  if (this->busy_ || this->pending_operations_.empty())
+  if (this->busy_ || this->op_queue_.empty())
     return;
 
   // Pop before dispatch so any handler that re-queues follow-up work sees the queue in its
   // post-consumption state and cannot accidentally execute the same operation twice.
-  PendingOperation const operation = std::move(this->pending_operations_.front());
-  this->pending_operations_.pop_front();
+  auto opt = this->op_queue_.pop();
+  if (!opt.has_value())
+    return;
+  const PendingOperation &operation = *opt;
 
   switch (operation.type) {
     case PendingOperationType::SET_POSITION:
@@ -588,13 +458,13 @@ void IOHomeControlComponent::process_pending_operation_() {
       this->execute_device_command_(operation.device_id, operation.command);
       break;
     case PendingOperationType::SET_LIGHT_STATE:
-      this->set_light_state(operation.device_id, operation.position == detail::BINARY_ENTITY_ON_POSITION);
+      this->set_light_state(operation.device_id, operation.position == BINARY_ENTITY_ON_POSITION);
       break;
     case PendingOperationType::SET_LOCK_STATE:
-      this->set_lock_state(operation.device_id, operation.position == detail::BINARY_ENTITY_OFF_POSITION);
+      this->set_lock_state(operation.device_id, operation.position == BINARY_ENTITY_OFF_POSITION);
       break;
     case PendingOperationType::SET_SWITCH_STATE:
-      this->set_switch_state(operation.device_id, operation.position == detail::BINARY_ENTITY_ON_POSITION);
+      this->set_switch_state(operation.device_id, operation.position == BINARY_ENTITY_ON_POSITION);
       break;
     case PendingOperationType::REQUEST_STATUS:
       this->request_device_status(operation.device_id);

@@ -15,7 +15,6 @@ namespace {
 
 class TestableDeviceNameHub : public IOHomeControlComponent {
  public:
-  using IOHomeControlComponent::callbacks_;
   using IOHomeControlComponent::notify_device_update_;
 
   void queue_request_device_name(const std::string &device_id) override { this->last_requested_device_id_ = device_id; }
@@ -42,7 +41,7 @@ TEST(PlatformDeviceNameTextSensor, SetupPublishesCachedNameAndSchedulesFetch) {
 
   EXPECT_EQ(sensor.state, "Patio Awning");
   EXPECT_EQ(sensor.last_timeout_name_, "init_name");
-  EXPECT_EQ(sensor.last_timeout_ms_, esphome::home_io_control::detail::INITIAL_STATUS_REQUEST_DELAY_MS);
+  EXPECT_EQ(sensor.last_timeout_ms_, esphome::home_io_control::INITIAL_STATUS_REQUEST_DELAY_MS);
 }
 
 TEST(PlatformDeviceNameTextSensor, InitialFetchTimeoutQueuesNameRequest) {

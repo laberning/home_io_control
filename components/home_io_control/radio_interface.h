@@ -149,26 +149,35 @@ class RadioDriver {
   /// @return Preamble length in bytes (SHORT_PREAMBLE for SX1276, longer for SX1262).
   [[nodiscard]] virtual uint16_t response_preamble() const { return SHORT_PREAMBLE; }
 
-  /// @brief Set the RX bandwidth for chips that support runtime bandwidth changes.
+  /// @brief Apply runtime tuning parameters to the driver.
   ///
-  /// Default implementation is a no-op for chips where the bandwidth is fixed at
-  /// init time. SX1262 overrides this to update the modulation parameters.
-  /// @param bandwidth Bandwidth selector enum.
-  virtual void set_rx_bandwidth(SX1262RxBandwidth bandwidth) {}
+  /// Each driver consumes only the fields it understands; the default is a no-op for
+  /// chips with no runtime-tunable radio parameters. RadioSX1262 applies its RX
+  /// bandwidth, response preamble and post-TX settling delay here. This keeps the hub
+  /// free of chip-specific tuning knowledge — it hands over the whole config and lets
+  /// the driver pick what it needs.
+  /// @param tuning Current tuning configuration.
+  virtual void apply_tuning(const TuningConfig &tuning) {}
 
-  /// @brief Set the response preamble length for chips that support it.
+  /// @brief Per-channel dwell while waiting for an authenticated exchange response.
   ///
-  /// Default implementation is a no-op. SX1262 overrides this to change the
-  /// preamble used for continuation frames.
-  /// @param preamble Preamble length in bytes.
-  virtual void set_response_preamble(uint16_t preamble) {}
+  /// The generic 50 ms slice is correct for the baseline protocol flow and pairing.
+  /// SX1262 authenticated exchanges are the special case: some devices reply slightly
+  /// later than 50 ms after 0x3D, so the SX1262 driver overrides this with a longer
+  /// dwell to avoid hopping away just before that final response arrives.
+  /// @return Slice length in milliseconds.
+  [[nodiscard]] virtual uint32_t exchange_wait_slice_ms() const { return RESPONSE_CHANNEL_WAIT_MS; }
 
-  /// @brief Set the post-TX settling delay for chips that need it.
+  /// @brief Per-channel dwell while pairing discovery hops across channels.
   ///
-  /// Default implementation is a no-op. SX1262 overrides this to change the
-  /// delay between TX completion and re-entering RX.
-  /// @param delay_us Delay in microseconds.
-  virtual void set_post_tx_settle_us(uint16_t delay_us) {}
+  /// SX1276 uses FastHop (no standby needed), so short slices are fine; SX1262
+  /// frequency changes require a standby→SetRf→RX cycle, so it overrides this with a
+  /// longer dwell. The per-chip values come from the user-facing tuning fields.
+  /// @param tuning Current tuning configuration.
+  /// @return Slice length in milliseconds.
+  [[nodiscard]] virtual uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const {
+    return tuning.sx1276_discovery_hop_slice_ms;
+  }
 
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;

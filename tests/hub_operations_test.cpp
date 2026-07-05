@@ -30,12 +30,13 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::send_and_receive_;
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::initialized_;
-  using IOHomeControlComponent::last_exchange_debug_;
+  using IOHomeControlComponent::exchange_engine_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
-  using IOHomeControlComponent::devices_;
-  using IOHomeControlComponent::pending_operations_;
+  using IOHomeControlComponent::op_queue_;
+  using IOHomeControlComponent::busy_;
+  using IOHomeControlComponent::poll_policy_;
 };
 
 // Build a response frame from device (matching device node_id 0xABC123)
@@ -250,9 +251,9 @@ TEST(HubOperations, QueueRequestDeviceNameDeduplicatesPerDevice) {
   comp.queue_request_device_name("ABC123");
   comp.queue_request_device_name("ABC123");
 
-  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "duplicate queued name requests should collapse";
-  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_NAME);
-  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "duplicate queued name requests should collapse";
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::REQUEST_NAME);
+  EXPECT_EQ(comp.op_queue_.front().device_id, "ABC123");
 }
 
 TEST(HubOperations, ProcessPendingRequestNameDispatchesOperation) {
@@ -315,10 +316,11 @@ TEST(HubOperations, RequestDeviceStatusExplicitErrorBacksOffTrackedPolling) {
   EXPECT_FALSE(comp.request_device_status("ABC123"))
       << "tracked status polls should treat explicit device errors as failures";
 
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  EXPECT_NE(dev->next_update, 0u) << "explicit errors during tracked polling should schedule backoff";
-  EXPECT_EQ(dev->status_poll_failures, 1u) << "explicit non-auth errors should use the normal failure streak";
+  ASSERT_NE(comp.get_device("ABC123"), nullptr);
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "explicit errors during tracked polling should schedule backoff";
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u)
+      << "explicit non-auth errors should use the normal failure streak";
 }
 
 TEST(HubOperations, RequestDeviceStatusRejectsUnknownDevice) {
@@ -358,12 +360,15 @@ TEST(HubOperations, RequestDeviceStatusOneShotFailureDoesNotArmRetries) {
   bool ok = comp.request_device_status("ABC123");
   EXPECT_FALSE(ok) << "one-shot request_device_status should fail when the device stays silent";
 
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->next_update, 0u) << "one-shot status requests should not schedule background retries";
-  EXPECT_EQ(dev->poll_deadline, 0u) << "one-shot status requests should not start tracked polling";
-  EXPECT_EQ(dev->status_poll_failures, 0u) << "one-shot failures should not affect tracked polling backoff";
-  EXPECT_EQ(dev->auth_poll_failures, 0u) << "one-shot failures should not affect tracked polling backoff";
+  ASSERT_NE(comp.get_device("ABC123"), nullptr);
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "one-shot status requests should not schedule background retries";
+  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
+      << "one-shot status requests should not start tracked polling";
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u)
+      << "one-shot failures should not affect tracked polling backoff";
+  EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 0u)
+      << "one-shot failures should not affect tracked polling backoff";
 }
 
 TEST(HubOperations, RequestDeviceStatusTimeoutBackoffEscalatesDuringTrackedPolling) {
@@ -377,25 +382,24 @@ TEST(HubOperations, RequestDeviceStatusTimeoutBackoffEscalatesDuringTrackedPolli
   bool ok = comp.request_device_status("ABC123");
   EXPECT_FALSE(ok) << "tracked request_device_status should fail when the device stays silent";
 
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  uint32_t delay1 = dev->next_update - esphome::millis();
-  EXPECT_GE(delay1, detail::STATUS_RETRY_AFTER_FAIL_MS - 1000)
-      << "first silent failure should keep the short retry delay";
-  EXPECT_LE(delay1, detail::STATUS_RETRY_AFTER_FAIL_MS + 1000)
-      << "first silent failure should not jump to a long cooldown";
-  EXPECT_EQ(dev->status_poll_failures, 1u) << "silent failure should increment the normal poll failure streak";
-  EXPECT_EQ(dev->auth_poll_failures, 0u) << "silent failure should not count as an auth-shaped failure";
+  ASSERT_NE(comp.get_device("ABC123"), nullptr);
+  uint32_t delay1 = comp.poll_policy_.get_next_update("ABC123") - esphome::millis();
+  EXPECT_GE(delay1, STATUS_RETRY_AFTER_FAIL_MS - 1000) << "first silent failure should keep the short retry delay";
+  EXPECT_LE(delay1, STATUS_RETRY_AFTER_FAIL_MS + 1000) << "first silent failure should not jump to a long cooldown";
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u)
+      << "silent failure should increment the normal poll failure streak";
+  EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 0u)
+      << "silent failure should not count as an auth-shaped failure";
 
   ok = comp.request_device_status("ABC123");
   EXPECT_FALSE(ok) << "second silent request should also fail without a queued response";
 
-  uint32_t delay2 = dev->next_update - esphome::millis();
-  EXPECT_GE(delay2, detail::STATUS_RETRY_AFTER_FAIL_STEP2_MS - 1000)
-      << "second silent failure should escalate the retry delay";
-  EXPECT_LE(delay2, detail::STATUS_RETRY_AFTER_FAIL_STEP2_MS + 1000)
+  uint32_t delay2 = comp.poll_policy_.get_next_update("ABC123") - esphome::millis();
+  EXPECT_GE(delay2, STATUS_RETRY_AFTER_FAIL_STEP2_MS - 1000) << "second silent failure should escalate the retry delay";
+  EXPECT_LE(delay2, STATUS_RETRY_AFTER_FAIL_STEP2_MS + 1000)
       << "second silent failure should use the configured step-2 backoff";
-  EXPECT_EQ(dev->status_poll_failures, 2u) << "second silent failure should continue the normal failure streak";
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 2u)
+      << "second silent failure should continue the normal failure streak";
 }
 
 TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
@@ -421,15 +425,17 @@ TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
   bool ok = comp.request_device_status("ABC123");
   EXPECT_FALSE(ok) << "missing final response after a challenge should fail the status request";
 
-  uint32_t delay = dev->next_update - esphome::millis();
-  EXPECT_TRUE(comp.last_exchange_debug_.saw_challenge)
+  uint32_t delay = comp.poll_policy_.get_next_update("ABC123") - esphome::millis();
+  EXPECT_TRUE(comp.exchange_engine_.get_debug().saw_challenge)
       << "exchange debug should preserve that a challenge happened even if later retries time out";
-  EXPECT_GE(delay, detail::STATUS_AUTH_RETRY_AFTER_FAIL_MS - 1000)
+  EXPECT_GE(delay, STATUS_AUTH_RETRY_AFTER_FAIL_MS - 1000)
       << "auth-shaped failures should back off more than plain silence";
-  EXPECT_LE(delay, detail::STATUS_AUTH_RETRY_AFTER_FAIL_MS + 1000)
+  EXPECT_LE(delay, STATUS_AUTH_RETRY_AFTER_FAIL_MS + 1000)
       << "first auth-shaped failure should use the configured auth backoff";
-  EXPECT_EQ(dev->status_poll_failures, 0u) << "auth-shaped failures should reset the silent-failure streak";
-  EXPECT_EQ(dev->auth_poll_failures, 1u) << "auth-shaped failures should increment their own streak";
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u)
+      << "auth-shaped failures should reset the silent-failure streak";
+  EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 1u)
+      << "auth-shaped failures should increment their own streak";
 }
 
 TEST(HubOperations, SetDevicePositionArmsTrackedPollingWhenConfigured) {
@@ -451,8 +457,10 @@ TEST(HubOperations, SetDevicePositionArmsTrackedPollingWhenConfigured) {
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_NE(dev->poll_deadline, 0u) << "successful change commands should start bounded follow-up polling";
-  EXPECT_NE(dev->next_update, 0u) << "successful change commands should schedule the first follow-up poll";
+  EXPECT_NE(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
+      << "successful change commands should start bounded follow-up polling";
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "successful change commands should schedule the first follow-up poll";
 }
 
 TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalSchedulesSingleFollowUpPoll) {
@@ -473,9 +481,11 @@ TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalSchedulesSingleFol
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->poll_deadline, 0u) << "legacy one-shot follow-up should not start tracked interval polling";
-  EXPECT_NE(dev->next_update, 0u) << "moving execute replies should still schedule one settle poll without config";
-  EXPECT_FALSE(dev->single_follow_up_poll_pending)
+  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
+      << "legacy one-shot follow-up should not start tracked interval polling";
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "moving execute replies should still schedule one settle poll without config";
+  EXPECT_FALSE(comp.poll_policy_.is_one_shot_pending("ABC123"))
       << "the legacy one-shot follow-up flag should be consumed once the settle poll is scheduled";
 }
 
@@ -487,9 +497,9 @@ TEST(HubOperations, QueueRequestDeviceStatusDeduplicatesPerDevice) {
   comp.queue_request_device_status("ABC123");
   comp.queue_request_device_status("ABC123");
 
-  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "duplicate queued status polls for the same device should collapse";
-  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
-  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "duplicate queued status polls for the same device should collapse";
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.op_queue_.front().device_id, "ABC123");
 }
 
 // ========================================================================================
@@ -511,10 +521,10 @@ TEST(HubOperations, QueuedOperationProcessesPosition) {
   radio.queue_rx(pkt);
 
   comp.queue_set_device_position("ABC123", 75);
-  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "one operation should be queued";
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "one operation should be queued";
 
   comp.process_pending_operation_();
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "queue should be empty after processing";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "queue should be empty after processing";
 }
 
 TEST(HubOperations, QueuedOperationSkipsWhenBusy) {
@@ -525,7 +535,7 @@ TEST(HubOperations, QueuedOperationSkipsWhenBusy) {
   comp.busy_ = true;
   comp.queue_set_device_position("ABC123", 50);
   comp.process_pending_operation_();
-  EXPECT_EQ(comp.pending_operations_.size(), 1u) << "should not process when busy";
+  EXPECT_EQ(comp.op_queue_.size(), 1u) << "should not process when busy";
 }
 
 TEST(HubOperations, DuplicateDiscoverAndPairNotQueued) {
@@ -535,7 +545,7 @@ TEST(HubOperations, DuplicateDiscoverAndPairNotQueued) {
 
   comp.queue_discover_and_pair();
   comp.queue_discover_and_pair();  // duplicate
-  EXPECT_EQ(comp.pending_operations_.size(), 1u) << "duplicate discover should be suppressed";
+  EXPECT_EQ(comp.op_queue_.size(), 1u) << "duplicate discover should be suppressed";
 }
 
 TEST(HubOperations, QueueDevicePositionRejectedForLight) {
@@ -547,7 +557,7 @@ TEST(HubOperations, QueueDevicePositionRejectedForLight) {
   dev->type = DeviceType::LIGHT;
 
   comp.queue_set_device_position("ABC123", 50);
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "non-cover device should be rejected in queue check";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "non-cover device should be rejected in queue check";
 }
 
 TEST(HubOperations, QueueSetLockStateRejectsNonLockDevice) {
@@ -556,7 +566,7 @@ TEST(HubOperations, QueueSetLockStateRejectsNonLockDevice) {
   setup_cover_component(comp, radio);
 
   comp.queue_set_lock_state("ABC123", true);
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "non-lock devices should be rejected in queued lock commands";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "non-lock devices should be rejected in queued lock commands";
 }
 
 TEST(HubOperations, ProcessPendingLockOperationDispatchesLockCommand) {
@@ -577,11 +587,11 @@ TEST(HubOperations, ProcessPendingLockOperationDispatchesLockCommand) {
   radio.queue_rx(pkt);
 
   comp.queue_set_lock_state("ABC123", true);
-  ASSERT_EQ(comp.pending_operations_.size(), 1u);
-  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::SET_LOCK_STATE);
+  ASSERT_EQ(comp.op_queue_.size(), 1u);
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::SET_LOCK_STATE);
 
   comp.process_pending_operation_();
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "queued lock operation should be consumed by the dispatcher";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "queued lock operation should be consumed by the dispatcher";
 }
 
 TEST(HubOperations, QueueDeviceTiltRejectedForNonTilt) {
@@ -590,7 +600,7 @@ TEST(HubOperations, QueueDeviceTiltRejectedForNonTilt) {
   setup_cover_component(comp, radio);
   // ROLLER_SHUTTER does not support tilt
   comp.queue_set_device_tilt("ABC123", 50);
-  EXPECT_TRUE(comp.pending_operations_.empty()) << "non-tilt device should be rejected in queue check";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "non-tilt device should be rejected in queue check";
 }
 
 // ========================================================================================
@@ -610,11 +620,11 @@ TEST(HubOperations, CoalescePositionThenTilt) {
   comp.queue_set_device_tilt("ABC123", 75);
 
   // Should coalesce into a single SET_POSITION_AND_TILT
-  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "coalesced ops should produce one entry";
-  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::SET_POSITION_AND_TILT);
-  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
-  EXPECT_EQ(comp.pending_operations_.front().position, 50u);
-  EXPECT_EQ(comp.pending_operations_.front().tilt, 75u);
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "coalesced ops should produce one entry";
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::SET_POSITION_AND_TILT);
+  EXPECT_EQ(comp.op_queue_.front().device_id, "ABC123");
+  EXPECT_EQ(comp.op_queue_.front().position, 50u);
+  EXPECT_EQ(comp.op_queue_.front().tilt, 75u);
 }
 
 TEST(HubOperations, CoalesceTiltThenPosition) {
@@ -630,11 +640,11 @@ TEST(HubOperations, CoalesceTiltThenPosition) {
   comp.queue_set_device_position("ABC123", 30);
 
   // Should coalesce into a single SET_POSITION_AND_TILT
-  ASSERT_EQ(comp.pending_operations_.size(), 1u) << "coalesced ops should produce one entry";
-  EXPECT_EQ(comp.pending_operations_.front().type, IOHomeControlComponent::PendingOperationType::SET_POSITION_AND_TILT);
-  EXPECT_EQ(comp.pending_operations_.front().device_id, "ABC123");
-  EXPECT_EQ(comp.pending_operations_.front().position, 30u);
-  EXPECT_EQ(comp.pending_operations_.front().tilt, 80u);
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "coalesced ops should produce one entry";
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::SET_POSITION_AND_TILT);
+  EXPECT_EQ(comp.op_queue_.front().device_id, "ABC123");
+  EXPECT_EQ(comp.op_queue_.front().position, 30u);
+  EXPECT_EQ(comp.op_queue_.front().tilt, 80u);
 }
 
 TEST(HubOperations, NoCoalesceForDifferentDevices) {
@@ -655,11 +665,11 @@ TEST(HubOperations, NoCoalesceForDifferentDevices) {
   comp.queue_set_device_position("ABC123", 50);
   comp.queue_set_device_tilt("DEF456", 75);
 
-  ASSERT_EQ(comp.pending_operations_.size(), 2u) << "different devices should not coalesce";
-  EXPECT_EQ(comp.pending_operations_[0].type, IOHomeControlComponent::PendingOperationType::SET_POSITION);
-  EXPECT_EQ(comp.pending_operations_[0].device_id, "ABC123");
-  EXPECT_EQ(comp.pending_operations_[1].type, IOHomeControlComponent::PendingOperationType::SET_TILT);
-  EXPECT_EQ(comp.pending_operations_[1].device_id, "DEF456");
+  ASSERT_EQ(comp.op_queue_.size(), 2u) << "different devices should not coalesce";
+  EXPECT_EQ(comp.op_queue_[0].type, PendingOperationType::SET_POSITION);
+  EXPECT_EQ(comp.op_queue_[0].device_id, "ABC123");
+  EXPECT_EQ(comp.op_queue_[1].type, PendingOperationType::SET_TILT);
+  EXPECT_EQ(comp.op_queue_[1].device_id, "DEF456");
 }
 
 TEST(HubOperations, NoCoalescePositionWithPosition) {
@@ -674,9 +684,9 @@ TEST(HubOperations, NoCoalescePositionWithPosition) {
   comp.queue_set_device_position("ABC123", 50);
   comp.queue_set_device_position("ABC123", 70);
 
-  ASSERT_EQ(comp.pending_operations_.size(), 2u) << "two SET_POSITION ops should not coalesce with each other";
-  EXPECT_EQ(comp.pending_operations_[0].type, IOHomeControlComponent::PendingOperationType::SET_POSITION);
-  EXPECT_EQ(comp.pending_operations_[1].type, IOHomeControlComponent::PendingOperationType::SET_POSITION);
+  ASSERT_EQ(comp.op_queue_.size(), 2u) << "two SET_POSITION ops should not coalesce with each other";
+  EXPECT_EQ(comp.op_queue_[0].type, PendingOperationType::SET_POSITION);
+  EXPECT_EQ(comp.op_queue_[1].type, PendingOperationType::SET_POSITION);
 }
 
 TEST(HubOperations, NoCoalesceTiltWithTilt) {
@@ -691,9 +701,9 @@ TEST(HubOperations, NoCoalesceTiltWithTilt) {
   comp.queue_set_device_tilt("ABC123", 50);
   comp.queue_set_device_tilt("ABC123", 70);
 
-  ASSERT_EQ(comp.pending_operations_.size(), 2u) << "two SET_TILT ops should not coalesce with each other";
-  EXPECT_EQ(comp.pending_operations_[0].type, IOHomeControlComponent::PendingOperationType::SET_TILT);
-  EXPECT_EQ(comp.pending_operations_[1].type, IOHomeControlComponent::PendingOperationType::SET_TILT);
+  ASSERT_EQ(comp.op_queue_.size(), 2u) << "two SET_TILT ops should not coalesce with each other";
+  EXPECT_EQ(comp.op_queue_[0].type, PendingOperationType::SET_TILT);
+  EXPECT_EQ(comp.op_queue_[1].type, PendingOperationType::SET_TILT);
 }
 
 TEST(HubOperations, CoalesceDoesNotAffectOtherPendingOps) {
@@ -710,9 +720,9 @@ TEST(HubOperations, CoalesceDoesNotAffectOtherPendingOps) {
   comp.queue_set_device_tilt("ABC123", 60);
 
   // The tilt should coalesce with the position, leaving status + combined
-  ASSERT_EQ(comp.pending_operations_.size(), 2u) << "status request + coalesced position_and_tilt = 2 ops";
-  EXPECT_EQ(comp.pending_operations_[0].type, IOHomeControlComponent::PendingOperationType::REQUEST_STATUS);
-  EXPECT_EQ(comp.pending_operations_[1].type, IOHomeControlComponent::PendingOperationType::SET_POSITION_AND_TILT);
-  EXPECT_EQ(comp.pending_operations_[1].position, 40u);
-  EXPECT_EQ(comp.pending_operations_[1].tilt, 60u);
+  ASSERT_EQ(comp.op_queue_.size(), 2u) << "status request + coalesced position_and_tilt = 2 ops";
+  EXPECT_EQ(comp.op_queue_[0].type, PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(comp.op_queue_[1].type, PendingOperationType::SET_POSITION_AND_TILT);
+  EXPECT_EQ(comp.op_queue_[1].position, 40u);
+  EXPECT_EQ(comp.op_queue_[1].tilt, 60u);
 }

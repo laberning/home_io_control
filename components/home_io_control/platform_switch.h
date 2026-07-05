@@ -16,14 +16,17 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/switch/switch.h"
-#include "hub_core.h"
+#include "platform_entity_base.h"
 
 namespace esphome {
 namespace home_io_control {
 
 /// @brief Binary switch entity for IO‑Homecontrol on/off devices.
 /// @ingroup hioc_platforms
-class IOHomeSwitch : public switch_::Switch, public Component {
+///
+/// The device-binding setters, setup() registration ritual and poll-interval dump line come
+/// from DeviceBoundEntity; only the on/off command and status decoding live here.
+class IOHomeSwitch : public switch_::Switch, public Component, public DeviceBoundEntity {
  public:
   /// @brief Initialize the switch entity.
   void setup() override;
@@ -33,22 +36,6 @@ class IOHomeSwitch : public switch_::Switch, public Component {
   /// @return setup_priority::DATA.
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 
-  /// @brief Set parent controller.
-  /// @param parent Pointer to IOHomeControlComponent.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-  /// @brief Set device ID from YAML.
-  /// @param id Hex string node ID.
-  void set_device_id(const std::string &id) { this->device_id_ = id; }
-  /// @brief Set the declared device type (from YAML).
-  /// @param type Device type enum.
-  void set_device_type(DeviceType type) { this->device_type_ = type; }
-  /// @brief Set the declared device subtype (from YAML).
-  /// @param subtype Subtype value.
-  void set_subtype(uint8_t subtype) { this->subtype_ = subtype; }
-  /// @brief Configure bounded follow-up polling while a state change is expected.
-  /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
-  void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
-
  protected:
   /// @brief Write state change to the device.
   /// @param state Desired on/off state.
@@ -57,12 +44,6 @@ class IOHomeSwitch : public switch_::Switch, public Component {
   /// @param id Device ID.
   /// @param dev Updated IoDevice state.
   void on_device_update_(const std::string &id, const IoDevice &dev);
-
-  IOHomeControlComponent *parent_{nullptr};
-  std::string device_id_;
-  DeviceType device_type_{DeviceType::UNKNOWN};
-  uint8_t subtype_{0};
-  uint32_t status_poll_interval_ms_{0};
 };
 
 }  // namespace home_io_control

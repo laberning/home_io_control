@@ -53,12 +53,12 @@ class FavoriteButtonMockHub : public IOHomeControlComponent {
   void queue_set_device_position(const std::string &device_id, uint8_t position) override {
     last_set_device_id_ = device_id;
     last_set_position_ = position;
-    queued_operations_.push_back({IOHomeControlComponent::PendingOperationType::SET_POSITION, device_id, position});
+    queued_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
   }
   void queue_device_command(const std::string &device_id, CoverCommand cmd) override {
     last_set_device_id_ = device_id;
     PendingOperation op{};
-    op.type = IOHomeControlComponent::PendingOperationType::DEVICE_COMMAND;
+    op.type = PendingOperationType::DEVICE_COMMAND;
     op.device_id = device_id;
     op.command = cmd;
     queued_operations_.push_back(op);
@@ -105,6 +105,8 @@ class FavoriteButtonMockHub : public IOHomeControlComponent {
   std::string last_set_device_id_;
   uint8_t last_set_position_{0};
   std::deque<PendingOperation> queued_operations_;
+  std::map<std::string, IoDevice> devices_;
+  std::vector<DeviceUpdateCallback> callbacks_;
 };
 
 TEST(PlatformCoverFavoriteButton, PressQueuesFavoritePosition) {
@@ -118,7 +120,7 @@ TEST(PlatformCoverFavoriteButton, PressQueuesFavoritePosition) {
   button.trigger_press();
 
   ASSERT_FALSE(hub.queued_operations().empty()) << "pressing the favorite button should queue a hub operation";
-  EXPECT_EQ(hub.queued_operations().back().type, IOHomeControlComponent::PendingOperationType::DEVICE_COMMAND)
+  EXPECT_EQ(hub.queued_operations().back().type, PendingOperationType::DEVICE_COMMAND)
       << "favorite button should queue a DEVICE_COMMAND operation";
   EXPECT_EQ(hub.queued_operations().back().command, CoverCommand::FAVORITE)
       << "favorite button should queue CoverCommand::FAVORITE";
