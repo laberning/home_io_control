@@ -184,7 +184,7 @@ Each rename attempt emits the Home Assistant event `esphome.home_io_control_acti
 
 For all other examples, platform-specific options, and pairing instructions, use [docs/home_io_control.md](docs/home_io_control.md).
 
-If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected `cover:`, `light:`, `lock:`, or `switch:` entry. Without that option, the hub still keeps the legacy single follow-up settle poll after a local command or overheard remote activity. With the option set, it continues polling only while the device still appears to be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires. The minimum supported interval is 500ms.
+If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected `cover:`, `light:`, `lock:`, or `switch:` entry. Without that option, the hub polls after commands and overheard remote activity at the device-reported settle hint (fallback 3 s) until the device reports a stable state or the bounded 10-minute window expires. With the option set, it uses min(device hint, configured interval) as the follow-up cadence — the device can shorten your configured interval but never stretch it. A STOP command always confirms the resting position within ~1 s, regardless of the configured interval. Either way the hub stops polling automatically once the device settles. The minimum supported interval is 500ms.
 
 Explicit device refusals show up as decoded warn-level ESPHome logs. For example, a command blocked by weather can log `LIMITATION_BY_RAIN` or `LIMITATION_BY_WIND` instead of looking like a silent no-op.
 

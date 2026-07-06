@@ -95,17 +95,18 @@ TEST(OperationQueue, NoCoalesceTiltWithTilt) {
   EXPECT_EQ(q.size(), 2u);
 }
 
-TEST(OperationQueue, CoalescePreservesOtherOpsInQueue) {
+TEST(OperationQueue, CoalesceWorksAroundBackgroundOpsForDifferentDevices) {
   OperationQueue q;
-  q.enqueue_request_status("DEV");
+  q.enqueue_request_status("OTHER");
   q.enqueue_set_position("DEV", 40);
   q.enqueue_set_tilt("DEV", 60);
 
-  ASSERT_EQ(q.size(), 2u) << "status + coalesced position_and_tilt = 2 ops";
-  EXPECT_EQ(q[0].type, PendingOperationType::REQUEST_STATUS);
-  EXPECT_EQ(q[1].type, PendingOperationType::SET_POSITION_AND_TILT);
-  EXPECT_EQ(q[1].position, 40u);
-  EXPECT_EQ(q[1].tilt, 60u);
+  // "OTHER" status poll sits after the coalesced DEV control op.
+  ASSERT_EQ(q.size(), 2u) << "coalesced control op + other-device status poll = 2 ops";
+  EXPECT_EQ(q[0].type, PendingOperationType::SET_POSITION_AND_TILT) << "control op should precede background poll";
+  EXPECT_EQ(q[0].position, 40u);
+  EXPECT_EQ(q[0].tilt, 60u);
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_STATUS);
 }
 
 // ============================================================================
@@ -247,4 +248,70 @@ TEST(OperationQueue, IteratorAccess) {
     count++;
   }
   EXPECT_EQ(count, 2);
+}
+
+// ============================================================================
+// Control command priority over background polls
+// ============================================================================
+
+TEST(OperationQueue, ControlCommandPopsBeforeBackgroundPolls) {
+  OperationQueue q;
+  q.enqueue_request_status("DEV");
+  q.enqueue_request_name("DEV2");
+  q.enqueue_set_position("DEV", 50);
+
+  // SET_POSITION(DEV) should be at the front, ahead of both background polls.
+  ASSERT_EQ(q.size(), 2u) << "REQUEST_STATUS for DEV dropped; REQUEST_NAME and SET_POSITION remain";
+  EXPECT_EQ(q.front().type, PendingOperationType::SET_POSITION) << "control op should come before background poll";
+  EXPECT_EQ(q.back().type, PendingOperationType::REQUEST_NAME);
+}
+
+TEST(OperationQueue, MultipleControlOpsPreserveFifoAmongThemselves) {
+  OperationQueue q;
+  q.enqueue_request_status("X");
+  q.enqueue_set_position("A", 10);
+  q.enqueue_set_position("B", 20);
+  q.enqueue_device_command("C", CoverCommand::STOP);
+
+  // All three control ops precede the background poll.
+  ASSERT_EQ(q.size(), 4u);
+  EXPECT_EQ(q[0].device_id, "A");
+  EXPECT_EQ(q[1].device_id, "B");
+  EXPECT_EQ(q[2].device_id, "C");
+  EXPECT_EQ(q[3].type, PendingOperationType::REQUEST_STATUS);
+}
+
+TEST(OperationQueue, StalePollForSameDeviceDroppedOnControlEnqueue) {
+  OperationQueue q;
+  q.enqueue_request_status("DEV");
+  q.enqueue_request_status("OTHER");
+
+  q.enqueue_set_position("DEV", 80);
+
+  // REQUEST_STATUS for DEV dropped; REQUEST_STATUS for OTHER and SET_POSITION(DEV) remain.
+  ASSERT_EQ(q.size(), 2u) << "same-device status poll should be dropped";
+  EXPECT_EQ(q[0].type, PendingOperationType::SET_POSITION) << "control op precedes surviving background poll";
+  EXPECT_EQ(q[0].device_id, "DEV");
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(q[1].device_id, "OTHER");
+}
+
+TEST(OperationQueue, RequestNameNotDroppedOnControlEnqueue) {
+  OperationQueue q;
+  q.enqueue_request_name("DEV");
+  q.enqueue_set_position("DEV", 50);
+
+  ASSERT_EQ(q.size(), 2u) << "REQUEST_NAME should not be dropped (only REQUEST_STATUS is)";
+  EXPECT_EQ(q[0].type, PendingOperationType::SET_POSITION);
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_NAME);
+}
+
+TEST(OperationQueue, DiscoverAndPairPopsBeforeControlOp) {
+  OperationQueue q;
+  q.enqueue_set_position("DEV", 50);
+  q.enqueue_discover_and_pair();
+
+  ASSERT_EQ(q.size(), 2u);
+  EXPECT_EQ(q.front().type, PendingOperationType::DISCOVER_AND_PAIR)
+      << "DISCOVER_AND_PAIR should precede a subsequently-added control op";
 }

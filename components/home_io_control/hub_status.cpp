@@ -25,9 +25,11 @@ namespace home_io_control {
 
 namespace {
 
-constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 8;     ///< Minimum payload length for 0x04 position-bearing replies.
-constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for 0x71 device-initiated updates.
-constexpr uint8_t GET_NAME_RESPONSE_MIN_DATA_LEN = 1;    ///< Minimum payload length for 0x51 name-bearing replies.
+constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 6;   ///< Minimum payload length for 0x04 position-bearing replies.
+                                                       ///< Bytes 0–5 (stopped flag + target + current) are mandatory;
+                                                       ///< byte 7 (settle hint) is optional and checked separately.
+constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;     ///< Minimum payload length for 0x71 device-initiated updates.
+constexpr uint8_t GET_NAME_RESPONSE_MIN_DATA_LEN = 1;  ///< Minimum payload length for 0x51 name-bearing replies.
 constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload length for 0x57 type/subtype metadata.
 constexpr uint8_t ERROR_RESPONSE_MIN_DATA_LEN = 1;       ///< Minimum payload length for 0xFE result-bearing replies.
 constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
@@ -49,8 +51,6 @@ constexpr uint8_t PRIVATE_RESPONSE_HINT_ZERO =
 constexpr uint32_t PRIVATE_RESPONSE_HINT_SCALE_MS = 1000;  ///< Private-response delay hint is expressed in seconds.
 constexpr uint32_t PRIVATE_RESPONSE_HINT_BIAS_MS =
     1000;  ///< Observed devices need an extra second beyond the hint value.
-constexpr uint32_t DEFAULT_SINGLE_FOLLOW_UP_POLL_DELAY_MS =
-    60000;  ///< Legacy worst-case settle poll when neither a device hint nor an explicit interval is available.
 
 /// @brief Decode the shared target/current position fields used by private response and status‑update frames.
 /// Different frame types use different byte offsets, but the normalization policy is identical once offsets known.
@@ -79,35 +79,37 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
 /// @param frame The private response frame (may contain a coarse retry hint in byte 7).
 /// @param policy Policy used to look up the configured poll interval.
 /// @param id Device ID for policy lookup.
-/// @return Delay in milliseconds.
+/// @return Delay in milliseconds, or 0 if the device is stopped.
 uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame, const StatusPollPolicy &policy,
                                            const std::string &id) {
   if (dev.is_stopped)
     return 0;
 
-  const uint32_t interval_ms = policy.get_interval(id);
-  // Private responses carry a coarse follow‑up timer in byte 7 on many devices.
-  // Delay priority is: device hint when present, otherwise the configured interval, otherwise the
-  // legacy one-shot settle delay. When both a hint and an explicit interval exist, cap the next
-  // poll to the shorter of the two so YAML cannot stretch a device-reported settle window.
-  if (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_UNUSED &&
+  // Private responses carry a coarse follow‑up timer in byte 7 on many devices. Decode it here
+  // (0 = absent) and let settle_delay_ms() reconcile it with the configured interval and default.
+  // Some devices omit byte 7 entirely (data_len == 6); treat those as hint-absent.
+  uint32_t hint_delay_ms = 0;
+  if (frame.data_len > PRIVATE_RESPONSE_DELAY_HINT_OFFSET &&
+      frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_UNUSED &&
       frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_ZERO) {
-    uint32_t const hinted_delay_ms = (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS) +
-                                     PRIVATE_RESPONSE_HINT_BIAS_MS;
-    if (interval_ms == 0)
-      return hinted_delay_ms;
-    return hinted_delay_ms < interval_ms ? hinted_delay_ms : interval_ms;
+    hint_delay_ms = (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS) +
+                    PRIVATE_RESPONSE_HINT_BIAS_MS;
   }
-  return interval_ms != 0 ? interval_ms : DEFAULT_SINGLE_FOLLOW_UP_POLL_DELAY_MS;
+  // A private response is the shared reply to both polls (0x03) and commands (0x00); it carries no
+  // marker for STOP, so the STOP cap is applied by the command path, not here.
+  return settle_delay_ms(policy.get_interval(id), hint_delay_ms, /*cap_for_stop=*/false);
 }
 
 /// @brief Compute the delay before the next status poll for a device‑originated status update.
 /// @param dev Device record.
 /// @param policy Policy used to look up the configured poll interval.
 /// @param id Device ID for policy lookup.
-/// @return Delay in milliseconds for tracked polling; no-interval devices stop after the unsolicited update.
+/// @return Delay in milliseconds for tracked polling; 0 if stopped.
 uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPolicy &policy, const std::string &id) {
-  return dev.is_stopped ? 0 : policy.get_interval(id);
+  if (dev.is_stopped)
+    return 0;
+  // Device-originated updates carry no follow-up hint and are never STOP replies.
+  return settle_delay_ms(policy.get_interval(id), /*hint_delay_ms=*/0, /*cap_for_stop=*/false);
 }
 
 /// @brief Apply a private-response frame to the device record.
@@ -121,18 +123,25 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   dev.last_status = millis();
   decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true);
 
-  const bool tracked_polling_active = policy.is_tracking_active(id, dev.last_status);
-  if (dev.is_stopped || !tracked_polling_active) {
-    if (!dev.is_stopped && policy.is_one_shot_pending(id)) {
-      policy.set_next_update(id, dev.last_status + compute_private_response_delay_ms(dev, frame, policy, id));
-      policy.clear_one_shot_pending(id);
-      return;
-    }
+  if (dev.is_stopped || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
     return;
   }
 
-  policy.set_next_update(id, dev.last_status + compute_private_response_delay_ms(dev, frame, policy, id));
+  uint32_t const delay_ms = compute_private_response_delay_ms(dev, frame, policy, id);
+  const bool hint_present = frame.data_len > PRIVATE_RESPONSE_DELAY_HINT_OFFSET;
+  const uint8_t hint_byte =
+      hint_present ? frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] : PRIVATE_RESPONSE_HINT_UNUSED;
+  const bool has_hint =
+      hint_present && hint_byte != PRIVATE_RESPONSE_HINT_UNUSED && hint_byte != PRIVATE_RESPONSE_HINT_ZERO;
+  ESP_LOGD(detail::TAG, "Device %s: next status poll in %u ms (device hint=%s, configured interval=%u ms)", id.c_str(),
+           delay_ms, has_hint ? std::to_string(hint_byte).append("s").c_str() : "none", policy.get_interval(id));
+  uint32_t const new_deadline = dev.last_status + delay_ms;
+  uint32_t const existing_deadline = policy.get_next_update(id);
+  // Don't push the deadline forward — only move it earlier. This prevents repeated command
+  // responses (e.g. multiple rapid STOP presses) from compounding the wait time.
+  policy.set_next_update(
+      id, (existing_deadline != 0 && existing_deadline < new_deadline) ? existing_deadline : new_deadline);
 }
 
 /// @brief Apply a device-originated status-update frame to the device record.
@@ -198,7 +207,6 @@ void IOHomeControlComponent::schedule_linked_remote_polls_(const std::string &re
   if (linked == nullptr)
     return;
   for (const auto &device_id : *linked) {
-    this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
     this->begin_status_poll_tracking_(device_id, 0);
     this->schedule_status_poll_(device_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
   }
@@ -362,7 +370,6 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // The 2-second delay gives the device time to complete the exchange and start moving.
   const std::string dst_id = node_id_to_string(frame.dst);
   if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
-    this->poll_policy_.set_one_shot_pending(dst_id, this->poll_policy_.get_interval(dst_id) == 0);
     ESP_LOGD(detail::TAG, "rx remote_activity src=%s dst=%s cmd=%s(0x%02X), scheduling status poll",
              node_id_to_string(frame.src).c_str(), dst_id.c_str(), command_name(frame.cmd), frame.cmd);
     this->begin_status_poll_tracking_(dst_id, 0);

@@ -101,7 +101,7 @@ TEST(HubCore, SetDeviceStatusPollIntervalStoresValue) {
   delete comp.radio_;
 }
 
-TEST(HubCore, LoopQueuesSingleFollowUpPollWithoutConfiguredInterval) {
+TEST(HubCore, LoopQueuesSettlePollWithoutConfiguredInterval) {
   TestableHubComponent comp;
   comp.initialized_ = true;
   comp.radio_ = new MockRadio();
@@ -110,15 +110,17 @@ TEST(HubCore, LoopQueuesSingleFollowUpPollWithoutConfiguredInterval) {
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   dev->type = DeviceType::HORIZONTAL_AWNING;
-  comp.poll_policy_.set_next_update("ABC123", esphome::millis());
+  // begin_tracking arms the deadline; then set_next_update simulates a hint-scheduled poll becoming due.
+  uint32_t const now = esphome::millis();
+  comp.poll_policy_.begin_tracking("ABC123", 0, now);
+  comp.poll_policy_.set_next_update("ABC123", now);
 
   comp.loop();
 
-  ASSERT_EQ(comp.op_queue_.size(), 1u) << "due no-interval settle polls should still be queued by the main loop";
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "due settle polls should be queued by the main loop";
   EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::REQUEST_STATUS);
   EXPECT_EQ(comp.op_queue_.front().device_id, "ABC123");
-  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u)
-      << "queued one-shot polls should clear their due timestamp";
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "queued polls should clear their due timestamp";
 
   delete comp.radio_;
 }
@@ -464,7 +466,7 @@ TEST(HubCore, RemoteActivity_TriggersDelayedPoll) {
   EXPECT_EQ(comp.op_queue_.front().device_id, "054E17");
 }
 
-TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsSingleSettlePoll) {
+TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsTrackedSettlePolling) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -483,8 +485,8 @@ TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsSingleSettlePoll) {
   comp.process_received_packet_(trigger_pkt);
 
   ASSERT_NE(comp.get_device("054E17"), nullptr);
-  EXPECT_TRUE(comp.poll_policy_.is_one_shot_pending("054E17"))
-      << "remote activity without an explicit interval should arm the legacy one-shot settle poll";
+  EXPECT_NE(comp.poll_policy_.get_poll_deadline("054E17"), 0u)
+      << "remote activity without an explicit interval should arm bounded tracked polling";
 
   IoFrame moving{};
   init_frame(moving, true, false, true, false);
@@ -497,9 +499,7 @@ TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsSingleSettlePoll) {
   comp.update_device_status_(moving);
 
   EXPECT_NE(comp.poll_policy_.get_next_update("054E17"), 0u)
-      << "the first moving poll response after remote activity should schedule one settle follow-up";
-  EXPECT_FALSE(comp.poll_policy_.is_one_shot_pending("054E17"))
-      << "the legacy one-shot settle poll flag should be consumed once the follow-up is scheduled";
+      << "a moving poll response after remote activity should schedule a hint-driven follow-up poll";
 }
 
 TEST(HubCore, RemoteActivity_UnregisteredDevice_NoTrigger) {

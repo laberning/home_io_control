@@ -47,7 +47,15 @@ struct PendingOperation {
   CoverCommand command{CoverCommand::STOP};  ///< Named command for DEVICE_COMMAND operations.
 };
 
-/// @brief Serialized pending-operation queue with coalescing and deduplication.
+/// @brief Serialized pending-operation queue with coalescing, deduplication, and two-band ordering.
+///
+/// **Ordering:** DISCOVER_AND_PAIR > control operations > background polls.
+/// Control operations (SET_*, DEVICE_COMMAND) are inserted before any queued REQUEST_STATUS /
+/// REQUEST_NAME entries so user-visible commands execute with minimum queue latency.
+/// DISCOVER_AND_PAIR always front-inserts ahead of all other entries.
+///
+/// **Stale-poll drop:** enqueueing a control operation for device X drops any queued
+/// REQUEST_STATUS for X, since the command reply supersedes it and re-arms tracking.
 ///
 /// Coalescing rules (both directions):
 /// - SET_POSITION arriving while SET_TILT is pending for the same device → SET_POSITION_AND_TILT.
@@ -115,6 +123,12 @@ class OperationQueue {
 
  private:
   std::deque<PendingOperation> queue_;
+
+  /// True for background poll types (REQUEST_STATUS, REQUEST_NAME) that yield to control operations.
+  static bool is_background_op(PendingOperationType t);
+  /// Insert a control operation before the first background entry; also drops any queued
+  /// REQUEST_STATUS for the same device since the incoming command supersedes it.
+  void push_control_(PendingOperation op);
 };
 
 }  // namespace home_io_control

@@ -27,6 +27,7 @@ namespace {
 class TestableComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::begin_status_poll_tracking_;
+  using IOHomeControlComponent::execute_device_command_;
   using IOHomeControlComponent::send_and_receive_;
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::initialized_;
@@ -58,6 +59,20 @@ static IoFrame build_moving_status_response(const uint8_t dst[3], uint8_t delay_
   set_dst(f, dst);
   set_src(f, device_node_id);
   uint8_t payload[8] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, delay_hint_seconds};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+  return f;
+}
+
+// 6-byte private response: stopped-flag + position bytes only; no hint byte.
+// Matches devices that omit the delay-hint field (e.g. some V3-era actuators).
+static IoFrame build_short_moving_status_response(const uint8_t dst[3]) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  // Bytes 0=flags(moving), 1=0, 2-3=target(0x0000=0%), 4-5=current(0x6400=50%)
+  uint8_t payload[6] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00};
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
   return f;
 }
@@ -463,7 +478,7 @@ TEST(HubOperations, SetDevicePositionArmsTrackedPollingWhenConfigured) {
       << "successful change commands should schedule the first follow-up poll";
 }
 
-TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalSchedulesSingleFollowUpPoll) {
+TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalUsesTrackedSettlePolling) {
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
@@ -481,12 +496,111 @@ TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalSchedulesSingleFol
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
-      << "legacy one-shot follow-up should not start tracked interval polling";
+  EXPECT_NE(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
+      << "commands without a configured interval should still start bounded tracked polling";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u)
-      << "moving execute replies should still schedule one settle poll without config";
-  EXPECT_FALSE(comp.poll_policy_.is_one_shot_pending("ABC123"))
-      << "the legacy one-shot follow-up flag should be consumed once the settle poll is scheduled";
+      << "moving execute replies should schedule a follow-up poll driven by the device hint";
+}
+
+TEST(HubOperations, StopCommandArmsTrackedPollingToConfirmRestingPosition) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  // STOP reply arrives with is_stopped=true — tracking should be cleared after confirming position.
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+
+  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
+      << "STOP confirmed by stopped reply should clear tracking";
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "no further polls needed once the stopped position is confirmed";
+}
+
+TEST(HubOperations, StopCommandWithMovingReplySchedulesShortSettlePoll) {
+  // When a STOP response says the device is still moving (motor decelerating), the settle poll
+  // should fire within STOP_SETTLE_POLL_CAP_MS — faster than the default motion-tracking cadence
+  // and faster than any configured interval — so STOP confirms the resting position quickly.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  IoFrame resp = build_moving_status_response(comp.node_id_, 0xFF);  // hint=unused → motion-tracking default
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  uint32_t const before_ms = esphome::millis();
+  EXPECT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->is_stopped) << "device reported moving after STOP";
+
+  uint32_t const next_update = comp.poll_policy_.get_next_update("ABC123");
+  EXPECT_NE(next_update, 0u) << "settle poll must be scheduled while device is still moving";
+  EXPECT_LE(next_update, before_ms + STOP_SETTLE_POLL_CAP_MS + 50u)
+      << "STOP settle poll must be capped to the STOP settle window";
+  EXPECT_LT(STOP_SETTLE_POLL_CAP_MS, DEFAULT_SETTLE_POLL_DELAY_MS)
+      << "STOP must settle faster than a normal move for this test to be meaningful";
+}
+
+TEST(HubOperations, ExchangeFailureOnCommandSchedulesBackoffRetry) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  // No response queued — exchange will fail
+  EXPECT_FALSE(comp.set_device_position("ABC123", 50));
+
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "exchange failure (device may have received the command) should schedule a backoff retry poll";
+  EXPECT_NE(comp.poll_policy_.get_poll_deadline("ABC123"), 0u) << "backoff retry requires tracking to remain active";
+}
+
+TEST(HubOperations, ShortPrivateResponseSixBytesIsAcceptedAndSchedulesSettlePoll) {
+  // Reproduces the case where a device responds with data_len=6 (no hint byte).
+  // Before the fix, PRIVATE_RESPONSE_MIN_DATA_LEN=8 caused these replies to be silently
+  // discarded as unsupported_payload, leaving HA stuck on the pre-command position.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  IoFrame resp = build_short_moving_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  uint32_t const before_ms = esphome::millis();
+  EXPECT_TRUE(comp.set_device_position("ABC123", 50));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->is_stopped) << "6-byte moving response should mark device as moving";
+  EXPECT_NE(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
+      << "6-byte response without hint should still arm bounded settle polling";
+  uint32_t const next_update = comp.poll_policy_.get_next_update("ABC123");
+  EXPECT_NE(next_update, 0u) << "settle poll should be scheduled using the default fallback delay (no hint present)";
+  EXPECT_GE(next_update, before_ms + DEFAULT_SETTLE_POLL_DELAY_MS)
+      << "hint-less moving reply should settle at the default motion-tracking delay";
+  EXPECT_LE(next_update, before_ms + DEFAULT_SETTLE_POLL_DELAY_MS + 50u)
+      << "hint-less moving reply should settle at the default motion-tracking delay";
 }
 
 TEST(HubOperations, QueueRequestDeviceStatusDeduplicatesPerDevice) {
@@ -714,15 +828,16 @@ TEST(HubOperations, CoalesceDoesNotAffectOtherPendingOps) {
   ASSERT_NE(dev, nullptr);
   dev->type = DeviceType::VENETIAN_BLIND;
 
-  // Queue a status request, then position, then tilt
-  comp.queue_request_device_status("ABC123");
+  // Queue a status request for a different device, then position + tilt for the target.
+  // The status poll for "ABC123" would be dropped, but "OTHER"'s poll should survive.
+  // The tilt coalesces with the position into SET_POSITION_AND_TILT, which precedes the background poll.
+  comp.queue_request_device_status("ABC123");  // This will be dropped when SET_POSITION for ABC123 arrives.
   comp.queue_set_device_position("ABC123", 40);
   comp.queue_set_device_tilt("ABC123", 60);
 
-  // The tilt should coalesce with the position, leaving status + combined
-  ASSERT_EQ(comp.op_queue_.size(), 2u) << "status request + coalesced position_and_tilt = 2 ops";
-  EXPECT_EQ(comp.op_queue_[0].type, PendingOperationType::REQUEST_STATUS);
-  EXPECT_EQ(comp.op_queue_[1].type, PendingOperationType::SET_POSITION_AND_TILT);
-  EXPECT_EQ(comp.op_queue_[1].position, 40u);
-  EXPECT_EQ(comp.op_queue_[1].tilt, 60u);
+  // Same-device REQUEST_STATUS is dropped; the coalesced SET_POSITION_AND_TILT remains.
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "same-device status request is dropped; only the coalesced op remains";
+  EXPECT_EQ(comp.op_queue_[0].type, PendingOperationType::SET_POSITION_AND_TILT);
+  EXPECT_EQ(comp.op_queue_[0].position, 40u);
+  EXPECT_EQ(comp.op_queue_[0].tilt, 60u);
 }

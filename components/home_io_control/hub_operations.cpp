@@ -111,26 +111,19 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
     return false;
   }
 
-  if (position == POS_STOP) {
-    this->poll_policy_.clear(device_id);
-  } else {
-    this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
-  }
+  this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", action, device_id.c_str(),
            device_operation_profile_name(dev->type));
 
   IoFrame request;
   if (!create_execute(request, this->node_id_, dev->node_id, true, position)) {
-    if (position != POS_STOP)
-      this->poll_policy_.clear(device_id);
+    this->poll_policy_.clear(device_id);
     return false;
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
-    if (position != POS_STOP)
-      this->poll_policy_.clear(device_id);
+    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
   if (position != POS_STOP && this->poll_policy_.get_interval(device_id) != 0 &&
@@ -149,30 +142,34 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
     return false;
   }
 
-  // STOP does not initiate movement tracking; FAVORITE and VENT do.
-  if (cmd != CoverCommand::STOP) {
-    this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
-  }
+  this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", cover_command_name(cmd), device_id.c_str(),
            device_operation_profile_name(dev->type));
 
   IoFrame request;
   if (!create_execute_command(request, this->node_id_, dev->node_id, true, cmd)) {
-    if (cmd != CoverCommand::STOP)
-      this->poll_policy_.clear(device_id);
+    this->poll_policy_.clear(device_id);
     return false;
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
-    if (cmd != CoverCommand::STOP)
-      this->poll_policy_.clear(device_id);
+    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
   if (cmd != CoverCommand::STOP && this->poll_policy_.get_interval(device_id) != 0 &&
       this->poll_policy_.get_next_update(device_id) == 0)
     this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
+  // STOP: if the device is still moving (decelerating or settling to a rest position), cap the
+  // settle poll to STOP_SETTLE_POLL_CAP_MS. The private response is the shared reply to both polls
+  // and commands, so it cannot mark itself as a STOP; this is the one place that knows a STOP was
+  // sent and shortens the settle the response handler scheduled (which already folded in any hint).
+  if (cmd == CoverCommand::STOP && dev != nullptr && !dev->is_stopped) {
+    uint32_t const cap = millis() + STOP_SETTLE_POLL_CAP_MS;
+    uint32_t const existing = this->poll_policy_.get_next_update(device_id);
+    if (existing == 0 || cap < existing)
+      this->poll_policy_.set_next_update(device_id, cap);
+  }
   return true;
 }
 
@@ -186,7 +183,6 @@ bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8
     return false;
   }
 
-  this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
   this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending tilt=%u%% to device %s (profile=%s)", tilt_percent, device_id.c_str(),
@@ -199,7 +195,7 @@ bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
-    this->poll_policy_.clear(device_id);
+    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
   if (this->poll_policy_.get_interval(device_id) != 0 && this->poll_policy_.get_next_update(device_id) == 0)
@@ -218,7 +214,6 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
     return false;
   }
 
-  this->poll_policy_.set_one_shot_pending(device_id, this->poll_policy_.get_interval(device_id) == 0);
   this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending position=%u%% tilt=%u%% to device %s (profile=%s)", position, tilt_percent,
@@ -231,7 +226,7 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
   }
   bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
   if (!ok) {
-    this->poll_policy_.clear(device_id);
+    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
   if (this->poll_policy_.get_interval(device_id) != 0 && this->poll_policy_.get_next_update(device_id) == 0)

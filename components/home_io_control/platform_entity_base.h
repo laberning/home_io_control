@@ -79,7 +79,7 @@ class DeviceBoundEntity {
   /// @param tag Log tag of the calling entity.
   void log_poll_interval_config_(const char *tag) const {
     if (this->status_poll_interval_ms_ == 0) {
-      ESP_LOGCONFIG(tag, "  Status Poll Interval: default single settle poll");
+      ESP_LOGCONFIG(tag, "  Status Poll Interval: device-hinted settle polling (no fixed interval)");
     } else {
       ESP_LOGCONFIG(tag, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
     }

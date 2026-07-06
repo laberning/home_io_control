@@ -18,8 +18,6 @@ uint32_t StatusPollPolicy::get_interval(const std::string &device_id) const {
 
 void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t initial_delay_ms, uint32_t now) {
   PollTracking &t = tracking_[device_id];
-  if (t.interval_ms == 0)
-    return;
   t.poll_deadline = now + MAX_TRACKED_STATUS_POLL_WINDOW_MS;
   t.next_update = (initial_delay_ms == 0) ? 0 : (now + initial_delay_ms);
   t.status_poll_failures = 0;
@@ -31,27 +29,11 @@ void StatusPollPolicy::clear(const std::string &device_id) {
   if (it == tracking_.end())
     return;
   PollTracking &t = it->second;
-  t.single_follow_up_poll_pending = false;
   t.next_update = 0;
   t.poll_deadline = 0;
   t.status_poll_failures = 0;
   t.auth_poll_failures = 0;
   // interval_ms is configuration — NOT cleared; remains set for future tracking cycles.
-}
-
-void StatusPollPolicy::set_one_shot_pending(const std::string &device_id, bool pending) {
-  tracking_[device_id].single_follow_up_poll_pending = pending;
-}
-
-bool StatusPollPolicy::is_one_shot_pending(const std::string &device_id) const {
-  auto it = tracking_.find(device_id);
-  return (it != tracking_.end()) && it->second.single_follow_up_poll_pending;
-}
-
-void StatusPollPolicy::clear_one_shot_pending(const std::string &device_id) {
-  auto it = tracking_.find(device_id);
-  if (it != tracking_.end())
-    it->second.single_follow_up_poll_pending = false;
 }
 
 void StatusPollPolicy::set_next_update(const std::string &device_id, uint32_t abs_time) {
@@ -73,7 +55,7 @@ bool StatusPollPolicy::is_tracking_active(const std::string &device_id, uint32_t
   if (it == tracking_.end())
     return false;
   const PollTracking &t = it->second;
-  return t.interval_ms != 0 && t.poll_deadline != 0 && now <= t.poll_deadline;
+  return t.poll_deadline != 0 && now <= t.poll_deadline;
 }
 
 uint32_t StatusPollPolicy::on_exchange_failed(const std::string &device_id, bool auth_like, uint32_t now) {
@@ -127,8 +109,7 @@ std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {
     PollTracking &t = pair.second;
     if (t.next_update == 0 || now <= t.next_update)
       continue;
-    const bool is_one_shot = (t.interval_ms == 0);
-    if (!is_one_shot && !is_tracking_active(pair.first, now)) {
+    if (!is_tracking_active(pair.first, now)) {
       clear(pair.first);
       continue;
     }
