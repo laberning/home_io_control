@@ -25,6 +25,8 @@ _COMPANION_ID_BASE = "home_io_control"
 CONF_SX1262_RX_BANDWIDTH = "sx1262_rx_bandwidth"
 CONF_SX1262_RESPONSE_PREAMBLE = "sx1262_response_preamble"
 CONF_SX1262_POST_TX_SETTLE_US = "sx1262_post_tx_settle_us"
+CONF_SX1276_RX_BANDWIDTH = "sx1276_rx_bandwidth"
+CONF_SX1276_RESPONSE_PREAMBLE = "sx1276_response_preamble"
 CONF_SX1276_DISCOVERY_HOP_SLICE_MS = "sx1276_discovery_hop_slice_ms"
 CONF_SX1262_DISCOVERY_HOP_SLICE_MS = "sx1262_discovery_hop_slice_ms"
 CONF_LBT_MAX_RETRIES = "lbt_max_retries"
@@ -52,6 +54,7 @@ IOHomeTuningSelect = home_io_control_ns.class_(
 # esphome::home_io_control::SX1262RxBandwidth::BW_117_3_KHZ) so generated code compiles in
 # the global-namespace setup() function.
 SX1262RxBandwidth = home_io_control_ns.enum("SX1262RxBandwidth", is_class=True)
+SX1276RxBandwidth = home_io_control_ns.enum("SX1276RxBandwidth", is_class=True)
 DiscoveryCommand = home_io_control_ns.enum("DiscoveryCommand", is_class=True)
 
 # Map each YAML option string to its C++ enum value. Options are bare kHz numbers (the "kHz"
@@ -62,6 +65,14 @@ SX1262_BANDWIDTH_OPTIONS = {
     "117.3": SX1262RxBandwidth.BW_117_3_KHZ,
     "156.2": SX1262RxBandwidth.BW_156_2_KHZ,
     "187.2": SX1262RxBandwidth.BW_187_2_KHZ,
+}
+
+SX1276_BANDWIDTH_OPTIONS = {
+    "20.8": SX1276RxBandwidth.BW_20_8_KHZ,
+    "41.7": SX1276RxBandwidth.BW_41_7_KHZ,
+    "62.5": SX1276RxBandwidth.BW_62_5_KHZ,
+    "83.3": SX1276RxBandwidth.BW_83_3_KHZ,
+    "125.0": SX1276RxBandwidth.BW_125_0_KHZ,
 }
 
 DISCOVERY_COMMAND_OPTIONS = {
@@ -98,6 +109,8 @@ UI_NAMES = {
     CONF_SX1262_RX_BANDWIDTH: "Radio SX1262 RX Bandwidth (kHz)",
     CONF_SX1262_RESPONSE_PREAMBLE: "Radio SX1262 Response Preamble",
     CONF_SX1262_POST_TX_SETTLE_US: "Radio SX1262 Post-TX Settle",
+    CONF_SX1276_RX_BANDWIDTH: "Radio SX1276 RX Bandwidth (kHz)",
+    CONF_SX1276_RESPONSE_PREAMBLE: "Radio SX1276 Response Preamble",
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: "Radio SX1276 Discovery Hop Slice",
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: "Radio SX1262 Discovery Hop Slice",
     CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
@@ -116,6 +129,7 @@ UI_NAMES = {
 _NUMBER_PARAMS = {
     CONF_SX1262_RESPONSE_PREAMBLE: (32, 256, 1, "B"),
     CONF_SX1262_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
+    CONF_SX1276_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: (5, 200, 1, "ms"),
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (50, 500, 1, "ms"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
@@ -133,6 +147,7 @@ _SELECT_OPTIONS = {
     CONF_PAIRING_DISCOVERY_PAYLOAD: PAIRING_DISCOVERY_PAYLOAD_OPTIONS,
     CONF_PAIRING_DISCOVERY_LOW_POWER: ["Off", "On"],
     CONF_SX1262_RX_BANDWIDTH: list(SX1262_BANDWIDTH_OPTIONS),
+    CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
 }
 
 
@@ -158,6 +173,9 @@ def _one_of_string(param_name, options, coerce_number=False):
 
 _validate_bandwidth = _one_of_string(
     CONF_SX1262_RX_BANDWIDTH, SX1262_BANDWIDTH_OPTIONS, coerce_number=True
+)
+_validate_sx1276_bandwidth = _one_of_string(
+    CONF_SX1276_RX_BANDWIDTH, SX1276_BANDWIDTH_OPTIONS, coerce_number=True
 )
 _validate_discovery_command = _one_of_string(
     f"{CONF_PAIRING_DISCOVERY_COMMANDS} entries", DISCOVERY_COMMAND_OPTIONS
@@ -191,6 +209,7 @@ TUNING_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_UI_CONTROLS, default=False): cv.boolean,
         cv.Optional(CONF_SX1262_RX_BANDWIDTH): _validate_bandwidth,
+        cv.Optional(CONF_SX1276_RX_BANDWIDTH): _validate_sx1276_bandwidth,
         cv.Optional(CONF_PAIRING_DISCOVERY_COMMANDS): cv.All(
             cv.ensure_list(_validate_discovery_command),
             cv.Length(min=1),
@@ -268,6 +287,13 @@ def _apply_tuning_config(config, var):
             tuning,
             "sx1262_rx_bandwidth",
             SX1262_BANDWIDTH_OPTIONS[config[CONF_SX1262_RX_BANDWIDTH]],
+        )
+
+    if CONF_SX1276_RX_BANDWIDTH in config:
+        _assign(
+            tuning,
+            "sx1276_rx_bandwidth",
+            SX1276_BANDWIDTH_OPTIONS[config[CONF_SX1276_RX_BANDWIDTH]],
         )
 
     # Ordered discovery commands. Clear the struct default before appending so a

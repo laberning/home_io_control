@@ -5,12 +5,12 @@
 /// @ingroup hioc_hub
 ///
 /// ManagementActions owns the rename-device flow and the native API registration
-/// that wires it into Home Assistant. Extracting this from the hub removes the
-/// `friend class detail::RenameDeviceServiceDescriptor` declaration: the descriptor
-/// now holds a ManagementActions* and calls only public methods on it.
+/// that wires it into Home Assistant. The API service descriptor holds a
+/// ManagementActions* and calls only public methods on it, so no friend
+/// declarations into the hub are needed.
 ///
-/// IOHomeControlComponent keeps thin protected wrappers (api_rename_device_,
-/// register_management_actions_) so existing tests remain unchanged.
+/// IOHomeControlComponent exposes this collaborator through thin protected
+/// wrappers (api_rename_device_, register_management_actions_).
 
 #include "exchange_engine.h"
 #include "device_registry.h"

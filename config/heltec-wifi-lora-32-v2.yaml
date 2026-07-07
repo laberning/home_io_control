@@ -168,7 +168,7 @@ cover:
     io_device_type: "horizontal_awning"
     io_subtype: 0
     invert_position: true
-    status_poll_interval: 500ms
+    status_poll_interval: 1000ms
     linked_remotes:
       - !secret example_io_device_linked_remote_id
     on_opening:

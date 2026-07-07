@@ -53,8 +53,8 @@ std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]) {
 
 /// CRC-CCITT used by the IO-Homecontrol protocol for frame validation.
 /// Polynomial: 0x1021 (reversed 0x8408), initial value: 0x0000.
-/// On SX1276 this is computed in hardware (IoHomeOn mode); on SX1262 it is
-/// computed in software by the radio driver.
+/// Radio chips with native IO-Homecontrol framing compute this in hardware;
+/// drivers for other chips call this helper instead.
 uint16_t crc_ccitt(const uint8_t *data, uint8_t len) {
   uint16_t crc = 0x0000;
   for (uint8_t i = 0; i < len; i++) {

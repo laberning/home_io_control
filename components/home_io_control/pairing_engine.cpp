@@ -135,9 +135,11 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
 /// Listens with per-chip frequency hopping between slices. Distinguishes between
 /// NO_RESPONSE (no packets at all) and INVALID (packets seen but none valid).
 ///
-/// Frequency hopping: hops between the 3 IO-homecontrol channels after each slice
-/// (5 ms SX1276 FastHop, 50 ms SX1262). When preamble or sync detection fires, the
-/// dwell extends to 15 ms so the incoming frame can complete without interruption.
+/// Frequency hopping: hops between the 3 IO-homecontrol channels after each slice.
+/// The slice length comes from RadioDriver::discovery_hop_slice_ms() — chips that
+/// retune slowly need a much longer dwell than fast-hopping chips. When preamble or
+/// sync detection fires, the dwell extends by PREAMBLE_DWELL_MS so the incoming
+/// frame can complete without interruption.
 decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_response_(uint32_t timeout_ms,
                                                                                    RadioRxPacket &packet,
                                                                                    IoFrame &response_frame) {
@@ -183,8 +185,9 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
 /// Wait for a key-challenge (0x3C) or direct key-confirm (0x33) from target device.
 ///
 /// During key exchange the device typically responds to 0x31 with a random 6-byte
-/// challenge (0x3C). Some devices (particularly on SX1262) skip the challenge and
-/// send 0x33 directly — indicating immediate key acceptance. Both are accepted.
+/// challenge (0x3C). Some devices skip the challenge and send 0x33 directly —
+/// indicating immediate key acceptance (observed mostly when the controller's
+/// TX→RX turnaround is slow enough that the 0x3C is missed). Both are accepted.
 bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet, IoFrame &challenge_frame,
                                             const uint8_t device_node_id[NODE_ID_SIZE]) {
   bool saw_traffic = false;
@@ -211,9 +214,9 @@ bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &
 
 /// Transmit the 0x32 key transfer and wait for 0x33 key confirm (with retry).
 ///
-/// Uses a dedicated wait loop with frequency hopping and the platform's response
-/// preamble. SX1262 needs a longer preamble than SHORT_PREAMBLE for the device to
-/// lock on. Retries up to EXCHANGE_RETRY_COUNT times on timeout.
+/// Uses a dedicated wait loop with frequency hopping and the driver's
+/// response_preamble() (drivers whose TX waveform needs more lock-on margin
+/// return a longer preamble). Retries up to EXCHANGE_RETRY_COUNT times on timeout.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
@@ -370,8 +373,11 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
 ///   3. Transmit CMD_KEY_TRANSFER (0x32) with encrypted system key
 ///   4. Wait for CMD_KEY_CONFIRM (0x33)
 ///
-/// SX1262 uses a dedicated wait_for_key_confirm_() path (faster TX→RX). SX1276 uses
-/// the standard send_and_receive_() exchange via ExchangeEngine.
+/// Step 4 depends on the driver's TX→RX turnaround: fast-turnaround radios await
+/// the 0x33 through the standard send_and_receive() exchange; slow-turnaround
+/// radios use the dedicated wait_for_key_confirm_() path with a key-init
+/// re-trigger, because the 0x33 would otherwise arrive while the receiver is
+/// still settling (see RadioDriver::has_fast_tx_rx_turnaround()).
 bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   context.state = pairing::PairingState::TX_KEY_INIT;
   engine_.record_debug(pairing_stage_name(context.state), 1, false);
@@ -410,10 +416,13 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
 
   context.state = pairing::PairingState::WAIT_KEY_CONFIRM;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  // SX1276: use the proven send_and_receive path.
-  // SX1262: TX→RX transition is too slow to catch the 0x33; use wait_for_key_confirm_ + auto-confirm retry.
+  // Fast-turnaround radios catch the 0x33 through the standard exchange wait. Slow-turnaround
+  // radios miss it while re-entering RX, so they use the dedicated wait loop and, on a miss,
+  // re-send the key-init to trigger the device's auto-confirm.
   bool key_ok = false;
-  if (strcmp(radio_()->chip_name(), "sx1262") == 0) {
+  if (radio_()->has_fast_tx_rx_turnaround()) {
+    key_ok = engine_.send_and_receive(context.req, context.resp, FREQ_CH2) && frame_is_key_confirm(context.resp);
+  } else {
     key_ok = wait_for_key_confirm_(context);
     for (int re = 0; !key_ok && re < 2; re++) {
       ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %d/2)", re + 1);
@@ -427,8 +436,6 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
         key_ok = true;
       }
     }
-  } else {
-    key_ok = engine_.send_and_receive(context.req, context.resp, FREQ_CH2) && frame_is_key_confirm(context.resp);
   }
   if (!key_ok) {
     ESP_LOGW(TAG, "Key exchange failed");

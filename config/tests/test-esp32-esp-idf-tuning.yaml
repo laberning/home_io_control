@@ -35,6 +35,8 @@ home_io_control:
     sx1262_rx_bandwidth: 78.2   # unquoted number exercises the numeric-coercion validator path
     sx1262_response_preamble: 96
     sx1262_post_tx_settle_us: 750
+    sx1276_rx_bandwidth: 83.3   # unquoted number exercises the SX1276 numeric-coercion path
+    sx1276_response_preamble: 16
     sx1276_discovery_hop_slice_ms: 10
     sx1262_discovery_hop_slice_ms: 250
     lbt_max_retries: 3

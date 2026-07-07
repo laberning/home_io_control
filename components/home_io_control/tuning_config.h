@@ -30,6 +30,20 @@ enum class SX1262RxBandwidth : uint8_t {
   BW_187_2_KHZ = 0x07,  ///< 187.2 kHz — widest selectable option.
 };
 
+/// @brief Valid SX1276 RX bandwidth options (RegRxBw register bytes).
+///
+/// The numeric values are the SX1276 RegRxBw encodings (RxBwMant in bits[4:3], RxBwExp in
+/// bits[2:0]) written verbatim to both REG_RX_BW and REG_AFC_BW. Double-sideband bandwidth =
+/// FXOSC / (RxBwMant * 2^(RxBwExp+2)) with FXOSC = 32 MHz. Narrower rejects more out-of-band
+/// noise (higher sensitivity); wider tolerates more LO frequency offset.
+enum class SX1276RxBandwidth : uint8_t {
+  BW_20_8_KHZ = 0x14,   ///< 20.8 kHz — narrowest; maximal noise rejection, least LO-offset tolerance.
+  BW_41_7_KHZ = 0x13,   ///< 41.7 kHz — default (validated against real devices).
+  BW_62_5_KHZ = 0x03,   ///< 62.5 kHz.
+  BW_83_3_KHZ = 0x12,   ///< 83.3 kHz.
+  BW_125_0_KHZ = 0x02,  ///< 125.0 kHz — widest selectable option.
+};
+
 /// @brief Discovery request command codes selectable by the tuning layer.
 enum class DiscoveryCommand : uint8_t {
   DISCOVER = 0x28,      ///< Standard broadcast discovery request (to 0x00003B).
@@ -37,9 +51,9 @@ enum class DiscoveryCommand : uint8_t {
   DISCOVER_ALT = 0x2E,  ///< Alternate broadcast discovery (to 0x00003F), with optional payload byte.
 };
 
-// SX1262 radio defaults live here beside the TuningConfig fields they initialize, keeping the
-// "single source of truth for defaults" rule intact after these were moved out of the generic
-// protocol timing layer. Only RadioSX1262 consumes them (via apply_tuning).
+// Chip-specific radio defaults live here beside the TuningConfig fields they initialize — the
+// single source of truth for defaults. proto_timing.h holds only chip-neutral protocol values;
+// the radio drivers consume these via apply_tuning / discovery_hop_slice_ms.
 
 /// SX1262-specific preamble for response/continuation frames within an exchange.
 ///
@@ -61,11 +75,32 @@ static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 64;
 /// authenticated exchanges.
 static constexpr uint16_t SX1262_POST_TX_SETTLE_US = 500;
 
+/// SX1276 preamble for response/continuation frames within an exchange.
+///
+/// The SX1276 originally reused the protocol's 8-byte SHORT_PREAMBLE for reply frames. A
+/// slightly longer 12-byte preamble was found on real hardware to improve the peer device's
+/// lock-on without measurably affecting exchange timing, so 12 is the default. Runtime-tunable
+/// down to SHORT_PREAMBLE or up for a marginal-range install.
+static constexpr uint16_t SX1276_RESPONSE_PREAMBLE = 12;
+
+/// Per-channel dwell while SX1276 pairing discovery hops across channels.
+///
+/// The SX1276 supports FastHop (no standby transition), so a short slice keeps
+/// discovery sweeping all three channels quickly.
+static constexpr uint16_t SX1276_DISCOVERY_HOP_SLICE_MS = 5;
+
+/// Per-channel dwell while SX1262 pairing discovery hops across channels.
+///
+/// SX1262 frequency changes require a standby→SetRfFrequency→RX cycle, so the
+/// dwell must be much longer than on the SX1276 for short-preamble responses on
+/// alternate channels to be caught reliably.
+static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 200;
+
 /// @brief All runtime tunable parameters for pairing and radio diagnostics.
 ///
-/// Values reset to their defaults on every boot. Each field initializes from the
-/// canonical constant in `proto_frame.h` — that header is the single source of truth
-/// for the defaults, shared with the ESPHome YAML schema. The hub stores a single
+/// Values reset to their defaults on every boot. Each field initializes from a
+/// canonical constant — chip-neutral defaults live in `proto_timing.h`, chip-specific
+/// defaults in this header — shared with the ESPHome YAML schema. The hub stores a single
 /// `TuningConfig` instance and passes it to the radio driver and pairing flow. UI
 /// callbacks update the hub instance directly; the snapshot helpers emit the current
 /// values in YAML-compatible form so a working combination can be copied back into the
@@ -75,6 +110,8 @@ struct TuningConfig {
   SX1262RxBandwidth sx1262_rx_bandwidth{SX1262RxBandwidth::BW_117_3_KHZ};  ///< SX1262 RX bandwidth selector.
   uint16_t sx1262_response_preamble{SX1262_RESPONSE_PREAMBLE};             ///< SX1262 response preamble in bytes.
   uint16_t sx1262_post_tx_settle_us{SX1262_POST_TX_SETTLE_US};             ///< Delay after SX1262 TX before RX (µs).
+  SX1276RxBandwidth sx1276_rx_bandwidth{SX1276RxBandwidth::BW_41_7_KHZ};   ///< SX1276 RX bandwidth selector.
+  uint16_t sx1276_response_preamble{SX1276_RESPONSE_PREAMBLE};             ///< SX1276 response preamble in bytes.
   uint16_t sx1276_discovery_hop_slice_ms{
       SX1276_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while SX1276 discovery hops.
   uint16_t sx1262_discovery_hop_slice_ms{
@@ -115,6 +152,21 @@ std::string sx1262_bandwidth_to_string(SX1262RxBandwidth bw);
 /// @param value YAML string such as "117.3kHz" or "156.2kHz".
 /// @return Bandwidth enum, or std::nullopt on invalid input.
 std::optional<SX1262RxBandwidth> sx1262_bandwidth_from_string(const std::string &value);
+
+/// @brief Convert an SX1276 bandwidth enum to the numeric kHz value used in YAML/logs.
+/// @param bw SX1276 bandwidth enum.
+/// @return Floating-point kHz value (20.8, 41.7, 62.5, 83.3, or 125.0).
+float sx1276_bandwidth_to_khz(SX1276RxBandwidth bw);
+
+/// @brief Format an SX1276 bandwidth enum as its YAML/UI option string (bare kHz number).
+/// @param bw SX1276 bandwidth enum.
+/// @return Bandwidth rendered with one decimal place (e.g. "41.7").
+std::string sx1276_bandwidth_to_string(SX1276RxBandwidth bw);
+
+/// @brief Convert a YAML SX1276 bandwidth string to the enum value.
+/// @param value YAML string such as "41.7" or "83.3kHz".
+/// @return Bandwidth enum, or std::nullopt on invalid input.
+std::optional<SX1276RxBandwidth> sx1276_bandwidth_from_string(const std::string &value);
 
 /// @brief Format the current tuning configuration as a one-line YAML-compatible snapshot.
 ///

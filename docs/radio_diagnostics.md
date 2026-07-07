@@ -129,6 +129,8 @@ your device may differ.
 | `sx1262_rx_bandwidth` | SX1262 | `117.3` | `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
 | `sx1262_response_preamble` | SX1262 | `64` | 32–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
+| `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth; wider tolerates LO offset, narrower rejects more noise. |
+| `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell while hopping during discovery. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
@@ -156,8 +158,8 @@ TX→RX turnaround. Experiments here found that at `58.6` kHz the demodulator co
 half the bytes of a post-transmit frame (pairing succeeded only about one attempt in five);
 widening to `117.3` kHz removed the problem entirely. Going wider still (`156.2`/`187.2`) can
 help when a device's transmitter drifts more than the controller's own radio, at the cost of
-more noise. `58.6` mirrors the ~50 kHz width commonly used on the older SX1276 chip, but is
-marginal on the tight turnaround.
+more noise. `58.6` is close to the narrow default used on the older SX1276 chip (≈41.7 kHz), but
+is marginal on the SX1262's tight turnaround.
 
 #### `sx1262_response_preamble`
 
@@ -180,6 +182,32 @@ fast replies (the challenge or key frames) arrive corrupted.
 demodulator from mangling the first bytes of a quick reply after the transmit→standby→receive
 transition. It works hand-in-hand with bandwidth — a narrower bandwidth generally wants a
 longer settle.
+
+#### `sx1276_rx_bandwidth`
+
+GFSK receiver bandwidth on the SX1276, written to both the RX and AFC bandwidth registers.
+Change it when discovery or key-exchange replies fail to decode cleanly on an SX1276 board.
+
+*Observations:* the default `41.7` kHz is the long-standing fixed value — tighter than the
+~77 kHz Carson-rule figure, chosen to maximise sensitivity by rejecting out-of-band noise, and
+validated against real devices. Unlike the SX1262, the SX1276 has a fast TX→RX turnaround and
+has worked reliably at this narrow default across the devices tested here, so this knob is
+exposed for marginal-range or drifting installs rather than because a change was needed. Widen
+it (`62.5`/`83.3`/`125.0`) when a device's transmitter drifts more than the controller's radio,
+at the cost of admitting more noise; narrow to `20.8` for maximum noise rejection on a clean
+signal.
+
+#### `sx1276_response_preamble`
+
+How long a preamble the SX1276 puts in front of its *reply* frames (the key-transfer and
+authentication responses), giving the peer time to lock on after the hub transmits. Raise it
+if key exchange stalls right after discovery on an SX1276 board.
+
+*Observations:* the SX1276 originally reused the protocol's 8-byte short preamble here. A
+slightly longer `12` bytes was found on hardware to improve the peer's lock-on with no
+measurable timing cost, so that is now the default — still far short of the SX1262's `64`, since
+the SX1276's IoHomeOn waveform gives peers more margin. Lengthen it further for a stubborn or
+marginal-range device.
 
 #### `sx1276_discovery_hop_slice_ms` / `sx1262_discovery_hop_slice_ms`
 

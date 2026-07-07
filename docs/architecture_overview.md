@@ -4,10 +4,20 @@ This page gives a contributor-oriented map of the Home IO Control component and 
 
 ## Layer Map
 
-- \ref hioc_protocol "Protocol Layer": frame layout, command builders, cryptographic helpers, and shared protocol utilities.
+- \ref hioc_protocol "Protocol Layer": frame layout, command builders, cryptographic helpers, and shared protocol utilities. The protocol model is split into cohesive headers (`proto_sizes.h`, `proto_timing.h`, `proto_constants.h`, `proto_device_model.h`, `proto_codecs.h`, `proto_commands.h`, `proto_crypto.h`) with `proto_frame.h` holding the frame container and re-exporting the rest for transition.
 - \ref hioc_radio "Radio Driver Layer": the `RadioDriver` abstraction and the SX1276 / SX1262 implementations.
-- \ref hioc_hub "Controller Layer": `IOHomeControlComponent` orchestrates setup and loop scheduling through six collaborator objects — `ExchangeEngine` (authenticated exchanges), `PairingEngine` (discovery and pairing), `ManagementActions` (rename-device), `DeviceRegistry` (device table and callbacks), `OperationQueue` (pending-operation coalescing), and `StatusPollPolicy` (per-device poll scheduling).
-- \ref hioc_entities "ESPHome Integration Layer": the runtime entities plus the Python schema/codegen modules that expose the component to ESPHome.
+- \ref hioc_hub "Controller Layer": `IOHomeControlComponent` orchestrates setup and loop scheduling through six collaborator objects — `ExchangeEngine` (authenticated exchanges), `PairingEngine` (discovery and pairing), `ManagementActions` (rename-device), `DeviceRegistry` (device table and callbacks), `OperationQueue` (pending-operation coalescing), and `StatusPollPolicy` (per-device poll scheduling). The hub itself is split by concern: `hub_core.cpp` (lifecycle and loop), `hub_operations.cpp` (queued operation dispatch), `hub_status.cpp` (passive receive-side handling), plus thin `hub_pairing.cpp` / `hub_management.cpp` wrappers around their engines. `hub_decisions.h` holds pure frame-classification helpers testable without radio or timing.
+- \ref hioc_tuning "Tuning Layer" (sub-group of the Controller Layer): the runtime `TuningConfig`, the table-driven `tuning_registry`, and the optional Home Assistant number/select entities.
+- \ref hioc_entities "ESPHome Integration Layer": the runtime entities plus the Python schema/codegen modules that expose the component to ESPHome. Shared device-binding codegen lives in `platform_common.py`; the C++ counterpart is the `DeviceBoundEntity` mixin in `platform_entity_base.h`.
+
+## Layering Rules
+
+These invariants keep the layers independent; changes should preserve them:
+
+1. The protocol layer is radio-agnostic: no chip names, chip registers, or driver behavior in `proto_*` files. `proto_timing.h` holds only chip-neutral protocol timing.
+2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `exchange_wait_slice_ms()`, `discovery_hop_slice_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only.
+3. Chip-specific constants live either in the driver header (`radio_sx1276.h` / `radio_sx1262.h`) or, when they are user-tunable defaults, next to their `TuningConfig` fields in `tuning_config.h`.
+4. The composition root is `hub_core.cpp` `setup()`: it is the only place that names concrete driver classes (selection and auto-detection).
 
 ## Request Flow
 
@@ -65,13 +75,20 @@ Replace `hioc_heltec_v2` with the normalized `esphome.name` of the ESPHome node 
 - Pairing engine: [pairing_engine.h](../components/home_io_control/pairing_engine.h)
 - Exchange/auth state types: [hub_exchange.h](../components/home_io_control/hub_exchange.h)
 - Pairing state types: [hub_pairing.h](../components/home_io_control/hub_pairing.h)
+- Pure frame-classification helpers: [hub_decisions.h](../components/home_io_control/hub_decisions.h)
 - Device registry: [device_registry.h](../components/home_io_control/device_registry.h)
 - Operation queue: [operation_queue.h](../components/home_io_control/operation_queue.h)
 - Status poll policy: [status_poll_policy.h](../components/home_io_control/status_poll_policy.h)
 - Management actions: [management_actions.h](../components/home_io_control/management_actions.h)
 - Radio abstraction: [radio_interface.h](../components/home_io_control/radio_interface.h)
+- SX1276 driver: [radio_sx1276.h](../components/home_io_control/radio_sx1276.h)
+- SX1262 driver: [radio_sx1262.h](../components/home_io_control/radio_sx1262.h)
 - Protocol frame model: [proto_frame.h](../components/home_io_control/proto_frame.h)
+- Runtime tuning config: [tuning_config.h](../components/home_io_control/tuning_config.h)
+- Tuning parameter registry: [tuning_registry.h](../components/home_io_control/tuning_registry.h)
+- Shared entity mixin: [platform_entity_base.h](../components/home_io_control/platform_entity_base.h)
 - ESPHome hub schema: [__init__.py](../components/home_io_control/__init__.py)
+- Shared platform codegen: [platform_common.py](../components/home_io_control/platform_common.py)
 
 ## Navigation Notes
 

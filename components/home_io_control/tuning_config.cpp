@@ -30,6 +30,13 @@ constexpr float BW_KHZ_117_3 = 117.3F;
 constexpr float BW_KHZ_156_2 = 156.2F;
 constexpr float BW_KHZ_187_2 = 187.2F;
 
+/// Numeric kHz value for each SX1276 RX bandwidth option.
+constexpr float BW_KHZ_20_8 = 20.8F;
+constexpr float BW_KHZ_41_7 = 41.7F;
+constexpr float BW_KHZ_62_5 = 62.5F;
+constexpr float BW_KHZ_83_3 = 83.3F;
+constexpr float BW_KHZ_125_0 = 125.0F;
+
 }  // namespace
 
 float sx1262_bandwidth_to_khz(SX1262RxBandwidth bw) {
@@ -73,6 +80,50 @@ std::optional<SX1262RxBandwidth> sx1262_bandwidth_from_string(const std::string 
     return SX1262RxBandwidth::BW_156_2_KHZ;
   if (normalized == "187.2" || normalized == "187")
     return SX1262RxBandwidth::BW_187_2_KHZ;
+  return std::nullopt;
+}
+
+float sx1276_bandwidth_to_khz(SX1276RxBandwidth bw) {
+  switch (bw) {
+    case SX1276RxBandwidth::BW_20_8_KHZ:
+      return BW_KHZ_20_8;
+    case SX1276RxBandwidth::BW_41_7_KHZ:
+      return BW_KHZ_41_7;
+    case SX1276RxBandwidth::BW_62_5_KHZ:
+      return BW_KHZ_62_5;
+    case SX1276RxBandwidth::BW_83_3_KHZ:
+      return BW_KHZ_83_3;
+    case SX1276RxBandwidth::BW_125_0_KHZ:
+      return BW_KHZ_125_0;
+  }
+  return BW_KHZ_41_7;
+}
+
+std::string sx1276_bandwidth_to_string(SX1276RxBandwidth bw) {
+  char buf[BANDWIDTH_STR_SIZE];
+  snprintf(buf, sizeof(buf), "%.1f", sx1276_bandwidth_to_khz(bw));
+  return std::string(buf);
+}
+
+std::optional<SX1276RxBandwidth> sx1276_bandwidth_from_string(const std::string &value) {
+  std::string normalized = value;
+  // Normalize: strip whitespace and a trailing "kHz"/"khz" suffix.
+  normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
+  for (char &c : normalized)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (normalized.size() > 3 && normalized.compare(normalized.size() - 3, 3, "khz") == 0)
+    normalized.resize(normalized.size() - 3);
+
+  if (normalized == "20.8" || normalized == "20")
+    return SX1276RxBandwidth::BW_20_8_KHZ;
+  if (normalized == "41.7" || normalized == "41")
+    return SX1276RxBandwidth::BW_41_7_KHZ;
+  if (normalized == "62.5" || normalized == "62")
+    return SX1276RxBandwidth::BW_62_5_KHZ;
+  if (normalized == "83.3" || normalized == "83")
+    return SX1276RxBandwidth::BW_83_3_KHZ;
+  if (normalized == "125.0" || normalized == "125")
+    return SX1276RxBandwidth::BW_125_0_KHZ;
   return std::nullopt;
 }
 
@@ -155,6 +206,10 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
     result += " sx1262_response_preamble=" + std::to_string(cfg.sx1262_response_preamble);
   if (cfg.sx1262_post_tx_settle_us != DEFAULTS.sx1262_post_tx_settle_us)
     result += " sx1262_post_tx_settle_us=" + std::to_string(cfg.sx1262_post_tx_settle_us);
+  if (cfg.sx1276_rx_bandwidth != DEFAULTS.sx1276_rx_bandwidth)
+    result += " sx1276_rx_bandwidth=" + sx1276_bandwidth_to_string(cfg.sx1276_rx_bandwidth);
+  if (cfg.sx1276_response_preamble != DEFAULTS.sx1276_response_preamble)
+    result += " sx1276_response_preamble=" + std::to_string(cfg.sx1276_response_preamble);
   if (cfg.sx1276_discovery_hop_slice_ms != DEFAULTS.sx1276_discovery_hop_slice_ms)
     result += " sx1276_discovery_hop_slice_ms=" + std::to_string(cfg.sx1276_discovery_hop_slice_ms);
   if (cfg.sx1262_discovery_hop_slice_ms != DEFAULTS.sx1262_discovery_hop_slice_ms)

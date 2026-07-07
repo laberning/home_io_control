@@ -5,9 +5,6 @@
 /// Implements ExchangeEngine: the retry loop, challenge-response
 /// authentication, final-response wait, listen-before-talk transmit, and
 /// frequency-hopping. Debug-snapshot helpers are also here.
-///
-/// This is a pure refactoring move from hub_exchange.cpp and hub_core.cpp;
-/// timing values, log formats, and wire behavior are bit-for-bit identical.
 
 #include "exchange_engine.h"
 

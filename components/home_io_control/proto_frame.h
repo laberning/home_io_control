@@ -12,9 +12,10 @@
 /// Communication is encrypted with AES-128 and authenticated with a 6-byte HMAC.
 /// Each installation has a unique 16-byte "system key" shared between controller and devices.
 ///
-/// This header now owns only the frame container itself. The rest of the protocol model was
-/// split into cohesive headers; they are re-exported below for transition so existing includers
-/// keep compiling unchanged. New code should include the specific header it needs.
+/// This header owns only the frame container itself. The rest of the protocol model lives in
+/// cohesive headers (proto_sizes/proto_timing/proto_constants/proto_device_model/proto_codecs);
+/// they are re-exported below for transition so existing includers keep compiling unchanged.
+/// New code should include the specific header it needs.
 
 #include "proto_sizes.h"
 
@@ -72,8 +73,8 @@ static constexpr uint8_t CTRL1_BEACON = 0x80;        ///< Bit 7: beacon announce
 /// @ingroup hioc_protocol
 ///
 /// Over the air layout: [CTRL0][CTRL1][DST 3B][SRC 3B][CMD][DATA 0-23B][CRC 2B].
-/// The CRC is handled by hardware on SX1276 (IoHomeOn) and by software on SX1262;
-/// it is not included in this struct.
+/// The on-air CRC is the radio driver's responsibility (hardware or software,
+/// depending on the chip); it is not included in this struct.
 struct IoFrame {
   uint8_t ctrl0;                      ///< Control byte 0: flags + length.
   uint8_t ctrl1;                      ///< Control byte 1: low power, beacon, etc.
@@ -156,7 +157,8 @@ std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]);
 // ============================================================================
 
 /// @brief Compute CRC‑CCITT (poly 0x1021, init 0x0000) over a buffer.
-/// On SX1276 this is done in hardware; on SX1262 it is computed in software.
+/// Used by radio drivers without hardware IO-Homecontrol CRC support and by
+/// frame validation in tests.
 /// @param data Pointer to data bytes.
 /// @param len Number of bytes.
 /// @return 16‑bit CRC value.

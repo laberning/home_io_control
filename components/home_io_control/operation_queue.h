@@ -4,10 +4,9 @@
 /// @brief Pending-operation queue with per-type coalescing and deduplication.
 /// @ingroup hioc_hub
 ///
-/// Owns the PendingOperationType / PendingOperation types that were previously
-/// nested inside IOHomeControlComponent, plus the coalescing rules that were
-/// inline in hub_operations.cpp. Pure data and logic — no ESPHome dependencies,
-/// fully host-testable.
+/// Owns the PendingOperationType / PendingOperation types and the coalescing
+/// rules applied when operations are enqueued. Pure data and logic — no ESPHome
+/// dependencies, fully host-testable.
 
 #include "proto_device_model.h"
 

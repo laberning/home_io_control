@@ -13,7 +13,7 @@ Key concepts:
 - **Frequency hopping**: The controller hops between three 868 MHz channels (~2.7 ms per channel) while idle, listening for incoming status updates.
 - **Pairing**: Before a device can be controlled, it must be paired — the controller transmits the system key to the device over a short encrypted exchange. The device must be in pairing mode (PROG button) during this step.
 - **YAML as source of truth**: Device type and subtype live in the YAML config. Cover inversion can be forced with `invert_position`, otherwise the controller falls back to the learned device profile. Pairing prints a ready-to-paste YAML snippet in the logs when enough metadata is known.
-- **Automatic status polling**: The controller periodically polls each device for its current position. Devices can also push unsolicited status updates, which the controller authenticates and processes automatically.
+- **Automatic status polling**: After a command (or overheard remote activity) the controller polls the affected device until it reports a stable position, within a bounded window; an optional per-entity `status_poll_interval` sets the follow-up cadence. Devices can also push unsolicited status updates, which the controller authenticates and processes automatically.
 
 ## Minimal Example
 

@@ -122,20 +122,40 @@ class RadioSX1262 : public RadioDriver {
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
   bool is_preamble_detected() override;
-  /// @copydoc RadioDriver::response_preamble
+  /// @brief Preamble for response/continuation frames (SX1262).
+  ///
+  /// The SX1262's software UART-encoded waveform gives the peer device less
+  /// synchronization margin than the SX1276's IoHomeOn waveform, so tight
+  /// RX→TX turnaround frames need a longer preamble than SHORT_PREAMBLE.
+  /// Runtime-tunable; the default and its hardware validation are documented
+  /// at @ref SX1262_RESPONSE_PREAMBLE.
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
-  /// @copydoc RadioDriver::apply_tuning
+  /// @brief Apply SX1262 runtime tuning: RX bandwidth, response preamble, post-TX settle delay.
   void apply_tuning(const TuningConfig &tuning) override {
     this->set_rx_bandwidth_(tuning.sx1262_rx_bandwidth);
     this->set_response_preamble_(tuning.sx1262_response_preamble);
     this->set_post_tx_settle_us_(tuning.sx1262_post_tx_settle_us);
   }
-  /// @copydoc RadioDriver::exchange_wait_slice_ms
+  /// @brief Per-channel dwell while waiting for exchange responses (SX1262).
+  ///
+  /// Longer than the protocol baseline; rationale is documented at
+  /// @ref SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS.
   [[nodiscard]] uint32_t exchange_wait_slice_ms() const override { return SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS; }
-  /// @copydoc RadioDriver::discovery_hop_slice_ms
+  /// @brief Per-channel dwell while pairing discovery hops (SX1262).
+  ///
+  /// SX1262 frequency changes require a standby→SetRfFrequency→RX cycle (no
+  /// fast hop), so discovery needs a much longer dwell than the SX1276. The
+  /// value comes from the user-facing `sx1262_discovery_hop_slice_ms` tuning field.
   [[nodiscard]] uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const override {
     return tuning.sx1262_discovery_hop_slice_ms;
   }
+  /// @brief TX→RX turnaround capability (SX1262): slow.
+  ///
+  /// The TX→standby→RX transition plus the post-TX settle delay is too slow to
+  /// catch a device's immediate reply through the standard exchange wait; in
+  /// pairing, the key-confirm (0x33) is missed that way. PairingEngine therefore
+  /// uses its dedicated key-confirm wait with key-init re-trigger on this driver.
+  [[nodiscard]] bool has_fast_tx_rx_turnaround() const override { return false; }
   /// @copydoc RadioDriver::set_mode_rx
   void set_mode_rx() override;
   /// @copydoc RadioDriver::set_mode_standby
@@ -219,6 +239,8 @@ class RadioSX1262 : public RadioDriver {
   /// @param force_standby If true, switch to standby before reset.
   void reset_rx_state_(bool force_standby = true);
   /// Populate the RadioCaptureInfo from SX1262‑specific telemetry.
+  /// Note: `crc_error` is set from the CrcErr IRQ bit — unlike the SX1276, this
+  /// driver sees and reports frames with a bad CRC.
   /// @param blocking_wait true if this was a blocking wait.
   /// @param irq_status Raw IRQ status.
   /// @param rx_offset Reported RX buffer offset.

@@ -4,9 +4,8 @@
 /// @brief Per-device poll scheduling, failure backoff, and follow-up-poll state machine.
 /// @ingroup hioc_hub
 ///
-/// Owns all per-device poll bookkeeping previously spread across IoDevice fields,
-/// hub_internal.h helpers, and multiple hub implementation files. Pure logic with
-/// injected timestamps — fully host-testable without a clock mock.
+/// Owns all per-device poll bookkeeping (intervals, deadlines, failure counters).
+/// Pure logic with injected timestamps — fully host-testable without a clock mock.
 
 #include <algorithm>
 #include <cstdint>
@@ -72,7 +71,7 @@ static constexpr uint32_t STOP_SETTLE_POLL_CAP_MS = 1000;
   return delay;
 }
 
-/// @brief Per-device poll scheduling state, moved out of IoDevice.
+/// @brief Per-device poll scheduling state.
 struct PollTracking {
   uint32_t interval_ms{0};    ///< Configured follow-up poll interval (0 = no configured cadence; delays fall back to
                               ///< device hint / default settle delay).
@@ -84,10 +83,9 @@ struct PollTracking {
 
 /// @brief Per-hub poll scheduling and failure-backoff policy.
 ///
-/// Maintains a PollTracking entry per device. All poll bookkeeping that previously
-/// lived in IoDevice fields, hub_internal.h inline helpers, and scattered hub
-/// implementation files now lives here. Callers inject 'now' timestamps so the
-/// class is fully testable without a hardware clock.
+/// Maintains a PollTracking entry per device; all hub poll bookkeeping lives
+/// here and nowhere else. Callers inject 'now' timestamps so the class is
+/// fully testable without a hardware clock.
 class StatusPollPolicy {
  public:
   // --- Interval configuration ---

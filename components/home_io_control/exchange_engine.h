@@ -16,9 +16,9 @@
 /// by the hub after construction (e.g., radio driver allocation in setup(),
 /// direct member writes in unit tests) are automatically visible.
 ///
-/// Pairing flows (`hub_pairing.cpp`) call the hub's thin `transmit_frame_()`
-/// and `hop_frequency_()` wrappers which delegate here, so no pairing call
-/// site needs to change.
+/// All transmit and channel-hop traffic funnels through this engine: the hub's
+/// thin `transmit_frame_()` / `hop_frequency_()` wrappers delegate here, and
+/// `PairingEngine` holds a direct reference for its own exchanges.
 
 #include "hub_exchange.h"
 #include "hub_decisions.h"
@@ -34,8 +34,8 @@ namespace home_io_control {
 
 /// @brief Authenticated exchange engine — outbound and inbound protocol flows.
 ///
-/// All timing constants (retry count/delay, response windows) are unchanged
-/// from the hub; this class is a pure refactoring move with no behavioral delta.
+/// All timing constants (retry count/delay, response windows) come from
+/// proto_timing.h; per-chip dwell overrides are queried from the RadioDriver.
 class ExchangeEngine {
  public:
   /// Construct the engine with double-pointer indirection into the hub's
@@ -104,7 +104,7 @@ class ExchangeEngine {
     bool saw_challenge{false};         ///< True if a 0x3C was seen during this exchange.
     bool capture_valid{false};         ///< True if radio capture is meaningful.
     bool capture_rx_done{false};       ///< True if RxDone IRQ fired.
-    bool capture_crc_error{false};     ///< True if CRC error flagged (SX1262).
+    bool capture_crc_error{false};     ///< True if CRC error flagged (chip-dependent; see RadioCaptureInfo::crc_error).
     uint32_t capture_freq_hz{0};       ///< RF frequency of the captured packet.
     uint16_t capture_irq_status{0};    ///< Raw IRQ register value.
     uint8_t capture_packet_status{0};  ///< Chip packet-status byte.

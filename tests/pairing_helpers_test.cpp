@@ -660,3 +660,79 @@ TEST(PairingHelpers, WaitForKeyConfirm_TimeoutNoConfirm) {
   EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
       << "should attempt the key-transfer TX once per retry before giving up";
 }
+
+// ============================================================================
+// Key-exchange confirm-wait strategy selection (RadioDriver::has_fast_tx_rx_turnaround)
+// ============================================================================
+
+namespace {
+
+// Wire layout: [CTRL0][CTRL1][DST 3B][SRC 3B][CMD ...] — command byte at offset 8.
+constexpr size_t WIRE_CMD_OFFSET = 8;
+
+std::vector<uint8_t> sent_command_bytes(const MockRadio &radio) {
+  std::vector<uint8_t> cmds;
+  for (const auto &frame : radio.get_sent_data()) {
+    cmds.push_back(frame.size() > WIRE_CMD_OFFSET ? frame[WIRE_CMD_OFFSET] : 0);
+  }
+  return cmds;
+}
+
+// Shared setup: device answers the key-init with a challenge; the key-confirm
+// (0x33) never arrives, so the phase exhausts its confirm strategy and fails.
+void run_key_exchange_without_confirm(TestableComponent &comp, MockRadio &radio, pairing::PairingContext &context) {
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  uint8_t device_id[3] = {0x44, 0x55, 0x66};
+  uint8_t challenge[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  memcpy(context.device.node_id, device_id, NODE_ID_SIZE);
+
+  IoFrame chal = build_key_challenge(device_id, comp.node_id_, challenge);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(chal, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.pairing_engine_.run_key_exchange_phase_(context))
+      << "key exchange must fail when the key-confirm (0x33) never arrives";
+}
+
+}  // anonymous namespace
+
+TEST(PairingHelpers, KeyExchangePhase_FastTurnaroundUsesStandardExchange) {
+  TestableComponent comp;
+  MockRadio radio;  // fast turnaround: standard send_and_receive path
+  pairing::PairingContext context;
+  run_key_exchange_without_confirm(comp, radio, context);
+
+  // Expected TX sequence: one 0x31 key-init, then only 0x32 key-transfer retries
+  // from send_and_receive — no key-init re-trigger.
+  std::vector<uint8_t> expected = {CMD_KEY_INIT};
+  for (uint8_t i = 0; i < EXCHANGE_RETRY_COUNT; i++)
+    expected.push_back(CMD_KEY_TRANSFER);
+  EXPECT_EQ(sent_command_bytes(radio), expected)
+      << "fast-turnaround driver should await the 0x33 via the standard exchange";
+}
+
+TEST(PairingHelpers, KeyExchangePhase_SlowTurnaroundUsesDedicatedConfirmWait) {
+  TestableComponent comp;
+  MockRadioSX1262 radio;  // slow turnaround: dedicated confirm wait + key-init re-trigger
+  pairing::PairingContext context;
+  run_key_exchange_without_confirm(comp, radio, context);
+
+  // Expected TX sequence: one 0x31 key-init, EXCHANGE_RETRY_COUNT × 0x32 from the
+  // dedicated confirm wait, then two 0x31 re-sends to trigger the device's auto-confirm.
+  std::vector<uint8_t> expected = {CMD_KEY_INIT};
+  for (uint8_t i = 0; i < EXCHANGE_RETRY_COUNT; i++)
+    expected.push_back(CMD_KEY_TRANSFER);
+  expected.push_back(CMD_KEY_INIT);
+  expected.push_back(CMD_KEY_INIT);
+  EXPECT_EQ(sent_command_bytes(radio), expected)
+      << "slow-turnaround driver should use the dedicated confirm wait with key-init re-trigger";
+}

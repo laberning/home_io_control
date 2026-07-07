@@ -4,8 +4,8 @@
 /// @brief Per-hub device table, update-callback fan-out, and linked-remote map.
 /// @ingroup hioc_hub
 ///
-/// DeviceRegistry owns the three containers that the hub previously kept as raw
-/// private members.  Extracting them into this class lets the polling loop, status
+/// DeviceRegistry owns the per-hub device table, the update-callback list, and the
+/// linked-remote map. Keeping them in one class lets the polling loop, status
 /// engine, and pairing flow share a single, testable source of truth without
 /// knowing about each other.
 
@@ -24,8 +24,8 @@ using DeviceUpdateCallback = std::function<void(const std::string &device_id, co
 
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.
 ///
-/// All add/get/subscribe/notify operations that IOHomeControlComponent previously
-/// performed on its own private maps now go through this class.  The class has no
+/// All of the hub's add/get/subscribe/notify operations go through this class —
+/// IOHomeControlComponent holds no device state of its own.  The class has no
 /// ESPHome dependencies beyond logging and is directly host-testable.
 /// @ingroup hioc_hub
 class DeviceRegistry {

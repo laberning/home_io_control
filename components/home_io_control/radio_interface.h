@@ -67,21 +67,22 @@ struct RadioCaptureInfo {
   bool valid{false};          ///< True if capture is valid.
   bool blocking_wait{false};  ///< True if captured during a blocking wait.
   bool rx_done{false};        ///< True if RxDone IRQ fired.
-  bool crc_error{false};  ///< True if CRC error detected (SX1276: never set in IoHomeOn mode; SX1262: set on bad CRC).
-  uint32_t timestamp_ms{0};  ///< Timestamp of capture (millis).
-  uint32_t freq_hz{0};       ///< RF frequency of capture (Hz).
-  int16_t rssi_dbm{0};       ///< Received signal strength (dBm).
-  uint16_t irq_status{0};    ///< Raw IRQ status register value.
-  uint8_t irq_flags1{0};     ///< IRQ flags group 1 (chip-specific).
-  uint8_t irq_flags2{0};     ///< IRQ flags group 2 (chip-specific, includes CRC flag).
-  uint8_t packet_status{0};  ///< Packet status byte (chip-specific).
-  uint8_t rx_offset{0};      ///< RX buffer offset where frame starts (SX1262).
-  uint8_t reported_len{0};   ///< Length reported by the radio chip.
-                             // raw[] preserves the chip-reported bytes before any protocol-specific recovery, while
-                             // frame[] stores the bytes handed to parse(). Keeping both made it possible to compare
-                             // SX1262 recovery output against SX1276 captures during bring-up.
-  uint8_t raw_len{0};        ///< Number of valid bytes in raw[].
-  uint8_t frame_len{0};      ///< Number of valid bytes in frame[].
+  bool crc_error{false};      ///< True if a CRC error was detected. Chip-dependent: some drivers cannot report
+                              ///< CRC failures — see the concrete driver's capture documentation.
+  uint32_t timestamp_ms{0};   ///< Timestamp of capture (millis).
+  uint32_t freq_hz{0};        ///< RF frequency of capture (Hz).
+  int16_t rssi_dbm{0};        ///< Received signal strength (dBm).
+  uint16_t irq_status{0};     ///< Raw IRQ status register value.
+  uint8_t irq_flags1{0};      ///< IRQ flags group 1 (chip-specific).
+  uint8_t irq_flags2{0};      ///< IRQ flags group 2 (chip-specific, includes CRC flag).
+  uint8_t packet_status{0};   ///< Packet status byte (chip-specific).
+  uint8_t rx_offset{0};       ///< RX buffer offset where the frame starts (0 for chips without offset reporting).
+  uint8_t reported_len{0};    ///< Length reported by the radio chip.
+                              // raw[] preserves the chip-reported bytes before any driver-specific recovery, while
+                              // frame[] stores the bytes handed to parse(). Keeping both makes it possible to compare
+                              // one driver's recovery output against reference captures from another.
+  uint8_t raw_len{0};         ///< Number of valid bytes in raw[].
+  uint8_t frame_len{0};       ///< Number of valid bytes in frame[].
   uint8_t raw[RADIO_PACKET_BUFFER_SIZE]{};    ///< Raw radio buffer bytes.
   uint8_t frame[RADIO_PACKET_BUFFER_SIZE]{};  ///< Parsed protocol frame bytes.
 };
@@ -101,7 +102,8 @@ class RadioDriver {
   virtual bool init() = 0;
 
   /// Send a packet using the specified carrier frequency and preamble settings.
-  /// The radio handles CRC automatically (IoHomeOn mode for SX1276).
+  /// The driver is responsible for appending the protocol CRC on the air
+  /// (in hardware or software, depending on the chip).
   virtual bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) = 0;
 
   /// Wait (blocking) for a packet with timeout. Returns true if a packet was received.
@@ -135,49 +137,56 @@ class RadioDriver {
 
   /// @brief Return the preamble length for response/continuation frames.
   ///
-  /// On SX1276 the IoHomeOn hardware mode produces a waveform that devices lock
-  /// onto quickly, so the standard SHORT_PREAMBLE (8 bytes) suffices for all
-  /// non-START frames. On SX1262 the software UART-encoded waveform requires a
-  /// longer preamble when the frame immediately follows a received packet (tight
-  /// RX→TX turnaround), because the peer device needs additional synchronization
-  /// margin after switching from its own TX back to RX.
-  ///
   /// Callers use this instead of hardcoding SHORT_PREAMBLE for any frame sent as
   /// an immediate reply within an exchange (challenge responses, key transfers,
-  /// and any future non-START continuation frames).
+  /// and any future non-START continuation frames — i.e. tight RX→TX turnaround).
   ///
-  /// @return Preamble length in bytes (SHORT_PREAMBLE for SX1276, longer for SX1262).
+  /// The default is the protocol's standard SHORT_PREAMBLE. Drivers whose TX
+  /// waveform gives the peer device less synchronization margin override this
+  /// with a longer preamble (see the concrete drivers for the chip-specific
+  /// rationale).
+  ///
+  /// @return Preamble length in bytes.
   [[nodiscard]] virtual uint16_t response_preamble() const { return SHORT_PREAMBLE; }
 
   /// @brief Apply runtime tuning parameters to the driver.
   ///
   /// Each driver consumes only the fields it understands; the default is a no-op for
-  /// chips with no runtime-tunable radio parameters. RadioSX1262 applies its RX
-  /// bandwidth, response preamble and post-TX settling delay here. This keeps the hub
-  /// free of chip-specific tuning knowledge — it hands over the whole config and lets
-  /// the driver pick what it needs.
+  /// chips with no runtime-tunable radio parameters. This keeps the hub free of
+  /// chip-specific tuning knowledge — it hands over the whole config and lets the
+  /// driver pick what it needs.
   /// @param tuning Current tuning configuration.
   virtual void apply_tuning(const TuningConfig &tuning) {}
 
   /// @brief Per-channel dwell while waiting for an authenticated exchange response.
   ///
-  /// The generic 50 ms slice is correct for the baseline protocol flow and pairing.
-  /// SX1262 authenticated exchanges are the special case: some devices reply slightly
-  /// later than 50 ms after 0x3D, so the SX1262 driver overrides this with a longer
-  /// dwell to avoid hopping away just before that final response arrives.
+  /// The default RESPONSE_CHANNEL_WAIT_MS slice is correct for the baseline protocol
+  /// flow and pairing. A driver overrides this with a longer dwell when its RX path
+  /// needs more margin to catch the final post-auth response before hopping away
+  /// (see the concrete drivers for the chip-specific rationale).
   /// @return Slice length in milliseconds.
   [[nodiscard]] virtual uint32_t exchange_wait_slice_ms() const { return RESPONSE_CHANNEL_WAIT_MS; }
 
   /// @brief Per-channel dwell while pairing discovery hops across channels.
   ///
-  /// SX1276 uses FastHop (no standby needed), so short slices are fine; SX1262
-  /// frequency changes require a standby→SetRf→RX cycle, so it overrides this with a
-  /// longer dwell. The per-chip values come from the user-facing tuning fields.
+  /// The right dwell is inherently chip-specific — it depends on how fast the chip
+  /// can retune (fast hop vs. a standby→retune→RX cycle) — so there is no generic
+  /// default: each driver must return its value, normally from its user-facing
+  /// tuning field.
   /// @param tuning Current tuning configuration.
   /// @return Slice length in milliseconds.
-  [[nodiscard]] virtual uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const {
-    return tuning.sx1276_discovery_hop_slice_ms;
-  }
+  [[nodiscard]] virtual uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const = 0;
+
+  /// @brief Whether the chip re-enters RX fast enough after a TX to catch an
+  /// immediate reply through the standard exchange wait.
+  ///
+  /// Some chips need a standby/settle cycle between TX and RX, so a device's
+  /// immediate response (e.g. the pairing key-confirm 0x33) can arrive while the
+  /// receiver is still settling and be lost. Callers choose between the standard
+  /// exchange wait and a dedicated wait-and-retrigger strategy based on this.
+  /// There is no safe generic default — each driver must declare it.
+  /// @return true if an immediate reply after TX is reliably received.
+  [[nodiscard]] virtual bool has_fast_tx_rx_turnaround() const = 0;
 
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
@@ -193,7 +202,7 @@ class RadioDriver {
   [[nodiscard]] virtual bool is_failed() const = 0;
 
   /// @brief Get a human‑readable chip name.
-  /// @return "sx1276" or "sx1262".
+  /// @return Short lowercase identifier (e.g. "sx1276").
   [[nodiscard]] virtual const char *chip_name() const = 0;
 
   /// Optional chip-specific diagnostics emitted from dump_config.
@@ -254,7 +263,7 @@ class RadioDriver {
     this->clear_dio_fired();
   }
 
-  /// Hardware reset sequence common to all SX chips.
+  /// Shared hardware reset sequence for chips with an active-low RST pin.
   /// Drives RST pin low → 10 ms → high → 10 ms. Called from derived driver init().
   void reset_hardware_();
 

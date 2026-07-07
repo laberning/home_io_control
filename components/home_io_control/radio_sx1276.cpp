@@ -171,11 +171,11 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_AFC_FEI, 0x01);          // AFC auto clear
   this->write_register_(REG_LNA, 0x23);              // Max gain, boost on
   this->write_register_(REG_PREAMBLE_DETECT, 0xAA);  // Detect on, 2 bytes, tol 10
-  // RX bandwidth: 50 kHz (Mant=01, Exp=3). Carson rule bandwidth for 38400 bps +
-  // 19200 Hz deviation is ~77 kHz; 50 kHz is tighter than theoretical but maximizes
-  // sensitivity by rejecting out-of-band noise. Validated against real devices.
-  this->write_register_(REG_RX_BW, 0x13);   // 50 kHz RX bandwidth
-  this->write_register_(REG_AFC_BW, 0x13);  // 50 kHz AFC bandwidth (matches RX BW)
+  // RX/AFC bandwidth: sourced from the runtime-tunable rx_bandwidth_ (default BW_41_7_KHZ = 0x13).
+  // Carson-rule bandwidth for 38400 bps + 19200 Hz deviation is ~77 kHz; the default is tighter
+  // than theoretical but maximizes sensitivity by rejecting out-of-band noise. Validated against
+  // real devices. See SX1276RxBandwidth for the selectable options.
+  this->set_rx_bandwidth_(this->rx_bandwidth_);
 
   // Bitrate 38400 bps
   uint32_t const br = FXOSC / 38400;
@@ -211,6 +211,13 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_SYNC_VALUE1 + 2, 0x33);
 
   this->set_mode_rx();
+}
+
+void RadioSX1276::set_rx_bandwidth_(SX1276RxBandwidth bandwidth) {
+  this->rx_bandwidth_ = bandwidth;
+  // The enum value is the RegRxBw register byte; AFC bandwidth uses the same encoding.
+  this->write_register_(REG_RX_BW, static_cast<uint8_t>(bandwidth));
+  this->write_register_(REG_AFC_BW, static_cast<uint8_t>(bandwidth));
 }
 
 // === Packet TX/RX ===

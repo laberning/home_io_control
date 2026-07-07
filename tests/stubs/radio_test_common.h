@@ -74,6 +74,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   }
   bool is_sync_detected() override { return false; }
   bool is_preamble_detected() override { return false; }
+  // discovery_hop_slice_ms and has_fast_tx_rx_turnaround are pure virtual in RadioDriver; the
+  // generic mock behaves like the fast-hopping, fast-turnaround reference platform so existing
+  // discovery-timing and key-exchange flow tests keep exercising the standard paths.
+  uint16_t discovery_hop_slice_ms(const esphome::home_io_control::TuningConfig &tuning) const override {
+    return tuning.sx1276_discovery_hop_slice_ms;
+  }
+  bool has_fast_tx_rx_turnaround() const override { return true; }
   void set_mode_rx() override {}
   void set_mode_standby() override {}
   bool is_failed() const override { return false; }
@@ -119,4 +126,5 @@ class MockRadioSX1262 : public MockRadio {
   uint16_t discovery_hop_slice_ms(const esphome::home_io_control::TuningConfig &tuning) const override {
     return tuning.sx1262_discovery_hop_slice_ms;
   }
+  bool has_fast_tx_rx_turnaround() const override { return false; }
 };

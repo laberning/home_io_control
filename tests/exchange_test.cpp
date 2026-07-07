@@ -3,6 +3,7 @@
 #include "proto_frame.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
+#include "radio_sx1276.h"
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -407,6 +408,44 @@ TEST(Exchange, ResponsePreamble_SX1262ReturnsLongerPreamble) {
       << "SX1262 should return the configured response preamble";
   EXPECT_GT(radio.response_preamble(), SHORT_PREAMBLE)
       << "SX1262 needs a longer preamble for device lock-on during tight turnaround";
+}
+
+TEST(Exchange, TxRxTurnaround_RealDriversDeclareExpectedCapability) {
+  // Pins the per-chip capability the pairing engine uses to select its key-confirm
+  // wait strategy. Instantiation only — no init(), no SPI traffic.
+  MockSpi spi;
+  MockPin rst, dio0, dio4, dio1, busy;
+  RadioSX1276 sx1276(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  RadioSX1262 sx1262(&spi, &rst, &dio1, &busy, 17, 0x03);
+  EXPECT_TRUE(sx1276.has_fast_tx_rx_turnaround())
+      << "SX1276 (IoHomeOn) catches immediate replies via the standard exchange wait";
+  EXPECT_FALSE(sx1262.has_fast_tx_rx_turnaround())
+      << "SX1262 needs the dedicated key-confirm wait (slow TX->RX transition)";
+}
+
+TEST(Exchange, RadioSX1276_ApplyTuningRoutesRadioParameters) {
+  // Drives the real SX1276 apply_tuning() path (no init(); register writes go to the no-op
+  // MockSpi). Verifies the default matches the pre-tunable fixed value and that a tuning
+  // override propagates to the observable response_preamble(), and that set_rx_bandwidth_
+  // accepts every enum option without touching hardware.
+  MockSpi spi;
+  MockPin rst, dio0, dio4;
+  RadioSX1276 sx1276(&spi, &rst, &dio0, &dio4, 17, 0x80);
+
+  // Default (no tuning applied): the SX1276 default response preamble (12).
+  EXPECT_EQ(sx1276.response_preamble(), SX1276_RESPONSE_PREAMBLE);
+
+  TuningConfig cfg{};
+  cfg.sx1276_response_preamble = 40;
+  for (auto bw : {SX1276RxBandwidth::BW_20_8_KHZ, SX1276RxBandwidth::BW_41_7_KHZ, SX1276RxBandwidth::BW_125_0_KHZ}) {
+    cfg.sx1276_rx_bandwidth = bw;
+    sx1276.apply_tuning(cfg);  // set_rx_bandwidth_ + set_response_preamble_ (no crash / no SPI dependency)
+  }
+  EXPECT_EQ(sx1276.response_preamble(), 40) << "apply_tuning must route sx1276_response_preamble to the driver";
+
+  // Applying defaults again restores the default preamble.
+  sx1276.apply_tuning(TuningConfig{});
+  EXPECT_EQ(sx1276.response_preamble(), SX1276_RESPONSE_PREAMBLE);
 }
 
 TEST(Exchange, SendAndReceive_StartFrameUsesLongPreamble) {

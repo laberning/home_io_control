@@ -114,6 +114,30 @@ class RadioSX1276 : public RadioDriver {
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
   bool is_preamble_detected() override;
+  /// @brief Per-channel dwell while pairing discovery hops (SX1276).
+  ///
+  /// The SX1276 supports FastHop (PllHop), so frequency changes need no standby
+  /// transition and a short slice is enough. The value comes from the user-facing
+  /// `sx1276_discovery_hop_slice_ms` tuning field.
+  [[nodiscard]] uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const override {
+    return tuning.sx1276_discovery_hop_slice_ms;
+  }
+  /// @brief TX→RX turnaround capability (SX1276): fast.
+  ///
+  /// The IoHomeOn TX path returns to RX quickly enough that immediate replies
+  /// (including the pairing key-confirm 0x33) are caught through the standard
+  /// exchange wait — validated by real-hardware pairing on this driver.
+  [[nodiscard]] bool has_fast_tx_rx_turnaround() const override { return true; }
+  /// @brief Preamble for response/continuation frames (SX1276).
+  ///
+  /// Runtime-tunable; the default and its hardware rationale are documented at
+  /// @ref SX1276_RESPONSE_PREAMBLE.
+  [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
+  /// @brief Apply SX1276 runtime tuning: RX bandwidth and response preamble.
+  void apply_tuning(const TuningConfig &tuning) override {
+    this->set_rx_bandwidth_(tuning.sx1276_rx_bandwidth);
+    this->set_response_preamble_(tuning.sx1276_response_preamble);
+  }
   /// @brief Switch radio into continuous receive mode.
   void set_mode_rx() override;
   /// @brief Switch radio into standby mode.
@@ -126,6 +150,14 @@ class RadioSX1276 : public RadioDriver {
   void dump_debug() override;
 
  protected:
+  // --- Tuning helpers (applied via apply_tuning) ---
+  /// Apply the RX bandwidth selector to REG_RX_BW and REG_AFC_BW.
+  /// @param bandwidth Bandwidth selector enum (register byte written verbatim).
+  void set_rx_bandwidth_(SX1276RxBandwidth bandwidth);
+  /// Set the preamble length used for response/continuation frames within an exchange.
+  /// @param preamble Preamble length in bytes.
+  void set_response_preamble_(uint16_t preamble) { this->response_preamble_ = preamble; }
+
   // --- SPI register access ---
   /// Read an SX1276 register over SPI.
   /// @param reg Register address (7 bits, MSB clear for read).
@@ -157,6 +189,8 @@ class RadioSX1276 : public RadioDriver {
   /// @return Number of bytes read.
   uint8_t read_fifo_packet_(uint8_t *buf, uint8_t buf_size);
   /// Populate last_capture_ from raw telemetry.
+  /// Note: `crc_error` is never set on this driver — in IoHomeOn mode the hardware
+  /// silently drops frames with a bad CRC before they reach the FIFO.
   /// @param blocking_wait if this was a blocking receive.
   /// @param irq1 IRQ flags 1.
   /// @param irq2 IRQ flags 2.
@@ -177,6 +211,8 @@ class RadioSX1276 : public RadioDriver {
   uint8_t tx_power_;
   uint8_t pa_pin_;
   bool failed_{false};
+  SX1276RxBandwidth rx_bandwidth_{SX1276RxBandwidth::BW_41_7_KHZ};  ///< Runtime-tunable RX bandwidth.
+  uint16_t response_preamble_{SX1276_RESPONSE_PREAMBLE};            ///< Runtime-tunable response preamble.
 };
 
 }  // namespace home_io_control

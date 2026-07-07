@@ -4,8 +4,10 @@
 /// @brief Internal pairing-state model for hub‑owned discovery and key‑exchange flows.
 /// @ingroup hioc_hub
 ///
-/// This module implements the three‑phase pairing procedure that temporarily tracks a
-/// newly paired device in the controller's runtime registry and installs the system key on the device:
+/// This header defines the state machine enum and context structures for the
+/// three‑phase pairing procedure (the flow itself is implemented by PairingEngine),
+/// which temporarily tracks a newly paired device in the controller's runtime
+/// registry and installs the system key on the device:
 ///
 /// Phase 1 — Discovery (broadcast 0x28 → device responds 0x29):
 ///   Controller broadcasts a discovery packet on the primary channel. A device in
@@ -23,9 +25,10 @@
 ///   updates from the device. This phase completes even if the config frame fails;
 ///   the device will still operate in polled mode.
 ///
-/// All frames use the standard authenticated exchange flow defined in hub_exchange.h.
-/// The pairing state machine serializes these phases, logs the YAML metadata the user should add,
-/// and keeps the paired device in the current runtime registry until reboot.
+/// All frames use the standard authenticated exchange flow (state types in
+/// hub_exchange.h, implementation in ExchangeEngine). PairingEngine serializes these
+/// phases, logs the YAML metadata the user should add, and keeps the paired device
+/// in the current runtime registry until reboot.
 
 #include "proto_frame.h"
 #include "radio_interface.h"

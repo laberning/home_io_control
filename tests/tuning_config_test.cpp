@@ -14,6 +14,11 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_EQ(cfg.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_117_3_KHZ);
   EXPECT_EQ(cfg.sx1262_response_preamble, 64);
   EXPECT_EQ(cfg.sx1262_post_tx_settle_us, 500);
+  // SX1276 radio defaults: RegRxBw 0x13 (unchanged fixed value) and a 12-byte response preamble
+  // (raised from SHORT_PREAMBLE after hardware tuning).
+  EXPECT_EQ(cfg.sx1276_rx_bandwidth, SX1276RxBandwidth::BW_41_7_KHZ);
+  EXPECT_EQ(static_cast<uint8_t>(cfg.sx1276_rx_bandwidth), 0x13);
+  EXPECT_EQ(cfg.sx1276_response_preamble, 12);
   EXPECT_EQ(cfg.sx1276_discovery_hop_slice_ms, 5);
   EXPECT_EQ(cfg.sx1262_discovery_hop_slice_ms, 200);
   EXPECT_EQ(cfg.lbt_max_retries, 5);
@@ -44,6 +49,26 @@ TEST(TuningConfig, BandwidthStringRoundTrip) {
   EXPECT_FLOAT_EQ(sx1262_bandwidth_to_khz(SX1262RxBandwidth::BW_58_6_KHZ), 58.6f);
   EXPECT_FLOAT_EQ(sx1262_bandwidth_to_khz(SX1262RxBandwidth::BW_117_3_KHZ), 117.3f);
   EXPECT_FLOAT_EQ(sx1262_bandwidth_to_khz(SX1262RxBandwidth::BW_187_2_KHZ), 187.2f);
+}
+
+TEST(TuningConfig, Sx1276BandwidthStringRoundTrip) {
+  // from_string accepts bare numbers and (tolerantly) a kHz suffix in any case.
+  EXPECT_EQ(sx1276_bandwidth_from_string("20.8"), SX1276RxBandwidth::BW_20_8_KHZ);
+  EXPECT_EQ(sx1276_bandwidth_from_string("41.7kHz"), SX1276RxBandwidth::BW_41_7_KHZ);
+  EXPECT_EQ(sx1276_bandwidth_from_string("62.5"), SX1276RxBandwidth::BW_62_5_KHZ);
+  EXPECT_EQ(sx1276_bandwidth_from_string("83.3 kHz"), SX1276RxBandwidth::BW_83_3_KHZ);
+  EXPECT_EQ(sx1276_bandwidth_from_string("125.0KHZ"), SX1276RxBandwidth::BW_125_0_KHZ);
+  EXPECT_FALSE(sx1276_bandwidth_from_string("50.0").has_value());
+  // to_string emits a bare kHz number matching the YAML option strings.
+  EXPECT_EQ(sx1276_bandwidth_to_string(SX1276RxBandwidth::BW_41_7_KHZ), "41.7");
+  EXPECT_EQ(sx1276_bandwidth_to_string(SX1276RxBandwidth::BW_125_0_KHZ), "125.0");
+  EXPECT_FLOAT_EQ(sx1276_bandwidth_to_khz(SX1276RxBandwidth::BW_20_8_KHZ), 20.8f);
+  EXPECT_FLOAT_EQ(sx1276_bandwidth_to_khz(SX1276RxBandwidth::BW_83_3_KHZ), 83.3f);
+  // Every enum option maps to a valid RegRxBw byte that round-trips to itself.
+  for (auto bw : {SX1276RxBandwidth::BW_20_8_KHZ, SX1276RxBandwidth::BW_41_7_KHZ, SX1276RxBandwidth::BW_62_5_KHZ,
+                  SX1276RxBandwidth::BW_83_3_KHZ, SX1276RxBandwidth::BW_125_0_KHZ}) {
+    EXPECT_EQ(sx1276_bandwidth_from_string(sx1276_bandwidth_to_string(bw)), bw);
+  }
 }
 
 TEST(TuningConfig, DiscoveryCommandStringRoundTrip) {
@@ -99,6 +124,8 @@ TEST(TuningConfig, SnapshotEmptyForDefaults) {
 TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   TuningConfig cfg{};
   cfg.sx1262_post_tx_settle_us = 750;
+  cfg.sx1276_rx_bandwidth = SX1276RxBandwidth::BW_83_3_KHZ;
+  cfg.sx1276_response_preamble = 24;
   cfg.pairing_discovery_commands = {DiscoveryCommand::DISCOVER, DiscoveryCommand::DISCOVER_ALT};
   cfg.pairing_discovery_payload_enabled = true;
   cfg.pairing_discovery_payload = 0x00;
@@ -107,6 +134,8 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
 
   std::string snapshot = tuning_config_snapshot(cfg);
   EXPECT_NE(snapshot.find("sx1262_post_tx_settle_us=750"), std::string::npos);
+  EXPECT_NE(snapshot.find("sx1276_rx_bandwidth=83.3"), std::string::npos);
+  EXPECT_NE(snapshot.find("sx1276_response_preamble=24"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_commands=[0x28,0x2E]"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_payload=0x00"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_low_power=true"), std::string::npos);

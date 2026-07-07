@@ -29,9 +29,10 @@ static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W 
 /// on the same channel. Solar-powered devices need the long preamble to wake up.
 static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes for initial/start frames
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
-// SX1262-specific preamble and post-TX settle defaults now live beside their TuningConfig fields in
-// tuning_config.h (single source of truth for defaults); the SX1262 exchange dwell lives in
-// radio_sx1262.h. Kept out of the generic protocol layer per the radio-timing layering cleanup.
+// Chip-specific defaults (SX1262 response preamble, post-TX settle, per-chip discovery hop
+// slices) live beside their TuningConfig fields in tuning_config.h; the SX1262 exchange dwell
+// lives in radio_sx1262.h. Kept out of the generic protocol layer per the radio-timing
+// layering cleanup — this header holds only chip-neutral protocol values.
 
 /// Timing constants for frequency hopping and response waiting.
 static constexpr int32_t HOP_TIME_US = 2700;             ///< Time per channel when hopping (2.7ms)
@@ -51,15 +52,14 @@ static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -90;  ///< Channel-free thresh
 static constexpr uint8_t LBT_MAX_RETRIES = 5;           ///< Max carrier-sense attempts before TX anyway
 static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT checks (≥ 5ms per ETSI)
 
-/// Canonical defaults for the runtime-tunable pairing/discovery parameters.
+/// Canonical defaults for the chip-neutral runtime-tunable pairing/discovery parameters.
 ///
 /// These are the single source of truth for the diagnostics tuning layer: `TuningConfig`
 /// initializes its fields from them, and the ESPHome YAML schema falls back to them when a
 /// key is omitted. Adjust a value here and both the compiled default and the documented
-/// YAML default follow. See @ref hioc_tuning.
-static constexpr uint16_t SX1276_DISCOVERY_HOP_SLICE_MS = 5;    ///< SX1276 per-channel dwell while discovery hops.
-static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 200;  ///< SX1262 per-channel dwell while discovery hops.
-static constexpr uint16_t PAIRING_DISCOVERY_WAIT_MS = 2000;     ///< Wait window after sending each discovery command.
+/// YAML default follow. Chip-specific tuning defaults live in tuning_config.h instead.
+/// See @ref hioc_tuning.
+static constexpr uint16_t PAIRING_DISCOVERY_WAIT_MS = 2000;  ///< Wait window after sending each discovery command.
 static constexpr uint16_t PAIRING_DISCOVERY_INITIAL_DWELL_MS = 300;  ///< Dwell on CH2 before discovery hopping begins.
 static constexpr uint8_t PAIRING_KEY_EXCHANGE_RETRIES = 3;  ///< Retries for the authenticated key-exchange phase.
 

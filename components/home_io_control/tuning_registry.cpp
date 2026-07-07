@@ -2,10 +2,10 @@
 /// @brief Parameter tables and lookup helpers for the tuning registry.
 /// @ingroup hioc_tuning
 ///
-/// The getter/setter lambdas below carry the exact per-parameter parsing that previously
-/// lived inline in hub_core.cpp's string-dispatch functions (bandwidth enum decode, the
-/// comma-separated command list with whitespace trimming, the destination/payload/low-power
-/// mapping). Keeping them here makes the hub methods pure table lookups.
+/// The getter/setter lambdas below carry all per-parameter parsing (bandwidth enum
+/// decode, the comma-separated command list with whitespace trimming, the
+/// destination/payload/low-power mapping). Keeping them here makes the hub's tuning
+/// dispatch methods pure table lookups.
 
 #include "tuning_registry.h"
 
@@ -17,7 +17,7 @@
 namespace esphome {
 namespace home_io_control {
 
-// === Numeric parameters (9) ====================================================
+// === Numeric parameters (10) ===================================================
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
@@ -25,6 +25,8 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](TuningConfig &t, float v) { t.sx1262_response_preamble = static_cast<uint16_t>(v); }, true},
     {"sx1262_post_tx_settle_us", [](const TuningConfig &t) { return static_cast<float>(t.sx1262_post_tx_settle_us); },
      [](TuningConfig &t, float v) { t.sx1262_post_tx_settle_us = static_cast<uint16_t>(v); }, true},
+    {"sx1276_response_preamble", [](const TuningConfig &t) { return static_cast<float>(t.sx1276_response_preamble); },
+     [](TuningConfig &t, float v) { t.sx1276_response_preamble = static_cast<uint16_t>(v); }, true},
     {"sx1276_discovery_hop_slice_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.sx1276_discovery_hop_slice_ms); },
      [](TuningConfig &t, float v) { t.sx1276_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
@@ -45,7 +47,7 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](TuningConfig &t, float v) { t.pairing_key_exchange_retries = static_cast<uint8_t>(v); }, false},
 };
 
-// === Select parameters (5) =====================================================
+// === Select parameters (6) =====================================================
 // The setters return false only when the option string is unparseable AND leaving the
 // value untouched is the intended behavior (currently just the bandwidth enum). The
 // destination/payload setters return false for unrecognized values so no radio re-apply
@@ -57,6 +59,15 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        if (!bw.has_value())
          return false;
        t.sx1262_rx_bandwidth = bw.value();
+       return true;
+     },
+     true},
+    {"sx1276_rx_bandwidth", [](const TuningConfig &t) { return sx1276_bandwidth_to_string(t.sx1276_rx_bandwidth); },
+     [](TuningConfig &t, const std::string &v) -> bool {
+       auto bw = sx1276_bandwidth_from_string(v);
+       if (!bw.has_value())
+         return false;
+       t.sx1276_rx_bandwidth = bw.value();
        return true;
      },
      true},
