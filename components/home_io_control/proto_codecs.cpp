@@ -201,6 +201,22 @@ AddressClass classify_address(const uint8_t addr[NODE_ID_SIZE]) {
   return AddressClass::UNKNOWN_BROADCAST;
 }
 
+const char *address_class_name(AddressClass address_class) {
+  switch (address_class) {
+    case AddressClass::UNICAST:
+      return "unicast";
+    case AddressClass::BROADCAST_ALL:
+      return "broadcast_all";
+    case AddressClass::BROADCAST_TYPE:
+      return "broadcast_type";
+    case AddressClass::DISCOVERY:
+      return "discovery";
+    case AddressClass::UNKNOWN_BROADCAST:
+    default:
+      return "unknown_broadcast";
+  }
+}
+
 DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]) {
   if (addr[0] != 0x00)
     return DeviceType::UNKNOWN;

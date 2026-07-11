@@ -212,6 +212,29 @@ void IOHomeControlComponent::schedule_linked_remote_polls_(const std::string &re
   }
 }
 
+void IOHomeControlComponent::maybe_fire_remote_button_event_(const OneWayFrameInfo &info, bool linked,
+                                                             const std::string &src_id) {
+  if (!info.has_intent)
+    return;
+  // All overheard 1W traffic is DEBUG-logged regardless (see log_1w_remote_frame()); the HA event
+  // additionally requires the sender to be on the `exposed_senders` allowlist, since 1W broadcasts
+  // carry no ownership marker and this radio may overhear a neighbor's remote (or sensor) as
+  // easily as the user's own. DEBUG-log the reason it did or didn't fire so a live log capture is
+  // enough to diagnose a misconfigured allowlist vs. a disconnected API.
+  if (!this->is_connected()) {
+    ESP_LOGD(detail::TAG, "1W sender %s has intent but the API is not connected, skipping %s", src_id.c_str(),
+             detail::ONEWAY_SENDER_EVENT);
+    return;
+  }
+  if (!detail::is_exposed_sender(this->exposed_senders_, src_id)) {
+    ESP_LOGD(detail::TAG, "1W sender %s has intent but is not in exposed_senders, skipping %s", src_id.c_str(),
+             detail::ONEWAY_SENDER_EVENT);
+    return;
+  }
+  ESP_LOGD(detail::TAG, "Firing %s for sender %s", detail::ONEWAY_SENDER_EVENT, src_id.c_str());
+  this->fire_homeassistant_event(detail::ONEWAY_SENDER_EVENT, detail::build_remote_button_event_data(info, linked));
+}
+
 void IOHomeControlComponent::update_device_status_(const IoFrame &frame) {
   const std::string id = node_id_to_string(frame.src);
   IoDevice *device_ptr = this->registry_.get(id);
@@ -329,9 +352,12 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     this->last_1w_logged_.cmd = frame.cmd;
     this->last_1w_logged_.timestamp = now;
 
-    // Log decoded frame and schedule linked remote polls.
+    // Decode once and reuse for logging and (when it carries a command intent) the
+    // remote-button HA event, so a physical button press can drive automations directly.
+    const OneWayFrameInfo info = decode_1w_frame(frame);
     const std::vector<std::string> *linked = this->registry_.linked_devices(src_id);
-    detail::log_1w_remote_frame(frame, linked);
+    detail::log_1w_remote_frame(info, linked);
+    this->maybe_fire_remote_button_event_(info, linked != nullptr && !linked->empty(), src_id);
     this->schedule_linked_remote_polls_(src_id);
     return;
   }

@@ -164,6 +164,8 @@ home_io_control:
   tcxo_voltage: 1_8V
   node_id: !secret hub_node_id
   system_key: !secret hub_system_key
+  exposed_senders:
+    - !secret example_io_device_linked_remote_id
 
 cover:
   - platform: home_io_control

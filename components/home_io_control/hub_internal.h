@@ -13,7 +13,12 @@
 
 #include "esphome/core/log.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdio>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace esphome {
 namespace home_io_control {
@@ -110,7 +115,10 @@ inline void log_component_capture(const RadioDriver *radio, const char *stage, c
                                   const IoFrame *frame = nullptr) {
   const RadioCaptureInfo &capture = radio->get_last_capture();
   char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
-  bytes_to_hex(buf, len, payload_hex, sizeof(payload_hex));
+  // Masks the 0x32 key-transfer payload exactly like log_frame() (log_frame.h) — this path is
+  // separate from log_frame() and runs on every received frame, including a passively overheard
+  // pairing exchange between two other devices, so it must carry the same redaction guarantee.
+  render_frame_hex_redacted(buf, len, payload_hex, sizeof(payload_hex));
   if (frame != nullptr) {
     ESP_LOGD(
         "io_capture",
@@ -151,15 +159,15 @@ inline void log_frame_issue(IOHomeControlComponent *component, const char *direc
 // 1W remote frame decode
 // ============================================================================
 
-/// @brief Log a decoded 1W remote frame at DEBUG level.
+/// @brief Log an already-decoded 1W remote frame at DEBUG level.
 ///
-/// Uses decode_1w_frame() to extract structured fields, then formats a concise
-/// DEBUG log line showing remote ID, target type, command intent, and priority.
-/// When the remote is linked to devices, appends the linked device IDs.
-/// @param frame Parsed 1W frame.
+/// Formats a concise DEBUG log line showing remote ID, target type, command intent, and
+/// priority. When the remote is linked to devices, appends the linked device IDs. Takes the
+/// already-decoded OneWayFrameInfo so callers that also build a HA event (see
+/// build_remote_button_event_data()) decode the frame once, not twice.
+/// @param info Already-decoded 1W frame info (see decode_1w_frame()).
 /// @param linked_devices Optional pointer to device IDs this remote is linked to.
-inline void log_1w_remote_frame(const IoFrame &frame, const std::vector<std::string> *linked_devices = nullptr) {
-  const OneWayFrameInfo info = decode_1w_frame(frame);
+inline void log_1w_remote_frame(const OneWayFrameInfo &info, const std::vector<std::string> *linked_devices = nullptr) {
   const std::string src_id = node_id_to_string(info.src);
 
   // Resolve the broadcast target label: "all" for BROADCAST_ALL, otherwise the device type name.
@@ -186,6 +194,55 @@ inline void log_1w_remote_frame(const IoFrame &frame, const std::vector<std::str
 
   ESP_LOGD(TAG, "rx 1W remote %s targets %s: %s(0x%02X) data_len=%u%s", src_id.c_str(), target_label,
            command_name(info.cmd), info.cmd, info.data_len, suffix.c_str());
+}
+
+/// @brief Home Assistant event fired when an overheard 1W remote button press is decoded.
+inline constexpr const char *ONEWAY_SENDER_EVENT = "esphome.home_io_control_sender_event";
+
+/// @brief Whether a 1W sender is on the `exposed_senders` allowlist for the remote-button HA event.
+///
+/// "Sender" covers both remotes and wind/rain sensors — they use the identical 1W broadcast
+/// mechanism and differ only in the `originator` byte inside the payload, not in addressing.
+/// Overheard 1W traffic is always DEBUG-logged regardless of this check (see
+/// log_1w_remote_frame()); this only gates whether the event reaches Home Assistant. Deliberately
+/// separate from `linked_devices` — a sender can be event-enabled without controlling any
+/// registered device (e.g. to trigger an HA automation with no matching cover/light/switch), or
+/// vice versa.
+/// @param exposed_senders Configured allowlist (`exposed_senders` YAML key, empty by default).
+/// @param sender_id Node ID of the 1W sender that sent the frame.
+/// @return true if the sender is in the allowlist.
+inline bool is_exposed_sender(const std::vector<std::string> &exposed_senders, const std::string &sender_id) {
+  return std::find(exposed_senders.begin(), exposed_senders.end(), sender_id) != exposed_senders.end();
+}
+
+/// Buffer size for format_name_and_hex(): longest command name plus "(0xXX)" and a margin.
+inline constexpr size_t NAME_AND_HEX_BUFFER_SIZE = 40;
+
+/// @brief Format a name/value pair as "name(0xXX)", e.g. "execute(0x00)".
+inline std::string format_name_and_hex(const char *name, uint8_t value) {
+  std::array<char, NAME_AND_HEX_BUFFER_SIZE> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "%s(0x%02X)", name, value);
+  return std::string(buffer.data());
+}
+
+/// @brief Build the Home Assistant event data map for a decoded 1W remote button press.
+///
+/// Only meaningful when `info.has_intent` is true (the caller gates emission on that); the
+/// `intent` field is only populated by decode_1w_frame() in that case.
+/// @param info Already-decoded 1W frame info (see decode_1w_frame()).
+/// @param linked True if this remote is linked to at least one registered device.
+/// @return Event data map ready for fire_homeassistant_event().
+inline std::map<std::string, std::string> build_remote_button_event_data(const OneWayFrameInfo &info, bool linked) {
+  return {
+      {"remote_id", node_id_to_string(info.src)},
+      {"target_class", address_class_name(info.address_class)},
+      {"target_type", device_type_name(info.target_type)},
+      {"cmd", format_name_and_hex(command_name(info.cmd), info.cmd)},
+      {"intent", info.intent},
+      {"originator", originator_name(info.originator)},
+      {"acei_level", acei_level_name(info.acei_level)},
+      {"linked", linked ? "true" : "false"},
+  };
 }
 
 // ============================================================================

@@ -107,6 +107,11 @@ enum class AddressClass : uint8_t {
 /// @return Classification indicating the address type.
 AddressClass classify_address(const uint8_t addr[NODE_ID_SIZE]);
 
+/// @brief Get a human-readable name for an address classification.
+/// @param address_class Classification returned by classify_address().
+/// @return Null-terminated string such as "broadcast_all" or "unicast".
+const char *address_class_name(AddressClass address_class);
+
 /// @brief Extract the target device type from a typed broadcast address.
 ///
 /// Broadcast addresses encode the device type in bits [9:2] of the combined

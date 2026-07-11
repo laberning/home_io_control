@@ -32,6 +32,7 @@ CONF_FEM_EN_PIN = "fem_en_pin"
 CONF_VFEM_PIN = "vfem_pin"
 CONF_FEM_PA_PIN = "fem_pa_pin"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
+CONF_EXPOSED_SENDERS = "exposed_senders"
 MIN_STATUS_POLL_INTERVAL_MS = 500
 
 home_io_control_ns = cg.esphome_ns.namespace("home_io_control")
@@ -181,6 +182,9 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_TCXO_VOLTAGE, default="1_8V"): cv.enum(
                 TCXO_VOLTAGE_OPTIONS, upper=True
             ),
+            cv.Optional(CONF_EXPOSED_SENDERS, default=[]): cv.ensure_list(
+                validate_device_id
+            ),
             cv.Optional(tuning_module.CONF_TUNING): tuning_module.TUNING_CONFIG_SCHEMA,
         }
     )
@@ -243,6 +247,9 @@ async def to_code(config):
         cg.add(var.set_radio_type(config[CONF_RADIO_TYPE]))
 
     cg.add(var.set_tcxo_voltage(config[CONF_TCXO_VOLTAGE]))
+
+    for sender_id in config[CONF_EXPOSED_SENDERS]:
+        cg.add(var.add_exposed_sender(sender_id))
 
     if tuning_module.CONF_TUNING in config:
         await tuning_module.to_code(config[tuning_module.CONF_TUNING], var)

@@ -16,7 +16,7 @@ public corpus key) are not yet checked here — that needs a Python AES/HMAC por
 in a later tool version. This script emits a labeled SKIP line for that gap instead of
 silently passing it.
 
-Run via `make corpus-sync` (part of the `lint` composite). Dependency: PyYAML.
+Run via `make corpus-validate` (part of the `lint` composite). Dependency: PyYAML.
 """
 
 import sys

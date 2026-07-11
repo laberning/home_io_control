@@ -69,7 +69,17 @@ def render_frame(capture_slug: str, index: int, frame: dict, expect_frame: dict)
     has_cmd = "cmd" in expect_frame
     cmd = expect_frame.get("cmd", 0)
 
-    has_flags = "start" in expect_frame or "end" in expect_frame or "protocol" in expect_frame
+    # start/end/protocol are one combined has_flags expectation in the generated struct (they
+    # describe the same CTRL0 byte), so a capture must specify all three together or none —
+    # specifying only one would silently assert false for the other two without a human having
+    # verified that, contradicting the "expectations are human-verified" rule in the README.
+    flag_keys_present = {"start", "end", "protocol"} & expect_frame.keys()
+    if flag_keys_present and flag_keys_present != {"start", "end", "protocol"}:
+        raise SystemExit(
+            f"error: {capture_slug} frame[{index}]: partial flag expectation {sorted(flag_keys_present)} — "
+            "specify all of start/end/protocol together, or omit all three"
+        )
+    has_flags = bool(flag_keys_present)
     start = "true" if expect_frame.get("start", False) else "false"
     end = "true" if expect_frame.get("end", False) else "false"
     oneway = "true" if expect_frame.get("protocol") == "1w" else "false"
@@ -125,8 +135,21 @@ def render_capture(capture: dict) -> "tuple[str, str]":
 
     exchange = expect.get("exchange")
     has_exchange = "true" if exchange else "false"
-    kind_expr = EXCHANGE_KIND_ENUM.get(exchange.get("kind") if exchange else None, "ExchangeKind::NONE")
-    outcome_expr = EXCHANGE_OUTCOME_ENUM.get(exchange.get("outcome") if exchange else None, "ExchangeOutcome::NONE")
+    kind_expr = "ExchangeKind::NONE"
+    outcome_expr = "ExchangeOutcome::NONE"
+    if exchange:
+        kind = exchange.get("kind")
+        if kind not in EXCHANGE_KIND_ENUM:
+            raise SystemExit(
+                f"error: {capture_id}: expect.exchange.kind {kind!r} is not one of {sorted(EXCHANGE_KIND_ENUM)}"
+            )
+        kind_expr = EXCHANGE_KIND_ENUM[kind]
+        outcome = exchange.get("outcome")
+        if outcome not in EXCHANGE_OUTCOME_ENUM:
+            raise SystemExit(
+                f"error: {capture_id}: expect.exchange.outcome {outcome!r} is not one of {sorted(EXCHANGE_OUTCOME_ENUM)}"
+            )
+        outcome_expr = EXCHANGE_OUTCOME_ENUM[outcome]
 
     device = expect.get("device") or {}
     has_reported_position = "reported_position" in device

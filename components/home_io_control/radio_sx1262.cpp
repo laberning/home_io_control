@@ -37,7 +37,7 @@ static const uint8_t SX1262_SYNC_WORD_PARAM_24_BITS = 0x18;
 // Fixed probe length chosen from captures of 23-25 byte protocol frames after UART packing
 // and CRC appending. 32 bytes is large enough to preserve complete traffic without relying on
 // the chip's variable-length engine, which consistently truncated the useful payload.
-static const uint8_t SX1262_RX_PROBE_PACKET_LEN = 32;
+static const uint8_t SX1262_RX_PROBE_PACKET_LEN = 48;
 
 // === SPI Communication (opcode-based) ===
 

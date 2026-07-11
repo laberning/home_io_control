@@ -79,6 +79,7 @@ Configuration variables:
 - `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end.
 - `fem_pa_pin` (Optional): Front-end module PA select pin for boards with an external RF front-end.
 - `tcxo_voltage` (Optional, default: `1_8V`): SX1262 TCXO voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, and `3_3V`.
+- `exposed_senders` (Optional, default: empty list): List of 1W sender node IDs (6 hex characters each — remotes *or* sensors, see below) allowed to fire the `esphome.home_io_control_sender_event` event to Home Assistant. Empty by default — see the Remote Button Events section below for why this is opt-in and how it relates to `linked_remotes`.
 - `tuning` (Optional): Diagnostics block for pairing/radio parameters. See [Radio Diagnostics Tuning](radio_diagnostics.md).
 
 Notes:
@@ -621,6 +622,86 @@ cover:
 - **Device type learning**: The YAML-declared `io_device_type` is the permanent, authoritative type. The controller may still learn a device's type from radio for runtime profile selection when the type is not declared in YAML, but it will never overwrite a YAML-declared type.
 - **Inversion defaults**: Some device families (e.g., horizontal awnings) default to inverted position mapping. When `invert_position` is omitted, the cover entity follows that learned device profile automatically. Setting `invert_position` explicitly overrides the learned value.
 - Additional reference-derived device types such as heating devices, sensors, and beacons are recognized for classification and logging, but they do not yet have dedicated ESPHome platform support.
+
+## Remote Button Events
+
+Every decoded 1W transmission is DEBUG-logged (see the Linked Remotes section above), regardless of configuration. Additionally, senders on the `exposed_senders` allowlist fire an `esphome.home_io_control_sender_event` event to Home Assistant, so you can trigger automations directly from a physical remote press — including a remote that doesn't control any device you own an entity for (e.g. a spare remote you want to repurpose as an HA trigger).
+
+"Sender" is deliberately not "remote": handheld/wall remotes and wind/rain sensors use the exact same 1W broadcast mechanism and the same node-ID addressing — a wind sensor is just another device that broadcasts a command (e.g. "close due to wind") with `originator=wind_sensor` instead of `originator=user_remote`. From the radio's perspective they're indistinguishable except for that one payload byte, so `exposed_senders` (like `linked_remotes`) works identically for either: a wind or rain sensor's node ID can go in this list the same way a handheld remote's can.
+
+### Why this is opt-in
+
+1W frames are unencrypted broadcasts to a type-class address (e.g., "all awning devices") — there is no ownership marker on the radio protocol. Your controller can overhear a neighbor's remote (or sensor) as easily as your own if it's in range. Firing an event to Home Assistant for every overheard transmission could mean HA sees a neighbor's button presses, so `exposed_senders` defaults to an **empty list**: nothing fires an event until you explicitly add its node ID.
+
+This is a separate mechanism from `linked_remotes` (which drives optimistic status polling for a device you own):
+
+- A sender can be in `exposed_senders` without being linked to any device — useful for a remote or sensor you want purely as an HA trigger.
+- A sender can be linked to a device without being in `exposed_senders` — linking still triggers a status poll, but the transmission does **not** reach Home Assistant as an event.
+- A sender can be in both lists at once.
+
+### Configuring exposed senders
+
+Find the sender's node ID the same way as for `linked_remotes` (see "Finding your remote's node ID" above — the same log line works for a wind/rain sensor's node ID too), then add it to the hub-level `exposed_senders` list:
+
+```yaml
+home_io_control:
+  cs_pin: 18
+  rst_pin: 14
+  dio0_pin: 26
+  node_id: "C0FFEE"
+  system_key: "00112233445566778899AABBCCDDEEFF"
+  exposed_senders:
+    - "9D6085"
+```
+
+### Event data
+
+| Field | Meaning |
+|-------|---------|
+| `remote_id` | The sender's 6-character node ID |
+| `target_class` | Address classification: `unicast`, `broadcast_all`, `broadcast_type`, `discovery`, or `unknown_broadcast` |
+| `target_type` | The broadcast device-type class the sender addresses (e.g. `awning`, or `unknown` for an all-devices broadcast) |
+| `cmd` | The command name and hex code, e.g. `execute(0x00)` |
+| `intent` | The decoded command: `OPEN`, `CLOSE`, `STOP`, `FAVORITE`, `VENT`, or a numeric position |
+| `originator` | Who triggered the command (`user_remote`, `wind_sensor`, `rain_sensor`, `timer`, etc.) |
+| `acei_level` | The ACEI priority level of the command |
+| `linked` | `"true"` if this sender is also in some entity's `linked_remotes` list, `"false"` otherwise |
+
+### Verifying the event fires
+
+Before wiring up an automation, confirm the event actually reaches Home Assistant:
+
+1. In Home Assistant, go to **Developer Tools → Events**.
+2. Under "Listen to events", type `esphome.home_io_control_sender_event` and click **Start listening**.
+3. Press the physical remote button (or trigger the sensor). If everything is configured correctly, the event and its full data payload appear in that panel within a second or two.
+4. Leave that panel open while iterating on `exposed_senders` — no reflash is needed to test, just re-press the remote after saving a config change and reflashing.
+
+If nothing appears, check the ESPHome DEBUG log (`logger: level: DEBUG`) for one of these lines, logged right after the `rx 1W remote ...` decode line:
+
+| Log line | Meaning |
+|----------|---------|
+| `Firing esphome.home_io_control_sender_event for sender XXXXXX` | The event was sent — if Developer Tools still shows nothing, check the Home Assistant API connection instead (`api:` block, encryption key, network). |
+| `1W sender XXXXXX has intent but is not in exposed_senders, skipping ...` | The sender ID isn't on the allowlist (or doesn't match — check exact casing/value). |
+| `1W sender XXXXXX has intent but the API is not connected, skipping ...` | Home Assistant hasn't got an active connection to this device yet. |
+| *(no line at all, just the `rx 1W remote ...` decode)* | This particular frame carried no decodable command intent — see below. |
+
+**Not every button press fires the event.** Only frames decoded as `CMD_EXECUTE` or `CMD_ACTIVATE_MODE` carry a command intent (`OPEN`/`CLOSE`/`STOP`/etc.); other 1W traffic from the same remote — for example a `WRITE_PRIVATE(0x20)` frame, which some remotes send as part of the same button press — is still DEBUG-logged but never fires the event, because there is nothing decodable to put in `intent`. If you only ever see `WRITE_PRIVATE` lines and never an `EXECUTE` line for a press that should have moved something, the `EXECUTE` frame itself was likely never received (radio timing/contention), not silently dropped by this component.
+
+### Example automation
+
+```yaml
+automation:
+  - alias: "Awning remote pressed"
+    trigger:
+      - platform: event
+        event_type: esphome.home_io_control_sender_event
+        event_data:
+          remote_id: "9D6085"
+    action:
+      - service: notify.mobile_app
+        data:
+          message: "Awning remote: {{ trigger.event.data.intent }}"
+```
 
 ## See Also
 

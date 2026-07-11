@@ -158,6 +158,8 @@ home_io_control:
   dio0_pin: 26
   node_id: !secret hub_node_id
   system_key: !secret hub_system_key
+  exposed_senders:
+    - !secret example_io_device_linked_remote_id
 
 cover:
   - platform: home_io_control

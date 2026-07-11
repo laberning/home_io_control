@@ -169,6 +169,17 @@ class IOHomeControlComponent : public Component,
     this->registry_.add_linked_remote(remote_id, device_id);
   }
 
+  /// Allow a 1W sender (identified by its node ID) to fire the `esphome.home_io_control_sender_event`
+  /// event to Home Assistant. "Sender" is deliberately broader than "remote": the same 1W broadcast
+  /// mechanism carries handheld/wall remotes and wind/rain sensors alike (they differ only in the
+  /// `originator` byte inside the payload, not in how they address the radio) — see `decode_1w_frame()`.
+  /// Overheard 1W traffic is always DEBUG-logged regardless of this list; this only controls which
+  /// senders are allowed to reach Home Assistant as an event, independent of whether the sender is
+  /// also linked to a device via `add_linked_remote`. Empty by default — a sender must be explicitly
+  /// opted in.
+  /// @param sender_id Node ID of the 1W sender (remote or sensor).
+  void add_exposed_sender(const std::string &sender_id) { this->exposed_senders_.push_back(sender_id); }
+
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (legacy/delegating overload).
   /// Type, subtype, and inverted default to UNKNOWN / 0 / false; use the 4-arg
@@ -327,6 +338,13 @@ class IOHomeControlComponent : public Component,
   /// Schedule status polls for all devices associated with a linked remote.
   /// @param remote_id Source node ID of the remote.
   void schedule_linked_remote_polls_(const std::string &remote_id);
+  /// Fire the remote-button HA event for a decoded 1W frame, if the sender is exposed.
+  /// DEBUG-logs the reason when it does not fire (API disconnected / sender not exposed) so a
+  /// live log capture can distinguish "never reached this check" from "reached it and skipped".
+  /// @param info Already-decoded 1W frame info (see decode_1w_frame()).
+  /// @param linked True if the sender is linked to at least one registered device.
+  /// @param src_id Sender's node ID as a string (already computed by the caller).
+  void maybe_fire_remote_button_event_(const OneWayFrameInfo &info, bool linked, const std::string &src_id);
   /// Shared request/response helper for high-level operations.
   /// @param device_id Target device ID.
   /// @param request Outbound request frame.
@@ -399,6 +417,9 @@ class IOHomeControlComponent : public Component,
   bool radio_test_mode_{false};  ///< When true, loop() is suspended for loopback testing.
   TuningConfig tuning_{};        ///< Runtime tuning overrides.
   DeviceRegistry registry_;
+  /// 1W sender node IDs (remotes or sensors) allowed to fire the remote-button HA event
+  /// (`add_exposed_sender`). Config-time list (populated once from YAML), not a per-frame allocation.
+  std::vector<std::string> exposed_senders_;
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
   ExchangeEngine exchange_engine_;        ///< Owns all authenticated exchange and LBT/hop logic.
