@@ -65,7 +65,13 @@ format-check:
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
 	@echo "Linting YAML configuration files..."
-	yamllint config/tests/ config/*.yaml 2>/dev/null || exit 1
+	yamllint config/tests/ config/*.yaml tests/corpus/captures/ 2>/dev/null || exit 1
+
+# Golden-frame corpus: schema + self-consistency validation of every capture YAML
+# (CRC, CTRL0 length, duplicate ids). The generated C++ headers are used for unit-tests
+corpus-validate:
+	@echo "Validating golden-frame corpus captures..."
+	@python3 scripts/corpus/validate.py
 
 # Static analysis (local clang-tidy after building inside Docker)
 clang-tidy:
@@ -97,10 +103,11 @@ STUB_SRCS := tests/stubs/stubs.cpp
 # All test files (*_test.cpp) in tests/ root
 TEST_SRCS := $(wildcard tests/*_test.cpp)
 
-# Include paths
+# Include paths (build/corpus holds the generated golden-frame corpus header — see corpus-gen below)
 INCLUDES := -Icomponents/home_io_control \
             -Itests/include \
-            -Itests/support
+            -Itests/support \
+            -Ibuild/corpus
 
 # Mirror the ESPHome API defines that the component injects during firmware codegen.
 # Without these, host builds silently compile out the rename-action registration path and
@@ -109,7 +116,13 @@ UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_CUSTOM_SERVICES \
 			 -DUSE_API_HOMEASSISTANT_SERVICES
 
-unit-test:
+# Regenerates build/corpus/corpus_generated.h from tests/corpus/captures/**/*.yaml.
+# see tests/corpus/README.md.
+corpus-gen:
+	@mkdir -p build
+	@python3 scripts/corpus/build.py
+
+unit-test: corpus-gen
 	@echo "Building Google Test unit tests for home_io_control (host-only)..."
 	@mkdir -p build
 	g++ -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable -Wno-unused-variable -Wno-reorder -DIRAM_ATTR= \
@@ -132,7 +145,7 @@ doxygen:
 
 # === Composite targets =========================================================
 
-lint: format-check yamllint clang-tidy tuning-sync
+lint: format-check yamllint clang-tidy tuning-sync corpus-validate
 test: unit-test firmware-test
 check: lint test doxygen
 
@@ -144,7 +157,7 @@ test-unit: unit-test
 # === Phony declarations ========================================================
 
 .PHONY: dashboard \
-		format format-check yamllint clang-tidy tidy tuning-sync \
+		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
 		firmware-test unit-test lint test check \
 		test-compile test-unit \
 		doxygen clean-docs

@@ -1,0 +1,47 @@
+id: synthetic_auth_exchange
+description: >
+  Synthetic authenticated exchange: execute(50) -> challenge -> challenge-response -> status
+  (END). HMAC is computed under the public corpus key (tests/support/test_helpers.h ::
+  TEST_SYSTEM_KEY), so this fixture's crypto is safe to commit. Pipeline self-test fixture —
+  see tests/corpus_bootstrap_dump_test.cpp for how these bytes were generated (real
+  serialize()/crc_ccitt()/create_challenge_resp() output, not hand-typed hex).
+source:
+  device: "synthetic controller <-> synthetic device"
+  captured_with: synthetic
+  firmware: null
+  date: 2026-07-11
+  origin: synthetic-bootstrap
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    freq: 868950000
+    hex: "50 20 44 55 66 11 22 33 00 01 43 64 00 80 D8 06 00 89 9A"
+    crc: present
+    note: "execute position 50 (raw 0x64), START, low-power flag set"
+  - dir: rx
+    freq: 868950000
+    hex: "0E 00 11 22 33 44 55 66 3C 01 23 45 67 89 AB 2E 19"
+    crc: present
+    note: "challenge request, challenge = 01 23 45 67 89 AB"
+  - dir: tx
+    freq: 868950000
+    hex: "0E 00 44 55 66 11 22 33 3D 9E 67 67 5E D0 FC C8 59"
+    crc: present
+    note: "challenge response, HMAC under the corpus key"
+  - dir: rx
+    freq: 868950000
+    hex: "90 00 11 22 33 44 55 66 04 01 00 64 00 64 00 00 00 0A 2E"
+    crc: present
+    note: "status response, END, position 50% (raw 0x64 target/current)"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C}
+    - {cmd: 0x3D, hmac_valid: true}
+    - {cmd: 0x04, end: true}
+  device:
+    reported_position: 50

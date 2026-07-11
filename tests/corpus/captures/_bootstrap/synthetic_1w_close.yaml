@@ -1,0 +1,27 @@
+id: synthetic_1w_close
+description: >
+  Hand-assembled 1W remote CLOSE command, typed-broadcast to all roller-shutter devices.
+  Pure plaintext (no crypto) pipeline self-test fixture — see tests/corpus_bootstrap_dump_test.cpp
+  for how these bytes were generated (real serialize()/crc_ccitt() output, not hand-typed hex).
+source:
+  device: "synthetic 1W remote"
+  captured_with: synthetic
+  firmware: null
+  date: 2026-07-11
+  origin: synthetic-bootstrap
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "EC 00 00 00 BF AA BB CC 00 01 41 C8 00 35 7E"
+    crc: present
+    note: "1W execute, typed broadcast to ROLLER_SHUTTER (dst=00 00 BF), CLOSE (main0=0xC8)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: CLOSE
+    target_type: 2
+    originator: 0x01
+    acei: 2
