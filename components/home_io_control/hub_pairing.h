@@ -69,5 +69,10 @@ struct PairingContext {
 
 }  // namespace pairing
 
+/// @brief Get a short, log/telemetry-friendly name for a pairing state.
+/// @param state Pairing state.
+/// @return Null-terminated lowercase string such as "wait_key_challenge".
+const char *pairing_stage_name(pairing::PairingState state);
+
 }  // namespace home_io_control
 }  // namespace esphome

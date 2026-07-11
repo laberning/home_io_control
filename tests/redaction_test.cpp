@@ -4,6 +4,7 @@
 #include "hub_core.h"
 #include "hub_internal.h"
 #include "log_frame.h"
+#include "pairing_telemetry.h"
 #include "proto_commands.h"
 #include "proto_frame.h"
 #include "redaction.h"
@@ -205,4 +206,42 @@ TEST(Redaction, FullPairingExchange_KeyTransferFrameNeverExposesSystemKey) {
                                        test::TEST_SYSTEM_KEY));
   }
   EXPECT_TRUE(found_key_transfer) << "pairing flow should have transmitted a CMD_KEY_TRANSFER frame";
+}
+
+// ============================================================================
+// Pairing telemetry — key material cannot appear by construction
+// ============================================================================
+
+TEST(Redaction, PairingTelemetryResultStringNeverExposesSystemKey) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+  radio.queue_rx(frame_to_rx_packet(build_discovery_response(device_bytes, comp.node_id_)));
+  uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_bytes, comp.node_id_, challenge)));
+  radio.queue_rx(frame_to_rx_packet(build_key_confirm(device_bytes, comp.node_id_)));
+
+  ASSERT_TRUE(comp.discover_and_pair());
+
+  // PairingTelemetry only ever records cmd/src/rssi/phase metadata — never frame payload
+  // bytes — so the real system key cannot appear in its output by construction. This test
+  // locks that invariant down as a regression guard rather than trusting the design note.
+  const std::string result = comp.pairing_telemetry().result_sensor_string();
+  EXPECT_FALSE(
+      contains_key_material(reinterpret_cast<const uint8_t *>(result.data()), result.size(), test::TEST_SYSTEM_KEY));
+  EXPECT_FALSE(text_contains_key_hex(result, test::TEST_SYSTEM_KEY, AES_KEY_SIZE));
+
+  // Every recorded event's fields are limited to cmd/src_node/rssi/aux — none of which can
+  // hold key-derived bytes (src_node is a 3-byte node ID, never 16 bytes of key material).
+  const PairingTelemetry &telemetry = comp.pairing_telemetry();
+  for (uint8_t i = 0; i < telemetry.event_count(); i++) {
+    const PairingTelemetryEvent &event = telemetry.events()[i];
+    EXPECT_FALSE(contains_key_material(event.src_node, sizeof(event.src_node), test::TEST_SYSTEM_KEY));
+    EXPECT_FALSE(contains_key_material(event.dst_node, sizeof(event.dst_node), test::TEST_SYSTEM_KEY));
+  }
 }

@@ -289,6 +289,22 @@ preamble/turnaround problem, so if extra retries alone don't help, address
 `sx1262_response_preamble` and `sx1262_post_tx_settle_us` first. Retries mainly guard against
 occasional transient decode failures.
 
+### Reading pairing results without the tuning UI
+
+Every `home_io_control` config with a `button:` entity gets a companion **"Last Pairing
+Result"** diagnostic text sensor that publishes a frozen, machine-readable summary after each
+pairing attempt (leading `v1;` is a version tag — any later format change bumps it):
+
+```
+v1; outcome=<paired|no_response|invalid_response|key_exchange_failed|config_failed>; phase=<...>; node=<XXXXXX|->; type=<...|->; attempts=<n>; lbt=<n>; dur_ms=<n>; heard=<n>; advice=<codes|none>
+```
+
+`lbt` (LBT retries consumed) and `advice` (see below) are the two fields most useful while
+tuning: a high `lbt` count with a `channel_busy` advice code means the channel — not the
+tuning parameters above — is the bottleneck. See `docs/home_io_control.md`'s "Diagnosing a
+failed pairing attempt" section for the full field reference and the pairing-window traffic
+advisor's advice codes (`1w_traffic`, `channel_busy`, `foreign_controller`, `rf_silent`).
+
 ## A suggested tuning plan
 
 If a device that should be in pairing mode does not pair with the defaults, work through the

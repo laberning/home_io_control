@@ -26,12 +26,6 @@
 namespace esphome {
 namespace home_io_control {
 
-namespace {
-
-const char *const TAG = "home_io_control";
-constexpr size_t DEVICE_TYPE_HEX_STRING_BUFFER_SIZE = 8;  ///< Buffer for strings such as "0x11" plus terminator.
-
-/// Map PairingState to string for debug logging.
 const char *pairing_stage_name(pairing::PairingState state) {
   switch (state) {
     case pairing::PairingState::IDLE:
@@ -57,6 +51,11 @@ const char *pairing_stage_name(pairing::PairingState state) {
       return "failed";
   }
 }
+
+namespace {
+
+const char *const TAG = "home_io_control";
+constexpr size_t DEVICE_TYPE_HEX_STRING_BUFFER_SIZE = 8;  ///< Buffer for strings such as "0x11" plus terminator.
 
 /// Check if frame is a 0x33 key-confirm message.
 bool frame_is_key_confirm(const IoFrame &frame) { return frame.cmd == CMD_KEY_CONFIRM; }
@@ -120,13 +119,15 @@ const char *pairing_platform_name(DeviceCapabilityClass capability_class) {
 // --- Constructor ---
 
 PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, const uint8_t *system_key,
-                             const TuningConfig *tuning, ExchangeEngine &engine, DeviceRegistry &registry)
+                             const TuningConfig *tuning, ExchangeEngine &engine, DeviceRegistry &registry,
+                             PairingTelemetry &telemetry)
     : radio_ptr_(radio_ptr),
       node_id_(node_id),
       system_key_(system_key),
       tuning_(tuning),
       engine_(engine),
-      registry_(registry) {}
+      registry_(registry),
+      telemetry_(telemetry) {}
 
 // --- Low-level waiters ---
 
@@ -147,9 +148,12 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
   static constexpr uint32_t PREAMBLE_DWELL_MS = 15;
 
   auto try_accept = [&]() {
-    return parse(packet.data, packet.len, response_frame) &&
-           decisions::classify_pairing_discovery_response(response_frame) ==
-               decisions::PairingDiscoveryDisposition::ACCEPT;
+    if (!parse(packet.data, packet.len, response_frame))
+      return false;
+    const bool accepted = decisions::classify_pairing_discovery_response(response_frame) ==
+                          decisions::PairingDiscoveryDisposition::ACCEPT;
+    this->record_discovery_rx_telemetry_(response_frame, accepted, radio_()->get_last_capture().rssi_dbm);
+    return accepted;
   };
 
   bool saw_traffic = false;
@@ -162,6 +166,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
         return decisions::PairingDiscoveryDisposition::ACCEPT;
       if ((int32_t) (deadline - millis()) > 0 && !radio_()->is_preamble_detected() && !radio_()->is_sync_detected()) {
         engine_.hop_frequency();
+        this->telemetry_.record_hop();
       }
       continue;
     }
@@ -169,6 +174,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
       break;
     if (!radio_()->is_preamble_detected() && !radio_()->is_sync_detected()) {
       engine_.hop_frequency();
+      this->telemetry_.record_hop();
       continue;
     }
     const uint32_t ext = std::min((uint32_t) (deadline - millis()), PREAMBLE_DWELL_MS);
@@ -200,12 +206,18 @@ bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &
     saw_traffic = true;
     if (!parse(packet.data, packet.len, challenge_frame))
       continue;
+    const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
     if (challenge_frame.cmd == CMD_KEY_CONFIRM && memcmp(challenge_frame.src, device_node_id, NODE_ID_SIZE) == 0 &&
-        memcmp(challenge_frame.dst, node_id_, NODE_ID_SIZE) == 0)
+        memcmp(challenge_frame.dst, node_id_, NODE_ID_SIZE) == 0) {
+      this->telemetry_.record_rx(challenge_frame, rssi);
       return true;
+    }
     if (decisions::classify_pairing_key_challenge(challenge_frame, device_node_id, node_id_) !=
-        decisions::PairingKeyChallengeDisposition::ACCEPT)
+        decisions::PairingKeyChallengeDisposition::ACCEPT) {
+      this->telemetry_.record_rx_reject(challenge_frame, rssi);
       continue;
+    }
+    this->telemetry_.record_rx(challenge_frame, rssi);
     return true;
   }
   ESP_LOGW(TAG, saw_traffic ? "Key exchange: no valid challenge received" : "Key exchange: no challenge received");
@@ -233,8 +245,10 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
       const uint32_t remaining = deadline - millis();
       const uint32_t slice = std::min<uint32_t>(remaining, detail::PAIRING_KEY_CONFIRM_SLICE_MS);
       if (!radio_()->wait_for_packet(context.packet, slice)) {
-        if ((int32_t) (deadline - millis()) > 0)
+        if ((int32_t) (deadline - millis()) > 0) {
           engine_.hop_frequency();
+          this->telemetry_.record_hop();
+        }
         continue;
       }
       saw_any = true;
@@ -248,8 +262,12 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
                context.resp.dst[2]);
       if (!decisions::frame_matches_exchange_endpoints(context.req, context.resp))
         continue;
-      if (frame_is_key_confirm(context.resp))
+      const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+      if (frame_is_key_confirm(context.resp)) {
+        this->telemetry_.record_rx(context.resp, rssi);
         return true;
+      }
+      this->telemetry_.record_rx_reject(context.resp, rssi);
       ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
                command_name(context.resp.cmd), context.resp.cmd);
       if (context.resp.cmd == CMD_ERROR_RESP && context.resp.data_len > 0)
@@ -330,6 +348,12 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
     delay(tuning_->pairing_discovery_initial_dwell_ms);
   }
 
+  // Tracks whether any single attempt saw traffic that failed to classify as a valid discovery
+  // response, so the final "gave up after retries" return can distinguish INVALID (something was
+  // heard, just not a valid response) from NO_RESPONSE (nothing heard at all) instead of always
+  // collapsing to NO_RESPONSE.
+  bool saw_invalid = false;
+
   for (size_t command_index = 0; command_index < tuning_->pairing_discovery_commands.size(); ++command_index) {
     auto command = static_cast<uint8_t>(tuning_->pairing_discovery_commands[command_index]);
     const uint8_t *destination = resolve_discovery_destination(command, tuning_->pairing_discovery_destination_auto,
@@ -338,8 +362,10 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
              tuning_->pairing_discovery_commands.size(), command, destination[0], destination[1], destination[2]);
 
     for (uint8_t attempt = 1; attempt <= detail::PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {
+      this->telemetry_.increment_discovery_attempt();
       context.state = pairing::PairingState::TX_DISCOVER;
       engine_.record_debug(pairing_stage_name(context.state), attempt, false);
+      this->telemetry_.set_phase(context.state);
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
                                     tuning_->pairing_discovery_payload_enabled, tuning_->pairing_discovery_payload,
                                     system_key_) ||
@@ -349,11 +375,15 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
 
       context.state = pairing::PairingState::WAIT_DISCOVER_RESPONSE;
       engine_.record_debug(pairing_stage_name(context.state), attempt, false);
+      this->telemetry_.set_phase(context.state);
       auto result = wait_for_discovery_response_(tuning_->pairing_discovery_wait_ms, context.packet, context.rx);
       if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
         parse_device_from_discovery(context.rx, context.device, context.device_id);
         context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
         return result;
+      }
+      if (result == decisions::PairingDiscoveryDisposition::INVALID) {
+        saw_invalid = true;
       }
 
       if (attempt < detail::PAIRING_DISCOVERY_MAX_ATTEMPTS) {
@@ -362,7 +392,8 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       }
     }
   }
-  return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
+  return saw_invalid ? decisions::PairingDiscoveryDisposition::INVALID
+                     : decisions::PairingDiscoveryDisposition::NO_RESPONSE;
 }
 
 /// Phase 2: authenticated key exchange (0x31 → 0x3C → 0x32 → 0x33).
@@ -381,6 +412,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
 bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   context.state = pairing::PairingState::TX_KEY_INIT;
   engine_.record_debug(pairing_stage_name(context.state), 1, false);
+  this->telemetry_.set_phase(context.state);
   if (!create_key_init(context.key_init, node_id_, context.device.node_id) ||
       !engine_.transmit_frame(context.key_init, FREQ_CH2, LONG_PREAMBLE)) {
     return false;
@@ -388,6 +420,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
 
   context.state = pairing::PairingState::WAIT_KEY_CHALLENGE;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
   if (!wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
                                context.device.node_id)) {
     return false;
@@ -409,6 +442,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
 
   context.state = pairing::PairingState::TX_KEY_TRANSFER;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
   if (!create_key_transfer(context.req, context.key_init, context.device.node_id, node_id_, system_key_,
                            context.rx.data)) {
     return false;
@@ -416,6 +450,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
 
   context.state = pairing::PairingState::WAIT_KEY_CONFIRM;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
   // Fast-turnaround radios catch the 0x33 through the standard exchange wait. Slow-turnaround
   // radios miss it while re-entering RX, so they use the dedicated wait loop and, on a miss,
   // re-send the key-init to trigger the device's auto-confirm.
@@ -446,9 +481,9 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
 
 /// Phase 3: send SetConfig1 (0x6F) to enable automatic status updates. Best-effort.
 bool PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &context) {
-  if (create_set_config1(context.req, node_id_, context.device.node_id))
-    engine_.send_and_receive(context.req, context.resp, FREQ_CH2);
-  return true;
+  if (!create_set_config1(context.req, node_id_, context.device.node_id))
+    return false;
+  return engine_.send_and_receive(context.req, context.resp, FREQ_CH2);
 }
 
 // --- Orchestrator ---
@@ -462,6 +497,9 @@ bool PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
 /// On success the device is added to the registry and a YAML snippet is printed to the log.
 /// The hub's thin wrapper manages the busy_ flag before and after this call.
 bool PairingEngine::discover_and_pair() {
+  this->telemetry_.begin();
+  this->engine_.set_pairing_telemetry(&this->telemetry_);
+
   ESP_LOGI(TAG, "Starting device discovery...");
   ESP_LOGI(TAG, "%s", tuning_config_full_snapshot(*tuning_).c_str());
 
@@ -471,6 +509,9 @@ bool PairingEngine::discover_and_pair() {
   auto disc_disp = run_discovery_phase_(context);
   if (disc_disp != decisions::PairingDiscoveryDisposition::ACCEPT) {
     log_discovery_diagnostic(disc_disp);
+    this->finish_pairing_attempt_(disc_disp == decisions::PairingDiscoveryDisposition::INVALID
+                                      ? PairingOutcome::INVALID_RESPONSE
+                                      : PairingOutcome::NO_RESPONSE);
     return false;
   }
 
@@ -487,16 +528,22 @@ bool PairingEngine::discover_and_pair() {
       break;
     }
   }
-  if (!key_exchanged)
+  if (!key_exchanged) {
+    this->finish_pairing_attempt_(PairingOutcome::KEY_EXCHANGE_FAILED);
     return false;
+  }
 
-  // Phase 3: Final configuration — best-effort SetConfig1
-  finalize_pairing_configuration_(context);
+  // Phase 3: Final configuration — best-effort SetConfig1. Pairing proceeds either way; the
+  // result only affects which outcome telemetry reports (PAIRED vs. CONFIG_FAILED).
+  const bool config_ok = finalize_pairing_configuration_(context);
+  const PairingOutcome outcome = config_ok ? PairingOutcome::PAIRED : PairingOutcome::CONFIG_FAILED;
 
   context.state = pairing::PairingState::REGISTER_DEVICE;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
 
   registry_.put(context.device_id, context.device);
+  this->telemetry_.set_paired_device(context.device.node_id, context.device.type);
 
   const auto capability_class = device_capability_class(context.device.type);
   const char *platform = pairing_platform_name(capability_class);
@@ -528,6 +575,8 @@ bool PairingEngine::discover_and_pair() {
 
     context.state = pairing::PairingState::COMPLETE;
     engine_.record_debug(pairing_stage_name(context.state), 1, true);
+    this->telemetry_.set_phase(context.state);
+    this->finish_pairing_attempt_(outcome);
     return true;
   }
 
@@ -565,7 +614,34 @@ bool PairingEngine::discover_and_pair() {
 
   context.state = pairing::PairingState::COMPLETE;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
+  this->finish_pairing_attempt_(outcome);
   return true;
+}
+
+void PairingEngine::finish_pairing_attempt_(PairingOutcome outcome) {
+  this->telemetry_.set_outcome(outcome);
+  this->engine_.set_pairing_telemetry(nullptr);
+  this->telemetry_.log_summary();
+
+  advisor::PairingAdvice advice[advisor::PAIRING_ADVICE_MAX];
+  const uint8_t advice_count = advisor::analyze_pairing_telemetry(this->telemetry_, this->node_id_, advice);
+  std::string advice_codes;
+  for (uint8_t i = 0; i < advice_count; i++) {
+    ESP_LOGW(TAG, "Pairing advisor: %s", advisor::pairing_advice_message(advice[i]).c_str());
+    if (!advice_codes.empty())
+      advice_codes += ',';
+    advice_codes += advisor::pairing_advice_code_name(advice[i].code);
+  }
+  this->telemetry_.set_advice_codes(advice_codes);
+}
+
+void PairingEngine::record_discovery_rx_telemetry_(const IoFrame &frame, bool accepted, int16_t rssi) {
+  if (accepted) {
+    this->telemetry_.record_rx(frame, rssi);
+  } else {
+    this->telemetry_.record_rx_reject(frame, rssi);
+  }
 }
 
 }  // namespace home_io_control

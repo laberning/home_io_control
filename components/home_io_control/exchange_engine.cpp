@@ -114,6 +114,8 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
     if (rssi < this->tuning_->lbt_rssi_threshold_dbm)
       break;
     ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm), retry %u/%u", rssi, lbt + 1, this->tuning_->lbt_max_retries);
+    if (this->pairing_telemetry_ != nullptr)
+      this->pairing_telemetry_->record_lbt_defer(rssi);
     delay(LBT_RETRY_DELAY_MS);
   }
   RadioTxConfig tx_config{};
@@ -123,6 +125,8 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
     ESP_LOGW(TAG, "tx: send_failed cmd=0x%02X", frame.cmd);
     return false;
   }
+  if (this->pairing_telemetry_ != nullptr)
+    this->pairing_telemetry_->record_tx(frame.cmd);
   return true;
 }
 

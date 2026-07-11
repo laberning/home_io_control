@@ -40,7 +40,8 @@ class TestableComponent : public IOHomeControlComponent {
   // same hub state via the same pointers. Tests that script individual phases use
   // this member; discover_and_pair() internally uses the base-class member (both
   // share the same radio/registry/node_id via shared pointers/references).
-  test::TestablePairingEngine pairing_engine_{&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_};
+  test::TestablePairingEngine pairing_engine_{&radio_,          node_id_,  system_key_,       &tuning_,
+                                              exchange_engine_, registry_, pairing_telemetry_};
 };
 
 // --- Frame builders ---------------------------------------------------------

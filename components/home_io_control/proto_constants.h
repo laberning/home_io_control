@@ -41,6 +41,9 @@ static constexpr uint8_t CMD_DISCOVER_CONFIRM = 0x2C;      ///< Confirm discover
 static constexpr uint8_t CMD_DISCOVER_CONFIRM_ACK = 0x2D;  ///< Device acknowledges confirmation
 static constexpr uint8_t CMD_DISCOVER_ALT_REQ =
     0x2E;  ///< Alternate broadcast discovery (to 0x00003F); response is 0x29
+static constexpr uint8_t CMD_ONEWAY_REMOVE =
+    0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device); same payload shape
+           ///< as 0x2E. Reference: analysis/completed/pairing_lab.md field capture, "CMD 0x39".
 
 // Key exchange commands (used during pairing)
 static constexpr uint8_t CMD_KEY_INIT = 0x31;      ///< Initiate key transfer to device

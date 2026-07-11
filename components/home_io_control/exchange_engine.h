@@ -22,6 +22,7 @@
 
 #include "hub_exchange.h"
 #include "hub_decisions.h"
+#include "pairing_telemetry.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 #include "radio_interface.h"
@@ -93,6 +94,16 @@ class ExchangeEngine {
   void reset_hop_timestamp();
 
   // -------------------------------------------------------------------------
+  // Pairing telemetry hook
+  // -------------------------------------------------------------------------
+
+  /// Attach a telemetry recorder so transmit_frame()'s LBT loop records defer events.
+  /// Set by PairingEngine for the duration of a `discover_and_pair()` attempt only — nullptr
+  /// (the default) for every non-pairing exchange, which is the common case and stays a no-op.
+  /// @param telemetry Non-owning pointer, or nullptr to detach.
+  void set_pairing_telemetry(PairingTelemetry *telemetry) { this->pairing_telemetry_ = telemetry; }
+
+  // -------------------------------------------------------------------------
   // Exchange debug snapshot
   // -------------------------------------------------------------------------
 
@@ -146,10 +157,11 @@ class ExchangeEngine {
 
   // --- Dependencies (back-references into the hub) -------------------------
 
-  RadioDriver **radio_ptr_;     ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
-  const uint8_t *node_id_;      ///< Hub's node_id_[NODE_ID_SIZE] array.
-  const uint8_t *system_key_;   ///< Hub's system_key_[AES_KEY_SIZE] array.
-  const TuningConfig *tuning_;  ///< Hub's live TuningConfig (read on every LBT check).
+  RadioDriver **radio_ptr_;                       ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
+  const uint8_t *node_id_;                        ///< Hub's node_id_[NODE_ID_SIZE] array.
+  const uint8_t *system_key_;                     ///< Hub's system_key_[AES_KEY_SIZE] array.
+  const TuningConfig *tuning_;                    ///< Hub's live TuningConfig (read on every LBT check).
+  PairingTelemetry *pairing_telemetry_{nullptr};  ///< Set only during a pairing attempt; see set_pairing_telemetry().
 
   // --- Engine state --------------------------------------------------------
 

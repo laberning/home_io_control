@@ -23,6 +23,7 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
 - **Position feedback**: Real-time position updates from devices (2-Way protocol)
 - **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity
+- **Pairing diagnostics**: Every pairing attempt is recorded to a machine-readable "Last Pairing Result" diagnostic text sensor, plus an actionable log-level advisor that turns overheard radio traffic (1W pairing traffic, channel congestion, a foreign controller pairing the same device, dead RF) into a plain-language diagnosis
 - **1W remote button events**: Overheard 1W transmissions (remotes *or* wind/rain sensors — same broadcast mechanism) fire an `esphome.home_io_control_sender_event` event for opted-in sender IDs (`exposed_senders`), so you can trigger Home Assistant automations directly from a physical remote press or sensor trigger
 - **Home Assistant integration**: Cover devices appear as native cover entities with full position support, and tilt-capable blinds also expose slat-angle control
 - **SX1276 & SX1262 support**: Works with both radio chips — SX1276 uses hardware IoHomeOn mode, SX1262 uses software CRC

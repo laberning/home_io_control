@@ -536,6 +536,41 @@ lambda: |-
 - The controller retries discovery up to 3 times per button press. If pairing fails on the first press, try again — the timing between PROG and Discover & Pair matters.
 - If a device in pairing mode does not respond to the default discovery command, use the `tuning:` block to experiment with alternate discovery commands and radio timings. See [Radio Diagnostics Tuning](radio_diagnostics.md).
 
+### Diagnosing a failed pairing attempt
+
+Every `home_io_control` config with a `button:` entity automatically gets a companion
+**"Last Pairing Result"** diagnostic text sensor — no YAML configuration needed. It updates
+after every "Discover & Pair" attempt with a frozen, machine-readable summary:
+
+```
+v1; outcome=paired; phase=complete; node=30E1F2; type=awning; attempts=1; lbt=0; dur_ms=842; heard=3; advice=none
+```
+
+| Field | Meaning |
+|-------|---------|
+| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, or `config_failed` (key exchange succeeded but the best-effort SetConfig1 step failed — still counted as paired). |
+| `phase` | The pairing state machine's furthest-reached stage. |
+| `node` / `type` | The paired device's node ID and type, or `-` if nothing was paired. |
+| `attempts` | Number of discovery command retries sent. |
+| `lbt` | Listen-before-talk retries consumed across the whole attempt (channel-busy indicator). |
+| `dur_ms` | Attempt duration in milliseconds. |
+| `heard` | Total RX events seen, including ones rejected by the pairing classifiers. |
+| `advice` | Comma-separated advisor codes (see below), or `none`. |
+
+This is intentionally a stable, parseable format (the `v1;` prefix is versioned) so it can be
+scripted against — e.g. an automation that alerts if `outcome` isn't `paired`.
+
+At the end of every attempt, the ESPHome log also gets a full human-readable summary (every
+TX/RX/RX_REJECT/LBT-defer/hop/phase event, in order) plus, when applicable, one or more
+**pairing advisor** WARN lines that turn overheard radio traffic into an actionable diagnosis:
+
+| Advice code | When it fires | What it means |
+|-------------|----------------|----------------|
+| `1w_traffic` | A 1W remote is seen performing 1W pairing (CTRL0 1W bit set, broadcast to `00003F`, with a 1W pairing command byte) to the same device you're trying to pair. | The motor is **not** in 2W learning mode — a PROG press on a 1W remote does not enable 2W discovery. This is the issue #27 case: perform a Double Power Cut on the motor to force 2W learning mode, then retry. |
+| `channel_busy` | Listen-before-talk retries were exhausted (reached the configured max) and the same source was heard repeatedly during the wait. | The channel is being flooded by a repeating beacon (usually a nearby remote or sensor); discovery transmissions were delayed. Try again, or tune `lbt_max_retries`/`lbt_rssi_threshold_dbm` — see [Radio Diagnostics Tuning](radio_diagnostics.md). |
+| `foreign_controller` | A discovery response (0x29) was seen addressed to a node ID that isn't this controller's. | Another controller (e.g. TaHoma) is pairing the same device right now. Wait for it to finish, or make sure you're the only controller with the device in pairing mode. |
+| `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Distinguishes "RF dead" (antenna, wiring, wrong channel/tuning) from "device just isn't in pairing mode" — check the antenna and radio tuning before re-pressing PROG. |
+
 ## Device Type and Capability Notes
 
 - **Cover-like families** (shutters, awnings, blinds, openers, curtains) are the primary supported path today. These support full position control (0–100%).

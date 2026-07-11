@@ -74,7 +74,7 @@ class IOHomeControlComponent : public Component,
   /// through all collaborators without calling setup().
   IOHomeControlComponent()
       : exchange_engine_(&radio_, node_id_, system_key_, &tuning_),
-        pairing_engine_(&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_),
+        pairing_engine_(&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_, pairing_telemetry_),
         management_actions_(node_id_, exchange_engine_, registry_, &initialized_, this) {}
 
   /// @brief Result payload used by hub-level management actions such as rename.
@@ -179,6 +179,15 @@ class IOHomeControlComponent : public Component,
   /// opted in.
   /// @param sender_id Node ID of the 1W sender (remote or sensor).
   void add_exposed_sender(const std::string &sender_id) { this->exposed_senders_.push_back(sender_id); }
+
+  /// @return The telemetry recorded for the most recent (or in-progress) pairing attempt.
+  [[nodiscard]] const PairingTelemetry &pairing_telemetry() const { return this->pairing_telemetry_; }
+
+  /// Register a callback invoked once, right after every `discover_and_pair()` attempt
+  /// completes — used by the "Last Pairing Result" text sensor to publish a fresh value.
+  /// Single-slot: only one platform instance is expected per hub.
+  /// @param cb Callable with no arguments.
+  void set_pairing_result_callback(std::function<void()> cb) { this->pairing_result_callback_ = std::move(cb); }
 
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (legacy/delegating overload).
@@ -420,8 +429,11 @@ class IOHomeControlComponent : public Component,
   /// 1W sender node IDs (remotes or sensors) allowed to fire the remote-button HA event
   /// (`add_exposed_sender`). Config-time list (populated once from YAML), not a per-frame allocation.
   std::vector<std::string> exposed_senders_;
+  /// Invoked once after every pairing attempt completes; see set_pairing_result_callback().
+  std::function<void()> pairing_result_callback_;
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
+  PairingTelemetry pairing_telemetry_;    ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.
   ExchangeEngine exchange_engine_;        ///< Owns all authenticated exchange and LBT/hop logic.
   PairingEngine pairing_engine_;          ///< Owns the three-phase device pairing flow.
   ManagementActions management_actions_;  ///< Owns rename and other hub-level HA actions.

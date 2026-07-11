@@ -31,6 +31,8 @@
 #include "hub_decisions.h"
 #include "exchange_engine.h"
 #include "device_registry.h"
+#include "pairing_advisor.h"
+#include "pairing_telemetry.h"
 #include "radio_interface.h"
 #include "tuning_config.h"
 
@@ -55,8 +57,9 @@ class PairingEngine {
   /// @param tuning     Tuning configuration, owned by the hub.
   /// @param engine     Shared exchange engine for transmit/receive operations.
   /// @param registry   Device registry where paired devices are permanently registered.
+  /// @param telemetry  Per-attempt telemetry recorder, owned by the hub.
   PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, const uint8_t *system_key, const TuningConfig *tuning,
-                ExchangeEngine &engine, DeviceRegistry &registry);
+                ExchangeEngine &engine, DeviceRegistry &registry, PairingTelemetry &telemetry);
 
   /// Non-copyable — stores double-pointer and references into hub member addresses.
   PairingEngine(const PairingEngine &) = delete;
@@ -83,8 +86,11 @@ class PairingEngine {
   bool run_key_exchange_phase_(pairing::PairingContext &context);
 
   /// Phase 3: send SetConfig1 (0x6F) to enable automatic status updates; best-effort.
+  /// Pairing always proceeds regardless of the outcome — the return value is informational
+  /// only, used to distinguish PairingOutcome::PAIRED from PairingOutcome::CONFIG_FAILED in
+  /// telemetry; it never causes discover_and_pair() to report failure.
   /// @param context Pairing context with device information from phases 1 and 2.
-  /// @return Always true — pairing proceeds regardless of config outcome.
+  /// @return true if the SetConfig1 exchange completed; false if it was skipped or failed.
   bool finalize_pairing_configuration_(pairing::PairingContext &context);
 
   /// Wait for a discovery response (0x29) within timeout_ms with per-chip frequency hopping.
@@ -111,12 +117,26 @@ class PairingEngine {
   /// Convenience accessor returning the current radio driver (dereferences double pointer).
   [[nodiscard]] RadioDriver *radio_() const { return *radio_ptr_; }
 
+  /// Record the final outcome, detach telemetry from the exchange engine, and log the
+  /// end-of-attempt summary. Called once at every discover_and_pair() exit point.
+  /// @param outcome Final disposition of this attempt.
+  void finish_pairing_attempt_(PairingOutcome outcome);
+
+  /// Record an RX or RX_REJECT telemetry event for a discovery-response candidate frame.
+  /// Factored out of wait_for_discovery_response_() purely to keep that function's cognitive
+  /// complexity under the clang-tidy threshold — no behavior beyond the telemetry call.
+  /// @param frame Parsed candidate frame.
+  /// @param accepted true if the frame was classified as a valid discovery response.
+  /// @param rssi RSSI of the captured frame.
+  void record_discovery_rx_telemetry_(const IoFrame &frame, bool accepted, int16_t rssi);
+
   RadioDriver **radio_ptr_;
   const uint8_t *node_id_;
   const uint8_t *system_key_;
   const TuningConfig *tuning_;
   ExchangeEngine &engine_;
   DeviceRegistry &registry_;
+  PairingTelemetry &telemetry_;
 };
 
 }  // namespace home_io_control
