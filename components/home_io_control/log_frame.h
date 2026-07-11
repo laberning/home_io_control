@@ -5,6 +5,7 @@
 /// @ingroup hioc_protocol
 
 #include "proto_frame.h"
+#include "redaction.h"
 
 #include "esphome/core/log.h"
 #include <cstddef>
@@ -47,17 +48,38 @@ inline void decode_ctrl1_flags(uint8_t ctrl1, char *out, size_t out_size) {
     snprintf(out + pos, out_size - pos, "[B]");
 }
 
+/// @brief Render a frame's bytes as spaced hex text, masking the payload when the command
+/// carries key material (see command_carries_key_material()).
+///
+/// Kept outside the IOHOME_FRAME_LOG guard so the redaction behavior is unit-testable
+/// independent of the firmware-only logging build flag.
+/// @param data Raw serialized frame bytes (header + payload, no CRC).
+/// @param len Total length of data.
+/// @param out Buffer to write the rendered text into.
+/// @param out_size Size of out.
+inline void render_frame_hex_redacted(const uint8_t *data, uint8_t len, char *out, size_t out_size) {
+  if (out_size == 0)
+    return;
+  if (len >= FRAME_MIN_SIZE && command_carries_key_material(data[FRAME_CMD_OFFSET])) {
+    char header_hex[FRAME_LOG_HEX_BUFFER_SIZE];
+    bytes_to_hex(data, FRAME_MIN_SIZE, header_hex, sizeof(header_hex));
+    snprintf(out, out_size, "%s[%u bytes masked]", header_hex, static_cast<unsigned>(len - FRAME_MIN_SIZE));
+  } else {
+    bytes_to_hex(data, len, out, out_size);
+  }
+}
+
 #ifdef IOHOME_FRAME_LOG
 inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint32_t freq, uint16_t preamble = 0) {
   char hex[FRAME_LOG_HEX_BUFFER_SIZE];
-  bytes_to_hex(data, len, hex, sizeof(hex));
+  render_frame_hex_redacted(data, len, hex, sizeof(hex));
 
   // Decode command name and CTRL1 flags for enhanced readability
   char flags[FRAME_LOG_FLAGS_BUFFER_SIZE] = {0};
   const char *cmd_str = "";
   if (len >= FRAME_MIN_SIZE) {
     decode_ctrl1_flags(data[1], flags, sizeof(flags));
-    cmd_str = command_name(data[8]);  // Command byte is at offset 8 (after ctrl0+ctrl1+dst+src)
+    cmd_str = command_name(data[FRAME_CMD_OFFSET]);
   }
 
   if (preamble > 0)

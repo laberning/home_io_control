@@ -29,6 +29,7 @@ static constexpr uint8_t BITS_PER_BYTE = 8;    ///< Number of bits in one protoc
 static constexpr uint8_t FRAME_MIN_SIZE = 9;        ///< Minimum frame: CTRL0+CTRL1+DST(3)+SRC(3)+CMD(1)
 static constexpr uint8_t FRAME_MAX_SIZE = 32;       ///< Maximum frame size (9 header + 23 data)
 static constexpr uint8_t FRAME_MAX_DATA_SIZE = 23;  ///< Maximum data bytes after command ID
+static constexpr uint8_t FRAME_CMD_OFFSET = 8;      ///< Byte offset of the command ID in a raw wire buffer
 
 }  // namespace home_io_control
 }  // namespace esphome
