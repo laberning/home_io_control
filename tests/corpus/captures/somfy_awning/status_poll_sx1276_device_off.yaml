@@ -1,0 +1,38 @@
+id: status_poll_sx1276_device_off
+description: >
+  Device powered off: a background status poll (PRIVATE 0x03) gets zero responses across all 3 tries. This is the first of 5 consecutive poll failures in the source session, each escalating status_poll_policy.cpp's backoff (5s -> 15s -> 30s -> 60s -> 300s); only one is captured here since the escalation itself is between-exchange scheduling, not something a single exchange replay exercises.
+source:
+  device: "Somfy Sunea IO awning motor (\"Patio Awning\")"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-12
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4B 20 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: tx
+    t_ms: 715
+    freq: 868950000
+    hex: "4B 20 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: tx
+    t_ms: 1535
+    freq: 868950000
+    hex: "4B 20 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+expect:
+  exchange:
+    kind: status_poll
+    outcome: failure
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}

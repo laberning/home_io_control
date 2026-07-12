@@ -5,7 +5,7 @@ description: >
   a pairing-mode beacon, plus discovery-with-no-response handling.
 source:
   device: "Somfy Sunea IO awning motor; Smoov IO remote (overheard)"
-  captured_with: heltec-v3
+  captured_with: sx1262
   firmware: null
   date: 2026-07-06
   origin: github-issue

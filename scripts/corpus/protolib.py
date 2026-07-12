@@ -469,8 +469,21 @@ def _same_physical_frame(a: RawFrame, b: RawFrame) -> bool:
     the signal; genuine retransmissions (e.g. three DISCOVER_REQ retries) are NOT adjacent to
     each other in this sense because caller code always logs the io_capture/io_frame pair
     together before the next real event.
+
+    That dual-logging invariant only holds when `io_capture` is actually emitted for the event.
+    On an io_capture-disabled log (io_frame-only — e.g. a monitor config without the structured
+    tag), every physical event is logged exactly once, so two adjacent identical-bytes-same-
+    direction io_frame lines are never a duplicate-tag artifact — they are two genuinely
+    distinct events (most commonly a retry retransmitting the same request payload byte-for-
+    byte). `chip` is only ever populated by the io_capture side (`_IO_FRAME_RE`'s branch always
+    sets it None), so requiring at least one side to carry it distinguishes a real io_capture/
+    io_frame pair from two bare io_frame lines that merely happen to match.
     """
-    return a.direction == b.direction and "".join(a.hex_bytes.split()).upper() == "".join(b.hex_bytes.split()).upper()
+    if a.direction != b.direction:
+        return False
+    if "".join(a.hex_bytes.split()).upper() != "".join(b.hex_bytes.split()).upper():
+        return False
+    return a.chip is not None or b.chip is not None
 
 
 def _merge_frames(a: RawFrame, b: RawFrame) -> RawFrame:

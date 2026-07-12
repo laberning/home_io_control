@@ -34,27 +34,24 @@ description: >
   Free-text summary of the scenario.
 source:
   device: "Somfy awning actuator (io Vertical)"   # free text, as much as known
-  captured_with: heltec-v3                        # heltec-v2 | heltec-v3 | other | synthetic
+  captured_with: sx1262                           # sx1276 | sx1262 | other | synthetic (radio chip)
   firmware: "2026.6 / commit f981dce"              # best effort, optional
   date: 2026-07-06
   origin: own-hardware                # own-hardware | github-issue | synthetic-bootstrap
   issue: null                          # e.g. "https://github.com/.../issues/42", else null
 key: corpus            # corpus = HMAC/key-transfer bytes verify under the public corpus key
                        # unknown = raw community capture, crypto not verifiable
-node_map:               # anonymization record: role -> ID as stored in the frames below
-  controller: "AAAA01"
-  awning:     "BBBB01"
 frames:
   - dir: tx                          # tx = controller->device, rx = device->controller
     t_ms: 0                          # relative timestamp in ms if known, else omit
     freq: 868950000                  # Hz; omit or 0 if unknown
-    hex: "F6 20 BB BB 01 AA AA 01 00 01 61 64 00 64 00 00 00 00 00 00 4C 8A"
+    hex: "F6 20 96 D2 67 C0 FF EE 00 01 61 64 00 64 00 00 00 00 00 00 4C 8A"
     crc: present                     # present | absent — whether the trailing 2 bytes are the CRC
     note: "execute position 50 (raw 0x64), START"
   - dir: rx
     t_ms: 41
     freq: 868950000
-    hex: "8E 10 AA AA 01 BB BB 01 3C 01 23 45 67 89 AB 11 F0"
+    hex: "8E 10 C0 FF EE 96 D2 67 3C 01 23 45 67 89 AB 11 F0"
     crc: present
     note: "challenge request, challenge = 01 23 45 67 89 AB"
 expect:                              # deliberately sparse — only assert what a human verified
@@ -81,15 +78,20 @@ expect:                              # deliberately sparse — only assert what 
 - `id` (string, required): globally unique. `validate.py`/`build.py` hard-fail on duplicates.
 - `description` (string, required): what the scenario is and why it's here.
 - `source.*`: provenance metadata, enforced by `validate.py`. Required: `origin` (one of
-  `own-hardware`, `github-issue`, `synthetic-bootstrap`), `captured_with` (one of `heltec-v2`,
-  `heltec-v3`, `other`, `synthetic` — `build.py` reads this unconditionally to pick a chip-mock
-  in `corpus_exchange_replay_test.cpp`), `device`, `date`. Optional: `firmware`, `issue` (set to
-  `null` when there is no originating discussion, e.g. synthetic-bootstrap captures).
+  `own-hardware`, `github-issue`, `synthetic-bootstrap`), `captured_with` (one of `sx1276`,
+  `sx1262`, `other`, `synthetic` — the **radio chip**, not the board model; `build.py` reads this
+  unconditionally to pick a chip-mock in `corpus_exchange_replay_test.cpp`, which only branches
+  on chip-specific timing behavior. Note the exact board/product if useful in
+  `source.device` or `firmware` free text — e.g. "Heltec WiFi LoRa32 V3" — `captured_with` itself
+  should not encode it), `device`, `date`. Optional: `firmware`, `issue` (set to `null` when
+  there is no originating discussion, e.g. synthetic-bootstrap captures).
 - `key` (required): `corpus` or `unknown`. See "Key hygiene" below — this is a promise the file
   makes, and `validate.py` enforces it cryptographically: every `key: corpus` capture's 0x3C/0x3D
   HMACs and 0x31/0x3C/0x32 key-transfer payloads must verify under the public corpus key.
-- `node_map` (optional): role -> node-ID-as-captured. Documents the anonymization applied at
-  ingest; omit for synthetic fixtures with no real device to anonymize.
+- `node_map` (optional): role -> remapped node ID, only present if a capture's
+  `--remap` was used at ingest. Node IDs are **not** treated as secret (see "Key hygiene" below)
+  so most captures — own-hardware or community — keep the node IDs as captured and omit this
+  field entirely.
 - `frames` (required, at least 1): every frame is a fixture even with zero `expect` entries —
   the universal wire invariants (round-trip, CRC, CTRL0 length) apply to all of them.
   - `dir`: `tx` (controller->device) or `rx` (device->controller).
@@ -135,11 +137,14 @@ message explaining why (e.g. the code's prior behavior was itself the bug).
   committed as captured — the transfer key is public and hardcoded, so anyone with the raw
   bytes can recover the real key. Pairing captures should be re-keyed before they are ever
   committed, and raw pairing logs should never be pasted into a public GitHub issue.
-- `key: unknown` community captures need no cryptographic anonymization — HMAC bytes without
-  the key are not attackable. Node-ID remapping is not required for them: an issue-derived
-  capture's node IDs are already public in the linked GitHub thread, and keeping them as
-  captured makes the capture directly cross-referenceable against that thread (searchable,
-  diffable against a future re-capture of the same device).
+- **Only the real system key is secret.** Node IDs — controller ID, device IDs, remote/sensor
+  IDs — are not: they're routing addresses on an already-broadcast RF protocol, not credentials,
+  and knowing one gives no path to a device or its key. Captures (own-hardware **and**
+  community) keep node IDs exactly as captured by default; `ingest.py --remap`/`--role` exist
+  but are optional and not the recommended default. `key: unknown` community captures need no
+  cryptographic anonymization either — HMAC bytes without the key are not attackable. Keeping
+  node IDs as captured also makes a capture directly cross-referenceable against its source (a
+  linked GitHub thread, or your own device labels).
 
 ### Expectations are human-verified
 
@@ -177,7 +182,7 @@ the two implementations fails a gate on both sides.
    ```bash
    python3 scripts/corpus/ingest.py analysis/issues/27.txt \
        --id issue_27_somfy_sunea_discovery --device "Somfy Sunea IO motor" \
-       --captured-with heltec-v3 --origin github-issue \
+       --captured-with sx1262 --origin github-issue \
        --issue https://github.com/laberning/home_io_control/issues/27 --date 2026-07-06 \
        -o tests/corpus/captures/issues/issue_27_somfy_sunea_discovery.yaml
    ```
@@ -187,18 +192,19 @@ the two implementations fails a gate on both sides.
 3. **Own-hardware captures with a real system key**: re-key at ingest time instead of committing
    real crypto. `--rekey` verifies every captured HMAC / key-transfer payload against your real
    key (hard abort on any mismatch — never silently produces bad output), rewrites them under
-   the public corpus key, and marks `key: corpus`:
+   the public corpus key, and marks `key: corpus`. Node IDs are kept as captured — see "Key
+   hygiene" above, only the key itself needs this treatment:
    ```bash
    python3 scripts/corpus/ingest.py my_capture.log --rekey \
        --system-key-from config/secrets.yaml \
-       --remap C0FFEE=AAAA01 --role AAAA01=controller \
-       --remap 96D267=BBBB01 --role BBBB01=awning \
-       --id somfy_awning_exchange_open --device "..." --captured-with heltec-v3 \
+       --id somfy_awning_exchange_open --device "..." --captured-with sx1262 \
        --origin own-hardware --date 2026-07-06 \
        -o tests/corpus/captures/somfy_awning/exchange_open.yaml
    ```
    `--system-key-from` refuses to read a path that is not git-ignored. Run this only locally,
    never in CI, and never on a community-supplied log you don't have the real key for.
+   `--remap OLDHEX=NEWHEX`/`--role NEWHEX=name` are available if you ever want to anonymize a
+   specific node ID for some other reason, but are not needed for privacy.
 4. Fill/correct `expect:` only with fields you have verified — `ingest.py`'s proposals are
    marked `# PROPOSED — verify before commit` and must be confirmed against real decoded output
    (own hardware) or the issue thread's established facts (community logs), not rubber-stamped.

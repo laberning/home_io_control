@@ -5,7 +5,7 @@ description: >
   exchange at the transport level, independent of the application-level failure it carries.
 source:
   device: "Somfy blind/shutter with tilt"
-  captured_with: heltec-v2
+  captured_with: sx1276
   firmware: null
   date: 2026-07-06
   origin: github-issue

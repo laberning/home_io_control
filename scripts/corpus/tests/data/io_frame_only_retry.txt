@@ -1,0 +1,8 @@
+Trimmed excerpt of a real capture (Lars's heltec-v3 Patio Awning session, monitor config with
+io_capture disabled — io_frame only). Exercises the case _same_physical_frame() must NOT merge:
+two genuinely distinct events (a status-poll retry retransmitting the identical PRIVATE request
+byte-for-byte, no response to the first try) with no io_capture line at all in the log.
+
+[16:06:59.036][I][io_frame:086]: TX [12 bytes] freq=868950000 preamble=1024 cmd=PRIVATE [LPM]: 4B 20 30 E1 F2 C0 FF EE 03 03 00 00
+[16:06:59.377][I][home_io_control.exchange:291]: Try 1 ended: no first response for cmd=PRIVATE(0x03) within 300 ms
+[16:06:59.632][I][io_frame:086]: TX [12 bytes] freq=868950000 preamble=1024 cmd=PRIVATE [LPM]: 4B 20 30 E1 F2 C0 FF EE 03 03 00 00

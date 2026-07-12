@@ -5,7 +5,7 @@ description: >
   across two different typed-broadcast destinations.
 source:
   device: "Velux SML roof window shutter (KUX110 control unit)"
-  captured_with: heltec-v2
+  captured_with: sx1276
   firmware: null
   date: 2026-07-06
   origin: github-issue

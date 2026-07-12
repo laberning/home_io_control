@@ -1,0 +1,47 @@
+id: exchange_get_name_sx1276
+description: >
+  Device-name readback (GET_NAME 0x50), triggered automatically by the hub right after a successful rename to verify the write. Response payload decodes to 'Patio Awning'.
+source:
+  device: "Somfy Sunea IO awning motor (\"Patio Awning\")"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-12
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "48 20 30 E1 F2 C0 FF EE 50"
+    crc: absent
+    note: "cmd=GET_NAME(0x50)"
+  - dir: rx
+    t_ms: 219
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C E6 8B 2C 77 67 E2"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 258
+    freq: 868950000
+    hex: "0E 00 30 E1 F2 C0 FF EE 3D 28 6E F4 B7 1E 4D"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 258
+    freq: 868950000
+    hex: "98 00 C0 FF EE 30 E1 F2 51 50 61 74 69 6F 20 41 77 6E 69 6E 67 00 00 00 00"
+    crc: absent
+    note: "cmd=GET_NAME_RESP(0x51)"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x50, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x51, start: false, end: true, protocol: 2w, classification: ACCEPT}
+  device:
+    name: "Patio Awning"

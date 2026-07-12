@@ -11,7 +11,7 @@ capture this tool emits is `key: unknown` unless `--rekey` is given.
 Usage:
   python3 scripts/corpus/ingest.py analysis/issues/27.txt \\
       --id issue_27_somfy_sunea_discovery --device "Somfy Sunea IO motor" \\
-      --captured-with heltec-v3 --origin github-issue \\
+      --captured-with sx1262 --origin github-issue \\
       --issue https://github.com/laberning/home_io_control/issues/27 --date 2026-07-06 \\
       -o tests/corpus/captures/issues/issue_27_somfy_sunea_discovery.yaml
 
@@ -23,14 +23,15 @@ Re-key mode (--rekey) — run ONLY locally, by someone who has the real system
 key, and ONLY on your own hardware captures:
   python3 scripts/corpus/ingest.py my_pairing_capture.log --rekey \\
       --system-key-from config/secrets.yaml \\
-      --remap C0FFEE=AAAA01 --role AAAA01=controller \\
-      --remap 96D267=BBBB01 --role BBBB01=awning \\
-      --id somfy_awning_exchange_open --device "..." --captured-with heltec-v3 \\
+      --id somfy_awning_exchange_open --device "..." --captured-with sx1262 \\
       --origin own-hardware --date 2026-07-06 \\
       -o tests/corpus/captures/somfy_awning/exchange_open.yaml
 This verifies every captured HMAC / key-transfer payload against the real key (hard abort on
-any mismatch), rewrites them under the public corpus key, remaps node IDs, and emits
-`key: corpus`. `--system-key-from` refuses to read a path that is not git-ignored.
+any mismatch), rewrites them under the public corpus key, and emits `key: corpus`.
+`--system-key-from` refuses to read a path that is not git-ignored. Only the system key is
+secret (see tests/corpus/README.md :: "Key hygiene") — node IDs are kept as captured by
+default; `--remap OLDHEX=NEWHEX`/`--role NEWHEX=name` exist if you want to anonymize a specific
+node ID for some other reason, but are optional, not required for privacy.
 """
 
 import argparse
@@ -353,7 +354,7 @@ def main() -> int:
     parser.add_argument("input", help="log file to parse, or '-' for stdin")
     parser.add_argument("--id", required=True, help="capture id (globally unique across the corpus)")
     parser.add_argument("--device", required=True, help="free-text device description")
-    parser.add_argument("--captured-with", default="other", choices=["heltec-v2", "heltec-v3", "other", "synthetic"])
+    parser.add_argument("--captured-with", default="other", choices=["sx1276", "sx1262", "other", "synthetic"])
     parser.add_argument("--origin", required=True, choices=["own-hardware", "github-issue", "synthetic-bootstrap"])
     parser.add_argument("--issue", default=None, help="issue URL, e.g. https://github.com/.../issues/27")
     parser.add_argument("--date", required=True, help="YYYY-MM-DD")

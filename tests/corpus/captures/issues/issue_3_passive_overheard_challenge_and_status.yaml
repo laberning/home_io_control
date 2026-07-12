@@ -5,7 +5,7 @@ description: >
   challenge traffic parses correctly and that a fully-open, stopped position decodes to 0.
 source:
   device: "Own controller (0842E3); overheard third-party devices"
-  captured_with: heltec-v3
+  captured_with: sx1262
   firmware: null
   date: 2026-07-06
   origin: github-issue

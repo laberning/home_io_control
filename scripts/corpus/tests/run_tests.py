@@ -32,8 +32,8 @@ def _read(name: str) -> str:
     return (DATA_DIR / name).read_text(encoding="utf-8")
 
 
-def test_clean_io_capture_v3() -> None:
-    frames = protolib.parse_log(_read("clean_io_capture_v3.txt"))
+def test_clean_io_capture_sx1262() -> None:
+    frames = protolib.parse_log(_read("clean_io_capture_sx1262.txt"))
     assert len(frames) == 2, f"expected 2 frames, got {len(frames)}"
     assert [f.direction for f in frames] == ["rx", "rx"]
     assert not any(f.unverified for f in frames), "clean io_capture lines must not be unverified"
@@ -88,6 +88,18 @@ def test_mangled_paste_fallback_tier() -> None:
     assert frame.unverified, "fallback-tier extraction must be marked unverified"
     expected = bytes.fromhex("50 20 7F 59 58 31 BA F7 00 01 E7 D4 00 20 32 00 00".replace(" ", ""))
     assert frame.raw() == expected, f"fallback extraction bytes mismatch: {frame.raw().hex()}"
+
+
+def test_io_frame_only_retry_not_merged() -> None:
+    # Regression for a false merge found ingesting a real io_capture-disabled log: two
+    # genuinely distinct io_frame-only TX lines with identical bytes (a retried PRIVATE status
+    # poll retransmitting the exact same request after a first-response timeout) must stay two
+    # frames, not collapse into one via the io_capture/io_frame dedup heuristic.
+    frames = protolib.parse_log(_read("io_frame_only_retry.txt"))
+    assert len(frames) == 2, f"expected 2 distinct retry frames, got {len(frames)}"
+    assert frames[0].direction == frames[1].direction == "tx"
+    assert frames[0].raw() == frames[1].raw(), "both retries carry the identical request payload"
+    assert frames[0].chip is None and frames[1].chip is None, "io_frame-only lines never carry chip"
 
 
 def test_merge_prefers_nonzero_freq_and_t_ms() -> None:
@@ -214,13 +226,13 @@ def test_end_to_end_scaffold_validate_build_roundtrip() -> None:
         output_yaml = captures_dir / "scaffold_smoke.yaml"
 
         argv = [
-            str(DATA_DIR / "clean_io_capture_v3.txt"),
+            str(DATA_DIR / "clean_io_capture_sx1262.txt"),
             "--id",
             "scaffold_smoke",
             "--device",
             "self-test fixture",
             "--captured-with",
-            "heltec-v3",
+            "sx1262",
             "--origin",
             "github-issue",
             "--issue",
@@ -423,7 +435,7 @@ def test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key() -> None
 
 
 TESTS = [
-    test_clean_io_capture_v3,
+    test_clean_io_capture_sx1262,
     test_io_frame_legacy_dedup_and_no_cmd_field,
     test_no_crc_write_private,
     test_mangled_paste_fallback_tier,
@@ -443,6 +455,7 @@ TESTS = [
     test_rekey_refuses_non_gitignored_key_path,
     test_rekey_output_safety_scan_trips_on_key_leakage,
     test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key,
+    test_io_frame_only_retry_not_merged,
 ]
 
 

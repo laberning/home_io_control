@@ -5,7 +5,7 @@ description: >
   as unrelated and that an out-of-range position decodes to unknown rather than a wrong number.
 source:
   device: "Somfy blind/shutter with tilt"
-  captured_with: heltec-v2
+  captured_with: sx1276
   firmware: null
   date: 2026-07-06
   origin: github-issue

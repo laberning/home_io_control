@@ -70,6 +70,13 @@ TEST_P(CorpusCryptoReplay, AuthenticatedCommandHmacMatchesCapture) {
     }
   }
   ASSERT_NE(origin_cf, nullptr) << "authenticated_command capture must have an origin tx frame";
+
+  // A capture whose own recorded outcome is timeout/failure legitimately has no challenge —
+  // that's the shape of "the device never responded" (e.g. powered off), not a corpus bug. Only
+  // a claimed-success exchange is required to have completed the real crypto handshake.
+  if (capture->outcome != corpus::ExchangeOutcome::SUCCESS && (challenge_cf == nullptr || response_cf == nullptr)) {
+    GTEST_SKIP() << "capture outcome is not success and has no completed 0x3C/0x3D pair — nothing to verify";
+  }
   ASSERT_NE(challenge_cf, nullptr) << "authenticated_command capture must have a 0x3C challenge frame";
   ASSERT_NE(response_cf, nullptr) << "authenticated_command capture must have a 0x3D response frame";
 

@@ -19,6 +19,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstring>
 #include <string>
 
@@ -111,8 +112,16 @@ TEST_P(CorpusDecode, ExpectationsMatchDecodedFrames) {
       float target = 0.0F;
       float position = 0.0F;
       decode_position_report(target_raw, current_raw, is_stopped, target, position);
-      EXPECT_FLOAT_EQ(position, static_cast<float>(capture->reported_position))
-          << "reported_position mismatch on frame " << static_cast<int>(i);
+      // `reported_position` is a whole-percent uint8_t in the schema (a human-verified reading,
+      // e.g. "the log says position=1%"), but decode_position_report() returns sub-percent-
+      // precision floats on real hardware (dev.position is carried as a float throughout
+      // components/ — see platform_cover.cpp's `dev.position / 100.0F`). Comparing those directly
+      // with EXPECT_FLOAT_EQ only ever passed by luck, on synthetic/zeroed captures whose raw
+      // bytes happen to decode to an exact integer; round to the nearest percent first so a real
+      // capture's genuinely fractional decode (e.g. 25.08) matches its human-verified "25%".
+      EXPECT_EQ(std::lround(position), static_cast<long>(capture->reported_position))
+          << "reported_position mismatch on frame " << static_cast<int>(i) << " (raw decoded position=" << position
+          << ")";
     }
     EXPECT_GT(status_frames_seen, 0)
         << "capture has device.reported_position expectation but no position-bearing CMD_PRIVATE_RESP frame found";

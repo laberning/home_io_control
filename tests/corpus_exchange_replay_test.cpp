@@ -51,11 +51,11 @@ std::vector<const corpus::CorpusCapture *> exchange_replay_captures() {
 }
 
 std::unique_ptr<MockRadio> make_mock_radio(const corpus::CorpusCapture *capture) {
-  // "heltec-v3" is the only chip family whose mock (MockRadioSX1262) differs in exchange-timing
-  // behavior (response_preamble/exchange_wait_slice_ms/has_fast_tx_rx_turnaround); every other
-  // captured_with value (heltec-v2, other, synthetic) is fine on the generic MockRadio, which
+  // "sx1262" is the only chip whose mock (MockRadioSX1262) differs in exchange-timing behavior
+  // (response_preamble/exchange_wait_slice_ms/has_fast_tx_rx_turnaround); every other
+  // captured_with value (sx1276, other, synthetic) is fine on the generic MockRadio, which
   // already mirrors the fast-hopping SX1276-like reference behavior (radio_test_common.h).
-  if (std::string(capture->captured_with) == "heltec-v3")
+  if (std::string(capture->captured_with) == "sx1262")
     return std::make_unique<MockRadioSX1262>();
   return std::make_unique<MockRadio>();
 }

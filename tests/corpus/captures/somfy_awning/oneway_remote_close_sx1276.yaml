@@ -1,0 +1,25 @@
+id: oneway_remote_close_sx1276
+description: >
+  1W remote CLOSE button press, EXECUTE(0x00) targeting all (00003F), originator=user_remote priority=user_high, linked to our awning. Received on both 868.95MHz and 869.85MHz (frequency-diversity retransmission of the identical payload) - the parser's dedup collapses these to one representative frame, which is fine since they carry no new information.
+source:
+  device: "Somfy 1W remote (node 9D6085), linked to Patio Awning"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-12
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F6 00 00 00 3F 9D 60 85 00 01 43 C8 00 00 00 59 84 4D 3B 46 18 B8 7A"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: CLOSE
+    originator: 0x01
+    acei: 2

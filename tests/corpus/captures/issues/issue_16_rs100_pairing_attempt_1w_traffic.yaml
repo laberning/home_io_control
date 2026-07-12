@@ -5,7 +5,7 @@ description: >
   decoding of an unhandled 1W command byte (0x5A).
 source:
   device: "Somfy RS100/Sunea io actuator"
-  captured_with: heltec-v3
+  captured_with: sx1262
   firmware: null
   date: 2026-07-06
   origin: github-issue
