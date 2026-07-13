@@ -309,6 +309,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     // immediate reply to our own execute command is not necessarily trustworthy for them (see
     // apply_private_response_status()'s trust_position parameter).
     apply_private_response_status(id, dev, frame, this->poll_policy_, trust_position);
+    detail::clear_command_result(dev);
     detail::log_status_update(id, dev);
     this->notify_device_update_(id);
     return;
@@ -323,6 +324,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     // Status-update frames come from the device itself rather than from a direct controller poll.
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
     apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
+    detail::clear_command_result(dev);
 
     // The originator byte at data[1] tells us what caused the device to move.
     // Log it so users can understand device-initiated movements (e.g., wind sensor, timer).
@@ -369,7 +371,8 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       return;
     }
 
-    detail::log_command_result(id, frame.data[0]);
+    detail::record_command_result(dev, id, frame.data[0]);
+    this->notify_device_update_(id);
     return;
   }
 }

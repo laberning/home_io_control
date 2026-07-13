@@ -766,6 +766,118 @@ TEST(HubCore, ErrorRespDoesNotMutateTrackedPosition) {
   EXPECT_FALSE(dev->is_stopped) << "error responses should not change movement state";
 }
 
+TEST(HubCore, ErrorRespSetsLastResultCode) {
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->last_result_code, 0u) << "newly added device should start with no recorded result";
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[1] = {RESULT_LIMITATION_BY_RAIN};
+  set_cmd(f, CMD_ERROR_RESP, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(dev->last_result_code, RESULT_LIMITATION_BY_RAIN) << "unsolicited 0xFE should record the result code";
+  EXPECT_NE(dev->last_result_at_ms, 0u) << "unsolicited 0xFE should stamp a recorded-at timestamp";
+}
+
+TEST(HubCore, ErrorRespWithNonLimitationCodeStillRecords) {
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[1] = {RESULT_COMMAND_COMPLETED_OK};
+  set_cmd(f, CMD_ERROR_RESP, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(dev->last_result_code, RESULT_COMMAND_COMPLETED_OK)
+      << "non-limitation result codes should still be recorded on the device";
+}
+
+TEST(HubCore, ErrorRespWithEmptyPayloadDoesNotSetLastResultCode) {
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_ERROR_RESP);  // zero-length payload — fails the ERROR_RESPONSE_MIN_DATA_LEN guard
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(dev->last_result_code, 0u) << "a too-short 0xFE must keep hitting the existing rejection path unchanged";
+}
+
+TEST(HubCore, SuccessfulPrivateResponseClearsLastResultCode) {
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  dev->last_result_code = RESULT_LIMITATION_BY_WIND;
+  dev->last_result_at_ms = 12345;
+
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // Bytes 0=flags(stopped), 2-3=target(0x0000=0%), 4-5=current(0x0000=0%).
+  uint8_t payload[6] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(dev->last_result_code, 0u) << "a subsequent successful status reply should clear a stale result reason";
+  EXPECT_EQ(dev->last_result_at_ms, 0u) << "clearing the result code should also clear its timestamp";
+}
+
+TEST(HubCore, SuccessfulStatusUpdateClearsLastResultCode) {
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  dev->last_result_code = RESULT_LIMITATION_BY_RAIN;
+  dev->last_result_at_ms = 12345;
+
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // 0x71 status update: byte0=flags(stopped), byte1=originator, bytes5-6=target, bytes7-8=current.
+  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(dev->last_result_code, 0u)
+      << "a subsequent device-initiated status update should clear a stale result reason";
+  EXPECT_EQ(dev->last_result_at_ms, 0u) << "clearing the result code should also clear its timestamp";
+}
+
 TEST(HubCore, OwnControllerStatusUpdateSchedulesPoll) {
   RxTestableComponent comp;
   MockRadio radio;

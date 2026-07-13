@@ -81,6 +81,9 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   if (response.cmd == CMD_ERROR_RESP) {
     if (response.data_len == 0) {
       detail::log_frame_issue(this, "rx", "unsupported_payload", response, frame_length(response));
+    } else if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
+      detail::record_command_result(*dev, device_id, response.data[0], request.cmd, true);
+      this->notify_device_update_(device_id);
     } else {
       detail::log_command_result(device_id, response.data[0], request.cmd, true);
     }

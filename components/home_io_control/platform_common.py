@@ -41,9 +41,14 @@ CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
 
 # Internal config key for the companion device-name sensor ID (injected by post-validator).
 CONF_DEVICE_NAME_SENSOR_ID = "_device_name_sensor_id"
+# Internal config key for the companion last-result sensor ID (injected by post-validator).
+CONF_LAST_RESULT_SENSOR_ID = "_last_result_sensor_id"
 
 IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
     "IOHomeDeviceNameTextSensor", text_sensor.TextSensor, cg.Component
+)
+IOHomeLastResultTextSensor = home_io_control_ns.class_(
+    "IOHomeLastResultTextSensor", text_sensor.TextSensor, cg.Component
 )
 
 
@@ -53,6 +58,14 @@ def device_name_sensor_name(config):
     if base_name:
         return f"{base_name} Device Name"
     return "Device Name"
+
+
+def last_result_sensor_name(config):
+    """Derive the last-result sensor name from the parent entity name."""
+    base_name = config.get(CONF_NAME, "")
+    if base_name:
+        return f"{base_name} Last Result"
+    return "Last Result"
 
 
 def companion_id_base(config, parent_id_key):
@@ -87,6 +100,21 @@ def inject_device_name_sensor_id(config, parent_id_key):
         f"{base}_device_name_sensor",
         is_declaration=True,
         type=IOHomeDeviceNameTextSensor,
+    )
+    return config
+
+
+def inject_last_result_sensor_id(config, parent_id_key):
+    """Declare the companion last-result sensor ID during schema validation.
+
+    Shared post-validator body for every device-bound platform. See companion_id_base()
+    for why the ID must be declared at validation time rather than in to_code().
+    """
+    base = companion_id_base(config, parent_id_key)
+    config[CONF_LAST_RESULT_SENSOR_ID] = ID(
+        f"{base}_last_result_sensor",
+        is_declaration=True,
+        type=IOHomeLastResultTextSensor,
     )
     return config
 
@@ -152,3 +180,22 @@ async def create_device_name_sensor(config, parent):
     await cg.register_component(device_name, device_name_config)
     cg.add(device_name.set_parent(parent))
     cg.add(device_name.set_device_id(config[CONF_DEVICE_ID]))
+
+
+async def create_last_result_sensor(config, parent):
+    """Create and register the companion last-result diagnostic text sensor.
+
+    Unlike the device-name sensor, this one is enabled by default — it is the headline
+    diagnostic value that turns a silently-ignored command into a self-explained one (e.g.
+    a wind/rain lockout), so users should see it without an opt-in step.
+    """
+    last_result_config = {
+        CONF_ID: config[CONF_LAST_RESULT_SENSOR_ID],
+        CONF_NAME: last_result_sensor_name(config),
+        CONF_DISABLED_BY_DEFAULT: False,
+        "entity_category": ENTITY_CATEGORY_DIAGNOSTIC,
+    }
+    last_result = await text_sensor.new_text_sensor(last_result_config)
+    await cg.register_component(last_result, last_result_config)
+    cg.add(last_result.set_parent(parent))
+    cg.add(last_result.set_device_id(config[CONF_DEVICE_ID]))

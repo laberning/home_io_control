@@ -193,7 +193,13 @@ struct IoDevice {
   bool is_stopped{true};                 ///< True if device is not moving.
   bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning).
   bool optimistic_state{true};           ///< True if `target` may be set ahead of a confirming poll/response.
-  uint32_t last_status{0};               ///< millis() timestamp of last received status.
+  uint8_t last_result_code{0};           ///< Last CMD_ERROR_RESP result byte (0 = none recorded). See
+                                ///< command_result_name()/is_limitation_result() in proto_constants.h. Cleared by
+                                ///< the next successful status/command reply for this device. Note: 0 is also the
+                                ///< real RESULT_UNKNOWN_STATUS_REPLY wire value, so that specific explicit reply is
+                                ///< indistinguishable here from "nothing recorded yet" — a known, accepted tradeoff.
+  uint32_t last_result_at_ms{0};  ///< millis() timestamp of last_result_code, 0 when none recorded.
+  uint32_t last_status{0};        ///< millis() timestamp of last received status.
 };
 
 /// @brief Determine whether a device type has inverted position mapping by default.

@@ -288,6 +288,39 @@ inline void log_command_result(const std::string &id, uint8_t result, uint8_t re
            command_result_description(result));
 }
 
+/// @brief Store a decoded CMD_ERROR_RESP result on the device and log it.
+///
+/// Single place both CMD_ERROR_RESP call sites (the unsolicited status path and the reply to
+/// our own EXECUTE) route through, so the store-and-log policy cannot drift between them. Does
+/// not notify subscribers itself — callers already call notify_device_update_() once per
+/// handled frame; call it after this.
+/// @param dev Device that returned the result.
+/// @param id Device ID (for the log line).
+/// @param result Result byte from CMD_ERROR_RESP data[0].
+/// @param request_cmd Original outbound request command when known.
+/// @param include_request_cmd True to include request_cmd context in the log line.
+inline void record_command_result(IoDevice &dev, const std::string &id, uint8_t result, uint8_t request_cmd = 0,
+                                  bool include_request_cmd = false) {
+  dev.last_result_code = result;
+  dev.last_result_at_ms = millis();
+  log_command_result(id, result, request_cmd, include_request_cmd);
+}
+
+/// @brief Clear a previously recorded CMD_ERROR_RESP result, if any.
+///
+/// A stale limitation reason (e.g. a rain lockout from an hour ago) is worse than none once the
+/// device has since replied normally, so every successful status/command reply for a device
+/// clears it. Called from the CMD_PRIVATE_RESP and CMD_STATUS_UPDATE branches of
+/// update_device_status_() — not from CMD_GET_NAME_RESP/CMD_GET_INFO2_RESP, which are metadata
+/// lookups unrelated to whether the device's last movement command succeeded. Like
+/// record_command_result(), does not notify subscribers itself — both existing call sites clear
+/// before their own notify_device_update_() call, which is what actually publishes this change.
+/// @param dev Device to clear.
+inline void clear_command_result(IoDevice &dev) {
+  dev.last_result_code = 0;
+  dev.last_result_at_ms = 0;
+}
+
 }  // namespace detail
 }  // namespace home_io_control
 }  // namespace esphome

@@ -137,14 +137,15 @@ Notes:
 - Covers with a declared position-capable `io_device_type` automatically generate a companion Home Assistant button named `<Cover Name> Favorite Position`. That button sends the protocol's favorite or My-position command.
 - Covers with `io_device_type` set to `window_opener` or `ventilation_point` also generate a companion button named `<Cover Name> Ventilation Position`. That button sends the protocol's ventilation command, which moves the actuator to a predefined partially-open position suitable for air exchange.
 - Covers also automatically generate a diagnostic text sensor named `<Cover Name> Device Name`. That entity is disabled by default to avoid clutter. When enabled, it queues a boot-time `GET_NAME` protocol request, caches the returned UTF-8 device name, and publishes it to Home Assistant.
+- Covers also automatically generate a diagnostic text sensor named `<Cover Name> Last Result`. Unlike the device-name sensor, this one is **enabled by default** — see "Last Command Result" below.
 - Automatic favorite-button and ventilation-button generation is compile-time only. If `io_device_type` is omitted and learned later from radio traffic, the controller can still operate the cover normally, but it cannot add new ESPHome entities at runtime after boot.
-- Automatic device-name sensor generation is also compile-time only for the same reason.
+- Automatic device-name and last-result sensor generation is also compile-time only for the same reason.
 - The protocol support currently exposed here is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh. The hub only keeps polling while a local command or overheard remote activity suggests that the device should still be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires.
 - After a STOP command the hub confirms the resting position via the same settle polling, capped to ~1 s (shorter than a normal move and any configured interval) so Home Assistant receives the final position quickly even when the device was still moving at the time of the stop.
 - Many devices report a settle hint in their status replies; the actual next-poll delay is **min(device hint, configured interval)** — the device can shorten your configured interval but never stretch it. `status_poll_interval` is therefore a ceiling on the follow-up cadence. The hint value and chosen delay are visible at debug log level. When `status_poll_interval` is omitted the hint drives the interval directly (fallback 3 s when no hint is present). A STOP command always caps the settle to ~1 s regardless of the interval or hint.
 - Unsolicited `0x71` device status updates are always applied to the entity state and extend settle polling while the device is still moving.
-- Explicit `0xFE` device refusals are decoded into warn-level ESPHome logs. Common examples include `LIMITATION_BY_RAIN`, `LIMITATION_BY_WIND`, and `THERMAL_PROTECTION`. This release keeps those diagnostics log-only rather than exposing a dedicated sensor.
+- Explicit `0xFE` device refusals are decoded into warn-level ESPHome logs and into the `Last Result` diagnostic sensor. Common examples include `LIMITATION_BY_RAIN`, `LIMITATION_BY_WIND`, and `THERMAL_PROTECTION`. See "Last Command Result" below.
 - Devices that do not support `GET_NAME` simply keep an empty cached name. Name-request failures are intentionally isolated from normal control and status behavior.
 
 ## Home Assistant Actions
@@ -252,6 +253,7 @@ Notes:
 - The current implementation is still experimental and untested on local hardware in this repo.
 - Known non-light device families will be rejected once the device type is known.
 - Lights automatically generate a diagnostic text sensor named `<Light Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
+- Lights also automatically generate a `<Light Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" above.
 
 ## Lock Platform
 
@@ -285,6 +287,7 @@ Notes:
 - The current implementation is experimental and untested on local hardware in this repo.
 - Known non-lock device families will be rejected once the device type is known.
 - Locks automatically generate a diagnostic text sensor named `<Lock Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
+- Locks also automatically generate a `<Lock Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" above.
 
 ## Switch Platform
 
@@ -314,6 +317,7 @@ Notes:
 - This platform is also experimental and currently limited to binary on/off semantics.
 - Known non-switch device families will be rejected once the device type is known.
 - Switches automatically generate a diagnostic text sensor named `<Switch Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
+- Switches also automatically generate a `<Switch Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" above.
 
 ## Button Platform
 
@@ -509,6 +513,14 @@ For larger working examples, see the configs already in this repo:
 - Warn-level logs now decode explicit `CMD_ERROR_RESP (0xFE)` replies instead of collapsing them into generic command failures. A refused command will look like `Device ABC123: command 0x00 returned limitation result=0xEB LIMITATION_BY_WIND (parameter was limited by a wind sensor)`.
 - The component's internal protocol layer uses `212.0F` as an unknown-position sentinel (matching `POS_UNKNOWN (0xD4)`), but this value is **never** exposed through the ESPHome cover's `position` field. Cover entities start at `1.0` (fully open) and update to the real device position once the first status response arrives. Custom lambdas can therefore treat any value in [0.0, 1.0] as valid.
 - The OLED example configs in this repo render `--` plus `Unknown` when a cover position is out of range, which now only applies before the first status poll completes on a fresh boot.
+
+### Last Command Result
+
+Every device-bound platform (cover, light, switch, lock) automatically generates a companion diagnostic text sensor named `<Entity Name> Last Result`. Unlike the `Device Name` sensor, it is **enabled by default**, since it turns a silent "nothing happened" command into a self-explained one — for example, pressing "open" on an awning during high wind now shows `LIMITATION_BY_WIND` in Home Assistant instead of only a log line.
+
+- The sensor publishes the symbolic result name (`command_result_name()`), such as `LIMITATION_BY_RAIN`, `LIMITATION_BY_WIND`, or `THERMAL_PROTECTION` — the same names that appear in the warn-level log line above.
+- It publishes an empty string when no `CMD_ERROR_RESP` has been recorded yet, and again once the device replies successfully to a later status poll or command — a stale limitation reason from an hour ago is worse than none, so it does not linger once the device is confirmed working again.
+- Both the unsolicited path (a device reporting a limitation on its own, e.g. after a wind gust) and the direct reply to a Home Assistant command are recorded, so this sensor also covers cases where the command was rejected outright.
 
 Example custom-lambda pattern:
 

@@ -311,6 +311,79 @@ TEST(HubOperations, SetDevicePositionFailsOnExplicitErrorResponse) {
   EXPECT_FALSE(comp.set_device_position("ABC123", 50)) << "explicit device refusals should fail the high-level command";
 }
 
+TEST(HubOperations, SetDevicePositionErrorResponseRecordsLastResultCode) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  IoFrame resp = build_error_response(comp.node_id_, RESULT_LIMITATION_BY_WIND);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.set_device_position("ABC123", 50));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->last_result_code, RESULT_LIMITATION_BY_WIND)
+      << "the reply-to-our-own-EXECUTE path should record the result code just like the unsolicited path";
+  EXPECT_NE(dev->last_result_at_ms, 0u) << "recording a result should stamp a recorded-at timestamp";
+}
+
+TEST(HubOperations, SetDevicePositionSuccessClearsPriorLastResultCode) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->last_result_code = RESULT_LIMITATION_BY_WIND;
+  dev->last_result_at_ms = 12345;
+
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.set_device_position("ABC123", 50))
+      << "a normal position response should still succeed the high-level command";
+  EXPECT_EQ(dev->last_result_code, 0u) << "a following successful EXECUTE reply should clear a stale result reason";
+  EXPECT_EQ(dev->last_result_at_ms, 0u) << "clearing the result code should also clear its timestamp";
+}
+
+TEST(HubOperations, SetDevicePositionEmptyErrorPayloadDoesNotRecordLastResultCode) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame resp{};
+  init_frame(resp, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(resp, comp.node_id_);
+  set_src(resp, device_node_id);
+  set_cmd(resp, CMD_ERROR_RESP);  // zero-length payload — pre-existing separate rejection path
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.set_device_position("ABC123", 50));
+  EXPECT_EQ(dev->last_result_code, 0u)
+      << "an empty CMD_ERROR_RESP payload must keep hitting the existing rejection path unchanged";
+}
+
 TEST(HubOperations, RequestDeviceStatusExplicitErrorBacksOffTrackedPolling) {
   TestableComponent comp;
   MockRadio radio;
