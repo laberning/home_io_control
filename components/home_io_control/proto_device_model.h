@@ -181,6 +181,16 @@ static constexpr uint8_t DEVICE_SUBTYPE_MASK = 0x3F;
 static constexpr float UNKNOWN_POSITION = 212.0F;
 static constexpr uint8_t DEVICE_NAME_BUFFER_SIZE = 32;  ///< Device name storage including null terminator
 
+/// @brief Sentinel value meaning "no RSSI sample recorded yet" for `last_rssi_dbm`/`rssi_ema_scaled`.
+/// A real RSSI reading from these radios is always well above `INT16_MIN` — and so is any real
+/// `rssi_ema_scaled` fixed-point value.
+static constexpr int16_t RSSI_UNKNOWN_DBM = INT16_MIN;
+
+/// @brief EMA weight denominator and fixed-point scale for `IoDevice::rssi_ema_scaled`.
+/// One constant serves both roles by construction: the update `S += x − round(S/N)` blends each
+/// new sample `x` in at weight 1/N while keeping `S = N × EMA`.
+static constexpr int16_t RSSI_EMA_SCALE = 8;
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -198,9 +208,38 @@ struct IoDevice {
                                 ///< the next successful status/command reply for this device. Note: 0 is also the
                                 ///< real RESULT_UNKNOWN_STATUS_REPLY wire value, so that specific explicit reply is
                                 ///< indistinguishable here from "nothing recorded yet" — a known, accepted tradeoff.
-  uint32_t last_result_at_ms{0};  ///< millis() timestamp of last_result_code, 0 when none recorded.
-  uint32_t last_status{0};        ///< millis() timestamp of last received status.
+  uint32_t last_result_at_ms{0};              ///< millis() timestamp of last_result_code, 0 when none recorded.
+  uint32_t last_status{0};                    ///< millis() timestamp of last received status.
+  int16_t last_rssi_dbm{RSSI_UNKNOWN_DBM};    ///< Most recent raw RSSI sample (dBm), or RSSI_UNKNOWN_DBM.
+  int16_t rssi_ema_scaled{RSSI_UNKNOWN_DBM};  ///< Smoothed RSSI as fixed point in 1/RSSI_EMA_SCALE dBm — read
+                                              ///< through device_rssi_ema_dbm(), updated by
+                                              ///< detail::update_link_health() in hub_internal.h. Fixed point
+                                              ///< (rather than whole dBm) keeps sub-dBm EMA contributions from
+                                              ///< vanishing to integer truncation, so the average converges on a
+                                              ///< stable signal instead of stalling up to RSSI_EMA_SCALE−1 dBm
+                                              ///< away. RSSI_UNKNOWN_DBM before the first sample.
+  uint32_t last_seen_ms{0};  ///< millis() of the last frame received from this device (any command), 0 = never.
+  uint16_t exchange_timeout_count{0};  ///< Cumulative count of outbound exchanges to this device with no valid
+                                       ///< response (see detail::record_exchange_timeout() in hub_internal.h).
+  uint16_t exchange_attempt_count{0};  ///< Cumulative attempts (`ExchangeEngine::DebugInfo::tries`, 1-based per
+                                       ///< exchange) across those timed-out exchanges only — attempts within an
+                                       ///< ultimately successful exchange are not counted (deliberate scope limit).
 };
+
+/// @brief Convert an `rssi_ema_scaled` fixed-point value to whole dBm (round half away from zero).
+/// @param scaled Fixed-point EMA value in 1/RSSI_EMA_SCALE dBm units (not the sentinel).
+/// @return Rounded dBm value.
+inline int16_t rssi_scaled_to_dbm(int16_t scaled) {
+  constexpr int16_t half = RSSI_EMA_SCALE / 2;
+  return static_cast<int16_t>((scaled + (scaled >= 0 ? half : -half)) / RSSI_EMA_SCALE);
+}
+
+/// @brief A device's smoothed RSSI in whole dBm.
+/// @param dev Device record to read.
+/// @return Rounded EMA in dBm, or RSSI_UNKNOWN_DBM when no sample has been recorded yet.
+inline int16_t device_rssi_ema_dbm(const IoDevice &dev) {
+  return dev.rssi_ema_scaled == RSSI_UNKNOWN_DBM ? RSSI_UNKNOWN_DBM : rssi_scaled_to_dbm(dev.rssi_ema_scaled);
+}
 
 /// @brief Determine whether a device type has inverted position mapping by default.
 /// @param type Device type.

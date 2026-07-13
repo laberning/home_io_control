@@ -92,6 +92,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
+  // Stage a valid get_last_capture() for tests exercising the link-health RSSI path. Real drivers
+  // populate this via populate_capture_base_() inside wait_for_packet()/check_for_packet(); this
+  // generic mock overrides both fully with queue-based logic and never calls it, so tests that
+  // need a capture (rather than just an RX frame) set it directly instead.
+  void set_last_capture_rssi(int16_t rssi_dbm) {
+    this->populate_capture_base_(false, 0, rssi_dbm, nullptr, 0, nullptr, 0);
+  }
   int get_send_count() const { return send_count_; }
   const std::vector<esphome::home_io_control::RadioTxConfig> &get_tx_configs() const { return tx_configs_; }
   const std::vector<std::vector<uint8_t>> &get_sent_data() const { return sent_data_; }

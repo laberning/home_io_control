@@ -16,11 +16,7 @@ void IOHomeDeviceNameTextSensor::setup() {
   if (this->parent_ == nullptr)
     return;
 
-  this->parent_->register_device_callback(
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
-
-  if (const auto *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
-    this->publish_state(dev->name);
+  this->register_companion_binding_([this](const IoDevice &dev) { this->publish_state(dev.name); });
 
   this->set_timeout("init_name", INITIAL_STATUS_REQUEST_DELAY_MS,
                     [this]() { this->parent_->queue_request_device_name(this->device_id_); });
@@ -29,13 +25,6 @@ void IOHomeDeviceNameTextSensor::setup() {
 void IOHomeDeviceNameTextSensor::dump_config() {
   LOG_TEXT_SENSOR("", "IO-Homecontrol Device Name", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-}
-
-void IOHomeDeviceNameTextSensor::on_device_update_(const std::string &id, const IoDevice &dev) {
-  if (id != this->device_id_)
-    return;
-
-  this->publish_state(dev.name);
 }
 
 }  // namespace home_io_control

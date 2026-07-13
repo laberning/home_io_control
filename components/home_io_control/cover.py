@@ -19,10 +19,8 @@ from esphome.core import ID
 from . import home_io_control_ns
 from .platform_common import (
     companion_id_base,
-    create_device_name_sensor,
-    create_last_result_sensor,
-    inject_device_name_sensor_id,
-    inject_last_result_sensor_id,
+    create_companion_sensors,
+    inject_companion_sensor_ids,
     platform_schema_extension,
     wire_device_binding,
     CONF_DEVICE_ID,
@@ -106,7 +104,7 @@ def _inject_companion_ids(config):
     """Declare cover companion entity IDs during schema validation for StaticVector sizing.
 
     The favorite and ventilation buttons are cover-only and gated on device capability, so
-    their injection stays here. The always-present device-name sensor ID is delegated to the
+    their injection stays here. The always-present companion sensor IDs are delegated to the
     shared helper. See platform_common.companion_id_base() for the StaticVector rationale.
     """
     base = companion_id_base(config, CONF_ID)
@@ -129,12 +127,8 @@ def _inject_companion_ids(config):
             type=IOHomeCoverVentButton,
         )
 
-    # Device-name and last-result diagnostic text sensors — always generated (shared with
-    # other platforms).
-    inject_device_name_sensor_id(config, CONF_ID)
-    inject_last_result_sensor_id(config, CONF_ID)
-
-    return config
+    # Companion diagnostic sensors — always generated (shared with other platforms).
+    return inject_companion_sensor_ids(config, CONF_ID)
 
 
 CONFIG_SCHEMA = cv.All(
@@ -181,5 +175,4 @@ async def to_code(config):
         cg.add(vent.set_parent(parent))
         cg.add(vent.set_device_id(config[CONF_DEVICE_ID]))
 
-    await create_device_name_sensor(config, parent)
-    await create_last_result_sensor(config, parent)
+    await create_companion_sensors(config, parent)

@@ -261,6 +261,57 @@ inline void normalize_stopped_state(IoDevice &dev) {
   }
 }
 
+/// @brief Update per-device link-health stats from the radio's last capture.
+///
+/// Called for every frame whose `src` is a registered device, regardless of command type or
+/// whether that command's own payload was well-formed — any such frame is real evidence the
+/// device is reachable and at this signal strength. The two call sites cover both ways such a
+/// frame arrives: update_device_status_() (inbound status path) and
+/// execute_request_and_update_()'s explicit-refusal branch (a CMD_ERROR_RESP reply to our own
+/// request, which returns before reaching the status path). Always stamps `last_seen_ms`; only
+/// touches the RSSI fields when `radio` is non-null and its last capture is valid (real drivers
+/// always populate a valid capture before a frame is handed off, but tests calling this path
+/// directly without a radio, or without exercising RX through it, must not crash or fabricate
+/// an RSSI).
+/// @param dev Device that sent the frame.
+/// @param radio Radio driver to read the last capture from; may be nullptr.
+inline void update_link_health(IoDevice &dev, RadioDriver *radio) {
+  dev.last_seen_ms = millis();
+  if (radio == nullptr)
+    return;
+
+  const RadioCaptureInfo &capture = radio->get_last_capture();
+  if (!capture.valid)
+    return;
+
+  dev.last_rssi_dbm = capture.rssi_dbm;
+  if (dev.rssi_ema_scaled == RSSI_UNKNOWN_DBM) {
+    // First sample: seed the EMA directly instead of blending from 0.
+    dev.rssi_ema_scaled = static_cast<int16_t>(capture.rssi_dbm * RSSI_EMA_SCALE);
+    return;
+  }
+  // Integer EMA kept in fixed point: `S += x − round(S/N)` blends each sample at weight 1/N
+  // while S stays scaled by N, so sub-dBm contributions accumulate instead of truncating to
+  // zero — a whole-dBm EMA would stall as soon as |sample − EMA| < N and never converge.
+  dev.rssi_ema_scaled =
+      static_cast<int16_t>(dev.rssi_ema_scaled + capture.rssi_dbm - rssi_scaled_to_dbm(dev.rssi_ema_scaled));
+}
+
+/// @brief Record that an outbound exchange to this device timed out (no valid response).
+///
+/// Called once per failed exchange from execute_request_and_update_()'s "no valid response"
+/// branch — the single place every device-directed exchange already reads
+/// ExchangeEngine::DebugInfo. Both counters saturate at UINT16_MAX instead of wrapping,
+/// matching PairingTelemetry's counters.
+/// @param dev Device the failed exchange was addressed to.
+/// @param tries Number of attempts the failed exchange made (`DebugInfo::tries`, 1-based).
+inline void record_exchange_timeout(IoDevice &dev, uint8_t tries) {
+  if (dev.exchange_timeout_count < UINT16_MAX)
+    dev.exchange_timeout_count++;
+  dev.exchange_attempt_count =
+      static_cast<uint16_t>(std::min<uint32_t>(static_cast<uint32_t>(dev.exchange_attempt_count) + tries, UINT16_MAX));
+}
+
 /// @brief Log a concise status‑update line used by inbound handlers.
 /// @param id Device ID.
 /// @param dev Current device state.

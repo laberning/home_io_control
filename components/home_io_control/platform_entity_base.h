@@ -1,19 +1,20 @@
 #pragma once
 
 /// @file platform_entity_base.h
-/// @brief Shared device-binding mixin for IO-Homecontrol entity platforms.
+/// @brief Shared device-binding mixins for IO-Homecontrol entity platforms.
 /// @ingroup hioc_platforms
 ///
 /// IOHomeCover, IOHomeLight, IOHomeSwitch and IOHomeLock all bind an ESPHome entity to a hub
 /// device: the same five YAML setters, the same registration ritual in setup(), and the same
 /// poll-interval dump_config line. DeviceBoundEntity centralizes exactly that shared state and
-/// wiring.
+/// wiring. The auto-generated companion diagnostic sensors share a smaller, observe-only
+/// binding; DeviceBoundCompanion centralizes that one.
 ///
-/// It is intentionally NOT an ESPHome base class — it is a plain mixin the entities inherit
+/// Both are intentionally NOT ESPHome base classes — they are plain mixins the entities inherit
 /// alongside their real ESPHome base (cover::Cover, light::LightOutput, switch_::Switch,
-/// lock::Lock). Entity-specific state mapping (cover position/tilt/movement inference, binary
-/// on/off decoding, the lock state machine) deliberately stays in the entities; only the
-/// device-binding plumbing lives here.
+/// lock::Lock, text_sensor::TextSensor, sensor::Sensor). Entity-specific state mapping (cover
+/// position/tilt/movement inference, binary on/off decoding, each companion's value rendering)
+/// deliberately stays in the entities; only the device-binding plumbing lives here.
 
 #include "hub_internal.h"
 
@@ -96,6 +97,49 @@ class DeviceBoundEntity {
   uint8_t subtype_{0};
   uint32_t status_poll_interval_ms_{0};
   bool optimistic_state_{true};
+};
+
+/// @brief Mixin holding the hub/device binding shared by the auto-generated per-device
+/// companion diagnostic sensors (device name, last result, RSSI, last seen, exchange failures).
+/// @ingroup hioc_platforms
+///
+/// Companions differ from the main entity platforms (DeviceBoundEntity above) in that they only
+/// *observe* a device the main entity already registered: they never call add_device() or
+/// configure polling, they just subscribe to update notifications and republish their one
+/// value. This mixin centralizes that subscribe-and-republish ritual; each sensor class keeps
+/// only its value rendering (including its decision whether a given device state is
+/// publishable at all).
+class DeviceBoundCompanion {
+ public:
+  /// @brief Set the parent controller component.
+  /// @param parent Pointer to the IOHomeControlComponent instance.
+  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
+  /// @brief Set the device ID whose state this companion sensor exposes.
+  /// @param id Hexadecimal node ID string (for example "123ABC").
+  void set_device_id(const std::string &id) { this->device_id_ = id; }
+
+ protected:
+  /// @brief Shared setup() body: subscribe to this device's updates and publish the initial state.
+  ///
+  /// No-op when no parent is wired (codegen always wires one before setup() runs).
+  /// @param publish Renders and publishes the sensor's value from a device record — or skips
+  /// publishing when the record has no meaningful value yet. Runs once immediately when the
+  /// device is already registered, then again on every update notification for this device.
+  void register_companion_binding_(const std::function<void(const IoDevice &)> &publish) {
+    if (this->parent_ == nullptr)
+      return;
+
+    this->parent_->register_device_callback([this, publish](const std::string &id, const IoDevice &dev) {
+      if (id == this->device_id_)
+        publish(dev);
+    });
+
+    if (const auto *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
+      publish(*dev);
+  }
+
+  IOHomeControlComponent *parent_{nullptr};
+  std::string device_id_;
 };
 
 }  // namespace home_io_control

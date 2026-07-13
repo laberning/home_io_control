@@ -297,6 +297,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     return;
   }
   IoDevice &dev = *device_ptr;
+  detail::update_link_health(dev, this->radio_);
 
   if (frame.cmd == CMD_PRIVATE_RESP) {
     if (frame.data_len < PRIVATE_RESPONSE_MIN_DATA_LEN) {

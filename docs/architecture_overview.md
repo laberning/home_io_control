@@ -8,7 +8,7 @@ This page gives a contributor-oriented map of the Home IO Control component and 
 - \ref hioc_radio "Radio Driver Layer": the `RadioDriver` abstraction and the SX1276 / SX1262 implementations. Chips without hardware IoHomeOn framing (SX1262 today, LR1121 planned) share the software PHY in `radio_soft_phy.h/.cpp` (UART bit-encoding for TX, UART-decode probe with CRC validation for RX).
 - \ref hioc_hub "Controller Layer": `IOHomeControlComponent` orchestrates setup and loop scheduling through seven collaborator objects — `ExchangeEngine` (authenticated exchanges), `PairingEngine` (discovery and pairing), `ManagementActions` (rename-device), `DeviceRegistry` (device table and callbacks), `OperationQueue` (pending-operation coalescing), `StatusPollPolicy` (per-device poll scheduling), and `PairingTelemetry` (per-attempt pairing event recorder, shared with both engines; its read-only companion `pairing_advisor.h` turns a completed attempt into actionable diagnostics). The hub itself is split by concern: `hub_core.cpp` (lifecycle and loop), `hub_operations.cpp` (queued operation dispatch), `hub_status.cpp` (passive receive-side handling), plus thin `hub_pairing.cpp` / `hub_management.cpp` wrappers around their engines. `hub_decisions.h` holds pure frame-classification helpers testable without radio or timing.
 - \ref hioc_tuning "Tuning Layer" (sub-group of the Controller Layer): the runtime `TuningConfig`, the table-driven `tuning_registry`, and the optional Home Assistant number/select entities.
-- \ref hioc_entities "ESPHome Integration Layer": the runtime entities plus the Python schema/codegen modules that expose the component to ESPHome. Shared device-binding codegen lives in `platform_common.py`; the C++ counterpart is the `DeviceBoundEntity` mixin in `platform_entity_base.h`.
+- \ref hioc_entities "ESPHome Integration Layer": the runtime entities plus the Python schema/codegen modules that expose the component to ESPHome. Shared device-binding codegen lives in `platform_common.py`; the C++ counterparts are the mixins in `platform_entity_base.h` — `DeviceBoundEntity` for the main entity platforms and `DeviceBoundCompanion` for the auto-generated per-device companion diagnostic sensors (device name, last result, RSSI, last seen, exchange failures).
 
 ## Layering Rules
 
@@ -90,7 +90,7 @@ Replace `hioc_heltec_v2` with the normalized `esphome.name` of the ESPHome node 
 - Protocol frame model: [proto_frame.h](../components/home_io_control/proto_frame.h)
 - Runtime tuning config: [tuning_config.h](../components/home_io_control/tuning_config.h)
 - Tuning parameter registry: [tuning_registry.h](../components/home_io_control/tuning_registry.h)
-- Shared entity mixin: [platform_entity_base.h](../components/home_io_control/platform_entity_base.h)
+- Shared entity mixins: [platform_entity_base.h](../components/home_io_control/platform_entity_base.h)
 - ESPHome hub schema: [__init__.py](../components/home_io_control/__init__.py)
 - Shared platform codegen: [platform_common.py](../components/home_io_control/platform_common.py)
 

@@ -138,8 +138,9 @@ Notes:
 - Covers with `io_device_type` set to `window_opener` or `ventilation_point` also generate a companion button named `<Cover Name> Ventilation Position`. That button sends the protocol's ventilation command, which moves the actuator to a predefined partially-open position suitable for air exchange.
 - Covers also automatically generate a diagnostic text sensor named `<Cover Name> Device Name`. That entity is disabled by default to avoid clutter. When enabled, it queues a boot-time `GET_NAME` protocol request, caches the returned UTF-8 device name, and publishes it to Home Assistant.
 - Covers also automatically generate a diagnostic text sensor named `<Cover Name> Last Result`. Unlike the device-name sensor, this one is **enabled by default** — see "Last Command Result" below.
+- Covers also automatically generate three disabled-by-default `<Cover Name> RSSI` / `Last Seen` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
 - Automatic favorite-button and ventilation-button generation is compile-time only. If `io_device_type` is omitted and learned later from radio traffic, the controller can still operate the cover normally, but it cannot add new ESPHome entities at runtime after boot.
-- Automatic device-name and last-result sensor generation is also compile-time only for the same reason.
+- Automatic device-name, last-result, and link-health sensor generation is also compile-time only for the same reason.
 - The protocol support currently exposed here is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh. The hub only keeps polling while a local command or overheard remote activity suggests that the device should still be changing, and it stops automatically once the device reports a stable state or the bounded polling window expires.
 - After a STOP command the hub confirms the resting position via the same settle polling, capped to ~1 s (shorter than a normal move and any configured interval) so Home Assistant receives the final position quickly even when the device was still moving at the time of the stop.
@@ -253,7 +254,8 @@ Notes:
 - The current implementation is still experimental and untested on local hardware in this repo.
 - Known non-light device families will be rejected once the device type is known.
 - Lights automatically generate a diagnostic text sensor named `<Light Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
-- Lights also automatically generate a `<Light Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" above.
+- Lights also automatically generate a `<Light Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" below.
+- Lights also automatically generate three disabled-by-default `<Light Name> RSSI` / `Last Seen` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
 
 ## Lock Platform
 
@@ -287,7 +289,8 @@ Notes:
 - The current implementation is experimental and untested on local hardware in this repo.
 - Known non-lock device families will be rejected once the device type is known.
 - Locks automatically generate a diagnostic text sensor named `<Lock Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
-- Locks also automatically generate a `<Lock Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" above.
+- Locks also automatically generate a `<Lock Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" below.
+- Locks also automatically generate three disabled-by-default `<Lock Name> RSSI` / `Last Seen` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
 
 ## Switch Platform
 
@@ -317,7 +320,8 @@ Notes:
 - This platform is also experimental and currently limited to binary on/off semantics.
 - Known non-switch device families will be rejected once the device type is known.
 - Switches automatically generate a diagnostic text sensor named `<Switch Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
-- Switches also automatically generate a `<Switch Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" above.
+- Switches also automatically generate a `<Switch Name> Last Result` diagnostic text sensor, enabled by default. See "Last Command Result" below.
+- Switches also automatically generate three disabled-by-default `<Switch Name> RSSI` / `Last Seen` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
 
 ## Button Platform
 
@@ -521,6 +525,15 @@ Every device-bound platform (cover, light, switch, lock) automatically generates
 - The sensor publishes the symbolic result name (`command_result_name()`), such as `LIMITATION_BY_RAIN`, `LIMITATION_BY_WIND`, or `THERMAL_PROTECTION` — the same names that appear in the warn-level log line above.
 - It publishes an empty string when no `CMD_ERROR_RESP` has been recorded yet, and again once the device replies successfully to a later status poll or command — a stale limitation reason from an hour ago is worse than none, so it does not linger once the device is confirmed working again.
 - Both the unsolicited path (a device reporting a limitation on its own, e.g. after a wind gust) and the direct reply to a Home Assistant command are recorded, so this sensor also covers cases where the command was rejected outright.
+
+### Link Health
+
+Every device-bound platform also automatically generates three per-device diagnostic `sensor:` entities for radio and exchange health. Unlike the `Last Result` sensor, all three are **disabled by default** — they are lower-level radio diagnostics, not everyday values, so they stay out of the way until explicitly enabled in Home Assistant.
+
+- **`<Entity Name> RSSI`** (dBm): a smoothed (exponential moving average, 1/8 weight per sample) signal-strength reading, updated on every frame received from the device — replies to hub commands and unsolicited device-initiated traffic alike. Shows as unavailable until the first frame is received; a real 0 dBm reading is never fabricated as a placeholder.
+- **`<Entity Name> Last Seen`** (seconds): seconds since controller boot at the last frame received from the device. This is **not** a Home Assistant timestamp — the hub has no wall-clock time source (no `time:` dependency) — so it publishes uptime-seconds instead. Combine with Home Assistant's own "last changed" indicator on this entity for a relative "how long ago" view. Shows as unavailable until the first frame is received.
+- **`<Entity Name> Exchange Failures`** (count): a cumulative count of outbound exchanges to this device (position/tilt/status/name requests) that received no valid response at all. Zero is a meaningful, always-published value here — it does not mean "unknown" the way it would for RSSI or Last Seen. A rising count on an otherwise-working device points at a marginal RF link (weak signal, interference, distance) worth investigating with the RSSI sensor above.
+- All three update only when the hub actually processes a frame or exchange for that device — no background timers or polling exist just to refresh them.
 
 Example custom-lambda pattern:
 

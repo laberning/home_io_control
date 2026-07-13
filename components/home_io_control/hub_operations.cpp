@@ -68,6 +68,10 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   IoFrame response;
   if (!this->send_and_receive_(request, response, FREQ_CH2)) {
     const auto &dbg = this->exchange_engine_.get_debug();
+    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
+      detail::record_exchange_timeout(*dev, dbg.tries);
+      this->notify_device_update_(device_id);
+    }
     if (retry_after_fail_ms != 0)
       this->schedule_background_poll_backoff_(device_id, dbg.saw_challenge);
     this->log_exchange_debug_(device_id.c_str());
@@ -79,14 +83,21 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   }
 
   if (response.cmd == CMD_ERROR_RESP) {
+    IoDevice *dev = this->registry_.get(device_id);
+    // An explicit refusal is still a reply from the device: this branch returns before the
+    // update_device_status_() call below, so it must stamp link health itself to keep
+    // update_link_health()'s "every frame from a registered device" contract.
+    if (dev != nullptr)
+      detail::update_link_health(*dev, this->radio_);
     if (response.data_len == 0) {
       detail::log_frame_issue(this, "rx", "unsupported_payload", response, frame_length(response));
-    } else if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
+    } else if (dev != nullptr) {
       detail::record_command_result(*dev, device_id, response.data[0], request.cmd, true);
-      this->notify_device_update_(device_id);
     } else {
       detail::log_command_result(device_id, response.data[0], request.cmd, true);
     }
+    if (dev != nullptr)
+      this->notify_device_update_(device_id);
     if (retry_after_fail_ms != 0)
       this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
