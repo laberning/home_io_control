@@ -20,10 +20,21 @@ class Component {
     last_timeout_callback_ = std::move(f);
   }
 
+  void set_interval(const char *name, uint32_t interval, std::function<void()> &&f) {
+    last_interval_name_ = name ? name : "";
+    last_interval_ms_ = interval;
+    last_interval_callback_ = std::move(f);
+  }
+
   // Test helpers for verifying set_timeout calls
   std::function<void()> last_timeout_callback_;
   std::string last_timeout_name_;
   uint32_t last_timeout_ms_{0};
+
+  // Test helpers for verifying set_interval calls
+  std::function<void()> last_interval_callback_;
+  std::string last_interval_name_;
+  uint32_t last_interval_ms_{0};
 
   void mark_failed() { this->failed_ = true; }
   bool is_failed() const { return this->failed_; }

@@ -1,7 +1,7 @@
 #pragma once
 
-/// @file platform_last_result_text_sensor.h
-/// @brief Diagnostic text sensor exposing the device's last CMD_ERROR_RESP result reason.
+/// @file platform_active_issue_text_sensor.h
+/// @brief Diagnostic text sensor exposing a device's currently outstanding CMD_ERROR_RESP reason.
 /// @ingroup hioc_platforms
 
 #include "esphome/components/text_sensor/text_sensor.h"
@@ -16,10 +16,13 @@ namespace home_io_control {
 /// self-explain instead of only showing up in the log. Shared by every device-bound platform
 /// (cover, light, switch, lock) via platform_common.py's companion-sensor codegen.
 ///
-/// Publishes an empty string until the first CMD_ERROR_RESP is seen, and again after any
-/// subsequent successful status/command reply clears it (see detail::clear_command_result()).
+/// Not a per-operation outcome — it does not get set on every command, only on an explicit
+/// CMD_ERROR_RESP. Publishes an empty string until the first one is seen, and again after any
+/// subsequent successful status/command reply clears it (see detail::clear_command_result()), so
+/// a non-empty value always means "this is still going on" rather than "this is what happened
+/// last."
 /// @ingroup hioc_platforms
-class IOHomeLastResultTextSensor : public text_sensor::TextSensor, public Component, public DeviceBoundCompanion {
+class IOHomeActiveIssueTextSensor : public text_sensor::TextSensor, public Component, public DeviceBoundCompanion {
  public:
   /// @brief Register the device-update subscription and publish the initial cached state.
   void setup() override;

@@ -15,8 +15,8 @@ namespace home_io_control {
 /// that timed out (no valid response) — see detail::record_exchange_timeout() in
 /// hub_internal.h.
 ///
-/// Unlike the RSSI and Last Seen sensors, zero is a meaningful value here (no failures yet), so
-/// this publishes on setup unconditionally.
+/// Unlike the RSSI and Last Contact sensors, zero is a meaningful value here (no failures yet),
+/// so this publishes on setup unconditionally.
 /// @ingroup hioc_platforms
 class IOHomeExchangeFailuresSensor : public sensor::Sensor, public Component, public DeviceBoundCompanion {
  public:

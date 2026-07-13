@@ -1,7 +1,7 @@
-/// @file platform_last_result_text_sensor_test.cpp
-/// @brief Tests for the generated last-command-result diagnostic text sensor.
+/// @file platform_active_issue_text_sensor_test.cpp
+/// @brief Tests for the generated active-issue diagnostic text sensor.
 
-#include "platform_last_result_text_sensor.h"
+#include "platform_active_issue_text_sensor.h"
 
 #include "hub_core.h"
 #include "hub_internal.h"
@@ -12,18 +12,18 @@ using namespace esphome::home_io_control;
 
 namespace {
 
-class TestableLastResultHub : public IOHomeControlComponent {
+class TestableActiveIssueHub : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::notify_device_update_;
 };
 
 }  // namespace
 
-TEST(PlatformLastResultTextSensor, SetupWithNoRecordedResultPublishesEmptyString) {
-  TestableLastResultHub hub;
+TEST(PlatformActiveIssueTextSensor, SetupWithNoRecordedResultPublishesEmptyString) {
+  TestableActiveIssueHub hub;
   hub.add_device("ABC123");
 
-  IOHomeLastResultTextSensor sensor;
+  IOHomeActiveIssueTextSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -31,14 +31,14 @@ TEST(PlatformLastResultTextSensor, SetupWithNoRecordedResultPublishesEmptyString
   EXPECT_EQ(sensor.state, "") << "a device with no recorded CMD_ERROR_RESP should publish an empty string";
 }
 
-TEST(PlatformLastResultTextSensor, SetupWithRecordedResultPublishesSymbolicName) {
-  TestableLastResultHub hub;
+TEST(PlatformActiveIssueTextSensor, SetupWithRecordedResultPublishesSymbolicName) {
+  TestableActiveIssueHub hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
   device->last_result_code = RESULT_LIMITATION_BY_RAIN;
 
-  IOHomeLastResultTextSensor sensor;
+  IOHomeActiveIssueTextSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -47,13 +47,13 @@ TEST(PlatformLastResultTextSensor, SetupWithRecordedResultPublishesSymbolicName)
       << "a previously recorded result should publish its symbolic name on setup";
 }
 
-TEST(PlatformLastResultTextSensor, DeviceUpdatePublishesNewResultAndClears) {
-  TestableLastResultHub hub;
+TEST(PlatformActiveIssueTextSensor, DeviceUpdatePublishesNewResultAndClears) {
+  TestableActiveIssueHub hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
 
-  IOHomeLastResultTextSensor sensor;
+  IOHomeActiveIssueTextSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -70,15 +70,15 @@ TEST(PlatformLastResultTextSensor, DeviceUpdatePublishesNewResultAndClears) {
   EXPECT_EQ(sensor.state, "") << "a device update after clearing should publish an empty string again";
 }
 
-TEST(PlatformLastResultTextSensor, DeviceUpdateForOtherDeviceIsIgnored) {
-  TestableLastResultHub hub;
+TEST(PlatformActiveIssueTextSensor, DeviceUpdateForOtherDeviceIsIgnored) {
+  TestableActiveIssueHub hub;
   hub.add_device("ABC123");
   hub.add_device("DEF456");
   auto *other = hub.get_device("DEF456");
   ASSERT_NE(other, nullptr);
   other->last_result_code = RESULT_LIMITATION_BY_RAIN;
 
-  IOHomeLastResultTextSensor sensor;
+  IOHomeActiveIssueTextSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();

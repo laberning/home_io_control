@@ -4,7 +4,7 @@
 ##
 ## cover.py, light.py, switch.py and lock.py all bind an ESPHome entity to a hub
 ## device: the same config keys, the same auto-generated companion diagnostic sensors
-## (device name, last result, RSSI, last seen, exchange failures), and the same
+## (device name, active issue, RSSI, last contact, exchange failures), and the same
 ## to_code() wiring (set_parent / set_device_id / device type / subtype / poll
 ## interval / linked remotes). This module is the single home for that shared logic so
 ## a change lands in one place instead of four — platform files call one
@@ -52,22 +52,22 @@ CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
 
 # Internal config key for the companion device-name sensor ID (injected by post-validator).
 CONF_DEVICE_NAME_SENSOR_ID = "_device_name_sensor_id"
-# Internal config key for the companion last-result sensor ID (injected by post-validator).
-CONF_LAST_RESULT_SENSOR_ID = "_last_result_sensor_id"
+# Internal config key for the companion active-issue sensor ID (injected by post-validator).
+CONF_ACTIVE_ISSUE_SENSOR_ID = "_active_issue_sensor_id"
 # Internal config keys for the companion link-health sensor IDs (injected by post-validator).
 CONF_RSSI_SENSOR_ID = "_rssi_sensor_id"
-CONF_LAST_SEEN_SENSOR_ID = "_last_seen_sensor_id"
+CONF_LAST_CONTACT_SENSOR_ID = "_last_contact_sensor_id"
 CONF_EXCHANGE_FAILURES_SENSOR_ID = "_exchange_failures_sensor_id"
 
 IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
     "IOHomeDeviceNameTextSensor", text_sensor.TextSensor, cg.Component
 )
-IOHomeLastResultTextSensor = home_io_control_ns.class_(
-    "IOHomeLastResultTextSensor", text_sensor.TextSensor, cg.Component
+IOHomeActiveIssueTextSensor = home_io_control_ns.class_(
+    "IOHomeActiveIssueTextSensor", text_sensor.TextSensor, cg.Component
 )
 IOHomeRssiSensor = home_io_control_ns.class_("IOHomeRssiSensor", sensor.Sensor, cg.Component)
-IOHomeLastSeenSensor = home_io_control_ns.class_(
-    "IOHomeLastSeenSensor", sensor.Sensor, cg.Component
+IOHomeLastContactSensor = home_io_control_ns.class_(
+    "IOHomeLastContactSensor", sensor.Sensor, cg.Component
 )
 IOHomeExchangeFailuresSensor = home_io_control_ns.class_(
     "IOHomeExchangeFailuresSensor", sensor.Sensor, cg.Component
@@ -77,9 +77,9 @@ IOHomeExchangeFailuresSensor = home_io_control_ns.class_(
 # (config key, ID suffix, codegen class) for every auto-generated companion sensor.
 _COMPANION_SENSOR_IDS = (
     (CONF_DEVICE_NAME_SENSOR_ID, "device_name_sensor", IOHomeDeviceNameTextSensor),
-    (CONF_LAST_RESULT_SENSOR_ID, "last_result_sensor", IOHomeLastResultTextSensor),
+    (CONF_ACTIVE_ISSUE_SENSOR_ID, "active_issue_sensor", IOHomeActiveIssueTextSensor),
     (CONF_RSSI_SENSOR_ID, "rssi_sensor", IOHomeRssiSensor),
-    (CONF_LAST_SEEN_SENSOR_ID, "last_seen_sensor", IOHomeLastSeenSensor),
+    (CONF_LAST_CONTACT_SENSOR_ID, "last_contact_sensor", IOHomeLastContactSensor),
     (CONF_EXCHANGE_FAILURES_SENSOR_ID, "exchange_failures_sensor", IOHomeExchangeFailuresSensor),
 )
 
@@ -194,7 +194,7 @@ async def _create_companion_text_sensor(config, parent, sensor_id, name, disable
 async def _create_link_health_sensor(config, parent, sensor_id, name, **sensor_kwargs):
     """Shared body for the three auto-generated link-health `sensor:` companions.
 
-    All three (RSSI, Last Seen, Exchange Failures) are numeric, diagnostic, and disabled by
+    All three (RSSI, Last Contact, Exchange Failures) are numeric, diagnostic, and disabled by
     default (noise control); only the name and sensor-specific schema keys
     (unit/device_class/state_class/accuracy_decimals) differ between them, so those are the
     only things each call in create_companion_sensors() supplies.
@@ -227,12 +227,14 @@ async def create_companion_sensors(config, parent):
     inject_companion_sensor_ids()), so adding a companion touches this module only:
 
     - Device Name: disabled by default (clutter control).
-    - Last Result: the one enabled-by-default companion — it is the headline diagnostic
+    - Active Issue: the one enabled-by-default companion — it is the headline diagnostic
       value that turns a silently-ignored command into a self-explained one (e.g. a
-      wind/rain lockout), so users should see it without an opt-in step.
-    - RSSI / Last Seen / Exchange Failures: numeric link-health diagnostics, disabled by
-      default (noise control). Last Seen publishes uptime-seconds, not a Home Assistant
-      timestamp — the hub has no wall-clock time source; see IOHomeLastSeenSensor.
+      wind/rain lockout), so users should see it without an opt-in step. Empty except while
+      a CMD_ERROR_RESP reason is outstanding; see IOHomeActiveIssueTextSensor.
+    - RSSI / Last Contact / Exchange Failures: numeric link-health diagnostics, disabled by
+      default (noise control). Last Contact publishes seconds since the last frame from the
+      device (an age, not a Home Assistant timestamp) and keeps counting up between frames via
+      its own heartbeat; see IOHomeLastContactSensor.
     """
     await _create_companion_text_sensor(
         config,
@@ -244,8 +246,8 @@ async def create_companion_sensors(config, parent):
     await _create_companion_text_sensor(
         config,
         parent,
-        config[CONF_LAST_RESULT_SENSOR_ID],
-        _companion_sensor_name(config, "Last Result"),
+        config[CONF_ACTIVE_ISSUE_SENSOR_ID],
+        _companion_sensor_name(config, "Active Issue"),
         disabled_by_default=False,
     )
     await _create_link_health_sensor(
@@ -263,10 +265,11 @@ async def create_companion_sensors(config, parent):
     await _create_link_health_sensor(
         config,
         parent,
-        config[CONF_LAST_SEEN_SENSOR_ID],
-        _companion_sensor_name(config, "Last Seen"),
+        config[CONF_LAST_CONTACT_SENSOR_ID],
+        _companion_sensor_name(config, "Last Contact"),
         **{
             CONF_UNIT_OF_MEASUREMENT: "s",
+            CONF_STATE_CLASS: STATE_CLASS_MEASUREMENT,
             CONF_ACCURACY_DECIMALS: 0,
         },
     )

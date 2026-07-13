@@ -100,7 +100,8 @@ class DeviceBoundEntity {
 };
 
 /// @brief Mixin holding the hub/device binding shared by the auto-generated per-device
-/// companion diagnostic sensors (device name, last result, RSSI, last seen, exchange failures).
+/// companion diagnostic sensors (device name, active issue, RSSI, last contact, exchange
+/// failures).
 /// @ingroup hioc_platforms
 ///
 /// Companions differ from the main entity platforms (DeviceBoundEntity above) in that they only
