@@ -18,11 +18,13 @@
 ///     ha_position = 1.0 - (io_position / 100.0). Some devices (horizontal awnings)
 ///     have inverted mapping; see platform_cover.h.
 ///
-/// Preamble handling:
-///   - Commands to battery/solar‑powered devices must use LONG_PREAMBLE (1024 bytes)
-///     so the sleeping receiver can detect the frame. Mains‑powered devices use
-///     SHORT_PREAMBLE (8 bytes). See CTRL1_LOW_POWER flag and battery_powered_ field
-///     in IoDevice.
+/// Low‑power flag and preamble handling:
+///   - Every frame addressed to a specific device sets CTRL1_LOW_POWER: the codebase does
+///     not track per‑device power class, battery/solar devices need the flag on every frame
+///     sent to them, and the golden‑frame corpus shows real devices accepting it.
+///   - The flag does not select the TX preamble. The exchange engine picks the preamble from
+///     frame position: start frames use LONG_PREAMBLE (1024 bytes) so a sleeping receiver
+///     can wake, follow‑up frames use the driver's response_preamble() (exchange_engine.cpp).
 
 #include "proto_frame.h"
 
@@ -38,7 +40,7 @@ namespace home_io_control {
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
-/// @param low_power True if target is battery/solar‑powered (uses long preamble).
+/// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
 /// @param position Desired position: 0–100 (open→closed), or POS_STOP/POS_FAVORITE.
 /// @return true on success; false if position exceeds limits.
 bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position);
@@ -51,7 +53,7 @@ bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
-/// @param low_power True if target is battery/solar‑powered (uses long preamble).
+/// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
 /// @param position Desired position 0–100 (0=fully open, 100=fully closed).
 /// @return true on success; false if position > 100.
 bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position);
@@ -69,7 +71,7 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
-/// @param low_power True if target is battery/solar‑powered (uses long preamble).
+/// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
 /// @param cmd Named command to execute.
 /// @return true on success; false for invalid command.
 bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd);
@@ -85,7 +87,7 @@ bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param dst Target device's 3-byte node ID.
-/// @param low_power True if target is battery/solar-powered (uses long preamble).
+/// @param low_power True if target is battery/solar-powered (sets CTRL1_LOW_POWER).
 /// @return true on success.
 bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
 
@@ -102,7 +104,7 @@ bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// @param f IoFrame to populate.
 /// @param own Controller node ID.
 /// @param dst Target device node ID.
-/// @param low_power True for long preamble (battery/solar devices).
+/// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
 /// @param tilt_percent 0 = fully closed, 100 = fully open.
 /// @note This uses the same command (0x00) as position control but with a different
 ///       payload format indicating a tilt operation. The receiver infers tilt from
@@ -117,7 +119,7 @@ bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, boo
 /// @param f IoFrame to populate.
 /// @param own Controller node ID.
 /// @param dst Target device node ID.
-/// @param low_power True for long preamble (battery/solar devices).
+/// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
 /// @param position Desired position 0–100 (open→closed).
 /// @param tilt_percent 0 = fully closed, 100 = fully open.
 /// @return true on success; false if position exceeds limits.

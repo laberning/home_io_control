@@ -128,7 +128,10 @@ bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 
 bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
                      const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]) {
-  init_frame(f, true, true, false, false);
+  // low_power=true: matches every other frame addressed to a specific device (see
+  // create_get_status/create_key_init) — solar/battery devices need CTRL1_LOW_POWER set on
+  // every frame sent to them, not only the initiating request.
+  init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, own);
   return set_cmd(f, CMD_SET_NAME, payload, DEVICE_NAME_WRITE_PAYLOAD_SIZE);
@@ -251,7 +254,8 @@ bool create_key_init(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
 /// Build a key-transfer frame (0x32) containing the system key encrypted with the transfer key.
 bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, const uint8_t *src,
                          const uint8_t key[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE]) {
-  init_frame(f, true, false, false, false);
+  // low_power=true: see create_set_name above.
+  init_frame(f, true, false, false, true);
   set_dst(f, dst);
   set_src(f, src);
   // The pairing capture we matched derives the IV from the previous command byte only. Treating
@@ -265,7 +269,8 @@ bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, con
 /// Build a challenge request (0x3C) containing 6 random bytes.
 /// Used when WE need to authenticate an incoming request from a device.
 bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src) {
-  init_frame(f, true, true, false, false);  // start=true, end=false
+  // start=true, end=false; low_power=true (see create_set_name above).
+  init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, src);
   uint8_t challenge[HMAC_SIZE];
@@ -277,7 +282,8 @@ bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src) {
 /// The HMAC is computed over [original_command_id + original_data] using the challenge.
 bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE],
                            const IoFrame &origin, const uint8_t *key) {
-  init_frame(f);
+  // low_power=true (see create_set_name above)
+  init_frame(f, true, false, false, true);
   set_dst(f, dst);
   set_src(f, src);
   // The authenticated transcript covers the original request, not the 0x3D wrapper. Using the
@@ -294,8 +300,8 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 /// Build a status-update acknowledgment (0x72). Sent after authenticating a device's status update.
 /// The response is sent on all 3 channels to ensure the device receives it.
 bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  // end=true: final frame.
-  init_frame(f, true, false, true, false);
+  // end=true: final frame. low_power=true (see create_set_name above).
+  init_frame(f, true, false, true, true);
   set_dst(f, dst);
   set_src(f, own);
   // Status update acknowledgment payload matched from working controller captures.
@@ -305,7 +311,8 @@ bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *ds
 /// Build a set-config command (0x6F) to tell the device to automatically send status updates
 /// when controlled by any remote (not just us). Not all devices support this.
 bool create_set_config1(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  init_frame(f, true, true, false, false);
+  // low_power=true (see create_set_name above).
+  init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, own);
   // Set-config payload matched from working controller captures.

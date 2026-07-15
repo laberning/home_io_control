@@ -26,7 +26,7 @@ frames:
     note: "challenge request, challenge = 01 23 45 67 89 AB"
   - dir: tx
     freq: 868950000
-    hex: "0E 00 44 55 66 11 22 33 3D E5 38 4D 03 16 8F 75 5E"
+    hex: "0E 20 44 55 66 11 22 33 3D E5 38 4D 03 16 8F CA FB"
     crc: present
     note: "challenge response, HMAC under the corpus key"
   - dir: rx

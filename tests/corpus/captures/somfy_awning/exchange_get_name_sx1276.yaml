@@ -25,7 +25,7 @@ frames:
   - dir: tx
     t_ms: 258
     freq: 868950000
-    hex: "0E 00 30 E1 F2 C0 FF EE 3D 28 6E F4 B7 1E 4D"
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 28 6E F4 B7 1E 4D"
     crc: absent
     note: "cmd=CHALLENGE_RESP(0x3D)"
   - dir: rx

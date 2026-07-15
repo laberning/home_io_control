@@ -13,7 +13,7 @@ frames:
   - dir: tx
     t_ms: 0
     freq: 868950000
-    hex: "58 00 30 E1 F2 C0 FF EE 52 50 61 74 69 6F 20 41 77 6E 69 6E 67 00 00 00 00"
+    hex: "58 20 30 E1 F2 C0 FF EE 52 50 61 74 69 6F 20 41 77 6E 69 6E 67 00 00 00 00"
     crc: absent
     note: "cmd=SET_NAME(0x52)"
   - dir: rx
@@ -25,7 +25,7 @@ frames:
   - dir: tx
     t_ms: 306
     freq: 868950000
-    hex: "0E 00 30 E1 F2 C0 FF EE 3D 46 76 85 38 45 DD"
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 46 76 85 38 45 DD"
     crc: absent
     note: "cmd=CHALLENGE_RESP(0x3D)"
   - dir: rx

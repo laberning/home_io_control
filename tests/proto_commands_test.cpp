@@ -42,6 +42,7 @@ TEST(ProtoCommands, CreateChallengeReq) {
   EXPECT_EQ(frame.data_len, HMAC_SIZE) << "challenge-req should carry 6-byte random challenge";
   EXPECT_TRUE(is_start(frame)) << "challenge-req should be a start frame";
   EXPECT_FALSE(is_end(frame)) << "challenge-req should not be an end frame";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
 }
 
 TEST(ProtoCommands, CreateStatusUpdateResp) {
@@ -54,6 +55,7 @@ TEST(ProtoCommands, CreateStatusUpdateResp) {
   EXPECT_EQ(frame.data[1], 0x00) << "status-update-resp payload byte 1 should be 0x00";
   EXPECT_FALSE(is_start(frame)) << "status-update-resp should not be a start frame";
   EXPECT_TRUE(is_end(frame)) << "status-update-resp should be an end frame";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
 }
 
 // ========================================================================================
@@ -72,6 +74,7 @@ TEST(ProtoCommands, CreateSetConfig1) {
   EXPECT_EQ(frame.data[4], 0x00) << "set-config1 payload byte 4 should be 0x00";
   EXPECT_TRUE(is_start(frame)) << "set-config1 should be a start frame";
   EXPECT_FALSE(is_end(frame)) << "set-config1 should not be an end frame";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
 }
 
 // ========================================================================================
@@ -164,6 +167,7 @@ TEST(ProtoCommands, CreateSetName) {
     EXPECT_EQ(frame.data[index], 0x00) << "set-name payload should preserve zero padding";
   EXPECT_TRUE(is_start(frame)) << "set-name should be a start frame";
   EXPECT_FALSE(is_end(frame)) << "set-name should not be an end frame";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
 }
 
 TEST(ProtoCommands, CreateGetStatusTilt) {
@@ -249,6 +253,7 @@ TEST(ProtoCommands, CreateKeyTransferSize) {
   EXPECT_EQ(key_transfer.data_len, AES_KEY_SIZE) << "key-transfer payload should be 16 bytes (encrypted system key)";
   EXPECT_FALSE(is_start(key_transfer)) << "key-transfer should not be a start frame";
   EXPECT_FALSE(is_end(key_transfer)) << "key-transfer should not be an end frame (middle frame)";
+  EXPECT_TRUE((key_transfer.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
 }
 
 TEST(ProtoCommands, CreateChallengeRespHmacSize) {
@@ -261,6 +266,7 @@ TEST(ProtoCommands, CreateChallengeRespHmacSize) {
   EXPECT_EQ(auth_resp.data_len, HMAC_SIZE) << "challenge-resp should carry 6-byte HMAC";
   EXPECT_FALSE(is_start(auth_resp)) << "challenge-resp should not be a start frame";
   EXPECT_FALSE(is_end(auth_resp)) << "challenge-resp should not be an end frame (continuation)";
+  EXPECT_TRUE((auth_resp.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
 }
 
 TEST(ProtoCommands, CreateDiscoveryRequest_0x28_Defaults) {
