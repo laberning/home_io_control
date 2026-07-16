@@ -105,6 +105,35 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   const uint8_t status_payload[8] = {STATUS_STOPPED, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(status, CMD_PRIVATE_RESP, status_payload, sizeof(status_payload)));
   print_wire("synthetic_auth_exchange status", status);
+
+  // --- synthetic_identify_exchange: identify(0x1E) -> challenge -> challenge-resp -> ack(END) ---
+  IoFrame identify{};
+  ASSERT_TRUE(create_identify(identify, test::OWN_ID, test::DST_ID));
+  print_wire("synthetic_identify_exchange identify", identify);
+
+  IoFrame identify_challenge{};
+  init_frame(identify_challenge, /*is_2w=*/true, /*start=*/false, /*end=*/false, /*low_power=*/false);
+  set_dst(identify_challenge, test::OWN_ID);
+  set_src(identify_challenge, test::DST_ID);
+  ASSERT_TRUE(set_cmd(identify_challenge, CMD_CHALLENGE_REQ, test::TEST_CHALLENGE, HMAC_SIZE));
+  print_wire("synthetic_identify_exchange challenge", identify_challenge);
+
+  // create_challenge_resp(f, dst, src, ...) — dst=device (the identify request's own dst), src=our
+  // own id, matching how ExchangeEngine builds it (exchange_engine.cpp: request.dst, node_id_).
+  IoFrame identify_resp{};
+  ASSERT_TRUE(create_challenge_resp(identify_resp, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE, identify,
+                                    test::TEST_SYSTEM_KEY));
+  print_wire("synthetic_identify_exchange challenge_resp", identify_resp);
+
+  // Final ack: identify_device() treats any endpoint-matched, non-error reply as success (there is
+  // no dedicated CMD_IDENTIFY response), so the device echoing CMD_IDENTIFY back is a plausible
+  // and minimal stand-in.
+  IoFrame identify_ack{};
+  init_frame(identify_ack, /*is_2w=*/true, /*start=*/false, /*end=*/true, /*low_power=*/false);
+  set_dst(identify_ack, test::OWN_ID);
+  set_src(identify_ack, test::DST_ID);
+  ASSERT_TRUE(set_cmd(identify_ack, CMD_IDENTIFY, nullptr, 0));
+  print_wire("synthetic_identify_exchange ack", identify_ack);
 }
 
 /// Prints cross-language create_hmac() KAT vectors for scripts/corpus/tests/data/crypto_kat.yaml

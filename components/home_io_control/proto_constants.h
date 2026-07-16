@@ -27,8 +27,12 @@ static constexpr uint8_t CMD_PRIVATE = 0x03;        ///< Get device status — n
 static constexpr uint8_t CMD_PRIVATE_RESP = 0x04;   ///< Response to 0x00 and 0x03 (contains position data)
 
 // Sensor and private register commands
-static constexpr uint8_t CMD_SET_SENSOR = 0x19;         ///< Inject sensor value into a device
-static constexpr uint8_t CMD_SET_SENSOR_ACK = 0x1A;     ///< Acknowledgment to CMD_SET_SENSOR
+static constexpr uint8_t CMD_SET_SENSOR = 0x19;      ///< Inject sensor value into a device
+static constexpr uint8_t CMD_SET_SENSOR_ACK = 0x1A;  ///< Acknowledgment to CMD_SET_SENSOR
+
+// Device identification
+static constexpr uint8_t CMD_IDENTIFY = 0x1E;  ///< Device physical identification / jog — requires authentication
+
 static constexpr uint8_t CMD_WRITE_PRIVATE = 0x20;      ///< Write private register (climate/heating devices)
 static constexpr uint8_t CMD_WRITE_PRIVATE_ACK = 0x21;  ///< Acknowledgment to CMD_WRITE_PRIVATE
 
@@ -153,11 +157,18 @@ static constexpr uint8_t POS_SECURED_TARGET = 0xD1;
 /// Moves the actuator to its factory or user-configured default position.
 static constexpr uint8_t POS_DEFAULT = 0xD3;
 
-/// @brief Wire value for the force-open command.
+/// @brief Ambiguous wire value used only for passive 1W-traffic intent decoding
+/// (decode_1w_main_intent() / oneway_intent_to_target() in proto_codecs.cpp).
 ///
-/// Force-open (0x64 = 100 decimal) commands the actuator to fully open, bypassing
-/// soft locks and environmental limitations (e.g., wind/rain restrictions). The device
-/// may still refuse if a hardware safety limit prevents movement.
+/// 0x64 (100) is simultaneously the ordinary doubled-position wire value for 50% and a value
+/// some physical 1W remotes send for their "force open" button — the protocol has no dedicated
+/// override code, so the two are indistinguishable on the wire. For passively decoding someone
+/// else's remote traffic, "FORCE_OPEN" is the more useful diagnostic label (physical remotes
+/// rarely send a numeric 50%). This is NOT used by any outbound builder in this codebase:
+/// real-hardware testing confirmed that sending main=0x64 as an outbound 2W
+/// CMD_EXECUTE command makes a real device move to 50% open, not bypass anything — see
+/// create_force_open() in proto_commands.cpp for the actual (ACEI-priority-based) force-open
+/// implementation.
 static constexpr uint8_t POS_FORCE_OPEN = 0x64;
 
 /// @brief Modifier byte for the ventilation command.

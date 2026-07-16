@@ -145,7 +145,10 @@ enum class CoverCommand : uint8_t {
   STOP = 0,        ///< Stop movement immediately.
   FAVORITE = 1,    ///< Move to stored favorite/"My" position.
   VENT = 2,        ///< Move to ventilation position (window-type devices).
-  FORCE_OPEN = 3,  ///< Force fully open, bypassing soft locks and environmental limits.
+  FORCE_OPEN = 3,  ///< Move to fully open at elevated priority; intended to bypass soft locks
+                   ///< and environmental limits (confirmed on real hardware to move correctly;
+                   ///< bypassing an active lock is still unconfirmed — see create_force_open()
+                   ///< in proto_commands.cpp).
 };
 
 /// @brief Get a human-readable name for a CoverCommand.

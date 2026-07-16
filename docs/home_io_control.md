@@ -46,8 +46,6 @@ button:
     name: "Discover & Pair"
 ```
 
-When `api:` is enabled, Home IO Control also exposes hub-level Home Assistant actions. The component currently exposes one such action: device rename.
-
 ## Home IO Control Component
 
 The `home_io_control:` block defines the shared radio/controller hub. All cover, light, lock, switch, and button entities attach to this hub.
@@ -151,9 +149,17 @@ Notes:
 
 ## Home Assistant Actions
 
-Home IO Control exposes hub-level actions through ESPHome's native API. These are intended for advanced workflows that should stay out of the default entity UI.
+Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes three **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so they're only reachable via Developer Tools or an automation.
 
-Required ESPHome API configuration:
+| Action | What it does | `verified` can be `true`? |
+|---|---|---|
+| `rename_device` | Renames a paired actuator and reads the name back to confirm the write. | Yes |
+| `identify_device` | Makes a device physically identify itself (brief jog/flash) so you can tell which physical motor a device ID belongs to. | No — no readback exists for a jog |
+| `force_open_device` ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. Confirmed to move the device correctly; **not yet confirmed to actually override an active lock** — see the warning below. | No — the outcome is asynchronous |
+
+### Enabling and triggering actions
+
+Requires a normal `api:` block — Home IO Control enables the extra native-API feature flags this needs internally, so no `custom_services:` or `homeassistant_services:` is needed:
 
 ```yaml
 api:
@@ -161,47 +167,47 @@ api:
     key: !secret api_key
 ```
 
-Trigger an action from a Home Assistant automation or script by adding an `action:` step that calls the node-scoped ESPHome action name.
+Each action becomes a node-scoped ESPHome action named `esphome.<node_name>_<action_name>`. `<node_name>` comes from `esphome.name` (not `friendly_name`), which Home Assistant normalizes to snake_case — e.g. the sample V2 config uses `name: hioc-heltec-v2`, so `rename_device` becomes `esphome.hioc_heltec_v2_rename_device`.
 
-Generic pattern:
+**From Home Assistant Developer Tools -> Actions**, use the direct action block (no `alias:`/`sequence:`):
 
 ```yaml
-action: esphome.<node_name>_<action_name>
+action: esphome.hioc_heltec_v2_identify_device
 data:
-  ... action-specific fields ...
+  device_id: "FEEB1E"
 ```
 
-The component enables the required native API feature flags internally, so you do not need to add `custom_services:` or `homeassistant_services:` manually.
+**From an automation or script**, wrap the same block in a normal step:
 
-The first Home IO Control action is `rename_device`.
+```yaml
+alias: Identify the Patio Awning
+sequence:
+  - action: esphome.hioc_heltec_v2_identify_device
+    data:
+      device_id: "FEEB1E"
+```
 
-## Rename Device Action
+Every action takes `device_id`: the 6-hex-character IO-homecontrol device ID — the same value you set as `io_device_id` in the entity's YAML, and the same ID the pairing log prints. This is the protocol-level actuator ID, **not** the Home Assistant entity ID.
 
-When the node has `api:` enabled, the hub registers a native ESPHome action named `esphome.<node_name>_rename_device`.
+### Result events
 
-`<node_name>` is derived from `esphome.name`, not `friendly_name`. Home Assistant normalizes that node name to snake case. For example, the sample V2 config uses `name: hioc-heltec-v2`, so the action becomes `esphome.hioc_heltec_v2_rename_device`.
+Every action fires the same Home Assistant event, `esphome.home_io_control_action_result`, so one automation trigger can react to any of them:
 
-Action fields:
+| Field | When present | Meaning |
+|---|---|---|
+| `action` | always | Action name, e.g. `rename_device`. |
+| `device_id` | always | Target device ID. |
+| `success` | always | Whether the action succeeded. |
+| `verified` | always | Whether a follow-up readback confirmed the result — see the table above for which actions can ever set this `true`. |
+| `message` | always | Human-readable outcome summary. |
+| `requested_name`, `applied_name` | `rename_device` only | Requested vs. verified device name. |
+| `result_code`, `result_code_name` | `rename_device` and `identify_device` only, when the device replies `CMD_ERROR_RESP` | Decoded protocol result code. |
 
-- `device_id` (Required): Target IO-homecontrol device ID as exactly 6 hexadecimal characters. This is the protocol-level actuator ID, not the Home Assistant entity ID.
-- `new_name` (Required): Requested device name as UTF-8 text. Leading and trailing ASCII whitespace is trimmed before validation. The final name must be representable in Latin-1 and fit within the protocol's 15-character write limit.
+### `rename_device`
 
-Behavior notes:
+Fields: `device_id` (required), `new_name` (required — UTF-8, ASCII whitespace trimmed, must fit the protocol's 15-character Latin-1 write limit).
 
-- The rename request uses the authenticated `SET_NAME` protocol exchange.
-- The hub rejects unknown devices before transmitting anything.
-- A successful protocol acknowledgement triggers an immediate `GET_NAME` readback through the same cached-name path used by the generated diagnostic text sensors.
-- The result is considered `verified` only when that readback matches the normalized requested name exactly.
-- If the target device returns `CMD_ERROR_RESP`, the hub surfaces the decoded result code in logs and in the emitted Home Assistant event.
-
-Home Assistant event reporting:
-
-- Every rename attempt fires `esphome.home_io_control_action_result`.
-- Event fields always include `action`, `device_id`, `success`, `verified`, and `message`.
-- Successful validations also include `requested_name` and, when available, `applied_name`.
-- Explicit device refusals also include `result_code` and `result_code_name`.
-
-Home Assistant Developer Tools -> Actions expects the direct action block below, without `alias:` or `sequence:`:
+Sends the authenticated `SET_NAME` write, then immediately sends `GET_NAME` to read it back — `verified` is `true` only if the readback matches the requested name exactly. An explicit device refusal (`CMD_ERROR_RESP`) surfaces its decoded result code in both the logs and the event.
 
 ```yaml
 action: esphome.hioc_heltec_v2_rename_device
@@ -210,20 +216,29 @@ data:
   new_name: "Patio Awning"
 ```
 
-Use the same `device_id` value that you configured as `io_device_id` in the Home IO Control entity YAML. If you paired the device through discovery first, the pairing log also prints that same 6-character ID in the generated YAML snippet.
+### `identify_device`
 
-Example automation or script call:
+Fields: `device_id` (required).
+
+Sends the authenticated `CMD_IDENTIFY` command. No device-type gating beyond "is it registered" — identify exists specifically to help you work out what an unknown or unrecognized device physically is. A `CMD_ERROR_RESP` reply still counts as **success**: some devices answer that way to an identify request and jog anyway (confirmed on real hardware — the awning jogged every time despite the error reply).
 
 ```yaml
-alias: Rename Patio Awning
-sequence:
-  - action: esphome.hioc_heltec_v2_rename_device
-    data:
-      device_id: "FEEB1E"
-      new_name: "Patio Awning"
+action: esphome.hioc_heltec_v2_identify_device
+data:
+  device_id: "FEEB1E"
 ```
 
-Home Assistant derives the action name from the node and the registered service name, so multiple Home IO Control hubs on different ESPHome nodes do not collide.
+### `force_open_device`
+
+Fields: `device_id` (required).
+
+Queued through the same dispatch path as the cover entity and its buttons (capability gating, poll tracking, settle handling, backoff) rather than sent directly, so a non-cover device is rejected the same way any other cover command would be. The result event only confirms the command was **queued** — the actual movement shows up later through the device's normal cover-state/polling pipeline, the same as any other cover command.
+
+```yaml
+action: esphome.hioc_heltec_v2_force_open_device
+data:
+  device_id: "FEEB1E"
+```
 
 ## Light Platform
 
@@ -397,8 +412,6 @@ button:
 
 With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position` button automatically.
 
-If `api:` is enabled, the same node also exposes `esphome.<node_name>_rename_device` for on-demand device renames.
-
 ### Minimal SX1262 Cover Controller
 
 ```yaml
@@ -452,8 +465,6 @@ button:
 ```
 
 With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position` button automatically.
-
-If `api:` is enabled, the same node also exposes `esphome.<node_name>_rename_device` for on-demand device renames.
 
 ### Minimal Example with all Device Types: Cover, Light, Lock, and Switch
 

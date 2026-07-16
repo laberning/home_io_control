@@ -170,6 +170,18 @@ TEST(ProtoCommands, CreateSetName) {
   EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
 }
 
+TEST(ProtoCommands, CreateIdentify) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID)) << "create_identify should succeed";
+  EXPECT_EQ(frame.cmd, CMD_IDENTIFY) << "identify command should be CMD_IDENTIFY (0x1E)";
+  EXPECT_EQ(frame.data_len, 2) << "identify should carry a 2-byte payload";
+  EXPECT_EQ(frame.data[0], 0x01) << "identify payload byte 0 (origin) should be 0x01";
+  EXPECT_EQ(frame.data[1], 0xFF) << "identify payload byte 1 (parameter) should be 0xFF";
+  EXPECT_TRUE(is_start(frame)) << "identify should be a start frame";
+  EXPECT_FALSE(is_end(frame)) << "identify should not be an end frame";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
+}
+
 TEST(ProtoCommands, CreateGetStatusTilt) {
   IoFrame frame{};
   ASSERT_TRUE(create_get_status_tilt(frame, test::OWN_ID, test::DST_ID)) << "create_get_status_tilt should succeed";
@@ -421,17 +433,50 @@ TEST(ProtoCommands, CreateExecuteCommandVent) {
   EXPECT_EQ(frame.data[3], POS_VENT_MODIFIER) << "vent modifier should be POS_VENT_MODIFIER (0x03)";
 }
 
-TEST(ProtoCommands, CreateExecuteCommandForceOpen) {
+TEST(ProtoCommands, CreateExecuteCommandRejectsForceOpen) {
+  // FORCE_OPEN needs a device-specific "fully open" position (see create_force_open()) that
+  // this generic dispatch cannot supply, so it must be rejected here rather than silently
+  // building a wrong-direction command.
   IoFrame frame{};
-  ASSERT_TRUE(create_execute_command(frame, test::OWN_ID, test::DST_ID, false, CoverCommand::FORCE_OPEN))
-      << "create_execute_command(FORCE_OPEN) should succeed";
+  EXPECT_FALSE(create_execute_command(frame, test::OWN_ID, test::DST_ID, false, CoverCommand::FORCE_OPEN));
+}
+
+TEST(ProtoCommands, CreateForceOpenNonInverted) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_force_open(frame, test::OWN_ID, test::DST_ID, false, 0)) << "create_force_open should succeed";
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "force open should use CMD_EXECUTE (0x00)";
-  EXPECT_EQ(frame.data_len, 6) << "force open should use 6-byte special payload";
+  EXPECT_EQ(frame.data_len, 8) << "force open should use the ordinary 8-byte position payload, not a special byte";
   EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
-  EXPECT_EQ(frame.data[2], POS_FORCE_OPEN) << "force open main byte should be POS_FORCE_OPEN (0x64)";
-  EXPECT_EQ(frame.data[3], 0x00) << "force open modifier should be 0x00";
+  EXPECT_EQ(frame.data[1], 0x03) << "force open ACEI should be elevated priority level 0 (protection_human): 0x03";
+  EXPECT_EQ(frame.data[2], 0x00) << "force open position LSB should be 0x00 for a non-inverted device";
+  EXPECT_EQ(frame.data[3], 0x00) << "force open position MSB should be 0x00";
   EXPECT_TRUE(is_start(frame));
   EXPECT_FALSE(is_end(frame));
+}
+
+TEST(ProtoCommands, CreateForceOpenInvertedDevice) {
+  // An inverted device's wire-scale "fully open" is 100, not 0 (see IoDevice::inverted /
+  // platform_cover.cpp's ha<->io mapping) — the caller passes that in explicitly.
+  IoFrame frame{};
+  ASSERT_TRUE(create_force_open(frame, test::OWN_ID, test::DST_ID, false, 100));
+  EXPECT_EQ(frame.data[2], 0xC8) << "position 100 doubles to 0x00C8 LSB, matching create_execute_position(100)";
+  EXPECT_EQ(frame.data[3], 0x00) << "position 100 doubles to 0x00C8 MSB should be 0x00";
+}
+
+TEST(ProtoCommands, CreateForceOpenMatchesOrdinaryOpenExceptAcei) {
+  // FORCE_OPEN should be identical to an ordinary create_execute_position() move to the same
+  // position except for the elevated ACEI byte — it is not a special-payload command like
+  // STOP/FAVORITE/VENT.
+  IoFrame force_frame{}, open_frame{};
+  ASSERT_TRUE(create_force_open(force_frame, test::OWN_ID, test::DST_ID, true, 0));
+  ASSERT_TRUE(create_execute_position(open_frame, test::OWN_ID, test::DST_ID, true, 0));
+  EXPECT_EQ(force_frame.data_len, open_frame.data_len);
+  EXPECT_NE(force_frame.data[1], open_frame.data[1]) << "ACEI byte should differ (elevated priority)";
+  for (uint8_t i = 0; i < force_frame.data_len; i++) {
+    if (i == 1)
+      continue;
+    EXPECT_EQ(force_frame.data[i], open_frame.data[i]) << "data[" << (int) i << "] should match ordinary open";
+  }
 }
 
 TEST(ProtoCommands, CreateExecuteCommandStopMatchesLegacy) {

@@ -27,7 +27,7 @@ class VentButtonMockHub : public test::MockPlatformHubBase {
   VentButtonMockHub() = default;
   ~VentButtonMockHub() override = default;
 
-  void queue_device_command(const std::string &device_id, CoverCommand cmd) override {
+  bool queue_device_command(const std::string &device_id, CoverCommand cmd) override {
     last_device_id_ = device_id;
     last_command_ = cmd;
     PendingOperation op{};
@@ -35,6 +35,7 @@ class VentButtonMockHub : public test::MockPlatformHubBase {
     op.device_id = device_id;
     op.command = cmd;
     queued_operations_.push_back(op);
+    return true;
   }
   void queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position,
                                           uint8_t tilt_percent) override {

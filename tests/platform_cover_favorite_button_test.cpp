@@ -38,13 +38,14 @@ class FavoriteButtonMockHub : public test::MockPlatformHubBase {
     last_set_position_ = position;
     queued_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
   }
-  void queue_device_command(const std::string &device_id, CoverCommand cmd) override {
+  bool queue_device_command(const std::string &device_id, CoverCommand cmd) override {
     last_set_device_id_ = device_id;
     PendingOperation op{};
     op.type = PendingOperationType::DEVICE_COMMAND;
     op.device_id = device_id;
     op.command = cmd;
     queued_operations_.push_back(op);
+    return true;
   }
 
   const std::string &last_set_device_id() const { return last_set_device_id_; }

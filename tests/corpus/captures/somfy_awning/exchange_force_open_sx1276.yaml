@@ -1,0 +1,61 @@
+id: exchange_force_open_sx1276
+description: >
+  force_open_device management action against the Patio Awning (an IoDevice::inverted device):
+  EXECUTE(0x00) at elevated ACEI priority (level 0, protection_human: data[1]=0x03) targeting
+  wire position 100 (data[2]=0xC8, doubled), the device's actual "fully open" value once
+  inversion is resolved by execute_device_command_() (hub_operations.cpp). CONFIRMED WORKING
+  (2026-07-16, visually observed): the awning genuinely opens this time, position climbing
+  0% -> 2% -> 6% -> 13% -> 17%... toward target=100% across the follow-up polls (not part of
+  this capture — see the sibling execute_ack_reports_stale_target_*.yaml pattern for why the
+  immediate ack's target=0 bytes are the usual stale quick-ack placeholder, not the real target).
+  This capture supersedes the two prior misfires
+  (misfire_0x64_special_byte_reads_as_50pct_sx1276.yaml,
+  misfire_elevated_priority_wrong_direction_sx1276.yaml) as the first confirmed-correct
+  force-open exchange. Still NOT confirmed: whether elevated priority actually overrides an
+  *active* wind/rain lock — this device was not under one during any of the three 2026-07-16
+  test sessions (all got a clean ack, never RESULT_PRIORITY_LEVEL_LOCKED), so that part of
+  analysis/reference_combined_integration.md item 5 remains open.
+source:
+  device: "Somfy Sunea IO awning motor (\"Patio Awning\")"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-16
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "50 20 30 E1 F2 C0 FF EE 00 01 03 C8 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), elevated ACEI (0x03), position=100 (0xC8 doubled) — this device's actual fully-open value"
+  - dir: rx
+    t_ms: 248
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C AA DD 21 83 8C A3"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 276
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 0C A6 C5 84 0D 34"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 276
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 2C 80 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04); quick EXECUTE-ack, target=0 bytes are stale (real target=100 shows up in follow-up polls)"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: ACCEPT}
+  device:
+    reported_position: 0

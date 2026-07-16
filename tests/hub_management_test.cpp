@@ -18,9 +18,12 @@ namespace {
 
 class TestableManagementComponent : public IOHomeControlComponent {
  public:
+  using IOHomeControlComponent::api_force_open_device_;
+  using IOHomeControlComponent::api_identify_device_;
   using IOHomeControlComponent::api_rename_device_;
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::node_id_;
+  using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::register_management_actions_;
   using IOHomeControlComponent::system_key_;
@@ -77,6 +80,20 @@ static IoFrame make_error_response(const uint8_t dst[3], uint8_t result_code) {
   set_src(frame, device_node_id);
   uint8_t payload[1] = {result_code};
   set_cmd(frame, CMD_ERROR_RESP, payload, sizeof(payload));
+  return frame;
+}
+
+// identify_device does not check the response command type (there is no dedicated
+// CMD_IDENTIFY response), so any endpoint-matched, non-error reply counts as an
+// acknowledgment. Echoing CMD_IDENTIFY itself is a plausible real-world reply and keeps the
+// test independent of any other action's response shape.
+static IoFrame make_identify_ack_response(const uint8_t dst[3]) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, dst);
+  set_src(frame, device_node_id);
+  set_cmd(frame, CMD_IDENTIFY, nullptr, 0);
   return frame;
 }
 
@@ -179,7 +196,187 @@ TEST(HubManagement, RenameDeviceExplicitErrorReturnsDecodedResultCode) {
                                 command_result_description(RESULT_LIMITATION_BY_WIND));
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersRenameService) {
+TEST(HubManagement, IdentifyDeviceRejectsUnknownDevice) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.identify_device("123456");
+  EXPECT_FALSE(result.success);
+  EXPECT_FALSE(result.verified);
+  EXPECT_EQ(result.message, "device is not registered on this hub");
+}
+
+TEST(HubManagement, IdentifyDeviceRejectsWhenHubNotInitialized) {
+  TestableManagementComponent component;
+
+  const auto result = component.identify_device("ABC123");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "hub is not initialized");
+}
+
+TEST(HubManagement, IdentifyDeviceRejectsInvalidDeviceId) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.identify_device("12");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
+}
+
+TEST(HubManagement, IdentifyDeviceNoResponseFails) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  // No queued RX at all: send_and_receive times out with no valid response.
+
+  const auto result = component.identify_device("ABC123");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "no valid response to identify request");
+}
+
+TEST(HubManagement, IdentifyDeviceSuccessWithDirectResponse) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
+
+  const auto result = component.identify_device("ABC123");
+  EXPECT_TRUE(result.success);
+  EXPECT_FALSE(result.verified);
+  EXPECT_EQ(result.message, "identify acknowledged by device");
+}
+
+TEST(HubManagement, IdentifyDeviceErrorResponseIsTreatedAsSuccess) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_LIMITATION_BY_WIND)));
+
+  const auto result = component.identify_device("ABC123");
+  EXPECT_TRUE(result.success) << "CMD_ERROR_RESP to an identify request is expected/non-fatal";
+  EXPECT_FALSE(result.verified);
+  EXPECT_TRUE(result.has_result_code);
+  EXPECT_EQ(result.result_code, RESULT_LIMITATION_BY_WIND);
+  EXPECT_EQ(result.message, "identify triggered (device reported " +
+                                std::string(command_result_name(RESULT_LIMITATION_BY_WIND)) + ": " +
+                                command_result_description(RESULT_LIMITATION_BY_WIND) + ")");
+}
+
+TEST(HubManagement, ApiIdentifyDevicePublishesManagementResultEvent) {
+  esphome::api::APIServer api_server;
+  esphome::api::global_api_server = &api_server;
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
+
+  component.api_identify_device_("ABC123");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  const auto &event = api_server.events_.front();
+  EXPECT_EQ(event.event_type, "esphome.home_io_control_action_result");
+  EXPECT_EQ(event.data.at("action"), "identify_device");
+  EXPECT_EQ(event.data.at("device_id"), "ABC123");
+  EXPECT_EQ(event.data.at("success"), "true");
+  EXPECT_EQ(event.data.at("verified"), "false");
+  EXPECT_EQ(event.data.at("message"), "identify acknowledged by device");
+  EXPECT_EQ(event.data.count("requested_name"), 0u) << "identify has no name fields";
+  EXPECT_EQ(event.data.count("applied_name"), 0u) << "identify has no name fields";
+  EXPECT_EQ(event.data.count("result_code"), 0u) << "no result_code on a non-error acknowledgment";
+}
+
+TEST(HubManagement, ForceOpenDeviceRejectsUnknownDevice) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.force_open_device("123456");
+  EXPECT_FALSE(result.success);
+  EXPECT_FALSE(result.verified);
+  EXPECT_EQ(result.message, "device is not registered on this hub");
+}
+
+TEST(HubManagement, ForceOpenDeviceRejectsWhenHubNotInitialized) {
+  TestableManagementComponent component;
+
+  const auto result = component.force_open_device("ABC123");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "hub is not initialized");
+}
+
+TEST(HubManagement, ForceOpenDeviceRejectsInvalidDeviceId) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.force_open_device("12");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
+}
+
+TEST(HubManagement, ForceOpenDeviceEnqueuesForceOpenCommand) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.force_open_device("ABC123");
+  EXPECT_TRUE(result.success);
+  EXPECT_FALSE(result.verified);
+  EXPECT_EQ(result.message,
+            "force open queued (elevated-priority open; wind/rain lock bypass unconfirmed; movement result arrives "
+            "via cover state)");
+
+  ASSERT_EQ(component.op_queue_.size(), 1u);
+  EXPECT_EQ(component.op_queue_.front().type, PendingOperationType::DEVICE_COMMAND);
+  EXPECT_EQ(component.op_queue_.front().command, CoverCommand::FORCE_OPEN);
+  EXPECT_EQ(component.op_queue_.front().device_id, "ABC123");
+}
+
+TEST(HubManagement, ForceOpenDeviceRejectsNonCoverDevice) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::LIGHT;
+
+  const auto result = component.force_open_device("ABC123");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device does not accept cover commands");
+  EXPECT_TRUE(component.op_queue_.empty());
+}
+
+TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
+  esphome::api::APIServer api_server;
+  esphome::api::global_api_server = &api_server;
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  component.api_force_open_device_("ABC123");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  const auto &event = api_server.events_.front();
+  EXPECT_EQ(event.event_type, "esphome.home_io_control_action_result");
+  EXPECT_EQ(event.data.at("action"), "force_open_device");
+  EXPECT_EQ(event.data.at("device_id"), "ABC123");
+  EXPECT_EQ(event.data.at("success"), "true");
+  EXPECT_EQ(event.data.at("verified"), "false");
+  EXPECT_EQ(event.data.at("message"),
+            "force open queued (elevated-priority open; wind/rain lock bypass unconfirmed; movement result arrives "
+            "via cover state)");
+  EXPECT_EQ(event.data.count("requested_name"), 0u) << "force-open has no name fields";
+  EXPECT_EQ(event.data.count("applied_name"), 0u) << "force-open has no name fields";
+  EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
+}
+
+TEST(HubManagement, RegisterManagementActionsRegistersAllThreeServices) {
   esphome::api::APIServer api_server;
   esphome::api::global_api_server = &api_server;
   api_server.reset();
@@ -189,15 +386,30 @@ TEST(HubManagement, RegisterManagementActionsRegistersRenameService) {
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 1u);
-  const auto response = esphome::api::global_api_server->user_services_.front()->encode_list_service_response();
-  EXPECT_EQ(response.name.str(), "rename_device");
-  EXPECT_EQ(response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
-  ASSERT_EQ(response.args.size(), 2u);
-  EXPECT_EQ(response.args[0].name.str(), "device_id");
-  EXPECT_EQ(response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
-  EXPECT_EQ(response.args[1].name.str(), "new_name");
-  EXPECT_EQ(response.args[1].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 3u);
+
+  const auto rename_response = esphome::api::global_api_server->user_services_[0]->encode_list_service_response();
+  EXPECT_EQ(rename_response.name.str(), "rename_device");
+  EXPECT_EQ(rename_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(rename_response.args.size(), 2u);
+  EXPECT_EQ(rename_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(rename_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+  EXPECT_EQ(rename_response.args[1].name.str(), "new_name");
+  EXPECT_EQ(rename_response.args[1].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto identify_response = esphome::api::global_api_server->user_services_[1]->encode_list_service_response();
+  EXPECT_EQ(identify_response.name.str(), "identify_device");
+  EXPECT_EQ(identify_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(identify_response.args.size(), 1u);
+  EXPECT_EQ(identify_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(identify_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto force_open_response = esphome::api::global_api_server->user_services_[2]->encode_list_service_response();
+  EXPECT_EQ(force_open_response.name.str(), "force_open_device");
+  EXPECT_EQ(force_open_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(force_open_response.args.size(), 1u);
+  EXPECT_EQ(force_open_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(force_open_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 }
 
 TEST(HubManagement, ApiRenameDevicePublishesManagementResultEvent) {
@@ -248,7 +460,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 1u);
+  ASSERT_EQ(api_server.user_services_.size(), 3u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));

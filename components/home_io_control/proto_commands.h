@@ -10,13 +10,18 @@
 /// addresses, command ID, and optional payload.
 ///
 /// Position encoding:
-///   - IO protocol position values: 0 = fully open, 100 = fully closed.
+///   - IO protocol position values: 0 = fully open, 100 = fully closed, for a non-inverted
+///     device — but this is per-device, not a universal wire constant: IoDevice::inverted
+///     devices (e.g. horizontal awnings) have it backwards (0 = fully closed, 100 = fully
+///     open). Never hardcode "0 = open" in caller code without checking inversion first.
 ///   - Use create_execute_position() for numeric positions (0–100).
 ///   - Use create_execute_command() for named commands: CoverCommand::STOP,
-///     CoverCommand::FAVORITE, CoverCommand::VENT, CoverCommand::FORCE_OPEN.
+///     CoverCommand::FAVORITE, CoverCommand::VENT.
+///   - Use create_force_open() for CoverCommand::FORCE_OPEN — it takes the target "fully open"
+///     position explicitly rather than assuming 0
 ///   - The Home Assistant layer maps HA's 1.0=open/0.0=closed to the IO scale via
-///     ha_position = 1.0 - (io_position / 100.0). Some devices (horizontal awnings)
-///     have inverted mapping; see platform_cover.h.
+///     ha_position = 1.0 - (io_position / 100.0), or the inverted form for IoDevice::inverted
+///     devices; see platform_cover.h.
 ///
 /// Low‑power flag and preamble handling:
 ///   - Every frame addressed to a specific device sets CTRL1_LOW_POWER: the codebase does
@@ -58,23 +63,46 @@ bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low
 /// @return true on success; false if position > 100.
 bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position);
 
-/// @brief Build a named-command execute frame (0x00) for STOP, FAVORITE, VENT, or FORCE_OPEN.
+/// @brief Build a named-command execute frame (0x00) for STOP, FAVORITE, or VENT.
 ///
-/// Each named command maps to a specific wire encoding in the CMD_EXECUTE payload:
-///   - STOP:       main=0xD2, modifier=0x00 (6-byte special payload)
-///   - FAVORITE:   main=0xD8, modifier=0x00 (6-byte special payload)
-///   - VENT:       main=0xD8, modifier=0x03 (6-byte special payload)
-///   - FORCE_OPEN: main=0x64, modifier=0x00 (6-byte special payload)
+/// Each maps to a specific wire encoding in the 6-byte special CMD_EXECUTE payload:
+///   - STOP:       main=0xD2, modifier=0x00
+///   - FAVORITE:   main=0xD8, modifier=0x00
+///   - VENT:       main=0xD8, modifier=0x03
 ///
 /// This cleanly separates "move to position X" from "execute named action"
 /// without overloading a single numeric parameter.
+///
+/// FORCE_OPEN is NOT handled here — see create_force_open() instead. Unlike these three, it
+/// needs a device-specific "fully open" wire position (0 or 100 depending on inversion), which
+/// this generic dispatch has no way to supply; passing CoverCommand::FORCE_OPEN returns false.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
 /// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
-/// @param cmd Named command to execute.
-/// @return true on success; false for invalid command.
+/// @param cmd Named command to execute (STOP, FAVORITE, or VENT).
+/// @return true on success; false for invalid/unsupported command.
 bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd);
+
+/// @brief Build a force-open execute frame (0x00): move to the device's wire-scale "fully open"
+/// position at elevated ACEI priority (level 0, protection_human) instead of the usual
+/// user_high level — see EXECUTE_ACEI_FORCE_OPEN in proto_commands.cpp for why priority
+/// elevation, not a special position byte, is the protocol's real mechanism for getting past an
+/// environmental soft lock.
+///
+/// @param f IoFrame to populate.
+/// @param own Controller's 3‑byte node ID (source address).
+/// @param dst Target device's 3‑byte node ID (destination address).
+/// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
+/// @param open_position The device's wire-scale position value that means "fully open": 0 for
+///        ordinary devices, 100 for IoDevice::inverted ones (e.g. horizontal awnings) — the
+///        caller must resolve this from the target device, this builder does not have access
+///        to device state. Getting this wrong sends an ordinary, harmless-looking position
+///        command to the device's already-resting position instead of moving it anywhere.
+/// @return true on success.
+/// @note The elevated-priority override has not yet been confirmed against a real *active*
+///       environmental lock — see analysis/reference_combined_integration.md item 5.
+bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t open_position);
 
 /// Build a get‑status request (0x03). The device responds with its current position.
 /// @param f IoFrame to populate.
@@ -99,6 +127,17 @@ bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 /// @return true on success.
 bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
                      const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]);
+
+/// @brief Build an authenticated device-identify request (0x1E) that makes a device
+/// physically identify itself (brief jog / flash).
+///
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @note The device may reply with CMD_ERROR_RESP instead of a dedicated identify response;
+///       callers should treat that reply as an expected, non-fatal outcome rather than a failure.
+/// @return true on success.
+bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 
 /// Build an execute‑tilt command (0x00) for slat angle control.
 /// @param f IoFrame to populate.

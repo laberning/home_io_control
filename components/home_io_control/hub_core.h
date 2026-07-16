@@ -22,7 +22,8 @@
 ///     inbound authentication (ExchangeEngine::authenticate_request) if the device proves itself.
 ///   - DeviceRegistry and its callbacks provide fan-out to platform entities
 ///     (covers/lights/switches/locks); StatusPollPolicy schedules follow-up polls;
-///     PairingEngine and ManagementActions own pairing and the rename action.
+///     PairingEngine owns pairing; ManagementActions owns the rename/identify/force-open
+///     hub-level Home Assistant actions.
 
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
@@ -280,6 +281,23 @@ class IOHomeControlComponent : public Component,
   /// @param new_name Requested UTF-8 device name.
   /// @return Structured result describing success, verification, and any validation failure.
   virtual ManagementActionResult rename_device(const std::string &device_id, const std::string &new_name);
+  /// Trigger a device's physical identify (brief jog/flash) so a user can confirm which
+  /// physical motor a device ID maps to.
+  /// @param device_id Target device ID.
+  /// @return Structured result describing success and any validation failure. `verified` is
+  ///         always false — there is no readback for a physical identify jog.
+  virtual ManagementActionResult identify_device(const std::string &device_id);
+  /// @brief Move a cover device to fully open at elevated priority, intended to bypass
+  /// wind/rain soft locks.
+  ///
+  /// Safety-sensitive: queues CoverCommand::FORCE_OPEN through the normal cover-command dispatch
+  /// path. Only confirms the command was queued; the movement outcome arrives later via the
+  /// device's normal cover-state/polling pipeline, so `verified` is always false. The lock-bypass
+  /// behavior itself is experimental and unconfirmed against an active lock — see
+  /// ManagementActions::force_open_device()'s doxygen for details.
+  /// @param device_id Target device ID.
+  /// @return Structured result describing whether the command was queued.
+  virtual ManagementActionResult force_open_device(const std::string &device_id);
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
@@ -307,10 +325,18 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired position (0–100).
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
-  /// Queue an async named command (STOP, FAVORITE, VENT, FORCE_OPEN); returns immediately, executed in loop().
+  /// @brief Queue an async named command (STOP, FAVORITE, VENT, FORCE_OPEN); returns immediately,
+  /// executed in loop().
+  ///
+  /// Existing entity/button callers (cover, favorite button, vent button) intentionally ignore
+  /// the return value — they always target a known, already-registered device. It exists so
+  /// force_open_device() can report enqueue rejection distinctly from a queued-but-not-yet-run
+  /// command.
   /// @param device_id Target device ID.
   /// @param cmd Named command to send.
-  virtual void queue_device_command(const std::string &device_id, CoverCommand cmd);
+  /// @return true if the hub is initialized, the device is registered, and the command matches
+  ///         its capability class (so the command was enqueued); false otherwise.
+  virtual bool queue_device_command(const std::string &device_id, CoverCommand cmd);
   /// @brief Queue an async tilt update; returns immediately, executed in loop().
   ///
   /// If a pending SET_POSITION operation for the same device is already in the queue, the two are
@@ -461,6 +487,12 @@ class IOHomeControlComponent : public Component,
   void api_rename_device_(const std::string &device_id, const std::string &new_name) {
     this->management_actions_.api_rename_device(device_id, new_name);
   }
+  /// Native API callback: trigger a registered device's physical identify.
+  void api_identify_device_(const std::string &device_id) { this->management_actions_.api_identify_device(device_id); }
+  /// Native API callback: force-open a registered cover device.
+  void api_force_open_device_(const std::string &device_id) {
+    this->management_actions_.api_force_open_device(device_id);
+  }
 
   // --- Frequency hopping ---
   void hop_frequency_();
@@ -504,7 +536,7 @@ class IOHomeControlComponent : public Component,
   PairingTelemetry pairing_telemetry_;    ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.
   ExchangeEngine exchange_engine_;        ///< Owns all authenticated exchange and LBT/hop logic.
   PairingEngine pairing_engine_;          ///< Owns the three-phase device pairing flow.
-  ManagementActions management_actions_;  ///< Owns rename and other hub-level HA actions.
+  ManagementActions management_actions_;  ///< Owns rename, identify, force-open, and other hub-level HA actions.
 
   /// @brief Tracks the last logged 1W frame per remote to suppress duplicates.
   ///

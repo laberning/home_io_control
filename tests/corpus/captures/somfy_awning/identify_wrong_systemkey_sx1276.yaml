@@ -1,0 +1,40 @@
+id: identify_wrong_systemkey_sx1276
+description: >
+  Live identify_device (CMD_IDENTIFY 0x1E) request against the Patio Awning. The device answers
+  directly with CMD_ERROR_RESP/WRONG_SYSTEMKEY, with no challenge round-trip at all: unlike
+  every other authenticated command in this corpus, this exchange completes on the first reply
+  (classify_exchange_first_response() sees a non-0x3C frame and treats it as COMPLETE_DIRECT).
+  The same system key authenticates rename and force-open moments later in the same session, so
+  this is not a genuine key mismatch — it's the device's stock/quirk error reply to a command it
+  doesn't fully implement. CONFIRMED (2026-07-16, visually observed across three separate
+  identify calls, byte-identical each time): the awning physically jogs despite the error
+  reply, validating identify_device's deliberate design choice to treat CMD_ERROR_RESP as
+  success for this action.
+source:
+  device: "Somfy Sunea IO awning motor (\"Patio Awning\")"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-16
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4A 20 30 E1 F2 C0 FF EE 1E 01 FF"
+    crc: absent
+    note: "cmd=IDENTIFY(0x1E)"
+  - dir: rx
+    t_ms: 255
+    freq: 868950000
+    hex: "89 00 C0 FF EE 30 E1 F2 FE 05"
+    crc: absent
+    note: "cmd=ERROR_RESP(0xFE), result_code=0x05 (WRONG_SYSTEMKEY)"
+expect:
+  exchange:
+    kind: direct
+    outcome: success
+  frames:
+    - {cmd: 0x1E, start: true, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w, classification: COMPLETE_DIRECT}

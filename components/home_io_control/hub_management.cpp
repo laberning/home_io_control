@@ -2,9 +2,9 @@
 /// @brief Thin hub wrapper delegating management actions to ManagementActions.
 /// @ingroup hioc_hub
 ///
-/// All management logic lives in management_actions.cpp. This file provides
-/// only the IOHomeControlComponent::rename_device() implementation that the
-/// virtual dispatch table requires.
+/// All management logic lives in management_actions.cpp. This file provides only the
+/// IOHomeControlComponent::rename_device() / identify_device() / force_open_device()
+/// implementations that the virtual dispatch table requires.
 
 #include "hub_internal.h"
 
@@ -18,6 +18,23 @@ namespace home_io_control {
 IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::rename_device(const std::string &device_id,
                                                                                      const std::string &new_name) {
   return this->management_actions_.rename_device(device_id, new_name);
+}
+
+/// Trigger a registered device's physical identify (jog/flash).
+///
+/// Thin wrapper that delegates to management_actions_.identify_device() so that
+/// the virtual dispatch defined in hub_core.h is fulfilled.
+IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::identify_device(const std::string &device_id) {
+  return this->management_actions_.identify_device(device_id);
+}
+
+/// Move a cover device to fully open at elevated priority, intended to bypass wind/rain
+/// soft locks.
+///
+/// Thin wrapper that delegates to management_actions_.force_open_device() so that
+/// the virtual dispatch defined in hub_core.h is fulfilled.
+IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::force_open_device(const std::string &device_id) {
+  return this->management_actions_.force_open_device(device_id);
 }
 
 }  // namespace home_io_control

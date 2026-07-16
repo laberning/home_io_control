@@ -166,7 +166,13 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
            device_operation_profile_name(dev->type));
 
   IoFrame request;
-  if (!create_execute_command(request, this->node_id_, dev->node_id, true, cmd)) {
+  // FORCE_OPEN needs the device's own wire-scale "fully open" position (0, or 100 for an
+  // IoDevice::inverted device such as a horizontal awning) — create_execute_command() has no
+  // device access to resolve that, so it's built separately here where dev is in scope.
+  bool const built = cmd == CoverCommand::FORCE_OPEN
+                         ? create_force_open(request, this->node_id_, dev->node_id, true, dev->inverted ? 100 : 0)
+                         : create_execute_command(request, this->node_id_, dev->node_id, true, cmd);
+  if (!built) {
     this->poll_policy_.clear(device_id);
     return false;
   }
@@ -353,13 +359,18 @@ void IOHomeControlComponent::queue_set_device_position(const std::string &device
   }
 }
 
-void IOHomeControlComponent::queue_device_command(const std::string &device_id, CoverCommand cmd) {
+bool IOHomeControlComponent::queue_device_command(const std::string &device_id, CoverCommand cmd) {
+  if (!this->initialized_)
+    return false;
   const IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
+  if (dev == nullptr)
+    return false;
+  if (!detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
     detail::log_rejected_operation(device_id, *dev, cover_command_name(cmd), "cover entity");
-    return;
+    return false;
   }
   this->op_queue_.enqueue_device_command(device_id, cmd);
+  return true;
 }
 
 void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {

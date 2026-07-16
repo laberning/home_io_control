@@ -657,6 +657,59 @@ TEST(HubOperations, StopCommandWithMovingReplySchedulesShortSettlePoll) {
       << "STOP must settle faster than a normal move for this test to be meaningful";
 }
 
+TEST(HubOperations, ForceOpenSendsPositionZeroForNonInvertedDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);  // ROLLER_SHUTTER, inverted=false (default)
+
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::FORCE_OPEN));
+
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  const auto &tx = radio.get_sent_data().front();
+  ASSERT_GE(tx.size(), 13u);
+  EXPECT_EQ(tx[10], 0x03) << "ACEI should be elevated priority level 0 (protection_human)";
+  EXPECT_EQ(tx[11], 0x00) << "position LSB should be 0 (fully open) for a non-inverted device";
+  EXPECT_EQ(tx[12], 0x00) << "position MSB should be 0";
+}
+
+TEST(HubOperations, ForceOpenSendsPositionHundredForInvertedDevice) {
+  // A horizontal-awning-style inverted device's wire-scale "fully open" is 100, not 0 — sending
+  // 0 to such a device (the original bug, confirmed on real hardware) just re-targets its
+  // already-resting closed position and produces no movement at all.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->inverted = true;
+
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::FORCE_OPEN));
+
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  const auto &tx = radio.get_sent_data().front();
+  ASSERT_GE(tx.size(), 13u);
+  EXPECT_EQ(tx[11], 0xC8) << "position LSB should be 200 (doubled 100%) for an inverted device";
+  EXPECT_EQ(tx[12], 0x00) << "position MSB should be 0";
+}
+
 TEST(HubOperations, ExchangeFailureOnCommandSchedulesBackoffRetry) {
   TestableComponent comp;
   MockRadio radio;
@@ -834,6 +887,21 @@ TEST(HubOperations, QueueDevicePositionRejectedForLight) {
 
   comp.queue_set_device_position("ABC123", 50);
   EXPECT_TRUE(comp.op_queue_.empty()) << "non-cover device should be rejected in queue check";
+}
+
+TEST(HubOperations, QueueDeviceCommandReturnsTrueForValidCoverFalseForUnknownDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  EXPECT_TRUE(comp.queue_device_command("ABC123", CoverCommand::FAVORITE))
+      << "a known cover device should be validated and enqueued";
+  ASSERT_EQ(comp.op_queue_.size(), 1u);
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::DEVICE_COMMAND);
+
+  EXPECT_FALSE(comp.queue_device_command("999999", CoverCommand::FAVORITE))
+      << "an unregistered device should be rejected, not silently enqueued";
+  EXPECT_EQ(comp.op_queue_.size(), 1u) << "the rejected command should not have been enqueued";
 }
 
 TEST(HubOperations, QueueSetLockStateRejectsNonLockDevice) {

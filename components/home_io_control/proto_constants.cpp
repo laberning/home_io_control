@@ -21,6 +21,8 @@ const char *command_name(uint8_t cmd) {
       return "SET_SENSOR";
     case CMD_SET_SENSOR_ACK:
       return "SET_SENSOR_ACK";
+    case CMD_IDENTIFY:
+      return "IDENTIFY";
     case CMD_WRITE_PRIVATE:
       return "WRITE_PRIVATE";
     case CMD_WRITE_PRIVATE_ACK:

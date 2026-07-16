@@ -6,6 +6,7 @@
 
 #include "proto_crypto.h"
 
+#include <array>
 #include <cstring>
 
 namespace esphome {
@@ -26,6 +27,24 @@ constexpr uint8_t EXECUTE_ORIGINATOR = ORIGINATOR_USER_REMOTE;
 /// Composition: (ACEI_LEVEL_USER_HIGH << 5) | (0 << 3) | (1 << 1) | 1 = 0x43.
 constexpr uint8_t EXECUTE_ACEI =
     (ACEI_LEVEL_USER_HIGH << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
+/// @brief ACEI byte for the force-open command — same bit layout as EXECUTE_ACEI but at the
+/// highest priority level instead of user_high.
+///
+/// The protocol's only documented override mechanism for an environmental soft lock (e.g. a
+/// wind/rain sensor holding a device at its secured position) is ACEI priority elevation: a node
+/// locked at some priority level rejects any command at that level or below (result codes
+/// RESULT_PRIORITY_LEVEL_LOCKED / RESULT_PRIORITY_LOCKED_NON_EXEC) and only a strictly
+/// higher-priority command gets through. Real captures of this repo's own wind/rain sensor
+/// traffic show it locks at ACEI_LEVEL_PROTECTION_SENSOR (1), so force-open uses level 0
+/// (protection_human, the highest level)
+/// Composition: (ACEI_LEVEL_PROTECTION_HUMAN << 5) | (1 << 1) | 1 = 0x03.
+/// @note Real-hardware testing confirmed this correctly moves a device to fully open (see
+///       create_force_open()'s position-inversion note), but elevation to level 0 has not yet
+///       been confirmed to actually override an *active* lock — only that the device accepts
+///       the frame when nothing is locking it. See analysis/reference_combined_integration.md
+///       item 5.
+constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
+    (ACEI_LEVEL_PROTECTION_HUMAN << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
 /// Standard payload length for full execute-family commands.
 constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
 /// Bit flag that marks the standard position payload layout after the encoded position byte.
@@ -40,6 +59,15 @@ constexpr uint8_t PRIVATE_GET_POSITION_STATUS = 0x03;
 constexpr uint8_t STATUS_UPDATE_ACK_PAYLOAD[] = {0x05, 0x00};
 /// Set-config payload that enables automatic status updates from the device.
 constexpr uint8_t SET_CONFIG1_STATUS_BROADCAST_PAYLOAD[] = {0xE0, 0x10, 0x0A, 0x08, 0x00};
+/// Identify-request parameter byte (data[1] of the CMD_IDENTIFY payload).
+constexpr uint8_t IDENTIFY_PARAMETER = 0xFF;
+
+/// @brief Build the standard 8-byte position payload shared by create_execute()'s position path,
+/// create_execute_position(), and create_force_open() — identical except for the ACEI byte.
+inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t acei, uint8_t position) {
+  return {EXECUTE_ORIGINATOR,           acei,         static_cast<uint8_t>(2 * position), 0x00,
+          EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
+}
 
 }  // namespace
 
@@ -51,11 +79,8 @@ bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low
   set_dst(f, dst);
   set_src(f, own);
   if (position <= POSITION_PERCENT_MAX) {
-    // Real position: doubled value (0-200 maps to 0-100%).
-    const uint8_t payload[EXECUTE_PAYLOAD_SIZE] = {
-        EXECUTE_ORIGINATOR,           EXECUTE_ACEI, static_cast<uint8_t>(2 * position), 0x00,
-        EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
-    return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+    const auto payload = make_position_payload(EXECUTE_ACEI, position);
+    return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
   }
 
   // Special command (stop=0xD2, favorite=0xD8).
@@ -70,13 +95,16 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
-  const uint8_t payload[EXECUTE_PAYLOAD_SIZE] = {
-      EXECUTE_ORIGINATOR,           EXECUTE_ACEI, static_cast<uint8_t>(2 * position), 0x00,
-      EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
-  return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+  const auto payload = make_position_payload(EXECUTE_ACEI, position);
+  return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
 
-/// Build a named-command execute frame (0x00) for STOP, FAVORITE, VENT, or FORCE_OPEN.
+/// Build a named-command execute frame (0x00) for STOP, FAVORITE, or VENT.
+///
+/// FORCE_OPEN is deliberately not handled here — unlike these three, it needs to know the
+/// device's wire-scale "fully open" position (0 or 100 depending on IoDevice::inverted, e.g.
+/// horizontal awnings), which this builder has no way to know. Use create_force_open() instead;
+/// see its comments for why.
 bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd) {
   uint8_t main_byte = 0;
   uint8_t modifier_byte = 0;
@@ -93,10 +121,6 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
       main_byte = POS_FAVORITE;
       modifier_byte = POS_VENT_MODIFIER;
       break;
-    case CoverCommand::FORCE_OPEN:
-      main_byte = POS_FORCE_OPEN;
-      modifier_byte = 0x00;
-      break;
     default:
       return false;
   }
@@ -106,6 +130,23 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
   const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, EXECUTE_ACEI, main_byte,
                                                          modifier_byte,      0x00,         0x00};
   return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+}
+
+/// Build a force-open execute frame (0x00): an ordinary position command to the device's
+/// wire-scale "fully open" value, sent at elevated ACEI priority (see EXECUTE_ACEI_FORCE_OPEN).
+///
+/// Takes the target position explicitly rather than assuming 0, because "fully open" is not
+/// always wire-position 0: IoDevice::inverted devices (e.g. horizontal awnings) have open/close
+/// swapped, so their fully-open wire position is 100. An earlier version of this builder
+/// hardcoded 0; on a real inverted awning that targeted its already-*closed* resting position, a
+/// real-hardware-confirmed no-op rather than a lock bypass. The caller (execute_device_command_()
+/// in hub_operations.cpp) is responsible for resolving the correct value from the target IoDevice.
+bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t open_position) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  const auto payload = make_position_payload(EXECUTE_ACEI_FORCE_OPEN, open_position);
+  return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
 
 /// Build a get-status request (0x03). The device responds with its current position.
@@ -135,6 +176,16 @@ bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
   set_dst(f, dst);
   set_src(f, own);
   return set_cmd(f, CMD_SET_NAME, payload, DEVICE_NAME_WRITE_PAYLOAD_SIZE);
+}
+
+/// Build an authenticated device-identify request (0x1E).
+bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+  // low_power=true (see create_set_name above).
+  init_frame(f, true, true, false, true);
+  set_dst(f, dst);
+  set_src(f, own);
+  const uint8_t payload[2] = {ORIGINATOR_USER_REMOTE, IDENTIFY_PARAMETER};
+  return set_cmd(f, CMD_IDENTIFY, payload, sizeof(payload));
 }
 
 /// Build a tilt execute command (0x00) for devices that support slat angle control.
