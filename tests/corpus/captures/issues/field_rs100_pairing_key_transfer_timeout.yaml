@@ -1,0 +1,59 @@
+id: field_rs100_pairing_key_transfer_timeout
+description: >
+  Second of two RS100 devices in a field report; key exchange needed 2 retries to get a challenge, then device never responded to key-transfer (0x32) across 3 retries, then stopped responding to key-init too. First device was already paired/configured in YAML at the time of this attempt.
+source:
+  device: "Somfy RS100 (io) awning/shutter actuator"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-07-02
+  origin: github-issue
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B D1 D4 FF 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28)"
+  - dir: rx
+    t_ms: 1020
+    freq: 869850000
+    hex: "D1 00 D1 D4 FF 8C 08 3C 29 00 80 8C 08 3C 02 1C 09 48"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29)"
+  - dir: tx
+    t_ms: 1021
+    freq: 869850000
+    hex: "48 20 8C 08 3C D1 D4 FF 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31)"
+  - dir: rx
+    t_ms: 2660
+    freq: 868950000
+    hex: "0E 00 D1 D4 FF 8C 08 3C 3C 45 51 6F FE 59 80"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 2664
+    freq: 868950000
+    hex: "18 00 8C 08 3C D1 D4 FF 32 5F D1 A5 AF 31 BE B6 8C 0A 21 A0 71 0D F2 5F 0C"
+    crc: absent
+    note: "cmd=KEY_TRANSFER(0x32)"
+  - dir: tx
+    t_ms: 5014
+    freq: 868950000
+    hex: "48 20 8C 08 3C D1 D4 FF 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31)"
+expect:
+  exchange:
+    kind: pairing
+    outcome: timeout
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x32, start: false, end: false, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}

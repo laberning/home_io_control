@@ -3,6 +3,8 @@
 #include "hub_decisions.h"
 #include "proto_commands.h"
 
+#include <cinttypes>
+
 /// @file hub_status.cpp
 /// @brief Inbound status handling and passive receive-side state updates.
 /// @ingroup hioc_hub
@@ -144,8 +146,9 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
       hint_present ? frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] : PRIVATE_RESPONSE_HINT_UNUSED;
   const bool has_hint =
       hint_present && hint_byte != PRIVATE_RESPONSE_HINT_UNUSED && hint_byte != PRIVATE_RESPONSE_HINT_ZERO;
-  ESP_LOGD(detail::TAG, "Device %s: next status poll in %u ms (device hint=%s, configured interval=%u ms)", id.c_str(),
-           delay_ms, has_hint ? std::to_string(hint_byte).append("s").c_str() : "none", policy.get_interval(id));
+  ESP_LOGD(
+      detail::TAG, "Device %s: next status poll in %" PRIu32 " ms (device hint=%s, configured interval=%" PRIu32 " ms)",
+      id.c_str(), delay_ms, has_hint ? std::to_string(hint_byte).append("s").c_str() : "none", policy.get_interval(id));
   uint32_t const new_deadline = dev.last_status + delay_ms;
   uint32_t const existing_deadline = policy.get_next_update(id);
   // Don't push the deadline forward — only move it earlier. This prevents repeated command

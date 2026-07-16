@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cinttypes>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -120,15 +121,15 @@ inline void log_component_capture(const RadioDriver *radio, const char *stage, c
   // pairing exchange between two other devices, so it must carry the same redaction guarantee.
   render_frame_hex_redacted(buf, len, payload_hex, sizeof(payload_hex));
   if (frame != nullptr) {
-    ESP_LOGD(
-        "io_capture",
-        "chip=%s phase=component stage=%s freq=%u ts=%u len=%u cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X payload=%s",
-        radio->chip_name(), stage, capture.freq_hz, capture.timestamp_ms, len, frame->cmd, frame->src[0], frame->src[1],
-        frame->src[2], frame->dst[0], frame->dst[1], frame->dst[2], payload_hex);
+    ESP_LOGD("io_capture",
+             "chip=%s phase=component stage=%s freq=%" PRIu32 " ts=%" PRIu32
+             " len=%u cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X payload=%s",
+             radio->chip_name(), stage, capture.freq_hz, capture.timestamp_ms, len, frame->cmd, frame->src[0],
+             frame->src[1], frame->src[2], frame->dst[0], frame->dst[1], frame->dst[2], payload_hex);
     return;
   }
-  ESP_LOGD("io_capture", "chip=%s phase=component stage=%s freq=%u ts=%u len=%u payload=%s", radio->chip_name(), stage,
-           capture.freq_hz, capture.timestamp_ms, len, payload_hex);
+  ESP_LOGD("io_capture", "chip=%s phase=component stage=%s freq=%" PRIu32 " ts=%" PRIu32 " len=%u payload=%s",
+           radio->chip_name(), stage, capture.freq_hz, capture.timestamp_ms, len, payload_hex);
 }
 
 /// @brief Log a frame‑level issue (unregistered endpoints, unsupported commands).

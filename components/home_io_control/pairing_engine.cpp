@@ -20,6 +20,7 @@
 #include "esphome/core/log.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 
@@ -226,7 +227,7 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
         continue;
       }
       saw_any = true;
-      ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%u", context.packet.len, context.packet.freq_hz);
+      ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, context.packet.len, context.packet.freq_hz);
       if (!parse(context.packet.data, context.packet.len, context.resp)) {
         ESP_LOGD(TAG, "Key confirm wait: parse failed");
         continue;
@@ -248,7 +249,7 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
         ESP_LOGW(TAG, "Key transfer: error code=0x%02X", context.resp.data[0]);
       return false;
     }
-    ESP_LOGI(TAG, "Try %d ended: no response for key transfer (0x32) within %u ms (saw_any=%d)", tries + 1,
+    ESP_LOGI(TAG, "Try %d ended: no response for key transfer (0x32) within %" PRIu32 " ms (saw_any=%d)", tries + 1,
              detail::PAIRING_KEY_CONFIRM_TIMEOUT_MS, saw_any);
   }
   return false;
@@ -407,7 +408,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
     return true;
   }
 
-  ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u bytes=[%02X %02X %02X %02X %02X %02X] freq=%u rssi=%d",
+  ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u bytes=[%02X %02X %02X %02X %02X %02X] freq=%" PRIu32 " rssi=%d",
            context.rx.data_len, context.rx.data_len > 0 ? context.rx.data[0] : 0,
            context.rx.data_len > 1 ? context.rx.data[1] : 0, context.rx.data_len > 2 ? context.rx.data[2] : 0,
            context.rx.data_len > 3 ? context.rx.data[3] : 0, context.rx.data_len > 4 ? context.rx.data[4] : 0,

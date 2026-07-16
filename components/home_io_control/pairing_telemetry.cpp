@@ -7,6 +7,7 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -164,23 +165,23 @@ void PairingTelemetry::increment_discovery_attempt() {
 uint32_t PairingTelemetry::duration_ms() const { return (this->ended_ ? this->end_ms_ : millis()) - this->start_ms_; }
 
 void PairingTelemetry::log_summary() const {
-  ESP_LOGI(TAG, "Pairing attempt summary: outcome=%s phase=%s attempts=%u lbt=%u dur_ms=%u heard=%u events=%u%s",
-           outcome_name(this->outcome_), pairing_stage_name(this->phase_), this->discovery_attempts_,
-           this->lbt_retries_, this->duration_ms(), this->heard_count_, this->event_count_,
-           this->truncated_ ? " (truncated)" : "");
+  ESP_LOGI(
+      TAG, "Pairing attempt summary: outcome=%s phase=%s attempts=%u lbt=%u dur_ms=%" PRIu32 " heard=%u events=%u%s",
+      outcome_name(this->outcome_), pairing_stage_name(this->phase_), this->discovery_attempts_, this->lbt_retries_,
+      this->duration_ms(), this->heard_count_, this->event_count_, this->truncated_ ? " (truncated)" : "");
   for (uint8_t i = 0; i < this->event_count_; i++) {
     const PairingTelemetryEvent &event = this->events_[i];
     if (event.kind == PairingTelemetryEventKind::RX || event.kind == PairingTelemetryEventKind::RX_REJECT) {
-      ESP_LOGI(TAG, "  [%4u ms] %s cmd=0x%02X src=%s rssi=%d", event.millis_offset, event_kind_name(event.kind),
-               event.cmd, node_id_to_string(event.src_node).c_str(), event.rssi);
+      ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s cmd=0x%02X src=%s rssi=%d", event.millis_offset,
+               event_kind_name(event.kind), event.cmd, node_id_to_string(event.src_node).c_str(), event.rssi);
     } else if (event.kind == PairingTelemetryEventKind::TX) {
-      ESP_LOGI(TAG, "  [%4u ms] %s cmd=0x%02X", event.millis_offset, event_kind_name(event.kind), event.cmd);
+      ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s cmd=0x%02X", event.millis_offset, event_kind_name(event.kind), event.cmd);
     } else if (event.kind == PairingTelemetryEventKind::PHASE) {
-      ESP_LOGI(TAG, "  [%4u ms] %s -> %s", event.millis_offset, event_kind_name(event.kind),
+      ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s -> %s", event.millis_offset, event_kind_name(event.kind),
                pairing_stage_name(static_cast<pairing::PairingState>(event.aux)));
     } else {
-      ESP_LOGI(TAG, "  [%4u ms] %s aux=%u rssi=%d", event.millis_offset, event_kind_name(event.kind), event.aux,
-               event.rssi);
+      ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s aux=%u rssi=%d", event.millis_offset, event_kind_name(event.kind),
+               event.aux, event.rssi);
     }
   }
   if (this->has_paired_device_) {
@@ -195,7 +196,7 @@ std::string PairingTelemetry::result_sensor_string() const {
   const std::string type = this->has_paired_device_ ? device_type_name(this->paired_device_type_) : "-";
   const std::string advice = this->advice_codes_.empty() ? "none" : this->advice_codes_;
   snprintf(buf, sizeof(buf),
-           "v1; outcome=%s; phase=%s; node=%s; type=%s; attempts=%u; lbt=%u; dur_ms=%u; heard=%u; advice=%s",
+           "v1; outcome=%s; phase=%s; node=%s; type=%s; attempts=%u; lbt=%u; dur_ms=%" PRIu32 "; heard=%u; advice=%s",
            outcome_name(this->outcome_), pairing_stage_name(this->phase_), node.c_str(), type.c_str(),
            this->discovery_attempts_, this->lbt_retries_, this->duration_ms(), this->heard_count_, advice.c_str());
   return std::string(buf);

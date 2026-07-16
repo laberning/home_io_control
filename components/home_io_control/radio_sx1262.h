@@ -101,11 +101,11 @@ class RadioSX1262 : public RadioDriver {
         spi_(spi),
         dio1_pin_(dio1_pin),
         busy_pin_(busy_pin),
-        tx_power_(tx_power),
-        tcxo_voltage_(tcxo_voltage),
         fem_en_pin_(fem_en_pin),
         vfem_pin_(vfem_pin),
-        fem_pa_pin_(fem_pa_pin) {}
+        fem_pa_pin_(fem_pa_pin),
+        tx_power_(tx_power),
+        tcxo_voltage_(tcxo_voltage) {}
 
   /// @copydoc RadioDriver::init
   bool init() override;

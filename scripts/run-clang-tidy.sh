@@ -20,19 +20,18 @@ if [ -z "$DEVICE_NAME" ]; then
 fi
 echo "==> Using device_name: $DEVICE_NAME"
 
-# Build directory (where .esphome places compiledb)
+# Build directory. compile_commands.json comes from ESP-IDF's own CMake build (it sets
+# CMAKE_EXPORT_COMPILE_COMMANDS on by default), not from a separate `pio -t compiledb` step —
+# current pioarduino ESP-IDF builds no longer scaffold a platformio.ini project file for `pio`
+# to operate on, so that used to be the approach but now fails with NotPlatformIOProjectError.
 CONFIG_DIR=$(dirname "$CONFIG_FILE")
 BUILD_DIR="${CONFIG_DIR}/.esphome/build/${DEVICE_NAME}"
-COMPILE_DB="${BUILD_DIR}/compile_commands.json"
+COMPILE_DB="${BUILD_DIR}/build/compile_commands.json"
 RAW_DB="build/clang-tidy/compile_commands.raw.json"
 FILTERED_DB="build/clang-tidy/compile_commands.json"
 COMPONENT_DIR="$REPO_ROOT/components/home_io_control"
 GENERATED_COMPONENT_PREFIX="src/esphome/components/home_io_control/"
 
-# Toolchain package root
-TOOLCHAIN_PKG_ROOT="$REPO_ROOT/config/.pio/packages/toolchain-xtensa-esp-elf"
-XTENSA_TOOLCHAIN="$TOOLCHAIN_PKG_ROOT/xtensa-esp-elf"
-PICOLIBC_TOOLCHAIN="$TOOLCHAIN_PKG_ROOT/picolibc/xtensa-esp-elf"
 # Ubuntu's clang build lists an Xtensa backend but does not accept the ESP-IDF
 # Xtensa target triple. A generic 32-bit target keeps pointer-width diagnostics
 # in ESP-IDF headers consistent with ESP32 while clang-tidy analyzes our code.
@@ -44,14 +43,48 @@ mkdir -p "$(dirname "$FILTERED_DB")"
 if [ ! -f "$COMPILE_DB" ]; then
   echo "==> Building $CONTAINER_CONFIG inside Docker..."
   docker compose run --rm esphome compile "$CONTAINER_CONFIG"
-  echo "==> Generating compile_commands.json for environment: $DEVICE_NAME"
-  docker compose run --rm --entrypoint sh esphome -c \
-    "cd /${BUILD_DIR} && pio run -t compiledb -e ${DEVICE_NAME}"
+fi
+
+# Derive the toolchain root from whichever compiler this build actually used, rather than
+# hardcoding a path: pioarduino has relocated the xtensa-esp-elf toolchain's install location
+# more than once (config/.pio/packages/ -> config/.pio/tools/ -> config/.esphome/idf/tools/
+# xtensa-esp-elf/<version>/), and a stale hardcoded path here used to silently degrade to
+# clang-tidy running with no toolchain headers at all (missing -isystem dirs just get skipped
+# below) instead of failing loudly.
+COMPILER_PATH=$(grep -m1 -oE '/[^"[:space:]]*xtensa-esp32-elf-g\+\+' "$COMPILE_DB" || true)
+if [ -z "$COMPILER_PATH" ]; then
+  echo "ERROR: Could not find xtensa-esp32-elf-g++ in $COMPILE_DB"
+  exit 1
+fi
+TOOLCHAIN_PKG_ROOT="$REPO_ROOT${COMPILER_PATH%/bin/xtensa-esp32-elf-g++}"
+XTENSA_TOOLCHAIN="$TOOLCHAIN_PKG_ROOT/xtensa-esp-elf"
+PICOLIBC_TOOLCHAIN="$TOOLCHAIN_PKG_ROOT/picolibc/xtensa-esp-elf"
+if [ ! -d "$XTENSA_TOOLCHAIN" ]; then
+  echo "ERROR: Resolved toolchain root does not exist: $TOOLCHAIN_PKG_ROOT"
+  echo "       (derived from compiler path $COMPILER_PATH in $COMPILE_DB)"
+  exit 1
+fi
+
+# ESP-IDF's ninja build passes some C++ flags via a compiler response file (@"path") instead of
+# inline on the command line. Inline its content below — both because clang (run on the host)
+# can't resolve a container-only path, and so the GCC-specific-flag filtering that follows can
+# see and strip flags like -mlongcalls that live inside it instead of on the command line.
+# Match specifically on "cxxflags": the database also has a separate "cflags" response file used
+# by plain-C translation units elsewhere in the tree, which isn't the one our .cpp files use.
+RESPONSE_FILE_CONTAINER_PATH=$(grep -m1 -oE '@\\"[^\\]*cxxflags\\"' "$COMPILE_DB" | sed -e 's/^@\\"//' -e 's/\\"$//' || true)
+RESPONSE_FILE_INLINE_EXPR="s/PLACEHOLDER_NEVER_MATCHES//"
+if [ -n "$RESPONSE_FILE_CONTAINER_PATH" ]; then
+  RESPONSE_FILE_HOST_PATH="$REPO_ROOT$RESPONSE_FILE_CONTAINER_PATH"
+  if [ -f "$RESPONSE_FILE_HOST_PATH" ]; then
+    RESPONSE_FILE_FLAGS=$(tr '\n' ' ' < "$RESPONSE_FILE_HOST_PATH")
+    RESPONSE_FILE_INLINE_EXPR="s|@\\\\\"${RESPONSE_FILE_CONTAINER_PATH}\\\\\"|${RESPONSE_FILE_FLAGS}|g"
+  fi
 fi
 
 # Filter GCC-specific flags clang can't handle
 echo "==> Filtering compile_commands.json -> $RAW_DB"
-sed -e 's/ -mlongcalls//g' \
+sed -e "$RESPONSE_FILE_INLINE_EXPR" \
+    -e 's/ -mlongcalls//g' \
     -e 's/ -fno-tree-switch-conversion//g' \
     -e 's/ -fstrict-volatile-bitfields//g' \
     -e 's/ -freorder-blocks//g' \
@@ -68,9 +101,10 @@ sed \
     -e "s|^/config/|${HOST_CONFIG_DIR}/|" \
   "$RAW_DB" > "$RAW_DB.tmp" && mv "$RAW_DB.tmp" "$RAW_DB"
 
-# Replace cross-compiler with clang++
+# Replace cross-compiler with clang++ (full absolute path or bare name, depending on how the
+# build generated this compile database)
 echo "==> Replacing cross-compiler with clang++..."
-sed 's|"command": "xtensa-esp32-elf-g++|"command": "clang++|' "$RAW_DB" > "$RAW_DB.tmp" && mv "$RAW_DB.tmp" "$RAW_DB"
+sed 's|"command": "[^"]*xtensa-esp32-elf-g++|"command": "clang++|' "$RAW_DB" > "$RAW_DB.tmp" && mv "$RAW_DB.tmp" "$RAW_DB"
 
 # Keep only this component's translation units and map them back to repository sources.
 echo "==> Reducing compile_commands.json to project sources..."

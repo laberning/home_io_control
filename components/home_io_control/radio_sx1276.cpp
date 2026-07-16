@@ -12,6 +12,8 @@
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
+#include <cinttypes>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -346,7 +348,7 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
 
 void RadioSX1276::dump_debug() {
   ESP_LOGCONFIG(TAG, "  SX1276 Diagnostic:");
-  ESP_LOGCONFIG(TAG, "    Opmode=0x%02X irq1=0x%02X irq2=0x%02X freq=%u", this->read_register_(REG_OP_MODE),
+  ESP_LOGCONFIG(TAG, "    Opmode=0x%02X irq1=0x%02X irq2=0x%02X freq=%" PRIu32, this->read_register_(REG_OP_MODE),
                 this->read_register_(REG_IRQ_FLAGS1), this->read_register_(REG_IRQ_FLAGS2), this->current_freq_);
 }
 

@@ -16,6 +16,7 @@
 #include "esphome/core/log.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstring>
 
 namespace esphome {
@@ -61,7 +62,8 @@ void ExchangeEngine::log_debug(const char *device_id) const {
   const auto &d = this->debug_;
   ESP_LOGW(TAG,
            "Exchange failed: device=%s cmd=%s(0x%02X) stage=%s tries=%u saw_challenge=%u cap_valid=%u cap_rx_done=%u "
-           "cap_crc_err=%u cap_freq=%u cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d",
+           "cap_crc_err=%u cap_freq=%" PRIu32
+           " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d",
            device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.saw_challenge, d.capture_valid,
            d.capture_rx_done, d.capture_crc_error, d.capture_freq_hz, d.capture_irq_status, d.capture_packet_status,
            d.capture_reported_len, d.capture_frame_len, d.capture_rssi_dbm);
@@ -288,7 +290,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
   }
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_debug("wait_first_timeout", ctx.try_index, false);
-  ESP_LOGI(TAG, "Try %d ended: no first response for cmd=%s(0x%02X) within %u ms", ctx.try_index,
+  ESP_LOGI(TAG, "Try %d ended: no first response for cmd=%s(0x%02X) within %" PRIu32 " ms", ctx.try_index,
            command_name(request.cmd), request.cmd, ctx.wait_ms);
   return decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED;
 }
@@ -306,7 +308,8 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
     return false;
   }
 
-  ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%u challenge=%02X%02X%02X%02X%02X%02X req_cmd=0x%02X req_len=%u",
+  ESP_LOGI(TAG,
+           "Auth challenge try=%d wait_ms=%" PRIu32 " challenge=%02X%02X%02X%02X%02X%02X req_cmd=0x%02X req_len=%u",
            ctx.try_index, ctx.first_response_ms - ctx.exchange_start_ms, ctx.rx.data[0], ctx.rx.data[1], ctx.rx.data[2],
            ctx.rx.data[3], ctx.rx.data[4], ctx.rx.data[5], request.cmd, request.data_len);
 
@@ -344,7 +347,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
   }
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_debug("wait_final_timeout", ctx.try_index, true);
-  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=%s(0x%02X) within %u ms", ctx.try_index,
+  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=%s(0x%02X) within %" PRIu32 " ms", ctx.try_index,
            command_name(request.cmd), request.cmd, RESPONSE_AUTH_WAIT_MS);
   return decisions::ExchangeFinalResponseDisposition::IGNORE_UNRELATED;
 }

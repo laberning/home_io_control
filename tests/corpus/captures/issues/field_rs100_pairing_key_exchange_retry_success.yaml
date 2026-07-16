@@ -1,0 +1,59 @@
+id: field_rs100_pairing_key_exchange_retry_success
+description: >
+  Full pairing sequence for the first of two RS100 devices; key exchange needed a retry (no challenge on first 0x31) before succeeding. First device in a paired-two-devices field report. The 0x3C and 0x33 rx frames were reconstructed from decoded log fields, not literally captured raw.
+source:
+  device: "Somfy RS100 (io) awning/shutter actuator"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-07-02
+  origin: github-issue
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B D1 D4 FF 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28)"
+  - dir: tx
+    t_ms: 2354
+    freq: 869850000
+    hex: "48 20 08 39 5F D1 D4 FF 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31)"
+  - dir: rx
+    t_ms: 3173
+    freq: 868950000
+    hex: "0E 00 D1 D4 FF 08 39 5F 3C DF 1C 86 49 5C 4C"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C); RECONSTRUCTED (see source log note) -- CTRL0/CTRL1 taken from the real 0x3C in the sibling failure capture, DST/SRC/DATA from this log's decoded fields; high confidence"
+  - dir: tx
+    t_ms: 3173
+    freq: 868950000
+    hex: "18 00 08 39 5F D1 D4 FF 32 DA 2E 23 0E 42 7C AB FD D1 98 5A 9E EA C0 C9 34"
+    crc: absent
+    note: "cmd=KEY_TRANSFER(0x32)"
+  - dir: rx
+    t_ms: 3173
+    freq: 868950000
+    hex: "08 00 D1 D4 FF 08 39 5F 33"
+    crc: absent
+    note: "cmd=KEY_CONFIRM(0x33); RECONSTRUCTED (see source log note) -- length/DST/SRC/CMD from this log's decoded fields, but START/END/1W flag bits (00 here) are an UNVERIFIED guess by analogy to the 0x3C frame; no raw 0x33 exists anywhere in this project's captures to check against"
+  - dir: tx
+    t_ms: 3173
+    freq: 868950000
+    hex: "4D 00 08 39 5F D1 D4 FF 6F E0 10 0A 08 00"
+    crc: absent
+    note: "cmd=SET_CONFIG1(0x6F)"
+expect:
+  exchange:
+    kind: pairing
+    outcome: success
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x32, start: false, end: false, protocol: 2w}
+    - {cmd: 0x33, start: false, end: false, protocol: 2w}  # UNVERIFIED — reconstructed frame, no real 0x33 exists anywhere in this project's captures to check against; see frame note
+    - {cmd: 0x6F, start: true, end: false, protocol: 2w}

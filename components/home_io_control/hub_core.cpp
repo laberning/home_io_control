@@ -19,6 +19,7 @@
 #include "tuning_config.h"
 #include "tuning_registry.h"
 
+#include <cinttypes>
 #include <new>
 #include <vector>
 
@@ -252,11 +253,11 @@ void IOHomeControlComponent::schedule_background_poll_backoff_(const std::string
   uint32_t const now = millis();
   uint32_t const backoff_ms = this->poll_policy_.on_exchange_failed(device_id, auth_like, now);
   if (backoff_ms > 0) {
-    ESP_LOGD(
-        TAG,
-        "Background status poll backoff for device %s: delay=%u ms auth_like=%s status_failures=%u auth_failures=%u",
-        device_id.c_str(), backoff_ms, YESNO(auth_like), this->poll_policy_.get_status_poll_failures(device_id),
-        this->poll_policy_.get_auth_poll_failures(device_id));
+    ESP_LOGD(TAG,
+             "Background status poll backoff for device %s: delay=%" PRIu32
+             " ms auth_like=%s status_failures=%u auth_failures=%u",
+             device_id.c_str(), backoff_ms, YESNO(auth_like), this->poll_policy_.get_status_poll_failures(device_id),
+             this->poll_policy_.get_auth_poll_failures(device_id));
   }
 }
 

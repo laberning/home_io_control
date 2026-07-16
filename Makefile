@@ -85,6 +85,19 @@ tuning-sync:
 	@echo "Checking tuning parameter sync (tuning.py <-> tuning_registry.cpp)..."
 	@python3 scripts/check-tuning-sync.py
 
+# Wipes config/tests/.esphome/build/<env>/ for every config/tests/test-*.yaml config (the ones
+# make clang-tidy / firmware-test / check build against). Uses Docker rather than a host-side rm
+# — these build directories are root-owned (created by a previous Docker run), so a plain `rm`
+# on the host fails with Permission denied. Run this before make clang-tidy / firmware-test /
+# check whenever a build directory might be stale or half-regenerated (see AGENTS.md).
+clean-test-cache:
+	@echo "Cleaning test build caches in config/tests/.esphome/build/"
+	@for cfg in config/tests/test-*.yaml; do \
+	  name=$$(grep 'device_name:' "$$cfg" | head -1 | cut -d: -f2- | sed "s/['\"]//g" | xargs); \
+	  echo "=== Cleaning config/tests/.esphome/build/$$name ==="; \
+	  docker compose run --rm --entrypoint sh esphome -c "rm -rf /config/tests/.esphome/build/$$name" || exit 1; \
+	done
+
 # Compilation tests for all platform configs
 firmware-test:
 	@echo "Compiling test configurations in config/tests/"

@@ -41,6 +41,14 @@ std::vector<const corpus::CorpusCapture *> authenticated_corpus_captures() {
   });
 }
 
+/// Captures that promise `key: corpus` and describe a pairing exchange — the shape the
+/// key-transfer (0x32) sub-test below replays.
+std::vector<const corpus::CorpusCapture *> pairing_corpus_captures() {
+  return corpus_test::captures_where([](const corpus::CorpusCapture *cap) {
+    return cap->key == corpus::KeyMode::CORPUS && cap->has_exchange && cap->kind == corpus::ExchangeKind::PAIRING;
+  });
+}
+
 }  // namespace
 
 class CorpusCryptoReplay : public ::testing::TestWithParam<const corpus::CorpusCapture *> {};
@@ -117,31 +125,53 @@ TEST_P(CorpusCryptoReplay, AuthenticatedCommandHmacMatchesCapture) {
       << "a single bit-flip in the captured HMAC must be rejected";
 }
 
-/// Key-transfer (0x32) sub-test — no such `key: corpus` capture exists yet (it first lands
-/// with the pairing capture, Step H2). Skips loudly with a count so the assertion is visibly
-/// dormant rather than silently absent.
-TEST(CorpusCryptoKeyTransfer, KeyTransferDecryptsToCorpusKey) {
-  int key_transfer_captures = 0;
-  for (size_t i = 0; i < corpus::CAPTURE_COUNT; i++) {
-    const corpus::CorpusCapture &cap = corpus::CAPTURES[i];
-    if (cap.key != corpus::KeyMode::CORPUS)
-      continue;
-    for (uint8_t f = 0; f < cap.frame_count; f++) {
-      const corpus::CorpusFrame &cf = cap.frames[f];
-      if (cf.has_cmd && cf.cmd == CMD_KEY_TRANSFER)
-        key_transfer_captures++;
+/// Key-transfer (0x32) sub-test (design §6.2, Step H2): locates the (0x31 key-init, 0x3C
+/// challenge, 0x32 key-transfer) triple in a pairing capture, exactly as
+/// create_key_transfer() (proto_commands.cpp) builds it — IV data is the key-init frame's
+/// single cmd byte, not a full transcript — and asserts crypto::crypt_key() recovers the corpus
+/// system key. Mirrors the Python --rekey pipeline's own verification step
+/// (scripts/corpus/ingest.py :: rekey_key_transfer_frames) against the real C++ implementation,
+/// so a divergence between the two crypto ports fails here, not silently in production.
+class CorpusCryptoKeyTransfer : public ::testing::TestWithParam<const corpus::CorpusCapture *> {};
+
+TEST_P(CorpusCryptoKeyTransfer, KeyTransferDecryptsToCorpusKey) {
+  const corpus::CorpusCapture *capture = GetParam();
+  SCOPED_TRACE(::testing::Message() << "capture=" << capture->id);
+
+  const corpus::CorpusFrame *key_init_cf = nullptr;
+  const corpus::CorpusFrame *challenge_cf = nullptr;
+  const corpus::CorpusFrame *transfer_cf = nullptr;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const corpus::CorpusFrame &cf = capture->frames[i];
+    const IoFrame parsed = corpus_test::parse_capture_frame(cf);
+    if (key_init_cf == nullptr && cf.tx && parsed.cmd == CMD_KEY_INIT) {
+      key_init_cf = &cf;
+    } else if (key_init_cf != nullptr && challenge_cf == nullptr && !cf.tx && parsed.cmd == CMD_CHALLENGE_REQ) {
+      challenge_cf = &cf;
+    } else if (challenge_cf != nullptr && transfer_cf == nullptr && cf.tx && parsed.cmd == CMD_KEY_TRANSFER) {
+      transfer_cf = &cf;
     }
   }
-  if (key_transfer_captures == 0) {
-    GTEST_SKIP() << "no key:corpus capture with a 0x32 key-transfer frame yet (arrives in Step H2)";
+  if (key_init_cf == nullptr || challenge_cf == nullptr || transfer_cf == nullptr) {
+    GTEST_SKIP() << "no complete 0x31/0x3C/0x32 triple in this pairing capture (e.g. a capture that failed "
+                    "before ever reaching key-transfer)";
   }
-  // Placeholder for when H2 lands: locate the 0x31 key-init + 0x32 key-transfer pair and the
-  // challenge that seeded it, then assert crypto::crypt_key(...) recovers TEST_SYSTEM_KEY.
-  FAIL() << "key_transfer_captures=" << key_transfer_captures
-         << " found but decrypt-to-corpus-key assertion is not yet implemented";
+
+  const IoFrame key_init = corpus_test::parse_capture_frame(*key_init_cf);
+  const IoFrame challenge = corpus_test::parse_capture_frame(*challenge_cf);
+  const IoFrame transfer = corpus_test::parse_capture_frame(*transfer_cf);
+  ASSERT_EQ(challenge.data_len, HMAC_SIZE) << "0x3C challenge payload must be exactly HMAC_SIZE bytes";
+  ASSERT_EQ(transfer.data_len, AES_KEY_SIZE) << "0x32 key-transfer payload must be exactly AES_KEY_SIZE bytes";
+
+  uint8_t recovered_key[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(crypto::crypt_key(&key_init.cmd, 1, challenge.data, transfer.data, recovered_key));
+  EXPECT_EQ(std::memcmp(recovered_key, test::TEST_SYSTEM_KEY, AES_KEY_SIZE), 0)
+      << "key-transfer payload does not decrypt to the corpus key";
 }
 
 INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoReplay, ::testing::ValuesIn(authenticated_corpus_captures()),
+                         corpus_test::capture_name_generator);
+INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoKeyTransfer, ::testing::ValuesIn(pairing_corpus_captures()),
                          corpus_test::capture_name_generator);
 
 /// Cross-language known-answer vectors, hardcoded here and in

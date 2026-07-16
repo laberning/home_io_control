@@ -208,7 +208,7 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_DIO1_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_BUSY_PIN): pins.internal_gpio_input_pin_schema,
             cv.Required(CONF_NODE_ID): validate_node_id,
-            cv.Required(CONF_SYSTEM_KEY): validate_system_key,
+            cv.Required(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
             cv.Optional(CONF_TX_POWER, default=17): cv.int_range(min=0, max=22),
             cv.Optional(CONF_PA_PIN, default="BOOST"): cv.enum(
                 PA_PIN_OPTIONS, upper=True

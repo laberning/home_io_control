@@ -5,6 +5,10 @@ substitutions:
 
 esphome:
   name: ${device_name}
+  # The framework-specific test-*.yaml files intentionally restate `substitutions` and `esp32`
+  # after `<<: !include common.yaml` (YAML merge keys pick a winner per top-level key rather than
+  # deep-merging) — silence the resulting "already defined" noise since that's expected here.
+  merge_warnings: false
 
 # Minimal esp32 config; framework (arduino/esp-idf) set in platform-specific files
 esp32:

@@ -20,6 +20,7 @@
 
 #include "esphome/core/application.h"
 
+#include <cinttypes>
 #include <functional>
 #include <string>
 #include <utility>
@@ -87,7 +88,7 @@ class DeviceBoundEntity {
     if (this->status_poll_interval_ms_ == 0) {
       ESP_LOGCONFIG(tag, "  Status Poll Interval: device-hinted settle polling (no fixed interval)");
     } else {
-      ESP_LOGCONFIG(tag, "  Status Poll Interval: %u ms", this->status_poll_interval_ms_);
+      ESP_LOGCONFIG(tag, "  Status Poll Interval: %" PRIu32 " ms", this->status_poll_interval_ms_);
     }
   }
 
