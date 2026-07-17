@@ -214,22 +214,22 @@ make compile
 make compile-v3
 
 # Compile the LR1121 config (LilyGO T3-S3 LR1121 variant)
-make compile-t3s3
+make compile-t3
 
 # Compile and flash via USB
 make upload          # SX1276
 make upload-v3       # SX1262
-make upload-t3s3     # LR1121
+make upload-t3       # LR1121
 
 # Monitor serial output
 make logs            # SX1276
 make logs-v3         # SX1262
-make logs-t3s3       # LR1121
+make logs-t3         # LR1121
 
 # Clean build artifacts
 make clean           # SX1276
 make clean-v3        # SX1262
-make clean-t3s3      # LR1121
+make clean-t3        # LR1121
 
 # Format all C++ source files
 make format

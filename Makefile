@@ -39,8 +39,8 @@ DEVICE_VARIANTS := heltec-wifi-lora-32-v2:v2 \
                     heltec-wifi-lora-32-v2-monitor:v2-monitor \
                     heltec-wifi-lora-32-v3:v3 \
                     heltec-wifi-lora-32-v3-monitor:v3-monitor \
-                    t3s3-lr1121:t3s3 \
-                    t3s3-lr1121-monitor:t3s3-monitor
+                    t3s3-lr1121:t3 \
+                    t3s3-lr1121-monitor:t3-monitor
 
 variant_stem = $(word 1,$(subst :, ,$1))
 variant_suffix = $(word 2,$(subst :, ,$1))
