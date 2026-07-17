@@ -323,6 +323,9 @@ def main() -> int:
     rendered = render(captures)
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if OUTPUT_PATH.is_file() and OUTPUT_PATH.read_text(encoding="utf-8") == rendered:
+        print(f"build.py: {OUTPUT_PATH} up to date ({len(captures)} captures)")
+        return 0
     OUTPUT_PATH.write_text(rendered, encoding="utf-8")
     print(f"build.py: wrote {OUTPUT_PATH} ({len(captures)} captures)")
     return 0

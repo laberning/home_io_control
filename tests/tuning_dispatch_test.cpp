@@ -20,7 +20,7 @@ using test::TestableHubComponent;
 namespace {
 
 /// Set up a component with a mock radio so radio-affecting updates have a target.
-void setup_component(TestableHubComponent &comp) { comp.radio_ = new MockRadio(); }
+void setup_component(TestableHubComponent &comp, MockRadio &radio) { comp.radio_ = &radio; }
 
 }  // namespace
 
@@ -30,7 +30,8 @@ void setup_component(TestableHubComponent &comp) { comp.radio_ = new MockRadio()
 
 TEST(TuningDispatch, NumberUpdatesEachParameter) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   comp.update_tuning_number("sx1262_response_preamble", 96);
   EXPECT_EQ(comp.tuning_.sx1262_response_preamble, 96);
@@ -71,7 +72,8 @@ TEST(TuningDispatch, NumberUpdatesEachParameter) {
 
 TEST(TuningDispatch, NumberIgnoresUnknownParameter) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
   comp.update_tuning_number("does_not_exist", 123);
   // Defaults remain untouched.
   EXPECT_EQ(comp.tuning_.sx1262_response_preamble, SX1262_RESPONSE_PREAMBLE);
@@ -83,21 +85,24 @@ TEST(TuningDispatch, NumberIgnoresUnknownParameter) {
 
 TEST(TuningDispatch, SelectBandwidth) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
   comp.update_tuning_select("sx1262_rx_bandwidth", "156.2");
   EXPECT_EQ(comp.tuning_.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_156_2_KHZ);
 }
 
 TEST(TuningDispatch, SelectLr1121Bandwidth) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
   comp.update_tuning_select("lr1121_rx_bandwidth", "156.2");
   EXPECT_EQ(comp.tuning_.lr1121_rx_bandwidth, LR1121RxBandwidth::BW_156_2_KHZ);
 }
 
 TEST(TuningDispatch, SelectDiscoveryCommandsCommaSeparated) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
   comp.update_tuning_select("pairing_discovery_commands", "0x28, 0x2E");
   ASSERT_EQ(comp.tuning_.pairing_discovery_commands.size(), 2);
   EXPECT_EQ(comp.tuning_.pairing_discovery_commands[0], DiscoveryCommand::DISCOVER);
@@ -106,7 +111,8 @@ TEST(TuningDispatch, SelectDiscoveryCommandsCommaSeparated) {
 
 TEST(TuningDispatch, SelectDiscoveryCommandsSingle) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
   comp.update_tuning_select("pairing_discovery_commands", "0x2E");
   ASSERT_EQ(comp.tuning_.pairing_discovery_commands.size(), 1);
   EXPECT_EQ(comp.tuning_.pairing_discovery_commands[0], DiscoveryCommand::DISCOVER_ALT);
@@ -114,7 +120,8 @@ TEST(TuningDispatch, SelectDiscoveryCommandsSingle) {
 
 TEST(TuningDispatch, SelectDiscoveryCommandsDropsInvalidTokens) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
   comp.update_tuning_select("pairing_discovery_commands", "0x28,bogus,0x2A");
   ASSERT_EQ(comp.tuning_.pairing_discovery_commands.size(), 2);
   EXPECT_EQ(comp.tuning_.pairing_discovery_commands[0], DiscoveryCommand::DISCOVER);
@@ -123,7 +130,8 @@ TEST(TuningDispatch, SelectDiscoveryCommandsDropsInvalidTokens) {
 
 TEST(TuningDispatch, SelectDestinationExplicitAndAuto) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   comp.update_tuning_select("pairing_discovery_destination", "0x00003F");
   EXPECT_FALSE(comp.tuning_.pairing_discovery_destination_auto);
@@ -139,7 +147,8 @@ TEST(TuningDispatch, SelectDestinationExplicitAndAuto) {
 
 TEST(TuningDispatch, SelectPayload) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   comp.update_tuning_select("pairing_discovery_payload", "0x00");
   EXPECT_TRUE(comp.tuning_.pairing_discovery_payload_enabled);
@@ -151,7 +160,8 @@ TEST(TuningDispatch, SelectPayload) {
 
 TEST(TuningDispatch, SelectLowPower) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   comp.update_tuning_select("pairing_discovery_low_power", "On");
   EXPECT_TRUE(comp.tuning_.pairing_discovery_low_power);
@@ -166,7 +176,8 @@ TEST(TuningDispatch, SelectLowPower) {
 
 TEST(TuningDispatch, GetNumberValueReturnsDefaultsThenUpdates) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   // Defaults come from the single-source constants in proto_frame.h.
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("sx1262_post_tx_settle_us"), SX1262_POST_TX_SETTLE_US);
@@ -179,13 +190,15 @@ TEST(TuningDispatch, GetNumberValueReturnsDefaultsThenUpdates) {
 
 TEST(TuningDispatch, GetNumberValueUnknownReturnsZero) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("nope"), 0.0F);
 }
 
 TEST(TuningDispatch, GetSelectValueMatchesOptionStrings) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   // Defaults.
   EXPECT_EQ(comp.get_tuning_select_value("sx1262_rx_bandwidth"), "117.3");
@@ -208,6 +221,7 @@ TEST(TuningDispatch, GetSelectValueMatchesOptionStrings) {
 
 TEST(TuningDispatch, GetSelectValueUnknownReturnsEmpty) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
   EXPECT_EQ(comp.get_tuning_select_value("nope"), "");
 }

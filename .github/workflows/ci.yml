@@ -27,6 +27,12 @@ jobs:
       - run: clang-tidy --version
       - run: make clang-tidy
 
+  tuning-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: make tuning-sync
+
   corpus-validate:
     runs-on: ubuntu-latest
     steps:
@@ -47,6 +53,14 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
       - run: pip install --user pyyaml
       - run: make unit-test
+
+  unit-test-asan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
+      - run: pip install --user pyyaml
+      - run: make unit-test-asan
 
   doxygen:
     runs-on: ubuntu-latest

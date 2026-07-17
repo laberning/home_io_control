@@ -1,0 +1,12 @@
+# LeakSanitizer suppressions for make unit-test-asan.
+#
+# ManagementActions::register_actions() (components/home_io_control/management_actions.cpp)
+# registers native-API service descriptors with the ESPHome APIServer singleton once at
+# setup(), transferring ownership to it — the same register-once/own-forever pattern
+# ESPHome's own component APIs use throughout (e.g. api::APIServer::register_user_service()
+# itself never frees what's registered). Real firmware never exits, so there is no leak in any
+# operational sense; the host test binary does exit, so LeakSanitizer flags the still-reachable
+# allocations made during each test's register_actions() call. Narrowly scoped to that one
+# function rather than suppressed wholesale — see analysis/refactoring_p1_implementation.md
+# "Findings" section for the ASan/UBSan triage this came out of.
+leak:esphome::home_io_control::ManagementActions::register_actions

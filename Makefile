@@ -159,16 +159,59 @@ corpus-gen:
 	@mkdir -p build
 	@python3 scripts/corpus/build.py
 
+# --- Host unit-test build (incremental; objects mirror source paths) ---
+# HOST_VARIANT selects the object/binary tree; "asan" adds sanitizer flags (see unit-test-asan).
+HOST_VARIANT ?= default
+HOST_BUILD_DIR := build/host/$(HOST_VARIANT)
+HOST_OBJ_DIR := $(HOST_BUILD_DIR)/obj
+HOST_EXTRA_FLAGS ?=
+HOST_CXXFLAGS := -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable \
+                 -Wno-unused-variable -Wno-reorder -DIRAM_ATTR= \
+                 $(UNIT_TEST_DEFINES) $(INCLUDES) $(HOST_EXTRA_FLAGS)
+
+HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)
+HOST_OBJS := $(patsubst %.cpp,$(HOST_OBJ_DIR)/%.o,$(HOST_SRCS))
+HOST_DEPS := $(HOST_OBJS:.o=.d)
+HOST_TEST_BIN := $(HOST_BUILD_DIR)/test_home_io_control
+
+$(HOST_OBJ_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	g++ $(HOST_CXXFLAGS) -MMD -MP -c $< -o $@
+
+$(HOST_TEST_BIN): $(HOST_OBJS)
+	g++ $(HOST_CXXFLAGS) $^ -lgtest -lgtest_main -pthread -o $@
+
+-include $(HOST_DEPS)
+
+# Builds $(HOST_TEST_BIN) for the current HOST_VARIANT and runs it. Shared by unit-test and
+# unit-test-asan (invoked as a sub-make with HOST_VARIANT/HOST_EXTRA_FLAGS overridden on the
+# command line, which is what makes $(HOST_TEST_BIN) resolve to the right variant tree below).
+host-run: $(HOST_TEST_BIN)
+	@echo "Running tests ($(HOST_VARIANT))..."
+	@UBSAN_OPTIONS=print_stacktrace=1 \
+		LSAN_OPTIONS=suppressions=$(CURDIR)/tests/asan/lsan.supp \
+		./$(HOST_TEST_BIN)
+
+# Public entry point: corpus-gen runs first (ordering!), then a parallel sub-make builds/links.
+# Parallelism is scoped to this sub-make (not a global -j) so the docker/esphome targets in
+# this Makefile stay serial. After changing HOST_CXXFLAGS, run `make clean-host` — make does
+# not hash command lines, so flag-only changes don't invalidate existing objects.
 unit-test: corpus-gen
 	@echo "Building Google Test unit tests for home_io_control (host-only)..."
-	@mkdir -p build
-	g++ -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable -Wno-unused-variable -Wno-reorder -DIRAM_ATTR= \
-		$(UNIT_TEST_DEFINES) $(INCLUDES) \
-		$(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS) \
-		-lgtest -lgtest_main -pthread \
-		-o build/test_home_io_control
-	@echo "Linking complete. Running tests..."
-	@./build/test_home_io_control
+	@$(MAKE) --no-print-directory -j$(shell nproc) host-run
+
+# ASan/UBSan variant: same sources and rules as unit-test, built into a fully separate object
+# tree (build/host/asan/) so the two variants never poison each other. Uninstrumented system
+# libgtest is fine to link against — ASan intercepts allocation globally.
+ASAN_HOST_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all -g -O1 -fno-omit-frame-pointer
+
+unit-test-asan: corpus-gen
+	@echo "Building Google Test unit tests for home_io_control (ASan/UBSan)..."
+	@$(MAKE) --no-print-directory -j$(shell nproc) \
+		HOST_VARIANT=asan HOST_EXTRA_FLAGS="$(ASAN_HOST_FLAGS)" host-run
+
+clean-host:
+	rm -rf build/host
 
 
 # === Documentation =============================================================
@@ -182,8 +225,15 @@ doxygen:
 
 # === Composite targets =========================================================
 
+# Every sub-target of `lint` below must have a matching CI job in .github/workflows/ci.yml,
+# so a local-only check can never silently drift out of CI coverage:
+#   format-check    -> format
+#   yamllint        -> yamllint
+#   clang-tidy      -> tidy
+#   tuning-sync     -> tuning-sync
+#   corpus-validate -> corpus-validate
 lint: format-check yamllint clang-tidy tuning-sync corpus-validate
-test: unit-test firmware-test
+test: unit-test unit-test-asan firmware-test
 check: lint test doxygen
 
 # Backward compatibility aliases (deprecated, use new names)
@@ -195,6 +245,6 @@ test-unit: unit-test
 
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
-		firmware-test unit-test lint test check \
+		firmware-test unit-test unit-test-asan host-run clean-host lint test check \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

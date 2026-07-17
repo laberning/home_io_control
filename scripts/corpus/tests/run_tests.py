@@ -268,6 +268,23 @@ def test_end_to_end_scaffold_validate_build_roundtrip() -> None:
     # tmp (and the throwaway scaffold/generated header) is deleted on context-manager exit.
 
 
+def test_build_main_skips_rewrite_when_unchanged() -> None:
+    # Guards the incremental host build (finding #1): if build.py rewrote the header on every
+    # run, its mtime would bump on every `make unit-test`, forcing the corpus-dependent test
+    # TUs to recompile even when no capture changed.
+    original_output_path = build_module.OUTPUT_PATH
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            build_module.OUTPUT_PATH = Path(tmp) / "corpus_generated.h"
+            assert build_module.main() == 0
+            first_mtime = build_module.OUTPUT_PATH.stat().st_mtime_ns
+            assert build_module.main() == 0
+            second_mtime = build_module.OUTPUT_PATH.stat().st_mtime_ns
+            assert first_mtime == second_mtime, "second run with unchanged captures must not rewrite the file"
+        finally:
+            build_module.OUTPUT_PATH = original_output_path
+
+
 def _run_ingest_main(argv: "list[str]") -> int:
     old_argv = sys.argv
     try:
@@ -448,6 +465,7 @@ TESTS = [
     test_validate_bad_classification_name_is_rejected,
     test_build_partial_flag_expectation_is_rejected,
     test_build_output_is_deterministic,
+    test_build_main_skips_rewrite_when_unchanged,
     test_end_to_end_scaffold_validate_build_roundtrip,
     test_crypto_kat_vectors_match_cpp,
     test_rekey_happy_path_rewrites_hmac_under_corpus_key,

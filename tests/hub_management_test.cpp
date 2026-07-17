@@ -266,7 +266,7 @@ TEST(HubManagement, IdentifyDeviceErrorResponseIsTreatedAsSuccess) {
 
 TEST(HubManagement, ApiIdentifyDevicePublishesManagementResultEvent) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   TestableManagementComponent component;
@@ -352,7 +352,7 @@ TEST(HubManagement, ForceOpenDeviceRejectsNonCoverDevice) {
 
 TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   TestableManagementComponent component;
@@ -378,7 +378,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
 
 TEST(HubManagement, RegisterManagementActionsRegistersAllThreeServices) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   TestableManagementComponent component;
@@ -414,7 +414,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllThreeServices) {
 
 TEST(HubManagement, ApiRenameDevicePublishesManagementResultEvent) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   TestableManagementComponent component;
@@ -438,7 +438,7 @@ TEST(HubManagement, ApiRenameDevicePublishesManagementResultEvent) {
 
 TEST(HubManagement, ApiRenameDeviceSkipsEventWhenApiDisconnected) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
   api_server.set_connected(false);
 
@@ -453,7 +453,7 @@ TEST(HubManagement, ApiRenameDeviceSkipsEventWhenApiDisconnected) {
 
 TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   TestableManagementComponent component;

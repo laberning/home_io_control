@@ -91,6 +91,23 @@ class APIServer {
 
 inline APIServer *global_api_server = nullptr;
 
+/// Test helper: installs `server` as global_api_server for the scope's lifetime and restores
+/// the previous value on destruction — including on an ASSERT_*-triggered early return, which
+/// still unwinds the stack and runs destructors. A bare `global_api_server = &server;` at the
+/// top of a TEST() left the pointer dangling into that test's own stack frame once it
+/// returned, so a later test with no api_server of its own would read freed stack memory
+/// through the global (caught by ASan as stack-use-after-return).
+class ScopedGlobalApiServer {
+ public:
+  explicit ScopedGlobalApiServer(APIServer &server) : previous_(global_api_server) { global_api_server = &server; }
+  ~ScopedGlobalApiServer() { global_api_server = previous_; }
+  ScopedGlobalApiServer(const ScopedGlobalApiServer &) = delete;
+  ScopedGlobalApiServer &operator=(const ScopedGlobalApiServer &) = delete;
+
+ private:
+  APIServer *previous_;
+};
+
 class CustomAPIDevice {
  public:
   virtual ~CustomAPIDevice() = default;

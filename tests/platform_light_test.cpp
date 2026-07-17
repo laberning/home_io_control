@@ -62,19 +62,20 @@ TEST(PlatformLight, WriteStateSendsOnOff) {
   IOHomeLight light;
   light.set_parent(&hub);
   light.set_device_id("ABC123");
-  light.setup_state(new esphome::light::LightState());
+  esphome::light::LightState state;
+  light.setup_state(&state);
 
   // Simulate HA turning light on via call
-  auto *on_state = new esphome::light::LightState();
-  on_state->set_current_on(true);
-  light.write_state(on_state);
+  esphome::light::LightState on_state;
+  on_state.set_current_on(true);
+  light.write_state(&on_state);
   EXPECT_EQ(hub.last_light_device_id(), "ABC123") << "device ID should match configured ID for on command";
   EXPECT_TRUE(hub.last_light_on()) << "last_light_on should be true after on command";
 
   // Turn off
-  auto *off_state = new esphome::light::LightState();
-  off_state->set_current_on(false);
-  light.write_state(off_state);
+  esphome::light::LightState off_state;
+  off_state.set_current_on(false);
+  light.write_state(&off_state);
   EXPECT_FALSE(hub.last_light_on()) << "last_light_on should be false after off command";
 }
 
@@ -83,7 +84,8 @@ TEST(PlatformLight, DeviceUpdateSetsHAPosition) {
   TestableLight light;
   light.set_parent(&hub);
   light.set_device_id("ABC123");
-  light.setup_state(new esphome::light::LightState());
+  esphome::light::LightState state;
+  light.setup_state(&state);
   light.setup();  // register device and callback
 
   // Device reports ON (position < 50)
@@ -106,7 +108,8 @@ TEST(PlatformLight, IgnoresMovingDevice) {
   TestableLight light;
   light.set_parent(&hub);
   light.set_device_id("ABC123");
-  light.setup_state(new esphome::light::LightState());
+  esphome::light::LightState state;
+  light.setup_state(&state);
   light.setup();
 
   IoDevice dev{};

@@ -24,7 +24,7 @@ using test::TestableHubComponent;
 namespace {
 
 /// Set up a component with a mock radio so radio-affecting updates have a target.
-void setup_component(TestableHubComponent &comp) { comp.radio_ = new MockRadio(); }
+void setup_component(TestableHubComponent &comp, MockRadio &radio) { comp.radio_ = &radio; }
 
 std::set<std::string> number_param_names() {
   std::set<std::string> names;
@@ -76,7 +76,8 @@ TEST(TuningRegistry, TotalParameterCountIsTwenty) {
 
 TEST(TuningRegistry, EveryNumberParameterRoundTrips) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   // Distinct, small positive values that fit every field's storage type (uint8/int16/uint16).
   float value = 11.0F;
@@ -93,7 +94,8 @@ TEST(TuningRegistry, EveryNumberParameterRoundTrips) {
 
 TEST(TuningRegistry, EverySelectOptionRoundTrips) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   const std::vector<std::pair<std::string, std::vector<std::string>>> legal_options = {
       {"sx1262_rx_bandwidth", {"58.6", "78.2", "117.3", "156.2", "187.2"}},
@@ -121,7 +123,8 @@ TEST(TuningRegistry, EverySelectOptionRoundTrips) {
 
 TEST(TuningRegistry, UnknownNamesDoNotCrashAndReturnDefaults) {
   TestableHubComponent comp;
-  setup_component(comp);
+  MockRadio radio;
+  setup_component(comp, radio);
 
   EXPECT_EQ(find_tuning_number("does_not_exist"), nullptr);
   EXPECT_EQ(find_tuning_select("does_not_exist"), nullptr);

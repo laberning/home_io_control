@@ -126,7 +126,7 @@ TEST(OnewayRx, IsExposedSender_MatchesOnlyListedIds) {
 
 TEST(OnewayRx, RemoteButtonEvent_NotFiredByDefaultEvenWithIntent) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   RxTestableComponent comp;
@@ -146,7 +146,7 @@ TEST(OnewayRx, RemoteButtonEvent_NotFiredByDefaultEvenWithIntent) {
 
 TEST(OnewayRx, RemoteButtonEvent_FiresOnceForAllowlistedRemote) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   RxTestableComponent comp;
@@ -169,7 +169,7 @@ TEST(OnewayRx, RemoteButtonEvent_FiresOnceForAllowlistedRemote) {
 
 TEST(OnewayRx, RemoteButtonEvent_LinkedTrueWhenRemoteLinkedToDevice) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   RxTestableComponent comp;
@@ -189,7 +189,7 @@ TEST(OnewayRx, RemoteButtonEvent_LinkedTrueWhenRemoteLinkedToDevice) {
 
 TEST(OnewayRx, RemoteButtonEvent_LinkedButNotAllowlistedStillSuppressesEvent) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   RxTestableComponent comp;
@@ -209,7 +209,7 @@ TEST(OnewayRx, RemoteButtonEvent_LinkedButNotAllowlistedStillSuppressesEvent) {
 
 TEST(OnewayRx, RemoteButtonEvent_NoEventForNonIntentFrame) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   RxTestableComponent comp;
@@ -228,7 +228,7 @@ TEST(OnewayRx, RemoteButtonEvent_NoEventForNonIntentFrame) {
 
 TEST(OnewayRx, RemoteButtonEvent_SkippedWhenApiDisconnected) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
   api_server.set_connected(false);
 
@@ -246,7 +246,7 @@ TEST(OnewayRx, RemoteButtonEvent_SkippedWhenApiDisconnected) {
 
 TEST(OnewayRx, RemoteButtonEvent_BurstOfFourYieldsOneEvent) {
   esphome::api::APIServer api_server;
-  esphome::api::global_api_server = &api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
 
   RxTestableComponent comp;
