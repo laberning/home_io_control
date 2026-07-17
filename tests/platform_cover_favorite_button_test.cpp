@@ -1,7 +1,6 @@
 #include "platform_cover_favorite_button.h"
 
 #include "hub_core.h"
-#include "proto_frame.h"
 
 #include <deque>
 

@@ -4,7 +4,7 @@
 ///
 /// The test parses __init__.py at runtime so Python remains the single source of truth.
 
-#include "proto_frame.h"
+#include "proto_device_model.h"
 #include "test_helpers.h"
 
 #include <cstdlib>

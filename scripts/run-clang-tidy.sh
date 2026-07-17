@@ -39,6 +39,10 @@ TARGET_TRIPLE="${CLANG_TIDY_TARGET:-i386-pc-linux-gnu}"
 
 mkdir -p "$(dirname "$FILTERED_DB")"
 
+# Catch a stale/half-regenerated build cache before it turns into a confusing missing-vtable
+# link error further down (see scripts/check-build-cache.py for the full story).
+python3 "$SCRIPT_DIR/check-build-cache.py" --clean
+
 # Build inside Docker if compile_commands.json missing
 if [ ! -f "$COMPILE_DB" ]; then
   echo "==> Building $CONTAINER_CONFIG inside Docker..."

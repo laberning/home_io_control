@@ -31,6 +31,8 @@
 ///     frame position: start frames use LONG_PREAMBLE (1024 bytes) so a sleeping receiver
 ///     can wake, follow‑up frames use the driver's response_preamble() (exchange_engine.cpp).
 
+#include "proto_codecs.h"
+#include "proto_device_model.h"
 #include "proto_frame.h"
 
 namespace esphome {

@@ -1,6 +1,5 @@
 #include "platform_light.h"
 #include "hub_core.h"
-#include "proto_frame.h"
 
 #include "test_helpers.h"
 

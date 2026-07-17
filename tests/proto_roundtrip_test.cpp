@@ -7,6 +7,7 @@
 /// against a large, deterministically generated frame corpus. All randomness uses
 /// a fixed seed so CI runs are bit-for-bit reproducible.
 
+#include "proto_constants.h"
 #include "proto_frame.h"
 
 #include <gtest/gtest.h>

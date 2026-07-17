@@ -9,7 +9,7 @@
 
 #include "tuning_registry.h"
 
-#include "proto_frame.h"  // ADDRESS_SUFFIX_DISCOVERY / ADDRESS_SUFFIX_BROADCAST
+#include "proto_codecs.h"  // ADDRESS_SUFFIX_DISCOVERY / ADDRESS_SUFFIX_BROADCAST
 
 #include <cstddef>
 #include <iterator>

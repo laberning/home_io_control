@@ -7,7 +7,6 @@
 /// are accessed through TestableHubComponent, which promotes them via using declarations.
 
 #include "hub_core.h"
-#include "proto_frame.h"
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"

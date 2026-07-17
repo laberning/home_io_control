@@ -30,6 +30,7 @@
 /// phases, logs the YAML metadata the user should add, and keeps the paired device
 /// in the current runtime registry until reboot.
 
+#include "proto_device_model.h"
 #include "proto_frame.h"
 #include "radio_interface.h"
 #include <cstdint>

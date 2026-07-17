@@ -15,6 +15,7 @@
 /// is nothing to redact.
 
 #include "hub_pairing.h"
+#include "proto_device_model.h"
 #include "proto_frame.h"
 
 #include <cstdint>

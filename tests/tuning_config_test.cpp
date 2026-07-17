@@ -1,5 +1,5 @@
 #include "tuning_config.h"
-#include "proto_frame.h"
+#include "proto_constants.h"
 
 #include <gtest/gtest.h>
 

@@ -8,7 +8,9 @@
 /// for exchange and pairing flows, plus shared timing utilities. No state, no
 /// side effects — suitable for unit testing without radio hardware.
 
+#include "proto_constants.h"
 #include "proto_frame.h"
+#include "proto_timing.h"
 
 #include <cstdint>
 #include <cstring>

@@ -4,6 +4,8 @@
 
 #include "proto_frame.h"
 
+#include "proto_constants.h"
+
 #include <cctype>
 #include <cstdio>
 #include <cstring>

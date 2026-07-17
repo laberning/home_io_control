@@ -30,6 +30,7 @@
 #include "esphome/components/api/custom_api_device.h"
 #include "esphome/components/spi/spi.h"
 #include "esphome/components/button/button.h"
+#include "proto_codecs.h"
 #include "proto_frame.h"
 #include "radio_interface.h"
 #include "tuning_config.h"

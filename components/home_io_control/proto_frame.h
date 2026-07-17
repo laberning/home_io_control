@@ -13,17 +13,10 @@
 /// Each installation has a unique 16-byte "system key" shared between controller and devices.
 ///
 /// This header owns only the frame container itself. The rest of the protocol model lives in
-/// cohesive headers (proto_sizes/proto_timing/proto_constants/proto_device_model/proto_codecs);
-/// they are re-exported below for transition so existing includers keep compiling unchanged.
+/// cohesive headers (proto_sizes/proto_timing/proto_constants/proto_device_model/proto_codecs).
 /// New code should include the specific header it needs.
 
 #include "proto_sizes.h"
-
-// Umbrella includes for transition; new code should include the specific header.
-#include "proto_codecs.h"
-#include "proto_constants.h"
-#include "proto_device_model.h"
-#include "proto_timing.h"
 
 #include <cstdint>
 #include <cstring>

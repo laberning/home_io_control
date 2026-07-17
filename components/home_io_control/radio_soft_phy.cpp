@@ -8,6 +8,8 @@
 
 #include "radio_soft_phy.h"
 
+#include "proto_constants.h"
+
 #include <algorithm>
 #include <cstring>
 #include <utility>

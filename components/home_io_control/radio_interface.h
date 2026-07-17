@@ -10,6 +10,7 @@
 /// without knowing the hardware details.
 
 #include "proto_frame.h"
+#include "proto_timing.h"
 #include "tuning_config.h"
 #include <atomic>
 #include <cstdint>

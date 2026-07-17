@@ -4,6 +4,7 @@
 
 #include "proto_commands.h"
 
+#include "proto_constants.h"
 #include "proto_crypto.h"
 
 #include <array>

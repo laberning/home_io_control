@@ -17,7 +17,7 @@
 ///          is to obfuscate the system key during over‑the‑air transfer. The security
 ///          of the installation relies entirely on keeping the system key secret.
 
-#include "proto_frame.h"
+#include "proto_sizes.h"
 
 namespace esphome {
 namespace home_io_control {

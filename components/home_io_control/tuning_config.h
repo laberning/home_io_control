@@ -9,6 +9,7 @@
 /// for logging and applying defaults.
 
 #include "proto_frame.h"
+#include "proto_timing.h"
 
 #include <cstdint>
 #include <optional>

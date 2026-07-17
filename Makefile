@@ -98,17 +98,23 @@ tuning-sync:
 	@echo "Checking tuning parameter sync (tuning.py <-> tuning_registry.cpp)..."
 	@python3 scripts/check-tuning-sync.py
 
+# Detects (and reports) config/tests/.esphome/build/<env>/ dirs with a stale or
+# half-regenerated object cache; see scripts/check-build-cache.py. Wired automatically
+# (with --clean) into firmware-test and run-clang-tidy.sh, so this is mainly for manual
+# inspection.
+check-build-cache:
+	@python3 scripts/check-build-cache.py
+
 # Wipes config/tests/.esphome/build/<env>/ for every config/tests/test-*.yaml config (the ones
 # make clang-tidy / firmware-test / check build against), plus config/tests/.esphome/storage/
 # (per-config validated-YAML cache, keyed by config filename rather than device_name, so it's
 # wiped in one shot instead of per-env). Uses Docker rather than a host-side rm — these paths are
 # root-owned (created by a previous Docker run), so a plain `rm` on the host fails with Permission
-# denied — including yamllint's read of storage/*.validated.yaml during `make lint`. Run this
-# before make clang-tidy / firmware-test / check whenever a build directory might be stale or
-# half-regenerated (see AGENTS.md), and also the first time in a session that you add a new .cpp
-# under components/home_io_control/ — SCons sometimes fails to notice a newly added source file in
-# a pre-existing build directory, producing a confusing "undefined reference to vtable" linker
-# error even though the file compiles fine under make unit-test.
+# denied — including yamllint's read of storage/*.validated.yaml during `make lint`. This is the
+# manual full-wipe hammer; scripts/check-build-cache.py now detects and auto-cleans the targeted
+# per-env staleness case automatically (see check-build-cache above), so reach for this instead
+# when you want a clean slate (e.g. storage/ permission issues, or a hunch the automated check
+# missed something).
 clean-test-cache:
 	@echo "Cleaning test build caches in config/tests/.esphome/build/"
 	@for cfg in config/tests/test-*.yaml; do \
@@ -122,6 +128,7 @@ clean-test-cache:
 
 # Compilation tests for all platform configs
 firmware-test:
+	@python3 scripts/check-build-cache.py --clean
 	@echo "Compiling test configurations in config/tests/"
 	@for cfg in config/tests/test-*.yaml; do \
 	  name=$$(basename "$$cfg"); \

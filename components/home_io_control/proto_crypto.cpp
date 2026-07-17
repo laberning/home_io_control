@@ -7,6 +7,8 @@
 
 #include "proto_crypto.h"
 
+#include "proto_constants.h"
+
 #include <esp_random.h>
 #include <cstring>
 

@@ -4,6 +4,8 @@
 
 #include "tuning_config.h"
 
+#include "proto_constants.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>

@@ -2,6 +2,8 @@
 /// @brief Device-name, address-classification and 1W-frame codec implementations.
 /// @ingroup hioc_protocol
 
+#include "proto_codecs.h"
+#include "proto_constants.h"
 #include "proto_frame.h"
 
 #include <cctype>

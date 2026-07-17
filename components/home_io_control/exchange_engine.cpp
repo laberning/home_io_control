@@ -10,6 +10,7 @@
 
 #include "hub_decisions.h"
 #include "proto_commands.h"
+#include "proto_constants.h"
 #include "proto_crypto.h"
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
