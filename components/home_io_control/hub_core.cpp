@@ -16,6 +16,7 @@
 
 #include "radio_sx1276.h"
 #include "radio_sx1262.h"
+#include "radio_lr1121.h"
 #include "tuning_config.h"
 #include "tuning_registry.h"
 
@@ -48,9 +49,12 @@ static const char *const TAG = detail::TAG;
 ///   2. Initialize the SPI bus via spi_setup().
 ///   3. Auto‑detect or explicitly select the radio chip:
 ///      - If radio_type is "sx1276" or "sx1262", select that driver.
+///      - If radio_type is "lr1121", select that driver (explicit-only — never reached by
+///        auto-detect).
 ///      - If empty (default), attempt to read SX1276 version register (0x42 = 0x12).
 ///        If the read fails or returns wrong version, fall back to SX1262.
-///   4. Allocate the appropriate RadioDriver (SX1276 needs DIO0; SX1262 needs BUSY+DIO1).
+///   4. Allocate the appropriate RadioDriver (SX1276 needs DIO0; SX1262/LR1121 need BUSY+DIO1,
+///      DIO1 carrying the LR1121's DIO9 IRQ line).
 ///   5. Call radio_->init() which performs chip reset, calibration, and register configuration.
 ///   6. Enter normal loop() operation with radio in RX mode.
 ///
@@ -71,9 +75,49 @@ void IOHomeControlComponent::setup() {
 
   this->spi_setup();
 
-  // --- Radio driver selection ---
-  bool use_sx1262 = false;
+  const char *chip_name_for_log = nullptr;
+  this->radio_ = this->select_and_construct_radio_(&chip_name_for_log);
+  if (this->radio_ == nullptr) {
+    this->mark_failed();
+    return;
+  }
 
+  if (!this->radio_->init()) {
+    delete this->radio_;
+    this->radio_ = nullptr;
+    this->mark_failed();
+    return;
+  }
+
+  this->initialized_ = true;
+  this->register_management_actions_();
+  this->exchange_engine_.reset_hop_timestamp();
+  this->apply_tuning_to_radio_();
+  if (this->tuning_.active) {
+    std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
+    ESP_LOGI(detail::TAG, "%s", snapshot.c_str());
+  }
+  ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", chip_name_for_log, this->node_id_str_.c_str());
+}
+
+// See the declaration in hub_core.h for the full contract. LR1121 is explicit-only in
+// phase 1 (design plan §3.3): it is never reached by the SX1276/SX1262 auto-detect probe
+// below, so a mis-probed chip can never silently select it.
+RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **chip_name_out) {
+  if (this->radio_type_ == "lr1121") {
+    *chip_name_out = "LR1121";
+    if (this->busy_pin_ == nullptr || this->dio1_pin_ == nullptr) {
+      ESP_LOGE(detail::TAG, "LR1121 requires busy_pin and dio1_pin (dio1_pin carries the chip's DIO9 IRQ line)");
+      return nullptr;
+    }
+    auto *radio = new (std::nothrow)
+        RadioLR1121(this, this->rst_pin_, this->dio1_pin_, this->busy_pin_, this->tx_power_, this->tcxo_voltage_);
+    if (radio == nullptr)
+      ESP_LOGE(detail::TAG, "Failed to allocate LR1121 radio driver");
+    return radio;
+  }
+
+  bool use_sx1262 = false;
   if (this->radio_type_ == "sx1262") {
     use_sx1262 = true;
   } else if (this->radio_type_ == "sx1276") {
@@ -95,47 +139,29 @@ void IOHomeControlComponent::setup() {
   }
 
   if (use_sx1262) {
+    *chip_name_out = "SX1262";
     if (this->busy_pin_ == nullptr || this->dio1_pin_ == nullptr) {
       ESP_LOGE(detail::TAG, "SX1262 requires busy_pin and dio1_pin");
-      this->mark_failed();
-      return;
+      return nullptr;
     }
-    this->radio_ =
+    auto *radio =
         new (std::nothrow) RadioSX1262(this, this->rst_pin_, this->dio1_pin_, this->busy_pin_, this->tx_power_,
                                        this->tcxo_voltage_, this->fem_en_pin_, this->vfem_pin_, this->fem_pa_pin_);
-  } else {
-    if (this->dio0_pin_ == nullptr) {
-      ESP_LOGE(detail::TAG, "SX1276 requires dio0_pin");
-      this->mark_failed();
-      return;
-    }
-    this->radio_ = new (std::nothrow)
-        RadioSX1276(this, this->rst_pin_, this->dio0_pin_, this->dio4_pin_, this->tx_power_, this->pa_pin_);
+    if (radio == nullptr)
+      ESP_LOGE(detail::TAG, "Failed to allocate SX1262 radio driver");
+    return radio;
   }
 
-  if (this->radio_ == nullptr) {
-    ESP_LOGE(detail::TAG, "Failed to allocate %s radio driver", use_sx1262 ? "SX1262" : "SX1276");
-    this->mark_failed();
-    return;
+  *chip_name_out = "SX1276";
+  if (this->dio0_pin_ == nullptr) {
+    ESP_LOGE(detail::TAG, "SX1276 requires dio0_pin");
+    return nullptr;
   }
-
-  if (!this->radio_->init()) {
-    delete this->radio_;
-    this->radio_ = nullptr;
-    this->mark_failed();
-    return;
-  }
-
-  this->initialized_ = true;
-  this->register_management_actions_();
-  this->exchange_engine_.reset_hop_timestamp();
-  this->apply_tuning_to_radio_();
-  if (this->tuning_.active) {
-    std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
-    ESP_LOGI(detail::TAG, "%s", snapshot.c_str());
-  }
-  ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", use_sx1262 ? "SX1262" : "SX1276",
-           this->node_id_str_.c_str());
+  auto *radio = new (std::nothrow)
+      RadioSX1276(this, this->rst_pin_, this->dio0_pin_, this->dio4_pin_, this->tx_power_, this->pa_pin_);
+  if (radio == nullptr)
+    ESP_LOGE(detail::TAG, "Failed to allocate SX1276 radio driver");
+  return radio;
 }
 
 // === Tuning layer ===

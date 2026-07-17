@@ -17,7 +17,7 @@
 namespace esphome {
 namespace home_io_control {
 
-// === Numeric parameters (10) ===================================================
+// === Numeric parameters (13) ===================================================
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
@@ -33,6 +33,13 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
     {"sx1262_discovery_hop_slice_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.sx1262_discovery_hop_slice_ms); },
      [](TuningConfig &t, float v) { t.sx1262_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
+    {"lr1121_response_preamble", [](const TuningConfig &t) { return static_cast<float>(t.lr1121_response_preamble); },
+     [](TuningConfig &t, float v) { t.lr1121_response_preamble = static_cast<uint16_t>(v); }, true},
+    {"lr1121_post_tx_settle_us", [](const TuningConfig &t) { return static_cast<float>(t.lr1121_post_tx_settle_us); },
+     [](TuningConfig &t, float v) { t.lr1121_post_tx_settle_us = static_cast<uint16_t>(v); }, true},
+    {"lr1121_discovery_hop_slice_ms",
+     [](const TuningConfig &t) { return static_cast<float>(t.lr1121_discovery_hop_slice_ms); },
+     [](TuningConfig &t, float v) { t.lr1121_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
     {"lbt_max_retries", [](const TuningConfig &t) { return static_cast<float>(t.lbt_max_retries); },
      [](TuningConfig &t, float v) { t.lbt_max_retries = static_cast<uint8_t>(v); }, false},
     {"lbt_rssi_threshold_dbm", [](const TuningConfig &t) { return static_cast<float>(t.lbt_rssi_threshold_dbm); },
@@ -47,7 +54,7 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](TuningConfig &t, float v) { t.pairing_key_exchange_retries = static_cast<uint8_t>(v); }, false},
 };
 
-// === Select parameters (6) =====================================================
+// === Select parameters (7) =====================================================
 // The setters return false only when the option string is unparseable AND leaving the
 // value untouched is the intended behavior (currently just the bandwidth enum). The
 // destination/payload setters return false for unrecognized values so no radio re-apply
@@ -68,6 +75,17 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        if (!bw.has_value())
          return false;
        t.sx1276_rx_bandwidth = bw.value();
+       return true;
+     },
+     true},
+    {"lr1121_rx_bandwidth", [](const TuningConfig &t) { return sx1262_bandwidth_to_string(t.lr1121_rx_bandwidth); },
+     [](TuningConfig &t, const std::string &v) -> bool {
+       // LR1121RxBandwidth is a type alias of SX1262RxBandwidth (chip-identical encoding,
+       // see tuning_config.h), so the SX1262 string helpers apply directly.
+       auto bw = sx1262_bandwidth_from_string(v);
+       if (!bw.has_value())
+         return false;
+       t.lr1121_rx_bandwidth = bw.value();
        return true;
      },
      true},

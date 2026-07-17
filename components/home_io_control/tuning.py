@@ -29,6 +29,10 @@ CONF_SX1276_RX_BANDWIDTH = "sx1276_rx_bandwidth"
 CONF_SX1276_RESPONSE_PREAMBLE = "sx1276_response_preamble"
 CONF_SX1276_DISCOVERY_HOP_SLICE_MS = "sx1276_discovery_hop_slice_ms"
 CONF_SX1262_DISCOVERY_HOP_SLICE_MS = "sx1262_discovery_hop_slice_ms"
+CONF_LR1121_RX_BANDWIDTH = "lr1121_rx_bandwidth"
+CONF_LR1121_RESPONSE_PREAMBLE = "lr1121_response_preamble"
+CONF_LR1121_POST_TX_SETTLE_US = "lr1121_post_tx_settle_us"
+CONF_LR1121_DISCOVERY_HOP_SLICE_MS = "lr1121_discovery_hop_slice_ms"
 CONF_LBT_MAX_RETRIES = "lbt_max_retries"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
 
@@ -113,6 +117,10 @@ UI_NAMES = {
     CONF_SX1276_RESPONSE_PREAMBLE: "Radio SX1276 Response Preamble",
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: "Radio SX1276 Discovery Hop Slice",
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: "Radio SX1262 Discovery Hop Slice",
+    CONF_LR1121_RX_BANDWIDTH: "Radio LR1121 RX Bandwidth (kHz)",
+    CONF_LR1121_RESPONSE_PREAMBLE: "Radio LR1121 Response Preamble",
+    CONF_LR1121_POST_TX_SETTLE_US: "Radio LR1121 Post-TX Settle",
+    CONF_LR1121_DISCOVERY_HOP_SLICE_MS: "Radio LR1121 Discovery Hop Slice",
     CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
     CONF_PAIRING_DISCOVERY_COMMANDS: "Pairing Discovery Commands",
@@ -132,6 +140,11 @@ _NUMBER_PARAMS = {
     CONF_SX1276_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: (5, 200, 1, "ms"),
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (50, 500, 1, "ms"),
+    # LR1121 numeric ranges reuse the SX1262 bounds — same chip-family physical constraints
+    # (design doc §3.2: "seed every timing/tuning default from the validated SX1262 values").
+    CONF_LR1121_RESPONSE_PREAMBLE: (32, 256, 1, "B"),
+    CONF_LR1121_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
+    CONF_LR1121_DISCOVERY_HOP_SLICE_MS: (50, 500, 1, "ms"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     CONF_PAIRING_DISCOVERY_WAIT_MS: (500, 5000, 50, "ms"),
@@ -148,6 +161,10 @@ _SELECT_OPTIONS = {
     CONF_PAIRING_DISCOVERY_LOW_POWER: ["Off", "On"],
     CONF_SX1262_RX_BANDWIDTH: list(SX1262_BANDWIDTH_OPTIONS),
     CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
+    # LR1121 reuses the SX1262 bandwidth option set — chip-identical register encoding
+    # (design doc §1.2: "same encoding, same table"; C++ side uses a type alias, see
+    # tuning_config.h LR1121RxBandwidth).
+    CONF_LR1121_RX_BANDWIDTH: list(SX1262_BANDWIDTH_OPTIONS),
 }
 
 
@@ -176,6 +193,11 @@ _validate_bandwidth = _one_of_string(
 )
 _validate_sx1276_bandwidth = _one_of_string(
     CONF_SX1276_RX_BANDWIDTH, SX1276_BANDWIDTH_OPTIONS, coerce_number=True
+)
+# LR1121 reuses the SX1262 option set (see _SELECT_OPTIONS above) but gets its own validator
+# so a validation error names "lr1121_rx_bandwidth", not "sx1262_rx_bandwidth".
+_validate_lr1121_bandwidth = _one_of_string(
+    CONF_LR1121_RX_BANDWIDTH, SX1262_BANDWIDTH_OPTIONS, coerce_number=True
 )
 _validate_discovery_command = _one_of_string(
     f"{CONF_PAIRING_DISCOVERY_COMMANDS} entries", DISCOVERY_COMMAND_OPTIONS
@@ -210,6 +232,7 @@ TUNING_SCHEMA = cv.Schema(
         cv.Optional(CONF_UI_CONTROLS, default=False): cv.boolean,
         cv.Optional(CONF_SX1262_RX_BANDWIDTH): _validate_bandwidth,
         cv.Optional(CONF_SX1276_RX_BANDWIDTH): _validate_sx1276_bandwidth,
+        cv.Optional(CONF_LR1121_RX_BANDWIDTH): _validate_lr1121_bandwidth,
         cv.Optional(CONF_PAIRING_DISCOVERY_COMMANDS): cv.All(
             cv.ensure_list(_validate_discovery_command),
             cv.Length(min=1),
@@ -294,6 +317,15 @@ def _apply_tuning_config(config, var):
             tuning,
             "sx1276_rx_bandwidth",
             SX1276_BANDWIDTH_OPTIONS[config[CONF_SX1276_RX_BANDWIDTH]],
+        )
+
+    if CONF_LR1121_RX_BANDWIDTH in config:
+        # LR1121RxBandwidth is a C++ type alias of SX1262RxBandwidth (chip-identical encoding),
+        # so the SX1262 enum values assign directly with no cast needed.
+        _assign(
+            tuning,
+            "lr1121_rx_bandwidth",
+            SX1262_BANDWIDTH_OPTIONS[config[CONF_LR1121_RX_BANDWIDTH]],
         )
 
     # Ordered discovery commands. Clear the struct default before appending so a

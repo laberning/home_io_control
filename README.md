@@ -2,7 +2,7 @@
 [![GitHub](https://img.shields.io/github/license/laberning/home_io_control)](https://github.com/laberning/home_io_control/blob/main/LICENSE)
 ![GitHub Repo stars](https://img.shields.io/github/stars/laberning/home_io_control)
 
-An [ESPHome](https://esphome.io/) external component for controlling IO-Homecontrol 2W devices (two-way, with device feedback). Control shutters, blinds, awnings, openers, curtains, and other IO-Homecontrol devices directly from ESPHome and Home Assistant using an ESP32 board with an SX1276 or SX1262 radio module.
+An [ESPHome](https://esphome.io/) external component for controlling IO-Homecontrol 2W devices (two-way, with device feedback). Control shutters, blinds, awnings, openers, curtains, and other IO-Homecontrol devices directly from ESPHome and Home Assistant using an ESP32 board with an SX1276, SX1262, or LR1121 radio module.
 
 > [!NOTE]
 > **Experimental Project — Use With Caution**
@@ -27,13 +27,13 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 - **1W remote button events**: Overheard 1W transmissions (remotes *or* wind/rain sensors — same broadcast mechanism) fire an `esphome.home_io_control_sender_event` event for opted-in sender IDs (`exposed_senders`), so you can trigger Home Assistant automations directly from a physical remote press or sensor trigger
 - **Optimistic cover state**: Linked-1W-remote presses and HA-issued open/close/stop/set-position commands show the requested movement direction immediately, before the confirming poll or device response lands (`optimistic_state`, default on, per-cover opt-out); remotes can also be linked to a whole device class (`class:awning`) instead of enumerating node IDs
 - **Home Assistant integration**: Cover devices appear as native cover entities with full position support, and tilt-capable blinds also expose slat-angle control
-- **SX1276 & SX1262 support**: Works with both radio chips — SX1276 uses hardware IoHomeOn mode, SX1262 uses a shared software PHY (UART framing + CRC in software)
+- **SX1276, SX1262 & LR1121 support**: Works across three radio chips — SX1276 uses hardware IoHomeOn mode; SX1262 and LR1121 share a software PHY (UART framing + CRC in software), since neither has an IoHomeOn-equivalent hardware mode
 
 ## Hardware Requirements
 
-You need an **ESP32 board with an SX1276 or SX1262 radio module** operating at 868 MHz.
+You need an **ESP32 board with an SX1276, SX1262, or LR1121 radio module** operating at 868 MHz.
 
-The table below lists board mappings that are known to be plausible for this component. `Confirmed` means they were tested in this repo. `Untested` means the GPIO mapping was taken from vendor documentation and still needs real IO-homecontrol validation here.
+The table below lists board mappings that are known to be plausible for this component. `Confirmed` means they were tested in this repo. `Untested` means the GPIO mapping was taken from vendor documentation and still needs real IO-homecontrol validation here. `Driver implemented, untested` means chip-driver code exists and compiles for the target but has never run against real silicon — treat every timing/register value as a starting point, not a validated default, until it clears hardware bring-up.
 
 | Board | Radio | Status | `spi:` pins | `home_io_control:` pins | Notes |
 |-------|-------|--------|-------------|-------------------------|-------|
@@ -41,9 +41,10 @@ The table below lists board mappings that are known to be plausible for this com
 | **Heltec WiFi LoRa32 V3 / V3.2** | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `radio_type: sx1262` and `tcxo_voltage: 1_8V`; matches [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml), the SX1262 cover example with OLED status display |
 | LilyGO T3-S3 SX1262 | SX1262 | Untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 33`, `busy_pin: 34` | should have the same mapping on v1.2 and v1.3; start with `radio_type: sx1262` |
 | LilyGO T3-S3 SX1276 | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio0_pin: 9` | |
+| LilyGO T3-S3 LR1121 | LR1121 | 🧪 Driver implemented, untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 36`, `busy_pin: 34` | **Not the same board as the two rows above** — same T3-S3 silkscreen/form factor, but a different radio chip and a different IRQ pin (GPIO36, vs. dio0/dio1 on 9/33 for the SX1276/SX1262 variants). Use `radio_type: lr1121` and `tcxo_voltage: 3_0V`; `dio1_pin` carries the LR1121's DIO9 interrupt line. Matches [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml). Needs hardware bring-up, see docs/architecture_overview.md |
 | LilyGO LoRa32 V1.3 SX1276 | SX1276 | Untested | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | |
 | LilyGO T-Beam 1W SX1262 | SX1262 | Untested | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | vendor docs suggest that `fem_en_pin: 40` and `fem_pa_pin: 21` might be needed |
-| Any other ESP32 + SX1276/SX1262 | Either | Untested | Board-specific | Board-specific | Use the chip pinout and set the appropriate `sx1276` or `sx1262` `radio_type` |
+| Any other ESP32 + SX1276/SX1262/LR1121 | Any | Untested | Board-specific | Board-specific | Use the chip pinout and set the appropriate `sx1276`, `sx1262`, or `lr1121` `radio_type` |
 
 ### Confirmed Board Notes
 
@@ -197,6 +198,10 @@ make corpus-validate
 
 # Regenerate the corpus's generated C++ fixture header (also runs automatically before unit-test)
 make corpus-gen
+
+# Clean stale build caches for config/tests/*.yaml (fixes confusing linker errors after
+# adding a new .cpp under components/home_io_control/ — see AGENTS.md for details)
+make clean-test-cache
 ```
 
 ### Firmware Build & Flash
@@ -208,17 +213,23 @@ make compile
 # Compile the SX1262 validation config (Heltec V3)
 make compile-v3
 
+# Compile the LR1121 config (LilyGO T3-S3 LR1121 variant)
+make compile-t3s3
+
 # Compile and flash via USB
 make upload          # SX1276
 make upload-v3       # SX1262
+make upload-t3s3     # LR1121
 
 # Monitor serial output
 make logs            # SX1276
 make logs-v3         # SX1262
+make logs-t3s3       # LR1121
 
 # Clean build artifacts
 make clean           # SX1276
 make clean-v3        # SX1262
+make clean-t3s3      # LR1121
 
 # Format all C++ source files
 make format

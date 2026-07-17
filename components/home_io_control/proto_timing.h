@@ -29,10 +29,11 @@ static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W 
 /// on the same channel. Solar-powered devices need the long preamble to wake up.
 static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes for initial/start frames
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
-// Chip-specific defaults (SX1262 response preamble, post-TX settle, per-chip discovery hop
-// slices) live beside their TuningConfig fields in tuning_config.h; the SX1262 exchange dwell
-// lives in radio_sx1262.h. Kept out of the generic protocol layer per the radio-timing
-// layering cleanup — this header holds only chip-neutral protocol values.
+// Chip-specific defaults (response preamble, post-TX settle, per-chip discovery hop slices
+// for SX1262 and LR1121) live beside their TuningConfig fields in tuning_config.h; the
+// SX1262/LR1121 exchange dwell constants live in radio_sx1262.h / radio_lr1121.h respectively.
+// Kept out of the generic protocol layer per the radio-timing layering cleanup — this header
+// holds only chip-neutral protocol values.
 
 /// Timing constants for frequency hopping and response waiting.
 static constexpr int32_t HOP_TIME_US = 2700;             ///< Time per channel when hopping (2.7ms)

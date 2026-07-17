@@ -5,7 +5,7 @@ This page gives a contributor-oriented map of the Home IO Control component and 
 ## Layer Map
 
 - \ref hioc_protocol "Protocol Layer": frame layout, command builders, cryptographic helpers, and shared protocol utilities. The protocol model is split into cohesive headers (`proto_sizes.h`, `proto_timing.h`, `proto_constants.h`, `proto_device_model.h`, `proto_codecs.h`, `proto_commands.h`, `proto_crypto.h`) with `proto_frame.h` holding the frame container and re-exporting the rest for transition.
-- \ref hioc_radio "Radio Driver Layer": the `RadioDriver` abstraction and the SX1276 / SX1262 implementations. Chips without hardware IoHomeOn framing (SX1262 today, LR1121 planned) share the software PHY in `radio_soft_phy.h/.cpp` (UART bit-encoding for TX, UART-decode probe with CRC validation for RX).
+- \ref hioc_radio "Radio Driver Layer": the `RadioDriver` abstraction and the SX1276 / SX1262 / LR1121 implementations. Chips without hardware IoHomeOn framing (SX1262 and LR1121) share the software PHY in `radio_soft_phy.h/.cpp` (UART bit-encoding for TX, UART-decode probe with CRC validation for RX). The LR1121 driver is code-complete and desk-verified (unit tests, firmware compile) but not yet hardware-validated — see its `TODO(hw-verify)` markers.
 - \ref hioc_hub "Controller Layer": `IOHomeControlComponent` orchestrates setup and loop scheduling through seven collaborator objects — `ExchangeEngine` (authenticated exchanges), `PairingEngine` (discovery and pairing), `ManagementActions` (rename/identify/force-open device actions), `DeviceRegistry` (device table and callbacks), `OperationQueue` (pending-operation coalescing), `StatusPollPolicy` (per-device poll scheduling), and `PairingTelemetry` (per-attempt pairing event recorder, shared with both engines; its read-only companion `pairing_advisor.h` turns a completed attempt into actionable diagnostics). The hub itself is split by concern: `hub_core.cpp` (lifecycle and loop), `hub_operations.cpp` (queued operation dispatch), `hub_status.cpp` (passive receive-side handling), plus thin `hub_pairing.cpp` / `hub_management.cpp` wrappers around their engines. `hub_decisions.h` holds pure frame-classification helpers testable without radio or timing.
 - \ref hioc_tuning "Tuning Layer" (sub-group of the Controller Layer): the runtime `TuningConfig`, the table-driven `tuning_registry`, and the optional Home Assistant number/select entities.
 - \ref hioc_entities "ESPHome Integration Layer": the runtime entities plus the Python schema/codegen modules that expose the component to ESPHome. Shared device-binding codegen lives in `platform_common.py`; the C++ counterparts are the mixins in `platform_entity_base.h` — `DeviceBoundEntity` for the main entity platforms and `DeviceBoundCompanion` for the auto-generated per-device companion diagnostic sensors (device name, active issue, RSSI, last contact, exchange failures).
@@ -16,7 +16,7 @@ These invariants keep the layers independent; changes should preserve them:
 
 1. The protocol layer is radio-agnostic: no chip names, chip registers, or driver behavior in `proto_*` files. `proto_timing.h` holds only chip-neutral protocol timing.
 2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `exchange_wait_slice_ms()`, `discovery_hop_slice_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only.
-3. Chip-specific constants live either in the driver header (`radio_sx1276.h` / `radio_sx1262.h`) or, when they are user-tunable defaults, next to their `TuningConfig` fields in `tuning_config.h`.
+3. Chip-specific constants live either in the driver header (`radio_sx1276.h` / `radio_sx1262.h` / `radio_lr1121.h`) or, when they are user-tunable defaults, next to their `TuningConfig` fields in `tuning_config.h`.
 4. The composition root is `hub_core.cpp` `setup()`: it is the only place that names concrete driver classes (selection and auto-detection).
 
 ## Request Flow
@@ -86,6 +86,7 @@ Replace `hioc_heltec_v2` with the normalized `esphome.name` of the ESPHome node 
 - Radio abstraction: [radio_interface.h](../components/home_io_control/radio_interface.h)
 - SX1276 driver: [radio_sx1276.h](../components/home_io_control/radio_sx1276.h)
 - SX1262 driver: [radio_sx1262.h](../components/home_io_control/radio_sx1262.h)
+- LR1121 driver: [radio_lr1121.h](../components/home_io_control/radio_lr1121.h)
 - Shared software PHY (UART framing for chips without hardware IoHomeOn): [radio_soft_phy.h](../components/home_io_control/radio_soft_phy.h)
 - Protocol frame model: [proto_frame.h](../components/home_io_control/proto_frame.h)
 - Runtime tuning config: [tuning_config.h](../components/home_io_control/tuning_config.h)

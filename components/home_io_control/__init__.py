@@ -48,6 +48,7 @@ PA_PIN_OPTIONS = {
 RADIO_TYPE_OPTIONS = {
     "sx1276": "sx1276",
     "sx1262": "sx1262",
+    "lr1121": "lr1121",
 }
 
 TCXO_VOLTAGE_OPTIONS = {
@@ -205,6 +206,7 @@ CONFIG_SCHEMA = (
             cv.Required(CONF_RST_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_DIO0_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_DIO4_PIN): pins.internal_gpio_input_pin_schema,
+            # The chip's IRQ line: SX1262's DIO1, or LR1121's DIO9
             cv.Optional(CONF_DIO1_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_BUSY_PIN): pins.internal_gpio_input_pin_schema,
             cv.Required(CONF_NODE_ID): validate_node_id,

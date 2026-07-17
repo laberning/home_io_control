@@ -1,0 +1,149 @@
+## Radio Turnaround Test — T3-S3 (LR1121) TX→RX
+## Transmits a trigger frame, then immediately switches to RX and waits for a reply.
+## Tests whether LR1121 receives correctly after a TX operation (tight turnaround).
+## Flash this on T3-S3, flash loopback-turnaround-v2.yaml on V2.
+
+esphome:
+  name: turnaround-t3s3
+  friendly_name: Turnaround T3-S3
+  platformio_options:
+    build_flags:
+      - -DIOHOME_FRAME_LOG
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+spi:
+  clk_pin: 5
+  mosi_pin: 6
+  miso_pin: 3
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+home_io_control:
+  id: hioc
+  cs_pin: 7
+  rst_pin: 8
+  busy_pin: 34
+  dio1_pin: 36  # LR1121 DIO9
+  radio_type: lr1121
+  tcxo_voltage: 3_0V
+  node_id: "C0FFEE"
+  system_key: "00112233445566778899AABBCCDDEEFF"
+
+globals:
+  - id: test_running
+    type: bool
+    initial_value: 'false'
+  - id: test_round
+    type: int
+    initial_value: '0'
+  - id: rx_ok
+    type: int
+    initial_value: '0'
+  - id: rx_err
+    type: int
+    initial_value: '0'
+  - id: rx_miss
+    type: int
+    initial_value: '0'
+
+button:
+  - platform: template
+    name: "Start Turnaround Test"
+    on_press:
+      - lambda: |-
+          id(hioc)->set_radio_test_mode(true);
+          id(test_running) = true;
+          id(test_round) = 0;
+          id(rx_ok) = 0;
+          id(rx_err) = 0;
+          id(rx_miss) = 0;
+          ESP_LOGI("turnaround", "========================================");
+          ESP_LOGI("turnaround", "  TURNAROUND TEST START — LR1121");
+          ESP_LOGI("turnaround", "  TX trigger → RX reply (500ms timeout)");
+          ESP_LOGI("turnaround", "========================================");
+
+interval:
+  - interval: 3s
+    then:
+      - lambda: |-
+          using namespace esphome::home_io_control;
+          if (!id(test_running)) return;
+
+          auto *radio = id(hioc)->get_radio();
+          if (radio == nullptr) return;
+
+          int round = id(test_round);
+          if (round >= 15) {
+            ESP_LOGI("turnaround", "========================================");
+            ESP_LOGI("turnaround", "  TEST COMPLETE: %d ok, %d errors, %d missed",
+                     (int)id(rx_ok), (int)id(rx_err), (int)id(rx_miss));
+            ESP_LOGI("turnaround", "========================================");
+            id(test_running) = false;
+            return;
+          }
+
+          static const uint8_t TRIGGER[] = {
+            0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31
+          };
+          static const uint8_t EXPECTED_REPLY[] = {
+            0xCE, 0x00, 0xC0, 0xFF, 0xEE, 0xAA, 0xBB, 0xCC,
+            0x3C, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
+          };
+
+          ESP_LOGI("turnaround", "--- Round %d/15 ---", round + 1);
+
+          RadioTxConfig cfg;
+          cfg.freq_hz = FREQ_CH2;
+          cfg.preamble_len = 1024;
+          radio->send_packet(TRIGGER, sizeof(TRIGGER), cfg);
+
+          radio->change_frequency(FREQ_CH2);
+          radio->set_mode_rx();
+
+          RadioRxPacket packet;
+          bool got_reply = radio->wait_for_packet(packet, 500);
+
+          if (!got_reply) {
+            id(rx_miss)++;
+            ESP_LOGW("turnaround", "  NO REPLY (miss #%d)", (int)id(rx_miss));
+          } else if (packet.len == sizeof(EXPECTED_REPLY) &&
+                     memcmp(packet.data, EXPECTED_REPLY, sizeof(EXPECTED_REPLY)) == 0) {
+            id(rx_ok)++;
+            ESP_LOGI("turnaround", "  ✓ MATCH");
+          } else {
+            id(rx_err)++;
+            if (packet.len != sizeof(EXPECTED_REPLY)) {
+              ESP_LOGW("turnaround", "  ✗ WRONG LENGTH: got %u", packet.len);
+            } else {
+              int bits = 0;
+              for (int j = 0; j < (int)sizeof(EXPECTED_REPLY); j++) {
+                uint8_t d = packet.data[j] ^ EXPECTED_REPLY[j];
+                while (d) { bits++; d &= d-1; }
+              }
+              ESP_LOGW("turnaround", "  ✗ %d bit errors", bits);
+            }
+          }
+
+          id(test_round) = round + 1;

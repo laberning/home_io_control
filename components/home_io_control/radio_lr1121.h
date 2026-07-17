@@ -1,0 +1,315 @@
+#pragma once
+
+/// @file radio_lr1121.h
+/// @brief LR1121 radio driver for IO-Homecontrol.
+/// @ingroup hioc_radio
+///
+/// Implements the RadioDriver interface for the Semtech LR1121 transceiver on the
+/// LilyGo T3-S3 board. Like the SX1262, the LR1121 has no hardware equivalent of the
+/// SX1276's IoHomeOn framing, so this driver reuses the shared software PHY
+/// (`radio_soft_phy.h`) wholesale: software UART bit-encoding on TX, a UART-decode
+/// probe with CRC-CCITT validation on RX, fixed-length GFSK packets, software CRC.
+/// This is a re-plumbed RadioSX1262 with a different SPI command set, not a new
+/// bring-up from first principles (design doc §1.2).
+///
+/// The chip-level difference from the SX1262 that actually changes the driver's
+/// shape is the SPI transport: the LR1121 uses 16-bit opcodes and a two-transaction
+/// command/response protocol (write opcode+params, wait BUSY, then a second
+/// transaction clocks out a status byte + response), instead of the SX1262's
+/// single-transaction opcode+NOP-then-data pattern.
+///
+/// @todo(hw-verify) Every opcode/encoding not explicitly called out below as
+///       cross-checked was assembled from the design plan (`analysis/lr1121_t3s3_integration_plan.md`
+///       §1.2/§3.2) plus general LR11xx-family knowledge, without a fresh read of the Semtech
+///       User Manual (the only locally fetchable copy is an image-based PDF with no OCR tooling
+///       available in this environment). Every such value is marked `TODO(hw-verify)` at its
+///       point of use and must be confirmed during Step 6 (design plan §4 rung 1) hardware
+///       bring-up before it can be trusted.
+
+#include "radio_interface.h"
+#include "radio_soft_phy.h"
+#include "esphome/core/hal.h"
+
+namespace esphome {
+namespace home_io_control {
+
+// ============================================================================
+// LR1121 Opcode Constants (16-bit)
+// ============================================================================
+//
+// The opcodes below marked "cross-checked" come verbatim from the design plan's
+// pre-verified table (design §1.2 / implementation §0.3.3), which was itself checked
+// against RadioLib's LR11x0_commands.h during planning. Opcodes marked TODO(hw-verify)
+// were not in that table and are this driver's best-effort placeholder pending a real
+// User Manual / hardware cross-check (see file-level @todo above).
+
+static constexpr uint16_t LR1121_CMD_GET_STATUS = 0x0100;               ///< cross-checked
+static constexpr uint16_t LR1121_CMD_GET_VERSION = 0x0101;              ///< cross-checked
+static constexpr uint16_t LR1121_CMD_GET_ERRORS = 0x010D;               ///< TODO(hw-verify)
+static constexpr uint16_t LR1121_CMD_CLEAR_ERRORS = 0x010E;             ///< TODO(hw-verify)
+static constexpr uint16_t LR1121_CMD_WRITE_BUFFER = 0x0109;             ///< cross-checked
+static constexpr uint16_t LR1121_CMD_READ_BUFFER = 0x010A;              ///< cross-checked
+static constexpr uint16_t LR1121_CMD_CALIBRATE = 0x010F;                ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_DIO_AS_RF_SWITCH = 0x0112;     ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_DIO_IRQ_PARAMS = 0x0113;       ///< cross-checked
+static constexpr uint16_t LR1121_CMD_CLEAR_IRQ = 0x0114;                ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_TCXO_MODE = 0x0117;            ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_STANDBY = 0x011C;              ///< cross-checked
+static constexpr uint16_t LR1121_CMD_GET_RX_BUFFER_STATUS = 0x0203;     ///< cross-checked
+static constexpr uint16_t LR1121_CMD_GET_RSSI_INST = 0x0205;            ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_GFSK_SYNC_WORD = 0x0206;       ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_RX = 0x0209;                   ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_TX = 0x020A;                   ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_RF_FREQUENCY = 0x020B;         ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_PACKET_TYPE = 0x020E;          ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_MODULATION_PARAMS = 0x020F;    ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_PACKET_PARAMS = 0x0210;        ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_TX_PARAMS = 0x0211;            ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_RX_TX_FALLBACK_MODE = 0x0213;  ///< cross-checked
+static constexpr uint16_t LR1121_CMD_SET_PA_CONFIG = 0x0215;            ///< cross-checked
+
+// ============================================================================
+// LR1121 IRQ Bit Masks (32-bit word)
+// ============================================================================
+// Bit positions are cross-checked (design §1.2 chip comparison table).
+
+static constexpr uint32_t LR1121_IRQ_TX_DONE = 1UL << 2;
+static constexpr uint32_t LR1121_IRQ_RX_DONE = 1UL << 3;
+static constexpr uint32_t LR1121_IRQ_PREAMBLE_DETECTED = 1UL << 4;
+static constexpr uint32_t LR1121_IRQ_SYNC_WORD_VALID = 1UL << 5;
+static constexpr uint32_t LR1121_IRQ_CRC_ERR = 1UL << 7;
+static constexpr uint32_t LR1121_IRQ_TIMEOUT = 1UL << 10;
+
+/// DIO-routed IRQ enable mask: TxDone|RxDone|PreambleDetected|SyncWordValid|Timeout
+/// (design implementation §Step 2, item 2 — deliberately excludes CrcErr from the DIO-routed
+/// set, unlike SX1262; CrcErr is still visible in the raw status word for capture diagnostics).
+static constexpr uint32_t LR1121_IRQ_DIO_ENABLE_MASK = LR1121_IRQ_TX_DONE | LR1121_IRQ_RX_DONE |
+                                                       LR1121_IRQ_PREAMBLE_DETECTED | LR1121_IRQ_SYNC_WORD_VALID |
+                                                       LR1121_IRQ_TIMEOUT;
+
+// ============================================================================
+// LR1121 chip identity / GFSK / packet constants
+// ============================================================================
+
+static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked (design §1.2 "Identity" row)
+
+static constexpr uint8_t LR1121_PACKET_TYPE_GFSK = 0x01;          ///< cross-checked (design §3.2 step 5)
+static constexpr uint8_t LR1121_GFSK_CRC_OFF = 0x01;              ///< cross-checked (same encoding as SX126x)
+static constexpr uint8_t LR1121_GFSK_PACKET_FIXED_LENGTH = 0x00;  ///< cross-checked (same encoding as SX126x)
+/// Preamble detector length selector: 16 bits. TODO(hw-verify) — assumed to share the SX126x
+/// GFSK preamble-detector enum (0x00 off, 0x04=8bit, 0x05=16bit, 0x06=24bit, 0x07=32bit) since
+/// the LR11xx sub-GHz GFSK modem descends from the same core; not confirmed against the UM.
+static constexpr uint8_t LR1121_PREAMBLE_DETECTOR_16_BIT = 0x05;
+/// Sync word length: 24 bits, encoded as a literal bit count — cross-checked, identical encoding
+/// to SX1262's SX1262_SYNC_WORD_PARAM_24_BITS.
+static constexpr uint8_t LR1121_SYNC_WORD_PARAM_24_BITS = 0x18;
+
+/// Calibrate "all blocks" bitmask. TODO(hw-verify) — LR11xx calibration blocks are believed to be
+/// LF-RC(0)/HF-RC(1)/PLL(2)/ADC(3)/IMG(4)/PLL-TX(5), so "all" = 0x3F; NOT the SX126x value (0x7F),
+/// which uses a different bit layout for a different chip.
+static constexpr uint8_t LR1121_CALIBRATE_ALL_BLOCKS = 0x3F;
+
+/// SetRxTxFallbackMode value for STDBY_XOSC. TODO(hw-verify) — LR11xx fallback-mode is believed to
+/// be a small sequential enum (FS=0x00, STDBY_RC=0x01, STDBY_XOSC=0x02), unlike SX126x's raw
+/// standby-mode byte (0x30) reused directly in that field; NOT cross-checked against the UM.
+static constexpr uint8_t LR1121_FALLBACK_STDBY_XOSC = 0x02;
+
+// ============================================================================
+// T3-S3 RF-switch table (secondhand — see design §1.1 / §6: sourced from the Meshtastic
+// `tlora_t3s3_v1` variant's rfswitch.h, not the LilyGo schematic. Verify on hardware in Step 6.)
+// ============================================================================
+//
+// SetDioAsRfSwitch parameter layout: TODO(hw-verify) — assumed to be [enable_mask, standby, rx,
+// tx, tx_hp, tx_hf, gnss, wifi] (8 bytes total), mirroring RadioLib's Lr11x0::setDioAsRfSwitch()
+// signature. Each mode byte is a bitmask of which switch-controlled DIOs (bit0=DIO5, bit1=DIO6,
+// ...) should be driven high in that mode. Not confirmed against the UM.
+static constexpr uint8_t LR1121_RFSWITCH_ENABLE_DIO5_DIO6 = 0x03;  ///< DIO5 + DIO6 are switch pins.
+static constexpr uint8_t LR1121_RFSWITCH_STANDBY = 0x00;           ///< Both low.
+static constexpr uint8_t LR1121_RFSWITCH_RX = 0x01;                ///< DIO5 high.
+static constexpr uint8_t LR1121_RFSWITCH_TX = 0x02;                ///< DIO6 high (both LP and HP PA).
+static constexpr uint8_t LR1121_RFSWITCH_TX_HP = 0x02;             ///< Same as TX (LP PA only used today).
+static constexpr uint8_t LR1121_RFSWITCH_TX_HF = 0x00;             ///< 2.4GHz path unused; both low.
+static constexpr uint8_t LR1121_RFSWITCH_GNSS = 0x00;              ///< Unused; both low.
+static constexpr uint8_t LR1121_RFSWITCH_WIFI = 0x00;              ///< Unused; both low.
+
+/// LR1121 TCXO voltage on the T3-S3 board — secondhand (Meshtastic variant), verify in Step 6.
+static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_MSB = 0x00;
+static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_MID = 0x01;
+static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_LSB = 0x40;  ///< ~5ms, same tick encoding as SX1262.
+
+/// LR1121-specific per-channel dwell while waiting for authenticated exchange responses.
+/// Seeded from the validated SX1262 value (design §3.2 "seed every timing/tuning default from
+/// the validated SX1262 values" — this encodes device-side protocol turnaround, not a chip
+/// quirk, so it is the right starting point pending Step 7 hardware tuning).
+static constexpr int32_t LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS = 90;
+
+// ============================================================================
+// LR1121 Radio Driver
+// ============================================================================
+
+/// @brief LR1121 implementation of RadioDriver.
+/// @ingroup hioc_radio
+///
+/// Manages the LR1121 via 16-bit-opcode, two-transaction SPI using the SpiAccess
+/// interface. Configures the chip in GFSK mode with software CRC-CCITT to match the
+/// IO-Homecontrol protocol (the LR1121, like the SX1262, lacks the SX1276's IoHomeOn
+/// mode). See the file header for the driver's relationship to RadioSX1262.
+class RadioLR1121 : public RadioDriver {
+ public:
+  RadioLR1121(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *irq_pin, InternalGPIOPin *busy_pin,
+              uint8_t tx_power, uint8_t tcxo_voltage_yaml_code)
+      : RadioDriver(rst_pin),
+        spi_(spi),
+        irq_pin_(irq_pin),
+        busy_pin_(busy_pin),
+        tx_power_(tx_power),
+        tcxo_voltage_yaml_code_(tcxo_voltage_yaml_code) {}
+
+  /// @copydoc RadioDriver::init
+  bool init() override;
+  /// @copydoc RadioDriver::send_packet
+  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
+  /// @copydoc RadioDriver::wait_for_packet
+  bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
+  /// @copydoc RadioDriver::check_for_packet
+  bool check_for_packet(RadioRxPacket &packet) override;
+  /// @copydoc RadioDriver::change_frequency
+  void change_frequency(uint32_t freq_hz) override;
+  /// @copydoc RadioDriver::read_rssi
+  int16_t read_rssi() override;
+  /// @copydoc RadioDriver::is_sync_detected
+  bool is_sync_detected() override;
+  /// @copydoc RadioDriver::is_preamble_detected
+  bool is_preamble_detected() override;
+  /// @brief Preamble for response/continuation frames (LR1121).
+  ///
+  /// Same rationale as the SX1262 (@ref RadioSX1262::response_preamble): the software
+  /// UART-encoded waveform gives the peer device less synchronization margin than the
+  /// SX1276's IoHomeOn waveform. Seeded from the SX1262-validated default pending
+  /// Step 7 hardware tuning on the LR1121 itself.
+  [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
+  /// @brief Apply LR1121 runtime tuning: RX bandwidth, response preamble, post-TX settle delay.
+  void apply_tuning(const TuningConfig &tuning) override {
+    this->set_rx_bandwidth_(tuning.lr1121_rx_bandwidth);
+    this->set_response_preamble_(tuning.lr1121_response_preamble);
+    this->set_post_tx_settle_us_(tuning.lr1121_post_tx_settle_us);
+  }
+  /// @brief Per-channel dwell while waiting for exchange responses (LR1121).
+  [[nodiscard]] uint32_t exchange_wait_slice_ms() const override { return LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS; }
+  /// @brief Per-channel dwell while pairing discovery hops (LR1121).
+  ///
+  /// LR1121 frequency changes require a standby→SetRfFrequency→RX cycle (no fast hop),
+  /// same as the SX1262, so discovery needs the equivalent longer dwell. The value comes
+  /// from the user-facing `lr1121_discovery_hop_slice_ms` tuning field.
+  [[nodiscard]] uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const override {
+    return tuning.lr1121_discovery_hop_slice_ms;
+  }
+  /// @brief TX→RX turnaround capability (LR1121): slow, same as SX1262.
+  ///
+  /// See @ref RadioSX1262::has_fast_tx_rx_turnaround for the rationale — the LR1121 needs
+  /// the same standby/settle cycle between TX and RX.
+  [[nodiscard]] bool has_fast_tx_rx_turnaround() const override { return false; }
+  /// @copydoc RadioDriver::set_mode_rx
+  void set_mode_rx() override;
+  /// @copydoc RadioDriver::set_mode_standby
+  void set_mode_standby() override;
+  [[nodiscard]] bool is_failed() const override { return this->failed_; }
+  [[nodiscard]] const char *chip_name() const override { return "lr1121"; }
+  /// @brief Dump LR1121-specific debug info.
+  void dump_debug() override;
+
+ protected:
+  // --- Tuning helpers (applied via apply_tuning) ---
+  /// Apply the RX bandwidth selector and rewrite the modulation parameters.
+  void set_rx_bandwidth_(LR1121RxBandwidth bandwidth);
+  /// Set the preamble length used for response/continuation frames within an exchange.
+  void set_response_preamble_(uint16_t preamble) { this->response_preamble_ = preamble; }
+  /// Set the delay between TX completion and re-entering RX.
+  void set_post_tx_settle_us_(uint16_t delay_us) { this->post_tx_settle_us_ = delay_us; }
+
+  // --- SPI communication (16-bit opcode, two-transaction) ---
+  /// Wait until BUSY pin is low before any SPI transaction.
+  void wait_busy_();
+  /// Write-only command: opcode + params, single NSS cycle.
+  /// @param opcode LR1121 16-bit opcode.
+  /// @param params Pointer to parameter buffer (may be nullptr).
+  /// @param len Parameter length.
+  void write_command_(uint16_t opcode, const uint8_t *params, uint8_t len);
+  /// Read-type command: write transaction, wait BUSY, then a second NSS cycle clocks out
+  /// a Stat1 status byte followed by `out_len` response bytes.
+  /// @param opcode LR1121 16-bit opcode.
+  /// @param params Pointer to request parameter buffer (may be nullptr).
+  /// @param params_len Request parameter length.
+  /// @param out Output buffer for the response bytes (excludes Stat1).
+  /// @param out_len Number of response bytes to read.
+  void read_command_(uint16_t opcode, const uint8_t *params, uint8_t params_len, uint8_t *out, uint8_t out_len);
+  /// Write into the LR1121 TX buffer (always from the chip's internal write pointer, which
+  /// resets to the buffer base for a fresh WriteBuffer sequence — unlike SX1262 there is no
+  /// separate offset parameter here; see design §3.2 "SPI transport").
+  void write_buffer_(const uint8_t *data, uint8_t len);
+  /// Read from the LR1121 RX buffer at a given offset (as reported by GetRxBufferStatus).
+  void read_buffer_(uint8_t offset, uint8_t len, uint8_t *data);
+  /// Log a warning if the most recently observed Stat1 command-status byte indicates an
+  /// error. TODO(hw-verify): the exact bit-field meaning of Stat1 was not cross-checked
+  /// against the UM this session, so this only logs the raw byte, not a decoded reason.
+  void log_command_status_(uint16_t opcode);
+
+  // --- Radio configuration ---
+  /// Full radio initialization (called from init()).
+  void configure_radio_();
+  /// Set RF frequency (plain Hz, 32-bit — no PLL-step conversion needed on this chip).
+  void set_frequency_register_(uint32_t freq_hz);
+  /// Configure GFSK packet parameters (preamble, payload length, CRC).
+  void set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type, uint8_t crc_type);
+  /// Apply the runtime bandwidth setting to the LR1121 modulation parameters.
+  void write_modulation_params_();
+  /// Apply RX-specific packet parameters (calls set_packet_params_ for RX).
+  void set_rx_packet_params_();
+  /// Clear IRQ status bits.
+  /// @param irq_mask 32-bit bitmask of IRQs to clear.
+  void clear_irq_status_(uint32_t irq_mask);
+  /// @brief Read device error flags (for diagnostics only — see dump_debug()).
+  /// @return Error bitmask. TODO(hw-verify): both the opcode (`LR1121_CMD_GET_ERRORS`) and the
+  ///         assumed 2-byte response width are unconfirmed against the UM this session.
+  uint16_t get_errors_();
+  /// @brief Clear device error flags. Called both during init (after TCXO configuration, before
+  ///        calibration) and at the end of configure_radio_() to discard init-time noise.
+  void clear_errors_();
+  /// Reset RX state machine and buffer. Optionally force standby first.
+  void reset_rx_state_(bool force_standby = true);
+  /// Populate the RadioCaptureInfo from LR1121-specific telemetry.
+  /// Note: RadioCaptureInfo::irq_status is uint16_t; the 32-bit IRQ word is mapped down by
+  /// taking bits [2..10] and shifting right by 2 (design §3.2 "IRQ-width note").
+  void fill_capture_info_(bool blocking_wait, uint32_t irq_status, uint8_t rx_offset, uint8_t reported_len,
+                          const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
+
+  /// Read a received packet from the buffer and return the raw bytes reported by the chip.
+  /// Virtual to allow test doubles.
+  virtual bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint32_t irq_status);
+
+  /// IRQ pin (DIO9) ISR — sets dio_fired flag. Runs in interrupt context.
+  static void gpio_intr(RadioLR1121 *arg);
+
+  /// @brief Read the raw 32-bit IRQ status word from the radio (via GetStatus).
+  virtual uint32_t read_irq_status_raw();
+
+ private:
+  // === wait_for_packet helpers (private) ===
+  bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool &saw_irq, uint32_t &irq);
+  bool resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint32_t &irq);
+  bool finalize_receive_(RadioRxPacket &packet, uint32_t irq);
+
+  SpiAccess *spi_;
+  InternalGPIOPin *irq_pin_;
+  InternalGPIOPin *busy_pin_;
+  uint8_t tx_power_;
+  uint8_t tcxo_voltage_yaml_code_;  ///< Raw TCXO_VOLTAGE_OPTIONS code from YAML (1_6V=0x01 .. 3_3V=0x08).
+  bool failed_{false};
+  uint8_t last_stat1_{0};                                            ///< Most recent Stat1 byte (diagnostics).
+  LR1121RxBandwidth rx_bandwidth_{LR1121RxBandwidth::BW_117_3_KHZ};  ///< Runtime-tunable RX bandwidth.
+  uint16_t response_preamble_{LR1121_RESPONSE_PREAMBLE};             ///< Runtime-tunable response preamble.
+  uint16_t post_tx_settle_us_{LR1121_POST_TX_SETTLE_US};             ///< Runtime-tunable post-TX settle delay.
+};
+
+}  // namespace home_io_control
+}  // namespace esphome

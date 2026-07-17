@@ -91,7 +91,7 @@ struct RadioCaptureInfo {
 ///
 /// Encapsulates all chip-specific operations: initialization, packet TX/RX,
 /// frequency control, and mode switching. Concrete implementations (RadioSX1276,
-/// RadioSX1262) handle the register-level details for each chip.
+/// RadioSX1262, RadioLR1121) handle the register-level details for each chip.
 /// @ingroup hioc_radio
 class RadioDriver {
  public:

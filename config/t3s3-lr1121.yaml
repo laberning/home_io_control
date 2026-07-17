@@ -1,0 +1,79 @@
+substitutions:
+  device_name: hioc-t3s3-lr1121
+  device_friendly_name: Home IO Control LilyGo T3-S3 (LR1121)
+
+## Home IO Control full hub config for the LilyGo T3-S3 (ESP32-S3 + Semtech LR1121).
+## Not to be confused with the plain SX1276/SX1262 "LilyGO T3-S3" boards already in the
+## README hardware table — same silkscreen/form factor, different radio chip, different
+## IRQ pin (design plan §1.1). Pins below are the T3-S3's radio-only SPI bus.
+##
+## This config intentionally omits the board's onboard SSD1306 OLED: the design plan's
+## pin table only documents the I2C bus (SDA=18, SCL=17), not the reset/power-gate pins
+## the Heltec V3 config's display logic depends on, and those must not be guessed
+## (AGENTS.md / implementation plan §0.3 "never guess chip constants" applies equally to
+## undocumented board pins). Add display support once verified on hardware (Step 6/9).
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${device_friendly_name}
+  platformio_options:
+    build_flags:
+      - -DIOHOME_FRAME_LOG
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+spi:
+  clk_pin: 5
+  mosi_pin: 6
+  miso_pin: 3
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+home_io_control:
+  cs_pin: 7
+  rst_pin: 8
+  busy_pin: 34
+  dio1_pin: 36  # LR1121 DIO9 — reuses the dio1_pin key (design plan §3.3)
+  radio_type: lr1121
+  tcxo_voltage: 3_0V
+  node_id: !secret hub_node_id
+  system_key: !secret hub_system_key
+  exposed_senders:
+    - !secret example_io_device_linked_remote_id
+
+cover:
+  - platform: home_io_control
+    id: patio_awning
+    name: "Patio Awning"
+    device_class: awning
+    io_device_id: !secret example_io_device_id
+    io_device_type: "horizontal_awning"
+    io_subtype: 0
+    invert_position: true
+    linked_remotes:
+      - !secret example_io_device_linked_remote_id
+
+button:
+  - platform: home_io_control
+    name: "Discover & Pair"

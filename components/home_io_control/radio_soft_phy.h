@@ -4,8 +4,8 @@
 /// @brief Software PHY for radios without IoHomeOn hardware framing.
 /// @ingroup hioc_radio
 ///
-/// Chips such as the SX1262 (and, in the future, the LR1121) have no hardware mode
-/// equivalent to the SX1276's IoHomeOn: they provide generic GFSK framing only. This header
+/// Chips such as the SX1262 and LR1121 have no hardware mode equivalent to the SX1276's
+/// IoHomeOn: they provide generic GFSK framing only. This header
 /// declares the chip-agnostic pieces such a driver needs to reproduce IO-Homecontrol framing
 /// in software — UART bit-encoding for TX, and a UART-decode probe (with CRC validation) to
 /// recover frame boundaries from an unaligned raw RX bitstream.

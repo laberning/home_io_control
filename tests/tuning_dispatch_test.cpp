@@ -44,6 +44,15 @@ TEST(TuningDispatch, NumberUpdatesEachParameter) {
   comp.update_tuning_number("sx1262_discovery_hop_slice_ms", 250);
   EXPECT_EQ(comp.tuning_.sx1262_discovery_hop_slice_ms, 250);
 
+  comp.update_tuning_number("lr1121_response_preamble", 96);
+  EXPECT_EQ(comp.tuning_.lr1121_response_preamble, 96);
+
+  comp.update_tuning_number("lr1121_post_tx_settle_us", 750);
+  EXPECT_EQ(comp.tuning_.lr1121_post_tx_settle_us, 750);
+
+  comp.update_tuning_number("lr1121_discovery_hop_slice_ms", 250);
+  EXPECT_EQ(comp.tuning_.lr1121_discovery_hop_slice_ms, 250);
+
   comp.update_tuning_number("lbt_max_retries", 1);
   EXPECT_EQ(comp.tuning_.lbt_max_retries, 1);
 
@@ -77,6 +86,13 @@ TEST(TuningDispatch, SelectBandwidth) {
   setup_component(comp);
   comp.update_tuning_select("sx1262_rx_bandwidth", "156.2");
   EXPECT_EQ(comp.tuning_.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_156_2_KHZ);
+}
+
+TEST(TuningDispatch, SelectLr1121Bandwidth) {
+  TestableHubComponent comp;
+  setup_component(comp);
+  comp.update_tuning_select("lr1121_rx_bandwidth", "156.2");
+  EXPECT_EQ(comp.tuning_.lr1121_rx_bandwidth, LR1121RxBandwidth::BW_156_2_KHZ);
 }
 
 TEST(TuningDispatch, SelectDiscoveryCommandsCommaSeparated) {

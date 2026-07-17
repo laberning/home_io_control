@@ -214,6 +214,14 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
     result += " sx1276_discovery_hop_slice_ms=" + std::to_string(cfg.sx1276_discovery_hop_slice_ms);
   if (cfg.sx1262_discovery_hop_slice_ms != DEFAULTS.sx1262_discovery_hop_slice_ms)
     result += " sx1262_discovery_hop_slice_ms=" + std::to_string(cfg.sx1262_discovery_hop_slice_ms);
+  if (cfg.lr1121_rx_bandwidth != DEFAULTS.lr1121_rx_bandwidth)
+    result += " lr1121_rx_bandwidth=" + sx1262_bandwidth_to_string(cfg.lr1121_rx_bandwidth);
+  if (cfg.lr1121_response_preamble != DEFAULTS.lr1121_response_preamble)
+    result += " lr1121_response_preamble=" + std::to_string(cfg.lr1121_response_preamble);
+  if (cfg.lr1121_post_tx_settle_us != DEFAULTS.lr1121_post_tx_settle_us)
+    result += " lr1121_post_tx_settle_us=" + std::to_string(cfg.lr1121_post_tx_settle_us);
+  if (cfg.lr1121_discovery_hop_slice_ms != DEFAULTS.lr1121_discovery_hop_slice_ms)
+    result += " lr1121_discovery_hop_slice_ms=" + std::to_string(cfg.lr1121_discovery_hop_slice_ms);
   if (cfg.lbt_max_retries != DEFAULTS.lbt_max_retries)
     result += " lbt_max_retries=" + std::to_string(cfg.lbt_max_retries);
   if (cfg.lbt_rssi_threshold_dbm != DEFAULTS.lbt_rssi_threshold_dbm)

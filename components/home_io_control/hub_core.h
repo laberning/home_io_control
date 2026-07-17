@@ -123,9 +123,9 @@ class IOHomeControlComponent : public Component,
   void set_dio0_pin(InternalGPIOPin *pin) { this->dio0_pin_ = pin; }
   /// Set the DIO4 preamble‑detect pin (SX1276, optional).
   void set_dio4_pin(InternalGPIOPin *pin) { this->dio4_pin_ = pin; }
-  /// Set the DIO1 interrupt pin (SX1262).
+  /// Set the DIO1 interrupt pin (SX1262; also carries the LR1121's DIO9 IRQ line).
   void set_dio1_pin(InternalGPIOPin *pin) { this->dio1_pin_ = pin; }
-  /// Set the BUSY pin (SX1262).
+  /// Set the BUSY pin (SX1262/LR1121).
   void set_busy_pin(InternalGPIOPin *pin) { this->busy_pin_ = pin; }
   /// Set the front‑end module enable pin.
   void set_fem_en_pin(InternalGPIOPin *pin) { this->fem_en_pin_ = pin; }
@@ -141,9 +141,10 @@ class IOHomeControlComponent : public Component,
   void set_tx_power(uint8_t power) { this->tx_power_ = power; }
   /// Set PA boost pin configuration.
   void set_pa_pin(uint8_t pa_pin) { this->pa_pin_ = pa_pin; }
-  /// Set radio type ("sx1276" or "sx1262"); empty string means auto‑detect.
+  /// Set radio type ("sx1276", "sx1262", or "lr1121"); empty string means auto‑detect
+  /// (auto-detect only ever selects sx1276 or sx1262 — lr1121 is explicit-only).
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
-  /// Set TCXO voltage for SX1262 (1.8V / 3.3V).
+  /// Set TCXO voltage for SX1262/LR1121 (1.8V / 3.3V).
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
 
   /// Apply the tuning configuration generated from YAML / UI entities.
@@ -497,6 +498,22 @@ class IOHomeControlComponent : public Component,
   // --- Frequency hopping ---
   void hop_frequency_();
 
+  // --- Radio driver selection (called once from setup()) ---
+  /// Select and construct the configured (or auto-detected) radio driver.
+  ///
+  /// Kept as its own method rather than inlined into setup(): the three-way chip branch
+  /// (SX1276/SX1262/LR1121) plus auto-detection is enough logic that folding it into
+  /// setup() pushes that function's cognitive complexity past clang-tidy's threshold.
+  /// Validates the pins each driver needs and logs a clear error (without calling
+  /// mark_failed() itself — the caller decides how to react) when a required pin is
+  /// missing. On success, `*chip_name_out` is set to a static string naming the selected
+  /// chip (used for logging), and the returned pointer is the heap-allocated (not yet
+  /// initialized) driver instance.
+  /// @param chip_name_out Output: human-readable chip name for logging (always set,
+  ///                      even on failure, to the best-known name for error messages).
+  /// @return Newly allocated RadioDriver, or nullptr if pin validation or allocation failed.
+  RadioDriver *select_and_construct_radio_(const char **chip_name_out);
+
   // --- Radio driver ---
   RadioDriver *radio_{nullptr};
 
@@ -504,8 +521,8 @@ class IOHomeControlComponent : public Component,
   InternalGPIOPin *rst_pin_{nullptr};
   InternalGPIOPin *dio0_pin_{nullptr};    ///< SX1276 DIO0 interrupt
   InternalGPIOPin *dio4_pin_{nullptr};    ///< SX1276 DIO4 preamble detect (optional)
-  InternalGPIOPin *dio1_pin_{nullptr};    ///< SX1262 DIO1 interrupt
-  InternalGPIOPin *busy_pin_{nullptr};    ///< SX1262 BUSY pin
+  InternalGPIOPin *dio1_pin_{nullptr};    ///< SX1262 DIO1 interrupt; also carries the LR1121's DIO9 IRQ line
+  InternalGPIOPin *busy_pin_{nullptr};    ///< SX1262/LR1121 BUSY pin
   InternalGPIOPin *fem_en_pin_{nullptr};  ///< Front-end module enable
   InternalGPIOPin *vfem_pin_{nullptr};    ///< Front-end module power
   InternalGPIOPin *fem_pa_pin_{nullptr};  ///< Front-end module PA switch
@@ -513,12 +530,12 @@ class IOHomeControlComponent : public Component,
   // --- Configuration (from YAML) ---
   std::string node_id_str_;
   std::string system_key_str_;
-  std::string radio_type_;  ///< "sx1276", "sx1262", or "" (auto-detect)
+  std::string radio_type_;  ///< "sx1276", "sx1262", "lr1121", or "" (auto-detect; never selects lr1121)
   uint8_t node_id_[NODE_ID_SIZE]{};
   uint8_t system_key_[AES_KEY_SIZE]{};
   uint8_t tx_power_{DEFAULT_TX_POWER_DBM};
   uint8_t pa_pin_{DEFAULT_PA_PIN_PA_BOOST};
-  uint8_t tcxo_voltage_{DEFAULT_TCXO_VOLTAGE_SETTING_1P8V};  ///< SX1262 TCXO voltage setting (default 1.8 V)
+  uint8_t tcxo_voltage_{DEFAULT_TCXO_VOLTAGE_SETTING_1P8V};  ///< SX1262/LR1121 TCXO voltage setting (default 1.8 V)
 
   // --- Runtime state ---
   bool initialized_{false};

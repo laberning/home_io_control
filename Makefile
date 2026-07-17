@@ -4,38 +4,51 @@
 
 
 # === Recipe fragments (shared) ==========================================================
-# $1 is the device stem (e.g., v2, v3-monitor)
+# $1 is the full config-file stem (e.g., heltec-wifi-lora-32-v2, t3s3-lr1121).
 define compile_recipe
-	@file="heltec-wifi-lora-32-$1.yaml"; \
+	@file="$1.yaml"; \
 	echo "Compiling $$$$file"; \
 	docker compose run --rm esphome compile "$$$$file"
 endef
 
 define upload_recipe
-	@file="heltec-wifi-lora-32-$1.yaml"; \
+	@file="$1.yaml"; \
 	echo "Uploading to $$$$file"; \
 	docker compose run --rm esphome run "$$$$file"
 endef
 
 define logs_recipe
-	@file="heltec-wifi-lora-32-$1.yaml"; \
+	@file="$1.yaml"; \
 	echo "Streaming logs from $$$$file"; \
 	docker compose run --rm esphome logs "$$$$file"
 endef
 
 define clean_recipe
-	@file="heltec-wifi-lora-32-$1.yaml"; \
+	@file="$1.yaml"; \
 	echo "Cleaning build artifacts for $$$$file"; \
 	docker compose run --rm esphome clean "$$$$file"
 endef
 
 # === Explicit device-variant targets (for tab completion & direct invocation) ===
-DEVICE_VARIANTS := v2 v2-monitor v3 v3-monitor
+# Each entry pairs a full config-file stem with the short target suffix used for
+# compile-<suffix> / upload-<suffix> / etc. The Heltec entries keep the exact target
+# names (compile-v2, ...) that existed before the T3-S3 board was added; only the
+# recipe fragments above changed shape (full stem instead of a hardcoded prefix) to
+# make room for stems that don't share the "heltec-wifi-lora-32-" prefix.
+DEVICE_VARIANTS := heltec-wifi-lora-32-v2:v2 \
+                    heltec-wifi-lora-32-v2-monitor:v2-monitor \
+                    heltec-wifi-lora-32-v3:v3 \
+                    heltec-wifi-lora-32-v3-monitor:v3-monitor \
+                    t3s3-lr1121:t3s3 \
+                    t3s3-lr1121-monitor:t3s3-monitor
 
-$(foreach v,$(DEVICE_VARIANTS),$(eval compile-$(v): ; $(call compile_recipe,$(v))))
-$(foreach v,$(DEVICE_VARIANTS),$(eval upload-$(v): ; $(call upload_recipe,$(v))))
-$(foreach v,$(DEVICE_VARIANTS),$(eval logs-$(v): ; $(call logs_recipe,$(v))))
-$(foreach v,$(DEVICE_VARIANTS),$(eval clean-$(v): ; $(call clean_recipe,$(v))))
+variant_stem = $(word 1,$(subst :, ,$1))
+variant_suffix = $(word 2,$(subst :, ,$1))
+
+$(foreach v,$(DEVICE_VARIANTS),$(eval compile-$(call variant_suffix,$(v)): ; $(call compile_recipe,$(call variant_stem,$(v)))))
+$(foreach v,$(DEVICE_VARIANTS),$(eval upload-$(call variant_suffix,$(v)): ; $(call upload_recipe,$(call variant_stem,$(v)))))
+$(foreach v,$(DEVICE_VARIANTS),$(eval logs-$(call variant_suffix,$(v)): ; $(call logs_recipe,$(call variant_stem,$(v)))))
+$(foreach v,$(DEVICE_VARIANTS),$(eval clean-$(call variant_suffix,$(v)): ; $(call clean_recipe,$(call variant_stem,$(v)))))
 
 # === Convenience defaults (delegate to v2) ====================================
 compile: compile-v2
@@ -92,7 +105,10 @@ tuning-sync:
 # root-owned (created by a previous Docker run), so a plain `rm` on the host fails with Permission
 # denied — including yamllint's read of storage/*.validated.yaml during `make lint`. Run this
 # before make clang-tidy / firmware-test / check whenever a build directory might be stale or
-# half-regenerated (see AGENTS.md).
+# half-regenerated (see AGENTS.md), and also the first time in a session that you add a new .cpp
+# under components/home_io_control/ — SCons sometimes fails to notice a newly added source file in
+# a pre-existing build directory, producing a confusing "undefined reference to vtable" linker
+# error even though the file compiles fine under make unit-test.
 clean-test-cache:
 	@echo "Cleaning test build caches in config/tests/.esphome/build/"
 	@for cfg in config/tests/test-*.yaml; do \
@@ -181,4 +197,4 @@ test-unit: unit-test
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
 		firmware-test unit-test lint test check \
 		test-compile test-unit \
-		doxygen clean-docs
+		doxygen clean-docs clean-test-cache

@@ -44,6 +44,15 @@ enum class SX1276RxBandwidth : uint8_t {
   BW_125_0_KHZ = 0x02,  ///< 125.0 kHz — widest selectable option.
 };
 
+/// @brief LR1121 RX bandwidth selector.
+///
+/// The LR1121's sub-GHz GFSK bandwidth register uses the same encoding table as the SX1262
+/// (design doc §1.2: "same encoding, same table" — validated SX1262 choices carry over 1:1), so
+/// the enum is reused via alias rather than duplicated. A distinct type name is kept (rather than
+/// spelling `SX1262RxBandwidth` in LR1121 code) purely for readability; this is not a distinct
+/// C++ type, so no casting is needed anywhere it is assigned or compared.
+using LR1121RxBandwidth = SX1262RxBandwidth;
+
 /// @brief Discovery request command codes selectable by the tuning layer.
 enum class DiscoveryCommand : uint8_t {
   DISCOVER = 0x28,      ///< Standard broadcast discovery request (to 0x00003B).
@@ -96,6 +105,25 @@ static constexpr uint16_t SX1276_DISCOVERY_HOP_SLICE_MS = 5;
 /// alternate channels to be caught reliably.
 static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 200;
 
+/// LR1121-specific preamble for response/continuation frames within an exchange.
+///
+/// Seeded from the SX1262-validated default (design doc §3.2: "seed every timing/tuning
+/// default from the validated SX1262 values ... they encode protocol-side realities more
+/// than chip quirks"). Not yet independently validated on LR1121 hardware — see the
+/// implementation plan's Step 7 (loopback tuning), which folds a measured value back here.
+static constexpr uint16_t LR1121_RESPONSE_PREAMBLE = SX1262_RESPONSE_PREAMBLE;
+
+/// LR1121-specific post-TX settling delay before re-entering RX.
+///
+/// Seeded from the SX1262-validated default; same rationale as @ref LR1121_RESPONSE_PREAMBLE.
+static constexpr uint16_t LR1121_POST_TX_SETTLE_US = SX1262_POST_TX_SETTLE_US;
+
+/// Per-channel dwell while LR1121 pairing discovery hops across channels.
+///
+/// LR1121 frequency changes require a standby→SetRfFrequency→RX cycle, same as the SX1262,
+/// so the dwell is seeded from the SX1262-validated default pending Step 7 hardware tuning.
+static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = SX1262_DISCOVERY_HOP_SLICE_MS;
+
 /// @brief All runtime tunable parameters for pairing and radio diagnostics.
 ///
 /// Values reset to their defaults on every boot. Each field initializes from a
@@ -115,7 +143,12 @@ struct TuningConfig {
   uint16_t sx1276_discovery_hop_slice_ms{
       SX1276_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while SX1276 discovery hops.
   uint16_t sx1262_discovery_hop_slice_ms{
-      SX1262_DISCOVERY_HOP_SLICE_MS};                      ///< Per-channel dwell while SX1262 discovery hops.
+      SX1262_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while SX1262 discovery hops.
+  LR1121RxBandwidth lr1121_rx_bandwidth{LR1121RxBandwidth::BW_117_3_KHZ};  ///< LR1121 RX bandwidth selector.
+  uint16_t lr1121_response_preamble{LR1121_RESPONSE_PREAMBLE};             ///< LR1121 response preamble in bytes.
+  uint16_t lr1121_post_tx_settle_us{LR1121_POST_TX_SETTLE_US};             ///< Delay after LR1121 TX before RX (µs).
+  uint16_t lr1121_discovery_hop_slice_ms{
+      LR1121_DISCOVERY_HOP_SLICE_MS};                      ///< Per-channel dwell while LR1121 discovery hops.
   uint8_t lbt_max_retries{LBT_MAX_RETRIES};                ///< LBT retries before forced TX.
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
 

@@ -17,7 +17,7 @@
 
 /// @defgroup hioc_radio Radio Driver Layer
 /// @ingroup hioc_arch
-/// @brief Chip-specific radio abstractions and concrete SX1276/SX1262 drivers.
+/// @brief Chip-specific radio abstractions and concrete SX1276/SX1262/LR1121 drivers.
 
 /// @defgroup hioc_hub Controller Layer
 /// @ingroup hioc_arch

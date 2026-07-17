@@ -1,0 +1,56 @@
+substitutions:
+  device_name: hioc-t3s3-lr1121
+  device_friendly_name: Home IO Control LilyGo T3-S3 (LR1121) Monitor
+
+## Passive IO-Homecontrol monitor for the LilyGo T3-S3 (ESP32-S3 + Semtech LR1121).
+## This config intentionally defines no IO entities and no pairing button.
+## The component still keeps the radio in RX, hops channels, and logs parsed traffic.
+## This is the config Step 6 (design plan §4 rung 1-2) flashes first: identity/TCXO
+## bring-up and passive RX validation need no real io-homecontrol device or key.
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${device_friendly_name}
+  platformio_options:
+    build_flags:
+      - -DIOHOME_FRAME_LOG
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+spi:
+  clk_pin: 5
+  mosi_pin: 6
+  miso_pin: 3
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+home_io_control:
+  cs_pin: 7
+  rst_pin: 8
+  busy_pin: 34
+  dio1_pin: 36  # LR1121 DIO9 — reuses the dio1_pin key (design plan §3.3)
+  radio_type: lr1121
+  tcxo_voltage: 3_0V
+  node_id: ABC124
+  system_key: ABCDEF1234567890ABCDEF1234567890

@@ -66,17 +66,17 @@ Configuration variables:
 - `rst_pin` (Required): Radio reset pin.
 - `dio0_pin` (Optional): SX1276 DIO0 interrupt pin.
 - `dio4_pin` (Optional): SX1276 DIO4 preamble-detect pin. Most boards do not wire this.
-- `dio1_pin` (Optional): SX1262 DIO1 interrupt pin.
-- `busy_pin` (Optional): SX1262 BUSY pin.
+- `dio1_pin` (Optional): The chip's IRQ line — SX1262 DIO1, or LR1121 DIO9.
+- `busy_pin` (Optional): SX1262/LR1121 BUSY pin.
 - `node_id` (Required): 3-byte controller ID as exactly 6 hexadecimal characters.
 - `system_key` (Required): 16-byte installation key as exactly 32 hexadecimal characters.
 - `tx_power` (Optional, default: `17`): Radio transmit power. The schema currently accepts `0` to `22`.
 - `pa_pin` (Optional, default: `BOOST`): SX1276 PA path. Valid values are `BOOST` and `RFO`.
-- `radio_type` (Optional): Force radio selection. Valid values are `sx1276` and `sx1262`. If omitted, the component auto-detects.
+- `radio_type` (Optional): Force radio selection. Valid values are `sx1276`, `sx1262`, and `lr1121`. If omitted, the component auto-detects between SX1276 and SX1262 only — `lr1121` is always explicit, never auto-detected (see "Radio Chip Support" below).
 - `fem_en_pin` (Optional): Front-end module enable pin for boards with an external RF front-end.
 - `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end.
 - `fem_pa_pin` (Optional): Front-end module PA select pin for boards with an external RF front-end.
-- `tcxo_voltage` (Optional, default: `1_8V`): SX1262 TCXO voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, and `3_3V`.
+- `tcxo_voltage` (Optional, default: `1_8V`): SX1262/LR1121 TCXO voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, and `3_3V`.
 - `exposed_senders` (Optional, default: empty list): List of 1W sender node IDs (6 hex characters each — remotes *or* sensors, see below) allowed to fire the `esphome.home_io_control_sender_event` event to Home Assistant. Empty by default — see the Sender Events section below for why this is opt-in and how it relates to `linked_remotes`.
 - `tuning` (Optional): Diagnostics block for pairing/radio parameters. See [Radio Diagnostics Tuning](radio_diagnostics.md).
 
@@ -84,7 +84,7 @@ Notes:
 
 - The SPI bus itself is configured separately in the top-level `spi:` block.
 - The component extends ESPHome's SPI device schema, so standard SPI-device options apply in addition to the keys above.
-- SX1276 and SX1262 use different interrupt pin sets. Only configure the pins for the radio you actually have.
+- SX1276 uses a different interrupt pin set (`dio0_pin`/`dio4_pin`) than SX1262/LR1121 (`dio1_pin`/`busy_pin`, shared — LR1121 reuses the same two keys, with `dio1_pin` carrying its DIO9 line). Only configure the pins for the radio you actually have.
 - User control commands (position, STOP, tilt, light/switch/lock state) are prioritized over background status polls in the operation queue. A queued status poll for the same device is dropped when a control command arrives, since the command reply provides fresher state. An in-flight exchange cannot be interrupted, so the worst-case latency is one full exchange (~1–3 s) regardless of the queue.
 
 ### Radio-Specific Pin Requirements
@@ -93,6 +93,11 @@ Notes:
 | --- | --- | --- | --- |
 | SX1276 | `cs_pin`, `rst_pin`, `dio0_pin` | `dio4_pin` | `pa_pin: BOOST` |
 | SX1262 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | `fem_en_pin`, `vfem_pin`, `fem_pa_pin` | `radio_type: sx1262`, `tcxo_voltage: 1_8V` |
+| LR1121 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | — | `radio_type: lr1121`, `tcxo_voltage: 3_0V` |
+
+### Radio Chip Support
+
+SX1276 and SX1262 are confirmed and validated on real hardware (see the [README hardware table](../README.md#hardware-requirements)). LR1121 support is code-complete — the driver, tuning, and firmware build all pass the full desk-verification suite — but has not yet been flashed to real silicon. Several register-level details are marked `TODO(hw-verify)` directly in `radio_lr1121.cpp`/`.h` pending that bring-up. `radio_type: lr1121` is always explicit; unlike SX1276/SX1262, it is never selected by auto-detection.
 
 ## Cover Platform
 
@@ -465,6 +470,61 @@ button:
 ```
 
 With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position` button automatically.
+
+### Minimal LR1121 Cover Controller
+
+> [!NOTE]
+> LR1121 support is code-complete but not yet hardware-validated — see "Radio Chip Support" above.
+
+```yaml
+esphome:
+  name: io-homecontrol-lr1121
+
+esp32:
+  variant: esp32s3
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+
+spi:
+  clk_pin: 5
+  mosi_pin: 6
+  miso_pin: 3
+
+external_components:
+  - source: github://laberning/home_io_control
+
+home_io_control:
+  cs_pin: 7
+  rst_pin: 8
+  dio1_pin: 36  # LR1121 DIO9
+  busy_pin: 34
+  radio_type: lr1121
+  tcxo_voltage: 3_0V
+  node_id: "C0FFEE"
+  system_key: "00112233445566778899AABBCCDDEEFF"
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    device_class: awning
+    io_device_id: "FEEB1E"
+    io_device_type: "awning"
+    io_subtype: 0
+    invert_position: true
+
+button:
+  - platform: home_io_control
+    name: "Discover & Pair"
+```
 
 ### Minimal Example with all Device Types: Cover, Light, Lock, and Switch
 
