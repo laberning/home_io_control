@@ -8,6 +8,7 @@
 #include "redaction.h"
 
 #include "esphome/core/log.h"
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -87,10 +88,10 @@ inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint
   }
 
   if (preamble > 0)
-    ESP_LOGI("io_frame", "%s [%u bytes] freq=%u preamble=%u cmd=%s %s: %s", prefix, len, freq, preamble, cmd_str, flags,
-             hex);
+    ESP_LOGI("io_frame", "%s [%u bytes] freq=%" PRIu32 " preamble=%u cmd=%s %s: %s", prefix, len, freq, preamble,
+             cmd_str, flags, hex);
   else
-    ESP_LOGI("io_frame", "%s [%u bytes] freq=%u cmd=%s %s: %s", prefix, len, freq, cmd_str, flags, hex);
+    ESP_LOGI("io_frame", "%s [%u bytes] freq=%" PRIu32 " cmd=%s %s: %s", prefix, len, freq, cmd_str, flags, hex);
 }
 #endif
 

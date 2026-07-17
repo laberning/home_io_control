@@ -86,17 +86,23 @@ tuning-sync:
 	@python3 scripts/check-tuning-sync.py
 
 # Wipes config/tests/.esphome/build/<env>/ for every config/tests/test-*.yaml config (the ones
-# make clang-tidy / firmware-test / check build against). Uses Docker rather than a host-side rm
-# — these build directories are root-owned (created by a previous Docker run), so a plain `rm`
-# on the host fails with Permission denied. Run this before make clang-tidy / firmware-test /
-# check whenever a build directory might be stale or half-regenerated (see AGENTS.md).
+# make clang-tidy / firmware-test / check build against), plus config/tests/.esphome/storage/
+# (per-config validated-YAML cache, keyed by config filename rather than device_name, so it's
+# wiped in one shot instead of per-env). Uses Docker rather than a host-side rm — these paths are
+# root-owned (created by a previous Docker run), so a plain `rm` on the host fails with Permission
+# denied — including yamllint's read of storage/*.validated.yaml during `make lint`. Run this
+# before make clang-tidy / firmware-test / check whenever a build directory might be stale or
+# half-regenerated (see AGENTS.md).
 clean-test-cache:
 	@echo "Cleaning test build caches in config/tests/.esphome/build/"
 	@for cfg in config/tests/test-*.yaml; do \
 	  name=$$(grep 'device_name:' "$$cfg" | head -1 | cut -d: -f2- | sed "s/['\"]//g" | xargs); \
+	  if [ -z "$$name" ]; then echo "ERROR: Could not extract device_name from $$cfg"; exit 1; fi; \
 	  echo "=== Cleaning config/tests/.esphome/build/$$name ==="; \
 	  docker compose run --rm --entrypoint sh esphome -c "rm -rf /config/tests/.esphome/build/$$name" || exit 1; \
 	done
+	@echo "Cleaning config/tests/.esphome/storage/"
+	@docker compose run --rm --entrypoint sh esphome -c "rm -rf /config/tests/.esphome/storage" || exit 1
 
 # Compilation tests for all platform configs
 firmware-test:

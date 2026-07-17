@@ -347,7 +347,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
   }
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_debug("wait_final_timeout", ctx.try_index, true);
-  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=%s(0x%02X) within %" PRIu32 " ms", ctx.try_index,
+  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=%s(0x%02X) within %" PRId32 " ms", ctx.try_index,
            command_name(request.cmd), request.cmd, RESPONSE_AUTH_WAIT_MS);
   return decisions::ExchangeFinalResponseDisposition::IGNORE_UNRELATED;
 }
