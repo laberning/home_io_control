@@ -78,11 +78,9 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        return true;
      },
      true},
-    {"lr1121_rx_bandwidth", [](const TuningConfig &t) { return sx1262_bandwidth_to_string(t.lr1121_rx_bandwidth); },
+    {"lr1121_rx_bandwidth", [](const TuningConfig &t) { return lr1121_bandwidth_to_string(t.lr1121_rx_bandwidth); },
      [](TuningConfig &t, const std::string &v) -> bool {
-       // LR1121RxBandwidth is a type alias of SX1262RxBandwidth (chip-identical encoding,
-       // see tuning_config.h), so the SX1262 string helpers apply directly.
-       auto bw = sx1262_bandwidth_from_string(v);
+       auto bw = lr1121_bandwidth_from_string(v);
        if (!bw.has_value())
          return false;
        t.lr1121_rx_bandwidth = bw.value();

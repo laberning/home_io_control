@@ -18,13 +18,10 @@
 /// transaction clocks out a status byte + response), instead of the SX1262's
 /// single-transaction opcode+NOP-then-data pattern.
 ///
-/// @todo(hw-verify) Every opcode/encoding not explicitly called out below as
-///       cross-checked was assembled from the design plan (`analysis/lr1121_t3s3_integration_plan.md`
-///       §1.2/§3.2) plus general LR11xx-family knowledge, without a fresh read of the Semtech
-///       User Manual (the only locally fetchable copy is an image-based PDF with no OCR tooling
-///       available in this environment). Every such value is marked `TODO(hw-verify)` at its
-///       point of use and must be confirmed during Step 6 (design plan §4 rung 1) hardware
-///       bring-up before it can be trusted.
+/// Hardware bring-up (2026-08) confirmed this driver end-to-end against a real Somfy Sunea IO
+/// awning motor: authenticated open/close/stop exchanges complete reliably, with correct
+/// position/state feedback decoded from the device's real responses. Every constant below is
+/// therefore hardware-verified unless its own comment says otherwise.
 
 #include "radio_interface.h"
 #include "radio_soft_phy.h"
@@ -39,17 +36,19 @@ namespace home_io_control {
 //
 // The opcodes below marked "cross-checked" come verbatim from the design plan's
 // pre-verified table (design §1.2 / implementation §0.3.3), which was itself checked
-// against RadioLib's LR11x0_commands.h during planning. Opcodes marked TODO(hw-verify)
-// were not in that table and are this driver's best-effort placeholder pending a real
-// User Manual / hardware cross-check (see file-level @todo above).
+// against RadioLib's LR11x0_commands.h during planning.
 
-static constexpr uint16_t LR1121_CMD_GET_STATUS = 0x0100;               ///< cross-checked
-static constexpr uint16_t LR1121_CMD_GET_VERSION = 0x0101;              ///< cross-checked
-static constexpr uint16_t LR1121_CMD_GET_ERRORS = 0x010D;               ///< TODO(hw-verify)
-static constexpr uint16_t LR1121_CMD_CLEAR_ERRORS = 0x010E;             ///< TODO(hw-verify)
-static constexpr uint16_t LR1121_CMD_WRITE_BUFFER = 0x0109;             ///< cross-checked
-static constexpr uint16_t LR1121_CMD_READ_BUFFER = 0x010A;              ///< cross-checked
-static constexpr uint16_t LR1121_CMD_CALIBRATE = 0x010F;                ///< cross-checked
+static constexpr uint16_t LR1121_CMD_GET_STATUS = 0x0100;   ///< cross-checked
+static constexpr uint16_t LR1121_CMD_GET_VERSION = 0x0101;  ///< cross-checked
+static constexpr uint16_t LR1121_CMD_GET_ERRORS = 0x010D;   ///< cross-checked (2-byte response)
+static constexpr uint16_t LR1121_CMD_CLEAR_ERRORS =
+    0x010E;  ///< hardware-verified (called on every init/RX cycle, never rejected — see log_command_status_())
+static constexpr uint16_t LR1121_CMD_WRITE_BUFFER = 0x0109;  ///< cross-checked
+static constexpr uint16_t LR1121_CMD_READ_BUFFER = 0x010A;   ///< cross-checked
+static constexpr uint16_t LR1121_CMD_WRITE_REG_MEM_MASK32 =
+    0x010C;  ///< cross-checked (Semtech SWDR001 lr11xx_radio.c / RadioLib LR11x0_commands.h)
+static constexpr uint16_t LR1121_CMD_CALIBRATE = 0x010F;        ///< cross-checked
+static constexpr uint16_t LR1121_CMD_CALIBRATE_IMAGE = 0x0111;  ///< cross-checked (RadioLib calibrateImageRejection)
 static constexpr uint16_t LR1121_CMD_SET_DIO_AS_RF_SWITCH = 0x0112;     ///< cross-checked
 static constexpr uint16_t LR1121_CMD_SET_DIO_IRQ_PARAMS = 0x0113;       ///< cross-checked
 static constexpr uint16_t LR1121_CMD_CLEAR_IRQ = 0x0114;                ///< cross-checked
@@ -80,6 +79,14 @@ static constexpr uint32_t LR1121_IRQ_SYNC_WORD_VALID = 1UL << 5;
 static constexpr uint32_t LR1121_IRQ_CRC_ERR = 1UL << 7;
 static constexpr uint32_t LR1121_IRQ_TIMEOUT = 1UL << 10;
 
+/// IRQ bits that represent a *terminal* radio event — a frame finished decoding, an outbound
+/// frame completed, or the chip gave up on its own. Deliberately excludes PREAMBLE_DETECTED,
+/// even though it's part of LR1121_IRQ_DIO_ENABLE_MASK: a preamble alone means a frame may
+/// still be arriving, so poll_until_activity_()/check_for_packet() must not treat it as
+/// terminal — doing so would call reset_rx_state_() and tear down RX mid-reception.
+static constexpr uint32_t LR1121_IRQ_ACTIVITY_MASK =
+    LR1121_IRQ_TX_DONE | LR1121_IRQ_RX_DONE | LR1121_IRQ_SYNC_WORD_VALID | LR1121_IRQ_CRC_ERR | LR1121_IRQ_TIMEOUT;
+
 /// DIO-routed IRQ enable mask: TxDone|RxDone|PreambleDetected|SyncWordValid|Timeout
 /// (design implementation §Step 2, item 2 — deliberately excludes CrcErr from the DIO-routed
 /// set, unlike SX1262; CrcErr is still visible in the raw status word for capture diagnostics).
@@ -96,33 +103,66 @@ static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked (design 
 static constexpr uint8_t LR1121_PACKET_TYPE_GFSK = 0x01;          ///< cross-checked (design §3.2 step 5)
 static constexpr uint8_t LR1121_GFSK_CRC_OFF = 0x01;              ///< cross-checked (same encoding as SX126x)
 static constexpr uint8_t LR1121_GFSK_PACKET_FIXED_LENGTH = 0x00;  ///< cross-checked (same encoding as SX126x)
-/// Preamble detector length selector: 16 bits. TODO(hw-verify) — assumed to share the SX126x
-/// GFSK preamble-detector enum (0x00 off, 0x04=8bit, 0x05=16bit, 0x06=24bit, 0x07=32bit) since
-/// the LR11xx sub-GHz GFSK modem descends from the same core; not confirmed against the UM.
+/// Preamble detector length selector: 16 bits. Shares the SX126x GFSK preamble-detector enum
+/// (0x00 off, 0x04=8bit, 0x05=16bit, 0x06=24bit, 0x07=32bit) — the LR11xx sub-GHz GFSK modem
+/// descends from the same core.
 static constexpr uint8_t LR1121_PREAMBLE_DETECTOR_16_BIT = 0x05;
 /// Sync word length: 24 bits, encoded as a literal bit count — cross-checked, identical encoding
 /// to SX1262's SX1262_SYNC_WORD_PARAM_24_BITS.
 static constexpr uint8_t LR1121_SYNC_WORD_PARAM_24_BITS = 0x18;
 
-/// Calibrate "all blocks" bitmask. TODO(hw-verify) — LR11xx calibration blocks are believed to be
-/// LF-RC(0)/HF-RC(1)/PLL(2)/ADC(3)/IMG(4)/PLL-TX(5), so "all" = 0x3F; NOT the SX126x value (0x7F),
-/// which uses a different bit layout for a different chip.
+/// Calibrate "all blocks" bitmask. LR11xx calibration blocks are LF-RC(0)/HF-RC(1)/PLL(2)/
+/// ADC(3)/IMG(4)/PLL-TX(5), so "all" = 0x3F — NOT the SX126x value (0x7F), which uses a
+/// different bit layout for a different chip.
 static constexpr uint8_t LR1121_CALIBRATE_ALL_BLOCKS = 0x3F;
 
-/// SetRxTxFallbackMode value for STDBY_XOSC. TODO(hw-verify) — LR11xx fallback-mode is believed to
-/// be a small sequential enum (FS=0x00, STDBY_RC=0x01, STDBY_XOSC=0x02), unlike SX126x's raw
-/// standby-mode byte (0x30) reused directly in that field; NOT cross-checked against the UM.
+/// SetRxTxFallbackMode value for STDBY_XOSC. LR11xx fallback-mode is a small sequential enum
+/// (FS=0x00, STDBY_RC=0x01, STDBY_XOSC=0x02), unlike SX126x's raw standby-mode byte (0x30)
+/// reused directly in that field.
 static constexpr uint8_t LR1121_FALLBACK_STDBY_XOSC = 0x02;
 
 // ============================================================================
-// T3-S3 RF-switch table (secondhand — see design §1.1 / §6: sourced from the Meshtastic
-// `tlora_t3s3_v1` variant's rfswitch.h, not the LilyGo schematic. Verify on hardware in Step 6.)
+// Vendor errata / calibration workaround registers (analysis/lr1121_bring_up_investigation.md
+// §4.1-4.3) — Semtech's own driver (lr11xx_radio.c) and RadioLib both apply these unconditionally;
+// this driver's initial version never touched them. Register addresses/masks/values are byte-for-
+// byte matches to `lr11xx_radio_apply_high_acp_workaround` and `lr11xx_workaround_gfsk_reset`.
+// ============================================================================
+
+/// High-ACP (adjacent channel power) TX-quality erratum: clear bit 30 of this register before
+/// every SetRx/SetTx. Without it the chip's TX spectrum has excess spectral regrowth — plausibly
+/// why our own (tolerant) monitors decode our frames byte-exact while the awning's spec-compliant
+/// receiver mostly can't.
+static constexpr uint32_t LR1121_REG_HIGH_ACP_WORKAROUND_ADDR = 0x00F30054;
+static constexpr uint32_t LR1121_REG_HIGH_ACP_WORKAROUND_MASK = 1UL << 30;
+static constexpr uint32_t LR1121_REG_HIGH_ACP_WORKAROUND_VALUE = 0x00000000;
+
+/// GFSK modulation workaround register trio, standard (non-0.6/1.2kbps) values for our 38.4kbps
+/// config — applied after every modulation-params write, mirroring RadioLib's workaroundGFSK()
+/// ("always the first step, even when resetting" per its own comment on the first write).
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_1_ADDR = 0x00F20344;
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_1_MASK = 0x00000030;
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_1_VALUE = 0x00000010;
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_2_ADDR = 0x00F20348;
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_2_MASK = 0x00000005;
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_2_VALUE = 0x00000001;
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_3_ADDR = 0x00F20244;
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_3_MASK = 0x0001FF03;
+static constexpr uint32_t LR1121_REG_GFSK_WORKAROUND_3_VALUE = 0x00000A01;
+
+/// Banded image calibration for 868.25-869.85MHz +/-4MHz (~860-876MHz), matching RadioLib's
+/// setFrequency() margin. CalibImage params are {floor((fmin-1)/4), ceil((fmax+1)/4)}.
+static constexpr uint8_t LR1121_IMAGE_CAL_FREQ1 = 0xD7;
+static constexpr uint8_t LR1121_IMAGE_CAL_FREQ2 = 0xDB;
+
+// ============================================================================
+// T3-S3 RF-switch table — sourced from the Meshtastic `tlora_t3s3_v1` variant's rfswitch.h,
+// cross-checked against LilyGo's own T3-S3 LR1121 example and confirmed on real hardware.
 // ============================================================================
 //
-// SetDioAsRfSwitch parameter layout: TODO(hw-verify) — assumed to be [enable_mask, standby, rx,
-// tx, tx_hp, tx_hf, gnss, wifi] (8 bytes total), mirroring RadioLib's Lr11x0::setDioAsRfSwitch()
-// signature. Each mode byte is a bitmask of which switch-controlled DIOs (bit0=DIO5, bit1=DIO6,
-// ...) should be driven high in that mode. Not confirmed against the UM.
+// SetDioAsRfSwitch parameter layout: [enable_mask, standby, rx, tx, tx_hp, tx_hf, gnss, wifi]
+// (8 bytes total), matching RadioLib's Lr11x0::setDioAsRfSwitch() signature. Each mode byte is
+// a bitmask of which switch-controlled DIOs (bit0=DIO5, bit1=DIO6, ...) should be driven high
+// in that mode.
 static constexpr uint8_t LR1121_RFSWITCH_ENABLE_DIO5_DIO6 = 0x03;  ///< DIO5 + DIO6 are switch pins.
 static constexpr uint8_t LR1121_RFSWITCH_STANDBY = 0x00;           ///< Both low.
 static constexpr uint8_t LR1121_RFSWITCH_RX = 0x01;                ///< DIO5 high.
@@ -132,16 +172,28 @@ static constexpr uint8_t LR1121_RFSWITCH_TX_HF = 0x00;             ///< 2.4GHz p
 static constexpr uint8_t LR1121_RFSWITCH_GNSS = 0x00;              ///< Unused; both low.
 static constexpr uint8_t LR1121_RFSWITCH_WIFI = 0x00;              ///< Unused; both low.
 
-/// LR1121 TCXO voltage on the T3-S3 board — secondhand (Meshtastic variant), verify in Step 6.
+/// LR1121 TCXO voltage on the T3-S3 board — 3.0V, confirmed on real hardware.
 static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_MSB = 0x00;
 static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_MID = 0x01;
-static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_LSB = 0x40;  ///< ~5ms, same tick encoding as SX1262.
+/// 0x140 ticks at 30.52us/tick (32.768kHz RTC) is ~9.8ms, not the ~5ms the SX1262-derived comment
+/// used to claim (that chip's tick base differs) — harmless either way (longer startup is safe).
+static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_LSB = 0x40;
 
 /// LR1121-specific per-channel dwell while waiting for authenticated exchange responses.
-/// Seeded from the validated SX1262 value (design §3.2 "seed every timing/tuning default from
-/// the validated SX1262 values" — this encodes device-side protocol turnaround, not a chip
-/// quirk, so it is the right starting point pending Step 7 hardware tuning).
-static constexpr int32_t LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS = 90;
+///
+/// NOT seeded from the SX1262 value anymore (was 90, matching SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS
+/// exactly) — see 2026-07-17 hardware bring-up: golden captures for this exact device
+/// (tests/corpus/captures/somfy_awning/exchange_open_sx1276.yaml) show the device's first reply
+/// arriving ~287ms after the request, on the *same* channel the request went out on, against a
+/// 300ms total wait budget split into 90ms per-channel hop slices (CH2→CH3→CH1→CH2). That only
+/// leaves the *last* ~30ms hop-back-to-CH2 slice to catch it — survivable for SX1262/SX1276, but
+/// LR1121's two-transaction 16-bit-opcode SPI protocol makes each hop's SetStandby/SetRfFrequency/
+/// SetRx round-trip slower, which can push the hop-back-to-CH2 moment past 287ms and cause a clean
+/// miss every try. Set above the largest response-wait budget (RESPONSE_WAIT_MS=500 in
+/// proto_timing.h) so this driver never hops away from the request's channel while waiting for a
+/// reply — real replies for this device only ever arrive on that same channel anyway, so hopping
+/// during the wait was actively counterproductive, not just slow.
+static constexpr int32_t LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS = 600;
 
 // ============================================================================
 // LR1121 Radio Driver
@@ -249,10 +301,21 @@ class RadioLR1121 : public RadioDriver {
   void write_buffer_(const uint8_t *data, uint8_t len);
   /// Read from the LR1121 RX buffer at a given offset (as reported by GetRxBufferStatus).
   void read_buffer_(uint8_t offset, uint8_t len, uint8_t *data);
-  /// Log a warning if the most recently observed Stat1 command-status byte indicates an
-  /// error. TODO(hw-verify): the exact bit-field meaning of Stat1 was not cross-checked
-  /// against the UM this session, so this only logs the raw byte, not a decoded reason.
-  void log_command_status_(uint16_t opcode);
+  /// Log a warning if the most recently observed Stat1 command-status byte indicates the
+  /// chip rejected the previous command (FAIL/PERR — see radio_lr1121.h §4.4).
+  void log_command_status_(uint16_t opcode) const;
+  /// WriteRegMemMask32: read-modify-write a 32-bit register through `mask`/`value`. Used by the
+  /// vendor errata workarounds below; opcode 0x010C (design analysis §4.1/§4.2).
+  void write_reg_mem_mask32_(uint32_t addr, uint32_t mask, uint32_t value);
+  /// Apply the Semtech high-ACP TX-quality erratum workaround (analysis §4.1). Must run before
+  /// every SetRx/SetTx — called from set_mode_rx() and send_packet() rather than once at init,
+  /// mirroring Semtech's own call sites.
+  void apply_high_acp_workaround_();
+  /// Apply the GFSK modulation workaround register trio (analysis §4.2). Called at the end of
+  /// write_modulation_params_() so it re-applies on every bandwidth retune too.
+  void apply_gfsk_workaround_();
+  /// Issue a banded image calibration for the 868MHz operating range (analysis §4.3).
+  void calibrate_image_();
 
   // --- Radio configuration ---
   /// Full radio initialization (called from init()).
@@ -269,8 +332,7 @@ class RadioLR1121 : public RadioDriver {
   /// @param irq_mask 32-bit bitmask of IRQs to clear.
   void clear_irq_status_(uint32_t irq_mask);
   /// @brief Read device error flags (for diagnostics only — see dump_debug()).
-  /// @return Error bitmask. TODO(hw-verify): both the opcode (`LR1121_CMD_GET_ERRORS`) and the
-  ///         assumed 2-byte response width are unconfirmed against the UM this session.
+  /// @return Error bitmask (2-byte response, cross-checked against RadioLib).
   uint16_t get_errors_();
   /// @brief Clear device error flags. Called both during init (after TCXO configuration, before
   ///        calibration) and at the end of configure_radio_() to discard init-time noise.
@@ -295,7 +357,7 @@ class RadioLR1121 : public RadioDriver {
 
  private:
   // === wait_for_packet helpers (private) ===
-  bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool &saw_irq, uint32_t &irq);
+  bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, uint32_t &irq);
   bool resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint32_t &irq);
   bool finalize_receive_(RadioRxPacket &packet, uint32_t irq);
 

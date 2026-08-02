@@ -93,6 +93,10 @@ class TestableRadioLR1121 : public RadioLR1121 {
   // GetRxBufferStatus/ReadBuffer/UART-probe path against a ScriptedSpi).
   void set_use_real_read_rx_packet(bool use_real) { use_real_ = use_real; }
 
+  // Bypass the read_irq_status_raw() override below to exercise the real GetStatus SPI
+  // transaction/parsing against a ScriptedSpi.
+  uint32_t call_real_read_irq_status_raw() { return RadioLR1121::read_irq_status_raw(); }
+
  protected:
   uint32_t read_irq_status_raw() override {
     if (irq_idx_ < irq_seq_.size()) {
@@ -127,9 +131,11 @@ namespace {
 constexpr uint8_t TCXO_YAML_CODE_3_0V = 0x07;
 
 // Queue a GetVersion response that reports a real LR1121 (device type 0x03) so init()
-// proceeds past the identity check. Response layout: [stat1, device_type, hw, fw_major, fw_minor].
+// proceeds past the identity check. Response layout: [stat1, hw, device_type, fw_major,
+// fw_minor] — cross-checked against RadioLib's LR11x0::getVersion() (device type is the
+// second data byte, not the first).
 void queue_valid_version_response(ScriptedSpi &spi) {
-  spi.queue_responses({0x00, LR1121_DEVICE_TYPE, 0x01, 0x02, 0x01});
+  spi.queue_responses({0x00, 0x01, LR1121_DEVICE_TYPE, 0x02, 0x01});
 }
 
 // Append the protocol CRC to `frame` and UART-encode the result — the exact on-air transform
@@ -168,6 +174,42 @@ TEST(RadioLR1121, GetVersionTransactionBytes) {
   EXPECT_EQ(first[1], 0x01) << "opcode LSB";
 }
 
+TEST(RadioLR1121, WaitBusyShortCircuitsAfterFailure) {
+  // Once a BUSY timeout has failed the driver, every later SPI command must not re-run the same
+  // multi-second timeout — otherwise a mid-init BUSY glitch would cascade into one full timeout
+  // per remaining configure_radio_() step (up to ~16x LR1121_BUSY_TIMEOUT_MS) before init()
+  // finally reports failure. BUSY pin held permanently high (never clears) simulates this.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(true);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+
+  radio.set_mode_standby();  // First BUSY wait times out and sets failed_.
+  ASSERT_TRUE(radio.is_failed());
+  uint32_t const t_before_second = esphome::millis();
+  radio.set_mode_standby();  // Must short-circuit instead of re-running the full timeout.
+  uint32_t const t_after_second = esphome::millis();
+
+  EXPECT_LT(t_after_second - t_before_second, 100u)
+      << "a failed driver must not re-run the BUSY timeout on every subsequent command";
+}
+
+TEST(RadioLR1121, ReadIrqStatusRawParsesGetStatusResponse) {
+  // GetStatus wire response is [Stat1, Stat2, IRQ_b3, IRQ_b2, IRQ_b1, IRQ_b0] (cross-checked
+  // against RadioLib's LRxxxx::getIrqStatus()). read_command_ consumes Stat1 separately, so
+  // this queues Stat1 + Stat2 + the 4 IRQ bytes and checks the word is reassembled correctly
+  // — guards against the resp[] off-by-one this test would have missed before the fix (every
+  // other test in this file only ever exercises the overridden read_irq_status_raw()).
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+
+  uint32_t const expected = LR1121_IRQ_RX_DONE | LR1121_IRQ_TIMEOUT;
+  spi.queue_responses({0x00, 0x00, (uint8_t) (expected >> 24), (uint8_t) (expected >> 16), (uint8_t) (expected >> 8),
+                       (uint8_t) expected});
+
+  EXPECT_EQ(radio.call_real_read_irq_status_raw(), expected);
+}
+
 TEST(RadioLR1121, InitSucceedsOnCorrectDeviceType) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
@@ -196,6 +238,71 @@ TEST(RadioLR1121, TcxoCommandEncodesYamlVoltageCode) {
   EXPECT_EQ(tx[2], TCXO_YAML_CODE_3_0V - 1) << "TCXO voltage code should be YAML code minus 1";
 }
 
+TEST(RadioLR1121, PaConfigSelectsHpPathAndClampsPowerAboveLpRange) {
+  // tx_power=17 exceeds the LP path's -17..14dBm range, so configure_radio_() must select HP
+  // (paSel=1, regPaSupply=1/VBAT, paHpSel=0x07) and clamp TX power to HP's -9..22dBm range. This
+  // is the fix for the board's actual root-cause bug: the driver used to always select LP
+  // regardless of tx_power_, so a 17dBm request produced an invalid/undefined analog PA output.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  queue_valid_version_response(spi);
+
+  ASSERT_TRUE(radio.init());
+
+  int pa_idx = spi.find_opcode(LR1121_CMD_SET_PA_CONFIG);
+  ASSERT_GE(pa_idx, 0);
+  const auto &pa_tx = spi.transactions()[pa_idx];
+  ASSERT_EQ(pa_tx.size(), 6u) << "opcode(2) + paSel + regPaSupply + paDutyCycle + paHpSel";
+  EXPECT_EQ(pa_tx[2], 0x01) << "paSel must select HP for 17dBm";
+  EXPECT_EQ(pa_tx[3], 0x01) << "regPaSupply must be VBAT (HP) for 17dBm";
+  EXPECT_EQ(pa_tx[5], 0x07) << "paHpSel";
+
+  int tx_params_idx = spi.find_opcode(LR1121_CMD_SET_TX_PARAMS);
+  ASSERT_GE(tx_params_idx, 0);
+  const auto &tx_params_tx = spi.transactions()[tx_params_idx];
+  ASSERT_EQ(tx_params_tx.size(), 4u) << "opcode(2) + power + ramp";
+  EXPECT_EQ((int8_t) tx_params_tx[2], 17) << "17dBm is within HP's range, so it must pass through unclamped";
+}
+
+TEST(RadioLR1121, PaConfigSelectsLpPathAndClampsPowerToLpRange) {
+  // tx_power=10 is within the LP path's -17..14dBm range, so configure_radio_() must select LP
+  // (paSel=0, regPaSupply=0/internal regulator).
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 10, TCXO_YAML_CODE_3_0V);
+  queue_valid_version_response(spi);
+
+  ASSERT_TRUE(radio.init());
+
+  int pa_idx = spi.find_opcode(LR1121_CMD_SET_PA_CONFIG);
+  ASSERT_GE(pa_idx, 0);
+  const auto &pa_tx = spi.transactions()[pa_idx];
+  EXPECT_EQ(pa_tx[2], 0x00) << "paSel must select LP for 10dBm";
+  EXPECT_EQ(pa_tx[3], 0x00) << "regPaSupply must be the internal regulator (LP) for 10dBm";
+
+  int tx_params_idx = spi.find_opcode(LR1121_CMD_SET_TX_PARAMS);
+  ASSERT_GE(tx_params_idx, 0);
+  const auto &tx_params_tx = spi.transactions()[tx_params_idx];
+  EXPECT_EQ((int8_t) tx_params_tx[2], 10) << "10dBm is within LP's range, so it must pass through unclamped";
+}
+
+TEST(RadioLR1121, PaConfigClampsPowerAboveHpMaximum) {
+  // A configured tx_power above HP's 22dBm ceiling (schema allows up to 22 per __init__.py, but
+  // guard the driver's own clamp independent of that) must be clamped, not passed through raw.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 22, TCXO_YAML_CODE_3_0V);
+  queue_valid_version_response(spi);
+
+  ASSERT_TRUE(radio.init());
+
+  int tx_params_idx = spi.find_opcode(LR1121_CMD_SET_TX_PARAMS);
+  ASSERT_GE(tx_params_idx, 0);
+  const auto &tx_params_tx = spi.transactions()[tx_params_idx];
+  EXPECT_EQ((int8_t) tx_params_tx[2], 22) << "22dBm is exactly HP's ceiling";
+}
+
 TEST(RadioLR1121, InitSequenceOrder) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
@@ -219,6 +326,82 @@ TEST(RadioLR1121, InitSequenceOrder) {
   EXPECT_LT(tcxo_idx, clear_errors_idx) << "Errors must be cleared after TCXO is configured";
   EXPECT_LT(clear_errors_idx, calibrate_idx) << "Calibrate must run after errors are cleared";
   EXPECT_LT(rfswitch_idx, set_rx_idx) << "RF-switch config must precede entering RX";
+}
+
+TEST(RadioLR1121, InitAppliesImageCalibrationAfterCalibrate) {
+  // analysis/lr1121_bring_up_investigation.md §4.3: Calibrate(0x3F) calibrates the IMG block at
+  // the chip's default band, not ours; a banded CalibImage must follow it.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  queue_valid_version_response(spi);
+
+  ASSERT_TRUE(radio.init());
+
+  int calibrate_idx = spi.find_opcode(LR1121_CMD_CALIBRATE);
+  int calibrate_image_idx = spi.find_opcode(LR1121_CMD_CALIBRATE_IMAGE);
+  ASSERT_GE(calibrate_idx, 0);
+  ASSERT_GE(calibrate_image_idx, 0);
+  EXPECT_LT(calibrate_idx, calibrate_image_idx) << "CalibImage must follow the all-blocks Calibrate";
+
+  const auto &tx = spi.transactions()[calibrate_image_idx];
+  ASSERT_EQ(tx.size(), 4u) << "opcode(2) + freq1(1) + freq2(1)";
+  EXPECT_EQ(tx[2], LR1121_IMAGE_CAL_FREQ1);
+  EXPECT_EQ(tx[3], LR1121_IMAGE_CAL_FREQ2);
+}
+
+TEST(RadioLR1121, InitAppliesGfskWorkaroundAfterModulationParams) {
+  // analysis/lr1121_bring_up_investigation.md §4.2: the GFSK workaround register trio must be
+  // written after every modulation-params write.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  queue_valid_version_response(spi);
+
+  ASSERT_TRUE(radio.init());
+
+  int mod_params_idx = spi.find_opcode(LR1121_CMD_SET_MODULATION_PARAMS);
+  ASSERT_GE(mod_params_idx, 0);
+
+  int found = 0;
+  for (size_t i = static_cast<size_t>(mod_params_idx) + 1; i < spi.transactions().size(); i++) {
+    const auto &tx = spi.transactions()[i];
+    if (tx.size() >= 2 && tx[0] == (uint8_t) (LR1121_CMD_WRITE_REG_MEM_MASK32 >> 8) &&
+        tx[1] == (uint8_t) LR1121_CMD_WRITE_REG_MEM_MASK32) {
+      found++;
+      if (found > 3)
+        break;
+    } else if (found > 0) {
+      break;  // workaround writes must be contiguous, immediately after modulation params
+    }
+  }
+  EXPECT_EQ(found, 3) << "expected exactly 3 WriteRegMemMask32 calls immediately after SetModulationParams";
+}
+
+TEST(RadioLR1121, SetModeRxAppliesHighAcpWorkaroundFirst) {
+  // analysis/lr1121_bring_up_investigation.md §4.1: the high-ACP TX-quality workaround must be
+  // written immediately before every SetRx.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+
+  radio.set_mode_rx();
+
+  ASSERT_EQ(spi.transactions().size(), 2u) << "expected exactly [WriteRegMemMask32, SetRx]";
+  const auto &workaround_tx = spi.transactions()[0];
+  const auto &set_rx_tx = spi.transactions()[1];
+  ASSERT_GE(workaround_tx.size(), 2u);
+  EXPECT_EQ(workaround_tx[0], (uint8_t) (LR1121_CMD_WRITE_REG_MEM_MASK32 >> 8));
+  EXPECT_EQ(workaround_tx[1], (uint8_t) LR1121_CMD_WRITE_REG_MEM_MASK32);
+  ASSERT_GE(set_rx_tx.size(), 2u);
+  EXPECT_EQ(set_rx_tx[0], (uint8_t) (LR1121_CMD_SET_RX >> 8));
+  EXPECT_EQ(set_rx_tx[1], (uint8_t) LR1121_CMD_SET_RX);
+
+  ASSERT_EQ(workaround_tx.size(), 14u) << "opcode(2) + addr(4) + mask(4) + value(4)";
+  uint32_t const addr = (static_cast<uint32_t>(workaround_tx[2]) << 24) |
+                        (static_cast<uint32_t>(workaround_tx[3]) << 16) |
+                        (static_cast<uint32_t>(workaround_tx[4]) << 8) | static_cast<uint32_t>(workaround_tx[5]);
+  EXPECT_EQ(addr, LR1121_REG_HIGH_ACP_WORKAROUND_ADDR);
 }
 
 TEST(RadioLR1121, ChangeFrequencyWritesPlainHzBytes) {
@@ -295,6 +478,30 @@ TEST(RadioLR1121, WaitForPacketTimeout_NoActivity) {
 
   EXPECT_FALSE(ok) << "absence of any radio activity should cause timeout and return false";
   EXPECT_EQ(result.len, 0u);
+}
+
+TEST(RadioLR1121, WaitForPacketIgnoresPreambleOnlyActivity) {
+  // LR1121_IRQ_DIO_ENABLE_MASK routes PREAMBLE_DETECTED to the DIO pin, but a preamble alone
+  // means the frame may still be arriving. Guards against poll_until_activity_() treating a
+  // preamble-only IRQ status as terminal activity — that would make finalize_receive_() see no
+  // RX_DONE and call reset_rx_state_(), tearing down RX and losing the real frame that follows.
+  // Proves the driver waits through a preamble-only reading and still catches the later RX_DONE.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+
+  RadioRxPacket pkt{};
+  pkt.len = 2;
+  pkt.data[0] = 0x11;
+  pkt.data[1] = 0x22;
+  radio.set_expected_packet(pkt);
+  radio.set_irq_sequence({LR1121_IRQ_PREAMBLE_DETECTED, LR1121_IRQ_PREAMBLE_DETECTED, LR1121_IRQ_RX_DONE});
+
+  RadioRxPacket result{};
+  bool ok = radio.wait_for_packet(result, 100);
+
+  EXPECT_TRUE(ok) << "preamble-only readings must not be treated as terminal activity";
+  EXPECT_EQ(result.len, 2u);
 }
 
 TEST(RadioLR1121, WaitForPacketRaceCondition_Resolved) {
@@ -432,6 +639,24 @@ TEST(RadioLR1121, CheckForPacketSyncWithoutRxDoneClearsIrqAndReturnsFalse) {
   EXPECT_GE(clear_idx, 0) << "the sticky SYNC flag must be cleared so it doesn't wedge the next poll";
 }
 
+TEST(RadioLR1121, CheckForPacketPreambleOnlyDoesNotResetRx) {
+  // A preamble-only IRQ means a frame may still be arriving. check_for_packet() must clear just
+  // that bit (so the next real completion can still raise the DIO edge) and NOT call
+  // reset_rx_state_(), which would issue SetStandby and tear down RX mid-reception.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+  radio.mark_dio_fired_from_isr();
+  radio.set_irq_sequence({LR1121_IRQ_PREAMBLE_DETECTED});
+
+  RadioRxPacket packet{};
+  bool ok = radio.check_for_packet(packet);
+
+  EXPECT_FALSE(ok) << "preamble alone is not a complete packet yet";
+  EXPECT_GE(spi.find_opcode(LR1121_CMD_CLEAR_IRQ), 0) << "the preamble bit must be cleared so it can re-fire";
+  EXPECT_LT(spi.find_opcode(LR1121_CMD_SET_STANDBY), 0) << "must not tear down RX via reset_rx_state_()";
+}
+
 // ============================================================================
 // Real read_rx_packet path: proves the GetRxBufferStatus/ReadBuffer/UART-probe wiring
 // against a scripted chip response, using a genuine UART-encoded, CRC-valid frame.
@@ -510,6 +735,32 @@ TEST(RadioLR1121, SendPacketWritesUartEncodedBytes) {
     EXPECT_EQ(tx[2 + i], expected_encoded[i]) << "encoded byte " << (int) i << " mismatch";
 }
 
+TEST(RadioLR1121, SendPacketAppliesHighAcpWorkaroundBeforeSetTx) {
+  // The high-ACP TX-quality workaround must be written immediately before SetTx too, not just
+  // before SetRx (SetModeRxAppliesHighAcpWorkaroundFirst already covers that call site).
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
+
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  radio.send_packet(frame, sizeof(frame), cfg);  // Times out waiting for TX_DONE — see the test above.
+
+  int set_tx_idx = spi.find_opcode(LR1121_CMD_SET_TX);
+  ASSERT_GE(set_tx_idx, 0);
+  ASSERT_GT(set_tx_idx, 0) << "SetTx must not be the very first transaction (a workaround write precedes it)";
+  const auto &workaround_tx = spi.transactions()[set_tx_idx - 1];
+  ASSERT_GE(workaround_tx.size(), 6u);
+  EXPECT_EQ(workaround_tx[0], (uint8_t) (LR1121_CMD_WRITE_REG_MEM_MASK32 >> 8));
+  EXPECT_EQ(workaround_tx[1], (uint8_t) LR1121_CMD_WRITE_REG_MEM_MASK32);
+  uint32_t const addr = (static_cast<uint32_t>(workaround_tx[2]) << 24) |
+                        (static_cast<uint32_t>(workaround_tx[3]) << 16) |
+                        (static_cast<uint32_t>(workaround_tx[4]) << 8) | static_cast<uint32_t>(workaround_tx[5]);
+  EXPECT_EQ(addr, LR1121_REG_HIGH_ACP_WORKAROUND_ADDR);
+}
+
 TEST(RadioLR1121, SendPacketSetsPacketParamsLengthToEncodedLength) {
   const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
   const uint8_t frame_len = sizeof(frame);
@@ -570,4 +821,21 @@ TEST(RadioLR1121, ApplyTuningRewritesModulationParamsBandwidth) {
   ASSERT_EQ(tx.size(), 12u) << "opcode(2) + 10 modulation-param bytes";
   EXPECT_EQ(tx[7], static_cast<uint8_t>(LR1121RxBandwidth::BW_187_2_KHZ))
       << "bandwidth byte must reflect the tuned value";
+
+  // write_modulation_params_() must re-apply the GFSK workaround trio on every retune, not just
+  // at init — this specifically catches a regression that hoists the workaround call up into
+  // configure_radio_() so it only fires once.
+  int found = 0;
+  for (size_t i = static_cast<size_t>(idx) + 1; i < spi.transactions().size(); i++) {
+    const auto &workaround_tx = spi.transactions()[i];
+    if (workaround_tx.size() >= 2 && workaround_tx[0] == (uint8_t) (LR1121_CMD_WRITE_REG_MEM_MASK32 >> 8) &&
+        workaround_tx[1] == (uint8_t) LR1121_CMD_WRITE_REG_MEM_MASK32) {
+      found++;
+      if (found > 3)
+        break;
+    } else if (found > 0) {
+      break;
+    }
+  }
+  EXPECT_EQ(found, 3) << "GFSK workaround trio must re-run immediately after every SetModulationParams";
 }

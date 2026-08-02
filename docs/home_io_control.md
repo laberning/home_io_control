@@ -97,7 +97,7 @@ Notes:
 
 ### Radio Chip Support
 
-SX1276 and SX1262 are confirmed and validated on real hardware (see the [README hardware table](../README.md#hardware-requirements)). LR1121 support is code-complete — the driver, tuning, and firmware build all pass the full desk-verification suite — but has not yet been flashed to real silicon. Several register-level details are marked `TODO(hw-verify)` directly in `radio_lr1121.cpp`/`.h` pending that bring-up. `radio_type: lr1121` is always explicit; unlike SX1276/SX1262, it is never selected by auto-detection.
+SX1276, SX1262, and LR1121 are all confirmed and validated on real hardware (see the [README hardware table](../README.md#hardware-requirements)). `radio_type: lr1121` is always explicit; unlike SX1276/SX1262, it is never selected by auto-detection.
 
 ## Cover Platform
 
@@ -472,9 +472,6 @@ button:
 With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position` button automatically.
 
 ### Minimal LR1121 Cover Controller
-
-> [!NOTE]
-> LR1121 support is code-complete but not yet hardware-validated — see "Radio Chip Support" above.
 
 ```yaml
 esphome:

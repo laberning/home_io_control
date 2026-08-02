@@ -68,8 +68,8 @@ void IOHomeControlComponent::setup() {
   ESP_LOGI(detail::TAG, "Initializing...");
   if (!hex_to_bytes(this->node_id_str_, this->node_id_, NODE_ID_SIZE) ||
       !hex_to_bytes(this->system_key_str_, this->system_key_, AES_KEY_SIZE)) {
-    ESP_LOGE(detail::TAG, "Invalid node_id or system_key configuration");
-    this->mark_failed();
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — ESPHome's own LOG_STR() macro.
+    this->mark_failed(LOG_STR("Invalid node_id or system_key configuration"));
     return;
   }
 
@@ -78,14 +78,16 @@ void IOHomeControlComponent::setup() {
   const char *chip_name_for_log = nullptr;
   this->radio_ = this->select_and_construct_radio_(&chip_name_for_log);
   if (this->radio_ == nullptr) {
-    this->mark_failed();
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — ESPHome's own LOG_STR() macro.
+    this->mark_failed(LOG_STR("Radio driver selection/allocation failed (see earlier log for details)"));
     return;
   }
 
   if (!this->radio_->init()) {
     delete this->radio_;
     this->radio_ = nullptr;
-    this->mark_failed();
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — ESPHome's own LOG_STR() macro.
+    this->mark_failed(LOG_STR("Radio hardware initialization failed (see earlier log for details)"));
     return;
   }
 

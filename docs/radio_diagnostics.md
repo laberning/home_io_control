@@ -134,7 +134,7 @@ your device may differ.
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell while hopping during discovery. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
-| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
+| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
 | `lr1121_response_preamble` | LR1121 | `64` | 32–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
@@ -231,14 +231,16 @@ The LR1121 equivalents of the four SX1262 knobs above — same meaning, same def
 register-level reasoning (the LR1121's GFSK bandwidth encoding is register-identical to the
 SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop).
 
-*Observations:* none yet — unlike every other parameter on this page, these defaults are
-**seeded from the SX1262's validated values, not independently measured on LR1121 hardware**.
-The LR1121 driver has not been flashed to real silicon as of this writing (see the "Radio Chip
-Support" section in [docs/home_io_control.md](home_io_control.md)). Treat
-them as a starting point for hardware bring-up, tune live from these entities exactly as
-described in "A suggested tuning plan" below, and expect the same failure *shapes* the SX1262
-section describes (post-TX corruption, brand-new-device preamble lock-on, discovery responses
-missed mid-hop) to be the first things worth adjusting if pairing doesn't work out of the box.
+*Observations:* the defaults were seeded from SX1262's validated values and are now confirmed
+working on real LR1121 hardware — authenticated open/close/stop exchanges complete reliably
+against a real awning at the stock `117.3` kHz / `64` B / `500` µs / `200` ms settings. Two of
+`lr1121_rx_bandwidth`'s enum values (39.0/46.9 kHz) turned out to have the wrong register
+encoding when borrowed directly from SX1262 and were corrected — the full, corrected option set
+is `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` kHz. The main variable that
+still matters in practice is RF link quality (RSSI) rather than these timing/bandwidth knobs —
+weak signal shows up as intermittent frame loss on either leg of an exchange, which the
+existing per-command retry already absorbs; there was no need to touch these defaults to get a
+working exchange.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 

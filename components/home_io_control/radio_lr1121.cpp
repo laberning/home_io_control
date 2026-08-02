@@ -30,12 +30,25 @@ static const char *const TAG = "home_io_control.lr1121";
 // protocol-frame-size property, not a chip quirk, so the same value applies here unchanged.
 static const uint8_t LR1121_RX_PROBE_PACKET_LEN = 48;
 
+// The LR11xx runs an internal boot ROM after reset before BUSY is meaningful — cross-checked
+// against RadioLib's LRxxxx::reset(), which waits ~300ms ("typical transition duration should
+// be 273 ms") and then polls BUSY with a 3s timeout; matched here exactly rather than picking
+// an arbitrary shorter value, since the only cost of a longer timeout is on the already-failing
+// path (a genuinely dead chip takes a few seconds longer to report failure).
+static const uint32_t LR1121_BUSY_TIMEOUT_MS = 3000;
+
 // === SPI Communication (16-bit opcode, two-transaction) ===
 
 void RadioLR1121::wait_busy_() {
+  // Once a BUSY timeout has failed the driver, every later wait_busy_() call would otherwise
+  // re-run the same timeout again — init()'s remaining ~16 configure_radio_() steps would each
+  // block for LR1121_BUSY_TIMEOUT_MS before init() finally returns false. Short-circuit instead:
+  // the chip is already known-unresponsive, so there's nothing to wait for.
+  if (this->failed_)
+    return;
   uint32_t const start = millis();
   while (this->busy_pin_->digital_read()) {
-    if (millis() - start > 10) {
+    if (millis() - start > LR1121_BUSY_TIMEOUT_MS) {
       ESP_LOGE(TAG, "BUSY timeout");
       this->failed_ = true;
       return;
@@ -73,14 +86,47 @@ void RadioLR1121::read_command_(uint16_t opcode, const uint8_t *params, uint8_t 
   this->log_command_status_(opcode);
 }
 
-void RadioLR1121::log_command_status_(uint16_t opcode) {
-  // TODO(hw-verify): the Stat1 byte's command-status bit field was not cross-checked against
-  // the UM this session (see file-level @todo in radio_lr1121.h), so this only surfaces the raw
-  // byte for diagnostics rather than decoding a specific error enum. Step 6 hardware bring-up
-  // should confirm the encoding and tighten this into a real error check if warranted.
+void RadioLR1121::log_command_status_(uint16_t opcode) const {
+  // Stat1 bits [3:1] encode the previous command's fate (0=CMD_FAIL, 1=CMD_PERR "processing
+  // error", 2=CMD_OK, 3=CMD_DAT); bit 0 is a separate IRQ-active flag. Any FAIL/PERR means the
+  // chip silently rejected the command — surfaced unconditionally (not gated on
+  // IOHOME_FRAME_LOG) since this whole driver has been blind to command rejections until now.
+  uint8_t const cmd_status = (this->last_stat1_ >> 1) & 0x07;
+  if (cmd_status == 0x00 || cmd_status == 0x01) {
+    ESP_LOGW(TAG, "cmd 0x%04X rejected: stat1=0x%02X (%s)", opcode, this->last_stat1_,
+             cmd_status == 0x00 ? "CMD_FAIL" : "CMD_PERR");
+  }
 #ifdef IOHOME_FRAME_LOG
   ESP_LOGV(TAG, "cmd 0x%04X stat1=0x%02X", opcode, this->last_stat1_);
 #endif
+}
+
+void RadioLR1121::write_reg_mem_mask32_(uint32_t addr, uint32_t mask, uint32_t value) {
+  uint8_t params[12] = {
+      (uint8_t) (addr >> 24),  (uint8_t) (addr >> 16),  (uint8_t) (addr >> 8),  (uint8_t) addr,
+      (uint8_t) (mask >> 24),  (uint8_t) (mask >> 16),  (uint8_t) (mask >> 8),  (uint8_t) mask,
+      (uint8_t) (value >> 24), (uint8_t) (value >> 16), (uint8_t) (value >> 8), (uint8_t) value,
+  };
+  this->write_command_(LR1121_CMD_WRITE_REG_MEM_MASK32, params, sizeof(params));
+}
+
+void RadioLR1121::apply_high_acp_workaround_() {
+  this->write_reg_mem_mask32_(LR1121_REG_HIGH_ACP_WORKAROUND_ADDR, LR1121_REG_HIGH_ACP_WORKAROUND_MASK,
+                              LR1121_REG_HIGH_ACP_WORKAROUND_VALUE);
+}
+
+void RadioLR1121::apply_gfsk_workaround_() {
+  this->write_reg_mem_mask32_(LR1121_REG_GFSK_WORKAROUND_1_ADDR, LR1121_REG_GFSK_WORKAROUND_1_MASK,
+                              LR1121_REG_GFSK_WORKAROUND_1_VALUE);
+  this->write_reg_mem_mask32_(LR1121_REG_GFSK_WORKAROUND_2_ADDR, LR1121_REG_GFSK_WORKAROUND_2_MASK,
+                              LR1121_REG_GFSK_WORKAROUND_2_VALUE);
+  this->write_reg_mem_mask32_(LR1121_REG_GFSK_WORKAROUND_3_ADDR, LR1121_REG_GFSK_WORKAROUND_3_MASK,
+                              LR1121_REG_GFSK_WORKAROUND_3_VALUE);
+}
+
+void RadioLR1121::calibrate_image_() {
+  uint8_t params[2] = {LR1121_IMAGE_CAL_FREQ1, LR1121_IMAGE_CAL_FREQ2};
+  this->write_command_(LR1121_CMD_CALIBRATE_IMAGE, params, sizeof(params));
 }
 
 void RadioLR1121::write_buffer_(const uint8_t *data, uint8_t len) {
@@ -94,26 +140,28 @@ void RadioLR1121::read_buffer_(uint8_t offset, uint8_t len, uint8_t *data) {
 
 uint32_t RadioLR1121::read_irq_status_raw() {
   // GetStatus returns Stat1, Stat2, then the 32-bit IRQ status word (design §3.2:
-  // "read IRQ status non-destructively via GetStatus"). TODO(hw-verify): the exact response
-  // byte count/ordering (Stat1+Stat2+4 IRQ bytes here) was not cross-checked against the UM.
-  uint8_t resp[6] = {0};
+  // "read IRQ status non-destructively via GetStatus") — cross-checked against RadioLib's
+  // LRxxxx::getIrqStatus(): 6 bytes total [Stat1, Stat2, IRQ_b3..IRQ_b0]. read_command_
+  // already consumes Stat1 into last_stat1_, so only 5 more bytes remain: Stat2 (resp[0],
+  // unused) followed by the 4 IRQ bytes (resp[1..4]).
+  uint8_t resp[5] = {0};
   this->read_command_(LR1121_CMD_GET_STATUS, nullptr, 0, resp, sizeof(resp));
-  return (static_cast<uint32_t>(resp[2]) << 24) | (static_cast<uint32_t>(resp[3]) << 16) |
-         (static_cast<uint32_t>(resp[4]) << 8) | static_cast<uint32_t>(resp[5]);
+  return (static_cast<uint32_t>(resp[1]) << 24) | (static_cast<uint32_t>(resp[2]) << 16) |
+         (static_cast<uint32_t>(resp[3]) << 8) | static_cast<uint32_t>(resp[4]);
 }
 
 // === wait_for_packet static helpers ===
 
-/// Poll for first radio activity (IRQ pin or any IRQ status) within timeout.
-/// Mirrors RadioSX1262::poll_until_activity_ exactly, over the LR1121's wider IRQ word.
-bool RadioLR1121::poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool &saw_irq, uint32_t &irq) {
+/// Poll for first *terminal* radio activity (IRQ pin or IRQ status matching
+/// LR1121_IRQ_ACTIVITY_MASK) within timeout. A preamble-only reading keeps the loop going
+/// rather than returning — the loop re-reads chip status via SPI every iteration regardless
+/// of the DIO edge, so nothing is lost by not acting on it immediately.
+bool RadioLR1121::poll_until_activity_(uint32_t start, uint32_t timeout_ms, uint32_t &irq) {
   while (true) {
-    if (this->is_dio_fired()) {
-      saw_irq = true;
-      return true;
-    }
+    if (this->is_dio_fired())
+      this->clear_dio_fired();
     irq = this->read_irq_status_raw();
-    if (irq != 0)
+    if ((irq & LR1121_IRQ_ACTIVITY_MASK) != 0)
       return true;
     if (millis() - start > timeout_ms) {
       this->clear_dio_fired();
@@ -190,9 +238,9 @@ void RadioLR1121::set_rx_packet_params_() {
 void RadioLR1121::write_modulation_params_() {
   // LR1121 GFSK modulation parameters for the IO-Homecontrol 868 MHz waveform, written as
   // plain Hz/bps 32-bit values (design §1.2: "RF frequency / bitrate / fdev are plain Hz /
-  // bit/s 32-bit values" — no PLL-step math needed, unlike SX1262).
-  // TODO(hw-verify): the field ORDER (bitrate, pulse shape, bandwidth, fdev) mirrors SX1262's
-  // own field order; not independently cross-checked against the UM this session.
+  // bit/s 32-bit values" — no PLL-step math needed, unlike SX1262). Field order (bitrate,
+  // pulse shape, bandwidth, fdev) cross-checked against RadioLib/Semtech and confirmed on
+  // real hardware.
   uint32_t const bitrate_bps = 38400;
   uint32_t const fdev_hz = 19200;
   uint8_t mod_params[10] = {
@@ -208,6 +256,10 @@ void RadioLR1121::write_modulation_params_() {
       (uint8_t) fdev_hz,  // Fdev: 19200 Hz
   };
   this->write_command_(LR1121_CMD_SET_MODULATION_PARAMS, mod_params, sizeof(mod_params));
+
+  // GFSK workaround register trio (analysis §4.2) — RadioLib/Semtech apply this after every
+  // modulation-params write, not just once at init, so it must re-run on every bandwidth retune.
+  this->apply_gfsk_workaround_();
 }
 
 uint16_t RadioLR1121::get_errors_() {
@@ -287,8 +339,8 @@ void RadioLR1121::dump_debug() {
   uint16_t const errors = this->get_errors_();
 
   ESP_LOGCONFIG(TAG, "  LR1121 Diagnostic:");
-  ESP_LOGCONFIG(TAG, "    Device type: 0x%02X (expect 0x%02X)", version[0], LR1121_DEVICE_TYPE);
-  ESP_LOGCONFIG(TAG, "    HW version: 0x%02X, FW version: %u.%u", version[1], version[2], version[3]);
+  ESP_LOGCONFIG(TAG, "    Device type: 0x%02X (expect 0x%02X)", version[1], LR1121_DEVICE_TYPE);
+  ESP_LOGCONFIG(TAG, "    HW version: 0x%02X, FW version: %u.%u", version[0], version[2], version[3]);
   ESP_LOGCONFIG(TAG, "    BUSY=%d IRQ=%d", this->busy_pin_->digital_read(), this->irq_pin_->digital_read());
   ESP_LOGCONFIG(TAG, "    IRQ status: 0x%08" PRIX32, irq);
   ESP_LOGCONFIG(TAG, "    Device errors: 0x%04X", errors);
@@ -297,15 +349,16 @@ void RadioLR1121::dump_debug() {
 
 void RadioLR1121::configure_radio_() {
   // 1. Identity check: GetVersion — device type must be LR1121 (0x03). Response layout
-  //    TODO(hw-verify): assumed [device_type, hw_version, fw_major, fw_minor] (4 bytes).
+  //    cross-checked against RadioLib's LR11x0::getVersion(): [hw_version, device_type,
+  //    fw_major, fw_minor] (4 bytes) — device type is byte 1, not byte 0.
   uint8_t version[4] = {0};
   this->read_command_(LR1121_CMD_GET_VERSION, nullptr, 0, version, sizeof(version));
-  if (version[0] != LR1121_DEVICE_TYPE) {
-    ESP_LOGE(TAG, "Unexpected device type 0x%02X (expected 0x%02X) — not an LR1121?", version[0], LR1121_DEVICE_TYPE);
+  if (version[1] != LR1121_DEVICE_TYPE) {
+    ESP_LOGE(TAG, "Unexpected device type 0x%02X (expected 0x%02X) — not an LR1121?", version[1], LR1121_DEVICE_TYPE);
     this->failed_ = true;
     return;
   }
-  ESP_LOGI(TAG, "LR1121 detected: hw=0x%02X fw=%u.%u", version[1], version[2], version[3]);
+  ESP_LOGI(TAG, "LR1121 detected: hw=0x%02X fw=%u.%u", version[0], version[2], version[3]);
 
   // 2. TCXO: map the YAML TCXO_VOLTAGE_OPTIONS code (1_6V=0x01 .. 3_3V=0x08, __init__.py) to the
   //    LR1121's own 0x00-0x07 voltage code (design §0.5.3: "codes run 0x00-0x07 for 1.6-3.3V" —
@@ -322,6 +375,10 @@ void RadioLR1121::configure_radio_() {
   uint8_t const cal_all = LR1121_CALIBRATE_ALL_BLOCKS;
   this->write_command_(LR1121_CMD_CALIBRATE, &cal_all, 1);
   delay(5);  // Wait for calibration to complete (same margin as SX1262).
+
+  // 3b. Banded image calibration (analysis §4.3) — Calibrate(0x3F) calibrates the IMG block at
+  //     the chip's default band, not ours; both reference drivers issue an explicit banded call.
+  this->calibrate_image_();
 
   // 4. RF switch: T3-S3 DIO5/DIO6 table (secondhand, see radio_lr1121.h constants).
   uint8_t rfswitch_params[8] = {
@@ -356,27 +413,43 @@ void RadioLR1121::configure_radio_() {
   uint8_t sync_word[8] = {0x57, 0xFD, 0x99, 0x00, 0x00, 0x00, 0x00, 0x00};
   this->write_command_(LR1121_CMD_SET_GFSK_SYNC_WORD, sync_word, sizeof(sync_word));
 
-  // 10. PA config: LP PA (design §1.2 PA row — LP first, HP is a later tuning exercise).
-  //     TODO(hw-verify): parameter layout assumed [paSel=LP, paRegSupply, paDutyCycle, paHpSel].
-  uint8_t pa_config[4] = {0x00, 0x01, 0x04, 0x00};
+  // 10. PA config: select LP or HP PA path based on the configured power — cross-checked against
+  //     RadioLib's LR1120::setOutputPower()/checkOutputPower(): the LP path only covers -17..14dBm
+  //     (regPaSupply=internal regulator); anything above requires the HP path (regPaSupply=VBAT,
+  //     -9..22dBm). This board's config requests 17dBm, which is out of the LP path's valid
+  //     range — always configuring LP here regardless of tx_power_ was invalid, and is the likely
+  //     reason TX completed digitally (TX_DONE fired, no error) while the awning never received
+  //     anything: the PA was asked to output power outside the range its selected path supports.
+  bool const use_hp_pa = this->tx_power_ > 14;
+  uint8_t pa_config[4] = {
+      (uint8_t) (use_hp_pa ? 0x01 : 0x00),  // paSel: 0=LP, 1=HP
+      (uint8_t) (use_hp_pa ? 0x01 : 0x00),  // regPaSupply: 0=internal regulator (LP), 1=VBAT (HP)
+      0x04,                                 // paDutyCycle
+      0x07,                                 // paHpSel — RadioLib always sets this, even for LP
+  };
   this->write_command_(LR1121_CMD_SET_PA_CONFIG, pa_config, sizeof(pa_config));
 
-  // 11. TX params: power in dBm, ramp 200us (0x04, same ramp encoding as SX1262).
-  int8_t const power = std::max((int8_t) -9, std::min((int8_t) 22, (int8_t) this->tx_power_));
-  uint8_t tx_params[2] = {(uint8_t) power, 0x04};
+  // 11. TX params: power in dBm, clamped to the selected PA path's valid range (see step 10).
+  //     Ramp register is LR11x0-specific, not the SX126x encoding this used to assume: RadioLib's
+  //     LR1120::setOutputPower() passes `roundRampTime(us) - 3` — the shared ramp-time enum
+  //     starts with three LR2021-only fast steps (2/4/8us) that don't exist on the LR11x0, so its
+  //     own register value for a given ramp time is 3 less than the shared table's index. 0x0C is
+  //     ~200us on this chip (the previous 0x04 was actually ~80us).
+  int8_t const min_power = use_hp_pa ? -9 : -17;
+  int8_t const max_power = use_hp_pa ? 22 : 14;
+  int8_t const power = std::max(min_power, std::min(max_power, (int8_t) this->tx_power_));
+  uint8_t tx_params[2] = {(uint8_t) power, 0x0C};
   this->write_command_(LR1121_CMD_SET_TX_PARAMS, tx_params, sizeof(tx_params));
 
   // 12. Keep the crystal path alive after RX/TX completion.
   uint8_t const fallback_mode = LR1121_FALLBACK_STDBY_XOSC;
   this->write_command_(LR1121_CMD_SET_RX_TX_FALLBACK_MODE, &fallback_mode, 1);
 
-  // 13. IRQ config: 32-bit enable mask + first DIO's 32-bit mask (routed to DIO9) + second DIO's
-  //     mask (unused, all zero) — design §Step 2 item 2: "mask 0 for the second IRQ output".
-  uint8_t irq_params[12] = {
-      (uint8_t) (LR1121_IRQ_DIO_ENABLE_MASK >> 24),
-      (uint8_t) (LR1121_IRQ_DIO_ENABLE_MASK >> 16),
-      (uint8_t) (LR1121_IRQ_DIO_ENABLE_MASK >> 8),
-      (uint8_t) LR1121_IRQ_DIO_ENABLE_MASK,  // irq enable mask
+  // 13. IRQ config: two 32-bit masks — first DIO's mask (routed to DIO9) + second DIO's mask
+  //     (unused, all zero). Cross-checked against RadioLib's LRxxxx::setDioIrqParams(irq1, irq2):
+  //     the command takes exactly these two fields, no separate "enable" field (design §Step 2
+  //     item 2: "mask 0 for the second IRQ output").
+  uint8_t irq_params[8] = {
       (uint8_t) (LR1121_IRQ_DIO_ENABLE_MASK >> 24),
       (uint8_t) (LR1121_IRQ_DIO_ENABLE_MASK >> 16),
       (uint8_t) (LR1121_IRQ_DIO_ENABLE_MASK >> 8),
@@ -402,11 +475,14 @@ void RadioLR1121::configure_radio_() {
 // === Mode control ===
 
 void RadioLR1121::set_mode_standby() {
-  uint8_t const stdby_xosc = 0x01;  // TODO(hw-verify): assumed same small sequential enum as SetRxTxFallbackMode.
+  uint8_t const stdby_xosc = 0x01;  // Same small sequential enum as SetRxTxFallbackMode (0x01=STDBY_XOSC there too).
   this->write_command_(LR1121_CMD_SET_STANDBY, &stdby_xosc, 1);
 }
 
 void RadioLR1121::set_mode_rx() {
+  // High-ACP workaround (analysis §4.1) — Semtech applies this unconditionally before every
+  // SetRx, so it lives here rather than only at init to cover every set_mode_rx() call site.
+  this->apply_high_acp_workaround_();
   uint8_t rx_continuous[3] = {0xFF, 0xFF, 0xFF};  // 0xFFFFFF = continuous, same sentinel as SX1262.
   this->write_command_(LR1121_CMD_SET_RX, rx_continuous, sizeof(rx_continuous));
 }
@@ -480,9 +556,13 @@ bool RadioLR1121::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
   this->clear_irq_status_(0xFFFFFFFF);
   this->write_buffer_(tx_buf, encoded_len);
 
-  // Start TX. TODO(hw-verify): tick base for the timeout field assumed same as SX126x
-  // (15.625us/tick, 0x03E800 = ~4s); the software 4000ms guard below is independent of this
-  // chip-level value and provides the actual safety net regardless.
+  // High-ACP workaround (analysis §4.1) — Semtech applies this unconditionally before every
+  // SetTx.
+  this->apply_high_acp_workaround_();
+
+  // Start TX. Tick base is 30.52us (32.768kHz RTC), so 0x03E800 is ~7.8s, not the ~4s the field
+  // was originally assumed to encode; the software 4000ms guard below is what actually bounds TX
+  // and is independent of this chip-level value.
   this->clear_dio_fired();
   uint8_t tx_timeout[3] = {0x03, 0xE8, 0x00};
   this->write_command_(LR1121_CMD_SET_TX, tx_timeout, sizeof(tx_timeout));
@@ -536,16 +616,10 @@ bool RadioLR1121::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
   this->prepare_blocking_receive_(packet);
 
   uint32_t const start = millis();
-  bool saw_irq = false;
   uint32_t irq = 0;
 
-  if (!this->poll_until_activity_(start, timeout_ms, saw_irq, irq)) {
+  if (!this->poll_until_activity_(start, timeout_ms, irq)) {
     return false;
-  }
-
-  if (saw_irq) {
-    this->clear_dio_fired();
-    irq = this->read_irq_status_raw();
   }
 
   if (!this->resolve_sync_race_(start, timeout_ms, irq)) {
@@ -620,6 +694,18 @@ bool RadioLR1121::check_for_packet(RadioRxPacket &packet) {
   this->prepare_nonblocking_receive_(packet);
 
   uint32_t const irq = this->read_irq_status_raw();
+
+  if ((irq & LR1121_IRQ_ACTIVITY_MASK) == 0) {
+    // Preamble-only (or spurious) DIO activity — a frame may still be arriving. Clear it (this
+    // only ever clears PREAMBLE_DETECTED here, since that's the one DIO-routed bit outside
+    // LR1121_IRQ_ACTIVITY_MASK) instead of calling reset_rx_state_() below, which would tear
+    // down RX mid-reception. Unlike poll_until_activity_(), this function has no internal retry
+    // loop, so leaving the chip-level bit set would starve later loop() ticks of the DIO edge
+    // they need to notice the real RX_DONE.
+    if (irq != 0)
+      this->clear_irq_status_(irq);
+    return false;
+  }
 
   if ((irq & LR1121_IRQ_SYNC_WORD_VALID) != 0 && (irq & LR1121_IRQ_RX_DONE) == 0) {
     this->clear_irq_status_(LR1121_IRQ_SYNC_WORD_VALID);

@@ -37,6 +37,13 @@ class Component {
   uint32_t last_interval_ms_{0};
 
   void mark_failed() { this->failed_ = true; }
+  // Real ESPHome overload takes a `const LogString *` (see esphome/core/log.h's LOG_STR());
+  // host tests don't need the PROGMEM plumbing, so this just takes the plain string LOG_STR()
+  // resolves to here.
+  void mark_failed(const char *message) {
+    (void) message;
+    this->failed_ = true;
+  }
   bool is_failed() const { return this->failed_; }
   void set_warn_if_blocking_over(uint32_t ms) { (void) ms; }
 

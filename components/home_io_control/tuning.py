@@ -59,6 +59,7 @@ IOHomeTuningSelect = home_io_control_ns.class_(
 # the global-namespace setup() function.
 SX1262RxBandwidth = home_io_control_ns.enum("SX1262RxBandwidth", is_class=True)
 SX1276RxBandwidth = home_io_control_ns.enum("SX1276RxBandwidth", is_class=True)
+LR1121RxBandwidth = home_io_control_ns.enum("LR1121RxBandwidth", is_class=True)
 DiscoveryCommand = home_io_control_ns.enum("DiscoveryCommand", is_class=True)
 
 # Map each YAML option string to its C++ enum value. Options are bare kHz numbers (the "kHz"
@@ -77,6 +78,20 @@ SX1276_BANDWIDTH_OPTIONS = {
     "62.5": SX1276RxBandwidth.BW_62_5_KHZ,
     "83.3": SX1276RxBandwidth.BW_83_3_KHZ,
     "125.0": SX1276RxBandwidth.BW_125_0_KHZ,
+}
+
+# LR1121 has its own register encoding, distinct from SX1262's (see tuning_config.h
+# LR1121RxBandwidth — two of the five values borrowed from SX1262 turned out wrong for this
+# chip). Includes two narrower options (39.0/46.9kHz) not offered for SX1262, added to get
+# closer to SX1276's real-hardware-validated 41.7kHz default.
+LR1121_BANDWIDTH_OPTIONS = {
+    "39.0": LR1121RxBandwidth.BW_39_0_KHZ,
+    "46.9": LR1121RxBandwidth.BW_46_9_KHZ,
+    "58.6": LR1121RxBandwidth.BW_58_6_KHZ,
+    "78.2": LR1121RxBandwidth.BW_78_2_KHZ,
+    "117.3": LR1121RxBandwidth.BW_117_3_KHZ,
+    "156.2": LR1121RxBandwidth.BW_156_2_KHZ,
+    "187.2": LR1121RxBandwidth.BW_187_2_KHZ,
 }
 
 DISCOVERY_COMMAND_OPTIONS = {
@@ -161,10 +176,7 @@ _SELECT_OPTIONS = {
     CONF_PAIRING_DISCOVERY_LOW_POWER: ["Off", "On"],
     CONF_SX1262_RX_BANDWIDTH: list(SX1262_BANDWIDTH_OPTIONS),
     CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
-    # LR1121 reuses the SX1262 bandwidth option set — chip-identical register encoding
-    # (design doc §1.2: "same encoding, same table"; C++ side uses a type alias, see
-    # tuning_config.h LR1121RxBandwidth).
-    CONF_LR1121_RX_BANDWIDTH: list(SX1262_BANDWIDTH_OPTIONS),
+    CONF_LR1121_RX_BANDWIDTH: list(LR1121_BANDWIDTH_OPTIONS),
 }
 
 
@@ -194,10 +206,8 @@ _validate_bandwidth = _one_of_string(
 _validate_sx1276_bandwidth = _one_of_string(
     CONF_SX1276_RX_BANDWIDTH, SX1276_BANDWIDTH_OPTIONS, coerce_number=True
 )
-# LR1121 reuses the SX1262 option set (see _SELECT_OPTIONS above) but gets its own validator
-# so a validation error names "lr1121_rx_bandwidth", not "sx1262_rx_bandwidth".
 _validate_lr1121_bandwidth = _one_of_string(
-    CONF_LR1121_RX_BANDWIDTH, SX1262_BANDWIDTH_OPTIONS, coerce_number=True
+    CONF_LR1121_RX_BANDWIDTH, LR1121_BANDWIDTH_OPTIONS, coerce_number=True
 )
 _validate_discovery_command = _one_of_string(
     f"{CONF_PAIRING_DISCOVERY_COMMANDS} entries", DISCOVERY_COMMAND_OPTIONS
@@ -320,12 +330,10 @@ def _apply_tuning_config(config, var):
         )
 
     if CONF_LR1121_RX_BANDWIDTH in config:
-        # LR1121RxBandwidth is a C++ type alias of SX1262RxBandwidth (chip-identical encoding),
-        # so the SX1262 enum values assign directly with no cast needed.
         _assign(
             tuning,
             "lr1121_rx_bandwidth",
-            SX1262_BANDWIDTH_OPTIONS[config[CONF_LR1121_RX_BANDWIDTH]],
+            LR1121_BANDWIDTH_OPTIONS[config[CONF_LR1121_RX_BANDWIDTH]],
         )
 
     # Ordered discovery commands. Clear the struct default before appending so a

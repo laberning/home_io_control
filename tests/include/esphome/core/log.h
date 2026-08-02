@@ -31,3 +31,8 @@
 
 // Helper macros used in dump_config()
 #define YESNO(b) ((b) ? "YES" : "NO")
+
+// Real ESPHome's LOG_STR() wraps a literal as `const LogString *` (PROGMEM on AVR, a plain
+// reinterpret_cast elsewhere). Host tests have no LogString type, so this just passes the
+// literal through as `const char *`, matching what Component::mark_failed(const char *) expects.
+#define LOG_STR(s) (s)
