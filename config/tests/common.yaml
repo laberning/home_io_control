@@ -56,6 +56,10 @@ light:
   - platform: home_io_control
     name: "Test Light"
     io_device_id: "FEEB1F"
+  - platform: home_io_control
+    name: "Test Dimmable Light"
+    io_device_id: "FEEB21"
+    dimmable: true
 
 switch:
   - platform: home_io_control

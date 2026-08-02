@@ -152,6 +152,24 @@ TEST(PlatformCover, NonInvertedPosition) {
   EXPECT_EQ(hub.last_set_position(), 25u) << "non-inverted position 0.75 HA should map to 25 IO";
 }
 
+// Real-hardware regression (same root cause as PlatformLight.DimmableWriteStateRoundsInstead-
+// OfTruncating): HA quantizes call position to 0-255 before it reaches us, so its "50%" is
+// 128/255=0.50196, not exactly 0.5. A truncating cast turned (1-0.50196)*100=49.8 into IO
+// position 49 instead of 50.
+TEST(PlatformCover, ControlRoundsQuantizedPositionInsteadOfTruncating) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_invert_position(false);
+
+  CoverCall call(&cover);
+  call.set_position(128.0f / 255.0f);  // HA's actual "50%" value
+  cover.control(call);
+
+  EXPECT_EQ(hub.last_set_position(), 50u) << "128/255 (HA's '50%') should round to IO position 50, not truncate to 49";
+}
+
 TEST(PlatformCover, DeviceUpdateToHAPosition) {
   MockHub hub;
   TestableCover cover;

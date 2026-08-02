@@ -13,6 +13,20 @@ using namespace esphome::home_io_control;
 // position helpers, and status normalization logic.
 
 // ========================================================================================
+// Percent conversion helpers
+// ========================================================================================
+
+TEST(HubInternal, RoundPercentRoundsRatherThanTruncates) {
+  // HA's actual "50%" (128/255) truncates to 49 but should round to 50 — the real-hardware
+  // regression this helper exists to fix (see platform_cover.cpp / platform_light.cpp).
+  EXPECT_EQ(detail::round_percent(128.0F / 255.0F), 50) << "128/255 should round to 50, not truncate to 49";
+  EXPECT_EQ(detail::round_percent(0.0F), 0);
+  EXPECT_EQ(detail::round_percent(1.0F), 100);
+  EXPECT_EQ(detail::round_percent(0.504F), 50) << "just past the rounding boundary should round up";
+  EXPECT_EQ(detail::round_percent(0.494F), 49) << "just below the rounding boundary should round down";
+}
+
+// ========================================================================================
 // Binary entity position helpers
 // ========================================================================================
 
@@ -67,11 +81,13 @@ TEST(HubInternal, KnownDeviceAcceptsExecutePosition) {
 
   IoDevice light_dev{};
   light_dev.type = DeviceType::LIGHT;
-  EXPECT_FALSE(detail::known_device_accepts_execute_position(light_dev, 50))
-      << "light should reject mid-range position";
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(light_dev, 50))
+      << "light should accept mid-range position (dimmable lights send arbitrary 0-100)";
   EXPECT_TRUE(detail::known_device_accepts_execute_position(light_dev, 0)) << "light should accept binary ON position";
   EXPECT_TRUE(detail::known_device_accepts_execute_position(light_dev, 100))
       << "light should accept binary OFF position";
+  EXPECT_FALSE(detail::known_device_accepts_execute_position(light_dev, POS_STOP))
+      << "light should reject the cover-only STOP marker (out of the 0-100 range)";
 
   IoDevice lock_dev{};
   lock_dev.type = DeviceType::LOCK;

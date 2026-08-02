@@ -247,7 +247,7 @@ data:
 
 ## Light Platform
 
-Use the light platform for binary on/off IO-homecontrol light devices.
+Use the light platform for IO-homecontrol light devices. Defaults to binary on/off; set `dimmable: true` for brightness control on devices that support intermediate positions.
 
 ```yaml
 light:
@@ -255,6 +255,12 @@ light:
     id: garden_light
     name: "Garden Light"
     io_device_id: "D15C05"
+
+  - platform: home_io_control
+    id: dimmable_light
+    name: "Dimmable Light"
+    io_device_id: "D15C06"
+    dimmable: true
 ```
 
 Configuration variables:
@@ -264,14 +270,14 @@ Configuration variables:
 - `io_device_id` (Required): 3-byte IO-homecontrol device ID as exactly 6 hexadecimal characters.
 - `io_device_type` (Optional): Declare the IO-homecontrol device type. Use the named value `light` when known, or a raw integer such as `0x06` if you are working from a pairing log that reports a not-yet-exposed alias. When omitted, the controller may learn the type later from radio metadata.
 - `io_subtype` (Optional): Device subtype value (0–63), as reported by the device. When omitted, the controller may learn it later from radio metadata.
+- `dimmable` (Optional, default `false`): Expose brightness control (`ColorMode::BRIGHTNESS`) instead of on/off only. The protocol has no machine-readable signal for whether a given light device actually supports intermediate positions, so this is an explicit opt-in — leave it unset for binary-only devices. Brightness is applied instantly (no client-side fade) by default, since ESPHome's default 1s transition would otherwise send a stream of superseding radio commands over the device's round trip; override `default_transition_length` in YAML if you want a fade anyway.
 - `status_poll_interval` (Optional): Poll interval used for bounded follow-up status checks while this device is expected to be changing state. The minimum supported value is 500ms. When omitted, the hub polls after commands or overheard remote activity at the device-reported settle hint (fallback 3 s) until the device reports a stable state or the bounded 10-minute window expires.
 - `linked_remotes` (Optional): List of remote node IDs (6 hex characters each) that control this device. See the Linked Remotes section below for details.
 - All standard options from the ESPHome light schema also apply.
 
 Notes:
 
-- This platform is intentionally binary only. Dimming is not exposed.
-- The current implementation is still experimental and untested on local hardware in this repo.
+- Binary on/off has been validated against real hardware (a Somfy Izymo dimmer, used in binary mode). `dimmable: true` has also been validated on the same device for intermediate brightness levels.
 - Known non-light device families will be rejected once the device type is known.
 - Lights automatically generate a diagnostic text sensor named `<Light Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 - Lights also automatically generate a `<Light Name> Active Issue` diagnostic text sensor, enabled by default. See "Active Issue" below.
@@ -747,7 +753,8 @@ Extraction)" (not configurable).
 ## Device Type and Capability Notes
 
 - **Cover-like families** (shutters, awnings, blinds, openers, curtains) are the primary supported path today. These support full position control (0–100%).
-- **Binary light, lock, and switch** support exists, but remains experimental and has not been validated against real hardware.
+- **Light** support (binary and dimmable) has been validated against real hardware (a Somfy Izymo dimmer).
+- **Lock and switch** support exists, but remains experimental and has not been validated against real hardware.
 - **Raw type IDs in YAML**: `io_device_type` accepts both named values such as `awning` and raw integers such as `0x11`. Raw values are useful when pairing discovers a valid IO-homecontrol type that this project does not yet expose under a named YAML alias.
 
 ### Named device types

@@ -18,7 +18,7 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 - **Stored device-name diagnostics**: Covers, lights, locks, and switches auto-generate a diagnostic text sensor named `<Entity Name> Device Name`, disabled by default to reduce clutter and populated from the actuator's internally stored name via a protocol read on boot
 - **Hub-level device actions**: Native ESPHome API actions to rename a paired actuator, trigger its physical identify jog/flash, or request a fully-open move at elevated priority intended to override wind/rain soft locks (experimental) — all without adding persistent helper entities; see [docs/home_io_control.md](docs/home_io_control.md#home-assistant-actions)
 - **Tilt support for venetian-style blinds**: Tilt-capable device types (venetian blind, external venetian blind, blind, louvre blind) expose slat-angle control automatically in Home Assistant when `io_device_type` is declared in YAML
-- **Experimental binary light support**: On/off-only light entities for IO-Homecontrol light devices
+- **Light support (binary or dimmable)**: On/off light entities for IO-Homecontrol light devices by default; opt into `dimmable: true` for brightness control on devices that support intermediate positions (hardware-confirmed on a Somfy Izymo dimmer)
 - **Experimental lock support**: Lock/unlock entities for IO-Homecontrol lock devices
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
 - **Position feedback**: Real-time position updates from devices (2-Way protocol)
@@ -222,6 +222,12 @@ make compile-t3
 make upload          # SX1276
 make upload-v3       # SX1262
 make upload-t3       # LR1121
+
+# Compile, flash, and stream logs in one shot (alias for upload-*, since
+# `esphome run` already does all three)
+make run              # SX1276
+make run-v3           # SX1262
+make run-t3           # LR1121
 
 # Monitor serial output
 make logs            # SX1276

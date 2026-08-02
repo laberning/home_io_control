@@ -87,6 +87,9 @@ class OperationQueue {
   void enqueue_device_command(const std::string &device_id, CoverCommand cmd);
 
   // --- Binary entity commands (no coalescing) ---
+  /// Enqueue SET_LIGHT_STATE with an arbitrary IO position (0-100), for dimmable lights.
+  /// enqueue_set_light_state() is a thin binary-position wrapper around this.
+  void enqueue_set_light_position(const std::string &device_id, uint8_t position);
   void enqueue_set_light_state(const std::string &device_id, bool on);
   void enqueue_set_lock_state(const std::string &device_id, bool locked);
   void enqueue_set_switch_state(const std::string &device_id, bool on);

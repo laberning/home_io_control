@@ -312,6 +312,10 @@ void IOHomeControlComponent::add_device(const std::string &device_id, DeviceType
 
 IoDevice *IOHomeControlComponent::get_device(const std::string &device_id) { return this->registry_.get(device_id); }
 
+void IOHomeControlComponent::set_device_dimmable(const std::string &device_id, bool dimmable) {
+  this->registry_.set_dimmable(device_id, dimmable);
+}
+
 // === Main loop ===
 
 void IOHomeControlComponent::loop() {

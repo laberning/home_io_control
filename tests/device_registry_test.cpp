@@ -66,6 +66,24 @@ TEST(DeviceRegistry, GetReturnsNullptrForUnknownId) {
   EXPECT_EQ(reg.get("FFFFFF"), nullptr);
 }
 
+TEST(DeviceRegistry, SetDimmableUpdatesRegisteredDevice) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", DeviceType::LIGHT, 0, false);
+  EXPECT_FALSE(reg.get("AABBCC")->dimmable) << "dimmable defaults to false";
+
+  reg.set_dimmable("AABBCC", true);
+  EXPECT_TRUE(reg.get("AABBCC")->dimmable);
+
+  reg.set_dimmable("AABBCC", false);
+  EXPECT_FALSE(reg.get("AABBCC")->dimmable);
+}
+
+TEST(DeviceRegistry, SetDimmableOnUnknownDeviceIsNoop) {
+  DeviceRegistry reg;
+  reg.set_dimmable("FFFFFF", true);  // must not crash
+  EXPECT_EQ(reg.get("FFFFFF"), nullptr);
+}
+
 TEST(DeviceRegistry, SizeReflectsRegistrationCount) {
   DeviceRegistry reg;
   EXPECT_EQ(reg.size(), 0u);

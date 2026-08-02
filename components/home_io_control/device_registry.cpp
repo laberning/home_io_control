@@ -40,6 +40,11 @@ IoDevice *DeviceRegistry::get(const std::string &device_id) {
   return (it != devices_.end()) ? &it->second : nullptr;
 }
 
+void DeviceRegistry::set_dimmable(const std::string &device_id, bool dimmable) {
+  if (IoDevice *dev = this->get(device_id))
+    dev->dimmable = dimmable;
+}
+
 void DeviceRegistry::subscribe(DeviceUpdateCallback cb) { callbacks_.push_back(std::move(cb)); }
 
 void DeviceRegistry::notify(const std::string &device_id) {

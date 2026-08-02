@@ -51,10 +51,27 @@ const char *position_command_action(const IoDevice &dev, uint8_t position) {
   }
 }
 
+/// @brief Return the effective profile label for a device's "Sending ... (profile=...)" logs.
+/// @param dev Device receiving the command.
+/// @return "dimmable_light" for a LIGHT-class device with IoDevice::dimmable set (a YAML choice
+///         the wire protocol has no signal for, so device_operation_profile_name() alone can't
+///         know it); device_operation_profile_name(dev.type) for every other device.
+const char *operation_profile_name(const IoDevice &dev) {
+  if (dev.dimmable && device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT)
+    return "dimmable_light";
+  return device_operation_profile_name(dev.type);
+}
+
 /// @brief Return the accepted entity/profile label for rejected execute-position logs.
+/// @param dev Device the command was rejected for.
 /// @param position Requested execute position.
 /// @return Expected profile label for detail::log_rejected_operation().
-const char *position_rejection_profile(uint8_t position) {
+const char *position_rejection_profile(const IoDevice &dev, uint8_t position) {
+  // A LIGHT-class device only reaches rejection for a genuinely out-of-range value (dimmable
+  // lights already accept the full 0-100 span in known_device_accepts_execute_position()) — the
+  // fix there isn't "needs cover_position", it's "needs a value in 0-100".
+  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT)
+    return "0-100";
   return detail::is_binary_entity_position(position) ? "cover_position or binary_on_off" : "cover_position";
 }
 
@@ -125,14 +142,14 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
   // before they hit the radio path. Unknown types still pass through so discovery and imported
   // devices keep working as before.
   if (!detail::known_device_accepts_execute_position(*dev, position)) {
-    detail::log_rejected_operation(device_id, *dev, action, position_rejection_profile(position));
+    detail::log_rejected_operation(device_id, *dev, action, position_rejection_profile(*dev, position));
     return false;
   }
 
   this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", action, device_id.c_str(),
-           device_operation_profile_name(dev->type));
+           operation_profile_name(*dev));
 
   IoFrame request;
   if (!create_execute(request, this->node_id_, dev->node_id, true, position)) {
@@ -163,7 +180,7 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
   this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", cover_command_name(cmd), device_id.c_str(),
-           device_operation_profile_name(dev->type));
+           operation_profile_name(*dev));
 
   IoFrame request;
   // FORCE_OPEN needs the device's own wire-scale "fully open" position (0, or 100 for an
@@ -210,7 +227,7 @@ bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8
   this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending tilt=%u%% to device %s (profile=%s)", tilt_percent, device_id.c_str(),
-           device_operation_profile_name(dev->type));
+           operation_profile_name(*dev));
 
   IoFrame request;
   if (!create_execute_tilt(request, this->node_id_, dev->node_id, true, tilt_percent)) {
@@ -241,7 +258,7 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
   this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending position=%u%% tilt=%u%% to device %s (profile=%s)", position, tilt_percent,
-           device_id.c_str(), device_operation_profile_name(dev->type));
+           device_id.c_str(), operation_profile_name(*dev));
 
   IoFrame request;
   if (!create_execute_position_and_tilt(request, this->node_id_, dev->node_id, true, position, tilt_percent)) {
@@ -292,7 +309,7 @@ bool IOHomeControlComponent::request_device_name(const std::string &device_id) {
   return this->execute_request_and_update_(device_id, request, false, 0);
 }
 
-bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool on) {
+bool IOHomeControlComponent::set_light_position(const std::string &device_id, uint8_t position) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
     return false;
@@ -302,9 +319,13 @@ bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool 
     return false;
   }
 
-  // Light entities are binary-only for now, so they intentionally reuse the controller's
-  // existing execute path with the proven on/off position encoding.
-  return this->set_device_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
+  // Light entities reuse the controller's existing execute path — the same position encoding
+  // covers use, confirmed on real dimmable hardware (see tests/corpus/captures/somfy_dimmer/).
+  return this->set_device_position(device_id, position);
+}
+
+bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool on) {
+  return this->set_light_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
 }
 
 bool IOHomeControlComponent::set_switch_state(const std::string &device_id, bool on) {
@@ -430,13 +451,17 @@ void IOHomeControlComponent::queue_request_device_name(const std::string &device
 /// front of the queue. Duplicate requests are suppressed.
 void IOHomeControlComponent::queue_discover_and_pair() { this->op_queue_.enqueue_discover_and_pair(); }
 
-void IOHomeControlComponent::queue_set_light_state(const std::string &device_id, bool on) {
+void IOHomeControlComponent::queue_set_light_position(const std::string &device_id, uint8_t position) {
   const IoDevice *dev = this->get_device(device_id);
   if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::LIGHT)) {
     detail::log_rejected_operation(device_id, *dev, "queued light command", "light entity");
     return;
   }
-  this->op_queue_.enqueue_set_light_state(device_id, on);
+  this->op_queue_.enqueue_set_light_position(device_id, position);
+}
+
+void IOHomeControlComponent::queue_set_light_state(const std::string &device_id, bool on) {
+  this->queue_set_light_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
 }
 
 void IOHomeControlComponent::queue_set_lock_state(const std::string &device_id, bool locked) {
@@ -482,7 +507,10 @@ void IOHomeControlComponent::process_pending_operation_() {
       this->execute_device_command_(operation.device_id, operation.command);
       break;
     case PendingOperationType::SET_LIGHT_STATE:
-      this->set_light_state(operation.device_id, operation.position == BINARY_ENTITY_ON_POSITION);
+      // operation.position already carries the target IO position (0-100) regardless of whether
+      // it was enqueued via queue_set_light_state() (binary extremes) or
+      // queue_set_light_position() (dimmable) — see enqueue_set_light_state()'s thin-wrapper doc.
+      this->set_light_position(operation.device_id, operation.position);
       break;
     case PendingOperationType::SET_LOCK_STATE:
       this->set_lock_state(operation.device_id, operation.position == BINARY_ENTITY_OFF_POSITION);

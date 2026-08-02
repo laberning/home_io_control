@@ -110,6 +110,7 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   bool request_device_status(const std::string &) override { return false; }
   bool request_device_name(const std::string &) override { return false; }
   bool discover_and_pair() override { return false; }
+  bool set_light_position(const std::string &, uint8_t) override { return false; }
   bool set_light_state(const std::string &, bool) override { return false; }
   bool set_switch_state(const std::string &, bool) override { return false; }
   bool set_lock_state(const std::string &, bool) override { return false; }
@@ -119,6 +120,7 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   void queue_request_device_status(const std::string &) override {}
   void queue_request_device_name(const std::string &) override {}
   void queue_discover_and_pair() override {}
+  void queue_set_light_position(const std::string &, uint8_t) override {}
   void queue_set_light_state(const std::string &, bool) override {}
   void queue_set_switch_state(const std::string &, bool) override {}
   void queue_set_lock_state(const std::string &, bool) override {}
@@ -126,6 +128,11 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   IoDevice *get_device(const std::string &device_id) override {
     auto it = devices_.find(device_id);
     return it != devices_.end() ? &it->second : nullptr;
+  }
+
+  void set_device_dimmable(const std::string &device_id, bool dimmable) override {
+    if (auto it = devices_.find(device_id); it != devices_.end())
+      it->second.dimmable = dimmable;
   }
 
   void add_device(const std::string &device_id) override {

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -39,6 +40,21 @@ inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for
 inline constexpr uint32_t PAIRING_KEY_CONFIRM_SLICE_MS = 150;  ///< RX slice during key confirm wait (hop each slice).
 inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
     50.0F;  ///< Shared 0-100 cutoff: values below this mean binary "on".
+
+// ============================================================================
+// Percent conversion helpers
+// ============================================================================
+
+/// @brief Convert a 0.0-1.0 HA fraction (position, tilt, or brightness) to a 0-100 IO percent.
+///
+/// Rounds rather than truncates: HA quantizes call values to 0-255 before they ever reach us, so
+/// its "50%" is 128/255=0.50196, not exactly 0.5 — a truncating cast compounds that quantization
+/// into a consistent ~1% bias, caught on real hardware in both platform_cover.cpp (position and
+/// tilt) and platform_light.cpp (brightness). Callers apply their own invert/complement logic
+/// (e.g. `1.0F - fraction`) before calling this; it only owns the rounding.
+/// @param fraction Value in [0.0, 1.0].
+/// @return Rounded 0-100 percent.
+inline uint8_t round_percent(float fraction) { return static_cast<uint8_t>(std::lround(fraction * 100.0F)); }
 
 // ============================================================================
 // Capability and entity-profile helpers
@@ -78,6 +94,12 @@ inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t p
     return true;
   if (device_supports_position_control(dev.type))
     return true;
+  // Dimmable lights (platform_light.cpp's dimmable: true) send arbitrary 0-100 IO positions, not
+  // just the two binary extremes — accept the full range for LIGHT here and trust the entity
+  // layer to only ever send binary values for a non-dimmable light. SWITCH and LOCK have no
+  // continuous concept, so they stay restricted to the binary encoding below.
+  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT)
+    return position <= BINARY_ENTITY_OFF_POSITION;
   return is_binary_entity_position(position) &&
          (device_supports_binary_control(dev.type) || device_supports_lock_control(dev.type));
 }

@@ -268,6 +268,12 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
   virtual IoDevice *get_device(const std::string &device_id);
+  /// Set a device's `dimmable` flag (see IoDevice::dimmable). Called by platform_light.cpp's
+  /// setup(), not folded into add_device() since it's a light-only YAML choice. No-op if the
+  /// device isn't registered.
+  /// @param device_id Hexadecimal node ID string.
+  /// @param dimmable New value for IoDevice::dimmable.
+  virtual void set_device_dimmable(const std::string &device_id, bool dimmable);
   /// Register a callback invoked when any device updates.
   /// @param cb Callable with signature void(const std::string&, const IoDevice&).
   virtual void register_device_callback(DeviceUpdateCallback cb) { this->registry_.subscribe(std::move(cb)); }
@@ -326,6 +332,14 @@ class IOHomeControlComponent : public Component,
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
+  /// Send an arbitrary IO position (0-100) to a light entity. Internally mapped to the shared
+  /// execute path. set_light_state() is a thin binary-position wrapper around this, used by
+  /// dimmable lights to send anything other than the two binary extremes.
+  /// @param device_id Target device ID.
+  /// @param position Desired IO position (0-100); this device family's convention maps 0 to full
+  ///        brightness and 100 to off, the same 0-100 scale platform_cover.cpp uses.
+  /// @return true if device acknowledged.
+  virtual bool set_light_position(const std::string &device_id, uint8_t position);
   /// Semantic binary helper for light entities. Internally mapped to the shared execute path.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
@@ -384,6 +398,11 @@ class IOHomeControlComponent : public Component,
   virtual void queue_request_device_name(const std::string &device_id);
   /// Queue a pairing operation; executed in loop() when radio idle.
   virtual void queue_discover_and_pair();
+  /// Async form of set_light_position() that keeps radio work serialized on the main loop.
+  /// queue_set_light_state() is a thin binary-position wrapper around this.
+  /// @param device_id Target device ID.
+  /// @param position Desired IO position (0-100).
+  virtual void queue_set_light_position(const std::string &device_id, uint8_t position);
   /// Async form of set_light_state() that keeps radio work serialized on the main loop.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.

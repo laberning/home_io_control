@@ -17,6 +17,14 @@ define upload_recipe
 	docker compose run --rm esphome run "$$$$file"
 endef
 
+# `esphome run` (used by upload_recipe above) already does compile + upload + logs in
+# one shot, so run-<suffix> is just a more honestly-named alias for upload-<suffix>.
+define run_recipe
+	@file="$1.yaml"; \
+	echo "Compiling, uploading, and streaming logs for $$$$file"; \
+	docker compose run --rm esphome run "$$$$file"
+endef
+
 define logs_recipe
 	@file="$1.yaml"; \
 	echo "Streaming logs from $$$$file"; \
@@ -49,12 +57,14 @@ $(foreach v,$(DEVICE_VARIANTS),$(eval compile-$(call variant_suffix,$(v)): ; $(c
 $(foreach v,$(DEVICE_VARIANTS),$(eval upload-$(call variant_suffix,$(v)): ; $(call upload_recipe,$(call variant_stem,$(v)))))
 $(foreach v,$(DEVICE_VARIANTS),$(eval logs-$(call variant_suffix,$(v)): ; $(call logs_recipe,$(call variant_stem,$(v)))))
 $(foreach v,$(DEVICE_VARIANTS),$(eval clean-$(call variant_suffix,$(v)): ; $(call clean_recipe,$(call variant_stem,$(v)))))
+$(foreach v,$(DEVICE_VARIANTS),$(eval run-$(call variant_suffix,$(v)): ; $(call run_recipe,$(call variant_stem,$(v)))))
 
 # === Convenience defaults (delegate to v2) ====================================
 compile: compile-v2
 upload: upload-v2
 logs: logs-v2
 clean: clean-v2
+run: run-v2
 
 # Remove generated docs (doxygen HTML, pre-processed markdown, downloaded tools)
 clean-docs:

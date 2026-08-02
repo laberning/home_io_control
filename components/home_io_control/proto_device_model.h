@@ -214,6 +214,11 @@ struct IoDevice {
   bool is_stopped{true};                 ///< True if device is not moving.
   bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning).
   bool optimistic_state{true};           ///< True if `target` may be set ahead of a confirming poll/response.
+  bool dimmable{false};                  ///< True for a LIGHT-class device configured `dimmable: true` in YAML.
+                                         ///< Not a protocol-level fact (the wire gives no dimmable-capability
+                                         ///< signal) — set from platform_light.cpp's YAML config via
+                                         ///< DeviceRegistry::set_dimmable(), purely for accurate profile-name
+                                         ///< logging.
   uint8_t last_result_code{0};           ///< Last CMD_ERROR_RESP result byte (0 = none recorded). See
                                 ///< command_result_name()/is_limitation_result() in proto_constants.h. Cleared by
                                 ///< the next successful status/command reply for this device. Note: 0 is also the

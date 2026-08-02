@@ -75,18 +75,23 @@ void IOHomeCover::control(const cover::CoverCall &call) {
   ///       cover.set_cover_position_and_tilt action, this branch would be exercised directly from
   ///       a single CoverCall. The queue coalescing in queue_set_device_position/tilt remains a
   ///       useful optimization for the two-separate-calls path regardless.
+  // Position/tilt fraction -> IO percent uses detail::round_percent() (hub_internal.h) — rounds
+  // rather than truncates, since HA quantizes call values to 0-255 before they reach us (its
+  // "50%" is 128/255=0.502, not exactly 0.5) and a truncating cast would compound that into a
+  // consistent ~1% bias (caught on hardware; see PlatformCover.ControlRoundsQuantizedPosition-
+  // InsteadOfTruncating).
   if (position_opt.has_value() && tilt_opt.has_value() && this->supports_tilt()) {
     float const ha_pos = *position_opt;
     const bool invert = this->effective_invert_();
-    uint8_t const io_pos = invert ? (uint8_t) (ha_pos * 100.0F) : (uint8_t) ((1.0F - ha_pos) * 100.0F);
-    auto const tilt = static_cast<uint8_t>(*tilt_opt * 100.0F);
+    uint8_t const io_pos = invert ? detail::round_percent(ha_pos) : detail::round_percent(1.0F - ha_pos);
+    auto const tilt = detail::round_percent(*tilt_opt);
     this->parent_->apply_optimistic_target(this->device_id_, io_pos);
     this->parent_->queue_set_device_position_and_tilt(this->device_id_, io_pos, tilt);
     return;
   }
 
   if (tilt_opt.has_value()) {
-    auto const tilt = static_cast<uint8_t>(*tilt_opt * 100.0F);
+    auto const tilt = detail::round_percent(*tilt_opt);
     this->parent_->queue_set_device_tilt(this->device_id_, tilt);
     return;
   }
@@ -99,12 +104,7 @@ void IOHomeCover::control(const cover::CoverCall &call) {
     // Standard: HA 1.0 (open) → IO 0 (open), HA 0.0 (closed) → IO 100 (closed)
     // Inverted: HA 1.0 (open) → IO 100, HA 0.0 (closed) → IO 0
     // (used for devices like horizontal awnings where the IO convention is reversed)
-    uint8_t io_pos;
-    if (invert) {
-      io_pos = (uint8_t) (ha_pos * 100.0F);
-    } else {
-      io_pos = (uint8_t) ((1.0F - ha_pos) * 100.0F);
-    }
+    const uint8_t io_pos = invert ? detail::round_percent(ha_pos) : detail::round_percent(1.0F - ha_pos);
 
     this->parent_->apply_optimistic_target(this->device_id_, io_pos);
     this->parent_->queue_set_device_position(this->device_id_, io_pos);

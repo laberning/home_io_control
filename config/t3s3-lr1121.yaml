@@ -74,6 +74,14 @@ cover:
     linked_remotes:
       - !secret example_io_device_linked_remote_id
 
+light:
+  - platform: home_io_control
+    name: "Dimmable Light"
+    io_device_id: !secret example_io_light_device_id
+    io_device_type: "light"
+    io_subtype: 0
+    dimmable: true
+
 button:
   - platform: home_io_control
     name: "Discover & Pair"

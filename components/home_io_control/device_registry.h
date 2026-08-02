@@ -55,6 +55,14 @@ class DeviceRegistry {
   /// @return Pointer to the stored IoDevice, or nullptr when not found.
   [[nodiscard]] IoDevice *get(const std::string &device_id);
 
+  /// Set a device's `dimmable` flag (see IoDevice::dimmable). No-op when the device is unknown.
+  /// Called by platform_light.cpp's setup() right after registration, since `dimmable` is a
+  /// light-platform YAML choice, not something add()'s shared cover/light/switch/lock signature
+  /// should carry for every entity type.
+  /// @param device_id Device to update.
+  /// @param dimmable  New value for IoDevice::dimmable.
+  void set_dimmable(const std::string &device_id, bool dimmable);
+
   /// Register a callback that fires whenever a device's state changes.
   /// @param cb Callable with signature void(const std::string &device_id, const IoDevice &device).
   void subscribe(DeviceUpdateCallback cb);
