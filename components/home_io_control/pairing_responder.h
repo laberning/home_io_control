@@ -1,0 +1,94 @@
+#pragma once
+
+/// @file pairing_responder.h
+/// @brief Pure decision logic for the device-role "Accept Foreign Pairing" (system-key
+/// extraction) responder.
+/// @ingroup hioc_hub
+///
+/// Mirrors hub_pairing.h's PairingState enum but for the reverse role: here the hub emulates an
+/// *unpaired device* so a user's existing (foreign) hub can pair to it and hand over its
+/// node_id/system_key. This lets a user recover credentials from an installation they already
+/// own without a separate sniffing tool or a device reset.
+///
+/// This header holds only the pure state-transition decisions (no radio I/O, no timers), matching
+/// hub_decisions.h's split, so it is directly host-testable. The impure orchestration — arming,
+/// throwaway node-ID generation, transmitting replies, the auto-off timer, and the security log
+/// block — lives on IOHomeControlComponent (hub_key_extraction.cpp), which calls into this header
+/// from the new 0x28/0x31/0x32 branches in process_received_packet_() (hub_status.cpp).
+
+#include "proto_device_model.h"
+#include "proto_sizes.h"
+
+#include <cstdint>
+
+namespace esphome {
+namespace home_io_control {
+namespace pairing_responder {
+
+/// @brief State machine for the device-role key-extraction responder.
+enum class ResponderState : uint8_t {
+  DISARMED,            ///< Not armed; 0x28/0x31/0x32 traffic is ignored.
+  ARMED_IDLE,          ///< Armed, listening for a discovery request (0x28).
+  SENT_DISCOVER_RESP,  ///< Replied to discovery (0x29); waiting for key-init (0x31).
+  SENT_CHALLENGE,      ///< Replied to key-init with our challenge (0x3C); waiting for key-transfer (0x32).
+  EXTRACTED,           ///< System key recovered from a valid 0x32; the hub disarms immediately after.
+};
+
+/// @brief Get a short, log/telemetry-friendly name for a responder state.
+/// @param state Responder state.
+/// @return Null-terminated lowercase string such as "sent_challenge".
+const char *responder_stage_name(ResponderState state);
+
+/// @brief Context for one key-extraction arm cycle.
+///
+/// Owned directly by the hub (like PairingTelemetry), not by PairingEngine/ExchangeEngine — this
+/// is the reverse (device) role and does not fit either of those collaborators.
+struct ResponderContext {
+  ResponderState state{ResponderState::DISARMED};   ///< Current state.
+  uint8_t throwaway_id[NODE_ID_SIZE]{};             ///< Random per-arm-cycle node ID we advertise as ourselves.
+  DeviceType advertised_type{DeviceType::UNKNOWN};  ///< Device type advertised in our 0x29.
+  uint8_t advertised_subtype{0};                    ///< Device subtype advertised in our 0x29.
+  uint8_t challenge[HMAC_SIZE]{};                   ///< Our challenge, generated on the first 0x31 of an attempt.
+  uint8_t hub_node_id[NODE_ID_SIZE]{};              ///< Foreign hub's real node ID, captured from the 0x31's src.
+  uint8_t recovered_key[AES_KEY_SIZE]{};            ///< Recovered system key; valid once state == EXTRACTED.
+};
+
+/// @brief Decide how to react to an inbound CMD_DISCOVER_REQ (0x28) while armed.
+///
+/// Valid from ARMED_IDLE (first response — replies using the throwaway ID/advertised type
+/// already stored in @p ctx by the caller at arm time) and SENT_DISCOVER_RESP (a hub retry —
+/// resend the same values without regenerating anything). No-op from any later state: a discovery
+/// request must never re-arm or restart an exchange already past this phase.
+/// @param ctx Responder context (mutated: state only).
+/// @return true if the caller should build and send a CMD_DISCOVER_RESP (0x29) reply.
+bool on_discover_request(ResponderContext &ctx);
+
+/// @brief Decide how to react to an inbound CMD_KEY_INIT (0x31) addressed to our throwaway ID.
+///
+/// Valid from SENT_DISCOVER_RESP (first key-init: stores @p challenge and @p hub_node_id, then
+/// advances) and SENT_CHALLENGE (a hub retry after missing our 0x3C — @p challenge is discarded
+/// and the previously-stored one is reused instead, since the hub's eventual 0x32 must be
+/// decrypted with the exact challenge bytes it actually received; SX1262's slow TX→RX turnaround
+/// makes this retry path the expected common case, not an edge case). No-op from any other state.
+/// @param ctx Responder context (mutated: state, and on the first call challenge/hub_node_id).
+/// @param challenge Caller-generated 6 random bytes (crypto::generate_challenge()); only consumed
+///        on the first 0x31 of an attempt.
+/// @param hub_node_id The inbound frame's src (the foreign hub's real node ID).
+/// @return true if the caller should build and send a CMD_CHALLENGE_REQ (0x3C) reply using
+///         ctx.challenge (not @p challenge directly — they may differ on a retry).
+bool on_key_init(ResponderContext &ctx, const uint8_t challenge[HMAC_SIZE], const uint8_t hub_node_id[NODE_ID_SIZE]);
+
+/// @brief Decide how to react to an inbound CMD_KEY_TRANSFER (0x32) while armed.
+///
+/// Valid only from SENT_CHALLENGE. Recovers the system key from @p transfer_payload using
+/// ctx.challenge via recover_system_key_from_transfer() (proto_commands.h) and, on success,
+/// transitions to EXTRACTED. No-op (state unchanged) from any other state, or if decoding fails.
+/// @param ctx Responder context (mutated: state, and on success recovered_key).
+/// @param transfer_payload 16-byte CMD_KEY_TRANSFER payload (frame.data).
+/// @return true if the key was recovered and the caller should build and send a
+///         CMD_KEY_CONFIRM (0x33) reply and report ctx.recovered_key to the user.
+bool on_key_transfer(ResponderContext &ctx, const uint8_t transfer_payload[AES_KEY_SIZE]);
+
+}  // namespace pairing_responder
+}  // namespace home_io_control
+}  // namespace esphome

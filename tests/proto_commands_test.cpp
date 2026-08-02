@@ -22,6 +22,48 @@ TEST(ProtoCommands, CreateDiscover) {
   EXPECT_TRUE(is_start(frame) && is_end(frame)) << "discover should be both start and end frame";
 }
 
+TEST(ProtoCommands, CreateDiscoverResp) {
+  IoFrame frame{};
+  ASSERT_TRUE(
+      create_discover_resp(frame, test::OWN_ID, test::DST_ID, DeviceType::ROLLER_SHUTTER, 5, MANUFACTURER_SOMFY))
+      << "create_discover_resp should succeed";
+  EXPECT_EQ(frame.cmd, CMD_DISCOVER_RESP) << "discover-resp command should be CMD_DISCOVER_RESP (0x29)";
+  EXPECT_EQ(frame.data_len, DISCOVERY_RESP_FULL_SIZE) << "discover-resp should carry the full 9-byte payload";
+  EXPECT_TRUE(is_start(frame) && is_end(frame)) << "discover-resp should be both start and end frame";
+  EXPECT_FALSE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "discover-resp is device-originated, not low-power targeted";
+  EXPECT_EQ(decode_packed_device_type(frame.data[0], frame.data[1]), DeviceType::ROLLER_SHUTTER)
+      << "packed type should round-trip through decode_packed_device_type";
+  EXPECT_EQ(decode_packed_device_subtype(frame.data[1]), 5) << "packed subtype should round-trip";
+  EXPECT_EQ(0, memcmp(&frame.data[DISCOVERY_RESP_BACKBONE_OFFSET], test::OWN_ID, NODE_ID_SIZE))
+      << "backbone address should be our own node ID, matching the real-capture cross-check";
+  EXPECT_EQ(frame.data[DISCOVERY_RESP_MANUFACTURER_OFFSET], MANUFACTURER_SOMFY)
+      << "manufacturer byte should be as supplied";
+  EXPECT_EQ(frame.data[DISCOVERY_RESP_FLAGS_OFFSET], 0x00)
+      << "flags byte is a best-effort placeholder (see proto_commands.h @note) — pinned here so a "
+         "future change to it is deliberate, not accidental";
+  EXPECT_EQ(frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET], 0x00);
+  EXPECT_EQ(frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1], 0x00);
+}
+
+TEST(ProtoCommands, CreateKeyConfirm) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_key_confirm(frame, test::OWN_ID, test::DST_ID)) << "create_key_confirm should succeed";
+  EXPECT_EQ(frame.cmd, CMD_KEY_CONFIRM) << "key-confirm command should be CMD_KEY_CONFIRM (0x33)";
+  EXPECT_EQ(frame.data_len, 0) << "key-confirm should have no payload";
+  EXPECT_FALSE(is_start(frame)) << "key-confirm should not be a start frame";
+  EXPECT_FALSE(is_end(frame)) << "key-confirm should not be an end frame";
+  EXPECT_FALSE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "key-confirm is device-originated, not low-power targeted";
+}
+
+TEST(ProtoCommands, CreateChallengeReqWithSuppliedChallengeMatchesGenerated) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_challenge_req(frame, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE))
+      << "create_challenge_req with a supplied challenge should succeed";
+  EXPECT_EQ(frame.cmd, CMD_CHALLENGE_REQ) << "challenge-req command should be CMD_CHALLENGE_REQ (0x3C)";
+  EXPECT_EQ(0, memcmp(frame.data, test::TEST_CHALLENGE, HMAC_SIZE))
+      << "the supplied challenge bytes should appear verbatim in the frame payload";
+}
+
 TEST(ProtoCommands, CreateKeyInit) {
   IoFrame frame{};
   ASSERT_TRUE(create_key_init(frame, test::OWN_ID, test::DST_ID)) << "create_key_init should succeed";

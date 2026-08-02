@@ -163,6 +163,7 @@ home_io_control:
   system_key: !secret hub_system_key
   exposed_senders:
     - !secret example_io_device_linked_remote_id
+  accept_foreign_pairing: true
 
 cover:
   - platform: home_io_control

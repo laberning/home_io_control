@@ -295,6 +295,49 @@ bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, c
   }
 }
 
+/// Build a discovery response (0x29) — device side, used only by the key-extraction responder.
+/// See proto_commands.h for the full contract and the real-capture cross-check.
+bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
+                          uint8_t manufacturer_id) {
+  init_frame(f, true, true, true, false);
+  set_dst(f, dst);
+  set_src(f, own);
+
+  uint8_t payload[DISCOVERY_RESP_FULL_SIZE] = {0};
+  encode_packed_device_type(type, subtype, payload[0], payload[1]);
+  // Backbone address: the captured real Somfy 0x29 (see proto_commands.h doxygen) reports the
+  // device's own node ID here, so we mirror that rather than inventing a separate address.
+  memcpy(&payload[DISCOVERY_RESP_BACKBONE_OFFSET], own, NODE_ID_SIZE);
+  payload[DISCOVERY_RESP_MANUFACTURER_OFFSET] = manufacturer_id;
+  // Flags: turnaround class ATT_CLASS_5S (0) and POWER_SAVE_ALWAYS_ALIVE (0) both encode to 0 —
+  // an honest description of this responder (it never sleeps while armed). Best-effort; see
+  // proto_commands.h @note.
+  // TODO(hardware-verify): confirm a real hub accepts these flags/timestamp values, or whether
+  // it requires specific ATT/power-save/timestamp semantics before completing pairing.
+  payload[DISCOVERY_RESP_FLAGS_OFFSET] = 0x00;
+  payload[DISCOVERY_RESP_TIMESTAMP_OFFSET] = 0x00;
+  payload[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1] = 0x00;
+  return set_cmd(f, CMD_DISCOVER_RESP, payload, sizeof(payload));
+}
+
+/// Build a key-confirm frame (0x33) — device side, used only by the key-extraction responder.
+/// See proto_commands.h for the full contract and the reconstructed-capture cross-check.
+bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+  init_frame(f, true, false, false, false);
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, CMD_KEY_CONFIRM);
+}
+
+/// Recover the system key from a CMD_KEY_TRANSFER payload. See proto_commands.h for the full
+/// contract; this is the single place the IV-`data` convention (`{CMD_KEY_INIT}, len 1`) lives
+/// for the decode direction, mirroring create_key_transfer()'s encode side below.
+bool recover_system_key_from_transfer(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE],
+                                      uint8_t out_key[AES_KEY_SIZE]) {
+  const uint8_t key_init_cmd = CMD_KEY_INIT;
+  return crypto::crypt_key(&key_init_cmd, 1, challenge, transfer_payload, out_key);
+}
+
 /// Build a key-init request (0x31) to start the pairing key exchange with a discovered device.
 bool create_key_init(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   init_frame(f, true, true, false, true);
@@ -318,16 +361,21 @@ bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, con
   return set_cmd(f, CMD_KEY_TRANSFER, enc_key, AES_KEY_SIZE);
 }
 
-/// Build a challenge request (0x3C) containing 6 random bytes.
-/// Used when WE need to authenticate an incoming request from a device.
-bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src) {
+/// Build a challenge request (0x3C) using a caller-supplied challenge. See proto_commands.h.
+bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE]) {
   // start=true, end=false; low_power=true (see create_set_name above).
   init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, src);
+  return set_cmd(f, CMD_CHALLENGE_REQ, challenge, HMAC_SIZE);
+}
+
+/// Build a challenge request (0x3C) containing 6 random bytes.
+/// Used when WE need to authenticate an incoming request from a device.
+bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src) {
   uint8_t challenge[HMAC_SIZE];
   crypto::generate_challenge(challenge);
-  return set_cmd(f, CMD_CHALLENGE_REQ, challenge, HMAC_SIZE);
+  return create_challenge_req(f, dst, src, challenge);
 }
 
 /// Build a challenge response (0x3D) proving we know the system key.

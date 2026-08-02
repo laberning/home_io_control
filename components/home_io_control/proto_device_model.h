@@ -126,6 +126,14 @@ DeviceType decode_packed_device_type(uint8_t type_msb, uint8_t type_subtype);
 /// @return Manufacturer-specific subtype.
 uint8_t decode_packed_device_subtype(uint8_t type_subtype);
 
+/// @brief Encode a DeviceType/subtype pair into the two-byte packed metadata format used by
+/// discovery responses — the inverse of decode_packed_device_type()/decode_packed_device_subtype().
+/// @param type Device type to encode.
+/// @param subtype Manufacturer-specific subtype; only bits [5:0] are used.
+/// @param type_msb Output: first metadata byte.
+/// @param type_subtype Output: second metadata byte (top 2 type bits + 6-bit subtype).
+void encode_packed_device_type(DeviceType type, uint8_t subtype, uint8_t &type_msb, uint8_t &type_subtype);
+
 /// @brief Human‑readable operation profile name for a device type.
 /// Used for logging and diagnostics.
 /// @param type Device type.

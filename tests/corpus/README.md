@@ -176,6 +176,19 @@ the two implementations fails a gate on both sides.
    configs (see `docs/radio_diagnostics.md` and the README's
    [Reporting Unsupported Devices](../../README.md#reporting-unsupported-devices) checklist).
    ⚠️ Never paste a raw pairing log (`0x31`/`0x32`/`0x33`) publicly — see "Key hygiene" above.
+
+   **Getting the raw `0x32` bytes for `--rekey`:** a normal build cannot produce them — `0x32`
+   payloads are always masked in frame logs (`log_frame.h`'s `render_frame_hex_redacted()`),
+   independent of `IOHOME_FRAME_LOG`. To capture a genuine own-hardware pairing exchange for
+   re-keying, temporarily rebuild with the separate, maintainer-only
+   `-DIOHOME_UNSAFE_LOG_KEY_MATERIAL` flag (see its doxygen in `log_frame.h` for the full rules),
+   capture the one exchange you need, then rebuild without it immediately. Never commit a config
+   with it enabled, never use it on a device whose logs anyone else can see, and never paste
+   output captured under it anywhere before `--rekey` has run. (If the raw bytes genuinely cannot
+   be obtained at all and you independently know the plaintext inputs — a real recovered key, the
+   challenge, and the IV `data` convention — the corpus-key payload can instead be computed
+   directly via `crypt_key()`/`protolib.crypt_key()` without ever touching the real key bytes;
+   label such a frame's `note:` clearly as computed, not captured, if you ever fall back to this.)
 2. Scaffold a capture YAML with `scripts/corpus/ingest.py`, which parses both on-air log tags
    (`io_capture` structured, legacy `io_frame`) plus a liberal fallback for mangled pastes, and
    proposes mechanically-derivable `expect:` fields (cmd/start/end/protocol only):

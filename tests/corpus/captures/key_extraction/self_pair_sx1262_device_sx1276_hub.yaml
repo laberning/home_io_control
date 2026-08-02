@@ -1,0 +1,80 @@
+id: key_extraction_self_pair_sx1262_device_sx1276_hub
+description: >
+  Real, fully re-keyed end-to-end capture of the Accept Foreign Pairing key-extraction responder (pairing_responder.h / hub_key_extraction.cpp) being paired to by this project's own PairingEngine acting as an ordinary controller -- the mirror direction of self_pair_sx1276_device_sx1262_hub.yaml, with roles swapped (SX1262 as the responder/device role this time, the direction the feature plan flagged as highest turnaround risk). Captured from the controller's (SX1276) own log with -DIOHOME_UNSAFE_LOG_KEY_MATERIAL temporarily enabled to obtain the raw 0x32 bytes, then rekeyed with --rekey. Confirms the full 0x28-0x33 exchange round-trips on real RF hardware and that the responder recovers the controller's real system key byte-for-byte, even with one retry needed at both the key-init and key-transfer steps (expected SX1262-settle-time behavior, tolerated by the responder's retry-safe state machine).
+source:
+  device: "This project's own hub firmware, self-paired (SX1262 device role, key-extraction responder <-> SX1276 controller role, normal Discover & Pair)"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-02
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B C0 FF EE 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), controller node C0FFEE (this was the controller's 3rd discovery attempt; the first 2 got no response for a reason not established by this capture)"
+  - dir: rx
+    t_ms: 217
+    freq: 868950000
+    hex: "D1 00 C0 FF EE 39 58 B4 29 00 80 39 58 B4 02 00 00 00"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), throwaway device id 39 58 B4, manufacturer=2 (Somfy), type=roller_shutter"
+  - dir: tx
+    t_ms: 225
+    freq: 868950000
+    hex: "48 20 39 58 B4 C0 FF EE 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), first attempt (unanswered — the responder's own log never shows receiving it, only the retry below)"
+  - dir: tx
+    t_ms: 1362
+    freq: 868950000
+    hex: "48 20 39 58 B4 C0 FF EE 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), retry; answered"
+  - dir: rx
+    t_ms: 1716
+    freq: 868950000
+    hex: "4E 20 C0 FF EE 39 58 B4 3C 4F FA 11 E7 8D 2C"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), challenge = 4F FA 11 E7 8D 2C"
+  - dir: tx
+    t_ms: 1731
+    freq: 868950000
+    hex: "18 20 39 58 B4 C0 FF EE 32 26 38 EE 03 22 C7 14 82 D3 09 41 B2 60 06 01 3A"
+    crc: absent
+    note: "cmd=KEY_TRANSFER(0x32), first attempt (unanswered — sent only ~15ms after the responder finished its own 3-channel challenge-reply burst)"
+  - dir: tx
+    t_ms: 2588
+    freq: 868950000
+    hex: "18 20 39 58 B4 C0 FF EE 32 26 38 EE 03 22 C7 14 82 D3 09 41 B2 60 06 01 3A"
+    crc: absent
+    note: "cmd=KEY_TRANSFER(0x32), retry (same payload — deterministic given the same challenge/key); answered"
+  - dir: rx
+    t_ms: 2647
+    freq: 868950000
+    hex: "08 00 C0 FF EE 39 58 B4 33"
+    crc: absent
+    note: "cmd=KEY_CONFIRM(0x33)"
+  - dir: tx
+    t_ms: 2703
+    freq: 868950000
+    hex: "4D 20 39 58 B4 C0 FF EE 6F E0 10 0A 08 00"
+    crc: absent
+    note: "cmd=SET_CONFIG1(0x6F), best-effort phase-3 config; unanswered (responder had already disarmed after 0x33)"
+expect:
+  exchange:
+    kind: pairing
+    outcome: success
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x32, start: false, end: false, protocol: 2w}
+    - {cmd: 0x32, start: false, end: false, protocol: 2w}
+    - {cmd: 0x33, start: false, end: false, protocol: 2w}
+    - {cmd: 0x6F, start: true, end: false, protocol: 2w}

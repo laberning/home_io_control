@@ -4,6 +4,11 @@
 /// @brief Key-material redaction helpers shared by every surface that can emit frame bytes
 /// or debug text (frame logging today; telemetry and diagnostic reports later).
 /// @ingroup hioc_protocol
+///
+/// The one deliberate, narrow exception to this file's masking is `IOHOME_UNSAFE_LOG_KEY_MATERIAL`
+/// (log_frame.h::render_frame_hex_redacted()) — a maintainer-only, opt-in-only build flag for
+/// capturing a genuine pairing exchange for `tests/corpus/`. See that function's doxygen for the
+/// full rules before ever defining it.
 
 #include "proto_constants.h"
 #include "proto_sizes.h"

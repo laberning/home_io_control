@@ -78,7 +78,7 @@ format-check:
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
 	@echo "Linting YAML configuration files..."
-	yamllint config/tests/ config/*.yaml tests/corpus/captures/ 2>/dev/null || exit 1
+	yamllint config/tests/*.yaml config/*.yaml tests/corpus/captures/ 2>/dev/null || exit 1
 
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
 # (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.

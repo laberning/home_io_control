@@ -669,6 +669,81 @@ TX/RX/RX_REJECT/LBT-defer/hop/phase event, in order) plus, when applicable, one 
 | `foreign_controller` | A discovery response (0x29) was seen addressed to a node ID that isn't this controller's. | Another controller (e.g. TaHoma) is pairing the same device right now. Wait for it to finish, or make sure you're the only controller with the device in pairing mode. |
 | `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Distinguishes "RF dead" (antenna, wiring, wrong channel/tuning) from "device just isn't in pairing mode" — check the antenna and radio tuning before re-pressing PROG. |
 
+## Key Extraction (Accept Foreign Pairing)
+
+> **⚠️ Hardware-confirmed protocol, but not yet against a third-party hub.** A full extraction
+> (0x28 through 0x33) between two boards — one running this responder, the other running this
+> project's own pairing flow as the "hub" — recovered the hub's `node_id`/`system_key`
+> byte-for-byte on real RF hardware. That confirms the crypto, state machine, and radio wiring are
+> correct. It does **not** confirm compatibility with a genuine third-party hub (Somfy TaHoma/
+> Smoove, Velux KLF200, etc.) — the discovery-response field guesses and IV-derivation assumption
+> were reverse-engineered from this project's own encoder and a small number of captures, and a
+> real hub's exact requirements may differ.
+
+If you already own a working IO-Homecontrol installation (a hub plus paired devices) and want to
+move it to this component, you normally need to extract that installation's `node_id`/
+`system_key` — which otherwise requires resetting a device and sniffing a re-pair with an
+external tool. This feature avoids that: it makes the ESP32 emulate an *unpaired device* so your
+existing hub can pair to it directly, the same way it would pair to a real shutter. During that
+pairing handshake your hub hands over its `node_id` and `system_key`; this feature recovers both
+and prints a ready-to-paste YAML block, with no separate hardware and no device reset.
+
+```yaml
+home_io_control:
+  # ... rst_pin / node_id / system_key / etc. as usual ...
+  accept_foreign_pairing: true
+```
+
+Configuration variable:
+
+- `accept_foreign_pairing` (Optional, boolean, default `false`): When `true`, dynamically creates
+  the **"Accept Foreign Pairing (Key Extraction)"** switch entity, bound directly to this hub.
+
+This lives directly under `home_io_control:`, alongside options like `tuning:` and
+`exposed_senders:`. The generated switch always boots off (`restore_mode: ALWAYS_OFF`) so a
+reboot can never leave it armed, and its name is fixed to "Accept Foreign Pairing (Key
+Extraction)" (not configurable).
+
+### Workflow
+
+1. Flash the firmware with `accept_foreign_pairing: true` set in your `home_io_control:` block.
+2. Turn the **"Accept Foreign Pairing (Key Extraction)"** switch on in Home Assistant. The hub
+   arms for **10 minutes** and logs the throwaway node ID it will advertise.
+3. Put your **existing** hub into its own "add device" / pairing mode, the same way you would to
+   pair a new shutter to it.
+4. Watch the ESPHome logs. On success, within a few seconds you will see a clearly-delimited
+   block containing your installation's real `node_id` and `system_key`, ready to paste
+   into a new `home_io_control:` block. The switch turns itself off immediately after a
+   successful extraction.
+5. If nothing happens within 10 minutes, the switch turns itself off and the log explains that no
+   pairing attempt was seen (or, if a partial attempt was seen, which phase it reached — useful
+   for diagnosing a missed frame, see the note below).
+6. Copy the printed `node_id`/`system_key` into your new hub's YAML and reflash.
+
+### Known limitations
+
+- The recovered key is **not independently verified against your specific hub** by this feature —
+  there is no automated read-back confirming it. Test it (e.g. by controlling a device) before
+  relying on it; if it doesn't work, please file a GitHub issue with the (redacted, per the
+  warning above) circumstances so the discovery-response format or IV-derivation assumptions can
+  be corrected.
+- On SX1262-based boards, a slow TX→RX turnaround can cause the responder to miss the hub's next
+  frame right after transmitting a reply. The responder tolerates this by staying in its current
+  state and waiting for the hub's own retry rather than assuming a single clean pass — if
+  extraction seems stuck, give it a few more seconds before assuming failure. Confirmed working
+  with SX1262 on both sides (as the *hub* and as the *responder*, the more demanding direction for
+  this specific risk) — occasionally needing one automatic retry at the key-init or key-transfer
+  step is expected and not a sign of failure.
+- Only one extraction attempt is honored per 10-minute arm; the switch disarms itself immediately
+  after the first successful extraction.
+- Pairing timing generally — hop/dwell slicing, preamble selection, and discovery-window sizing —
+  is not yet perfectly tuned across this project, and the key-extraction responder shares that
+  same radio timing machinery with normal device pairing (`PairingEngine`). In practice this means
+  discovery, key-init, or key-transfer can each need a retry before landing, on top of the
+  turnaround-specific SX1262 behavior noted above. Extraction is still expected to succeed, but
+  don't be surprised if it takes several hub-side retries (or, if the whole attempt times out, a
+  fresh switch toggle) rather than a single clean pass on the first try.
+
 ## Device Type and Capability Notes
 
 - **Cover-like families** (shutters, awnings, blinds, openers, curtains) are the primary supported path today. These support full position control (0–100%).

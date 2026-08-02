@@ -84,6 +84,8 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::pairing_engine_;
   using IOHomeControlComponent::transmit_frame_;
   using IOHomeControlComponent::process_received_packet_;
+  using IOHomeControlComponent::key_extraction_ctx_;
+  using IOHomeControlComponent::generate_key_extraction_throwaway_id_;
   using IOHomeControlComponent::update_device_status_;
   using IOHomeControlComponent::notify_device_update_;
   using IOHomeControlComponent::begin_status_poll_tracking_;

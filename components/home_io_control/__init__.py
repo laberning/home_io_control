@@ -9,7 +9,17 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
 from esphome.components import spi
-from esphome.const import CONF_ID
+# Aliased: this package has its own switch.py submodule, so a plain `from esphome.components
+# import switch` here would bind the name `switch` in this __init__.py's namespace — which,
+# because __init__.py IS the esphome.components.home_io_control package object, is the exact
+# same slot ESPHome's component loader later overwrites when it imports our own switch.py
+# platform file as `esphome.components.home_io_control.switch`. Without the alias, whichever
+# import happens to run last silently wins, and to_code() (called even later, when tasks are
+# flushed) can end up resolving `switch` to our own switch.py instead of the real ESPHome
+# switch component.
+from esphome.components import switch as switch_component
+from esphome.const import CONF_ID, CONF_NAME, ENTITY_CATEGORY_CONFIG
+from esphome.core import ID
 
 from . import tuning as tuning_module
 
@@ -33,12 +43,44 @@ CONF_VFEM_PIN = "vfem_pin"
 CONF_FEM_PA_PIN = "fem_pa_pin"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_EXPOSED_SENDERS = "exposed_senders"
+CONF_ACCEPT_FOREIGN_PAIRING = "accept_foreign_pairing"
 MIN_STATUS_POLL_INTERVAL_MS = 500
+
+# Internal config key for the "Accept Foreign Pairing" companion switch ID (injected by
+# post-validator, same pattern as tuning.py's companion entity IDs — ESPHome 2026.x sizes the
+# runtime component vector from IDs known at the end of schema validation, so a companion
+# entity created only in to_code() would silently drop; see tuning.py::_inject_tuning_companion_ids
+# for the fuller rationale).
+CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID = "_accept_foreign_pairing_switch_id"
 
 home_io_control_ns = cg.esphome_ns.namespace("home_io_control")
 IOHomeControlComponent = home_io_control_ns.class_(
     "IOHomeControlComponent", cg.Component, spi.SPIDevice
 )
+# Hub-level "Accept Foreign Pairing (Key Extraction)" switch (hub_key_extraction.cpp /
+# platform_accept_foreign_pairing_switch.h). Deliberately NOT exposed via a `switch:` platform
+# entry: earlier revisions dispatched on the presence/absence of `io_device_id` within switch.py,
+# which meant an ordinary device-bound switch missing `io_device_id` by mistake would silently
+# become this security-sensitive switch instead of failing validation. Gating it behind this
+# boolean (created dynamically, like the `tuning:` UI controls) makes that class of mistake
+# structurally impossible: there is no shared schema for the two to be confused under.
+IOHomeAcceptForeignPairingSwitch = home_io_control_ns.class_(
+    "IOHomeAcceptForeignPairingSwitch", switch_component.Switch, cg.Component
+)
+
+
+def _inject_accept_foreign_pairing_switch_id(config):
+    if not config[CONF_ACCEPT_FOREIGN_PAIRING]:
+        return config
+    parent_id = config[CONF_ID]
+    base = parent_id.id if parent_id.id else "home_io_control"
+    config[CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID] = ID(
+        f"{base}_accept_foreign_pairing_switch",
+        is_declaration=True,
+        type=IOHomeAcceptForeignPairingSwitch,
+    )
+    return config
+
 
 PA_PIN_OPTIONS = {
     "BOOST": 0x80,
@@ -199,7 +241,7 @@ def validate_status_poll_interval(value):
     return value
 
 
-CONFIG_SCHEMA = (
+CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(IOHomeControlComponent),
@@ -225,11 +267,13 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_EXPOSED_SENDERS, default=[]): cv.ensure_list(
                 validate_device_id
             ),
+            cv.Optional(CONF_ACCEPT_FOREIGN_PAIRING, default=False): cv.boolean,
             cv.Optional(tuning_module.CONF_TUNING): tuning_module.TUNING_CONFIG_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
-    .extend(spi.spi_device_schema(True, 8e6, "mode0"))
+    .extend(spi.spi_device_schema(True, 8e6, "mode0")),
+    _inject_accept_foreign_pairing_switch_id,
 )
 
 
@@ -291,5 +335,31 @@ async def to_code(config):
     for sender_id in config[CONF_EXPOSED_SENDERS]:
         cg.add(var.add_exposed_sender(sender_id))
 
+    if config[CONF_ACCEPT_FOREIGN_PAIRING]:
+        await _create_accept_foreign_pairing_switch(config, var)
+
     if tuning_module.CONF_TUNING in config:
         await tuning_module.to_code(config[tuning_module.CONF_TUNING], var)
+
+
+async def _create_accept_foreign_pairing_switch(config, var):
+    """Create the hub-level "Accept Foreign Pairing (Key Extraction)" switch.
+
+    Mirrors tuning.py's _create_number()/_create_select(): normalize a bare {id, name} dict
+    through switch_schema()+COMPONENT_SCHEMA so it carries the entity/component defaults
+    register_switch()/register_component() require, matching the neighboring pattern rather than
+    hand-assembling a config dict shape of its own.
+    """
+    entity_config = switch_component.switch_schema(
+        IOHomeAcceptForeignPairingSwitch,
+        default_restore_mode="ALWAYS_OFF",  # never auto-arm after a reboot
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ).extend(cv.COMPONENT_SCHEMA)(
+        {
+            CONF_ID: config[CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID],
+            CONF_NAME: "Accept Foreign Pairing (Key Extraction)",
+        }
+    )
+    entity = await switch_component.new_switch(entity_config)
+    await cg.register_component(entity, entity_config)
+    cg.add(entity.set_parent(var))

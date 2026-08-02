@@ -203,6 +203,57 @@ bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, c
 /// @return true on success.
 bool create_discover(IoFrame &f, const uint8_t *own);
 
+/// @brief Build a discovery response (0x29) — the device side of discovery, used by the
+/// key-extraction responder (see pairing_responder.h) to emulate an unpaired device.
+///
+/// Every other builder in this file speaks the *controller* side of the protocol; this one and
+/// create_key_confirm() below speak the *device* side, needed only for that one reverse-role
+/// feature. Payload layout matches the full 9-byte discovery response format documented at
+/// DISCOVERY_RESP_BACKBONE_OFFSET/_MANUFACTURER_OFFSET/_FLAGS_OFFSET/_TIMESTAMP_OFFSET
+/// (proto_constants.h), cross-checked against a real Somfy actuator's captured 0x29
+/// (tests/corpus/captures/somfy_awning/pairing_lab_discovery_response.yaml): backbone address
+/// equals the device's own node ID, start+end set, low_power clear.
+/// @param f IoFrame to populate.
+/// @param own Our advertised (throwaway) node ID — used as both src and the backbone address.
+/// @param dst Destination node ID (the discovering hub's real node ID, from its 0x28's src).
+/// @param type Device type to advertise.
+/// @param subtype Device subtype to advertise.
+/// @param manufacturer_id Manufacturer ID to advertise (see MANUFACTURER_* in proto_constants.h).
+/// @note The flags byte (turnaround class, power-save) and timestamp are best-effort placeholder
+///       values (0x00) — a real hub may require different values; unverified without hardware.
+/// @return true on success.
+bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
+                          uint8_t manufacturer_id);
+
+/// @brief Build a key-confirm frame (0x33) — the device's acknowledgement that it received and
+/// installed the system key, sent after decrypting a CMD_KEY_TRANSFER (0x32).
+///
+/// Device-side counterpart to create_key_transfer(); used only by the key-extraction responder
+/// (see create_discover_resp() above for why this direction exists at all). No payload, matching
+/// the reconstructed-but-high-confidence 0x33 in
+/// tests/corpus/captures/issues/field_rs100_pairing_key_exchange_retry_success.yaml (no real 0x33
+/// has been captured raw anywhere in this project).
+/// @param f IoFrame to populate.
+/// @param own Our advertised (throwaway) node ID.
+/// @param dst Destination node ID (the hub that sent the key transfer).
+/// @return true on success.
+bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+
+/// @brief Recover the system key from an inbound CMD_KEY_TRANSFER (0x32) payload — the decode
+/// counterpart to create_key_transfer()'s encode.
+///
+/// Centralizes the IV-`data` convention in one place: create_key_transfer() derives its IV from
+/// the *preceding* CMD_KEY_INIT (0x31) command byte only (see its own doxygen), so decoding must
+/// use that same single-byte `{CMD_KEY_INIT}` — not the 0x32 frame's own command byte, and not
+/// the discovery frame. crypt_key() is symmetric, so this is the same primitive in reverse.
+/// @param transfer_payload 16-byte CMD_KEY_TRANSFER payload (frame.data).
+/// @param challenge The 6-byte challenge *we* generated and sent in our own CMD_CHALLENGE_REQ
+///        (0x3C) — the far side mixes this into its IV, so decoding requires the exact same bytes.
+/// @param out_key Output: recovered 16-byte system key.
+/// @return true on success (crypt_key() AES failure is the only false case).
+bool recover_system_key_from_transfer(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE],
+                                      uint8_t out_key[AES_KEY_SIZE]);
+
 /// Build a key‑init request (0x31) to start pairing key exchange with a discovered device.
 /// @param f IoFrame to populate.
 /// @param own Controller node ID.
@@ -233,6 +284,22 @@ bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, con
 /// @param src Controller node ID.
 /// @return true on success.
 bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src);
+
+/// @brief Build a challenge request (0x3C) using a caller-supplied challenge instead of
+/// generating a fresh one internally.
+///
+/// The no-challenge overload above generates its own random bytes and does not expose them,
+/// which is fine for the normal inbound-auth path (the challenge is only ever needed once, to
+/// build this same frame). The key-extraction responder (pairing_responder.h) needs the *exact*
+/// bytes again later to decrypt the corresponding CMD_KEY_TRANSFER (0x32), so it generates the
+/// challenge itself and passes it in here — this overload is what keeps both call sites (the
+/// transmitted 0x3C and the later decrypt) using the same source of truth.
+/// @param f IoFrame to populate.
+/// @param dst Target node ID (device or, for the key-extraction responder, the foreign hub).
+/// @param src Our own node ID.
+/// @param challenge Caller-supplied 6-byte challenge (e.g. from crypto::generate_challenge()).
+/// @return true on success.
+bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE]);
 
 /// Build a challenge response (0x3D) proving we know the system key.
 /// HMAC is computed over [original_command_id + original_data] using the challenge.

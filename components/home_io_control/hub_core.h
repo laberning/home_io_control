@@ -43,6 +43,7 @@
 #include "exchange_engine.h"
 #include "pairing_engine.h"
 #include "management_actions.h"
+#include "pairing_responder.h"
 #include <map>
 #include <vector>
 #include <functional>
@@ -220,6 +221,28 @@ class IOHomeControlComponent : public Component,
   /// @param cb Callable with no arguments.
   void set_pairing_result_callback(std::function<void()> cb) { this->pairing_result_callback_ = std::move(cb); }
 
+  /// @brief Arm or disarm the "Accept Foreign Pairing (Key Extraction)" responder.
+  ///
+  /// Arming picks a fresh throwaway node ID, resets the pairing_responder state machine to
+  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, new 0x28/0x31/0x32 branches in
+  /// process_received_packet_() emulate an unpaired device so a user's existing hub can pair to
+  /// it and hand over its node_id/system_key (see pairing_responder.h). Disarming — manual, via
+  /// the HA switch, on successful extraction, or on auto-off — immediately stops those branches
+  /// from responding; it never touches the real device registry or the hub's own node_id_/
+  /// system_key_. Virtual so platform unit tests can substitute a mock hub, matching every other
+  /// queue_*/set_* entry point on this component.
+  /// @param armed Desired state.
+  virtual void set_key_extraction_armed(bool armed);
+
+  /// Register a callback invoked whenever the key-extraction armed state changes — manual
+  /// toggle, successful extraction, or auto-off timeout — so the switch entity can keep its
+  /// displayed state in sync when the hub disarms itself rather than the user. Single-slot,
+  /// mirrors set_pairing_result_callback().
+  /// @param cb Callable receiving the new armed state.
+  void set_key_extraction_armed_callback(std::function<void(bool)> cb) {
+    this->key_extraction_armed_callback_ = std::move(cb);
+  }
+
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (legacy/delegating overload).
   /// Type, subtype, and inverted default to UNKNOWN / 0 / false; use the 4-arg
@@ -395,6 +418,43 @@ class IOHomeControlComponent : public Component,
   /// Parse a received frame, merge supported device state or metadata, and notify callbacks.
   /// @param packet Raw radio packet containing a parsed IoFrame.
   void process_received_packet_(const RadioRxPacket &packet);
+
+  // --- Key-extraction responder ("Accept Foreign Pairing") RX handlers ---
+  // Small delegating wrappers called from process_received_packet_(); the actual decision logic
+  // lives in pairing_responder.h so it stays pure and host-testable. See hub_key_extraction.cpp.
+
+  /// Dispatch a frame to the key-extraction responder if it's one of its 0x28/0x31/0x32 frames
+  /// and the responder is armed. Factored out of process_received_packet_() purely to keep that
+  /// function's cognitive complexity under the clang-tidy threshold, mirroring
+  /// PairingEngine::record_discovery_rx_telemetry_()'s reason for existing.
+  /// @param frame Parsed inbound frame.
+  /// @return true if the frame was handled (caller should stop further dispatch for it).
+  bool try_handle_key_extraction_frame_(const IoFrame &frame);
+  /// Handle an inbound CMD_DISCOVER_REQ (0x28) while the key-extraction responder is armed.
+  /// @param frame Parsed inbound discovery broadcast.
+  void handle_key_extraction_discover_(const IoFrame &frame);
+  /// Handle an inbound CMD_KEY_INIT (0x31) addressed to our throwaway node ID while armed.
+  /// @param frame Parsed inbound key-init frame.
+  void handle_key_extraction_key_init_(const IoFrame &frame);
+  /// Handle an inbound CMD_KEY_TRANSFER (0x32) addressed to our throwaway node ID while armed.
+  /// @param frame Parsed inbound key-transfer frame.
+  void handle_key_extraction_key_transfer_(const IoFrame &frame);
+  /// Generate a random throwaway node ID for one key-extraction arm cycle, avoiding collisions
+  /// with the broadcast addresses, this hub's own real node ID, and any registered device.
+  /// @param out Output: 3-byte node ID.
+  void generate_key_extraction_throwaway_id_(uint8_t out[NODE_ID_SIZE]);
+  /// Transmit a key-extraction reply frame on all 3 IO-homecontrol channels, using the radio
+  /// driver's response_preamble() rather than a fixed SHORT_PREAMBLE/LONG_PREAMBLE constant —
+  /// long enough that a channel-hopping receiver reliably lands on it, short enough that 3
+  /// sequential transmissions don't block the main loop for the better part of a second (see the
+  /// implementation comment in hub_key_extraction.cpp for the hardware-confirmed reasoning).
+  /// Shared by all three RX handlers so the preamble choice and channel list are defined once.
+  /// @param frame Frame to broadcast (already built by the caller).
+  void broadcast_key_extraction_reply_(const IoFrame &frame);
+  /// Emit the security-sensitive "system key extracted" log block (see redaction.h — this is the
+  /// one deliberate, explicit exception to that file's masking, not a loosening of it).
+  void log_key_extraction_result_();
+
   /// Extract supported position or metadata info from a response frame and merge it into the device record.
   /// @param frame IoFrame containing a supported inbound command such as CMD_PRIVATE_RESP,
   /// CMD_STATUS_UPDATE, CMD_GET_NAME_RESP, or CMD_GET_INFO2_RESP.
@@ -549,6 +609,11 @@ class IOHomeControlComponent : public Component,
   std::vector<std::string> exposed_senders_;
   /// Invoked once after every pairing attempt completes; see set_pairing_result_callback().
   std::function<void()> pairing_result_callback_;
+  /// State for the current "Accept Foreign Pairing" (key-extraction) arm cycle; DISARMED by
+  /// default so a fresh boot never responds to foreign pairing traffic. See pairing_responder.h.
+  pairing_responder::ResponderContext key_extraction_ctx_;
+  /// Invoked whenever the key-extraction armed state changes; see set_key_extraction_armed_callback().
+  std::function<void(bool)> key_extraction_armed_callback_;
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
   PairingTelemetry pairing_telemetry_;    ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.

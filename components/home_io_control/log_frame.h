@@ -54,6 +54,16 @@ inline void decode_ctrl1_flags(uint8_t ctrl1, char *out, size_t out_size) {
 ///
 /// Kept outside the IOHOME_FRAME_LOG guard so the redaction behavior is unit-testable
 /// independent of the firmware-only logging build flag.
+///
+/// @warning `IOHOME_UNSAFE_LOG_KEY_MATERIAL` disables the masking below entirely. It exists
+/// solely so a maintainer can capture a genuine pairing exchange for `tests/corpus/` (see
+/// `tests/corpus/README.md`'s key-hygiene section) when the normal `ingest.py --rekey` flow has
+/// no other way to obtain the raw bytes. Never set it outside a deliberate, local,
+/// own-hardware capture session: build with it, capture the one exchange you need, `--rekey`
+/// immediately, then rebuild without it. Never commit a config with it enabled, never use it on
+/// a device whose logs anyone else can see, and never paste output captured under it into an
+/// issue/chat before re-keying. hub_core.cpp's setup() logs a loud warning every boot while this
+/// is defined specifically so an accidentally-left-on build can't stay quiet.
 /// @param data Raw serialized frame bytes (header + payload, no CRC).
 /// @param len Total length of data.
 /// @param out Buffer to write the rendered text into.
@@ -61,6 +71,7 @@ inline void decode_ctrl1_flags(uint8_t ctrl1, char *out, size_t out_size) {
 inline void render_frame_hex_redacted(const uint8_t *data, uint8_t len, char *out, size_t out_size) {
   if (out_size == 0)
     return;
+#ifndef IOHOME_UNSAFE_LOG_KEY_MATERIAL
   if (len >= FRAME_MIN_SIZE && command_carries_key_material(data[FRAME_CMD_OFFSET])) {
     // Sized for FRAME_MIN_SIZE bytes of "XX " hex (not the general FRAME_LOG_HEX_BUFFER_SIZE) so
     // GCC's -Wformat-truncation can prove the snprintf() below never truncates into `out`.
@@ -69,9 +80,10 @@ inline void render_frame_hex_redacted(const uint8_t *data, uint8_t len, char *ou
     char header_hex[FRAME_MIN_SIZE * 3 + 4];
     bytes_to_hex(data, FRAME_MIN_SIZE, header_hex, sizeof(header_hex));
     snprintf(out, out_size, "%s[%u bytes masked]", header_hex, static_cast<unsigned>(len - FRAME_MIN_SIZE));
-  } else {
-    bytes_to_hex(data, len, out, out_size);
+    return;
   }
+#endif
+  bytes_to_hex(data, len, out, out_size);
 }
 
 #ifdef IOHOME_FRAME_LOG

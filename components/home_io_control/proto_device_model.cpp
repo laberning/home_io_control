@@ -33,6 +33,12 @@ DeviceType decode_packed_device_type(uint8_t type_msb, uint8_t type_subtype) {
 
 uint8_t decode_packed_device_subtype(uint8_t type_subtype) { return type_subtype & DEVICE_SUBTYPE_MASK; }
 
+void encode_packed_device_type(DeviceType type, uint8_t subtype, uint8_t &type_msb, uint8_t &type_subtype) {
+  const auto raw = static_cast<uint8_t>(type);
+  type_msb = static_cast<uint8_t>(raw >> DEVICE_TYPE_LOW_BITS_SHIFT);
+  type_subtype = static_cast<uint8_t>((raw << DEVICE_TYPE_HIGH_BITS_SHIFT) | (subtype & DEVICE_SUBTYPE_MASK));
+}
+
 void decode_position_report(uint16_t target_raw, uint16_t current_raw, bool is_stopped, float &target,
                             float &position) {
   bool const target_valid = target_raw <= STATUS_POS_MAX;

@@ -23,6 +23,7 @@ Contributions are welcome. If you have hardware that is not listed here, an unsu
 - **Experimental binary switch support**: On/off-only switch entities for IO-Homecontrol on/off switch devices
 - **Position feedback**: Real-time position updates from devices (2-Way protocol)
 - **Device discovery & pairing**: Pair new devices directly from Home Assistant via a button entity
+- **Key extraction from an existing installation (hardware-confirmed protocol; not yet confirmed against a third-party hub)**: A hub-level switch that emulates an unpaired device so your *existing* IO-Homecontrol hub can pair to it and hand over its `node_id`/`system_key` — no separate sniffing hardware or device reset required; see [Key Extraction](docs/home_io_control.md#key-extraction-accept-foreign-pairing)
 - **Pairing diagnostics**: Every pairing attempt is recorded to a machine-readable "Last Pairing Result" diagnostic text sensor, plus an actionable log-level advisor that turns overheard radio traffic (1W pairing traffic, channel congestion, a foreign controller pairing the same device, dead RF) into a plain-language diagnosis
 - **1W remote button events**: Overheard 1W transmissions (remotes *or* wind/rain sensors — same broadcast mechanism) fire an `esphome.home_io_control_sender_event` event for opted-in sender IDs (`exposed_senders`), so you can trigger Home Assistant automations directly from a physical remote press or sensor trigger
 - **Optimistic cover state**: Linked-1W-remote presses and HA-issued open/close/stop/set-position commands show the requested movement direction immediately, before the confirming poll or device response lands (`optimistic_state`, default on, per-cover opt-out); remotes can also be linked to a whole device class (`class:awning`) instead of enumerating node IDs
@@ -274,15 +275,18 @@ logger:
 2. Trigger the action that shows the problem.
    For new devices, put the device into pairing mode, press the Discover & Pair button, and capture the log from the button press until the pairing flow finishes.
 
-   **⚠️ Do NOT post pairing logs publicly.** A raw pairing log contains your system key encrypted
-   only under a key that is hardcoded and identical on every IO-Homecontrol installation
-   worldwide — anyone with the raw bytes can recover your real key and control your paired
-   devices. Command/status logs (opening, closing, polling status) are safe to share; a log that
-   contains commands `0x31`/`0x32`/`0x33` (key init / key transfer / key confirm) is a pairing
-   log and should never be pasted into a public issue. If you want to help turn your log into a
-   permanent regression fixture instead of a one-off report, see
-   `tests/corpus/README.md` — command/status logs can be contributed directly; pairing logs
-   should be re-keyed first (that tooling is there too).
+   A normal `-DIOHOME_FRAME_LOG` build never exposes your real system key: `CMD_KEY_TRANSFER`
+   (0x32) payloads are always masked in frame logs (`[N bytes masked]`), regardless of this flag —
+   that's enforced unconditionally by `redaction.h`, not something you can accidentally disable by
+   turning on frame logging. It is still good practice to avoid pasting pairing logs (commands
+   `0x31`/`0x32`/`0x33`) into a public issue when you don't need to — share the specific command
+   you're actually debugging instead where possible. If you want to help turn your log into a
+   permanent regression fixture instead of a one-off report, see `tests/corpus/README.md` —
+   command/status logs can be contributed directly, and pairing logs go through
+   `ingest.py --rekey` first (that tooling is there too). If you need to capture the *raw*,
+   unmasked `0x32` bytes for a re-keyed corpus contribution (the masking above means a normal
+   build genuinely cannot produce them), see `IOHOME_UNSAFE_LOG_KEY_MATERIAL` in
+   `log_frame.h`' — an opt-in-only build flag, never use it for a bug-report log.
 3. Include the board model, radio chip, and full pin mapping you used.
 4. Include the device model or product name if you know it, and mention whether it was previously paired with another hub.
 5. Include any raw values reported by the logs, especially `io_device_id`, `io_device_type`, and `io_subtype`, even if they appear as numeric values such as `0x11`.

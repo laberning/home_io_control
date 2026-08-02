@@ -65,6 +65,16 @@ void IOHomeControlComponent::setup() {
   // IO-homecontrol exchanges are intentionally blocking and often take a few hundred
   // milliseconds, so use a higher warning threshold than ESPHome's generic 30-50 ms.
   this->warn_if_blocking_over_ = BLOCKING_WARNING_THRESHOLD_MS;
+#ifdef IOHOME_UNSAFE_LOG_KEY_MATERIAL
+  // Loud, unconditional, every-boot warning so a build left with this flag on by accident can
+  // never stay quiet about it — see log_frame.h::render_frame_hex_redacted() for the full
+  // rationale and safe-use rules.
+  ESP_LOGE(detail::TAG, "########################################");
+  ESP_LOGE(detail::TAG, "IOHOME_UNSAFE_LOG_KEY_MATERIAL IS ENABLED -- FRAME LOGS EXPOSE YOUR SYSTEM KEY");
+  ESP_LOGE(detail::TAG, "This build is NOT safe to run normally or share logs from. Rebuild without this");
+  ESP_LOGE(detail::TAG, "flag as soon as you are done capturing.");
+  ESP_LOGE(detail::TAG, "########################################");
+#endif
   ESP_LOGI(detail::TAG, "Initializing...");
   if (!hex_to_bytes(this->node_id_str_, this->node_id_, NODE_ID_SIZE) ||
       !hex_to_bytes(this->system_key_str_, this->system_key_, AES_KEY_SIZE)) {
