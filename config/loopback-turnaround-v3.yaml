@@ -6,9 +6,8 @@
 esphome:
   name: turnaround-v3
   friendly_name: Turnaround V3
-  platformio_options:
-    build_flags:
-      - -DIOHOME_FRAME_LOG
+  build_flags:
+    - -DIOHOME_FRAME_LOG
 
 esp32:
   variant: esp32s3

@@ -1,6 +1,6 @@
 #include "hub_core.h"
-#include "hub_internal.h"
 #include "hub_pairing.h"
+#include "pairing_engine.h"
 #include "proto_frame.h"
 #include "radio_interface.h"
 
@@ -94,8 +94,8 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_Success) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  auto result = comp.pairing_engine_.wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS,
-                                                                  out_pkt, out_frame);
+  auto result =
+      comp.pairing_engine_.wait_for_discovery_response_(PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
 
   // Expect: valid discovery response yields ACCEPT disposition and populates outputs
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::ACCEPT)
@@ -116,8 +116,8 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_TimeoutNoTraffic) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  auto result = comp.pairing_engine_.wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS,
-                                                                  out_pkt, out_frame);
+  auto result =
+      comp.pairing_engine_.wait_for_discovery_response_(PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
 
   // Expect: no packets seen → NO_RESPONSE disposition
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE)
@@ -155,8 +155,8 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_InvalidFramesIgnoredThenAccept) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  auto result = comp.pairing_engine_.wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS,
-                                                                  out_pkt, out_frame);
+  auto result =
+      comp.pairing_engine_.wait_for_discovery_response_(PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
 
   // Expect: invalid frames ignored; first valid discovery response yields ACCEPT
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::ACCEPT)
@@ -199,8 +199,8 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_AllInvalidReturnsInvalid) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  auto result = comp.pairing_engine_.wait_for_discovery_response_(detail::PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS,
-                                                                  out_pkt, out_frame);
+  auto result =
+      comp.pairing_engine_.wait_for_discovery_response_(PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
 
   // Expect: traffic seen but no valid discovery response → INVALID disposition
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::INVALID)
@@ -228,8 +228,8 @@ TEST(PairingHelpers, WaitForKeyChallenge_Success) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  bool ok = comp.pairing_engine_.wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame,
-                                                         device_id);
+  bool ok =
+      comp.pairing_engine_.wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame, device_id);
 
   // Expect: challenge frame accepted and parsed correctly
   EXPECT_TRUE(ok) << "valid key challenge from expected device should be accepted";
@@ -261,7 +261,7 @@ TEST(PairingHelpers, WaitForKeyChallenge_WrongDeviceIgnored) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  bool ok = comp.pairing_engine_.wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame,
+  bool ok = comp.pairing_engine_.wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame,
                                                          expected_device_id);
 
   // Expect: frame from wrong device is ignored → failure return
@@ -293,8 +293,8 @@ TEST(PairingHelpers, WaitForKeyChallenge_NonChallengeIgnored) {
 
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
-  bool ok = comp.pairing_engine_.wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame,
-                                                         device_id);
+  bool ok =
+      comp.pairing_engine_.wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame, device_id);
 
   // Expect: non‑challenge command is ignored → failure return
   EXPECT_FALSE(ok) << "non‑challenge frame should be ignored during key‑challenge wait";
@@ -474,7 +474,7 @@ TEST(PairingHelpers, RunDiscoveryPhase_RetriesOnNoResponse) {
 
   EXPECT_NE(result, decisions::PairingDiscoveryDisposition::ACCEPT);
   // Should have sent one discovery TX per attempt (3 attempts)
-  EXPECT_EQ(radio.get_send_count(), detail::PAIRING_DISCOVERY_MAX_ATTEMPTS)
+  EXPECT_EQ(radio.get_send_count(), PAIRING_DISCOVERY_MAX_ATTEMPTS)
       << "should transmit discovery frame once per retry attempt";
 }
 

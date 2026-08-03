@@ -13,7 +13,6 @@
 #include "pairing_engine.h"
 
 #include "hub_decisions.h"
-#include "hub_internal.h"
 #include "proto_commands.h"
 #include "tuning_config.h"
 #include "esphome/core/application.h"
@@ -214,11 +213,11 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
     if (!engine_.transmit_frame(context.req, FREQ_CH2, radio_()->response_preamble()))
       continue;
 
-    const uint32_t deadline = millis() + detail::PAIRING_KEY_CONFIRM_TIMEOUT_MS;
+    const uint32_t deadline = millis() + PAIRING_KEY_CONFIRM_TIMEOUT_MS;
     bool saw_any = false;
     while ((int32_t) (deadline - millis()) > 0) {
       const uint32_t remaining = deadline - millis();
-      const uint32_t slice = std::min<uint32_t>(remaining, detail::PAIRING_KEY_CONFIRM_SLICE_MS);
+      const uint32_t slice = std::min<uint32_t>(remaining, PAIRING_KEY_CONFIRM_SLICE_MS);
       if (!radio_()->wait_for_packet(context.packet, slice)) {
         if ((int32_t) (deadline - millis()) > 0) {
           engine_.hop_frequency();
@@ -250,7 +249,7 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
       return false;
     }
     ESP_LOGI(TAG, "Try %d ended: no response for key transfer (0x32) within %" PRIu32 " ms (saw_any=%d)", tries + 1,
-             detail::PAIRING_KEY_CONFIRM_TIMEOUT_MS, saw_any);
+             PAIRING_KEY_CONFIRM_TIMEOUT_MS, saw_any);
   }
   return false;
 }
@@ -336,7 +335,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
     ESP_LOGD(TAG, "Discovery command %u/%zu: cmd=0x%02X dst=%02X%02X%02X", command_index + 1,
              tuning_->pairing_discovery_commands.size(), command, destination[0], destination[1], destination[2]);
 
-    for (uint8_t attempt = 1; attempt <= detail::PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {
+    for (uint8_t attempt = 1; attempt <= PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {
       this->telemetry_.increment_discovery_attempt();
       context.state = pairing::PairingState::TX_DISCOVER;
       engine_.record_debug(pairing_stage_name(context.state), attempt, false);
@@ -361,9 +360,9 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
         saw_invalid = true;
       }
 
-      if (attempt < detail::PAIRING_DISCOVERY_MAX_ATTEMPTS) {
+      if (attempt < PAIRING_DISCOVERY_MAX_ATTEMPTS) {
         ESP_LOGI(TAG, "Discovery attempt %u/%u for cmd=0x%02X: no response, retrying...", attempt,
-                 detail::PAIRING_DISCOVERY_MAX_ATTEMPTS, command);
+                 PAIRING_DISCOVERY_MAX_ATTEMPTS, command);
       }
     }
   }
@@ -396,8 +395,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   context.state = pairing::PairingState::WAIT_KEY_CHALLENGE;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
   this->telemetry_.set_phase(context.state);
-  if (!wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
-                               context.device.node_id)) {
+  if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id)) {
     return false;
   }
 
@@ -440,7 +438,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
       delay(EXCHANGE_RETRY_DELAY_MS);
       if (!engine_.transmit_frame(context.key_init, FREQ_CH2, LONG_PREAMBLE))
         continue;
-      if (wait_for_key_challenge_(detail::PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
+      if (wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
                                   context.device.node_id) &&
           context.rx.cmd == CMD_KEY_CONFIRM) {
         key_ok = true;

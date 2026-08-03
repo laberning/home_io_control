@@ -22,6 +22,15 @@ namespace home_io_control {
 /// Callback type invoked when a device's state changes.
 using DeviceUpdateCallback = std::function<void(const std::string &device_id, const IoDevice &device)>;
 
+/// YAML-declared device metadata for registration; defaults match an undeclared device.
+/// A new per-device attribute is a new field with a default here, not a new `add()` overload.
+struct DeviceConfig {
+  DeviceType type{DeviceType::UNKNOWN};  ///< Device type from YAML declaration.
+  uint8_t subtype{0};                    ///< Device subtype byte.
+  bool inverted{false};                  ///< Position-inversion flag.
+  bool optimistic_state{true};           ///< Whether `apply_optimistic_target`/`clear_optimistic_target` may fire.
+};
+
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.
 ///
 /// All of the hub's add/get/subscribe/notify operations go through this class —
@@ -37,13 +46,9 @@ class DeviceRegistry {
 
   /// Register a device with full YAML-derived metadata.
   /// No-op when @p device_id is already registered.  Warns and returns when the hex string is invalid.
-  /// @param device_id       Hexadecimal node ID string.
-  /// @param type            Device type from YAML declaration.
-  /// @param subtype         Device subtype byte.
-  /// @param inverted        Position-inversion flag.
-  /// @param optimistic_state Whether `apply_optimistic_target`/`clear_optimistic_target` may set
-  ///                         `target` ahead of a confirming poll/response; default true.
-  void add(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted, bool optimistic_state = true);
+  /// @param device_id Hexadecimal node ID string.
+  /// @param cfg       Device type/subtype/inversion/optimistic-state metadata.
+  void add(const std::string &device_id, const DeviceConfig &cfg);
 
   /// Insert or overwrite a device entry without deduplication or hex-validation checks.
   /// Used by the pairing flow which already validated the device during discovery.

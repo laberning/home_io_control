@@ -89,8 +89,9 @@ class TestableRadioLR1121 : public RadioLR1121 {
   // Control whether the final packet read succeeds (when not using the real path).
   void set_read_success(bool success) { read_success_ = success; }
 
-  // When true, dispatch to the real RadioLR1121::read_rx_packet (exercises the actual
-  // GetRxBufferStatus/ReadBuffer/UART-probe path against a ScriptedSpi).
+  // When true, dispatch to the real SoftPhyDriverBase::read_rx_packet (exercises the actual
+  // GetRxBufferStatus/ReadBuffer/UART-probe path against a ScriptedSpi) via RadioLR1121's
+  // concrete primitives.
   void set_use_real_read_rx_packet(bool use_real) { use_real_ = use_real; }
 
   // Bypass the read_irq_status_raw() override below to exercise the real GetStatus SPI
@@ -107,7 +108,7 @@ class TestableRadioLR1121 : public RadioLR1121 {
 
   bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint32_t irq_status) override {
     if (use_real_)
-      return RadioLR1121::read_rx_packet(packet, blocking_wait, irq_status);
+      return SoftPhyDriverBase::read_rx_packet(packet, blocking_wait, irq_status);
     (void) blocking_wait;
     (void) irq_status;
     if (read_success_) {
@@ -196,9 +197,9 @@ TEST(RadioLR1121, WaitBusyShortCircuitsAfterFailure) {
 TEST(RadioLR1121, ReadIrqStatusRawParsesGetStatusResponse) {
   // GetStatus wire response is [Stat1, Stat2, IRQ_b3, IRQ_b2, IRQ_b1, IRQ_b0] (cross-checked
   // against RadioLib's LRxxxx::getIrqStatus()). read_command_ consumes Stat1 separately, so
-  // this queues Stat1 + Stat2 + the 4 IRQ bytes and checks the word is reassembled correctly
-  // — guards against the resp[] off-by-one this test would have missed before the fix (every
-  // other test in this file only ever exercises the overridden read_irq_status_raw()).
+  // this queues Stat1 + Stat2 + the 4 IRQ bytes and checks the word is reassembled correctly.
+  // Every other test in this file exercises the overridden read_irq_status_raw(), so this is the
+  // only one that actually verifies the real GetStatus response parsing.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
@@ -240,9 +241,9 @@ TEST(RadioLR1121, TcxoCommandEncodesYamlVoltageCode) {
 
 TEST(RadioLR1121, PaConfigSelectsHpPathAndClampsPowerAboveLpRange) {
   // tx_power=17 exceeds the LP path's -17..14dBm range, so configure_radio_() must select HP
-  // (paSel=1, regPaSupply=1/VBAT, paHpSel=0x07) and clamp TX power to HP's -9..22dBm range. This
-  // is the fix for the board's actual root-cause bug: the driver used to always select LP
-  // regardless of tx_power_, so a 17dBm request produced an invalid/undefined analog PA output.
+  // (paSel=1, regPaSupply=1/VBAT, paHpSel=0x07) and clamp TX power to HP's -9..22dBm range.
+  // Selecting the wrong path for the configured power produces an invalid/undefined analog PA
+  // output, so this must track tx_power_ rather than a fixed path.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
@@ -697,6 +698,51 @@ TEST(RadioLR1121, ReadRxPacketRecoversUartEncodedFrame) {
   ASSERT_TRUE(ok) << "a genuine UART-encoded, CRC-valid frame must be recovered end-to-end";
   EXPECT_EQ(packet.len, frame_len);
   EXPECT_EQ(memcmp(packet.data, frame, frame_len), 0) << "recovered frame must match the original bytes exactly";
+}
+
+TEST(RadioLR1121, ReadRxPacketReportsRssiFromPktStatusNotLiveRssiInst) {
+  // fill_capture_info_() must report RSSI/packet_status from GetPktStatus (0x0204), the opcode
+  // atomically tied to the just-received packet — not GetRssiInst (0x0205), a live read
+  // unrelated to any specific frame that would reflect the channel's current state rather than
+  // the received frame's actual signal level. GetRssiInst must not be called at all during RX.
+  const uint8_t frame[] = {0xCE, 0x00, 0xC0, 0xFF, 0xEE, 0xAA, 0xBB, 0xCC, 0x3C, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  const uint8_t frame_len = sizeof(frame);
+
+  uint8_t encoded[64] = {0};
+  uint8_t encoded_len = encode_frame_with_crc(frame, frame_len, encoded, sizeof(encoded));
+  ASSERT_GT(encoded_len, 0u);
+
+  constexpr uint8_t kProbeLen = 48;
+  uint8_t padded[kProbeLen] = {0};
+  ASSERT_LE(encoded_len, kProbeLen);
+  memcpy(padded, encoded, encoded_len);
+
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+  radio.set_use_real_read_rx_packet(true);
+  radio.set_irq_sequence({LR1121_IRQ_RX_DONE});
+  radio.mark_dio_fired_from_isr();
+
+  // GetRxBufferStatus response: [stat1, reported_len, rx_offset].
+  spi.queue_responses({0x00, kProbeLen, 0x00});
+  // ReadBuffer response: [stat1, <kProbeLen data bytes>].
+  spi.queue_response(0x00);
+  for (uint8_t b : padded)
+    spi.queue_response(b);
+  // GetPktStatus response: [stat1, rssi_sync=76 (-38 dBm), rssi_avg=90 (-45 dBm), rx_len, status=0x02].
+  spi.queue_responses({0x00, 76, 90, kProbeLen, 0x02});
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -38)
+      << "must report rssi_sync from GetPktStatus, not a live GetRssiInst read";
+  EXPECT_EQ(radio.get_last_capture().packet_status, 0x02) << "packet_status must come from GetPktStatus's status byte";
+  EXPECT_GE(spi.find_opcode(LR1121_CMD_GET_PKT_STATUS), 0) << "GetPktStatus (0x0204) must be issued for a completed RX";
+  EXPECT_LT(spi.find_opcode(LR1121_CMD_GET_RSSI_INST), 0)
+      << "GetRssiInst (0x0205) must not be used for packet-capture RSSI — it samples RSSI live, "
+         "well after the frame already ended";
 }
 
 // ============================================================================

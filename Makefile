@@ -88,7 +88,7 @@ format-check:
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
 	@echo "Linting YAML configuration files..."
-	yamllint config/tests/*.yaml config/*.yaml tests/corpus/captures/ 2>/dev/null || exit 1
+	yamllint config/tests/*.yaml config/*.yaml tests/corpus/captures/
 
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
 # (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.
@@ -97,6 +97,23 @@ corpus-validate:
 	@echo "Validating golden-frame corpus captures..."
 	@python3 scripts/corpus/validate.py
 	@python3 scripts/corpus/tests/run_tests.py
+
+# libFuzzer target for the frame parser and its pure decoders, seeded from the golden-frame
+# corpus. Time-boxed background check (FUZZ_TIME seconds, default 60) — not part of `make check`/
+# `make test`, since fuzzing doesn't have a pass/fail gate the way a fixed test suite does. The
+# parser TUs (proto_frame/proto_codecs/proto_device_model) are ESPHome-free, so this links
+# directly with clang, no stubs needed.
+FUZZ_TIME ?= 60
+fuzz-frame:
+	@mkdir -p build/fuzz/seeds build/fuzz/corpus
+	@python3 scripts/corpus/extract_fuzz_seeds.py
+	clang++ -std=c++17 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
+		-Icomponents/home_io_control \
+		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
+		components/home_io_control/proto_device_model.cpp tests/fuzz/fuzz_frame_parse.cpp \
+		-o build/fuzz/fuzz_frame_parse
+	./build/fuzz/fuzz_frame_parse -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
+		build/fuzz/corpus build/fuzz/seeds
 
 # Static analysis (local clang-tidy after building inside Docker)
 clang-tidy:
@@ -120,11 +137,10 @@ check-build-cache:
 # (per-config validated-YAML cache, keyed by config filename rather than device_name, so it's
 # wiped in one shot instead of per-env). Uses Docker rather than a host-side rm — these paths are
 # root-owned (created by a previous Docker run), so a plain `rm` on the host fails with Permission
-# denied — including yamllint's read of storage/*.validated.yaml during `make lint`. This is the
-# manual full-wipe hammer; scripts/check-build-cache.py now detects and auto-cleans the targeted
-# per-env staleness case automatically (see check-build-cache above), so reach for this instead
-# when you want a clean slate (e.g. storage/ permission issues, or a hunch the automated check
-# missed something).
+# denied. This is the manual full-wipe hammer; scripts/check-build-cache.py now detects and
+# auto-cleans the targeted per-env staleness case automatically (see check-build-cache above), so
+# reach for this instead when you want a clean slate (e.g. storage/ permission issues, or a hunch
+# the automated check missed something).
 clean-test-cache:
 	@echo "Cleaning test build caches in config/tests/.esphome/build/"
 	@for cfg in config/tests/test-*.yaml; do \
@@ -262,6 +278,7 @@ test-unit: unit-test
 
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
+		fuzz-frame \
 		firmware-test unit-test unit-test-asan host-run clean-host lint test check \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

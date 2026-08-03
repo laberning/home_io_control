@@ -33,11 +33,6 @@ namespace detail {
 inline constexpr const char *TAG = "home_io_control";  ///< Shared log tag for hub-level messages.
 inline constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS =
     2000;  ///< Suppress duplicate 1W log/poll for same remote+cmd within this window.
-inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Discovery wait window after sending 0x28.
-inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;             ///< Retry discovery TX up to this many times.
-inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
-inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for 0x33 key confirm after sending 0x32.
-inline constexpr uint32_t PAIRING_KEY_CONFIRM_SLICE_MS = 150;  ///< RX slice during key confirm wait (hop each slice).
 inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
     50.0F;  ///< Shared 0-100 cutoff: values below this mean binary "on".
 

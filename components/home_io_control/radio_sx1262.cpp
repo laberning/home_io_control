@@ -5,27 +5,20 @@
 /// Unlike the SX1276, the SX1262 does not provide Semtech's IoHomeOn mode for
 /// IO-Homecontrol. On SX1276 that mode handles key protocol details in hardware:
 /// CRC generation and checking, packet boundary handling, and delivery of
-/// already-decoded protocol bytes in the FIFO. On SX1262 those pieces have to
-/// be reproduced in software on top of generic GFSK support.
+/// already-decoded protocol bytes in the FIFO. On SX1262 those pieces are reproduced
+/// in software by SoftPhyDriverBase (shared with RadioLR1121) on top of generic GFSK
+/// support; this file supplies the SPI transport and every register/opcode encoding
+/// SoftPhyDriverBase's shared RX/TX orchestration calls through virtual primitives.
 ///
-/// Concretely, this driver has to:
-/// - append and verify the IO-Homecontrol CRC in software,
-/// - UART-pack frames for TX and recover UART-packed on-air bytes on RX,
-/// - detect plausible frame boundaries before handing bytes to the parser,
-/// - preserve raw capture data and metadata for debugging against the SX1276
-///   baseline capture path.
-///
-/// The chip interface itself is also different: SX1262 uses opcode-based SPI
-/// instead of the SX1276 register model, and every transaction must respect the
-/// BUSY line. For experiment builds, the RX path prioritizes preserving the
-/// chip-reported bytes and metadata verbatim.
+/// The chip interface itself is opcode-based SPI instead of the SX1276 register model, and
+/// every transaction must respect the BUSY line. For experiment builds, the RX path
+/// prioritizes preserving the chip-reported bytes and metadata verbatim.
 
 // The SX1262 path is intentionally low-level: opcode payloads, line-coding widths, and recovery
 // thresholds are written in the same shape as the chip protocol and on-air framing.
 // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 
 #include "radio_sx1262.h"
-#include "log_frame.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
@@ -34,12 +27,6 @@ namespace home_io_control {
 
 static const char *const TAG = "home_io_control.sx1262";
 static const uint8_t SX1262_SYNC_WORD_PARAM_24_BITS = 0x18;
-// Fixed probe length chosen from captures of 23-25 byte protocol frames after UART packing
-// and CRC appending: the longest frame (25 bytes + 2 CRC) UART-packs to 34 raw bytes, so 48
-// bytes preserves complete traffic (with margin for leading noise before the frame start)
-// without relying on the chip's variable-length engine, which consistently truncated the
-// useful payload.
-static const uint8_t SX1262_RX_PROBE_PACKET_LEN = 48;
 
 // === SPI Communication (opcode-based) ===
 
@@ -74,77 +61,10 @@ void RadioSX1262::read_opcode_(uint8_t opcode, uint8_t *data, uint8_t len) {
   this->spi_->spi_disable();
 }
 
-uint16_t RadioSX1262::read_irq_status_raw() {
+uint32_t RadioSX1262::read_irq_status_raw() {
   uint8_t irq_raw[2] = {0};
   this->read_opcode_(SX1262_GET_IRQ_STATUS, irq_raw, 2);
-  return (uint16_t) (((uint16_t) irq_raw[0] << 8) | irq_raw[1]);
-}
-
-// === wait_for_packet static helpers ===
-
-/// Poll for first radio activity (DIO1 interrupt or any IRQ status) within timeout.
-///
-/// Checks the DIO1 pin latch and the raw IRQ status register repeatedly until
-/// either activity is detected or the timeout expires. On timeout, clears the
-/// DIO latch and resets the RX state machine for the next receive cycle.
-bool RadioSX1262::poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool &saw_dio1, uint16_t &irq) {
-  while (true) {
-    if (this->is_dio_fired()) {
-      saw_dio1 = true;
-      return true;
-    }
-    irq = this->read_irq_status_raw();
-    if (irq != 0)
-      return true;
-    if (millis() - start > timeout_ms) {
-      this->clear_dio_fired();
-      this->reset_rx_state_();
-      return false;
-    }
-    App.feed_wdt();
-    delay(1);
-  }
-}
-
-/// Resolve the SYNC_WORD_VALID → RX_DONE race condition.
-///
-/// On SX1262 the SYNC_WORD_VALID IRQ can assert before the packet is fully
-/// received. If we observe SYNC without RX_DONE, clear the sticky SYNC flag
-/// and spin until RX_DONE arrives or the remaining timeout elapses.
-bool RadioSX1262::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint16_t &irq) {
-  // If RX_DONE already set or SYNC not set, nothing to resolve.
-  if ((irq & SX1262_IRQ_SYNC_WORD_VALID) == 0 || (irq & SX1262_IRQ_RX_DONE) != 0) {
-    return true;
-  }
-  // SYNC seen without RX_DONE — clear sticky SYNC and wait for RX_DONE.
-  this->clear_irq_status_(SX1262_IRQ_SYNC_WORD_VALID);
-  while (millis() - start <= timeout_ms) {
-    if (!this->is_dio_fired()) {
-      irq = this->read_irq_status_raw();
-      if ((irq & SX1262_IRQ_RX_DONE) != 0)
-        return true;
-      App.feed_wdt();
-      delay(1);
-      continue;
-    }
-    this->clear_dio_fired();
-    irq = this->read_irq_status_raw();
-    if ((irq & SX1262_IRQ_RX_DONE) != 0)
-      return true;
-    if (irq != 0)
-      this->clear_irq_status_(irq);
-  }
-  return false;  // timeout
-}
-
-/// Finalize receive: read the packet if RX_DONE is set, otherwise record failure.
-bool RadioSX1262::finalize_receive_(RadioRxPacket &packet, uint16_t irq) {
-  if ((irq & SX1262_IRQ_RX_DONE) == 0) {
-    this->fill_capture_info_(true, irq, 0, 0, nullptr, 0, nullptr, 0);
-    this->reset_rx_state_();
-    return false;
-  }
-  return this->read_rx_packet(packet, true, irq);
+  return (static_cast<uint32_t>(irq_raw[0]) << 8) | static_cast<uint32_t>(irq_raw[1]);
 }
 
 void RadioSX1262::write_register_(uint16_t addr, const uint8_t *data, uint8_t len) {
@@ -209,12 +129,13 @@ void RadioSX1262::set_packet_params_(uint16_t preamble_len, uint8_t payload_len,
   this->write_opcode_(SX1262_SET_PACKET_PARAMS, params, sizeof(params));
 }
 
-void RadioSX1262::set_rx_packet_params_() {
+void RadioSX1262::set_rx_packet_params() {
   // The variable-size packet engine recovers a stable 15-byte boundary, but that boundary is
   // too short for a full software UART decode and buffer reads past it are not trustworthy.
   // Probe again with a fixed raw packet size that matches typical UART-packed 23-25 byte
-  // IO-homecontrol frames: ceil(25 * 10 / 8) = 32 bytes.
-  this->set_packet_params_(8, SX1262_RX_PROBE_PACKET_LEN, SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH, SX1262_GFSK_CRC_OFF);
+  // IO-homecontrol frames (SOFT_PHY_RX_PROBE_PACKET_LEN, shared with LR1121 — see its doc
+  // comment in radio_soft_phy_driver_base.h).
+  this->set_packet_params_(8, SOFT_PHY_RX_PROBE_PACKET_LEN, SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH, SX1262_GFSK_CRC_OFF);
 }
 
 void RadioSX1262::write_modulation_params_() {
@@ -241,7 +162,7 @@ void RadioSX1262::write_modulation_params_() {
   this->write_opcode_(SX1262_SET_MODULATION_PARAMS, mod_params, sizeof(mod_params));
 }
 
-void RadioSX1262::clear_irq_status_(uint16_t irq_mask) {
+void RadioSX1262::clear_irq_status(uint32_t irq_mask) {
   uint8_t clear_irq[2] = {
       (uint8_t) ((irq_mask >> 8) & 0xFF),
       (uint8_t) (irq_mask & 0xFF),
@@ -260,18 +181,13 @@ void RadioSX1262::clear_device_errors_() {
   this->write_opcode_(SX1262_CLEAR_DEVICE_ERRORS, clear_errors, sizeof(clear_errors));
 }
 
-void RadioSX1262::reset_rx_state_(bool force_standby) {
+void RadioSX1262::configure_buffer_base() {
   uint8_t buf_base[2] = {0x00, 0x80};
-  if (force_standby)
-    this->set_mode_standby();
-  this->clear_irq_status_(0xFFFF);
   this->write_opcode_(SX1262_SET_BUFFER_BASE_ADDRESS, buf_base, sizeof(buf_base));
-  this->set_rx_packet_params_();
-  this->set_mode_rx();
 }
 
-void RadioSX1262::fill_capture_info_(bool blocking_wait, uint16_t irq_status, uint8_t rx_offset, uint8_t reported_len,
-                                     const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
+void RadioSX1262::fill_capture_info(bool blocking_wait, uint32_t irq_status, uint8_t rx_offset, uint8_t reported_len,
+                                    const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
   uint8_t packet_status[3] = {0};
   this->read_opcode_(SX1262_GET_PACKET_STATUS, packet_status, sizeof(packet_status));
 
@@ -279,10 +195,29 @@ void RadioSX1262::fill_capture_info_(bool blocking_wait, uint16_t irq_status, ui
                                frame_len);
   this->last_capture_.rx_done = (irq_status & SX1262_IRQ_RX_DONE) != 0;
   this->last_capture_.crc_error = (irq_status & SX1262_IRQ_CRC_ERR) != 0;
-  this->last_capture_.irq_status = irq_status;
+  this->last_capture_.irq_status = static_cast<uint16_t>(irq_status);
   this->last_capture_.packet_status = packet_status[0];
   this->last_capture_.rx_offset = rx_offset;
   this->last_capture_.reported_len = reported_len;
+}
+
+uint8_t RadioSX1262::read_rssi_raw_byte() {
+  uint8_t raw = 0;
+  this->read_opcode_(SX1262_GET_RSSI_INST, &raw, 1);
+  return raw;
+}
+
+void RadioSX1262::get_rx_buffer_status(uint8_t &reported_len, uint8_t &rx_offset) {
+  uint8_t rx_status[2] = {0};
+  this->read_opcode_(SX1262_GET_RX_BUFFER_STATUS, rx_status, sizeof(rx_status));
+  reported_len = rx_status[0];
+  rx_offset = rx_status[1];
+}
+
+void RadioSX1262::start_tx() {
+  // Start TX with 4s timeout (256000 ticks at 15.625us/tick = 0x03E800).
+  uint8_t tx_timeout[3] = {0x03, 0xE8, 0x00};
+  this->write_opcode_(SX1262_SET_TX, tx_timeout, sizeof(tx_timeout));
 }
 
 // === ISR ===
@@ -406,7 +341,7 @@ void RadioSX1262::configure_radio_() {
   this->write_opcode_(SX1262_SET_PACKET_TYPE, &pkt_type, 1);
 
   // 8. Set frequency to channel 2 (868.95 MHz)
-  this->set_frequency_register_(FREQ_CH2);
+  this->set_frequency_register(FREQ_CH2);
 
   // 9. Calibrate image for 863-870 MHz band
   uint8_t cal_img[2] = {0xD7, 0xDB};
@@ -420,7 +355,7 @@ void RadioSX1262::configure_radio_() {
   this->write_modulation_params_();
 
   // 11. Default RX packet params: variable-size GFSK with hardware CCITT CRC validation.
-  this->set_rx_packet_params_();
+  this->set_rx_packet_params();
 
   // 12. Sync word: 0x57 0xFD 0x99 (24-bit UART-derived IO-homecontrol hypothesis)
   uint8_t sync_word[8] = {0x57, 0xFD, 0x99, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -435,8 +370,7 @@ void RadioSX1262::configure_radio_() {
   this->write_register_(0x06BE, crc_poly, 2);
 
   // 13. Buffer base addresses: TX at 0x00, RX at 0x80
-  uint8_t buf_base[2] = {0x00, 0x80};
-  this->write_opcode_(SX1262_SET_BUFFER_BASE_ADDRESS, buf_base, sizeof(buf_base));
+  this->configure_buffer_base();
 
   // 14. PA config: SX1262 high power PA (paDutyCycle=0x04, hpMax=0x07, deviceSel=0x00=SX1262, paLut=0x01)
   uint8_t pa_config[4] = {0x04, 0x07, 0x00, 0x01};
@@ -466,7 +400,7 @@ void RadioSX1262::configure_radio_() {
   this->dio1_pin_->attach_interrupt(&RadioSX1262::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
 
   // 18. Clear any pending IRQs
-  this->clear_irq_status_(0xFFFF);
+  this->clear_irq_status(0xFFFF);
   this->clear_device_errors_();
 
   // 19. Enter continuous receive
@@ -488,7 +422,7 @@ void RadioSX1262::set_mode_rx() {
 
 // === Frequency control ===
 
-void RadioSX1262::set_frequency_register_(uint32_t freq_hz) {
+void RadioSX1262::set_frequency_register(uint32_t freq_hz) {
   auto freq_reg = (uint32_t) ((double) freq_hz * (1 << 25) / 32e6);
   uint8_t params[4] = {
       (uint8_t) (freq_reg >> 24),
@@ -500,261 +434,9 @@ void RadioSX1262::set_frequency_register_(uint32_t freq_hz) {
   this->current_freq_ = freq_hz;
 }
 
-void RadioSX1262::change_frequency(uint32_t freq_hz) {
-  this->set_mode_standby();
-  this->set_frequency_register_(freq_hz);
-  this->clear_irq_status_(0xFFFF);  // Clear stale preamble/sync bits from previous channel
-  this->clear_dio_fired();          // Clear stale DIO1 latch from previous channel activity
-  this->set_mode_rx();
-}
-
 void RadioSX1262::set_rx_bandwidth_(SX1262RxBandwidth bandwidth) {
   this->rx_bandwidth_ = bandwidth;
   this->write_modulation_params_();
-}
-
-int16_t RadioSX1262::read_rssi() {
-  uint8_t raw = 0;
-  this->read_opcode_(SX1262_GET_RSSI_INST, &raw, 1);
-  return -(int16_t) raw / 2;
-}
-
-bool RadioSX1262::is_sync_detected() { return (this->read_irq_status_raw() & SX1262_IRQ_SYNC_WORD_VALID) != 0; }
-
-bool RadioSX1262::is_preamble_detected() { return (this->read_irq_status_raw() & SX1262_IRQ_PREAMBLE_DETECTED) != 0; }
-
-// === Packet TX ===
-
-bool RadioSX1262::send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) {
-  if (len == 0)
-    return false;
-
-#ifdef IOHOME_FRAME_LOG
-  log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);
-#endif
-
-  this->set_mode_standby();
-
-  // Set frequency (already in standby, no need for full change_frequency cycle)
-  this->set_frequency_register_(tx_config.freq_hz);
-
-  uint8_t frame_with_crc[FRAME_MAX_SIZE + 2] = {0};
-  uint8_t tx_buf[RADIO_PACKET_BUFFER_SIZE];
-  if ((uint16_t) len + 2 > (uint16_t) sizeof(frame_with_crc))
-    return false;
-
-  memcpy(frame_with_crc, data, len);
-  const uint16_t crc = crc_ccitt(data, len);
-  frame_with_crc[len] = crc & 0xFF;
-  frame_with_crc[len + 1] = (crc >> 8) & 0xFF;
-
-  const uint8_t encoded_len = uart_encode_packet(frame_with_crc, len + 2, tx_buf, sizeof(tx_buf));
-  if (encoded_len == 0)
-    return false;
-
-  this->set_packet_params_(tx_config.preamble_len, encoded_len, SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH,
-                           SX1262_GFSK_CRC_OFF);
-
-  // Clear IRQs and write to TX buffer at offset 0
-  this->clear_irq_status_(0xFFFF);
-  this->write_buffer_(0x00, tx_buf, encoded_len);
-
-  // Start TX with 4s timeout (256000 ticks at 15.625us/tick = 0x03E800)
-  this->clear_dio_fired();
-  uint8_t tx_timeout[3] = {0x03, 0xE8, 0x00};
-  this->write_opcode_(SX1262_SET_TX, tx_timeout, sizeof(tx_timeout));
-
-  auto read_irq_status = [this]() {
-    uint8_t irq_raw[2] = {0};
-    this->read_opcode_(SX1262_GET_IRQ_STATUS, irq_raw, sizeof(irq_raw));
-    return (uint16_t) (((uint16_t) irq_raw[0] << 8) | irq_raw[1]);
-  };
-
-  // Wait for an actual TxDone IRQ. DIO1 is shared with RX-related events, so
-  // a stale or unrelated interrupt must not be treated as TX completion.
-  uint32_t const start = millis();
-  uint16_t tx_irq = 0;
-  while (true) {
-    if (!this->is_dio_fired()) {
-      if (millis() - start > 4000) {
-        ESP_LOGE(TAG, "TX timeout — DIO1 never fired");
-        this->set_mode_standby();
-        return false;
-      }
-      App.feed_wdt();
-      delayMicroseconds(100);
-      continue;
-    }
-
-    this->clear_dio_fired();
-    tx_irq = read_irq_status();
-    if ((tx_irq & SX1262_IRQ_TX_DONE) != 0)
-      break;
-
-    if (tx_irq != 0) {
-      this->clear_irq_status_(tx_irq);
-    }
-
-    if (millis() - start > 4000) {
-      ESP_LOGE(TAG, "TX timeout — no TX_DONE IRQ (last_irq=0x%04X)", tx_irq);
-      this->set_mode_standby();
-      return false;
-    }
-  }
-  // TxDone used the same DIO1 latch as RX. Clear the local latch before
-  // re-arming RX so an immediate reply remains visible to wait_for_packet().
-  this->clear_dio_fired();
-
-  // Clear IRQs, restore default packet params, return to RX. The TxDone fallback
-  // leaves the chip in STDBY_XOSC, but issuing an explicit standby command ensures
-  // deterministic state before reconfiguring the buffer base address and re-entering RX.
-  this->clear_irq_status_(0xFFFF);
-  this->reset_rx_state_(true);
-
-  // Post-TX settling delay: the GFSK demodulator needs time to stabilize after
-  // the TX→STDBY→RX transition. Without this, frames received immediately after TX
-  // (e.g., the 0x3C challenge during pairing) suffer UART decode bit errors because
-  // the demodulator's frequency discrimination hasn't settled. 500µs eliminates
-  // the issue completely (confirmed via loopback and real-device testing).
-  delayMicroseconds(this->post_tx_settle_us_);
-
-  return true;
-}
-
-// === Packet RX (blocking) ===
-
-bool RadioSX1262::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
-  // Blocking receive with timeout. Returns true if a packet was successfully received.
-  // This orchestrator decomposes the state machine into three low‑complexity helpers.
-  this->prepare_blocking_receive_(packet);
-
-  uint32_t const start = millis();
-  bool saw_dio1 = false;
-  uint16_t irq = 0;
-
-  // Phase 1: Wait for first activity (DIO interrupt or any IRQ status change).
-  if (!this->poll_until_activity_(start, timeout_ms, saw_dio1, irq)) {
-    return false;
-  }
-
-  // If DIO fired, refresh IRQ status to capture the reason bits.
-  if (saw_dio1) {
-    this->clear_dio_fired();
-    irq = this->read_irq_status_raw();
-  }
-
-  // Phase 2: Resolve the SYNC_WORD_VALID → RX_DONE race condition.
-  if (!this->resolve_sync_race_(start, timeout_ms, irq)) {
-    return false;
-  }
-
-  // Phase 3: Finalize — either read the packet or treat as a failure.
-  return this->finalize_receive_(packet, irq);
-}
-
-// === Shared RX helper ===
-
-bool RadioSX1262::read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint16_t irq_status) {
-  uint8_t rx_status[2] = {0};
-  uint8_t rx_buf[RADIO_PACKET_BUFFER_SIZE] = {0};
-  uint8_t recovered_buf[RADIO_PACKET_BUFFER_SIZE] = {0};
-
-  this->read_opcode_(SX1262_GET_RX_BUFFER_STATUS, rx_status, sizeof(rx_status));
-  uint8_t const reported_len = std::min(rx_status[0], (uint8_t) sizeof(rx_buf));
-  uint8_t const rx_offset = rx_status[1];
-  uint8_t raw_probe_len = reported_len;
-  if (reported_len > 0 && reported_len < 32) {
-    // When the SX1262 reports a short packet length, still pull the full raw window. Earlier
-    // bring-up on this chip showed that trimming this probe too aggressively makes the recovered
-    // post-auth response less reliable because the useful UART-packed tail may sit past the
-    // chip-reported boundary.
-    raw_probe_len = sizeof(rx_buf);
-  }
-  if (reported_len == SX1262_RX_PROBE_PACKET_LEN)
-    raw_probe_len = SX1262_RX_PROBE_PACKET_LEN;
-  if (raw_probe_len > 0)
-    this->read_buffer_(rx_offset, rx_buf, raw_probe_len);
-
-  // SX1262 does not expose the already-decoded IO-homecontrol frame the way SX1276 does. We first
-  // capture the raw bytes exactly as reported by the chip, then recover the UART-packed protocol
-  // stream in software and only pass a plausible frame up to the parser. This software recovery
-  // path is the SX1262-specific adaptation to the same protocol.
-  UartProbeResult probe = find_uart_probe(rx_buf, raw_probe_len);
-  if (probe.valid) {
-    memcpy(recovered_buf, probe.decoded + probe.frame_start, probe.frame_len);
-    memcpy(packet.data, recovered_buf, probe.frame_len);
-    packet.len = probe.frame_len;
-#ifdef IOHOME_FRAME_LOG
-    ESP_LOGD(TAG, "UART probe: valid=1 bit_offset=%u frame_start=%u frame_len=%u decoded_len=%u", probe.bit_offset,
-             probe.frame_start, probe.frame_len, probe.decoded_len);
-#endif
-  } else {
-#ifdef IOHOME_FRAME_LOG
-    // Log diagnostic info when CRC validation rejects all decode attempts — helps identify
-    // whether post-TX RX corruption is being correctly caught by CRC or slipping through.
-    char hex_buf[97] = {0};  // 32 bytes * 3 chars + null
-    uint8_t dump_len = std::min(raw_probe_len, (uint8_t) 32);
-    for (uint8_t i = 0; i < dump_len; i++)
-      snprintf(hex_buf + (i * 3), 4, "%02X ", rx_buf[i]);
-    ESP_LOGW(TAG, "UART probe: valid=0 decoded_len=%u raw_probe_len=%u", probe.decoded_len, raw_probe_len);
-    ESP_LOGW(TAG, "  raw[0..%u]: %s", dump_len - 1, hex_buf);
-    // Try to show why CRC failed at best offset
-    if (probe.decoded_len >= FRAME_MIN_SIZE) {
-      int best_len = std::min<int>(probe.decoded_len, FRAME_MAX_SIZE);
-      IoFrame test_frame;
-      for (int cl = best_len; cl >= FRAME_MIN_SIZE; cl--) {
-        if (!parse(probe.decoded, cl, test_frame))
-          continue;
-        if (cl + 2 <= (int) probe.decoded_len) {
-          uint16_t computed = crc_ccitt(probe.decoded, cl);
-          uint16_t received = (uint16_t) probe.decoded[cl] | ((uint16_t) probe.decoded[cl + 1] << 8);
-          ESP_LOGW(TAG, "  CRC check: candidate_len=%d cmd=0x%02X crc_computed=0x%04X crc_received=0x%04X %s", cl,
-                   test_frame.cmd, computed, received, computed == received ? "MATCH" : "MISMATCH");
-        }
-        break;
-      }
-    }
-#endif
-    uint8_t const copy_len = std::min(reported_len, FRAME_MAX_SIZE);
-    if (copy_len > 0)
-      memcpy(packet.data, rx_buf, copy_len);
-    packet.len = copy_len;
-  }
-  packet.freq_hz = this->current_freq_;
-  this->fill_capture_info_(blocking_wait, irq_status, rx_offset, reported_len, rx_buf, raw_probe_len, packet.data,
-                           packet.len);
-
-#ifdef IOHOME_FRAME_LOG
-  if (packet.len > 0)
-    log_frame("RX", packet.data, packet.len, this->current_freq_);
-#endif
-  this->reset_rx_state_();
-  return packet.len > 0;
-}
-
-// === Packet RX (non-blocking) ===
-
-bool RadioSX1262::check_for_packet(RadioRxPacket &packet) {
-  if (!this->is_dio_fired())
-    return false;
-  this->prepare_nonblocking_receive_(packet);
-
-  uint8_t irq_raw[2];
-  this->read_opcode_(SX1262_GET_IRQ_STATUS, irq_raw, 2);
-  uint16_t const irq = ((uint16_t) irq_raw[0] << 8) | irq_raw[1];
-
-  if ((irq & SX1262_IRQ_SYNC_WORD_VALID) != 0 && (irq & SX1262_IRQ_RX_DONE) == 0) {
-    this->clear_irq_status_(SX1262_IRQ_SYNC_WORD_VALID);
-    return false;
-  }
-
-  if ((irq & SX1262_IRQ_RX_DONE) != 0) {
-    return this->read_rx_packet(packet, false, irq);
-  }
-
-  this->fill_capture_info_(false, irq, 0, 0, nullptr, 0, nullptr, 0);
-  this->reset_rx_state_();
-  return false;
 }
 
 }  // namespace home_io_control

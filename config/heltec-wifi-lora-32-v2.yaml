@@ -13,10 +13,8 @@ esphome:
           id(oled_active_cover) = "System";
           id(oled_status_text) = "Ready";
       - script.execute: oled_refresh
-  platformio_options:
-    build_flags:
-      - -DIOHOME_FRAME_LOG
-      - -DIOHOME_UNSAFE_LOG_KEY_MATERIAL
+  build_flags:
+    - -DIOHOME_FRAME_LOG
 
 esp32:
   variant: esp32

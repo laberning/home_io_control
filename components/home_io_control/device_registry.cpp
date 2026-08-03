@@ -14,10 +14,9 @@ namespace home_io_control {
 
 static constexpr const char *TAG = "home_io_control";
 
-void DeviceRegistry::add(const std::string &device_id) { add(device_id, DeviceType::UNKNOWN, 0, false); }
+void DeviceRegistry::add(const std::string &device_id) { add(device_id, DeviceConfig{}); }
 
-void DeviceRegistry::add(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted,
-                         bool optimistic_state) {
+void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) {
   if (devices_.count(device_id) != 0)
     return;
   IoDevice dev{};
@@ -25,11 +24,11 @@ void DeviceRegistry::add(const std::string &device_id, DeviceType type, uint8_t 
     ESP_LOGW(TAG, "Ignoring invalid device ID %s", device_id.c_str());
     return;
   }
-  dev.type = type;
-  dev.subtype = subtype;
-  if (inverted)
+  dev.type = cfg.type;
+  dev.subtype = cfg.subtype;
+  if (cfg.inverted)
     dev.inverted = true;
-  dev.optimistic_state = optimistic_state;
+  dev.optimistic_state = cfg.optimistic_state;
   devices_[device_id] = dev;
 }
 

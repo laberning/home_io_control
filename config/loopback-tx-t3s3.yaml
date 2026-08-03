@@ -5,9 +5,8 @@
 esphome:
   name: loopback-tx-t3s3
   friendly_name: Loopback TX T3-S3
-  platformio_options:
-    build_flags:
-      - -DIOHOME_FRAME_LOG
+  build_flags:
+    - -DIOHOME_FRAME_LOG
 
 esp32:
   variant: esp32s3

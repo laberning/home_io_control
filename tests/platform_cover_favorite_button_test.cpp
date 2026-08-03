@@ -59,7 +59,7 @@ class FavoriteButtonMockHub : public test::MockPlatformHubBase {
 
 TEST(PlatformCoverFavoriteButton, PressQueuesFavoritePosition) {
   FavoriteButtonMockHub hub;
-  hub.add_device("ABC123", DeviceType::AWNING, 0, false);
+  hub.add_device("ABC123", {DeviceType::AWNING, 0, false});
 
   TestableIOHomeCoverFavoriteButton button;
   button.set_parent(&hub);

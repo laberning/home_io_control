@@ -6,6 +6,9 @@
 #include "proto_frame.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
+#include "../stubs/radio_test_common.h"
+
+#include <cstring>
 
 namespace test {
 using namespace esphome::home_io_control;
@@ -96,6 +99,51 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::register_management_actions_;
 };
 
+/// Hub subclass for RX-path tests: exposes process_received_packet_/update_device_status_ plus
+/// the node ID/system key/radio/queue/poll-policy state a full RX dispatch touches. Shared by
+/// hub_core_test.cpp (exchange-internal filtering) and hub_status_test.cpp (status/remote-
+/// activity/link-health handling) — both drive real frames through the same RX entry points.
+class RxTestableComponent : public IOHomeControlComponent {
+ public:
+  using IOHomeControlComponent::process_received_packet_;
+  using IOHomeControlComponent::update_device_status_;
+  using IOHomeControlComponent::node_id_;
+  using IOHomeControlComponent::system_key_;
+  using IOHomeControlComponent::initialized_;
+  using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::op_queue_;
+  using IOHomeControlComponent::poll_policy_;
+};
+
+/// Build a RadioRxPacket from a constructed IoFrame.
+inline RadioRxPacket make_rx_packet(const IoFrame &frame) {
+  RadioRxPacket pkt{};
+  pkt.len = serialize(frame, pkt.data, sizeof(pkt.data));
+  pkt.freq_hz = FREQ_CH2;
+  return pkt;
+}
+
+/// Create a minimal RX-test component with one registered device ("054E17") and a mock radio.
+inline void setup_rx_test_component(RxTestableComponent &comp, MockRadio &radio) {
+  comp.node_id_[0] = 0xC0;
+  comp.node_id_[1] = 0xFF;
+  comp.node_id_[2] = 0xEE;
+  static const uint8_t key[] = {0x5B, 0x8E, 0x21, 0xF7, 0x6C, 0x0A, 0x93, 0x4D,
+                                0x18, 0xF5, 0xA2, 0xE9, 0xB3, 0x17, 0xC6, 0xD0};
+  std::memcpy(comp.system_key_, key, AES_KEY_SIZE);
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  comp.add_device("054E17");
+}
+
+/// Pack a device type/subtype pair into the shared 2-byte metadata layout (used by GetInfo2Resp
+/// and discovery-response frames).
+inline void encode_device_metadata(DeviceType type, uint8_t subtype, uint8_t *payload) {
+  payload[0] = static_cast<uint8_t>(static_cast<uint8_t>(type) >> DEVICE_TYPE_LOW_BITS_SHIFT);
+  payload[1] = static_cast<uint8_t>(subtype | ((static_cast<uint8_t>(type) & ((1U << DEVICE_TYPE_LOW_BITS_SHIFT) - 1U))
+                                               << DEVICE_TYPE_HIGH_BITS_SHIFT));
+}
+
 /// Shared mock hub base for platform entity tests.
 ///
 /// The concrete platform test doubles override only the semantic command paths
@@ -141,20 +189,15 @@ class MockPlatformHubBase : public IOHomeControlComponent {
     devices_[device_id] = IoDevice{};
   }
 
-  void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) override {
-    this->add_device(device_id, type, subtype, inverted, true);
-  }
-
-  void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted,
-                  bool optimistic_state) override {
+  void add_device(const std::string &device_id, const DeviceConfig &cfg) override {
     if (devices_.count(device_id))
       return;
     auto &device = devices_[device_id];
     device = IoDevice{};
-    device.type = type;
-    device.subtype = subtype;
-    device.inverted = inverted;
-    device.optimistic_state = optimistic_state;
+    device.type = cfg.type;
+    device.subtype = cfg.subtype;
+    device.inverted = cfg.inverted;
+    device.optimistic_state = cfg.optimistic_state;
   }
 
   bool apply_optimistic_target(const std::string &device_id, float target_io_position) override {

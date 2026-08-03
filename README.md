@@ -270,9 +270,8 @@ Use this checklist when collecting logs:
 
 ```yaml
 esphome:
-  platformio_options:
-    build_flags:
-      - -DIOHOME_FRAME_LOG
+  build_flags:
+    - -DIOHOME_FRAME_LOG
 
 logger:
   level: DEBUG

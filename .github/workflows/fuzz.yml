@@ -1,0 +1,22 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # Weekly, Monday 06:00 UTC — not per-PR; fuzzing is time-boxed background work.
+  workflow_dispatch:
+
+jobs:
+  fuzz-frame:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: pip install --user pyyaml
+      - run: make fuzz-frame FUZZ_TIME=300
+      - name: Upload crash/leak artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-frame-findings
+          path: |
+            crash-*
+            leak-*

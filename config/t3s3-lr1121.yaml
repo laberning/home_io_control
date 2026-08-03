@@ -16,9 +16,8 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: ${device_friendly_name}
-  platformio_options:
-    build_flags:
-      - -DIOHOME_FRAME_LOG
+  build_flags:
+    - -DIOHOME_FRAME_LOG
 
 esp32:
   variant: esp32s3

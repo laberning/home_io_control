@@ -276,7 +276,7 @@ TEST(PlatformCover, ControlSetPositionAppliesOptimisticTargetImmediately) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  hub.add_device("ABC123", DeviceType::ROLLER_SHUTTER, 0, false);
+  hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
 
   CoverCall call(&cover);
   call.set_position(0.25);  // HA 0.25 open -> IO 75 (non-inverted)
@@ -293,7 +293,7 @@ TEST(PlatformCover, ControlStopClearsOptimisticTargetImmediately) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  hub.add_device("ABC123", DeviceType::ROLLER_SHUTTER, 0, false);
+  hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
   hub.get_device("ABC123")->target = 50.0f;
   hub.get_device("ABC123")->is_stopped = false;
 
@@ -314,7 +314,7 @@ TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTargetImmedia
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_device_type(DeviceType::VENETIAN_BLIND);  // tilt-capable, required for the combined branch
-  hub.add_device("ABC123", DeviceType::VENETIAN_BLIND, 0, false);
+  hub.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
 
   CoverCall call(&cover);
   call.set_position(0.25);  // HA 0.25 open -> IO 75 (non-inverted)
@@ -335,7 +335,7 @@ TEST(PlatformCover, ControlRespectsOptimisticStateFalse) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  hub.add_device("ABC123", DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false);
+  hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false});
 
   CoverCall call(&cover);
   call.set_position(0.25);

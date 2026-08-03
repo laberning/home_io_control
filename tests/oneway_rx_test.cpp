@@ -273,7 +273,7 @@ TEST(OnewayRx, OptimisticState_LinkedDeviceGetsTargetFromCloseIntent) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("112233", DeviceType::ROLLER_SHUTTER, 0, false);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
 
   IoFrame frame = make_1w_execute(0xC8, 0x00);  // CLOSE -> IO target 100
@@ -292,7 +292,7 @@ TEST(OnewayRx, OptimisticState_StopClearsTargetAndPollsImmediately) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("112233", DeviceType::ROLLER_SHUTTER, 0, false);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
   comp.get_device("112233")->target = 50.0f;
   comp.get_device("112233")->is_stopped = false;
@@ -313,7 +313,7 @@ TEST(OnewayRx, OptimisticState_TypeMismatchSkipsOptimisticApplyButStillPolls) {
   MockRadio radio;
   setup_component(comp, radio);
   // BROADCAST_ROLLER targets ROLLER_SHUTTER; link a device of a different known type.
-  comp.add_device("112233", DeviceType::AWNING, 0, false);
+  comp.add_device("112233", {DeviceType::AWNING, 0, false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
 
   IoFrame frame = make_1w_execute(0xC8, 0x00);  // CLOSE
@@ -331,7 +331,7 @@ TEST(OnewayRx, OptimisticState_UnlinkedRemoteAppliesNoState) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("112233", DeviceType::ROLLER_SHUTTER, 0, false);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
   // Deliberately no add_linked_remote(): REMOTE_ID is not linked to "112233".
 
   IoFrame frame = make_1w_execute(0xC8, 0x00);  // CLOSE
@@ -347,7 +347,7 @@ TEST(OnewayRx, OptimisticState_FavoriteIntentAppliesNoTargetButStillPolls) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("112233", DeviceType::ROLLER_SHUTTER, 0, false);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
 
   IoFrame frame = make_1w_execute(POS_FAVORITE, 0x00);  // FAVORITE: no resolvable numeric target
@@ -364,7 +364,7 @@ TEST(OnewayRx, OptimisticState_RespectsOptimisticStateFalse) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("112233", DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
 
   IoFrame frame = make_1w_execute(0xC8, 0x00);  // CLOSE
@@ -385,7 +385,7 @@ TEST(OnewayRx, OptimisticState_ClassLinkedDeviceGetsOptimisticStateWithoutIdLink
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("112233", DeviceType::ROLLER_SHUTTER, 0, false);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
   comp.add_linked_remote_class(DeviceType::ROLLER_SHUTTER, "112233");
   // Deliberately no add_linked_remote(): "112233" is only linked by class, not by REMOTE_ID.
 
@@ -402,7 +402,7 @@ TEST(OnewayRx, ResolveTargetDevices_DedupsDeviceLinkedByBothIdAndClass) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("112233", DeviceType::ROLLER_SHUTTER, 0, false);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
   comp.add_linked_remote_class(DeviceType::ROLLER_SHUTTER, "112233");
 
@@ -418,8 +418,8 @@ TEST(OnewayRx, ResolveTargetDevices_UnionsIdLinkedAndClassLinkedDevices) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("112233", DeviceType::ROLLER_SHUTTER, 0, false);
-  comp.add_device("445566", DeviceType::ROLLER_SHUTTER, 0, false);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
+  comp.add_device("445566", {DeviceType::ROLLER_SHUTTER, 0, false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
   comp.add_linked_remote_class(DeviceType::ROLLER_SHUTTER, "445566");
 
@@ -436,7 +436,7 @@ TEST(OnewayRx, ResolveTargetDevices_UnicastFrameDoesNotFanOutToClassLinks) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.add_device("445566", DeviceType::ROLLER_SHUTTER, 0, false);
+  comp.add_device("445566", {DeviceType::ROLLER_SHUTTER, 0, false});
   comp.add_linked_remote_class(DeviceType::ROLLER_SHUTTER, "445566");
 
   // A unicast (non-broadcast) 1W frame must not resolve any class-linked devices, even if the

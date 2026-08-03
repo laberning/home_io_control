@@ -55,7 +55,7 @@ class VentButtonMockHub : public test::MockPlatformHubBase {
 
 TEST(PlatformCoverVentButton, PressQueuesVentCommand) {
   VentButtonMockHub hub;
-  hub.add_device("ABC123", DeviceType::WINDOW_OPENER, 0, false);
+  hub.add_device("ABC123", {DeviceType::WINDOW_OPENER, 0, false});
 
   TestableIOHomeCoverVentButton button;
   button.set_parent(&hub);

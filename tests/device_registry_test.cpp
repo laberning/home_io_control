@@ -27,7 +27,7 @@ TEST(DeviceRegistry, AddAndGetReturnsDevice) {
 
 TEST(DeviceRegistry, AddWithMetadataStoresFields) {
   DeviceRegistry reg;
-  reg.add("AABBCC", DeviceType::AWNING, 2, true);
+  reg.add("AABBCC", {DeviceType::AWNING, 2, true});
   IoDevice *dev = reg.get("AABBCC");
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::AWNING);
@@ -48,7 +48,7 @@ TEST(DeviceRegistry, AddStoresNodeIdBytes) {
 TEST(DeviceRegistry, DuplicateAddIsIgnored) {
   DeviceRegistry reg;
   reg.add("ABC123");
-  reg.add("ABC123", DeviceType::AWNING, 5, true);
+  reg.add("ABC123", {DeviceType::AWNING, 5, true});
   IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::UNKNOWN);  // first registration wins
@@ -68,7 +68,7 @@ TEST(DeviceRegistry, GetReturnsNullptrForUnknownId) {
 
 TEST(DeviceRegistry, SetDimmableUpdatesRegisteredDevice) {
   DeviceRegistry reg;
-  reg.add("AABBCC", DeviceType::LIGHT, 0, false);
+  reg.add("AABBCC", {DeviceType::LIGHT, 0, false});
   EXPECT_FALSE(reg.get("AABBCC")->dimmable) << "dimmable defaults to false";
 
   reg.set_dimmable("AABBCC", true);
@@ -220,7 +220,7 @@ TEST(DeviceRegistry, ForEachLinkedRemoteVisitsAllEntries) {
 
 TEST(DeviceRegistry, ApplyOptimisticTargetSetsTargetAndClearsStopped) {
   DeviceRegistry reg;
-  reg.add("ABC123", DeviceType::ROLLER_SHUTTER, 0, false);
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
 
   EXPECT_TRUE(reg.apply_optimistic_target("ABC123", 75.0f));
 
@@ -232,7 +232,7 @@ TEST(DeviceRegistry, ApplyOptimisticTargetSetsTargetAndClearsStopped) {
 
 TEST(DeviceRegistry, ClearOptimisticTargetResetsTargetAndSetsStopped) {
   DeviceRegistry reg;
-  reg.add("ABC123", DeviceType::ROLLER_SHUTTER, 0, false);
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
   reg.apply_optimistic_target("ABC123", 75.0f);
 
   EXPECT_TRUE(reg.clear_optimistic_target("ABC123"));
@@ -256,7 +256,7 @@ TEST(DeviceRegistry, ClearOptimisticTargetOnUnknownDeviceReturnsFalseWithoutCras
 
 TEST(DeviceRegistry, OptimisticTargetNoOpWhenOptimisticStateDisabled) {
   DeviceRegistry reg;
-  reg.add("ABC123", DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false);
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false});
 
   EXPECT_FALSE(reg.apply_optimistic_target("ABC123", 75.0f));
   EXPECT_FALSE(reg.clear_optimistic_target("ABC123"));

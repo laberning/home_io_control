@@ -301,13 +301,8 @@ void IOHomeControlComponent::schedule_background_poll_backoff_(const std::string
 
 void IOHomeControlComponent::add_device(const std::string &device_id) { this->registry_.add(device_id); }
 
-void IOHomeControlComponent::add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted) {
-  this->registry_.add(device_id, type, subtype, inverted, true);
-}
-
-void IOHomeControlComponent::add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted,
-                                        bool optimistic_state) {
-  this->registry_.add(device_id, type, subtype, inverted, optimistic_state);
+void IOHomeControlComponent::add_device(const std::string &device_id, const DeviceConfig &cfg) {
+  this->registry_.add(device_id, cfg);
 }
 
 IoDevice *IOHomeControlComponent::get_device(const std::string &device_id) { return this->registry_.get(device_id); }

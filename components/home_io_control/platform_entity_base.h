@@ -64,7 +64,8 @@ class DeviceBoundEntity {
   /// @param on_update The entity's device-update callback.
   void register_device_binding_(Component *self, bool inverted,
                                 std::function<void(const std::string &, const IoDevice &)> on_update) {
-    this->parent_->add_device(this->device_id_, this->device_type_, this->subtype_, inverted, this->optimistic_state_);
+    this->parent_->add_device(this->device_id_,
+                              DeviceConfig{this->device_type_, this->subtype_, inverted, this->optimistic_state_});
     this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
     this->parent_->register_device_callback(std::move(on_update));
     // Schedule the delayed initial poll through the public scheduler: Component::set_timeout is

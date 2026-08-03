@@ -5,9 +5,8 @@
 esphome:
   name: loopback-rx-v2
   friendly_name: Loopback RX V2
-  platformio_options:
-    build_flags:
-      - -DIOHOME_FRAME_LOG
+  build_flags:
+    - -DIOHOME_FRAME_LOG
 
 esp32:
   variant: esp32

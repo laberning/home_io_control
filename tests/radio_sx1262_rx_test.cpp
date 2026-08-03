@@ -21,8 +21,10 @@ class TestableRadioSX1262 : public RadioSX1262 {
  public:
   using RadioSX1262::RadioSX1262;
 
-  // Configure the sequence of IRQ status values returned by read_irq_status_raw().
-  void set_irq_sequence(std::initializer_list<uint16_t> seq) {
+  // Configure the sequence of IRQ status values returned by read_irq_status_raw(). uint32_t to
+  // match SoftPhyDriverBase's shared IRQ word width (SX1262's own values only ever occupy the
+  // low 16 bits).
+  void set_irq_sequence(std::initializer_list<uint32_t> seq) {
     irq_seq_.assign(seq);
     irq_idx_ = 0;
   }
@@ -34,14 +36,14 @@ class TestableRadioSX1262 : public RadioSX1262 {
   void set_read_success(bool success) { read_success_ = success; }
 
  protected:
-  uint16_t read_irq_status_raw() override {
+  uint32_t read_irq_status_raw() override {
     if (irq_idx_ < irq_seq_.size()) {
       return irq_seq_[irq_idx_++];
     }
     return 0;
   }
 
-  bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint16_t irq_status) override {
+  bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint32_t irq_status) override {
     (void) blocking_wait;
     (void) irq_status;
     if (read_success_) {
@@ -52,7 +54,7 @@ class TestableRadioSX1262 : public RadioSX1262 {
   }
 
  private:
-  std::vector<uint16_t> irq_seq_;
+  std::vector<uint32_t> irq_seq_;
   size_t irq_idx_ = 0;
   RadioRxPacket expected_packet_{};
   bool read_success_ = true;

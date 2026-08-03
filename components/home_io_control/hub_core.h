@@ -29,7 +29,6 @@
 #include "esphome/core/hal.h"
 #include "esphome/components/api/custom_api_device.h"
 #include "esphome/components/spi/spi.h"
-#include "esphome/components/button/button.h"
 #include "proto_codecs.h"
 #include "proto_frame.h"
 #include "radio_interface.h"
@@ -244,26 +243,15 @@ class IOHomeControlComponent : public Component,
   }
 
   // --- Device management (called by platform entities during setup) ---
-  /// Add a device to the registry by device ID only (legacy/delegating overload).
-  /// Type, subtype, and inverted default to UNKNOWN / 0 / false; use the 4-arg
-  /// overload when type/subtype/inverted come from YAML declarations.
+  /// Add a device to the registry by device ID only (undeclared/legacy path).
+  /// Type, subtype, inverted, and optimistic_state default to UNKNOWN / 0 / false / true; use the
+  /// `DeviceConfig` overload when metadata comes from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
   virtual void add_device(const std::string &device_id);
-  /// Add a device to the registry with full metadata from YAML. Optimistic state defaults to
-  /// enabled; use the 5-arg overload when the YAML declaration overrides it.
+  /// Add a device to the registry with full metadata from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
-  /// @param type Device type from YAML declaration (UNKNOWN if not specified).
-  /// @param subtype Device subtype from YAML declaration.
-  /// @param inverted Position inversion flag from YAML declaration.
-  virtual void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted);
-  /// Add a device to the registry with full metadata from YAML, including the optimistic-state flag.
-  /// @param device_id Hexadecimal node ID string.
-  /// @param type Device type from YAML declaration (UNKNOWN if not specified).
-  /// @param subtype Device subtype from YAML declaration.
-  /// @param inverted Position inversion flag from YAML declaration.
-  /// @param optimistic_state Whether optimistic target updates are allowed for this device.
-  virtual void add_device(const std::string &device_id, DeviceType type, uint8_t subtype, bool inverted,
-                          bool optimistic_state);
+  /// @param cfg Device type/subtype/inversion/optimistic-state metadata.
+  virtual void add_device(const std::string &device_id, const DeviceConfig &cfg);
   /// Retrieve a device by ID; returns nullptr if not found.
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
@@ -650,23 +638,6 @@ class IOHomeControlComponent : public Component,
     uint32_t timestamp{0};  ///< millis() when last logged.
   };
   OneWayDedup last_1w_logged_{};
-};
-
-// ============================================================================
-// Discover & Pair Button
-// ============================================================================
-
-/// Button entity that triggers device discovery and pairing when pressed in Home Assistant.
-/// @ingroup hioc_platforms
-class IOHomeDiscoverButton : public button::Button, public Component {
- public:
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-  void dump_config() override {}
-
- protected:
-  /// @brief When button is pressed, queue a discovery/pair operation.
-  void press_action() override { this->parent_->queue_discover_and_pair(); }
-  IOHomeControlComponent *parent_{nullptr};
 };
 
 // ----------------------------------------------------------------------------

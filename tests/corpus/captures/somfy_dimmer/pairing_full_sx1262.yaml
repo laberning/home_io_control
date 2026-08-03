@@ -1,0 +1,105 @@
+id: somfy_izymo_dimmer_pairing_full_sx1262
+description: >
+  Real end-to-end pairing exchange (discovery through PairingEngine key transfer + phase-3
+  config) with a Somfy Izymo dimmer, captured on the Heltec V3/SX1262 hub — the sx1262 sibling
+  of somfy_dimmer/pairing_full.yaml (same device family, different node ID: 530BD0 here vs
+  389618 there). No unrelated neighbor traffic was overheard during this capture's discovery
+  window, unlike the sx1276 capture.
+source:
+  device: "Somfy Izymo dimmer (io light actuator)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-08-03
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B C0 FF EE 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), broadcast to backbone group 00003B, attempt 1/3 (no response)"
+  - dir: tx
+    t_ms: 2003
+    freq: 868950000
+    hex: "C8 00 00 00 3B C0 FF EE 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), attempt 2/3 (no response)"
+  - dir: tx
+    t_ms: 4149
+    freq: 868950000
+    hex: "C8 00 00 00 3B C0 FF EE 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), attempt 3/3 — answered"
+  - dir: rx
+    t_ms: 5293
+    freq: 868250000
+    hex: "D1 00 C0 FF EE 53 0B D0 29 01 80 53 0B D0 02 DC 00 11"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), device 530BD0 (Somfy Izymo dimmer) responds, manufacturer=2 (Somfy), turnaround=40s, power_save=always_alive, flags=0xDC"
+  - dir: tx
+    t_ms: 5302
+    freq: 868950000
+    hex: "48 20 53 0B D0 C0 FF EE 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), hub initiates the key exchange with device 530BD0"
+  - dir: rx
+    t_ms: 5368
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 53 0B D0 3C 2F B2 41 38 96 18"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), pairing challenge = 2F B2 41 38 96 18"
+  - dir: tx
+    t_ms: 5368
+    freq: 868950000
+    hex: "18 20 53 0B D0 C0 FF EE 32 93 0D AC 39 B7 F8 ED 93 24 8B CE 2F C7 C2 94 5C"
+    crc: absent
+    note: "cmd=KEY_TRANSFER(0x32), system key encrypted under the challenge above; rekeyed under the public corpus key via ingest.py --rekey (never the real key)"
+  - dir: rx
+    t_ms: 5409
+    freq: 868950000
+    hex: "88 00 C0 FF EE 53 0B D0 33"
+    crc: absent
+    note: "cmd=KEY_CONFIRM(0x33), device confirms the key transfer — pairing is complete at this point"
+  - dir: tx
+    t_ms: 5415
+    freq: 868950000
+    hex: "4D 20 53 0B D0 C0 FF EE 6F E0 10 0A 08 00"
+    crc: absent
+    note: "cmd=SET_CONFIG1(0x6F), phase-3 config write (turnaround/power-save) sent immediately after pairing, as an ordinary authenticated command"
+  - dir: rx
+    t_ms: 5476
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 53 0B D0 3C 93 1A 9C 3C B7 2C"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), device demands auth for SET_CONFIG1, challenge = 93 1A 9C 3C B7 2C"
+  - dir: tx
+    t_ms: 5481
+    freq: 868950000
+    hex: "0E 20 53 0B D0 C0 FF EE 3D 8F 67 1D 95 44 0C"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D), HMAC response to the SET_CONFIG1 challenge above; rekeyed under the public corpus key"
+  - dir: rx
+    t_ms: 5518
+    freq: 868950000
+    hex: "8A 00 C0 FF EE 53 0B D0 FE 28 28"
+    crc: absent
+    note: "cmd=ERROR_RESP(0xFE), result_code=0x28 (no named RESULT_* constant in proto_constants.h — same unmapped/reserved code the sx1276 capture's device returned); pairing itself had already completed via 0x33 above, this only affects the best-effort phase-3 config write"
+expect:
+  exchange:
+    kind: pairing
+    outcome: success
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x32, start: false, end: false, protocol: 2w}
+    - {cmd: 0x33, start: false, end: true, protocol: 2w}
+    - {cmd: 0x6F, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w}

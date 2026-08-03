@@ -8,11 +8,13 @@
 /// Unlike the SX1276, the SX1262 uses opcode-based SPI commands and requires a
 /// BUSY pin check before every SPI transaction. The capture path preserves the
 /// radio-reported RX metadata so offline analysis can work from trustworthy data.
+/// The IRQ-driven RX/TX orchestration this driver shares with RadioLR1121 lives in
+/// SoftPhyDriverBase (see radio_soft_phy_driver_base.h) — this file has the SX1262-specific
+/// SPI transport and register/opcode encoding underneath it.
 /// @todo Validate Heltec V4-family boards on real hardware, especially the assumed
 ///       front-end module enable pins and the required TCXO voltage selection.
 
-#include "radio_interface.h"
-#include "radio_soft_phy.h"
+#include "radio_soft_phy_driver_base.h"
 #include "esphome/core/hal.h"
 
 namespace esphome {
@@ -90,14 +92,16 @@ static constexpr int32_t SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS = 90;
 /// Manages the SX1262 via opcode‑based SPI using the SpiAccess interface.
 /// Configures the chip in FSK mode with software CRC‑CCITT to match the
 /// IO‑Homecontrol protocol (the SX1262 lacks the SX1276's IoHomeOn mode).
+/// The IRQ-driven RX/TX orchestration is inherited from SoftPhyDriverBase; this class supplies
+/// the SPI transport and every SX1262-specific register/opcode encoding underneath it.
 /// @todo Confirm whether additional SX1262 board variants need board-specific FEM
 ///       defaults beyond the currently documented Heltec V3/V4 assumptions.
-class RadioSX1262 : public RadioDriver {
+class RadioSX1262 : public SoftPhyDriverBase {
  public:
   RadioSX1262(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *dio1_pin, InternalGPIOPin *busy_pin,
               uint8_t tx_power, uint8_t tcxo_voltage, InternalGPIOPin *fem_en_pin = nullptr,
               InternalGPIOPin *vfem_pin = nullptr, InternalGPIOPin *fem_pa_pin = nullptr)
-      : RadioDriver(rst_pin),
+      : SoftPhyDriverBase(rst_pin, SX1262_RESPONSE_PREAMBLE, SX1262_POST_TX_SETTLE_US),
         spi_(spi),
         dio1_pin_(dio1_pin),
         busy_pin_(busy_pin),
@@ -109,28 +113,6 @@ class RadioSX1262 : public RadioDriver {
 
   /// @copydoc RadioDriver::init
   bool init() override;
-  /// @copydoc RadioDriver::send_packet
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
-  /// @copydoc RadioDriver::wait_for_packet
-  bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
-  /// @copydoc RadioDriver::check_for_packet
-  bool check_for_packet(RadioRxPacket &packet) override;
-  /// @copydoc RadioDriver::change_frequency
-  void change_frequency(uint32_t freq_hz) override;
-  /// @copydoc RadioDriver::read_rssi
-  int16_t read_rssi() override;
-  /// @copydoc RadioDriver::is_sync_detected
-  bool is_sync_detected() override;
-  /// @copydoc RadioDriver::is_preamble_detected
-  bool is_preamble_detected() override;
-  /// @brief Preamble for response/continuation frames (SX1262).
-  ///
-  /// The SX1262's software UART-encoded waveform gives the peer device less
-  /// synchronization margin than the SX1276's IoHomeOn waveform, so tight
-  /// RX→TX turnaround frames need a longer preamble than SHORT_PREAMBLE.
-  /// Runtime-tunable; the default and its hardware validation are documented
-  /// at @ref SX1262_RESPONSE_PREAMBLE.
-  [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
   /// @brief Apply SX1262 runtime tuning: RX bandwidth, response preamble, post-TX settle delay.
   void apply_tuning(const TuningConfig &tuning) override {
     this->set_rx_bandwidth_(tuning.sx1262_rx_bandwidth);
@@ -167,16 +149,11 @@ class RadioSX1262 : public RadioDriver {
   void dump_debug() override;
 
  protected:
-  // --- Tuning helpers (applied via apply_tuning) ---
+  // --- Tuning helper unique to this chip (its RX-bandwidth enum is not shared, see
+  // tuning_config.h's LR1121RxBandwidth comment for why the two chips' encodings diverged) ---
   /// Apply the RX bandwidth selector and rewrite the modulation parameters.
   /// @param bandwidth Bandwidth selector enum.
   void set_rx_bandwidth_(SX1262RxBandwidth bandwidth);
-  /// Set the preamble length used for response/continuation frames within an exchange.
-  /// @param preamble Preamble length in bytes.
-  void set_response_preamble_(uint16_t preamble) { this->response_preamble_ = preamble; }
-  /// Set the delay between TX completion and re-entering RX.
-  /// @param delay_us Delay in microseconds.
-  void set_post_tx_settle_us_(uint16_t delay_us) { this->post_tx_settle_us_ = delay_us; }
 
   // --- SPI communication (opcode‑based) ---
   /// Wait until BUSY pin is low before any SPI transaction.
@@ -215,9 +192,8 @@ class RadioSX1262 : public RadioDriver {
   // --- Radio configuration ---
   /// Full radio initialization (called from init()).
   void configure_radio_();
-  /// Set RF frequency via the frequency register.
-  /// @param freq_hz Frequency in Hz.
-  void set_frequency_register_(uint32_t freq_hz);
+  /// @copydoc SoftPhyDriverBase::set_frequency_register
+  void set_frequency_register(uint32_t freq_hz) override;
   /// Configure packet parameters (preamble, payload length, CRC).
   /// @param preamble_len Preamble length in symbols.
   /// @param payload_len Expected payload length.
@@ -226,70 +202,56 @@ class RadioSX1262 : public RadioDriver {
   void set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type, uint8_t crc_type);
   /// Apply the runtime bandwidth setting to the SX1262 modulation parameters.
   void write_modulation_params_();
-  /// Apply RX‑specific packet parameters (calls set_packet_params_ for RX).
-  void set_rx_packet_params_();
-  /// Clear all IRQ status bits.
-  /// @param irq_mask Bitmask of IRQs to clear.
-  void clear_irq_status_(uint16_t irq_mask);
+  /// @copydoc SoftPhyDriverBase::set_rx_packet_params
+  void set_rx_packet_params() override;
+  /// @copydoc SoftPhyDriverBase::set_tx_packet_params
+  void set_tx_packet_params(uint16_t preamble_len, uint8_t payload_len) override {
+    this->set_packet_params_(preamble_len, payload_len, SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH, SX1262_GFSK_CRC_OFF);
+  }
+  /// @copydoc SoftPhyDriverBase::clear_irq_status
+  void clear_irq_status(uint32_t irq_mask) override;
   /// @brief Read device error flags (and clear them).
   /// @return Error bitmask.
   uint16_t get_device_errors_();
   /// @brief Clear device error flags.
   void clear_device_errors_();
-  /// Reset RX state machine and buffer. Optionally force standby first.
-  /// @param force_standby If true, switch to standby before reset.
-  void reset_rx_state_(bool force_standby = true);
-  /// Populate the RadioCaptureInfo from SX1262‑specific telemetry.
+  /// @copydoc SoftPhyDriverBase::configure_buffer_base
+  ///
+  /// SX1262's buffer base addresses (TX=0x00, RX=0x80) are re-asserted on every RX reset — LR1121
+  /// has no equivalent register.
+  void configure_buffer_base() override;
+  /// @copydoc SoftPhyDriverBase::fill_capture_info
+  ///
   /// Note: `crc_error` is set from the CrcErr IRQ bit — unlike the SX1276, this
   /// driver sees and reports frames with a bad CRC.
-  /// @param blocking_wait true if this was a blocking wait.
-  /// @param irq_status Raw IRQ status.
-  /// @param rx_offset Reported RX buffer offset.
-  /// @param reported_len Length reported by the radio.
-  /// @param raw Pointer to raw buffer bytes (may be nullptr).
-  /// @param raw_len Length of raw buffer.
-  /// @param frame Pointer to parsed frame bytes (may be nullptr).
-  /// @param frame_len Length of parsed frame.
-  void fill_capture_info_(bool blocking_wait, uint16_t irq_status, uint8_t rx_offset, uint8_t reported_len,
-                          const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
-
-  /// Read a received packet from the buffer and return the raw bytes reported by the chip.
-  /// This is virtual to allow test doubles.
-  /// @param packet Output RadioRxPacket.
-  /// @param blocking_wait true if called from a blocking wait path.
-  /// @param irq_status Raw IRQ status word.
-  /// @return true if a valid packet was extracted; false otherwise.
-  virtual bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint16_t irq_status);
+  void fill_capture_info(bool blocking_wait, uint32_t irq_status, uint8_t rx_offset, uint8_t reported_len,
+                         const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) override;
 
   /// DIO1 ISR — sets dio_fired flag. Runs in interrupt context.
   static void gpio_intr(RadioSX1262 *arg);
 
-  /// @brief Read the raw IRQ status from the radio.
-  /// @return 16‑bit IRQ status word.
-  virtual uint16_t read_irq_status_raw();
+  /// @copydoc SoftPhyDriverBase::read_irq_status_raw
+  uint32_t read_irq_status_raw() override;
+  /// @copydoc SoftPhyDriverBase::sync_word_valid_bit
+  [[nodiscard]] uint32_t sync_word_valid_bit() const override { return SX1262_IRQ_SYNC_WORD_VALID; }
+  /// @copydoc SoftPhyDriverBase::rx_done_bit
+  [[nodiscard]] uint32_t rx_done_bit() const override { return SX1262_IRQ_RX_DONE; }
+  /// @copydoc SoftPhyDriverBase::tx_done_bit
+  [[nodiscard]] uint32_t tx_done_bit() const override { return SX1262_IRQ_TX_DONE; }
+  /// @copydoc SoftPhyDriverBase::preamble_detected_bit
+  [[nodiscard]] uint32_t preamble_detected_bit() const override { return SX1262_IRQ_PREAMBLE_DETECTED; }
+  /// @copydoc SoftPhyDriverBase::read_rssi_raw_byte
+  uint8_t read_rssi_raw_byte() override;
+  /// @copydoc SoftPhyDriverBase::write_tx_buffer
+  void write_tx_buffer(const uint8_t *data, uint8_t len) override { this->write_buffer_(0x00, data, len); }
+  /// @copydoc SoftPhyDriverBase::get_rx_buffer_status
+  void get_rx_buffer_status(uint8_t &reported_len, uint8_t &rx_offset) override;
+  /// @copydoc SoftPhyDriverBase::read_rx_buffer
+  void read_rx_buffer(uint8_t offset, uint8_t *data, uint8_t len) override { this->read_buffer_(offset, data, len); }
+  /// @copydoc SoftPhyDriverBase::start_tx
+  void start_tx() override;
 
  private:
-  // === wait_for_packet helpers (private) ===
-  /// Poll until any radio activity (DIO1) or timeout.
-  /// @param start Starting timestamp.
-  /// @param timeout_ms Maximum wait.
-  /// @param saw_dio1 Output: true if DIO1 fired.
-  /// @param irq Output: captured IRQ status.
-  /// @return true if activity detected before timeout; false otherwise.
-  bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, bool &saw_dio1, uint16_t &irq);
-  /// Resolve the race between SYNC word detection and payload‑ready by peeking
-  /// the RX buffer status and potentially restarting RX.
-  /// @param start Starting timestamp.
-  /// @param timeout_ms Maximum wait.
-  /// @param irq Output: final IRQ status when success is determined.
-  /// @return true if a frame boundary is resolved; false on timeout or error.
-  bool resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint16_t &irq);
-  /// Finalize receive: populate packet from the RX buffer and telemetry.
-  /// @param packet Output RadioRxPacket.
-  /// @param irq IRQ status at completion.
-  /// @return true if packet extraction succeeded; false otherwise.
-  bool finalize_receive_(RadioRxPacket &packet, uint16_t irq);
-
   SpiAccess *spi_;
   InternalGPIOPin *dio1_pin_;
   InternalGPIOPin *busy_pin_;
@@ -300,8 +262,6 @@ class RadioSX1262 : public RadioDriver {
   uint8_t tcxo_voltage_;
   bool failed_{false};
   SX1262RxBandwidth rx_bandwidth_{SX1262RxBandwidth::BW_117_3_KHZ};  ///< Runtime-tunable RX bandwidth.
-  uint16_t response_preamble_{SX1262_RESPONSE_PREAMBLE};             ///< Runtime-tunable response preamble.
-  uint16_t post_tx_settle_us_{SX1262_POST_TX_SETTLE_US};             ///< Runtime-tunable post-TX settling delay.
 };
 
 }  // namespace home_io_control
