@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace esphome {
 namespace home_io_control {
@@ -108,11 +109,21 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
 
 /// Decide if a frame is a valid discovery response (0x29) during pairing.
 ///
-/// @param candidate Parsed IoFrame.
-/// @return ACCEPT if command is CMD_DISCOVER_RESP; INVALID otherwise.
-inline PairingDiscoveryDisposition classify_pairing_discovery_response(const IoFrame &candidate) {
-  return candidate.cmd == CMD_DISCOVER_RESP ? PairingDiscoveryDisposition::ACCEPT
-                                            : PairingDiscoveryDisposition::INVALID;
+/// Only the destination is checked, not the source: the discovery request goes out to a
+/// shared broadcast address, so a response arriving during the same window may be a device
+/// answering a *different* controller's concurrent discovery rather than ours — real hardware
+/// addresses its response back to the requesting controller's own node ID, so checking that is
+/// both possible and sufficient to reject it. The source can't be checked here — the device's
+/// node ID is exactly what discovery exists to learn, so there is nothing yet to compare it to.
+///
+/// @param candidate      Parsed IoFrame.
+/// @param controller_id  Node ID of this controller (expected destination).
+/// @return ACCEPT if the command is CMD_DISCOVER_RESP and addressed to this controller; INVALID otherwise.
+inline PairingDiscoveryDisposition classify_pairing_discovery_response(const IoFrame &candidate,
+                                                                       const uint8_t controller_id[NODE_ID_SIZE]) {
+  return candidate.cmd == CMD_DISCOVER_RESP && std::memcmp(candidate.dst, controller_id, NODE_ID_SIZE) == 0
+             ? PairingDiscoveryDisposition::ACCEPT
+             : PairingDiscoveryDisposition::INVALID;
 }
 
 /// Decide if a frame is a valid key-challenge (0x3C) during pairing key exchange.
@@ -137,6 +148,72 @@ inline PairingKeyChallengeDisposition classify_pairing_key_challenge(const IoFra
                  frame_matches_nodes(candidate, device_id, controller_id)
              ? PairingKeyChallengeDisposition::ACCEPT
              : PairingKeyChallengeDisposition::IGNORE;
+}
+
+// == One-way (1W) remote frame handling ==
+
+/// @brief Key fields of the last processed 1W frame, used to collapse a remote's repeat burst.
+///
+/// 1W remotes repeat each command 4× at ~40ms intervals for reliability, and a held button keeps
+/// resending, so one logical press arrives as many identical frames. The key deliberately includes
+/// the decoded intent bytes and not just the command byte: a move and a stop are *both*
+/// CMD_EXECUTE and differ only in `main0`, so a command-only key silently discards a stop that
+/// follows a move within the window — losing the sender event, the optimistic-target clear, and
+/// the immediate poll that a stop is supposed to trigger.
+struct OneWayDedupState {
+  std::string src_id;      ///< Source node ID of the last processed frame; empty before the first.
+  uint8_t cmd{0};          ///< Command byte.
+  bool has_intent{false};  ///< Whether main0/main1 were decoded (execute / activate-mode only).
+  uint8_t main0{0};        ///< First main byte — what distinguishes a move from a stop.
+  uint8_t main1{0};        ///< Second main byte.
+  uint32_t timestamp{0};   ///< millis() when the frame was processed.
+};
+
+/// Decide whether an incoming 1W frame repeats the previous one inside the burst window.
+///
+/// @param last     State recorded for the previously processed 1W frame.
+/// @param incoming Candidate frame's key fields, with `timestamp` set to now.
+/// @param window_ms Burst-suppression window.
+/// @return true if the frame should be dropped as a repeat of `last`.
+inline bool is_duplicate_1w_frame(const OneWayDedupState &last, const OneWayDedupState &incoming, uint32_t window_ms) {
+  // `last.src_id` is empty until the first 1W frame is processed, so a real frame never matches it.
+  if (last.src_id != incoming.src_id || last.cmd != incoming.cmd || last.has_intent != incoming.has_intent)
+    return false;
+  if (incoming.has_intent && (last.main0 != incoming.main0 || last.main1 != incoming.main1))
+    return false;
+  // Unsigned arithmetic makes this correct across the millis() wrap.
+  return (incoming.timestamp - last.timestamp) < window_ms;
+}
+
+/// Decide whether to hold back a queued background poll because a 1W remote is still transmitting.
+///
+/// The radio is half-duplex and an authenticated exchange blocks for 1–3 s, during which no frame
+/// can be received at all. A press on a linked remote schedules a status poll, so without this gate
+/// the hub's own poll can start on top of the burst that triggered it and go deaf to the rest of it.
+///
+/// Only background polls are deferred. A user command must never wait on a remote the user may not
+/// even own — 1W broadcasts carry no ownership marker, so the activity could be a neighbour's.
+///
+/// The deferral itself has no cap: it re-arms on every 1W frame received while it is already
+/// active, so sustained sub-`quiet_ms` 1W traffic from any source — including a neighbour's,
+/// since these broadcasts carry no ownership marker — holds background polls back indefinitely.
+/// This is acceptable because a real burst from one remote is short (~160 ms, well under
+/// `quiet_ms`) and the gate only delays a poll, it never drops one: the poll stays queued and
+/// fires as soon as the channel goes quiet. The residual risk is a pathological or malicious
+/// sender transmitting 1W frames faster than `quiet_ms` apart without pause, which would starve
+/// background polls — and therefore device state freshness — for as long as that traffic
+/// continues, with no diagnostic surfaced today.
+///
+/// @param next_op_is_background True if the queue front is a REQUEST_STATUS / REQUEST_NAME.
+/// @param last_1w_activity_ms   millis() of the most recent 1W frame; 0 if none seen since boot.
+/// @param now                   Current millis().
+/// @param quiet_ms              How long after 1W activity to hold background polls back.
+/// @return true if the caller should skip dispatching this loop iteration.
+inline bool defer_background_poll_for_1w_activity(bool next_op_is_background, uint32_t last_1w_activity_ms,
+                                                  uint32_t now, uint32_t quiet_ms) {
+  if (!next_op_is_background || last_1w_activity_ms == 0)
+    return false;
+  return (now - last_1w_activity_ms) < quiet_ms;
 }
 
 // == Timing/slicing helper ==

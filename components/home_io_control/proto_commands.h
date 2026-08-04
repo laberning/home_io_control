@@ -38,20 +38,6 @@
 namespace esphome {
 namespace home_io_control {
 
-/// Build an execute command (0x00) to control a device (set position or special).
-///
-/// @deprecated Prefer create_execute_position() for numeric positions and
-///             create_execute_command() for named commands (STOP, FAVORITE, VENT).
-///             This function is retained for backward compatibility but new code
-///             should use the typed alternatives.
-/// @param f IoFrame to populate.
-/// @param own Controller's 3‑byte node ID (source address).
-/// @param dst Target device's 3‑byte node ID (destination address).
-/// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
-/// @param position Desired position: 0–100 (open→closed), or POS_STOP/POS_FAVORITE.
-/// @return true on success; false if position exceeds limits.
-bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position);
-
 /// @brief Build a position execute command (0x00) to move a device to a numeric position.
 ///
 /// Encodes a 0–100 position value into the standard 8-byte execute payload with

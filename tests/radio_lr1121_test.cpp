@@ -1,6 +1,8 @@
 #include "radio_lr1121.h"
 #include "radio_interface.h"
 
+#include "esphome/core/application.h"
+
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
@@ -184,8 +186,11 @@ TEST(RadioLR1121, WaitBusyShortCircuitsAfterFailure) {
   MockPin rst, irq, busy(true);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
 
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
   radio.set_mode_standby();  // First BUSY wait times out and sets failed_.
   ASSERT_TRUE(radio.is_failed());
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "the BUSY-pin wait is a distinct blocking path (SPI turnaround, not RX) and must feed too";
   uint32_t const t_before_second = esphome::millis();
   radio.set_mode_standby();  // Must short-circuit instead of re-running the full timeout.
   uint32_t const t_after_second = esphome::millis();
@@ -475,10 +480,13 @@ TEST(RadioLR1121, WaitForPacketTimeout_NoActivity) {
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
 
   RadioRxPacket result{};
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
   bool ok = radio.wait_for_packet(result, 5);
 
   EXPECT_FALSE(ok) << "absence of any radio activity should cause timeout and return false";
   EXPECT_EQ(result.len, 0u);
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "a multi-millisecond blocking wait must feed the watchdog, or a real timeout resets the board";
 }
 
 TEST(RadioLR1121, WaitForPacketIgnoresPreambleOnlyActivity) {
@@ -532,10 +540,13 @@ TEST(RadioLR1121, WaitForPacketRaceCondition_Timeout) {
   radio.set_irq_sequence({LR1121_IRQ_SYNC_WORD_VALID, LR1121_IRQ_SYNC_WORD_VALID});
 
   RadioRxPacket result{};
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
   bool ok = radio.wait_for_packet(result, 5);
 
   EXPECT_FALSE(ok) << "SYNC without RX_DONE before timeout should cause failure";
   EXPECT_EQ(result.len, 0u);
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "the sync-race wait loop is a separate blocking path and must feed the watchdog too";
 }
 
 TEST(RadioLR1121, WaitForPacketReadFailure_CapturePopulated) {

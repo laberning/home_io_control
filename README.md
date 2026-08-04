@@ -1,4 +1,8 @@
 # Home IO Control
+[![CI](https://github.com/laberning/home_io_control/actions/workflows/ci.yml/badge.svg)](https://github.com/laberning/home_io_control/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/laberning/home_io_control/actions/workflows/codeql.yml/badge.svg)](https://github.com/laberning/home_io_control/actions/workflows/codeql.yml)
+[![Fuzz](https://github.com/laberning/home_io_control/actions/workflows/fuzz.yml/badge.svg)](https://github.com/laberning/home_io_control/actions/workflows/fuzz.yml)
+[![Docs](https://github.com/laberning/home_io_control/actions/workflows/doxygen-deploy.yml/badge.svg)](https://github.com/laberning/home_io_control/actions/workflows/doxygen-deploy.yml)
 [![GitHub](https://img.shields.io/github/license/laberning/home_io_control)](https://github.com/laberning/home_io_control/blob/main/LICENSE)
 ![GitHub Repo stars](https://img.shields.io/github/stars/laberning/home_io_control)
 
@@ -38,13 +42,13 @@ The table below lists board mappings that are known to be plausible for this com
 
 | Board | Radio | Status | `spi:` pins | `home_io_control:` pins | Notes |
 |-------|-------|--------|-------------|-------------------------|-------|
-| **Heltec WiFi LoRa32 v2** | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | Matches [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml), the SX1276 cover example with OLED status display |
+| **Heltec WiFi LoRa32 v2** | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | Use `radio_type: sx1276`; matches [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml), the SX1276 cover example with OLED status display |
 | **Heltec WiFi LoRa32 V3 / V3.2** | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `radio_type: sx1262` and `tcxo_voltage: 1_8V`; matches [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml), the SX1262 cover example with OLED status display |
 | LilyGO T3-S3 SX1262 | SX1262 | Untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 33`, `busy_pin: 34` | should have the same mapping on v1.2 and v1.3; start with `radio_type: sx1262` |
-| LilyGO T3-S3 SX1276 | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio0_pin: 9` | |
+| LilyGO T3-S3 SX1276 | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio0_pin: 9` | Use `radio_type: sx1276` |
 | **LilyGO T3-S3 LR1121** | LR1121 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 36`, `busy_pin: 34` | **Not the same board as the two rows above** — same T3-S3 silkscreen/form factor, but a different radio chip and a different IRQ pin (GPIO36, vs. dio0/dio1 on 9/33 for the SX1276/SX1262 variants). Use `radio_type: lr1121` and `tcxo_voltage: 3_0V`; `dio1_pin` carries the LR1121's DIO9 interrupt line. Matches [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) |
-| LilyGO LoRa32 V1.3 SX1276 | SX1276 | Untested | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | |
-| LilyGO T-Beam 1W SX1262 | SX1262 | Untested | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | vendor docs suggest that `fem_en_pin: 40` and `fem_pa_pin: 21` might be needed |
+| LilyGO LoRa32 V1.3 SX1276 | SX1276 | Untested | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | Use `radio_type: sx1276` |
+| LilyGO T-Beam 1W SX1262 | SX1262 | Untested | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | Use `radio_type: sx1262`; vendor docs suggest that `fem_en_pin: 40` and `fem_pa_pin: 21` might be needed |
 | Any other ESP32 + SX1276/SX1262/LR1121 | Any | Untested | Board-specific | Board-specific | Use the chip pinout and set the appropriate `sx1276`, `sx1262`, or `lr1121` `radio_type` |
 
 ### Confirmed Board Notes

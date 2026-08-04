@@ -90,6 +90,19 @@ const char *pairing_platform_name(DeviceCapabilityClass capability_class) {
 
 }  // namespace
 
+std::string PairingEngine::build_incomplete_metadata_snippet(const std::string &device_id) {
+  return "  <cover|light|switch|lock>:\n"
+         "  - platform: home_io_control\n"
+         "    name: \"My Device\"\n"
+         "    io_device_id: \"" +
+         device_id +
+         "\"\n"
+         "    # io_device_type: left unset — this device didn't report its type during\n"
+         "    #   discovery, so the controller learns it automatically from the next status\n"
+         "    #   reply. Add it explicitly once you see it logged, to skip re-learning on\n"
+         "    #   every future boot.\n";
+}
+
 // --- Constructor ---
 
 PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, const uint8_t *system_key,
@@ -124,7 +137,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
   auto try_accept = [&]() {
     if (!parse(packet.data, packet.len, response_frame))
       return false;
-    const bool accepted = decisions::classify_pairing_discovery_response(response_frame) ==
+    const bool accepted = decisions::classify_pairing_discovery_response(response_frame, node_id_) ==
                           decisions::PairingDiscoveryDisposition::ACCEPT;
     this->record_discovery_rx_telemetry_(response_frame, accepted, radio_()->get_last_capture().rssi_dbm);
     return accepted;
@@ -538,10 +551,12 @@ bool PairingEngine::discover_and_pair() {
       ESP_LOGW(TAG, "Please file a GitHub issue with this device type, subtype, model, and the pairing log so support "
                     "can be added.");
     } else {
-      ESP_LOGW(TAG, "Device %s paired successfully, but the discovery response did not include type/subtype metadata.",
+      ESP_LOGW(TAG,
+               "Device %s paired successfully, but the discovery response did not include type/subtype "
+               "metadata, so the platform (cover/light/switch/lock) can't be determined automatically.",
                context.device_id.c_str());
-      ESP_LOGW(TAG, "No ready-to-paste YAML was generated. Add the device ID to the correct cover/light/switch entry "
-                    "manually and leave io_device_type/io_subtype unset for now.");
+      ESP_LOGI(TAG, "Add this to your YAML once you know what kind of device it is:\n%s",
+               build_incomplete_metadata_snippet(context.device_id).c_str());
       ESP_LOGW(TAG, "Please file a GitHub issue with the pairing log and device model so this discovery edge case can "
                     "be investigated.");
     }

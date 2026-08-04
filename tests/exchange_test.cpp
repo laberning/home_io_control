@@ -128,7 +128,7 @@ TEST(Exchange, SendAndReceive_DirectSuccess) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   IoFrame resp = build_status_response(test::DST_ID, comp.node_id_);
   uint8_t raw[64];
@@ -162,7 +162,7 @@ TEST(Exchange, SendAndReceive_AllTransmitFails) {
   }
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   IoFrame response{};
   bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
@@ -182,7 +182,7 @@ TEST(Exchange, SendAndReceive_FirstResponseIgnoredThenDirectSuccess) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   // Unrelated packet (wrong source)
   IoFrame unrelated = build_status_response(test::FOREIGN_ID, comp.node_id_);
@@ -221,7 +221,7 @@ TEST(Exchange, SendAndReceive_ChallengeSuccess) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   // Challenge packet from device
   uint8_t chal_data[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
@@ -259,7 +259,7 @@ TEST(Exchange, SendAndReceive_DirectErrorResponseIsAccepted) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   IoFrame resp = build_error_response(test::DST_ID, comp.node_id_, RESULT_LIMITATION_BY_RAIN);
   uint8_t raw[64];
@@ -288,7 +288,7 @@ TEST(Exchange, SendAndReceive_FinalErrorResponseAfterChallengeIsAccepted) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   uint8_t chal_data[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
   IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
@@ -325,7 +325,7 @@ TEST(Exchange, SendAndReceive_AuthTransmitFailure) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   // Challenge packet
   uint8_t chal_data[6] = {1, 2, 3, 4, 5, 6};
@@ -363,7 +363,7 @@ TEST(Exchange, SendAndReceive_FinalResponseTimeout) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   // Challenge packet
   uint8_t chal_data[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
@@ -458,8 +458,8 @@ TEST(Exchange, SendAndReceive_StartFrameUsesLongPreamble) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
-  // create_execute sets START flag — verify it
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  // create_execute_position sets START flag — verify it
   ASSERT_TRUE(is_start(request)) << "execute command should have START flag set";
 
   // No RX → times out after retries, but we can inspect the TX config
@@ -533,7 +533,7 @@ TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   // Queue a challenge from device
   uint8_t chal_data[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
@@ -649,7 +649,7 @@ TEST(Exchange, SendAndReceive_ChallengeResponseCarriesCorrectHmac) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   // Challenge from device with known bytes.
   uint8_t chal_data[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
@@ -707,7 +707,7 @@ TEST(Exchange, SendAndReceive_RetryExhaustion_NoResponse) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 50);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 50);
 
   IoFrame response{};
   bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
@@ -731,7 +731,7 @@ TEST(Exchange, SendAndReceive_UnrelatedFrameIgnoredDuringFinalWait) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute(request, comp.node_id_, test::DST_ID, false, 100);
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   // 1. Challenge from the correct device.
   uint8_t chal_data[6] = {0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x01};

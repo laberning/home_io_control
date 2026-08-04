@@ -1,6 +1,6 @@
 services:
   esphome:
-    image: ghcr.io/esphome/esphome:latest
+    image: ghcr.io/esphome/esphome:${ESPHOME_TAG:-latest}
     volumes:
       - ./config:/config
       - ./components:/config/components

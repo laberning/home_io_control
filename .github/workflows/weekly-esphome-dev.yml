@@ -1,0 +1,43 @@
+name: Weekly (ESPHome dev channel)
+
+on:
+  schedule:
+    # ESPHome's external_components API and codegen are still moving underneath us -- this is
+    # the early-warning system for a breaking upstream change, failing weeks before a routine
+    # `latest` bump would surface it on hardware. Never blocks merges -- see ci.yml for the
+    # check that does.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  weekly:
+    name: Compile test configs against ESPHome dev
+    runs-on: ubuntu-latest
+    env:
+      ESPHOME_TAG: dev
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: firmware-test (ESPHOME_TAG=dev)
+        run: make firmware-test
+
+      - name: Open an issue on failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          marker="Weekly build failed against the ESPHome dev channel"
+          existing=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --search "in:title \"$marker\"" --json number --jq '.[0].number')
+          if [ -z "$existing" ]; then
+            gh issue create --repo "${{ github.repository }}" \
+              --title "$marker" \
+              --body "First seen $(date -u +%Y-%m-%d). See the run for details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            gh issue comment "$existing" --repo "${{ github.repository }}" \
+              --body "Still failing as of $(date -u +%Y-%m-%d): ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi

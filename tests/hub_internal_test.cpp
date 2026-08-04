@@ -172,3 +172,35 @@ TEST(HubInternal, NormalizeStoppedStateUnknownPosition) {
   detail::normalize_stopped_state(dev);
   EXPECT_TRUE(dev.is_stopped) << "stopped flag should remain when position is unknown";
 }
+
+// ========================================================================================
+// describe_learned_device_type
+// ========================================================================================
+
+TEST(HubInternal, DescribeLearnedDeviceTypeUsesNamedYamlAlias) {
+  EXPECT_EQ(detail::describe_learned_device_type(DeviceType::VENETIAN_BLIND), "io_device_type: \"venetian_blind\"")
+      << "a type with a named YAML alias should be quoted exactly as the schema expects it";
+}
+
+TEST(HubInternal, DescribeLearnedDeviceTypeFallsBackToHexWithoutAnAlias) {
+  // BEACON (0x0C) has no case in yaml_device_type_name() — falls through to the hex fallback.
+  EXPECT_EQ(detail::describe_learned_device_type(DeviceType::BEACON), "io_device_type: 0x0C")
+      << "a type with no named YAML alias should fall back to a raw hex value the schema still accepts";
+}
+
+TEST(HubInternal, DescribeLearnedDeviceTypeMatchesYamlDeviceTypeNameSourceOfTruth) {
+  // Both the pairing snippet (pairing_engine.cpp) and this boot-time hint derive their YAML
+  // syntax from yaml_device_type_name() — this pins that this helper never drifts from it.
+  for (uint8_t raw = 0; raw <= 0x18; raw++) {
+    const auto type = static_cast<DeviceType>(raw);
+    const std::string described = detail::describe_learned_device_type(type);
+    const char *alias = yaml_device_type_name(type);
+    if (alias != nullptr) {
+      EXPECT_EQ(described, std::string("io_device_type: \"") + alias + "\"")
+          << "mismatch for raw type 0x" << std::hex << static_cast<int>(raw);
+    } else {
+      EXPECT_NE(described.find("0x"), std::string::npos)
+          << "unnamed type 0x" << std::hex << static_cast<int>(raw) << " should fall back to a hex value";
+    }
+  }
+}

@@ -23,7 +23,12 @@ class Scheduler {
 class Application {
  public:
   Scheduler scheduler;
-  void feed_wdt() {}
+  // Counts calls rather than being a pure no-op so tests can assert that a long blocking wait
+  // actually feeds the watchdog, not just that it eventually returns. Global and monotonic —
+  // callers snapshot the count before their wait and assert on the delta, since unrelated tests
+  // may also drive code paths that feed.
+  uint32_t feed_wdt_calls{0};
+  void feed_wdt() { this->feed_wdt_calls++; }
 };
 
 extern Application App;

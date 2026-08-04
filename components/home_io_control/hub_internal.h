@@ -31,8 +31,11 @@ namespace detail {
 // ============================================================================
 
 inline constexpr const char *TAG = "home_io_control";  ///< Shared log tag for hub-level messages.
-inline constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS =
-    2000;  ///< Suppress duplicate 1W log/poll for same remote+cmd within this window.
+/// Suppress a repeated 1W log/poll for the same remote *and the same intent* within this window.
+/// Wide on purpose: it collapses both the 4×/40ms reliability burst and a held button into one
+/// logical press. A *different* intent from the same remote (a stop after a move) is not a
+/// duplicate and passes through immediately — see decisions::is_duplicate_1w_frame().
+inline constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS = 2000;
 inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
     50.0F;  ///< Shared 0-100 cutoff: values below this mean binary "on".
 
@@ -241,6 +244,26 @@ inline constexpr size_t NAME_AND_HEX_BUFFER_SIZE = 40;
 inline std::string format_name_and_hex(const char *name, uint8_t value) {
   std::array<char, NAME_AND_HEX_BUFFER_SIZE> buffer{};
   std::snprintf(buffer.data(), buffer.size(), "%s(0x%02X)", name, value);
+  return std::string(buffer.data());
+}
+
+/// Buffer size for describe_learned_device_type()'s hex fallback: "io_device_type: 0xXX" plus margin.
+inline constexpr size_t LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE = 24;
+
+/// @brief Build the YAML line to add once a device's type is learned at runtime.
+///
+/// Logged when `io_device_type` was left unset in YAML and an INFO2 response just resolved it
+/// for the first time this boot (ADR 0018: nothing persists, so this repeats on every reboot
+/// until the user copies the line in). Reuses yaml_device_type_name() so the exact syntax always
+/// matches what the pairing snippet and the Python schema accept.
+/// @param type The now-known device type. Must not be DeviceType::UNKNOWN.
+/// @return The YAML line to add, e.g. `io_device_type: "venetian_blind"` or `io_device_type: 0x11`.
+inline std::string describe_learned_device_type(DeviceType type) {
+  const char *name = yaml_device_type_name(type);
+  if (name != nullptr)
+    return std::string("io_device_type: \"") + name + "\"";
+  std::array<char, LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "io_device_type: 0x%02X", static_cast<uint8_t>(type));
   return std::string(buffer.data());
 }
 

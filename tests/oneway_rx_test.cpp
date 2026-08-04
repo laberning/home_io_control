@@ -453,3 +453,69 @@ TEST(OnewayRx, ResolveTargetDevices_UnicastFrameDoesNotFanOutToClassLinks) {
   const auto devices = comp.resolve_1w_target_devices_(info, node_id_to_string(REMOTE_ID));
   EXPECT_TRUE(devices.empty()) << "a unicast 1W frame must not fan out to class-linked devices";
 }
+
+// ============================================================================
+// Burst suppression must not swallow a change of intent
+// ============================================================================
+// A move and a stop are both CMD_EXECUTE and differ only in main0, so the dedup key has to
+// include the decoded intent. Keying on src+cmd alone silently discarded the stop.
+
+TEST(OnewayRx, StopAfterMoveInsideDedupWindowStillFiresItsEvent) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.add_exposed_sender(node_id_to_string(REMOTE_ID));
+
+  RadioRxPacket move = make_rx_packet(make_1w_execute(0xC8, 0x00));  // CLOSE
+  RadioRxPacket stop = make_rx_packet(make_1w_execute(POS_STOP, 0x00));
+  comp.process_received_packet_(move);
+  comp.process_received_packet_(stop);
+
+  ASSERT_EQ(api_server.events_.size(), 2u)
+      << "the stop is a different intent from the same remote, so it is not a burst repeat";
+}
+
+TEST(OnewayRx, StopAfterMoveInsideDedupWindowClearsTargetAndPollsImmediately) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
+  comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
+
+  RadioRxPacket move = make_rx_packet(make_1w_execute(0xC8, 0x00));  // CLOSE
+  comp.process_received_packet_(move);
+  ASSERT_FLOAT_EQ(comp.get_device("112233")->target, 100.0f) << "precondition: the move set a target";
+
+  RadioRxPacket stop = make_rx_packet(make_1w_execute(POS_STOP, 0x00));
+  comp.process_received_packet_(stop);
+
+  const auto *dev = comp.get_device("112233");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION)
+      << "a swallowed stop leaves the HA cover animating toward a target the device abandoned";
+  EXPECT_TRUE(dev->is_stopped) << "the stop must mark the device stopped";
+  EXPECT_EQ(comp.last_timeout_ms_, 0u) << "the stop must still get its immediate confirmation poll";
+}
+
+TEST(OnewayRx, RepeatedIdenticalIntentIsStillCollapsed) {
+  // The change to the dedup key must not weaken the burst suppression it exists for: a held
+  // button resends the same intent and must still read as one press.
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.add_exposed_sender(node_id_to_string(REMOTE_ID));
+
+  RadioRxPacket pkt = make_rx_packet(make_1w_execute(0xC8, 0x00));
+  for (int i = 0; i < 8; i++)
+    comp.process_received_packet_(pkt);
+
+  EXPECT_EQ(api_server.events_.size(), 1u) << "a held button is one logical press, not eight";
+}

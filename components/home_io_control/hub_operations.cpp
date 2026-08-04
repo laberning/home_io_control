@@ -152,7 +152,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
            operation_profile_name(*dev));
 
   IoFrame request;
-  if (!create_execute(request, this->node_id_, dev->node_id, true, position)) {
+  if (!create_execute_position(request, this->node_id_, dev->node_id, true, position)) {
     this->poll_policy_.clear(device_id);
     return false;
   }

@@ -72,15 +72,29 @@ TEST(Decisions, ExchangeFinalResponseIgnoreUnrelated) {
 TEST(Decisions, PairingDiscoveryAccept) {
   const IoFrame discovery = make_frame(DST_ID, OWN_ID, CMD_DISCOVER_RESP, 2);
 
-  EXPECT_EQ(decisions::classify_pairing_discovery_response(discovery), decisions::PairingDiscoveryDisposition::ACCEPT)
-      << "discovery response should be accepted during pairing discovery wait";
+  EXPECT_EQ(decisions::classify_pairing_discovery_response(discovery, OWN_ID),
+            decisions::PairingDiscoveryDisposition::ACCEPT)
+      << "discovery response addressed to this controller should be accepted during discovery wait";
 }
 
 TEST(Decisions, PairingDiscoveryInvalidNonDiscovery) {
   const IoFrame ignored = make_frame(DST_ID, OWN_ID, CMD_PRIVATE_RESP, 6);
 
-  EXPECT_EQ(decisions::classify_pairing_discovery_response(ignored), decisions::PairingDiscoveryDisposition::INVALID)
+  EXPECT_EQ(decisions::classify_pairing_discovery_response(ignored, OWN_ID),
+            decisions::PairingDiscoveryDisposition::INVALID)
       << "non-discovery frame should be invalid during pairing discovery wait";
+}
+
+TEST(Decisions, PairingDiscoveryInvalidWrongDestination) {
+  // DISCOVER_REQ goes out to a shared broadcast address, so a well-formed 0x29 arriving during
+  // the discovery window may be a device answering a different, concurrent controller's request
+  // rather than ours. Real hardware addresses its response back to the requesting controller, so
+  // a mismatched dst means this frame was never meant for us.
+  const IoFrame discovery_for_someone_else = make_frame(DST_ID, FOREIGN_ID, CMD_DISCOVER_RESP, 2);
+
+  EXPECT_EQ(decisions::classify_pairing_discovery_response(discovery_for_someone_else, OWN_ID),
+            decisions::PairingDiscoveryDisposition::INVALID)
+      << "a discovery response addressed to a different controller must not be accepted as ours";
 }
 
 // ========================================================================================
@@ -117,4 +131,110 @@ TEST(Decisions, PairingKeyChallengeIgnoreWrongNodes) {
   EXPECT_EQ(decisions::classify_pairing_key_challenge(wrong_nodes, DST_ID, OWN_ID),
             decisions::PairingKeyChallengeDisposition::IGNORE)
       << "wrong node pairing challenge should be ignored during pairing key wait";
+}
+
+// ============================================================================
+// 1W burst suppression — is_duplicate_1w_frame()
+// ============================================================================
+// The key includes the decoded intent, not just the command byte: a move and a
+// stop are both CMD_EXECUTE and differ only in main0.
+
+namespace {
+
+decisions::OneWayDedupState dedup_state(const char *src, uint8_t cmd, bool has_intent, uint8_t main0,
+                                        uint32_t timestamp) {
+  return decisions::OneWayDedupState{src, cmd, has_intent, main0, 0x00, timestamp};
+}
+
+constexpr uint32_t DEDUP_WINDOW_MS = 2000;
+
+}  // namespace
+
+TEST(Decisions, OneWayDedupFirstFrameIsNeverADuplicate) {
+  const decisions::OneWayDedupState nothing_seen_yet{};
+  const auto incoming = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1000);
+
+  EXPECT_FALSE(decisions::is_duplicate_1w_frame(nothing_seen_yet, incoming, DEDUP_WINDOW_MS))
+      << "with no previous frame recorded the src IDs differ, so nothing can be suppressed";
+}
+
+TEST(Decisions, OneWayDedupSuppressesIdenticalRepeatInsideWindow) {
+  const auto last = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1000);
+  const auto repeat = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1040);
+
+  EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, repeat, DEDUP_WINDOW_MS))
+      << "the 4x/40ms reliability burst must collapse into one logical press";
+}
+
+TEST(Decisions, OneWayDedupAllowsIdenticalRepeatAfterWindow) {
+  const auto last = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1000);
+  const auto later = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1000 + DEDUP_WINDOW_MS);
+
+  EXPECT_FALSE(decisions::is_duplicate_1w_frame(last, later, DEDUP_WINDOW_MS))
+      << "a genuine second press after the window is a new logical press";
+}
+
+TEST(Decisions, OneWayDedupDoesNotSuppressStopAfterMove) {
+  // Both frames are CMD_EXECUTE; only main0 differs. Keying on the command byte alone would
+  // discard the stop, losing the sender event, the optimistic clear, and the immediate poll.
+  const auto move = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1000);
+  const auto stop = dedup_state("AABBCC", CMD_EXECUTE, true, POS_STOP, 1500);
+
+  EXPECT_FALSE(decisions::is_duplicate_1w_frame(move, stop, DEDUP_WINDOW_MS))
+      << "a stop pressed shortly after a move carries a different intent and must be processed";
+}
+
+TEST(Decisions, OneWayDedupDoesNotSuppressDifferentRemote) {
+  const auto last = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1000);
+  const auto other_remote = dedup_state("DDEEFF", CMD_EXECUTE, true, 0xC8, 1040);
+
+  EXPECT_FALSE(decisions::is_duplicate_1w_frame(last, other_remote, DEDUP_WINDOW_MS))
+      << "two remotes pressed at once are two presses";
+}
+
+TEST(Decisions, OneWayDedupIgnoresIntentBytesWhenNoIntentWasDecoded) {
+  // Commands without a decodable intent (e.g. write-private) carry stale main0/main1; the key
+  // must fall back to src+cmd for them rather than comparing meaningless bytes.
+  const auto last = dedup_state("AABBCC", CMD_WRITE_PRIVATE, false, 0x11, 1000);
+  const auto repeat = dedup_state("AABBCC", CMD_WRITE_PRIVATE, false, 0x99, 1040);
+
+  EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, repeat, DEDUP_WINDOW_MS))
+      << "intent-less commands dedup on src+cmd alone";
+}
+
+TEST(Decisions, OneWayDedupSurvivesMillisWrap) {
+  const auto last = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 0xFFFFFF00);
+  const auto after_wrap = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 0x00000040);
+
+  EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, after_wrap, DEDUP_WINDOW_MS))
+      << "unsigned subtraction must keep the window correct across the millis() wrap";
+}
+
+// ============================================================================
+// Background-poll deferral — defer_background_poll_for_1w_activity()
+// ============================================================================
+
+TEST(Decisions, DeferHoldsBackgroundPollDuringRemoteActivity) {
+  EXPECT_TRUE(decisions::defer_background_poll_for_1w_activity(/*next_op_is_background=*/true,
+                                                               /*last_1w_activity_ms=*/1000,
+                                                               /*now=*/1100, /*quiet_ms=*/700))
+      << "a poll must not seize the radio while the remote that triggered it is still transmitting";
+}
+
+TEST(Decisions, DeferReleasesBackgroundPollAfterQuietPeriod) {
+  EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(true, 1000, 1700, 700))
+      << "the hold must expire exactly at the quiet period, not linger";
+}
+
+TEST(Decisions, DeferNeverHoldsBackControlOperations) {
+  EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(/*next_op_is_background=*/false,
+                                                                /*last_1w_activity_ms=*/1000,
+                                                                /*now=*/1100, /*quiet_ms=*/700))
+      << "a user command must not wait on a remote the user may not even own";
+}
+
+TEST(Decisions, DeferIsInactiveBeforeAnyRemoteIsHeard) {
+  EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(true, /*last_1w_activity_ms=*/0,
+                                                                /*now=*/500, /*quiet_ms=*/700))
+      << "0 means no 1W frame has ever been seen, not 'heard one at boot'";
 }

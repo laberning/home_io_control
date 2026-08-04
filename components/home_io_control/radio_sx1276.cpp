@@ -51,6 +51,7 @@ void RadioSX1276::set_mode_(uint8_t mode) {
       this->failed_ = true;
       return;
     }
+    App.feed_wdt();
   }
 }
 
@@ -67,6 +68,7 @@ void RadioSX1276::run_image_cal_() {
       this->failed_ = true;
       return;
     }
+    App.feed_wdt();
   }
 }
 

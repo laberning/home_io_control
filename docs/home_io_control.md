@@ -32,6 +32,7 @@ home_io_control:
   cs_pin: 18
   rst_pin: 14
   dio0_pin: 26
+  radio_type: sx1276
   node_id: "C0FFEE"
   system_key: "00112233445566778899AABBCCDDEEFF"
 
@@ -55,6 +56,7 @@ home_io_control:
   cs_pin: 18
   rst_pin: 14
   dio0_pin: 26
+  radio_type: sx1276
   node_id: "C0FFEE"
   system_key: "00112233445566778899AABBCCDDEEFF"
 ```
@@ -72,7 +74,7 @@ Configuration variables:
 - `system_key` (Required): 16-byte installation key as exactly 32 hexadecimal characters.
 - `tx_power` (Optional, default: `17`): Radio transmit power. The schema currently accepts `0` to `22`.
 - `pa_pin` (Optional, default: `BOOST`): SX1276 PA path. Valid values are `BOOST` and `RFO`.
-- `radio_type` (Optional): Force radio selection. Valid values are `sx1276`, `sx1262`, and `lr1121`. If omitted, the component auto-detects between SX1276 and SX1262 only — `lr1121` is always explicit, never auto-detected (see "Radio Chip Support" below).
+- `radio_type` (Required): The radio chip fitted to your board. Valid values are `sx1276`, `sx1262`, and `lr1121` — see "Radio Chip Support" below.
 - `fem_en_pin` (Optional): Front-end module enable pin for boards with an external RF front-end.
 - `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end.
 - `fem_pa_pin` (Optional): Front-end module PA select pin for boards with an external RF front-end.
@@ -91,13 +93,13 @@ Notes:
 
 | Radio | Required hub pins | Optional hub pins | Typical extra setting |
 | --- | --- | --- | --- |
-| SX1276 | `cs_pin`, `rst_pin`, `dio0_pin` | `dio4_pin` | `pa_pin: BOOST` |
+| SX1276 | `cs_pin`, `rst_pin`, `dio0_pin` | `dio4_pin` | `radio_type: sx1276`, `pa_pin: BOOST` |
 | SX1262 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | `fem_en_pin`, `vfem_pin`, `fem_pa_pin` | `radio_type: sx1262`, `tcxo_voltage: 1_8V` |
 | LR1121 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | — | `radio_type: lr1121`, `tcxo_voltage: 3_0V` |
 
 ### Radio Chip Support
 
-SX1276, SX1262, and LR1121 are all confirmed and validated on real hardware (see the [README hardware table](../README.md#hardware-requirements)). `radio_type: lr1121` is always explicit; unlike SX1276/SX1262, it is never selected by auto-detection.
+SX1276, SX1262, and LR1121 are all confirmed and validated on real hardware (see the [README hardware table](../README.md#hardware-requirements)). `radio_type` must always be set explicitly — there is no chip auto-detection, so an ambiguous or mis-wired chip can never be silently probed into the wrong SPI command set.
 
 ## Cover Platform
 
@@ -404,6 +406,7 @@ home_io_control:
   cs_pin: 18
   rst_pin: 14
   dio0_pin: 26
+  radio_type: sx1276
   node_id: "C0FFEE"
   system_key: "00112233445566778899AABBCCDDEEFF"
 
@@ -536,6 +539,7 @@ home_io_control:
   cs_pin: 18
   rst_pin: 14
   dio0_pin: 26
+  radio_type: sx1276
   node_id: "C0FFEE"
   system_key: "00112233445566778899AABBCCDDEEFF"
 
@@ -913,6 +917,7 @@ home_io_control:
   cs_pin: 18
   rst_pin: 14
   dio0_pin: 26
+  radio_type: sx1276
   node_id: "C0FFEE"
   system_key: "00112233445566778899AABBCCDDEEFF"
   exposed_senders:

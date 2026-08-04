@@ -376,6 +376,48 @@ TEST(PairingHelpers, ParseDeviceFromDiscovery_ShortPayloadFallsBackToUnknown) {
 }
 
 // ============================================================================
+// build_incomplete_metadata_snippet tests
+// ============================================================================
+
+TEST(PairingHelpers, BuildIncompleteMetadataSnippet_ContainsDeviceIdAndName) {
+  const std::string snippet = PairingEngine::build_incomplete_metadata_snippet("38B4A1");
+
+  EXPECT_NE(snippet.find("io_device_id: \"38B4A1\""), std::string::npos)
+      << "the one thing the user can't guess (the device ID) must be present verbatim";
+  EXPECT_NE(snippet.find("name: \"My Device\""), std::string::npos)
+      << "snippet should still include the standard name placeholder";
+  EXPECT_NE(snippet.find("platform: home_io_control"), std::string::npos);
+}
+
+TEST(PairingHelpers, BuildIncompleteMetadataSnippet_DoesNotGuessAPlatform) {
+  const std::string snippet = PairingEngine::build_incomplete_metadata_snippet("38B4A1");
+
+  // A wrong guess (e.g. defaulting to "cover") would be worse than no guess: the user might
+  // paste it under the wrong platform's schema without noticing. Only the placeholder token
+  // should appear, not a real platform key at the top level.
+  EXPECT_NE(snippet.find("<cover|light|switch|lock>:"), std::string::npos)
+      << "platform must be left as an explicit placeholder, never guessed";
+}
+
+TEST(PairingHelpers, BuildIncompleteMetadataSnippet_DoesNotEmitUncommentedDeviceType) {
+  const std::string snippet = PairingEngine::build_incomplete_metadata_snippet("38B4A1");
+
+  EXPECT_EQ(snippet.find("\n    io_device_type:"), std::string::npos)
+      << "io_device_type is unknown here and must stay commented out, never a bare guessed line";
+  EXPECT_NE(snippet.find("# io_device_type:"), std::string::npos)
+      << "the commented-out io_device_type line should still explain why it's missing";
+}
+
+TEST(PairingHelpers, BuildIncompleteMetadataSnippet_DifferentDeviceIdsProduceDifferentSnippets) {
+  const std::string snippet_a = PairingEngine::build_incomplete_metadata_snippet("112233");
+  const std::string snippet_b = PairingEngine::build_incomplete_metadata_snippet("AABBCC");
+
+  EXPECT_NE(snippet_a, snippet_b);
+  EXPECT_NE(snippet_a.find("112233"), std::string::npos);
+  EXPECT_NE(snippet_b.find("AABBCC"), std::string::npos);
+}
+
+// ============================================================================
 // Frequency hopping and preamble/sync gating tests
 // ============================================================================
 

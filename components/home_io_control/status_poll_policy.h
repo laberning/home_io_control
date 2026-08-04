@@ -39,6 +39,11 @@ static constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS = 600000;
 static constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS = 5000;
 /// Delay before polling after overheard remote traffic.
 static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
+/// Hold queued background polls back for this long after any 1W frame, so a poll the hub itself
+/// scheduled does not occupy the (half-duplex) radio while the remote is still transmitting.
+/// Comfortably longer than the ~160ms reliability burst; short enough to barely shift poll timing
+/// otherwise. Only background polls yield — see decisions::defer_background_poll_for_1w_activity().
+static constexpr uint32_t ONEWAY_QUIET_PERIOD_MS = 700;
 
 /// Default follow-up settle-poll delay used while a device may still be moving, when no explicit
 /// poll interval is configured (interval_ms == 0). Short on purpose so hint-less devices are

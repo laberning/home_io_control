@@ -63,31 +63,14 @@ constexpr uint8_t SET_CONFIG1_STATUS_BROADCAST_PAYLOAD[] = {0xE0, 0x10, 0x0A, 0x
 /// Identify-request parameter byte (data[1] of the CMD_IDENTIFY payload).
 constexpr uint8_t IDENTIFY_PARAMETER = 0xFF;
 
-/// @brief Build the standard 8-byte position payload shared by create_execute()'s position path,
-/// create_execute_position(), and create_force_open() — identical except for the ACEI byte.
+/// @brief Build the standard 8-byte position payload shared by create_execute_position() and
+/// create_force_open() — identical except for the ACEI byte.
 inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t acei, uint8_t position) {
   return {EXECUTE_ORIGINATOR,           acei,         static_cast<uint8_t>(2 * position), 0x00,
           EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
 }
 
 }  // namespace
-
-/// Build an execute command (0x00) to control a device.
-/// For real positions (0-100), the value is doubled in the frame (0x00=0%, 0xC8=100%).
-/// For special commands (stop/favorite), a shorter 6-byte payload is used.
-bool create_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
-  if (position <= POSITION_PERCENT_MAX) {
-    const auto payload = make_position_payload(EXECUTE_ACEI, position);
-    return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
-  }
-
-  // Special command (stop=0xD2, favorite=0xD8).
-  const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, EXECUTE_ACEI, position, 0x00, 0x00, 0x00};
-  return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
-}
 
 /// Build a position execute command (0x00) to move a device to a numeric position.
 bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position) {

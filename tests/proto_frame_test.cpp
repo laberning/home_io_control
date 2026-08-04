@@ -18,7 +18,7 @@ TEST(ProtoFrame, ExecuteRoundTrip) {
   const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
 
   IoFrame frame{};
-  ASSERT_TRUE(create_execute(frame, own, dst, true, 100)) << "create_execute should succeed";
+  ASSERT_TRUE(create_execute_position(frame, own, dst, true, 100)) << "create_execute_position should succeed";
   EXPECT_TRUE(is_start(frame)) << "execute frame should be marked start";
   EXPECT_FALSE(is_end(frame)) << "execute frame should remain open for the authenticated response path";
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "execute frame command should match";

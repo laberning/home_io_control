@@ -362,10 +362,17 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
 
     // INFO2 is metadata, not movement state. Only learn type from radio if still UNKNOWN;
     // YAML-declared type takes priority.
+    const bool type_was_unknown = dev.type == DeviceType::UNKNOWN;
     apply_info2_response(dev, frame);
     ESP_LOGI(detail::TAG, "Device %s: type=%s (%u) class=%s profile=%s subtype=%u", id.c_str(),
              device_type_name(dev.type), (uint8_t) dev.type, device_capability_class_name(dev.type),
              device_operation_profile_name(dev.type), dev.subtype);
+    if (type_was_unknown && dev.type != DeviceType::UNKNOWN) {
+      ESP_LOGI(detail::TAG,
+               "Device %s: type learned at runtime, not declared in YAML — add `%s` to skip "
+               "re-learning it on every future boot",
+               id.c_str(), detail::describe_learned_device_type(dev.type).c_str());
+    }
     return;
   }
 
@@ -409,21 +416,26 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // Decode the frame content for diagnostic logging, then fall through to linked_remotes
   // handling which may schedule a status poll for devices this remote controls.
   if ((frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0) {
-    // 1W remotes repeat each command 4× at 40ms intervals across channels. Suppress
-    // duplicate logging and poll scheduling within a 2-second window per remote+cmd.
     const std::string src_id = node_id_to_string(frame.src);
     const uint32_t now = millis();
-    if (src_id == this->last_1w_logged_.src_id && frame.cmd == this->last_1w_logged_.cmd &&
-        (now - this->last_1w_logged_.timestamp) < detail::ONEWAY_DEDUP_WINDOW_MS) {
-      return;
-    }
-    this->last_1w_logged_.src_id = src_id;
-    this->last_1w_logged_.cmd = frame.cmd;
-    this->last_1w_logged_.timestamp = now;
 
-    // Decode once and reuse for logging and (when it carries a command intent) the
+    // Any 1W frame means a remote is transmitting right now, duplicate or not — record it before
+    // the dedup check so loop() keeps background polls off the radio for the rest of the burst.
+    this->last_1w_activity_ms_ = now;
+
+    // Decode once and reuse for the dedup key, logging, and (when it carries a command intent) the
     // sender HA event, so a physical remote press (or sensor trigger) can drive automations directly.
+    // The decode must happen *before* the dedup check: a move and a stop share the CMD_EXECUTE
+    // command byte and are told apart only by the decoded intent, which is part of the key.
     const OneWayFrameInfo info = decode_1w_frame(frame);
+
+    // 1W remotes repeat each command 4× at 40ms intervals across channels, and a held button keeps
+    // resending. Collapse that into one logical press per remote+command+intent.
+    const decisions::OneWayDedupState incoming{src_id, frame.cmd, info.has_intent, info.main0, info.main1, now};
+    if (decisions::is_duplicate_1w_frame(this->last_1w_logged_, incoming, detail::ONEWAY_DEDUP_WINDOW_MS))
+      return;
+    this->last_1w_logged_ = incoming;
+
     const std::vector<std::string> *linked = this->registry_.linked_devices(src_id);
     detail::log_1w_remote_frame(info, linked);
     this->maybe_fire_sender_event_(info, linked != nullptr && !linked->empty(), src_id);

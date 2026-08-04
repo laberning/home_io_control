@@ -14,9 +14,13 @@ REPO_ROOT    = SCRIPT_DIR.parent
 DOXYFILE     = SCRIPT_DIR / "Doxyfile"
 DOCS_OUT_DIR = REPO_ROOT / "build" / "docs"
 
+# Non-recursive on purpose: docs/adr/ is a real directory under docs/ that Doxygen's INPUT never
+# references (its ADRs aren't wired into the generated site — see docs/architecture_overview.md's
+# "Design Decisions" section, which links to it on GitHub instead). A recursive glob would copy
+# and pygmentize all of it here for nothing every run. Add a page explicitly below if it should
+# ever actually become part of the generated docs.
 EXTRA_MD_GLOBS = [
     "README.md",
-    "docs/**/*.md",
     "docs/*.md",
 ]
 
@@ -128,16 +132,36 @@ def _md_from_doxyfile() -> list[Path]:
 
 
 def _all_sources() -> list[Path]:
+    """Doxyfile INPUT files first, then everything else.
+
+    The order is load-bearing: output names are flat basenames, so if two sources ever
+    shared a basename they would compete for one destination. Files named in Doxyfile
+    INPUT are referenced by that basename and must win — see _dest_name(), which relies
+    on this ordering to decide who gets the plain name. Sorting the combined list would
+    destroy that grouping, so each group is sorted separately instead."""
     seen: set[Path] = set()
     out: list[Path] = []
-    for f in _md_from_doxyfile():
+    for f in sorted(_md_from_doxyfile()):
         if f not in seen:
             seen.add(f); out.append(f)  # noqa: E701
     for pat in EXTRA_MD_GLOBS:
         for p in sorted(REPO_ROOT.glob(pat)):
             if p.is_file() and p.suffix == ".md" and p not in seen:
                 seen.add(p); out.append(p)
-    return sorted(out)
+    return out
+
+
+def _dest_name(src: Path, taken: set[str]) -> str:
+    """Output filename for *src* in the flat build/docs/ tree.
+
+    Defensive against a future source that shares a basename with one already claimed:
+    without this, two such files would silently overwrite each other in the flat output
+    directory, and whichever landed last would win. The first claimant — a Doxyfile
+    INPUT file, by _all_sources() ordering — keeps the plain basename; later ones get a
+    path-qualified name instead of colliding."""
+    if src.name not in taken:
+        return src.name
+    return str(src.relative_to(REPO_ROOT)).replace("/", "_")
 
 
 # ---------------------------------------------------------------------------
@@ -161,9 +185,12 @@ def main():
         print("No Markdown files found.", file=sys.stderr)
         sys.exit(0)
 
+    taken: set[str] = set()
     for src in src_files:
         raw = src.read_text(encoding="utf-8")
-        dst = DOCS_OUT_DIR / src.name
+        dst_name = _dest_name(src, taken)
+        taken.add(dst_name)
+        dst = DOCS_OUT_DIR / dst_name
 
         if "```yaml" not in raw and "```yml" not in raw:
             # Files without YAML blocks are copied verbatim, but fix relative

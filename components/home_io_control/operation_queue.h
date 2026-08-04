@@ -123,11 +123,13 @@ class OperationQueue {
   [[nodiscard]] std::deque<PendingOperation>::const_iterator begin() const;
   [[nodiscard]] std::deque<PendingOperation>::const_iterator end() const;
 
+  /// True for background poll types (REQUEST_STATUS, REQUEST_NAME) that yield to control operations.
+  /// Public because the dispatch gate in loop() defers *only* background work when a 1W remote is
+  /// transmitting; a user command must never be held back for it.
+  [[nodiscard]] static bool is_background_op(PendingOperationType t);
+
  private:
   std::deque<PendingOperation> queue_;
-
-  /// True for background poll types (REQUEST_STATUS, REQUEST_NAME) that yield to control operations.
-  static bool is_background_op(PendingOperationType t);
   /// Insert a control operation before the first background entry; also drops any queued
   /// REQUEST_STATUS for the same device since the incoming command supersedes it.
   void push_control_(PendingOperation op);

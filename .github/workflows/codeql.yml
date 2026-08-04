@@ -1,0 +1,37 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # CodeQL's C/C++ query pack changes independently of our code, so code that
+    # was clean last month can turn up new findings without a single line changed here.
+    - cron: "41 6 * * 3"
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (cpp)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: cpp
+          build-mode: manual
+
+      # Build the host unit-test binary rather than the firmware itself: it compiles
+      # the actual component logic (protocol/platform/hub/radio-driver sources) with
+      # plain g++, no ESPHome/PlatformIO toolchain or Docker required.
+      - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
+      - run: pip install --user pyyaml
+      - run: make unit-test
+
+      - uses: github/codeql-action/analyze@v4

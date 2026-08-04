@@ -33,7 +33,9 @@ ota:
     password: !secret ota_password
 
 spi:
-  clk_pin: 5
+  clk_pin:
+    number: 5
+    ignore_strapping_warning: true
   mosi_pin: 27
   miso_pin: 19
 
@@ -46,5 +48,6 @@ home_io_control:
   cs_pin: 18
   rst_pin: 14
   dio0_pin: 26
+  radio_type: sx1276
   node_id: ABC123
   system_key: ABCDEF1234567890ABCDEF1234567891

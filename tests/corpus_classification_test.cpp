@@ -125,19 +125,31 @@ TEST_P(CorpusClassification, FramesClassifyInRecordedOrder) {
     }
 
     case corpus::ExchangeKind::PAIRING: {
-      // classify_pairing_discovery_response() needs only the candidate frame (pairing_engine.cpp
-      // :: wait_for_discovery_response_()); classify_pairing_key_challenge() additionally needs
-      // the discovered device's node ID and our own, which the corpus schema does not carry
-      // today (arrives with a real pairing capture's node_map in Step H2) — a classification
-      // expectation on a non-discovery frame in a pairing capture fails loudly rather than
-      // silently passing.
+      // classify_pairing_discovery_response() needs our own controller node ID, which the corpus
+      // schema does not carry as a dedicated field — but every tx frame in a capture shares the
+      // same src (this controller), so the first tx frame's src doubles as that ID, the same way
+      // the DIRECT/STATUS_POLL case above derives `origin` from it. classify_pairing_key_challenge()
+      // additionally needs the discovered device's node ID, which the schema does not carry today
+      // (arrives with a real pairing capture's node_map in Step H2) — a classification expectation
+      // on a non-discovery frame in a pairing capture fails loudly rather than silently passing.
+      const corpus::CorpusFrame *origin_cf = nullptr;
+      for (uint8_t i = 0; i < capture->frame_count; i++) {
+        if (capture->frames[i].tx) {
+          origin_cf = &capture->frames[i];
+          break;
+        }
+      }
+      ASSERT_NE(origin_cf, nullptr) << "pairing capture must have an origin tx frame to supply our own node ID";
+      IoFrame origin = corpus_test::parse_capture_frame(*origin_cf);
+
       for (uint8_t i = 0; i < capture->frame_count; i++) {
         const corpus::CorpusFrame &cf = capture->frames[i];
         if (cf.tx || !cf.has_classification)
           continue;
         IoFrame candidate = corpus_test::parse_capture_frame(cf);
         if (cf.has_cmd && cf.cmd == CMD_DISCOVER_RESP) {
-          const uint8_t actual = static_cast<uint8_t>(decisions::classify_pairing_discovery_response(candidate));
+          const uint8_t actual =
+              static_cast<uint8_t>(decisions::classify_pairing_discovery_response(candidate, origin.src));
           EXPECT_EQ(actual, cf.classification) << "discovery classification mismatch on frame " << static_cast<int>(i);
         } else {
           ADD_FAILURE() << "frame " << static_cast<int>(i) << " (cmd=0x" << std::hex << static_cast<int>(candidate.cmd)

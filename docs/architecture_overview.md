@@ -10,6 +10,13 @@ This page gives a contributor-oriented map of the Home IO Control component and 
 - \ref hioc_tuning "Tuning Layer" (sub-group of the Controller Layer): the runtime `TuningConfig`, the table-driven `tuning_registry`, and the optional Home Assistant number/select entities.
 - \ref hioc_entities "ESPHome Integration Layer": the runtime entities plus the Python schema/codegen modules that expose the component to ESPHome. Shared device-binding codegen lives in `platform_common.py`; the C++ counterparts are the mixins in `platform_entity_base.h` — `DeviceBoundEntity` for the main entity platforms and `DeviceBoundCompanion` for the auto-generated per-device companion diagnostic sensors (device name, active issue, RSSI, last contact, exchange failures).
 
+## Design Decisions
+
+The reasoning behind the architectural choices below — including options
+considered and their trade-offs — is recorded as individual Architecture
+Decision Records in [`docs/adr/`](https://github.com/laberning/home_io_control/tree/main/docs/adr).
+Start there for *why* something is built the way it is, not just *what* it is.
+
 ## Layering Rules
 
 These invariants keep the layers independent; changes should preserve them:
@@ -17,7 +24,7 @@ These invariants keep the layers independent; changes should preserve them:
 1. The protocol layer is radio-agnostic: no chip names, chip registers, or driver behavior in `proto_*` files. `proto_timing.h` holds only chip-neutral protocol timing.
 2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `exchange_wait_slice_ms()`, `discovery_hop_slice_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only.
 3. Chip-specific constants live either in the driver header (`radio_sx1276.h` / `radio_sx1262.h` / `radio_lr1121.h`) or, when they are user-tunable defaults, next to their `TuningConfig` fields in `tuning_config.h`.
-4. The composition root is `hub_core.cpp` `setup()`: it is the only place that names concrete driver classes (selection and auto-detection).
+4. The composition root is `hub_core.cpp` `setup()`: it is the only place that names concrete driver classes, selecting one by the required `radio_type` YAML field.
 
 ## Request Flow
 

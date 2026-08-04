@@ -31,7 +31,9 @@ ota:
 spi:
   clk_pin: 5
   mosi_pin: 6
-  miso_pin: 3
+  miso_pin:
+    number: 3
+    ignore_strapping_warning: true
 
 external_components:
   - source:

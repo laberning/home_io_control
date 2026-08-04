@@ -31,9 +31,6 @@ namespace {
 
 constexpr uint32_t BLOCKING_WARNING_THRESHOLD_MS =
     250;  ///< setup() and exchanges can legitimately block longer than generic ESPHome components.
-constexpr uint8_t SX1276_VERSION_REGISTER = 0x42;            ///< SX1276 version register used for auto-detection.
-constexpr uint8_t SX1276_VERSION_REGISTER_READ_MASK = 0x7F;  ///< SX1276 SPI read transactions clear bit 7.
-constexpr uint8_t SX1276_EXPECTED_VERSION = 0x12;            ///< Known chip ID returned by SX1276 silicon.
 
 }  // namespace
 
@@ -47,12 +44,8 @@ static const char *const TAG = detail::TAG;
 /// The sequence:
 ///   1. Parse node_id and system_key from hex strings (fails early if malformed).
 ///   2. Initialize the SPI bus via spi_setup().
-///   3. Auto‑detect or explicitly select the radio chip:
-///      - If radio_type is "sx1276" or "sx1262", select that driver.
-///      - If radio_type is "lr1121", select that driver (explicit-only — never reached by
-///        auto-detect).
-///      - If empty (default), attempt to read SX1276 version register (0x42 = 0x12).
-///        If the read fails or returns wrong version, fall back to SX1262.
+///   3. Construct the driver named by the required `radio_type` YAML field
+///      ("sx1276", "sx1262", or "lr1121").
 ///   4. Allocate the appropriate RadioDriver (SX1276 needs DIO0; SX1262/LR1121 need BUSY+DIO1,
 ///      DIO1 carrying the LR1121's DIO9 IRQ line).
 ///   5. Call radio_->init() which performs chip reset, calibration, and register configuration.
@@ -112,9 +105,10 @@ void IOHomeControlComponent::setup() {
   ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", chip_name_for_log, this->node_id_str_.c_str());
 }
 
-// See the declaration in hub_core.h for the full contract. LR1121 is explicit-only in
-// phase 1 (design plan §3.3): it is never reached by the SX1276/SX1262 auto-detect probe
-// below, so a mis-probed chip can never silently select it.
+// See the declaration in hub_core.h for the full contract. `radio_type_` is one of "lr1121",
+// "sx1262", or "sx1276" — the YAML schema requires the field and validates it against exactly
+// those three values, so the fallthrough below is unreachable in a config-driven build and
+// exists only to fail loudly rather than guess if this method is ever called some other way.
 RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **chip_name_out) {
   if (this->radio_type_ == "lr1121") {
     *chip_name_out = "LR1121";
@@ -129,28 +123,7 @@ RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **ch
     return radio;
   }
 
-  bool use_sx1262 = false;
   if (this->radio_type_ == "sx1262") {
-    use_sx1262 = true;
-  } else if (this->radio_type_ == "sx1276") {
-    use_sx1262 = false;
-  } else {
-    // Auto-detect: read SX1276 version register and compare against the known chip ID.
-    // Falls back to SX1262 if the version does not match.
-    this->enable();
-    this->write_byte(SX1276_VERSION_REGISTER & SX1276_VERSION_REGISTER_READ_MASK);
-    uint8_t const version = this->read_byte();
-    this->disable();
-    if (version == SX1276_EXPECTED_VERSION) {
-      ESP_LOGI(detail::TAG, "Auto-detected SX1276 (version=0x%02X)", version);
-      use_sx1262 = false;
-    } else {
-      ESP_LOGI(detail::TAG, "SX1276 not detected (version=0x%02X), trying SX1262", version);
-      use_sx1262 = true;
-    }
-  }
-
-  if (use_sx1262) {
     *chip_name_out = "SX1262";
     if (this->busy_pin_ == nullptr || this->dio1_pin_ == nullptr) {
       ESP_LOGE(detail::TAG, "SX1262 requires busy_pin and dio1_pin");
@@ -164,16 +137,22 @@ RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **ch
     return radio;
   }
 
-  *chip_name_out = "SX1276";
-  if (this->dio0_pin_ == nullptr) {
-    ESP_LOGE(detail::TAG, "SX1276 requires dio0_pin");
-    return nullptr;
+  if (this->radio_type_ == "sx1276") {
+    *chip_name_out = "SX1276";
+    if (this->dio0_pin_ == nullptr) {
+      ESP_LOGE(detail::TAG, "SX1276 requires dio0_pin");
+      return nullptr;
+    }
+    auto *radio = new (std::nothrow)
+        RadioSX1276(this, this->rst_pin_, this->dio0_pin_, this->dio4_pin_, this->tx_power_, this->pa_pin_);
+    if (radio == nullptr)
+      ESP_LOGE(detail::TAG, "Failed to allocate SX1276 radio driver");
+    return radio;
   }
-  auto *radio = new (std::nothrow)
-      RadioSX1276(this, this->rst_pin_, this->dio0_pin_, this->dio4_pin_, this->tx_power_, this->pa_pin_);
-  if (radio == nullptr)
-    ESP_LOGE(detail::TAG, "Failed to allocate SX1276 radio driver");
-  return radio;
+
+  *chip_name_out = "unknown";
+  ESP_LOGE(detail::TAG, "Unrecognized radio_type '%s'", this->radio_type_.c_str());
+  return nullptr;
 }
 
 // === Tuning layer ===
@@ -326,7 +305,10 @@ void IOHomeControlComponent::loop() {
       this->process_received_packet_(packet);
   }
 
-  if (!this->busy_)
+  // A blocking exchange makes the radio deaf for 1–3 s. When a linked remote's press schedules a
+  // status poll, dispatching it while that same remote is still transmitting would blind the hub
+  // to the rest of the press — so background polls yield for a moment. Control operations never do.
+  if (!this->busy_ && !this->defer_background_poll_())
     this->process_pending_operation_();
 
   // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
@@ -348,7 +330,7 @@ void IOHomeControlComponent::loop() {
 void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "IO-Homecontrol:");
   ESP_LOGCONFIG(detail::TAG, "  Node ID: %s", this->node_id_str_.c_str());
-  ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.empty() ? "auto-detected" : this->radio_type_.c_str());
+  ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
   LOG_PIN("  RST Pin: ", this->rst_pin_);
   if (this->dio0_pin_ != nullptr)

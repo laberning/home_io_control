@@ -344,3 +344,82 @@ TEST(HubCore, FilterExchangeInternal_ChallengeResponse) {
   EXPECT_TRUE(comp.op_queue_.empty()) << "0x3D should not trigger any operation";
   EXPECT_TRUE(comp.last_timeout_name_.empty()) << "0x3D should not schedule a timeout";
 }
+
+// ========================================================================================
+// Background-poll deferral during 1W remote activity
+// ========================================================================================
+// The radio is half-duplex and an exchange blocks for 1-3 s. A press on a linked remote
+// schedules a status poll, so dispatching that poll while the same remote is still
+// transmitting would blind the hub to the rest of the press.
+
+TEST(HubCore, LoopDefersQueuedPollWhileRemoteIsStillTransmitting) {
+  TestableHubComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = new MockRadio();
+  comp.add_device("ABC123");
+
+  ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
+  comp.last_1w_activity_ms_ = esphome::millis();
+
+  EXPECT_TRUE(comp.defer_background_poll_()) << "a queued poll must yield during the remote's burst";
+  comp.loop();
+  EXPECT_EQ(comp.op_queue_.size(), 1u) << "the deferred poll stays queued rather than being dropped";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, LoopDoesNotDeferQueuedPollWithoutRecentRemoteActivity) {
+  TestableHubComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = new MockRadio();
+  comp.add_device("ABC123");
+
+  ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
+  ASSERT_EQ(comp.last_1w_activity_ms_, 0u) << "precondition: no 1W frame seen since boot";
+
+  EXPECT_FALSE(comp.defer_background_poll_()) << "polls must dispatch normally when no remote is active";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, LoopNeverDefersAUserCommandForRemoteActivity) {
+  TestableHubComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = new MockRadio();
+  comp.add_device("ABC123");
+
+  comp.op_queue_.enqueue_device_command("ABC123", CoverCommand::STOP);
+  comp.last_1w_activity_ms_ = esphome::millis();
+
+  EXPECT_FALSE(comp.defer_background_poll_())
+      << "1W broadcasts carry no ownership marker, so a neighbour's remote must not delay a user command";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, RemoteActivityTimestampIsRecordedEvenForSuppressedRepeats) {
+  // A duplicate frame still means the remote is transmitting, so the quiet period must extend
+  // across the whole burst rather than only its first frame.
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  const uint8_t broadcast_roller[NODE_ID_SIZE] = {0x00, 0x00, 0xBF};
+  const uint8_t remote_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  set_dst(f, broadcast_roller);
+  set_src(f, remote_id);
+  const uint8_t payload[4] = {ORIGINATOR_USER_REMOTE, 0x41, 0xC8, 0x00};
+  set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  comp.process_received_packet_(pkt);
+  const uint32_t after_first = comp.last_1w_activity_ms_;
+  ASSERT_NE(after_first, 0u) << "the first frame must record activity";
+
+  comp.last_1w_activity_ms_ = 0;
+  comp.process_received_packet_(pkt);  // suppressed as a burst repeat
+  EXPECT_NE(comp.last_1w_activity_ms_, 0u)
+      << "activity is recorded before the dedup check, so repeats keep the radio reserved";
+}

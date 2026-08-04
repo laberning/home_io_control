@@ -38,12 +38,16 @@ ota:
 
 i2c:
   sda: 4
-  scl: 15
+  scl:
+    number: 15
+    ignore_strapping_warning: true
   scan: false
   frequency: 400kHz
 
 spi:
-  clk_pin: 5
+  clk_pin:
+    number: 5
+    ignore_strapping_warning: true
   mosi_pin: 27
   miso_pin: 19
 
@@ -158,6 +162,7 @@ home_io_control:
   cs_pin: 18
   rst_pin: 14
   dio0_pin: 26
+  radio_type: sx1276
   node_id: !secret hub_node_id
   system_key: !secret hub_system_key
   exposed_senders:

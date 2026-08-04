@@ -1,6 +1,8 @@
 #include "radio_sx1262.h"
 #include "radio_interface.h"
 
+#include "esphome/core/application.h"
+
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
@@ -128,12 +130,15 @@ TEST(RadioSX1262, WaitForPacketTimeout_NoActivity) {
   // IRQ sequence empty -> always returns 0.
 
   RadioRxPacket result{};
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
   bool ok = radio.wait_for_packet(result, 5);  // 5ms timeout
 
   // No IRQ or DIO → timeout, report failure
   EXPECT_FALSE(ok) << "absence of any radio activity should cause timeout and return false";
   // result should remain empty
   EXPECT_EQ(result.len, 0u) << "on timeout, result packet length should be zero";
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "a multi-millisecond blocking wait must feed the watchdog, or a real timeout resets the board";
 }
 
 TEST(RadioSX1262, WaitForPacketRaceCondition_Resolved) {
@@ -173,11 +178,14 @@ TEST(RadioSX1262, WaitForPacketRaceCondition_Timeout) {
   radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID, SX1262_IRQ_SYNC_WORD_VALID});
 
   RadioRxPacket result{};
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
   bool ok = radio.wait_for_packet(result, 5);  // short timeout
 
   // SYNC without subsequent RX_DONE within timeout → failure path
   EXPECT_FALSE(ok) << "SYNC_WORD_VALID without RX_DONE before timeout should cause failure";
   EXPECT_EQ(result.len, 0u) << "on race-condition timeout, result length should be zero";
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "the sync-race wait loop is a separate blocking path and must feed the watchdog too";
 }
 
 TEST(RadioSX1262, WaitForPacketReadFailure) {

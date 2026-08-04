@@ -12,6 +12,55 @@ using namespace esphome::home_io_control;
 // Covers the cryptographic proofs used for authenticated commands.
 
 // ========================================================================================
+// aes128_encrypt() / aes128_decrypt() — independent known-answer vectors
+// ========================================================================================
+// Plaintext, key, and ciphertext below are copied verbatim from published NIST test
+// vectors — NOT generated from this codebase — so a match is evidence the primitive is
+// correct, not merely self-consistent. The corpus KAT vectors elsewhere (crypto_kat.yaml,
+// DISABLED_PrintCryptoKatVectors) pin the C++/Python ports against each other; these pin
+// the primitive itself against an external, independently-computed answer.
+
+TEST(ProtoCrypto, Aes128EncryptMatchesFips197AppendixBVector) {
+  // FIPS-197, Appendix B, "Cipher Example".
+  const uint8_t key[AES_KEY_SIZE] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+                                     0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F};
+  const uint8_t plaintext[AES_BLOCK_SIZE] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                                             0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  const uint8_t expected_ciphertext[AES_BLOCK_SIZE] = {0x69, 0xC4, 0xE0, 0xD8, 0x6A, 0x7B, 0x04, 0x30,
+                                                       0xD8, 0xCD, 0xB7, 0x80, 0x70, 0xB4, 0xC5, 0x5A};
+
+  uint8_t ciphertext[AES_BLOCK_SIZE] = {0};
+  ASSERT_TRUE(crypto::aes128_encrypt(plaintext, key, ciphertext));
+  EXPECT_EQ(0, memcmp(ciphertext, expected_ciphertext, AES_BLOCK_SIZE))
+      << "AES-128 encrypt must match the published FIPS-197 Appendix B vector";
+
+  uint8_t decrypted[AES_BLOCK_SIZE] = {0};
+  ASSERT_TRUE(crypto::aes128_decrypt(expected_ciphertext, key, decrypted));
+  EXPECT_EQ(0, memcmp(decrypted, plaintext, AES_BLOCK_SIZE))
+      << "AES-128 decrypt must recover the published vector's plaintext";
+}
+
+TEST(ProtoCrypto, Aes128EncryptMatchesNistSp80038aVector) {
+  // NIST SP 800-38A, Appendix F.1.1, "ECB-AES128.Encrypt", block #1.
+  const uint8_t key[AES_KEY_SIZE] = {0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
+                                     0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C};
+  const uint8_t plaintext[AES_BLOCK_SIZE] = {0x6B, 0xC1, 0xBE, 0xE2, 0x2E, 0x40, 0x9F, 0x96,
+                                             0xE9, 0x3D, 0x7E, 0x11, 0x73, 0x93, 0x17, 0x2A};
+  const uint8_t expected_ciphertext[AES_BLOCK_SIZE] = {0x3A, 0xD7, 0x7B, 0xB4, 0x0D, 0x7A, 0x36, 0x60,
+                                                       0xA8, 0x9E, 0xCA, 0xF3, 0x24, 0x66, 0xEF, 0x97};
+
+  uint8_t ciphertext[AES_BLOCK_SIZE] = {0};
+  ASSERT_TRUE(crypto::aes128_encrypt(plaintext, key, ciphertext));
+  EXPECT_EQ(0, memcmp(ciphertext, expected_ciphertext, AES_BLOCK_SIZE))
+      << "AES-128 encrypt must match the published NIST SP 800-38A vector";
+
+  uint8_t decrypted[AES_BLOCK_SIZE] = {0};
+  ASSERT_TRUE(crypto::aes128_decrypt(expected_ciphertext, key, decrypted));
+  EXPECT_EQ(0, memcmp(decrypted, plaintext, AES_BLOCK_SIZE))
+      << "AES-128 decrypt must recover the published vector's plaintext";
+}
+
+// ========================================================================================
 // Challenge-response HMAC verification
 // ========================================================================================
 

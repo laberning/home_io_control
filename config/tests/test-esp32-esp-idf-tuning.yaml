@@ -23,6 +23,7 @@ home_io_control:
   cs_pin: 18
   rst_pin: 14
   dio0_pin: 26
+  radio_type: sx1276
   node_id: C0FFEE
   system_key: 0123456789ABCDEF0123456789ABCDEF
   tuning:

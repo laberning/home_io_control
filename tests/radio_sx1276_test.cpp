@@ -1,6 +1,8 @@
 #include "radio_sx1276.h"
 #include "radio_interface.h"
 
+#include "esphome/core/application.h"
+
 #include "stubs/radio_test_common.h"
 
 #include <gtest/gtest.h>
@@ -81,6 +83,16 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
     return false;
   }
 
+  // Force reads of `reg` to always return `stuck_value`, regardless of what the driver writes.
+  // Used to simulate hardware that never reports completion (e.g. a mode change that never
+  // sticks, or a calibration-running bit that never clears), driving set_mode_()/
+  // run_image_cal_() into their timeout paths.
+  void stick_reg(uint8_t reg, uint8_t stuck_value) {
+    this->stuck_reg_ = reg & 0x7F;
+    this->stuck_value_ = stuck_value;
+    this->stuck_active_ = true;
+  }
+
  private:
   static constexpr uint8_t kRegFifo = 0x00;
   static constexpr uint8_t kRegIrqFlags2 = 0x3F;
@@ -101,6 +113,8 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
   }
 
   uint8_t handle_read_byte_() {
+    if (this->stuck_active_ && this->addr_ == this->stuck_reg_)
+      return this->stuck_value_;
     if (this->addr_ == kRegFifo) {
       if (this->rx_fifo_.empty())
         return 0;
@@ -124,6 +138,10 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
   bool have_addr_{false};
   bool write_dir_{false};
   uint8_t addr_{0};
+
+  bool stuck_active_{false};
+  uint8_t stuck_reg_{0};
+  uint8_t stuck_value_{0};
 };
 
 namespace {
@@ -196,6 +214,40 @@ TEST(RadioSX1276, InitProgramsValidatedConfiguration) {
   EXPECT_EQ(spi.get_reg(REG_PREAMBLE_LSB), 0x00);
 
   EXPECT_EQ(spi.get_reg(REG_OP_MODE) & MODE_MASK, MODE_RX) << "configure_radio_() must end in RX mode";
+}
+
+TEST(RadioSX1276, SetModeTimesOutWhenOpModeNeverReflectsTarget) {
+  // Force REG_OP_MODE reads to always report SLEEP, so set_mode_()'s poll-until-it-sticks loop
+  // for STDBY never observes a match and must fall through its timeout path.
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.stick_reg(REG_OP_MODE, MODE_SLEEP);
+
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
+  radio.set_mode_standby();
+
+  EXPECT_TRUE(radio.is_failed()) << "a mode that never reads back as requested must fail the driver";
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "the mode-change poll is a multi-millisecond blocking wait and must feed the watchdog on timeout";
+}
+
+TEST(RadioSX1276, RunImageCalTimesOutWhenCalBitNeverClears) {
+  // Force REG_IMAGE_CAL to always report the "calibration running" bit (0x20) set, so
+  // run_image_cal_()'s poll loop never observes completion and must fall through its timeout path.
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  seed_valid_version(spi);
+  spi.stick_reg(REG_IMAGE_CAL, 0x20);
+
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
+  bool ok = radio.init();
+
+  EXPECT_FALSE(ok) << "init() must fail when image calibration never completes";
+  EXPECT_TRUE(radio.is_failed());
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "the image-calibration poll is a blocking wait and must feed the watchdog on timeout";
 }
 
 TEST(RadioSX1276, ChangeFrequencyWritesFrfBytesForEachChannel) {
@@ -340,10 +392,13 @@ TEST(RadioSX1276, WaitForPacketTimesOutWithNoActivity) {
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
 
   RadioRxPacket packet{};
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
   bool ok = radio.wait_for_packet(packet, 5);
 
   EXPECT_FALSE(ok);
   EXPECT_EQ(packet.len, 0u);
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "a multi-millisecond blocking wait must feed the watchdog, or a real timeout resets the board";
 }
 
 // ============================================================================

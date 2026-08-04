@@ -28,10 +28,10 @@ const uint8_t TEST_CHALLENGE[6] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB};
 const uint8_t TEST_SYSTEM_KEY[16] = {0xDE, 0xCA, 0xFC, 0x0F, 0xFE, 0xE0, 0xFF, 0x1C,
                                      0xEB, 0xAD, 0xBE, 0xEF, 0xF0, 0x0D, 0xBA, 0x11};
 
-// Build a standard execute command frame (start frame, not end) for the given position.
+// Build a standard execute command frame (start frame, not end) for the given position (0-100).
 inline IoFrame make_execute(uint8_t position) {
   IoFrame frame{};
-  create_execute(frame, OWN_ID, DST_ID, true, position);
+  create_execute_position(frame, OWN_ID, DST_ID, true, position);
   return frame;
 }
 
@@ -97,6 +97,8 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::authenticate_request_;
   using IOHomeControlComponent::api_rename_device_;
   using IOHomeControlComponent::register_management_actions_;
+  using IOHomeControlComponent::last_1w_activity_ms_;
+  using IOHomeControlComponent::defer_background_poll_;
 };
 
 /// Hub subclass for RX-path tests: exposes process_received_packet_/update_device_status_ plus
@@ -113,6 +115,7 @@ class RxTestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::poll_policy_;
+  using IOHomeControlComponent::last_1w_activity_ms_;
 };
 
 /// Build a RadioRxPacket from a constructed IoFrame.

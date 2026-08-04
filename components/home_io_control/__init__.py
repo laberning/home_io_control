@@ -257,7 +257,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PA_PIN, default="BOOST"): cv.enum(
                 PA_PIN_OPTIONS, upper=True
             ),
-            cv.Optional(CONF_RADIO_TYPE): cv.enum(RADIO_TYPE_OPTIONS, lower=True),
+            cv.Required(CONF_RADIO_TYPE): cv.enum(RADIO_TYPE_OPTIONS, lower=True),
             cv.Optional(CONF_FEM_EN_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_VFEM_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_FEM_PA_PIN): pins.internal_gpio_output_pin_schema,
@@ -327,8 +327,7 @@ async def to_code(config):
     cg.add(var.set_tx_power(config[CONF_TX_POWER]))
     cg.add(var.set_pa_pin(config[CONF_PA_PIN]))
 
-    if CONF_RADIO_TYPE in config:
-        cg.add(var.set_radio_type(config[CONF_RADIO_TYPE]))
+    cg.add(var.set_radio_type(config[CONF_RADIO_TYPE]))
 
     cg.add(var.set_tcxo_voltage(config[CONF_TCXO_VOLTAGE]))
 

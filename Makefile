@@ -88,7 +88,7 @@ format-check:
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
 	@echo "Linting YAML configuration files..."
-	yamllint config/tests/*.yaml config/*.yaml tests/corpus/captures/
+	yamllint config/tests/*.yaml config/*.yaml tests/corpus/captures/ .github/workflows/*.yml .github/dependabot.yml
 
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
 # (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.
@@ -131,6 +131,11 @@ tuning-sync:
 # inspection.
 check-build-cache:
 	@python3 scripts/check-build-cache.py
+
+# Cross-file check: every relative markdown link across tracked docs must resolve.
+docs-link-check:
+	@echo "Checking documentation cross-links..."
+	@python3 scripts/check-docs-links.py
 
 # Wipes config/tests/.esphome/build/<env>/ for every config/tests/test-*.yaml config (the ones
 # make clang-tidy / firmware-test / check build against), plus config/tests/.esphome/storage/
@@ -260,12 +265,13 @@ doxygen:
 
 # Every sub-target of `lint` below must have a matching CI job in .github/workflows/ci.yml,
 # so a local-only check can never silently drift out of CI coverage:
-#   format-check    -> format
-#   yamllint        -> yamllint
-#   clang-tidy      -> tidy
-#   tuning-sync     -> tuning-sync
-#   corpus-validate -> corpus-validate
-lint: format-check yamllint clang-tidy tuning-sync corpus-validate
+#   format-check     -> format
+#   yamllint         -> yamllint
+#   clang-tidy       -> tidy
+#   tuning-sync      -> tuning-sync
+#   corpus-validate  -> corpus-validate
+#   docs-link-check  -> docs-link-check
+lint: format-check yamllint clang-tidy tuning-sync corpus-validate docs-link-check
 test: unit-test unit-test-asan firmware-test
 check: lint test doxygen
 
@@ -278,6 +284,7 @@ test-unit: unit-test
 
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
+		docs-link-check \
 		fuzz-frame \
 		firmware-test unit-test unit-test-asan host-run clean-host lint test check \
 		test-compile test-unit \

@@ -142,8 +142,7 @@ class IOHomeControlComponent : public Component,
   void set_tx_power(uint8_t power) { this->tx_power_ = power; }
   /// Set PA boost pin configuration.
   void set_pa_pin(uint8_t pa_pin) { this->pa_pin_ = pa_pin; }
-  /// Set radio type ("sx1276", "sx1262", or "lr1121"); empty string means auto‑detect
-  /// (auto-detect only ever selects sx1276 or sx1262 — lr1121 is explicit-only).
+  /// Set radio type ("sx1276", "sx1262", or "lr1121"); required by the YAML schema.
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
   /// Set TCXO voltage for SX1262/LR1121 (1.8V / 3.3V).
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
@@ -273,7 +272,8 @@ class IOHomeControlComponent : public Component,
   // --- High-level operations ---
   /// Send a position command to a device.
   /// @param device_id Target device ID.
-  /// @param position Desired position (0–100, or POS_STOP/POS_FAVORITE).
+  /// @param position Desired position, 0–100 (open→closed). Named commands (STOP, FAVORITE,
+  ///        VENT) go through execute_device_command_()/create_execute_command() instead.
   /// @return true if device acknowledged; false on timeout or radio error.
   virtual bool set_device_position(const std::string &device_id, uint8_t position);
   /// Send a tilt command to a tilt‑capable cover.
@@ -486,6 +486,14 @@ class IOHomeControlComponent : public Component,
   /// @param device_ids Devices to poll.
   /// @param delay_ms Poll delay in milliseconds.
   void schedule_device_polls_(const std::vector<std::string> &device_ids, uint32_t delay_ms);
+  /// Whether loop() should skip dispatching the queue this iteration because the pending work is a
+  /// background poll and a 1W remote transmitted very recently. Thin wrapper binding the component's
+  /// state to decisions::defer_background_poll_for_1w_activity().
+  [[nodiscard]] bool defer_background_poll_() const {
+    return decisions::defer_background_poll_for_1w_activity(
+        !this->op_queue_.empty() && OperationQueue::is_background_op(this->op_queue_.front().type),
+        this->last_1w_activity_ms_, millis(), ONEWAY_QUIET_PERIOD_MS);
+  }
   /// Schedule status polls for all devices associated with a linked remote.
   /// @param remote_id Source node ID of the remote.
   /// @param delay_ms Poll delay; default REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS. A STOP intent
@@ -567,11 +575,11 @@ class IOHomeControlComponent : public Component,
   void hop_frequency_();
 
   // --- Radio driver selection (called once from setup()) ---
-  /// Select and construct the configured (or auto-detected) radio driver.
+  /// Select and construct the radio driver named by the required `radio_type` config field.
   ///
   /// Kept as its own method rather than inlined into setup(): the three-way chip branch
-  /// (SX1276/SX1262/LR1121) plus auto-detection is enough logic that folding it into
-  /// setup() pushes that function's cognitive complexity past clang-tidy's threshold.
+  /// (SX1276/SX1262/LR1121) is enough logic on its own that folding it into setup() pushes
+  /// that function's cognitive complexity past clang-tidy's threshold.
   /// Validates the pins each driver needs and logs a clear error (without calling
   /// mark_failed() itself — the caller decides how to react) when a required pin is
   /// missing. On success, `*chip_name_out` is set to a static string naming the selected
@@ -598,7 +606,7 @@ class IOHomeControlComponent : public Component,
   // --- Configuration (from YAML) ---
   std::string node_id_str_;
   std::string system_key_str_;
-  std::string radio_type_;  ///< "sx1276", "sx1262", "lr1121", or "" (auto-detect; never selects lr1121)
+  std::string radio_type_;  ///< "sx1276", "sx1262", or "lr1121"; required by the YAML schema.
   uint8_t node_id_[NODE_ID_SIZE]{};
   uint8_t system_key_[AES_KEY_SIZE]{};
   uint8_t tx_power_{DEFAULT_TX_POWER_DBM};
@@ -628,16 +636,13 @@ class IOHomeControlComponent : public Component,
   PairingEngine pairing_engine_;          ///< Owns the three-phase device pairing flow.
   ManagementActions management_actions_;  ///< Owns rename, identify, force-open, and other hub-level HA actions.
 
-  /// @brief Tracks the last logged 1W frame per remote to suppress duplicates.
-  ///
-  /// 1W remotes repeat each command 4× at 40ms intervals (protocol requirement for
-  /// reliability). Without dedup, a single button press generates 4+ identical log lines.
-  struct OneWayDedup {
-    std::string src_id;     ///< Last seen remote source ID.
-    uint8_t cmd{0};         ///< Last seen command byte.
-    uint32_t timestamp{0};  ///< millis() when last logged.
-  };
-  OneWayDedup last_1w_logged_{};
+  /// Identity of the last processed 1W frame, for burst suppression; see
+  /// decisions::is_duplicate_1w_frame() for why the intent bytes are part of the key.
+  decisions::OneWayDedupState last_1w_logged_{};
+  /// millis() of the most recent 1W frame of any kind, including ones dropped as duplicates —
+  /// a repeat still means the remote is transmitting. 0 until the first is seen. Gates background
+  /// polls in loop(); see decisions::defer_background_poll_for_1w_activity().
+  uint32_t last_1w_activity_ms_{0};
 };
 
 // ----------------------------------------------------------------------------
