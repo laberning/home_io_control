@@ -20,7 +20,7 @@ jobs:
     env:
       ESPHOME_TAG: dev
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: firmware-test (ESPHOME_TAG=dev)
         run: make firmware-test
