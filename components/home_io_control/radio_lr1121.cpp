@@ -300,6 +300,12 @@ void RadioLR1121::dump_debug() {
   ESP_LOGCONFIG(TAG, "  LR1121 Diagnostic:");
   ESP_LOGCONFIG(TAG, "    Device type: 0x%02X (expect 0x%02X)", version[1], LR1121_DEVICE_TYPE);
   ESP_LOGCONFIG(TAG, "    HW version: 0x%02X, FW version: %u.%u", version[0], version[2], version[3]);
+  if (lr1121_firmware_is_outdated(version[2], version[3])) {
+    ESP_LOGCONFIG(TAG,
+                  "    Firmware update available (latest known: %u.%u) — see "
+                  "https://github.com/Lora-net/radio_firmware_images/blob/master/lr1121/transceiver/README.md",
+                  LR1121_KNOWN_LATEST_FW_MAJOR, LR1121_KNOWN_LATEST_FW_MINOR);
+  }
   ESP_LOGCONFIG(TAG, "    BUSY=%d IRQ=%d", this->busy_pin_->digital_read(), this->irq_pin_->digital_read());
   ESP_LOGCONFIG(TAG, "    IRQ status: 0x%08" PRIX32, irq);
   ESP_LOGCONFIG(TAG, "    Device errors: 0x%04X", errors);

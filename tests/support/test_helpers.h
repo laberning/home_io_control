@@ -98,6 +98,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::api_rename_device_;
   using IOHomeControlComponent::register_management_actions_;
   using IOHomeControlComponent::last_1w_activity_ms_;
+  using IOHomeControlComponent::first_1w_activity_ms_;
   using IOHomeControlComponent::defer_background_poll_;
 };
 

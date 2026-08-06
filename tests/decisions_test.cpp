@@ -216,25 +216,69 @@ TEST(Decisions, OneWayDedupSurvivesMillisWrap) {
 
 TEST(Decisions, DeferHoldsBackgroundPollDuringRemoteActivity) {
   EXPECT_TRUE(decisions::defer_background_poll_for_1w_activity(/*next_op_is_background=*/true,
+                                                               /*first_1w_activity_ms=*/1000,
                                                                /*last_1w_activity_ms=*/1000,
-                                                               /*now=*/1100, /*quiet_ms=*/700))
+                                                               /*now=*/1100, /*quiet_ms=*/700,
+                                                               /*max_defer_ms=*/5000))
       << "a poll must not seize the radio while the remote that triggered it is still transmitting";
 }
 
 TEST(Decisions, DeferReleasesBackgroundPollAfterQuietPeriod) {
-  EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(true, 1000, 1700, 700))
+  EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(true, 1000, 1000, 1700, 700, 5000))
       << "the hold must expire exactly at the quiet period, not linger";
 }
 
 TEST(Decisions, DeferNeverHoldsBackControlOperations) {
   EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(/*next_op_is_background=*/false,
+                                                                /*first_1w_activity_ms=*/1000,
                                                                 /*last_1w_activity_ms=*/1000,
-                                                                /*now=*/1100, /*quiet_ms=*/700))
+                                                                /*now=*/1100, /*quiet_ms=*/700,
+                                                                /*max_defer_ms=*/5000))
       << "a user command must not wait on a remote the user may not even own";
 }
 
 TEST(Decisions, DeferIsInactiveBeforeAnyRemoteIsHeard) {
-  EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(true, /*last_1w_activity_ms=*/0,
-                                                                /*now=*/500, /*quiet_ms=*/700))
+  EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(true, /*first_1w_activity_ms=*/0,
+                                                                /*last_1w_activity_ms=*/0,
+                                                                /*now=*/500, /*quiet_ms=*/700,
+                                                                /*max_defer_ms=*/5000))
       << "0 means no 1W frame has ever been seen, not 'heard one at boot'";
+}
+
+TEST(Decisions, DeferHoldsThroughRepeatedReArmingUnderTheCap) {
+  // Burst started at 0; a frame every 500ms keeps re-arming the quiet-period hold, but the cap
+  // (5000ms from burst start) has not been reached yet.
+  EXPECT_TRUE(decisions::defer_background_poll_for_1w_activity(true, /*first_1w_activity_ms=*/0,
+                                                               /*last_1w_activity_ms=*/4500,
+                                                               /*now=*/4600, /*quiet_ms=*/700,
+                                                               /*max_defer_ms=*/5000))
+      << "sustained sub-quiet_ms traffic must keep deferring right up to the cap";
+}
+
+TEST(Decisions, DeferReleasesAtTheCapEvenMidBurst) {
+  // Same sustained traffic, but now() has reached the cap measured from first_1w_activity_ms —
+  // the poll must be let through even though the most recent frame is still within quiet_ms.
+  EXPECT_FALSE(decisions::defer_background_poll_for_1w_activity(true, /*first_1w_activity_ms=*/0,
+                                                                /*last_1w_activity_ms=*/4900,
+                                                                /*now=*/5000, /*quiet_ms=*/700,
+                                                                /*max_defer_ms=*/5000))
+      << "sustained 1W traffic must not starve a background poll past max_defer_ms";
+}
+
+// ============================================================================
+// Burst start-of-window detection — oneway_burst_started_fresh()
+// ============================================================================
+
+TEST(Decisions, BurstStartsFreshWhenNoneSeenYet) {
+  EXPECT_TRUE(decisions::oneway_burst_started_fresh(/*last_1w_activity_ms=*/0, /*now=*/500, /*quiet_ms=*/700));
+}
+
+TEST(Decisions, BurstStartsFreshAfterQuietGap) {
+  EXPECT_TRUE(decisions::oneway_burst_started_fresh(/*last_1w_activity_ms=*/1000, /*now=*/1700, /*quiet_ms=*/700))
+      << "a gap reaching quiet_ms means the previous burst already ended";
+}
+
+TEST(Decisions, BurstContinuesWithinQuietGap) {
+  EXPECT_FALSE(decisions::oneway_burst_started_fresh(/*last_1w_activity_ms=*/1000, /*now=*/1699, /*quiet_ms=*/700))
+      << "a frame arriving just inside quiet_ms extends the current burst rather than starting a new one";
 }

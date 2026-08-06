@@ -359,7 +359,7 @@ TEST(HubCore, LoopDefersQueuedPollWhileRemoteIsStillTransmitting) {
   comp.add_device("ABC123");
 
   ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
-  comp.last_1w_activity_ms_ = esphome::millis();
+  comp.first_1w_activity_ms_ = comp.last_1w_activity_ms_ = esphome::millis();
 
   EXPECT_TRUE(comp.defer_background_poll_()) << "a queued poll must yield during the remote's burst";
   comp.loop();
@@ -389,10 +389,29 @@ TEST(HubCore, LoopNeverDefersAUserCommandForRemoteActivity) {
   comp.add_device("ABC123");
 
   comp.op_queue_.enqueue_device_command("ABC123", CoverCommand::STOP);
-  comp.last_1w_activity_ms_ = esphome::millis();
+  comp.first_1w_activity_ms_ = comp.last_1w_activity_ms_ = esphome::millis();
 
   EXPECT_FALSE(comp.defer_background_poll_())
       << "1W broadcasts carry no ownership marker, so a neighbour's remote must not delay a user command";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, LoopReleasesQueuedPollAtTheDeferCapDespiteOngoingRemoteActivity) {
+  TestableHubComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = new MockRadio();
+  comp.add_device("ABC123");
+
+  ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
+  // Burst "started" ONEWAY_POLL_DEFER_CAP_MS ago and a frame just arrived — without the cap this
+  // would defer indefinitely as long as frames keep arriving inside the quiet period.
+  const uint32_t now = esphome::millis();
+  comp.first_1w_activity_ms_ = now - ONEWAY_POLL_DEFER_CAP_MS;
+  comp.last_1w_activity_ms_ = now;
+
+  EXPECT_FALSE(comp.defer_background_poll_())
+      << "sustained 1W traffic must not starve a background poll past the defer cap";
 
   delete comp.radio_;
 }

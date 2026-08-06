@@ -388,6 +388,15 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
   }
 }
 
+void IOHomeControlComponent::record_1w_activity_(uint32_t now) {
+  // A gap of a full quiet period or more since the last frame means the previous burst already
+  // released any deferred poll, so this frame starts a new burst window rather than extending the
+  // old one (which would make ONEWAY_POLL_DEFER_CAP_MS fire on the very next frame).
+  if (decisions::oneway_burst_started_fresh(this->last_1w_activity_ms_, now, ONEWAY_QUIET_PERIOD_MS))
+    this->first_1w_activity_ms_ = now;
+  this->last_1w_activity_ms_ = now;
+}
+
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
   IoFrame frame;
   if (!parse(packet.data, packet.len, frame)) {
@@ -421,7 +430,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
 
     // Any 1W frame means a remote is transmitting right now, duplicate or not — record it before
     // the dedup check so loop() keeps background polls off the radio for the rest of the burst.
-    this->last_1w_activity_ms_ = now;
+    this->record_1w_activity_(now);
 
     // Decode once and reuse for the dedup key, logging, and (when it carries a command intent) the
     // sender HA event, so a physical remote press (or sensor trigger) can drive automations directly.

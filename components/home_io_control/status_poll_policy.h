@@ -44,6 +44,13 @@ static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
 /// Comfortably longer than the ~160ms reliability burst; short enough to barely shift poll timing
 /// otherwise. Only background polls yield — see decisions::defer_background_poll_for_1w_activity().
 static constexpr uint32_t ONEWAY_QUIET_PERIOD_MS = 700;
+/// Hard cap on how long sustained 1W traffic may hold a background poll back in total, measured
+/// from the start of the burst rather than the most recent frame. ONEWAY_QUIET_PERIOD_MS re-arms on
+/// every frame, so without this cap traffic arriving faster than the quiet period apart — a stuck
+/// remote, a chatty neighbour's sensor — could starve background polls, and therefore device state
+/// freshness, indefinitely. Comfortably above a legitimate ~160ms burst; bounds the worst case
+/// without meaningfully affecting normal operation.
+static constexpr uint32_t ONEWAY_POLL_DEFER_CAP_MS = 5000;
 
 /// Default follow-up settle-poll delay used while a device may still be moving, when no explicit
 /// poll interval is configured (interval_ms == 0). Short on purpose so hint-less devices are

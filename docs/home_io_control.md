@@ -24,7 +24,9 @@ external_components:
   - source: github://laberning/home_io_control
 
 spi:
-  clk_pin: 5
+  clk_pin:
+    number: 5
+    ignore_strapping_warning: true
   mosi_pin: 27
   miso_pin: 19
 
@@ -86,6 +88,7 @@ Notes:
 
 - The SPI bus itself is configured separately in the top-level `spi:` block.
 - The component extends ESPHome's SPI device schema, so standard SPI-device options apply in addition to the keys above.
+- Some boards route the SPI bus through an ESP32 strapping pin (GPIO5's `clk_pin` on classic ESP32, GPIO3's `miso_pin` on ESP32-S3). ESPHome refuses to reuse a strapping pin as a plain GPIO unless you set `ignore_strapping_warning: true` on that pin's expanded schema, e.g. `clk_pin: {number: 5, ignore_strapping_warning: true}` — see the examples below.
 - SX1276 uses a different interrupt pin set (`dio0_pin`/`dio4_pin`) than SX1262/LR1121 (`dio1_pin`/`busy_pin`, shared — LR1121 reuses the same two keys, with `dio1_pin` carrying its DIO9 line). Only configure the pins for the radio you actually have.
 - User control commands (position, STOP, tilt, light/switch/lock state) are prioritized over background status polls in the operation queue. A queued status poll for the same device is dropped when a control command arrives, since the command reply provides fresher state. An in-flight exchange cannot be interrupted, so the worst-case latency is one full exchange (~1–3 s) regardless of the queue.
 
@@ -395,7 +398,9 @@ ota:
   - platform: esphome
 
 spi:
-  clk_pin: 5
+  clk_pin:
+    number: 5
+    ignore_strapping_warning: true
   mosi_pin: 27
   miso_pin: 19
 
@@ -503,7 +508,9 @@ ota:
 spi:
   clk_pin: 5
   mosi_pin: 6
-  miso_pin: 3
+  miso_pin:
+    number: 3
+    ignore_strapping_warning: true
 
 external_components:
   - source: github://laberning/home_io_control

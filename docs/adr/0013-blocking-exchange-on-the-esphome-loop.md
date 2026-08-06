@@ -80,14 +80,16 @@ itself scheduled does not start on top of the burst that triggered it.
   above. This cost is **not** specific to blocking — one half-duplex radio
   cannot listen while it transmits and waits — so an asynchronous engine would
   inherit it unchanged. Only the mitigations follow from this decision.
-- **The 1W quiet period has no cap.** It re-arms on every 1W frame received
-  while active, so it holds a background poll back for as long as 1W traffic
-  keeps arriving less than `quiet_ms` apart — including from a neighbour's
-  hardware, since these broadcasts carry no ownership marker. A real remote's
-  burst is short (~160 ms) and the poll is only delayed, never dropped, so this
-  is accepted rather than bounded. The residual risk is sustained sub-`quiet_ms`
-  1W traffic from any source starving background polls, and therefore device
-  state freshness, indefinitely, with no diagnostic surfaced today.
+- **The 1W quiet period re-arms on every frame, but total deferral is capped.**
+  Sustained 1W traffic less than `quiet_ms` apart — including from a
+  neighbour's hardware, since these broadcasts carry no ownership marker —
+  keeps re-arming the hold, but `ONEWAY_POLL_DEFER_CAP_MS` bounds the total
+  time from the start of the burst: once reached, the poll is let through even
+  if traffic is still arriving. A real remote's burst is short (~160 ms), well
+  under both the quiet period and the cap, so normal operation is unaffected;
+  the cap only matters for the pathological case (a stuck remote, a chatty
+  neighbour's sensor) and turns "background polls starve indefinitely" into
+  "delayed by at most a few seconds."
 - No shared state crosses a thread boundary, so the registry, tuning config,
   and entity callbacks need no locking.
 - Every blocking loop must feed the watchdog. One that forgets is a reset

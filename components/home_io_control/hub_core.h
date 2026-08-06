@@ -471,6 +471,10 @@ class IOHomeControlComponent : public Component,
   /// tests/corpus/captures/somfy_awning/execute_ack_reports_stale_target_*.yaml), so
   /// execute_request_and_update_() passes false there; every other caller trusts as before.
   void update_device_status_(const IoFrame &frame, bool trust_position = true);
+  /// Record that a 1W frame just arrived, updating last_1w_activity_ms_ and — when this frame
+  /// starts a new burst (see decisions::oneway_burst_started_fresh()) — first_1w_activity_ms_.
+  /// @param now millis() at which this frame arrived.
+  void record_1w_activity_(uint32_t now);
   /// Schedule a delayed status poll for a registered device using the Component timeout API.
   /// @param device_id ID of the device to poll.
   /// @param delay_ms Delay in milliseconds before polling.
@@ -492,7 +496,8 @@ class IOHomeControlComponent : public Component,
   [[nodiscard]] bool defer_background_poll_() const {
     return decisions::defer_background_poll_for_1w_activity(
         !this->op_queue_.empty() && OperationQueue::is_background_op(this->op_queue_.front().type),
-        this->last_1w_activity_ms_, millis(), ONEWAY_QUIET_PERIOD_MS);
+        this->first_1w_activity_ms_, this->last_1w_activity_ms_, millis(), ONEWAY_QUIET_PERIOD_MS,
+        ONEWAY_POLL_DEFER_CAP_MS);
   }
   /// Schedule status polls for all devices associated with a linked remote.
   /// @param remote_id Source node ID of the remote.
@@ -643,6 +648,11 @@ class IOHomeControlComponent : public Component,
   /// a repeat still means the remote is transmitting. 0 until the first is seen. Gates background
   /// polls in loop(); see decisions::defer_background_poll_for_1w_activity().
   uint32_t last_1w_activity_ms_{0};
+  /// millis() of the first 1W frame in the current burst. Advances to the new frame's timestamp
+  /// whenever the gap since last_1w_activity_ms_ reaches ONEWAY_QUIET_PERIOD_MS (the previous burst
+  /// has already released any deferred poll, so this one starts fresh); otherwise holds at the
+  /// burst's start. Bounds defer_background_poll_() via ONEWAY_POLL_DEFER_CAP_MS.
+  uint32_t first_1w_activity_ms_{0};
 };
 
 // ----------------------------------------------------------------------------

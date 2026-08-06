@@ -106,6 +106,30 @@ static constexpr uint32_t LR1121_IRQ_DIO_ENABLE_MASK = LR1121_IRQ_TX_DONE | LR11
 
 static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked (design §1.2 "Identity" row)
 
+/// Newest LR1121 transceiver firmware known at the time this file was last updated, per the
+/// version-numbered filenames and CHANGELOG.md at
+/// https://github.com/Lora-net/radio_firmware_images/tree/master/lr1121/transceiver — the same
+/// two bytes GetVersion reports as fw_major/fw_minor (e.g. `lr1121_transceiver_0104.bin` is
+/// major=0x01, minor=0x04). Deliberately NOT queried live (baked in, per design decision) — this
+/// is a point-in-time snapshot that will go stale as Semtech ships new firmware, and needs a
+/// manual refresh here when it does.
+///
+/// Last checked 2026-08-05: latest is 0x0104 (2026-04-01), which per that changelog fixes
+/// CVE-2025-14857/-14858/-14859 (see https://www.semtech.com/company/security/security-bulletins)
+/// on top of earlier feature/bugfix releases — not just a cosmetic version bump.
+static constexpr uint8_t LR1121_KNOWN_LATEST_FW_MAJOR = 0x01;
+static constexpr uint8_t LR1121_KNOWN_LATEST_FW_MINOR = 0x04;
+
+/// Pure comparison against the known-latest constants above — no I/O, host-testable. Only ever
+/// flags a version as outdated when it is strictly older than what this file knows about;
+/// versions equal to or newer than LR1121_KNOWN_LATEST_FW_* (including any real future firmware
+/// this snapshot predates) are never flagged, so a stale baked-in constant fails silent rather
+/// than crying wolf.
+[[nodiscard]] constexpr bool lr1121_firmware_is_outdated(uint8_t fw_major, uint8_t fw_minor) {
+  return (fw_major < LR1121_KNOWN_LATEST_FW_MAJOR) ||
+         (fw_major == LR1121_KNOWN_LATEST_FW_MAJOR && fw_minor < LR1121_KNOWN_LATEST_FW_MINOR);
+}
+
 static constexpr uint8_t LR1121_PACKET_TYPE_GFSK = 0x01;          ///< cross-checked (design §3.2 step 5)
 static constexpr uint8_t LR1121_GFSK_CRC_OFF = 0x01;              ///< cross-checked (same encoding as SX126x)
 static constexpr uint8_t LR1121_GFSK_PACKET_FIXED_LENGTH = 0x00;  ///< cross-checked (same encoding as SX126x)

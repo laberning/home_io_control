@@ -194,26 +194,45 @@ inline bool is_duplicate_1w_frame(const OneWayDedupState &last, const OneWayDedu
 /// Only background polls are deferred. A user command must never wait on a remote the user may not
 /// even own — 1W broadcasts carry no ownership marker, so the activity could be a neighbour's.
 ///
-/// The deferral itself has no cap: it re-arms on every 1W frame received while it is already
-/// active, so sustained sub-`quiet_ms` 1W traffic from any source — including a neighbour's,
-/// since these broadcasts carry no ownership marker — holds background polls back indefinitely.
-/// This is acceptable because a real burst from one remote is short (~160 ms, well under
-/// `quiet_ms`) and the gate only delays a poll, it never drops one: the poll stays queued and
-/// fires as soon as the channel goes quiet. The residual risk is a pathological or malicious
-/// sender transmitting 1W frames faster than `quiet_ms` apart without pause, which would starve
-/// background polls — and therefore device state freshness — for as long as that traffic
-/// continues, with no diagnostic surfaced today.
+/// The hold re-arms on every 1W frame received while it is already active, so a real burst from one
+/// remote (~160 ms, well under `quiet_ms`) never gets cut short mid-transmission. Left unchecked
+/// that re-arming has no cap: sustained sub-`quiet_ms` 1W traffic from any source — including a
+/// neighbour's, since these broadcasts carry no ownership marker — would hold background polls back
+/// indefinitely. @p max_defer_ms bounds that: once that much time has passed since the burst
+/// *started* (not the most recent frame), the poll is let through regardless of ongoing traffic.
+/// The gate only ever delays a poll, never drops one — it stays queued and fires as soon as it is
+/// no longer deferred.
 ///
 /// @param next_op_is_background True if the queue front is a REQUEST_STATUS / REQUEST_NAME.
+/// @param first_1w_activity_ms  millis() of the first frame in the current 1W burst; 0 if none seen
+///                               since boot.
 /// @param last_1w_activity_ms   millis() of the most recent 1W frame; 0 if none seen since boot.
 /// @param now                   Current millis().
 /// @param quiet_ms              How long after 1W activity to hold background polls back.
+/// @param max_defer_ms          Hard cap on total defer time, measured from first_1w_activity_ms.
 /// @return true if the caller should skip dispatching this loop iteration.
-inline bool defer_background_poll_for_1w_activity(bool next_op_is_background, uint32_t last_1w_activity_ms,
-                                                  uint32_t now, uint32_t quiet_ms) {
+inline bool defer_background_poll_for_1w_activity(bool next_op_is_background, uint32_t first_1w_activity_ms,
+                                                  uint32_t last_1w_activity_ms, uint32_t now, uint32_t quiet_ms,
+                                                  uint32_t max_defer_ms) {
   if (!next_op_is_background || last_1w_activity_ms == 0)
     return false;
+  if (now - first_1w_activity_ms >= max_defer_ms)
+    return false;
   return (now - last_1w_activity_ms) < quiet_ms;
+}
+
+/// Whether a 1W frame arriving at `now` starts a new burst rather than extending the current one
+/// — true if no frame has been seen yet, or the gap since the last one reached `quiet_ms` (the
+/// previous burst already released any deferred poll). Callers use this to decide whether to
+/// reset a burst's start-time tracking; see defer_background_poll_for_1w_activity() for why the
+/// burst start (not just the latest frame) needs its own timestamp.
+///
+/// @param last_1w_activity_ms millis() of the most recent 1W frame before this one; 0 if none
+///                             seen since boot.
+/// @param now                 Current millis() (this frame's arrival time).
+/// @param quiet_ms            Gap after which a previous burst is considered over.
+[[nodiscard]] inline bool oneway_burst_started_fresh(uint32_t last_1w_activity_ms, uint32_t now, uint32_t quiet_ms) {
+  return last_1w_activity_ms == 0 || (now - last_1w_activity_ms) >= quiet_ms;
 }
 
 // == Timing/slicing helper ==

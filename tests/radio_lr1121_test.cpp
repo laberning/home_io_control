@@ -227,6 +227,34 @@ TEST(RadioLR1121, InitSucceedsOnCorrectDeviceType) {
   EXPECT_FALSE(radio.is_failed());
 }
 
+// ============================================================================
+// Firmware-version staleness check — lr1121_firmware_is_outdated() (pure, no I/O)
+// ============================================================================
+
+TEST(RadioLR1121, FirmwareOlderMajorIsOutdated) {
+  EXPECT_TRUE(lr1121_firmware_is_outdated(LR1121_KNOWN_LATEST_FW_MAJOR - 1, 0xFF))
+      << "an older major version is outdated regardless of the minor byte";
+}
+
+TEST(RadioLR1121, FirmwareSameMajorOlderMinorIsOutdated) {
+  ASSERT_GT(LR1121_KNOWN_LATEST_FW_MINOR, 0) << "precondition: test needs room to go one minor version older";
+  EXPECT_TRUE(lr1121_firmware_is_outdated(LR1121_KNOWN_LATEST_FW_MAJOR, LR1121_KNOWN_LATEST_FW_MINOR - 1));
+}
+
+TEST(RadioLR1121, FirmwareExactlyLatestIsNotOutdated) {
+  EXPECT_FALSE(lr1121_firmware_is_outdated(LR1121_KNOWN_LATEST_FW_MAJOR, LR1121_KNOWN_LATEST_FW_MINOR));
+}
+
+TEST(RadioLR1121, FirmwareNewerMinorIsNotOutdated) {
+  EXPECT_FALSE(lr1121_firmware_is_outdated(LR1121_KNOWN_LATEST_FW_MAJOR, LR1121_KNOWN_LATEST_FW_MINOR + 1))
+      << "a version newer than what this file knows about must never be flagged outdated";
+}
+
+TEST(RadioLR1121, FirmwareNewerMajorIsNotOutdated) {
+  EXPECT_FALSE(lr1121_firmware_is_outdated(LR1121_KNOWN_LATEST_FW_MAJOR + 1, 0x00))
+      << "a future major version must never be flagged outdated even with minor=0";
+}
+
 TEST(RadioLR1121, TcxoCommandEncodesYamlVoltageCode) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
