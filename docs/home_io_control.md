@@ -761,6 +761,86 @@ Extraction)" (not configurable).
   don't be surprised if it takes several hub-side retries (or, if the whole attempt times out, a
   fresh switch toggle) rather than a single clean pass on the first try.
 
+## LR1121 Firmware Update
+
+> **⚠️ Use at your own risk.** Flashing radio firmware can potentially brick the chip if it goes
+> wrong. This project only ever touches the transceiver-firmware region (see below), which keeps
+> every failure this feature can produce recoverable — but flash with the same caution you'd give
+> any firmware update, and don't power-cycle the device mid-flash.
+
+Semtech ships field-upgradable transceiver firmware for the LR1121, separately versioned from this
+project. This feature flashes a Semtech-published image directly from your existing build — no
+separate hardware, no vendor tooling — triggered by a Home Assistant button.
+
+```yaml
+home_io_control:
+  radio_type: lr1121   # required
+  busy_pin: 34          # required
+  lr1121_firmware_update:
+    source: github://Lora-net/radio_firmware_images/lr1121/transceiver/lr1121_transceiver_0103.bin
+    # ref: optional branch/tag/commit; defaults to HEAD
+    # checksum_md5: optional 32-hex-char hash; also the fallback when no `.bin.md5` sibling exists
+    # target_version: optional hex (e.g. 0x0103); only needed when the filename carries no version
+```
+
+Configuration variables (all nested under `lr1121_firmware_update:`):
+
+- `source` (Required): A `github://<owner>/<repo>/<path/to/file.bin>[@ref]` shorthand pointing at
+  the **`.bin` file** itself. Fetched and MD5-verified once, at compile time — not a live
+  "check for updates" mechanism, and no firmware binary is ever committed to this repo.
+- `ref` (Optional): Branch, tag, or commit to fetch from. Defaults to `HEAD`, or an `@ref` embedded
+  directly in `source`.
+- `checksum_md5` (Optional): A 32-hex-character MD5 hash to verify the download against, used when
+  no `<source>.md5` sidecar exists (or must agree with it, if one does).
+- `target_version` (Optional): Overrides the firmware version this build believes it is flashing.
+  Normally derived from the filename (`..._0104.bin` → `1.4`); only needed when a mirrored or
+  renamed image's filename carries no version.
+
+The block's mere presence is the build flag: adding it recompiles the flash button and a boot-time
+bootloader-version read into the firmware; removing it takes them back out. There is no runtime
+toggle — entering and leaving flash mode is a recompile + OTA each way. All of your normal
+cover/light/switch/lock entities keep working throughout, unaffected.
+
+### Which images can I flash?
+
+This project currently flashes only the transceiver-firmware region, not the bootloader — the
+bootloader-updater path is a categorically riskier operation (see [ADR 0020](https://github.com/laberning/home_io_control/blob/main/docs/adr/0020-flash-lr1121-transceiver-firmware-not-the-bootloader.md)) and isn't implemented yet. So what you
+can reach depends on what your board's bootloader already is: the near-universal `0x2100`
+bootloader can take firmware `1.1`–`1.3`, while `1.4` needs bootloader `0x2101` and is unreachable
+until bootloader updates are supported.
+
+Every boot reads the bootloader version (a free chip reset before anything else is configured) and
+reports it, together with whether the configured `target_version` can proceed, in the startup
+config dump:
+
+```
+LR1121 bootloader version: 0x2100
+Firmware update target: 1.4 -- CANNOT PROCEED: needs bootloader 0x2101, this chip has 0x2100
+```
+
+A target version this build has no opinion on (something Semtech publishes later) is never
+refused outright — it's routed through the two-press confirmation below instead, so the feature
+keeps working on firmware that doesn't exist yet.
+
+### The flash button and two-press confirmation
+
+Configuring the block creates a **"Flash LR1121 Radio Firmware"** button, bound directly to the
+hub. Pressing it:
+
+- **Refuses immediately, without touching the chip**, if the configured target can't proceed
+  (wrong bootloader) or the radio doesn't look like an LR1121 at all — the reason is the same one
+  already printed in the boot-time config dump.
+- **Asks for a second press** if the target isn't unambiguously newer than what's installed (already
+  installed, unverified compatibility, or an unknown version). A second press within about a minute
+  proceeds; letting the window expire cancels it.
+- **Flashes immediately** if the target is a known-good, strictly newer version.
+
+Once a flash starts, the chip is erased and rewritten, with progress logged periodically
+(`Flashing LR1121: 1630/16304 words (10%)`) on both the serial console and the API connection — on
+a `1.3` image this takes a few seconds total. The ESP32 reboots on its own once the sequence
+finishes, including after a failure. **A failed erase or write is recoverable**: press the button
+again after the reboot to retry.
+
 ## Device Type and Capability Notes
 
 - **Cover-like families** (shutters, awnings, blinds, openers, curtains) are the primary supported path today. These support full position control (0–100%).

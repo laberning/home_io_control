@@ -117,6 +117,14 @@ static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked (design 
 /// Last checked 2026-08-05: latest is 0x0104 (2026-04-01), which per that changelog fixes
 /// CVE-2025-14857/-14858/-14859 (see https://www.semtech.com/company/security/security-bulletins)
 /// on top of earlier feature/bugfix releases — not just a cosmetic version bump.
+///
+/// Reachability caveat: this project's `lr1121_firmware_update:` feature (docs/home_io_control.md)
+/// can flash any published image, but 0x0104 requires bootloader 0x2101, and this project
+/// deliberately never updates the bootloader itself (bootloader updates are materially higher
+/// risk — see the design record). On the common 0x2100 bootloader, 0x0103 is the practical
+/// ceiling. So the "update available" line below can point at a version this component cannot
+/// currently reach for a given chip; the flash feature's own boot-time bootloader-version report
+/// is what tells a user whether 0x0104 specifically is reachable on their board.
 static constexpr uint8_t LR1121_KNOWN_LATEST_FW_MAJOR = 0x01;
 static constexpr uint8_t LR1121_KNOWN_LATEST_FW_MINOR = 0x04;
 

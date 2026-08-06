@@ -97,6 +97,7 @@ corpus-validate:
 	@echo "Validating golden-frame corpus captures..."
 	@python3 scripts/corpus/validate.py
 	@python3 scripts/corpus/tests/run_tests.py
+	@python3 scripts/lr1121_firmware/tests/run_tests.py
 
 # libFuzzer target for the frame parser and its pure decoders, seeded from the golden-frame
 # corpus. Time-boxed background check (FUZZ_TIME seconds, default 60) — not part of `make check`/
@@ -187,9 +188,14 @@ INCLUDES := -Icomponents/home_io_control \
 # Mirror the ESPHome API defines that the component injects during firmware codegen.
 # Without these, host builds silently compile out the rename-action registration path and
 # the associated unit tests only exercise a reduced slice of the recovered feature.
+# IOHOME_LR1121_FIRMWARE_UPDATE is normally only set when a YAML config has a
+# lr1121_firmware_update: block, but host tests need it unconditionally: without it,
+# COMPONENT_SRCS's wildcard picks up radio_lr1121_firmware_updater.cpp and hub_lr1121_firmware_update.cpp
+# and compiles each to an empty TU, so their tests would have nothing to link against.
 UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_CUSTOM_SERVICES \
-			 -DUSE_API_HOMEASSISTANT_SERVICES
+			 -DUSE_API_HOMEASSISTANT_SERVICES \
+			 -DIOHOME_LR1121_FIRMWARE_UPDATE
 
 # Regenerates build/corpus/corpus_generated.h from tests/corpus/captures/**/*.yaml.
 # see tests/corpus/README.md.

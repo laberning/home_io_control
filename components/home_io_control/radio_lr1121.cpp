@@ -302,7 +302,7 @@ void RadioLR1121::dump_debug() {
   ESP_LOGCONFIG(TAG, "    HW version: 0x%02X, FW version: %u.%u", version[0], version[2], version[3]);
   if (lr1121_firmware_is_outdated(version[2], version[3])) {
     ESP_LOGCONFIG(TAG,
-                  "    Firmware update available (latest known: %u.%u) — see "
+                  "    Newer firmware available (%u.%u), see "
                   "https://github.com/Lora-net/radio_firmware_images/blob/master/lr1121/transceiver/README.md",
                   LR1121_KNOWN_LATEST_FW_MAJOR, LR1121_KNOWN_LATEST_FW_MINOR);
   }

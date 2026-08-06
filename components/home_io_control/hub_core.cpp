@@ -86,13 +86,30 @@ void IOHomeControlComponent::setup() {
     return;
   }
 
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+  // Boot-time bootloader-version excursion (design record §0.3/§0.4) — deliberately before
+  // init(): nothing has configured the radio yet, so this costs one extra chip reset and needs no
+  // reboot afterward, unlike every other bootloader excursion this feature performs.
+  this->run_lr1121_boot_time_bootloader_read_();
+#endif
+
   if (!this->radio_->init()) {
     delete this->radio_;
     this->radio_ = nullptr;
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+    // Cache the verdict even on a failed init() — a null radio_ is exactly the case
+    // trigger_lr1121_firmware_update()'s guard 0 still allows an attempt for (reflashing is the
+    // recovery), and it needs a cached "installed version unknown" verdict to route through.
+    this->cache_lr1121_flash_verdict_();
+#endif
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — ESPHome's own LOG_STR() macro.
     this->mark_failed(LOG_STR("Radio hardware initialization failed (see earlier log for details)"));
     return;
   }
+
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+  this->cache_lr1121_flash_verdict_();
+#endif
 
   this->initialized_ = true;
   this->register_management_actions_();
@@ -352,6 +369,10 @@ void IOHomeControlComponent::dump_config() {
 
   if (this->radio_ != nullptr)
     this->radio_->dump_debug();
+
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+  this->dump_lr1121_firmware_update_debug_();
+#endif
 }
 
 }  // namespace home_io_control

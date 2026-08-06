@@ -43,6 +43,8 @@
 #include "pairing_engine.h"
 #include "management_actions.h"
 #include "pairing_responder.h"
+#include "lr1121_firmware_decisions.h"
+#include "radio_lr1121_firmware_updater.h"
 #include <map>
 #include <vector>
 #include <functional>
@@ -404,6 +406,16 @@ class IOHomeControlComponent : public Component,
   /// @param locked Desired locked/unlocked state.
   virtual void queue_set_lock_state(const std::string &device_id, bool locked);
 
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+  /// @brief Entry point for the "Flash LR1121 Radio Firmware" button.
+  ///
+  /// Only exists when a `lr1121_firmware_update:` block is configured. See
+  /// hub_lr1121_firmware_update.cpp for the full contract, including the safety invariant that
+  /// every bootloader excursion this triggers must end in either radio_->init() or
+  /// App.safe_reboot() — there is no third option.
+  void trigger_lr1121_firmware_update();
+#endif
+
  protected:
   // --- Protocol-level operations ---
   /// Transmit a raw IoFrame on the current frequency with given preamble length.
@@ -595,6 +607,53 @@ class IOHomeControlComponent : public Component,
   /// @return Newly allocated RadioDriver, or nullptr if pin validation or allocation failed.
   RadioDriver *select_and_construct_radio_(const char **chip_name_out);
 
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+  // --- LR1121 firmware update (hub_lr1121_firmware_update.cpp) ---
+  /// @brief Boot-time bootloader-version excursion (design record §0.3/§0.4).
+  ///
+  /// Called from setup() after select_and_construct_radio_() and before radio_->init() — at that
+  /// point nothing has configured the radio yet, so a bootloader excursion costs one extra chip
+  /// reset and needs no reboot afterward (unlike every other bootloader excursion in this
+  /// feature). Constructs lr1121_firmware_updater_, runs the excursion, and caches the bootloader
+  /// version/type. Never fails setup(): a failed read just leaves the bootloader version
+  /// "unknown" and lets radio_->init() proceed normally.
+  void run_lr1121_boot_time_bootloader_read_();
+  /// @brief Compute and cache the flash verdict once radio_->init() has produced (or failed to
+  /// produce) an installed-firmware-version read.
+  ///
+  /// Must run after init(), not during the boot-time excursion above: the installed version comes
+  /// from configure_radio_(), which runs inside init(). Called from setup() regardless of whether
+  /// init() succeeded — see the null-radio_ recovery-path reasoning in
+  /// trigger_lr1121_firmware_update()'s guard 0.
+  void cache_lr1121_flash_verdict_();
+  /// @brief Emit the bootloader version and cached flash verdict to the config dump.
+  /// Called from dump_config(), next to the existing radio_->dump_debug() call.
+  void dump_lr1121_firmware_update_debug_() const;
+  /// @brief Pure content behind dump_lr1121_firmware_update_debug_(), factored out so it is
+  /// testable without a log-capturing harness (ESP_LOGCONFIG is a no-op in host tests). Always
+  /// includes the verdict line when the verdict is known, independent of whether the bootloader
+  /// version is -- see the implementation for why that independence matters.
+  std::vector<std::string> lr1121_firmware_update_debug_lines_() const;
+  /// @brief Human-readable explanation of the cached verdict, shared by
+  /// dump_lr1121_firmware_update_debug_() and trigger_lr1121_firmware_update() so the boot-time
+  /// config dump and a button-press log always say the same thing.
+  /// @return A complete log message (no trailing newline).
+  std::string describe_lr1121_flash_verdict_() const;
+  /// @brief Arm the two-press confirmation window and schedule its auto-disarm.
+  /// Mirrors hub_key_extraction.cpp's KEY_EXTRACTION_AUTO_OFF_MS idiom (named set_timeout,
+  /// guard against a stale callback after a fresh press already disarmed).
+  void arm_lr1121_flash_confirmation_();
+  /// @brief The bootloader-entry-through-post-flash-verify sequence, run only once
+  /// trigger_lr1121_firmware_update() has decided to actually flash. Split out from that method
+  /// to keep its own cognitive complexity within clang-tidy's threshold (see the implementation
+  /// plan's ground rules).
+  ///
+  /// Per the ground rules' safety invariant: once this method's bootloader entry succeeds, every
+  /// exit — including every failure path — ends in `App.safe_reboot()`. There is no `return` in
+  /// here that leaves the chip unconfigured without also rebooting the ESP32.
+  void run_lr1121_flash_sequence_();
+#endif
+
   // --- Radio driver ---
   RadioDriver *radio_{nullptr};
 
@@ -653,6 +712,26 @@ class IOHomeControlComponent : public Component,
   /// has already released any deferred poll, so this one starts fresh); otherwise holds at the
   /// burst's start. Bounds defer_background_poll_() via ONEWAY_POLL_DEFER_CAP_MS.
   uint32_t first_1w_activity_ms_{0};
+
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+  // --- LR1121 firmware update state (hub_lr1121_firmware_update.cpp) ---
+  /// Heap-allocated in setup(), like radio_ — constructed once, used by both the boot-time
+  /// excursion and any later button press. Never deleted/reconstructed at runtime.
+  Lr1121FirmwareUpdater *lr1121_firmware_updater_{nullptr};
+  bool lr1121_bootloader_version_known_{false};  ///< False until the boot-time excursion succeeds.
+  uint8_t lr1121_bootloader_chip_type_{0};       ///< `type` byte from the boot-time bootloader GetVersion.
+  uint16_t lr1121_bootloader_version_{0};        ///< Bootloader version from the boot-time excursion.
+  bool lr1121_flash_verdict_known_{false};       ///< False until cache_lr1121_flash_verdict_() has run.
+  FlashDecision lr1121_flash_verdict_{FlashDecision::NEEDS_CONFIRMATION};  ///< Cached verdict (see decisions header).
+  uint16_t lr1121_installed_fw_{0};  ///< Installed firmware version at the time the verdict was cached (0=unknown).
+  /// `device_type` byte from the same normal-mode GetVersion that produced lr1121_installed_fw_
+  /// (0=unknown, e.g. after a failed init()) -- kept alongside it so describe_lr1121_flash_verdict_()
+  /// can name which chip a REJECT_WRONG_CHIP verdict actually saw. See lr1121_flash_decision()'s
+  /// `device_type` parameter (layer 3) for why this is a distinct value from
+  /// lr1121_bootloader_chip_type_ above (layer 4, bootloader-mode).
+  uint8_t lr1121_installed_device_type_{0};
+  bool lr1121_flash_confirmation_armed_{false};  ///< True during the two-press confirmation window.
+#endif
 };
 
 // ----------------------------------------------------------------------------

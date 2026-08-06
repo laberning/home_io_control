@@ -5,22 +5,29 @@
 ## Defines the top-level ``home_io_control:`` YAML schema, shared validators, and the
 ## generated C++ hub component wiring used by the platform modules.
 
+import hashlib
+import urllib.error
+import urllib.request
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
 from esphome.components import spi
-# Aliased: this package has its own switch.py submodule, so a plain `from esphome.components
-# import switch` here would bind the name `switch` in this __init__.py's namespace — which,
-# because __init__.py IS the esphome.components.home_io_control package object, is the exact
-# same slot ESPHome's component loader later overwrites when it imports our own switch.py
-# platform file as `esphome.components.home_io_control.switch`. Without the alias, whichever
-# import happens to run last silently wins, and to_code() (called even later, when tasks are
-# flushed) can end up resolving `switch` to our own switch.py instead of the real ESPHome
-# switch component.
+# Aliased: this package has its own switch.py/button.py submodules, so a plain `from
+# esphome.components import switch` here would bind the name `switch` in this __init__.py's
+# namespace — which, because __init__.py IS the esphome.components.home_io_control package
+# object, is the exact same slot ESPHome's component loader later overwrites when it imports our
+# own switch.py/button.py platform files as `esphome.components.home_io_control.switch` /
+# `...button`. Without the alias, whichever import happens to run last silently wins, and
+# to_code() (called even later, when tasks are flushed) can end up resolving `switch`/`button` to
+# our own platform files instead of the real ESPHome components.
+from esphome.components import button as button_component
 from esphome.components import switch as switch_component
-from esphome.const import CONF_ID, CONF_NAME, ENTITY_CATEGORY_CONFIG
-from esphome.core import ID
+from esphome.const import CONF_ID, CONF_INVERTED, CONF_NAME, CONF_REF, CONF_SOURCE, ENTITY_CATEGORY_CONFIG
+from esphome.core import CORE, ID
+from esphome.helpers import write_file_if_changed
 
+from . import lr1121_firmware
 from . import tuning as tuning_module
 
 DEPENDENCIES = ["api", "spi"]
@@ -44,6 +51,9 @@ CONF_FEM_PA_PIN = "fem_pa_pin"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_EXPOSED_SENDERS = "exposed_senders"
 CONF_ACCEPT_FOREIGN_PAIRING = "accept_foreign_pairing"
+CONF_LR1121_FIRMWARE_UPDATE = "lr1121_firmware_update"
+CONF_CHECKSUM_MD5 = "checksum_md5"
+CONF_TARGET_VERSION = "target_version"
 MIN_STATUS_POLL_INTERVAL_MS = 500
 
 # Internal config key for the "Accept Foreign Pairing" companion switch ID (injected by
@@ -52,6 +62,9 @@ MIN_STATUS_POLL_INTERVAL_MS = 500
 # entity created only in to_code() would silently drop; see tuning.py::_inject_tuning_companion_ids
 # for the fuller rationale).
 CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID = "_accept_foreign_pairing_switch_id"
+# Internal config key for the "Flash LR1121 Radio Firmware" companion button ID (injected by
+# post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
+CONF_LR1121_FIRMWARE_UPDATE_BUTTON_ID = "_lr1121_firmware_update_button_id"
 
 home_io_control_ns = cg.esphome_ns.namespace("home_io_control")
 IOHomeControlComponent = home_io_control_ns.class_(
@@ -67,6 +80,13 @@ IOHomeControlComponent = home_io_control_ns.class_(
 IOHomeAcceptForeignPairingSwitch = home_io_control_ns.class_(
     "IOHomeAcceptForeignPairingSwitch", switch_component.Switch, cg.Component
 )
+# Hub-level "Flash LR1121 Radio Firmware" button (hub_lr1121_firmware_update.cpp /
+# platform_lr1121_firmware_update_button.h). Same "created dynamically from a home_io_control:
+# sub-block, not a device-bound platform entry" shape as the switch above — there is no
+# `io_device_id` to bind this to, it targets the hub's own radio.
+IOHomeLr1121FirmwareUpdateButton = home_io_control_ns.class_(
+    "IOHomeLr1121FirmwareUpdateButton", button_component.Button, cg.Component
+)
 
 
 def _inject_accept_foreign_pairing_switch_id(config):
@@ -78,6 +98,78 @@ def _inject_accept_foreign_pairing_switch_id(config):
         f"{base}_accept_foreign_pairing_switch",
         is_declaration=True,
         type=IOHomeAcceptForeignPairingSwitch,
+    )
+    return config
+
+
+def validate_lr1121_firmware_source(value):
+    """Validate the lr1121_firmware_update `source:` shorthand at schema time.
+
+    Only checks the shape (github://owner/repo/path[@ref]); the network fetch and MD5/image
+    verification happen later, in to_code(), where a failure is still a build-time error but one
+    that needs the network anyway.
+    """
+    value = cv.string_strict(value)
+    try:
+        lr1121_firmware.parse_github_source(value)
+    except lr1121_firmware.Lr1121FirmwareError as err:
+        raise cv.Invalid(str(err)) from err
+    return value
+
+
+def validate_checksum_md5(value):
+    """Validate checksum_md5 as exactly 32 hex characters (MD5)."""
+    value = cv.string_strict(value).lower()
+    if len(value) != 32:
+        raise cv.Invalid("checksum_md5 must be exactly 32 hex characters (MD5)")
+    try:
+        int(value, 16)
+    except ValueError as err:
+        raise cv.Invalid("checksum_md5 must be valid hexadecimal") from err
+    return value
+
+
+LR1121_FIRMWARE_UPDATE_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_SOURCE): validate_lr1121_firmware_source,
+        cv.Optional(CONF_REF): cv.string_strict,
+        cv.Optional(CONF_CHECKSUM_MD5): validate_checksum_md5,
+        # target_version exists solely as an escape hatch for a mirrored/renamed image whose
+        # filename carries no version — NOT as a compatibility declaration. There is deliberately
+        # no `requires_bootloader:` key; see the design record for why user-supplied data would be
+        # the wrong shape for a safety check.
+        cv.Optional(CONF_TARGET_VERSION): cv.hex_int,
+    }
+)
+
+
+def _validate_lr1121_firmware_update(config):
+    """Gate + inject the button ID for the optional lr1121_firmware_update: block.
+
+    Only runs when the block is present. Rejects configurations that can't reach the LR1121
+    bootloader at all (wrong radio_type, missing busy_pin) or that would silently invert the
+    bootloader-entry level (busy_pin inverted: true — bootloader entry drives BUSY to a physical
+    LOW; see radio_lr1121_firmware_updater.h). Also injects the flash button's companion ID at
+    validation time — see CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID's comment above for why that
+    can't wait until to_code().
+    """
+    if CONF_LR1121_FIRMWARE_UPDATE not in config:
+        return config
+    try:
+        lr1121_firmware.validate_bootloader_reachability(
+            radio_type=config[CONF_RADIO_TYPE],
+            has_busy_pin=CONF_BUSY_PIN in config,
+            busy_pin_inverted=config.get(CONF_BUSY_PIN, {}).get(CONF_INVERTED, False),
+        )
+    except lr1121_firmware.Lr1121FirmwareError as err:
+        raise cv.Invalid(str(err)) from err
+
+    parent_id = config[CONF_ID]
+    base = parent_id.id if parent_id.id else "home_io_control"
+    config[CONF_LR1121_FIRMWARE_UPDATE_BUTTON_ID] = ID(
+        f"{base}_lr1121_firmware_update_button",
+        is_declaration=True,
+        type=IOHomeLr1121FirmwareUpdateButton,
     )
     return config
 
@@ -268,12 +360,14 @@ CONFIG_SCHEMA = cv.All(
                 validate_device_id
             ),
             cv.Optional(CONF_ACCEPT_FOREIGN_PAIRING, default=False): cv.boolean,
+            cv.Optional(CONF_LR1121_FIRMWARE_UPDATE): LR1121_FIRMWARE_UPDATE_SCHEMA,
             cv.Optional(tuning_module.CONF_TUNING): tuning_module.TUNING_CONFIG_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
     .extend(spi.spi_device_schema(True, 8e6, "mode0")),
     _inject_accept_foreign_pairing_switch_id,
+    _validate_lr1121_firmware_update,
 )
 
 
@@ -337,6 +431,9 @@ async def to_code(config):
     if config[CONF_ACCEPT_FOREIGN_PAIRING]:
         await _create_accept_foreign_pairing_switch(config, var)
 
+    if CONF_LR1121_FIRMWARE_UPDATE in config:
+        await _create_lr1121_firmware_update(config, var)
+
     if tuning_module.CONF_TUNING in config:
         await tuning_module.to_code(config[tuning_module.CONF_TUNING], var)
 
@@ -360,5 +457,124 @@ async def _create_accept_foreign_pairing_switch(config, var):
         }
     )
     entity = await switch_component.new_switch(entity_config)
+    await cg.register_component(entity, entity_config)
+    cg.add(entity.set_parent(var))
+
+
+def _cached_http_fetch(cache_dir):
+    """Build a `fetch(url, expected_hash=None) -> bytes` callable for
+    lr1121_firmware.fetch_and_verify(), backed by an on-disk cache so repeat and offline builds
+    don't re-download the same source (design plan §5.2).
+
+    The cache key incorporates `expected_hash` (the MD5 fetch_and_verify() already resolved from
+    the `.md5` sidecar or `checksum_md5:` before calling this for the `.bin`) rather than being
+    `sha256(url)` alone. With the default `ref: HEAD` the URL never changes, so a plain
+    url-only key means a corrupt/truncated download poisons the cache permanently -- no config
+    change can ever invalidate it, since nothing about the request changes on retry. Folding the
+    expected hash in means correcting a wrong `checksum_md5:` (or a fixed upstream sidecar) misses
+    the poisoned entry and forces a fresh download. The `.md5` sidecar fetch itself has no
+    expected_hash to key on (chicken-and-egg -- it's what supplies one for the .bin) and is cached
+    under the URL alone; a corrupted sidecar is a much smaller/rarer risk than a corrupted 64+ KB
+    binary, and the cache directory below is a manual escape hatch either way.
+
+    Data that fails its own hash check is deliberately never written to the cache (verify-before-store):
+    a transient network corruption then simply retries cleanly on the next build, with no
+    config change needed at all.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def fetch(url, expected_hash=None):
+        cache_key = hashlib.sha256(f"{url}|{expected_hash or ''}".encode("utf-8")).hexdigest()
+        cache_path = cache_dir / cache_key
+        if cache_path.exists():
+            return cache_path.read_bytes()
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310
+                data = response.read()
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                raise lr1121_firmware.Lr1121FirmwareNotFoundError(url) from err
+            raise lr1121_firmware.Lr1121FirmwareError(f"HTTP {err.code} fetching {url}") from err
+        except urllib.error.URLError as err:
+            raise lr1121_firmware.Lr1121FirmwareError(f"Failed to fetch {url}: {err}") from err
+        if expected_hash is None or hashlib.md5(data).hexdigest() == expected_hash:  # noqa: S324
+            cache_path.write_bytes(data)
+        return data
+
+    return fetch
+
+
+def _render_lr1121_firmware_header(image):
+    """Render the verified firmware image as a C++ header (design plan §5.3).
+
+    Each raw 4-byte chunk of the `.bin` is exactly one big-endian word as Semtech's own image
+    format already lays it out, so this only has to slice and format, not transform, the bytes.
+    `inline const` (not `constexpr`) for the array: it is never used in a constant expression, so
+    forcing constant-evaluation of up to ~61k elements would only cost compile time; `const` at
+    namespace scope still lands in `.rodata` (flash) on ESP32, not RAM.
+    """
+    words = [f"0x{int.from_bytes(image.data[i : i + 4], 'big'):08X}" for i in range(0, len(image.data), 4)]
+    words_per_line = 8
+    body_lines = [
+        "    " + ", ".join(words[i : i + words_per_line]) + "," for i in range(0, len(words), words_per_line)
+    ]
+    return "\n".join(
+        [
+            "#pragma once",
+            "// Auto-generated by the home_io_control lr1121_firmware_update build step. Do not edit.",
+            "#include <cstddef>",
+            "#include <cstdint>",
+            "",
+            "namespace esphome {",
+            "namespace home_io_control {",
+            "",
+            "inline const uint32_t LR1121_FIRMWARE_UPDATE_IMAGE[] = {",
+            *body_lines,
+            "};",
+            f"inline constexpr size_t LR1121_FIRMWARE_UPDATE_IMAGE_WORDS = {len(words)};",
+            f"inline constexpr uint16_t LR1121_FIRMWARE_UPDATE_TARGET_VERSION = 0x{image.version:04X};",
+            "",
+            "}  // namespace home_io_control",
+            "}  // namespace esphome",
+            "",
+        ]
+    )
+
+
+async def _create_lr1121_firmware_update(config, var):
+    """Fetch/verify the configured firmware image, generate its header, set the build flag that
+    gates the whole feature, and create the "Flash LR1121 Radio Firmware" button.
+
+    The block's mere presence in YAML is the build flag (design plan §5.4) — there is no
+    separate enable switch, so entering/leaving flash mode is a recompile + OTA each way.
+    """
+    fw_config = config[CONF_LR1121_FIRMWARE_UPDATE]
+    cache_dir = CORE.data_dir / "lr1121_firmware_cache"
+    try:
+        image = lr1121_firmware.fetch_and_verify(
+            source=fw_config[CONF_SOURCE],
+            ref=fw_config.get(CONF_REF),
+            checksum_md5=fw_config.get(CONF_CHECKSUM_MD5),
+            target_version=fw_config.get(CONF_TARGET_VERSION),
+            fetch=_cached_http_fetch(cache_dir),
+        )
+    except lr1121_firmware.Lr1121FirmwareError as err:
+        raise cv.Invalid(f"lr1121_firmware_update: {err}") from err
+
+    header_path = CORE.relative_src_path("lr1121_firmware_update_image.h")
+    write_file_if_changed(header_path, _render_lr1121_firmware_header(image))
+
+    cg.add_define("IOHOME_LR1121_FIRMWARE_UPDATE")
+
+    entity_config = button_component.button_schema(
+        IOHomeLr1121FirmwareUpdateButton,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ).extend(cv.COMPONENT_SCHEMA)(
+        {
+            CONF_ID: config[CONF_LR1121_FIRMWARE_UPDATE_BUTTON_ID],
+            CONF_NAME: "Flash LR1121 Radio Firmware",
+        }
+    )
+    entity = await button_component.new_button(entity_config)
     await cg.register_component(entity, entity_config)
     cg.add(entity.set_parent(var))

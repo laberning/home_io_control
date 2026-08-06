@@ -100,6 +100,21 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::last_1w_activity_ms_;
   using IOHomeControlComponent::first_1w_activity_ms_;
   using IOHomeControlComponent::defer_background_poll_;
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+  using IOHomeControlComponent::lr1121_firmware_updater_;
+  using IOHomeControlComponent::lr1121_bootloader_version_known_;
+  using IOHomeControlComponent::lr1121_bootloader_chip_type_;
+  using IOHomeControlComponent::lr1121_bootloader_version_;
+  using IOHomeControlComponent::lr1121_flash_verdict_known_;
+  using IOHomeControlComponent::lr1121_flash_verdict_;
+  using IOHomeControlComponent::lr1121_installed_fw_;
+  using IOHomeControlComponent::lr1121_installed_device_type_;
+  using IOHomeControlComponent::lr1121_flash_confirmation_armed_;
+  using IOHomeControlComponent::describe_lr1121_flash_verdict_;
+  using IOHomeControlComponent::lr1121_firmware_update_debug_lines_;
+  using IOHomeControlComponent::run_lr1121_boot_time_bootloader_read_;
+  using IOHomeControlComponent::cache_lr1121_flash_verdict_;
+#endif
 };
 
 /// Hub subclass for RX-path tests: exposes process_received_packet_/update_device_status_ plus

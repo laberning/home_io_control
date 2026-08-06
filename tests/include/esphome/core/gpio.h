@@ -10,7 +10,9 @@ enum Flags : uint8_t {
   FLAG_NONE = 0x00,
   FLAG_INPUT = 0x01,
   FLAG_OUTPUT = 0x02,
-  // not needed
+  FLAG_OPEN_DRAIN = 0x04,
+  FLAG_PULLUP = 0x08,
+  FLAG_PULLDOWN = 0x10,
 };
 
 enum InterruptMode {
@@ -28,6 +30,10 @@ class GPIOPin {
   virtual ~GPIOPin() = default;
   virtual void setup() {}
   virtual void pin_mode(gpio::Flags flags) { (void) flags; }
+  // Real GPIOPin::get_flags() returns the pin's *configured* mode (from YAML, e.g.
+  // pullup:/pulldown:), independent of any transient pin_mode() calls -- see MockPin
+  // (radio_test_common.h) for a stub that models that distinction.
+  virtual gpio::Flags get_flags() const { return gpio::FLAG_NONE; }
   virtual bool digital_read() { return false; }
   virtual void digital_write(bool value) { (void) value; }
   virtual void attach_interrupt(void (*handler)(void *), void *arg, gpio::InterruptMode mode) {

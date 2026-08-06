@@ -28,8 +28,23 @@ class MockPin : public esphome::InternalGPIOPin {
   bool digital_read() override { return value_; }
   void set_value(bool v) { value_ = v; }
 
+  // Configured pin flags, as if set once by codegen from YAML (e.g. pullup:/pulldown:) --
+  // returned by get_flags() regardless of any pin_mode() calls that happen afterward. This
+  // mirrors real ESP32InternalGPIOPin::pin_mode(), which only programs the IDF GPIO driver and
+  // never mutates the pin's own flags_ member; get_flags() always reads back the configuration,
+  // not the pin's current transient direction. See BusyPinAsResetStrapGuard
+  // (radio_lr1121_firmware_updater.cpp) for the fix this distinction is needed to test.
+  void set_flags(esphome::gpio::Flags flags) { configured_flags_ = flags; }
+  esphome::gpio::Flags get_flags() const override { return configured_flags_; }
+  // Records every pin_mode() call (direction flip to OUTPUT, then whatever is restored on the
+  // way back) so tests can assert what a RAII guard restored, not just that it restored *something*.
+  void pin_mode(esphome::gpio::Flags flags) override { pin_mode_calls_.push_back(flags); }
+  const std::vector<esphome::gpio::Flags> &pin_mode_calls() const { return pin_mode_calls_; }
+
  private:
   bool value_;
+  esphome::gpio::Flags configured_flags_{esphome::gpio::FLAG_INPUT};
+  std::vector<esphome::gpio::Flags> pin_mode_calls_;
 };
 
 // --- Mock radio driver (generic, queue-based) ---------------------------------

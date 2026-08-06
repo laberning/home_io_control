@@ -18,6 +18,28 @@ class Scheduler {
       component->last_timeout_callback_ = std::move(func);
     }
   }
+
+  // Self-keyed overload, mirroring the real Scheduler::set_timeout(const void *self, ...): no
+  // Component is recorded, so (unlike the overload above) this is not subject to a failed
+  // component being skipped. There is no Component to store the callback on, so it is recorded
+  // here on the Scheduler stub instead, keyed by `self` for cancel_timeout()/inspection.
+  void set_timeout(const void *self, uint32_t timeout, std::function<void()> &&func) {
+    last_self_timeout_self_ = self;
+    last_self_timeout_ms_ = timeout;
+    last_self_timeout_callback_ = std::move(func);
+  }
+  bool cancel_timeout(const void *self) {
+    if (self == nullptr || self != last_self_timeout_self_)
+      return false;
+    last_self_timeout_self_ = nullptr;
+    last_self_timeout_callback_ = nullptr;
+    return true;
+  }
+
+  // Test helpers for verifying self-keyed set_timeout() calls.
+  const void *last_self_timeout_self_{nullptr};
+  uint32_t last_self_timeout_ms_{0};
+  std::function<void()> last_self_timeout_callback_;
 };
 
 class Application {
@@ -29,6 +51,13 @@ class Application {
   // may also drive code paths that feed.
   uint32_t feed_wdt_calls{0};
   void feed_wdt() { this->feed_wdt_calls++; }
+
+  // Counts calls instead of actually restarting the process, so tests can assert a code path
+  // reaches the safe_reboot() invariant (see the LR1121 firmware-update ground rules: every
+  // bootloader excursion must end in either radio_->init() or App.safe_reboot()) without tearing
+  // down the test binary.
+  uint32_t safe_reboot_calls{0};
+  void safe_reboot() { this->safe_reboot_calls++; }
 };
 
 extern Application App;
