@@ -50,6 +50,13 @@ inline constexpr uint16_t LR1120_BOOTLOADER_2001 = 0x2001;
 inline constexpr uint16_t LR1110_BOOTLOADER_6500 = 0x6500;
 inline constexpr uint16_t LR1110_BOOTLOADER_1001 = 0x1001;
 
+/// @brief Version the `lr1121_loader_2100.bin` bootloader-*loader* image reports of itself.
+/// Numerically identical to LR1121_BOOTLOADER_2100, but a distinct concept: this is the loader
+/// firmware's own self-reported version, which Semtech's compatibility rule requires to *equal*
+/// the bootloader version currently running before the loader may be used -- not a
+/// "requires bootloader >= X" rule like LR1121_KNOWN_BOOTLOADER_REQUIREMENTS below.
+inline constexpr uint16_t LR1121_LOADER_2100 = 0x2100;
+
 /// @return true if `bootloader_version` is one of the two bootloader versions an LR1121 (as
 /// opposed to an LR1120 or LR1110) can report.
 [[nodiscard]] constexpr bool lr1121_bootloader_is_lr1121(uint16_t bootloader_version) {
@@ -124,6 +131,105 @@ enum class BootloaderSupport : uint8_t {
   return BootloaderSupport::UNKNOWN_TARGET;
 }
 
+/// @brief Required bootloader for a known target firmware version.
+/// @return The paired bootloader from LR1121_KNOWN_BOOTLOADER_REQUIREMENTS, or 0 when target_fw
+///         is not in the table -- an "unverified", not "incompatible", target (see that table's
+///         comment), and never a real requirement value since no table entry uses 0.
+[[nodiscard]] constexpr uint16_t lr1121_required_bootloader_for(uint16_t target_fw) {
+  for (const auto &requirement : LR1121_KNOWN_BOOTLOADER_REQUIREMENTS) {
+    if (requirement.target_fw == target_fw)
+      return requirement.bootloader;
+  }
+  return 0;
+}
+
+/// @brief Direction of a bootloader/target mismatch, for messaging.
+///
+/// lr1121_flash_decision()'s REJECT_BOOTLOADER_TOO_OLD verdict fires whenever
+/// lr1121_bootloader_supports_target() returns UNSUPPORTED, which covers both directions: the
+/// target needs a newer bootloader than this chip has (the only direction reachable before the
+/// bootloader-update feature existed), and the target needs an OLDER bootloader than this chip
+/// has -- a downgrade, unreachable until a chip can actually be running 0x2101. Used for
+/// *messaging* only, in both the transceiver-only and bootloader-update builds -- it never
+/// changes lr1121_flash_decision()'s own verdict.
+enum class BootloaderMismatch : uint8_t {
+  NONE,                ///< target_fw is unknown, or its required bootloader matches bootloader_version.
+  TARGET_NEEDS_NEWER,  ///< The "too old" direction -- what REJECT_BOOTLOADER_TOO_OLD has always meant until now.
+  TARGET_NEEDS_OLDER,  ///< The "too new" direction -- a downgrade, newly reachable once this feature ships.
+};
+
+/// @brief Classify a bootloader/target mismatch by direction; see BootloaderMismatch.
+[[nodiscard]] constexpr BootloaderMismatch lr1121_bootloader_mismatch_kind(uint16_t target_fw,
+                                                                           uint16_t bootloader_version) {
+  const uint16_t required = lr1121_required_bootloader_for(target_fw);
+  if (required == 0 || required == bootloader_version)
+    return BootloaderMismatch::NONE;
+  return required > bootloader_version ? BootloaderMismatch::TARGET_NEEDS_NEWER
+                                       : BootloaderMismatch::TARGET_NEEDS_OLDER;
+}
+
+/// @brief Whether the three-stage bootloader-rewrite sequence (ADR 0021) is applicable, and if
+/// not, why.
+enum class BootloaderUpgradePath : uint8_t {
+  NOT_APPLICABLE,            ///< No block, or no upgrade needed/possible to evaluate. Keep the original verdict.
+  AVAILABLE,                 ///< Three-stage is possible. Still requires the arming switch to actually run.
+  BLOCKED_UNKNOWN_TARGET,    ///< Block present, but this build cannot know what the target needs.
+  BLOCKED_BOOTLOADER_NEWER,  ///< Target needs an OLDER bootloader. Not reachable today, likely never.
+};
+
+/// @brief Whether the three-stage bootloader upgrade is applicable for the current cached state.
+///
+/// A post-filter, consulted only when lr1121_flash_decision() has already returned
+/// REJECT_BOOTLOADER_TOO_OLD -- it never runs earlier and never changes that function's verdict
+/// (see this header's file comment and lr1121_flash_decision()'s doc comment). The evaluation
+/// order below *is* the specification -- each rule exists to close a specific way an irreversible
+/// write could be justified on insufficient evidence:
+///   1. !block_present -> NOT_APPLICABLE -- feature not built in.
+///   2. !bootloader_version_known -> NOT_APPLICABLE -- an unknown current bootloader cannot
+///      justify an irreversible write. Note run_lr1121_flash_sequence_() *adopts* a fresh reading
+///      at flash time for the ordinary transceiver path; that allowance must not extend to here.
+///   3. bootloader_version doesn't identify an LR1121 -> NOT_APPLICABLE -- REJECT_WRONG_CHIP owns
+///      wrong-chip messaging, this function does not duplicate it.
+///   4. loader_fw != bootloader_version -> NOT_APPLICABLE -- Semtech's equality rule for the
+///      loader image (see LR1121_LOADER_2100); also the "chip is already on 0x2101" case, since
+///      no 0x2101-chip can equal the 0x2100 loader.
+///   5. target not in the compatibility table (required == 0) -> BLOCKED_UNKNOWN_TARGET -- never
+///      gamble an irreversible write on an unrecognised target.
+///   6. required == bootloader_version -> NOT_APPLICABLE -- no upgrade needed.
+///   7. required > bootloader_version -> AVAILABLE -- the one path that proceeds.
+///   8. else (required < bootloader_version) -> BLOCKED_BOOTLOADER_NEWER -- a downgrade. The
+///      0x8101 report includes an anti-rollback check, whose exact semantics Semtech does not
+///      document, but which most likely makes this permanently impossible; ADR 0021 records how
+///      far that is inference.
+/// @param block_present Whether a `bootloader:` sub-block is configured (the build flag).
+/// @param bootloader_version_known Whether the boot-time excursion successfully read a bootloader
+///        version -- same "unknown is never evidence" sentinel rule as lr1121_flash_decision().
+/// @param bootloader_version Bootloader version read at boot; meaningless if !bootloader_version_known.
+/// @param loader_fw Version parsed from the bootloader: sub-block's loader source: image.
+/// @param target_fw Configured target firmware version (0 if unknown).
+[[nodiscard]] constexpr BootloaderUpgradePath lr1121_bootloader_upgrade_path(bool block_present,
+                                                                             bool bootloader_version_known,
+                                                                             uint16_t bootloader_version,
+                                                                             uint16_t loader_fw, uint16_t target_fw) {
+  if (!block_present)
+    return BootloaderUpgradePath::NOT_APPLICABLE;
+  if (!bootloader_version_known)
+    return BootloaderUpgradePath::NOT_APPLICABLE;
+  if (!lr1121_bootloader_is_lr1121(bootloader_version))
+    return BootloaderUpgradePath::NOT_APPLICABLE;
+  if (loader_fw != bootloader_version)
+    return BootloaderUpgradePath::NOT_APPLICABLE;
+
+  const uint16_t required = lr1121_required_bootloader_for(target_fw);
+  if (required == 0)
+    return BootloaderUpgradePath::BLOCKED_UNKNOWN_TARGET;
+  if (required == bootloader_version)
+    return BootloaderUpgradePath::NOT_APPLICABLE;
+  if (required > bootloader_version)
+    return BootloaderUpgradePath::AVAILABLE;
+  return BootloaderUpgradePath::BLOCKED_BOOTLOADER_NEWER;
+}
+
 /// @brief Outcome of lr1121_flash_decision().
 enum class FlashDecision : uint8_t {
   PROCEED,                    ///< Safe to erase and write.
@@ -135,7 +241,9 @@ enum class FlashDecision : uint8_t {
 
 /// @brief The single decision point for whether/how to flash `target_fw`.
 ///
-/// Order of checks, per the design record's five-layer scheme (§6):
+/// Order of checks. Layers 3 and 4 below are the two chip-identity checks (normal-mode
+/// device_type and bootloader-mode version); everything else exists to make sure an absent read
+/// is never mistaken for evidence:
 ///   1. Boot excursion never completed at all (bootloader_version unknown) -- nothing below can
 ///      be evaluated, so this is checked first and short-circuits straight to NEEDS_CONFIRMATION.
 ///   2. Layer 4 -- bootloader-mode identity: `type` must be the production-silicon byte AND the
@@ -154,10 +262,11 @@ enum class FlashDecision : uint8_t {
 /// Every input below has its own "unknown" sentinel, and every one of them routes to
 /// NEEDS_CONFIRMATION rather than a rejection or a false PROCEED -- an absent read is never
 /// evidence of anything, safe or unsafe:
-///   - `bootloader_version == 0`: the boot-time excursion (design record §0.3) never successfully
-///     read one. 0x0000 is not a value any real LR11xx bootloader reports.
+///   - `bootloader_version == 0`: the boot-time excursion never successfully read one. 0x0000 is
+///     not a value any real LR11xx bootloader reports.
 ///   - `device_type == 0`: the normal-mode read never happened at all (failed init(), or the read
-///     itself failed) -- see design record's Step 6b(c) recovery-path allowance.
+///     itself failed). Deliberately still allowed to reach a flash after confirmation -- a radio
+///     that failed to initialize is exactly the case reflashing is meant to recover.
 ///   - `target_fw == 0`: the build could not derive a version from the filename and none was
 ///     configured; can never match a LR1121_KNOWN_BOOTLOADER_REQUIREMENTS entry (none uses 0), so
 ///     it always resolves to BootloaderSupport::UNKNOWN_TARGET.
@@ -170,7 +279,7 @@ enum class FlashDecision : uint8_t {
 /// @param bootloader_chip_type `type` byte from the *bootloader-mode* GetVersion read at boot
 ///        (layer 4); 0xDF (LR1121_BOOTLOADER_TYPE_FOR_FIRMWARE_DECISIONS) for production silicon
 ///        of any LR11xx family, or 0 if the boot excursion never completed.
-/// @param bootloader_version Bootloader version read at boot (design record §0.3); one of
+/// @param bootloader_version Bootloader version read at boot; one of
 ///        LR1121_BOOTLOADER_2100/2101 for a genuine LR1121, or 0 if never successfully read.
 /// @param installed_fw Currently-installed transceiver firmware version (0 if unknown, e.g. after
 ///        a failed init()).

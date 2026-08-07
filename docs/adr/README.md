@@ -24,7 +24,8 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0002](0002-direct-spi-radio-drivers.md) | Direct SPI radio drivers | Own the chip drivers rather than reuse ESPHome's generic radio components |
 | [0003](0003-shared-software-phy-base-for-sx1262-lr1121.md) | Shared software PHY + IRQ base | SX1262 and LR1121 share one framing codec and one RX/TX state machine |
 | [0013](0013-blocking-exchange-on-the-esphome-loop.md) | Blocking radio work on the loop | No FreeRTOS tasks; the operation queue *is* the concurrency model |
-| [0020](0020-flash-lr1121-transceiver-firmware-not-the-bootloader.md) | Flash LR1121 firmware, not the bootloader | Stage the riskier operation for later; keep every failed flash recoverable now |
+| [0020](0020-flash-lr1121-transceiver-firmware-not-the-bootloader.md) | Flash LR1121 firmware, not the bootloader | *Superseded by 0021.* Stage the riskier operation for later; keep every failed flash recoverable now |
+| [0021](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md) | Flash the bootloader, behind an arming switch | Reach the CVE-fixing `0x0104`; gate the one unrecoverable write behind visible armed state and a build-time recovery image |
 
 ### Behavior
 

@@ -414,6 +414,20 @@ class IOHomeControlComponent : public Component,
   /// every bootloader excursion this triggers must end in either radio_->init() or
   /// App.safe_reboot() — there is no third option.
   void trigger_lr1121_firmware_update();
+
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+  /// @brief Set by the "Allow LR1121 Bootloader Rewrite (Irreversible)" switch's write_state().
+  ///
+  /// A permission, not an override: this can only convert a cached
+  /// BootloaderUpgradePath::AVAILABLE verdict into "run the three-stage sequence" (bootloader
+  /// ADR 0021) -- it never affects REJECT_WRONG_CHIP, the post-entry sanity
+  /// check, the busy_ guard, or any other verdict. Read once, at button-press time
+  /// (trigger_lr1121_firmware_update()); the ESPHome loop is blocked for the whole three-stage
+  /// sequence once it starts, so the switch cannot change mid-flash. Deliberately not named
+  /// anything with "armed" -- lr1121_flash_confirmation_armed_ already means the two-press window
+  /// this switch *replaces* for its own path, and a reader must never have to guess which is meant.
+  void set_bootloader_rewrite_allowed(bool allowed) { this->bootloader_rewrite_allowed_ = allowed; }
+#endif
 #endif
 
  protected:
@@ -609,7 +623,7 @@ class IOHomeControlComponent : public Component,
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   // --- LR1121 firmware update (hub_lr1121_firmware_update.cpp) ---
-  /// @brief Boot-time bootloader-version excursion (design record §0.3/§0.4).
+  /// @brief Boot-time bootloader-version excursion.
   ///
   /// Called from setup() after select_and_construct_radio_() and before radio_->init() — at that
   /// point nothing has configured the radio yet, so a bootloader excursion costs one extra chip
@@ -639,6 +653,19 @@ class IOHomeControlComponent : public Component,
   /// config dump and a button-press log always say the same thing.
   /// @return A complete log message (no trailing newline).
   std::string describe_lr1121_flash_verdict_() const;
+
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+  /// @brief User-facing text for a bootloader-rewrite refusal at button-press time.
+  ///
+  /// Separate from describe_lr1121_flash_verdict_() rather than a suffix on it: that function
+  /// opens with "CANNOT PROCEED", which reads as final and would then contradict an explanation
+  /// that the rewrite is available. Leads with the outcome (nothing happened), then the reason,
+  /// then the next action. Returns a string rather than logging directly so it stays testable --
+  /// host builds compile the ESP_LOG* macros to no-ops.
+  /// @param path The cached upgrade path that produced the refusal.
+  /// @return The message to log.
+  std::string describe_lr1121_bootloader_refusal_(BootloaderUpgradePath path) const;
+#endif
   /// @brief Arm the two-press confirmation window and schedule its auto-disarm.
   /// Mirrors hub_key_extraction.cpp's KEY_EXTRACTION_AUTO_OFF_MS idiom (named set_timeout,
   /// guard against a stale callback after a fresh press already disarmed).
@@ -652,6 +679,20 @@ class IOHomeControlComponent : public Component,
   /// exit — including every failure path — ends in `App.safe_reboot()`. There is no `return` in
   /// here that leaves the chip unconfigured without also rebooting the ESP32.
   void run_lr1121_flash_sequence_();
+
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+  /// @brief The three-stage bootloader-rewrite sequence (ADR 0021): write the loader image,
+  /// reboot into it, rewrite the bootloader via 0x81xx, then write the transceiver image. Run
+  /// only once trigger_lr1121_firmware_update() has decided the switch permits it and
+  /// the cached path is BootloaderUpgradePath::AVAILABLE.
+  ///
+  /// Same safety invariant as run_lr1121_flash_sequence_(): every exit past the first
+  /// enter_bootloader() call is App.safe_reboot(), including every stage's failure path -- a
+  /// stage-2 failure must reboot, not fall through to stage 3. Stage 2 (0x8100 in flight) is the
+  /// one step with no recovery path in this project; every log line in that stage must say so
+  /// plainly and must never reuse this component's ordinary "press again" phrasing.
+  void run_lr1121_bootloader_upgrade_sequence_();
+#endif
 #endif
 
   // --- Radio driver ---
@@ -731,6 +772,11 @@ class IOHomeControlComponent : public Component,
   /// lr1121_bootloader_chip_type_ above (layer 4, bootloader-mode).
   uint8_t lr1121_installed_device_type_{0};
   bool lr1121_flash_confirmation_armed_{false};  ///< True during the two-press confirmation window.
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+  /// Set by the arming switch (IOHomeLr1121BootloaderRewriteSwitch); see
+  /// set_bootloader_rewrite_allowed()'s comment above for what this may and may not affect.
+  bool bootloader_rewrite_allowed_{false};
+#endif
 #endif
 };
 

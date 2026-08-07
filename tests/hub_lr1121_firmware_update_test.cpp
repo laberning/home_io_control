@@ -30,6 +30,47 @@ void queue_version_response(ScriptedSpi &spi, uint8_t byte1, uint8_t byte2, uint
   spi.queue_responses({0x00, 0x01, byte1, byte2, byte3});
 }
 
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+// Queue a VerifyBootloader-shaped response: [stat1, check_byte, use_case, version_major, version_minor].
+void queue_verify_bootloader_response(ScriptedSpi &spi, uint8_t check_byte, uint8_t use_case, uint8_t version_major,
+                                      uint8_t version_minor) {
+  spi.queue_responses({0x00, check_byte, use_case, version_major, version_minor});
+}
+
+// Queue the 6-byte Stat1/Stat2/IrqStatus direct read the loader answers between UpdateBootloader
+// and VerifyBootloader. command_status lives in bits 7:1 of Stat1, so OK (2) encodes as 0x04.
+void queue_updater_status_response(ScriptedSpi &spi, uint8_t command_status) {
+  spi.queue_responses({static_cast<uint8_t>(command_status << 1), 0x00, 0x00, 0x00, 0x00, 0x00});
+}
+
+// Count occurrences of `opcode` across every recorded transaction (find_opcode() only finds the
+// first) -- the three-stage sequence issues EraseFlash/WriteFlashEncrypted twice, once per stage.
+size_t count_opcode(const ScriptedSpi &spi, uint16_t opcode) {
+  const uint8_t msb = (opcode >> 8) & 0xFF, lsb = opcode & 0xFF;
+  size_t count = 0;
+  for (const auto &txn : spi.transactions()) {
+    if (txn.size() >= 2 && txn[0] == msb && txn[1] == lsb)
+      count++;
+  }
+  return count;
+}
+
+// Index of the Nth (0-based) occurrence of `opcode`, or -1 if fewer than N+1 exist.
+int find_nth_opcode(const ScriptedSpi &spi, uint16_t opcode, size_t n) {
+  const uint8_t msb = (opcode >> 8) & 0xFF, lsb = opcode & 0xFF;
+  size_t seen = 0;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    const auto &txn = spi.transactions()[i];
+    if (txn.size() >= 2 && txn[0] == msb && txn[1] == lsb) {
+      if (seen == n)
+        return static_cast<int>(i);
+      seen++;
+    }
+  }
+  return -1;
+}
+#endif  // IOHOME_LR1121_BOOTLOADER_UPDATE
+
 }  // namespace
 
 TEST(HubLr1121FirmwareUpdate, TriggerWhileBusyIsRefusedWithoutTouchingTheChip) {
@@ -252,8 +293,11 @@ TEST(HubLr1121FirmwareUpdate, CacheFlashVerdictProceedsForRealLr1121BytePattern)
   MockPin rst, busy;
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
   // cache_lr1121_flash_verdict_() issues exactly one normal-mode GetVersion: device_type 0x03,
-  // installed firmware 0x0101 -- older than the test image's target 0x0103 (see
-  // tests/include/lr1121_firmware_update_image.h), so a correct decision is PROCEED.
+  // installed firmware 0x0101 -- older than the test image's target 0x0104 (see
+  // tests/include/lr1121_firmware_update_image.h), so a correct decision is PROCEED. Bootloader is
+  // 0x2101 (not 0x2100) specifically because 0x0104 requires 0x2101 -- this is the regression guard
+  // for the layer-3/4 byte-swap bug, not a bootloader-compatibility test, so any SUPPORTED pairing
+  // exercises it equally.
   queue_version_response(spi, LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS, 0x01, 0x01);
 
   MockRadio radio;
@@ -264,7 +308,7 @@ TEST(HubLr1121FirmwareUpdate, CacheFlashVerdictProceedsForRealLr1121BytePattern)
   // already cached a genuine LR1121's bootloader identity.
   hub.lr1121_bootloader_version_known_ = true;
   hub.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
-  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
+  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2101;
 
   hub.cache_lr1121_flash_verdict_();
 
@@ -371,8 +415,15 @@ TEST(HubLr1121FirmwareUpdate, DescribeVerdictFormatsEveryOutcomeDistinctly) {
   hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
   const std::string too_old = hub.describe_lr1121_flash_verdict_();
   EXPECT_NE(too_old.find("CANNOT PROCEED"), std::string::npos) << too_old;
-  EXPECT_NE(too_old.find("not supported"), std::string::npos)
-      << "must say bootloader updates are not supported: " << too_old;
+  EXPECT_NE(too_old.find("needs bootloader"), std::string::npos)
+      << "must state the required and current bootloader versions: " << too_old;
+  // The test Makefile defines IOHOME_LR1121_BOOTLOADER_UPDATE, so describe_lr1121_flash_verdict_()
+  // must NOT append the "add a bootloader: sub-block" suffix here -- that advice is wrong when the
+  // block is already configured, and trigger_lr1121_firmware_update()/
+  // lr1121_firmware_update_debug_lines_() are the ones that append a path-specific suffix in a
+  // build that has the feature compiled in (covered separately below).
+  EXPECT_EQ(too_old.find("bootloader:"), std::string::npos)
+      << "must not tell the user to add a block that this build already has: " << too_old;
 
   hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
   const std::string needs_confirm = hub.describe_lr1121_flash_verdict_();
@@ -408,6 +459,40 @@ TEST(HubLr1121FirmwareUpdate, DescribeVerdictNamesNormalModeChipIdentityWhenLaye
   EXPECT_NE(message.find("normal-mode chip identity byte"), std::string::npos) << message;
   EXPECT_NE(message.find("0x01"), std::string::npos) << "must name the device_type byte this chip has: " << message;
   EXPECT_NE(message.find("LR1110"), std::string::npos) << message;
+}
+
+// R7: a chip whose bootloader is
+// NEWER than what the configured target requires -- the "too new" direction
+// (BootloaderMismatch::TARGET_NEEDS_OLDER), newly reachable once this feature ships. This is the
+// message a user actually sees, and the entire reason the TARGET_NEEDS_OLDER/TARGET_NEEDS_NEWER
+// split exists, so it needs its own test independent of lr1121_bootloader_mismatch_kind()'s own
+// (already thorough) coverage.
+//
+// describe_lr1121_flash_verdict_() reads LR1121_FIRMWARE_UPDATE_TARGET_VERSION as a compile-time
+// constant, not a parameter -- and this test binary's stand-in header fixes it at 0x0104
+// (requires bootloader 0x2101; see tests/include/lr1121_firmware_update_image.h's comment), which
+// is always present in LR1121_KNOWN_BOOTLOADER_REQUIREMENTS. There is no way to vary the target at
+// runtime here, so the matrix's literal "bootloader 0x2101 vs. a target requiring 0x2100" numbers
+// cannot be reproduced. What *is* reachable, through the real rendering code, is the same
+// TARGET_NEEDS_OLDER branch: any bootloader_version_ newer than the compiled-in target's required
+// 0x2101 takes that identical branch in describe_lr1121_flash_verdict_(). 0x2102 is not a bootloader
+// version any real LR1121 reports (lr1121_bootloader_is_lr1121() only knows 0x2100/0x2101), but
+// this test only exercises message *rendering* (a pure string-formatting function of two uint16_t
+// values), which does not care whether the input is realistic.
+TEST(HubLr1121FirmwareUpdate, R7_DescribeVerdictRendersDowngradeMessageDistinctFromTooOldWording) {
+  TestableHubComponent hub;
+  hub.lr1121_bootloader_version_ = 0x2102;  // synthetic: newer than the 0x2101 the compiled-in target requires
+  hub.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+
+  const std::string message = hub.describe_lr1121_flash_verdict_();
+
+  EXPECT_NE(message.find("is newer than this firmware supports"), std::string::npos) << message;
+  EXPECT_NE(message.find("no downgrade path"), std::string::npos) << message;
+  // "this chip has" only appears in the TARGET_NEEDS_NEWER ("too old") branch's wording -- its
+  // absence here proves the two branches did not collapse onto the same message.
+  EXPECT_EQ(message.find("this chip has"), std::string::npos)
+      << "must not reuse the TARGET_NEEDS_NEWER (\"too old\") wording: " << message;
 }
 
 // The button-press log site is where the "press again" follow-up actually belongs (see
@@ -483,4 +568,375 @@ TEST(HubLr1121FirmwareUpdate, EnterBootloaderConfirmationTimeoutStillReboots) {
   EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1)
       << "enter_bootloader() returning false must still reboot -- its entry sequence already ran "
          "and left the chip unconfigured regardless of whether the verification read succeeded";
+}
+
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+// ============================================================================
+// Bootloader-rewrite post-filter dispatch (ADR 0021)
+// ============================================================================
+// LR1121_FIRMWARE_UPDATE_TARGET_VERSION is 0x0104 (requires bootloader 0x2101) and
+// LR1121_BOOTLOADER_LOADER_FW is 0x2100 in the test fixtures -- see
+// tests/include/lr1121_firmware_update_image.h's comment for why this is the only target for
+// which BootloaderUpgradePath::AVAILABLE is reachable through the real
+// cache_lr1121_flash_verdict_()/lr1121_bootloader_upgrade_path() wiring.
+
+namespace {
+// Sets up a hub whose cached state matches R3/R4: chip at bootloader 0x2100 (equals the
+// configured loader's version), target 0x0104 needs 0x2101 -> AVAILABLE.
+void arrange_bootloader_upgrade_available(TestableHubComponent &hub, Lr1121FirmwareUpdater &updater) {
+  hub.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+  hub.lr1121_bootloader_version_known_ = true;
+  hub.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
+  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
+}
+}  // namespace
+
+TEST(HubLr1121FirmwareUpdate, R3_BootloaderUpgradeAvailableButSwitchOffRefusesWithZeroSpiTraffic) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  TestableHubComponent hub;
+  arrange_bootloader_upgrade_available(hub, updater);
+  hub.bootloader_rewrite_allowed_ = false;  // switch off
+
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_TRUE(spi.transactions().empty()) << "a switch-off refusal must not touch the chip at all";
+}
+
+TEST(HubLr1121FirmwareUpdate, R4_BootloaderUpgradeAvailableAndSwitchOnRunsFullThreeStageSequence) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x00);     // Stage 1a sanity: 0x2100
+  queue_version_response(spi, LR1121_UPDATER_LOADER_DEVICE_TYPE, 0x21, 0x00);  // Stage 1b: loader running
+  queue_updater_status_response(spi, 0x02);                                    // Stage 2: chip accepted 0x8100
+  queue_verify_bootloader_response(spi, 0x3F, 0x01, 0x21, 0x01);               // Stage 2: all six checks pass
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x01);     // Stage 2: stays in bootloader, 0x2101
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x01);  // Stage 3: enter_bootloader confirms 0x2101
+  queue_version_response(spi, LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS, 0x01, 0x04);  // Stage 3: post-flash verify
+
+  TestableHubComponent hub;
+  arrange_bootloader_upgrade_available(hub, updater);
+  hub.bootloader_rewrite_allowed_ = true;  // switch on
+
+  const uint32_t reboots_before = esphome::App.safe_reboot_calls;
+  hub.trigger_lr1121_firmware_update();
+
+  ASSERT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_ERASE_FLASH), 2u) << "one erase per stage (1a and 3)";
+  ASSERT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_WRITE_FLASH_ENCRYPTED), 2u) << "one write per stage (1a and 3)";
+  ASSERT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_UPDATE_BOOTLOADER), 1u);
+  ASSERT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_VERIFY_BOOTLOADER), 1u);
+  ASSERT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_UPDATER_REBOOT), 1u);
+
+  const int erase_1a = find_nth_opcode(spi, LR1121_UPDATER_CMD_ERASE_FLASH, 0);
+  const int write_1a = find_nth_opcode(spi, LR1121_UPDATER_CMD_WRITE_FLASH_ENCRYPTED, 0);
+  const int update_bl = spi.find_opcode(LR1121_UPDATER_CMD_UPDATE_BOOTLOADER);
+  const int verify_bl = spi.find_opcode(LR1121_UPDATER_CMD_VERIFY_BOOTLOADER);
+  const int updater_reboot_idx = spi.find_opcode(LR1121_UPDATER_CMD_UPDATER_REBOOT);
+  const int erase_3 = find_nth_opcode(spi, LR1121_UPDATER_CMD_ERASE_FLASH, 1);
+  const int write_3 = find_nth_opcode(spi, LR1121_UPDATER_CMD_WRITE_FLASH_ENCRYPTED, 1);
+  ASSERT_GE(erase_1a, 0);
+  ASSERT_GE(write_1a, 0);
+  ASSERT_GE(update_bl, 0);
+  ASSERT_GE(verify_bl, 0);
+  ASSERT_GE(updater_reboot_idx, 0);
+  ASSERT_GE(erase_3, 0);
+  ASSERT_GE(write_3, 0);
+  EXPECT_LT(erase_1a, write_1a);
+  EXPECT_LT(write_1a, update_bl) << "Stage 1b's checkpoint must pass before Stage 2's irreversible write";
+  // Semtech's reference tool issues a 6-byte no-opcode status read between UpdateBootloader and
+  // VerifyBootloader; matching its wire traffic exactly matters most in this stage, which cannot
+  // be verified on hardware without risking the chip.
+  ASSERT_EQ(verify_bl, update_bl + 2) << "exactly one transaction must sit between 0x8100 and 0x8101";
+  EXPECT_EQ(spi.transactions()[update_bl + 1].size(), 6u)
+      << "that transaction must be the 6-byte Stat1/Stat2/IrqStatus direct read";
+  EXPECT_LT(update_bl, verify_bl);
+  EXPECT_LT(verify_bl, updater_reboot_idx);
+  EXPECT_LT(updater_reboot_idx, erase_3)
+      << "Stage 3 must re-enter the bootloader and erase only after Stage 2 confirms";
+  EXPECT_LT(erase_3, write_3);
+
+  EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1) << "a full successful sequence still ends in a reboot";
+}
+
+// R8: the boot-time excursion never read
+// a bootloader version at all. lr1121_bootloader_upgrade_path() rule 2 makes this NOT_APPLICABLE
+// unconditionally -- an unknown bootloader can never justify an irreversible write, switch or no
+// switch (§D requires every refusing row to assert zero SPI traffic). trigger_lr1121_firmware_update()
+// reads lr1121_bootloader_version_known_ directly (not re-derived from the cached verdict), so this
+// is reachable exactly as written -- no fallback needed.
+TEST(HubLr1121FirmwareUpdate, R8_UnknownBootloaderRefusesEvenWithSwitchOn) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  TestableHubComponent hub;
+  hub.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+  hub.lr1121_bootloader_version_known_ = false;  // boot-time excursion never read a version
+  hub.bootloader_rewrite_allowed_ = true;        // switch on -- must not matter (rule 2)
+
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_TRUE(spi.transactions().empty())
+      << "an unknown bootloader must never justify the irreversible path, switch or no switch";
+}
+
+// R9: the target is absent from this
+// build's compatibility table -> BootloaderUpgradePath::BLOCKED_UNKNOWN_TARGET -> refuse without
+// gambling an irreversible write on an unrecognised requirement (§D requires zero SPI traffic).
+//
+// UNREACHABLE at the hub level in this test binary: trigger_lr1121_firmware_update() calls
+// lr1121_bootloader_upgrade_path() with LR1121_FIRMWARE_UPDATE_TARGET_VERSION, a compile-time
+// constant fixed at 0x0104 by this test binary's stand-in header (see
+// tests/include/lr1121_firmware_update_image.h) -- and 0x0104 is always present in
+// LR1121_KNOWN_BOOTLOADER_REQUIREMENTS, so `required` can never be 0 no matter what hub state this
+// test sets up. There is no runtime hook to substitute a different target for one hub test. This
+// tests the same rule directly at the pure-function level instead.
+TEST(HubLr1121FirmwareUpdate, R9_UnknownTargetBlocksUpgradePathAtThePureFunctionLevel) {
+  constexpr uint16_t kTargetAbsentFromCompatibilityTable = 0x0999;  // matches the pure-decision test's convention
+  EXPECT_EQ(lr1121_bootloader_upgrade_path(/*block_present=*/true, /*bootloader_version_known=*/true,
+                                           /*bootloader_version=*/LR1121_BOOTLOADER_2100,
+                                           /*loader_fw=*/LR1121_BOOTLOADER_2100, kTargetAbsentFromCompatibilityTable),
+            BootloaderUpgradePath::BLOCKED_UNKNOWN_TARGET);
+}
+
+// The highest-value safety test in this feature: a loader that did not
+// land must be caught at the Stage-1b checkpoint, before the irreversible 0x8100 is ever sent.
+TEST(HubLr1121FirmwareUpdate, Stage1bAbortsOnFirmwareMismatchAndNeverIssuesUpdateBootloader) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x00);  // Stage 1a sanity: 0x2100
+  // Stage 1b: chip reports the OLD installed firmware instead of the loader's 0x2100 -- as if the
+  // loader write from Stage 1a never actually landed.
+  queue_version_response(spi, LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS, 0x01, 0x01);
+
+  TestableHubComponent hub;
+  arrange_bootloader_upgrade_available(hub, updater);
+  hub.bootloader_rewrite_allowed_ = true;
+
+  const uint32_t reboots_before = esphome::App.safe_reboot_calls;
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_LT(spi.find_opcode(LR1121_UPDATER_CMD_UPDATE_BOOTLOADER), 0)
+      << "the Stage-1b checkpoint must abort before the irreversible 0x8100 write";
+  EXPECT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_ERASE_FLASH), 1u) << "only Stage 1a's erase, never Stage 3's";
+  EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1)
+      << "a Stage-1b abort is a post-entry exit and must reboot";
+}
+
+// The version check alone cannot catch this: the loader reports 0x2100 and so does the bootloader
+// (LR1121_LOADER_2100 == LR1121_BOOTLOADER_2100 numerically). If reboot() is sent but the chip
+// never leaves bootloader mode, the Stage-1b read returns byte-for-byte what a successful loader
+// boot returns, except for `type`. Without the type check, 0x8100 would be sent to the bootloader.
+TEST(HubLr1121FirmwareUpdate, Stage1bAbortsWhenChipStayedInBootloaderDespiteMatchingVersion) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x00);  // Stage 1a sanity: 0x2100
+  // Stage 1b: fw is exactly the loader's 0x2100 -- the version check passes -- but type is still
+  // 0xDF, i.e. the reboot-into-loader never took effect and this is the bootloader answering.
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x00);
+
+  TestableHubComponent hub;
+  arrange_bootloader_upgrade_available(hub, updater);
+  hub.bootloader_rewrite_allowed_ = true;
+
+  const uint32_t reboots_before = esphome::App.safe_reboot_calls;
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_LT(spi.find_opcode(LR1121_UPDATER_CMD_UPDATE_BOOTLOADER), 0)
+      << "a chip still in bootloader mode must never receive 0x8100, even though the version matched";
+  EXPECT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_ERASE_FLASH), 1u) << "only Stage 1a's erase, never Stage 3's";
+  EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1);
+}
+
+// A Stage-2 verification failure (write already happened) must reboot without ever reaching
+// Stage 3 -- and per hard rule "do not auto-retry 0x8100", must not send it again either.
+TEST(HubLr1121FirmwareUpdate, Stage2VerificationFailureAbortsBeforeStage3AndNeverRetries) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x00);     // Stage 1a sanity: 0x2100
+  queue_version_response(spi, LR1121_UPDATER_LOADER_DEVICE_TYPE, 0x21, 0x00);  // Stage 1b: loader running
+  // Stage 2: anti-rollback bit (0x20) clear -- one of the six checks fails.
+  queue_updater_status_response(spi, 0x02);
+  queue_verify_bootloader_response(spi, 0x1F, 0x01, 0x21, 0x01);
+
+  TestableHubComponent hub;
+  arrange_bootloader_upgrade_available(hub, updater);
+  hub.bootloader_rewrite_allowed_ = true;
+
+  const uint32_t reboots_before = esphome::App.safe_reboot_calls;
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_UPDATE_BOOTLOADER), 1u) << "must not auto-retry 0x8100";
+  EXPECT_LT(spi.find_opcode(LR1121_UPDATER_CMD_UPDATER_REBOOT), 0)
+      << "must not proceed to the post-verify reboot after a failed verification";
+  EXPECT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_ERASE_FLASH), 1u) << "must never reach Stage 3's erase";
+  EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1);
+}
+
+// A Stage-2 post-verify reboot that does NOT come back reporting 0x2101-in-bootloader (the
+// inverted success condition -- ADR 0021) must also abort before Stage 3.
+TEST(HubLr1121FirmwareUpdate, Stage2UnexpectedPostRebootStateAbortsBeforeStage3) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x00);     // Stage 1a sanity: 0x2100
+  queue_version_response(spi, LR1121_UPDATER_LOADER_DEVICE_TYPE, 0x21, 0x00);  // Stage 1b: loader running
+  queue_updater_status_response(spi, 0x02);                                    // Stage 2: chip accepted 0x8100
+  queue_verify_bootloader_response(spi, 0x3F, 0x01, 0x21, 0x01);               // Stage 2: all six checks pass
+  // Stage 2 post-verify reboot: chip booted the loader firmware instead of staying in the
+  // bootloader -- the new bootloader did NOT refuse it as expected.
+  queue_version_response(spi, LR1121_UPDATER_LOADER_DEVICE_TYPE, 0x21, 0x00);
+
+  TestableHubComponent hub;
+  arrange_bootloader_upgrade_available(hub, updater);
+  hub.bootloader_rewrite_allowed_ = true;
+
+  const uint32_t reboots_before = esphome::App.safe_reboot_calls;
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_ERASE_FLASH), 1u) << "must never reach Stage 3's erase";
+  EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1);
+}
+
+// Hard rule 6: the switch is a permission, never an override -- it must have zero effect on
+// REJECT_WRONG_CHIP.
+TEST(HubLr1121FirmwareUpdate, SwitchOnHasNoEffectOnRejectWrongChipVerdict) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  TestableHubComponent hub;
+  hub.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
+  hub.bootloader_rewrite_allowed_ = true;  // switch on -- must not matter
+
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_TRUE(spi.transactions().empty());
+}
+
+// Hard rule 6, other direction: the switch must not bypass the ordinary two-press confirmation
+// for a NEEDS_CONFIRMATION verdict -- it only ever converts REJECT_BOOTLOADER_TOO_OLD/AVAILABLE.
+TEST(HubLr1121FirmwareUpdate, SwitchOnDoesNotBypassTwoPressConfirmationForNeedsConfirmation) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  TestableHubComponent hub;
+  hub.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
+  hub.bootloader_rewrite_allowed_ = true;  // switch on -- must not matter
+
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_TRUE(spi.transactions().empty()) << "first press must still not touch the chip";
+  EXPECT_TRUE(hub.lr1121_flash_confirmation_armed_) << "must still arm the ordinary two-press window";
+}
+
+// Boot-time message: this prints on every boot, so it is deliberately short -- the switch is
+// discoverable in Home Assistant and the full reasoning lives in the docs and ADR 0021. What must
+// survive that trim is both versions and the fact that the rewrite cannot be undone.
+TEST(HubLr1121FirmwareUpdate, DebugLinesStateBothVersionsAndIrreversibilityWhenUpgradeIsAvailable) {
+  TestableHubComponent hub;
+  hub.lr1121_bootloader_version_known_ = true;
+  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;  // matches LR1121_BOOTLOADER_LOADER_FW
+  hub.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+
+  const std::vector<std::string> lines = hub.lr1121_firmware_update_debug_lines_();
+
+  ASSERT_EQ(lines.size(), 3u);
+  const std::string &message = lines[2];
+  EXPECT_NE(message.find("0x2101"), std::string::npos) << "required bootloader: " << message;
+  EXPECT_NE(message.find("0x2100"), std::string::npos) << "current bootloader: " << message;
+  EXPECT_NE(message.find("cannot be undone"), std::string::npos) << "must say it is irreversible: " << message;
+  // The boot dump runs on every boot; keeping it terse is the point of the trim.
+  EXPECT_LT(message.size(), 200u) << "boot-time line must stay short: " << message;
+}
+
+// The switch-off refusal used to be describe_lr1121_flash_verdict_() ("CANNOT PROCEED: ...") with a
+// suffix bolted on, which read as final and then contradicted itself by saying the rewrite was
+// available. It must lead with the outcome, then the reason, then what to do.
+TEST(HubLr1121FirmwareUpdate, SwitchOffRefusalLeadsWithOutcomeAndSaysWhatToDoNext) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  TestableHubComponent hub;
+  arrange_bootloader_upgrade_available(hub, updater);
+  hub.bootloader_rewrite_allowed_ = false;
+
+  const std::string message = hub.describe_lr1121_bootloader_refusal_(BootloaderUpgradePath::AVAILABLE);
+
+  EXPECT_EQ(message.find("nothing was done"), 0u + std::string("LR1121 firmware update: ").size())
+      << "must lead with the outcome: " << message;
+  EXPECT_EQ(message.find("CANNOT PROCEED"), std::string::npos)
+      << "must not reuse the terminal-sounding verdict wording for a recoverable, actionable state: " << message;
+  EXPECT_EQ(message.find("No chip access"), std::string::npos) << "must not use developer shorthand: " << message;
+  EXPECT_NE(message.find("press this button again"), std::string::npos) << "must say what to do next: " << message;
+  EXPECT_NE(message.find("cannot be undone"), std::string::npos) << "must keep the warning: " << message;
+
+  hub.trigger_lr1121_firmware_update();
+  EXPECT_TRUE(spi.transactions().empty()) << "a switch-off refusal must still not touch the chip";
+}
+
+// The other two refusals must follow the same shape and must not claim a bootloader requirement
+// they do not know (UNKNOWN_TARGET) or invert the direction (BOOTLOADER_NEWER).
+TEST(HubLr1121FirmwareUpdate, BlockedRefusalsLeadWithOutcomeAndStateTheRightReason) {
+  TestableHubComponent hub;
+  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
+
+  const std::string unknown = hub.describe_lr1121_bootloader_refusal_(BootloaderUpgradePath::BLOCKED_UNKNOWN_TARGET);
+  EXPECT_NE(unknown.find("nothing was done"), std::string::npos) << unknown;
+  EXPECT_NE(unknown.find("does not recognise"), std::string::npos) << unknown;
+  EXPECT_EQ(unknown.find("press this button again"), std::string::npos)
+      << "there is no user action that helps here, so do not suggest one: " << unknown;
+
+  const std::string newer = hub.describe_lr1121_bootloader_refusal_(BootloaderUpgradePath::BLOCKED_BOOTLOADER_NEWER);
+  EXPECT_NE(newer.find("nothing was done"), std::string::npos) << newer;
+  EXPECT_NE(newer.find("already newer"), std::string::npos) << newer;
+  EXPECT_NE(newer.find("no way back"), std::string::npos) << newer;
+}
+#endif  // IOHOME_LR1121_BOOTLOADER_UPDATE
+
+// The loader's type byte (0xDE) and the bootloader's (0xDF) differ by a single bit, so the Stage-1b
+// checkpoint asserts the loader's value positively. A "not 0xDF" check would have accepted exactly
+// the one-bit corruption of the byte this gate exists to trust.
+TEST(HubLr1121FirmwareUpdate, Stage1bRejectsAnyTypeOtherThanTheLoadersEvenWhenItIsNotTheBootloaders) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x00);  // Stage 1a sanity: 0x2100
+  // Correct loader version, and NOT the bootloader's 0xDF -- but not the loader's 0xDE either.
+  queue_version_response(spi, 0xAA, 0x21, 0x00);
+
+  TestableHubComponent hub;
+  arrange_bootloader_upgrade_available(hub, updater);
+  hub.bootloader_rewrite_allowed_ = true;
+
+  const uint32_t reboots_before = esphome::App.safe_reboot_calls;
+  hub.trigger_lr1121_firmware_update();
+
+  EXPECT_LT(spi.find_opcode(LR1121_UPDATER_CMD_UPDATE_BOOTLOADER), 0)
+      << "an unrecognised type byte must abort before the irreversible write";
+  EXPECT_EQ(count_opcode(spi, LR1121_UPDATER_CMD_ERASE_FLASH), 1u) << "only Stage 1a's erase, never Stage 3's";
+  EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1);
 }

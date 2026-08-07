@@ -243,6 +243,141 @@ TEST(Lr1121FirmwareUpdater, RebootSendsCorrectParamForEachDirection) {
   }
 }
 
+// ============================================================================
+// Bootloader-rewrite primitives (0x81xx family) -- normal-mode commands of the *loader* firmware,
+// not bootloader-mode commands; see radio_lr1121_firmware_updater.h's file comment. Byte-exact
+// against SWTL001's bootloader_updater_driver/src/lr11xx_bootloader_updater.c, the only public
+// specification for this wire protocol.
+// ============================================================================
+
+TEST(Lr1121FirmwareUpdater, ReadBootloaderVersionSendsGetVersionWithoutRunningTheEntrySequence) {
+  ScriptedSpi spi;
+  MockPin rst;
+  MockPin busy;
+  queue_bootloader_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x2101);
+
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+  uint8_t type = 0;
+  uint16_t bootloader_version = 0;
+  ASSERT_TRUE(updater.read_bootloader_version(type, bootloader_version));
+  EXPECT_EQ(type, LR1121_UPDATER_BOOTLOADER_TYPE);
+  EXPECT_EQ(bootloader_version, 0x2101);
+
+  // Exactly the two transactions read_command_() always uses (write phase, read phase) -- no
+  // RST pulse/BUSY-strap GPIO dance, unlike enter_bootloader().
+  ASSERT_EQ(spi.transactions().size(), 2u);
+  EXPECT_GE(spi.find_opcode(LR1121_UPDATER_CMD_GET_VERSION), 0);
+}
+
+TEST(Lr1121FirmwareUpdater, UpdateBootloaderSendsOpcodeWithNoParamsAndWaitsBusy) {
+  ScriptedSpi spi;
+  MockPin rst;
+  MockPin busy;  // not busy -> wait_busy_() returns immediately, both before and after the command.
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  ASSERT_TRUE(updater.update_bootloader());
+
+  int const idx = spi.find_opcode(LR1121_UPDATER_CMD_UPDATE_BOOTLOADER);
+  ASSERT_GE(idx, 0);
+  EXPECT_EQ(spi.transactions()[idx].size(), 2u) << "UpdateBootloader has no request params";
+}
+
+TEST(Lr1121FirmwareUpdater, UpdateBootloaderFailsOnBusyTimeoutWithoutAnyTransaction) {
+  ScriptedSpi spi;
+  MockPin rst;
+  MockPin busy(true);  // BUSY held high -> the pre-command wait_busy_() in write_command_() times out.
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  EXPECT_FALSE(updater.update_bootloader());
+  EXPECT_TRUE(spi.transactions().empty());
+}
+
+// Queue a VerifyBootloader response: [stat1, check_byte, use_case, version_major, version_minor].
+namespace {
+void queue_verify_bootloader_response(ScriptedSpi &spi, uint8_t check_byte, uint8_t use_case, uint8_t version_major,
+                                      uint8_t version_minor) {
+  spi.queue_responses({0x00, check_byte, use_case, version_major, version_minor});
+}
+}  // namespace
+
+TEST(Lr1121FirmwareUpdater, VerifyBootloaderDecodesAllSixChecksWhenAllPass) {
+  ScriptedSpi spi;
+  MockPin rst;
+  MockPin busy;
+  queue_verify_bootloader_response(spi, 0x3F, 0x01, 0x21, 0x01);  // all six bits set
+
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+  Lr1121BootloaderVerification report;
+  ASSERT_TRUE(updater.verify_bootloader(report));
+  EXPECT_TRUE(report.all_checks_passed());
+  EXPECT_TRUE(report.signature_verified);
+  EXPECT_TRUE(report.version_verified);
+  EXPECT_TRUE(report.use_case_verified);
+  EXPECT_TRUE(report.version_major_verified);
+  EXPECT_TRUE(report.version_minor_verified);
+  EXPECT_TRUE(report.anti_rollback_verified);
+  EXPECT_EQ(report.use_case, 0x01);
+  EXPECT_EQ(report.version_major, 0x21);
+  EXPECT_EQ(report.version_minor, 0x01);
+
+  EXPECT_GE(spi.find_opcode(LR1121_UPDATER_CMD_VERIFY_BOOTLOADER), 0);
+}
+
+// Each of the six check bits, individually false, with the other five set -- the highest-value
+// decode test, one per check bit: a single-bit decode bug would only
+// show up when every other bit is correct.
+TEST(Lr1121FirmwareUpdater, VerifyBootloaderDetectsEachCheckBitIndividuallyFailing) {
+  struct Case {
+    uint8_t check_byte;
+    const char *name;
+  };
+  const Case cases[] = {
+      {0x3E, "signature"},      // bit 0 clear
+      {0x3D, "version"},        // bit 1 clear
+      {0x3B, "use_case"},       // bit 2 clear
+      {0x37, "version_major"},  // bit 3 clear
+      {0x2F, "version_minor"},  // bit 4 clear
+      {0x1F, "anti_rollback"},  // bit 5 clear
+  };
+  for (const auto &c : cases) {
+    ScriptedSpi spi;
+    MockPin rst;
+    MockPin busy;
+    queue_verify_bootloader_response(spi, c.check_byte, 0, 0, 0);
+
+    Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+    Lr1121BootloaderVerification report;
+    ASSERT_TRUE(updater.verify_bootloader(report));
+    EXPECT_FALSE(report.all_checks_passed()) << "check_byte=0x" << std::hex << static_cast<int>(c.check_byte) << " ("
+                                             << c.name << " bit clear) must fail all_checks_passed()";
+  }
+}
+
+TEST(Lr1121FirmwareUpdater, UpdaterRebootSendsCorrectParamForEachDirection) {
+  {
+    ScriptedSpi spi;
+    MockPin rst;
+    MockPin busy;
+    Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+    ASSERT_TRUE(updater.updater_reboot(true));
+    int const idx = spi.find_opcode(LR1121_UPDATER_CMD_UPDATER_REBOOT);
+    ASSERT_GE(idx, 0);
+    ASSERT_EQ(spi.transactions()[idx].size(), 3u);
+    EXPECT_EQ(spi.transactions()[idx][2], 0x03) << "stay_in_bootloader=true must send param 0x03";
+  }
+  {
+    ScriptedSpi spi;
+    MockPin rst;
+    MockPin busy;
+    Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+    ASSERT_TRUE(updater.updater_reboot(false));
+    int const idx = spi.find_opcode(LR1121_UPDATER_CMD_UPDATER_REBOOT);
+    ASSERT_GE(idx, 0);
+    ASSERT_EQ(spi.transactions()[idx].size(), 3u);
+    EXPECT_EQ(spi.transactions()[idx][2], 0x00) << "stay_in_bootloader=false must send param 0x00";
+  }
+}
+
 TEST(Lr1121FirmwareUpdater, FullSequenceOrdering) {
   ScriptedSpi spi;
   MockPin rst;
@@ -274,4 +409,44 @@ TEST(Lr1121FirmwareUpdater, FullSequenceOrdering) {
   EXPECT_LT(erase_idx, write_idx);
   EXPECT_LT(write_idx, hash_idx) << "GetHash must be read before rebooting -- still in bootloader mode";
   EXPECT_LT(hash_idx, reboot_idx);
+}
+
+// The status read is a bare 6-byte transaction with NO opcode -- Semtech's lr11xx_hal_direct_read()
+// shape. Sending an opcode here would be a different command entirely, so the byte count and the
+// absence of a leading opcode are both part of the contract.
+TEST(Lr1121FirmwareUpdater, ReadUpdaterStatusIsAnOpcodeLessSixByteReadAndDecodesCommandStatus) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  // Stat1 = 0x05: bit0 (interrupt active) set, command_status = 0x05 >> 1 = 2 (OK).
+  // Stat2 = 0x23: running_from_flash set, chip_mode = (0x23 & 0x0F) >> 1 = 1, reset_status = 2.
+  spi.queue_responses({0x05, 0x23, 0xDE, 0xAD, 0xBE, 0xEF});
+
+  Lr1121UpdaterStatus status;
+  ASSERT_TRUE(updater.read_updater_status(status));
+
+  EXPECT_EQ(status.command_status, Lr1121UpdaterCommandStatus::OK);
+  EXPECT_TRUE(status.interrupt_active);
+  EXPECT_TRUE(status.running_from_flash);
+  EXPECT_EQ(status.chip_mode, 1);
+  EXPECT_EQ(status.reset_status, 2);
+  EXPECT_EQ(status.irq_status, 0xDEADBEEFu);
+
+  ASSERT_EQ(spi.transactions().size(), 1u);
+  EXPECT_EQ(spi.transactions()[0].size(), 6u) << "must clock exactly 6 bytes, matching Semtech's status read";
+}
+
+// A rejected 0x8100 is the one failure this read exists to surface: nothing else in the sequence
+// distinguishes "command refused" from "written but bad".
+TEST(Lr1121FirmwareUpdater, ReadUpdaterStatusDecodesARejectedCommand) {
+  ScriptedSpi spi;
+  MockPin rst, busy;
+  Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
+
+  spi.queue_responses({0x02, 0x00, 0x00, 0x00, 0x00, 0x00});  // command_status = 0x02 >> 1 = 1 (PERR)
+
+  Lr1121UpdaterStatus status;
+  ASSERT_TRUE(updater.read_updater_status(status));
+  EXPECT_EQ(status.command_status, Lr1121UpdaterCommandStatus::PERR);
 }

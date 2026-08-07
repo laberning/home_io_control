@@ -97,7 +97,7 @@ def test_validate_image_rejects_non_word_aligned_length() -> None:
 
 def test_validate_image_accepts_large_but_valid_image() -> None:
     # Mirrors 0101's 61320-word image (245280 bytes) -- ~3.7x the size of later releases, and
-    # must still pass: there is deliberately no size band (design plan §3.4).
+    # must still pass: there is deliberately no size band.
     data = b"\x00" * (61320 * 4)
     fw.validate_image(data, "https://raw.githubusercontent.com/Lora-net/x/HEAD/lr1121/transceiver/y_0101.bin")
 
@@ -119,6 +119,68 @@ def test_validate_image_rejects_non_lr1121_url() -> None:
         raise AssertionError("expected Lr1121FirmwareError for a URL not naming lr1121")
     except fw.Lr1121FirmwareError:
         pass
+
+
+# === validate_image_class ===============================================================
+
+
+def test_validate_image_class_accepts_ordinary_transceiver_source() -> None:
+    fw.validate_image_class("lr1121/transceiver/lr1121_transceiver_0104.bin", expect_loader=False)
+
+
+def test_validate_image_class_rejects_loader_as_transceiver_source() -> None:
+    try:
+        fw.validate_image_class("lr1121/loader/lr1121_loader_2100.bin", expect_loader=False)
+        raise AssertionError("expected Lr1121FirmwareError for a loader image used as a transceiver source")
+    except fw.Lr1121FirmwareError:
+        pass
+
+
+def test_validate_image_class_rejects_modem_as_transceiver_source() -> None:
+    try:
+        fw.validate_image_class("lr1121/modem/lr1121_modem_2.0.1.bin", expect_loader=False)
+        raise AssertionError("expected Lr1121FirmwareError for a modem image used as a transceiver source")
+    except fw.Lr1121FirmwareError:
+        pass
+
+
+def test_validate_image_class_requires_loader_for_bootloader_slot() -> None:
+    fw.validate_image_class("lr1121/loader/lr1121_loader_2100.bin", expect_loader=True)
+    try:
+        fw.validate_image_class("lr1121/transceiver/lr1121_transceiver_0104.bin", expect_loader=True)
+        raise AssertionError("expected Lr1121FirmwareError for a transceiver image in the bootloader loader slot")
+    except fw.Lr1121FirmwareError:
+        pass
+
+
+# === resolve_target_version / classify_bootloader_upgrade_class =====================================
+
+
+def test_resolve_target_version_from_filename() -> None:
+    assert fw.resolve_target_version("github://o/r/lr1121/transceiver/lr1121_transceiver_0104.bin", None) == 0x0104
+
+
+def test_resolve_target_version_override_wins_over_filename() -> None:
+    assert (
+        fw.resolve_target_version("github://o/r/lr1121/transceiver/lr1121_transceiver_0103.bin", 0x0105) == 0x0105
+    )
+
+
+def test_resolve_target_version_unparseable_filename_is_unknown() -> None:
+    assert fw.resolve_target_version("github://o/r/lr1121/transceiver/my_renamed_image.bin", None) == 0
+
+
+def test_classify_bootloader_upgrade_class_c3_known_target_needing_new_bootloader_accepts() -> None:
+    assert fw.classify_bootloader_upgrade_class(0x0104) == "accept"
+
+
+def test_classify_bootloader_upgrade_class_c4_known_target_needing_old_bootloader_is_hard_error() -> None:
+    assert fw.classify_bootloader_upgrade_class(0x0103) == "hard_error"
+    assert fw.classify_bootloader_upgrade_class(0x0101) == "hard_error"
+
+
+def test_classify_bootloader_upgrade_class_c5_unknown_target_is_unknown() -> None:
+    assert fw.classify_bootloader_upgrade_class(0x0999) == "unknown"
 
 
 # === validate_bootloader_reachability ===============================================================
@@ -341,6 +403,16 @@ TESTS = [
     test_validate_image_accepts_large_but_valid_image,
     test_validate_image_rejects_empty_image,
     test_validate_image_rejects_non_lr1121_url,
+    test_validate_image_class_accepts_ordinary_transceiver_source,
+    test_validate_image_class_rejects_loader_as_transceiver_source,
+    test_validate_image_class_rejects_modem_as_transceiver_source,
+    test_validate_image_class_requires_loader_for_bootloader_slot,
+    test_resolve_target_version_from_filename,
+    test_resolve_target_version_override_wins_over_filename,
+    test_resolve_target_version_unparseable_filename_is_unknown,
+    test_classify_bootloader_upgrade_class_c3_known_target_needing_new_bootloader_accepts,
+    test_classify_bootloader_upgrade_class_c4_known_target_needing_old_bootloader_is_hard_error,
+    test_classify_bootloader_upgrade_class_c5_unknown_target_is_unknown,
     test_validate_bootloader_reachability_accepts_valid_config,
     test_validate_bootloader_reachability_rejects_wrong_radio_type,
     test_validate_bootloader_reachability_rejects_missing_busy_pin,

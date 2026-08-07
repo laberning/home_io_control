@@ -11,7 +11,7 @@
 ## config-validation/codegen boundary where ESPHome is guaranteed to be present.
 ##
 ## The goal this module serves is "flash whatever LR1121 transceiver image the user points at",
-## not one specific release — see the design plan's scope decision. That is why validate_image()
+## not one specific release (ADR 0020). That is why validate_image()
 ## deliberately does not gate on image size (published images range from 65 KB to 245 KB, all
 ## legitimate) and why an unparseable filename version is carried through as "unknown" rather
 ## than failing the build.
@@ -35,7 +35,7 @@ class Lr1121FirmwareNotFoundError(Lr1121FirmwareError):
 
 
 # github://<owner>/<repo>/<path/to/file.bin>[@ref] -- deliberately not ESPHome's own
-# cv.SOURCE_SCHEMA shorthand, which is repo-level only (no sub-path); see design plan §5.1.
+# cv.SOURCE_SCHEMA shorthand, which is repo-level only (no sub-path) and so cannot name a file.
 _GITHUB_SOURCE_RE = re.compile(r"^github://(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?P<path>[^@]+?)(?:@(?P<ref>[^@]+))?$")
 
 _MD5_HEX_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -71,7 +71,7 @@ def parse_md5_sidecar(text):
 
     Only the first whitespace-separated token is the hash. The second field is NOT a stable
     filename -- some published sidecars carry a bare filename, others a relative release-artefact
-    path -- so it is read and then deliberately never validated (design plan §3.5).
+    path -- so it is read and then deliberately never validated.
     @raises Lr1121FirmwareError if the first token isn't 32 lowercase hex characters.
     """
     stripped = text.strip()
@@ -80,6 +80,39 @@ def parse_md5_sidecar(text):
     if not _MD5_HEX_RE.match(lowered):
         raise Lr1121FirmwareError(f"Malformed MD5 sidecar (expected 32 hex chars as the first token): {text!r}")
     return lowered
+
+
+def validate_image_class(path, *, expect_loader):
+    """Reject a `source:` naming the wrong LR1121 image class, by filename.
+
+    A blocklist of two known-bad patterns, not an allowlist requiring e.g. "transceiver" in the
+    name -- an allowlist would break a user mirroring images under their own names. Semtech's own
+    tool refuses a loader image as an ordinary firmware target outright; this project had no
+    such guard, and a loader/modem source previously passed validation
+    and was routed through the two-press UNKNOWN_TARGET confirmation, leaving the radio running a
+    non-transceiver image after the flash -- SPI still answers, but there is no radio function.
+    @param expect_loader True when validating the bootloader sub-block's `source:` (must BE a
+           loader image); False for the ordinary transceiver `source:` (must NOT be one).
+    @raises Lr1121FirmwareError on a filename/class mismatch.
+    """
+    name = path.rsplit("/", 1)[-1].lower()
+    is_loader = "_loader_" in name
+    if expect_loader:
+        if not is_loader:
+            raise Lr1121FirmwareError(
+                f"bootloader: source must be a bootloader loader image (filename containing '_loader_'), got {path!r}"
+            )
+        return
+    if is_loader:
+        raise Lr1121FirmwareError(
+            f"source {path!r} looks like a bootloader loader image (filename containing '_loader_'); loader images "
+            "are only usable through the bootloader: sub-block, not as the ordinary transceiver source:"
+        )
+    if "_modem_" in name:
+        raise Lr1121FirmwareError(
+            f"source {path!r} looks like a LoRa Basics Modem-E image (filename containing '_modem_'); modem "
+            "firmware is a different product mode this component does not support"
+        )
 
 
 def parse_version_from_filename(path):
@@ -99,7 +132,7 @@ def validate_image(data, url):
 
     Deliberately narrow -- length must be a whole (and non-zero) number of 32-bit words, and the
     URL must name the chip family. No size band: published images range from 65 KB to 245 KB, both
-    legitimate (design plan §3.4 records the mistake of guessing a band from a sample).
+    legitimate, so guessing a plausible size band from a sample would reject valid images.
     @raises Lr1121FirmwareError on any check failing.
     """
     if len(data) == 0:
@@ -132,6 +165,54 @@ def validate_bootloader_reachability(radio_type, has_busy_pin, busy_pin_inverted
             "the LR1121 bootloader drives it to a physical LOW, and an inverted pin would invert "
             "that level"
         )
+
+
+def resolve_target_version(source, target_version):
+    """Resolve the target firmware version from `source`/`target_version` without any network access.
+
+    Same resolution order fetch_and_verify() uses (explicit override, else filename, else 0 ==
+    unknown) -- factored out so schema-time bootloader-compatibility checks (see
+    classify_bootloader_upgrade_class() below) can classify a `bootloader:` block's outer target
+    before to_code()'s network fetch happens.
+    @raises Lr1121FirmwareError if `source` doesn't match the expected github:// shape.
+    """
+    _, _, path, _ = parse_github_source(source)
+    return target_version or parse_version_from_filename(path) or 0
+
+
+# Mirrors lr1121_firmware_decisions.h's LR1121_KNOWN_BOOTLOADER_REQUIREMENTS -- duplicated here
+# because this module deliberately does not import ESPHome or link against the C++ decision
+# header (see the file header), yet the bootloader:-block build-time check below must classify
+# the outer target before to_code()'s network fetch happens. An advisory snapshot, not a
+# compatibility authority (same discipline as the C++ table): a target absent from it is
+# "unverified", never "incompatible" -- see classify_bootloader_upgrade_class(). Keep the two
+# tables in sync by hand when Semtech publishes a new pairing; last checked 2026-08-07.
+KNOWN_BOOTLOADER_REQUIREMENTS = {
+    0x0101: 0x2100,
+    0x0102: 0x2100,
+    0x0103: 0x2100,
+    0x0104: 0x2101,
+}
+LR1121_BOOTLOADER_2100 = 0x2100
+LR1121_BOOTLOADER_2101 = 0x2101
+
+
+def classify_bootloader_upgrade_class(target_fw):
+    """Classify whether a `bootloader:` sub-block is safe given the outer `source:`'s target.
+
+    Implements the build-time half of ADR 0021's compatibility rule: it
+    must stay three-way, like the C++ side's runtime compatibility rule, or it rots the first time
+    Semtech ships a new firmware release this table has never heard of.
+    @return "accept" (target known, requires the new bootloader 0x2101 -- C3),
+            "hard_error" (target known, requires the OLD bootloader 0x2100 -- C4; post-upgrade
+            this image would be unflashable, so the block would be arming a trap),
+            "unknown" (target absent from the table -- C5; accept with a warning, since refusing
+            outright would rot on the next Semtech release).
+    """
+    required = KNOWN_BOOTLOADER_REQUIREMENTS.get(target_fw)
+    if required is None:
+        return "unknown"
+    return "accept" if required == LR1121_BOOTLOADER_2101 else "hard_error"
 
 
 @dataclass

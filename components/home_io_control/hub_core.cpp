@@ -87,7 +87,7 @@ void IOHomeControlComponent::setup() {
   }
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
-  // Boot-time bootloader-version excursion (design record §0.3/§0.4) — deliberately before
+  // Boot-time bootloader-version excursion — deliberately before
   // init(): nothing has configured the radio yet, so this costs one extra chip reset and needs no
   // reboot afterward, unlike every other bootloader excursion this feature performs.
   this->run_lr1121_boot_time_bootloader_read_();

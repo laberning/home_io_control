@@ -35,9 +35,8 @@ namespace home_io_control {
 // LR1121 Opcode Constants (16-bit)
 // ============================================================================
 //
-// The opcodes below marked "cross-checked" come verbatim from the design plan's
-// pre-verified table (design §1.2 / implementation §0.3.3), which was itself checked
-// against RadioLib's LR11x0_commands.h during planning.
+// The opcodes below marked "cross-checked" were verified against Semtech's SWDR001 driver and
+// RadioLib's LR11x0_commands.h before first use, rather than inferred from observed traffic.
 
 static constexpr uint16_t LR1121_CMD_GET_STATUS = 0x0100;   ///< cross-checked
 static constexpr uint16_t LR1121_CMD_GET_VERSION = 0x0101;  ///< cross-checked
@@ -119,12 +118,12 @@ static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked (design 
 /// on top of earlier feature/bugfix releases — not just a cosmetic version bump.
 ///
 /// Reachability caveat: this project's `lr1121_firmware_update:` feature (docs/home_io_control.md)
-/// can flash any published image, but 0x0104 requires bootloader 0x2101, and this project
-/// deliberately never updates the bootloader itself (bootloader updates are materially higher
-/// risk — see the design record). On the common 0x2100 bootloader, 0x0103 is the practical
-/// ceiling. So the "update available" line below can point at a version this component cannot
-/// currently reach for a given chip; the flash feature's own boot-time bootloader-version report
-/// is what tells a user whether 0x0104 specifically is reachable on their board.
+/// can flash any published image, but 0x0104 requires bootloader 0x2101. Reaching it from the
+/// common 0x2100 bootloader needs the separate, opt-in bootloader rewrite (ADR 0021) — an
+/// irreversible operation gated behind its own arming switch — so without that opted in, 0x0103
+/// is the practical ceiling. The "update available" line below can therefore point at a version
+/// that is not reachable on a given chip as currently configured; the flash feature's own
+/// boot-time bootloader-version report is what tells a user which case they are in.
 static constexpr uint8_t LR1121_KNOWN_LATEST_FW_MAJOR = 0x01;
 static constexpr uint8_t LR1121_KNOWN_LATEST_FW_MINOR = 0x04;
 

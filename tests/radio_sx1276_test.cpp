@@ -72,7 +72,7 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
   const std::vector<uint8_t> &tx_fifo() const { return this->tx_fifo_; }
 
   // Ordered log of (register, value) for every write_register_()-style value write.
-  // FIFO writes are excluded — those go to tx_fifo() instead (plan §1.1).
+  // FIFO writes are excluded — those go to tx_fifo() instead.
   const std::vector<std::pair<uint8_t, uint8_t>> &write_log() const { return this->write_log_; }
 
   bool wrote_register(uint8_t reg) const {

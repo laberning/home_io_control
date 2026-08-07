@@ -40,7 +40,7 @@ TEST(Lr1121FlashDecision, KnownCompatiblePairOnNewerBootloaderProceeds) {
 }
 
 TEST(Lr1121FlashDecision, FutureFirmwareUnknownToTableNeedsConfirmationNotRejection) {
-  // Regression guard for the "don't rot when new firmware ships" rule (design record §0.2): a
+  // Regression guard for the "don't rot when new firmware ships" rule: a
   // hypothetical 0x0105 that this build has never heard of must NOT be treated as incompatible.
   EXPECT_EQ(lr1121_flash_decision(LR1121, BL_OK, LR1121_BOOTLOADER_2100, 0x0101, 0x0105, false),
             FlashDecision::NEEDS_CONFIRMATION);
@@ -154,4 +154,96 @@ TEST(Lr1121ChipFamilyForDeviceType, MapsKnownDeviceTypesToTheirChipFamily) {
   EXPECT_STREQ(lr1121_chip_family_for_device_type(LR1110_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS), "an LR1110");
   EXPECT_STREQ(lr1121_chip_family_for_device_type(LR1120_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS), "an LR1120");
   EXPECT_STREQ(lr1121_chip_family_for_device_type(0x99), "an unrecognized chip");
+}
+
+// ============================================================================
+// Bootloader-update post-filter (ADR 0021)
+// ============================================================================
+
+TEST(Lr1121RequiredBootloaderFor, KnownTargetsResolveTheirRequirementUnknownTargetsResolveZero) {
+  EXPECT_EQ(lr1121_required_bootloader_for(0x0101), LR1121_BOOTLOADER_2100);
+  EXPECT_EQ(lr1121_required_bootloader_for(0x0103), LR1121_BOOTLOADER_2100);
+  EXPECT_EQ(lr1121_required_bootloader_for(0x0104), LR1121_BOOTLOADER_2101);
+  EXPECT_EQ(lr1121_required_bootloader_for(0x0999), 0);
+}
+
+TEST(Lr1121BootloaderMismatchKind, UnknownTargetIsNone) {
+  EXPECT_EQ(lr1121_bootloader_mismatch_kind(0x0999, LR1121_BOOTLOADER_2100), BootloaderMismatch::NONE);
+}
+
+TEST(Lr1121BootloaderMismatchKind, MatchingPairIsNone) {
+  EXPECT_EQ(lr1121_bootloader_mismatch_kind(0x0103, LR1121_BOOTLOADER_2100), BootloaderMismatch::NONE);
+  EXPECT_EQ(lr1121_bootloader_mismatch_kind(0x0104, LR1121_BOOTLOADER_2101), BootloaderMismatch::NONE);
+}
+
+TEST(Lr1121BootloaderMismatchKind, TargetNeedsNewerBootloaderIsTheTooOldDirection) {
+  // 0x0104 requires 0x2101; the chip only has 0x2100 -- the direction that has always been
+  // reachable, and what REJECT_BOOTLOADER_TOO_OLD's message has always described.
+  EXPECT_EQ(lr1121_bootloader_mismatch_kind(0x0104, LR1121_BOOTLOADER_2100), BootloaderMismatch::TARGET_NEEDS_NEWER);
+}
+
+TEST(Lr1121BootloaderMismatchKind, TargetNeedsOlderBootloaderIsTheNewlyReachableDowngradeDirection) {
+  // 0x0103 requires 0x2100; a chip that has been upgraded to 0x2101 hits the other direction,
+  // unreachable before the bootloader-update feature existed.
+  EXPECT_EQ(lr1121_bootloader_mismatch_kind(0x0103, LR1121_BOOTLOADER_2101), BootloaderMismatch::TARGET_NEEDS_OLDER);
+}
+
+namespace {
+// Convenience alias matching lr1121_bootloader_upgrade_path()'s parameter order.
+constexpr BootloaderUpgradePath upgrade_path(bool block_present, bool bl_known, uint16_t bl, uint16_t loader_fw,
+                                             uint16_t target_fw) {
+  return lr1121_bootloader_upgrade_path(block_present, bl_known, bl, loader_fw, target_fw);
+}
+}  // namespace
+
+TEST(Lr1121BootloaderUpgradePath, Row1NoBlockIsNotApplicable) {
+  EXPECT_EQ(upgrade_path(false, true, LR1121_BOOTLOADER_2100, LR1121_LOADER_2100, 0x0104),
+            BootloaderUpgradePath::NOT_APPLICABLE);
+}
+
+TEST(Lr1121BootloaderUpgradePath, Row2UnknownBootloaderVersionIsNotApplicable) {
+  // Regression guard: this path must NEVER adopt a fresh reading the way the ordinary transceiver
+  // flash sequence does -- an unknown current bootloader can never justify an irreversible write.
+  EXPECT_EQ(upgrade_path(true, false, 0, LR1121_LOADER_2100, 0x0104), BootloaderUpgradePath::NOT_APPLICABLE);
+}
+
+TEST(Lr1121BootloaderUpgradePath, Row3WrongChipBootloaderVersionIsNotApplicable) {
+  // 0x2000 is an LR1120 bootloader version -- REJECT_WRONG_CHIP owns this, not this function.
+  EXPECT_EQ(upgrade_path(true, true, 0x2000, 0x2000, 0x0104), BootloaderUpgradePath::NOT_APPLICABLE);
+}
+
+TEST(Lr1121BootloaderUpgradePath, Row4LoaderVersionMismatchIsNotApplicable) {
+  // Semtech's equality rule: the loader image's version must equal the running bootloader.
+  EXPECT_EQ(upgrade_path(true, true, LR1121_BOOTLOADER_2100, /*loader_fw=*/0x2101, 0x0104),
+            BootloaderUpgradePath::NOT_APPLICABLE);
+}
+
+TEST(Lr1121BootloaderUpgradePath, Row4ChipAlreadyOnNewBootloaderIsNotApplicable) {
+  // A chip already on 0x2101 can never equal the 0x2100 loader -- this is also how "already
+  // upgraded, block is inert" (R5/R6) is reached.
+  EXPECT_EQ(upgrade_path(true, true, LR1121_BOOTLOADER_2101, LR1121_LOADER_2100, 0x0104),
+            BootloaderUpgradePath::NOT_APPLICABLE);
+}
+
+TEST(Lr1121BootloaderUpgradePath, Row5UnknownTargetIsBlocked) {
+  EXPECT_EQ(upgrade_path(true, true, LR1121_BOOTLOADER_2100, LR1121_LOADER_2100, 0x0999),
+            BootloaderUpgradePath::BLOCKED_UNKNOWN_TARGET);
+}
+
+TEST(Lr1121BootloaderUpgradePath, Row6NoUpgradeNeededIsNotApplicable) {
+  EXPECT_EQ(upgrade_path(true, true, LR1121_BOOTLOADER_2100, LR1121_LOADER_2100, 0x0103),
+            BootloaderUpgradePath::NOT_APPLICABLE);
+}
+
+TEST(Lr1121BootloaderUpgradePath, Row7TheOnePathThatProceedsIsAvailable) {
+  EXPECT_EQ(upgrade_path(true, true, LR1121_BOOTLOADER_2100, LR1121_LOADER_2100, 0x0104),
+            BootloaderUpgradePath::AVAILABLE);
+}
+
+TEST(Lr1121BootloaderUpgradePath, Row8DowngradeIsBlockedAsBootloaderNewer) {
+  // Row 4's loader-equality gate means this can only be reached with a *different* loader image
+  // than LR1121_LOADER_2100 (a hypothetical future one) whose version equals the chip's -- the
+  // downgrade-detection branch itself (required < bootloader_version) must still fire correctly.
+  EXPECT_EQ(upgrade_path(true, true, LR1121_BOOTLOADER_2101, /*loader_fw=*/LR1121_BOOTLOADER_2101, 0x0103),
+            BootloaderUpgradePath::BLOCKED_BOOTLOADER_NEWER);
 }

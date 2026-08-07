@@ -22,20 +22,20 @@ namespace {
 /// uses for the ordinary transceiver-mode reset (radio_interface.cpp); this is a different
 /// sequence (BUSY is also driven here) but there is no reason for the pulse itself to differ.
 constexpr uint32_t LR1121_UPDATER_RESET_PULSE_MS = 10;
-/// Wait after the reset pulse while BUSY is still held as an output (design plan §3.1 step 3).
+/// Wait after the reset pulse while BUSY is still held as an output. Semtech's value, from
+/// lr11xx_reset_to_bootloader() (SWTL001 application/src/lr11xx_firmware_update.c).
 constexpr uint32_t LR1121_UPDATER_BOOTLOADER_ENTRY_WAIT_MS = 500;
-/// Further wait after BUSY is returned to input, before the chip is treated as ready (§3.1 step 5).
+/// Further wait after BUSY is returned to input, before the chip is treated as ready. Also
+/// Semtech's value, from the same function.
 constexpr uint32_t LR1121_UPDATER_POST_ENTRY_SETTLE_MS = 100;
 /// Settle time after Reboot is sent, before reboot() returns control to the caller — see
-/// reboot()'s comment for the BUSY race this closes. Semtech's own reference tool
+/// reboot()'s comment for the BUSY race this closes. Unlike the two entry-sequence waits above,
+/// this one has no counterpart in Semtech's source: their reference tool
 /// (lr11xx_update_post_flash_reboot_and_verification()) issues the post-reboot GetVersion
-/// immediately with no wait of its own for the transceiver-firmware path, so this is not a
-/// documented requirement; it is defensive against this project's own HAL/BUSY timing, sized as
-/// half of LR1121_UPDATER_POST_ENTRY_SETTLE_MS since Reboot drives the same internal chip reset
-/// without the external RST/BUSY strapping that makes the entry sequence heavier. Note that
-/// entry-sequence value is *not* verified against Semtech source either: the bootloader-entry
-/// GPIO/reset routine is called by the reference tool but is not defined in any reachable file
-/// of its published tree, so both timings stay assumptions until real hardware confirms them.
+/// immediately with no wait of its own for the transceiver-firmware path. It is defensive against
+/// this project's own HAL/BUSY timing, sized as half of LR1121_UPDATER_POST_ENTRY_SETTLE_MS since
+/// Reboot drives the same internal chip reset without the external RST/BUSY strapping that makes
+/// the entry sequence heavier.
 constexpr uint32_t LR1121_UPDATER_POST_REBOOT_SETTLE_MS = 50;
 
 /// RAII guard for the bootloader-entry BUSY-as-output-LOW trick: drives BUSY as a GPIO output LOW
@@ -72,7 +72,7 @@ class BusyPinAsResetStrapGuard {
 Lr1121FirmwareUpdater::Lr1121FirmwareUpdater(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *busy_pin)
     : spi_(spi), rst_pin_(rst_pin), busy_pin_(busy_pin) {
   // This class exists specifically to run before RadioLR1121::init() has ever executed (the
-  // boot-time bootloader-version read — see the implementation plan's Step 6b), so the pins it
+  // boot-time bootloader-version read), so the pins it
   // needs cannot rely on the driver having set them up already. GPIOPin::setup() is idempotent —
   // init() calling it again afterward on the same pins is harmless.
   this->rst_pin_->setup();
@@ -136,9 +136,13 @@ bool Lr1121FirmwareUpdater::enter_bootloader(uint8_t &type, uint16_t &bootloader
     delay(LR1121_UPDATER_RESET_PULSE_MS);
     this->rst_pin_->digital_write(true);
     delay(LR1121_UPDATER_BOOTLOADER_ENTRY_WAIT_MS);
-  }  // Guard destructor returns BUSY to input here (design plan §3.1 step 4).
+  }  // Guard destructor returns BUSY to input here, before the post-entry settle wait.
   delay(LR1121_UPDATER_POST_ENTRY_SETTLE_MS);
 
+  return this->read_bootloader_version(type, bootloader_version);
+}
+
+bool Lr1121FirmwareUpdater::read_bootloader_version(uint8_t &type, uint16_t &bootloader_version) {
   uint8_t resp[4] = {0};
   if (!this->read_command_(LR1121_UPDATER_CMD_GET_VERSION, nullptr, 0, resp, sizeof(resp),
                            LR1121_UPDATER_BUSY_TIMEOUT_MS))
@@ -150,6 +154,75 @@ bool Lr1121FirmwareUpdater::enter_bootloader(uint8_t &type, uint16_t &bootloader
   bootloader_version = (static_cast<uint16_t>(resp[2]) << 8) | resp[3];
   return true;
 }
+
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+
+bool Lr1121FirmwareUpdater::update_bootloader() {
+  if (!this->write_command_(LR1121_UPDATER_CMD_UPDATE_BOOTLOADER, nullptr, 0, LR1121_UPDATER_BUSY_TIMEOUT_MS))
+    return false;
+  // Semtech's own reference tool calls GetStatus exactly once here and calls that "waiting for
+  // bootloader update termination" (lr11xx_bootloader_update.c:138) -- a single poll, not a wait
+  // loop. This project's erase_flash() already handles an operation that holds BUSY for an
+  // internal flash write correctly; do the same here, so a hung write surfaces as a timeout rather
+  // than as a verify_bootloader() read taken before the chip is actually ready.
+  return this->wait_busy_(LR1121_UPDATER_BOOTLOADER_UPDATE_BUSY_TIMEOUT_MS);
+}
+
+bool Lr1121FirmwareUpdater::read_updater_status(Lr1121UpdaterStatus &status) {
+  if (!this->wait_busy_(LR1121_UPDATER_BUSY_TIMEOUT_MS))
+    return false;
+  // No opcode: a bare NSS-low/clock/NSS-high read returns Stat1, Stat2 and the 4-byte IrqStatus,
+  // matching Semtech's lr11xx_hal_direct_read() with LR11XX_BL_UPDATER_GET_STATUS_CMD_LENGTH (6).
+  uint8_t data[6] = {0};
+  this->spi_->spi_enable();
+  for (unsigned char &byte : data)
+    byte = this->spi_->spi_read();
+  this->spi_->spi_disable();
+
+  // Bit layout matches lr11xx_bootloader_updater_get_status() verbatim.
+  status.interrupt_active = (data[0] & 0x01) != 0;
+  status.command_status = static_cast<Lr1121UpdaterCommandStatus>(data[0] >> 1);
+  status.running_from_flash = (data[1] & 0x01) != 0;
+  status.chip_mode = static_cast<uint8_t>((data[1] & 0x0F) >> 1);
+  status.reset_status = static_cast<uint8_t>((data[1] & 0xF0) >> 4);
+  status.irq_status = (static_cast<uint32_t>(data[2]) << 24) | (static_cast<uint32_t>(data[3]) << 16) |
+                      (static_cast<uint32_t>(data[4]) << 8) | static_cast<uint32_t>(data[5]);
+  return true;
+}
+
+bool Lr1121FirmwareUpdater::verify_bootloader(Lr1121BootloaderVerification &report) {
+  uint8_t resp[4] = {0};
+  if (!this->read_command_(LR1121_UPDATER_CMD_VERIFY_BOOTLOADER, nullptr, 0, resp, sizeof(resp),
+                           LR1121_UPDATER_BUSY_TIMEOUT_MS))
+    return false;
+  // Bit layout matches SWTL001's lr11xx_bootloader_updater_verify_bootloader() verbatim
+  // (bootloader_updater_driver/src/lr11xx_bootloader_updater.c:170-179) -- the only public
+  // specification for this response; the User Manual predates the bootloader updater entirely.
+  const uint8_t check_byte = resp[0];
+  report.signature_verified = (check_byte & 0x01) != 0;
+  report.version_verified = (check_byte & 0x02) != 0;
+  report.use_case_verified = (check_byte & 0x04) != 0;
+  report.version_major_verified = (check_byte & 0x08) != 0;
+  report.version_minor_verified = (check_byte & 0x10) != 0;
+  report.anti_rollback_verified = (check_byte & 0x20) != 0;
+  report.use_case = resp[1];
+  report.version_major = resp[2];
+  report.version_minor = resp[3];
+  return true;
+}
+
+bool Lr1121FirmwareUpdater::updater_reboot(bool stay_in_bootloader) {
+  uint8_t const param = stay_in_bootloader ? 0x03 : 0x00;
+  if (!this->write_command_(LR1121_UPDATER_CMD_UPDATER_REBOOT, &param, 1, LR1121_UPDATER_BUSY_TIMEOUT_MS))
+    return false;
+  // Same BUSY race as reboot() -- see its comment. The caller's very next step is always a
+  // read_bootloader_version() to check whether the chip stayed in the bootloader, which is exactly
+  // the kind of immediately-following wait_busy_() reboot()'s comment warns about.
+  delay(LR1121_UPDATER_POST_REBOOT_SETTLE_MS);
+  return true;
+}
+
+#endif  // IOHOME_LR1121_BOOTLOADER_UPDATE
 
 bool Lr1121FirmwareUpdater::erase_flash() {
   if (!this->write_command_(LR1121_UPDATER_CMD_ERASE_FLASH, nullptr, 0, LR1121_UPDATER_BUSY_TIMEOUT_MS))

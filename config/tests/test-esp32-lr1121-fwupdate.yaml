@@ -1,0 +1,55 @@
+# Compile test for the LR1121 firmware-update feature *and* its bootloader-rewrite sub-block.
+#
+# Exists because both features are gated behind build defines that no other test config sets, so
+# without this config neither IOHOME_LR1121_FIRMWARE_UPDATE nor IOHOME_LR1121_BOOTLOADER_UPDATE is
+# ever compiled for the Xtensa target — only for the x86-64 host unit-test build, which uses a
+# different compiler and different fundamental type widths. This repo has already been bitten once
+# by exactly that gap (uint32_t is `long` on Xtensa, so `%u` format specifiers broke).
+#
+# NOTE: this config downloads two firmware images from GitHub at build time and is therefore the
+# one test config that needs network access. `make firmware-test` skips it for that reason; build
+# it explicitly with:
+#   docker compose run --rm esphome compile /config/tests/test-esp32-lr1121-fwupdate.yaml
+substitutions:
+  device_name: test_lr1121_fwupdate
+
+esphome:
+  name: ${device_name}
+  merge_warnings: false
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-ssid"
+  password: "test12345"
+
+api:
+
+spi:
+  clk_pin: 5
+  mosi_pin: 6
+  miso_pin: 3
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+home_io_control:
+  cs_pin: 7
+  rst_pin: 8
+  busy_pin: 34
+  dio1_pin: 33
+  radio_type: lr1121
+  node_id: C0FFEE
+  system_key: 0123456789ABCDEF0123456789ABCDEF
+  lr1121_firmware_update:
+    source: github://Lora-net/radio_firmware_images/lr1121/transceiver/lr1121_transceiver_0104.bin
+    bootloader:
+      source: github://Lora-net/radio_firmware_images/lr1121/loader/lr1121_loader_2100.bin

@@ -158,15 +158,28 @@ clean-test-cache:
 	@echo "Cleaning config/tests/.esphome/storage/"
 	@docker compose run --rm --entrypoint sh esphome -c "rm -rf /config/tests/.esphome/storage" || exit 1
 
-# Compilation tests for all platform configs
+# Compilation tests for all platform configs.
+# test-esp32-lr1121-fwupdate.yaml is excluded here and built by firmware-test-fwupdate instead:
+# it is the only config that downloads firmware images at build time, so keeping it out of this
+# loop keeps `make check` runnable without network access.
 firmware-test:
 	@python3 scripts/check-build-cache.py --clean
 	@echo "Compiling test configurations in config/tests/"
 	@for cfg in config/tests/test-*.yaml; do \
 	  name=$$(basename "$$cfg"); \
+	  case "$$name" in test-esp32-lr1121-fwupdate.yaml) echo "=== Skipping $$name (needs network; make firmware-test-fwupdate) ==="; continue;; esac; \
 	  echo "=== Compiling $$name ==="; \
 	  docker compose run --rm esphome compile "/config/tests/$$name" || exit 1; \
 	done
+
+# Compile test for the LR1121 firmware-update + bootloader-rewrite features. Separate from
+# firmware-test because it fetches two images from GitHub. Without it, IOHOME_LR1121_FIRMWARE_UPDATE
+# and IOHOME_LR1121_BOOTLOADER_UPDATE are only ever compiled by the x86-64 host unit-test build --
+# a different compiler with different type widths from the Xtensa target (this repo has already
+# been bitten once by uint32_t being `long` there).
+firmware-test-fwupdate:
+	@echo "=== Compiling test-esp32-lr1121-fwupdate.yaml (downloads firmware images) ==="
+	@docker compose run --rm esphome compile "/config/tests/test-esp32-lr1121-fwupdate.yaml"
 
 # === Unit test configuration ===================================================
 
@@ -192,10 +205,14 @@ INCLUDES := -Icomponents/home_io_control \
 # lr1121_firmware_update: block, but host tests need it unconditionally: without it,
 # COMPONENT_SRCS's wildcard picks up radio_lr1121_firmware_updater.cpp and hub_lr1121_firmware_update.cpp
 # and compiles each to an empty TU, so their tests would have nothing to link against.
+# IOHOME_LR1121_BOOTLOADER_UPDATE is the same story one level down: normally only set when a
+# `bootloader:` sub-block is configured, but the 0x81xx primitives and the three-stage
+# orchestration it gates need to be always-on for their host tests to have anything to link.
 UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_CUSTOM_SERVICES \
 			 -DUSE_API_HOMEASSISTANT_SERVICES \
-			 -DIOHOME_LR1121_FIRMWARE_UPDATE
+			 -DIOHOME_LR1121_FIRMWARE_UPDATE \
+			 -DIOHOME_LR1121_BOOTLOADER_UPDATE
 
 # Regenerates build/corpus/corpus_generated.h from tests/corpus/captures/**/*.yaml.
 # see tests/corpus/README.md.

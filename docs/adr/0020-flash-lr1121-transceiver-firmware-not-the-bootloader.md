@@ -1,6 +1,6 @@
 # ADR 0020: Flash LR1121 transceiver firmware, not the bootloader
 
-**Status:** Accepted · **Recorded:** 2026-08
+**Status:** Superseded by [ADR 0021](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md) · **Recorded:** 2026-08
 
 ## Context
 
@@ -20,6 +20,25 @@ Two facts shape the problem. First, Semtech gates each transceiver image on the
 a separate operation with its own opcode family (`0x8100`/`0x8101`/`0x8102`)
 that rewrites the bootloader itself.
 
+A third fact sets the stakes. Semtech's advisory SEM-PSA-2026-001 lists LR1121
+as affected when running *"TRX FW versions earlier than `0x0104` and BL2 FW
+versions earlier than `0x2101`"* — it names a **bootloader** threshold as well as
+a transceiver one. The most severe of the three CVEs it covers, CVE-2025-14859
+(CVSS 7.0), is a secure-boot weakness: a non-standard hash vulnerable to
+second-preimage attacks, letting forged firmware pass signature verification.
+Secure boot is the bootloader's first documented task. So a transceiver-only
+updater probably cannot close all three — it cannot fix a flaw in the code that
+authenticates transceiver firmware.
+
+That last step is inference and is recorded as such: the advisory never maps
+individual CVEs to individual components, and its "and" could be read as
+describing the affected population rather than prescribing two fixes. What is not
+in doubt is that Semtech names `0x2101` at all, which it would have no reason to
+do if the transceiver update sufficed. Against that, all three CVEs require
+physical access to the SPI interface, are not remotely exploitable, and do not
+disclose cryptographic keys — for a hub inside a house this is defence-in-depth,
+not an emergency.
+
 That second operation is categorically riskier than the first, and the reason is
 structural rather than statistical. Entering bootloader mode is a GPIO strap —
 BUSY held low across a reset — so it does not depend on the transceiver firmware
@@ -36,8 +55,9 @@ all. A bricked bootloader is not recoverable by this project.
    about an update it gives them no way to apply, and the vendor path is
    inaccessible on the hardware this project actually targets.
 2. **The full capability, including the bootloader-updater opcodes.** Reaches
-   `0x0104` — which matters, since that release fixes CVE-2025-14857/-14858/-14859.
-   The cost is that a failed bootloader write has no recovery path in-project.
+   `0x0104` on `0x2101`, the first configuration that plausibly closes all three
+   CVEs. The cost is that a failed bootloader write has no recovery path
+   in-project.
 3. **Transceiver region only, bootloader deferred.** Gives up `0x0104` on chips
    that shipped with `0x2100` for now, and keeps every failure recoverable.
 
@@ -106,10 +126,14 @@ anything new.
 
 ## Consequences
 
-- **The one release users most want is the one this cannot reach yet.** On a
-  chip that shipped with bootloader `0x2100`, `0x0104` — the CVE-fixing release
-  — is unreachable, and `0x0103` is the ceiling. This is the direct, deliberate
-  cost of staging the riskier operation for later, not an oversight.
+- **The configuration users most need is the one this cannot reach yet, and the
+  gap is a security one.** On a chip that shipped with bootloader `0x2100`,
+  `0x0104` is unreachable and `0x0103` is the ceiling — so per the advisory
+  above, CVE-2025-14859 (7.0 High) most likely stays open on every board running
+  this build. That is the direct, deliberate cost of staging the riskier
+  operation for later, not an oversight, and it is the strongest argument for
+  revisiting. It is bounded by the fact that exploitation needs physical access
+  to the SPI interface.
 - Every transceiver-flash failure short of physical damage is a retry. A power
   loss mid-write, an erase timeout, or a write timeout leaves a chip whose
   transceiver region is incomplete but whose bootloader is untouched; the next
@@ -131,10 +155,10 @@ anything new.
   in one NSS cycle.
 - The wire protocol is verified against Semtech's published source rather than
   inferred — opcodes, the byte-denominated flash offset advancing 256 per chunk,
-  the reboot parameter encoding, the GetVersion response layout, and the
-  compatibility matrix all match `Lora-net/SWTL001` verbatim. The BUSY-strap
-  bootloader-entry sequence is the exception: it is not in the published tree's
-  reachable files, and was confirmed by a real hardware flash instead.
+  the reboot parameter encoding, the GetVersion response layout, the compatibility
+  matrix, and the BUSY-strap bootloader-entry sequence (including its 500 ms and
+  100 ms waits) all match `Lora-net/SWTL001` verbatim, and the entry sequence was
+  independently confirmed by a real hardware flash.
 - Byte-exact host tests prove the component sends what it believes the protocol
   to be. A real hardware write is what validated the offset semantics the tests
   alone could not catch a misreading of.

@@ -9,8 +9,8 @@
 /// from the presence of `home_io_control.lr1121_firmware_update:` (see `__init__.py`'s
 /// `_create_lr1121_firmware_update()`), bound directly to the hub instance being built. See
 /// hub_lr1121_firmware_update.cpp for what a press actually does — every rejection path is a
-/// cached-verdict log, not a fresh bootloader entry; see the implementation plan's ground rules
-/// for the safety invariant once a press does proceed.
+/// cached-verdict log, not a fresh bootloader entry. Once a press does proceed, ADR 0020's
+/// invariant applies: every exit after a bootloader excursion reboots the ESP32.
 
 // IOHOME_LR1121_FIRMWARE_UPDATE is only visible after something pulls in esphome/core/defines.h
 // (via hub_core.h's own #include "esphome/core/hal.h") — these #includes must run before the

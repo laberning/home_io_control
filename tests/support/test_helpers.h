@@ -114,6 +114,10 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::lr1121_firmware_update_debug_lines_;
   using IOHomeControlComponent::run_lr1121_boot_time_bootloader_read_;
   using IOHomeControlComponent::cache_lr1121_flash_verdict_;
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+  using IOHomeControlComponent::bootloader_rewrite_allowed_;
+  using IOHomeControlComponent::describe_lr1121_bootloader_refusal_;
+#endif
 #endif
 };
 
