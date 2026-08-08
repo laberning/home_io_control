@@ -6,12 +6,13 @@
 
 /// @brief Scriptable RNG queue for host tests that need deterministic esp_random() output.
 ///
-/// Not yet consumed — added ahead of Step H2's pairing replay test, which will use this to
-/// reproduce a captured controller challenge (crypto::generate_challenge() consumes
-/// esp_random() one byte at a time via `& 0xFF`) so a pairing/discovery replay can assert
-/// byte-exact transmitted frames instead of merely structural ones. Empty queue -> esp_random()
-/// falls back to its original LCG behavior, so every test that never calls test_rng::enqueue()
-/// (i.e. every test today) is completely unaffected.
+/// Added for pairing replay tests to reproduce a captured controller challenge
+/// (crypto::generate_challenge() consumes esp_random() one byte at a time via `& 0xFF`) so a
+/// pairing/discovery replay can assert byte-exact transmitted frames instead of merely
+/// structural ones. Empty queue -> esp_random() falls back to a deterministic LCG, so every test
+/// that never calls test_rng::enqueue() is unaffected; ProtoCrypto.GenerateChallenge* in
+/// proto_crypto_test.cpp relies on exactly that fallback (via reset()) to check
+/// generate_challenge()'s output shape without needing real entropy.
 namespace test_rng {
 
 inline std::deque<uint32_t> &queue() {

@@ -65,6 +65,10 @@ const char *command_name(uint8_t cmd) {
       return "SET_NAME";
     case CMD_SET_NAME_RESP:
       return "SET_NAME_RESP";
+    case CMD_GET_INFO1:
+      return "GET_INFO1";
+    case CMD_GET_INFO1_RESP:
+      return "GET_INFO1_RESP";
     case CMD_GET_INFO2:
       return "GET_INFO2";
     case CMD_GET_INFO2_RESP:
@@ -77,6 +81,14 @@ const char *command_name(uint8_t cmd) {
       return "STATUS_UPDATE";
     case CMD_STATUS_UPDATE_RESP:
       return "STATUS_UPDATE_RESP";
+    case CMD_SEND_RAW_MESSAGE:
+      return "SEND_RAW_MESSAGE";
+    case CMD_READ_GROUPS:
+      return "READ_GROUPS";
+    case CMD_REBOOT:
+      return "REBOOT";
+    case CMD_SERVICE_STATUS_ACK:
+      return "SERVICE_STATUS_ACK";
     case CMD_ERROR_RESP:
       return "ERROR_RESP";
     default:

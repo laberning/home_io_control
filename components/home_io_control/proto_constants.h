@@ -44,7 +44,9 @@ static constexpr uint8_t CMD_DISCOVER_SPE_RESP = 0x2B;     ///< Sub-device respo
 static constexpr uint8_t CMD_DISCOVER_CONFIRM = 0x2C;      ///< Confirm discovery to device
 static constexpr uint8_t CMD_DISCOVER_CONFIRM_ACK = 0x2D;  ///< Device acknowledges confirmation
 static constexpr uint8_t CMD_DISCOVER_ALT_REQ =
-    0x2E;  ///< Alternate broadcast discovery (to 0x00003F); response is 0x29
+    0x2E;  ///< Alternate broadcast discovery (to 0x00003F); claimed response is 0x29, but that's
+           ///< unconfirmed — a real Somfy Izymo dimmer drew no response to 0x2E at all
+           ///< (tests/corpus/captures/somfy_dimmer/discover_alt_no_response.yaml).
 static constexpr uint8_t CMD_ONEWAY_REMOVE =
     0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device); same payload shape
            ///< as 0x2E. Reference: analysis/completed/pairing_lab.md field capture, "CMD 0x39".
@@ -64,10 +66,14 @@ static constexpr uint8_t CMD_CHALLENGE_REQ = 0x3C;   ///< Device sends 6-byte ra
 static constexpr uint8_t CMD_CHALLENGE_RESP = 0x3D;  ///< Controller responds with HMAC proof
 
 // Device info commands
-static constexpr uint8_t CMD_GET_NAME = 0x50;        ///< Request device name
-static constexpr uint8_t CMD_GET_NAME_RESP = 0x51;   ///< Device name response
-static constexpr uint8_t CMD_SET_NAME = 0x52;        ///< Set device name (authenticated)
-static constexpr uint8_t CMD_SET_NAME_RESP = 0x53;   ///< Device-name write response
+static constexpr uint8_t CMD_GET_NAME = 0x50;       ///< Request device name
+static constexpr uint8_t CMD_GET_NAME_RESP = 0x51;  ///< Device name response
+static constexpr uint8_t CMD_SET_NAME = 0x52;       ///< Set device name (authenticated)
+static constexpr uint8_t CMD_SET_NAME_RESP = 0x53;  ///< Device-name write response
+static constexpr uint8_t CMD_GET_INFO1 =
+    0x54;  ///< Request device general info 1 (unimplemented; we only use 0x56/0x57)
+static constexpr uint8_t CMD_GET_INFO1_RESP =
+    0x55;  ///< Device general info 1 response (unimplemented; we only use 0x56/0x57)
 static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info
 static constexpr uint8_t CMD_GET_INFO2_RESP = 0x57;  ///< Device type/model response
 
@@ -76,7 +82,13 @@ static constexpr uint8_t CMD_SET_CONFIG1 = 0x6F;         ///< Configure device t
 static constexpr uint8_t CMD_SET_CONFIG1_RESP = 0x70;    ///< Config response
 static constexpr uint8_t CMD_STATUS_UPDATE = 0x71;       ///< Device-initiated status update (needs auth)
 static constexpr uint8_t CMD_STATUS_UPDATE_RESP = 0x72;  ///< Acknowledge status update
-static constexpr uint8_t CMD_ERROR_RESP = 0xFE;          ///< Error response to any command
+
+static constexpr uint8_t CMD_SEND_RAW_MESSAGE = 0xF0;    ///< Send raw message / "find hardware" (service)
+static constexpr uint8_t CMD_READ_GROUPS = 0xF1;         ///< Actuator: read groups / service ACK
+static constexpr uint8_t CMD_REBOOT = 0xF2;              ///< Reboot / service status
+static constexpr uint8_t CMD_SERVICE_STATUS_ACK = 0xF3;  ///< Service status ACK
+
+static constexpr uint8_t CMD_ERROR_RESP = 0xFE;  ///< Error response to any command
 
 // Command-result / limitation codes carried in CMD_ERROR_RESP DATA[0].
 static constexpr uint8_t RESULT_UNKNOWN_STATUS_REPLY = 0x00;        ///< Device returned an unknown status reply.

@@ -706,3 +706,68 @@ TEST(HubCore, StatusUpdateWithShortPayloadIgnored) {
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "short status update should not change position";
 }
+
+// ADR 0022: an unauthenticated CMD_PRIVATE_RESP/foreign-dst CMD_STATUS_UPDATE is never applied
+// to device state, regardless of what it claims — see hub_status.cpp's process_received_packet_.
+// Both payloads below claim the device is *moving* to 100% (STATUS_STOPPED bit clear) — the
+// opposite of a fresh device's default (is_stopped=true, position=UNKNOWN_POSITION) — the same
+// shape the equivalent authenticated-path tests elsewhere in this file (e.g.
+// StatusUpdateMovingFrameHandling) prove really does decode when trusted, so a regression that
+// started trusting this path again would flip these assertions rather than pass vacuously.
+
+TEST(HubCore, UnauthenticatedForeignPrivateResponseDoesNotUpdateDeviceState) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.add_device("054E17");
+
+  // CMD_PRIVATE_RESP from one of our own registered devices, addressed to some other controller
+  // (not us) — as if we're passively overhearing a reply to a different controller's own poll.
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};  // our registered device
+  uint8_t dst[3] = {0x43, 0x44, 0xE3};  // some other controller, not us
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[8] = {0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};  // moving, target/current=100%
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "private response frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "unauthenticated foreign reply must not set position";
+  EXPECT_TRUE(dev->is_stopped) << "unauthenticated foreign reply must not change is_stopped from its default";
+}
+
+TEST(HubCore, UnauthenticatedForeignStatusUpdateDoesNotUpdateDeviceState) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.add_device("054E17");
+
+  // CMD_STATUS_UPDATE from one of our own registered devices, addressed to some other controller
+  // — the device-initiated equivalent of the CMD_PRIVATE_RESP case above.
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};  // our registered device
+  uint8_t dst[3] = {0x43, 0x44, 0xE3};  // some other controller, not us
+  set_src(f, src);
+  set_dst(f, dst);
+  // moving, target at [5..6]=0xC800 (100%), current at [7..8]=0xC800 (100%)
+  uint8_t payload[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  RadioRxPacket pkt = make_rx_packet(f);
+  ASSERT_GT(pkt.len, 0) << "status update frame should serialize";
+
+  comp.process_received_packet_(pkt);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "unauthenticated foreign status update must not set position";
+  EXPECT_TRUE(dev->is_stopped) << "unauthenticated foreign status update must not change is_stopped from its default";
+}

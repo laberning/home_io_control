@@ -156,9 +156,9 @@ TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
 INSTANTIATE_TEST_SUITE_P(CorpusExchangeReplay, CorpusExchangeReplay, ::testing::ValuesIn(exchange_replay_captures()),
                          corpus_test::capture_name_generator);
 
-/// Smoke test for tests/include/esp_random.h's test_rng stub (not yet consumed by any suite —
-/// see that header's comment; this pins the enqueue/reset contract Step H2's pairing replay
-/// will rely on).
+/// Smoke test for tests/include/esp_random.h's test_rng stub — pins the enqueue/reset contract
+/// relied on elsewhere (this file's pairing replay tests; ProtoCrypto.GenerateChallenge* in
+/// proto_crypto_test.cpp, which uses reset() to force the deterministic LCG fallback).
 TEST(TestRng, EnqueueReturnsQueuedValuesThenFallsBackToLcg) {
   test_rng::enqueue_byte(0xAB);
   test_rng::enqueue_byte(0xCD);

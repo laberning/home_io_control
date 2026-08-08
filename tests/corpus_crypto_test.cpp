@@ -118,11 +118,15 @@ TEST_P(CorpusCryptoReplay, AuthenticatedCommandHmacMatchesCapture) {
     EXPECT_TRUE(hmac_actually_valid) << "verify_hmac must accept the captured HMAC";
   }
 
-  uint8_t tampered[HMAC_SIZE];
-  std::memcpy(tampered, response.data, HMAC_SIZE);
-  tampered[0] ^= 0x01;
-  EXPECT_FALSE(crypto::verify_hmac(transcript, transcript_len, tampered, challenge.data, test::TEST_SYSTEM_KEY))
-      << "a single bit-flip in the captured HMAC must be rejected";
+  // Flip each byte position independently, not just byte 0 — see the identical rationale in
+  // tests/proto_crypto_test.cpp's ChallengeResponseHmac.
+  for (uint8_t i = 0; i < HMAC_SIZE; i++) {
+    uint8_t tampered[HMAC_SIZE];
+    std::memcpy(tampered, response.data, HMAC_SIZE);
+    tampered[i] ^= 0x01;
+    EXPECT_FALSE(crypto::verify_hmac(transcript, transcript_len, tampered, challenge.data, test::TEST_SYSTEM_KEY))
+        << "a bit-flip in captured HMAC byte " << static_cast<int>(i) << " must be rejected";
+  }
 }
 
 /// Key-transfer (0x32) sub-test (design §6.2, Step H2): locates the (0x31 key-init, 0x3C

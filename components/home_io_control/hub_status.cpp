@@ -477,9 +477,12 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   }
 
   if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE) {
-    // Passive receive mode can still observe replies/status from other exchanges. If a frame
-    // is status-bearing and not exchange-internal, try to merge it into known device state.
-    this->update_device_status_(frame);
+    // Passive receive mode can still observe replies/status from other exchanges (another
+    // controller sharing a device, or an attacker who knows the device's node ID -- node IDs
+    // travel in the clear, see README.md's "Reporting Unsupported Devices"). Nothing here proves
+    // the frame's source currently holds the system key, so its content is never applied -- see
+    // ADR 0022. State goes stale until this hub's own next authenticated poll corrects it.
+    detail::log_frame_issue(this, "rx", "unauthenticated_status_ignored", frame, packet.len);
     return;
   }
 

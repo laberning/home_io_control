@@ -25,13 +25,18 @@
 /// the state machine, and the radio wiring end-to-end on real RF hardware.
 /// @warning What that test does NOT validate: compatibility with a genuine third-party hub
 /// (Somfy TaHoma/Smoove, Velux KLF200, etc.). The device-role frames built here
-/// (create_discover_resp(), create_challenge_req(), create_key_confirm()) and the IV-derivation
-/// assumption in recover_system_key_from_transfer() were reverse-engineered from this project's
-/// own encoder and a small number of captures — see analysis/key_extraction_feature_plan.md §4b.
-/// The self-test above necessarily agrees with those conventions (it's the same codebase on both
-/// ends); a real hub's exact requirements (discovery-response field completeness, retry cadence,
-/// IV convention) may still differ. Treat a recovered key as unconfirmed until it has been
-/// verified against a real hub, or by successfully controlling a device with it.
+/// (create_discover_resp(), create_challenge_req(), create_key_confirm()) were reverse-engineered
+/// from this project's own encoder and a small number of captures — see
+/// analysis/key_extraction_feature_plan.md §4b. The self-test above necessarily agrees with those
+/// conventions (it's the same codebase on both ends); a real hub's exact requirements
+/// (discovery-response field completeness, retry cadence) may still differ.
+/// recover_system_key_from_transfer()'s IV-derivation formula itself is now pinned against two
+/// externally-captured known-answer key transfers (ProtoCrypto.CryptKeyMatchesDocumented*Capture
+/// in proto_crypto_test.cpp), so that specific formula is no longer only self-derived — though
+/// both captures are short requests and don't exercise construct_iv()'s 8-byte truncation window,
+/// so a real hub sending a longer request is still an open question. Treat a recovered key as
+/// unconfirmed until it has been verified against a real hub, or by successfully controlling a
+/// device with it.
 
 namespace esphome {
 namespace home_io_control {
@@ -220,13 +225,16 @@ void IOHomeControlComponent::handle_key_extraction_key_transfer_(const IoFrame &
 }
 
 // TODO(hardware-verify): the feature plan's §3/§6 step 8 recommends an authenticated read-back
-// to the foreign hub using the recovered key before trusting it (the IV-derivation assumption in
-// recover_system_key_from_transfer() is the single highest-risk unverified piece of this
-// feature). That subflow was deliberately deferred here: it would require carving a narrow
-// exception into is_exchange_internal_command()'s 0x3C/0x3D early-drop (hub_status.cpp) for a
-// second unverified vendor-hub interaction, doubling the protocol-speculation surface for a
-// feature that already ships marked experimental. The key is still always printed (gating it on
-// an equally-unverified secondary check risks hiding a correct key), but the log below says so.
+// to the foreign hub using the recovered key before trusting it. recover_system_key_from_transfer()'s
+// IV-derivation formula is now pinned against externally-captured known-answer key transfers (see
+// the file-level @warning above), so that piece is no longer just self-consistent — but nothing
+// here confirms this specific extraction talks to a real third-party hub correctly, which is now
+// the single highest-risk unverified piece of this feature. That read-back subflow was
+// deliberately deferred here: it would require carving a narrow exception into
+// is_exchange_internal_command()'s 0x3C/0x3D early-drop (hub_status.cpp) for a second unverified
+// vendor-hub interaction, doubling the protocol-speculation surface for a feature that already
+// ships marked experimental. The key is still always printed (gating it on an equally-unverified
+// secondary check risks hiding a correct key), but the log below says so.
 void IOHomeControlComponent::log_key_extraction_result_() {
   const std::string node_id_str = node_id_to_string(this->key_extraction_ctx_.hub_node_id);
   const std::string key_str = format_key_hex(this->key_extraction_ctx_.recovered_key);

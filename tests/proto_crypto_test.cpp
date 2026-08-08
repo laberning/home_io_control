@@ -3,6 +3,11 @@
 
 #include "test_helpers.h"
 
+#include <esp_random.h>
+
+#include <array>
+#include <set>
+
 using namespace esphome::home_io_control;
 
 // ============================================================================
@@ -80,12 +85,62 @@ TEST(ProtoCrypto, ChallengeResponseHmac) {
       crypto::verify_hmac(transcript, origin.data_len + 1, auth_resp.data, test::TEST_CHALLENGE, test::TEST_SYSTEM_KEY))
       << "valid HMAC should verify against origin transcript";
 
-  uint8_t tampered[HMAC_SIZE] = {0};
-  std::memcpy(tampered, auth_resp.data, HMAC_SIZE);
-  tampered[0] ^= 0x01;
-  EXPECT_FALSE(
-      crypto::verify_hmac(transcript, origin.data_len + 1, tampered, test::TEST_CHALLENGE, test::TEST_SYSTEM_KEY))
-      << "tampered HMAC should fail verification";
+  // Flip each byte position independently, not just byte 0 — verify_hmac() is meant to be
+  // load-bearing across all 6 bytes (proto_crypto.cpp's constant-time XOR/OR loop), and a
+  // mutation that narrowed the comparison to e.g. `hmac[0] == expected[0]` would still pass a
+  // byte-0-only tamper test.
+  for (uint8_t i = 0; i < HMAC_SIZE; i++) {
+    uint8_t tampered[HMAC_SIZE] = {0};
+    std::memcpy(tampered, auth_resp.data, HMAC_SIZE);
+    tampered[i] ^= 0x01;
+    EXPECT_FALSE(
+        crypto::verify_hmac(transcript, origin.data_len + 1, tampered, test::TEST_CHALLENGE, test::TEST_SYSTEM_KEY))
+        << "a tampered HMAC byte at position " << static_cast<int>(i) << " should fail verification";
+  }
+}
+
+// ========================================================================================
+// crypt_key() / construct_iv() — independent known-answer vectors
+// ========================================================================================
+// Two real over-the-air key-transfer exchanges with known plaintext keys, posted by the
+// iown-homecontrol reverse-engineering project. Independent of this codebase, so a match here
+// is evidence crypt_key()'s IV construction is correct, not merely self-consistent: our other
+// crypto tests below (CryptKeyRoundTrip, KeyTransferRoundTrip,
+// RecoverSystemKeyFromTransferRoundTrip) all encrypt and decrypt with our own code and check
+// mutual agreement, which can't catch a bug where both directions share the same wrong
+// assumption — only a known answer from an outside source can.
+
+TEST(ProtoCrypto, CryptKeyMatchesDocumentedIownHomecontrolPushCapture) {
+  // Controller-initiated ("push") key transfer: a CMD_KEY_INIT (0x31) request, a 6-byte
+  // challenge from the device, and the CMD_KEY_TRANSFER (0x32) reply masking a known stack key.
+  const uint8_t iv_data[1] = {CMD_KEY_INIT};
+  const uint8_t challenge[HMAC_SIZE] = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
+  const uint8_t wire_ciphertext[AES_KEY_SIZE] = {0x10, 0x2E, 0x49, 0xA1, 0x6D, 0x3B, 0x69, 0x72,
+                                                 0x6F, 0x31, 0x92, 0xCF, 0x17, 0x53, 0x4A, 0xD9};
+  const uint8_t expected_key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                              0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+
+  uint8_t recovered[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(crypto::crypt_key(iv_data, sizeof(iv_data), challenge, wire_ciphertext, recovered));
+  EXPECT_EQ(0, memcmp(recovered, expected_key, AES_KEY_SIZE))
+      << "crypt_key() must recover the documented Push-flow stack key from the captured wire ciphertext";
+}
+
+TEST(ProtoCrypto, CryptKeyMatchesDocumentedIownHomecontrolPullCapture) {
+  // Device-initiated ("pull") key transfer: a CMD_LAUNCH_KEY_TRANSFER (0x38) request whose own
+  // payload carries the challenge, and the CMD_KEY_TRANSFER (0x32) reply masking a known device
+  // key using an IV built from the full 7-byte request (command byte + 6-byte challenge).
+  const uint8_t iv_data[7] = {CMD_LAUNCH_KEY_TRANSFER, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
+  const uint8_t challenge[HMAC_SIZE] = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
+  const uint8_t wire_ciphertext[AES_KEY_SIZE] = {0xEA, 0x42, 0x5A, 0x7A, 0x18, 0x28, 0x85, 0xD4,
+                                                 0xEA, 0xEE, 0xFD, 0x41, 0x6D, 0x62, 0x5E, 0x01};
+  const uint8_t expected_key[AES_KEY_SIZE] = {0xAB, 0xCD, 0xEF, 0x01, 0x02, 0x03, 0x04, 0x05,
+                                              0x06, 0x07, 0x08, 0x09, 0x10, 0x11, 0x12, 0x13};
+
+  uint8_t recovered[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(crypto::crypt_key(iv_data, sizeof(iv_data), challenge, wire_ciphertext, recovered));
+  EXPECT_EQ(0, memcmp(recovered, expected_key, AES_KEY_SIZE))
+      << "crypt_key() must recover the documented Pull-flow device key from the captured wire ciphertext";
 }
 
 TEST(ProtoCrypto, CryptKeyRoundTrip) {
@@ -171,4 +226,52 @@ TEST(ProtoCrypto, RecoverSystemKeyFromTransferWrongIvDataFails) {
       crypto::crypt_key(wrong_iv_seed, sizeof(wrong_iv_seed), test::TEST_CHALLENGE, key_transfer.data, recovered));
   EXPECT_NE(0, memcmp(recovered, test::TEST_SYSTEM_KEY, AES_KEY_SIZE))
       << "decrypting with the wrong IV-data convention must not silently recover the correct key";
+}
+
+// ========================================================================================
+// generate_challenge() — output shape, not entropy quality
+// ========================================================================================
+// generate_challenge() feeds the entire authentication scheme: the challenge-response protocol
+// is only as fresh as the challenge is unpredictable per exchange. This test can't judge the
+// ESP32 hardware TRNG's entropy quality on host (esp_random() falls back to a plain LCG here,
+// see tests/include/esp_random.h), but it can catch the class of glue-code bug that would
+// survive even good entropy underneath: e.g. a loop bound off by one that leaves trailing bytes
+// always zero, or a copy that only ever touches byte 0.
+
+TEST(ProtoCrypto, GenerateChallengeProducesDistinctNonDegenerateOutput) {
+  test_rng::reset();  // Use the deterministic LCG fallback, not a leftover scripted queue.
+
+  constexpr int kSamples = 20;
+  std::set<std::array<uint8_t, HMAC_SIZE>> seen;
+  std::array<bool, HMAC_SIZE> byte_varied{};
+
+  uint8_t previous[HMAC_SIZE] = {0};
+  for (int sample = 0; sample < kSamples; sample++) {
+    uint8_t challenge[HMAC_SIZE] = {0};
+    crypto::generate_challenge(challenge);
+
+    uint8_t all_zero = 0x00, all_ff = 0xFF;
+    for (uint8_t i = 0; i < HMAC_SIZE; i++) {
+      all_zero |= challenge[i];
+      all_ff &= challenge[i];
+      if (sample > 0 && challenge[i] != previous[i])
+        byte_varied[i] = true;
+    }
+    EXPECT_NE(all_zero, 0x00) << "challenge #" << sample << " must not be all-zero";
+    EXPECT_NE(all_ff, 0xFF) << "challenge #" << sample << " must not be all-0xFF";
+
+    std::array<uint8_t, HMAC_SIZE> as_array;
+    std::memcpy(as_array.data(), challenge, HMAC_SIZE);
+    EXPECT_TRUE(seen.insert(as_array).second) << "challenge #" << sample << " repeats an earlier sample";
+
+    std::memcpy(previous, challenge, HMAC_SIZE);
+  }
+
+  // Every byte position must change at least once across the run — catches a mutation that
+  // only ever writes a subset of the 6 bytes (the whole-value distinctness check above would
+  // miss that as long as some other byte kept changing).
+  for (uint8_t i = 0; i < HMAC_SIZE; i++) {
+    EXPECT_TRUE(byte_varied[i]) << "byte position " << static_cast<int>(i) << " never changed across " << kSamples
+                                << " samples";
+  }
 }

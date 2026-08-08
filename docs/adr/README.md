@@ -52,6 +52,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0007](0007-self-contained-aes-implementation.md) | Self-contained AES-128 | Avoid an mbedTLS linkage dependency for one fixed primitive |
 | [0011](0011-key-material-redaction-in-logs.md) | Key material masked in all logs | Masking is unconditional, not tied to the frame-logging flag |
 | [0012](0012-key-extraction-responder-for-owned-devices.md) | Key-extraction responder | Emulate a device so a user's own hub hands over its credentials |
+| [0022](0022-unauthenticated-status-frames-are-never-applied.md) | Unauthenticated status frames are never applied | Drop the merge rather than pay a challenge or an attacker-triggerable poll |
 
 ### Testing
 
