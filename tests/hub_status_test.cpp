@@ -23,10 +23,10 @@ using test::TestableHubComponent;
 // status updates, INFO2/error responses, remote-activity-triggered polling, linked remotes,
 // and RSSI/last-seen link-health tracking. Split out of hub_core_test.cpp (finding #11) since
 // these all exercise the same file's responsibilities rather than hub_core.cpp's own setup/loop/
-// queue-dispatch surface. Kept in the HubCore suite name — a pure test-file move, not a
-// suite rename (that stays Lars's call; --gtest_filter behavior is unaffected either way).
+// queue-dispatch surface. Uses the HubStatus suite name, distinct from hub_core_test.cpp's
+// HubCore suite.
 
-TEST(HubCore, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
+TEST(HubStatus, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
   TestableHubComponent comp;
   comp.add_device("ABC123");
 
@@ -48,7 +48,7 @@ TEST(HubCore, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
   EXPECT_TRUE(dev->is_stopped) << "matching normalized target/current should remain stopped";
 }
 
-TEST(HubCore, StoppedFlagMismatchKeepsDeviceMoving) {
+TEST(HubStatus, StoppedFlagMismatchKeepsDeviceMoving) {
   TestableHubComponent comp;
   comp.add_device("ABC123");
 
@@ -74,7 +74,7 @@ TEST(HubCore, StoppedFlagMismatchKeepsDeviceMoving) {
 // Remote activity detection tests (Issue #3)
 // ============================================================================
 
-TEST(HubCore, RemoteActivity_TriggersDelayedPoll) {
+TEST(HubStatus, RemoteActivity_TriggersDelayedPoll) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -106,7 +106,7 @@ TEST(HubCore, RemoteActivity_TriggersDelayedPoll) {
   EXPECT_EQ(comp.op_queue_.front().device_id, "054E17");
 }
 
-TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsTrackedSettlePolling) {
+TEST(HubStatus, RemoteActivityWithoutConfiguredIntervalArmsTrackedSettlePolling) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -142,7 +142,7 @@ TEST(HubCore, RemoteActivityWithoutConfiguredIntervalArmsTrackedSettlePolling) {
       << "a moving poll response after remote activity should schedule a hint-driven follow-up poll";
 }
 
-TEST(HubCore, RemoteActivity_UnregisteredDevice_NoTrigger) {
+TEST(HubStatus, RemoteActivity_UnregisteredDevice_NoTrigger) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -166,7 +166,7 @@ TEST(HubCore, RemoteActivity_UnregisteredDevice_NoTrigger) {
   EXPECT_TRUE(comp.op_queue_.empty()) << "should not queue any operation";
 }
 
-TEST(HubCore, RemoteActivity_OwnEcho_NoTrigger) {
+TEST(HubStatus, RemoteActivity_OwnEcho_NoTrigger) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -190,7 +190,7 @@ TEST(HubCore, RemoteActivity_OwnEcho_NoTrigger) {
   EXPECT_TRUE(comp.op_queue_.empty()) << "should not queue any operation";
 }
 
-TEST(HubCore, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
+TEST(HubStatus, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -226,7 +226,7 @@ TEST(HubCore, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
   EXPECT_EQ(comp.op_queue_.front().device_id, "054E17");
 }
 
-TEST(HubCore, LinkedRemotes_MultipleRemotesOneDevice) {
+TEST(HubStatus, LinkedRemotes_MultipleRemotesOneDevice) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -253,7 +253,7 @@ TEST(HubCore, LinkedRemotes_MultipleRemotesOneDevice) {
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
 }
 
-TEST(HubCore, LinkedRemotes_OneRemoteMultipleDevices) {
+TEST(HubStatus, LinkedRemotes_OneRemoteMultipleDevices) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -286,7 +286,7 @@ TEST(HubCore, LinkedRemotes_OneRemoteMultipleDevices) {
 // Inbound status update tests (update_device_status_ paths)
 // ============================================================================
 
-TEST(HubCore, StatusUpdateFrameHandling) {
+TEST(HubStatus, StatusUpdateFrameHandling) {
   // The CMD_STATUS_UPDATE path through process_received_packet_ triggers
   // authentication (authenticate_request_) which requires a challenge response
   // from the mock radio. Test update_device_status_ directly instead.
@@ -311,7 +311,7 @@ TEST(HubCore, StatusUpdateFrameHandling) {
   EXPECT_TRUE(dev->is_stopped) << "device should be stopped";
 }
 
-TEST(HubCore, StatusUpdateMovingFrameHandling) {
+TEST(HubStatus, StatusUpdateMovingFrameHandling) {
   TestableHubComponent comp;
   comp.add_device("054E17");
 
@@ -334,7 +334,7 @@ TEST(HubCore, StatusUpdateMovingFrameHandling) {
   EXPECT_FALSE(dev->is_stopped) << "device should be moving";
 }
 
-TEST(HubCore, GetInfo2RespUpdatesDeviceType) {
+TEST(HubStatus, GetInfo2RespUpdatesDeviceType) {
   TestableHubComponent comp;
   comp.add_device("054E17");
 
@@ -358,7 +358,7 @@ TEST(HubCore, GetInfo2RespUpdatesDeviceType) {
   EXPECT_EQ(dev->subtype, 0u) << "INFO2 response should update device subtype";
 }
 
-TEST(HubCore, GetInfo2RespDoesNotOverwriteDeclaredType) {
+TEST(HubStatus, GetInfo2RespDoesNotOverwriteDeclaredType) {
   TestableHubComponent comp;
   comp.add_device("054E17", {DeviceType::AWNING, 7, false});
 
@@ -380,7 +380,7 @@ TEST(HubCore, GetInfo2RespDoesNotOverwriteDeclaredType) {
   EXPECT_EQ(dev->subtype, 7u) << "INFO2 must not overwrite a YAML-declared subtype";
 }
 
-TEST(HubCore, ErrorRespDoesNotMutateTrackedPosition) {
+TEST(HubStatus, ErrorRespDoesNotMutateTrackedPosition) {
   TestableHubComponent comp;
   comp.add_device("054E17");
 
@@ -406,7 +406,7 @@ TEST(HubCore, ErrorRespDoesNotMutateTrackedPosition) {
   EXPECT_FALSE(dev->is_stopped) << "error responses should not change movement state";
 }
 
-TEST(HubCore, ErrorRespSetsLastResultCode) {
+TEST(HubStatus, ErrorRespSetsLastResultCode) {
   TestableHubComponent comp;
   comp.add_device("054E17");
 
@@ -429,7 +429,7 @@ TEST(HubCore, ErrorRespSetsLastResultCode) {
   EXPECT_NE(dev->last_result_at_ms, 0u) << "unsolicited 0xFE should stamp a recorded-at timestamp";
 }
 
-TEST(HubCore, ErrorRespWithNonLimitationCodeStillRecords) {
+TEST(HubStatus, ErrorRespWithNonLimitationCodeStillRecords) {
   TestableHubComponent comp;
   comp.add_device("054E17");
   auto *dev = comp.get_device("054E17");
@@ -450,7 +450,7 @@ TEST(HubCore, ErrorRespWithNonLimitationCodeStillRecords) {
       << "non-limitation result codes should still be recorded on the device";
 }
 
-TEST(HubCore, ErrorRespWithEmptyPayloadDoesNotSetLastResultCode) {
+TEST(HubStatus, ErrorRespWithEmptyPayloadDoesNotSetLastResultCode) {
   TestableHubComponent comp;
   comp.add_device("054E17");
   auto *dev = comp.get_device("054E17");
@@ -469,7 +469,7 @@ TEST(HubCore, ErrorRespWithEmptyPayloadDoesNotSetLastResultCode) {
   EXPECT_EQ(dev->last_result_code, 0u) << "a too-short 0xFE must keep hitting the existing rejection path unchanged";
 }
 
-TEST(HubCore, SuccessfulPrivateResponseClearsLastResultCode) {
+TEST(HubStatus, SuccessfulPrivateResponseClearsLastResultCode) {
   TestableHubComponent comp;
   comp.add_device("054E17");
   auto *dev = comp.get_device("054E17");
@@ -493,7 +493,7 @@ TEST(HubCore, SuccessfulPrivateResponseClearsLastResultCode) {
   EXPECT_EQ(dev->last_result_at_ms, 0u) << "clearing the result code should also clear its timestamp";
 }
 
-TEST(HubCore, SuccessfulStatusUpdateClearsLastResultCode) {
+TEST(HubStatus, SuccessfulStatusUpdateClearsLastResultCode) {
   TestableHubComponent comp;
   comp.add_device("054E17");
   auto *dev = comp.get_device("054E17");
@@ -522,7 +522,7 @@ TEST(HubCore, SuccessfulStatusUpdateClearsLastResultCode) {
 // Link-health tests (RSSI EMA, last-seen, exchange failures)
 // ========================================================================================
 
-TEST(HubCore, RxFromRegisteredDeviceUpdatesLastSeenAndRssiEma) {
+TEST(HubStatus, RxFromRegisteredDeviceUpdatesLastSeenAndRssiEma) {
   TestableHubComponent comp;
   MockRadio radio;
   comp.radio_ = &radio;
@@ -562,7 +562,7 @@ TEST(HubCore, RxFromRegisteredDeviceUpdatesLastSeenAndRssiEma) {
   EXPECT_EQ(device_rssi_ema_dbm(*dev), -77) << "EMA should blend by 1/8th with fixed-point precision";
 }
 
-TEST(HubCore, RssiEmaConvergesToStableSignal) {
+TEST(HubStatus, RssiEmaConvergesToStableSignal) {
   TestableHubComponent comp;
   MockRadio radio;
   comp.radio_ = &radio;
@@ -590,7 +590,7 @@ TEST(HubCore, RssiEmaConvergesToStableSignal) {
   EXPECT_EQ(device_rssi_ema_dbm(*dev), -64) << "a stable signal must converge exactly, with no truncation dead zone";
 }
 
-TEST(HubCore, RxWithInvalidCaptureUpdatesLastSeenButNotRssi) {
+TEST(HubStatus, RxWithInvalidCaptureUpdatesLastSeenButNotRssi) {
   TestableHubComponent comp;
   MockRadio radio;
   comp.radio_ = &radio;  // Never staged with set_last_capture_rssi(): get_last_capture().valid stays false.
@@ -613,7 +613,7 @@ TEST(HubCore, RxWithInvalidCaptureUpdatesLastSeenButNotRssi) {
   EXPECT_EQ(dev->last_rssi_dbm, RSSI_UNKNOWN_DBM);
 }
 
-TEST(HubCore, RxWithoutRadioDoesNotCrash) {
+TEST(HubStatus, RxWithoutRadioDoesNotCrash) {
   TestableHubComponent comp;
   ASSERT_EQ(comp.radio_, nullptr) << "test relies on radio_ defaulting to nullptr";
   comp.add_device("054E17");
@@ -634,7 +634,7 @@ TEST(HubCore, RxWithoutRadioDoesNotCrash) {
   EXPECT_EQ(dev->rssi_ema_scaled, RSSI_UNKNOWN_DBM);
 }
 
-TEST(HubCore, RxFromUnregisteredDeviceUpdatesNothing) {
+TEST(HubStatus, RxFromUnregisteredDeviceUpdatesNothing) {
   TestableHubComponent comp;
   MockRadio radio;
   comp.radio_ = &radio;
@@ -657,7 +657,7 @@ TEST(HubCore, RxFromUnregisteredDeviceUpdatesNothing) {
   EXPECT_EQ(dev->last_seen_ms, 0u) << "an unrelated registered device must not be touched";
 }
 
-TEST(HubCore, OwnControllerStatusUpdateSchedulesPoll) {
+TEST(HubStatus, OwnControllerStatusUpdateSchedulesPoll) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -681,7 +681,7 @@ TEST(HubCore, OwnControllerStatusUpdateSchedulesPoll) {
   EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should reference our device";
 }
 
-TEST(HubCore, StatusUpdateWithShortPayloadIgnored) {
+TEST(HubStatus, StatusUpdateWithShortPayloadIgnored) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -715,7 +715,7 @@ TEST(HubCore, StatusUpdateWithShortPayloadIgnored) {
 // StatusUpdateMovingFrameHandling) prove really does decode when trusted, so a regression that
 // started trusting this path again would flip these assertions rather than pass vacuously.
 
-TEST(HubCore, UnauthenticatedForeignPrivateResponseDoesNotUpdateDeviceState) {
+TEST(HubStatus, UnauthenticatedForeignPrivateResponseDoesNotUpdateDeviceState) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -743,7 +743,7 @@ TEST(HubCore, UnauthenticatedForeignPrivateResponseDoesNotUpdateDeviceState) {
   EXPECT_TRUE(dev->is_stopped) << "unauthenticated foreign reply must not change is_stopped from its default";
 }
 
-TEST(HubCore, UnauthenticatedForeignStatusUpdateDoesNotUpdateDeviceState) {
+TEST(HubStatus, UnauthenticatedForeignStatusUpdateDoesNotUpdateDeviceState) {
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);

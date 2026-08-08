@@ -16,7 +16,7 @@ permissions:
 jobs:
   weekly:
     name: Compile test configs against ESPHome dev
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       ESPHOME_TAG: dev
     steps:

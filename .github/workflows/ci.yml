@@ -8,52 +8,52 @@ on:
 
 jobs:
   format:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: make format-check
 
   yamllint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y yamllint
       - run: make yamllint
 
   tidy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: clang-tidy --version
       - run: make clang-tidy
 
   tuning-sync:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: make tuning-sync
 
   corpus-validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: pip install --user pyyaml
       - run: make corpus-validate
 
   docs-link-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: make docs-link-check
 
   test-compile:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: make firmware-test
 
   unit-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
@@ -61,7 +61,7 @@ jobs:
       - run: make unit-test
 
   unit-test-asan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
@@ -69,7 +69,7 @@ jobs:
       - run: make unit-test-asan
 
   doxygen:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y graphviz python3-pygments

@@ -345,7 +345,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
     auto command = static_cast<uint8_t>(tuning_->pairing_discovery_commands[command_index]);
     const uint8_t *destination = resolve_discovery_destination(command, tuning_->pairing_discovery_destination_auto,
                                                                tuning_->pairing_discovery_destination.data());
-    ESP_LOGD(TAG, "Discovery command %u/%zu: cmd=0x%02X dst=%02X%02X%02X", command_index + 1,
+    ESP_LOGD(TAG, "Discovery command %zu/%zu: cmd=0x%02X dst=%02X%02X%02X", command_index + 1,
              tuning_->pairing_discovery_commands.size(), command, destination[0], destination[1], destination[2]);
 
     for (uint8_t attempt = 1; attempt <= PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {

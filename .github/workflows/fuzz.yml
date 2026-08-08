@@ -7,7 +7,7 @@ on:
 
 jobs:
   fuzz-frame:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: pip install --user pyyaml

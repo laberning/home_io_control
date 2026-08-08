@@ -33,7 +33,12 @@ void print_wire(const char *label, const IoFrame &frame) {
   wire[len] = crc & 0xFF;
   wire[len + 1] = (crc >> 8) & 0xFF;
   printf("%s hex:", label);
-  for (uint8_t i = 0; i < len + 2; i++)
+  // Index is size_t, not uint8_t: `len + 2` promotes to int, and a uint8_t counter can never
+  // reach it once len exceeds 253 — the comparison would stay true forever. FRAME_MAX_SIZE
+  // caps len at 32 today, so this was latent rather than live, but the loop shouldn't depend
+  // on that constant staying small.
+  const size_t wire_len = static_cast<size_t>(len) + 2;
+  for (size_t i = 0; i < wire_len; i++)
     printf(" %02X", wire[i]);
   printf("\n");
 }

@@ -70,7 +70,7 @@ if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE) {
 - The cost lands entirely on the narrow multi-controller-sharing-a-device scenario: this hub's
   own view of a shared device's position now only updates via its own regular, authenticated
   polling cadence, not instantly from overhearing another controller's exchange.
-- Regression-pinned by `HubCore.UnauthenticatedForeign{PrivateResponse,StatusUpdate}DoesNotUpdateDeviceState`
+- Regression-pinned by `HubStatus.UnauthenticatedForeign{PrivateResponse,StatusUpdate}DoesNotUpdateDeviceState`
   (hub_status_test.cpp) — both verified to fail against the prior code before this change landed.
 - `authenticate_request_()` remains exactly as expensive and exactly as used as before — this
   decision is about *not* reaching for it here, not about changing its cost anywhere else.

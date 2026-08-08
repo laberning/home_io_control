@@ -226,8 +226,13 @@ HOST_VARIANT ?= default
 HOST_BUILD_DIR := build/host/$(HOST_VARIANT)
 HOST_OBJ_DIR := $(HOST_BUILD_DIR)/obj
 HOST_EXTRA_FLAGS ?=
-HOST_CXXFLAGS := -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-unused-but-set-variable \
-                 -Wno-unused-variable -Wno-reorder -DIRAM_ATTR= \
+# -Wno-unused-variable / -Wno-unused-but-set-variable are deliberately ABSENT here — do not
+# re-add them. tests/include/esphome/core/log.h's ESP_LOG* stubs name their arguments in a
+# dead branch, so values only computed for logging still read as "used" on host. If a wave of
+# unused-variable warnings ever reappears, that stub was broken — fix it there, not here.
+# -Wno-unused-parameter stays: callback signatures conforming to an interface genuinely have
+# unused parameters. -Wno-reorder stays: member-init-order patterns here rely on it.
+HOST_CXXFLAGS := -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
                  $(UNIT_TEST_DEFINES) $(INCLUDES) $(HOST_EXTRA_FLAGS)
 
 HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)

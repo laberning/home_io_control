@@ -142,8 +142,9 @@ TEST_P(CorpusPairingReplay, EngineReproducesCapturedPairing) {
     const uint8_t non_crc_len = corpus_test::wire_len(*cf);
     SCOPED_TRACE(::testing::Message() << "tx frame index=" << i);
 
-    if (cf->freq_hz != 0)
+    if (cf->freq_hz != 0) {
       EXPECT_EQ(tx_configs[i].freq_hz, cf->freq_hz) << "TX frequency mismatch";
+    }
 
     if (capture->key == corpus::KeyMode::CORPUS) {
       ASSERT_EQ(sent[i].size(), non_crc_len) << "byte-exact length mismatch (key: corpus)";
