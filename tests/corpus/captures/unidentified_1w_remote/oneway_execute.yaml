@@ -1,0 +1,28 @@
+id: unidentified_1w_remote_oneway_execute
+description: >
+  1W CMD_EXECUTE (0x00) broadcast from an unidentified io-homecontrol 1W transmitter,
+  typed-broadcast to all (dst=00003F). Originator=0x01, ACEI=0x61. Literal bytes (only the
+  FF/33 preamble/sync prefix stripped) are quoted directly in Velocet/iown-homecontrol's
+  docs/radio.md, labeled "101010b packet 1" — the same CC0-1.0-licensed file cited by the
+  somfy_smoove/ captures in this corpus. radio.md attributes the original capture to GitHub
+  user 101010b (io-home repo), who never identified which product this is beyond
+  "my transmitters" in their own writeup. This project has no hardware from this device;
+  crc_ccitt() independently confirms the trailing 2 bytes are a valid CRC over the rest of
+  the frame, so nothing here was recomputed or altered.
+source:
+  device: "Unidentified io-homecontrol 1W remote"
+  captured_with: other
+  firmware: null
+  date: 2026-08-08
+  origin: reference-material
+  issue: "https://github.com/Velocet/iown-homecontrol/blob/main/docs/radio.md"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    hex: "F8 00 00 00 3F 1A 38 0B 00 01 61 00 00 80 D8 05 00 02 A6 24 22 2E 8B A3 51 5F 52"
+    crc: present
+    note: "cmd=EXECUTE(0x00), originator=0x01, ACEI=0x61"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}

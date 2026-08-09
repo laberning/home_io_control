@@ -308,6 +308,32 @@ def rekey_key_transfer_frames(frames, real_key: bytes, corpus_key: bytes) -> int
     return rewritten
 
 
+def rekey_self_authenticated_frames(frames, real_key: bytes, corpus_key: bytes) -> int:
+    """Verify + rewrite the HMAC half of every self-authenticated frame (payload =
+    [challenge | HMAC], see protolib.SELF_AUTHENTICATED_COMMANDS). The challenge half is left
+    exactly as captured — it is random bytes the sender chose, not key-derived, and rewriting it
+    would destroy a real recorded value for no gain.
+
+    Same hard-abort contract as the other two rewriters: a payload of the right length whose HMAC
+    does not verify means the assumed shape is wrong for this frame (or the bytes are corrupt),
+    and guessing would silently replace real capture data with fiction.
+    """
+    rewritten = 0
+    for frame in protolib.find_self_authenticated_frames(frames):
+        transcript, challenge, hmac = protolib.self_auth_parts(frame)
+        if not protolib.verify_hmac(transcript, hmac, challenge, real_key):
+            raise RekeyError(
+                f"self-authenticated frame {frame.raw().hex().upper()} has a "
+                f"[challenge|HMAC]-shaped payload that does NOT verify under the real key "
+                f"(fingerprint sha256={key_fingerprint(real_key)}) — wrong key, corrupted capture, or a "
+                "command wrongly listed in protolib.SELF_AUTHENTICATED_COMMANDS. Aborting; nothing was written.")
+        new_hmac = protolib.create_hmac(transcript, challenge, corpus_key)
+        prefix = protolib.non_crc_bytes(frame)[:protolib.FRAME_MIN_SIZE]
+        _set_frame_raw(frame, prefix + challenge + new_hmac)
+        rewritten += 1
+    return rewritten
+
+
 def assert_no_key_leakage(frames, real_key: bytes) -> None:
     """Output-safety scan: after rewriting, no frame may contain the real key's bytes in either
     byte order. This is a last-resort net, not the primary defense (rekey_*_frames already
@@ -334,6 +360,7 @@ def apply_rekey(frames, args) -> "tuple[bytes, list[str], dict[str, str]]":
     remap, roles = parse_remap_args(args.remap, args.role)
 
     hmac_count = rekey_hmac_frames(frames, real_key, corpus_key)
+    hmac_count += rekey_self_authenticated_frames(frames, real_key, corpus_key)
     transfer_count = rekey_key_transfer_frames(frames, real_key, corpus_key)
     warnings = apply_node_remap(frames, remap)
     assert_no_key_leakage(frames, real_key)
@@ -355,7 +382,11 @@ def main() -> int:
     parser.add_argument("--id", required=True, help="capture id (globally unique across the corpus)")
     parser.add_argument("--device", required=True, help="free-text device description")
     parser.add_argument("--captured-with", default="other", choices=["sx1276", "sx1262", "other", "synthetic"])
-    parser.add_argument("--origin", required=True, choices=["own-hardware", "github-issue", "synthetic-bootstrap"])
+    parser.add_argument(
+        "--origin",
+        required=True,
+        choices=["own-hardware", "github-issue", "synthetic-bootstrap", "reference-material"],
+    )
     parser.add_argument("--issue", default=None, help="issue URL, e.g. https://github.com/.../issues/27")
     parser.add_argument("--date", required=True, help="YYYY-MM-DD")
     parser.add_argument("--firmware", default=None)

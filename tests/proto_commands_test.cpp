@@ -1,7 +1,10 @@
 #include "proto_commands.h"
+#include "proto_crypto.h"
 #include "proto_frame.h"
 
 #include "test_helpers.h"
+
+#include <cstring>
 
 using namespace esphome::home_io_control;
 
@@ -314,6 +317,29 @@ TEST(ProtoCommands, CreateDiscoveryRequest_0x2A_PayloadSize) {
       << "create_discovery_request should succeed for 0x2A";
   EXPECT_EQ(frame.cmd, CMD_DISCOVER_SPE_REQ);
   EXPECT_EQ(frame.data_len, 12) << "0x2A payload should be 6 random + 6 HMAC bytes";
+}
+
+TEST(ProtoCommands, CreateDiscoveryRequest_0x2A_HmacCoversCommandByteOnly) {
+  // Pins the transcript, which is the whole point of this payload: the 6-byte HMAC covers the
+  // command byte alone, authenticated against the nonce that precedes it in the same frame.
+  // Asserting only the length (the test above) let a wrong transcript ship — every emitted 0x2A
+  // carried an HMAC no device could verify. Real-hardware ground truth for the rule lives in
+  // CorpusCryptoSelfAuthenticated (corpus_crypto_test.cpp).
+  IoFrame frame{};
+  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false, 0,
+                                       test::TEST_SYSTEM_KEY));
+  ASSERT_EQ(frame.data_len, HMAC_SIZE * 2);
+  const uint8_t *nonce = frame.data;
+  const uint8_t *hmac = frame.data + HMAC_SIZE;
+
+  const uint8_t cmd = CMD_DISCOVER_SPE_REQ;
+  EXPECT_TRUE(crypto::verify_hmac(&cmd, 1, hmac, nonce, test::TEST_SYSTEM_KEY))
+      << "0x2A HMAC must verify over the command byte alone, with the nonce as challenge";
+
+  uint8_t cmd_plus_nonce[HMAC_SIZE + 1] = {cmd};
+  std::memcpy(cmd_plus_nonce + 1, nonce, HMAC_SIZE);
+  EXPECT_FALSE(crypto::verify_hmac(cmd_plus_nonce, sizeof(cmd_plus_nonce), hmac, nonce, test::TEST_SYSTEM_KEY))
+      << "the pre-2026-08 [cmd, nonce] transcript must not come back";
 }
 
 TEST(ProtoCommands, CreateDiscoveryRequest_0x2A_RequiresSystemKey) {

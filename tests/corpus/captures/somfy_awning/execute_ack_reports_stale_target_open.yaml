@@ -1,42 +1,48 @@
 id: execute_ack_reports_stale_target_open
 description: >
-  The device's immediate reply to an EXECUTE(open, target=22%) command reports a stale
-  target=0%/position=0% instead of the just-commanded value. Verifies that this quick-ack frame
-  decodes to the device's pre-command position, not the fresh target — the real value only
-  arrives on the follow-up status poll.
+  The device's immediate reply to an EXECUTE(open, target=25%) command carries a stale target of
+  0% — its pre-command position — instead of the just-commanded 25%. Both the target bytes
+  (data[2..3] = 00 00) and the current bytes (data[4..5] = 00 00) read zero here, so
+  `reported_position` is 0. The true value only arrives on the follow-up status polls, which
+  reported 3%, 6%, 10% ... in the same session.
+  Recorded back-to-back with execute_ack_reports_stale_target_close.yaml, and the pair is the
+  point: there the device is commanded to 0% and its ack's target reads 25%. Each ack echoes the
+  *other* scenario's pre-command value, which rules out a fixed-offset decode error on our side
+  and pins the behaviour as the device reporting pre-command state — this capture alone could be
+  explained by an all-zero payload, the sibling is what makes it conclusive.
 source:
   device: "Somfy Sunea IO awning motor"
-  captured_with: sx1262
+  captured_with: sx1276
   firmware: null
-  date: 2026-07-12
+  date: 2026-08-09
   origin: own-hardware
   issue: null
-key: unknown
+key: corpus
 frames:
   - dir: tx
     t_ms: 0
     freq: 868950000
-    hex: "50 20 30 E1 F2 C0 FF EE 00 01 43 2C 00 80 D8 06 00"
+    hex: "50 20 30 E1 F2 C0 FF EE 00 01 43 32 00 80 D8 06 00"
     crc: absent
-    note: "EXECUTE, position=22 (0x2C = 2*22), START"
+    note: "cmd=EXECUTE(0x00), position=25 (0x32 = 2*25), START; CTRL1=0x20 LOW_POWER"
   - dir: rx
-    t_ms: 34
+    t_ms: 289
     freq: 868950000
-    hex: "0E 00 C0 FF EE 30 E1 F2 3C C4 E9 F8 F1 92 6B"
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C 1D 3B 4A A9 92 D7"
     crc: absent
-    note: "challenge request, challenge = C4 E9 F8 F1 92 6B"
+    note: "cmd=CHALLENGE_REQ(0x3C), challenge = 1D 3B 4A A9 92 D7"
   - dir: tx
-    t_ms: 34
+    t_ms: 315
     freq: 868950000
-    hex: "0E 00 30 E1 F2 C0 FF EE 3D D4 89 07 A2 89 27"
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 3F 0E 4E B0 B9 29"
     crc: absent
-    note: "challenge response (key unknown, HMAC not verifiable)"
+    note: "cmd=CHALLENGE_RESP(0x3D), HMAC over the EXECUTE transcript above; re-keyed under the public corpus key at ingest (ingest.py --rekey), so it verifies under TEST_SYSTEM_KEY and never carried the real key. CTRL1=0x20 LOW_POWER is set here, which the superseded 2026-07-12 capture predates — that flag was missing on 0x3D until the six frame builders were aligned"
   - dir: rx
-    t_ms: 38
+    t_ms: 315
     freq: 868950000
     hex: "8E 00 C0 FF EE 30 E1 F2 04 2C 80 00 00 00 00"
     crc: absent
-    note: "quick EXECUTE-ack, END — target/current bytes decode to 0/0 (stale pre-command state, not the just-commanded target=22)"
+    note: "cmd=PRIVATE_RESP(0x04), quick EXECUTE-ack, END — target bytes 00 00 and current bytes 00 00 both decode to 0%, the stale pre-command state, not the just-commanded target=25"
 expect:
   exchange:
     kind: authenticated_command

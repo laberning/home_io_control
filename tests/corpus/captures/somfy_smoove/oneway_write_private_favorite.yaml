@@ -1,0 +1,28 @@
+id: somfy_smoove_oneway_write_private_favorite
+description: >
+  1W CMD_WRITE_PRIVATE (0x20) broadcast from the same Somfy Smoove-style io wall switch as the
+  sibling somfy_smoove captures, captured immediately after oneway_write_private_a. The first 8
+  data bytes (02 FF 01 43 02 05 FF 00) are byte-for-byte identical to somfy_awning's own
+  oneway_remote_favorite_sx1276 capture's favorite/'My'-button payload, from an unrelated
+  device and session — cross-confirms this is the same favorite/'My' button encoding on a
+  different physical product. Same source and license as oneway_execute_current.yaml
+  (Velocet/iown-homecontrol docs/radio.md, CC0-1.0).
+  Literal documented bytes with only a preamble/sync prefix stripped; crc_ccitt() independently
+  confirms the trailing CRC.
+source:
+  device: "Somfy Smoove-style io wall switch (1W)"
+  captured_with: other
+  firmware: null
+  date: 2026-08-08
+  origin: reference-material
+  issue: "https://github.com/Velocet/iown-homecontrol/blob/main/docs/radio.md"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    hex: "F8 00 00 00 3F 48 5B 37 20 02 FF 01 43 02 05 FF 00 03 D8 90 39 62 DB AD 98 FB 24"
+    crc: present
+    note: "cmd=WRITE_PRIVATE(0x20), favorite/'My' button pattern"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}

@@ -236,9 +236,10 @@ bool create_discover(IoFrame &f, const uint8_t *own) {
 /// Build a configurable discovery request command (0x28, 0x2A, or 0x2E).
 ///
 /// For 0x2A (Discover SPE), the payload is a 6-byte random nonce followed by a 6-byte
-/// HMAC computed over [cmd + nonce] using the nonce as the challenge and the supplied
-/// system key. This requires a valid system key; it will not work for a motor that has
-/// never been paired with this controller's key.
+/// HMAC over the command byte alone, using that nonce as the challenge and the supplied
+/// system key — one frame carrying a whole challenge-response, which is what lets a
+/// broadcast be authenticated. This requires a valid system key; it will not work for a
+/// motor that has never been paired with this controller's key.
 bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, const uint8_t *dst, bool low_power,
                               bool payload_enabled, uint8_t payload, const uint8_t *system_key) {
   init_frame(f, true, true, true, low_power);
@@ -254,11 +255,13 @@ bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, c
         return false;
       uint8_t nonce[HMAC_SIZE];
       crypto::generate_challenge(nonce);
-      uint8_t data[HMAC_SIZE + 1];
-      data[0] = command;
-      memcpy(data + 1, nonce, HMAC_SIZE);
+      // The HMAC covers the command byte *alone*, with the nonce as the challenge — not the
+      // nonce as transcript data, which is what this built until real bytes settled it (a Velux
+      // KLR200's own 0x2A, tests/corpus/captures/velux_kux100/pairing_full.yaml, recomputed
+      // under that installation's key). The old [cmd, nonce] transcript produced an HMAC no
+      // device could verify, so every 0x2A we emitted was silently unanswerable.
       uint8_t hmac[HMAC_SIZE];
-      if (!crypto::create_hmac(data, sizeof(data), nonce, system_key, hmac))
+      if (!crypto::create_hmac(&command, 1, nonce, system_key, hmac))
         return false;
       uint8_t payload_buf[HMAC_SIZE * 2];
       memcpy(payload_buf, nonce, HMAC_SIZE);

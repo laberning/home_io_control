@@ -42,7 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CAPTURES_DIR = REPO_ROOT / "tests" / "corpus" / "captures"
 
 ALLOWED_KEY_MODES = {"corpus", "unknown"}
-ALLOWED_ORIGINS = {"own-hardware", "github-issue", "synthetic-bootstrap"}
+ALLOWED_ORIGINS = {"own-hardware", "github-issue", "synthetic-bootstrap", "reference-material"}
 # Mirrors ingest.py's --captured-with choices — build.py hard-requires source.captured_with
 # (render_capture() reads capture["source"]["captured_with"] unconditionally) but validate.py
 # didn't check it was present, so a hand-edited or older capture missing it passed validation
@@ -229,6 +229,19 @@ def validate_crypto(data: dict, capture_id: str) -> None:
             protolib.verify_hmac(parts.transcript, parts.hmac, parts.challenge, protolib.CORPUS_SYSTEM_KEY),
             f"{capture_id}: key: corpus promise broken — a 0x3D HMAC does not verify under the public "
             "corpus key",
+        )
+
+    # Self-authenticated frames (0x2A: payload = [challenge | HMAC]) carry a complete
+    # challenge-response with no surrounding frames to pair them with, so the loop above cannot
+    # see them — they are opaque blobs to a reader and were, until a real capture turned up,
+    # invisible to this enforcement too.
+    for frame in protolib.find_self_authenticated_frames(frames):
+        transcript, self_challenge, self_hmac = protolib.self_auth_parts(frame)
+        require(
+            protolib.verify_hmac(transcript, self_hmac, self_challenge, protolib.CORPUS_SYSTEM_KEY),
+            f"{capture_id}: key: corpus promise broken — the HMAC half of a self-authenticated "
+            f"0x{protolib.CMD_DISCOVER_SPE_REQ:02X} payload does not verify under the public corpus key "
+            "(re-key it with scripts/corpus/ingest.py --rekey or rekey_capture.py)",
         )
 
 

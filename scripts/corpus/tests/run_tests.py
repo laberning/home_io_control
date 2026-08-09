@@ -25,6 +25,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import build as build_module  # noqa: E402
 import ingest as ingest_module  # noqa: E402
 import protolib  # noqa: E402
+import rekey_capture as rekey_capture_module  # noqa: E402
 import validate as validate_module  # noqa: E402
 
 
@@ -422,6 +423,236 @@ def test_rekey_output_safety_scan_trips_on_key_leakage() -> None:
     ingest_module.assert_no_key_leakage([clean_frame], real_key)  # must not raise
 
 
+def test_find_challenge_response_triple_device_side_response() -> None:
+    """The protocol is symmetric: a controller can challenge a *device*'s response (tx 0x3C, rx
+    0x3D), and the device HMACs its own preceding frame. Matching only tx 0x3D would leave such
+    HMACs unrewritten by --rekey and unchecked by validate.py — see
+    tests/corpus/captures/velux_kux100/pairing_full.yaml for the real capture.
+    """
+    origin_data = bytes([0xB6, 0x2B, 0xBB])
+    origin = _make_raw_frame("rx", 0x00, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, 0x37, origin_data)
+    challenge = _make_raw_frame("tx", 0x00, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, protolib.CMD_CHALLENGE_REQ,
+                                bytes([0x64, 0x45, 0xE0, 0x81, 0xDC, 0x93]))
+    response = _make_raw_frame("rx", 0x80, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, protolib.CMD_CHALLENGE_RESP,
+                               bytes(protolib.HMAC_SIZE))
+    triples = protolib.find_challenge_response_triples([origin, challenge, response])
+    assert len(triples) == 1, f"expected 1 device-side triple, got {len(triples)}"
+    found_origin, found_challenge, found_response = triples[0]
+    assert found_origin is origin, "origin must be the responder's own preceding frame, not the challenger's"
+    assert found_challenge is challenge and found_response is response
+    parts = protolib.hmac_parts(found_origin, found_challenge, found_response)
+    assert parts.transcript == bytes([0x37]) + origin_data, f"transcript mismatch: {parts.transcript.hex()}"
+
+    # The ordinary controller-side direction must still resolve exactly as before.
+    controller_side = protolib.find_challenge_response_triples(_build_synthetic_exchange(bytes([0xA5] * 16)))
+    assert len(controller_side) == 1, "controller-side 0x3D must still be found"
+    assert controller_side[0][0].direction == "tx"
+
+
+# --- rekey_capture.py self-tests (re-key from the capture's own 0x32 frame) --------------------
+
+
+def _synthetic_pairing_capture_yaml(real_key: bytes) -> str:
+    """A pairing capture as it looks *before* re-keying: a 0x31/0x3C/0x32 triple carrying
+    `real_key`, plus a device-side 0x3D HMAC computed under the same key.
+    """
+    challenge_bytes = bytes([0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
+    key_init = _make_raw_frame("tx", 0x40, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, protolib.CMD_KEY_INIT, b"")
+    challenge = _make_raw_frame("rx", 0x00, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, protolib.CMD_CHALLENGE_REQ,
+                                challenge_bytes)
+    transfer = _make_raw_frame("tx", 0x00, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, protolib.CMD_KEY_TRANSFER,
+                               protolib.crypt_key(bytes([protolib.CMD_KEY_INIT]), challenge_bytes, real_key))
+    origin_data = bytes([0xB6, 0x2B, 0xBB])
+    origin = _make_raw_frame("rx", 0x00, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, 0x37, origin_data)
+    challenge2_bytes = bytes([0x64, 0x45, 0xE0, 0x81, 0xDC, 0x93])
+    challenge2 = _make_raw_frame("tx", 0x00, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, protolib.CMD_CHALLENGE_REQ,
+                                 challenge2_bytes)
+    response = _make_raw_frame("rx", 0x80, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, protolib.CMD_CHALLENGE_RESP,
+                               protolib.create_hmac(bytes([0x37]) + origin_data, challenge2_bytes, real_key))
+
+    frames = [key_init, challenge, transfer, origin, challenge2, response]
+    frame_yaml = "".join(
+        f'  - dir: {f.direction}\n    hex: "{f.hex_bytes.upper()}"\n    crc: absent\n    note: "note {i}"\n'
+        for i, f in enumerate(frames))
+    return (
+        "id: self_test_rekey_capture\n"
+        "description: >\n  pre-re-key self-test fixture\n"
+        "source:\n  device: \"self-test fixture\"\n  captured_with: other\n  firmware: null\n"
+        "  date: 2026-08-09\n  origin: reference-material\n  issue: null\n"
+        "key: unknown\n"
+        "frames:\n" + frame_yaml
+    )
+
+
+def test_rekey_capture_recovers_key_from_capture_and_rewrites_text() -> None:
+    real_key = bytes([0x3C] * 15 + [0x01])
+    text = _synthetic_pairing_capture_yaml(real_key)
+    capture = yaml.safe_load(text)
+    frames = rekey_capture_module.load_frames(capture)
+    original_hex = [f.hex_bytes for f in frames]
+
+    recovered = rekey_capture_module.recover_system_key(frames)
+    assert recovered == real_key, "the key must be recovered from the capture's own 0x32 payload"
+
+    hmac_count = ingest_module.rekey_hmac_frames(frames, recovered, protolib.CORPUS_SYSTEM_KEY)
+    transfer_count = ingest_module.rekey_key_transfer_frames(frames, recovered, protolib.CORPUS_SYSTEM_KEY)
+    assert (hmac_count, transfer_count) == (1, 1), f"expected 1 HMAC + 1 key-transfer rewrite, got {hmac_count}/{transfer_count}"
+
+    rendered, changed = rekey_capture_module.rewrite_text(text, frames, original_hex)
+    assert changed == 2, f"only the two crypto-bearing frames may change, got {changed}"
+    assert "key: corpus\n" in rendered and "key: unknown\n" not in rendered
+    for i in range(6):
+        assert f'note "note {i}"' not in rendered  # sanity: notes are quoted, not mangled
+        assert f'note: "note {i}"' in rendered, "hand-written notes must survive the rewrite verbatim"
+
+    # The re-keyed result must satisfy validate.py's own crypto enforcement, and no longer hold
+    # anything derived from the real key.
+    rekeyed = yaml.safe_load(rendered)
+    validate_module.validate_crypto(rekeyed, rekeyed["id"])  # must not raise
+    rekey_capture_module.assert_output_is_clean(rendered, rekeyed, real_key)  # must not raise
+
+
+def test_rekey_capture_refuses_already_rekeyed_and_keyless_captures() -> None:
+    text = _synthetic_pairing_capture_yaml(protolib.CORPUS_SYSTEM_KEY)
+    frames = rekey_capture_module.load_frames(yaml.safe_load(text))
+    try:
+        rekey_capture_module.recover_system_key(frames)
+        raise AssertionError("expected RekeyError on an already-re-keyed capture")
+    except ingest_module.RekeyError as exc:
+        assert "already re-keyed" in str(exc), exc
+
+    # No 0x32 frame at all: there is nothing to recover, and the tool must say so rather than
+    # silently emitting an unchanged `key: corpus` capture.
+    try:
+        rekey_capture_module.recover_system_key(_build_synthetic_exchange(bytes([0xA5] * 16)))
+        raise AssertionError("expected RekeyError on a capture with no key-transfer frame")
+    except ingest_module.RekeyError as exc:
+        assert "no 0x31/0x3C/0x32 key-transfer triple" in str(exc), exc
+
+
+def test_rekey_capture_refuses_committable_input() -> None:
+    """The pre-re-key file is a verbatim record of a real system key; any committable path is
+    refused. A *tracked* path is refused too — re-keying an already-committed capture is not a
+    supported repair (it is deleted and re-recorded instead), so the tool must not offer one.
+    """
+    for committable in (REPO_ROOT / "README.md", REPO_ROOT / "not_a_real_untracked_capture.yaml"):
+        try:
+            rekey_capture_module.assert_input_is_not_committable(committable)
+            raise AssertionError(f"expected RekeyError for a committable input path: {committable}")
+        except ingest_module.RekeyError:
+            pass
+
+    # A git-ignored path inside the repo, and any path outside it, are both fine.
+    rekey_capture_module.assert_input_is_not_committable(REPO_ROOT / "build" / "corpus" / "raw.yaml")
+    rekey_capture_module.assert_input_is_not_committable(Path(tempfile.gettempdir()) / "raw.yaml")
+
+
+def test_rekey_capture_explicit_key_for_capture_without_key_transfer() -> None:
+    """The remediation path: a capture with HMACs but no 0x32 cannot self-supply its key, so the
+    key comes from a git-ignored file instead. This is what fixes an own-hardware capture that was
+    committed without a re-key.
+    """
+    real_key = bytes([0x77] * 16)
+    frames = _build_synthetic_exchange(real_key)
+    assert not protolib.find_key_transfer_triples(frames), "fixture must have no 0x32 to recover from"
+
+    key_path = _write_fake_key_file(real_key)
+    try:
+        resolved, how = rekey_capture_module.resolve_key(frames, str(key_path))
+        assert resolved == real_key
+        assert "key file" in how
+
+        count = ingest_module.rekey_hmac_frames(frames, resolved, protolib.CORPUS_SYSTEM_KEY)
+        assert count == 1
+        rewritten = frames[2].raw()[protolib.FRAME_MIN_SIZE:protolib.FRAME_MIN_SIZE + protolib.HMAC_SIZE]
+        transcript = bytes([0x00, 0x01, 0x02, 0x03])
+        challenge = bytes([0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
+        assert protolib.verify_hmac(transcript, rewritten, challenge, protolib.CORPUS_SYSTEM_KEY)
+
+        # Without a key file and without a 0x32, there is nothing to resolve — must not guess.
+        try:
+            rekey_capture_module.resolve_key(frames, None)
+            raise AssertionError("expected RekeyError when neither a key file nor a 0x32 frame is available")
+        except ingest_module.RekeyError:
+            pass
+    finally:
+        key_path.unlink(missing_ok=True)
+
+
+def _make_self_authenticated_frame(key: bytes, challenge: bytes) -> "protolib.RawFrame":
+    """A 0x2A frame whose payload is [challenge | HMAC-over-the-command-byte] under `key`."""
+    hmac = protolib.create_hmac(bytes([protolib.CMD_DISCOVER_SPE_REQ]), challenge, key)
+    return _make_raw_frame("tx", 0xC0, bytes.fromhex("00003B"), _REKEY_CONTROLLER_ID,
+                           protolib.CMD_DISCOVER_SPE_REQ, challenge + hmac)
+
+
+def test_rekey_self_authenticated_frame_hmac_half_only() -> None:
+    """A 0x2A payload carries a whole challenge-response in one frame. Only the HMAC half is
+    key-derived, so only that half may be rewritten — the challenge is a real captured random
+    value and must survive.
+    """
+    real_key = bytes([0xA5] * 16)
+    challenge = bytes([0x4A, 0x15, 0xC2, 0x1F, 0x97, 0x33])
+    frame = _make_self_authenticated_frame(real_key, challenge)
+
+    assert protolib.find_self_authenticated_frames([frame]) == [frame]
+    count = ingest_module.rekey_self_authenticated_frames([frame], real_key, protolib.CORPUS_SYSTEM_KEY)
+    assert count == 1, f"expected 1 rewrite, got {count}"
+
+    transcript, new_challenge, new_hmac = protolib.self_auth_parts(frame)
+    assert transcript == bytes([protolib.CMD_DISCOVER_SPE_REQ])
+    assert new_challenge == challenge, "the captured challenge half must not be rewritten"
+    assert protolib.verify_hmac(transcript, new_hmac, challenge, protolib.CORPUS_SYSTEM_KEY), (
+        "rewritten HMAC must verify under the corpus key")
+    assert not protolib.verify_hmac(transcript, new_hmac, challenge, real_key), (
+        "rewritten HMAC must no longer verify under the real key")
+
+
+def test_rekey_self_authenticated_frame_aborts_on_unverifiable_payload() -> None:
+    """Right length, wrong content: the shape assumption is wrong for this frame (or its bytes
+    are corrupt), so re-keying must abort rather than overwrite real capture data with fiction.
+    """
+    real_key = bytes([0xA5] * 16)
+    frame = _make_self_authenticated_frame(real_key, bytes([0x11] * 6))
+    raw = bytearray(frame.raw())
+    raw[-1] ^= 0xFF
+    frame.hex_bytes = bytes(raw).hex()
+    try:
+        ingest_module.rekey_self_authenticated_frames([frame], real_key, protolib.CORPUS_SYSTEM_KEY)
+        raise AssertionError("expected RekeyError on a [challenge|HMAC] payload that does not verify")
+    except ingest_module.RekeyError:
+        pass
+
+
+def test_validate_enforces_self_authenticated_hmac_for_key_corpus() -> None:
+    """The 0x3C/0x3D loop cannot see a self-contained challenge-response, so an un-re-keyed 0x2A
+    used to pass `key: corpus` validation while still holding real-key-derived bytes.
+    """
+    wrong_key = bytes([0x5A] * 16)
+    data = {
+        "key": "corpus",
+        "frames": [{"dir": "tx", "hex": _make_self_authenticated_frame(wrong_key, bytes(6)).hex_bytes,
+                    "crc": "absent"}],
+    }
+    _assert_validation_fails_crypto(data, "self-authenticated")
+
+    ok = {
+        "key": "corpus",
+        "frames": [{"dir": "tx", "hex": _make_self_authenticated_frame(protolib.CORPUS_SYSTEM_KEY, bytes(6)).hex_bytes,
+                    "crc": "absent"}],
+    }
+    validate_module.validate_crypto(ok, "self_test_ok")  # must not raise
+
+
+def _assert_validation_fails_crypto(data: dict, needle: str) -> None:
+    try:
+        validate_module.validate_crypto(data, "self_test_capture")
+    except validate_module.ValidationError as exc:
+        assert needle in str(exc), f"expected {needle!r} in error, got: {exc}"
+        return
+    raise AssertionError(f"expected ValidationError containing {needle!r}, but validation passed")
+
+
 def test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key() -> None:
     """validate.py's 0x32 safety net must hard-fail regardless of the capture's `key:` field —
     this is what stops an un-re-keyed raw pairing capture from ever being committed.
@@ -472,6 +703,14 @@ TESTS = [
     test_rekey_tamper_abort,
     test_rekey_refuses_non_gitignored_key_path,
     test_rekey_output_safety_scan_trips_on_key_leakage,
+    test_find_challenge_response_triple_device_side_response,
+    test_rekey_capture_recovers_key_from_capture_and_rewrites_text,
+    test_rekey_capture_refuses_already_rekeyed_and_keyless_captures,
+    test_rekey_capture_refuses_committable_input,
+    test_rekey_capture_explicit_key_for_capture_without_key_transfer,
+    test_rekey_self_authenticated_frame_hmac_half_only,
+    test_rekey_self_authenticated_frame_aborts_on_unverifiable_payload,
+    test_validate_enforces_self_authenticated_hmac_for_key_corpus,
     test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key,
     test_io_frame_only_retry_not_merged,
 ]

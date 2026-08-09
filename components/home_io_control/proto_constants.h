@@ -37,16 +37,39 @@ static constexpr uint8_t CMD_WRITE_PRIVATE = 0x20;      ///< Write private regis
 static constexpr uint8_t CMD_WRITE_PRIVATE_ACK = 0x21;  ///< Acknowledgment to CMD_WRITE_PRIVATE
 
 // Discovery and pairing commands
-static constexpr uint8_t CMD_DISCOVER_REQ = 0x28;          ///< Broadcast discovery request
-static constexpr uint8_t CMD_DISCOVER_RESP = 0x29;         ///< Device responds with its ID and type
-static constexpr uint8_t CMD_DISCOVER_SPE_REQ = 0x2A;      ///< Discover sub-devices (e.g., light on garage door)
+static constexpr uint8_t CMD_DISCOVER_REQ = 0x28;   ///< Broadcast discovery request
+static constexpr uint8_t CMD_DISCOVER_RESP = 0x29;  ///< Device responds with its ID and type
+static constexpr uint8_t CMD_DISCOVER_SPE_REQ =
+    0x2A;  ///< Discover sub-devices (e.g., light on garage door). Its 12-byte payload
+           ///< authenticates itself in a single frame — 6 random challenge bytes followed by a
+           ///< 6-byte HMAC over the command byte alone — instead of the usual 0x3C/0x3D round
+           ///< trip, which is what lets it be broadcast. Confirmed against real bytes in
+           ///< tests/corpus/captures/velux_kux100/pairing_full.yaml (recomputed under that
+           ///< installation's key before the capture was re-keyed). create_discovery_request()
+           ///< (proto_commands.cpp) builds it to match. Nothing consumes the reply:
+           ///< classify_pairing_discovery_response() accepts only 0x29, so a device answering
+           ///< 0x2B would be discarded — sending 0x2A as a discovery command can therefore only
+           ///< work today if the device replies 0x29, which no capture yet shows either way.
 static constexpr uint8_t CMD_DISCOVER_SPE_RESP = 0x2B;     ///< Sub-device response
 static constexpr uint8_t CMD_DISCOVER_CONFIRM = 0x2C;      ///< Confirm discovery to device
 static constexpr uint8_t CMD_DISCOVER_CONFIRM_ACK = 0x2D;  ///< Device acknowledges confirmation
 static constexpr uint8_t CMD_DISCOVER_ALT_REQ =
-    0x2E;  ///< Alternate broadcast discovery (to 0x00003F); claimed response is 0x29, but that's
-           ///< unconfirmed — a real Somfy Izymo dimmer drew no response to 0x2E at all
-           ///< (tests/corpus/captures/somfy_dimmer/discover_alt_no_response.yaml).
+    0x2E;  ///< Alternate discovery. Broadcast (to 0x00003F) draws no response at all on every
+           ///< device this project has real evidence for — a Somfy Izymo dimmer
+           ///< (tests/corpus/captures/somfy_dimmer/discover_alt_no_response.yaml) and a Velux
+           ///< KLR200/KUX100 pair (tests/corpus/captures/velux_kux100/
+           ///< discover_alt_broadcast_no_response.yaml) both went unanswered; the older
+           ///< "response is 0x29" guess never had real evidence and appears to have been wrong.
+           ///< Directly *addressed* to a known device instead of broadcast, it does draw a
+           ///< response, but a 0x3C/0x3D challenge-response followed by CMD_DISCOVER_ALT_RESP
+           ///< (0x2F), not 0x29 — see tests/corpus/captures/velux_kux100/
+           ///< discover_alt_addressed_challenge_response.yaml.
+static constexpr uint8_t CMD_DISCOVER_ALT_RESP =
+    0x2F;  ///< Reply to an addressed (non-broadcast) CMD_DISCOVER_ALT_REQ, following a
+           ///< 0x3C/0x3D challenge-response. See CMD_DISCOVER_ALT_REQ's comment and
+           ///< tests/corpus/captures/velux_kux100/discover_alt_addressed_challenge_response.yaml
+           ///< — the only capture this project has of it. Not otherwise used anywhere in this
+           ///< codebase (no dispatch logic added).
 static constexpr uint8_t CMD_ONEWAY_REMOVE =
     0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device); same payload shape
            ///< as 0x2E. Reference: analysis/completed/pairing_lab.md field capture, "CMD 0x39".
@@ -57,13 +80,31 @@ static constexpr uint8_t CMD_KEY_TRANSFER = 0x32;  ///< Send encrypted system ke
 static constexpr uint8_t CMD_KEY_CONFIRM = 0x33;   ///< Device confirms key was received
 
 // Address and device-initiated key exchange
-static constexpr uint8_t CMD_ADDRESS_REQ = 0x36;          ///< Address assignment request
-static constexpr uint8_t CMD_ADDRESS_RESP = 0x37;         ///< Address assignment response
+static constexpr uint8_t CMD_ADDRESS_REQ = 0x36;  ///< Address assignment request
+static constexpr uint8_t CMD_ADDRESS_RESP =
+    0x37;  ///< Address assignment response: the device returns its own 3-byte backbone address,
+           ///< byte-identical to the one it reported at data[2..4]
+           ///< (DISCOVERY_RESP_BACKBONE_OFFSET) of its CMD_DISCOVER_RESP earlier in the same
+           ///< session — an independent confirmation of that offset. Only capture of this pair:
+           ///< tests/corpus/captures/velux_kux100/pairing_full.yaml, where a Velux KLR200 closes
+           ///< pairing with 0x36 and then challenges the 0x37 it gets back (see
+           ///< CMD_CHALLENGE_REQ). Neither command is sent or handled anywhere in this codebase.
 static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER = 0x38;  ///< Device-initiated key transfer request
 
 // Authentication commands (challenge-response for secured commands)
-static constexpr uint8_t CMD_CHALLENGE_REQ = 0x3C;   ///< Device sends 6-byte random challenge
-static constexpr uint8_t CMD_CHALLENGE_RESP = 0x3D;  ///< Controller responds with HMAC proof
+static constexpr uint8_t CMD_CHALLENGE_REQ =
+    0x3C;  ///< 6-byte random challenge. Usually a device challenging a controller's command —
+           ///< the only direction this codebase implements — but the protocol is symmetric and
+           ///< controllers challenge devices too: in
+           ///< tests/corpus/captures/velux_kux100/pairing_full.yaml a KLR200 issues 0x3C against
+           ///< the device's own CMD_ADDRESS_RESP.
+static constexpr uint8_t CMD_CHALLENGE_RESP =
+    0x3D;  ///< HMAC proof answering a 0x3C. Whoever is challenged authenticates *its own*
+           ///< preceding frame: the transcript is [cmd, data...] of the challenged party's last
+           ///< frame (create_challenge_resp()), never the challenger's. That holds in both
+           ///< directions — the device-side 0x3D in pairing_full.yaml (over its own 0x37) was
+           ///< recomputed under that installation's recovered key and confirmed before the
+           ///< capture was re-keyed, so it is measured, not assumed by symmetry.
 
 // Device info commands
 static constexpr uint8_t CMD_GET_NAME = 0x50;       ///< Request device name
@@ -349,7 +390,10 @@ const char *acei_level_name(uint8_t level);
 /// bytes 0–1 hold the packed device type/subtype (already parsed by
 /// decode_packed_device_type()), and bytes 2–8 hold additional fields.
 /// @{
-static constexpr uint8_t DISCOVERY_RESP_BACKBONE_OFFSET = 2;      ///< Backbone address starts at data[2] (3 bytes).
+static constexpr uint8_t DISCOVERY_RESP_BACKBONE_OFFSET = 2;      ///< Backbone address starts at data[2] (3 bytes);
+                                                                  ///< cross-confirmed by CMD_ADDRESS_RESP (0x37),
+                                                                  ///< which returns the same 3 bytes for the same
+                                                                  ///< device (see that constant's comment).
 static constexpr uint8_t DISCOVERY_RESP_MANUFACTURER_OFFSET = 5;  ///< Manufacturer ID at data[5].
 static constexpr uint8_t DISCOVERY_RESP_FLAGS_OFFSET = 6;         ///< Flags byte at data[6].
 static constexpr uint8_t DISCOVERY_RESP_TIMESTAMP_OFFSET = 7;     ///< Timestamp starts at data[7] (2 bytes).

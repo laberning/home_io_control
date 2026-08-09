@@ -246,7 +246,7 @@ struct CorpusFrame {{
 /// @brief One captured exchange/scenario: its frames plus optional capture-level expectations.
 struct CorpusCapture {{
   const char *id;
-  const char *source_origin;  ///< "own-hardware" | "github-issue" | "synthetic-bootstrap".
+  const char *source_origin;  ///< "own-hardware" | "github-issue" | "synthetic-bootstrap" | "reference-material".
   const char *captured_with;  ///< "sx1276" | "sx1262" | "other" | "synthetic" — radio chip.
   KeyMode key;
   bool has_exchange;

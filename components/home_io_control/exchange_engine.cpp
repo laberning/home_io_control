@@ -391,6 +391,10 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq)
     return false;
   }
 
+  // Transcript is the *device's* own frame (cmd + data), not our challenge — the challenged
+  // party authenticates what it said. Long assumed by symmetry with our outbound direction;
+  // confirmed against real hardware bytes by the device-side 0x3D in
+  // tests/corpus/captures/velux_kux100/pairing_full.yaml.
   uint8_t frame_data[FRAME_MAX_SIZE];
   frame_data[0] = request.cmd;
   memcpy(frame_data + 1, request.data, request.data_len);

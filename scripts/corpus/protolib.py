@@ -68,10 +68,19 @@ def is_oneway(ctrl0: int) -> bool:
 
 # --- Mirrors components/home_io_control/proto_constants.h :: CMD_* values needed by the
 # --rekey pipeline (ingest.py) to locate challenge/response and key-init/key-transfer pairs.
+CMD_DISCOVER_SPE_REQ = 0x2A
 CMD_KEY_INIT = 0x31
 CMD_KEY_TRANSFER = 0x32
 CMD_CHALLENGE_REQ = 0x3C
 CMD_CHALLENGE_RESP = 0x3D
+
+# Commands that authenticate themselves in a single frame — payload = [challenge(6) | HMAC(6)],
+# the HMAC taken over just the command byte, so one broadcast frame carries both halves of a
+# challenge-response instead of a 0x3C/0x3D round trip. Only 0x2A is listed: it is the only shape
+# this project has real evidence for (velux_kux100/pairing_full.yaml, matching the payload the
+# io-rts-esp32 reference builds for SPE discovery). Adding a command here without a
+# capture that verifies under a known key would make --rekey rewrite bytes it does not understand.
+SELF_AUTHENTICATED_COMMANDS = {CMD_DISCOVER_SPE_REQ}
 
 # --- Mirrors components/home_io_control/proto_constants.h :: CMD_* (subset used for scaffold
 # readability/notes only — never used to derive a committed `expect:` value, which must be
@@ -221,16 +230,29 @@ def _frame_cmd(frame) -> "int | None":
 
 
 def find_challenge_response_triples(frames):
-    """Locate (origin_tx, challenge_rx, response_tx) triples for 0x3C/0x3D authenticated
-    exchanges among a capture's frames, in the same shape corpus_crypto_test.cpp replays:
-    origin = the tx frame preceding the 0x3C; transcript = [origin.cmd, *origin.data].
+    """Locate (origin, challenge, response) triples for 0x3C/0x3D authenticated exchanges among
+    a capture's frames, in the same shape corpus_crypto_test.cpp replays: transcript =
+    [origin.cmd, *origin.data], authenticated against the 0x3C challenge.
+
+    The roles are defined by direction *relative to the 0x3D*, not by tx/rx absolutely: whoever
+    is challenged authenticates their own last frame. The common case is the controller being
+    challenged (tx 0x3D — origin is the preceding tx command, e.g. 0x00 EXECUTE, challenged by
+    an rx 0x3C), but the protocol is symmetric and the reverse occurs for real: in
+    velux_kux100/pairing_full.yaml the *device* answers a controller-issued challenge
+    (rx 0x3D over its own preceding rx 0x37 ADDRESS_RESP), confirmed by recomputation against
+    that installation's recovered key before the capture was re-keyed. Matching only tx 0x3D
+    would leave those HMACs unrewritten by ingest.py --rekey and unchecked by validate.py's
+    `key: corpus` enforcement.
+
     `frames` items need only `.direction` ("tx"/"rx") and `.raw()` (non-CRC bytes) — RawFrame
     satisfies this directly; validate.py wraps its YAML frame dicts the same way.
     """
     triples = []
     for i, frame in enumerate(frames):
-        if frame.direction != "tx" or _frame_cmd(frame) != CMD_CHALLENGE_RESP:
+        if _frame_cmd(frame) != CMD_CHALLENGE_RESP:
             continue
+        responder_dir = frame.direction
+        challenger_dir = "rx" if responder_dir == "tx" else "tx"
         challenge = None
         origin = None
         for j in range(i - 1, -1, -1):
@@ -238,10 +260,10 @@ def find_challenge_response_triples(frames):
             cmd = _frame_cmd(candidate)
             if cmd is None:
                 continue
-            if challenge is None and candidate.direction == "rx" and cmd == CMD_CHALLENGE_REQ:
+            if challenge is None and candidate.direction == challenger_dir and cmd == CMD_CHALLENGE_REQ:
                 challenge = candidate
                 continue
-            if challenge is not None and candidate.direction == "tx":
+            if challenge is not None and candidate.direction == responder_dir:
                 origin = candidate
                 break
         if challenge is not None and origin is not None:
@@ -286,6 +308,35 @@ def non_crc_bytes(frame) -> bytes:
     """
     raw = frame.raw()
     return raw[:-2] if frame.crc_present() else raw
+
+
+def find_self_authenticated_frames(frames):
+    """Locate frames that carry a whole challenge-response inside one payload — see
+    SELF_AUTHENTICATED_COMMANDS. Returns a list of frames; use self_auth_parts() to slice one.
+
+    Unlike the 0x3C/0x3D and 0x31/0x3C/0x32 finders this needs no surrounding context: the
+    challenge is in the same payload as the HMAC. That is exactly what makes it easy to miss —
+    such a frame looks like an opaque blob, so an un-re-keyed one sails through a corpus review
+    while still carrying HMAC bytes derived from a real system key.
+    """
+    found = []
+    for frame in frames:
+        cmd = _frame_cmd(frame)
+        if cmd not in SELF_AUTHENTICATED_COMMANDS:
+            continue
+        payload = non_crc_bytes(frame)[FRAME_MIN_SIZE:]
+        if len(payload) == 2 * HMAC_SIZE:
+            found.append(frame)
+    return found
+
+
+def self_auth_parts(frame) -> "tuple[bytes, bytes, bytes]":
+    """Slice a self-authenticated frame into (transcript, challenge, hmac). The transcript is the
+    command byte alone — the same single-byte convention create_key_transfer() uses for its IV.
+    """
+    raw = non_crc_bytes(frame)
+    payload = raw[FRAME_MIN_SIZE:]
+    return bytes([raw[8]]), payload[:HMAC_SIZE], payload[HMAC_SIZE:2 * HMAC_SIZE]
 
 
 HmacParts = namedtuple("HmacParts", ["transcript", "challenge", "hmac"])

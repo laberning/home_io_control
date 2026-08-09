@@ -1,0 +1,39 @@
+id: velux_kux100_discover_alt_broadcast_no_response
+description: >
+  CMD_DISCOVER_ALT_REQ (0x2E) broadcast to the alternate-discovery group (dst=00003F) from a
+  Velux KLR200, captured by SPI-sniffing between its MCU and CC1021 radio chip with a logic
+  analyzer (forum user "Safepcb", openHAB community forum, posts #267-268, 2022-12-10:
+  https://community.openhab.org/t/io-homecontrol-velux-somethings-in-the-bush/11413/268). No
+  KUX100/PK03 response for the low-power first attempt or its retries (3 further bitwise-
+  identical retries in the source, omitted here as redundant) — a second real device confirming
+  no response to broadcast 0x2E, matching our own Somfy Izymo dimmer's
+  somfy_dimmer/discover_alt_no_response.yaml. Contrast
+  discover_alt_addressed_challenge_response.yaml: the same command *directly addressed* does get
+  a response. The openHAB forum carries no explicit content-reuse license, so only the
+  byte-level facts of what was transmitted are used here — this project has no KLR200 hardware.
+  crc_ccitt() verifies each frame's trailing CRC after stripping a leading 0x33 byte present on
+  every source line (the CC1021 SPI FIFO-access address, not part of the over-the-air frame).
+source:
+  device: "Velux KLR200 remote -> KUX100/PK03 (io-homecontrol wireless-to-wired bridge)"
+  captured_with: other
+  firmware: null
+  date: 2026-08-08
+  origin: reference-material
+  issue: "https://community.openhab.org/t/io-homecontrol-velux-somethings-in-the-bush/11413/268"
+key: unknown
+frames:
+  - dir: tx
+    hex: "F1 20 00 00 3F 43 8D 43 2E 00 00 00 93 D3 22 92 55 74 E4 B4"
+    crc: present
+    note: "cmd=DISCOVER_ALT_REQ(0x2E), first attempt, CTRL1 LOW_POWER flag set; no response"
+  - dir: tx
+    hex: "F1 00 00 00 3F 43 8D 43 2E 00 00 00 93 D3 22 92 55 74 26 A5"
+    crc: present
+    note: "cmd=DISCOVER_ALT_REQ(0x2E), retry (source shows 3 bitwise-identical retries; one shown here), CTRL1 LOW_POWER flag now clear; no response"
+expect:
+  exchange:
+    kind: pairing
+    outcome: timeout
+  frames:
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}

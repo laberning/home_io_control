@@ -78,7 +78,8 @@ expect:                              # deliberately sparse — only assert what 
 - `id` (string, required): globally unique. `validate.py`/`build.py` hard-fail on duplicates.
 - `description` (string, required): what the scenario is and why it's here.
 - `source.*`: provenance metadata, enforced by `validate.py`. Required: `origin` (one of
-  `own-hardware`, `github-issue`, `synthetic-bootstrap`), `captured_with` (one of `sx1276`,
+  `own-hardware`, `github-issue`, `synthetic-bootstrap`, `reference-material` — see
+  `docs/adr/0023-reference-material-as-a-corpus-origin.md` for what each one means), `captured_with` (one of `sx1276`,
   `sx1262`, `other`, `synthetic` — the **radio chip**, not the board model; `build.py` reads this
   unconditionally to pick a chip-mock in `corpus_exchange_replay_test.cpp`, which only branches
   on chip-specific timing behavior. Note the exact board/product if useful in
@@ -123,9 +124,20 @@ expect:                              # deliberately sparse — only assert what 
 ### Raw bytes are immutable
 
 Once a capture YAML is committed, its `hex` bytes are never hand-edited. Only
-`scripts/corpus/ingest.py` (`--rekey` for re-key/anonymize) may rewrite bytes, and only before
-the first commit of that capture. `expect:` values may be corrected by hand with a commit
-message explaining why (e.g. the code's prior behavior was itself the bug).
+`scripts/corpus/ingest.py` (`--rekey` for re-key/anonymize) and `scripts/corpus/rekey_capture.py`
+may rewrite bytes, and only before the first commit of that capture. `expect:` values may be
+corrected by hand with a commit message explaining why (e.g. the code's prior behavior was itself
+the bug).
+
+There is no exception, including for a capture that turns out to hold real key material after it
+was committed. That case is real — an `own-hardware` capture ingested without `--rekey` keeps HMACs
+computed under the maintainer's real key, and a committed HMAC is a permanent offline oracle for
+that key (`analysis/dual_use_security_plan.md` §2). **Delete it and re-record the scenario**; do
+not rewrite it in place. Re-keying committed bytes would mean the corpus's central promise ("these
+are the bytes that were on the wire") holds only until someone decides otherwise, and a fixture
+whose provenance is "we edited it later" is worth less than a re-recorded one. If the re-record
+cannot happen immediately, note the missing coverage where the next reader will look — the
+deleted capture's id is what someone will grep for.
 
 ### Key hygiene — ⚠️ read before ever pasting a pairing log
 
@@ -136,7 +148,9 @@ message explaining why (e.g. the code's prior behavior was itself the bug).
 - **Pairing captures (containing a `0x32` key-transfer frame) leak the real system key** if
   committed as captured — the transfer key is public and hardcoded, so anyone with the raw
   bytes can recover the real key. Pairing captures should be re-keyed before they are ever
-  committed, and raw pairing logs should never be pasted into a public GitHub issue.
+  committed, and raw pairing logs should never be pasted into a public GitHub issue. That
+  recoverability cuts both ways: it is also what lets `rekey_capture.py` re-key a third party's
+  published pairing capture (workflow step 3) without anyone ever holding their key.
 - **Only the real system key is secret.** Node IDs — controller ID, device IDs, remote/sensor
   IDs — are not: they're routing addresses on an already-broadcast RF protocol, not credentials,
   and knowing one gives no path to a device or its key. Captures (own-hardware **and**
@@ -159,7 +173,17 @@ field claims:
 - `key: corpus` captures: every 0x3C/0x3D HMAC must verify, and every 0x31/0x3C/0x32
   key-transfer payload must decrypt, under the public corpus key
   (`scripts/corpus/protolib.py :: CORPUS_SYSTEM_KEY`, mirroring
-  `tests/support/test_helpers.h :: TEST_SYSTEM_KEY`).
+  `tests/support/test_helpers.h :: TEST_SYSTEM_KEY`). HMACs count in both directions: usually
+  the controller answers a device's challenge (`tx` 0x3D), but a device answering a
+  controller-issued challenge (`rx` 0x3D, see `velux_kux100/pairing_full.yaml`) is the
+  same construction mirrored — the challenged party HMACs its own preceding frame's cmd+data.
+- `key: corpus` captures also have their **self-authenticated** frames checked: a 0x2A payload
+  is `[6-byte challenge | 6-byte HMAC over the command byte]`, a whole challenge-response inside
+  one broadcast frame. There are no surrounding frames to pair it with, so the 0x3C/0x3D check
+  above cannot see it and a reader sees only an opaque blob — which is exactly how an
+  un-re-keyed one can slip through review still carrying real-key-derived bytes.
+  `scripts/corpus/protolib.py :: SELF_AUTHENTICATED_COMMANDS` lists the commands with this
+  shape; only add one there once a capture verifies under a known key.
 - **Any** capture, regardless of `key:` mode, containing a 0x32 key-transfer frame whose
   payload does not decrypt to the corpus key is a hard validation failure — this is the safety
   net that stops an un-re-keyed raw pairing capture from ever being committed.
@@ -218,6 +242,35 @@ the two implementations fails a gate on both sides.
    never in CI, and never on a community-supplied log you don't have the real key for.
    `--remap OLDHEX=NEWHEX`/`--role NEWHEX=name` are available if you ever want to anonymize a
    specific node ID for some other reason, but are not needed for privacy.
+   **Someone else's pairing capture** (`reference-material`, ADR 0023 — a published log from a
+   device this project has no access to) has no `--system-key-from` file to point at: the system
+   key is a third party's and exists nowhere but inside the capture. Use
+   `scripts/corpus/rekey_capture.py` instead, which recovers that key in memory by decrypting the
+   capture's own `0x32` payload under the public `TRANSFER_KEY`, hands it straight to the same
+   verify-and-rewrite pipeline, and never prints or stores it — the only thing it says out loud
+   is a sha256 fingerprint:
+   ```bash
+   python3 scripts/corpus/rekey_capture.py ~/outside-the-repo/raw_capture.yaml \
+       -o tests/corpus/captures/velux_kux100/pairing_full.yaml
+   ```
+   Unlike `ingest.py`, it takes an already-written capture YAML rather than a log, and edits it
+   as *text*: only the rewritten `hex:` values and `key:` change, so hand-written descriptions,
+   notes and `expect:` blocks survive verbatim. Write that pre-re-key YAML outside the repo (or
+   under a git-ignored path — the tool refuses an untracked committable input, since until it runs
+   the file is a verbatim record of a real key) and delete it once the re-keyed capture is in place.
+
+   `rekey_capture.py` also takes `--system-key-from` for a capture that has **no** 0x32 to recover
+   a key from — an own-hardware exchange whose only crypto is a 0x3D HMAC, hand-assembled from a
+   log rather than piped through `ingest.py`. Same pre-commit rule: run it before the capture is
+   ever committed. A wrong key aborts before writing anything (the captured HMAC must verify
+   first), so a mistyped path cannot corrupt a capture. Prose is never rewritten, so the tool
+   prints a reminder if the file still says something like "HMAC not verifiable" after the bytes
+   have been re-keyed.
+
+   **The tell that a capture needed this and didn't get it:** `key: unknown` on an
+   `origin: own-hardware` capture that contains 0x3D/0x32/0x2A frames. `key: unknown` is honest
+   only when nobody involved has the key — a community log, or reference material. On your own
+   hardware you *do* have it, so the label is wrong and the HMACs are real-key bytes.
 4. Fill/correct `expect:` only with fields you have verified — `ingest.py`'s proposals are
    marked `# PROPOSED — verify before commit` and must be confirmed against real decoded output
    (own hardware) or the issue thread's established facts (community logs), not rubber-stamped.

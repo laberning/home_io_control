@@ -60,6 +60,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 |---|---|---|
 | [0010](0010-golden-frame-corpus-as-regression-source-of-truth.md) | Real captured frames as test truth | Committed YAML captures, generated fixtures, no hand-written byte guesses |
 | [0014](0014-host-tests-against-stubbed-esphome-headers.md) | Host tests on stubbed ESPHome headers | Plain `g++`, no ESPHome or hardware — with a stated fidelity cost |
+| [0023](0023-reference-material-as-a-corpus-origin.md) | `reference-material` corpus origin | Real devices this project doesn't own, sourced from published third-party material |
 
 ## Writing a new one
 

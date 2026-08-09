@@ -1,0 +1,27 @@
+id: somfy_smoove_oneway_execute_current
+description: >
+  1W CMD_EXECUTE (0x00) broadcast from a Somfy Smoove-style io wall switch (a fixed
+  wall-mounted control, unlike the handheld remotes elsewhere in this corpus), typed-broadcast
+  to all (dst=00003F). Originator=0x01 (User), ACEI=0x43, MainParam=0xD200, FP1=0, FP2=0 —
+  same field layout as this project's other CMD_EXECUTE 1W captures. This project has no
+  hardware from this device family; the literal bytes (only a radio preamble/sync prefix
+  stripped) are published in Velocet/iown-homecontrol's docs/radio.md, CC0-1.0 licensed).
+  crc_ccitt() independently confirms the trailing 2 bytes are a valid CRC over the rest
+  of the frame, so nothing here was recomputed or altered.
+source:
+  device: "Somfy Smoove-style io wall switch (1W)"
+  captured_with: other
+  firmware: null
+  date: 2026-08-08
+  origin: reference-material
+  issue: "https://github.com/Velocet/iown-homecontrol/blob/main/docs/radio.md"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    hex: "F6 00 00 00 3F 48 5B 37 00 01 43 D2 00 00 00 03 D6 B6 3C B3 CD CD 2B 8A 2E"
+    crc: present
+    note: "cmd=EXECUTE(0x00), originator=0x01, ACEI=0x43, main_param=0xD200"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}

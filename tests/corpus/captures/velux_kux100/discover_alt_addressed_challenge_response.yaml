@@ -1,0 +1,58 @@
+id: velux_kux100_discover_alt_addressed_challenge_response
+description: >
+  CMD_DISCOVER_ALT_REQ (0x2E) sent *directly addressed* to a known device rather than
+  broadcast — contrast discover_alt_broadcast_no_response.yaml, same command, no response.
+  Addressed, it triggers a full authenticated exchange: 0x3C challenge, 0x3D response, then a
+  reply with command byte 0x2F — previously undefined in proto_constants.h; CMD_DISCOVER_ALT_RESP
+  was added on the strength of this capture (name+value only, no dispatch logic). This is the
+  first real evidence of what a 0x2E response actually looks like: 0x2F, not the 0x29 an uncited
+  comment on CMD_DISCOVER_ALT_REQ claimed — neither this capture, its broadcast sibling, nor our
+  own hardware (somfy_dimmer/discover_alt_no_response.yaml) has ever produced 0x29 for 0x2E.
+  Source describes this as the KLR200 preparing a 1-way-linked accessory rather than discovery
+  proper — plausible but not asserted here. Independently cross-confirmed byte-for-byte by a
+  second forum user ("Pascal_M", post #277 in the same thread); their FROM/TO labels are swapped
+  relative to both the original poster's and this project's own verified DST-then-SRC field
+  order, so this capture follows the original poster's ("Safepcb") direction labels. Captured by
+  SPI-sniffing between a Velux KLR200's MCU and its CC1021 radio chip with a logic analyzer
+  (forum user "Safepcb", openHAB community forum, post #269, 2022-12-10:
+  https://community.openhab.org/t/io-homecontrol-velux-somethings-in-the-bush/11413/269). The
+  openHAB forum carries no explicit content-reuse license, so only the byte-level facts of what
+  was transmitted are used here — this project has no KLR200/KUX100 hardware. Every frame's CRC
+  is independently confirmed by crc_ccitt() after stripping a leading 0x33 byte present on every
+  source line (the CC1021 SPI FIFO-access address, not part of the over-the-air frame). No key
+  material here — only a 6-byte challenge and a 6-byte HMAC, neither secret without the real
+  system key.
+source:
+  device: "Velux KLR200 remote <-> KUX100/PK04 (io-homecontrol wireless-to-wired bridge)"
+  captured_with: other
+  firmware: null
+  date: 2026-08-08
+  origin: reference-material
+  issue: "https://community.openhab.org/t/io-homecontrol-velux-somethings-in-the-bush/11413/269"
+key: unknown
+frames:
+  - dir: tx
+    hex: "49 10 16 EB 1E 79 BA 7D 2E 00 01 BD"
+    crc: present
+    note: "cmd=DISCOVER_ALT_REQ(0x2E), directly addressed (not broadcast), 1-byte data=00, START"
+  - dir: rx
+    hex: "0E 08 79 BA 7D 16 EB 1E 3C 23 19 A7 B0 51 48 22 8E"
+    crc: present
+    note: "challenge request, challenge = 23 19 A7 B0 51 48; CTRL1=0x08, same unnamed reserved bit seen on this device family's other outbound frames — see velux_kux100/pairing_full.yaml"
+  - dir: tx
+    hex: "0E 10 16 EB 1E 79 BA 7D 3D 53 AB 19 59 40 E7 59 86"
+    crc: present
+    note: "challenge response (key unknown, HMAC not verifiable)"
+  - dir: rx
+    hex: "89 08 79 BA 7D 16 EB 1E 2F 00 A4 3B"
+    crc: present
+    note: "cmd=0x2F (undocumented in this project), 1-byte data=00, END; CTRL1=0x08, same unnamed reserved bit"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x2E, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x2F, start: false, end: true, protocol: 2w}

@@ -173,7 +173,45 @@ TEST_P(CorpusCryptoKeyTransfer, KeyTransferDecryptsToCorpusKey) {
       << "key-transfer payload does not decrypt to the corpus key";
 }
 
+/// Self-authenticated frames (design: one frame carrying a whole challenge-response). A
+/// CMD_DISCOVER_SPE_REQ (0x2A) payload is [6-byte challenge | 6-byte HMAC over the command byte
+/// alone] — no 0x3C/0x3D round trip, which is what lets it be broadcast. Asserts the real C++
+/// crypto reproduces the captured HMAC, mirroring scripts/corpus/validate.py's enforcement of the
+/// same frames, so the two crypto ports cannot drift apart on this shape either. The rule itself
+/// was established from real KLR200 bytes (velux_kux100/pairing_full.yaml, recomputed under that
+/// installation's own key before re-keying) and is what create_discovery_request() builds.
+class CorpusCryptoSelfAuthenticated : public ::testing::TestWithParam<const corpus::CorpusCapture *> {};
+
+TEST_P(CorpusCryptoSelfAuthenticated, SelfAuthenticatedPayloadVerifiesUnderCorpusKey) {
+  const corpus::CorpusCapture *capture = GetParam();
+  SCOPED_TRACE(::testing::Message() << "capture=" << capture->id);
+
+  uint8_t checked = 0;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const IoFrame parsed = corpus_test::parse_capture_frame(capture->frames[i]);
+    if (parsed.cmd != CMD_DISCOVER_SPE_REQ || parsed.data_len != HMAC_SIZE * 2)
+      continue;
+    const uint8_t *challenge = parsed.data;
+    const uint8_t *hmac = parsed.data + HMAC_SIZE;
+
+    uint8_t computed[HMAC_SIZE] = {0};
+    ASSERT_TRUE(crypto::create_hmac(&parsed.cmd, 1, challenge, test::TEST_SYSTEM_KEY, computed));
+    EXPECT_EQ(std::memcmp(computed, hmac, HMAC_SIZE), 0)
+        << "frame " << static_cast<int>(i) << ": 0x2A HMAC does not match the corpus key over the command byte";
+    checked++;
+  }
+  if (checked == 0)
+    GTEST_SKIP() << "no self-authenticated frame in this capture";
+}
+
+std::vector<const corpus::CorpusCapture *> corpus_key_captures() {
+  return corpus_test::captures_where(
+      [](const corpus::CorpusCapture *cap) { return cap->key == corpus::KeyMode::CORPUS; });
+}
+
 INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoReplay, ::testing::ValuesIn(authenticated_corpus_captures()),
+                         corpus_test::capture_name_generator);
+INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoSelfAuthenticated, ::testing::ValuesIn(corpus_key_captures()),
                          corpus_test::capture_name_generator);
 INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoKeyTransfer, ::testing::ValuesIn(pairing_corpus_captures()),
                          corpus_test::capture_name_generator);

@@ -1,0 +1,27 @@
+id: unidentified_1w_remote_oneway_write_private_b
+description: >
+  1W CMD_WRITE_PRIVATE (0x20) broadcast from the same unidentified 1W transmitter as the
+  sibling captures in this directory ("101010b packet 3" in the source), captured immediately
+  after oneway_write_private_a in the same listing — likely a different physical button than
+  that frame (data differs starting at byte 5), but exact semantics are not verified so only
+  structural fields are asserted. Same source and license as oneway_execute.yaml
+  (Velocet/iown-homecontrol docs/radio.md, CC0-1.0).
+  Literal published bytes with only the FF/33 preamble/sync prefix stripped; crc_ccitt()
+  independently confirms the trailing CRC.
+source:
+  device: "Unidentified io-homecontrol 1W remote"
+  captured_with: other
+  firmware: null
+  date: 2026-08-08
+  origin: reference-material
+  issue: "https://github.com/Velocet/iown-homecontrol/blob/main/docs/radio.md"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    hex: "F8 00 00 00 3F 1A 38 0B 20 02 FF 01 61 00 05 FF 00 02 A8 C7 74 2D FE 1F 33 3B 82"
+    crc: present
+    note: "cmd=WRITE_PRIVATE(0x20)"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
