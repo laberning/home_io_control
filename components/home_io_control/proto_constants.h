@@ -40,17 +40,40 @@ static constexpr uint8_t CMD_WRITE_PRIVATE_ACK = 0x21;  ///< Acknowledgment to C
 static constexpr uint8_t CMD_DISCOVER_REQ = 0x28;   ///< Broadcast discovery request
 static constexpr uint8_t CMD_DISCOVER_RESP = 0x29;  ///< Device responds with its ID and type
 static constexpr uint8_t CMD_DISCOVER_SPE_REQ =
-    0x2A;  ///< Discover sub-devices (e.g., light on garage door). Its 12-byte payload
-           ///< authenticates itself in a single frame — 6 random challenge bytes followed by a
-           ///< 6-byte HMAC over the command byte alone — instead of the usual 0x3C/0x3D round
-           ///< trip, which is what lets it be broadcast. Confirmed against real bytes in
-           ///< tests/corpus/captures/velux_kux100/pairing_full.yaml (recomputed under that
-           ///< installation's key before the capture was re-keyed). create_discovery_request()
-           ///< (proto_commands.cpp) builds it to match. Nothing consumes the reply:
-           ///< classify_pairing_discovery_response() accepts only 0x29, so a device answering
-           ///< 0x2B would be discarded — sending 0x2A as a discovery command can therefore only
-           ///< work today if the device replies 0x29, which no capture yet shows either way.
-static constexpr uint8_t CMD_DISCOVER_SPE_RESP = 0x2B;     ///< Sub-device response
+    0x2A;  ///< Broadcast roll-call answered by every device that already holds this controller's
+           ///< system key, regardless of device type. A device that holds no key yet — one in
+           ///< learning mode, mid-pairing — has nothing to authenticate the request against and
+           ///< stays silent, so this enumerates already-managed devices and cannot discover new
+           ///< ones. Do not offer it as a pairing-discovery command: it can only ever add replies
+           ///< from devices already paired, never help reach an unpaired one.
+           ///< The 12-byte payload authenticates itself in a single frame — 6 random challenge
+           ///< bytes followed by a 6-byte HMAC over the command byte alone — instead of the usual
+           ///< 0x3C/0x3D round trip, which is what lets it be broadcast;
+           ///< create_discovery_request() (proto_commands.cpp) builds it to match. Real captured
+           ///< bytes: tests/corpus/captures/velux_kux100/pairing_full.yaml (request shape, HMAC
+           ///< recomputed under that installation's key before the capture was re-keyed) and
+           ///< tests/corpus/captures/somfy_awning/discover_spe_paired_rollcall.yaml plus
+           ///< tests/corpus/captures/somfy_dimmer/discover_spe_paired_rollcall.yaml (two awnings
+           ///< and a dimmer answering one broadcast). No dispatch path consumes the reply yet;
+           ///< classify_pairing_discovery_response() accepts only 0x29 and must not be extended to
+           ///< accept 0x2B, because a roll-call reply from an already-paired device is not a
+           ///< newly-discovered one and must never enter the pairing flow. See
+           ///< CMD_DISCOVER_SPE_RESP.
+static constexpr uint8_t CMD_DISCOVER_SPE_RESP =
+    0x2B;  ///< Roll-call reply to CMD_DISCOVER_SPE_REQ, sent only by devices that already hold the
+           ///< requesting controller's system key. The payload is the same DISCOVERY_RESP_FULL_SIZE
+           ///< layout as a CMD_DISCOVER_RESP (0x29), so every DISCOVERY_RESP_*_OFFSET constant
+           ///< below applies unchanged — packed type/subtype at data[0..1], backbone address at
+           ///< DISCOVERY_RESP_BACKBONE_OFFSET, manufacturer at DISCOVERY_RESP_MANUFACTURER_OFFSET,
+           ///< Multi Information Byte at DISCOVERY_RESP_FLAGS_OFFSET, timestamp at
+           ///< DISCOVERY_RESP_TIMESTAMP_OFFSET — and PairingEngine::parse_device_from_discovery()
+           ///< decodes a 0x2B correctly with no special-casing. Real captured replies (two awnings
+           ///< and a dimmer) are in tests/corpus/captures/somfy_awning/ and .../somfy_dimmer/
+           ///< discover_spe_paired_rollcall.yaml. The timestamp is the field that advances between
+           ///< successive replies from one device; it is not a response to the request's random
+           ///< challenge, since that HMAC covers only the constant command byte. Treat a reply as
+           ///< self-description, not proof of identity: nothing in it is bound to the request, so
+           ///< report it, never act on it. No dispatch path consumes a 0x2B yet.
 static constexpr uint8_t CMD_DISCOVER_CONFIRM = 0x2C;      ///< Confirm discovery to device
 static constexpr uint8_t CMD_DISCOVER_CONFIRM_ACK = 0x2D;  ///< Device acknowledges confirmation
 static constexpr uint8_t CMD_DISCOVER_ALT_REQ =

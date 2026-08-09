@@ -101,7 +101,7 @@ TEST(TuningRegistry, EverySelectOptionRoundTrips) {
       {"sx1262_rx_bandwidth", {"58.6", "78.2", "117.3", "156.2", "187.2"}},
       {"sx1276_rx_bandwidth", {"20.8", "41.7", "62.5", "83.3", "125.0"}},
       {"lr1121_rx_bandwidth", {"39.0", "46.9", "58.6", "78.2", "117.3", "156.2", "187.2"}},
-      {"pairing_discovery_commands", {"0x28", "0x2E", "0x2A", "0x28,0x2E", "0x28,0x2A,0x2E"}},
+      {"pairing_discovery_commands", {"0x28", "0x2E", "0x28,0x2E"}},
       {"pairing_discovery_destination", {"auto", "0x00003B", "0x00003F"}},
       {"pairing_discovery_payload", {"none", "0x00"}},
       {"pairing_discovery_low_power", {"Off", "On"}},

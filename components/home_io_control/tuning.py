@@ -96,20 +96,21 @@ LR1121_BANDWIDTH_OPTIONS = {
 
 DISCOVERY_COMMAND_OPTIONS = {
     "0x28": DiscoveryCommand.DISCOVER,
-    "0x2A": DiscoveryCommand.DISCOVER_SPE,
     "0x2E": DiscoveryCommand.DISCOVER_ALT,
 }
+# 0x2A (CMD_DISCOVER_SPE_REQ) is deliberately excluded: it is a roll-call answered only by devices
+# that already hold the controller's system key, so a device in learning mode never answers it.
+# Offering it here could only add replies from already-paired devices to a pairing attempt, never
+# help reach the unpaired one. The command byte itself stays valid — see
+# DiscoveryCommand::DISCOVER_SPE in tuning_config.h.
 
 # Home Assistant `select` entities are single-choice, but the discovery phase can send an
 # ordered list of commands. These comma-separated presets expose the useful combinations as
 # selectable options; the C++ dispatch (update_tuning_select) parses them back into the vector.
-# Individual commands plus the Tahoma-style combinations (which send 0x28/0x2A/0x2E together).
 DISCOVERY_COMMAND_PRESETS = [
     "0x28",  # default 2W discovery
     "0x2E",  # alternate discovery (the most common thing to try for a stuck device)
-    "0x2A",  # SPE / sub-device discovery (niche)
     "0x28,0x2E",  # both broadcasts
-    "0x28,0x2A,0x2E",  # all three (Tahoma-style)
 ]
 
 DISCOVERY_DESTINATION_OPTIONS = ["auto", "0x00003B", "0x00003F"]

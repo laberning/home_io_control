@@ -67,10 +67,16 @@ enum class LR1121RxBandwidth : uint8_t {
   BW_187_2_KHZ = 0x12,  ///< 187.2 kHz — widest selectable option.
 };
 
-/// @brief Discovery request command codes selectable by the tuning layer.
+/// @brief Discovery request command codes.
 enum class DiscoveryCommand : uint8_t {
   DISCOVER = 0x28,      ///< Standard broadcast discovery request (to 0x00003B).
-  DISCOVER_SPE = 0x2A,  ///< Sub-device / SPE discovery request (authenticated).
+  DISCOVER_SPE = 0x2A,  ///< SPE roll-call request (self-authenticating; see CMD_DISCOVER_SPE_REQ).
+                        ///< Deliberately **not** offered as a `pairing_discovery_commands` preset
+                        ///< in tuning.py: only devices that already hold the system key answer it,
+                        ///< so it can never help reach a device in learning mode. Retained here
+                        ///< because the command byte is still needed to *send* a roll-call, and
+                        ///< because discovery_command_from_string() stays permissive enough to
+                        ///< parse it — do not remove either as dead code.
   DISCOVER_ALT = 0x2E,  ///< Alternate broadcast discovery (to 0x00003F), with optional payload byte.
 };
 

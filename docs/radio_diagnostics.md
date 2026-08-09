@@ -140,7 +140,7 @@ your device may differ.
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
-| `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2A` / `0x2E` | Which discovery command(s) to send, and in what order. |
+| `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` | Address the discovery frames are sent to. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
 | `pairing_discovery_low_power` | both | `false` | `true` / `false` | Sets the LOW_POWER flag in discovery frames. |
@@ -269,14 +269,19 @@ stops at the first device response.
 - `0x2E` — *alternate* discovery, sent to `0x00003F` — the address on which devices in a
   1W-triggered pairing mode (and their beacons) listen. Conventionally paired with payload
   `0x00` and `low_power` on.
-- `0x2A` — SPE / sub-device discovery. Authenticated with the configured `system_key`, so it
-  only helps a device that already shares that key. Sent to `0x00003B`.
+
+`0x2A` (SPE roll-call) is **not** an option here, on purpose. It looks superficially similar —
+authenticated with the configured `system_key`, broadcast to `0x00003B` — but only devices that
+*already* hold your key answer it. A device sitting in learning mode, waiting to be paired, holds
+no key yet and stays silent. So adding it to this list cannot help a pairing attempt succeed; it
+would only add replies from devices you have already paired. It is a "who is still out there"
+roll-call over your existing devices — a different question entirely from "who wants to pair".
 
 *Observations:* for the devices tested here, plain `0x28` to `0x00003B` is what works — the
 alternate `0x2E` drew no response from them (but they already answer `0x28`). Full-featured
-controllers are known to broadcast all three commands throughout pairing, which is exactly why
-the combined presets exist: a device that ignores `0x28` may only be reachable via `0x2E`. In
-the Home Assistant UI the selector offers preset combinations (e.g. `0x28,0x2E`).
+controllers are known to broadcast both commands throughout pairing, which is exactly why the
+combined preset exists: a device that ignores `0x28` may only be reachable via `0x2E`. In the
+Home Assistant UI the selector offers the combination (`0x28,0x2E`) as a preset.
 
 #### `pairing_discovery_destination`
 
@@ -365,20 +370,14 @@ is a general starting point, not a guarantee — different devices need differen
    the *command* from the *address*, since a device may only answer on the specific address it is
    listening on — which is not always the command's conventional one.
 
-5. **Add `0x2A`** only if the device already shares your `system_key` (e.g. it was previously
-   paired to an installer hub):
-   ```yaml
-   pairing_discovery_commands: ["0x28", "0x2A", "0x2E"]
-   ```
-
-6. **If discovery is intermittent** (responses appear sometimes), widen the timing:
+5. **If discovery is intermittent** (responses appear sometimes), widen the timing:
    ```yaml
    pairing_discovery_wait_ms: 3000
    pairing_discovery_initial_dwell_ms: 500
    sx1262_discovery_hop_slice_ms: 250   # SX1262 boards only; use lr1121_discovery_hop_slice_ms on LR1121
    ```
 
-7. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
+6. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
    after discovery), give the receiver more margin around the turnaround (SX1262 shown; on
    LR1121 boards use the `lr1121_*` equivalents instead):
    ```yaml
@@ -387,7 +386,7 @@ is a general starting point, not a guarantee — different devices need differen
    sx1262_response_preamble: 96     # then 128
    ```
 
-8. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but see the
+7. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but see the
    compliance note below:
    ```yaml
    lbt_max_retries: 1
