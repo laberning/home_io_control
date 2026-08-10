@@ -1,10 +1,14 @@
 id: issue_17_velux_kux110_1w_discover_alt_beacon
 description: >
-  Periodic 1W self-announcement beacons from a Velux SML/KUX110 unit, reusing a command byte
-  (0x2E) that this project otherwise sends as a 2W discovery request. Verifies 1W frame parsing
+  Periodic 1W beacons reusing a command byte (0x2E) that this project otherwise sends as a 2W
+  discovery request. Captured in an installation where a Velux KLI 313 remote drives a Velux SML
+  roof window shutter via a KUX110 control unit; the source (DA2C93) is the *remote*, not the
+  KUX110 or the shutter — 0x2E is controller-side (compare the KLR200 in
+  velux_kux100/discover_alt_addressed_challenge_response.yaml), and the same address also emits
+  the controller-side EXECUTE in issue_17_velux_kux110_1w_stop.yaml. Verifies 1W frame parsing
   across two different typed-broadcast destinations.
 source:
-  device: "Velux SML roof window shutter (KUX110 control unit)"
+  device: "Velux KLI 313 remote (driving a Velux SML shutter via a KUX110 control unit)"
   captured_with: sx1276
   firmware: null
   date: 2026-07-06

@@ -178,5 +178,36 @@ struct OneWayFrameInfo {
 /// @return Populated OneWayFrameInfo.
 OneWayFrameInfo decode_1w_frame(const IoFrame &frame);
 
+// ============================================================================
+// Discovery Response Decode
+// ============================================================================
+
+/// @brief Extended discovery-response fields (manufacturer, Multi Information Byte, backbone
+/// address, timestamp) plus flags recording how much of the payload was actually present.
+struct DiscoveryResponseInfo {
+  bool metadata_complete{false};     ///< data_len >= DEVICE_METADATA_SIZE (type/subtype present).
+  bool has_extended{false};          ///< data_len >= DISCOVERY_RESP_FULL_SIZE (mfr/flags/timestamp present).
+  uint8_t manufacturer{0};           ///< Raw manufacturer ID; name via manufacturer_name().
+  uint8_t flags{0};                  ///< Multi Information Byte; decode with DISCOVERY_FLAGS_* masks.
+  uint8_t backbone[NODE_ID_SIZE]{};  ///< Backbone address as reported by the device.
+  uint16_t timestamp{0};             ///< Device timestamp field (advances between replies).
+};
+
+/// @brief Decode a discovery-response payload (CMD_DISCOVER_RESP 0x29 or CMD_DISCOVER_SPE_RESP 0x2B —
+/// both carry the identical DISCOVERY_RESP_FULL_SIZE layout) into device metadata.
+///
+/// Pure: no logging, no side effects. Extended fields (manufacturer, flags, timestamp) are
+/// returned rather than logged so each caller can present them its own way. Sets
+/// `device.node_id`/`type`/`subtype`/`inverted`/`position`/`target`/`is_stopped` and
+/// `device_id` exactly as a discovery reply implies: type/subtype and inversion come from the
+/// packed metadata bytes when present, position/target default to the unknown sentinel, and
+/// the device is assumed stopped. Every field read is guarded on `frame.data_len`, so a short
+/// or truncated payload degrades gracefully instead of reading past the end.
+/// @param frame Parsed discovery-response frame.
+/// @param device Output: device record populated from the frame.
+/// @param device_id Output: hex device ID string derived from `frame.src`.
+/// @return Extended discovery fields (manufacturer/flags/timestamp) and length flags.
+DiscoveryResponseInfo decode_discovery_response(const IoFrame &frame, IoDevice &device, std::string &device_id);
+
 }  // namespace home_io_control
 }  // namespace esphome

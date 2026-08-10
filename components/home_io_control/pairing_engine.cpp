@@ -20,7 +20,6 @@
 
 #include <algorithm>
 #include <cinttypes>
-#include <cstdio>
 #include <cstring>
 
 namespace esphome {
@@ -29,7 +28,6 @@ namespace home_io_control {
 namespace {
 
 const char *const TAG = "home_io_control";
-constexpr size_t DEVICE_TYPE_HEX_STRING_BUFFER_SIZE = 8;  ///< Buffer for strings such as "0x11" plus terminator.
 
 /// Check if frame is a 0x33 key-confirm message.
 bool frame_is_key_confirm(const IoFrame &frame) { return frame.cmd == CMD_KEY_CONFIRM; }
@@ -48,60 +46,7 @@ void log_discovery_diagnostic(decisions::PairingDiscoveryDisposition disp) {
   }
 }
 
-/// Format a raw device type as hexadecimal for YAML and diagnostics.
-std::string format_device_type_hex(DeviceType type) {
-  char buf[DEVICE_TYPE_HEX_STRING_BUFFER_SIZE];
-  snprintf(buf, sizeof(buf), "0x%02X", static_cast<uint8_t>(type));
-  return std::string(buf);
-}
-
-/// Return a human-readable device type string including the raw numeric value.
-std::string format_device_type_diagnostic(DeviceType type) {
-  const char *name = device_type_name(type);
-  std::string raw = format_device_type_hex(type);
-  if (name != nullptr && strcmp(name, "unknown") != 0) {
-    return std::string(name) + " (" + raw + ")";
-  }
-  return raw;
-}
-
-/// Build the YAML value for io_device_type.
-std::string format_device_type_for_yaml(DeviceType type) {
-  const char *name = yaml_device_type_name(type);
-  if (name != nullptr) {
-    return std::string("\"") + name + "\"";
-  }
-  return format_device_type_hex(type);
-}
-
-/// Map a capability class to the corresponding ESPHome platform name.
-const char *pairing_platform_name(DeviceCapabilityClass capability_class) {
-  switch (capability_class) {
-    case DeviceCapabilityClass::COVER:
-      return "cover";
-    case DeviceCapabilityClass::LIGHT:
-      return "light";
-    case DeviceCapabilityClass::SWITCH:
-      return "switch";
-    default:
-      return nullptr;
-  }
-}
-
 }  // namespace
-
-std::string PairingEngine::build_incomplete_metadata_snippet(const std::string &device_id) {
-  return "  <cover|light|switch|lock>:\n"
-         "  - platform: home_io_control\n"
-         "    name: \"My Device\"\n"
-         "    io_device_id: \"" +
-         device_id +
-         "\"\n"
-         "    # io_device_type: left unset — this device didn't report its type during\n"
-         "    #   discovery, so the controller learns it automatically from the next status\n"
-         "    #   reply. Add it explicitly once you see it logged, to skip re-learning on\n"
-         "    #   every future boot.\n";
-}
 
 // --- Constructor ---
 
@@ -271,48 +216,31 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
 
 /// Parse a discovery response frame into device metadata and ID.
 ///
-/// Extracts node ID, device type, and subtype from a CMD_DISCOVER_RESP frame.
-/// The two-byte payload uses the shared packed device metadata layout.
-/// When the full 9-byte payload is present, also logs manufacturer name and
-/// backbone address for diagnostic purposes.
+/// Decodes node ID, device type, subtype, and the extended fields (manufacturer, backbone,
+/// Multi Information Byte) via decode_discovery_response(), then emits pairing's diagnostic log
+/// lines for whichever extended fields the payload actually included.
 /// The inversion flag is derived from the type via `default_inverted_for_type()`.
 void PairingEngine::parse_device_from_discovery(const IoFrame &frame, IoDevice &device, std::string &device_id) {
-  memcpy(device.node_id, frame.src, NODE_ID_SIZE);
-  if (frame.data_len >= DEVICE_METADATA_SIZE) {
-    device.type = decode_packed_device_type(frame.data[0], frame.data[1]);
-    device.subtype = decode_packed_device_subtype(frame.data[1]);
-    device.inverted = default_inverted_for_type(device.type);
-  } else {
-    device.type = DeviceType::UNKNOWN;
-    device.subtype = 0;
-    device.inverted = false;
-  }
-  device.position = UNKNOWN_POSITION;
-  device.target = UNKNOWN_POSITION;
-  device.is_stopped = true;
-  device_id = node_id_to_string(device.node_id);
+  const DiscoveryResponseInfo info = decode_discovery_response(frame, device, device_id);
 
   if (frame.data_len > DISCOVERY_RESP_MANUFACTURER_OFFSET) {
-    uint8_t const mfr_id = frame.data[DISCOVERY_RESP_MANUFACTURER_OFFSET];
-    const char *mfr_name = manufacturer_name(mfr_id);
-    ESP_LOGI(TAG, "Discovery: device %s manufacturer=%u (%s)", device_id.c_str(), mfr_id, mfr_name);
-    if (mfr_id == 0 || mfr_id > MANUFACTURER_ID_MAX) {
+    const char *mfr_name = manufacturer_name(info.manufacturer);
+    ESP_LOGI(TAG, "Discovery: device %s manufacturer=%u (%s)", device_id.c_str(), info.manufacturer, mfr_name);
+    if (info.manufacturer == 0 || info.manufacturer > MANUFACTURER_ID_MAX) {
       ESP_LOGW(TAG,
                "Unknown manufacturer ID %u reported by device %s. "
                "Please file a GitHub issue with this ID and your device model so support can be added.",
-               mfr_id, device_id.c_str());
+               info.manufacturer, device_id.c_str());
     }
   }
   if (frame.data_len > DISCOVERY_RESP_BACKBONE_OFFSET + NODE_ID_SIZE - 1) {
-    ESP_LOGD(TAG, "Discovery: backbone=%02X%02X%02X", frame.data[DISCOVERY_RESP_BACKBONE_OFFSET],
-             frame.data[DISCOVERY_RESP_BACKBONE_OFFSET + 1], frame.data[DISCOVERY_RESP_BACKBONE_OFFSET + 2]);
+    ESP_LOGD(TAG, "Discovery: backbone=%02X%02X%02X", info.backbone[0], info.backbone[1], info.backbone[2]);
   }
   if (frame.data_len > DISCOVERY_RESP_FLAGS_OFFSET) {
-    uint8_t const flags = frame.data[DISCOVERY_RESP_FLAGS_OFFSET];
-    uint8_t const att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
-    uint8_t const power_save = flags & DISCOVERY_FLAGS_POWER_SAVE_MASK;
+    uint8_t const att = discovery_att_class(info.flags);
+    uint8_t const power_save = discovery_power_save_mode(info.flags);
     ESP_LOGI(TAG, "Discovery: device %s turnaround=%s power_save=%s flags=0x%02X", device_id.c_str(),
-             att_class_name(att), power_save_mode_name(power_save), flags);
+             att_class_name(att), power_save_mode_name(power_save), info.flags);
     if (power_save == POWER_SAVE_LOW_POWER) {
       ESP_LOGI(TAG,
                "Device %s reports low-power mode. "
@@ -531,35 +459,26 @@ bool PairingEngine::discover_and_pair() {
   registry_.put(context.device_id, context.device);
   this->telemetry_.set_paired_device(context.device.node_id, context.device.type);
 
-  const auto capability_class = device_capability_class(context.device.type);
-  const char *platform = pairing_platform_name(capability_class);
   const std::string type_diag = format_device_type_diagnostic(context.device.type);
   const std::string type_yaml = format_device_type_for_yaml(context.device.type);
-  std::string extra_lines;
+  const std::string snippet = build_device_yaml_snippet(context.device.type, context.device.subtype, context.device_id,
+                                                        context.discovery_metadata_complete, context.device.inverted);
 
-  if (platform == nullptr) {
-    if (context.discovery_metadata_complete) {
-      ESP_LOGW(TAG,
-               "Device %s paired successfully, but this repo does not yet expose an ESPHome platform for type=%s "
-               "class=%s subtype=%u.",
-               context.device_id.c_str(), type_diag.c_str(), device_capability_class_name(context.device.type),
-               context.device.subtype);
-      ESP_LOGW(TAG,
-               "No ready-to-paste YAML was generated. If you want to experiment manually, choose the most likely "
-               "platform and set io_device_type: %s.",
-               type_yaml.c_str());
-      ESP_LOGW(TAG, "Please file a GitHub issue with this device type, subtype, model, and the pairing log so support "
-                    "can be added.");
-    } else {
-      ESP_LOGW(TAG,
-               "Device %s paired successfully, but the discovery response did not include type/subtype "
-               "metadata, so the platform (cover/light/switch/lock) can't be determined automatically.",
-               context.device_id.c_str());
-      ESP_LOGI(TAG, "Add this to your YAML once you know what kind of device it is:\n%s",
-               build_incomplete_metadata_snippet(context.device_id).c_str());
-      ESP_LOGW(TAG, "Please file a GitHub issue with the pairing log and device model so this discovery edge case can "
-                    "be investigated.");
-    }
+  if (snippet.empty()) {
+    // metadata_complete is true here (build_device_yaml_snippet() never returns empty for
+    // metadata_complete == false), so this is specifically "we know the type, but there's no
+    // ESPHome platform for it yet".
+    ESP_LOGW(TAG,
+             "Device %s paired successfully, but this repo does not yet expose an ESPHome platform for type=%s "
+             "class=%s subtype=%u.",
+             context.device_id.c_str(), type_diag.c_str(), device_capability_class_name(context.device.type),
+             context.device.subtype);
+    ESP_LOGW(TAG,
+             "No ready-to-paste YAML was generated. If you want to experiment manually, choose the most likely "
+             "platform and set io_device_type: %s.",
+             type_yaml.c_str());
+    ESP_LOGW(TAG, "Please file a GitHub issue with this device type, subtype, model, and the pairing log so support "
+                  "can be added.");
 
     context.state = pairing::PairingState::COMPLETE;
     engine_.record_debug(pairing_stage_name(context.state), 1, true);
@@ -568,30 +487,26 @@ bool PairingEngine::discover_and_pair() {
     return true;
   }
 
-  if (capability_class == DeviceCapabilityClass::COVER && context.device.inverted)
-    extra_lines += "    invert_position: true\n";
+  if (!context.discovery_metadata_complete) {
+    ESP_LOGW(TAG,
+             "Device %s paired successfully, but the discovery response did not include type/subtype "
+             "metadata, so the platform (cover/light/switch/lock) can't be determined automatically.",
+             context.device_id.c_str());
+    ESP_LOGI(TAG, "Add this to your YAML once you know what kind of device it is:\n%s", snippet.c_str());
+    ESP_LOGW(TAG, "Please file a GitHub issue with the pairing log and device model so this discovery edge case can "
+                  "be investigated.");
 
-  std::string subtype_line;
-  if (context.discovery_metadata_complete) {
-    subtype_line = "    io_subtype: " + std::to_string(context.device.subtype) + "\n";
+    context.state = pairing::PairingState::COMPLETE;
+    engine_.record_debug(pairing_stage_name(context.state), 1, true);
+    this->telemetry_.set_phase(context.state);
+    this->finish_pairing_attempt_(outcome);
+    return true;
   }
 
-  ESP_LOGI(TAG,
-           "Device %s paired successfully! Add this to your YAML:\n"
-           "  %s:\n"
-           "  - platform: home_io_control\n"
-           "    name: \"My Device\"\n"
-           "    io_device_id: \"%s\"\n"
-           "    io_device_type: %s\n"
-           "%s"
-           "%s",
-           context.device_id.c_str(), platform, context.device_id.c_str(), type_yaml.c_str(), subtype_line.c_str(),
-           extra_lines.c_str());
+  ESP_LOGI(TAG, "Device %s paired successfully! Add this to your YAML:\n%s", context.device_id.c_str(),
+           snippet.c_str());
 
-  if (!context.discovery_metadata_complete) {
-    ESP_LOGW(TAG, "This device did not report a subtype during discovery, so io_subtype was omitted. The controller "
-                  "will try to learn it later at runtime.");
-  } else if (yaml_device_type_name(context.device.type) == nullptr) {
+  if (yaml_device_type_name(context.device.type) == nullptr) {
     ESP_LOGW(TAG,
              "This snippet uses the raw device type %s because the project does not yet expose a named YAML alias "
              "for %s.",

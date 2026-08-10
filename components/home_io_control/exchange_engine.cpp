@@ -354,6 +354,49 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
 }
 
 // ============================================================================
+// Broadcast roll-call
+// ============================================================================
+
+uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint32_t freq, uint8_t expected_cmd,
+                                                    uint32_t window_ms, const BroadcastReplyHandler &on_reply) {
+  this->reset_debug(request.cmd);
+
+  if (!this->transmit_frame(request, freq, LONG_PREAMBLE)) {
+    this->record_debug("broadcast_tx_failed", 1, false);
+    return 0;
+  }
+
+  RadioDriver *radio = *this->radio_ptr_;
+  RadioRxPacket packet{};
+  IoFrame rx{};
+  uint8_t count = 0;
+  const uint32_t deadline = millis() + window_ms;
+
+  while ((int32_t) (deadline - millis()) > 0) {
+    const uint32_t remaining = deadline - millis();
+    const uint32_t slice = std::min<uint32_t>(remaining, radio->exchange_wait_slice_ms());
+    if (!radio->wait_for_packet(packet, slice)) {
+      if ((int32_t) (deadline - millis()) > 0)
+        this->hop_frequency();
+      continue;
+    }
+    if (!parse(packet.data, packet.len, rx))
+      continue;
+    if (rx.cmd != expected_cmd)
+      continue;
+    if (memcmp(rx.dst, this->node_id_, NODE_ID_SIZE) != 0)
+      continue;
+
+    on_reply(rx, radio->get_last_capture().rssi_dbm);
+    if (count < UINT8_MAX)
+      ++count;
+  }
+
+  this->record_debug("broadcast_collect_done", 1, false);
+  return count;
+}
+
+// ============================================================================
 // Inbound authentication
 // ============================================================================
 

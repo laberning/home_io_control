@@ -159,13 +159,14 @@ Notes:
 
 ## Home Assistant Actions
 
-Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes three **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so they're only reachable via Developer Tools or an automation.
+Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes four **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so they're only reachable via Developer Tools or an automation.
 
 | Action | What it does | `verified` can be `true`? |
 |---|---|---|
 | `rename_device` | Renames a paired actuator and reads the name back to confirm the write. | Yes |
 | `identify_device` | Makes a device physically identify itself (brief jog/flash) so you can tell which physical motor a device ID belongs to. | No — no readback exists for a jog |
 | `force_open_device` ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. Confirmed to move the device correctly; **not yet confirmed to actually override an active lock** — see the warning below. | No — the outcome is asynchronous |
+| `scan_paired_devices` | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. | No — nothing here is read back either |
 
 ### Enabling and triggering actions
 
@@ -197,7 +198,7 @@ sequence:
       device_id: "FEEB1E"
 ```
 
-Every action takes `device_id`: the 6-hex-character IO-homecontrol device ID — the same value you set as `io_device_id` in the entity's YAML, and the same ID the pairing log prints. This is the protocol-level actuator ID, **not** the Home Assistant entity ID.
+Every action except `scan_paired_devices` takes `device_id`: the 6-hex-character IO-homecontrol device ID — the same value you set as `io_device_id` in the entity's YAML, and the same ID the pairing log prints. This is the protocol-level actuator ID, **not** the Home Assistant entity ID. `scan_paired_devices` takes no `data:` at all — it isn't aimed at one device.
 
 ### Result events
 
@@ -206,10 +207,10 @@ Every action fires the same Home Assistant event, `esphome.home_io_control_actio
 | Field | When present | Meaning |
 |---|---|---|
 | `action` | always | Action name, e.g. `rename_device`. |
-| `device_id` | always | Target device ID. |
-| `success` | always | Whether the action succeeded. |
+| `device_id` | always | Target device ID — **empty** for `scan_paired_devices`, which has no single target. |
+| `success` | always | Whether the action succeeded. For `scan_paired_devices`, `true` whenever the broadcast went out — a scan that heard nothing back is a successful scan, not a failure. |
 | `verified` | always | Whether a follow-up readback confirmed the result — see the table above for which actions can ever set this `true`. |
-| `message` | always | Human-readable outcome summary. |
+| `message` | always | Human-readable outcome summary. For `scan_paired_devices` this is the full multi-line report (see below), not a one-line summary. |
 | `requested_name`, `applied_name` | `rename_device` only | Requested vs. verified device name. |
 | `result_code`, `result_code_name` | `rename_device` and `identify_device` only, when the device replies `CMD_ERROR_RESP` | Decoded protocol result code. |
 
@@ -249,6 +250,81 @@ action: esphome.hioc_heltec_v2_force_open_device
 data:
   device_id: "FEEB1E"
 ```
+
+### `scan_paired_devices`
+
+No fields — call it with an empty `data:` (or omit `data:` entirely). Like the other actions it
+becomes `esphome.<node_name>_scan_paired_devices`; for the sample V2 config
+(`name: hioc-heltec-v2`) that's `esphome.hioc_heltec_v2_scan_paired_devices`.
+
+Broadcasts a `CMD_DISCOVER_SPE_REQ` (0x2A) roll-call and listens for replies from **every
+device that already holds this hub's system key** — not just the ones you have YAML entities
+for. Each responder is looked up against the hub's device registry and grouped into a `Known:`
+section and an `Unknown:` section; unknown responders additionally get a lead-in line and a
+ready-to-paste YAML block, the same one a successful pairing prints.
+
+```yaml
+action: esphome.hioc_heltec_v2_scan_paired_devices
+```
+
+A realistic report, one already-configured device and one that isn't:
+
+```
+Roll-call: 2 devices detected (1 known, 1 unknown)
+Known:
+  30E1F2: horizontal_awning subtype=0 rssi=-52dBm manufacturer=Somfy turnaround=40s power_save=always_alive [known]
+Unknown:
+  415CE4: light subtype=0 rssi=-61dBm manufacturer=Somfy turnaround=40s power_save=always_alive [unknown]
+    Paste this into your YAML to register it:
+  light:
+  - platform: home_io_control
+    name: "My Device"
+    io_device_id: "415CE4"
+    io_device_type: "light"
+    io_subtype: 0
+```
+
+A single scan reports at most **24 devices**. If more than that answer, the report says so
+explicitly with a `NOTE: more than 24 devices answered; the list below is truncated.` line rather
+than quietly listing a subset — so a large install can never look like devices have gone missing.
+Raising the limit means changing `SCAN_MAX_REPLIES` in `management_actions.cpp`; each additional
+slot costs 12 bytes of stack, so there is plenty of headroom if you need it.
+
+Known devices are always listed before unknown ones, and either the `Known:` or `Unknown:`
+section is omitted entirely when it would be empty (e.g. a scan where every responder is already
+known prints no `Unknown:` header at all).
+
+`success` is `true` whenever the broadcast went out, **including when nothing answers** — a
+scan that hears nothing is a valid result, not a failure. `device_id` on the result event is
+always empty (there is no single target); the full report above is the event's `message`.
+
+**A single scan may still miss devices — run it again if one you expect is absent.** A paired
+device only answers if it happens to be awake and listening on the channel the hub transmits on
+at that instant, so the hub retries the broadcast on all three IO-homecontrol channels (CH2,
+then CH1, then CH3), each with its own full `pairing_discovery_wait_ms` listen window, before
+returning the merged report. That covers most cases, but a device's own listen schedule is
+outside the hub's control, so it is still possible for a device to be asleep — or simply still
+composing its reply — through all three attempts. This makes a single scan take a while: three
+full-length windows plus transmit time, roughly `3 × pairing_discovery_wait_ms` (~6 seconds at
+the 2000 ms default). It will also log an ESPHome "operation took a long time" warning on every
+run — a known, accepted tradeoff. That warning stops repeating for anything that blocks under
+~2.5 s, and a shorter window was tried for exactly that reason; it was reverted because it made
+devices' replies land just after the window closed, where they are dropped, so scans started
+missing devices. A recurring log line is the lesser problem. If a device you know is paired doesn't show up, just trigger
+the action again — it costs nothing else, since the action has no side effects to worry about
+repeating.
+
+**This cannot help you pair a new device.** A device only answers 0x2A if it already holds
+this hub's system key — a device sitting in learning mode, waiting to be paired, holds no key
+yet and stays silent. See `docs/radio_diagnostics.md`'s `pairing_discovery_commands` section for
+why 0x2A is deliberately excluded from the pairing discovery command list. Use the "Discover &
+Pair" button for pairing a new device; use `scan_paired_devices` to check in on devices you have
+already paired.
+
+An unknown responder in the report is not, on its own, a sign of an intruder — it almost always
+means a device you paired earlier whose YAML entry never got saved (or got lost), not a foreign
+controller. The reply itself proves nothing more than "this device once received your system
+key"; see the roll-call's protocol notes for why the reply carries no per-transaction proof.
 
 ## Light Platform
 

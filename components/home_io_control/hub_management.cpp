@@ -3,8 +3,8 @@
 /// @ingroup hioc_hub
 ///
 /// All management logic lives in management_actions.cpp. This file provides only the
-/// IOHomeControlComponent::rename_device() / identify_device() / force_open_device()
-/// implementations that the virtual dispatch table requires.
+/// IOHomeControlComponent::rename_device() / identify_device() / force_open_device() /
+/// scan_paired_devices() implementations that the virtual dispatch table requires.
 
 #include "hub_internal.h"
 
@@ -35,6 +35,14 @@ IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::identify_
 /// the virtual dispatch defined in hub_core.h is fulfilled.
 IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::force_open_device(const std::string &device_id) {
   return this->management_actions_.force_open_device(device_id);
+}
+
+/// Broadcast a roll-call and report every device that answers.
+///
+/// Thin wrapper that delegates to management_actions_.scan_paired_devices() so that
+/// the virtual dispatch defined in hub_core.h is fulfilled.
+IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::scan_paired_devices() {
+  return this->management_actions_.scan_paired_devices();
 }
 
 }  // namespace home_io_control

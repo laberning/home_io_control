@@ -12,7 +12,8 @@
 /// methods on it, so no friend declarations into the hub are needed.
 ///
 /// IOHomeControlComponent exposes this collaborator through thin protected wrappers
-/// (api_rename_device_, api_identify_device_, api_force_open_device_, register_management_actions_).
+/// (api_rename_device_, api_identify_device_, api_force_open_device_, api_scan_paired_devices_,
+/// register_management_actions_).
 
 #include "exchange_engine.h"
 #include "device_registry.h"
@@ -23,8 +24,9 @@
 namespace esphome {
 namespace home_io_control {
 
-// Forward declaration — full definition included only in management_actions.cpp.
+// Forward declarations — full definitions included only in management_actions.cpp.
 class IOHomeControlComponent;
+struct TuningConfig;
 
 /// Result of a hub-level management action such as rename.
 ///
@@ -52,11 +54,19 @@ class ManagementActions {
   /// Construct with all required collaborators.
   ///
   /// @param node_id      Controller 3-byte node ID, owned by the hub.
+  /// @param system_key   Controller 16-byte AES system key, owned by the hub. Only
+  ///                     scan_paired_devices() uses this — it builds a self-authenticating
+  ///                     CMD_DISCOVER_SPE_REQ itself, unlike rename/identify/force-open, which
+  ///                     authenticate through ExchangeEngine's challenge-response.
+  /// @param tuning       Runtime tuning config, owned by the hub. Only scan_paired_devices()
+  ///                     uses this — it reuses `pairing_discovery_wait_ms` as the listen window
+  ///                     for each of its own per-channel attempts.
   /// @param engine       Shared exchange engine for radio transactions.
   /// @param registry     Device registry for device lookups.
   /// @param initialized  Pointer to the hub's initialized flag.
   /// @param hub          Hub pointer for ESPHome API calls and public hub methods.
-  ManagementActions(const uint8_t *node_id, ExchangeEngine &engine, DeviceRegistry &registry, const bool *initialized,
+  ManagementActions(const uint8_t *node_id, const uint8_t *system_key, const TuningConfig *tuning,
+                    ExchangeEngine &engine, DeviceRegistry &registry, const bool *initialized,
                     IOHomeControlComponent *hub);
 
   /// Non-copyable — stores references and pointers into hub member addresses.
@@ -112,7 +122,63 @@ class ManagementActions {
   /// @return Structured result describing whether the command was queued.
   ManagementActionResult force_open_device(const std::string &device_id);
 
-  /// Publish a management result as a structured log line and Home Assistant event.
+  /// Native API callback: run a roll-call scan and publish the result as a HA event.
+  void api_scan_paired_devices();
+
+  /// @brief Broadcast a roll-call and report every device that answers.
+  ///
+  /// Not a discovery mechanism for new devices: only devices that already hold this hub's
+  /// system key answer a CMD_DISCOVER_SPE_REQ (the 0x2A payload is self-authenticating — 6
+  /// random bytes plus a 6-byte HMAC over the command byte, computed with `system_key_`), so a
+  /// device that has never paired with this hub stays silent. See
+  /// `tests/corpus/captures/somfy_awning/discover_spe_paired_rollcall.yaml` for a captured
+  /// exchange. Never writes DeviceRegistry — every responder is only looked up, never
+  /// registered; an unknown responder usually means a device paired earlier whose YAML config
+  /// was never saved, not an intruder. `result.device_id` stays empty (there is no single
+  /// target) and `verified` stays false (nothing here is read back). `success` is true whenever
+  /// the broadcast went out, including with zero replies — "nothing answered" is a valid
+  /// result, not a failure. `result.message` carries the full multi-line report: a header line
+  /// (devices detected, how many known vs. unknown), then a `Known:` section followed by an
+  /// `Unknown:` section (either omitted if empty) — known responders get a summary line each,
+  /// unknown responders additionally get a lead-in sentence and a ready-to-paste YAML block.
+  /// Devices are grouped by known/unknown rather than left in arrival order, since the two
+  /// groups need different follow-up and interleaving them made an unknown responder easy to
+  /// miss between known ones. At most `SCAN_MAX_REPLIES` distinct responders are reported; if
+  /// more answer, the report says so explicitly rather than quietly listing a subset.
+  ///
+  /// Transmits the request once per channel (CH2, then CH1, then CH3), each with its own full
+  /// `pairing_discovery_wait_ms` listen window, merging distinct responders across attempts — a
+  /// paired device only hears the broadcast if it happens to be awake on the channel the hub
+  /// transmits on at that instant, and real hardware testing found that single-channel
+  /// duty-cycling paired devices are not reliably caught by a one-shot broadcast. A responder
+  /// that answers more than one attempt still appears exactly once. Each attempt is a single
+  /// transmit followed by its own window, never back-to-back transmits, so it does not
+  /// reintroduce the different failure mode a 3-channel-burst transmit caused elsewhere: firing
+  /// three long-preamble transmits back-to-back with no listening in between blew through the
+  /// tight per-try response wait windows and broke exchanges in both directions (see
+  /// `IOHomeControlComponent::broadcast_key_extraction_reply_()`'s doc comment).
+  ///
+  /// This still blocks the caller for the full three-window duration (roughly
+  /// `3 × pairing_discovery_wait_ms`, ~6 s at the 2000 ms default) and therefore trips ESPHome's
+  /// "operation took a long time" warning on *every* invocation. That warning uses a per-component
+  /// ratchet (`Component::should_warn_of_blocking()`): it starts at 50 ms and, each time it fires,
+  /// raises its own threshold to the observed duration plus a margin — but the threshold is stored
+  /// in centiseconds in a `uint8_t`, so it saturates at **2550 ms**. Anything that blocks longer
+  /// than that can never ratchet out of warning range.
+  ///
+  /// Accepting that is a deliberate tradeoff (confirmed on real hardware 2026-08-10). A shorter
+  /// fixed window (500 ms/attempt, ~2.4 s total) was tried: it would have gone quiet after one
+  /// warning, since 2.4 s sits under the 2550 ms cap — but it also caused real, correctly-decoded
+  /// replies from registered devices to arrive after the window had already closed, where the
+  /// passive path drops them (`hub_status.cpp`'s `unhandled_cmd` catch-all). Losing devices from
+  /// the report is worse than a recurring log line, so the long window won. Getting both would
+  /// require restructuring this action to run across multiple scheduled `loop()` ticks so no single
+  /// blocking unit approaches 2550 ms — not done here.
+  /// @return Structured result whose `message` is the full report.
+  ManagementActionResult scan_paired_devices();
+
+  /// Publish a management result as one or more structured log lines (one call per line of
+  /// `result.message`, see log_multiline_result() in the .cpp) and a Home Assistant event.
   void publish_result(const ManagementActionResult &result);
 
  private:
@@ -149,6 +215,8 @@ class ManagementActions {
                                    ManagementActionResult &result);
 
   const uint8_t *node_id_;
+  const uint8_t *system_key_;
+  const TuningConfig *tuning_;
   ExchangeEngine &engine_;
   DeviceRegistry &registry_;
   const bool *initialized_;

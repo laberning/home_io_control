@@ -10,6 +10,7 @@
 
 #include <cstring>
 #include <deque>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -806,4 +807,244 @@ TEST(Exchange, AuthenticateRequest_InvalidHmacRejected) {
   bool ok = comp.authenticate_request_(status_update, FREQ_CH2);
 
   EXPECT_FALSE(ok) << "authenticate_request_ with wrong HMAC must return false";
+}
+
+// ============================================================================
+// collect_broadcast_responses tests
+// ============================================================================
+// Exercises ExchangeEngine directly (not through IOHomeControlComponent) to isolate this
+// primitive from the action layer that drives it (ManagementActions::scan_paired_devices(),
+// covered separately in tests/hub_management_test.cpp). A small pairing_discovery_wait_ms keeps
+// host-test iteration counts meaningful: in host tests millis() advances by exactly 1 per call,
+// and MockRadio::wait_for_packet() returns false immediately once its queue is empty rather than
+// honouring the timeout.
+
+namespace {
+
+TuningConfig make_broadcast_test_tuning() {
+  TuningConfig tuning;
+  tuning.pairing_discovery_wait_ms = 20;
+  return tuning;
+}
+
+IoFrame build_spe_response(const uint8_t src[3], const uint8_t dst[3]) {
+  IoFrame f{};
+  init_frame(f, true, true, true, false);
+  set_dst(f, dst);
+  set_src(f, src);
+  set_cmd(f, CMD_DISCOVER_SPE_RESP, nullptr, 0);
+  return f;
+}
+
+RadioRxPacket to_rx_packet(const IoFrame &frame) {
+  RadioRxPacket pkt{};
+  uint8_t raw[64];
+  pkt.len = serialize(frame, raw, sizeof(raw));
+  memcpy(pkt.data, raw, pkt.len);
+  return pkt;
+}
+
+IoFrame build_spe_request(const uint8_t own[3]) {
+  IoFrame f{};
+  create_discovery_request(f, own, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false, 0, test::TEST_SYSTEM_KEY);
+  return f;
+}
+
+/// Records every callback delivery so tests can assert on count, addresses, and RSSI.
+/// collect_broadcast_responses() neither stores nor deduplicates replies, so this is also what
+/// proves it hands over duplicates rather than filtering them.
+struct CollectedReplies {
+  std::vector<IoFrame> frames;
+  std::vector<int16_t> rssi_dbm;
+
+  ExchangeEngine::BroadcastReplyHandler handler() {
+    return [this](const IoFrame &frame, int16_t rssi) {
+      this->frames.push_back(frame);
+      this->rssi_dbm.push_back(rssi);
+    };
+  }
+};
+
+}  // namespace
+
+TEST(Exchange, CollectBroadcastResponses_ZeroReplies) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  EXPECT_EQ(count, 0u) << "no queued replies should yield zero collected";
+  EXPECT_TRUE(collected.frames.empty()) << "the handler must not be invoked when nothing arrives";
+}
+
+TEST(Exchange, CollectBroadcastResponses_WindowIsHonouredNotIgnored) {
+  // Every production caller passes the same tuning value, so without this the window_ms parameter
+  // could be ignored entirely and no other test would notice. A zero-length window must expire
+  // before the first receive: host millis() advances one tick per call, so the deadline is already
+  // in the past when the loop is first evaluated.
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP, /*window_ms=*/0,
+                                                     collected.handler());
+
+  EXPECT_EQ(count, 0u) << "a zero-length window must collect nothing even with a reply already queued";
+  EXPECT_TRUE(collected.frames.empty()) << "the handler must not run after the window has expired";
+  EXPECT_EQ(radio.get_send_count(), 1) << "the request is still transmitted; only the listen window is empty";
+}
+
+TEST(Exchange, CollectBroadcastResponses_OneReply) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  radio.set_last_capture_rssi(-42);
+
+  IoFrame reply = build_spe_response(test::DST_ID, test::OWN_ID);
+  radio.queue_rx(to_rx_packet(reply));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  ASSERT_EQ(count, 1u);
+  ASSERT_EQ(collected.frames.size(), 1u);
+  EXPECT_EQ(memcmp(collected.frames[0].src, test::DST_ID, NODE_ID_SIZE), 0)
+      << "delivered reply should carry the responder's node ID";
+  EXPECT_EQ(collected.rssi_dbm[0], -42) << "delivered reply should carry the RSSI of the captured packet";
+}
+
+TEST(Exchange, CollectBroadcastResponses_TwoDistinctSourcesBothCollected) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+  radio.queue_rx(to_rx_packet(build_spe_response(test::FOREIGN_ID, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  EXPECT_EQ(count, 2u) << "two distinct responders should both be collected";
+}
+
+TEST(Exchange, CollectBroadcastResponses_SameSourceTwiceBothDelivered) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  EXPECT_EQ(count, 2u) << "the engine does not deduplicate; both deliveries reach the handler";
+  EXPECT_EQ(collected.frames.size(), 2u)
+      << "deduplication belongs to the caller (see ScanPairedDevicesDedupsSameSourceThroughActionLayer)";
+}
+
+TEST(Exchange, CollectBroadcastResponses_WrongCommandIgnoredWithoutAbortingCollection) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // Wrong-command frame from the same src the valid reply will use.
+  IoFrame wrong_cmd{};
+  init_frame(wrong_cmd, true, true, true, false);
+  set_dst(wrong_cmd, test::OWN_ID);
+  set_src(wrong_cmd, test::DST_ID);
+  set_cmd(wrong_cmd, CMD_PRIVATE_RESP, nullptr, 0);
+  radio.queue_rx(to_rx_packet(wrong_cmd));
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  ASSERT_EQ(count, 1u) << "the wrong-command frame must be ignored, not counted or fatal";
+  ASSERT_EQ(collected.frames.size(), 1u);
+  EXPECT_EQ(collected.frames[0].cmd, CMD_DISCOVER_SPE_RESP) << "the delivered reply must be the valid one";
+}
+
+TEST(Exchange, CollectBroadcastResponses_WrongDestinationIgnored) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // Addressed to some other hub, not us.
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::FOREIGN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  EXPECT_EQ(count, 0u) << "a reply not addressed to us must be ignored";
+}
+
+TEST(Exchange, CollectBroadcastResponses_NoCapacityLimitAtEngineLayer) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // Three distinct responders: the engine stores nothing, so all three reach the handler and any
+  // limit is the caller's to impose.
+  const uint8_t src_a[3] = {0x01, 0x01, 0x01};
+  const uint8_t src_b[3] = {0x02, 0x02, 0x02};
+  const uint8_t src_c[3] = {0x03, 0x03, 0x03};
+  radio.queue_rx(to_rx_packet(build_spe_response(src_a, test::OWN_ID)));
+  radio.queue_rx(to_rx_packet(build_spe_response(src_b, test::OWN_ID)));
+  radio.queue_rx(to_rx_packet(build_spe_response(src_c, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  EXPECT_EQ(count, 3u) << "the engine imposes no cap of its own";
+  EXPECT_EQ(collected.frames.size(), 3u) << "every distinct responder must reach the handler";
+}
+
+TEST(Exchange, CollectBroadcastResponses_TransmitFailureReturnsZero) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  radio.queue_tx_result(false);
+
+  // Even a queued reply must not be collected if the initial transmit never went out.
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  EXPECT_EQ(count, 0u) << "a failed initial transmit must short-circuit with zero replies";
+  EXPECT_TRUE(collected.frames.empty()) << "the handler must not be invoked when the transmit failed";
+  EXPECT_EQ(radio.get_send_count(), 1) << "exactly one transmit attempt, no retry";
 }

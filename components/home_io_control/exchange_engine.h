@@ -8,6 +8,7 @@
 /// machine and the inbound challenge-response authentication path. It owns:
 ///   - `send_and_receive()` — retry loop with challenge/response support.
 ///   - `authenticate_request()` — verify a device-initiated command via HMAC.
+///   - `collect_broadcast_responses()` — send once, report every matching reply in a window.
 ///   - Transmit with LBT (listen-before-talk) and frequency hopping.
 ///   - Exchange debug snapshot captured on every attempt.
 ///
@@ -29,6 +30,7 @@
 #include "tuning_config.h"
 
 #include <cstdint>
+#include <functional>
 
 namespace esphome {
 namespace home_io_control {
@@ -70,6 +72,44 @@ class ExchangeEngine {
   /// @param freq    RF channel the frame arrived on.
   /// @return true if HMAC verified; false on timeout or mismatch.
   bool authenticate_request(const IoFrame &request, uint32_t freq);
+
+  /// @brief Invoked for each matching broadcast reply, as it arrives.
+  /// @param frame    Parsed reply frame (responder's address is `frame.src`).
+  /// @param rssi_dbm RSSI of this reply.
+  using BroadcastReplyHandler = std::function<void(const IoFrame &frame, int16_t rssi_dbm)>;
+
+  /// Transmit `request` once and hand every matching broadcast reply to `on_reply` within
+  /// `window_ms`.
+  ///
+  /// Unlike send_and_receive(), this neither retries the transmit nor performs any
+  /// authentication — a broadcast roll-call has no per-transaction proof, so replies are
+  /// informational only (see the caller's protocol notes). Every candidate packet is parsed
+  /// and checked against `expected_cmd` and `node_id_` (as the frame's destination); anything
+  /// that fails `parse()`, carries a different `cmd`, or is not addressed to us is ignored
+  /// without ending collection. Silence on a slice hops to the next channel, exactly like
+  /// wait_for_first_response_(), so replies arriving on any of the three channels are caught.
+  ///
+  /// This method stores nothing and imposes no capacity: it neither buffers replies nor
+  /// deduplicates them, so the same responder answering twice within one window invokes
+  /// `on_reply` twice. Storage, deduplication, and any capacity limit belong to the caller,
+  /// which knows how little of each reply it actually needs to keep — see
+  /// `ManagementActions::scan_paired_devices()`, which decodes each frame on arrival into a
+  /// compact record rather than retaining whole frames. Collection always runs to the deadline.
+  /// @param request       Frame to transmit once (cmd + endpoints already filled).
+  /// @param freq          RF channel frequency (Hz) for the initial transmit.
+  /// @param expected_cmd  Command byte a reply must carry to be considered.
+  /// @param window_ms     How long to listen after the transmit, in milliseconds. The caller
+  ///                      owns this budget explicitly (rather than this method reading
+  ///                      `tuning_->pairing_discovery_wait_ms` itself) because a caller that
+  ///                      transmits more than once needs to divide one total time budget across
+  ///                      several calls — see `ManagementActions::scan_paired_devices()`.
+  /// @param on_reply      Invoked once per matching reply, before the next packet is awaited, so
+  ///                      the handler must be cheap and must not block. Keep captures to a few
+  ///                      pointers: small callables avoid std::function's heap fallback on the
+  ///                      implementations this project builds against.
+  /// @return Number of matching replies handed to `on_reply` (duplicates included).
+  uint8_t collect_broadcast_responses(const IoFrame &request, uint32_t freq, uint8_t expected_cmd, uint32_t window_ms,
+                                      const BroadcastReplyHandler &on_reply);
 
   // -------------------------------------------------------------------------
   // Infrastructure delegated from the hub

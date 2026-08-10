@@ -5,9 +5,41 @@
 #include "proto_device_model.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace esphome {
 namespace home_io_control {
+
+namespace {
+
+constexpr size_t DEVICE_TYPE_HEX_STRING_BUFFER_SIZE = 8;  ///< Buffer for strings such as "0x11" plus terminator.
+
+/// Format a raw device type as hexadecimal, for diagnostics and as the YAML fallback.
+std::string format_device_type_hex(DeviceType type) {
+  char buf[DEVICE_TYPE_HEX_STRING_BUFFER_SIZE];
+  snprintf(buf, sizeof(buf), "0x%02X", static_cast<uint8_t>(type));
+  return std::string(buf);
+}
+
+/// Map a capability class to the corresponding ESPHome platform name, or nullptr when the
+/// class has no dedicated platform yet.
+const char *pairing_platform_name(DeviceCapabilityClass capability_class) {
+  switch (capability_class) {
+    case DeviceCapabilityClass::COVER:
+      return "cover";
+    case DeviceCapabilityClass::LIGHT:
+      return "light";
+    case DeviceCapabilityClass::SWITCH:
+      return "switch";
+    case DeviceCapabilityClass::LOCK:
+      return "lock";
+    default:
+      return nullptr;
+  }
+}
+
+}  // namespace
 
 bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HORIZONTAL_AWNING; }
 
@@ -310,6 +342,58 @@ const char *device_operation_profile_name(DeviceType type) {
     default:
       return "unknown";
   }
+}
+
+std::string format_device_type_diagnostic(DeviceType type) {
+  const char *name = device_type_name(type);
+  std::string raw = format_device_type_hex(type);
+  if (name != nullptr && strcmp(name, "unknown") != 0) {
+    return std::string(name) + " (" + raw + ")";
+  }
+  return raw;
+}
+
+std::string format_device_type_for_yaml(DeviceType type) {
+  const char *name = yaml_device_type_name(type);
+  if (name != nullptr) {
+    return std::string("\"") + name + "\"";
+  }
+  return format_device_type_hex(type);
+}
+
+std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
+                                      bool metadata_complete, bool inverted) {
+  if (!metadata_complete) {
+    return "  <cover|light|switch|lock>:\n"
+           "  - platform: home_io_control\n"
+           "    name: \"My Device\"\n"
+           "    io_device_id: \"" +
+           device_id +
+           "\"\n"
+           "    # io_device_type: left unset — this device didn't report its type during\n"
+           "    #   discovery, so the controller learns it automatically from the next status\n"
+           "    #   reply. Add it explicitly once you see it logged, to skip re-learning on\n"
+           "    #   every future boot.\n";
+  }
+
+  const auto capability_class = device_capability_class(type);
+  const char *platform = pairing_platform_name(capability_class);
+  if (platform == nullptr)
+    return "";
+
+  std::string extra_lines;
+  if (capability_class == DeviceCapabilityClass::COVER && inverted)
+    extra_lines += "    invert_position: true\n";
+
+  const std::string subtype_line = "    io_subtype: " + std::to_string(subtype) + "\n";
+
+  return "  " + std::string(platform) +
+         ":\n"
+         "  - platform: home_io_control\n"
+         "    name: \"My Device\"\n"
+         "    io_device_id: \"" +
+         device_id + "\"\n" + "    io_device_type: " + format_device_type_for_yaml(type) + "\n" + subtype_line +
+         extra_lines;
 }
 
 }  // namespace home_io_control

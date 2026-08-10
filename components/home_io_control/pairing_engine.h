@@ -82,16 +82,6 @@ class PairingEngine {
   /// Extract node ID, device type, and subtype from a CMD_DISCOVER_RESP frame.
   static void parse_device_from_discovery(const IoFrame &frame, IoDevice &device, std::string &device_id);
 
-  /// Build the ready-to-paste YAML skeleton logged when a device pairs successfully but its
-  /// discovery response didn't include type/subtype metadata (so the platform — cover, light,
-  /// switch, or lock — can't be determined automatically; see discover_and_pair()). Gives the
-  /// user the two fields that *are* known (name, io_device_id) instead of making them transcribe
-  /// the device ID out of a log sentence by hand.
-  /// @param device_id Hex device ID string (e.g. "38B4A1"), already known from discovery.
-  /// @return Multi-line YAML snippet with a platform placeholder and a commented-out
-  ///         io_device_type explanation.
-  static std::string build_incomplete_metadata_snippet(const std::string &device_id);
-
  protected:
   // --- Phase helpers (protected; exposed to tests via TestablePairingEngine in test_helpers.h) ---
 

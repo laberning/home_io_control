@@ -11,6 +11,7 @@
 #include "proto_sizes.h"
 
 #include <cstdint>
+#include <string>
 
 namespace esphome {
 namespace home_io_control {
@@ -139,6 +140,40 @@ void encode_packed_device_type(DeviceType type, uint8_t subtype, uint8_t &type_m
 /// @param type Device type.
 /// @return String such as "cover_position", "cover_position_tilt", "binary_on_off", "lock", etc.
 const char *device_operation_profile_name(DeviceType type);
+
+/// @brief Human-readable device type string for diagnostics, including the raw numeric value.
+/// @param type Device type.
+/// @return String such as "horizontal_awning (0x10)", or the raw hex form ("0x1A") when the
+///         type has no symbolic name.
+std::string format_device_type_diagnostic(DeviceType type);
+
+/// @brief Build the YAML value for a device's `io_device_type` key.
+/// @param type Device type.
+/// @return A quoted symbolic name (e.g. `"horizontal_awning"`) when one exists, otherwise the
+///         raw hex form (e.g. `0x1A`) for a type with no YAML alias.
+std::string format_device_type_for_yaml(DeviceType type);
+
+/// @brief Build the ready-to-paste YAML block describing a device, for both a fully-decoded
+/// device and one whose type/subtype wasn't reported.
+///
+/// With `metadata_complete == false`, the type/subtype are unknown, so the returned snippet
+/// uses a `<cover|light|switch|lock>` platform placeholder and a commented-out
+/// `io_device_type` explanation; `type`, `subtype`, and `inverted` are ignored in this case.
+///
+/// With `metadata_complete == true`, the snippet names the concrete ESPHome platform for
+/// `type` and fills in `io_subtype` and (for an inverted cover) `invert_position: true`. If
+/// `type` has no known ESPHome platform, an empty string is returned instead — the caller
+/// decides what to say when there's no snippet to show.
+/// @param type Decoded device type.
+/// @param subtype Decoded device subtype; only used when `metadata_complete` is true.
+/// @param device_id Hex device ID string (e.g. "38B4A1").
+/// @param metadata_complete Whether the discovery response included type/subtype metadata.
+/// @param inverted Whether the device's open/close positions are swapped; only used when
+///        `metadata_complete` is true and `type` is a cover.
+/// @return Multi-line YAML snippet, or an empty string when `metadata_complete` is true but
+///         `type` maps to no ESPHome platform.
+std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
+                                      bool metadata_complete, bool inverted);
 
 // ============================================================================
 // Cover Commands

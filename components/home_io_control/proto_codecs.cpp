@@ -33,6 +33,7 @@ constexpr uint8_t UTF8_CONTINUATION_PREFIX_MASK = 0xC0;
 constexpr uint8_t UTF8_CONTINUATION_PREFIX = 0x80;
 constexpr uint8_t UTF8_TWO_BYTE_VALUE_MASK = 0x1F;
 constexpr uint8_t ASCII_MAX = 0x7F;
+constexpr uint8_t DISCOVERY_TIMESTAMP_MSB_SHIFT = 8;  ///< Shift for the timestamp field's big-endian MSB.
 
 std::string latin1_to_utf8(const uint8_t *data, size_t len) {
   std::string result;
@@ -327,6 +328,44 @@ OneWayFrameInfo decode_1w_frame(const IoFrame &frame) {
     info.main0 = frame.data[2];
     info.main1 = frame.data[3];
     decode_1w_main_intent(frame.data[2], frame.data[3], info.intent, sizeof(info.intent));
+  }
+
+  return info;
+}
+
+DiscoveryResponseInfo decode_discovery_response(const IoFrame &frame, IoDevice &device, std::string &device_id) {
+  DiscoveryResponseInfo info{};
+
+  memcpy(device.node_id, frame.src, NODE_ID_SIZE);
+  info.metadata_complete = frame.data_len >= DEVICE_METADATA_SIZE;
+  if (info.metadata_complete) {
+    device.type = decode_packed_device_type(frame.data[0], frame.data[1]);
+    device.subtype = decode_packed_device_subtype(frame.data[1]);
+    device.inverted = default_inverted_for_type(device.type);
+  } else {
+    device.type = DeviceType::UNKNOWN;
+    device.subtype = 0;
+    device.inverted = false;
+  }
+  device.position = UNKNOWN_POSITION;
+  device.target = UNKNOWN_POSITION;
+  device.is_stopped = true;
+  device_id = node_id_to_string(device.node_id);
+
+  info.has_extended = frame.data_len >= DISCOVERY_RESP_FULL_SIZE;
+  if (frame.data_len > DISCOVERY_RESP_MANUFACTURER_OFFSET) {
+    info.manufacturer = frame.data[DISCOVERY_RESP_MANUFACTURER_OFFSET];
+  }
+  if (frame.data_len > DISCOVERY_RESP_BACKBONE_OFFSET + NODE_ID_SIZE - 1) {
+    memcpy(info.backbone, &frame.data[DISCOVERY_RESP_BACKBONE_OFFSET], NODE_ID_SIZE);
+  }
+  if (frame.data_len > DISCOVERY_RESP_FLAGS_OFFSET) {
+    info.flags = frame.data[DISCOVERY_RESP_FLAGS_OFFSET];
+  }
+  if (frame.data_len > DISCOVERY_RESP_TIMESTAMP_OFFSET + 1) {
+    info.timestamp =
+        static_cast<uint16_t>((frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET] << DISCOVERY_TIMESTAMP_MSB_SHIFT) |
+                              frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1]);
   }
 
   return info;

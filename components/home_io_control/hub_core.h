@@ -79,7 +79,7 @@ class IOHomeControlComponent : public Component,
   IOHomeControlComponent()
       : exchange_engine_(&radio_, node_id_, system_key_, &tuning_),
         pairing_engine_(&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_, pairing_telemetry_),
-        management_actions_(node_id_, exchange_engine_, registry_, &initialized_, this) {}
+        management_actions_(node_id_, system_key_, &tuning_, exchange_engine_, registry_, &initialized_, this) {}
 
   /// @brief Result payload used by hub-level management actions such as rename.
   /// Alias of the standalone esphome::home_io_control::ManagementActionResult struct so that
@@ -319,6 +319,11 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @return Structured result describing whether the command was queued.
   virtual ManagementActionResult force_open_device(const std::string &device_id);
+  /// Broadcast a roll-call and report every device that answers (see
+  /// ManagementActions::scan_paired_devices() for the full contract: only key-holding devices
+  /// answer, DeviceRegistry is never written, and zero replies is a successful result).
+  /// @return Structured result whose `message` is the full multi-line report.
+  virtual ManagementActionResult scan_paired_devices();
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
@@ -601,6 +606,8 @@ class IOHomeControlComponent : public Component,
   void api_force_open_device_(const std::string &device_id) {
     this->management_actions_.api_force_open_device(device_id);
   }
+  /// Native API callback: broadcast a roll-call scan of already-paired devices.
+  void api_scan_paired_devices_() { this->management_actions_.api_scan_paired_devices(); }
 
   // --- Frequency hopping ---
   void hop_frequency_();
@@ -739,7 +746,8 @@ class IOHomeControlComponent : public Component,
   PairingTelemetry pairing_telemetry_;    ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.
   ExchangeEngine exchange_engine_;        ///< Owns all authenticated exchange and LBT/hop logic.
   PairingEngine pairing_engine_;          ///< Owns the three-phase device pairing flow.
-  ManagementActions management_actions_;  ///< Owns rename, identify, force-open, and other hub-level HA actions.
+  ManagementActions management_actions_;  ///< Owns rename, identify, force-open, scan_paired_devices, and other
+                                          ///< hub-level HA actions.
 
   /// Identity of the last processed 1W frame, for burst suppression; see
   /// decisions::is_duplicate_1w_frame() for why the intent bytes are part of the key.

@@ -1,10 +1,14 @@
 id: issue_17_velux_kux110_1w_stop
 description: >
-  A 1W EXECUTE (STOP) command from a Velux SML/KUX110 unit, broadcast to the generic
-  all-devices address. Verifies 1W STOP-intent decoding for a device family that cannot pair
-  with this (2W-only) project.
+  A 1W EXECUTE (STOP) command broadcast to the generic all-devices address, captured in an
+  installation where a Velux KLI 313 remote drives a Velux SML roof window shutter via a
+  KUX110 control unit. The source (DA2C93) is the *remote*, not the KUX110 or the shutter:
+  EXECUTE is a controller-side command, and the same address also emits the controller-side
+  0x2E beacons in issue_17_velux_kux110_1w_discover_alt_beacon.yaml. Verifies 1W STOP-intent
+  decoding for an installation whose control path is 1W, which this (2W-only) project cannot
+  pair with today.
 source:
-  device: "Velux SML roof window shutter (KUX110 control unit)"
+  device: "Velux KLI 313 remote (driving a Velux SML shutter via a KUX110 control unit)"
   captured_with: sx1276
   firmware: null
   date: 2026-07-06

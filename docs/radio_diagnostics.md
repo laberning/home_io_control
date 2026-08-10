@@ -144,7 +144,7 @@ your device may differ.
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` | Address the discovery frames are sent to. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
 | `pairing_discovery_low_power` | both | `false` | `true` / `false` | Sets the LOW_POWER flag in discovery frames. |
-| `pairing_discovery_wait_ms` | both | `2000` | 500–5000 ms | How long to wait for a response after each discovery TX. |
+| `pairing_discovery_wait_ms` | both | `2000` | 500–5000 ms | How long to wait for a response after each discovery TX. Also the per-attempt listen window for each of the three roll-call attempts the `scan_paired_devices` action makes. |
 | `pairing_discovery_initial_dwell_ms` | both | `300` | 0–500 ms | Settle delay before the first discovery TX. |
 | `pairing_key_exchange_retries` | both | `3` | 1–5 | Retries for the authenticated key-exchange phase. |
 
@@ -277,6 +277,10 @@ no key yet and stays silent. So adding it to this list cannot help a pairing att
 would only add replies from devices you have already paired. It is a "who is still out there"
 roll-call over your existing devices — a different question entirely from "who wants to pair".
 
+If a "who is still out there" roll-call over your *already-paired* devices is what you actually
+want, that is exactly what the `scan_paired_devices` hub action does — see
+`docs/home_io_control.md`'s "Home Assistant Actions" section.
+
 *Observations:* for the devices tested here, plain `0x28` to `0x00003B` is what works — the
 alternate `0x2E` drew no response from them (but they already answer `0x28`). Full-featured
 controllers are known to broadcast both commands throughout pairing, which is exactly why the
@@ -300,7 +304,10 @@ path, so only enable them alongside `0x2E`.
 #### `pairing_discovery_wait_ms` / `pairing_discovery_initial_dwell_ms`
 
 How long to wait for a response after each discovery transmit, and an initial settle before the
-first transmit.
+first transmit. `pairing_discovery_wait_ms` also sets the per-attempt listen window for the
+`scan_paired_devices` Home Assistant action (see `docs/home_io_control.md`'s "Home Assistant
+Actions" section); since that action makes three attempts, one per channel, its total runtime is
+roughly 3x this value.
 
 *Observations:* the `300` ms initial dwell mirrors the conventional wait after a start frame.
 Lengthening the wait only helps when responses are *intermittent* — merely extending the dwell

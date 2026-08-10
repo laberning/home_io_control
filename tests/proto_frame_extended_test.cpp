@@ -601,6 +601,22 @@ TEST(ProtoFrame, PowerSaveModeNameAllValues) {
   EXPECT_STREQ(power_save_mode_name(0xFF), "unknown");
 }
 
+TEST(ProtoFrame, DiscoveryAttClassExtractsBitsSixAndSeven) {
+  EXPECT_EQ(discovery_att_class(0x00), ATT_CLASS_5S);
+  EXPECT_EQ(discovery_att_class(0x40), ATT_CLASS_10S);
+  EXPECT_EQ(discovery_att_class(0x80), ATT_CLASS_20S);
+  EXPECT_EQ(discovery_att_class(0xC0), ATT_CLASS_40S);
+  // Non-ATT bits must not leak into the extracted field.
+  EXPECT_EQ(discovery_att_class(0xEC), ATT_CLASS_40S);
+}
+
+TEST(ProtoFrame, DiscoveryPowerSaveModeExtractsBitsZeroAndOne) {
+  EXPECT_EQ(discovery_power_save_mode(0x00), POWER_SAVE_ALWAYS_ALIVE);
+  EXPECT_EQ(discovery_power_save_mode(0x01), POWER_SAVE_LOW_POWER);
+  // Non-power-save bits must not leak into the extracted field.
+  EXPECT_EQ(discovery_power_save_mode(0xEC), POWER_SAVE_ALWAYS_ALIVE);
+}
+
 TEST(ProtoFrame, DiscoveryFlagsBitExtraction) {
   // flags=0xEC: ATT=11 (40s), sync_ctrl=1, bit4=0, rf_support=1, io_member=0, power_save=00
   uint8_t flags = 0xEC;
@@ -848,4 +864,87 @@ TEST(ProtoFrame, Decode1wFrameShortPayload) {
   EXPECT_EQ(info.cmd, CMD_EXECUTE);
   EXPECT_FALSE(info.has_intent) << "Short payload should not attempt intent decode";
   EXPECT_EQ(info.data_len, 2);
+}
+
+// ============================================================================
+// decode_discovery_response tests
+// ============================================================================
+// Payload bytes match the real somfy_awning discover_spe_paired_rollcall corpus fixture
+// (04 00 30 E1 F2 02 CC FC 03): a CMD_DISCOVER_SPE_RESP with the full 9-byte
+// DISCOVERY_RESP_FULL_SIZE layout, identical to a CMD_DISCOVER_RESP payload.
+
+TEST(ProtoFrame, DecodeDiscoveryResponseFullPayload) {
+  IoFrame frame{};
+  init_frame(frame, true, true, true, false);
+  frame.src[0] = 0x30;
+  frame.src[1] = 0xE1;
+  frame.src[2] = 0xF2;
+  frame.dst[0] = 0x00;
+  frame.dst[1] = 0x00;
+  frame.dst[2] = 0x3B;
+  frame.cmd = CMD_DISCOVER_SPE_RESP;
+  const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2, 0x02, 0xCC, 0xFC, 0x03};
+  memcpy(frame.data, payload, sizeof(payload));
+  frame.data_len = sizeof(payload);
+
+  IoDevice device{};
+  std::string device_id;
+  DiscoveryResponseInfo info = decode_discovery_response(frame, device, device_id);
+
+  EXPECT_TRUE(info.metadata_complete);
+  EXPECT_TRUE(info.has_extended);
+  EXPECT_EQ(device.type, DeviceType::HORIZONTAL_AWNING);
+  EXPECT_EQ(device.subtype, 0u);
+  EXPECT_EQ(device_id, "30E1F2");
+  EXPECT_EQ(info.backbone[0], 0x30);
+  EXPECT_EQ(info.backbone[1], 0xE1);
+  EXPECT_EQ(info.backbone[2], 0xF2);
+  EXPECT_EQ(info.manufacturer, MANUFACTURER_SOMFY);
+  EXPECT_EQ(info.flags, 0xCC);
+  EXPECT_EQ(info.timestamp, 0xFC03);
+  EXPECT_EQ(device.position, UNKNOWN_POSITION);
+  EXPECT_EQ(device.target, UNKNOWN_POSITION);
+  EXPECT_TRUE(device.is_stopped);
+}
+
+TEST(ProtoFrame, DecodeDiscoveryResponseTruncatedPayload) {
+  IoFrame frame{};
+  init_frame(frame, true, true, true, false);
+  frame.src[0] = 0x9D;
+  frame.src[1] = 0x60;
+  frame.src[2] = 0x85;
+  frame.cmd = CMD_DISCOVER_SPE_RESP;
+  frame.data[0] = 0x04;
+  frame.data[1] = 0x00;
+  frame.data_len = DEVICE_METADATA_SIZE;  // 2 bytes: type/subtype only, no extended fields
+
+  IoDevice device{};
+  std::string device_id;
+  DiscoveryResponseInfo info = decode_discovery_response(frame, device, device_id);
+
+  EXPECT_TRUE(info.metadata_complete);
+  EXPECT_FALSE(info.has_extended);
+  EXPECT_EQ(device.type, DeviceType::HORIZONTAL_AWNING);
+  EXPECT_EQ(device_id, "9D6085");
+}
+
+TEST(ProtoFrame, DecodeDiscoveryResponseEmptyPayload) {
+  IoFrame frame{};
+  init_frame(frame, true, true, true, false);
+  frame.src[0] = 0x11;
+  frame.src[1] = 0x22;
+  frame.src[2] = 0x33;
+  frame.cmd = CMD_DISCOVER_SPE_RESP;
+  frame.data_len = 0;
+
+  IoDevice device{};
+  std::string device_id;
+  DiscoveryResponseInfo info = decode_discovery_response(frame, device, device_id);
+
+  EXPECT_FALSE(info.metadata_complete);
+  EXPECT_FALSE(info.has_extended);
+  EXPECT_EQ(device.type, DeviceType::UNKNOWN);
+  EXPECT_EQ(device.subtype, 0u);
+  EXPECT_FALSE(device.inverted);
+  EXPECT_EQ(device_id, "112233");
 }

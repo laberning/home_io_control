@@ -457,6 +457,18 @@ static constexpr uint8_t POWER_SAVE_ALWAYS_ALIVE = 0;  ///< Device is always lis
 static constexpr uint8_t POWER_SAVE_LOW_POWER = 1;     ///< Device sleeps — needs long preamble to wake.
 /// @}
 
+/// @brief Extract the ATT class field from a discovery response's Multi Information Byte.
+/// @param flags Multi Information Byte (data[DISCOVERY_RESP_FLAGS_OFFSET]).
+/// @return ATT class value (0–3); pass to att_class_name() for a human-readable string.
+inline uint8_t discovery_att_class(uint8_t flags) {
+  return (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+}
+
+/// @brief Extract the power save mode field from a discovery response's Multi Information Byte.
+/// @param flags Multi Information Byte (data[DISCOVERY_RESP_FLAGS_OFFSET]).
+/// @return Power save mode value (0–1); pass to power_save_mode_name() for a human-readable string.
+inline uint8_t discovery_power_save_mode(uint8_t flags) { return flags & DISCOVERY_FLAGS_POWER_SAVE_MASK; }
+
 /// @brief Get a human-readable turnaround time string for an ATT class value.
 /// @param att_class ATT class (0–3) extracted from the Multi Information Byte.
 /// @return Null-terminated string such as "5s", "10s", "20s", or "40s".
