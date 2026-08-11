@@ -837,6 +837,90 @@ Extraction)" (not configurable).
   don't be surprised if it takes several hub-side retries (or, if the whole attempt times out, a
   fresh switch toggle) rather than a single clean pass on the first try.
 
+## Adopting a 1W Controller Key
+
+> **⚠️ Receive-only, but it recovers a real secret.** This feature never transmits anything. It
+> listens for a frame your own 1W remote broadcasts during its key-copy gesture and decrypts it.
+> The decryption needs nothing secret — see the security note below — so treat the recovered key
+> exactly as you would treat your `system_key`.
+
+One-way (1W) installations — a handheld remote driving a shutter or awning directly, with no hub —
+have their own network key. If you want this component to join such an installation, you need that
+key. This feature recovers it by overhearing a single `0x30` "add controller" broadcast, which is
+what a 1W remote sends while its **remote-to-remote key-copy mode** is active in order to hand its
+network key to a new remote.
+
+The alternative — enrolling this hub into the device from scratch — is destructive: the enrollment
+command clears the device's existing one-way controls, which would unpair the remote you already
+use. **Adoption is the non-destructive route into an installation that already works**, so prefer
+it whenever you have a functioning remote.
+
+```yaml
+home_io_control:
+  # ... rst_pin / node_id / system_key / etc. as usual ...
+  accept_oneway_key: true
+```
+
+Configuration variable:
+
+- `accept_oneway_key` (Optional, boolean, default `false`): When `true`, dynamically creates the
+  **"Adopt 1W Controller Key"** switch entity, bound directly to this hub.
+
+Like `accept_foreign_pairing`, this lives directly under `home_io_control:`, the generated switch
+always boots off (`restore_mode: ALWAYS_OFF`) so a reboot can never leave it armed, and its name is
+fixed (not configurable). The two features are independent — arming one never arms the other.
+
+### Workflow
+
+1. Flash the firmware with `accept_oneway_key: true` set in your `home_io_control:` block.
+2. Turn the **"Adopt 1W Controller Key"** switch on in Home Assistant. The hub arms for
+   **10 minutes** and logs that it is listening. Nothing is transmitted.
+3. Trigger the **key-copy gesture on your existing 1W remote** — the remote-to-remote copy mode
+   described in its manual, the one you would use to teach a second remote the same network.
+   Do this near the hub.
+4. Watch the ESPHome logs. On success you will see a clearly-delimited block containing the
+   recovered key and a ready-to-paste `oneway_controllers:` entry. The switch turns itself off
+   immediately — one adoption per arm.
+5. Put the key into `secrets.yaml` as `adopted_1w_key`, paste the block into your YAML, and
+   reflash.
+6. If nothing happens within 10 minutes, the switch turns itself off and says so. Re-arm and try
+   again closer to the device.
+
+### Reading the result
+
+The report tells you the **MAC status**, which is your on-the-spot evidence that the recovered key
+is correct:
+
+- **`MAC VERIFIED`** — the frame carried an authenticator and it checked out *under the key that
+  was just recovered*. This is the strongest confirmation available without commanding a device.
+- **`MAC FAILED`** — the authenticator did not check out. The key is probably wrong (a marginal
+  reception is the usual cause). Re-arm and repeat the gesture closer to the hub.
+- **`MAC not present`** — the frame carried no authenticator to check. Not an error; the key may
+  still be correct, but treat it as unconfirmed until you have controlled something with it.
+
+Two fields in the emitted block deserve a note:
+
+- **`node_id` is deliberately absent.** The hub transmits under its *own* address, derived from
+  your hub's `node_id`. It must never impersonate the existing remote: reusing that address would
+  hijack the remote's rolling sequence counter and break it.
+- **`io_device_type` is prefilled from what was overheard**, if this hub happened to see other 1W
+  traffic from the same remote while armed. It is a well-founded guess, not authoritative — verify
+  it. If nothing was observed, the line is commented out with a pointer to the DEBUG log line that
+  reveals it.
+
+### Security note
+
+Anyone within radio range of a key-copy gesture can recover the network key this way. The wrapped
+key in that broadcast is protected only by a **publicly-known transfer key**, using an
+initialisation vector derived from the sender's own address — which is in the same frame's header,
+in plaintext. There is no secret involved in the unwrap.
+
+That is a property of io-homecontrol, not something this project introduces; the same framing
+applies as to the Key Extraction section above. The practical advice
+is the same as for any secret: perform the key copy **once**, indoors, and treat the recovered key
+as the credential it is. Raw `0x30` payloads are masked in this component's own frame logs for
+that reason — the recovered key is printed in exactly one deliberate place, the adoption report.
+
 ## LR1121 Firmware Update
 
 > **⚠️ Give this the same care as any firmware update.** Make sure the device is on stable mains

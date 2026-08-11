@@ -1,5 +1,6 @@
 #include "proto_frame.h"
 #include "proto_commands.h"
+#include "proto_constants.h"
 
 #include "test_helpers.h"
 
@@ -125,6 +126,112 @@ TEST(ProtoFrame, ParseRejectsNullAndTruncatedInputs) {
   uint8_t serialized_len = serialize(frame, serialized, sizeof(serialized));
   EXPECT_GT(serialized_len, 0) << "status request should serialize for truncation test";
   EXPECT_FALSE(parse(serialized, serialized_len - 1, parsed)) << "parse should reject truncated input";
+}
+
+TEST(ProtoFrame, ParseRejectsLengthOutsideDeclaredOrTrailerShape) {
+  const uint8_t own[NODE_ID_SIZE] = {0xC0, 0xFF, 0xEE};
+  const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
+
+  IoFrame frame{};
+  ASSERT_TRUE(create_get_status(frame, own, dst)) << "status request should be created for length-shape test";
+
+  uint8_t serialized[FRAME_MAX_SIZE] = {0};
+  const uint8_t serialized_len = serialize(frame, serialized, sizeof(serialized));
+  ASSERT_GT(serialized_len, 0) << "status request should serialize for length-shape test";
+
+  // Neither the declared length nor declared_len + HMAC_SIZE — a length in between (or beyond)
+  // must never be accepted, whatever the command.
+  uint8_t padded[FRAME_MAX_WIRE_SIZE] = {0};
+  memcpy(padded, serialized, serialized_len);
+  IoFrame parsed{};
+  EXPECT_FALSE(parse(padded, static_cast<uint8_t>(serialized_len + 1), parsed))
+      << "parse should reject a length that is neither declared_len nor declared_len + HMAC_SIZE";
+  EXPECT_FALSE(parse(padded, static_cast<uint8_t>(serialized_len + HMAC_SIZE - 1), parsed))
+      << "parse should reject a length one short of declared_len + HMAC_SIZE";
+}
+
+TEST(ProtoFrame, ParseRejectsMacTrailerShapeForNonTrailerCommand) {
+  // frame_carries_mac_trailer() gates the wider declared_len + HMAC_SIZE shape by command
+  // (proto_frame.cpp); this pins that gate so a regression back to a length-only check (which
+  // would let any ordinary frame arriving with 6 extra trailing bytes be misread as carrying a
+  // fabricated MAC) is caught here rather than surfacing as a ~1-in-65536 CRC coincidence later.
+  const uint8_t own[NODE_ID_SIZE] = {0xC0, 0xFF, 0xEE};
+  const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
+
+  IoFrame frame{};
+  ASSERT_TRUE(create_get_status(frame, own, dst)) << "status request should be created for the non-trailer test";
+  ASSERT_NE(frame.cmd, CMD_ONEWAY_ADD_CONTROLLER) << "test fixture must be a command that carries no trailer";
+  ASSERT_FALSE(frame_carries_mac_trailer(frame.cmd)) << "CMD_PRIVATE must not be treated as trailer-bearing";
+
+  uint8_t serialized[FRAME_MAX_WIRE_SIZE] = {0};
+  const uint8_t serialized_len = serialize(frame, serialized, sizeof(serialized));
+  ASSERT_GT(serialized_len, 0) << "status request should serialize for the non-trailer test";
+
+  // Append 6 arbitrary trailing bytes — the exact shape a genuine MAC trailer would have.
+  for (uint8_t i = 0; i < HMAC_SIZE; i++)
+    serialized[serialized_len + i] = static_cast<uint8_t>(0xA0 + i);
+
+  IoFrame parsed{};
+  EXPECT_FALSE(parse(serialized, static_cast<uint8_t>(serialized_len + HMAC_SIZE), parsed))
+      << "declared_len + HMAC_SIZE must be rejected for a command that does not carry a trailer";
+}
+
+TEST(ProtoFrame, SerializeRefusesTrailerOnNonTrailerCommand) {
+  // The mirror of ParseRejectsMacTrailerShapeForNonTrailerCommand: serialize() applies the same
+  // frame_carries_mac_trailer() gate, so it can never emit a frame parse() would reject. Without
+  // that guard a caller could set has_mac on any command and put 6 trailing bytes on air that no
+  // receiver would ever read back.
+  const uint8_t own[NODE_ID_SIZE] = {0xC0, 0xFF, 0xEE};
+  const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
+
+  IoFrame frame{};
+  ASSERT_TRUE(create_get_status(frame, own, dst)) << "status request should be created for the non-trailer test";
+  ASSERT_FALSE(frame_carries_mac_trailer(frame.cmd)) << "test fixture must be a command that carries no trailer";
+
+  uint8_t serialized[FRAME_MAX_WIRE_SIZE] = {0};
+  ASSERT_GT(serialize(frame, serialized, sizeof(serialized)), 0) << "the frame must serialize while has_mac is false";
+
+  frame.has_mac = true;
+  for (uint8_t i = 0; i < HMAC_SIZE; i++)
+    frame.mac[i] = static_cast<uint8_t>(0xA0 + i);
+  EXPECT_EQ(serialize(frame, serialized, sizeof(serialized)), 0)
+      << "serialize() must refuse a trailer on a command that does not carry one";
+}
+
+TEST(ProtoFrame, AddControllerMacTrailerRoundTrip) {
+  // Published worked example (reference/iown-homecontrol's docs/linklayer.md, CC0-1.0), captured
+  // verbatim as tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml. 29
+  // declared bytes (9 header + enc_key[16] + man_id[1] + data[1] + sequence[2] = 20 data bytes)
+  // plus a genuine 6-byte MAC that does not fit inside CTRL0's 5-bit length field alongside the
+  // declared payload (29 + 6 = 35, unrepresentable in 5 bits) — the MAC rides after the declared
+  // length instead, still under the CRC. The corpus suite (corpus_frame_test.cpp) round-trips
+  // this capture generically; this test pins the actual decoded field values.
+  // Layout: ctrl0, ctrl1, dst[3], src[3], cmd, enc_key[16], man_id, data, sequence[2], mac[6].
+  const uint8_t non_crc[] = {0xFC, 0x00, 0x00, 0x00, 0x3F, 0xAB, 0xCD, 0xEF, 0x30, 0x7E, 0x60, 0x49,
+                             0x1F, 0x97, 0x6A, 0xDF, 0x65, 0x3D, 0xB0, 0xED, 0x78, 0x5E, 0x49, 0xA2,
+                             0x01, 0x02, 0x01, 0x12, 0x34, 0x19, 0xE8, 0x1E, 0xC4, 0x3D, 0x5E};
+  const uint8_t expected_mac[HMAC_SIZE] = {0x19, 0xE8, 0x1E, 0xC4, 0x3D, 0x5E};
+
+  ASSERT_EQ(sizeof(non_crc), 35u) << "fixture should be the 29-declared + 6-MAC on-air body, CRC excluded";
+
+  IoFrame parsed{};
+  ASSERT_TRUE(parse(non_crc, sizeof(non_crc), parsed))
+      << "declared_len + HMAC_SIZE should parse for CMD_ONEWAY_ADD_CONTROLLER";
+  EXPECT_TRUE(parsed.has_mac) << "add-controller frame should be recognized as MAC-trailer-bearing";
+  EXPECT_EQ(memcmp(parsed.mac, expected_mac, HMAC_SIZE), 0) << "parsed MAC should match the published trailer";
+  EXPECT_EQ(parsed.cmd, CMD_ONEWAY_ADD_CONTROLLER) << "parsed command should be the add-controller command";
+  EXPECT_EQ(parsed.data_len, 20) << "declared payload (enc_key+man_id+data+sequence) is 20 bytes";
+  EXPECT_EQ(frame_length(parsed), 29) << "frame_length() reports only the CTRL0-declared portion, not the trailer";
+
+  uint8_t serialized[FRAME_MAX_WIRE_SIZE] = {0};
+  const uint8_t serialized_len = serialize(parsed, serialized, sizeof(serialized));
+  ASSERT_EQ(serialized_len, sizeof(non_crc)) << "serialize() should re-emit the declared payload plus the trailer";
+  EXPECT_EQ(memcmp(serialized, non_crc, sizeof(non_crc)), 0)
+      << "round-trip should reproduce the published bytes exactly";
+
+  // CRC-CCITT is computed over all 35 non-CRC bytes, including the trailer — the published on-air
+  // CRC is little-endian "9B F2", i.e. 0xF29B.
+  EXPECT_EQ(crc_ccitt(non_crc, sizeof(non_crc)), 0xF29B) << "CRC-CCITT must cover the trailer, per the published frame";
 }
 
 // ========================================================================================

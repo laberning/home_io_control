@@ -4,6 +4,7 @@
 
 #include "proto_codecs.h"
 #include "proto_constants.h"
+#include "proto_crypto.h"
 #include "proto_frame.h"
 
 #include <cctype>
@@ -34,6 +35,18 @@ constexpr uint8_t UTF8_CONTINUATION_PREFIX = 0x80;
 constexpr uint8_t UTF8_TWO_BYTE_VALUE_MASK = 0x1F;
 constexpr uint8_t ASCII_MAX = 0x7F;
 constexpr uint8_t DISCOVERY_TIMESTAMP_MSB_SHIFT = 8;  ///< Shift for the timestamp field's big-endian MSB.
+
+// CMD_ONEWAY_ADD_CONTROLLER (0x30) declared-payload layout: enc_key[16] + man_id[1] + data[1] +
+// sequence[2] = 20 bytes. Offsets are into `frame.data`, never into the out-of-length MAC trailer
+// (`frame.mac`, see IoFrame::has_mac) which decode_1w_add_controller() reads separately.
+constexpr uint8_t ONEWAY_ADD_CONTROLLER_ENC_KEY_OFFSET = 0;
+constexpr uint8_t ONEWAY_ADD_CONTROLLER_MANUFACTURER_OFFSET = AES_KEY_SIZE;  // 16
+constexpr uint8_t ONEWAY_ADD_CONTROLLER_SEQUENCE_OFFSET = AES_KEY_SIZE + 2;  // 18: man_id(1) + data(1) skipped
+constexpr uint8_t ONEWAY_ADD_CONTROLLER_PAYLOAD_SIZE = AES_KEY_SIZE + 4;     // 20: enc_key+man_id+data+sequence
+constexpr uint8_t ONEWAY_ADD_CONTROLLER_SEQUENCE_MSB_SHIFT = 8;  ///< Shift for the sequence field's big-endian MSB.
+// The only span CMD_ONEWAY_ADD_CONTROLLER authenticates (create_1w_hmac()'s @warning): cmd byte
+// followed by the 16 encrypted-key bytes, NOT the whole declared payload.
+constexpr uint8_t ONEWAY_ADD_CONTROLLER_MAC_SPAN_SIZE = 1 + AES_KEY_SIZE;  // 17
 
 std::string latin1_to_utf8(const uint8_t *data, size_t len) {
   std::string result;
@@ -369,6 +382,63 @@ DiscoveryResponseInfo decode_discovery_response(const IoFrame &frame, IoDevice &
   }
 
   return info;
+}
+
+// ============================================================================
+// 1W Add-Controller Key Adoption (CMD 0x30)
+// ============================================================================
+
+OneWayAddControllerDecodeError decode_1w_add_controller(const IoFrame &frame, OneWayAdoptedKey &out) {
+  out = OneWayAdoptedKey{};
+
+  // Validate before decrypting -- reject rather than decrypt garbage. Order matches how a reader
+  // would narrow down "what kind of frame is this" (protocol bit, then command, then shape).
+  if ((frame.ctrl0 & CTRL0_PROTOCOL_1W) == 0)
+    return OneWayAddControllerDecodeError::NOT_ONEWAY;
+  if (frame.cmd != CMD_ONEWAY_ADD_CONTROLLER)
+    return OneWayAddControllerDecodeError::WRONG_COMMAND;
+  if (frame.data_len != ONEWAY_ADD_CONTROLLER_PAYLOAD_SIZE)
+    return OneWayAddControllerDecodeError::BAD_LENGTH;
+
+  const uint8_t *enc_key = &frame.data[ONEWAY_ADD_CONTROLLER_ENC_KEY_OFFSET];
+  // Self-inverse wrap (crypto::crypt_1w_key()'s @warning) -- no direction flag: this same call
+  // decrypts the overheard ciphertext back to the plaintext network key.
+  if (!crypto::crypt_1w_key(frame.src, enc_key, out.system_key))
+    return OneWayAddControllerDecodeError::KEY_UNWRAP_FAILED;
+
+  out.manufacturer = frame.data[ONEWAY_ADD_CONTROLLER_MANUFACTURER_OFFSET];
+  memcpy(out.sender_node, frame.src, NODE_ID_SIZE);
+  out.sequence = static_cast<uint16_t>(
+      (frame.data[ONEWAY_ADD_CONTROLLER_SEQUENCE_OFFSET] << ONEWAY_ADD_CONTROLLER_SEQUENCE_MSB_SHIFT) |
+      frame.data[ONEWAY_ADD_CONTROLLER_SEQUENCE_OFFSET + 1]);
+
+  // A frame with no MAC is not an error (the reference _p0x30 struct omits the field entirely) --
+  // report NOT_PRESENT and stop; there is nothing to verify.
+  if (!frame.has_mac) {
+    out.mac_status = OneWayMacStatus::NOT_PRESENT;
+    return OneWayAddControllerDecodeError::NONE;
+  }
+
+  // MAC span is command-specific: cmd + enc_key (17 bytes), NOT the whole declared payload --
+  // see create_1w_hmac()'s @warning. Verified under the *recovered* key: a match is strong
+  // evidence the decryption above landed on the correct key, before any device is ever commanded.
+  uint8_t mac_span[ONEWAY_ADD_CONTROLLER_MAC_SPAN_SIZE];
+  mac_span[0] = frame.cmd;
+  memcpy(&mac_span[1], enc_key, AES_KEY_SIZE);
+
+  uint8_t expected_mac[HMAC_SIZE];
+  if (!crypto::create_1w_hmac(mac_span, sizeof(mac_span), out.sequence, out.system_key, expected_mac)) {
+    out.mac_status = OneWayMacStatus::FAILED;
+    return OneWayAddControllerDecodeError::NONE;
+  }
+
+  // Constant-time comparison, matching crypto::verify_hmac()'s convention.
+  uint8_t diff = 0;
+  for (uint8_t i = 0; i < HMAC_SIZE; i++)
+    diff |= static_cast<uint8_t>(frame.mac[i] ^ expected_mac[i]);
+  out.mac_status = (diff == 0) ? OneWayMacStatus::VERIFIED : OneWayMacStatus::FAILED;
+
+  return OneWayAddControllerDecodeError::NONE;
 }
 
 }  // namespace home_io_control

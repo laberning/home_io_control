@@ -61,6 +61,7 @@ CONF_FEM_PA_PIN = "fem_pa_pin"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_EXPOSED_SENDERS = "exposed_senders"
 CONF_ACCEPT_FOREIGN_PAIRING = "accept_foreign_pairing"
+CONF_ACCEPT_ONEWAY_KEY = "accept_oneway_key"
 CONF_LR1121_FIRMWARE_UPDATE = "lr1121_firmware_update"
 CONF_LR1121_BOOTLOADER = "bootloader"
 CONF_CHECKSUM_MD5 = "checksum_md5"
@@ -73,6 +74,9 @@ MIN_STATUS_POLL_INTERVAL_MS = 500
 # entity created only in to_code() would silently drop; see tuning.py::_inject_tuning_companion_ids
 # for the fuller rationale).
 CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID = "_accept_foreign_pairing_switch_id"
+# Internal config key for the "Adopt 1W Controller Key" companion switch ID (injected by
+# post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
+CONF_ACCEPT_ONEWAY_KEY_SWITCH_ID = "_accept_oneway_key_switch_id"
 # Internal config key for the "Flash LR1121 Radio Firmware" companion button ID (injected by
 # post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
 CONF_LR1121_FIRMWARE_UPDATE_BUTTON_ID = "_lr1121_firmware_update_button_id"
@@ -94,6 +98,14 @@ IOHomeControlComponent = home_io_control_ns.class_(
 # structurally impossible: there is no shared schema for the two to be confused under.
 IOHomeAcceptForeignPairingSwitch = home_io_control_ns.class_(
     "IOHomeAcceptForeignPairingSwitch", switch_component.Switch, cg.Component
+)
+# Hub-level "Adopt 1W Controller Key" switch (hub_oneway_key_adoption.cpp /
+# platform_accept_oneway_key_switch.h). Same dynamically-created, hub-bound shape as the switch
+# above, and gated behind its own boolean for the same reason: there is no shared schema for a
+# device-bound switch to be confused under. Independent of accept_foreign_pairing — the two arm
+# different listeners (2W pairing responder vs. 1W add-controller broadcast).
+IOHomeAcceptOneWayKeySwitch = home_io_control_ns.class_(
+    "IOHomeAcceptOneWayKeySwitch", switch_component.Switch, cg.Component
 )
 # Hub-level "Flash LR1121 Radio Firmware" button (hub_lr1121_firmware_update.cpp /
 # platform_lr1121_firmware_update_button.h). Same "created dynamically from a home_io_control:
@@ -120,6 +132,19 @@ def _inject_accept_foreign_pairing_switch_id(config):
         f"{base}_accept_foreign_pairing_switch",
         is_declaration=True,
         type=IOHomeAcceptForeignPairingSwitch,
+    )
+    return config
+
+
+def _inject_accept_oneway_key_switch_id(config):
+    if not config[CONF_ACCEPT_ONEWAY_KEY]:
+        return config
+    parent_id = config[CONF_ID]
+    base = parent_id.id if parent_id.id else "home_io_control"
+    config[CONF_ACCEPT_ONEWAY_KEY_SWITCH_ID] = ID(
+        f"{base}_accept_oneway_key_switch",
+        is_declaration=True,
+        type=IOHomeAcceptOneWayKeySwitch,
     )
     return config
 
@@ -443,6 +468,7 @@ CONFIG_SCHEMA = cv.All(
                 validate_device_id
             ),
             cv.Optional(CONF_ACCEPT_FOREIGN_PAIRING, default=False): cv.boolean,
+            cv.Optional(CONF_ACCEPT_ONEWAY_KEY, default=False): cv.boolean,
             cv.Optional(CONF_LR1121_FIRMWARE_UPDATE): LR1121_FIRMWARE_UPDATE_SCHEMA,
             cv.Optional(tuning_module.CONF_TUNING): tuning_module.TUNING_CONFIG_SCHEMA,
         }
@@ -450,6 +476,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(cv.COMPONENT_SCHEMA)
     .extend(spi.spi_device_schema(True, 8e6, "mode0")),
     _inject_accept_foreign_pairing_switch_id,
+    _inject_accept_oneway_key_switch_id,
     _validate_lr1121_firmware_update,
 )
 
@@ -514,6 +541,9 @@ async def to_code(config):
     if config[CONF_ACCEPT_FOREIGN_PAIRING]:
         await _create_accept_foreign_pairing_switch(config, var)
 
+    if config[CONF_ACCEPT_ONEWAY_KEY]:
+        await _create_accept_oneway_key_switch(config, var)
+
     if CONF_LR1121_FIRMWARE_UPDATE in config:
         await _create_lr1121_firmware_update(config, var)
 
@@ -537,6 +567,27 @@ async def _create_accept_foreign_pairing_switch(config, var):
         {
             CONF_ID: config[CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID],
             CONF_NAME: "Accept Foreign Pairing (Key Extraction)",
+        }
+    )
+    entity = await switch_component.new_switch(entity_config)
+    await cg.register_component(entity, entity_config)
+    cg.add(entity.set_parent(var))
+
+
+async def _create_accept_oneway_key_switch(config, var):
+    """Create the hub-level "Adopt 1W Controller Key" switch.
+
+    Same normalization as _create_accept_foreign_pairing_switch() above, including the
+    ALWAYS_OFF restore mode: a reboot must never leave a key-adoption window armed.
+    """
+    entity_config = switch_component.switch_schema(
+        IOHomeAcceptOneWayKeySwitch,
+        default_restore_mode="ALWAYS_OFF",  # never auto-arm after a reboot
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ).extend(cv.COMPONENT_SCHEMA)(
+        {
+            CONF_ID: config[CONF_ACCEPT_ONEWAY_KEY_SWITCH_ID],
+            CONF_NAME: "Adopt 1W Controller Key",
         }
     )
     entity = await switch_component.new_switch(entity_config)

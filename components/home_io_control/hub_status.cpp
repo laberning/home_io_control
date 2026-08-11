@@ -438,6 +438,15 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     // command byte and are told apart only by the decoded intent, which is part of the key.
     const OneWayFrameInfo info = decode_1w_frame(frame);
 
+    // Opt-in, receive-only 1W key adoption (hub_oneway_key_adoption.cpp). Both calls sit after
+    // the parse and before the dedup check so an add-controller broadcast is seen even when its
+    // repeats would collapse into one logical press. Both self-gate on armed, so the disarmed
+    // path is unchanged; they observe the frame rather than consuming it, and execution always
+    // continues into the normal logging path below. Order matters only in that the class
+    // observation must be recorded before an adoption can consume it.
+    this->record_oneway_observed_class_(info);
+    this->try_adopt_oneway_key_(frame);
+
     // 1W remotes repeat each command 4× at 40ms intervals across channels, and a held button keeps
     // resending. Collapse that into one logical press per remote+command+intent.
     const decisions::OneWayDedupState incoming{src_id, frame.cmd, info.has_intent, info.main0, info.main1, now};

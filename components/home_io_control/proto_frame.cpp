@@ -91,8 +91,10 @@ bool set_cmd(IoFrame &f, uint8_t cmd, const uint8_t *params, uint8_t params_len)
     memcpy(f.data, params, params_len);
   uint8_t const total = FRAME_MIN_SIZE + f.data_len;
   // Refuse to encode inconsistent frame metadata here so malformed commands never make it onto
-  // the radio path and later confuse the serializer or on-air retries.
-  if (total > FRAME_MAX_SIZE)
+  // the radio path and later confuse the serializer or on-air retries. This is a declared-length
+  // guard: CTRL0's 5-bit length field cannot describe more than FRAME_MAX_DECLARED_SIZE bytes,
+  // regardless of any out-of-length trailer a frame might separately carry (see IoFrame::has_mac).
+  if (total > FRAME_MAX_DECLARED_SIZE)
     return false;
   f.ctrl0 = (f.ctrl0 & ~CTRL0_LENGTH_MASK) | ((total - 1) & CTRL0_LENGTH_MASK);
   return true;
@@ -102,11 +104,18 @@ uint8_t frame_length(const IoFrame &f) { return (f.ctrl0 & CTRL0_LENGTH_MASK) + 
 bool is_start(const IoFrame &f) { return (f.ctrl0 & CTRL0_START) != 0; }
 bool is_end(const IoFrame &f) { return (f.ctrl0 & CTRL0_END) != 0; }
 
+bool frame_carries_mac_trailer(uint8_t cmd) {
+  // Only CMD_ONEWAY_ADD_CONTROLLER's declared payload plus its 6-byte MAC overflows CTRL0's
+  // 5-bit length field (see that constant's Doxygen in proto_constants.h) — every other command
+  // this project models keeps its authenticator, if any, inside the declared length.
+  return cmd == CMD_ONEWAY_ADD_CONTROLLER;
+}
+
 uint8_t serialize(const IoFrame &f, uint8_t *buf, uint8_t buf_size) {
   if (buf == nullptr)
     return 0;
   uint8_t const len = frame_length(f);
-  if (len < FRAME_MIN_SIZE || len > FRAME_MAX_SIZE)
+  if (len < FRAME_MIN_SIZE || len > FRAME_MAX_DECLARED_SIZE)
     return 0;
   if (f.data_len > FRAME_MAX_DATA_SIZE)
     return 0;
@@ -114,7 +123,16 @@ uint8_t serialize(const IoFrame &f, uint8_t *buf, uint8_t buf_size) {
   // catches partially initialized frames before they are transmitted.
   if ((uint8_t) (FRAME_MIN_SIZE + f.data_len) != len)
     return 0;
-  if (buf_size < len)
+  // Keep serialize() and parse() agreeing on which commands may carry a trailer at all, so this
+  // function can never emit a frame parse() would then reject. Without it a caller could set
+  // has_mac on any command and produce 6 trailing bytes no receiver would read back.
+  if (f.has_mac && !frame_carries_mac_trailer(f.cmd))
+    return 0;
+  // The MAC trailer (when present) rides after the declared length and is counted in the
+  // returned length, so a caller's CRC — computed over serialize()'s return value, not a
+  // separately recomputed frame_length() — covers it too.
+  uint8_t const total_len = f.has_mac ? (uint8_t) (len + HMAC_SIZE) : len;
+  if (buf_size < total_len)
     return 0;
   uint8_t offset = 0;
   buf[offset++] = f.ctrl0;
@@ -126,6 +144,10 @@ uint8_t serialize(const IoFrame &f, uint8_t *buf, uint8_t buf_size) {
   buf[offset++] = f.cmd;
   memcpy(&buf[offset], f.data, f.data_len);
   offset += f.data_len;
+  if (f.has_mac) {
+    memcpy(&buf[offset], f.mac, HMAC_SIZE);
+    offset += HMAC_SIZE;
+  }
   return offset;
 }
 
@@ -139,10 +161,23 @@ bool parse(const uint8_t *buf, uint8_t buf_len, IoFrame &f) {
   f.ctrl0 = buf[offset++];
   f.ctrl1 = buf[offset++];
   uint8_t const len = frame_length(f);
-  if (len < FRAME_MIN_SIZE || len > FRAME_MAX_SIZE)
+  if (len < FRAME_MIN_SIZE || len > FRAME_MAX_DECLARED_SIZE)
     return false;
-  if (buf_len != len)
+  // buf_len must be either exactly the CTRL0-declared length (the common case, no trailer), or
+  // that length plus the out-of-length MAC trailer (see IoFrame::has_mac) — any other length
+  // means buf isn't this frame at all, not a frame with an unusual trailer size. The wider shape
+  // is additionally gated on the command byte (frame_carries_mac_trailer()): without that gate,
+  // any ordinary frame arriving with 6 extra trailing bytes for whatever reason would also match
+  // this shape and be accepted as a fabricated MAC trailer, with only a ~1-in-65536 CRC check
+  // downstream to catch it. Reading buf[FRAME_CMD_OFFSET] here is safe — buf_len is already
+  // known to be >= FRAME_MIN_SIZE (== FRAME_CMD_OFFSET + 1) from the guard above.
+  if (buf_len == len) {
+    f.has_mac = false;
+  } else if (buf_len == (uint8_t) (len + HMAC_SIZE) && frame_carries_mac_trailer(buf[FRAME_CMD_OFFSET])) {
+    f.has_mac = true;
+  } else {
     return false;
+  }
   if (offset + NODE_ID_SIZE > buf_len)
     return false;
   memcpy(f.dst, &buf[offset], NODE_ID_SIZE);
@@ -154,12 +189,17 @@ bool parse(const uint8_t *buf, uint8_t buf_len, IoFrame &f) {
   if (offset >= buf_len)
     return false;
   f.cmd = buf[offset++];
+  // data_len is always derived from the declared length alone — the trailer is never part of
+  // data[], so FRAME_MIN_SIZE + data_len == frame_length(f) holds whether or not has_mac is set.
   f.data_len = len - FRAME_MIN_SIZE;
   if (f.data_len > FRAME_MAX_DATA_SIZE)
     return false;
   if (offset + f.data_len > buf_len)
     return false;
   memcpy(f.data, &buf[offset], f.data_len);
+  offset += f.data_len;
+  if (f.has_mac)
+    memcpy(f.mac, &buf[offset], HMAC_SIZE);
   return true;
 }
 

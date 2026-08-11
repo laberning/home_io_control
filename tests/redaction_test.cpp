@@ -6,6 +6,7 @@
 #include "log_frame.h"
 #include "pairing_telemetry.h"
 #include "proto_commands.h"
+#include "proto_crypto.h"
 #include "proto_frame.h"
 #include "redaction.h"
 
@@ -101,14 +102,51 @@ TEST(Redaction, ContainsKeyMaterial_ShortBufferNeverMatches) {
 }
 
 // ============================================================================
+// contains_key_material() — also covers 1W-recovered keys (crypt_1w_key())
+// ============================================================================
+// The 1W key-wrap primitive (crypt_1w_key(), Phase 3A Step 1) recovers a plaintext network key
+// from an overheard CMD_ONEWAY_ADD_CONTROLLER (0x30) frame. That recovered key is exactly the
+// kind of "real key material" contains_key_material() exists to catch — verify the generic
+// scanner works on a 1W key with zero 1W-specific code, so a later step that reports/logs the
+// recovered key can lean on the existing guarantee rather than inventing a new one.
+
+TEST(Redaction, ContainsKeyMaterial_DetectsRecovered1wKey) {
+  const uint8_t node[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
+  // Published add-controller vector (reference/iown-homecontrol docs/linklayer.md, CC0-1.0;
+  // also tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml).
+  const uint8_t wire_ciphertext[AES_KEY_SIZE] = {0x7E, 0x60, 0x49, 0x1F, 0x97, 0x6A, 0xDF, 0x65,
+                                                 0x3D, 0xB0, 0xED, 0x78, 0x5E, 0x49, 0xA2, 0x01};
+
+  uint8_t recovered_key[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(crypto::crypt_1w_key(node, wire_ciphertext, recovered_key));
+
+  uint8_t buf[32] = {0};
+  memcpy(buf + 3, recovered_key, sizeof(recovered_key));
+  EXPECT_TRUE(contains_key_material(buf, sizeof(buf), recovered_key))
+      << "the generic key-material scanner must catch a 1W-recovered key exactly as it catches a "
+         "2W system key";
+
+  // The ciphertext that actually rides on the wire is not the recovered key — logging the raw
+  // 0x30 payload bytes (as any un-redacted frame log already does today) does not by itself leak
+  // the plaintext network key, unlike the 2W CMD_KEY_TRANSFER payload.
+  EXPECT_FALSE(contains_key_material(wire_ciphertext, sizeof(wire_ciphertext), recovered_key))
+      << "the wire ciphertext must not equal the recovered plaintext key";
+}
+
+// ============================================================================
 // command_carries_key_material()
 // ============================================================================
 
-TEST(Redaction, CommandCarriesKeyMaterial_OnlyKeyTransfer) {
+TEST(Redaction, CommandCarriesKeyMaterial_KeyTransferAndOneWayAddController) {
   EXPECT_TRUE(command_carries_key_material(CMD_KEY_TRANSFER));
+  // The 1W add-controller payload unwraps to the network key using only public inputs (the
+  // TRANSFER_KEY and the sender address in the same frame header), so rendering it verbatim is
+  // equivalent to printing the key.
+  EXPECT_TRUE(command_carries_key_material(CMD_ONEWAY_ADD_CONTROLLER));
   EXPECT_FALSE(command_carries_key_material(CMD_KEY_INIT));
   EXPECT_FALSE(command_carries_key_material(CMD_KEY_CONFIRM));
   EXPECT_FALSE(command_carries_key_material(CMD_CHALLENGE_REQ));
+  EXPECT_FALSE(command_carries_key_material(CMD_ONEWAY_REMOVE));
 }
 
 // ============================================================================

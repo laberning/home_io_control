@@ -229,6 +229,147 @@ TEST(ProtoCrypto, RecoverSystemKeyFromTransferWrongIvDataFails) {
 }
 
 // ========================================================================================
+// create_1w_hmac() / construct_iv_1w_sequence() — the 1W frame authenticator
+// ========================================================================================
+// Two independent published vectors from reference/iown-homecontrol's docs/linklayer.md
+// (CC0-1.0), both captured in tests/corpus/captures/reference_1w_vectors/. They pin different
+// halves of the primitive: the add-controller vector pins the final MAC under a known key, and
+// the execute vector pins the IV construction itself (checksum bytes at 8-9, sequence at 10-11)
+// independently of any key — its own MAC is a documented placeholder and is deliberately not
+// asserted here.
+
+TEST(ProtoCrypto, ConstructIv1wSequenceMatchesPublishedExecuteVector) {
+  // oneway_execute_iv_vector.yaml: payload 00 01 43 D2 00 00 00 (7 bytes, padded to 8 with 0x55),
+  // sequence 0x0599. The document states the resulting IV explicitly, so this asserts our IV
+  // layout against a source outside this codebase rather than against our own expectations.
+  const uint8_t span[] = {0x00, 0x01, 0x43, 0xD2, 0x00, 0x00, 0x00};
+  const uint8_t expected_iv[IV_SIZE] = {0x00, 0x01, 0x43, 0xD2, 0x00, 0x00, 0x00, 0x55,
+                                        0x05, 0x00, 0x05, 0x99, 0x55, 0x55, 0x55, 0x55};
+
+  uint8_t iv[IV_SIZE] = {0};
+  crypto::construct_iv_1w_sequence(span, sizeof(span), 0x0599, iv);
+  EXPECT_EQ(0, memcmp(iv, expected_iv, IV_SIZE))
+      << "construct_iv_1w_sequence() must reproduce the published execute-frame IV byte-for-byte";
+}
+
+TEST(ProtoCrypto, Create1wHmacMatchesPublishedAddControllerVector) {
+  // oneway_add_controller_kat.yaml: span is cmd(0x30) followed by the 16 encrypted-key bytes —
+  // 17 bytes, NOT the whole payload. The span is command-specific and does not generalise; see
+  // Create1wHmacRejectsWrongSpan below for what a wrong choice looks like.
+  const uint8_t span[] = {0x30, 0x7E, 0x60, 0x49, 0x1F, 0x97, 0x6A, 0xDF, 0x65,
+                          0x3D, 0xB0, 0xED, 0x78, 0x5E, 0x49, 0xA2, 0x01};
+  const uint8_t controller_key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                                0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+  const uint8_t expected_hmac[HMAC_SIZE] = {0x19, 0xE8, 0x1E, 0xC4, 0x3D, 0x5E};
+
+  uint8_t hmac[HMAC_SIZE] = {0};
+  ASSERT_TRUE(crypto::create_1w_hmac(span, sizeof(span), 0x1234, controller_key, hmac));
+  EXPECT_EQ(0, memcmp(hmac, expected_hmac, HMAC_SIZE))
+      << "create_1w_hmac() must reproduce the published add-controller MAC 19E81EC43D5E";
+}
+
+TEST(ProtoCrypto, Create1wHmacRejectsWrongSpan) {
+  // The failure mode create_1w_hmac()'s @warning exists for: a wrong span still produces a
+  // well-formed 6-byte MAC that looks entirely plausible, and only a known-answer vector catches
+  // it. Here the span omits the leading command byte — the single most likely mistake — and the
+  // result must differ from the published MAC.
+  const uint8_t enc_key_only[] = {0x7E, 0x60, 0x49, 0x1F, 0x97, 0x6A, 0xDF, 0x65,
+                                  0x3D, 0xB0, 0xED, 0x78, 0x5E, 0x49, 0xA2, 0x01};
+  const uint8_t controller_key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                                0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+  const uint8_t published_hmac[HMAC_SIZE] = {0x19, 0xE8, 0x1E, 0xC4, 0x3D, 0x5E};
+
+  uint8_t hmac[HMAC_SIZE] = {0};
+  ASSERT_TRUE(crypto::create_1w_hmac(enc_key_only, sizeof(enc_key_only), 0x1234, controller_key, hmac));
+  EXPECT_NE(0, memcmp(hmac, published_hmac, HMAC_SIZE))
+      << "dropping the command byte from the span must not still yield the published MAC";
+}
+
+// ========================================================================================
+// crypt_1w_key() / construct_iv_1w_node() — the 1W add-controller key wrap
+// ========================================================================================
+// Published worked example from reference/iown-homecontrol's docs/linklayer.md (CC0-1.0),
+// also captured verbatim in tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml:
+// node ABCDEF, controller key 0102...1516, sequence 0x1234. Independent of this codebase, so a
+// match here is evidence crypt_1w_key()'s IV construction is correct, not merely self-consistent
+// — the same role the CryptKeyMatchesDocumentedIownHomecontrol* vectors play for the 2W sibling.
+// This is the primary, hardware-free KAT for Phase 3A Step 1.
+
+TEST(ProtoCrypto, ConstructIv1wNodeMatchesPublishedVector) {
+  const uint8_t node[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
+  const uint8_t expected_iv[IV_SIZE] = {0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF, 0xAB, 0xCD,
+                                        0xEF, 0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF, 0xAB};
+
+  uint8_t iv[IV_SIZE] = {0};
+  crypto::construct_iv_1w_node(node, iv);
+  EXPECT_EQ(0, memcmp(iv, expected_iv, IV_SIZE))
+      << "construct_iv_1w_node() must reproduce ABCDEFABCDEFABCDEFABCDEFABCDEFAB for node ABCDEF";
+}
+
+TEST(ProtoCrypto, Crypt1wKeyMatchesPublishedAddControllerVector) {
+  const uint8_t node[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
+  const uint8_t plaintext_key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                               0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+  const uint8_t expected_ciphertext[AES_KEY_SIZE] = {0x7E, 0x60, 0x49, 0x1F, 0x97, 0x6A, 0xDF, 0x65,
+                                                     0x3D, 0xB0, 0xED, 0x78, 0x5E, 0x49, 0xA2, 0x01};
+
+  uint8_t encrypted[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(crypto::crypt_1w_key(node, plaintext_key, encrypted));
+  EXPECT_EQ(0, memcmp(encrypted, expected_ciphertext, AES_KEY_SIZE))
+      << "crypt_1w_key() must encrypt the published controller key to the published ciphertext";
+
+  uint8_t decrypted[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(crypto::crypt_1w_key(node, expected_ciphertext, decrypted));
+  EXPECT_EQ(0, memcmp(decrypted, plaintext_key, AES_KEY_SIZE))
+      << "crypt_1w_key() must decrypt the published ciphertext back to the published key";
+}
+
+TEST(ProtoCrypto, Crypt1wKeyRoundTripsForVariousNodesAndKeys) {
+  struct Case {
+    uint8_t node[NODE_ID_SIZE];
+    uint8_t key[AES_KEY_SIZE];
+  };
+  const Case cases[] = {
+      {{0x00, 0x00, 0x00}, {0}},
+      {{0xFF, 0xFF, 0xFF},
+       {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}},
+      {{0x11, 0x22, 0x33},
+       {0xDE, 0xCA, 0xFC, 0x0F, 0xFE, 0xE0, 0xFF, 0x1C, 0xE0, 0xFF, 0xEE, 0xBA, 0xBE, 0x01, 0x02, 0x03}},
+      {{0x77, 0x1A, 0x5C},
+       {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}},
+  };
+
+  for (const auto &c : cases) {
+    uint8_t encrypted[AES_KEY_SIZE] = {0};
+    uint8_t decrypted[AES_KEY_SIZE] = {0};
+    ASSERT_TRUE(crypto::crypt_1w_key(c.node, c.key, encrypted));
+    ASSERT_TRUE(crypto::crypt_1w_key(c.node, encrypted, decrypted));
+    EXPECT_EQ(0, memcmp(decrypted, c.key, AES_KEY_SIZE))
+        << "crypt_1w_key() round trip must recover the original key for node " << static_cast<int>(c.node[0]) << "."
+        << static_cast<int>(c.node[1]) << "." << static_cast<int>(c.node[2]);
+  }
+}
+
+TEST(ProtoCrypto, Crypt1wKeyDoesNotShareOutputWithCryptKeyOnSameBytes) {
+  // Guards against a refactor accidentally collapsing the two primitives: feeding crypt_key()
+  // the node bytes as its `data`/`challenge` inputs must not reproduce crypt_1w_key()'s output
+  // — the two use different, non-interchangeable IV derivations by design.
+  const uint8_t node[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
+  const uint8_t plaintext_key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                               0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+
+  uint8_t via_1w[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(crypto::crypt_1w_key(node, plaintext_key, via_1w));
+
+  uint8_t challenge_from_node[HMAC_SIZE] = {node[0], node[1], node[2], node[0], node[1], node[2]};
+  uint8_t via_2w[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(crypto::crypt_key(node, NODE_ID_SIZE, challenge_from_node, plaintext_key, via_2w));
+
+  EXPECT_NE(0, memcmp(via_1w, via_2w, AES_KEY_SIZE))
+      << "crypt_1w_key() and crypt_key() must not be interchangeable even when fed the same bytes";
+}
+
+// ========================================================================================
 // generate_challenge() — output shape, not entropy quality
 // ========================================================================================
 // generate_challenge() feeds the entire authentication scheme: the challenge-response protocol

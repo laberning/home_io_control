@@ -35,7 +35,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build import CLASSIFICATION_ENUM  # noqa: E402
 import protolib  # noqa: E402
-from protolib import CTRL0_LENGTH_MASK, FRAME_MAX_SIZE, FRAME_MIN_SIZE, crc_ccitt  # noqa: E402
+from protolib import CTRL0_LENGTH_MASK, FRAME_MAX_SIZE, FRAME_MIN_SIZE, HMAC_SIZE, crc_ccitt  # noqa: E402
 from protolib import parse_hex as protolib_parse_hex  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -104,16 +104,27 @@ def validate_frame(frame: dict, index: int, capture_id: str) -> None:
         non_crc_len >= FRAME_MIN_SIZE,
         f"{context}: frame is {non_crc_len} bytes (excluding CRC), below FRAME_MIN_SIZE={FRAME_MIN_SIZE}",
     )
+    # A frame's non-CRC bytes are either exactly the CTRL0-declared length, or that length plus
+    # the out-of-length MAC trailer some 1W frames carry (a CMD 0x30 add-controller payload
+    # overflows CTRL0's 5-bit length field alongside its MAC — see
+    # reference_1w_vectors/oneway_add_controller_kat.yaml — so the MAC rides after the declared
+    # length instead, mirrored by proto_frame.cpp parse()'s two accepted shapes, IoFrame::has_mac).
+    # The declared length alone can never exceed FRAME_MAX_SIZE (CTRL0's 5-bit field), so the
+    # widest legal non_crc_len is FRAME_MAX_SIZE + HMAC_SIZE; this still hard-rejects a genuinely
+    # oversized or otherwise-malformed frame rather than going blind to it.
+    max_non_crc_len = FRAME_MAX_SIZE + HMAC_SIZE
     require(
-        non_crc_len <= FRAME_MAX_SIZE,
-        f"{context}: frame is {non_crc_len} bytes (excluding CRC), above FRAME_MAX_SIZE={FRAME_MAX_SIZE}",
+        non_crc_len <= max_non_crc_len,
+        f"{context}: frame is {non_crc_len} bytes (excluding CRC), above FRAME_MAX_SIZE+HMAC_SIZE={max_non_crc_len}",
     )
 
     ctrl0 = raw[0]
-    expected_total = (ctrl0 & CTRL0_LENGTH_MASK) + 1
+    expected_declared = (ctrl0 & CTRL0_LENGTH_MASK) + 1
+    has_mac_trailer = non_crc_len == expected_declared + HMAC_SIZE
     require(
-        expected_total == non_crc_len,
-        f"{context}: CTRL0 length bits imply {expected_total} bytes, but captured non-CRC length is {non_crc_len}",
+        expected_declared == non_crc_len or has_mac_trailer,
+        f"{context}: CTRL0 length bits imply {expected_declared} bytes (or {expected_declared + HMAC_SIZE} bytes "
+        f"with a MAC trailer), but captured non-CRC length is {non_crc_len}",
     )
 
     if crc_present:

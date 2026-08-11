@@ -93,6 +93,15 @@ static constexpr uint8_t CMD_DISCOVER_ALT_RESP =
            ///< tests/corpus/captures/velux_kux100/discover_alt_addressed_challenge_response.yaml
            ///< — the only capture this project has of it. Not otherwise used anywhere in this
            ///< codebase (no dispatch logic added).
+static constexpr uint8_t CMD_ONEWAY_ADD_CONTROLLER =
+    0x30;  ///< 1W "add controller" — a 1W device broadcasts this while its key-copy gesture is
+           ///< active, handing its network's wrapped system key to whichever controller is
+           ///< listening. Its 20-byte declared payload (enc_key[16] + man_id[1] + data[1] +
+           ///< sequence[2]) plus a genuine 6-byte MAC does not fit inside CTRL0's 5-bit length
+           ///< field together (29 + 6 = 35, unrepresentable in 5 bits), so the MAC rides after
+           ///< the declared length instead, still under the CRC — see IoFrame::has_mac and
+           ///< frame_carries_mac_trailer() (proto_frame.h). Reference:
+           ///< tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml.
 static constexpr uint8_t CMD_ONEWAY_REMOVE =
     0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device); same payload shape
            ///< as 0x2E. Reference: analysis/completed/pairing_lab.md field capture, "CMD 0x39".

@@ -1,5 +1,6 @@
 #include "radio_sx1262.h"
 #include "radio_interface.h"
+#include "proto_constants.h"
 
 #include "esphome/core/application.h"
 
@@ -312,6 +313,57 @@ TEST(RadioSX1262, UartProbeRejectsBitErrors) {
     EXPECT_FALSE(matches_original) << "Bit-corrupted frame should not pass CRC validation";
   }
   // Either probe.valid==false (rejected entirely) or it found a different candidate — both are acceptable
+}
+
+TEST(RadioSX1262, UartProbeAcceptsMacTrailerFrame) {
+  // Full RX path for a 1W CMD 0x30 "add controller" frame (IoFrame::has_mac), not just parse() in
+  // isolation: find_uart_probe() runs the CRC search (find_crc_valid_frame, which must reach the
+  // wider declared_len + HMAC_SIZE candidate length to recover a trailer-bearing frame) and
+  // classifies the candidate as a plausible frame (is_plausible_uart_frame(), which accepts it via
+  // the 1W bit) before this test's own parse() call re-derives the same fields from the recovered
+  // bytes — mirroring UartEncodeDecodeRoundTrip above, the established pattern for driving this
+  // path, extended with the trailer-specific assertions. Same field values as
+  // proto_frame_test.cpp's AddControllerMacTrailerRoundTrip / tests/corpus/captures/
+  // reference_1w_vectors/oneway_add_controller_kat.yaml.
+  IoFrame frame{};
+  init_frame(frame, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  const uint8_t src[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
+  const uint8_t dst[NODE_ID_SIZE] = {0x00, 0x00, 0x3F};
+  set_src(frame, src);
+  set_dst(frame, dst);
+  const uint8_t payload[20] = {0x7E, 0x60, 0x49, 0x1F, 0x97, 0x6A, 0xDF, 0x65, 0x3D, 0xB0,
+                               0xED, 0x78, 0x5E, 0x49, 0xA2, 0x01, 0x02, 0x01, 0x12, 0x34};
+  ASSERT_TRUE(set_cmd(frame, CMD_ONEWAY_ADD_CONTROLLER, payload, sizeof(payload)));
+  frame.has_mac = true;
+  const uint8_t mac[HMAC_SIZE] = {0x19, 0xE8, 0x1E, 0xC4, 0x3D, 0x5E};
+  memcpy(frame.mac, mac, HMAC_SIZE);
+
+  uint8_t body[FRAME_MAX_WIRE_SIZE] = {0};
+  const uint8_t body_len = serialize(frame, body, sizeof(body));
+  ASSERT_EQ(body_len, 35) << "declared 29 bytes plus the 6-byte MAC trailer";
+
+  uint16_t crc = crc_ccitt(body, body_len);
+  uint8_t frame_with_crc[FRAME_MAX_WIRE_SIZE];
+  memcpy(frame_with_crc, body, body_len);
+  frame_with_crc[body_len] = crc & 0xFF;
+  frame_with_crc[body_len + 1] = (crc >> 8) & 0xFF;
+
+  uint8_t encoded[64] = {0};
+  uint8_t encoded_len =
+      uart_encode_packet(frame_with_crc, static_cast<uint8_t>(body_len + 2), encoded, sizeof(encoded));
+  ASSERT_GT(encoded_len, 0u);
+
+  UartProbeResult probe = find_uart_probe(encoded, encoded_len);
+  ASSERT_TRUE(probe.valid) << "CRC-valid MAC-trailer frame should be accepted by find_uart_probe";
+  EXPECT_EQ(probe.frame_len, body_len)
+      << "recovered frame length should include the trailer, not just the declared bytes";
+
+  IoFrame parsed{};
+  ASSERT_TRUE(parse(probe.decoded + probe.frame_start, probe.frame_len, parsed))
+      << "recovered bytes should re-parse as the same MAC-trailer frame";
+  EXPECT_TRUE(parsed.has_mac) << "classification should see the frame as MAC-trailer-bearing after recovery";
+  EXPECT_EQ(memcmp(parsed.mac, mac, HMAC_SIZE), 0) << "recovered MAC should survive the CRC search + decode path";
+  EXPECT_EQ(parsed.cmd, CMD_ONEWAY_ADD_CONTROLLER);
 }
 
 TEST(RadioSX1262, UartDecodeFixedStride) {

@@ -243,6 +243,29 @@ class IOHomeControlComponent : public Component,
     this->key_extraction_armed_callback_ = std::move(cb);
   }
 
+  /// Arm or disarm the 1W controller-key adoption listener. While armed, an overheard
+  /// CMD_ONEWAY_ADD_CONTROLLER broadcast is decrypted and reported once, after which the hub
+  /// disarms itself — one adoption per arm, which bounds how long a key-bearing frame can be
+  /// captured and matches the single physical key-copy gesture the user performs. Receive-only:
+  /// unlike 2W key extraction this never transmits, it only listens for a frame a 1W device
+  /// broadcasts of its own accord. Virtual so platform unit tests can substitute a mock hub,
+  /// matching every other queue_*/set_* entry point on this component.
+  /// @param armed Desired state.
+  virtual void set_oneway_key_adoption_armed(bool armed);
+
+  /// Register a callback invoked whenever the 1W key-adoption armed state changes — manual
+  /// toggle, successful adoption, or auto-off timeout — so the switch entity stays in sync when
+  /// the hub disarms itself rather than the user. Single-slot, mirrors
+  /// set_key_extraction_armed_callback().
+  /// @param cb Callable receiving the new armed state.
+  void set_oneway_key_adoption_armed_callback(std::function<void(bool)> cb) {
+    this->oneway_key_adoption_armed_callback_ = std::move(cb);
+  }
+
+  /// Whether the 1W key-adoption listener is currently armed.
+  /// @return true while armed.
+  [[nodiscard]] bool oneway_key_adoption_armed() const { return this->oneway_key_adoption_armed_; }
+
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (undeclared/legacy path).
   /// Type, subtype, inverted, and optimistic_state default to UNKNOWN / 0 / false / true; use the
@@ -468,6 +491,21 @@ class IOHomeControlComponent : public Component,
   /// @param frame Parsed inbound frame.
   /// @return true if the frame was handled (caller should stop further dispatch for it).
   bool try_handle_key_extraction_frame_(const IoFrame &frame);
+  /// Decode an inbound CMD_ONEWAY_ADD_CONTROLLER (0x30) while the 1W key-adoption listener is
+  /// armed, report the result, and disarm. Returns false — including when disarmed — so the
+  /// frame still flows through the normal 1W logging path unchanged; this listener observes,
+  /// it does not consume.
+  /// @param frame Parsed inbound 1W frame.
+  void try_adopt_oneway_key_(const IoFrame &frame);
+  /// Remember the most recent 1W target device class observed from `info.src`, for the 1W
+  /// key-adoption report's `io_device_type` prefill (see build_oneway_adoption_report(),
+  /// hub_internal.h). No-op unless armed and `info.target_type` is a real class — the
+  /// add-controller frame itself broadcasts to "all" (no class), so decoding it never clobbers a
+  /// genuine earlier observation from the same sender. Called unconditionally from the 1W RX
+  /// branch (hub_status.cpp), mirroring try_adopt_oneway_key_()'s "always call, self-gate on
+  /// armed" shape.
+  /// @param info Already-decoded 1W frame info (see decode_1w_frame()).
+  void record_oneway_observed_class_(const OneWayFrameInfo &info);
   /// Handle an inbound CMD_DISCOVER_REQ (0x28) while the key-extraction responder is armed.
   /// @param frame Parsed inbound discovery broadcast.
   void handle_key_extraction_discover_(const IoFrame &frame);
@@ -741,6 +779,21 @@ class IOHomeControlComponent : public Component,
   pairing_responder::ResponderContext key_extraction_ctx_;
   /// Invoked whenever the key-extraction armed state changes; see set_key_extraction_armed_callback().
   std::function<void(bool)> key_extraction_armed_callback_;
+  /// True while the 1W key-adoption listener is armed; see set_oneway_key_adoption_armed().
+  bool oneway_key_adoption_armed_{false};
+  /// Invoked whenever the 1W key-adoption armed state changes; see
+  /// set_oneway_key_adoption_armed_callback().
+  std::function<void(bool)> oneway_key_adoption_armed_callback_;
+  /// Most recent 1W target device class observed from a sender while the key-adoption listener
+  /// is armed. Single-slot — this is a one-gesture flow, not a per-node registry — and reset on
+  /// every arm so a stale observation from an earlier window never leaks into the next one. Feeds
+  /// the `io_device_type` prefill in the adoption report; see record_oneway_observed_class_().
+  struct OneWayObservedClass {
+    uint8_t node[NODE_ID_SIZE]{};
+    DeviceType type{DeviceType::UNKNOWN};
+    bool valid{false};
+  };
+  OneWayObservedClass oneway_last_observed_class_{};
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
   PairingTelemetry pairing_telemetry_;    ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.

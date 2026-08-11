@@ -285,11 +285,16 @@ void compute_checksum(uint8_t byte, uint8_t &c1, uint8_t &c2) {
   c2 = ((tmp << 1) ^ 0x5B) & 0xFF;
 }
 
-/// Construct the 16-byte initialization vector (IV) for AES encryption.
-/// Layout: [bytes 0-7: frame data or 0x55 padding] [bytes 8-9: checksums] [bytes 10-15: challenge]
-/// The IV binds the HMAC to both the frame content and the random challenge,
-/// preventing replay attacks.
-void construct_iv(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC_SIZE], uint8_t iv[IV_SIZE]) {
+// === Initialization vectors ===
+
+/// Shared core of construct_iv() (2W) and construct_iv_1w_sequence() (1W): fills IV bytes 0-9 —
+/// up to 8 bytes of span data (0x55-padded if the span is shorter), then the two running
+/// checksum bytes (compute_checksum()) accumulated over the *whole* span. The two callers differ
+/// only in how they fill the remaining tail (bytes 10-15): a 6-byte challenge for 2W, or a
+/// 2-byte sequence plus 0x55 padding for 1W. Factoring this out keeps the checksum/pad
+/// accumulation in exactly one place rather than forked per variant — the same reasoning that
+/// keeps xor_with_encrypted_iv() (below) shared between crypt_key() and crypt_1w_key().
+static void construct_iv_prefix(const uint8_t *data, uint8_t len, uint8_t iv[IV_SIZE]) {
   memset(iv, 0, IV_SIZE);
   uint8_t c1 = 0;
   uint8_t c2 = 0;
@@ -298,12 +303,48 @@ void construct_iv(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC
     if (i < 8)
       iv[i] = data[i];
   }
-  // Pad remaining bytes 0-7 with 0x55 if data is shorter than 8 bytes.
+  // Pad remaining bytes 0-7 with 0x55 if the span is shorter than 8 bytes.
   for (uint8_t i = len; i < 8; i++)
     iv[i] = IV_PADDING;
   iv[8] = c1;
   iv[9] = c2;
+}
+
+/// Construct the 16-byte initialization vector (IV) for AES encryption.
+/// Layout: [bytes 0-7: frame data or 0x55 padding] [bytes 8-9: checksums] [bytes 10-15: challenge]
+/// The IV binds the HMAC to both the frame content and the random challenge,
+/// preventing replay attacks. Bytes 0-9 are construct_iv_prefix()'s shared core; see
+/// construct_iv_1w_sequence() for the 1W sibling that reuses it with a different tail.
+void construct_iv(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC_SIZE], uint8_t iv[IV_SIZE]) {
+  construct_iv_prefix(data, len, iv);
   memcpy(&iv[10], challenge, HMAC_SIZE);
+}
+
+/// Construct the 16-byte IV for the 1W sequence-keyed HMAC (create_1w_hmac()).
+/// Layout: [bytes 0-7: span data or 0x55 padding] [bytes 8-9: checksums] [bytes 10-11: sequence,
+/// big-endian] [bytes 12-15: 0x55 padding]. Shares construct_iv_prefix() with the 2W
+/// construct_iv() — only the tail differs, matching a real 1W frame's shape: there is no
+/// per-exchange challenge, only the sequence number being transmitted. Verified against the
+/// published IV vector in tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml
+/// (payload `00 01 43 D2 00 00 00`, sequence `0x0599` -> IV `000143D2000000550500059955555555`).
+void construct_iv_1w_sequence(const uint8_t *data, uint8_t len, uint16_t sequence, uint8_t iv[IV_SIZE]) {
+  construct_iv_prefix(data, len, iv);
+  iv[10] = static_cast<uint8_t>((sequence >> BITS_PER_BYTE) & 0xFF);
+  iv[11] = static_cast<uint8_t>(sequence & 0xFF);
+  iv[12] = IV_PADDING;
+  iv[13] = IV_PADDING;
+  iv[14] = IV_PADDING;
+  iv[15] = IV_PADDING;
+}
+
+/// Construct the 16-byte IV for the 1W key-wrap primitive from a sender's node address alone.
+/// A 1W broadcast (CMD_ONEWAY_ADD_CONTROLLER, 0x30) has no per-exchange challenge to bind to — the
+/// node address is the only public, per-sender input available, so it is repeated to fill the
+/// block. `node[i % NODE_ID_SIZE]` naturally lands iv[15] on node[0] (15 % 3 == 0), matching
+/// the published vector without a separate last-byte special case.
+void construct_iv_1w_node(const uint8_t node[NODE_ID_SIZE], uint8_t iv[IV_SIZE]) {
+  for (uint8_t i = 0; i < IV_SIZE; i++)
+    iv[i] = node[i % NODE_ID_SIZE];
 }
 
 /// AES-128 ECB encrypt a single 16-byte block.
@@ -329,6 +370,23 @@ bool create_hmac(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC_
   return true;
 }
 
+/// Create the 6-byte authenticator for a 1W frame. See proto_crypto.h for the full contract —
+/// in particular that `data`/`len` is a command-specific span the caller must get right, and that
+/// `controller_key` is whichever key the controller identity holds. Structurally identical to
+/// create_hmac() apart from the IV tail (sequence instead of challenge), so both truncate the same
+/// AES-128 output the same way.
+bool create_1w_hmac(const uint8_t *data, uint8_t len, uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE],
+                    uint8_t hmac[HMAC_SIZE]) {
+  uint8_t iv[IV_SIZE];
+  construct_iv_1w_sequence(data, len, sequence, iv);
+  uint8_t encrypted[AES_BLOCK_SIZE];
+  if (!aes128_encrypt(iv, controller_key, encrypted))
+    return false;
+  // Truncate 16-byte AES output to 6 bytes, exactly as create_hmac() does.
+  memcpy(hmac, encrypted, HMAC_SIZE);
+  return true;
+}
+
 /// Verify a received HMAC using constant-time comparison.
 /// Full documentation in proto_crypto.h.
 bool verify_hmac(const uint8_t *data, uint8_t len, const uint8_t hmac[HMAC_SIZE], const uint8_t challenge[HMAC_SIZE],
@@ -344,6 +402,23 @@ bool verify_hmac(const uint8_t *data, uint8_t len, const uint8_t hmac[HMAC_SIZE]
   return diff == 0;
 }
 
+// === Key wrap (2W key transfer / 1W add-controller) ===
+
+/// Shared core of crypt_key() (2W) and crypt_1w_key() (1W): AES-128-ECB-encrypt `iv` under the
+/// public TRANSFER_KEY, then XOR the result over `in`. The two callers differ only in how they
+/// build `iv` (construct_iv() vs. construct_iv_1w_node()); factoring this tail out keeps the
+/// encrypt-under-TRANSFER_KEY-then-XOR logic in exactly one place instead of two copies that
+/// could drift apart.
+static bool xor_with_encrypted_iv(const uint8_t iv[IV_SIZE], const uint8_t in[AES_KEY_SIZE],
+                                  uint8_t out[AES_KEY_SIZE]) {
+  uint8_t enc_iv[AES_BLOCK_SIZE];
+  if (!aes128_encrypt(iv, TRANSFER_KEY, enc_iv))
+    return false;
+  for (uint8_t i = 0; i < AES_KEY_SIZE; i++)
+    out[i] = in[i] ^ enc_iv[i];
+  return true;
+}
+
 /// Encrypt or decrypt a system key during pairing.
 /// The system key is XORed with AES(IV, TRANSFER_KEY) - the same operation encrypts and decrypts.
 /// The TRANSFER_KEY is a hardcoded key known to all IO-Homecontrol devices.
@@ -351,12 +426,16 @@ bool crypt_key(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC_SI
                uint8_t out[AES_KEY_SIZE]) {
   uint8_t iv[IV_SIZE];
   construct_iv(data, len, challenge, iv);
-  uint8_t enc_iv[AES_BLOCK_SIZE];
-  if (!aes128_encrypt(iv, TRANSFER_KEY, enc_iv))
-    return false;
-  for (uint8_t i = 0; i < AES_KEY_SIZE; i++)
-    out[i] = in[i] ^ enc_iv[i];
-  return true;
+  return xor_with_encrypted_iv(iv, in, out);
+}
+
+/// Encrypt or decrypt a 1W controller key during add-controller key adoption (CMD 0x30).
+/// See proto_crypto.h for the full contract; this is crypt_key()'s 1W sibling, sharing the
+/// same xor_with_encrypted_iv() core with a node-derived IV in place of a challenge-derived one.
+bool crypt_1w_key(const uint8_t node[NODE_ID_SIZE], const uint8_t in[AES_KEY_SIZE], uint8_t out[AES_KEY_SIZE]) {
+  uint8_t iv[IV_SIZE];
+  construct_iv_1w_node(node, iv);
+  return xor_with_encrypted_iv(iv, in, out);
 }
 
 /// Generate 6 random bytes for a challenge using the ESP32 hardware RNG.

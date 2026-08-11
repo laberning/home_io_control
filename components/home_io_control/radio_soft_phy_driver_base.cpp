@@ -161,7 +161,12 @@ bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait
     ESP_LOGW(TAG, "  raw[0..%u]: %s", dump_len - 1, hex_buf);
     // Try to show why CRC failed at best offset
     if (probe.decoded_len >= FRAME_MIN_SIZE) {
-      int best_len = std::min<int>(probe.decoded_len, FRAME_MAX_SIZE);
+      // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: this is the diagnostic that explains *why* a CRC
+      // check failed, so it must be able to reach a MAC-bearing 1W frame's longer non-CRC length
+      // (see IoFrame::has_mac) too — capped at the declared-only bound, this log would report a
+      // spurious mismatch for a frame that is actually fine, exactly during the bring-up it exists
+      // to help with.
+      int best_len = std::min<int>(probe.decoded_len, FRAME_MAX_WIRE_SIZE);
       IoFrame test_frame;
       for (int cl = best_len; cl >= FRAME_MIN_SIZE; cl--) {
         if (!parse(probe.decoded, cl, test_frame))
@@ -176,7 +181,11 @@ bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait
       }
     }
 #endif
-    uint8_t const copy_len = std::min(reported_len, FRAME_MAX_SIZE);
+    // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: this fallback runs when no CRC-valid frame was
+    // found, so what's being copied is raw chip-reported bytes on a best-effort basis, not a
+    // frame known to lack a MAC trailer — capping to the declared-only bound would silently
+    // truncate a genuine MAC-bearing frame's tail before it ever reached find_uart_probe again.
+    uint8_t const copy_len = std::min(reported_len, FRAME_MAX_WIRE_SIZE);
     if (copy_len > 0)
       memcpy(packet.data, rx_buf, copy_len);
     packet.len = copy_len;
@@ -242,7 +251,10 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
   this->set_mode_standby();
   this->set_frequency_register(tx_config.freq_hz);
 
-  uint8_t frame_with_crc[FRAME_MAX_SIZE + 2] = {0};
+  // FRAME_MAX_WIRE_SIZE already includes the CRC bytes (declared + trailer + CRC), so this holds
+  // `len` (which may itself include a serialize()-emitted MAC trailer, see IoFrame::has_mac) plus
+  // its CRC without truncating a frame this driver is asked to transmit.
+  uint8_t frame_with_crc[FRAME_MAX_WIRE_SIZE] = {0};
   uint8_t tx_buf[RADIO_PACKET_BUFFER_SIZE];
   if ((uint16_t) len + 2 > (uint16_t) sizeof(frame_with_crc))
     return false;

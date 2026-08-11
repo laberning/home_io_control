@@ -42,6 +42,7 @@ home_io_control:
   node_id: C0FFEE
   system_key: 0123456789ABCDEF0123456789ABCDEF
   accept_foreign_pairing: true
+  accept_oneway_key: true
 
 # At least one entity of each type is needed to ensure all platform code compiles
 cover:

@@ -87,7 +87,9 @@ void queue_valid_version_response(ScriptedSpi &spi) {
 // should have been written to the TX buffer / received in the RX buffer" byte sequence.
 uint8_t encode_frame_with_crc(const uint8_t *frame, uint8_t frame_len, uint8_t *encoded, uint8_t encoded_max_len) {
   uint16_t const crc = crc_ccitt(frame, frame_len);
-  uint8_t frame_with_crc[FRAME_MAX_SIZE + 2];
+  // FRAME_MAX_WIRE_SIZE (not FRAME_MAX_SIZE + 2) to mirror SoftPhyDriverBase::send_packet()'s own
+  // buffer exactly — it holds a MAC-trailer-bearing frame's CRC too, see IoFrame::has_mac.
+  uint8_t frame_with_crc[FRAME_MAX_WIRE_SIZE];
   memcpy(frame_with_crc, frame, frame_len);
   frame_with_crc[frame_len] = crc & 0xFF;
   frame_with_crc[frame_len + 1] = (crc >> 8) & 0xFF;

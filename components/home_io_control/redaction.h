@@ -26,9 +26,19 @@ namespace home_io_control {
 /// CMD_KEY_TRANSFER (0x32) carries the system key encrypted with the pairing transfer key —
 /// still key material, so callers rendering frame bytes must mask this payload rather than
 /// print it.
+///
+/// CMD_ONEWAY_ADD_CONTROLLER (0x30) is the 1W equivalent. Its payload is not literally the key —
+/// it is the key wrapped with the public TRANSFER_KEY — but the unwrap needs nothing secret: the
+/// IV derives only from the sender's node address, which is plaintext in the same frame's header.
+/// So publishing those bytes is equivalent to publishing the key, and they are masked for the
+/// same reason 0x32 is. The one deliberate exception is the adoption report in
+/// hub_oneway_key_adoption.cpp, which formats the *decoded* key directly rather than going
+/// through any frame-rendering path.
 /// @param cmd Frame command byte.
 /// @return true if the payload of a frame with this command must be masked.
-inline bool command_carries_key_material(uint8_t cmd) { return cmd == CMD_KEY_TRANSFER; }
+inline bool command_carries_key_material(uint8_t cmd) {
+  return cmd == CMD_KEY_TRANSFER || cmd == CMD_ONEWAY_ADD_CONTROLLER;
+}
 
 /// @brief Whether a buffer contains the system key as a contiguous run of bytes.
 ///

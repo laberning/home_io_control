@@ -42,6 +42,12 @@ static constexpr uint8_t CTRL0_START = 0x40;        ///< Bit 6: first frame in e
 static constexpr uint8_t CTRL0_PROTOCOL_1W = 0x20;  ///< Bit 5: 1=OneWay protocol, 0=TwoWay protocol
 static constexpr uint8_t CTRL0_LENGTH_MASK = 0x1F;  ///< Bits [4:0]: frame length - 1
 
+/// Ties `FRAME_MAX_DECLARED_SIZE` (proto_sizes.h) to the mask that actually defines it. The two
+/// can't be expressed as one expression across the header boundary (proto_sizes.h can't include
+/// this header back without a cycle), so this assert is the drift guard instead.
+static_assert(FRAME_MAX_DECLARED_SIZE == CTRL0_LENGTH_MASK + 1,
+              "FRAME_MAX_DECLARED_SIZE must track CTRL0_LENGTH_MASK's 5-bit field");
+
 /// Control byte 1 (CTRL1) bit definitions.
 /// CTRL1 carries protocol metadata flags that describe the frame's routing,
 /// power mode, and priority characteristics.
@@ -65,17 +71,28 @@ static constexpr uint8_t CTRL1_BEACON = 0x80;        ///< Bit 7: beacon announce
 /// @brief Parsed IO‑Homecontrol frame (CTRL0/1 + addresses + command + data).
 /// @ingroup hioc_protocol
 ///
-/// Over the air layout: [CTRL0][CTRL1][DST 3B][SRC 3B][CMD][DATA 0-23B][CRC 2B].
+/// Over the air layout: [CTRL0][CTRL1][DST 3B][SRC 3B][CMD][DATA 0-23B][MAC 0/6B][CRC 2B].
 /// The on-air CRC is the radio driver's responsibility (hardware or software,
 /// depending on the chip); it is not included in this struct.
+///
+/// The MAC trailer exists because at least one frame shape's authenticator does not fit inside
+/// CTRL0's 5-bit length field alongside its payload: a 1W CMD 0x30 "add controller" frame is 29
+/// declared bytes plus a 6-byte MAC, and 35 has no 5-bit encoding. That MAC rides after the
+/// declared length instead — still under the CRC, but outside what CTRL0's length bits describe
+/// — so it is modeled as a distinct trailer rather than folded into `data[]`. `has_mac` is false
+/// for every frame shape that predates this (i.e. everything except a MAC-bearing 1W frame), so
+/// `data_len`/`frame_length()` keep meaning exactly what they meant before this field existed.
 struct IoFrame {
   uint8_t ctrl0;                      ///< Control byte 0: flags + length.
   uint8_t ctrl1;                      ///< Control byte 1: low power, beacon, etc.
   uint8_t dst[NODE_ID_SIZE];          ///< Destination node ID (3 bytes).
   uint8_t src[NODE_ID_SIZE];          ///< Source node ID (3 bytes).
   uint8_t cmd;                        ///< Command ID.
-  uint8_t data[FRAME_MAX_DATA_SIZE];  ///< Command parameters (0–23 bytes).
-  uint8_t data_len;                   ///< Actual length of data.
+  uint8_t data[FRAME_MAX_DATA_SIZE];  ///< Command parameters (0–23 bytes). Never includes `mac`.
+  uint8_t data_len;                   ///< Actual length of data. `FRAME_MIN_SIZE + data_len == frame_length()`
+                                      ///< always holds, trailer or not — see `mac`/`has_mac`.
+  uint8_t mac[HMAC_SIZE];             ///< Out-of-length authenticator trailer; meaningful only when `has_mac`.
+  bool has_mac = false;               ///< True if this frame carries the `mac` trailer (see struct doc).
 };
 
 // --- Frame construction and parsing ---
@@ -117,15 +134,33 @@ bool is_start(const IoFrame &f);
 /// @param f Parsed frame.
 /// @return true if END flag is set.
 bool is_end(const IoFrame &f);
+/// Whether wire frames for a command carry the out-of-length MAC trailer described on
+/// `IoFrame::has_mac`/`IoFrame::mac`. This exists because CTRL0's 5-bit length field cannot
+/// describe every command's declared payload plus a 6-byte authenticator in one span — one
+/// command's authenticator is carried outside the declared length instead (see the command's own
+/// Doxygen in proto_constants.h for why). `parse()` consults this before it will accept the
+/// wider `declared_len + HMAC_SIZE` buffer shape for a given command, so an unrelated frame that
+/// merely happens to arrive with 6 extra trailing bytes is never mistaken for a trailer-bearing
+/// one — only a command that genuinely carries a trailer gets the wider shape considered at all.
+/// @param cmd Command byte (`IoFrame::cmd`, or the raw byte at `FRAME_CMD_OFFSET` in a wire buffer).
+/// @return true if `cmd`'s wire frames carry the `mac` trailer after the declared length.
+bool frame_carries_mac_trailer(uint8_t cmd);
 /// Serialize a parsed frame into a wire buffer (without CRC).
-/// @param f Parsed frame.
-/// @param buf Output buffer (must be at least frame_length(f) bytes).
+/// @param f Parsed frame. When `f.has_mac`, the 6-byte `mac` trailer is appended after the
+///   declared payload and counted in the returned length, so a caller's CRC (computed over the
+///   returned length) covers it.
+/// @param buf Output buffer (must be at least frame_length(f) bytes, or +HMAC_SIZE when `f.has_mac`).
 /// @param buf_size Size of buf.
-/// @return Number of bytes written, or 0 on failure.
+/// @return Number of bytes written (declared length, plus HMAC_SIZE when `f.has_mac`), or 0 on failure.
 uint8_t serialize(const IoFrame &f, uint8_t *buf, uint8_t buf_size);
 /// Parse a wire buffer into a parsed IoFrame (validates length and CTRL0).
 /// @param buf Raw byte buffer.
-/// @param buf_len Number of bytes in buf.
+/// @param buf_len Number of bytes in buf. Accepted shapes: exactly the CTRL0-declared length
+///   (`has_mac` comes out false), or — only for a command where `frame_carries_mac_trailer()` is
+///   true — that length plus HMAC_SIZE (the trailing bytes are copied into `f.mac` and `has_mac`
+///   comes out true). Any other length, or that same wider length for a command that doesn't
+///   carry a trailer, is rejected. `data_len` is always `buf_len`'s declared portion minus
+///   FRAME_MIN_SIZE — the trailer is never data.
 /// @param f Output parsed frame.
 /// @return true if parse succeeded; false otherwise.
 bool parse(const uint8_t *buf, uint8_t buf_len, IoFrame &f);

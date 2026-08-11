@@ -18,7 +18,7 @@
 using namespace esphome::home_io_control;
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-  if (size == 0 || size > 64)  // Wire frames are 9-32 bytes; leave headroom, cap cheap.
+  if (size == 0 || size > 64)  // Wire frames are FRAME_MIN_SIZE..FRAME_MAX_WIRE_SIZE bytes; leave headroom, cap cheap.
     return 0;
 
   IoFrame f{};
@@ -49,10 +49,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     decode_position_report(target_raw, current_raw, false, target, position);
   }
 
-  // Re-serialize to exercise the buffer-bounds path on the parser's own output. Not asserting
-  // round-trip equality here — that's the golden-frame corpus's job on real captures, not a
-  // fuzz-target concern.
-  uint8_t out[FRAME_MAX_SIZE];
+  // Re-serialize to exercise the buffer-bounds path on the parser's own output. Sized to
+  // FRAME_MAX_WIRE_SIZE (not FRAME_MAX_SIZE) so a parsed MAC-trailer frame (IoFrame::has_mac,
+  // reachable from fuzzer input via parse()'s declared_len+HMAC_SIZE acceptance) actually
+  // exercises serialize()'s trailer-emitting path instead of always failing the size check.
+  // Not asserting round-trip equality here — that's the golden-frame corpus's job on real
+  // captures, not a fuzz-target concern.
+  uint8_t out[FRAME_MAX_WIRE_SIZE];
   (void) serialize(f, out, sizeof(out));
 
   return 0;

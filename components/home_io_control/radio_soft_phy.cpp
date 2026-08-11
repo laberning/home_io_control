@@ -130,7 +130,16 @@ bool is_plausible_uart_frame(const IoFrame &frame, uint8_t candidate_len) {
 /// @return Frame start index and length if found, or {0, 0} if no valid frame.
 static std::pair<uint8_t, uint8_t> find_crc_valid_frame(const uint8_t *decoded, uint8_t decoded_len) {
   for (uint8_t start = 0; start < decoded_len; start++) {
-    const uint8_t max_candidate_len = std::min<uint8_t>(decoded_len - start, FRAME_MAX_SIZE);
+    // FRAME_MAX_WIRE_SIZE (declared + trailer + CRC) rather than FRAME_MAX_SIZE, so a MAC-bearing
+    // 1W frame's longer non-CRC length (see IoFrame::has_mac) is reachable by this downward
+    // search. Trying the extra candidate lengths above the old declared-only bound does not add
+    // false-match surface for other frame types: parse() only accepts a declared_len +
+    // HMAC_SIZE-shaped buffer for a command that actually carries a trailer
+    // (frame_carries_mac_trailer(), proto_frame.{h,cpp}) — for every other command those extra
+    // lengths are rejected by parse() itself, before this loop ever reaches the CRC comparison,
+    // so there is no length here that could produce a spurious CRC match against a fabricated
+    // 6-byte MAC for an existing non-trailer frame type.
+    const uint8_t max_candidate_len = std::min<uint8_t>(decoded_len - start, FRAME_MAX_WIRE_SIZE);
     for (uint8_t candidate_len = max_candidate_len; candidate_len >= FRAME_MIN_SIZE; candidate_len--) {
       IoFrame frame;
       if (!parse(decoded + start, candidate_len, frame))
