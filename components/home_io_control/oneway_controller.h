@@ -68,12 +68,11 @@ static constexpr uint8_t ONEWAY_POSITION_FULLY_CLOSED = 100;
 /// positions 0 and 100, and only look like named commands to a user.
 /// @ingroup hioc_protocol
 enum class OneWayButtonAction : uint8_t {
-  OPEN,        ///< Position 0 (fully open).
-  CLOSE,       ///< Position 100 (fully closed).
-  STOP,        ///< CoverCommand::STOP.
-  VENT,        ///< CoverCommand::VENT.
-  FORCE_OPEN,  ///< CoverCommand::FORCE_OPEN.
-  FAVORITE,    ///< CoverCommand::FAVORITE.
+  OPEN,      ///< Position 0 (fully open).
+  CLOSE,     ///< Position 100 (fully closed).
+  STOP,      ///< CoverCommand::STOP.
+  VENT,      ///< CoverCommand::VENT.
+  FAVORITE,  ///< CoverCommand::FAVORITE.
 };
 
 /// @brief How a OneWayButtonAction reaches the wire.
@@ -105,9 +104,6 @@ inline OneWayActionEncoding encode_oneway_action(OneWayButtonAction action) {
       break;
     case OneWayButtonAction::VENT:
       encoding.command = CoverCommand::VENT;
-      break;
-    case OneWayButtonAction::FORCE_OPEN:
-      encoding.command = CoverCommand::FORCE_OPEN;
       break;
     case OneWayButtonAction::FAVORITE:
       encoding.command = CoverCommand::FAVORITE;

@@ -73,9 +73,6 @@ class OneWayTransmitter {
   /// @return The configured controller identities.
   [[nodiscard]] const OneWayControllerRegistry &identities() const { return this->identities_; }
 
-  /// @return The sequence store, for diagnostics and the resync path.
-  [[nodiscard]] OneWaySequenceStore &sequences() { return this->sequences_; }
-
   /// @brief Register the callback that receives a report after every command attempt.
   /// @param callback Invoked once per logical command, including failed ones — a command that
   ///        never left the hub is exactly the case a user needs to see, and 1W will not tell them.
@@ -92,15 +89,15 @@ class OneWayTransmitter {
   /// holds the signing key acts on it — that is what 1W is, not a limitation to work around. Two
   /// devices of one class are separable only if they can be given separate identities.
   /// @param controller_id YAML handle of the controller identity to transmit as.
-  /// @param cmd Named command (STOP, FAVORITE, VENT, FORCE_OPEN).
+  /// @param cmd Named command (STOP, FAVORITE, VENT). CoverCommand::FORCE_OPEN has no 1W
+  ///        encoding and cannot be built — see create_1w_execute_command() (proto_commands.h).
   /// @return true if at least one copy reached the radio; false if the identity is unknown, the
   ///         sequence could not be reserved, or the frame could not be built.
   bool send_command(const std::string &controller_id, CoverCommand cmd);
 
   /// @brief Send a numeric position as the identity's controller.
   ///
-  /// Same contract as send_command(). Note that position 50 is indistinguishable from FORCE_OPEN
-  /// on the wire — see create_1w_execute_position() (proto_commands.h).
+  /// Same contract as send_command(). Every position 0–100 is ordinary; none is a special code.
   /// @param controller_id YAML handle of the controller identity to transmit as.
   /// @param position Target position 0–100 (0 = fully open, 100 = fully closed).
   /// @return true if at least one copy reached the radio.
@@ -117,11 +114,14 @@ class OneWayTransmitter {
   /// accept one and reject three as replays. This function therefore never rebuilds a frame,
   /// never touches a sequence counter, and takes the frame by const reference so it cannot.
   ///
-  /// **It blocks for the whole ~120 ms**, feeding the watchdog in the gaps. Per ADR 0013 all radio
-  /// work happens on the ESPHome loop and the operation queue is the concurrency model; an
-  /// authenticated 2W exchange already blocks far longer than this. Scheduling the repeats through
-  /// a timeout would add a second concurrency model and would let a queued 2W exchange interleave
-  /// between copies of one command.
+  /// **It blocks for the whole burst**, feeding the watchdog in the gaps. The three inter-copy
+  /// gaps alone are 3 * ONEWAY_BURST_INTERVAL_MS = ~120 ms of pure delay; add each of the four
+  /// copies' own airtime and the wall-clock total this function blocks for is closer to ~160 ms
+  /// (proto_timing.h's ONEWAY_BURST_INTERVAL_MS comment has the same two numbers). Per ADR 0013
+  /// all radio work happens on the ESPHome loop and the operation queue is the concurrency model;
+  /// an authenticated 2W exchange already blocks far longer than this. Scheduling the repeats
+  /// through a timeout would add a second concurrency model and would let a queued 2W exchange
+  /// interleave between copies of one command.
   /// @param frame Signed 1W frame to send.
   /// @return true if at least one copy reached the radio. Partial success is still reported as
   ///         success because it is genuinely what the caller wants to know — with no reply frame,

@@ -95,16 +95,24 @@ class OneWaySequenceStore {
 
   /// @brief Force an identity's counter to a specific value and persist it immediately.
   ///
-  /// The recovery path: unlike add_identity(), this *may* move the counter backwards, which is
-  /// the whole point — it re-seeds from a sequence observed on air, or from a user's estimate,
-  /// when a counter has desynced from the device.
+  /// The primitive a future resync action would call: unlike add_identity(), this *may* move the
+  /// counter backwards, which is the whole point — re-seed from a sequence observed on air, or
+  /// from a user's estimate, when a counter has desynced from the device. Nothing user-facing
+  /// reaches this yet — no button, no service call, no diagnostic surface calls it — so today's
+  /// only documented remedy for a desynced counter is `initial_sequence:` (docs/home_io_control.md
+  /// troubleshooting), which goes through add_identity() at boot instead. This method and peek()
+  /// below are tested directly (tests/oneway_sequence_store_test.cpp) so the primitives are proven
+  /// ready for whenever that resync action is built.
   /// @param node_id Identity's 3-byte source address.
   /// @param value Next sequence to hand out.
   /// @return false if the address is not registered or the write could not be persisted.
   bool seed(const uint8_t node_id[NODE_ID_SIZE], uint16_t value);
 
   /// @brief The next sequence this identity would hand out, without reserving it.
-  /// For diagnostics only — never transmit a value obtained here.
+  ///
+  /// Same status as seed() above: nothing user-facing calls this today, only its test. Reaches no
+  /// diagnostic sensor or log line yet — a future one would use this rather than next(), since
+  /// next() commits to transmitting the value it returns.
   /// @param node_id Identity's 3-byte source address.
   /// @param out Output: the sequence next() would return.
   /// @return false if the address is not a registered identity.

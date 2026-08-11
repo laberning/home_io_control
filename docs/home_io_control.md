@@ -970,8 +970,13 @@ home_io_control:
 | `node_id` | no | Source address to transmit as. **Derived from your hub's `node_id` and this `id` when omitted** — see below. |
 | `system_key` | no | Network key for this identity. Defaults to the hub's own; set it to drive a network whose key you adopted. |
 | `initial_sequence` | no | Seeds the rolling counter. The day-one remedy for a desynced device — see troubleshooting. |
-| `commands` | no | Which buttons to generate: `open`, `close`, `stop`, `vent`, `force_open`, `favorite`. |
+| `commands` | no | Which buttons to generate: `open`, `close`, `stop`, `vent`, `favorite`. `stop` is pinned by a published reference vector; `vent` matches the reference remote's source but is unconfirmed by any capture; `favorite` is extrapolated with no reference support and is directly contradicted by this project's own capture of a real My/favorite button press, which encodes it a different way entirely — see `create_1w_execute_command()` in proto_commands.h. Treat `favorite` as untested. |
 | `manufacturer` | no | Accepted and stored; used only by 1W enrollment, which does not ship yet. |
+
+There is no 1W `force_open` button. The only wire byte this project ever associated with a
+"force open" label, `0x64`, decodes to an ordinary numeric position (50%) when tested against real
+hardware as an outbound command — see the "Numeric positions" section below. The hub's
+force-open (`force_open_device`) is a separate, 2W, per-device action; see that section above.
 
 **Why `node_id` is optional.** Asking you to invent a 3-byte radio address is an unanswerable
 question: nothing tells you which addresses are safe, and colliding with a real remote in range
@@ -1032,9 +1037,7 @@ For anything other than the generated buttons there is an action (ADR 0006):
 ```
 
 `position` runs 0 (fully open) to 100 (fully closed) and is passed as a string, like every argument
-on this component's action surface. **`50` is a special case**: `2 × 50` is `0x64`, which is also
-the wire code for force-open. The protocol overloads that byte, so a device asked for 50% will most
-likely force-open instead. Nothing can encode around it — no other byte means "50%".
+on this component's action surface.
 
 The result event reports only that the command was **queued**. Nothing downstream can ever upgrade
 that to "the device moved".

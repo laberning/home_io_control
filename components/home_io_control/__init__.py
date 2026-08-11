@@ -74,7 +74,6 @@ CONF_MANUFACTURER = "manufacturer"
 CONF_IO_DEVICE_TYPE = "io_device_type"
 CONF_INITIAL_SEQUENCE = "initial_sequence"
 CONF_COMMANDS = "commands"
-CONF_ENROLLMENT = "enrollment"
 # Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"
@@ -152,7 +151,6 @@ ONEWAY_COMMANDS = {
     "close": OneWayButtonAction.CLOSE,
     "stop": OneWayButtonAction.STOP,
     "vent": OneWayButtonAction.VENT,
-    "force_open": OneWayButtonAction.FORCE_OPEN,
     "favorite": OneWayButtonAction.FAVORITE,
 }
 # Hub-level "Allow LR1121 Bootloader Rewrite (Irreversible)" arming switch
@@ -464,7 +462,6 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         cv.Optional(CONF_COMMANDS, default=[]): cv.ensure_list(
             cv.one_of(*ONEWAY_COMMANDS, lower=True)
         ),
-        cv.Optional(CONF_ENROLLMENT, default=False): cv.boolean,
     }
 )
 

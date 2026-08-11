@@ -15,8 +15,6 @@ const char *oneway_button_action_name(OneWayButtonAction action) {
       return "CLOSE";
     case OneWayButtonAction::VENT:
       return "VENT";
-    case OneWayButtonAction::FORCE_OPEN:
-      return "FORCE_OPEN";
     case OneWayButtonAction::FAVORITE:
       return "FAVORITE";
     case OneWayButtonAction::STOP:

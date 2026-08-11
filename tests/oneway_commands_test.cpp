@@ -3,6 +3,8 @@
 #include "proto_crypto.h"
 #include "proto_frame.h"
 
+#include "corpus_generated.h"
+#include "corpus_test_helpers.h"
 #include "test_helpers.h"
 
 #include <cstring>
@@ -16,7 +18,11 @@ using namespace esphome::home_io_control;
 // destination, and a rolling sequence in place of the 2W challenge. Every byte a builder emits
 // is therefore unverifiable at runtime — nothing answers to say it was wrong — so these tests
 // pin the output against real frames instead: three captures from this project's own Somfy
-// awning remote and one published worked example.
+// awning remote and one published worked example, plus a fourth own-hardware capture
+// (oneway_remote_favorite_sx1276) used the other way around, as counter-evidence that the
+// builder's FAVORITE encoding is *not* what that button actually sends on air. Expected bytes are
+// read out of the corpus by id (corpus_test::capture_by_id(), corpus_test_helpers.h) rather than
+// transcribed, so a corrected capture automatically corrects what these tests check.
 
 namespace {
 
@@ -33,27 +39,15 @@ constexpr uint8_t EXECUTE_MAC_OFFSET = 8;
 
 /// tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml — the worked
 /// initial-value example from Velocet/iown-homecontrol docs/linklayer.md. STOP from node
-/// 385762, sequence 0x0599, typed-broadcast to all.
+/// 385762, typed-broadcast to all. Only the node address is transcribed here; everything else
+/// (sequence, prefix bytes, MAC, CRC) is read from the corpus by load_captured_execute() below —
+/// see its comment for why.
 const uint8_t PUBLISHED_STOP_SRC[NODE_ID_SIZE] = {0x38, 0x57, 0x62};
-const uint8_t PUBLISHED_STOP_PREFIX[EXECUTE_PREFIX_LEN] = {0xF6, 0x00, 0x00, 0x00, 0x3F, 0x38, 0x57, 0x62, 0x00,
-                                                           0x01, 0x43, 0xD2, 0x00, 0x00, 0x00, 0x05, 0x99};
-/// The MAC that frame carries is the source document's filler value, not a signature — the same
-/// bytes appear as the challenge in its 2W examples, and no key is published for this frame. It
-/// is used here only to reconstitute the exact 23 bytes the document's CRC covers.
-const uint8_t PUBLISHED_STOP_PLACEHOLDER_MAC[HMAC_SIZE] = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
-/// Trailing CRC bytes of that frame, in wire order (LSB first).
-constexpr uint8_t PUBLISHED_STOP_CRC_LO = 0x5F;
-constexpr uint8_t PUBLISHED_STOP_CRC_HI = 0xB0;
 
 /// tests/corpus/captures/somfy_awning/oneway_remote_{open,close,stop}_sx1276.yaml — three
-/// presses of this project's own remote, node 9D6085, captured on an SX1276.
+/// presses of this project's own remote, node 9D6085, captured on an SX1276. Same note as above:
+/// only the shared node address is transcribed.
 const uint8_t SOMFY_REMOTE_SRC[NODE_ID_SIZE] = {0x9D, 0x60, 0x85};
-const uint8_t SOMFY_OPEN_PREFIX[EXECUTE_PREFIX_LEN] = {0xF6, 0x00, 0x00, 0x00, 0x3F, 0x9D, 0x60, 0x85, 0x00,
-                                                       0x01, 0x43, 0x00, 0x00, 0x00, 0x00, 0x59, 0x97};
-const uint8_t SOMFY_CLOSE_PREFIX[EXECUTE_PREFIX_LEN] = {0xF6, 0x00, 0x00, 0x00, 0x3F, 0x9D, 0x60, 0x85, 0x00,
-                                                        0x01, 0x43, 0xC8, 0x00, 0x00, 0x00, 0x59, 0x84};
-const uint8_t SOMFY_STOP_PREFIX[EXECUTE_PREFIX_LEN] = {0xF6, 0x00, 0x00, 0x00, 0x3F, 0x9D, 0x60, 0x85, 0x00,
-                                                       0x01, 0x43, 0xD2, 0x00, 0x00, 0x00, 0x59, 0x94};
 
 /// Serialize a built frame and return its length, failing the test if it does not serialize.
 uint8_t serialize_execute(const IoFrame &frame, uint8_t *out, uint8_t out_size) {
@@ -70,6 +64,40 @@ void expected_execute_mac(uint8_t main0, uint8_t main1, uint16_t sequence, const
   ASSERT_TRUE(crypto::create_1w_hmac(span, sizeof(span), sequence, key, out));
 }
 
+/// Everything a byte-exact reproduction test needs to pin a built frame against, read straight
+/// out of one corpus capture's sole frame rather than transcribed by hand. A correction to a
+/// capture must change what these tests check, not leave a stale transcription behind — that is
+/// the entire point of going through the corpus instead of a local C array (see the file comment
+/// at the top of this file). ASSERTs the id resolves and the frame is long enough to hold a 1W
+/// execute, so a renamed or truncated capture fails the calling test loudly instead of comparing
+/// against garbage or silently checking nothing.
+struct CapturedExecute {
+  uint8_t prefix[EXECUTE_PREFIX_LEN];  ///< header(9) + origin/acei/main[2]/fp1/fp2/sequence(8).
+  uint16_t sequence;                   ///< The last two bytes of `prefix`, decoded.
+  uint8_t mac[HMAC_SIZE];              ///< The captured frame's own MAC — a placeholder for the
+                                       ///< published vector (see its corpus entry's `key:`).
+  bool has_crc;
+  uint8_t crc_lo;  ///< Trailing CRC, wire order (LSB first). Only valid when has_crc.
+  uint8_t crc_hi;
+};
+
+void load_captured_execute(const char *id, CapturedExecute &out) {
+  const auto *capture = corpus_test::capture_by_id(id);
+  ASSERT_NE(capture, nullptr) << "corpus capture '" << id << "' not found — was it renamed?";
+  ASSERT_EQ(capture->frame_count, 1) << id << " must have exactly one frame";
+  const auto &cf = capture->frames[0];
+  ASSERT_GE(cf.len, static_cast<uint8_t>(EXECUTE_PREFIX_LEN + HMAC_SIZE))
+      << id << " frame is shorter than a 1W execute";
+  memcpy(out.prefix, cf.bytes, EXECUTE_PREFIX_LEN);
+  out.sequence = static_cast<uint16_t>((out.prefix[EXECUTE_PREFIX_LEN - 2] << 8) | out.prefix[EXECUTE_PREFIX_LEN - 1]);
+  memcpy(out.mac, &cf.bytes[EXECUTE_PREFIX_LEN], HMAC_SIZE);
+  out.has_crc = cf.crc_present;
+  if (cf.crc_present) {
+    out.crc_lo = cf.bytes[cf.len - 2];
+    out.crc_hi = cf.bytes[cf.len - 1];
+  }
+}
+
 }  // namespace
 
 // ========================================================================================
@@ -77,26 +105,31 @@ void expected_execute_mac(uint8_t main0, uint8_t main1, uint16_t sequence, const
 // ========================================================================================
 
 TEST(OneWayCommands, StopReproducesThePublishedVectorPrefix) {
+  CapturedExecute pub;
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_execute_iv_vector", pub));
+
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_execute_command(frame, PUBLISHED_STOP_SRC, DeviceType::UNKNOWN, CoverCommand::STOP, 0x0599,
-                                        test::TEST_SYSTEM_KEY))
+  ASSERT_TRUE(create_1w_execute_command(frame, PUBLISHED_STOP_SRC, DeviceType::UNKNOWN, CoverCommand::STOP,
+                                        pub.sequence, test::TEST_SYSTEM_KEY))
       << "building a 1W STOP should succeed";
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   ASSERT_EQ(serialize_execute(frame, wire, sizeof(wire)), EXECUTE_FRAME_LEN);
-  EXPECT_EQ(0, memcmp(wire, PUBLISHED_STOP_PREFIX, EXECUTE_PREFIX_LEN))
+  EXPECT_EQ(0, memcmp(wire, pub.prefix, EXECUTE_PREFIX_LEN))
       << "every byte through the sequence must match the published frame";
 }
 
 TEST(OneWayCommands, StopMacMatchesTheIndependentlyComputedSignature) {
   // The published frame's own MAC is a placeholder, so the signature is pinned against
   // create_1w_hmac() instead — which is itself pinned by a published KAT (proto_crypto_test).
+  CapturedExecute pub;
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_execute_iv_vector", pub));
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_execute_command(frame, PUBLISHED_STOP_SRC, DeviceType::UNKNOWN, CoverCommand::STOP, 0x0599,
-                                        test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_1w_execute_command(frame, PUBLISHED_STOP_SRC, DeviceType::UNKNOWN, CoverCommand::STOP,
+                                        pub.sequence, test::TEST_SYSTEM_KEY));
 
   uint8_t expected[HMAC_SIZE] = {0};
-  expected_execute_mac(POS_STOP, 0x00, 0x0599, test::TEST_SYSTEM_KEY, expected);
+  expected_execute_mac(POS_STOP, 0x00, pub.sequence, test::TEST_SYSTEM_KEY, expected);
   EXPECT_EQ(0, memcmp(&frame.data[EXECUTE_MAC_OFFSET], expected, HMAC_SIZE))
       << "the MAC must sign the command byte through fp2, and nothing else";
 }
@@ -105,54 +138,64 @@ TEST(OneWayCommands, FramingReproducesThePublishedCrc) {
   // The CRC covers all 23 body bytes, so reconstituting the document's frame from our own
   // framing plus its placeholder MAC and getting its published CRC back proves the header,
   // lengths and field order are byte-for-byte what a real receiver checksums.
+  CapturedExecute pub;
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_execute_iv_vector", pub));
+  ASSERT_TRUE(pub.has_crc) << "the published vector capture must carry a CRC to pin against";
+
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_execute_command(frame, PUBLISHED_STOP_SRC, DeviceType::UNKNOWN, CoverCommand::STOP, 0x0599,
-                                        test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_1w_execute_command(frame, PUBLISHED_STOP_SRC, DeviceType::UNKNOWN, CoverCommand::STOP,
+                                        pub.sequence, test::TEST_SYSTEM_KEY));
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   ASSERT_EQ(serialize_execute(frame, wire, sizeof(wire)), EXECUTE_FRAME_LEN);
-  memcpy(&wire[EXECUTE_PREFIX_LEN], PUBLISHED_STOP_PLACEHOLDER_MAC, HMAC_SIZE);
+  memcpy(&wire[EXECUTE_PREFIX_LEN], pub.mac, HMAC_SIZE);
 
   const uint16_t crc = crc_ccitt(wire, EXECUTE_FRAME_LEN);
-  EXPECT_EQ(static_cast<uint8_t>(crc & 0xFF), PUBLISHED_STOP_CRC_LO) << "CRC low byte must match the published frame";
-  EXPECT_EQ(static_cast<uint8_t>(crc >> 8), PUBLISHED_STOP_CRC_HI) << "CRC high byte must match the published frame";
+  EXPECT_EQ(static_cast<uint8_t>(crc & 0xFF), pub.crc_lo) << "CRC low byte must match the published frame";
+  EXPECT_EQ(static_cast<uint8_t>(crc >> 8), pub.crc_hi) << "CRC high byte must match the published frame";
 }
 
 TEST(OneWayCommands, PositionZeroReproducesTheRemotesOpenPress) {
   // OPEN is not a distinct wire command: it is position 0, which encodes to main 00 00. Pinning
   // it against a real press is what proves the position path and the named-command path agree
   // with one physical remote.
+  CapturedExecute open;
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("oneway_remote_open_sx1276", open));
   IoFrame frame{};
   ASSERT_TRUE(
-      create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, 0, 0x5997, test::TEST_SYSTEM_KEY))
+      create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, 0, open.sequence, test::TEST_SYSTEM_KEY))
       << "position 0 (fully open) should build";
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   ASSERT_EQ(serialize_execute(frame, wire, sizeof(wire)), EXECUTE_FRAME_LEN);
-  EXPECT_EQ(0, memcmp(wire, SOMFY_OPEN_PREFIX, EXECUTE_PREFIX_LEN))
+  EXPECT_EQ(0, memcmp(wire, open.prefix, EXECUTE_PREFIX_LEN))
       << "an OPEN press from node 9D6085 at sequence 5997 has exactly these bytes";
 }
 
 TEST(OneWayCommands, PositionHundredReproducesTheRemotesClosePress) {
+  CapturedExecute close_press;
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("oneway_remote_close_sx1276", close_press));
   IoFrame frame{};
-  ASSERT_TRUE(
-      create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, 100, 0x5984, test::TEST_SYSTEM_KEY))
+  ASSERT_TRUE(create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, 100, close_press.sequence,
+                                         test::TEST_SYSTEM_KEY))
       << "position 100 (fully closed) should build";
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   ASSERT_EQ(serialize_execute(frame, wire, sizeof(wire)), EXECUTE_FRAME_LEN);
-  EXPECT_EQ(0, memcmp(wire, SOMFY_CLOSE_PREFIX, EXECUTE_PREFIX_LEN))
+  EXPECT_EQ(0, memcmp(wire, close_press.prefix, EXECUTE_PREFIX_LEN))
       << "CLOSE encodes as main C8 00, i.e. position 100 doubled";
 }
 
 TEST(OneWayCommands, StopReproducesTheRemotesStopPress) {
+  CapturedExecute stop_press;
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("oneway_remote_stop_sx1276", stop_press));
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, CoverCommand::STOP, 0x5994,
-                                        test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, CoverCommand::STOP,
+                                        stop_press.sequence, test::TEST_SYSTEM_KEY));
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   ASSERT_EQ(serialize_execute(frame, wire, sizeof(wire)), EXECUTE_FRAME_LEN);
-  EXPECT_EQ(0, memcmp(wire, SOMFY_STOP_PREFIX, EXECUTE_PREFIX_LEN))
+  EXPECT_EQ(0, memcmp(wire, stop_press.prefix, EXECUTE_PREFIX_LEN))
       << "a STOP press from node 9D6085 at sequence 5994 has exactly these bytes";
 }
 
@@ -271,7 +314,6 @@ TEST(OneWayCommands, NamedCommandsDecodeBackToTheirIntent) {
       {CoverCommand::STOP, POS_STOP, 0x00, "STOP"},
       {CoverCommand::FAVORITE, POS_FAVORITE, 0x00, "FAVORITE"},
       {CoverCommand::VENT, POS_FAVORITE, POS_VENT_MODIFIER, "VENT"},
-      {CoverCommand::FORCE_OPEN, POS_FORCE_OPEN, 0x00, "FORCE_OPEN"},
   };
 
   for (const auto &c : cases) {
@@ -294,8 +336,10 @@ TEST(OneWayCommands, NamedCommandsDecodeBackToTheirIntent) {
 
 TEST(OneWayCommands, PositionsDecodeBackToTheSamePercentage) {
   for (uint8_t position = 0; position <= 100; position += 5) {
-    // 50 is skipped deliberately, not because the builder gets it wrong — see
-    // PositionFiftyCollidesWithForceOpen for the wire-format collision it exposes.
+    // 50 is skipped deliberately, not because the builder gets it wrong: main0 == POS_FORCE_OPEN
+    // (0x64) is excluded by oneway_intent_to_target()'s special-code list, a decode-side choice
+    // out of scope here — see ForceOpenHasNoOneWayEncoding for what the builder actually does
+    // with position 50 (an ordinary doubled-position frame).
     if (position == 50)
       continue;
     IoFrame frame{};
@@ -312,22 +356,53 @@ TEST(OneWayCommands, PositionsDecodeBackToTheSamePercentage) {
   }
 }
 
-TEST(OneWayCommands, PositionFiftyCollidesWithForceOpen) {
-  // Not a builder defect — the wire format overloads the byte. 2 * 50 is 0x64, which is also
-  // POS_FORCE_OPEN's main code, and the reference implementation emits the same byte for both.
-  // Pinned here so the collision is a documented property with a test behind it rather than a
-  // surprise someone rediscovers from a device that force-opens when asked for half-closed.
+TEST(OneWayCommands, ForceOpenHasNoOneWayEncoding) {
+  // 0x64 outbound was hardware-tested as "move to 50%" (see POS_FORCE_OPEN in
+  // proto_constants.h), not a lock bypass. A 1W FORCE_OPEN button would therefore have been a
+  // 50% button wearing the wrong name, so it was never built: position 50 is an ordinary
+  // position command, and create_1w_execute_command() rejects CoverCommand::FORCE_OPEN outright
+  // rather than reuse that byte under a misleading label.
   IoFrame position_frame{};
-  IoFrame force_frame{};
   ASSERT_TRUE(
       create_1w_execute_position(position_frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, 50, 42, test::TEST_SYSTEM_KEY));
-  ASSERT_TRUE(create_1w_execute_command(force_frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::FORCE_OPEN, 42,
-                                        test::TEST_SYSTEM_KEY));
+  EXPECT_EQ(position_frame.data[2], static_cast<uint8_t>(2 * 50)) << "position 50 is an ordinary doubled-position byte";
+  EXPECT_EQ(position_frame.data[3], 0x00);
 
-  EXPECT_EQ(0, memcmp(position_frame.data, force_frame.data, EXECUTE_DATA_LEN))
-      << "position 50 and FORCE_OPEN produce identical frames, signature included";
-  EXPECT_STREQ(decode_1w_frame(position_frame).intent, "FORCE_OPEN")
-      << "the decoder resolves the ambiguity toward FORCE_OPEN, and a device likely does too";
+  IoFrame force_frame{};
+  memset(&force_frame, 0xAA, sizeof(force_frame));
+  const IoFrame untouched = force_frame;
+  EXPECT_FALSE(create_1w_execute_command(force_frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::FORCE_OPEN,
+                                         42, test::TEST_SYSTEM_KEY))
+      << "1W has no known force-open encoding";
+  EXPECT_EQ(0, memcmp(&force_frame, &untouched, sizeof(IoFrame)))
+      << "a rejected command must leave the frame untouched";
+}
+
+// ========================================================================================
+// Counter-evidence — the capture this builder does NOT reproduce
+// ========================================================================================
+
+TEST(OneWayCommands, FavoriteButtonCaptureIsWritePrivateNotExecute) {
+  // Direct counter-evidence for the FAVORITE/VENT caveat in create_1w_execute_command()'s doxygen
+  // (proto_commands.h): this project's own capture of a real My/favorite button press is not what
+  // this builder emits for CoverCommand::FAVORITE, or anything close to it. If the builder is
+  // ever changed to match this capture, or the caveat above it is deleted, this test is what
+  // still says the capture disagrees.
+  const auto *capture = corpus_test::capture_by_id("oneway_remote_favorite_sx1276");
+  ASSERT_NE(capture, nullptr) << "corpus capture 'oneway_remote_favorite_sx1276' not found — was it renamed?";
+  ASSERT_EQ(capture->frame_count, 1);
+
+  const IoFrame frame = corpus_test::parse_capture_frame(capture->frames[0]);
+  EXPECT_EQ(frame.cmd, CMD_WRITE_PRIVATE) << "the My/favorite press is CMD_WRITE_PRIVATE (0x20)";
+  EXPECT_NE(frame.cmd, CMD_EXECUTE) << "in particular, it is not the CMD_EXECUTE this builder emits for FAVORITE";
+  EXPECT_TRUE(is_start(frame) && is_end(frame)) << "still a single self-contained 1W frame";
+  EXPECT_EQ(broadcast_target_type(frame.dst), DeviceType::UNKNOWN)
+      << "dst 00 00 3F is the all-classes broadcast, not a typed one";
+
+  const OneWayFrameInfo info = decode_1w_frame(frame);
+  EXPECT_FALSE(info.has_intent) << "decode_1w_frame() only decodes CMD_EXECUTE/CMD_ACTIVATE_MODE payloads — "
+                                   "WRITE_PRIVATE has a different layout and is not read as an intent, let "
+                                   "alone as POS_FAVORITE";
 }
 
 // ========================================================================================

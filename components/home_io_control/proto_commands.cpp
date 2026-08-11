@@ -66,8 +66,14 @@ constexpr uint8_t IDENTIFY_PARAMETER = 0xFF;
 /// @brief Build the standard 8-byte position payload shared by create_execute_position() and
 /// create_force_open() — identical except for the ACEI byte.
 inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t acei, uint8_t position) {
-  return {EXECUTE_ORIGINATOR,           acei,         static_cast<uint8_t>(2 * position), 0x00,
-          EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
+  return {EXECUTE_ORIGINATOR,
+          acei,
+          static_cast<uint8_t>(POSITION_WIRE_SCALE * position),
+          0x00,
+          EXECUTE_POSITION_LAYOUT_FLAG,
+          POS_FAVORITE,
+          EXECUTE_POSITION_PROFILE,
+          0x00};
 }
 
 // === 1W execute (CMD 0x00) frame assembly ===
@@ -208,12 +214,16 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
                                 uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
   if (position > POSITION_PERCENT_MAX)
     return false;
-  return build_1w_execute(f, src, target_type, static_cast<uint8_t>(2 * position), 0x00, sequence, controller_key);
+  return build_1w_execute(f, src, target_type, static_cast<uint8_t>(POSITION_WIRE_SCALE * position), 0x00, sequence,
+                          controller_key);
 }
 
 /// Build a 1W named-command execute frame (CMD 0x00) targeting a device class. See
-/// proto_commands.h for the full contract, including why FORCE_OPEN — unlike its 2W counterpart —
-/// fits this generic dispatch instead of needing create_force_open()'s device-specific position.
+/// proto_commands.h for the full contract, including why 1W has no FORCE_OPEN: the only known
+/// wire encoding for the label (POS_FORCE_OPEN, main=0x64) was hardware-tested as an ordinary
+/// move-to-50% command, not a lock bypass — see the POS_FORCE_OPEN doc comment in
+/// proto_constants.h. Passing CoverCommand::FORCE_OPEN here falls through to `default` and
+/// returns false, matching 2W's create_execute_command().
 bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, CoverCommand cmd,
                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
   uint8_t main0 = 0;
@@ -228,9 +238,6 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
     case CoverCommand::VENT:
       main0 = POS_FAVORITE;
       main1 = POS_VENT_MODIFIER;
-      break;
-    case CoverCommand::FORCE_OPEN:
-      main0 = POS_FORCE_OPEN;
       break;
     default:
       return false;

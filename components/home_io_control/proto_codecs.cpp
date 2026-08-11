@@ -291,10 +291,9 @@ void decode_1w_main_intent(uint8_t main0, uint8_t main1, char *out, size_t out_s
     snprintf(out, out_size, "DEFAULT");
     return;
   }
-  // Numeric position: wire value is position_percent * 2 (0=open, 200=closed).
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  if (main0 <= 200) {
-    uint8_t const percent = main0 / 2;
+  // Numeric position: wire value is position_percent * POSITION_WIRE_SCALE (0=open, 200=closed).
+  if (main0 <= POSITION_WIRE_MAX) {
+    uint8_t const percent = main0 / POSITION_WIRE_SCALE;
     if (percent == 0) {
       snprintf(out, out_size, "OPEN");
       // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
@@ -317,11 +316,10 @@ std::optional<float> oneway_intent_to_target(uint8_t main0, uint8_t main1) {
       main0 == POS_SECURED_TARGET || main0 == POS_DEFAULT) {
     return std::nullopt;
   }
-  // Wire value is position_percent * 2 (0=open, 200=closed); divide as an integer first,
-  // matching decode_1w_main_intent()'s percent computation, then convert to float.
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  if (main0 <= 200) {
-    uint8_t const percent = main0 / 2;
+  // Wire value is position_percent * POSITION_WIRE_SCALE (0=open, 200=closed); divide as an
+  // integer first, matching decode_1w_main_intent()'s percent computation, then convert to float.
+  if (main0 <= POSITION_WIRE_MAX) {
+    uint8_t const percent = main0 / POSITION_WIRE_SCALE;
     return static_cast<float>(percent);
   }
   return std::nullopt;

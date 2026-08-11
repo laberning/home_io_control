@@ -262,6 +262,17 @@ static constexpr uint8_t POS_FORCE_OPEN = 0x64;
 /// but ventilation sets the secondary byte (main[1]) to 0x03 while favorite leaves it 0x00.
 static constexpr uint8_t POS_VENT_MODIFIER = 0x03;
 
+/// @brief Scale factor between a 0-100 percent position and its CMD_EXECUTE main-byte wire value.
+///
+/// Percent 0-100 maps to wire 0-200 (wire = percent * POSITION_WIRE_SCALE), leaving 201-255 free
+/// for the POS_* special codes above. Builders multiply by this to encode a position; decoders
+/// divide by it to recover one — both directions belong on this one constant so they cannot
+/// silently drift apart into two different bare "2"s.
+static constexpr uint8_t POSITION_WIRE_SCALE = 2;
+/// @brief Highest doubled-position wire value: 100% * POSITION_WIRE_SCALE. A main byte at or
+/// below this is an ordinary position; above it, one of the POS_* special codes.
+static constexpr uint8_t POSITION_WIRE_MAX = 200;
+
 /// Status byte flags in CMD_PRIVATE_RESP and CMD_STATUS_UPDATE.
 static constexpr uint8_t STATUS_STOPPED = 0x01;        ///< Byte 0 bit 0: device is not moving
 static constexpr uint8_t STATUS_EXPECTED = 0x80;       ///< Byte 1 bit 7: device will send auto status update

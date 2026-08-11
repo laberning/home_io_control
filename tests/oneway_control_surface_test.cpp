@@ -34,7 +34,6 @@ TEST(OneWayControlSurface, NamedActionsMapToTheirCoverCommands) {
   const Case cases[] = {
       {OneWayButtonAction::STOP, CoverCommand::STOP, "STOP"},
       {OneWayButtonAction::VENT, CoverCommand::VENT, "VENT"},
-      {OneWayButtonAction::FORCE_OPEN, CoverCommand::FORCE_OPEN, "FORCE_OPEN"},
       {OneWayButtonAction::FAVORITE, CoverCommand::FAVORITE, "FAVORITE"},
   };
 
@@ -49,9 +48,8 @@ TEST(OneWayControlSurface, NamedActionsMapToTheirCoverCommands) {
 TEST(OneWayControlSurface, EveryActionNameIsDistinct) {
   // The names reach the diagnostic sensor and the boot log; two actions sharing one would make a
   // misconfigured button indistinguishable from a correct one in the only output that exists.
-  const OneWayButtonAction actions[] = {OneWayButtonAction::OPEN,       OneWayButtonAction::CLOSE,
-                                        OneWayButtonAction::STOP,       OneWayButtonAction::VENT,
-                                        OneWayButtonAction::FORCE_OPEN, OneWayButtonAction::FAVORITE};
+  const OneWayButtonAction actions[] = {OneWayButtonAction::OPEN, OneWayButtonAction::CLOSE, OneWayButtonAction::STOP,
+                                        OneWayButtonAction::VENT, OneWayButtonAction::FAVORITE};
   for (size_t i = 0; i < sizeof(actions) / sizeof(actions[0]); i++) {
     for (size_t j = i + 1; j < sizeof(actions) / sizeof(actions[0]); j++) {
       EXPECT_STRNE(oneway_button_action_name(actions[i]), oneway_button_action_name(actions[j]))

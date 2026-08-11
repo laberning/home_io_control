@@ -611,9 +611,17 @@ class IOHomeControlComponent : public Component,
   /// tests/corpus/captures/somfy_awning/execute_ack_reports_stale_target_*.yaml), so
   /// execute_request_and_update_() passes false there; every other caller trusts as before.
   void update_device_status_(const IoFrame &frame, bool trust_position = true);
-  /// Record that a 1W frame just arrived, updating last_1w_activity_ms_ and — when this frame
-  /// starts a new burst (see decisions::oneway_burst_started_fresh()) — first_1w_activity_ms_.
-  /// @param now millis() at which this frame arrived.
+  /// Record that a 1W frame just went out on the radio — ours or someone else's — updating
+  /// last_1w_activity_ms_ and — when this frame starts a new burst (see
+  /// decisions::oneway_burst_started_fresh()) — first_1w_activity_ms_.
+  ///
+  /// Called both from process_received_packet_() for an overheard remote's frame and from
+  /// execute_oneway_command_()/execute_oneway_position_() (hub_operations.cpp) for a frame this
+  /// hub just transmitted itself. That second case is deliberate, not a misuse of a receive-path
+  /// hook: our own burst should defer background polls exactly like a remote's does, because it
+  /// puts the same 1W traffic on the same shared channel the polls would otherwise use, and the
+  /// devices it targets need the same settling time either way.
+  /// @param now millis() at which this frame was seen or sent.
   void record_1w_activity_(uint32_t now);
   /// Schedule a delayed status poll for a registered device using the Component timeout API.
   /// @param device_id ID of the device to poll.

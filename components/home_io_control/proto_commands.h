@@ -114,13 +114,11 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// span is command-specific (see create_1w_execute_command()'s doxygen); there is no default, so
 /// this builder assembles it itself via the shared internal helper.
 ///
-/// @warning **Position 50 is indistinguishable from FORCE_OPEN on the wire.** `2 * 50` is 0x64,
-///          which is also POS_FORCE_OPEN's main-byte code — the protocol overloads the value, and
-///          the reference implementation emits the same byte for both. decode_1w_main_intent()
-///          therefore reads a frame this builder produced for position 50 back as "FORCE_OPEN",
-///          and a receiving device most likely does the same. This is a property of the wire
-///          format, not something a builder can encode around: no alternative byte means "50%".
-///          Callers exposing numeric positions to users should expect 50 to behave as force-open.
+/// @note Position 50 encodes as `2 * 50 = 0x64` on the wire, the same byte
+///       decode_1w_main_intent() labels POS_FORCE_OPEN when reading overheard traffic. That label
+///       is a decode-side diagnostic choice only (see POS_FORCE_OPEN in proto_constants.h) — it
+///       does not change what this builder sends or what a device does with it. Position 50 is an
+///       ordinary position command.
 /// @param f IoFrame to populate.
 /// @param src Our 3-byte controller node address (the 1W controller identity's `node_id`).
 /// @param target_type Device class to address; encoded via encode_broadcast_address().
@@ -138,16 +136,41 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 
 /// @brief Build a 1W named-command execute frame (CMD 0x00) targeting a device class.
 ///
-/// Covers all four CoverCommand values — unlike the 2W dispatch pair (create_execute_command() /
-/// create_force_open()), 1W's FORCE_OPEN needs no device-specific "fully open" position: the
-/// reference protocol encodes it as a literal main-byte code (POS_FORCE_OPEN) regardless of
-/// device inversion, so it fits the same named-command dispatch as STOP/FAVORITE/VENT. It also
-/// keeps the ordinary EXECUTE_ACEI (0x43) rather than the elevated force-open priority 2W uses —
-/// the reference implementation does not raise ACEI priority for 1W's force-open code either.
+/// Covers three of CoverCommand's values — STOP, FAVORITE, VENT. FORCE_OPEN is not handled here:
+/// the only wire code this project has for that label, POS_FORCE_OPEN (main=0x64), was
+/// hardware-tested as an outbound CMD_EXECUTE command and found to move a real device to 50%
+/// open, not bypass anything (see POS_FORCE_OPEN in proto_constants.h). There is no known 1W
+/// force-open encoding, so passing CoverCommand::FORCE_OPEN here falls to `default` and returns
+/// false, the same way create_execute_command()'s 2W dispatch rejects it.
 ///   - STOP:       main=POS_STOP (0xD2),      modifier=0x00
 ///   - FAVORITE:   main=POS_FAVORITE (0xD8),   modifier=0x00
 ///   - VENT:       main=POS_FAVORITE (0xD8),   modifier=POS_VENT_MODIFIER (0x03)
-///   - FORCE_OPEN: main=POS_FORCE_OPEN (0x64), modifier=0x00
+///
+/// @warning **These three do not rest on the same evidence, even though they read as a uniform
+/// list.** STOP is the only one a real frame pins: the published IV vector
+/// (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml) is a documented
+/// worked example carrying main=0xD2. VENT is not captured anywhere in this project, but it does
+/// match the reference implementation's own 1W remote byte-for-byte — `RemoteButton::Vent` in
+/// reference/iohomecontrol/src/iohcRemote1W.cpp emits exactly main=0xD8/mod=0x03. FAVORITE has
+/// neither kind of support: that same reference remote has no distinct favorite/My button at all
+/// (its RemoteButton set is Open/Close/Stop/Vent/ForceOpen/Position/Absolute/Pair/Add/Remove/
+/// Mode1-4 — no Favorite), so main=0xD8/mod=0x00 here is extrapolated purely by analogy with the
+/// 2W builder's FAVORITE encoding, with no source behind it at all. Worse, the one real capture
+/// this project has of an actual My/favorite button press —
+/// tests/corpus/captures/somfy_awning/oneway_remote_favorite_sx1276.yaml, pinned by
+/// `OneWayCommands.FavoriteButtonCaptureIsWritePrivateNotExecute` in tests/oneway_commands_test.cpp
+/// — contradicts it directly: that remote's My button is CMD_WRITE_PRIVATE (0x20) with a 16-byte
+/// payload, not CMD_EXECUTE with main=0xD8. Treat FAVORITE as untested and plausibly wrong, not
+/// merely unconfirmed, until some capture shows a device actually accepting 0xD8 as a 1W favorite.
+///
+/// FORCE_OPEN is deliberately absent rather than merely untested. The reference remote's
+/// `RemoteButton::ForceOpen` emits main=0x64/mod=0x00 — the same bytes this project labels
+/// POS_FORCE_OPEN — so it would "match the reference implementation byte-for-byte" the same way
+/// VENT does above. But matching the reference is not evidence it works: this project
+/// hardware-tested that exact main byte as an outbound CMD_EXECUTE and confirmed it moves a real
+/// device to 50% open (see POS_FORCE_OPEN in proto_constants.h), not past any lock. There is no
+/// known 1W encoding for a real force-open, so it is unimplemented rather than shipped on a
+/// mislabeled byte.
 ///
 /// The MAC span is the 7 bytes `cmd, origin, acei, main0, main1, fp1, fp2` — the command byte
 /// through fp2, stopping before the sequence, which is not frame data and never enters the MAC.
@@ -159,16 +182,16 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// @param f IoFrame to populate.
 /// @param src Our 3-byte controller node address (the 1W controller identity's `node_id`).
 /// @param target_type Device class to address; encoded via encode_broadcast_address().
-/// @param cmd Named command to execute (STOP, FAVORITE, VENT, or FORCE_OPEN).
+/// @param cmd Named command to execute (STOP, FAVORITE, or VENT). CoverCommand::FORCE_OPEN
+///        returns false — see the @warning above.
 /// @param sequence 2-byte rolling sequence for this transmission (big-endian on wire); the
 ///        caller's identity/sequence store owns incrementing and persisting this, not this
 ///        builder — see the section note above.
 /// @param controller_key 16-byte key held by the transmitting controller identity: the hub's own
 ///        `system_key` for its own network, or a foreign key adopted via CMD 0x30 (Phase 3A "key
 ///        adoption") when transmitting as an adopted identity.
-/// @return true on success; false only if crypto::create_1w_hmac() fails — every CoverCommand
-///         value has a 1W encoding today, but the switch stays exhaustive and defensive in the
-///         same shape as create_execute_command().
+/// @return true on success; false if `cmd` is CoverCommand::FORCE_OPEN (no 1W encoding exists) or
+///         if crypto::create_1w_hmac() fails.
 bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, CoverCommand cmd,
                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]);
 

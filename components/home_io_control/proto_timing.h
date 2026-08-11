@@ -49,15 +49,31 @@ static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per comma
 ///
 /// A 1W command is fire-and-forget: nothing replies, so there is no acknowledgement to retry on
 /// and no way to learn a frame was missed. Repetition *is* the reliability mechanism — real
-/// remotes send the same frame four times, 40 ms apart, and a receiving device treats the set as
-/// one command because all four carry the same sequence. These are protocol values shared by
-/// every 1W transmitter, not radio tuning: they do not vary by chip and must not be moved into a
-/// driver or a TuningConfig field.
+/// remotes send the same frame four times, and a receiving device treats the set as one command
+/// because all four carry the same sequence. These are protocol values shared by every 1W
+/// transmitter, not radio tuning: they do not vary by chip and must not be moved into a driver or
+/// a TuningConfig field.
 ///
-/// The resulting ~160 ms burst is what ONEWAY_QUIET_PERIOD_MS (status_poll_policy.h) is sized
-/// against when it holds background polls back during 1W activity.
-static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;        ///< Copies of each 1W command sent per press.
-static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;  ///< Gap between those copies.
+/// Both values come from the reference implementation, which sets them on adjacent lines when it
+/// forges a 1W packet: `packet->repeat = 4` and `packet->repeatTime = 40` in
+/// reference/iohomecontrol/src/iohcRemote1W.cpp. The capture logs embedded in that same file show
+/// consecutive copies of one burst arriving roughly 25 ms apart, which is not a contradiction:
+/// those are receive-side timestamps of a burst whose configured gap is 40 ms, so they measure
+/// something else. Do not "correct" 40 down to 25 on the strength of them.
+///
+/// Erring long would in any case be the safe direction — a device needs only one of the four
+/// copies to land, so a wider spacing costs nothing and leaves more room on a shared band.
+///
+/// The resulting burst duration — see ONEWAY_BURST_INTERVAL_MS's own comment and send_burst()'s
+/// doxygen (oneway_transmitter.h) for the two numbers this decomposes into — is what
+/// ONEWAY_QUIET_PERIOD_MS (status_poll_policy.h) is sized against when it holds background polls
+/// back during 1W activity.
+static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;  ///< Copies of each 1W command sent per press.
+/// Gap between those copies. Three gaps between four copies is 3 * 40 = 120 ms of pure *delay*;
+/// adding each of the four copies' own airtime brings the wall-clock burst closer to ~160 ms.
+/// send_burst()'s doxygen (oneway_transmitter.h) states both — they are not competing claims about
+/// the same number, just two different things measured on the same burst.
+static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;
 
 /// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.
 /// Before transmitting, the radio checks that the channel RSSI is below the

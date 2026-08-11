@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
@@ -42,6 +43,20 @@ inline std::vector<const corpus::CorpusCapture *> captures_where(
 /// Every corpus capture, unfiltered.
 inline std::vector<const corpus::CorpusCapture *> all_captures() {
   return captures_where([](const corpus::CorpusCapture *) { return true; });
+}
+
+/// The single capture with the given `id`, or nullptr if none matches. For tests that pin a
+/// specific frame's bytes rather than sweeping the whole corpus — those tests should source their
+/// expected bytes from here instead of transcribing them, so a corrected capture automatically
+/// corrects what they check instead of leaving a stale transcription behind. Callers should
+/// ASSERT on a non-null result: a missing id almost always means a capture got renamed, and that
+/// should fail the test loudly rather than silently check nothing.
+inline const corpus::CorpusCapture *capture_by_id(const char *id) {
+  for (size_t i = 0; i < corpus::CAPTURE_COUNT; i++) {
+    if (std::strcmp(corpus::CAPTURES[i].id, id) == 0)
+      return &corpus::CAPTURES[i];
+  }
+  return nullptr;
 }
 
 /// gtest instantiation name generator: uses the capture's own `id` as the test name.
