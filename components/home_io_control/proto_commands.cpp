@@ -70,6 +70,75 @@ inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t a
           EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
 }
 
+// === 1W execute (CMD 0x00) frame assembly ===
+
+/// 1W execute command parameters: origin(1) + acei(1) + main[2] + fp1(1) + fp2(1). This is the
+/// 6-byte "special" payload form, which 1W uses even for numeric positions (unlike 2W's 8-byte
+/// create_execute_position() layout).
+constexpr uint8_t ONEWAY_EXECUTE_PARAMS_SIZE = 6;
+/// Rolling sequence width; big-endian on the wire, and never part of the signed span.
+constexpr uint8_t ONEWAY_SEQUENCE_SIZE = 2;
+/// 1W execute MAC span: the command byte followed by all ONEWAY_EXECUTE_PARAMS_SIZE parameter
+/// bytes, stopping before the sequence. See create_1w_execute_command()'s doxygen
+/// (proto_commands.h) for the published-vector and reference-implementation citations pinning
+/// this span; it is command-specific and must not be reused for any other 1W command.
+constexpr uint8_t ONEWAY_EXECUTE_MAC_SPAN_SIZE = 1 + ONEWAY_EXECUTE_PARAMS_SIZE;
+/// Offsets of the sequence and MAC within the payload, derived from the field widths above so
+/// the layout cannot be restated inconsistently.
+constexpr uint8_t ONEWAY_EXECUTE_SEQUENCE_OFFSET = ONEWAY_EXECUTE_PARAMS_SIZE;
+constexpr uint8_t ONEWAY_EXECUTE_MAC_OFFSET = ONEWAY_EXECUTE_SEQUENCE_OFFSET + ONEWAY_SEQUENCE_SIZE;
+/// 1W execute declared payload: parameters + sequence + MAC = 14 bytes, matching the reference
+/// `_p0x00_14` struct.
+constexpr uint8_t ONEWAY_EXECUTE_PAYLOAD_SIZE = ONEWAY_EXECUTE_MAC_OFFSET + HMAC_SIZE;
+/// 1W execute functional-parameter bytes; always zero for the frames this codebase builds.
+constexpr uint8_t ONEWAY_EXECUTE_FP1 = 0x00;
+constexpr uint8_t ONEWAY_EXECUTE_FP2 = 0x00;
+
+/// @brief Shared assembly for both 1W execute builders: header, MAC span/HMAC, and the 14-byte
+/// payload. create_1w_execute_position() and create_1w_execute_command() differ only in how they
+/// derive `main0`/`main1`; every other byte on the wire is identical, so this is the one place
+/// that wiring lives — a second copy would risk drifting from the published IV vector this
+/// span is pinned against.
+///
+/// ctrl1 is deliberately left at 0 (LOW_POWER / CTRL1_LOW_POWER NOT set), unlike every 2W builder
+/// in this file. The reference `forgePacket` sets it, but five independently captured real 1W
+/// frames all disagree: this project's own Somfy awning remote
+/// (tests/corpus/captures/somfy_awning/oneway_remote_{open,close,stop}_sx1276.yaml), an
+/// unidentified 1W remote (tests/corpus/captures/unidentified_1w_remote/oneway_execute.yaml), and
+/// the published vector (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml)
+/// all carry ctrl1=0x00. Followed the captures over the reference source on this point.
+bool build_1w_execute(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t main0, uint8_t main1,
+                      uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
+  uint8_t payload[ONEWAY_EXECUTE_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, EXECUTE_ACEI,      main0, main1,
+                                                  ONEWAY_EXECUTE_FP1, ONEWAY_EXECUTE_FP2};
+
+  // The span is the command byte followed by exactly the parameter bytes that go on air, so it
+  // is copied out of `payload` rather than restated — a restatement could drift from the wire
+  // and produce a signature that verifies against nothing.
+  uint8_t mac_span[ONEWAY_EXECUTE_MAC_SPAN_SIZE];
+  mac_span[0] = CMD_EXECUTE;
+  memcpy(&mac_span[1], payload, ONEWAY_EXECUTE_PARAMS_SIZE);
+
+  // Sign before touching `f`, so a failure leaves the caller's frame exactly as it found it.
+  // 1W is fire-and-forget: a caller that ignored the return value and transmitted a half-built
+  // frame would get no error back from anywhere — the failure would be silent and on air.
+  if (!crypto::create_1w_hmac(mac_span, sizeof(mac_span), sequence, controller_key,
+                              &payload[ONEWAY_EXECUTE_MAC_OFFSET]))
+    return false;
+
+  payload[ONEWAY_EXECUTE_SEQUENCE_OFFSET] = static_cast<uint8_t>(sequence >> BITS_PER_BYTE);
+  payload[ONEWAY_EXECUTE_SEQUENCE_OFFSET + 1] = static_cast<uint8_t>(sequence);
+
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+
+  uint8_t dst[NODE_ID_SIZE];
+  encode_broadcast_address(target_type, dst);
+  set_dst(f, dst);
+  set_src(f, src);
+
+  return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+}
+
 }  // namespace
 
 /// Build a position execute command (0x00) to move a device to a numeric position.
@@ -131,6 +200,42 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
   set_src(f, own);
   const auto payload = make_position_payload(EXECUTE_ACEI_FORCE_OPEN, open_position);
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
+}
+
+/// Build a 1W position execute frame (CMD 0x00) targeting a device class. See proto_commands.h
+/// for the full contract.
+bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t position,
+                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
+  if (position > POSITION_PERCENT_MAX)
+    return false;
+  return build_1w_execute(f, src, target_type, static_cast<uint8_t>(2 * position), 0x00, sequence, controller_key);
+}
+
+/// Build a 1W named-command execute frame (CMD 0x00) targeting a device class. See
+/// proto_commands.h for the full contract, including why FORCE_OPEN — unlike its 2W counterpart —
+/// fits this generic dispatch instead of needing create_force_open()'s device-specific position.
+bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, CoverCommand cmd,
+                               uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
+  uint8_t main0 = 0;
+  uint8_t main1 = 0;
+  switch (cmd) {
+    case CoverCommand::STOP:
+      main0 = POS_STOP;
+      break;
+    case CoverCommand::FAVORITE:
+      main0 = POS_FAVORITE;
+      break;
+    case CoverCommand::VENT:
+      main0 = POS_FAVORITE;
+      main1 = POS_VENT_MODIFIER;
+      break;
+    case CoverCommand::FORCE_OPEN:
+      main0 = POS_FORCE_OPEN;
+      break;
+    default:
+      return false;
+  }
+  return build_1w_execute(f, src, target_type, main0, main1, sequence, controller_key);
 }
 
 /// Build a get-status request (0x03). The device responds with its current position.

@@ -122,6 +122,21 @@ const char *address_class_name(AddressClass address_class);
 /// @return DeviceType encoded in the address, or DeviceType::UNKNOWN for unicast.
 DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]);
 
+/// @brief Encode a device type into its typed-broadcast destination address — the exact inverse
+/// of broadcast_target_type(), kept immediately beside it so the pair cannot drift apart.
+///
+/// The class occupies bits [9:2] and therefore **spans two bytes**: `out[0]` is always 0,
+/// `out[1] = raw >> DEVICE_TYPE_LOW_BITS_SHIFT` carries the high bits, and
+/// `out[2] = (raw << DEVICE_TYPE_HIGH_BITS_SHIFT) | DEVICE_SUBTYPE_MASK` carries the low bits
+/// plus the all-ones subtype field that makes the address a broadcast ("any subtype of this
+/// class"). A single-byte encoding looks right for classes 0–3 and silently produces the wrong
+/// class from 4 upward — e.g. the light class (0x06) encodes to `00 01 BF`, not `00 00 BF`.
+/// This is the addressing primitive 1W execute frames use: 1W commands a device *class*, never
+/// an individual node, so this is the only destination a 1W builder ever needs.
+/// @param type Device class to address.
+/// @param out Output: 3-byte typed-broadcast destination address.
+void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]);
+
 // ============================================================================
 // 1W Remote Frame Decode
 // ============================================================================

@@ -45,6 +45,20 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
 
+/// One-way (1W) transmit cadence.
+///
+/// A 1W command is fire-and-forget: nothing replies, so there is no acknowledgement to retry on
+/// and no way to learn a frame was missed. Repetition *is* the reliability mechanism — real
+/// remotes send the same frame four times, 40 ms apart, and a receiving device treats the set as
+/// one command because all four carry the same sequence. These are protocol values shared by
+/// every 1W transmitter, not radio tuning: they do not vary by chip and must not be moved into a
+/// driver or a TuningConfig field.
+///
+/// The resulting ~160 ms burst is what ONEWAY_QUIET_PERIOD_MS (status_poll_policy.h) is sized
+/// against when it holds background polls back during 1W activity.
+static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;        ///< Copies of each 1W command sent per press.
+static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;  ///< Gap between those copies.
+
 /// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.
 /// Before transmitting, the radio checks that the channel RSSI is below the
 /// threshold. If the channel is busy, TX is deferred by LBT_RETRY_DELAY_MS

@@ -32,6 +32,8 @@ enum class PendingOperationType : uint8_t {
   SET_LIGHT_STATE,        ///< set_light_state call (binary on/off).
   SET_LOCK_STATE,         ///< set_lock_state call (locked/unlocked).
   SET_SWITCH_STATE,       ///< set_switch_state call (binary on/off).
+  ONEWAY_COMMAND,         ///< 1W named command sent as a controller identity.
+  ONEWAY_POSITION,        ///< 1W numeric position sent as a controller identity.
   REQUEST_STATUS,         ///< request_device_status call (poll for current position).
   REQUEST_NAME,           ///< request_device_name call (poll for stored device name).
   DISCOVER_AND_PAIR,      ///< discover_and_pair call (starts 3-phase pairing flow).
@@ -39,8 +41,13 @@ enum class PendingOperationType : uint8_t {
 
 /// @brief A single queued operation to be dispatched from loop().
 struct PendingOperation {
-  PendingOperationType type;                 ///< Operation type (determines which handler to invoke).
-  std::string device_id;                     ///< Target device ID (hex string, e.g., "123ABC").
+  PendingOperationType type;  ///< Operation type (determines which handler to invoke).
+  /// Target device ID (hex string, e.g., "123ABC") — **except** for the ONEWAY_* types, where it
+  /// carries the controller-identity handle instead. 1W addresses a device class, not a node, so
+  /// there is no device ID to put here; the identity is what the operation is bound to. The field
+  /// is reused rather than duplicated because every queue entry would otherwise grow a second
+  /// string for the benefit of two operation types.
+  std::string device_id;
   uint8_t position{0};                       ///< Position/tilt value (0–100) or binary state (ON=0, OFF=100).
   uint8_t tilt{0};                           ///< Tilt value for SET_POSITION_AND_TILT (0–100).
   CoverCommand command{CoverCommand::STOP};  ///< Named command for DEVICE_COMMAND operations.
@@ -93,6 +100,24 @@ class OperationQueue {
   void enqueue_set_light_state(const std::string &device_id, bool on);
   void enqueue_set_lock_state(const std::string &device_id, bool locked);
   void enqueue_set_switch_state(const std::string &device_id, bool on);
+
+  // --- 1W commands (no coalescing, no deduplication) ---
+
+  /// Enqueue a 1W named command for a controller identity.
+  ///
+  /// Deliberately neither coalesced nor deduplicated, unlike their 2W counterparts. A 2W command
+  /// can be superseded because the device reports back what it did; a 1W command cannot be
+  /// confirmed at all, so dropping one is dropping a press the user made with nothing to notice
+  /// it. Each press also consumes its own sequence, and merging two would leave a gap that looks
+  /// like a lost frame to a device tracking the counter.
+  /// @param controller_id Controller-identity handle (see PendingOperation::device_id).
+  /// @param cmd Named command to send.
+  void enqueue_oneway_command(const std::string &controller_id, CoverCommand cmd);
+
+  /// Enqueue a 1W numeric position for a controller identity.
+  /// @param controller_id Controller-identity handle (see PendingOperation::device_id).
+  /// @param position Target position 0–100.
+  void enqueue_oneway_position(const std::string &controller_id, uint8_t position);
 
   // --- Background polls (with deduplication) ---
 

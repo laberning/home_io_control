@@ -76,6 +76,14 @@ void IOHomeControlComponent::setup() {
     return;
   }
 
+  // Open the 1W identities' persistent sequence counters. Not done from the generated
+  // add_oneway_controller() wiring, which runs before preferences are usable.
+  this->oneway_transmitter_.setup();
+  this->oneway_transmitter_.set_command_report_callback([this](const OneWayCommandReport &report) {
+    for (const auto &callback : this->oneway_report_callbacks_)
+      callback(report);
+  });
+
   this->spi_setup();
 
   const char *chip_name_for_log = nullptr;
@@ -367,9 +375,9 @@ void IOHomeControlComponent::dump_config() {
     });
   }
 
-  if (!this->oneway_controllers_.empty()) {
-    ESP_LOGCONFIG(detail::TAG, "  1W Controllers: %zu", this->oneway_controllers_.all().size());
-    for (const auto &identity : this->oneway_controllers_.all()) {
+  if (!this->oneway_controllers().empty()) {
+    ESP_LOGCONFIG(detail::TAG, "  1W Controllers: %zu", this->oneway_controllers().all().size());
+    for (const auto &identity : this->oneway_controllers().all()) {
       // A derived address is reproducible from the YAML, but nothing in the YAML shows it — so
       // print it, and mark it derived, or a user debugging a collision has nowhere to look.
       // Keys are never printed here (ADR 0011); only addresses and classes.

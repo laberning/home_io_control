@@ -315,3 +315,49 @@ TEST(OperationQueue, DiscoverAndPairPopsBeforeControlOp) {
   EXPECT_EQ(q.front().type, PendingOperationType::DISCOVER_AND_PAIR)
       << "DISCOVER_AND_PAIR should precede a subsequently-added control op";
 }
+
+// ========================================================================================
+// 1W commands
+// ========================================================================================
+
+TEST(OperationQueue, OneWayCommandsAreControlOpsAndPrecedeBackgroundPolls) {
+  OperationQueue q;
+  q.enqueue_request_status("DEV");
+  q.enqueue_oneway_command("awning_remote", CoverCommand::STOP);
+
+  ASSERT_EQ(q.size(), 2u);
+  EXPECT_EQ(q[0].type, PendingOperationType::ONEWAY_COMMAND) << "a user press must not queue behind a background poll";
+  EXPECT_EQ(q[0].device_id, "awning_remote") << "device_id carries the controller-identity handle for 1W ops";
+  EXPECT_EQ(q[0].command, CoverCommand::STOP);
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_STATUS);
+}
+
+TEST(OperationQueue, RepeatedOneWayCommandsAreNeitherCoalescedNorDeduplicated) {
+  // A 2W command can be superseded because the device reports what it did. A 1W command cannot be
+  // confirmed at all, so dropping one drops a press with nothing to notice it -- and each press
+  // consumes its own sequence, so merging two would leave a gap that reads as a lost frame.
+  OperationQueue q;
+  q.enqueue_oneway_command("awning_remote", CoverCommand::STOP);
+  q.enqueue_oneway_command("awning_remote", CoverCommand::STOP);
+  q.enqueue_oneway_position("awning_remote", 50);
+
+  EXPECT_EQ(q.size(), 3u) << "every 1W press must survive as its own operation";
+}
+
+TEST(OperationQueue, AOneWayCommandDoesNotDropADeviceStatusPoll) {
+  // The stale-poll drop assumes device_id names a device whose reply supersedes the poll. For 1W
+  // it names an identity, and no reply is coming -- so a handle colliding with a device ID must
+  // not silently cancel that device's poll.
+  OperationQueue q;
+  q.enqueue_request_status("SAME");
+  q.enqueue_oneway_command("SAME", CoverCommand::STOP);
+
+  ASSERT_EQ(q.size(), 2u) << "the poll must survive a 1W command that happens to share its handle";
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_STATUS);
+}
+
+TEST(OperationQueue, OneWayOpsAreNotBackgroundWork) {
+  EXPECT_FALSE(OperationQueue::is_background_op(PendingOperationType::ONEWAY_COMMAND))
+      << "a 1W press is a user command and must never yield to one";
+  EXPECT_FALSE(OperationQueue::is_background_op(PendingOperationType::ONEWAY_POSITION));
+}

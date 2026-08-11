@@ -248,6 +248,13 @@ DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]) {
   return static_cast<DeviceType>(type_raw);
 }
 
+void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
+  const auto type_raw = static_cast<uint16_t>(type);
+  out[0] = 0;
+  out[1] = static_cast<uint8_t>(type_raw >> DEVICE_TYPE_LOW_BITS_SHIFT);
+  out[2] = static_cast<uint8_t>((type_raw << DEVICE_TYPE_HIGH_BITS_SHIFT) | DEVICE_SUBTYPE_MASK);
+}
+
 void decode_1w_main_intent(uint8_t main0, uint8_t main1, char *out, size_t out_size) {
   if (out_size == 0)
     return;

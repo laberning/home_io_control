@@ -159,7 +159,7 @@ Notes:
 
 ## Home Assistant Actions
 
-Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes four **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so they're only reachable via Developer Tools or an automation.
+Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes five **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so they're only reachable via Developer Tools or an automation.
 
 | Action | What it does | `verified` can be `true`? |
 |---|---|---|
@@ -167,6 +167,7 @@ Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML
 | `identify_device` | Makes a device physically identify itself (brief jog/flash) so you can tell which physical motor a device ID belongs to. | No — no readback exists for a jog |
 | `force_open_device` ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. Confirmed to move the device correctly; **not yet confirmed to actually override an active lock** — see the warning below. | No — the outcome is asynchronous |
 | `scan_paired_devices` | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. | No — nothing here is read back either |
+| `oneway_set_position` | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. See the "Sending 1W Commands" section. | No — 1W has no reply at all |
 
 ### Enabling and triggering actions
 
@@ -920,6 +921,171 @@ applies as to the Key Extraction section above. The practical advice
 is the same as for any secret: perform the key copy **once**, indoors, and treat the recovered key
 as the credential it is. Raw `0x30` payloads are masked in this component's own frame logs for
 that reason — the recovered key is printed in exactly one deliberate place, the adoption report.
+
+## Sending 1W Commands (Controller Identities)
+
+The hub can act as a **1W controller** — the kind of thing a wall remote is — and drive devices by
+transmitting. This is off unless you configure it, and it signs with a key you already hold: the
+same authorisation as any 2W command this component sends.
+
+### What 1W is, and what it is not
+
+Everything about this feature follows from two properties of the protocol:
+
+- **A 1W command addresses a device *class*, not a device.** There is no unicast form. A command
+  sent as a `roller_shutter` identity reaches every roller shutter in range that holds the signing
+  key. That is what 1W *is*, not a limitation to design around.
+- **Nothing replies.** No acknowledgement, no status, no error. A command a device ignored is
+  indistinguishable on the radio from one it obeyed.
+
+The second one shapes the whole feature. There is no failure you can be notified about, so the
+"Last 1W Command" sensor and the section below are the diagnostic tools.
+
+### Controller identities
+
+Because nothing on the wire names a device, what distinguishes one 1W control surface from another
+is the *controller* doing the transmitting. That triple — source address, network key, device class
+— is a **controller identity**, and it takes the place node addressing has for 2W (ADR 0024).
+
+```yaml
+home_io_control:
+  # ... radio pins, node_id, system_key ...
+  oneway_controllers:
+    - id: velux_windows
+      io_device_type: window_opener
+      commands: [open, close, stop]
+
+    - id: neighbours_shutters
+      node_id: A11CE0
+      system_key: FEDCBA98765432100123456789ABCDEF
+      io_device_type: roller_shutter
+      initial_sequence: 4000
+      commands: [open, close, stop, favorite]
+```
+
+| Key | Required | Meaning |
+|---|---|---|
+| `id` | yes | Handle the generated entities are named and ID'd from. |
+| `io_device_type` | yes | The device class this identity commands. |
+| `node_id` | no | Source address to transmit as. **Derived from your hub's `node_id` and this `id` when omitted** — see below. |
+| `system_key` | no | Network key for this identity. Defaults to the hub's own; set it to drive a network whose key you adopted. |
+| `initial_sequence` | no | Seeds the rolling counter. The day-one remedy for a desynced device — see troubleshooting. |
+| `commands` | no | Which buttons to generate: `open`, `close`, `stop`, `vent`, `force_open`, `favorite`. |
+| `manufacturer` | no | Accepted and stored; used only by 1W enrollment, which does not ship yet. |
+
+**Why `node_id` is optional.** Asking you to invent a 3-byte radio address is an unanswerable
+question: nothing tells you which addresses are safe, and colliding with a real remote in range
+silently desyncs both transmitters' counters. So it is derived — deterministically, at *compile*
+time, from your hub's `node_id` plus the identity's `id`. That means a derived address takes part
+in the same collision checks as an explicit one and a clash fails the build. The value is printed
+at boot, marked `(derived)`, because nothing in your YAML shows it.
+
+**Per-identity keys are the point of the optional `system_key`.** A key adopted from a foreign 1W
+network (see the "Adopting a 1W Controller Key" section) has to coexist with
+your own network's identities, not replace them.
+
+### Generated buttons
+
+Each name in `commands:` generates a button. Their **IDs follow `<identity_id>_<command>`** —
+`velux_windows` + `open` → `velux_windows_open` — and that rule is a documented contract, because
+you cannot compose against IDs you cannot predict. Entity names derive from the same pair
+("Velux Windows Open").
+
+These are created from the `oneway_controllers:` block rather than declared as
+`button: - platform: home_io_control` entries, deliberately. A platform entry would have to decide
+what the button *is* from the presence of some key, which is how a device-bound switch that merely
+forgot its `io_device_id` once became the security-sensitive one instead of failing validation.
+Creating these from the hub block makes that class of mistake structurally impossible.
+
+### Position feedback: compose with `time_based`
+
+There is no 1W cover entity, and there will not be one: travel duration is unknowable from the
+radio, so it is a declaration you make, never something this component infers (ADR 0019).
+ESPHome's `time_based` cover already does exactly this, with asymmetric durations and endstop
+handling, and it is a standalone platform rather than a mixin — so it composes rather than
+inherits:
+
+```yaml
+cover:
+  - platform: time_based
+    name: "Roof Window"
+    open_action:  {then: [button.press: velux_windows_open]}
+    close_action: {then: [button.press: velux_windows_close]}
+    stop_action:  {then: [button.press: velux_windows_stop]}
+    open_duration: 30s
+    close_duration: 28s
+    has_built_in_endstop: true
+```
+
+Note the estimate is exactly that: pressing the *physical* remote moves the device without telling
+Home Assistant, so the position drifts until the next full open or close re-synchronises it.
+
+### Numeric positions
+
+For anything other than the generated buttons there is an action (ADR 0006):
+
+```yaml
+- action: esphome.<device_name>_oneway_set_position
+  data:
+    controller_id: velux_windows
+    position: "40"
+```
+
+`position` runs 0 (fully open) to 100 (fully closed) and is passed as a string, like every argument
+on this component's action surface. **`50` is a special case**: `2 × 50` is `0x64`, which is also
+the wire code for force-open. The protocol overloads that byte, so a device asked for 50% will most
+likely force-open instead. Nothing can encode around it — no other byte means "50%".
+
+The result event reports only that the command was **queued**. Nothing downstream can ever upgrade
+that to "the device moved".
+
+### The "Last 1W Command" sensor
+
+Every identity gets one, and it is the only feedback this feature can produce:
+
+```
+CLOSE -> window_opener seq 4013
+```
+
+It reports what the hub **transmitted** — never that a device acted, because that is not knowable.
+It also shows the **sequence** used, which is the number you need for the troubleshooting below.
+
+### Troubleshooting
+
+With no reply frames, this ladder is the diagnostic. Work down it in order.
+
+**Nothing appears in "Last 1W Command" after a press.** The command never reached the transmitter.
+Check that the button you pressed belongs to the identity you think it does (`<identity_id>_<command>`),
+and look for `no controller identity` in the log.
+
+**The sensor says `not sent (no sequence reserved)`.** The identity resolved but its counter could
+not be written to flash, so nothing was built — the hub refuses to transmit a sequence it has not
+durably reserved, because reusing one is unrecoverable. This is a storage failure, not a radio one.
+
+**The sensor updates but the device does not move.** In order of likelihood:
+
+1. **Wrong key.** The device is on a network whose key you do not hold. Adopting it is a separate
+   step — see the "Adopting a 1W Controller Key" section.
+2. **Wrong device class.** `io_device_type` selects the broadcast address. A shutter will not act
+   on a command addressed to the awning class. Compare against the class you see in overheard 1W
+   traffic from the real remote.
+3. **The device does not know this controller.** A device that has never been taught this source
+   address may ignore it even with the right key. Enrolling as an additional controller is not
+   implemented yet.
+4. **Desynced counter.** The device remembers the highest sequence it accepted from you and rejects
+   anything at or below it. If your counter fell behind — a replaced board, a restored backup — every
+   command is silently dropped. **Remedy:** raise `initial_sequence:` above the value in the sensor
+   and reflash. Move it in *small* steps: devices accept a forward jump only within a window
+   (~1000), so overshooting fails exactly like undershooting.
+
+### What is stored on the device
+
+The rolling sequence counter, and nothing else. It is the one exception to this component's
+otherwise absolute rule that YAML is the only source of truth, because the counter is neither
+configuration nor re-learnable from the air — a 1W device never transmits, so nothing reports the
+high-water mark your counter has to stay ahead of. ADR 0025 records the exception and its cost;
+the practical consequence is that **replacing your board loses the counters**, and the identities
+on the new board will need `initial_sequence:` raised once.
 
 ## LR1121 Firmware Update
 

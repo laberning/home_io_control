@@ -20,6 +20,7 @@ class TestableManagementComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::api_force_open_device_;
   using IOHomeControlComponent::api_identify_device_;
+  using IOHomeControlComponent::api_oneway_set_position_;
   using IOHomeControlComponent::api_rename_device_;
   using IOHomeControlComponent::api_scan_paired_devices_;
   using IOHomeControlComponent::initialized_;
@@ -396,7 +397,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllFourServices) {
+TEST(HubManagement, RegisterManagementActionsRegistersEveryService) {
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -406,7 +407,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllFourServices) {
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 4u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 5u);
 
   const auto rename_response = esphome::api::global_api_server->user_services_[0]->encode_list_service_response();
   EXPECT_EQ(rename_response.name.str(), "rename_device");
@@ -485,7 +486,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 4u);
+  ASSERT_EQ(api_server.user_services_.size(), 5u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
@@ -757,7 +758,7 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 4u);
+  ASSERT_EQ(api_server.user_services_.size(), 5u);
 
   const auto response = api_server.user_services_[3]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "scan_paired_devices");
@@ -814,4 +815,65 @@ TEST(HubManagement, ApiScanPairedDevicesFailurePublishesEventWithEmptyDeviceId) 
   EXPECT_EQ(event.data.at("device_id"), "") << "scan action never has a single target device";
   EXPECT_EQ(event.data.at("success"), "false");
   EXPECT_EQ(event.data.at("message"), "hub is not initialized");
+}
+TEST(HubManagement, OneWaySetPositionActionIsRegisteredWithBothArguments) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.register_management_actions_();
+  ASSERT_EQ(api_server.user_services_.size(), 5u);
+
+  const auto response = api_server.user_services_[4]->encode_list_service_response();
+  EXPECT_EQ(response.name.str(), "oneway_set_position");
+  ASSERT_EQ(response.args.size(), 2u);
+  EXPECT_EQ(response.args[0].name.str(), "controller_id");
+  EXPECT_EQ(response.args[1].name.str(), "position");
+}
+
+TEST(HubManagement, OneWaySetPositionRejectsAnUnknownIdentity) {
+  // 1W transmits nothing back, so an action that silently did nothing for a mistyped handle would
+  // be indistinguishable from one that worked. The published result is the only signal there is.
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  component.api_oneway_set_position_("nope", "50");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  const auto &event = api_server.events_.front();
+  EXPECT_EQ(event.data.at("action"), "oneway_set_position");
+  EXPECT_EQ(event.data.at("success"), "false");
+}
+
+TEST(HubManagement, OneWaySetPositionRejectsAMalformedPosition) {
+  // A position that failed to parse and quietly became 0 would send a fully-open command to an
+  // entire device class.
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  OneWayControllerIdentity identity{};
+  identity.id = "awning_remote";
+  identity.io_device_type = DeviceType::AWNING;
+  component.add_oneway_controller(identity);
+
+  for (const char *bad : {"", "abc", "101", "-1", "12x"}) {
+    api_server.reset();
+    component.api_oneway_set_position_("awning_remote", bad);
+    ASSERT_EQ(api_server.events_.size(), 1u) << "input '" << bad << "' produced no result event";
+    EXPECT_EQ(api_server.events_.front().data.at("success"), "false")
+        << "position '" << bad << "' should be rejected, not coerced";
+  }
 }

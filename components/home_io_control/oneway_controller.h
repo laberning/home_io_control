@@ -15,12 +15,11 @@
 /// hub_oneway_key_adoption.cpp) produces an identity whose key is *not* the hub's own, and it
 /// must coexist with identities on the hub's own network rather than replace them.
 ///
-/// @note Ownership. These identities ultimately belong to the `OneWayTransmitter` collaborator
-/// (ADR 0004), held by value in the hub, which keeps only the wiring. That collaborator does not
-/// exist yet — it arrives with the transmit engine. Until then the collection lives here and the
-/// hub holds it; **move ownership into `OneWayTransmitter` when it lands** rather than leaving a
-/// second long-lived container on the component.
+/// @note Ownership. These identities belong to the `OneWayTransmitter` collaborator
+/// (oneway_transmitter.h), held by value in the hub, which keeps only the wiring (ADR 0004).
+/// This header owns the types; it does not own an instance of them.
 
+#include "proto_codecs.h"
 #include "proto_device_model.h"
 #include "proto_sizes.h"
 
@@ -48,19 +47,84 @@ struct OneWayControllerIdentity {
   /// @brief Typed-broadcast destination address this identity transmits to.
   ///
   /// 1W addresses a device *class*, never a node — which is why the identity, not a device ID, is
-  /// what a 1W entity binds to. The class occupies bits [9:2] of bytes 1-2, so it **spans two
-  /// bytes**: the light class (0x06) encodes to `00 01 BF`, not `00 00 BF`. This is the exact
-  /// inverse of broadcast_target_type() (proto_codecs.cpp) and shares its shift constants so the
-  /// two cannot drift apart. The low six bits are the subtype field with every bit set — i.e.
-  /// "any subtype of this class", which is what makes the address a broadcast.
+  /// what a 1W entity binds to. Delegates to encode_broadcast_address() (proto_codecs.h), the
+  /// single place the bit layout is documented, so this and broadcast_target_type() (its decode
+  /// counterpart) cannot drift apart.
   /// @param out Output: 3-byte destination address.
-  void broadcast_address(uint8_t out[NODE_ID_SIZE]) const {
-    const auto type_raw = static_cast<uint16_t>(this->io_device_type);
-    out[0] = 0;
-    out[1] = static_cast<uint8_t>(type_raw >> DEVICE_TYPE_LOW_BITS_SHIFT);
-    out[2] = static_cast<uint8_t>((type_raw << DEVICE_TYPE_HIGH_BITS_SHIFT) | DEVICE_SUBTYPE_MASK);
-  }
+  void broadcast_address(uint8_t out[NODE_ID_SIZE]) const { encode_broadcast_address(this->io_device_type, out); }
 };
+
+// === Control surface ===
+
+/// Wire-scale position meaning "fully closed" (0 means fully open). Named here because the two
+/// values are what OPEN and CLOSE actually are — see encode_oneway_action().
+static constexpr uint8_t ONEWAY_POSITION_FULLY_OPEN = 0;
+static constexpr uint8_t ONEWAY_POSITION_FULLY_CLOSED = 100;
+
+/// @brief The command a generated 1W button sends.
+///
+/// The vocabulary of the `commands:` list on a `oneway_controllers:` entry. Kept separate from
+/// CoverCommand because two of these are not commands at all on the wire: OPEN and CLOSE are
+/// positions 0 and 100, and only look like named commands to a user.
+/// @ingroup hioc_protocol
+enum class OneWayButtonAction : uint8_t {
+  OPEN,        ///< Position 0 (fully open).
+  CLOSE,       ///< Position 100 (fully closed).
+  STOP,        ///< CoverCommand::STOP.
+  VENT,        ///< CoverCommand::VENT.
+  FORCE_OPEN,  ///< CoverCommand::FORCE_OPEN.
+  FAVORITE,    ///< CoverCommand::FAVORITE.
+};
+
+/// @brief How a OneWayButtonAction reaches the wire.
+/// @ingroup hioc_protocol
+struct OneWayActionEncoding {
+  bool is_position{false};                   ///< True when the action is sent as a numeric position.
+  uint8_t position{0};                       ///< Position to send when `is_position`.
+  CoverCommand command{CoverCommand::STOP};  ///< Named command to send otherwise.
+};
+
+/// @brief Resolve a button action to the call that sends it.
+///
+/// Pure, so the mapping can be tested without a radio, an entity or a hub. OPEN and CLOSE resolve
+/// to positions because that is what they are on the wire — there is no distinct open/close
+/// opcode, and treating them as named commands would need a second encoding path for no gain.
+/// @param action Button action to encode.
+/// @return The position-or-command the transmitter should send.
+/// @ingroup hioc_protocol
+inline OneWayActionEncoding encode_oneway_action(OneWayButtonAction action) {
+  OneWayActionEncoding encoding{};
+  switch (action) {
+    case OneWayButtonAction::OPEN:
+      encoding.is_position = true;
+      encoding.position = ONEWAY_POSITION_FULLY_OPEN;
+      break;
+    case OneWayButtonAction::CLOSE:
+      encoding.is_position = true;
+      encoding.position = ONEWAY_POSITION_FULLY_CLOSED;
+      break;
+    case OneWayButtonAction::VENT:
+      encoding.command = CoverCommand::VENT;
+      break;
+    case OneWayButtonAction::FORCE_OPEN:
+      encoding.command = CoverCommand::FORCE_OPEN;
+      break;
+    case OneWayButtonAction::FAVORITE:
+      encoding.command = CoverCommand::FAVORITE;
+      break;
+    case OneWayButtonAction::STOP:
+    default:
+      encoding.command = CoverCommand::STOP;
+      break;
+  }
+  return encoding;
+}
+
+/// @brief Human-readable name for a button action, as it appears in the diagnostic sensor.
+/// @param action Button action to name.
+/// @return Null-terminated name such as "OPEN".
+/// @ingroup hioc_protocol
+const char *oneway_button_action_name(OneWayButtonAction action);
 
 /// @brief The configured 1W controller identities, in YAML declaration order.
 ///

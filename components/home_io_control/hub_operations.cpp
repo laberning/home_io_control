@@ -482,6 +482,22 @@ void IOHomeControlComponent::queue_set_switch_state(const std::string &device_id
   this->op_queue_.enqueue_set_switch_state(device_id, on);
 }
 
+// === 1W transmit ===
+
+void IOHomeControlComponent::execute_oneway_command_(const std::string &controller_id, CoverCommand cmd) {
+  this->busy_ = true;
+  this->oneway_transmitter_.send_command(controller_id, cmd);
+  this->busy_ = false;
+  this->record_1w_activity_(millis());
+}
+
+void IOHomeControlComponent::execute_oneway_position_(const std::string &controller_id, uint8_t position) {
+  this->busy_ = true;
+  this->oneway_transmitter_.send_position(controller_id, position);
+  this->busy_ = false;
+  this->record_1w_activity_(millis());
+}
+
 void IOHomeControlComponent::process_pending_operation_() {
   if (this->busy_ || this->op_queue_.empty())
     return;
@@ -517,6 +533,13 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::SET_SWITCH_STATE:
       this->set_switch_state(operation.device_id, operation.position == BINARY_ENTITY_ON_POSITION);
+      break;
+    case PendingOperationType::ONEWAY_COMMAND:
+      // device_id carries the controller-identity handle for 1W ops — see PendingOperation.
+      this->execute_oneway_command_(operation.device_id, operation.command);
+      break;
+    case PendingOperationType::ONEWAY_POSITION:
+      this->execute_oneway_position_(operation.device_id, operation.position);
       break;
     case PendingOperationType::REQUEST_STATUS:
       this->request_device_status(operation.device_id);

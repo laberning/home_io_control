@@ -35,6 +35,7 @@ constexpr const char *MANAGEMENT_ACTION_RENAME_DEVICE = "rename_device";
 constexpr const char *MANAGEMENT_ACTION_IDENTIFY_DEVICE = "identify_device";
 constexpr const char *MANAGEMENT_ACTION_FORCE_OPEN_DEVICE = "force_open_device";
 constexpr const char *MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES = "scan_paired_devices";
+constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_POSITION = "oneway_set_position";
 constexpr const char *MANAGEMENT_RESULT_EVENT = "esphome.home_io_control_action_result";
 constexpr size_t RESULT_CODE_BUFFER_SIZE = 5;
 constexpr size_t UNEXPECTED_RESPONSE_MESSAGE_BUFFER_SIZE = 64;
@@ -254,6 +255,15 @@ void ManagementActions::register_actions() {
   api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
       MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES, {},
       [this](const api::ExecuteServiceRequest &) { this->api_scan_paired_devices(); }));
+  // `position` arrives as a string because ManagementServiceDescriptor exposes every argument as
+  // SERVICE_ARG_TYPE_STRING. Widening it to typed arguments would change a shipped API surface
+  // for one new parameter, so this action parses instead — and rejects loudly, since an
+  // unparseable position that silently became 0 would send a fully-open command.
+  api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
+      MANAGEMENT_ACTION_ONEWAY_SET_POSITION, {"controller_id", "position"},
+      [this](const api::ExecuteServiceRequest &request) {
+        this->api_oneway_set_position(request.args[0].string_.str(), request.args[1].string_.str());
+      }));
 #endif
 }
 
@@ -455,6 +465,38 @@ ManagementActionResult ManagementActions::force_open_device(const std::string &d
 }
 
 void ManagementActions::api_scan_paired_devices() { publish_result(scan_paired_devices()); }
+
+void ManagementActions::api_oneway_set_position(const std::string &controller_id, const std::string &position) {
+  // device_id carries the controller-identity handle: 1W addresses a class, so there is no device
+  // to name, and the identity is what the caller actually chose.
+  ManagementActionResult result = make_management_result(MANAGEMENT_ACTION_ONEWAY_SET_POSITION, controller_id);
+
+  if (hub_->oneway_controllers().get(controller_id) == nullptr) {
+    result.message = "no oneway_controllers identity with that id";
+    publish_result(result);
+    return;
+  }
+
+  const std::string trimmed = trim_ascii_whitespace(position);
+  if (trimmed.empty() || trimmed.find_first_not_of("0123456789") != std::string::npos) {
+    result.message = "position must be a whole number between 0 and 100";
+    publish_result(result);
+    return;
+  }
+  const unsigned long parsed = strtoul(trimmed.c_str(), nullptr, 10);  // NOLINT(google-runtime-int)
+  if (parsed > ONEWAY_POSITION_FULLY_CLOSED) {
+    result.message = "position must be between 0 and 100";
+    publish_result(result);
+    return;
+  }
+
+  hub_->send_oneway_position(controller_id, static_cast<uint8_t>(parsed));
+  result.success = true;
+  // Deliberately "queued", not "sent" or "applied": 1W reports nothing back, and neither should
+  // this. See the "Last 1W Command" sensor for what was actually transmitted.
+  result.message = "1W position command queued";
+  publish_result(result);
+}
 
 /// @brief Format one roll-call responder's report line(s).
 ///

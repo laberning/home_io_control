@@ -14,12 +14,21 @@ bool OperationQueue::is_background_op(PendingOperationType t) {
 }
 
 void OperationQueue::push_control_(PendingOperation op) {
-  queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
-                              [&op](const PendingOperation &existing) {
-                                return existing.type == PendingOperationType::REQUEST_STATUS &&
-                                       existing.device_id == op.device_id;
-                              }),
-               queue_.end());
+  // The stale-poll drop assumes `device_id` names a device whose reply will supersede the poll.
+  // For the ONEWAY_* types it names a controller identity instead, and a 1W command produces no
+  // reply to supersede anything — so a handle that happened to match a device ID would silently
+  // cancel that device's status poll. Exclude them rather than rely on the two namespaces never
+  // colliding.
+  const bool addresses_a_device =
+      op.type != PendingOperationType::ONEWAY_COMMAND && op.type != PendingOperationType::ONEWAY_POSITION;
+  if (addresses_a_device) {
+    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
+                                [&op](const PendingOperation &existing) {
+                                  return existing.type == PendingOperationType::REQUEST_STATUS &&
+                                         existing.device_id == op.device_id;
+                                }),
+                 queue_.end());
+  }
   auto it =
       std::find_if(queue_.begin(), queue_.end(), [](const PendingOperation &o) { return is_background_op(o.type); });
   queue_.insert(it, std::move(op));
@@ -64,6 +73,18 @@ void OperationQueue::enqueue_device_command(const std::string &device_id, CoverC
   op.device_id = device_id;
   op.command = cmd;
   push_control_(std::move(op));
+}
+
+void OperationQueue::enqueue_oneway_command(const std::string &controller_id, CoverCommand cmd) {
+  PendingOperation op{};
+  op.type = PendingOperationType::ONEWAY_COMMAND;
+  op.device_id = controller_id;
+  op.command = cmd;
+  push_control_(std::move(op));
+}
+
+void OperationQueue::enqueue_oneway_position(const std::string &controller_id, uint8_t position) {
+  push_control_({PendingOperationType::ONEWAY_POSITION, controller_id, position});
 }
 
 void OperationQueue::enqueue_set_light_position(const std::string &device_id, uint8_t position) {

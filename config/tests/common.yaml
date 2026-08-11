@@ -55,7 +55,9 @@ home_io_control:
       manufacturer: 0x02
       io_device_type: roller_shutter
       initial_sequence: 1234
-      commands: [open, close]
+      # Exercises the "no commands:" shape too — an identity driven only by the
+      # oneway_set_position action still gets its Last 1W Command sensor.
+      commands: []
 
 # At least one entity of each type is needed to ensure all platform code compiles
 cover:

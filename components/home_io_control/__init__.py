@@ -24,6 +24,7 @@ from esphome.components import spi
 # our own platform files instead of the real ESPHome components.
 from esphome.components import button as button_component
 from esphome.components import switch as switch_component
+from esphome.components import text_sensor as text_sensor_component
 from esphome.const import (
     CONF_ID,
     CONF_INVERTED,
@@ -31,6 +32,7 @@ from esphome.const import (
     CONF_REF,
     CONF_SOURCE,
     ENTITY_CATEGORY_CONFIG,
+    ENTITY_CATEGORY_DIAGNOSTIC,
 )
 from esphome.core import CORE, ID
 from esphome.helpers import write_file_if_changed
@@ -73,6 +75,10 @@ CONF_IO_DEVICE_TYPE = "io_device_type"
 CONF_INITIAL_SEQUENCE = "initial_sequence"
 CONF_COMMANDS = "commands"
 CONF_ENROLLMENT = "enrollment"
+# Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
+# diagnostic sensor ID (ADR 0009).
+CONF_BUTTON_IDS = "button_ids"
+CONF_LAST_COMMAND_SENSOR_ID = "last_command_sensor_id"
 CONF_LR1121_FIRMWARE_UPDATE = "lr1121_firmware_update"
 CONF_LR1121_BOOTLOADER = "bootloader"
 CONF_CHECKSUM_MD5 = "checksum_md5"
@@ -125,6 +131,30 @@ IOHomeAcceptOneWayKeySwitch = home_io_control_ns.class_(
 IOHomeLr1121FirmwareUpdateButton = home_io_control_ns.class_(
     "IOHomeLr1121FirmwareUpdateButton", button_component.Button, cg.Component
 )
+# Generated 1W command buttons and their per-identity diagnostic sensor
+# (platform_oneway_command_button.h / platform_oneway_last_command_text_sensor.h). Created from
+# the `oneway_controllers:` block for the same reason as the entities above: a `button:` entry
+# that dispatched on the presence of a `commands:` key would let a mistyped key turn one kind of
+# button into another, which is precisely the failure the key-extraction switch was moved here to
+# avoid.
+IOHomeOneWayCommandButton = home_io_control_ns.class_(
+    "IOHomeOneWayCommandButton", button_component.Button, cg.Component
+)
+IOHomeOneWayLastCommandTextSensor = home_io_control_ns.class_(
+    "IOHomeOneWayLastCommandTextSensor", text_sensor_component.TextSensor, cg.Component
+)
+OneWayButtonAction = home_io_control_ns.enum("OneWayButtonAction", is_class=True)
+# Command names a user may list, mapped to the C++ enum. OPEN and CLOSE are positions on the
+# wire, not distinct opcodes -- encode_oneway_action() (oneway_controller.h) is where that
+# resolves, so this table stays a plain name->enum mapping.
+ONEWAY_COMMANDS = {
+    "open": OneWayButtonAction.OPEN,
+    "close": OneWayButtonAction.CLOSE,
+    "stop": OneWayButtonAction.STOP,
+    "vent": OneWayButtonAction.VENT,
+    "force_open": OneWayButtonAction.FORCE_OPEN,
+    "favorite": OneWayButtonAction.FAVORITE,
+}
 # Hub-level "Allow LR1121 Bootloader Rewrite (Irreversible)" arming switch
 # (hub_lr1121_firmware_update.cpp / platform_lr1121_bootloader_rewrite_switch.h). Same
 # dynamically-created, hub-bound shape as the two entities above; created only when
@@ -428,7 +458,12 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # in the one documented receiver implementation), so a value that is too far ahead fails
         # exactly like one that is too far behind, and just as silently — move it in small steps.
         cv.Optional(CONF_INITIAL_SEQUENCE, default=0): cv.int_range(min=0, max=0xFFFF),
-        cv.Optional(CONF_COMMANDS, default=[]): cv.ensure_list(cv.string_strict),
+        # Which command buttons to generate. Validated against the known set rather than taken
+        # as free text: a typo would otherwise produce a silently missing button, and 1W gives no
+        # runtime signal that would ever reveal one.
+        cv.Optional(CONF_COMMANDS, default=[]): cv.ensure_list(
+            cv.one_of(*ONEWAY_COMMANDS, lower=True)
+        ),
         cv.Optional(CONF_ENROLLMENT, default=False): cv.boolean,
     }
 )
@@ -544,6 +579,44 @@ def _validate_oneway_controllers(config):
         # repeat it; an adopted foreign network's key is what makes the override necessary.
         if CONF_SYSTEM_KEY not in identity:
             identity[CONF_SYSTEM_KEY] = config[CONF_SYSTEM_KEY]
+
+        # Entity IDs are declared here, at validation time, not in to_code(): an ID created late
+        # is silently dropped at runtime (ADR 0009). The `<identity_id>_<command>` shape is a
+        # documented contract, not an implementation detail -- users compose `time_based` covers
+        # against these IDs and cannot do that against IDs they can't predict.
+        identity[CONF_BUTTON_IDS] = {
+            command: ID(
+                f"{identity_id}_{command}",
+                is_declaration=True,
+                type=IOHomeOneWayCommandButton,
+            )
+            for command in identity[CONF_COMMANDS]
+        }
+        identity[CONF_LAST_COMMAND_SENSOR_ID] = ID(
+            f"{identity_id}_last_1w_command",
+            is_declaration=True,
+            type=IOHomeOneWayLastCommandTextSensor,
+        )
+
+    # Two identities of the same class transmitting from the hub are byte-identical on air apart
+    # from their source address, so whether they are separable at all depends on whether devices
+    # discriminate by source node -- an open question. Sharing a class is therefore allowed but
+    # worth saying out loud, because the symptom (both sets of devices reacting to either
+    # identity) has no other diagnostic.
+    classes_seen = {}
+    for identity in identities:
+        device_type = identity[CONF_IO_DEVICE_TYPE]
+        if device_type in classes_seen:
+            _LOGGER.warning(
+                "oneway_controllers '%s' and '%s' both address device class '%s'. 1W is "
+                "class-addressed, so unless your devices discriminate by source address, every "
+                "device of that class will act on commands from both.",
+                classes_seen[device_type],
+                identity[CONF_ID],
+                device_type,
+            )
+        else:
+            classes_seen[device_type] = identity[CONF_ID]
 
     return config
 
@@ -702,6 +775,7 @@ async def to_code(config):
                 oneway_controller_expression(identity, config[CONF_NODE_ID])
             )
         )
+        await _create_oneway_controller_entities(identity, var)
 
     if config[CONF_ACCEPT_FOREIGN_PAIRING]:
         await _create_accept_foreign_pairing_switch(config, var)
@@ -714,6 +788,52 @@ async def to_code(config):
 
     if tuning_module.CONF_TUNING in config:
         await tuning_module.to_code(config[tuning_module.CONF_TUNING], var)
+
+
+async def _create_oneway_controller_entities(identity, var):
+    """Create one identity's command buttons and its "Last 1W Command" diagnostic sensor.
+
+    Same normalization as the hub-level switches below: run a bare {id, name} dict through the
+    platform's own schema so it carries the entity/component defaults register_*() require.
+
+    Entity names derive from the identity handle and the command ("awning_remote" + "open" ->
+    "Awning Remote Open"), mirroring how the cover's favourite/vent companions derive theirs. The
+    *IDs* follow the documented `<identity_id>_<command>` rule instead, because those are what a
+    `time_based` cover composes against.
+    """
+    friendly_identity = identity[CONF_ID].replace("_", " ").title()
+
+    for command, button_id in identity[CONF_BUTTON_IDS].items():
+        entity_config = button_component.button_schema(
+            IOHomeOneWayCommandButton,
+        ).extend(cv.COMPONENT_SCHEMA)(
+            {
+                CONF_ID: button_id,
+                CONF_NAME: f"{friendly_identity} {command.replace('_', ' ').title()}",
+            }
+        )
+        entity = await button_component.new_button(entity_config)
+        await cg.register_component(entity, entity_config)
+        cg.add(entity.set_parent(var))
+        cg.add(entity.set_controller_id(identity[CONF_ID]))
+        cg.add(entity.set_action(ONEWAY_COMMANDS[command]))
+
+    # Always created, even with no buttons: an identity driven only by the
+    # `oneway_set_position` action still needs somewhere to show what it sent, and with no reply
+    # frame this sensor is the only place that can ever appear.
+    sensor_config = text_sensor_component.text_sensor_schema(
+        IOHomeOneWayLastCommandTextSensor,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ).extend(cv.COMPONENT_SCHEMA)(
+        {
+            CONF_ID: identity[CONF_LAST_COMMAND_SENSOR_ID],
+            CONF_NAME: f"{friendly_identity} Last 1W Command",
+        }
+    )
+    sensor = await text_sensor_component.new_text_sensor(sensor_config)
+    await cg.register_component(sensor, sensor_config)
+    cg.add(sensor.set_parent(var))
+    cg.add(sensor.set_controller_id(identity[CONF_ID]))
 
 
 async def _create_accept_foreign_pairing_switch(config, var):

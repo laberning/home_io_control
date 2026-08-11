@@ -125,6 +125,20 @@ class ManagementActions {
   /// Native API callback: run a roll-call scan and publish the result as a HA event.
   void api_scan_paired_devices();
 
+  /// @brief Native API callback: queue a 1W position for a controller identity.
+  ///
+  /// An action rather than an entity per percentage (ADR 0006). `position` arrives as a string
+  /// because every argument on this action surface is a string; it is parsed and range-checked
+  /// here, and a bad value is reported rather than coerced — a malformed position that silently
+  /// became 0 would send a fully-open command to a whole device class.
+  ///
+  /// The published result says only that the command was *queued*. 1W has no reply, so nothing
+  /// downstream can ever upgrade that to "the device moved"; the per-identity "Last 1W Command"
+  /// sensor reports what was transmitted.
+  /// @param controller_id Controller-identity handle from `oneway_controllers:`.
+  /// @param position Target position 0-100 as a decimal string.
+  void api_oneway_set_position(const std::string &controller_id, const std::string &position);
+
   /// @brief Broadcast a roll-call and report every device that answers.
   ///
   /// Not a discovery mechanism for new devices: only devices that already hold this hub's

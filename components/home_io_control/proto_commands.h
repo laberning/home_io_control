@@ -92,6 +92,86 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 ///       environmental lock — see analysis/reference_combined_integration.md item 5.
 bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t open_position);
 
+// ============================================================================
+// 1W Execute (fire-and-forget class broadcast)
+// ============================================================================
+//
+// 1W has no reply and no challenge: a controller transmits once and the frame either lands or it
+// doesn't — there is no ACK to retry on and no 0x3C/0x3D to authenticate through, so the MAC
+// inside the payload (create_1w_hmac(), sequence-keyed rather than challenge-keyed) is the only
+// authentication a receiving device gets. The destination is a device *class*
+// (encode_broadcast_address(), proto_codecs.h), never an individual node — 1W has no addressed
+// unicast form at all. Both builders below are pure: they take `sequence` and `controller_key` as
+// parameters and neither increment, persist, nor look either up. The sequence store and the
+// identity registry that own those concerns (OneWayControllerRegistry, oneway_controller.h)
+// arrive in a later step; until then callers are responsible for supplying both.
+
+/// @brief Build a 1W position execute frame (CMD 0x00) targeting a device class.
+///
+/// Encodes a 0–100 position into the 2-byte main field (wire value is `2 * position`, matching
+/// the 2W numeric encoding) inside 1W's 6-byte "special" payload form — 1W uses this short form
+/// even for numeric positions, not the 8-byte layout create_execute_position() (2W) uses. The MAC
+/// span is command-specific (see create_1w_execute_command()'s doxygen); there is no default, so
+/// this builder assembles it itself via the shared internal helper.
+///
+/// @warning **Position 50 is indistinguishable from FORCE_OPEN on the wire.** `2 * 50` is 0x64,
+///          which is also POS_FORCE_OPEN's main-byte code — the protocol overloads the value, and
+///          the reference implementation emits the same byte for both. decode_1w_main_intent()
+///          therefore reads a frame this builder produced for position 50 back as "FORCE_OPEN",
+///          and a receiving device most likely does the same. This is a property of the wire
+///          format, not something a builder can encode around: no alternative byte means "50%".
+///          Callers exposing numeric positions to users should expect 50 to behave as force-open.
+/// @param f IoFrame to populate.
+/// @param src Our 3-byte controller node address (the 1W controller identity's `node_id`).
+/// @param target_type Device class to address; encoded via encode_broadcast_address().
+/// @param position Desired position 0–100 (0=fully open, 100=fully closed).
+/// @param sequence 2-byte rolling sequence for this transmission (big-endian on wire); the
+///        caller's identity/sequence store owns incrementing and persisting this, not this
+///        builder — see the section note above.
+/// @param controller_key 16-byte key held by the transmitting controller identity: the hub's own
+///        `system_key` for its own network, or a foreign key adopted via CMD 0x30 (Phase 3A "key
+///        adoption") when transmitting as an adopted identity.
+/// @return true on success; false if `position > 100` or if crypto::create_1w_hmac() fails — no
+///         partially-populated frame is left behind on failure.
+bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t position,
+                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]);
+
+/// @brief Build a 1W named-command execute frame (CMD 0x00) targeting a device class.
+///
+/// Covers all four CoverCommand values — unlike the 2W dispatch pair (create_execute_command() /
+/// create_force_open()), 1W's FORCE_OPEN needs no device-specific "fully open" position: the
+/// reference protocol encodes it as a literal main-byte code (POS_FORCE_OPEN) regardless of
+/// device inversion, so it fits the same named-command dispatch as STOP/FAVORITE/VENT. It also
+/// keeps the ordinary EXECUTE_ACEI (0x43) rather than the elevated force-open priority 2W uses —
+/// the reference implementation does not raise ACEI priority for 1W's force-open code either.
+///   - STOP:       main=POS_STOP (0xD2),      modifier=0x00
+///   - FAVORITE:   main=POS_FAVORITE (0xD8),   modifier=0x00
+///   - VENT:       main=POS_FAVORITE (0xD8),   modifier=POS_VENT_MODIFIER (0x03)
+///   - FORCE_OPEN: main=POS_FORCE_OPEN (0x64), modifier=0x00
+///
+/// The MAC span is the 7 bytes `cmd, origin, acei, main0, main1, fp1, fp2` — the command byte
+/// through fp2, stopping before the sequence, which is not frame data and never enters the MAC.
+/// Pinned by the published IV vector at
+/// tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml and by the reference
+/// implementation's own span (`toAdd = 6 + 1`, `reference/iohomecontrol/src/iohcRemote1W.cpp`).
+/// This span is command-specific and does not generalise: CMD 0x30's span is `cmd + enc_key`
+/// only — see crypto::create_1w_hmac()'s `@warning`.
+/// @param f IoFrame to populate.
+/// @param src Our 3-byte controller node address (the 1W controller identity's `node_id`).
+/// @param target_type Device class to address; encoded via encode_broadcast_address().
+/// @param cmd Named command to execute (STOP, FAVORITE, VENT, or FORCE_OPEN).
+/// @param sequence 2-byte rolling sequence for this transmission (big-endian on wire); the
+///        caller's identity/sequence store owns incrementing and persisting this, not this
+///        builder — see the section note above.
+/// @param controller_key 16-byte key held by the transmitting controller identity: the hub's own
+///        `system_key` for its own network, or a foreign key adopted via CMD 0x30 (Phase 3A "key
+///        adoption") when transmitting as an adopted identity.
+/// @return true on success; false only if crypto::create_1w_hmac() fails — every CoverCommand
+///         value has a 1W encoding today, but the switch stays exhaustive and defensive in the
+///         same shape as create_execute_command().
+bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, CoverCommand cmd,
+                               uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]);
+
 /// Build a get‑status request (0x03). The device responds with its current position.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID.

@@ -78,3 +78,10 @@ over the radio but would have nothing in Home Assistant to command it *from*.
 - Entity-level persistence is separate and still available where ESPHome
   provides it: the key-extraction switch, for instance, deliberately always
   boots off rather than restoring its previous state.
+- **One narrow exception exists**, recorded in
+  [ADR 0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md):
+  the 1W rolling-sequence counter is persisted, because it is neither
+  configuration nor re-learnable from the air — a 1W device never transmits, so
+  nothing reports the high-water mark our counter has to stay ahead of. The
+  exception covers monotonic counters and nothing else; devices, keys and node
+  IDs stay YAML-only under this ADR.
