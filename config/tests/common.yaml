@@ -43,6 +43,19 @@ home_io_control:
   system_key: 0123456789ABCDEF0123456789ABCDEF
   accept_foreign_pairing: true
   accept_oneway_key: true
+  # Two identities: one inheriting the hub system_key with a derived node_id, one with its own
+  # key and an explicit address — the two shapes the schema has to support.
+  oneway_controllers:
+    - id: awning_remote
+      io_device_type: awning
+      commands: [open, close, stop]
+    - id: adopted_neighbour_net
+      node_id: A11CE0
+      system_key: FEDCBA98765432100123456789ABCDEF
+      manufacturer: 0x02
+      io_device_type: roller_shutter
+      initial_sequence: 1234
+      commands: [open, close]
 
 # At least one entity of each type is needed to ensure all platform code compiles
 cover:

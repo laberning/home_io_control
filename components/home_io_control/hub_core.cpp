@@ -367,6 +367,18 @@ void IOHomeControlComponent::dump_config() {
     });
   }
 
+  if (!this->oneway_controllers_.empty()) {
+    ESP_LOGCONFIG(detail::TAG, "  1W Controllers: %zu", this->oneway_controllers_.all().size());
+    for (const auto &identity : this->oneway_controllers_.all()) {
+      // A derived address is reproducible from the YAML, but nothing in the YAML shows it — so
+      // print it, and mark it derived, or a user debugging a collision has nowhere to look.
+      // Keys are never printed here (ADR 0011); only addresses and classes.
+      ESP_LOGCONFIG(detail::TAG, "    - %s: node %s%s, class 0x%02X", identity.id.c_str(),
+                    node_id_to_string(identity.node_id).c_str(), identity.node_id_derived ? " (derived)" : "",
+                    static_cast<unsigned>(identity.io_device_type));
+    }
+  }
+
   if (this->radio_ != nullptr)
     this->radio_->dump_debug();
 

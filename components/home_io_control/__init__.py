@@ -62,6 +62,17 @@ CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_EXPOSED_SENDERS = "exposed_senders"
 CONF_ACCEPT_FOREIGN_PAIRING = "accept_foreign_pairing"
 CONF_ACCEPT_ONEWAY_KEY = "accept_oneway_key"
+CONF_ONEWAY_CONTROLLERS = "oneway_controllers"
+# Internal marker recording that an identity's node_id was derived rather than configured, so
+# validation errors and the boot log can say which it was.
+CONF_NODE_ID_DERIVED = "_node_id_derived"
+CONF_MANUFACTURER = "manufacturer"
+# Same YAML key as platform_common.py's CONF_DEVICE_TYPE, spelled here rather than imported:
+# platform_common imports from this module, so the dependency cannot run the other way.
+CONF_IO_DEVICE_TYPE = "io_device_type"
+CONF_INITIAL_SEQUENCE = "initial_sequence"
+CONF_COMMANDS = "commands"
+CONF_ENROLLMENT = "enrollment"
 CONF_LR1121_FIRMWARE_UPDATE = "lr1121_firmware_update"
 CONF_LR1121_BOOTLOADER = "bootloader"
 CONF_CHECKSUM_MD5 = "checksum_md5"
@@ -394,6 +405,149 @@ def validate_system_key(value):
     return value
 
 
+# A 1W controller identity. 1W is class-addressed — a command goes to a device *class*, never to
+# a node — so there is no `io_device_id` here and none on the entities that will reference this
+# handle. What distinguishes one 1W control surface from another is the controller doing the
+# transmitting: its address, its key, and the class it speaks to. See ADR 0024 and
+# oneway_controller.h.
+ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
+    {
+        cv.Required(CONF_ID): cv.string_strict,
+        # Optional and derived when omitted — see derive_oneway_node_id() for why asking the user
+        # for one is an unanswerable question.
+        cv.Optional(CONF_NODE_ID): validate_node_id,
+        # Optional and inherits the hub's key when omitted. cv.sensitive matches the hub's own
+        # system_key handling (see the main schema below) so the value is redacted from ESPHome's
+        # config dump; without it a per-identity key would leak into logs verbatim.
+        cv.Optional(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
+        cv.Optional(CONF_MANUFACTURER, default=0): cv.int_range(min=0, max=0xFF),
+        cv.Required(CONF_IO_DEVICE_TYPE): validate_device_type,
+        # Seeds this identity's rolling counter on first use. This is the escape hatch for a
+        # device that has stopped accepting commands because its stored counter ran ahead of
+        # ours: bump this and reflash. Devices accept a forward jump only within a window (~1000
+        # in the one documented receiver implementation), so a value that is too far ahead fails
+        # exactly like one that is too far behind, and just as silently — move it in small steps.
+        cv.Optional(CONF_INITIAL_SEQUENCE, default=0): cv.int_range(min=0, max=0xFFFF),
+        cv.Optional(CONF_COMMANDS, default=[]): cv.ensure_list(cv.string_strict),
+        cv.Optional(CONF_ENROLLMENT, default=False): cv.boolean,
+    }
+)
+
+
+def derive_oneway_node_id(hub_node_id, identity_id):
+    """Derive a stable 3-byte 1W source address from the hub's node_id and an identity handle.
+
+    `node_id` is optional on a `oneway_controllers:` entry because asking a user to invent a
+    3-byte radio address is an unanswerable question — nothing tells them which addresses are
+    safe, and colliding with a real remote in range silently desyncs both transmitters' rolling
+    sequence counters. Deriving one removes the decision while leaving an explicit value
+    available to anyone who needs it.
+
+    The derivation is done here, at schema time, rather than at runtime on the device, so that a
+    derived address participates in the same collision checks as a configured one and a clash
+    fails the build instead of surfacing as a device that silently ignores commands. It is a
+    pure function of (hub node_id, identity id), so it is stable across builds and reproducible
+    from the YAML alone.
+
+    Uses BLAKE2b rather than Python's hash(), which is salted per-process and would produce a
+    different address on every compile.
+    """
+    digest = hashlib.blake2b(
+        f"{hub_node_id}:{identity_id}".encode(), digest_size=3
+    ).digest()
+    return f"{digest[0]:02X}{digest[1]:02X}{digest[2]:02X}"
+
+
+def _hex_byte_array(hex_string):
+    """Render a hex string as a C++ brace-initialiser list of bytes."""
+    values = ", ".join(
+        f"0x{hex_string[i : i + 2]}" for i in range(0, len(hex_string), 2)
+    )
+    return f"{{{values}}}"
+
+
+def oneway_controller_expression(identity, hub_node_id):
+    """Generate the C++ OneWayControllerIdentity initialiser for one configured identity.
+
+    Emitted as a designated initialiser so the generated code reads like the YAML that produced
+    it, and so adding a field to the struct cannot silently shift an existing value.
+    """
+    derived = identity.get(CONF_NODE_ID_DERIVED, False)
+    fields = ", ".join(
+        [
+            f'.id = "{identity[CONF_ID]}"',
+            f".node_id = {_hex_byte_array(identity[CONF_NODE_ID])}",
+            f".system_key = {_hex_byte_array(identity[CONF_SYSTEM_KEY])}",
+            f".manufacturer = 0x{identity[CONF_MANUFACTURER]:02X}",
+            f".io_device_type = static_cast<esphome::home_io_control::DeviceType>"
+            f"(0x{identity[CONF_IO_DEVICE_TYPE]:02X})",
+            f".initial_sequence = 0x{identity[CONF_INITIAL_SEQUENCE]:04X}",
+            f".node_id_derived = {'true' if derived else 'false'}",
+        ]
+    )
+    if derived:
+        _LOGGER.info(
+            "home_io_control: oneway_controllers '%s' node_id derived from hub %s -> %s",
+            identity[CONF_ID],
+            hub_node_id,
+            identity[CONF_NODE_ID],
+        )
+    return cg.RawExpression(
+        f"esphome::home_io_control::OneWayControllerIdentity{{{fields}}}"
+    )
+
+
+def _validate_oneway_controllers(config):
+    """Resolve per-identity defaults and reject address/handle collisions at compile time.
+
+    Runs as a post-validator on the whole hub config because every rule here needs the hub's own
+    `node_id`/`system_key`, which a per-entry validator cannot see.
+    """
+    identities = config.get(CONF_ONEWAY_CONTROLLERS, [])
+    if not identities:
+        return config
+
+    hub_node_id = config[CONF_NODE_ID]
+    seen_ids = set()
+    # Maps resolved address -> the human-readable owner, so a collision message can name both
+    # sides rather than just reporting that "an" address is taken.
+    seen_node_ids = {hub_node_id: "the hub's own node_id"}
+
+    for identity in identities:
+        identity_id = identity[CONF_ID]
+        if identity_id in seen_ids:
+            raise cv.Invalid(
+                f"Duplicate oneway_controllers id '{identity_id}' — each identity needs its own handle"
+            )
+        seen_ids.add(identity_id)
+
+        if CONF_NODE_ID not in identity:
+            identity[CONF_NODE_ID] = derive_oneway_node_id(hub_node_id, identity_id)
+            identity[CONF_NODE_ID_DERIVED] = True
+
+        node_id = identity[CONF_NODE_ID]
+        if node_id in seen_node_ids:
+            owner = seen_node_ids[node_id]
+            hint = (
+                " (this address was derived; set node_id: explicitly to resolve the clash)"
+                if identity.get(CONF_NODE_ID_DERIVED)
+                else ""
+            )
+            raise cv.Invalid(
+                f"oneway_controllers id '{identity_id}' uses node_id {node_id}, which collides with "
+                f"{owner}{hint}. Two transmitters sharing an address share a rolling sequence "
+                f"counter, which silently desyncs both."
+            )
+        seen_node_ids[node_id] = f"oneway_controllers id '{identity_id}'"
+
+        # A per-identity key is optional so that identities on the hub's own network need not
+        # repeat it; an adopted foreign network's key is what makes the override necessary.
+        if CONF_SYSTEM_KEY not in identity:
+            identity[CONF_SYSTEM_KEY] = config[CONF_SYSTEM_KEY]
+
+    return config
+
+
 def validate_device_id(value):
     """Validate io_device_id as exactly 6 hex characters (3 bytes)."""
     value = cv.string_strict(value).upper()
@@ -469,6 +623,9 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_ACCEPT_FOREIGN_PAIRING, default=False): cv.boolean,
             cv.Optional(CONF_ACCEPT_ONEWAY_KEY, default=False): cv.boolean,
+            cv.Optional(CONF_ONEWAY_CONTROLLERS, default=[]): cv.ensure_list(
+                ONEWAY_CONTROLLER_SCHEMA
+            ),
             cv.Optional(CONF_LR1121_FIRMWARE_UPDATE): LR1121_FIRMWARE_UPDATE_SCHEMA,
             cv.Optional(tuning_module.CONF_TUNING): tuning_module.TUNING_CONFIG_SCHEMA,
         }
@@ -477,6 +634,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(spi.spi_device_schema(True, 8e6, "mode0")),
     _inject_accept_foreign_pairing_switch_id,
     _inject_accept_oneway_key_switch_id,
+    _validate_oneway_controllers,
     _validate_lr1121_firmware_update,
 )
 
@@ -537,6 +695,13 @@ async def to_code(config):
 
     for sender_id in config[CONF_EXPOSED_SENDERS]:
         cg.add(var.add_exposed_sender(sender_id))
+
+    for identity in config[CONF_ONEWAY_CONTROLLERS]:
+        cg.add(
+            var.add_oneway_controller(
+                oneway_controller_expression(identity, config[CONF_NODE_ID])
+            )
+        )
 
     if config[CONF_ACCEPT_FOREIGN_PAIRING]:
         await _create_accept_foreign_pairing_switch(config, var)

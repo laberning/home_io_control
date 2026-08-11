@@ -44,6 +44,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0015](0015-table-driven-tuning-registry-with-a-sync-gate.md) | Table-driven tuning registry | Python and C++ stay hand-written, a build gate catches drift |
 | [0018](0018-yaml-is-the-source-of-truth-hub-persists-nothing.md) | YAML is the only source of truth | The hub persists nothing; pairing ends in paste-and-reflash |
 | [0019](0019-declare-what-the-protocol-cannot-report.md) | Declare, don't guess | Undetectable capabilities are YAML options, not inferences |
+| [0024](0024-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
 
 ### Security
 

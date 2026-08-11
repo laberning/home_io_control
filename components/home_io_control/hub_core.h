@@ -43,6 +43,7 @@
 #include "pairing_engine.h"
 #include "management_actions.h"
 #include "pairing_responder.h"
+#include "oneway_controller.h"
 #include "lr1121_firmware_decisions.h"
 #include "radio_lr1121_firmware_updater.h"
 #include <map>
@@ -211,6 +212,17 @@ class IOHomeControlComponent : public Component,
   /// opted in.
   /// @param sender_id Node ID of the 1W sender (remote or sensor).
   void add_exposed_sender(const std::string &sender_id) { this->exposed_senders_.push_back(sender_id); }
+
+  /// Register a configured 1W controller identity (see oneway_controller.h). Called once per
+  /// `oneway_controllers:` entry from generated code. Both the source address and the key are
+  /// already resolved at schema time — a derived address is computed there so a collision with
+  /// the hub's own address or another identity fails the build rather than silently desyncing a
+  /// transmitter at runtime.
+  /// @param identity Fully-resolved controller identity.
+  void add_oneway_controller(const OneWayControllerIdentity &identity) { this->oneway_controllers_.add(identity); }
+
+  /// @return The configured 1W controller identities.
+  [[nodiscard]] const OneWayControllerRegistry &oneway_controllers() const { return this->oneway_controllers_; }
 
   /// @return The telemetry recorded for the most recent (or in-progress) pairing attempt.
   [[nodiscard]] const PairingTelemetry &pairing_telemetry() const { return this->pairing_telemetry_; }
@@ -779,6 +791,11 @@ class IOHomeControlComponent : public Component,
   pairing_responder::ResponderContext key_extraction_ctx_;
   /// Invoked whenever the key-extraction armed state changes; see set_key_extraction_armed_callback().
   std::function<void(bool)> key_extraction_armed_callback_;
+  /// Configured 1W controller identities (oneway_controller.h). Config-time list, populated once
+  /// from YAML. **Ownership moves into the `OneWayTransmitter` collaborator when it lands** — see
+  /// that header's note and ADR 0004; it lives here only because the collaborator does not exist
+  /// yet.
+  OneWayControllerRegistry oneway_controllers_;
   /// True while the 1W key-adoption listener is armed; see set_oneway_key_adoption_armed().
   bool oneway_key_adoption_armed_{false};
   /// Invoked whenever the 1W key-adoption armed state changes; see
