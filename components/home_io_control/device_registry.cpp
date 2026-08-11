@@ -103,6 +103,28 @@ bool DeviceRegistry::clear_optimistic_target(const std::string &device_id) {
   return true;
 }
 
+bool DeviceRegistry::apply_optimistic_tilt(const std::string &device_id, float tilt_percent) {
+  auto it = devices_.find(device_id);
+  if (it == devices_.end() || !it->second.optimistic_state)
+    return false;
+  // Type-gated here rather than at the call sites so every present and future caller is safe:
+  // showing an angle the device will never report back would be a lie the next poll cannot
+  // correct. This admits exactly the devices whose tilt command is accepted — the command gate
+  // known_device_accepts_execute_tilt() is this same predicate plus an UNKNOWN-type check that
+  // device_supports_tilt() already fails — so the two cannot disagree about a given device.
+  if (!device_supports_tilt(it->second.type))
+    return false;
+  if (it->second.tilt == UNKNOWN_POSITION) {
+    ESP_LOGD(TAG, "Device %s: optimistic tilt=%.0f (last reported tilt=unknown)", device_id.c_str(), tilt_percent);
+  } else {
+    ESP_LOGD(TAG, "Device %s: optimistic tilt=%.0f (last reported tilt=%.0f)", device_id.c_str(), tilt_percent,
+             it->second.tilt);
+  }
+  it->second.tilt = tilt_percent;
+  notify(device_id);
+  return true;
+}
+
 void DeviceRegistry::for_each_linked_remote(
     const std::function<void(const std::string &, const std::vector<std::string> &)> &fn) const {
   for (const auto &pair : linked_remotes_)

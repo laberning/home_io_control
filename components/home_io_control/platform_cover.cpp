@@ -86,12 +86,17 @@ void IOHomeCover::control(const cover::CoverCall &call) {
     uint8_t const io_pos = invert ? detail::round_percent(ha_pos) : detail::round_percent(1.0F - ha_pos);
     auto const tilt = detail::round_percent(*tilt_opt);
     this->parent_->apply_optimistic_target(this->device_id_, io_pos);
+    this->parent_->apply_optimistic_tilt(this->device_id_, tilt);
     this->parent_->queue_set_device_position_and_tilt(this->device_id_, io_pos, tilt);
     return;
   }
 
   if (tilt_opt.has_value()) {
     auto const tilt = detail::round_percent(*tilt_opt);
+    // Position commands get their optimistic feedback from apply_optimistic_target() above; tilt
+    // needs its own because a tilt command's reply carries no usable slat angle, so without this
+    // the slider snaps back to the pre-command angle until the next status poll.
+    this->parent_->apply_optimistic_tilt(this->device_id_, tilt);
     this->parent_->queue_set_device_tilt(this->device_id_, tilt);
     return;
   }

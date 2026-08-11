@@ -169,9 +169,12 @@ inline void encode_device_metadata(DeviceType type, uint8_t subtype, uint8_t *pa
 
 /// Shared mock hub base for platform entity tests.
 ///
-/// The concrete platform test doubles override only the semantic command paths
-/// they assert on. Device registry and callback fan-out stay centralized here
-/// so hub interface growth does not need to be repeated in every test file.
+/// The concrete platform test doubles override only the semantic command paths they assert on
+/// (the radio-facing set_*/queue_* calls, stubbed out here). Everything else — device storage,
+/// subscriber fan-out, optimistic state — is inherited from the real component and runs against
+/// a real DeviceRegistry, so hub interface growth needs no repetition in any test file.
+/// Device IDs must therefore be valid hex node IDs (e.g. "ABC123"): DeviceRegistry::add()
+/// rejects anything else, and get_device() would then return nullptr.
 class MockPlatformHubBase : public IOHomeControlComponent {
  public:
   ~MockPlatformHubBase() override = default;
@@ -196,68 +199,33 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   void queue_set_switch_state(const std::string &, bool) override {}
   void queue_set_lock_state(const std::string &, bool) override {}
 
-  IoDevice *get_device(const std::string &device_id) override {
-    auto it = devices_.find(device_id);
-    return it != devices_.end() ? &it->second : nullptr;
-  }
-
-  void set_device_dimmable(const std::string &device_id, bool dimmable) override {
-    if (auto it = devices_.find(device_id); it != devices_.end())
-      it->second.dimmable = dimmable;
-  }
-
-  void add_device(const std::string &device_id) override {
-    if (devices_.count(device_id))
-      return;
-    devices_[device_id] = IoDevice{};
-  }
-
-  void add_device(const std::string &device_id, const DeviceConfig &cfg) override {
-    if (devices_.count(device_id))
-      return;
-    auto &device = devices_[device_id];
-    device = IoDevice{};
-    device.type = cfg.type;
-    device.subtype = cfg.subtype;
-    device.inverted = cfg.inverted;
-    device.optimistic_state = cfg.optimistic_state;
-  }
-
-  bool apply_optimistic_target(const std::string &device_id, float target_io_position) override {
-    auto it = devices_.find(device_id);
-    if (it == devices_.end() || !it->second.optimistic_state)
-      return false;
-    it->second.target = target_io_position;
-    it->second.is_stopped = false;
-    for (auto &cb : callbacks_)
-      cb(device_id, it->second);
-    return true;
-  }
-
-  bool clear_optimistic_target(const std::string &device_id) override {
-    auto it = devices_.find(device_id);
-    if (it == devices_.end() || !it->second.optimistic_state)
-      return false;
-    it->second.target = UNKNOWN_POSITION;
-    it->second.is_stopped = true;
-    for (auto &cb : callbacks_)
-      cb(device_id, it->second);
-    return true;
-  }
-
-  void register_device_callback(DeviceUpdateCallback cb) override { callbacks_.push_back(std::move(cb)); }
+  // add_device/get_device/set_device_dimmable/register_device_callback/apply_optimistic_* are
+  // deliberately NOT overridden — the base implements them as one-line delegations to the real
+  // DeviceRegistry, so inheriting them tests production code instead of a parallel copy. This
+  // mock previously kept its own std::map and reimplemented that logic; it diverged silently the
+  // moment the registry grew a method, because the base's virtual was never reached and every
+  // platform test saw a no-op instead of the new behavior.
 
   using IOHomeControlComponent::poll_policy_;
 
+  /// Publish `dev` to the entity callbacks as if it had just arrived from the radio.
+  /// @param device_id   Device the update is for; must already be registered via add_device().
+  /// @param dev         Device state to publish.
+  /// @param cache_device True to leave `dev` in the registry afterwards; false to publish it as a
+  ///                     one-off and restore the previously stored state, matching how a test
+  ///                     drives a sequence of updates without disturbing the device it set up.
   void trigger_device_update(const std::string &device_id, const IoDevice &dev, bool cache_device = false) {
-    if (cache_device)
-      devices_[device_id] = dev;
-    for (auto &cb : callbacks_)
-      cb(device_id, dev);
+    IoDevice const *stored = this->registry_.get(device_id);
+    // notify() publishes what the registry holds, so the update has to be stored to be seen.
+    // Snapshot first when the caller wants it put back.
+    bool const was_registered = stored != nullptr;
+    IoDevice const previous = was_registered ? *stored : IoDevice{};
+    this->registry_.put(device_id, dev);
+    this->registry_.notify(device_id);
+    // Restore only when there was something to restore — putting back a default-constructed
+    // IoDevice for a device that was never registered would leave a phantom with a zero node ID.
+    if (!cache_device && was_registered)
+      this->registry_.put(device_id, previous);
   }
-
- private:
-  std::map<std::string, IoDevice> devices_;
-  std::vector<DeviceUpdateCallback> callbacks_;
 };
 }  // namespace test

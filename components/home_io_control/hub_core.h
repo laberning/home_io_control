@@ -201,6 +201,19 @@ class IOHomeControlComponent : public Component,
     return this->registry_.clear_optimistic_target(device_id);
   }
 
+  /// Set an optimistic slat angle ahead of a confirming status poll, and notify.
+  /// No-op when the device is unknown, has `optimistic_state == false`, or is not tilt-capable.
+  /// See DeviceRegistry::apply_optimistic_tilt() for the full contract and for why a tilt
+  /// command cannot rely on its own reply the way a position command can.
+  /// Virtual like the other device-registry accessors so a test double can override it if it
+  /// needs to; MockPlatformHubBase deliberately does not, and exercises the real registry.
+  /// @param device_id    Target device ID.
+  /// @param tilt_percent Slat angle in the same percent scale as `IoDevice::tilt` (0-100).
+  /// @return true if the optimistic tilt was applied.
+  virtual bool apply_optimistic_tilt(const std::string &device_id, float tilt_percent) {
+    return this->registry_.apply_optimistic_tilt(device_id, tilt_percent);
+  }
+
   /// Allow a 1W sender (identified by its node ID) to fire the `esphome.home_io_control_sender_event`
   /// event to Home Assistant. "Sender" is deliberately broader than "remote": the same 1W broadcast
   /// mechanism carries handheld/wall remotes and wind/rain sensors alike (they differ only in the

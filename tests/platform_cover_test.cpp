@@ -330,6 +330,65 @@ TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTargetImmedia
   EXPECT_FALSE(dev->is_stopped);
 }
 
+TEST(PlatformCover, ControlSetTiltAppliesOptimisticTiltImmediately) {
+  // Issue 60: a tilt command's own reply carries no usable slat angle, so without an optimistic
+  // apply the HA slider snaps back to the pre-command angle until the next status poll.
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_device_type(DeviceType::VENETIAN_BLIND);
+  hub.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+
+  CoverCall call(&cover);
+  call.set_tilt(0.83f);
+  cover.control(call);
+
+  const auto *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->tilt, 83.0f) << "control() should apply the optimistic tilt before the queued command runs";
+  EXPECT_TRUE(dev->is_stopped) << "a tilt-only command must not start the HA open/close animation";
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "a tilt-only command must not invent a position target";
+  EXPECT_EQ(hub.last_set_tilt(), 83u) << "the command itself should still be queued as normal";
+}
+
+TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTiltToo) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_device_type(DeviceType::VENETIAN_BLIND);
+  hub.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+
+  CoverCall call(&cover);
+  call.set_position(0.25);
+  call.set_tilt(0.5f);
+  cover.control(call);
+
+  const auto *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->tilt, 50.0f) << "the combined branch should apply optimistic tilt alongside optimistic target";
+  EXPECT_FLOAT_EQ(dev->target, 75.0f);
+}
+
+TEST(PlatformCover, ControlSetTiltRespectsOptimisticStateFalse) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_device_type(DeviceType::VENETIAN_BLIND);
+  hub.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
+
+  CoverCall call(&cover);
+  call.set_tilt(0.83f);
+  cover.control(call);
+
+  const auto *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->tilt, UNKNOWN_POSITION) << "optimistic_state=false must leave tilt untouched (poll-only)";
+  EXPECT_EQ(hub.last_set_tilt(), 83u) << "the command itself should still be queued as normal";
+}
+
 TEST(PlatformCover, ControlRespectsOptimisticStateFalse) {
   MockHub hub;
   TestableCover cover;
