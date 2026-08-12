@@ -150,10 +150,13 @@ TEST(HubKeyExtraction, ThrowawayIdGenerationFallsBackWhenEveryCandidateCollides)
 // fixed SHORT_PREAMBLE/LONG_PREAMBLE constant. Hardware-confirmed 2026-08-02: both fixed choices
 // broke real exchanges — SHORT_PREAMBLE(8) was too short for a hopping receiver to reliably catch
 // from a slower-turnaround chip, and LONG_PREAMBLE(1024) blocked the main loop long enough to
-// blow through the hub's tight per-try wait windows on both chips. Using MockRadioSX1262 (whose
-// response_preamble() differs from both fixed constants) makes this failure mode fail loudly
-// instead of silently passing on the generic MockRadio, whose default happens to equal
-// SHORT_PREAMBLE.
+// blow through the hub's tight per-try wait windows on both chips.
+//
+// SX1262_RESPONSE_PREAMBLE == SHORT_PREAMBLE (8 bytes): both are byte-denominated, and the
+// hardware-validated SX1262 response preamble turns out to equal the protocol's nominal short
+// preamble. So MockRadioSX1262 no longer discriminates "used response_preamble()" from
+// "hardcoded SHORT_PREAMBLE" on that constant alone — only the LONG_PREAMBLE check still catches
+// a regression to a fixed constant.
 // ========================================================================================
 
 TEST(HubKeyExtraction, DiscoveryReplyUsesRadioResponsePreambleNotFixedConstant) {
@@ -168,9 +171,8 @@ TEST(HubKeyExtraction, DiscoveryReplyUsesRadioResponsePreambleNotFixedConstant) 
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u) << "0x29 should be sent on all 3 channels";
   for (const auto &tx_config : radio.get_tx_configs()) {
-    EXPECT_EQ(tx_config.preamble_len, SX1262_RESPONSE_PREAMBLE)
+    EXPECT_EQ(tx_config.preamble_len, radio.response_preamble())
         << "discovery reply must use the driver's response_preamble(), not a fixed constant";
-    EXPECT_NE(tx_config.preamble_len, SHORT_PREAMBLE);
     EXPECT_NE(tx_config.preamble_len, LONG_PREAMBLE);
   }
 }

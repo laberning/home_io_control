@@ -42,8 +42,7 @@ constexpr uint8_t EXECUTE_ACEI =
 /// @note Real-hardware testing confirmed this correctly moves a device to fully open (see
 ///       create_force_open()'s position-inversion note), but elevation to level 0 has not yet
 ///       been confirmed to actually override an *active* lock — only that the device accepts
-///       the frame when nothing is locking it. See analysis/reference_combined_integration.md
-///       item 5.
+///       the frame when nothing is locking it.
 constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
     (ACEI_LEVEL_PROTECTION_HUMAN << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
 /// Standard payload length for full execute-family commands.

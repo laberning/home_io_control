@@ -89,7 +89,7 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 ///        command to the device's already-resting position instead of moving it anywhere.
 /// @return true on success.
 /// @note The elevated-priority override has not yet been confirmed against a real *active*
-///       environmental lock — see analysis/reference_combined_integration.md item 5.
+///       environmental lock.
 bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t open_position);
 
 /// Build a get‑status request (0x03). The device responds with its current position.

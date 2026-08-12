@@ -159,10 +159,9 @@ static constexpr uint8_t LR1121_CALIBRATE_ALL_BLOCKS = 0x3F;
 static constexpr uint8_t LR1121_FALLBACK_STDBY_XOSC = 0x02;
 
 // ============================================================================
-// Vendor errata / calibration workaround registers (analysis/lr1121_bring_up_investigation.md
-// §4.1-4.3) — Semtech's own driver (lr11xx_radio.c) and RadioLib both apply these unconditionally;
-// this driver's initial version never touched them. Register addresses/masks/values are byte-for-
-// byte matches to `lr11xx_radio_apply_high_acp_workaround` and `lr11xx_workaround_gfsk_reset`.
+// Vendor errata / calibration workaround registers — Semtech's own driver (lr11xx_radio.c) and
+// RadioLib both apply these unconditionally. Register addresses/masks/values are byte-for-byte
+// matches to `lr11xx_radio_apply_high_acp_workaround` and `lr11xx_workaround_gfsk_reset`.
 // ============================================================================
 
 /// High-ACP (adjacent channel power) TX-quality erratum: clear bit 30 of this register before

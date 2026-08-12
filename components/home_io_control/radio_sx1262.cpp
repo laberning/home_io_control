@@ -115,9 +115,15 @@ void RadioSX1262::read_buffer_(uint8_t offset, uint8_t *data, uint8_t len) {
 
 void RadioSX1262::set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type,
                                      uint8_t crc_type) {
+  // preamble_len arrives in bytes, matching every other layer in this codebase (LONG_PREAMBLE,
+  // SHORT_PREAMBLE, the tuning defaults) and the SX1276's byte-wide RegPreambleMsb/Lsb. This
+  // chip's SetPacketParams field is bit-denominated instead — Semtech's own struct names it
+  // sx126x_pkt_params_gfsk_t.preamble_len_in_bits — so convert at this last step, right before
+  // the value leaves for the wire.
+  const uint16_t preamble_bits = preamble_len * 8;
   uint8_t params[9] = {
-      (uint8_t) (preamble_len >> 8),   // Preamble length MSB
-      (uint8_t) preamble_len,          // Preamble length LSB
+      (uint8_t) (preamble_bits >> 8),  // Preamble length MSB
+      (uint8_t) preamble_bits,         // Preamble length LSB
       0x04,                            // Preamble detector: 8 bits (1 byte)
       SX1262_SYNC_WORD_PARAM_24_BITS,  // Sync word length: 24 bits (3 bytes)
       0x00,                            // Address comparison: off

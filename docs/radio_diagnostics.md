@@ -128,14 +128,14 @@ your device may differ.
 | Parameter | Radio | Default | Range / options | What it does |
 |---|---|---|---|---|
 | `sx1262_rx_bandwidth` | SX1262 | `117.3` | `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
-| `sx1262_response_preamble` | SX1262 | `64` | 32–256 B | Preamble length on reply frames, for the peer to lock on. |
+| `sx1262_response_preamble` | SX1262 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth; wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell while hopping during discovery. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
-| `lr1121_response_preamble` | LR1121 | `64` | 32–256 B | Preamble length on reply frames, for the peer to lock on. |
+| `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
@@ -174,9 +174,11 @@ when key exchange stalls right after discovery on an SX1262 board, especially wi
 has never been paired before.
 
 *Observations:* the SX1262's modulation is marginal for short preambles on the fast post-TX
-turnaround. In testing, already-paired devices locked onto 64 bytes reliably, but brand-new
-devices often failed to decode 8/32/64-byte preambles and only succeeded with a very long
-preamble.
+turnaround. Already-paired devices lock onto an on-air preamble of 8 bytes reliably. Brand-new
+devices often fail to decode on-air preambles of 1/4/8 bytes and need something substantially
+longer — exactly how much, up to the protocol's full 1024-byte long preamble, has not yet been
+independently validated on this chip, so treat any specific number above 8 as untested rather
+than known-good.
 
 #### `sx1262_post_tx_settle_us`
 
@@ -210,9 +212,10 @@ if key exchange stalls right after discovery on an SX1276 board.
 
 *Observations:* the SX1276 originally reused the protocol's 8-byte short preamble here. A
 slightly longer `12` bytes was found on hardware to improve the peer's lock-on with no
-measurable timing cost, so that is now the default — still far short of the SX1262's `64`, since
-the SX1276's IoHomeOn waveform gives peers more margin. Lengthen it further for a stubborn or
-marginal-range device.
+measurable timing cost, so that is now the default — actually longer than the SX1262's `8`
+(see the SX1262 section above: brand-new devices needed noticeably more than that on the SX1262,
+so don't read the SX1276's smaller number as evidence 12 is generous; it has simply never needed
+raising in testing here). Lengthen it further for a stubborn or marginal-range device.
 
 #### `sx1276_discovery_hop_slice_ms` / `sx1262_discovery_hop_slice_ms`
 
@@ -233,7 +236,7 @@ SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop).
 
 *Observations:* the defaults were seeded from SX1262's validated values and are now confirmed
 working on real LR1121 hardware — authenticated open/close/stop exchanges complete reliably
-against a real awning at the stock `117.3` kHz / `64` B / `500` µs / `200` ms settings. Two of
+against a real awning at the stock `117.3` kHz / `8` B / `500` µs / `200` ms settings. Two of
 `lr1121_rx_bandwidth`'s enum values (39.0/46.9 kHz) turned out to have the wrong register
 encoding when borrowed directly from SX1262 and were corrected — the full, corrected option set
 is `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` kHz. The main variable that
@@ -390,7 +393,7 @@ is a general starting point, not a guarantee — different devices need differen
    ```yaml
    sx1262_post_tx_settle_us: 750    # then 1000
    sx1262_rx_bandwidth: 156.2
-   sx1262_response_preamble: 96     # then 128
+   sx1262_response_preamble: 12     # then 16
    ```
 
 7. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but see the

@@ -93,9 +93,8 @@ static constexpr uint8_t CMD_DISCOVER_ALT_RESP =
            ///< tests/corpus/captures/velux_kux100/discover_alt_addressed_challenge_response.yaml
            ///< — the only capture this project has of it. Not otherwise used anywhere in this
            ///< codebase (no dispatch logic added).
-static constexpr uint8_t CMD_ONEWAY_REMOVE =
-    0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device); same payload shape
-           ///< as 0x2E. Reference: analysis/completed/pairing_lab.md field capture, "CMD 0x39".
+static constexpr uint8_t CMD_ONEWAY_REMOVE = 0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device);
+                                                    ///< same payload shape as 0x2E.
 
 // Key exchange commands (used during pairing)
 static constexpr uint8_t CMD_KEY_INIT = 0x31;      ///< Initiate key transfer to device

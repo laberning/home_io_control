@@ -26,10 +26,9 @@
 /// @warning What that test does NOT validate: compatibility with a genuine third-party hub
 /// (Somfy TaHoma/Smoove, Velux KLF200, etc.). The device-role frames built here
 /// (create_discover_resp(), create_challenge_req(), create_key_confirm()) were reverse-engineered
-/// from this project's own encoder and a small number of captures — see
-/// analysis/key_extraction_feature_plan.md §4b. The self-test above necessarily agrees with those
-/// conventions (it's the same codebase on both ends); a real hub's exact requirements
-/// (discovery-response field completeness, retry cadence) may still differ.
+/// from this project's own encoder and a small number of captures. The self-test above
+/// necessarily agrees with those conventions (it's the same codebase on both ends); a real hub's
+/// exact requirements (discovery-response field completeness, retry cadence) may still differ.
 /// recover_system_key_from_transfer()'s IV-derivation formula itself is now pinned against two
 /// externally-captured known-answer key transfers (ProtoCrypto.CryptKeyMatchesDocumented*Capture
 /// in proto_crypto_test.cpp), so that specific formula is no longer only self-derived — though
@@ -45,9 +44,8 @@ namespace {
 
 constexpr uint32_t KEY_EXTRACTION_AUTO_OFF_MS = 10 * 60 * 1000;  ///< Arm window: 10 minutes.
 // TODO(hardware-verify): confirm a real hub's pairing flow doesn't validate the advertised
-// manufacturer/type against a known-device allowlist before completing key exchange (see
-// analysis/key_extraction_feature_plan.md §10.1) — Somfy/roller-shutter is a plausible but
-// unconfirmed default.
+// manufacturer/type against a known-device allowlist before completing key exchange —
+// Somfy/roller-shutter is a plausible but unconfirmed default.
 constexpr uint8_t KEY_EXTRACTION_MANUFACTURER_ID = MANUFACTURER_SOMFY;  ///< Plausible, widely-supported default.
 constexpr DeviceType KEY_EXTRACTION_ADVERTISED_TYPE = DeviceType::ROLLER_SHUTTER;  ///< Plausible default device type.
 constexpr uint8_t KEY_EXTRACTION_ADVERTISED_SUBTYPE = 0;
@@ -155,7 +153,7 @@ bool IOHomeControlComponent::try_handle_key_extraction_frame_(const IoFrame &fra
 void IOHomeControlComponent::broadcast_key_extraction_reply_(const IoFrame &frame) {
   // Broadcast on all 3 channels like the CMD_STATUS_UPDATE_RESP ack in hub_status.cpp: we don't
   // know which channel the foreign hub is listening on after transmitting its own frame. Use the
-  // driver's own response_preamble() (12 bytes for SX1276, 64 for SX1262) rather than a flat
+  // driver's own response_preamble() (12 bytes for SX1276, 8 for SX1262) rather than a flat
   // SHORT_PREAMBLE(8) or LONG_PREAMBLE(1024) constant — this is the same chip-tuned "reply, not a
   // cold start" preamble ExchangeEngine/PairingEngine already use for every other reply in this
   // codebase (see exchange_engine.cpp, pairing_engine.cpp), and it exists for exactly this

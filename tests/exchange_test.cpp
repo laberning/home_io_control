@@ -403,12 +403,16 @@ TEST(Exchange, ResponsePreamble_DefaultReturnsShortPreamble) {
       << "base RadioDriver (SX1276-like) should return SHORT_PREAMBLE for response frames";
 }
 
-TEST(Exchange, ResponsePreamble_SX1262ReturnsLongerPreamble) {
+TEST(Exchange, ResponsePreamble_SX1262MatchesConfiguredValue) {
   MockRadioSX1262 radio;
   EXPECT_EQ(radio.response_preamble(), SX1262_RESPONSE_PREAMBLE)
       << "SX1262 should return the configured response preamble";
-  EXPECT_GT(radio.response_preamble(), SHORT_PREAMBLE)
-      << "SX1262 needs a longer preamble for device lock-on during tight turnaround";
+  // SX1262_RESPONSE_PREAMBLE is byte-denominated, same as SHORT_PREAMBLE (set_packet_params_()
+  // converts to the chip's bit-denominated register at the SPI boundary), so the hardware-
+  // validated response preamble equals the protocol's nominal short preamble, not something
+  // longer than it.
+  EXPECT_EQ(radio.response_preamble(), SHORT_PREAMBLE)
+      << "SX1262's hardware-validated response preamble is the protocol's nominal 8 bytes";
 }
 
 TEST(Exchange, TxRxTurnaround_RealDriversDeclareExpectedCapability) {
@@ -499,7 +503,7 @@ TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_Default) {
 }
 
 TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_SX1262) {
-  // Non-START frames on SX1262 should use the longer SX1262_RESPONSE_PREAMBLE.
+  // Non-START frames on SX1262 should use SX1262_RESPONSE_PREAMBLE, not LONG_PREAMBLE.
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadioSX1262 radio;
@@ -521,7 +525,7 @@ TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_SX1262) {
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u);
   EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, SX1262_RESPONSE_PREAMBLE)
-      << "non-START frame on SX1262 should use SX1262_RESPONSE_PREAMBLE (64)";
+      << "non-START frame on SX1262 should use SX1262_RESPONSE_PREAMBLE";
 }
 
 TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {

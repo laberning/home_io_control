@@ -151,14 +151,18 @@ UI_NAMES = {
 # Numeric parameters: key -> (min, max, step, unit). Single source of truth for both the
 # YAML validation range and the Home Assistant `number` entity bounds, so the two cannot drift.
 _NUMBER_PARAMS = {
-    CONF_SX1262_RESPONSE_PREAMBLE: (32, 256, 1, "B"),
+    # Floor is 8, not an arbitrary round number: it's SHORT_PREAMBLE, the protocol's own nominal
+    # preamble length and the lowest value that makes sense to transmit (below it there isn't
+    # enough preamble left for the peer's detector to lock on at all). Same floor as
+    # sx1276_response_preamble below.
+    CONF_SX1262_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_SX1262_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
     CONF_SX1276_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: (5, 200, 1, "ms"),
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (50, 500, 1, "ms"),
     # LR1121 numeric ranges reuse the SX1262 bounds — same chip-family physical constraints
     # (design doc §3.2: "seed every timing/tuning default from the validated SX1262 values").
-    CONF_LR1121_RESPONSE_PREAMBLE: (32, 256, 1, "B"),
+    CONF_LR1121_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_LR1121_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: (50, 500, 1, "ms"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),

@@ -181,9 +181,8 @@ TEST(ProtoCrypto, KeyTransferRoundTrip) {
 // ========================================================================================
 // recover_system_key_from_transfer() — key-extraction responder's decode path
 // ========================================================================================
-// The single most important test in the key-extraction feature (see
-// analysis/key_extraction_feature_plan.md §3, §9): pins down the IV-`data` convention
-// (`{CMD_KEY_INIT}, len 1`) so a future refactor can't quietly break decryption.
+// The single most important test in the key-extraction feature: pins down the IV-`data`
+// convention (`{CMD_KEY_INIT}, len 1`) so a future refactor can't quietly break decryption.
 
 TEST(ProtoCrypto, RecoverSystemKeyFromTransferRoundTrip) {
   IoFrame key_init = test::make_key_init();

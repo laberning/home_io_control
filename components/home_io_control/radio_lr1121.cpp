@@ -152,9 +152,14 @@ void RadioLR1121::set_packet_params_(uint16_t preamble_len, uint8_t payload_len,
                                      uint8_t crc_type) {
   // Same 9-field shape as RadioSX1262::set_packet_params_ (design §3.2 step 7 gives the LR1121
   // field values as a direct match to the SX1262's), just written via the LR1121 opcode.
+  //
+  // preamble_len arrives in bytes (see RadioSX1262::set_packet_params_ for why); this chip's
+  // field is bit-denominated too — Semtech names it lr11xx_radio_pkt_params_gfsk_t.pbl_len_in_bit
+  // (reference/SWTL001/lr11xx_driver/src/lr11xx_radio_types.h:545) — so convert here as well.
+  const uint16_t preamble_bits = preamble_len * 8;
   uint8_t params[9] = {
-      (uint8_t) (preamble_len >> 8),    // Preamble length MSB
-      (uint8_t) preamble_len,           // Preamble length LSB
+      (uint8_t) (preamble_bits >> 8),   // Preamble length MSB
+      (uint8_t) preamble_bits,          // Preamble length LSB
       LR1121_PREAMBLE_DETECTOR_16_BIT,  // Preamble detector: 16 bits
       LR1121_SYNC_WORD_PARAM_24_BITS,   // Sync word length: 24 bits
       0x00,                             // Address comparison: off
