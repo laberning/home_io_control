@@ -65,6 +65,7 @@ expect:                              # deliberately sparse — only assert what 
     - {cmd: 0x04, start: false, end: true, protocol: 2w}
   device:
     reported_position: 50
+    reported_tilt: 72
     name: "Terrace Awning"
   oneway:
     intent: CLOSE
@@ -120,6 +121,16 @@ expect:                              # deliberately sparse — only assert what 
     (0x29) frame can carry a `classification` expectation today (`classify_pairing_discovery_response()`
     needs only the frame itself); `classify_pairing_key_challenge()` additionally needs the
     discovered device's and controller's node IDs, which the schema doesn't carry yet.
+  - `device.reported_tilt` (optional): human-verified slat-angle percentage, checked by
+    `corpus_decode_test.cpp` against every `CMD_PRIVATE_RESP` frame long enough (>=15 data bytes)
+    to carry the extended tilt block (selector `0x20` at data offset 12, 16-bit angle at 13..14),
+    decoded via `decode_tilt_report()`. This is a **different** field from the tilt-shaped bytes at
+    data offset 4..6 in the immediate reply to our own EXECUTE-tilt command — that one is the
+    device's *pre-command* tilt, not a live or target reading (see
+    `issue_60_tilt_execute_ack_echoes_precommand_tilt.yaml`), and `hub_status.cpp` never decodes it
+    into device state. Only a status-poll reply is long enough and positioned right to trip the
+    `reported_tilt` check, so don't set this expectation on an EXECUTE-ack capture even if its
+    bytes happen to satisfy the length/selector test.
 
 ### Raw bytes are immutable
 

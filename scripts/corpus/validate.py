@@ -58,7 +58,7 @@ ALLOWED_CRC = {"present", "absent"}
 ALLOWED_EXPECT_KEYS = {"frames", "exchange", "device", "oneway"}
 ALLOWED_EXPECT_FRAME_KEYS = {"cmd", "start", "end", "protocol", "classification", "hmac_valid"}
 ALLOWED_EXPECT_EXCHANGE_KEYS = {"kind", "outcome"}
-ALLOWED_EXPECT_DEVICE_KEYS = {"reported_position", "name"}
+ALLOWED_EXPECT_DEVICE_KEYS = {"reported_position", "reported_tilt", "name"}
 ALLOWED_EXPECT_ONEWAY_KEYS = {"intent", "target_type", "originator", "acei"}
 
 # Names only — imported from build.py::CLASSIFICATION_ENUM rather than hand-mirrored, so a new
