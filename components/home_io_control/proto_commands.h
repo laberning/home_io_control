@@ -192,9 +192,12 @@ bool create_discover(IoFrame &f, const uint8_t *own);
 /// @brief Build a discovery response (0x29) — the device side of discovery, used by the
 /// key-extraction responder (see pairing_responder.h) to emulate an unpaired device.
 ///
-/// Every other builder in this file speaks the *controller* side of the protocol; this one and
-/// create_key_confirm() below speak the *device* side, needed only for that one reverse-role
-/// feature. Payload layout matches the full 9-byte discovery response format documented at
+/// Almost every builder in this file speaks the *controller* side of the protocol; this one,
+/// create_key_confirm(), create_discover_confirm_ack(), and create_challenge_req_device_role()
+/// below speak the *device* side, needed only for that one reverse-role feature. Device-side
+/// frames never set CTRL1_LOW_POWER: that bit describes the *target* of a controller-originated
+/// frame, and a device's replies are addressed to a mains-powered hub.
+/// Payload layout matches the full 9-byte discovery response format documented at
 /// DISCOVERY_RESP_BACKBONE_OFFSET/_MANUFACTURER_OFFSET/_FLAGS_OFFSET/_TIMESTAMP_OFFSET
 /// (proto_constants.h), cross-checked against a real Somfy actuator's captured 0x29
 /// (tests/corpus/captures/somfy_awning/pairing_lab_discovery_response.yaml): backbone address
@@ -215,15 +218,31 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
 /// installed the system key, sent after decrypting a CMD_KEY_TRANSFER (0x32).
 ///
 /// Device-side counterpart to create_key_transfer(); used only by the key-extraction responder
-/// (see create_discover_resp() above for why this direction exists at all). No payload, matching
-/// the reconstructed-but-high-confidence 0x33 in
-/// tests/corpus/captures/issues/field_rs100_pairing_key_exchange_retry_success.yaml (no real 0x33
-/// has been captured raw anywhere in this project).
+/// (see create_discover_resp() above for why this direction exists at all). No payload and END
+/// set, matching real devices' 0x33 in
+/// tests/corpus/captures/somfy_dimmer/pairing_full.yaml and velux_kux100/pairing_full.yaml —
+/// 0x33 closes the key-exchange sequence that CMD_KEY_INIT (0x31) opened with START.
 /// @param f IoFrame to populate.
 /// @param own Our advertised (throwaway) node ID.
 /// @param dst Destination node ID (the hub that sent the key transfer).
 /// @return true on success.
 bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+
+/// @brief Build a discovery-confirm acknowledgement (0x2D) — the device's answer to a hub's
+/// CMD_DISCOVER_CONFIRM (0x2C), which a hub sends directly to a freshly-discovered device before
+/// it will proceed to the key exchange.
+///
+/// Device-side only, like create_discover_resp()/create_key_confirm() above; this project's own
+/// controller role never sends 0x2C, so there is no counterpart builder for the other direction.
+/// No payload and END set, matching real devices' 0x2D in
+/// tests/corpus/captures/velux_kux100/pairing_full.yaml (and, for a second independent hub,
+/// tests/corpus/captures/issues/issue_45_somfy_connectivity_kit_key_extraction_stall.yaml, where
+/// an already-paired device answers the same hub the key-extraction responder was talking to).
+/// @param f IoFrame to populate.
+/// @param own Our advertised (throwaway) node ID.
+/// @param dst Destination node ID (the hub that sent the discovery confirm).
+/// @return true on success.
+bool create_discover_confirm_ack(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 
 /// @brief Recover the system key from an inbound CMD_KEY_TRANSFER (0x32) payload — the decode
 /// counterpart to create_key_transfer()'s encode.
@@ -276,16 +295,36 @@ bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src);
 ///
 /// The no-challenge overload above generates its own random bytes and does not expose them,
 /// which is fine for the normal inbound-auth path (the challenge is only ever needed once, to
-/// build this same frame). The key-extraction responder (pairing_responder.h) needs the *exact*
-/// bytes again later to decrypt the corresponding CMD_KEY_TRANSFER (0x32), so it generates the
-/// challenge itself and passes it in here — this overload is what keeps both call sites (the
-/// transmitted 0x3C and the later decrypt) using the same source of truth.
+/// build this same frame). A caller that needs the *exact* bytes again later — the key-extraction
+/// responder decrypting the corresponding CMD_KEY_TRANSFER (0x32) — generates the challenge itself
+/// and passes it in here, keeping the transmitted 0x3C and the later decrypt on one source of
+/// truth. Note that responder uses create_challenge_req_device_role() below, not this overload.
 /// @param f IoFrame to populate.
-/// @param dst Target node ID (device or, for the key-extraction responder, the foreign hub).
+/// @param dst Target device node ID (device we're challenging).
 /// @param src Our own node ID.
 /// @param challenge Caller-supplied 6-byte challenge (e.g. from crypto::generate_challenge()).
 /// @return true on success.
 bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE]);
+
+/// @brief Build a challenge request (0x3C) in the *device* direction — used only by the
+/// key-extraction responder to challenge a foreign hub that sent us CMD_KEY_INIT (0x31).
+///
+/// Same command and payload as the controller-role builders above, but framed the way a real
+/// device frames it: START clear and LOW_POWER clear. Both controller-role overloads set both
+/// bits, which is correct for their direction — LOW_POWER describes the *target* of a
+/// controller-originated frame (a device that may be battery/solar powered, see this header's
+/// convention note), and the controller's 0x3C opens its own inbound-auth exchange. Neither holds
+/// for a device answering a hub's key-init: real devices' pairing 0x3C frames in
+/// tests/corpus/captures/somfy_dimmer/pairing_full.yaml (`0E 00 …`) and
+/// velux_kux100/pairing_full.yaml carry neither bit, because the frame is a continuation of the
+/// hub's already-open exchange and is addressed to a mains-powered hub.
+/// @param f IoFrame to populate.
+/// @param dst The foreign hub's node ID (from the inbound 0x31's src).
+/// @param src Our advertised (throwaway) node ID.
+/// @param challenge Caller-supplied 6-byte challenge, retained for the later 0x32 decrypt.
+/// @return true on success.
+bool create_challenge_req_device_role(IoFrame &f, const uint8_t *dst, const uint8_t *src,
+                                      const uint8_t challenge[HMAC_SIZE]);
 
 /// Build a challenge response (0x3D) proving we know the system key.
 /// HMAC is computed over [original_command_id + original_data] using the challenge.

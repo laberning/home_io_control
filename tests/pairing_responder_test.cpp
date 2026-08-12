@@ -11,8 +11,9 @@ using namespace esphome::home_io_control::pairing_responder;
 // PairingResponder test suite
 // ============================================================================
 // Pure state-machine transitions for the "Accept Foreign Pairing" (key-extraction) responder:
-// ARMED_IDLE -> SENT_DISCOVER_RESP -> SENT_CHALLENGE -> EXTRACTED, including out-of-order frames,
-// retries (missed-frame tolerance), and the crypto integration through on_key_transfer().
+// ARMED_IDLE -> SENT_DISCOVER_RESP -> SENT_CONFIRM_ACK -> SENT_CHALLENGE -> EXTRACTED, including
+// out-of-order frames, retries (missed-frame tolerance), the SENT_CONFIRM_ACK bypass some hubs
+// take, and the crypto integration through on_key_transfer().
 
 namespace {
 
@@ -36,6 +37,9 @@ TEST(PairingResponder, FullFlowTransitionsThroughAllStates) {
 
   EXPECT_TRUE(on_discover_request(ctx)) << "discovery request should be accepted while ARMED_IDLE";
   EXPECT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP);
+
+  EXPECT_TRUE(on_discover_confirm(ctx)) << "discovery confirm should be accepted while SENT_DISCOVER_RESP";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_CONFIRM_ACK);
 
   const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
   EXPECT_TRUE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id)) << "key-init should be accepted while SENT_DISCOVER_RESP";
@@ -69,6 +73,32 @@ TEST(PairingResponder, DiscoverRequestRetryResendsWithoutRegenerating) {
   // Hub missed our first 0x29 and retries the 0x28.
   EXPECT_TRUE(on_discover_request(ctx)) << "a discovery retry while SENT_DISCOVER_RESP should still be accepted";
   EXPECT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP) << "state should not regress or advance on a retry";
+}
+
+TEST(PairingResponder, DiscoverConfirmRetryResendsSameAck) {
+  ResponderContext ctx = make_armed_ctx();
+  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_TRUE(on_discover_confirm(ctx));
+  ASSERT_EQ(ctx.state, ResponderState::SENT_CONFIRM_ACK);
+
+  // Hub missed our first 0x2D and retries the 0x2C.
+  EXPECT_TRUE(on_discover_confirm(ctx)) << "a discovery-confirm retry while SENT_CONFIRM_ACK should still be accepted";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_CONFIRM_ACK) << "state should not regress or advance on a retry";
+}
+
+/// Some hubs give up waiting for our 0x2D and send CMD_KEY_INIT anyway, so the key exchange must
+/// be reachable without the discovery-confirm step ever completing.
+TEST(PairingResponder, KeyInitAcceptedWithoutDiscoverConfirm) {
+  ResponderContext ctx = make_armed_ctx();
+  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP);
+
+  const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  EXPECT_TRUE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id))
+      << "key-init straight from SENT_DISCOVER_RESP must still be accepted";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_CHALLENGE);
+  EXPECT_EQ(0, memcmp(ctx.challenge, test::TEST_CHALLENGE, HMAC_SIZE)) << "challenge should be stored";
+  EXPECT_EQ(0, memcmp(ctx.hub_node_id, hub_id, NODE_ID_SIZE)) << "hub's real node ID should be captured from src";
 }
 
 TEST(PairingResponder, KeyInitRetryKeepsStoredChallenge) {
@@ -108,6 +138,23 @@ TEST(PairingResponder, KeyTransferBeforeKeyInitIsIgnored) {
   uint8_t payload[AES_KEY_SIZE] = {0};
   EXPECT_FALSE(on_key_transfer(ctx, payload)) << "key-transfer while SENT_DISCOVER_RESP should be ignored";
   EXPECT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP) << "state should be unchanged";
+}
+
+TEST(PairingResponder, DiscoverConfirmBeforeDiscoverIsIgnored) {
+  ResponderContext ctx = make_armed_ctx();
+  EXPECT_FALSE(on_discover_confirm(ctx)) << "discovery confirm while ARMED_IDLE should be ignored";
+  EXPECT_EQ(ctx.state, ResponderState::ARMED_IDLE) << "state should be unchanged";
+}
+
+TEST(PairingResponder, DiscoverConfirmAfterKeyInitIsIgnored) {
+  ResponderContext ctx = make_armed_ctx();
+  ASSERT_TRUE(on_discover_request(ctx));
+  const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  ASSERT_TRUE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id));
+  ASSERT_EQ(ctx.state, ResponderState::SENT_CHALLENGE);
+
+  EXPECT_FALSE(on_discover_confirm(ctx)) << "a late 0x2C must not pull an in-flight key exchange back a phase";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_CHALLENGE) << "state should be unchanged";
 }
 
 TEST(PairingResponder, DiscoverRequestAfterExtractedIsIgnored) {
@@ -159,6 +206,7 @@ TEST(PairingResponder, StageNameCoversEveryState) {
   EXPECT_STREQ(responder_stage_name(ResponderState::DISARMED), "disarmed");
   EXPECT_STREQ(responder_stage_name(ResponderState::ARMED_IDLE), "armed_idle");
   EXPECT_STREQ(responder_stage_name(ResponderState::SENT_DISCOVER_RESP), "sent_discover_resp");
+  EXPECT_STREQ(responder_stage_name(ResponderState::SENT_CONFIRM_ACK), "sent_confirm_ack");
   EXPECT_STREQ(responder_stage_name(ResponderState::SENT_CHALLENGE), "sent_challenge");
   EXPECT_STREQ(responder_stage_name(ResponderState::EXTRACTED), "extracted");
 }

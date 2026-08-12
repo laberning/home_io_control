@@ -426,7 +426,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // === Key-extraction responder ("Accept Foreign Pairing") ===
   // Narrow, armed-only branches for the device-role pairing responder (pairing_responder.h);
   // see hub_key_extraction.cpp. When disarmed these frames fall through unchanged to the normal
-  // handling below (0x28/0x31/0x32 are not otherwise acted on by this hub, so that's a no-op).
+  // handling below (0x28/0x2C/0x31/0x32 are not otherwise acted on by this hub, so that's a no-op).
   if (this->try_handle_key_extraction_frame_(frame))
     return;
 

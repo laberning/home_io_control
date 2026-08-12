@@ -18,9 +18,9 @@ using test::TestableHubComponent;
 // ============================================================================
 // HubKeyExtraction test suite
 // ============================================================================
-// "Accept Foreign Pairing (Key Extraction)" hub wiring: arm/disarm, the 0x28/0x31/0x32 RX
-// branches, address disambiguation against the real node_id_, auto-off timeout scheduling, and
-// the disarm-on-extraction guarantee.
+// "Accept Foreign Pairing (Key Extraction)" hub wiring: arm/disarm, the 0x28/0x2C/0x31/0x32 RX
+// branches, address disambiguation against the real node_id_ and against other devices' traffic,
+// auto-off timeout scheduling, and the disarm-on-extraction guarantee.
 
 namespace {
 
@@ -178,7 +178,7 @@ TEST(HubKeyExtraction, DiscoveryReplyUsesRadioResponsePreambleNotFixedConstant) 
 }
 
 // ========================================================================================
-// Full RX flow: 0x28 -> 0x29, 0x31 -> 0x3C, 0x32 -> 0x33 + extraction + auto-disarm
+// Full RX flow: 0x28 -> 0x29, 0x2C -> 0x2D, 0x31 -> 0x3C, 0x32 -> 0x33 + extraction + auto-disarm
 // ========================================================================================
 
 TEST(HubKeyExtraction, FullExchangeExtractsKeyAndAutoDisarms) {
@@ -195,6 +195,17 @@ TEST(HubKeyExtraction, FullExchangeExtractsKeyAndAutoDisarms) {
   comp.process_received_packet_(make_rx_packet(discover));
   EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
   EXPECT_EQ(count_sent_cmd(radio, CMD_DISCOVER_RESP), 3) << "0x29 should be sent on all 3 channels";
+
+  // Hub confirms the discovery directly to us; most hubs will not start the key exchange until
+  // this is acknowledged. (A hub that skips it is covered by the pure-responder suite.)
+  IoFrame discover_confirm{};
+  init_frame(discover_confirm, true, true, false, false);
+  set_dst(discover_confirm, throwaway_id);
+  set_src(discover_confirm, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
+  comp.process_received_packet_(make_rx_packet(discover_confirm));
+  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CONFIRM_ACK);
+  EXPECT_EQ(count_sent_cmd(radio, CMD_DISCOVER_CONFIRM_ACK), 3) << "0x2D should be sent on all 3 channels";
 
   // Hub sends key-init to our throwaway ID.
   IoFrame key_init{};
@@ -217,6 +228,42 @@ TEST(HubKeyExtraction, FullExchangeExtractsKeyAndAutoDisarms) {
   EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should be sent on all 3 channels";
   EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
       << "responder should auto-disarm immediately after extraction";
+}
+
+/// Not every hub waits for our CMD_DISCOVER_CONFIRM_ACK before starting the key exchange, so a
+/// hub that goes straight from discovery to key-init must still reach a completed extraction —
+/// reaching DISARMED here is that proof, since the responder only auto-disarms after emitting the
+/// recovered-key log block.
+TEST(HubKeyExtraction, ExchangeWithoutDiscoverConfirmStillExtractsKey) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  uint8_t throwaway_id[NODE_ID_SIZE];
+  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
+
+  // No 0x2C at all — straight to key-init.
+  IoFrame key_init{};
+  create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
+  comp.process_received_packet_(make_rx_packet(key_init));
+  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
+  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_REQ), 3);
+
+  IoFrame key_transfer{};
+  const uint8_t foreign_system_key[AES_KEY_SIZE] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+                                                    0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00};
+  ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
+                                  comp.key_extraction_ctx_.challenge));
+  comp.process_received_packet_(make_rx_packet(key_transfer));
+
+  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should still be sent on all 3 channels";
+  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
+      << "a hub that skips the discovery-confirm step must still complete the extraction";
 }
 
 TEST(HubKeyExtraction, SecondExtractionAttemptMidWindowIsIgnoredAfterFirstSucceeds) {
@@ -250,7 +297,7 @@ TEST(HubKeyExtraction, SecondExtractionAttemptMidWindowIsIgnoredAfterFirstSuccee
 }
 
 // ========================================================================================
-// Disarmed: 0x28/0x31/0x32 fall through unchanged, no reply
+// Disarmed: 0x28/0x2C/0x31/0x32 fall through unchanged, no reply
 // ========================================================================================
 
 TEST(HubKeyExtraction, DisarmedDoesNotRespondToDiscoveryOrKeyFrames) {
@@ -259,11 +306,19 @@ TEST(HubKeyExtraction, DisarmedDoesNotRespondToDiscoveryOrKeyFrames) {
   setup_component(comp, radio);
   // Never armed.
 
+  const uint8_t some_id[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
+
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
 
-  const uint8_t some_id[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
+  IoFrame discover_confirm{};
+  init_frame(discover_confirm, true, true, false, false);
+  set_dst(discover_confirm, some_id);
+  set_src(discover_confirm, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
+  comp.process_received_packet_(make_rx_packet(discover_confirm));
+
   IoFrame key_init{};
   create_key_init(key_init, FOREIGN_HUB_ID, some_id);
   comp.process_received_packet_(make_rx_packet(key_init));
@@ -274,6 +329,34 @@ TEST(HubKeyExtraction, DisarmedDoesNotRespondToDiscoveryOrKeyFrames) {
 // ========================================================================================
 // Address disambiguation: 0x31 to our REAL node_id_ is not part of this flow
 // ========================================================================================
+
+/// A hub in pairing mode sends CMD_DISCOVER_CONFIRM to each of its *own* already-paired devices
+/// as well, repeatedly and on every channel. Answering one would impersonate that device and put
+/// a burst of bogus 0x2D frames on the air, so the responder must only ever answer a 0x2C
+/// addressed to its throwaway ID.
+TEST(HubKeyExtraction, DiscoverConfirmToAnotherDeviceIsIgnored) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  radio.clear();
+  const auto state_before = comp.key_extraction_ctx_.state;
+
+  const uint8_t other_device_id[NODE_ID_SIZE] = {0x58, 0x6E, 0x35};
+  IoFrame discover_confirm{};
+  init_frame(discover_confirm, true, true, false, false);
+  set_dst(discover_confirm, other_device_id);
+  set_src(discover_confirm, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
+  comp.process_received_packet_(make_rx_packet(discover_confirm));
+
+  EXPECT_EQ(comp.key_extraction_ctx_.state, state_before) << "responder state must be untouched";
+  EXPECT_EQ(radio.get_send_count(), 0) << "responder must not answer a 0x2C addressed to another device";
+}
 
 TEST(HubKeyExtraction, KeyInitToRealNodeIdIsNotHijackedByResponder) {
   TestableHubComponent comp;

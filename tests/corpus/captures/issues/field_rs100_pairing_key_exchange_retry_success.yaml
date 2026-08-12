@@ -39,7 +39,7 @@ frames:
     freq: 868950000
     hex: "08 00 D1 D4 FF 08 39 5F 33"
     crc: absent
-    note: "cmd=KEY_CONFIRM(0x33); RECONSTRUCTED (see source log note) -- length/DST/SRC/CMD from this log's decoded fields, but START/END/1W flag bits (00 here) are an UNVERIFIED guess by analogy to the 0x3C frame; no raw 0x33 exists anywhere in this project's captures to check against"
+    note: "cmd=KEY_CONFIRM(0x33); RECONSTRUCTED (see source log note) -- length/DST/SRC/CMD from this log's decoded fields, but START/END/1W flag bits (00 here) are an UNVERIFIED guess by analogy to the 0x3C frame. That guess is WRONG: real devices' 0x33 sets END (velux_kux100/pairing_full.yaml, somfy_dimmer/pairing_full.yaml), because 0x33 closes the exchange CMD_KEY_INIT opened. The bytes stay as reconstructed (raw bytes are immutable, see tests/corpus/README.md) -- do not re-derive protocol facts from this frame; corpus_device_role_builder_test.cpp excludes it for exactly this reason"
   - dir: tx
     t_ms: 3173
     freq: 868950000

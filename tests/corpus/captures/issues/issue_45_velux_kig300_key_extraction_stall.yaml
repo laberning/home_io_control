@@ -1,0 +1,65 @@
+id: issue_45_velux_kig300_key_extraction_stall
+description: >
+  Community capture from issue #45 (@alucryd): the "Accept Foreign Pairing (Key Extraction)"
+  responder (pairing_responder.h / hub_key_extraction.cpp) being paired to by a real Velux KIG300
+  hub (node BEFEDB). The hub sends CMD_DISCOVER_CONFIRM (0x2C) directly to the throwaway device
+  and gets no reply -- the responder has no 0x2C handler at all -- yet this particular hub
+  tolerates that and, after several retries and re-broadcasts (only one retry shown; see notes),
+  eventually sends CMD_KEY_INIT (0x31) anyway. The responder's CMD_CHALLENGE_REQ (0x3C) reply then
+  sets CTRL0_START and CTRL1_LOW_POWER, which a real device's genuine pairing 0x3C does not (see
+  tests/corpus/captures/somfy_dimmer/pairing_full.yaml for the contrast) -- the hub never answers
+  it, and CMD_KEY_TRANSFER (0x32) never arrives. See analysis/issue_45_key_extraction_stall_analysis.md
+  for the full write-up (Findings 1 and 3). Original on-air log has since been deleted per the
+  reporter/maintainer's usual key-extraction-log-hygiene practice; this capture is the durable
+  record of what it showed. Timestamps for tx frames (what the device sent) are wall-clock-second
+  derived approximations -- the device-role log has no per-frame tick counter for its own
+  transmissions, unlike the precise ts= counter available for rx frames (what the hub sent).
+source:
+  device: "Velux KIG300 hub (node BEFEDB) -- real third-party hub, community capture"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-12
+  origin: github-issue
+  issue: https://github.com/laberning/home_io_control/issues/45
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 10 00 00 3B BE FE DB 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), broadcast to backbone group 00003B"
+  - dir: rx
+    t_ms: 700
+    freq: 868250000
+    hex: "D1 00 BE FE DB A4 26 55 29 00 80 A4 26 55 02 00 00 00"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), throwaway device id A42655, manufacturer=2 (Somfy), type=roller_shutter; sent identically on all 3 channels, one shown"
+  - dir: tx
+    t_ms: 7748
+    freq: 868950000
+    hex: "48 10 A4 26 55 BE FE DB 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), addressed directly to the discovered device -- per tests/corpus/captures/velux_kux100/pairing_full.yaml a real device must answer this with CMD_DISCOVER_CONFIRM_ACK (0x2D) before the hub proceeds. The responder has no 0x2C handler (pairing_responder.cpp), so nothing is sent back. The hub retried this exact frame (modulo channel/timestamp) at least 6 more times over the following ~90 seconds -- 22:14:52, 22:15:31, 22:15:33, 22:15:58, 22:16:09 (x2) in the original log -- interspersed with fresh DISCOVER_REQ broadcasts and identical DISCOVER_RESP replies each cycle; all omitted here as redundant"
+  - dir: tx
+    t_ms: 93445
+    freq: 868250000
+    hex: "48 10 A4 26 55 BE FE DB 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), sent 22:16:14 -- after 4 separate discovery cycles and at least 6 ignored 0x2C's, this particular hub proceeds anyway. This was the only one of roughly a dozen attempts across two full log sessions where this hub got this far; every other attempt (against this hub and the reporter's second hub, a Somfy connectivity kit) stalled permanently at the unanswered 0x2C -- see issue_45_somfy_connectivity_kit_key_extraction_stall.yaml for a hub that does not tolerate it"
+  - dir: rx
+    t_ms: 93845
+    freq: 868250000
+    hex: "4E 20 BE FE DB A4 26 55 3C 01 DC 1A 26 3E CB"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), challenge = 01 DC 1A 26 3E CB. ctrl0=0x4E (CTRL0_START set), ctrl1=0x20 (CTRL1_LOW_POWER set) -- create_challenge_req() (proto_commands.cpp) hardcodes both for its normal controller->device direction, but this call is device->hub (the reverse key-extraction role). Contrast a real device's genuine pairing 0x3C in tests/corpus/captures/somfy_dimmer/pairing_full.yaml: '0E 00 C0 FF EE 38 96 18 3C 2F B2 41 38 96 18' -- ctrl0=0x0E, ctrl1=0x00, neither bit set. No further frame addressed to A42655 appears anywhere in the rest of this 10-minute arm window: CMD_KEY_TRANSFER (0x32) never arrives"
+expect:
+  exchange:
+    kind: pairing
+    outcome: timeout
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: true, end: false, protocol: 2w}
