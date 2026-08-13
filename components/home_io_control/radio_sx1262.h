@@ -70,6 +70,18 @@ static constexpr uint16_t SX1262_REG_SYNC_WORD = 0x06C0;
 static constexpr uint16_t SX1262_REG_RX_GAIN = 0x08AC;
 static constexpr uint16_t SX1262_REG_TX_CLAMP_CONFIG = 0x08D8;
 
+/// TX modulation-quality erratum register (SX1262 datasheet §15.1, "Modulation Quality with
+/// 500 kHz LoRa Bandwidth" — the title names LoRa, but the workaround table covers every
+/// modulation). Bit 2 must be cleared *only* for LoRa at BW 500 kHz and set to 1 for everything
+/// else, explicitly including any (G)FSK configuration — which is all this driver ever uses.
+/// Semtech's own driver and RadioLib apply it as `TxModulation` / `fixModulationQuality()`.
+/// Leaving it at its reset value degrades transmitted modulation quality, which on this protocol
+/// shows up as a peer that intermittently fails to decode an otherwise strong frame.
+/// Counterpart to the already-applied TxClamp erratum (@ref SX1262_REG_TX_CLAMP_CONFIG).
+static constexpr uint16_t SX1262_REG_TX_MODULATION = 0x0889;
+/// Bit 2 of @ref SX1262_REG_TX_MODULATION — the (G)FSK-correct value is 1.
+static constexpr uint8_t SX1262_TX_MODULATION_GFSK_BIT = 0x04;
+
 static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
@@ -202,6 +214,10 @@ class RadioSX1262 : public SoftPhyDriverBase {
   void set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type, uint8_t crc_type);
   /// Apply the runtime bandwidth setting to the SX1262 modulation parameters.
   void write_modulation_params_();
+  /// Apply the Semtech TX modulation-quality erratum workaround (datasheet §15.1). The datasheet
+  /// requires it "before any packet transmission", so it hangs off @ref before_tx_arm rather than
+  /// running once at init — same placement rationale as RadioLR1121's high-ACP workaround.
+  void apply_tx_modulation_workaround_();
   /// @copydoc SoftPhyDriverBase::set_rx_packet_params
   void set_rx_packet_params() override;
   /// @copydoc SoftPhyDriverBase::set_tx_packet_params
@@ -250,6 +266,12 @@ class RadioSX1262 : public SoftPhyDriverBase {
   void read_rx_buffer(uint8_t offset, uint8_t *data, uint8_t len) override { this->read_buffer_(offset, data, len); }
   /// @copydoc SoftPhyDriverBase::start_tx
   void start_tx() override;
+  /// @copydoc SoftPhyDriverBase::before_tx_arm
+  ///
+  /// TX modulation-quality erratum (@ref SX1262_REG_TX_MODULATION): the datasheet requires bit 2
+  /// be set for every (G)FSK transmission, so it is re-asserted before each SetTx rather than
+  /// assumed to survive from init.
+  void before_tx_arm() override { this->apply_tx_modulation_workaround_(); }
 
  private:
   SpiAccess *spi_;

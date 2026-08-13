@@ -378,3 +378,48 @@ TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
       << " bytes) must reach the chip as " << (LONG_PREAMBLE * 8) << " bits, not " << LONG_PREAMBLE
       << " bits (an 8x-too-short on-air preamble)";
 }
+
+// ============================================================================
+// TX modulation-quality erratum (datasheet §15.1): bit 2 of SX1262_REG_TX_MODULATION must be set
+// for every (G)FSK transmission. The chip transmits perfectly happily without it, just with
+// degraded modulation quality, so nothing but this test catches a regression.
+// ============================================================================
+
+TEST(RadioSX1262, SendPacketAppliesTxModulationWorkaroundBeforeSetTx) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  // As in SendPacketSetsPacketParamsPreambleInBits: send_packet times out waiting for TX_DONE in a
+  // synchronous host test, but everything up to and including SetTx has already been issued.
+  radio.send_packet(frame, sizeof(frame), cfg);
+
+  int set_tx_idx = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_SET_TX) {
+      set_tx_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(set_tx_idx, 0);
+
+  int workaround_idx = -1;
+  for (int i = set_tx_idx - 1; i >= 0; i--) {
+    const auto &tx = spi.transactions()[i];
+    if (tx.size() == 4 && tx[0] == SX1262_WRITE_REGISTER &&
+        tx[1] == static_cast<uint8_t>(SX1262_REG_TX_MODULATION >> 8) &&
+        tx[2] == static_cast<uint8_t>(SX1262_REG_TX_MODULATION)) {
+      workaround_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(workaround_idx, 0) << "SX1262_REG_TX_MODULATION must be written before every SetTx "
+                                  "(datasheet §15.1 TX modulation-quality erratum)";
+  EXPECT_NE(spi.transactions()[workaround_idx][3] & SX1262_TX_MODULATION_GFSK_BIT, 0)
+      << "the (G)FSK-correct value for bit 2 of SX1262_REG_TX_MODULATION is 1, not 0";
+}
