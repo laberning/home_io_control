@@ -24,8 +24,8 @@ namespace home_io_control {
 /// The numeric values are the register-encoded (double-sideband) bandwidth selectors used by
 /// `RadioSX1262::set_rx_bandwidth()`.
 enum class SX1262RxBandwidth : uint8_t {
-  BW_58_6_KHZ = 0x0C,  ///< 58.6 kHz — narrowest; SX1276-equivalent width, marginal on the default TX→RX turnaround.
-  BW_78_2_KHZ = 0x1B,  ///< 78.2 kHz — narrow.
+  BW_58_6_KHZ = 0x0C,   ///< 58.6 kHz — narrowest; SX1276-equivalent width, marginal on the default TX→RX turnaround.
+  BW_78_2_KHZ = 0x1B,   ///< 78.2 kHz — narrow.
   BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — default.
   BW_156_2_KHZ = 0x09,  ///< 156.2 kHz — wider tolerance for LO offset.
   BW_187_2_KHZ = 0x07,  ///< 187.2 kHz — widest selectable option.
@@ -176,6 +176,16 @@ struct TuningConfig {
       LR1121_DISCOVERY_HOP_SLICE_MS};                      ///< Per-channel dwell while LR1121 discovery hops.
   uint8_t lbt_max_retries{LBT_MAX_RETRIES};                ///< LBT retries before forced TX.
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
+
+  // --- Exchange response windows ---
+  // How long the hub listens for a device's reply. Tunable because the right value is a property
+  // of the *device*, not of the radio or the protocol: observed reply latencies on one network
+  // span two orders of magnitude (a mains Oximo 40 at ~23 ms, a solar RS100 at 29-3052 ms). See
+  // RESPONSE_START_WAIT_MS for the measurements behind the defaults.
+  uint16_t exchange_start_response_wait_ms{
+      RESPONSE_START_WAIT_MS};  ///< Reply window for a start frame (wakes a sleeping device).
+  uint16_t exchange_response_wait_ms{
+      RESPONSE_WAIT_MS};  ///< Reply window for continuation frames and the post-auth final response.
 
   // --- Pairing protocol ---
   std::vector<DiscoveryCommand> pairing_discovery_commands{

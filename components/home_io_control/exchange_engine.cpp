@@ -208,7 +208,8 @@ bool ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response,
     exchange::OutboundExchangeContext context;
     context.try_index = tries + 1;
     context.exchange_start_ms = millis();
-    context.wait_ms = is_start(request) ? RESPONSE_START_WAIT_MS : RESPONSE_WAIT_MS;
+    context.wait_ms =
+        is_start(request) ? this->tuning_->exchange_start_response_wait_ms : this->tuning_->exchange_response_wait_ms;
     context.state = exchange::OutboundExchangeState::TX_REQUEST;
 
     if (tries > 0) {
@@ -328,7 +329,10 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
     const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
   RadioDriver *radio = *this->radio_ptr_;
   RadioRxPacket packet{};
-  const uint32_t deadline = millis() + RESPONSE_AUTH_WAIT_MS;
+  // Same budget as any other continuation frame — RESPONSE_AUTH_WAIT_MS was always an alias for
+  // RESPONSE_WAIT_MS, so the two share one knob rather than inventing a third.
+  const uint32_t auth_wait_ms = this->tuning_->exchange_response_wait_ms;
+  const uint32_t deadline = millis() + auth_wait_ms;
   while ((int32_t) (deadline - millis()) > 0) {
     const uint32_t remaining = deadline - millis();
     const uint32_t slice = std::min<uint32_t>(remaining, radio->exchange_wait_slice_ms());
@@ -348,8 +352,8 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
   }
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_debug("wait_final_timeout", ctx.try_index, true);
-  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=%s(0x%02X) within %" PRId32 " ms", ctx.try_index,
-           command_name(request.cmd), request.cmd, RESPONSE_AUTH_WAIT_MS);
+  ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=%s(0x%02X) within %" PRIu32 " ms", ctx.try_index,
+           command_name(request.cmd), request.cmd, auth_wait_ms);
   return decisions::ExchangeFinalResponseDisposition::IGNORE_UNRELATED;
 }
 
@@ -421,7 +425,7 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq)
   this->record_debug(inbound_stage_name(context.state), 1, true);
 
   RadioRxPacket packet{};
-  if (!radio->wait_for_packet(packet, RESPONSE_WAIT_MS)) {
+  if (!radio->wait_for_packet(packet, this->tuning_->exchange_response_wait_ms)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return false;

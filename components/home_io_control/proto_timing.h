@@ -39,7 +39,33 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/conti
 static constexpr int32_t HOP_TIME_US = 2700;             ///< Time per channel when hopping (2.7ms)
 static constexpr int32_t RESPONSE_CHANNEL_WAIT_MS = 50;  ///< Per-channel dwell while waiting for an exchange response
 static constexpr int32_t RESPONSE_WAIT_MS = 500;         ///< Wait for response to non-start frame
-static constexpr int32_t RESPONSE_START_WAIT_MS = 300;   ///< Wait for response to start frame (longer)
+
+/// Wait for a response to a start frame — the first frame of an exchange, and the one a sleeping
+/// device has just been woken by.
+///
+/// This was 300 ms, *shorter* than the non-start budget above despite its own comment promising
+/// "longer". That inversion is backwards for the case it covers: a start frame is preceded by a
+/// 1024-byte (213 ms) wake-up preamble precisely because the target may have been asleep, and a
+/// device that has just woken is the slowest it will ever be to answer.
+///
+/// Field captures of a Somfy RS100 solar actuator (2026-08-14, third-party listener, three
+/// controllers on one network) measured its request→reply latency at 29 ms, 781 ms, 1548 ms,
+/// 1945 ms, 2469 ms and 3052 ms — the same device, minutes apart. A Somfy Oximo 40 on the same
+/// network answered in ~23 ms every time, day or night, and is *also* solar: reply latency is a
+/// per-model behaviour, not something the power source predicts, so there is no device class this
+/// budget can safely be tuned for. Against a 300 ms budget the RS100 was reachable only in its
+/// fastest state, which is why it answered intermittently and grew worse as the day went on.
+/// tests/corpus/captures/issues/field_rs100_pairing_key_transfer_timeout.yaml shows the same
+/// device class at 1020 ms and 1639 ms, and @ref LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS documents
+/// a Somfy awning replying at 287 ms against the old 300 ms budget — margin that thin was already
+/// known to be a problem on a *fast* device.
+///
+/// 1000 ms restores the documented intent and covers the bulk of the observed spread without
+/// unbounded loop blocking (see ADR 0013 — the exchange blocks the ESPHome loop, and a failed
+/// exchange costs EXCHANGE_RETRY_COUNT of these). Devices slower still are reachable by raising
+/// `exchange_start_response_wait_ms` from YAML rather than by rebuilding.
+static constexpr int32_t RESPONSE_START_WAIT_MS = 1000;
+
 static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
     RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command

@@ -134,6 +134,8 @@ your device may differ.
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell while hopping during discovery. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
+| `exchange_start_response_wait_ms` | both | `1000` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
+| `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
@@ -189,6 +191,34 @@ fast replies (the challenge or key frames) arrive corrupted.
 demodulator from mangling the first bytes of a quick reply after the transmit→standby→receive
 transition. It works hand-in-hand with bandwidth — a narrower bandwidth generally wants a
 longer settle.
+
+#### `exchange_start_response_wait_ms` / `exchange_response_wait_ms`
+
+How long the hub listens for a device's reply before giving up on a try. Raise
+`exchange_start_response_wait_ms` when a device ignores commands but is known to be in range and
+correctly paired.
+
+*Observations:* reply latency is a property of the **device model**, not of the radio, and the
+spread is enormous. A third-party capture of one network (2026-08-14, three controllers) measured a
+Somfy RS100 replying at 29 ms, 781 ms, 1548 ms, 1945 ms, 2469 ms and 3052 ms within a few minutes,
+while a Somfy Oximo 40 on the same network answered in ~23 ms every time.
+
+Both of those are solar actuators, so **don't try to predict this from the power source** — the
+Oximo stays fast at night, the RS100 does not. Nor is it stable per device: the RS100's own spread
+covers two orders of magnitude, and it drifts slower over the course of a day. Treat the setting as
+something to measure per installation, not to infer.
+
+The start-frame default used to be `300`, *shorter* than the continuation default of `500` even
+though its own comment promised "longer" — backwards for the one case where the target may have
+been asleep until the 213 ms wake-up preamble reached it. Against 300 ms the RS100 was reachable
+only in its fastest state, so it answered intermittently and got worse as the day went on. Both
+radios failed identically, which is the signature of a chip-neutral protocol constant rather than a
+radio problem. The default is now `1000`.
+
+Every millisecond here is loop-blocking time on a *failed* exchange only (a successful one returns
+as soon as the reply lands, see [ADR 0013](adr/0013-blocking-exchange-on-the-esphome-loop.md)), and
+a failure costs this window once per retry. Raise it for a stubborn device; lower it if slow
+failures are worse for you than missed commands.
 
 #### `sx1276_rx_bandwidth`
 

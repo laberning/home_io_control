@@ -1052,3 +1052,82 @@ TEST(Exchange, CollectBroadcastResponses_TransmitFailureReturnsZero) {
   EXPECT_TRUE(collected.frames.empty()) << "the handler must not be invoked when the transmit failed";
   EXPECT_EQ(radio.get_send_count(), 1) << "exactly one transmit attempt, no retry";
 }
+
+// ============================================================================
+// Response windows: a start frame wakes a sleeping device, so it gets the *longer* budget.
+//
+// These were fixed constants, and RESPONSE_START_WAIT_MS (300 ms) was shorter than
+// RESPONSE_WAIT_MS (500 ms) despite its own comment promising "longer" — backwards for the one
+// case where the target may have been asleep until the 213 ms wake-up preamble reached it. Field
+// captures of a solar RS100 measured replies from 29 ms to 3052 ms on the same device; see
+// RESPONSE_START_WAIT_MS.
+// ============================================================================
+
+namespace {
+
+// The host clock stubs advance millis() one unit per call, and the engine reads it a couple of
+// times between stamping the deadline and slicing it, so the first slice lands a tick or two under
+// the configured window. Assert the window, not the exact tick.
+void expect_window_near(uint32_t actual, uint32_t expected) {
+  EXPECT_LE(actual, expected) << "slice must never exceed the configured window";
+  EXPECT_GE(actual + 10u, expected) << "slice must be the configured window, not a different budget";
+}
+
+}  // namespace
+
+TEST(Exchange, StartFrameBudgetsTheStartResponseWindow) {
+  MockRadio radio;
+  // A slice larger than the window keeps per-channel hopping from masking the budget under test.
+  radio.set_exchange_wait_slice_ms(1000000);
+  RadioDriver *radio_ptr = &radio;
+
+  TuningConfig tuning;
+  tuning.exchange_start_response_wait_ms = 1750;
+  tuning.exchange_response_wait_ms = 250;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, true, 100);
+  ASSERT_TRUE(is_start(request)) << "an execute command is a start frame";
+
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2);  // nothing queued → runs out its retries
+
+  ASSERT_FALSE(radio.wait_timeouts().empty());
+  expect_window_near(radio.wait_timeouts().front(), 1750);
+}
+
+TEST(Exchange, ContinuationFrameBudgetsTheShorterResponseWindow) {
+  MockRadio radio;
+  radio.set_exchange_wait_slice_ms(1000000);
+  RadioDriver *radio_ptr = &radio;
+
+  TuningConfig tuning;
+  tuning.exchange_start_response_wait_ms = 1750;
+  tuning.exchange_response_wait_ms = 250;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  init_frame(request, true, false, false, false);
+  set_dst(request, test::DST_ID);
+  set_src(request, test::OWN_ID);
+  uint8_t payload[16] = {0};
+  set_cmd(request, CMD_KEY_TRANSFER, payload, sizeof(payload));
+  ASSERT_FALSE(is_start(request));
+
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2);
+
+  ASSERT_FALSE(radio.wait_timeouts().empty());
+  expect_window_near(radio.wait_timeouts().front(), 250);
+}
+
+TEST(Exchange, StartResponseWindowDefaultsLongerThanContinuation) {
+  // The regression this guards: a start frame's budget must never fall back below the
+  // continuation budget, whatever the numbers are changed to.
+  TuningConfig tuning;
+  EXPECT_GT(tuning.exchange_start_response_wait_ms, tuning.exchange_response_wait_ms)
+      << "a start frame wakes a sleeping device and must get the longer window";
+  EXPECT_EQ(tuning.exchange_start_response_wait_ms, RESPONSE_START_WAIT_MS);
+  EXPECT_EQ(tuning.exchange_response_wait_ms, RESPONSE_WAIT_MS);
+}
