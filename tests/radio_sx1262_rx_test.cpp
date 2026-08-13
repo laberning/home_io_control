@@ -620,3 +620,35 @@ TEST(RadioSX1262, EarlyCompletionDeclinesWindowsTooShortToFinishIn) {
   EXPECT_FALSE(radio.wait_for_packet(pkt, SOFT_PHY_EARLY_MIN_WINDOW_MS - 1));
   EXPECT_TRUE(radio.read_lengths().empty()) << "no buffer read should have been attempted at all";
 }
+
+TEST(SoftPhy, EncodePadsTrailingIdleBitsHigh) {
+  // 3 bytes = 30 bits = 4 encoded bytes (32 bits), so 2 bits of the last byte are line-idle time
+  // rather than data. They must go out as idle-high, not as a spurious start bit.
+  const uint8_t data[3] = {0x00, 0xFF, 0x5A};
+  uint8_t encoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  const uint8_t encoded_len = uart_encode_packet(data, sizeof(data), encoded, sizeof(encoded));
+  ASSERT_EQ(encoded_len, 4);
+
+  const uint16_t data_bits = sizeof(data) * UART_CELL_BITS;
+  for (uint16_t pos = data_bits; pos < static_cast<uint16_t>(encoded_len) * 8; pos++) {
+    const uint8_t bit = (encoded[pos / 8] >> (7 - (pos % 8))) & 0x01;
+    EXPECT_EQ(bit, 1) << "trailing bit " << pos << " must idle high";
+  }
+
+  // Padding must not disturb the cells themselves: the stream still round-trips.
+  uint8_t decoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  ASSERT_EQ(decode_uart_probe(encoded, encoded_len, 0, decoded, sizeof(decoded)), sizeof(data));
+  EXPECT_EQ(memcmp(decoded, data, sizeof(data)), 0);
+}
+
+TEST(SoftPhy, EncodeLeavesNoPaddingWhenCellsFillWholeBytes) {
+  // 4 bytes = 40 bits = exactly 5 encoded bytes, so there is nothing to pad and the last bit
+  // written is the frame's own stop bit.
+  const uint8_t data[4] = {0xC8, 0x00, 0x12, 0x34};
+  uint8_t encoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  ASSERT_EQ(uart_encode_packet(data, sizeof(data), encoded, sizeof(encoded)), 5);
+
+  uint8_t decoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  ASSERT_EQ(decode_uart_probe(encoded, 5, 0, decoded, sizeof(decoded)), sizeof(data));
+  EXPECT_EQ(memcmp(decoded, data, sizeof(data)), 0);
+}

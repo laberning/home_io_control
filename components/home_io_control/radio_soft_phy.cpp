@@ -238,7 +238,16 @@ uint8_t uart_encode_packet(const uint8_t *data, uint8_t len, uint8_t *encoded, u
     write_bit(bit_pos++, 1);  // UART stop bit
   }
 
-  return (total_bits + 7) / 8;
+  // A 10-bit cell only lands on a byte boundary every fourth byte, so the last byte of the buffer
+  // is usually part data, part leftover — and the chip transmits it whole either way. Those
+  // leftover bits are line-idle time, and a UART line idles *high*: zero-filling them puts what
+  // looks like a start bit on air immediately after the frame's last stop bit. The SX1276's
+  // IoHomeOn coder, which this software PHY exists to reproduce, never emits that. Pad with ones.
+  const uint8_t encoded_len = (total_bits + 7) / 8;
+  for (uint16_t pad_pos = total_bits; pad_pos < (uint16_t) encoded_len * 8; pad_pos++)
+    write_bit(pad_pos, 1);
+
+  return encoded_len;
 }
 
 }  // namespace home_io_control
