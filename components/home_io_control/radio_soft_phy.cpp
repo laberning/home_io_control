@@ -187,6 +187,31 @@ UartProbeResult find_uart_probe(const uint8_t *raw, uint8_t raw_len) {
   return best;
 }
 
+// === Length-driven receive helpers ===
+
+uint8_t soft_phy_raw_bytes_for_frame(uint8_t frame_len) {
+  // The CRC is appended before UART packing (see SoftPhyDriverBase::send_packet), so it occupies
+  // two cells of its own.
+  const uint16_t cells = (uint16_t) frame_len + FRAME_CRC_SIZE;
+  const uint16_t bits = cells * UART_CELL_BITS;
+  return (uint8_t) ((bits + 7) / 8);
+}
+
+uint8_t soft_phy_peek_frame_length(const uint8_t *raw, uint8_t raw_len) {
+  uint8_t best = 0;
+  for (uint8_t bit_offset = 0; bit_offset < UART_PROBE_MAX_BIT_OFFSET; bit_offset++) {
+    uint8_t ctrl0 = 0;
+    if (decode_uart_probe(raw, raw_len, bit_offset, &ctrl0, 1) != 1)
+      continue;  // start/stop bits don't frame here — wrong alignment
+    const uint8_t frame_len = (uint8_t) ((ctrl0 & CTRL0_LENGTH_MASK) + 1);
+    if (frame_len < FRAME_MIN_SIZE || frame_len > FRAME_MAX_SIZE)
+      continue;
+    if (frame_len > best)
+      best = frame_len;
+  }
+  return best;
+}
+
 // === Software UART encode (TX) ===
 
 uint8_t uart_encode_packet(const uint8_t *data, uint8_t len, uint8_t *encoded, uint8_t encoded_max_len) {

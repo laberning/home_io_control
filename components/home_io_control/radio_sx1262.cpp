@@ -188,7 +188,7 @@ void RadioSX1262::clear_device_errors_() {
 }
 
 void RadioSX1262::configure_buffer_base() {
-  uint8_t buf_base[2] = {0x00, 0x80};
+  uint8_t buf_base[2] = {SX1262_TX_BUFFER_BASE, SX1262_RX_BUFFER_BASE};
   this->write_opcode_(SX1262_SET_BUFFER_BASE_ADDRESS, buf_base, sizeof(buf_base));
 }
 

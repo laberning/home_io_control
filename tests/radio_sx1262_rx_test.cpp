@@ -159,7 +159,11 @@ TEST(RadioSX1262, WaitForPacketRaceCondition_Resolved) {
   radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID, SX1262_IRQ_SYNC_WORD_VALID | SX1262_IRQ_RX_DONE});
 
   RadioRxPacket result{};
-  bool ok = radio.wait_for_packet(result, 100);
+  // The length-driven receive now runs ahead of the race handler and declines on this all-zero
+  // mock buffer, but it spends real air time getting there. The host hal.h stubs advance millis()
+  // and micros() one unit per call, so that ~1 ms of air time costs ~1000 fake milliseconds of
+  // budget; the window is sized for the stub, not for the protocol.
+  bool ok = radio.wait_for_packet(result, 20000);
 
   // SYNC before RX_DONE race handled by resolve_sync_race → eventual success
   EXPECT_TRUE(ok) << "SYNC_WORD_VALID followed by RX_DONE should be resolved and yield packet";
@@ -422,4 +426,197 @@ TEST(RadioSX1262, SendPacketAppliesTxModulationWorkaroundBeforeSetTx) {
                                   "(datasheet §15.1 TX modulation-quality erratum)";
   EXPECT_NE(spi.transactions()[workaround_idx][3] & SX1262_TX_MODULATION_GFSK_BIT, 0)
       << "the (G)FSK-correct value for bit 2 of SX1262_REG_TX_MODULATION is 1, not 0";
+}
+
+// ============================================================================
+// Length-driven receive: RX runs in fixed-length mode at SOFT_PHY_RX_PROBE_PACKET_LEN, so
+// RX_DONE lands a fixed ~10 ms after the sync word regardless of how short the frame was. A
+// frame's own length is knowable from its first decoded byte, so the shared flow reads it out on
+// air time instead. CRC validation is the gate; anything less falls back to the RX_DONE path.
+// ============================================================================
+
+namespace {
+
+// Build the raw bytes the chip's data buffer holds mid-reception: the frame, its CRC-CCITT
+// trailer, and the whole lot UART-packed exactly as it arrived off air.
+std::vector<uint8_t> uart_packed_on_air_bytes(const std::vector<uint8_t> &frame) {
+  std::vector<uint8_t> with_crc = frame;
+  const uint16_t crc = crc_ccitt(frame.data(), static_cast<uint8_t>(frame.size()));
+  with_crc.push_back(static_cast<uint8_t>(crc & 0xFF));
+  with_crc.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
+
+  uint8_t encoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  const uint8_t encoded_len =
+      uart_encode_packet(with_crc.data(), static_cast<uint8_t>(with_crc.size()), encoded, sizeof(encoded));
+  return std::vector<uint8_t>(encoded, encoded + encoded_len);
+}
+
+// A real 15-byte RS100 challenge (0x3C) — the exact frame the hub must turn around fastest, from
+// tests/corpus/captures/issues/field_rs100_pairing_key_transfer_timeout.yaml.
+const std::vector<uint8_t> kRs100Challenge = {0x0E, 0x00, 0xD1, 0xD4, 0xFF, 0x8C, 0x08, 0x3C,
+                                              0x3C, 0x45, 0x51, 0x6F, 0xFE, 0x59, 0x80};
+
+}  // namespace
+
+// Serves a scripted data buffer, standing in for the chip's buffer as reception progresses, and
+// records every read so tests can assert what the early path actually asked for.
+class EarlyRxRadioSX1262 : public RadioSX1262 {
+ public:
+  using RadioSX1262::RadioSX1262;
+
+  void set_irq_sequence(std::initializer_list<uint32_t> seq) {
+    irq_seq_.assign(seq);
+    irq_idx_ = 0;
+  }
+  void set_rx_buffer(std::vector<uint8_t> buf) { rx_buffer_ = std::move(buf); }
+  void set_fallback_packet(const RadioRxPacket &pkt) { fallback_packet_ = pkt; }
+  using RadioSX1262::early_rx_read_offset;
+
+  const std::vector<uint8_t> &read_lengths() const { return read_lengths_; }
+  const std::vector<uint8_t> &read_offsets() const { return read_offsets_; }
+  bool fallback_used() const { return fallback_used_; }
+
+ protected:
+  uint32_t read_irq_status_raw() override {
+    if (irq_idx_ < irq_seq_.size())
+      return irq_seq_[irq_idx_++];
+    return 0;
+  }
+
+  void read_rx_buffer(uint8_t offset, uint8_t *data, uint8_t len) override {
+    read_offsets_.push_back(offset);
+    read_lengths_.push_back(len);
+    for (uint8_t i = 0; i < len; i++)
+      data[i] = i < rx_buffer_.size() ? rx_buffer_[i] : 0x00;
+  }
+
+  bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint32_t irq_status) override {
+    (void) blocking_wait;
+    (void) irq_status;
+    fallback_used_ = true;
+    packet = fallback_packet_;
+    return packet.len > 0;
+  }
+
+ private:
+  std::vector<uint32_t> irq_seq_;
+  size_t irq_idx_ = 0;
+  std::vector<uint8_t> rx_buffer_;
+  std::vector<uint8_t> read_lengths_;
+  std::vector<uint8_t> read_offsets_;
+  RadioRxPacket fallback_packet_{};
+  bool fallback_used_ = false;
+};
+
+TEST(SoftPhy, RawBytesForFrameCoversFrameAndCrcCells) {
+  // 15 protocol bytes + 2 CRC = 17 UART cells = 170 bits = 22 raw bytes.
+  EXPECT_EQ(soft_phy_raw_bytes_for_frame(15), 22);
+  EXPECT_EQ(soft_phy_raw_bytes_for_frame(FRAME_MIN_SIZE), 14);
+  // Even the longest possible frame stays well inside the raw scratch buffer.
+  EXPECT_EQ(soft_phy_raw_bytes_for_frame(FRAME_MAX_SIZE), 43);
+  EXPECT_LE(soft_phy_raw_bytes_for_frame(FRAME_MAX_SIZE), RADIO_PACKET_BUFFER_SIZE);
+}
+
+TEST(SoftPhy, PeekFrameLengthRecoversLengthFromFirstUartCell) {
+  const std::vector<uint8_t> raw = uart_packed_on_air_bytes(kRs100Challenge);
+  ASSERT_GE(raw.size(), SOFT_PHY_EARLY_HEADER_RAW_BYTES);
+
+  // Three raw bytes — a quarter of a millisecond of air time — is enough to learn the whole
+  // frame's length, because CTRL0 bits [4:0] carry it.
+  EXPECT_EQ(soft_phy_peek_frame_length(raw.data(), SOFT_PHY_EARLY_HEADER_RAW_BYTES), kRs100Challenge.size());
+}
+
+TEST(SoftPhy, PeekFrameLengthRejectsNoise) {
+  const uint8_t zeros[SOFT_PHY_EARLY_HEADER_RAW_BYTES] = {0x00, 0x00, 0x00};
+  EXPECT_EQ(soft_phy_peek_frame_length(zeros, sizeof(zeros)), 0) << "no stop bit — not a UART cell at any offset";
+
+  const uint8_t ones[SOFT_PHY_EARLY_HEADER_RAW_BYTES] = {0xFF, 0xFF, 0xFF};
+  EXPECT_EQ(soft_phy_peek_frame_length(ones, sizeof(ones)), 0) << "no start bit — not a UART cell at any offset";
+}
+
+TEST(SoftPhy, AirTimeIsRoundedUpToWholeBytes) {
+  // 38400 bps: one byte is 208.33 µs, and the helper must never round below that.
+  EXPECT_GE(soft_phy_air_time_us(1), 208u);
+  EXPECT_GE(soft_phy_air_time_us(48), 10000u) << "the fixed-length RX window costs a full 10 ms";
+  EXPECT_LT(soft_phy_air_time_us(22 + SOFT_PHY_EARLY_READ_MARGIN_BYTES), soft_phy_air_time_us(48))
+      << "a 15-byte frame must complete well before the fixed-length window would";
+}
+
+TEST(RadioSX1262, WaitForPacketCompletesOnAirTimeWithoutRxDone) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.set_rx_buffer(uart_packed_on_air_bytes(kRs100Challenge));
+  // SYNC_WORD_VALID only — RX_DONE never arrives. Under the old flow this receive could only
+  // time out; the frame is nonetheless entirely on air and recoverable.
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  // The host hal.h stubs advance millis() and micros() by one unit per call, so a real frame's
+  // ~5 ms of air time costs several thousand fake milliseconds here. The timeout is sized for the
+  // stub, not for the protocol.
+  ASSERT_TRUE(radio.wait_for_packet(pkt, 20000)) << "a complete, CRC-valid frame must not need RX_DONE";
+  EXPECT_FALSE(radio.fallback_used()) << "the RX_DONE path must not have been reached";
+
+  ASSERT_EQ(pkt.len, kRs100Challenge.size());
+  EXPECT_EQ(std::vector<uint8_t>(pkt.data, pkt.data + pkt.len), kRs100Challenge);
+
+  // It must read from the RX base address, and read only the frame's own bytes plus margin —
+  // never the full fixed-length window.
+  ASSERT_GE(radio.read_lengths().size(), 2u) << "expected a header read then a whole-frame read";
+  for (uint8_t offset : radio.read_offsets())
+    EXPECT_EQ(offset, SX1262_RX_BUFFER_BASE);
+  EXPECT_EQ(radio.read_lengths().front(), SOFT_PHY_EARLY_HEADER_RAW_BYTES);
+  EXPECT_EQ(radio.read_lengths().back(),
+            soft_phy_raw_bytes_for_frame(kRs100Challenge.size()) + SOFT_PHY_EARLY_READ_MARGIN_BYTES);
+  EXPECT_LT(radio.read_lengths().back(), SOFT_PHY_RX_PROBE_PACKET_LEN);
+}
+
+TEST(RadioSX1262, WaitForPacketFallsBackToRxDoneWhenEarlyReadDoesNotValidate) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  // A buffer that never yields a CRC-valid frame — the shape of a chip that turns out not to
+  // expose its buffer mid-reception, or of a spurious sync detect.
+  radio.set_rx_buffer(std::vector<uint8_t>(SOFT_PHY_RX_PROBE_PACKET_LEN, 0x00));
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID, SX1262_IRQ_RX_DONE});
+
+  RadioRxPacket fallback{};
+  fallback.len = 4;
+  fallback.data[0] = 0xDE;
+  radio.set_fallback_packet(fallback);
+
+  RadioRxPacket pkt{};
+  // Generous for the same host-stub clock reason as the test above: the early path must get far
+  // enough to read the buffer and reject it on its merits, not be cut short by the timeout.
+  ASSERT_TRUE(radio.wait_for_packet(pkt, 20000));
+  EXPECT_TRUE(radio.fallback_used()) << "a failed early read must cost latency, never the frame";
+  EXPECT_EQ(pkt.len, 4);
+  EXPECT_EQ(pkt.data[0], 0xDE);
+}
+
+TEST(RadioSX1262, EarlyCompletionIsOptInPerChip) {
+  // The base class default keeps a chip on the RX_DONE path until it declares its buffer
+  // readable mid-reception; SX1262 opts in with the RX base it already programs.
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  EXPECT_EQ(radio.early_rx_read_offset(), SX1262_RX_BUFFER_BASE);
+}
+
+TEST(RadioSX1262, EarlyCompletionDeclinesWindowsTooShortToFinishIn) {
+  // A window smaller than the longest frame's air time cannot complete a receive either way, so
+  // the early path must not spend that whole budget discovering it.
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.set_rx_buffer(uart_packed_on_air_bytes(kRs100Challenge));
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  EXPECT_FALSE(radio.wait_for_packet(pkt, SOFT_PHY_EARLY_MIN_WINDOW_MS - 1));
+  EXPECT_TRUE(radio.read_lengths().empty()) << "no buffer read should have been attempted at all";
 }

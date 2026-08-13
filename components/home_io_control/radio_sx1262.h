@@ -82,6 +82,12 @@ static constexpr uint16_t SX1262_REG_TX_MODULATION = 0x0889;
 /// Bit 2 of @ref SX1262_REG_TX_MODULATION — the (G)FSK-correct value is 1.
 static constexpr uint8_t SX1262_TX_MODULATION_GFSK_BIT = 0x04;
 
+/// Data-buffer split programmed by configure_buffer_base(): TX packets build from 0x00, RX
+/// packets land at 0x80. The RX base doubles as the read offset for a length-driven receive —
+/// a single in-flight packet always starts exactly there.
+static constexpr uint8_t SX1262_TX_BUFFER_BASE = 0x00;
+static constexpr uint8_t SX1262_RX_BUFFER_BASE = 0x80;
+
 static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
@@ -236,6 +242,13 @@ class RadioSX1262 : public SoftPhyDriverBase {
   /// SX1262's buffer base addresses (TX=0x00, RX=0x80) are re-asserted on every RX reset — LR1121
   /// has no equivalent register.
   void configure_buffer_base() override;
+  /// @copydoc SoftPhyDriverBase::early_rx_read_offset
+  ///
+  /// The SX1262 writes demodulated bytes into its data buffer as they arrive, and a single
+  /// in-flight packet always starts at the RX base address programmed by configure_buffer_base(),
+  /// so the shared flow can read the frame out on its own air time rather than waiting the fixed
+  /// ~10 ms for the 48-byte RX_DONE.
+  [[nodiscard]] int16_t early_rx_read_offset() const override { return SX1262_RX_BUFFER_BASE; }
   /// @copydoc SoftPhyDriverBase::fill_capture_info
   ///
   /// Note: `crc_error` is set from the CrcErr IRQ bit — unlike the SX1276, this
@@ -259,7 +272,9 @@ class RadioSX1262 : public SoftPhyDriverBase {
   /// @copydoc SoftPhyDriverBase::read_rssi_raw_byte
   uint8_t read_rssi_raw_byte() override;
   /// @copydoc SoftPhyDriverBase::write_tx_buffer
-  void write_tx_buffer(const uint8_t *data, uint8_t len) override { this->write_buffer_(0x00, data, len); }
+  void write_tx_buffer(const uint8_t *data, uint8_t len) override {
+    this->write_buffer_(SX1262_TX_BUFFER_BASE, data, len);
+  }
   /// @copydoc SoftPhyDriverBase::get_rx_buffer_status
   void get_rx_buffer_status(uint8_t &reported_len, uint8_t &rx_offset) override;
   /// @copydoc SoftPhyDriverBase::read_rx_buffer
