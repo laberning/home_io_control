@@ -38,15 +38,25 @@ constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
     15;  ///< Minimum payload length for tilt-capable extended status replies.
 constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;         ///< Byte containing STATUS_STOPPED.
 constexpr uint8_t PRIVATE_RESPONSE_DELAY_HINT_OFFSET = 7;  ///< Coarse follow-up delay hint byte in many 0x04 replies.
-constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;      ///< Target-position MSB offset in 0x04 replies.
-constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;     ///< Current-position MSB offset in 0x04 replies.
-constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;         ///< Target-position MSB offset in 0x71 updates.
-constexpr uint8_t STATUS_UPDATE_CURRENT_OFFSET = 7;        ///< Current-position MSB offset in 0x71 updates.
-constexpr uint8_t GET_INFO2_TYPE_OFFSET = 10;              ///< Packed device type byte in 0x57 replies.
-constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;      ///< Packed type low bits plus subtype byte in 0x57 replies.
-constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;      ///< Selector byte announcing extended tilt payload.
-constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;           ///< Tilt-position MSB within extended replies.
-constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;           ///< Tilt-position LSB within extended replies.
+// A 0x04 payload does not describe its own layout — which fields these offsets name depends on
+// the request that drew the reply, and only the caller knows that. A reply to a tilt EXECUTE puts
+// the tilt selector 0x20 at offset 4 and a 16-bit slat angle at 5..6, straddling the bytes a
+// reply to a status poll uses for the current position (4..5). Do not try to recover the
+// difference by sniffing the payload: 0x20 is also a perfectly legal current-position MSB (raw
+// 0x2000-0x20FF is 16.0%-16.5%), and a tilt ack is 8 bytes like any hint-carrying position reply,
+// so neither a `data[4] == STATUS_TILT_SELECTOR` test nor a length test can separate them — the
+// first would blank real readings from any cover resting near 16%. The request-derived
+// `trust_position` parameter on update_device_status_() is the discriminator, and the only
+// correct one. See tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block*.yaml.
+constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;   ///< Target-position MSB offset in 0x04 replies.
+constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;  ///< Current-position MSB offset in 0x04 replies.
+constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;      ///< Target-position MSB offset in 0x71 updates.
+constexpr uint8_t STATUS_UPDATE_CURRENT_OFFSET = 7;     ///< Current-position MSB offset in 0x71 updates.
+constexpr uint8_t GET_INFO2_TYPE_OFFSET = 10;           ///< Packed device type byte in 0x57 replies.
+constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;   ///< Packed type low bits plus subtype byte in 0x57 replies.
+constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;   ///< Selector byte announcing extended tilt payload.
+constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;        ///< Tilt-position MSB within extended replies.
+constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;        ///< Tilt-position LSB within extended replies.
 constexpr uint8_t PRIVATE_RESPONSE_HINT_UNUSED = 0xFF;  ///< Value used by devices that do not expose a follow-up timer.
 constexpr uint8_t PRIVATE_RESPONSE_HINT_ZERO =
     0x00;  ///< Value treated as invalid or uninformative for follow-up timing.
@@ -416,7 +426,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // === Key-extraction responder ("Accept Foreign Pairing") ===
   // Narrow, armed-only branches for the device-role pairing responder (pairing_responder.h);
   // see hub_key_extraction.cpp. When disarmed these frames fall through unchanged to the normal
-  // handling below (0x28/0x31/0x32 are not otherwise acted on by this hub, so that's a no-op).
+  // handling below (0x28/0x2C/0x31/0x32 are not otherwise acted on by this hub, so that's a no-op).
   if (this->try_handle_key_extraction_frame_(frame))
     return;
 

@@ -117,6 +117,25 @@ class DeviceRegistry {
   /// @return true if the optimistic target was cleared.
   bool clear_optimistic_target(const std::string &device_id);
 
+  /// Set an optimistic slat angle ahead of a confirming poll, and notify.
+  ///
+  /// No-op (and returns false) when the device is unknown, has `optimistic_state == false`, or is
+  /// not a tilt-capable type. Nothing else can fill the gap: unlike a position command, a tilt
+  /// command's own reply carries no slat angle this hub can use. The EXECUTE ack lays its payload
+  /// out differently from a status reply and is not decoded for tilt at all (see the offset
+  /// constants in hub_status.cpp and
+  /// tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block*.yaml), so without this the
+  /// entity would keep showing the pre-command angle until the next status poll seconds later.
+  ///
+  /// Deliberately does not touch `is_stopped`, unlike apply_optimistic_target(): the HA movement
+  /// animation is derived from main-position delta, and a tilt-only command does not move the
+  /// main position — marking the device as moving would animate an open/close that is not
+  /// happening. The EXECUTE ack settles `is_stopped` from the wire a fraction of a second later.
+  /// @param device_id   Device to update.
+  /// @param tilt_percent Slat angle in the same percent scale as `IoDevice::tilt` (0-100).
+  /// @return true if the optimistic tilt was applied.
+  bool apply_optimistic_tilt(const std::string &device_id, float tilt_percent);
+
   /// @return Number of registered devices.
   [[nodiscard]] size_t size() const { return devices_.size(); }
 

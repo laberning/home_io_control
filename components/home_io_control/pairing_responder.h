@@ -14,7 +14,7 @@
 /// hub_decisions.h's split, so it is directly host-testable. The impure orchestration — arming,
 /// throwaway node-ID generation, transmitting replies, the auto-off timer, and the security log
 /// block — lives on IOHomeControlComponent (hub_key_extraction.cpp), which calls into this header
-/// from the new 0x28/0x31/0x32 branches in process_received_packet_() (hub_status.cpp).
+/// from the 0x28/0x2C/0x31/0x32 branches in process_received_packet_() (hub_status.cpp).
 
 #include "proto_device_model.h"
 #include "proto_sizes.h"
@@ -27,9 +27,10 @@ namespace pairing_responder {
 
 /// @brief State machine for the device-role key-extraction responder.
 enum class ResponderState : uint8_t {
-  DISARMED,            ///< Not armed; 0x28/0x31/0x32 traffic is ignored.
+  DISARMED,            ///< Not armed; 0x28/0x2C/0x31/0x32 traffic is ignored.
   ARMED_IDLE,          ///< Armed, listening for a discovery request (0x28).
-  SENT_DISCOVER_RESP,  ///< Replied to discovery (0x29); waiting for key-init (0x31).
+  SENT_DISCOVER_RESP,  ///< Replied to discovery (0x29); waiting for discovery-confirm (0x2C) or key-init (0x31).
+  SENT_CONFIRM_ACK,    ///< Acknowledged discovery-confirm (0x2D); waiting for key-init (0x31).
   SENT_CHALLENGE,      ///< Replied to key-init with our challenge (0x3C); waiting for key-transfer (0x32).
   EXTRACTED,           ///< System key recovered from a valid 0x32; the hub disarms immediately after.
 };
@@ -58,15 +59,37 @@ struct ResponderContext {
 /// Valid from ARMED_IDLE (first response — replies using the throwaway ID/advertised type
 /// already stored in @p ctx by the caller at arm time) and SENT_DISCOVER_RESP (a hub retry —
 /// resend the same values without regenerating anything). No-op from any later state: a discovery
-/// request must never re-arm or restart an exchange already past this phase.
+/// request must never re-arm or restart an exchange already past this phase. That silence is what
+/// a real device does too — in tests/corpus/captures/velux_kux100/pairing_full.yaml the hub
+/// re-broadcasts 0x28 right after the confirm-ack and the device pointedly does not answer,
+/// before the hub moves on to the key exchange.
 /// @param ctx Responder context (mutated: state only).
 /// @return true if the caller should build and send a CMD_DISCOVER_RESP (0x29) reply.
 bool on_discover_request(ResponderContext &ctx);
 
+/// @brief Decide how to react to an inbound CMD_DISCOVER_CONFIRM (0x2C) addressed to our
+/// throwaway ID.
+///
+/// A hub sends 0x2C directly to a device it just discovered and, in general, will not proceed to
+/// the key exchange until that device answers with CMD_DISCOVER_CONFIRM_ACK (0x2D) — the step
+/// between discovery and key-init in a real pairing
+/// (tests/corpus/captures/velux_kux100/pairing_full.yaml). Hub strictness varies: some retry 0x2C
+/// indefinitely without it, others eventually send 0x31 anyway, which is why on_key_init() also
+/// accepts a key-init straight from SENT_DISCOVER_RESP.
+///
+/// Valid from SENT_DISCOVER_RESP (first confirm) and SENT_CONFIRM_ACK (a hub retry after missing
+/// our 0x2D — resend the same bare ack, nothing is regenerated). No-op from any other state: like
+/// on_discover_request(), an early-phase frame must never pull an exchange already past this
+/// point back down.
+/// @param ctx Responder context (mutated: state only).
+/// @return true if the caller should build and send a CMD_DISCOVER_CONFIRM_ACK (0x2D) reply.
+bool on_discover_confirm(ResponderContext &ctx);
+
 /// @brief Decide how to react to an inbound CMD_KEY_INIT (0x31) addressed to our throwaway ID.
 ///
-/// Valid from SENT_DISCOVER_RESP (first key-init: stores @p challenge and @p hub_node_id, then
-/// advances) and SENT_CHALLENGE (a hub retry after missing our 0x3C — @p challenge is discarded
+/// Valid from SENT_DISCOVER_RESP and SENT_CONFIRM_ACK (first key-init: stores @p challenge and
+/// @p hub_node_id, then advances — accepted from both because not every hub waits for our 0x2D,
+/// see on_discover_confirm()) and SENT_CHALLENGE (a hub retry after missing our 0x3C — @p challenge is discarded
 /// and the previously-stored one is reused instead, since the hub's eventual 0x32 must be
 /// decrypted with the exact challenge bytes it actually received; SX1262's slow TX→RX turnaround
 /// makes this retry path the expected common case, not an edge case). No-op from any other state.

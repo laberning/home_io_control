@@ -1,0 +1,66 @@
+id: issue_60_tilt_execute_ack_echoes_precommand_tilt
+description: >
+  Middle frame of the same-device before/after pair (see
+  issue_60_tilt_status_poll_reports_settled_tilt_before.yaml and
+  issue_60_tilt_status_poll_reports_settled_tilt_after.yaml): the reporter set tilt from a known
+  0% baseline to 75% (data[5..6] of the EXECUTE request = 0x3200 -> 100 - 12800*100/51200 =
+  75%, matching "Sending tilt=75%"). The immediate 0x04 ack's tilt-shaped bytes at data[5..6]
+  are 0xC800 — decode_tilt_report(0xC800) = 0%, i.e. **byte-for-byte identical** to the raw tilt
+  block this same device reported in the status poll one minute *before* this command (see the
+  "before" capture). That exact match is the answer to the maintainer's open question on issue
+  #60: the EXECUTE-tilt ack's tilt block is the device's *pre-command* angle, not the new
+  target and not a live in-motion reading — it hadn't started moving yet when it built this
+  reply. hub_status.cpp never decodes this value (trust_position=false for our own EXECUTE
+  acks, and even when trusted the offsets differ from the extended status-poll layout — see the
+  file-scope comment above PRIVATE_RESPONSE_TARGET_OFFSET), so no code change follows from this
+  capture; it exists to document *why* leaving that field permanently unused is correct, with
+  real-hardware evidence, rather than an untested assumption.
+  Also note data[2..3]=0xC800 (target=100%) and the generic current-position decode data[4..5]:
+  data[4]=0x20 is the tilt selector marker reused as if it were the current-position MSB, giving
+  a bogus 16%-ish reading — the same artifact documented in
+  issue_60_tilt_execute_ack_tilt_block.yaml, reproduced here on a third capture of the same bug
+  class with a different commanded tilt value.
+source:
+  device: "io-homecontrol tilt-capable cover (cover_position_tilt profile), node 51C001"
+  captured_with: other
+  firmware: "user build at commit 03b5f8d (log lines home_io_control:245/:269), predates commit 5ddadd4"
+  date: 2026-08-11
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/60"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "50 20 51 C0 01 31 BA F7 00 01 43 D4 00 20 32 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) setOrientation, START; data[4]=0x20 tilt selector, data[5..6]=0x3200 = 12800/51200 -> tilt 75%"
+  - dir: rx
+    t_ms: 299
+    freq: 868950000
+    hex: "0E 00 31 BA F7 51 C0 01 3C CD 43 69 9D 59 FD"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), challenge = CD 43 69 9D 59 FD"
+  - dir: tx
+    t_ms: 306
+    freq: 868950000
+    hex: "0E 00 51 C0 01 31 BA F7 3D 3E 70 A4 14 B0 B6"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D), HMAC under the reporter's real system key — not verifiable here (key: unknown)"
+  - dir: rx
+    t_ms: 342
+    freq: 868950000
+    hex: "90 00 31 BA F7 51 C0 01 04 04 80 C8 00 20 C8 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04) EXECUTE-tilt ack, END — data[0]=0x04 (STATUS_STOPPED clear: moving), data[2..3]=0xC800 stale target=100%, data[4]=0x20 tilt selector read as bogus current-position MSB, data[5..6]=0xC800 is the tilt block (decodes to 0% = the pre-command angle, not the commanded 75%), data[7]=0x00 (no follow-up hint)"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: ACCEPT}
+  device:
+    reported_position: 16  # raw decode of data[4..5]; the bug, not the device's real position — see description

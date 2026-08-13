@@ -77,6 +77,23 @@ static IoFrame build_short_moving_status_response(const uint8_t dst[3]) {
   return f;
 }
 
+// 8-byte private response in the EXECUTE-tilt ack layout: data[4] is the tilt selector and
+// data[5..6] a 16-bit slat angle, where a position-bearing 0x04 carries the current position in
+// data[4..5]. Byte-for-byte the ack from issue 60 — see
+// tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block.yaml.
+static IoFrame build_tilt_execute_ack_response(const uint8_t dst[3]) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  // Read as a position reply this decodes to target=0xC800=100% and current=0x2060=16%, neither
+  // of which is where the cover is; read correctly it is selector + tilt block + absent hint.
+  uint8_t payload[8] = {0x04, 0x80, 0xC8, 0x00, STATUS_TILT_SELECTOR, 0x60, 0x8D, 0x00};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+  return f;
+}
+
 static IoFrame build_error_response(const uint8_t dst[3], uint8_t result) {
   IoFrame f{};
   init_frame(f, true, false, true, false);
@@ -787,6 +804,46 @@ TEST(HubOperations, ExecuteReplyDoesNotOverwriteTargetOrPositionWithStaleValues)
 
   EXPECT_FLOAT_EQ(dev->target, 77.0F) << "EXECUTE's own reply must not overwrite target with stale data";
   EXPECT_FLOAT_EQ(dev->position, 88.0F) << "EXECUTE's own reply must not overwrite position with stale data";
+  EXPECT_FALSE(dev->is_stopped) << "is_stopped is still applied from the reply";
+}
+
+TEST(HubOperations, TiltExecuteReplyTiltBlockIsNotDecodedAsPosition) {
+  // Issue 60: an EXECUTE-tilt ack lays out its payload differently from a position status
+  // reply — data[4] is the tilt selector 0x20 and data[5..6] carry a 16-bit tilt value, where a
+  // position-bearing 0x04 has the current position in data[4..5]. Decoded generically, data[4..5]
+  // reads 0x2060 = 16%, so every tilt command appeared to snap the cover to the same position
+  // (84% in Home Assistant, the inverted form) regardless of where it actually was.
+  // The bytes below are the ones off the reporter's wire; see
+  // tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block.yaml.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;  // supports tilt
+  dev->target = 77.0F;
+  dev->position = 88.0F;
+  // The angle the entity layer already applied optimistically for this very command
+  // (DeviceRegistry::apply_optimistic_tilt()); the ack must not overwrite it.
+  dev->tilt = 83.0F;
+
+  IoFrame resp = build_tilt_execute_ack_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.set_device_tilt("ABC123", 83));
+
+  EXPECT_FLOAT_EQ(dev->position, 88.0F)
+      << "the tilt selector byte must not be decoded as the current-position MSB (would read 16%)";
+  EXPECT_FLOAT_EQ(dev->target, 77.0F) << "a tilt ack carries no main-position target either (would read 100%)";
+  EXPECT_FLOAT_EQ(dev->tilt, 83.0F) << "the ack's tilt block (0x608D ~= 52%) is in-flight or pre-command state of "
+                                       "unknown meaning, so it must not replace the optimistic commanded angle";
   EXPECT_FALSE(dev->is_stopped) << "is_stopped is still applied from the reply";
 }
 

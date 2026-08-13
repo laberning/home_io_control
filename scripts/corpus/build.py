@@ -173,6 +173,8 @@ def render_capture(capture: dict) -> "tuple[str, str]":
     device = expect.get("device") or {}
     has_reported_position = "reported_position" in device
     reported_position = device.get("reported_position", 0)
+    has_reported_tilt = "reported_tilt" in device
+    reported_tilt = device.get("reported_tilt", 0)
     has_device_name = "name" in device
     device_name = device.get("name", "")
 
@@ -195,6 +197,7 @@ def render_capture(capture: dict) -> "tuple[str, str]":
         f"{has_exchange}, {kind_expr}, {outcome_expr}, "
         f"{frames_array_name}, {len(frames)}u, "
         f"{'true' if has_reported_position else 'false'}, {reported_position}u, "
+        f"{'true' if has_reported_tilt else 'false'}, {reported_tilt}u, "
         f"{'true' if has_device_name else 'false'}, {c_string(device_name)}, "
         f"{'true' if has_oneway_intent else 'false'}, {c_string(oneway_intent)}, "
         f"{'true' if has_oneway_target_type else 'false'}, {oneway_target_type}u, "
@@ -256,6 +259,8 @@ struct CorpusCapture {{
   uint8_t frame_count;
   bool has_reported_position;
   uint8_t reported_position;
+  bool has_reported_tilt;
+  uint8_t reported_tilt;
   bool has_device_name;
   const char *device_name;
   bool has_oneway_intent;

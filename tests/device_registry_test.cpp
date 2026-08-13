@@ -266,6 +266,52 @@ TEST(DeviceRegistry, OptimisticTargetNoOpWhenOptimisticStateDisabled) {
   EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "optimistic_state=false must leave target untouched";
 }
 
+// --- optimistic tilt ---
+
+TEST(DeviceRegistry, ApplyOptimisticTiltSetsTiltWithoutClearingStopped) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+
+  EXPECT_TRUE(reg.apply_optimistic_tilt("ABC123", 83.0f));
+
+  const IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->tilt, 83.0f);
+  EXPECT_TRUE(dev->is_stopped) << "a tilt-only command does not move the main position, so it must "
+                                  "not start the HA open/close animation the way a target does";
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "optimistic tilt must not invent a position target";
+  EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "optimistic tilt must not touch the reported position";
+}
+
+TEST(DeviceRegistry, ApplyOptimisticTiltNoOpForNonTiltDevice) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+
+  EXPECT_FALSE(reg.apply_optimistic_tilt("ABC123", 83.0f)) << "a roller shutter rejects the tilt command anyway; "
+                                                              "showing an angle no poll will ever confirm is worse "
+                                                              "than showing none";
+
+  const IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->tilt, UNKNOWN_POSITION);
+}
+
+TEST(DeviceRegistry, ApplyOptimisticTiltOnUnknownDeviceReturnsFalseWithoutCrashing) {
+  DeviceRegistry reg;
+  EXPECT_FALSE(reg.apply_optimistic_tilt("UNKNOWN1", 50.0f));
+}
+
+TEST(DeviceRegistry, OptimisticTiltNoOpWhenOptimisticStateDisabled) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
+
+  EXPECT_FALSE(reg.apply_optimistic_tilt("ABC123", 83.0f));
+
+  const IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->tilt, UNKNOWN_POSITION) << "optimistic_state=false must leave tilt untouched";
+}
+
 // --- linked remote class lookup ---
 
 TEST(DeviceRegistry, LinkedDevicesForClassReturnsAllSameTypeDevices) {

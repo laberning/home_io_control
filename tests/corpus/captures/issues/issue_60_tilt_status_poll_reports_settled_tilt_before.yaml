@@ -1,0 +1,63 @@
+id: issue_60_tilt_status_poll_reports_settled_tilt_before
+description: >
+  A status poll (CMD_PRIVATE 0x03, requesting the tilt-aware extended reply via the
+  STATUS_TILT_SELECTOR marker byte in the request itself — proto_commands.cpp's
+  build_status_poll_request()) answered with the 16-byte extended CMD_PRIVATE_RESP: the normal
+  8-byte position block at data[0..7] (target 100%, current 100%, stopped) followed by an
+  extra 8 bytes at data[8..15] carrying the echoed sender node ID and, at data[12..14], the
+  STATUS_TILT_SELECTOR (0x20) plus a 16-bit slat angle — decode_tilt_report(0xC800) = 0%.
+  This is the *baseline* half of a same-device before/after pair: the cover's tilt had been
+  explicitly set to 0% about a minute earlier (see the reporter's full log — tilt=0% EXECUTE at
+  22:26:03, then this poll at 22:27:03), so a 0% extended-tilt reading here is the real,
+  settled angle, not an artifact. Paired with
+  issue_60_tilt_execute_ack_echoes_precommand_tilt.yaml (same device, next command) and
+  issue_60_tilt_status_poll_reports_settled_tilt_after.yaml (the poll a minute after that
+  command) — together the three pin down what the two different "tilt-shaped" byte pairs in
+  this protocol actually mean, which the reporter and maintainer could not determine from the
+  original bug report alone (github.com/laberning/home_io_control/issues/60#issuecomment,
+  2026-08-11).
+source:
+  device: "io-homecontrol tilt-capable cover (cover_position_tilt profile), node 51C001"
+  captured_with: other
+  firmware: "user build at commit 03b5f8d (log lines home_io_control:245/:269), predates commit 5ddadd4"
+  date: 2026-08-11
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/60"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 20 51 C0 01 31 BA F7 03 03 20 01 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) status poll; data[0..3]=03 20 01 00 explicitly requests the tilt-extended reply (STATUS_TILT_SELECTOR=0x20 as the second byte)"
+  - dir: rx
+    t_ms: 295
+    freq: 868950000
+    hex: "0E 00 31 BA F7 51 C0 01 3C 53 D1 18 AA D0 A7"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), challenge = 53 D1 18 AA D0 A7"
+  - dir: tx
+    t_ms: 303
+    freq: 868950000
+    hex: "0E 00 51 C0 01 31 BA F7 3D FA AA 3C 11 18 C4"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D), HMAC under the reporter's real system key — not verifiable here (key: unknown)"
+  - dir: rx
+    t_ms: 340
+    freq: 868950000
+    hex: "98 00 31 BA F7 51 C0 01 04 05 00 C8 00 C8 00 00 00 31 BA F7 01 20 C8 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), extended (16-byte) reply, END — data[0]=0x05 (STATUS_STOPPED set), data[2..3]=0xC800 target=100%, data[4..5]=0xC800 current=100%, data[8..10]=31BAF7 (our own controller ID, echoed), data[11]=0x01, data[12]=0x20 STATUS_TILT_SELECTOR, data[13..14]=0xC800 tilt raw -> decode_tilt_report(0xC800)=0%"
+expect:
+  exchange:
+    kind: status_poll
+    outcome: success
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: ACCEPT}
+  device:
+    reported_position: 100
+    reported_tilt: 0

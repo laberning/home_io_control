@@ -37,6 +37,17 @@ constexpr uint8_t PRIVATE_RESP_STOPPED_FLAGS_OFFSET = 0;
 constexpr uint8_t PRIVATE_RESP_TARGET_OFFSET = 2;
 constexpr uint8_t PRIVATE_RESP_CURRENT_OFFSET = 4;
 
+// Mirrors EXTENDED_TILT_RESPONSE_MIN_DATA_LEN / EXTENDED_TILT_SELECTOR_OFFSET / EXTENDED_TILT_MSB_OFFSET /
+// EXTENDED_TILT_LSB_OFFSET in hub_status.cpp — same file-local-constant situation as the position offsets
+// above. Only a status-poll reply (not our own EXECUTE-tilt ack) is long enough to carry this extended
+// block; hub_status.cpp additionally gates on device_supports_tilt(dev.type), which this codec-layer test
+// has no device record to check, so it relies on the capture author only setting reported_tilt on frames
+// that are genuinely status-poll replies (see tests/corpus/README.md).
+constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN = 15;
+constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;
+constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;
+constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;
+
 }  // namespace
 
 class CorpusDecode : public ::testing::TestWithParam<const corpus::CorpusCapture *> {};
@@ -125,6 +136,35 @@ TEST_P(CorpusDecode, ExpectationsMatchDecodedFrames) {
     }
     EXPECT_GT(status_frames_seen, 0)
         << "capture has device.reported_position expectation but no position-bearing CMD_PRIVATE_RESP frame found";
+  }
+
+  // --- Status-poll extended tilt decode --------------------------------------------------------
+  // Only the extended (>=15-byte) CMD_PRIVATE_RESP layout used for status-poll replies carries a
+  // real slat-angle reading (selector 0x20 at offset 12, 16-bit angle at 13..14) — the immediate
+  // ack to our own EXECUTE-tilt echoes a *different*, pre-command tilt block at offset 4..6 (see
+  // tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block*.yaml and
+  // issue_60_tilt_execute_ack_echoes_precommand_tilt.yaml) and must never be checked here.
+  if (capture->has_reported_tilt) {
+    int tilt_frames_seen = 0;
+    for (uint8_t i = 0; i < capture->frame_count; i++) {
+      const corpus::CorpusFrame &cf = capture->frames[i];
+      if (!cf.has_cmd || cf.cmd != CMD_PRIVATE_RESP)
+        continue;
+      IoFrame frame = corpus_test::parse_capture_frame(cf);
+      if (frame.data_len < EXTENDED_TILT_RESPONSE_MIN_DATA_LEN ||
+          frame.data[EXTENDED_TILT_SELECTOR_OFFSET] != STATUS_TILT_SELECTOR)
+        continue;  // not an extended tilt-bearing reply
+      tilt_frames_seen++;
+
+      const uint16_t tilt_raw =
+          (static_cast<uint16_t>(frame.data[EXTENDED_TILT_MSB_OFFSET]) << 8) | frame.data[EXTENDED_TILT_LSB_OFFSET];
+      const float tilt = decode_tilt_report(tilt_raw);
+      // Whole-percent uint8_t in the schema, same rounding rationale as reported_position above.
+      EXPECT_EQ(std::lround(tilt), static_cast<long>(capture->reported_tilt))
+          << "reported_tilt mismatch on frame " << static_cast<int>(i) << " (raw decoded tilt=" << tilt << ")";
+    }
+    EXPECT_GT(tilt_frames_seen, 0)
+        << "capture has device.reported_tilt expectation but no extended tilt-bearing CMD_PRIVATE_RESP frame found";
   }
 }
 

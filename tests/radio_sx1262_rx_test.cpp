@@ -6,6 +6,7 @@
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
+#include "stubs/scripted_spi.h"
 
 #include <gtest/gtest.h>
 #include <vector>
@@ -381,4 +382,51 @@ TEST(RadioSX1262, UartDecodeFixedStride) {
   uint8_t dlen = decode_uart_probe(encoded, elen, 0, decoded, sizeof(decoded));
   ASSERT_GE(dlen, 1u);
   EXPECT_EQ(decoded[0], 0xA5);
+}
+
+// ============================================================================
+// Preamble unit regression: SetPacketParams' PreambleLength field is bit-denominated on this
+// chip, but every caller passes a byte count (LONG_PREAMBLE, SHORT_PREAMBLE, response_preamble()).
+// set_packet_params_() must convert.
+// ============================================================================
+
+TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = LONG_PREAMBLE;
+  // As in the LR1121 TX test: send_packet reliably times out waiting for TX_DONE in a
+  // synchronous host test, but SetPacketParams/WriteBuffer are both issued before that wait.
+  radio.send_packet(frame, sizeof(frame), cfg);
+
+  int write_buffer_idx = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_WRITE_BUFFER) {
+      write_buffer_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(write_buffer_idx, 0);
+
+  int packet_params_idx = -1;
+  for (int i = write_buffer_idx - 1; i >= 0; i--) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_SET_PACKET_PARAMS) {
+      packet_params_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(packet_params_idx, 0) << "SetPacketParams must be issued before WriteBuffer for TX";
+
+  const auto &pp = spi.transactions()[packet_params_idx];
+  ASSERT_EQ(pp.size(), 10u) << "opcode(1) + 9 packet-param bytes";
+  const uint16_t preamble_field = (static_cast<uint16_t>(pp[1]) << 8) | pp[2];
+  EXPECT_EQ(preamble_field, static_cast<uint16_t>(LONG_PREAMBLE * 8))
+      << "SetPacketParams' PreambleLength is in bits: LONG_PREAMBLE (" << LONG_PREAMBLE
+      << " bytes) must reach the chip as " << (LONG_PREAMBLE * 8) << " bits, not " << LONG_PREAMBLE
+      << " bits (an 8x-too-short on-air preamble)";
 }

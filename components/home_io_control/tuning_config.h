@@ -86,15 +86,20 @@ enum class DiscoveryCommand : uint8_t {
 
 /// SX1262-specific preamble for response/continuation frames within an exchange.
 ///
-/// The SX1262 software UART-encoded waveform requires a longer preamble than the
-/// protocol's standard 8-byte SHORT_PREAMBLE when the peer device has just finished
-/// transmitting and is switching back to RX. This applies to any tight-turnaround
-/// frame: 0x3D challenge responses, 0x32 key transfers after receiving 0x3C, and
-/// any future protocol frames sent immediately after receiving from the device.
+/// Applies to any tight-turnaround frame sent immediately after receiving from the device —
+/// 0x3D challenge responses, 0x32 key transfers after receiving 0x3C, and any future protocol
+/// frame in that position — giving the peer's receiver time to lock back on after the SX1262's
+/// own TX→RX turnaround.
 ///
-/// 64 bytes was validated on real hardware (Heltec V3.2 ↔ Device actuator) as the
-/// minimum that gives reliable lock-on without perturbing exchange timing.
-static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 64;
+/// 8 bytes was validated on real hardware (Heltec V3.2 ↔ Device actuator) as the minimum that
+/// gives reliable lock-on without perturbing exchange timing; it matches the protocol's own
+/// nominal SHORT_PREAMBLE floor.
+///
+/// This constant is byte-denominated, like every other preamble value in this codebase
+/// (LONG_PREAMBLE, SHORT_PREAMBLE) — `RadioSX1262::set_packet_params_()` is the one place that
+/// converts to the chip's bit-denominated SetPacketParams field, right before the value leaves
+/// for the wire.
+static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 8;
 
 /// SX1262-specific post-TX settling delay before re-entering RX.
 ///

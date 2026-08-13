@@ -102,9 +102,8 @@ static constexpr uint8_t CMD_ONEWAY_ADD_CONTROLLER =
            ///< the declared length instead, still under the CRC — see IoFrame::has_mac and
            ///< frame_carries_mac_trailer() (proto_frame.h). Reference:
            ///< tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml.
-static constexpr uint8_t CMD_ONEWAY_REMOVE =
-    0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device); same payload shape
-           ///< as 0x2E. Reference: analysis/completed/pairing_lab.md field capture, "CMD 0x39".
+static constexpr uint8_t CMD_ONEWAY_REMOVE = 0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device);
+                                                    ///< same payload shape as 0x2E.
 
 // Key exchange commands (used during pairing)
 static constexpr uint8_t CMD_KEY_INIT = 0x31;      ///< Initiate key transfer to device

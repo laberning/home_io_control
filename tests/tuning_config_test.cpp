@@ -12,7 +12,7 @@ using namespace esphome::home_io_control;
 TEST(TuningConfig, DefaultsMatchPlan) {
   TuningConfig cfg{};
   EXPECT_EQ(cfg.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_117_3_KHZ);
-  EXPECT_EQ(cfg.sx1262_response_preamble, 64);
+  EXPECT_EQ(cfg.sx1262_response_preamble, 8);
   EXPECT_EQ(cfg.sx1262_post_tx_settle_us, 500);
   // SX1276 radio defaults: RegRxBw 0x13 (unchanged fixed value) and a 12-byte response preamble
   // (raised from SHORT_PREAMBLE after hardware tuning).
@@ -23,7 +23,7 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_EQ(cfg.sx1262_discovery_hop_slice_ms, 200);
   // LR1121 radio defaults are seeded from the validated SX1262 values
   EXPECT_EQ(cfg.lr1121_rx_bandwidth, LR1121RxBandwidth::BW_117_3_KHZ);
-  EXPECT_EQ(cfg.lr1121_response_preamble, 64);
+  EXPECT_EQ(cfg.lr1121_response_preamble, 8);
   EXPECT_EQ(cfg.lr1121_post_tx_settle_us, 500);
   EXPECT_EQ(cfg.lr1121_discovery_hop_slice_ms, 200);
   EXPECT_EQ(cfg.lbt_max_retries, 5);

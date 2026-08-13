@@ -16,7 +16,7 @@
 /// Owns the impure side of the key-extraction feature: arming/disarming, throwaway node-ID
 /// generation, the 10-minute auto-off timer, transmitting device-role replies, and the
 /// security-sensitive result log block. The pure state-transition decisions live in
-/// pairing_responder.h/.cpp; the three RX branches that call into this file are in
+/// pairing_responder.h/.cpp; the four RX branches that call into this file are in
 /// process_received_packet_() (hub_status.cpp).
 ///
 /// @note Hardware-confirmed 2026-08-02: a full extraction (0x28 through 0x33) between two real
@@ -26,15 +26,24 @@
 /// @warning What that test does NOT validate: compatibility with a genuine third-party hub
 /// (Somfy TaHoma/Smoove, Velux KLF200, etc.). The device-role frames built here
 /// (create_discover_resp(), create_challenge_req(), create_key_confirm()) were reverse-engineered
-/// from this project's own encoder and a small number of captures — see
-/// analysis/key_extraction_feature_plan.md §4b. The self-test above necessarily agrees with those
-/// conventions (it's the same codebase on both ends); a real hub's exact requirements
-/// (discovery-response field completeness, retry cadence) may still differ.
+/// from this project's own encoder and a small number of captures. The self-test above
+/// necessarily agrees with those conventions (it's the same codebase on both ends); a real hub's
+/// exact requirements (discovery-response field completeness, retry cadence) may still differ.
 /// recover_system_key_from_transfer()'s IV-derivation formula itself is now pinned against two
+/// (Somfy TaHoma/Smoove, Velux KLF200, etc.). That self-test necessarily agrees with this
+/// codebase's own conventions — it is the same encoder on both ends — so it is blind to two
+/// things: a device-role frame that is self-consistent but wrong on air, and a protocol step a
+/// real hub requires that this project's own controller role never sends. Both are real failure
+/// modes against real hubs; see tests/corpus/captures/issues/issue_45_*_key_extraction_stall.yaml.
+/// The device-role builders (create_discover_resp(), create_challenge_req_device_role(),
+/// create_key_confirm(), create_discover_confirm_ack()) are each pinned against a real device's
+/// captured framing by tests/corpus_device_role_builder_test.cpp — except
+/// create_discover_resp()'s flags/timestamp bytes, which remain placeholders.
+/// recover_system_key_from_transfer()'s IV-derivation formula is independently pinned against two
 /// externally-captured known-answer key transfers (ProtoCrypto.CryptKeyMatchesDocumented*Capture
-/// in proto_crypto_test.cpp), so that specific formula is no longer only self-derived — though
-/// both captures are short requests and don't exercise construct_iv()'s 8-byte truncation window,
-/// so a real hub sending a longer request is still an open question. Treat a recovered key as
+/// in proto_crypto_test.cpp), so that formula does not rest on this codebase's own conventions —
+/// though both captures are short requests and don't exercise construct_iv()'s 8-byte truncation
+/// window, so a real hub sending a longer request is an open question. Treat a recovered key as
 /// unconfirmed until it has been verified against a real hub, or by successfully controlling a
 /// device with it.
 
@@ -45,9 +54,8 @@ namespace {
 
 constexpr uint32_t KEY_EXTRACTION_AUTO_OFF_MS = 10 * 60 * 1000;  ///< Arm window: 10 minutes.
 // TODO(hardware-verify): confirm a real hub's pairing flow doesn't validate the advertised
-// manufacturer/type against a known-device allowlist before completing key exchange (see
-// analysis/key_extraction_feature_plan.md §10.1) — Somfy/roller-shutter is a plausible but
-// unconfirmed default.
+// manufacturer/type against a known-device allowlist before completing key exchange —
+// Somfy/roller-shutter is a plausible but unconfirmed default.
 constexpr uint8_t KEY_EXTRACTION_MANUFACTURER_ID = MANUFACTURER_SOMFY;  ///< Plausible, widely-supported default.
 constexpr DeviceType KEY_EXTRACTION_ADVERTISED_TYPE = DeviceType::ROLLER_SHUTTER;  ///< Plausible default device type.
 constexpr uint8_t KEY_EXTRACTION_ADVERTISED_SUBTYPE = 0;
@@ -96,7 +104,7 @@ void IOHomeControlComponent::set_key_extraction_armed(bool armed) {
 
   ESP_LOGW(detail::TAG,
            "Key extraction: ARMED for 10 minutes, throwaway ID %s. Put your existing hub into pairing/add-device "
-           "mode now. Not yet confirmed against a third-party hub — see docs for details.",
+           "mode now.",
            node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
 
   this->set_timeout(KEY_EXTRACTION_TIMEOUT_NAME, KEY_EXTRACTION_AUTO_OFF_MS, [this]() {
@@ -128,6 +136,10 @@ bool IOHomeControlComponent::try_handle_key_extraction_frame_(const IoFrame &fra
   }
   if (memcmp(frame.dst, this->key_extraction_ctx_.throwaway_id, NODE_ID_SIZE) != 0)
     return false;
+  if (frame.cmd == CMD_DISCOVER_CONFIRM) {
+    this->handle_key_extraction_discover_confirm_(frame);
+    return true;
+  }
   if (frame.cmd == CMD_KEY_INIT) {
     this->handle_key_extraction_key_init_(frame);
     return true;
@@ -142,7 +154,7 @@ bool IOHomeControlComponent::try_handle_key_extraction_frame_(const IoFrame &fra
 void IOHomeControlComponent::broadcast_key_extraction_reply_(const IoFrame &frame) {
   // Broadcast on all 3 channels like the CMD_STATUS_UPDATE_RESP ack in hub_status.cpp: we don't
   // know which channel the foreign hub is listening on after transmitting its own frame. Use the
-  // driver's own response_preamble() (12 bytes for SX1276, 64 for SX1262) rather than a flat
+  // driver's own response_preamble() (12 bytes for SX1276, 8 for SX1262) rather than a flat
   // SHORT_PREAMBLE(8) or LONG_PREAMBLE(1024) constant — this is the same chip-tuned "reply, not a
   // cold start" preamble ExchangeEngine/PairingEngine already use for every other reply in this
   // codebase (see exchange_engine.cpp, pairing_engine.cpp), and it exists for exactly this
@@ -172,6 +184,20 @@ void IOHomeControlComponent::handle_key_extraction_discover_(const IoFrame &fram
            node_id_to_string(frame.src).c_str(), node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
 }
 
+void IOHomeControlComponent::handle_key_extraction_discover_confirm_(const IoFrame &frame) {
+  if (!pairing_responder::on_discover_confirm(this->key_extraction_ctx_))
+    return;
+
+  IoFrame resp;
+  if (!create_discover_confirm_ack(resp, this->key_extraction_ctx_.throwaway_id, frame.src)) {
+    ESP_LOGW(detail::TAG, "Key extraction: failed to build discovery-confirm ack");
+    return;
+  }
+  this->broadcast_key_extraction_reply_(resp);
+  ESP_LOGI(detail::TAG, "Key extraction: acknowledged discovery confirm from hub %s",
+           node_id_to_string(frame.src).c_str());
+}
+
 void IOHomeControlComponent::handle_key_extraction_key_init_(const IoFrame &frame) {
   uint8_t candidate_challenge[HMAC_SIZE];
   crypto::generate_challenge(candidate_challenge);
@@ -179,8 +205,8 @@ void IOHomeControlComponent::handle_key_extraction_key_init_(const IoFrame &fram
     return;
 
   IoFrame resp;
-  if (!create_challenge_req(resp, frame.src, this->key_extraction_ctx_.throwaway_id,
-                            this->key_extraction_ctx_.challenge)) {
+  if (!create_challenge_req_device_role(resp, frame.src, this->key_extraction_ctx_.throwaway_id,
+                                        this->key_extraction_ctx_.challenge)) {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build challenge request");
     return;
   }
@@ -211,13 +237,12 @@ void IOHomeControlComponent::handle_key_extraction_key_transfer_(const IoFrame &
   this->set_key_extraction_armed(false);
 }
 
-// TODO(hardware-verify): the feature plan's §3/§6 step 8 recommends an authenticated read-back
-// to the foreign hub using the recovered key before trusting it. recover_system_key_from_transfer()'s
-// IV-derivation formula is now pinned against externally-captured known-answer key transfers (see
-// the file-level @warning above), so that piece is no longer just self-consistent — but nothing
-// here confirms this specific extraction talks to a real third-party hub correctly, which is now
-// the single highest-risk unverified piece of this feature. That read-back subflow was
-// deliberately deferred here: it would require carving a narrow exception into
+// TODO(hardware-verify): an authenticated read-back to the foreign hub using the recovered key,
+// to confirm it before trusting it. recover_system_key_from_transfer()'s IV-derivation formula is
+// independently pinned against externally-captured known-answer key transfers (see the file-level
+// @warning above), but nothing here confirms this specific extraction talks to a real third-party
+// hub correctly — the single highest-risk unverified piece of this feature. That read-back subflow
+// is deliberately not implemented: it would require carving a narrow exception into
 // is_exchange_internal_command()'s 0x3C/0x3D early-drop (hub_status.cpp) for a second unverified
 // vendor-hub interaction, doubling the protocol-speculation surface for a feature that already
 // ships marked experimental. The key is still always printed (gating it on an equally-unverified

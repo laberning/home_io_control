@@ -209,6 +209,19 @@ class IOHomeControlComponent : public Component,
     return this->registry_.clear_optimistic_target(device_id);
   }
 
+  /// Set an optimistic slat angle ahead of a confirming status poll, and notify.
+  /// No-op when the device is unknown, has `optimistic_state == false`, or is not tilt-capable.
+  /// See DeviceRegistry::apply_optimistic_tilt() for the full contract and for why a tilt
+  /// command cannot rely on its own reply the way a position command can.
+  /// Virtual like the other device-registry accessors so a test double can override it if it
+  /// needs to; MockPlatformHubBase deliberately does not, and exercises the real registry.
+  /// @param device_id    Target device ID.
+  /// @param tilt_percent Slat angle in the same percent scale as `IoDevice::tilt` (0-100).
+  /// @return true if the optimistic tilt was applied.
+  virtual bool apply_optimistic_tilt(const std::string &device_id, float tilt_percent) {
+    return this->registry_.apply_optimistic_tilt(device_id, tilt_percent);
+  }
+
   /// Allow a 1W sender (identified by its node ID) to fire the `esphome.home_io_control_sender_event`
   /// event to Home Assistant. "Sender" is deliberately broader than "remote": the same 1W broadcast
   /// mechanism carries handheld/wall remotes and wind/rain sensors alike (they differ only in the
@@ -295,8 +308,8 @@ class IOHomeControlComponent : public Component,
   /// @brief Arm or disarm the "Accept Foreign Pairing (Key Extraction)" responder.
   ///
   /// Arming picks a fresh throwaway node ID, resets the pairing_responder state machine to
-  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, new 0x28/0x31/0x32 branches in
-  /// process_received_packet_() emulate an unpaired device so a user's existing hub can pair to
+  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, the 0x28/0x2C/0x31/0x32 branches
+  /// in process_received_packet_() emulate an unpaired device so a user's existing hub can pair to
   /// it and hand over its node_id/system_key (see pairing_responder.h). Disarming — manual, via
   /// the HA switch, on successful extraction, or on auto-off — immediately stops those branches
   /// from responding; it never touches the real device registry or the hub's own node_id_/
@@ -555,9 +568,9 @@ class IOHomeControlComponent : public Component,
   // Small delegating wrappers called from process_received_packet_(); the actual decision logic
   // lives in pairing_responder.h so it stays pure and host-testable. See hub_key_extraction.cpp.
 
-  /// Dispatch a frame to the key-extraction responder if it's one of its 0x28/0x31/0x32 frames
-  /// and the responder is armed. Factored out of process_received_packet_() purely to keep that
-  /// function's cognitive complexity under the clang-tidy threshold, mirroring
+  /// Dispatch a frame to the key-extraction responder if it's one of its 0x28/0x2C/0x31/0x32
+  /// frames and the responder is armed. Factored out of process_received_packet_() purely to keep
+  /// that function's cognitive complexity under the clang-tidy threshold, mirroring
   /// PairingEngine::record_discovery_rx_telemetry_()'s reason for existing.
   /// @param frame Parsed inbound frame.
   /// @return true if the frame was handled (caller should stop further dispatch for it).
@@ -580,6 +593,9 @@ class IOHomeControlComponent : public Component,
   /// Handle an inbound CMD_DISCOVER_REQ (0x28) while the key-extraction responder is armed.
   /// @param frame Parsed inbound discovery broadcast.
   void handle_key_extraction_discover_(const IoFrame &frame);
+  /// Handle an inbound CMD_DISCOVER_CONFIRM (0x2C) addressed to our throwaway node ID while armed.
+  /// @param frame Parsed inbound discovery-confirm frame.
+  void handle_key_extraction_discover_confirm_(const IoFrame &frame);
   /// Handle an inbound CMD_KEY_INIT (0x31) addressed to our throwaway node ID while armed.
   /// @param frame Parsed inbound key-init frame.
   void handle_key_extraction_key_init_(const IoFrame &frame);
@@ -595,7 +611,7 @@ class IOHomeControlComponent : public Component,
   /// long enough that a channel-hopping receiver reliably lands on it, short enough that 3
   /// sequential transmissions don't block the main loop for the better part of a second (see the
   /// implementation comment in hub_key_extraction.cpp for the hardware-confirmed reasoning).
-  /// Shared by all three RX handlers so the preamble choice and channel list are defined once.
+  /// Shared by every RX handler so the preamble choice and channel list are defined once.
   /// @param frame Frame to broadcast (already built by the caller).
   void broadcast_key_extraction_reply_(const IoFrame &frame);
   /// Emit the security-sensitive "system key extracted" log block (see redaction.h — this is the

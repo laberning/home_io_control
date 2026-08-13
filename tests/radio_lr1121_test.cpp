@@ -306,8 +306,8 @@ TEST(RadioLR1121, InitSequenceOrder) {
 }
 
 TEST(RadioLR1121, InitAppliesImageCalibrationAfterCalibrate) {
-  // analysis/lr1121_bring_up_investigation.md §4.3: Calibrate(0x3F) calibrates the IMG block at
-  // the chip's default band, not ours; a banded CalibImage must follow it.
+  // Calibrate(0x3F) calibrates the IMG block at the chip's default band, not ours; a banded
+  // CalibImage must follow it.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
@@ -328,8 +328,7 @@ TEST(RadioLR1121, InitAppliesImageCalibrationAfterCalibrate) {
 }
 
 TEST(RadioLR1121, InitAppliesGfskWorkaroundAfterModulationParams) {
-  // analysis/lr1121_bring_up_investigation.md §4.2: the GFSK workaround register trio must be
-  // written after every modulation-params write.
+  // The GFSK workaround register trio must be written after every modulation-params write.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
@@ -356,8 +355,7 @@ TEST(RadioLR1121, InitAppliesGfskWorkaroundAfterModulationParams) {
 }
 
 TEST(RadioLR1121, SetModeRxAppliesHighAcpWorkaroundFirst) {
-  // analysis/lr1121_bring_up_investigation.md §4.1: the high-ACP TX-quality workaround must be
-  // written immediately before every SetRx.
+  // The high-ACP TX-quality workaround must be written immediately before every SetRx.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
@@ -824,6 +822,13 @@ TEST(RadioLR1121, SendPacketSetsPacketParamsLengthToEncodedLength) {
   const auto &pp = spi.transactions()[packet_params_idx];
   ASSERT_EQ(pp.size(), 11u) << "opcode(2) + 9 packet-param bytes";
   EXPECT_EQ(pp[8], expected_encoded_len) << "payload length field must equal the UART-encoded length";
+
+  // This chip's PreambleLength field is bit-denominated (pbl_len_in_bit), but the caller passed
+  // a byte count (SHORT_PREAMBLE). set_packet_params_() must convert.
+  const uint16_t preamble_field = (static_cast<uint16_t>(pp[2]) << 8) | pp[3];
+  EXPECT_EQ(preamble_field, static_cast<uint16_t>(SHORT_PREAMBLE * 8))
+      << "SetPacketParams' PreambleLength is in bits: SHORT_PREAMBLE (" << SHORT_PREAMBLE
+      << " bytes) must reach the chip as " << (SHORT_PREAMBLE * 8) << " bits";
 }
 
 // ============================================================================

@@ -1,6 +1,6 @@
 id: status_poll_success_sx1276
 description: >
-  Single-try status poll (PRIVATE 0x03) during motion; v2 board uses preamble=12 for CHALLENGE_RESP/PRIVATE vs v3's preamble=64 - a real chip-difference data point for the same logical exchange.
+  Single-try status poll (PRIVATE 0x03) during motion; v2 board uses preamble=12 for CHALLENGE_RESP/PRIVATE vs v3's logged preamble=64 (SX1262's SetPacketParams preamble field counts bits, not bytes, so this is 8 real on-air bytes) - a real chip-difference data point for the same logical exchange.
 source:
   device: "Somfy Sunea IO awning motor (\"Patio Awning\")"
   captured_with: sx1276

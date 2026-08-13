@@ -42,8 +42,7 @@ constexpr uint8_t EXECUTE_ACEI =
 /// @note Real-hardware testing confirmed this correctly moves a device to fully open (see
 ///       create_force_open()'s position-inversion note), but elevation to level 0 has not yet
 ///       been confirmed to actually override an *active* lock — only that the device accepts
-///       the frame when nothing is locking it. See analysis/reference_combined_integration.md
-///       item 5.
+///       the frame when nothing is locking it.
 constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
     (ACEI_LEVEL_PROTECTION_HUMAN << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
 /// Standard payload length for full execute-family commands.
@@ -418,13 +417,31 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
   return set_cmd(f, CMD_DISCOVER_RESP, payload, sizeof(payload));
 }
 
-/// Build a key-confirm frame (0x33) — device side, used only by the key-extraction responder.
-/// See proto_commands.h for the full contract and the reconstructed-capture cross-check.
-bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  init_frame(f, true, false, false, false);
+/// Build a bare device→hub terminal acknowledgement: no payload, END set, START and LOW_POWER
+/// clear. Shared by create_key_confirm() and create_discover_confirm_ack(), which are the same
+/// frame shape and differ only in command byte — real captures of both
+/// (tests/corpus/captures/somfy_dimmer/pairing_full.yaml's 0x33 `88 00 …`,
+/// velux_kux100/pairing_full.yaml's 0x2D `88 08 …`) show a device closing its half of a
+/// two-frame handshake this way. LOW_POWER stays clear because that bit describes the *target* of
+/// a controller-originated frame (see the header's convention note); a device does not flag a
+/// frame it sends *to* the hub as low-power.
+static bool create_device_terminal_ack(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t cmd) {
+  init_frame(f, true, false, true, false);
   set_dst(f, dst);
   set_src(f, own);
-  return set_cmd(f, CMD_KEY_CONFIRM);
+  return set_cmd(f, cmd);
+}
+
+/// Build a key-confirm frame (0x33) — device side, used only by the key-extraction responder.
+/// See proto_commands.h for the full contract and the real-capture cross-check.
+bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+  return create_device_terminal_ack(f, own, dst, CMD_KEY_CONFIRM);
+}
+
+/// Build a discovery-confirm acknowledgement (0x2D) — device side, used only by the
+/// key-extraction responder. See proto_commands.h for the full contract.
+bool create_discover_confirm_ack(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+  return create_device_terminal_ack(f, own, dst, CMD_DISCOVER_CONFIRM_ACK);
 }
 
 /// Recover the system key from a CMD_KEY_TRANSFER payload. See proto_commands.h for the full
@@ -459,13 +476,21 @@ bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, con
   return set_cmd(f, CMD_KEY_TRANSFER, enc_key, AES_KEY_SIZE);
 }
 
-/// Build a challenge request (0x3C) using a caller-supplied challenge. See proto_commands.h.
-bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE]) {
-  // start=true, end=false; low_power=true (see create_set_name above).
-  init_frame(f, true, true, false, true);
+/// Build a challenge request (0x3C) with caller-chosen framing bits. Shared by the
+/// controller-role and device-role builders below, which differ only in those bits.
+static bool create_challenge_req_framed(IoFrame &f, const uint8_t *dst, const uint8_t *src,
+                                        const uint8_t challenge[HMAC_SIZE], bool start, bool low_power) {
+  init_frame(f, true, start, false, low_power);
   set_dst(f, dst);
   set_src(f, src);
   return set_cmd(f, CMD_CHALLENGE_REQ, challenge, HMAC_SIZE);
+}
+
+/// Build a challenge request (0x3C) using a caller-supplied challenge. See proto_commands.h.
+/// low_power is set because the target is a device that may be battery/solar powered (see
+/// create_set_name above).
+bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE]) {
+  return create_challenge_req_framed(f, dst, src, challenge, /*start=*/true, /*low_power=*/true);
 }
 
 /// Build a challenge request (0x3C) containing 6 random bytes.
@@ -474,6 +499,14 @@ bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src) {
   uint8_t challenge[HMAC_SIZE];
   crypto::generate_challenge(challenge);
   return create_challenge_req(f, dst, src, challenge);
+}
+
+/// Build a device-role challenge request (0x3C) — device side, used only by the key-extraction
+/// responder. See proto_commands.h for why the framing bits differ from the controller-role
+/// builders above.
+bool create_challenge_req_device_role(IoFrame &f, const uint8_t *dst, const uint8_t *src,
+                                      const uint8_t challenge[HMAC_SIZE]) {
+  return create_challenge_req_framed(f, dst, src, challenge, /*start=*/false, /*low_power=*/false);
 }
 
 /// Build a challenge response (0x3D) proving we know the system key.
