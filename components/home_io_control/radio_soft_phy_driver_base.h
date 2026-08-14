@@ -64,11 +64,21 @@ static constexpr uint32_t SOFT_PHY_EARLY_POLL_US = 100;
 /// early path from spending a short window's whole budget on a receive it cannot complete.
 static constexpr uint32_t SOFT_PHY_EARLY_MIN_WINDOW_MS = 12;
 
-/// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's 38400 bps line rate.
+/// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
+static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
+/// Microseconds in a second, for the air-time arithmetic below.
+static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
+
+/// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.
 ///
-/// 8 bits / 38400 bps = 208.333 µs per byte, written as the exact fraction 625/3 and rounded *up*
-/// so the result never falls short of a whole byte's air time.
-constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) { return ((raw_bytes * 625U) + 2U) / 3U; }
+/// One byte is 8 / 38400 s = 208.333 µs. Computed as an integer division rounded *up*, so the
+/// result never falls short of a whole byte's air time and a caller that waits on it never reads
+/// the chip's buffer early. The numerator peaks around 360 million for the longest frame this is
+/// ever asked about, well inside uint32_t.
+constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
+  const uint32_t bit_periods = raw_bytes * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
+  return (bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS;
+}
 
 /// @brief Shared RX/TX driver flow for the software-PHY radios (SX1262, LR1121).
 /// @ingroup hioc_radio
@@ -209,10 +219,6 @@ class SoftPhyDriverBase : public RadioDriver {
   /// RX_DONE. Returns true only when a CRC-valid frame was recovered.
   bool try_early_completion_(RadioRxPacket &packet, uint32_t sync_us, uint32_t irq_status, uint32_t start_ms,
                              uint32_t timeout_ms);
-  /// Block until `raw_bytes` (plus @ref SOFT_PHY_EARLY_READ_MARGIN_BYTES) have had time to arrive
-  /// since the sync word was observed at `sync_us`.
-  /// @return false if the caller's `timeout_ms` window closed first.
-  bool wait_for_air_time_(uint32_t sync_us, uint8_t raw_bytes, uint32_t start_ms, uint32_t timeout_ms);
   /// Finalize receive: read the packet if RX_DONE is set, otherwise record failure.
   bool finalize_receive_(RadioRxPacket &packet, uint32_t irq);
 

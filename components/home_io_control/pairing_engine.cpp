@@ -431,7 +431,7 @@ bool PairingEngine::discover_and_pair() {
 
   // Phase 2: Key exchange — retry up to the configured number of times.
   bool key_exchanged = false;
-  for (int ke_attempt = 0; ke_attempt < tuning_->pairing_key_exchange_retries; ke_attempt++) {
+  for (uint8_t ke_attempt = 0; ke_attempt < tuning_->pairing_key_exchange_retries; ke_attempt++) {
     if (ke_attempt > 0) {
       ESP_LOGI(TAG, "Retrying key exchange (attempt %d/%u)...", ke_attempt + 1, tuning_->pairing_key_exchange_retries);
       App.feed_wdt();

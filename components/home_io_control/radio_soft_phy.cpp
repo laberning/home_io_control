@@ -203,11 +203,10 @@ uint8_t soft_phy_peek_frame_length(const uint8_t *raw, uint8_t raw_len) {
     uint8_t ctrl0 = 0;
     if (decode_uart_probe(raw, raw_len, bit_offset, &ctrl0, 1) != 1)
       continue;  // start/stop bits don't frame here — wrong alignment
-    const uint8_t frame_len = (uint8_t) ((ctrl0 & CTRL0_LENGTH_MASK) + 1);
+    const auto frame_len = (uint8_t) ((ctrl0 & CTRL0_LENGTH_MASK) + 1);
     if (frame_len < FRAME_MIN_SIZE || frame_len > FRAME_MAX_SIZE)
       continue;
-    if (frame_len > best)
-      best = frame_len;
+    best = std::max(frame_len, best);
   }
   return best;
 }

@@ -27,11 +27,11 @@ namespace home_io_control {
 
 namespace {
 
-constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 6;     ///< Minimum payload length for 0x04 position-bearing replies.
-                                                         ///< Bytes 0–5 (stopped flag + target + current) are mandatory;
-                                                         ///< byte 7 (settle hint) is optional and checked separately.
-constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for 0x71 device-initiated updates.
-constexpr uint8_t GET_NAME_RESPONSE_MIN_DATA_LEN = 1;    ///< Minimum payload length for 0x51 name-bearing replies.
+constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 6;   ///< Minimum payload length for 0x04 position-bearing replies.
+                                                       ///< Bytes 0–5 (stopped flag + target + current) are mandatory;
+                                                       ///< byte 7 (settle hint) is optional and checked separately.
+constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;     ///< Minimum payload length for 0x71 device-initiated updates.
+constexpr uint8_t GET_NAME_RESPONSE_MIN_DATA_LEN = 1;  ///< Minimum payload length for 0x51 name-bearing replies.
 constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload length for 0x57 type/subtype metadata.
 constexpr uint8_t ERROR_RESPONSE_MIN_DATA_LEN = 1;       ///< Minimum payload length for 0xFE result-bearing replies.
 constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =

@@ -77,13 +77,43 @@ dashboard:
 	docker compose up
 
 # Formatting
-format:
-	@echo "Formatting C++ source files with clang-format..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format -i {} +
+#
+# Pinned to the version CI actually runs: .github/workflows/ci.yml's format job installs nothing,
+# so it uses the ubuntu-24.04 runner image's own clang-format, which is $(CLANG_FORMAT_VERSION).
+#
+# The pin matters because clang-format's ColumnLimit accounting is not stable across releases: 18
+# and earlier measure the limit in *bytes*, 19+ in *display columns*. Several comments here contain
+# multi-byte punctuation (en/em dashes, arrows) and sit within a few bytes of the 120-column limit,
+# so the two accountings disagree about whether they fit -- and AlignTrailingComments then drags
+# their ASCII neighbours into the same diff. Reformatting with a newer local clang-format therefore
+# produces a tree that fails CI with no source change in between, which is exactly what happened.
+#
+# If your default clang-format is a different version, install the pinned one -- it is picked up
+# automatically from ~/.local/bin, no CLANG_FORMAT= needed afterwards:
+#   pip install --user clang-format==$(CLANG_FORMAT_VERSION)
+CLANG_FORMAT_VERSION := 18.1.8
+# Prefer an explicitly installed pinned binary over whatever `clang-format` resolves to, so the
+# pin does not force every invocation to pass CLANG_FORMAT= by hand. Falls back to the plain name,
+# which is correct on any machine whose default already is the pinned version (ubuntu-24.04, CI).
+CLANG_FORMAT ?= $(firstword $(wildcard $(HOME)/.local/bin/clang-format) \
+                            $(shell command -v clang-format-18 2>/dev/null) \
+                            clang-format)
 
-format-check:
+check-clang-format-version:
+	@$(CLANG_FORMAT) --version | grep -qF '$(CLANG_FORMAT_VERSION)' || { \
+	  printf 'clang-format %s is required for byte-identical formatting; found: %s\n' \
+	    '$(CLANG_FORMAT_VERSION)' "$$($(CLANG_FORMAT) --version 2>&1)"; \
+	  printf 'Install it with: pip install clang-format==%s\n' '$(CLANG_FORMAT_VERSION)'; \
+	  printf 'Then: make $@ CLANG_FORMAT=~/.local/bin/clang-format\n'; \
+	  exit 1; }
+
+format: check-clang-format-version
+	@echo "Formatting C++ source files with clang-format..."
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec $(CLANG_FORMAT) -i {} +
+
+format-check: check-clang-format-version
 	@echo "Checking C++ formatting with clang-format (--dry-run)..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --dry-run --Werror {} +
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec $(CLANG_FORMAT) --dry-run --Werror {} +
 
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
@@ -108,7 +138,7 @@ FUZZ_TIME ?= 60
 fuzz-frame:
 	@mkdir -p build/fuzz/seeds build/fuzz/corpus
 	@python3 scripts/corpus/extract_fuzz_seeds.py
-	clang++ -std=c++17 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
+	clang++ -std=c++20 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
 		-Icomponents/home_io_control \
 		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
 		components/home_io_control/proto_device_model.cpp tests/fuzz/fuzz_frame_parse.cpp \
@@ -232,7 +262,11 @@ HOST_EXTRA_FLAGS ?=
 # unused-variable warnings ever reappears, that stub was broken — fix it there, not here.
 # -Wno-unused-parameter stays: callback signatures conforming to an interface genuinely have
 # unused parameters. -Wno-reorder stays: member-init-order patterns here rely on it.
-HOST_CXXFLAGS := -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
+# -std=c++20 matches the device build (ESP-IDF compiles this component as gnu++20), so the host
+# tests exercise the sources under the same language rules the firmware does. They were on c++17,
+# which meant C++20 library calls the device build accepts -- and that clang-tidy's device-side
+# analysis actively recommends, e.g. modernize-use-starts-ends-with -- would not compile here.
+HOST_CXXFLAGS := -std=c++20 -Wall -Wextra -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
                  $(UNIT_TEST_DEFINES) $(INCLUDES) $(HOST_EXTRA_FLAGS)
 
 HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)
@@ -311,7 +345,8 @@ test-unit: unit-test
 # === Phony declarations ========================================================
 
 .PHONY: dashboard \
-		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
+		format format-check check-clang-format-version \
+		yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
 		docs-link-check \
 		fuzz-frame \
 		firmware-test unit-test unit-test-asan host-run clean-host lint test check \

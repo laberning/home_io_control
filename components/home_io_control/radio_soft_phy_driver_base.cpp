@@ -22,6 +22,27 @@ namespace home_io_control {
 
 static const char *const TAG = "home_io_control.soft_phy";
 
+namespace {
+
+/// Block until `raw_bytes` (plus @ref SOFT_PHY_EARLY_READ_MARGIN_BYTES) have had time to arrive
+/// since the sync word was observed at `sync_us`. Pure wall-clock waiting against the protocol's
+/// line rate — it reads no chip state, so it lives here rather than on the driver.
+/// @return false if the caller's `timeout_ms` window closed first.
+bool wait_for_air_time(uint32_t sync_us, uint8_t raw_bytes, uint32_t start_ms, uint32_t timeout_ms) {
+  uint32_t const needed_us = soft_phy_air_time_us((uint32_t) raw_bytes + SOFT_PHY_EARLY_READ_MARGIN_BYTES);
+  while (micros() - sync_us < needed_us) {
+    // Never outstay the window the caller asked for: a receive that has run out of time falls back
+    // to the RX_DONE path (which will time out on its own terms) rather than silently overrunning.
+    if (millis() - start_ms > timeout_ms)
+      return false;
+    App.feed_wdt();
+    delayMicroseconds(SOFT_PHY_EARLY_POLL_US);
+  }
+  return true;
+}
+
+}  // namespace
+
 // === Packet RX (blocking) ===
 
 bool SoftPhyDriverBase::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
@@ -113,20 +134,6 @@ bool SoftPhyDriverBase::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, 
   return false;  // timeout
 }
 
-bool SoftPhyDriverBase::wait_for_air_time_(uint32_t sync_us, uint8_t raw_bytes, uint32_t start_ms,
-                                           uint32_t timeout_ms) {
-  uint32_t const needed_us = soft_phy_air_time_us((uint32_t) raw_bytes + SOFT_PHY_EARLY_READ_MARGIN_BYTES);
-  while ((uint32_t) (micros() - sync_us) < needed_us) {
-    // Never outstay the window the caller asked for: a receive that has run out of time falls back
-    // to the RX_DONE path (which will time out on its own terms) rather than silently overrunning.
-    if (millis() - start_ms > timeout_ms)
-      return false;
-    App.feed_wdt();
-    delayMicroseconds(SOFT_PHY_EARLY_POLL_US);
-  }
-  return true;
-}
-
 /// Finish a reception on the frame's own air time instead of the chip's fixed-length RX_DONE.
 ///
 /// Three stages, each of which can bail out harmlessly:
@@ -150,7 +157,7 @@ bool SoftPhyDriverBase::try_early_completion_(RadioRxPacket &packet, uint32_t sy
   auto const offset = (uint8_t) base;
 
   // Stage 1: ten bits of air time is all it takes to learn how long the frame will be.
-  if (!this->wait_for_air_time_(sync_us, SOFT_PHY_EARLY_HEADER_RAW_BYTES, start_ms, timeout_ms))
+  if (!wait_for_air_time(sync_us, SOFT_PHY_EARLY_HEADER_RAW_BYTES, start_ms, timeout_ms))
     return false;
   uint8_t header[SOFT_PHY_EARLY_HEADER_RAW_BYTES] = {0};
   this->read_rx_buffer(offset, header, sizeof(header));
@@ -162,7 +169,7 @@ bool SoftPhyDriverBase::try_early_completion_(RadioRxPacket &packet, uint32_t sy
   // have been waited for either way, so read them too — they give the probe slack to work with
   // when the stream is not byte-aligned.
   uint8_t const frame_raw_len = soft_phy_raw_bytes_for_frame(frame_len);
-  if (!this->wait_for_air_time_(sync_us, frame_raw_len, start_ms, timeout_ms))
+  if (!wait_for_air_time(sync_us, frame_raw_len, start_ms, timeout_ms))
     return false;
   uint8_t raw[RADIO_PACKET_BUFFER_SIZE] = {0};
   auto const read_len =

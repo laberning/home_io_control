@@ -73,7 +73,7 @@ std::optional<SX1262RxBandwidth> sx1262_bandwidth_from_string(const std::string 
   normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
   for (char &c : normalized)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (normalized.size() > 3 && normalized.compare(normalized.size() - 3, 3, "khz") == 0)
+  if (normalized.size() > 3 && normalized.ends_with("khz"))
     normalized.resize(normalized.size() - 3);
 
   if (normalized == "58.6" || normalized == "58")
@@ -117,7 +117,7 @@ std::optional<SX1276RxBandwidth> sx1276_bandwidth_from_string(const std::string 
   normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
   for (char &c : normalized)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (normalized.size() > 3 && normalized.compare(normalized.size() - 3, 3, "khz") == 0)
+  if (normalized.size() > 3 && normalized.ends_with("khz"))
     normalized.resize(normalized.size() - 3);
 
   if (normalized == "20.8" || normalized == "20")
@@ -165,7 +165,7 @@ std::optional<LR1121RxBandwidth> lr1121_bandwidth_from_string(const std::string 
   normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
   for (char &c : normalized)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (normalized.size() > 3 && normalized.compare(normalized.size() - 3, 3, "khz") == 0)
+  if (normalized.size() > 3 && normalized.ends_with("khz"))
     normalized.resize(normalized.size() - 3);
 
   if (normalized == "39.0" || normalized == "39")

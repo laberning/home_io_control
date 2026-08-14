@@ -77,7 +77,7 @@ inline void render_frame_hex_redacted(const uint8_t *data, uint8_t len, char *ou
     // GCC's -Wformat-truncation can prove the snprintf() below never truncates into `out`.
     // +4 rather than +1: bytes_to_hex()'s loop guard (`pos + 4 < out_size`) needs headroom beyond
     // the last byte's own 3 chars, not just space for the content + null terminator.
-    char header_hex[FRAME_MIN_SIZE * 3 + 4];
+    char header_hex[(FRAME_MIN_SIZE * 3) + 4];
     bytes_to_hex(data, FRAME_MIN_SIZE, header_hex, sizeof(header_hex));
     snprintf(out, out_size, "%s[%u bytes masked]", header_hex, static_cast<unsigned>(len - FRAME_MIN_SIZE));
     return;

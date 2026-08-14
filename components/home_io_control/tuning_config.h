@@ -24,8 +24,8 @@ namespace home_io_control {
 /// The numeric values are the register-encoded (double-sideband) bandwidth selectors used by
 /// `RadioSX1262::set_rx_bandwidth()`.
 enum class SX1262RxBandwidth : uint8_t {
-  BW_58_6_KHZ = 0x0C,   ///< 58.6 kHz — narrowest; SX1276-equivalent width, marginal on the default TX→RX turnaround.
-  BW_78_2_KHZ = 0x1B,   ///< 78.2 kHz — narrow.
+  BW_58_6_KHZ = 0x0C,  ///< 58.6 kHz — narrowest; SX1276-equivalent width, marginal on the default TX→RX turnaround.
+  BW_78_2_KHZ = 0x1B,  ///< 78.2 kHz — narrow.
   BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — default.
   BW_156_2_KHZ = 0x09,  ///< 156.2 kHz — wider tolerance for LO offset.
   BW_187_2_KHZ = 0x07,  ///< 187.2 kHz — widest selectable option.
