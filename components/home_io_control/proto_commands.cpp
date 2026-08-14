@@ -394,10 +394,24 @@ static bool create_challenge_req_framed(IoFrame &f, const uint8_t *dst, const ui
 }
 
 /// Build a challenge request (0x3C) using a caller-supplied challenge. See proto_commands.h.
-/// low_power is set because the target is a device that may be battery/solar powered (see
-/// create_set_name above).
+///
+/// Framed exactly like the device-role builder below (`0E 00 ...`), which is not an oversight.
+/// This used to set START and LOW_POWER on the theory that a controller challenging a device
+/// opens its own exchange and should flag its target's power class. Nothing on air supports that:
+/// across three field captures (2026-08-14) every single 0x3C observed — from a Somfy RS100 and
+/// three other actuators — is `0E 00`, and the one reference 2W hub on that network (a Velux
+/// KIG300) never issues a 0x3C at all, only ever answering them. Our hub was the only node
+/// emitting `4E 20`, and not one of those challenges was ever answered: five sent, zero replies,
+/// which is why every status update addressed to us ends in `auth_failed` and its position is
+/// discarded.
+///
+/// So the controller-role framing was an assumption with no positive evidence behind it, and the
+/// observed-on-air framing is the better default. Kept as a separate entry point from
+/// create_challenge_req_device_role() because the call sites and rationale differ (inbound
+/// authentication vs the key-extraction responder) and because this is a field experiment — if
+/// devices still do not answer, the flags here are the one thing to put back.
 bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE]) {
-  return create_challenge_req_framed(f, dst, src, challenge, /*start=*/true, /*low_power=*/true);
+  return create_challenge_req_framed(f, dst, src, challenge, /*start=*/false, /*low_power=*/false);
 }
 
 /// Build a challenge request (0x3C) containing 6 random bytes.

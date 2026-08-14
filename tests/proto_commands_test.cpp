@@ -71,7 +71,7 @@ TEST(ProtoCommands, CreateDiscoverConfirmAck) {
       << "discovery-confirm ack is device-originated, not low-power targeted";
 }
 
-TEST(ProtoCommands, CreateChallengeReqDeviceRoleOmitsControllerFramingBits) {
+TEST(ProtoCommands, CreateChallengeReqUsesTheFramingObservedOnAir) {
   IoFrame device_role{};
   ASSERT_TRUE(create_challenge_req_device_role(device_role, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE))
       << "create_challenge_req_device_role should succeed";
@@ -86,12 +86,15 @@ TEST(ProtoCommands, CreateChallengeReqDeviceRoleOmitsControllerFramingBits) {
   EXPECT_FALSE((device_role.ctrl1 & CTRL1_LOW_POWER) != 0)
       << "device-role challenge-req is addressed to a mains-powered hub";
 
-  // The controller-role builder must keep its own framing — it serves a different direction.
+  // The controller-role builder now matches. It used to set START and LOW_POWER, but field
+  // captures show every 0x3C on a real network is `0E 00` regardless of who sent it, and the
+  // hub's own `4E 20` challenges were never once answered. See create_challenge_req().
   IoFrame controller_role{};
   ASSERT_TRUE(create_challenge_req(controller_role, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE));
-  EXPECT_TRUE(is_start(controller_role)) << "controller-role challenge-req still opens its own exchange";
-  EXPECT_TRUE((controller_role.ctrl1 & CTRL1_LOW_POWER) != 0)
-      << "controller-role challenge-req still flags its device target as possibly low-power";
+  EXPECT_FALSE(is_start(controller_role)) << "no 0x3C observed on air is a start frame";
+  EXPECT_FALSE((controller_role.ctrl1 & CTRL1_LOW_POWER) != 0) << "no 0x3C observed on air sets LOW_POWER";
+  EXPECT_EQ(controller_role.ctrl0, device_role.ctrl0) << "both roles now use the observed framing";
+  EXPECT_EQ(controller_role.ctrl1, device_role.ctrl1);
 }
 
 TEST(ProtoCommands, CreateChallengeReqWithSuppliedChallengeMatchesGenerated) {
@@ -121,9 +124,10 @@ TEST(ProtoCommands, CreateChallengeReq) {
   ASSERT_TRUE(create_challenge_req(frame, test::DST_ID, test::OWN_ID)) << "create_challenge_req should succeed";
   EXPECT_EQ(frame.cmd, CMD_CHALLENGE_REQ) << "challenge-req command should be CMD_CHALLENGE_REQ (0x3C)";
   EXPECT_EQ(frame.data_len, HMAC_SIZE) << "challenge-req should carry 6-byte random challenge";
-  EXPECT_TRUE(is_start(frame)) << "challenge-req should be a start frame";
+  // Framing matches every 0x3C seen on a real network (`0E 00 ...`); see create_challenge_req().
+  EXPECT_FALSE(is_start(frame)) << "challenge-req should not be a start frame";
   EXPECT_FALSE(is_end(frame)) << "challenge-req should not be an end frame";
-  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
+  EXPECT_FALSE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "challenge-req should not set LOW_POWER";
 }
 
 TEST(ProtoCommands, CreateStatusUpdateResp) {
