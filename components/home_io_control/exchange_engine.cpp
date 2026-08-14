@@ -203,6 +203,7 @@ bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
 bool ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq) {
   this->reset_debug(request.cmd);
   const uint16_t request_preamble = is_start(request) ? LONG_PREAMBLE : (*this->radio_ptr_)->response_preamble();
+  const uint32_t exchange_begin_ms = millis();
 
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
     exchange::OutboundExchangeContext context;
@@ -213,6 +214,16 @@ bool ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response,
     context.state = exchange::OutboundExchangeState::TX_REQUEST;
 
     if (tries > 0) {
+      // The retry count is a maximum, not a promise: don't start a try the exchange has no budget
+      // left for. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command from
+      // blocking the ESPHome loop for the full retries x response-window product.
+      if (millis() - exchange_begin_ms >= this->tuning_->exchange_total_budget_ms) {
+        this->record_debug("retry_budget_exhausted", tries, false);
+        ESP_LOGI(TAG, "Exchange budget exhausted after %u tries for cmd=%s(0x%02X) (%" PRIu32 " of %u ms)", tries,
+                 command_name(request.cmd), request.cmd, millis() - exchange_begin_ms,
+                 this->tuning_->exchange_total_budget_ms);
+        break;
+      }
       App.feed_wdt();
       delay(EXCHANGE_RETRY_DELAY_MS);
     }

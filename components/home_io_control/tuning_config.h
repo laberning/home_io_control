@@ -186,6 +186,7 @@ struct TuningConfig {
       RESPONSE_START_WAIT_MS};  ///< Reply window for a start frame (wakes a sleeping device).
   uint16_t exchange_response_wait_ms{
       RESPONSE_WAIT_MS};  ///< Reply window for continuation frames and the post-auth final response.
+  uint16_t exchange_total_budget_ms{EXCHANGE_TOTAL_BUDGET_MS};  ///< Ceiling on one whole exchange, retries included.
 
   // --- Pairing protocol ---
   std::vector<DiscoveryCommand> pairing_discovery_commands{

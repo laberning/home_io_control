@@ -227,7 +227,7 @@ TEST(ProtoCommands, CreateExecuteTilt) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "tilt execute should still use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "tilt execute should use 8-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "tilt originator should be user";
-  EXPECT_EQ(frame.data[1], 0x43) << "tilt ACEI should use user_high priority (0x43)";
+  EXPECT_EQ(frame.data[1], 0x63) << "tilt ACEI should use user_default priority (0x63), as a real 2W hub does";
   EXPECT_EQ(frame.data[2], POS_UNKNOWN) << "tilt execute should keep position unchanged via unknown marker";
   EXPECT_EQ(frame.data[3], 0x00);
   EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt execute should set the tilt separator flag";
@@ -244,7 +244,7 @@ TEST(ProtoCommands, CreateExecutePositionAndTilt) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "combined command should use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "combined command should use 8-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "originator should be user";
-  EXPECT_EQ(frame.data[1], 0x43) << "ACEI should be user_high priority (0x43)";
+  EXPECT_EQ(frame.data[1], 0x63) << "ACEI should be user_default priority (0x63), as a real 2W hub does";
   EXPECT_EQ(frame.data[2], 100) << "position 50% => 2*50 = 100 (0x64)";
   EXPECT_EQ(frame.data[3], 0x00);
   EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt separator flag (FP3 bitmap)";
@@ -403,7 +403,7 @@ TEST(ProtoCommands, CreateExecutePositionZero) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "position execute should use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "position execute should use 8-byte payload";
   EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
-  EXPECT_EQ(frame.data[1], 0x43) << "ACEI byte should be 0x43 (user_high priority)";
+  EXPECT_EQ(frame.data[1], 0x63) << "ACEI byte should be 0x63 (user_default priority, matching a real 2W hub)";
   EXPECT_EQ(frame.data[2], 0x00) << "position 0 doubles to 0x00";
   EXPECT_EQ(frame.data[3], 0x00) << "position 0 second byte should be 0x00";
   EXPECT_TRUE(is_start(frame)) << "position execute should be a start frame";
@@ -459,7 +459,7 @@ TEST(ProtoCommands, CreateExecuteCommandStop) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "command execute should use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 6) << "command execute should use 6-byte special payload";
   EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
-  EXPECT_EQ(frame.data[1], 0x43) << "ACEI byte should be 0x43 (user_high priority)";
+  EXPECT_EQ(frame.data[1], 0x63) << "ACEI byte should be 0x63 (user_default priority, matching a real 2W hub)";
   EXPECT_EQ(frame.data[2], POS_STOP) << "stop command main byte should be POS_STOP (0xD2)";
   EXPECT_EQ(frame.data[3], 0x00) << "stop command modifier should be 0x00";
   EXPECT_TRUE(is_start(frame));
@@ -473,7 +473,7 @@ TEST(ProtoCommands, CreateExecuteCommandFavorite) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE);
   EXPECT_EQ(frame.data_len, 6) << "favorite should use 6-byte special payload";
   EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
-  EXPECT_EQ(frame.data[1], 0x43) << "ACEI byte should be 0x43 (user_high priority)";
+  EXPECT_EQ(frame.data[1], 0x63) << "ACEI byte should be 0x63 (user_default priority, matching a real 2W hub)";
   EXPECT_EQ(frame.data[2], POS_FAVORITE) << "favorite main byte should be POS_FAVORITE (0xD8)";
   EXPECT_EQ(frame.data[3], 0x00) << "favorite modifier should be 0x00";
   EXPECT_EQ(frame.data[4], 0x00);

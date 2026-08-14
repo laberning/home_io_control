@@ -23,11 +23,28 @@ constexpr uint8_t POSITION_PERCENT_MAX = 100;
 /// Uses the public ORIGINATOR_USER_REMOTE constant from proto_frame.h.
 constexpr uint8_t EXECUTE_ORIGINATOR = ORIGINATOR_USER_REMOTE;
 /// ACEI byte for execute commands — composed from priority and validity bits.
-/// Level=2 (user_high) matches real IO-homecontrol remotes and avoids
-/// RESULT_PRIORITY_LOCKED_NON_EXEC (0x38) rejections on devices locked at level 3.
-/// Composition: (ACEI_LEVEL_USER_HIGH << 5) | (0 << 3) | (1 << 1) | 1 = 0x43.
+///
+/// Level=3 (user_default), matching what a real 2W hub puts on the air. A 2026-08-14 third-party
+/// capture of a Velux KIG300 commanding a Somfy RS100 shows its EXECUTE payload as
+/// `01 63 C8 00 80 32 00 00` — ACEI 0x63, level 3 — and that command is obeyed, on the same
+/// shutter and in the same minutes that this hub's own commands were being silently ignored.
+///
+/// This was level=2 (user_high, 0x43). Two things argued for that and neither survives contact
+/// with the KIG300 capture:
+///   - "matches real IO-homecontrol remotes": the 0x43 reference
+///     (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml) is a *1W remote*
+///     frame, and its origin is a documentation example whose own MAC field is a stated
+///     placeholder — not a captured 2W hub. A handheld remote claiming a higher priority than a
+///     home-automation hub is entirely plausible; we are the hub.
+///   - "avoids RESULT_PRIORITY_LOCKED_NON_EXEC (0x38) rejections on devices locked at level 3":
+///     still a real risk, and the reason to keep this in one named place. But the observed failure
+///     mode is not a 0x38 rejection — it is no reply at all, while a level-3 controller on the same
+///     network is obeyed. Watch for 0x38 in command results after this change; if it reappears, the
+///     old value is one edit away and the tradeoff is genuine.
+///
+/// Composition: (ACEI_LEVEL_USER_DEFAULT << 5) | (0 << 3) | (1 << 1) | 1 = 0x63.
 constexpr uint8_t EXECUTE_ACEI =
-    (ACEI_LEVEL_USER_HIGH << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
+    (ACEI_LEVEL_USER_DEFAULT << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
 /// @brief ACEI byte for the force-open command — same bit layout as EXECUTE_ACEI but at the
 /// highest priority level instead of user_high.
 ///

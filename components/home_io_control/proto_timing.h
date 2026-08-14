@@ -71,6 +71,21 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
 
+/// Wall-clock ceiling on one whole exchange, retries included.
+///
+/// EXCHANGE_RETRY_COUNT tries x (long preamble + response window + retry gap) is what actually
+/// determines how long a failing command blocks the ESPHome loop (ADR 0013). Once
+/// RESPONSE_START_WAIT_MS grew to cover slow devices, three full tries reached ~4.2 s and tripped
+/// ESPHome's own "took a long time for an operation" warning (threshold 2550 ms) on every failure
+/// -- observed in the field on 2026-08-14 with a hub driving ~18 shutters, where that blocking
+/// also starves the receive path the rest of the exchange depends on.
+///
+/// So the retry count is a maximum, not a promise: a try only starts if the exchange has budget
+/// left. At the 300 ms window this changes nothing (three tries fit in ~2.0 s); at 1000 ms it
+/// yields two tries instead of three. That is the right trade for a slow device anyway -- one long
+/// listen catches a late reply that three short ones miss.
+static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
+
 /// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.
 /// Before transmitting, the radio checks that the channel RSSI is below the
 /// threshold. If the channel is busy, TX is deferred by LBT_RETRY_DELAY_MS

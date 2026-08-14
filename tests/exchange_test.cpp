@@ -1131,3 +1131,57 @@ TEST(Exchange, StartResponseWindowDefaultsLongerThanContinuation) {
   EXPECT_EQ(tuning.exchange_start_response_wait_ms, RESPONSE_START_WAIT_MS);
   EXPECT_EQ(tuning.exchange_response_wait_ms, RESPONSE_WAIT_MS);
 }
+
+// ============================================================================
+// Retry budget: EXCHANGE_RETRY_COUNT is a maximum, not a promise. Three tries at a window sized
+// for the slowest device on the network blocks the ESPHome loop past its own warning threshold
+// (ADR 0013), so a try only starts if the exchange still has budget. See EXCHANGE_TOTAL_BUDGET_MS.
+// ============================================================================
+
+TEST(Exchange, RetriesStopOnceTheTotalBudgetIsSpent) {
+  MockRadio radio;
+  radio.set_exchange_wait_slice_ms(1000000);  // don't let per-channel slicing mask the window
+  RadioDriver *radio_ptr = &radio;
+
+  TuningConfig tuning;
+  // One try fits; a second would overrun. The host clock stubs advance millis() per call, so the
+  // budget is expressed relative to the window rather than in real milliseconds.
+  tuning.exchange_start_response_wait_ms = 400;
+  tuning.exchange_total_budget_ms = 200;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, true, 100);
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2);  // nothing queued -> every try fails
+
+  EXPECT_EQ(radio.get_send_count(), 1) << "a second try must not start once the budget is spent";
+  EXPECT_STREQ(engine.get_debug().stage, "retry_budget_exhausted");
+}
+
+TEST(Exchange, GenerousBudgetStillAllowsEveryRetry) {
+  MockRadio radio;
+  radio.set_exchange_wait_slice_ms(1000000);
+  RadioDriver *radio_ptr = &radio;
+
+  TuningConfig tuning;
+  tuning.exchange_start_response_wait_ms = 200;
+  tuning.exchange_total_budget_ms = 60000;  // far more than the stub clock can consume
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, true, 100);
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2);
+
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "with budget to spare the retry count is unchanged";
+}
+
+TEST(Exchange, ExecuteUsesUserDefaultAceiPriority) {
+  // A real 2W hub (Velux KIG300, 2026-08-14 capture) sends ACEI 0x63 -- level 3, user_default.
+  // Claiming a higher priority than the reference controller is what this hub used to do.
+  IoFrame f{};
+  ASSERT_TRUE(create_execute_position(f, test::OWN_ID, test::DST_ID, true, 100));
+  EXPECT_EQ(f.data[1], 0x63);
+  EXPECT_EQ((f.data[1] & ACEI_LEVEL_MASK) >> ACEI_LEVEL_SHIFT, ACEI_LEVEL_USER_DEFAULT);
+}

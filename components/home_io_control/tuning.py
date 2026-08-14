@@ -37,6 +37,7 @@ CONF_LBT_MAX_RETRIES = "lbt_max_retries"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
 CONF_EXCHANGE_START_RESPONSE_WAIT_MS = "exchange_start_response_wait_ms"
 CONF_EXCHANGE_RESPONSE_WAIT_MS = "exchange_response_wait_ms"
+CONF_EXCHANGE_TOTAL_BUDGET_MS = "exchange_total_budget_ms"
 
 # --- Pairing protocol ---
 CONF_PAIRING_DISCOVERY_COMMANDS = "pairing_discovery_commands"
@@ -143,6 +144,7 @@ UI_NAMES = {
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: "Exchange Start Response Wait",
     CONF_EXCHANGE_RESPONSE_WAIT_MS: "Exchange Response Wait",
+    CONF_EXCHANGE_TOTAL_BUDGET_MS: "Exchange Total Budget",
     CONF_PAIRING_DISCOVERY_COMMANDS: "Pairing Discovery Commands",
     CONF_PAIRING_DISCOVERY_DESTINATION: "Pairing Discovery Destination",
     CONF_PAIRING_DISCOVERY_PAYLOAD: "Pairing Discovery Payload",
@@ -176,6 +178,9 @@ _NUMBER_PARAMS = {
     # Every millisecond here is loop-blocking time on a *failed* exchange only (ADR 0013).
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: (200, 4000, 50, "ms"),
     CONF_EXCHANGE_RESPONSE_WAIT_MS: (200, 4000, 50, "ms"),
+    # Ceiling on a whole exchange. Every millisecond over ~2550 blocks the ESPHome loop past its
+    # own warning threshold, so raise this only when persistence matters more than responsiveness.
+    CONF_EXCHANGE_TOTAL_BUDGET_MS: (500, 12000, 100, "ms"),
     CONF_PAIRING_DISCOVERY_WAIT_MS: (500, 5000, 50, "ms"),
     CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS: (0, 500, 10, "ms"),
     CONF_PAIRING_KEY_EXCHANGE_RETRIES: (1, 5, 1, ""),
