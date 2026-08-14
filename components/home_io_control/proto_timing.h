@@ -43,28 +43,25 @@ static constexpr int32_t RESPONSE_WAIT_MS = 500;         ///< Wait for response 
 /// Wait for a response to a start frame — the first frame of an exchange, and the one a sleeping
 /// device has just been woken by.
 ///
-/// This was 300 ms, *shorter* than the non-start budget above despite its own comment promising
-/// "longer". That inversion is backwards for the case it covers: a start frame is preceded by a
-/// 1024-byte (213 ms) wake-up preamble precisely because the target may have been asleep, and a
-/// device that has just woken is the slowest it will ever be to answer.
+/// Sized from measurement, not from a worst case. On 2026-08-14 the hub logged its own
+/// request→reply latency (`Auth challenge ... wait_ms=`) across a run against a Somfy RS100: 235,
+/// 486, 486, 236, 486 ms — try 1 always ~235 ms, try 2 always ~486 ms, which is 235 plus the
+/// EXCHANGE_RETRY_DELAY_MS gap. Zero variance. Subtract the 213 ms long preamble and the device is
+/// answering within a few milliseconds of the carrier dropping.
 ///
-/// Field captures of a Somfy RS100 solar actuator (2026-08-14, third-party listener, three
-/// controllers on one network) measured its request→reply latency at 29 ms, 781 ms, 1548 ms,
-/// 1945 ms, 2469 ms and 3052 ms — the same device, minutes apart. A Somfy Oximo 40 on the same
-/// network answered in ~23 ms every time, day or night, and is *also* solar: reply latency is a
-/// per-model behaviour, not something the power source predicts, so there is no device class this
-/// budget can safely be tuned for. Against a 300 ms budget the RS100 was reachable only in its
-/// fastest state, which is why it answered intermittently and grew worse as the day went on.
-/// tests/corpus/captures/issues/field_rs100_pairing_key_transfer_timeout.yaml shows the same
-/// device class at 1020 ms and 1639 ms, and @ref LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS documents
-/// a Somfy awning replying at 287 ms against the old 300 ms budget — margin that thin was already
-/// known to be a problem on a *fast* device.
+/// The device is therefore *not* slow: it replies almost immediately or not at all, and a failure
+/// shows up as `saw_challenge=0` with no frame received at all rather than as a late arrival. An
+/// earlier 1000 ms value here was set from a much larger apparent latency spread (29 ms–3052 ms),
+/// which turned out to be an artifact of pairing frames by proximity in a third-party sniff with
+/// three controllers sharing one channel — the pairings were wrong. Nothing was ever caught later
+/// than ~235 ms once the hub measured it directly.
 ///
-/// 1000 ms restores the documented intent and covers the bulk of the observed spread without
-/// unbounded loop blocking (see ADR 0013 — the exchange blocks the ESPHome loop, and a failed
-/// exchange costs EXCHANGE_RETRY_COUNT of these). Devices slower still are reachable by raising
-/// `exchange_start_response_wait_ms` from YAML rather than by rebuilding.
-static constexpr int32_t RESPONSE_START_WAIT_MS = 1000;
+/// 400 ms is comfortably above every observed reply while keeping a failed exchange inside
+/// EXCHANGE_TOTAL_BUDGET_MS, so a dead device no longer blocks the ESPHome loop past its own
+/// warning threshold (ADR 0013). Raise `exchange_start_response_wait_ms` from YAML if a device
+/// ever genuinely answers late — but check `wait_ms` in the logs first, because a fast-or-never
+/// device is a turnaround problem and a longer window cannot fix it.
+static constexpr int32_t RESPONSE_START_WAIT_MS = 400;
 
 static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
     RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response

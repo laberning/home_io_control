@@ -128,6 +128,9 @@ class SoftPhyDriverBase : public RadioDriver {
   virtual bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint32_t irq_status);
   /// Reset RX state machine and buffer. Optionally force standby first.
   void reset_rx_state_(bool force_standby = true);
+  /// Minimal path back into RX immediately after a transmission — see the definition for why this
+  /// is deliberately not @ref reset_rx_state_.
+  void rearm_rx_after_tx_();
 
   /// @brief Read the raw IRQ status word from the radio.
   /// Virtual to allow test doubles (both concrete drivers' tests override this).

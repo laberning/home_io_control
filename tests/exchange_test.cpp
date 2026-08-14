@@ -1122,14 +1122,17 @@ TEST(Exchange, ContinuationFrameBudgetsTheShorterResponseWindow) {
   expect_window_near(radio.wait_timeouts().front(), 250);
 }
 
-TEST(Exchange, StartResponseWindowDefaultsLongerThanContinuation) {
-  // The regression this guards: a start frame's budget must never fall back below the
-  // continuation budget, whatever the numbers are changed to.
+TEST(Exchange, ResponseWindowDefaultsComeFromTheProtocolConstants) {
+  // No ordering constraint between the two windows is asserted on purpose. An earlier version of
+  // this test required the start window to be the longer of the two, on the theory that a
+  // just-woken device is the slowest to answer. Measurement disproved that: the device replies
+  // within milliseconds of the carrier dropping or not at all (see RESPONSE_START_WAIT_MS), so
+  // both windows only need to clear a few tens of milliseconds and their relative order carries
+  // no meaning worth pinning.
   TuningConfig tuning;
-  EXPECT_GT(tuning.exchange_start_response_wait_ms, tuning.exchange_response_wait_ms)
-      << "a start frame wakes a sleeping device and must get the longer window";
   EXPECT_EQ(tuning.exchange_start_response_wait_ms, RESPONSE_START_WAIT_MS);
   EXPECT_EQ(tuning.exchange_response_wait_ms, RESPONSE_WAIT_MS);
+  EXPECT_EQ(tuning.exchange_total_budget_ms, EXCHANGE_TOTAL_BUDGET_MS);
 }
 
 // ============================================================================
