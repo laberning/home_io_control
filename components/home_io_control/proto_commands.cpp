@@ -309,10 +309,12 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
 /// clear. Shared by create_key_confirm() and create_discover_confirm_ack(), which are the same
 /// frame shape and differ only in command byte — real captures of both
 /// (tests/corpus/captures/somfy_dimmer/pairing_full.yaml's 0x33 `88 00 …`,
-/// velux_kux100/pairing_full.yaml's 0x2D `88 08 …`) show a device closing its half of a
-/// two-frame handshake this way. LOW_POWER stays clear because that bit describes the *target* of
-/// a controller-originated frame (see the header's convention note); a device does not flag a
-/// frame it sends *to* the hub as low-power.
+/// velux_kux100/pairing_full.yaml's 0x2D `88 08 …`, and this project's own key-extraction
+/// responder against a real hub in
+/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml, both 0x2D and
+/// 0x33 as `88 00 …`) show a device closing its half of a two-frame handshake this way. LOW_POWER
+/// stays clear because that bit describes the *target* of a controller-originated frame (see the
+/// header's convention note); a device does not flag a frame it sends *to* the hub as low-power.
 static bool create_device_terminal_ack(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t cmd) {
   init_frame(f, true, false, true, false);
   set_dst(f, dst);

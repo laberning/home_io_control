@@ -93,6 +93,15 @@ static constexpr uint8_t CMD_DISCOVER_ALT_RESP =
            ///< tests/corpus/captures/velux_kux100/discover_alt_addressed_challenge_response.yaml
            ///< — the only capture this project has of it. Not otherwise used anywhere in this
            ///< codebase (no dispatch logic added).
+static constexpr uint8_t CMD_ONEWAY_ADD_CONTROLLER =
+    0x30;  ///< 1W "add controller": a 1W device broadcasts this while its key-copy gesture is
+           ///< active, handing its network's wrapped system key to whichever controller is
+           ///< listening — see docs/commands.md#30-send-1w-key in the reference project linked
+           ///< from issue #66. Not parsed or handled anywhere in this codebase (no 1W key-adoption
+           ///< feature exists here); the constant exists solely so redaction.h can recognize and
+           ///< mask any such frame this hub's radio passively overhears from a neighboring
+           ///< installation's 1W pairing gesture, the same way it already does for CMD_ONEWAY_REMOVE
+           ///< in pairing_advisor.cpp.
 static constexpr uint8_t CMD_ONEWAY_REMOVE = 0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device);
                                                     ///< same payload shape as 0x2E.
 

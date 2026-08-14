@@ -347,12 +347,11 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
     return true;
   }
 
-  ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u bytes=[%02X %02X %02X %02X %02X %02X] freq=%" PRIu32 " rssi=%d",
-           context.rx.data_len, context.rx.data_len > 0 ? context.rx.data[0] : 0,
-           context.rx.data_len > 1 ? context.rx.data[1] : 0, context.rx.data_len > 2 ? context.rx.data[2] : 0,
-           context.rx.data_len > 3 ? context.rx.data[3] : 0, context.rx.data_len > 4 ? context.rx.data[4] : 0,
-           context.rx.data_len > 5 ? context.rx.data[5] : 0, context.packet.freq_hz,
-           radio_()->get_last_capture().rssi_dbm);
+  // No challenge bytes here: the raw 0x3C payload plus the 0x3D response it provokes is a
+  // known-plaintext/known-ciphertext pair under the system key (see redaction.h). The generic
+  // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
+  ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%d", context.rx.data_len,
+           context.packet.freq_hz, radio_()->get_last_capture().rssi_dbm);
 
   context.state = pairing::PairingState::TX_KEY_TRANSFER;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);

@@ -104,11 +104,13 @@ TEST(Redaction, ContainsKeyMaterial_ShortBufferNeverMatches) {
 // command_carries_key_material()
 // ============================================================================
 
-TEST(Redaction, CommandCarriesKeyMaterial_OnlyKeyTransfer) {
+TEST(Redaction, CommandCarriesKeyMaterial_KeyTransferAndChallengePair) {
   EXPECT_TRUE(command_carries_key_material(CMD_KEY_TRANSFER));
+  EXPECT_TRUE(command_carries_key_material(CMD_CHALLENGE_REQ));
+  EXPECT_TRUE(command_carries_key_material(CMD_CHALLENGE_RESP));
+  EXPECT_TRUE(command_carries_key_material(CMD_ONEWAY_ADD_CONTROLLER));
   EXPECT_FALSE(command_carries_key_material(CMD_KEY_INIT));
   EXPECT_FALSE(command_carries_key_material(CMD_KEY_CONFIRM));
-  EXPECT_FALSE(command_carries_key_material(CMD_CHALLENGE_REQ));
 }
 
 // ============================================================================

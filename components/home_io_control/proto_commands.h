@@ -220,7 +220,9 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
 /// Device-side counterpart to create_key_transfer(); used only by the key-extraction responder
 /// (see create_discover_resp() above for why this direction exists at all). No payload and END
 /// set, matching real devices' 0x33 in
-/// tests/corpus/captures/somfy_dimmer/pairing_full.yaml and velux_kux100/pairing_full.yaml —
+/// tests/corpus/captures/somfy_dimmer/pairing_full.yaml, velux_kux100/pairing_full.yaml, and (this
+/// project's own key-extraction responder against a real hub)
+/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml —
 /// 0x33 closes the key-exchange sequence that CMD_KEY_INIT (0x31) opened with START.
 /// @param f IoFrame to populate.
 /// @param own Our advertised (throwaway) node ID.
@@ -235,9 +237,11 @@ bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 /// Device-side only, like create_discover_resp()/create_key_confirm() above; this project's own
 /// controller role never sends 0x2C, so there is no counterpart builder for the other direction.
 /// No payload and END set, matching real devices' 0x2D in
-/// tests/corpus/captures/velux_kux100/pairing_full.yaml (and, for a second independent hub,
+/// tests/corpus/captures/velux_kux100/pairing_full.yaml; for a second independent hub,
 /// tests/corpus/captures/issues/issue_45_somfy_connectivity_kit_key_extraction_stall.yaml, where
-/// an already-paired device answers the same hub the key-extraction responder was talking to).
+/// an already-paired device answers the same hub the key-extraction responder was talking to; and
+/// for this exact builder exercised against a real hub,
+/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml.
 /// @param f IoFrame to populate.
 /// @param own Our advertised (throwaway) node ID.
 /// @param dst Destination node ID (the hub that sent the discovery confirm).
@@ -317,7 +321,9 @@ bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, co
 /// for a device answering a hub's key-init: real devices' pairing 0x3C frames in
 /// tests/corpus/captures/somfy_dimmer/pairing_full.yaml (`0E 00 …`) and
 /// velux_kux100/pairing_full.yaml carry neither bit, because the frame is a continuation of the
-/// hub's already-open exchange and is addressed to a mains-powered hub.
+/// hub's already-open exchange and is addressed to a mains-powered hub — and this exact builder,
+/// exercised against a real hub, produces the identical `0E 00` shape in
+/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml.
 /// @param f IoFrame to populate.
 /// @param dst The foreign hub's node ID (from the inbound 0x31's src).
 /// @param src Our advertised (throwaway) node ID.

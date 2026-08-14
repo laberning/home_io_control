@@ -309,10 +309,11 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
     return false;
   }
 
-  ESP_LOGI(TAG,
-           "Auth challenge try=%d wait_ms=%" PRIu32 " challenge=%02X%02X%02X%02X%02X%02X req_cmd=0x%02X req_len=%u",
-           ctx.try_index, ctx.first_response_ms - ctx.exchange_start_ms, ctx.rx.data[0], ctx.rx.data[1], ctx.rx.data[2],
-           ctx.rx.data[3], ctx.rx.data[4], ctx.rx.data[5], request.cmd, request.data_len);
+  // No challenge bytes here: the raw 0x3C payload plus the 0x3D response it provokes is a
+  // known-plaintext/known-ciphertext pair under the system key (see redaction.h). The generic
+  // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
+  ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%" PRIu32 " req_cmd=0x%02X req_len=%u", ctx.try_index,
+           ctx.first_response_ms - ctx.exchange_start_ms, request.cmd, request.data_len);
 
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
