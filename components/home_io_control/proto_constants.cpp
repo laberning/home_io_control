@@ -17,6 +17,10 @@ const char *command_name(uint8_t cmd) {
       return "PRIVATE";
     case CMD_PRIVATE_RESP:
       return "PRIVATE_RESP";
+    case CMD_PRIVATE2:
+      return "PRIVATE2";
+    case CMD_PRIVATE2_RESP:
+      return "PRIVATE2_RESP";
     case CMD_SET_SENSOR:
       return "SET_SENSOR";
     case CMD_SET_SENSOR_ACK:
@@ -55,6 +59,10 @@ const char *command_name(uint8_t cmd) {
       return "ADDRESS_RESP";
     case CMD_LAUNCH_KEY_TRANSFER:
       return "LAUNCH_KEY_TRANSFER";
+    case CMD_UNKNOWN4A_REQ:
+      return "UNKNOWN4A_REQ";
+    case CMD_UNKNOWN4A_RESP:
+      return "UNKNOWN4A_RESP";
     case CMD_CHALLENGE_REQ:
       return "CHALLENGE_REQ";
     case CMD_CHALLENGE_RESP:
@@ -75,6 +83,10 @@ const char *command_name(uint8_t cmd) {
       return "GET_INFO2";
     case CMD_GET_INFO2_RESP:
       return "GET_INFO2_RESP";
+    case CMD_GET_GENERAL_INFO3:
+      return "GET_GENERAL_INFO3";
+    case CMD_GET_GENERAL_INFO3_RESP:
+      return "GET_GENERAL_INFO3_RESP";
     case CMD_SET_CONFIG1:
       return "SET_CONFIG1";
     case CMD_SET_CONFIG1_RESP:

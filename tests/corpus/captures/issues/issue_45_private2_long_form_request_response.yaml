@@ -1,0 +1,27 @@
+id: issue_45_private2_long_form_request_response
+description: >
+  PRIVATE2 (0x0C/0x0D) long form, the only genuinely adjacent request/response pair in the whole corpus.
+source:
+  device: "Somfy device 1F3807, controlled by hub CA0A18"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/45"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 20 1F 38 07 CA 0A 18 0C D4 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C)"
+  - dir: rx
+    t_ms: 19
+    freq: 869850000
+    hex: "8F 00 CA 0A 18 1F 38 07 0D 05 D4 00 80 C8 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE2_RESP(0x0D), 19 ms after the request — the only genuinely adjacent
+      request/response pair for this opcode in the whole corpus; every other capture pairs a
+      request and reply from different bursts, seconds apart.
