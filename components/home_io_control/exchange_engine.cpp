@@ -201,10 +201,18 @@ bool frame_is_challenge_response(const IoFrame &frame) { return frame.cmd == CMD
 /// helper as every other frame log, so an unparsable frame can't leak key material by being
 /// unrecognisable (see ADR 0011).
 void log_unparsable_frame(const char *stage, int tries, const RadioRxPacket &packet) {
+  // The *fact* stays unconditional: it means the receiver is demodulating traffic it cannot
+  // decode, which is a real fault worth surfacing to someone who never enables a debug flag — a
+  // misconfigured RX bandwidth showed up as several of these a minute. The bytes only help someone
+  // already debugging the PHY, and dumping them at that rate is what makes a log unreadable, so
+  // they sit behind the frame-log flag with the rest of that detail.
+  ESP_LOGW(TAG, "%s try=%d: %u bytes did not parse as a frame on %" PRIu32 " Hz", stage, tries, packet.len,
+           packet.freq_hz);
+#ifdef IOHOME_FRAME_LOG
   char hex[FRAME_LOG_HEX_BUFFER_SIZE];
   render_frame_hex_redacted(packet.data, packet.len, hex, sizeof(hex));
-  ESP_LOGW(TAG, "%s try=%d: %u bytes did not parse as a frame on %" PRIu32 " Hz: %s", stage, tries, packet.len,
-           packet.freq_hz, hex);
+  ESP_LOGD(TAG, "  raw: %s", hex);
+#endif
 }
 
 /// Log an exchanged frame with context (stage, try index, length).

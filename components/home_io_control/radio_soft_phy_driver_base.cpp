@@ -421,9 +421,10 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
   // immediate reply remains visible to wait_for_packet().
   this->clear_dio_fired();
 
+#ifdef IOHOME_FRAME_LOG
   uint32_t const tx_done_us = micros();
+#endif
   this->rearm_rx_after_tx_();
-  uint32_t const rearm_us = micros() - tx_done_us;
 
   // Post-TX settling delay: the GFSK demodulator needs time to stabilize after the TX→STDBY→RX
   // transition. Without this, frames received immediately after TX (e.g. the 0x3C challenge
@@ -434,10 +435,15 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
 
   // A peer can reply within a millisecond or two of our carrier dropping — field measurement of a
   // Somfy RS100 puts its challenge at a fixed ~22 ms after exchange start, i.e. within ms of the
-  // transmission ending, with no late replies ever observed. That makes this number the margin the
-  // whole exchange lives on: if re-arming outlasts the peer's turnaround the reply is not late,
-  // it is never heard at all, and no response-window length can recover it.
-  ESP_LOGD(TAG, "TX->RX re-arm: %" PRIu32 " us (+%u us settle)", rearm_us, this->post_tx_settle_us_);
+  // transmission ending. That makes this number the margin the whole exchange lives on: if
+  // re-arming outlasts the peer's turnaround the reply is not late, it is never heard at all, and
+  // no response-window length can recover it. Behind the frame-log flag with the rest of the
+  // PHY-level instrumentation: it fires on *every* transmission, and the measurement it exists to
+  // settle (~390 us, against the ~20 ms available) is long since settled. The timing calls compile
+  // out with it, because this is the one code path where microseconds were ever in question.
+#ifdef IOHOME_FRAME_LOG
+  ESP_LOGD(TAG, "TX->RX re-arm: %" PRIu32 " us (+%u us settle)", micros() - tx_done_us, this->post_tx_settle_us_);
+#endif
 
   return true;
 }

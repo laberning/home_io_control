@@ -136,7 +136,7 @@ your device may differ.
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
 | `exchange_start_response_wait_ms` | both | `1000` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
-| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
+| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth. Still `117.3` by default — untested on LR1121, but the SX1262 result below suggests trying narrower. |
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
@@ -429,7 +429,7 @@ is a general starting point, not a guarantee — different devices need differen
    LR1121 boards use the `lr1121_*` equivalents instead):
    ```yaml
    sx1262_post_tx_settle_us: 750    # then 1000
-   sx1262_rx_bandwidth: 156.2
+   sx1262_rx_bandwidth: 46.9        # then 39.0 — narrower, not wider; see the section above
    sx1262_response_preamble: 12     # then 16
    ```
 

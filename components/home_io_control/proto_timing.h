@@ -78,9 +78,9 @@ static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per comma
 /// also starves the receive path the rest of the exchange depends on.
 ///
 /// So the retry count is a maximum, not a promise: a try only starts if the exchange has budget
-/// left. At the 300 ms window this changes nothing (three tries fit in ~2.0 s); at 1000 ms it
-/// yields two tries instead of three. That is the right trade for a slow device anyway -- one long
-/// listen catches a late reply that three short ones miss.
+/// left. At the current 400 ms window all three tries still fit (~2.3 s); it only starts trimming
+/// them if the window is raised well past the default, which is exactly when three full tries stop
+/// being affordable. One long listen is the better trade there anyway.
 static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 
 /// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.
