@@ -47,6 +47,10 @@ constexpr float BW_KHZ_46_9 = 46.9F;
 
 float sx1262_bandwidth_to_khz(SX1262RxBandwidth bw) {
   switch (bw) {
+    case SX1262RxBandwidth::BW_39_0_KHZ:
+      return BW_KHZ_39_0;
+    case SX1262RxBandwidth::BW_46_9_KHZ:
+      return BW_KHZ_46_9;
     case SX1262RxBandwidth::BW_58_6_KHZ:
       return BW_KHZ_58_6;
     case SX1262RxBandwidth::BW_78_2_KHZ:
@@ -76,6 +80,10 @@ std::optional<SX1262RxBandwidth> sx1262_bandwidth_from_string(const std::string 
   if (normalized.size() > 3 && normalized.ends_with("khz"))
     normalized.resize(normalized.size() - 3);
 
+  if (normalized == "39.0" || normalized == "39")
+    return SX1262RxBandwidth::BW_39_0_KHZ;
+  if (normalized == "46.9" || normalized == "46")
+    return SX1262RxBandwidth::BW_46_9_KHZ;
   if (normalized == "58.6" || normalized == "58")
     return SX1262RxBandwidth::BW_58_6_KHZ;
   if (normalized == "78.2" || normalized == "78")

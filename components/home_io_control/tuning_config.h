@@ -23,12 +23,26 @@ namespace home_io_control {
 ///
 /// The numeric values are the register-encoded (double-sideband) bandwidth selectors used by
 /// `RadioSX1262::set_rx_bandwidth()`.
+///
+/// Two of these were wrong until 2026-08-15, and this enum is where the error originated:
+/// `LR1121RxBandwidth` below was created as a type alias of *this* enum, later found to carry two
+/// bad codes, and corrected against RadioLib — but the correction was never brought back here, so
+/// the SX1262 kept them. `0x09` is 467.0 kHz, not 156.2, and `0x07` is not a valid GFSK bandwidth
+/// code at all. Field evidence matched exactly: selecting "187.2" left the radio unable to
+/// complete a single exchange (18 failures, zero challenges answered, in 7.5 minutes), and
+/// "156.2" behaved like the ~4x-too-wide filter it actually was.
+///
+/// The whole table is a regular (mantissa, exponent) grid — triples of 0x1X / 0x1X-8 / 0x0X with
+/// the bandwidth roughly doubling per group — so the three codes that were always right (0x0C,
+/// 0x1B, 0x0B) confirm the two that were not.
 enum class SX1262RxBandwidth : uint8_t {
-  BW_58_6_KHZ = 0x0C,  ///< 58.6 kHz — narrowest; SX1276-equivalent width, marginal on the default TX→RX turnaround.
-  BW_78_2_KHZ = 0x1B,  ///< 78.2 kHz — narrow.
-  BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — default.
-  BW_156_2_KHZ = 0x09,  ///< 156.2 kHz — wider tolerance for LO offset.
-  BW_187_2_KHZ = 0x07,  ///< 187.2 kHz — widest selectable option.
+  BW_39_0_KHZ = 0x1C,   ///< 39.0 kHz — narrowest; closest to the SX1276's validated 41.7 kHz.
+  BW_46_9_KHZ = 0x14,   ///< 46.9 kHz — narrow.
+  BW_58_6_KHZ = 0x0C,   ///< 58.6 kHz — default; the narrowest value validated on real hardware here.
+  BW_78_2_KHZ = 0x1B,   ///< 78.2 kHz — just above the ~77 kHz Carson figure for this waveform.
+  BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — the former default.
+  BW_156_2_KHZ = 0x1A,  ///< 156.2 kHz.
+  BW_187_2_KHZ = 0x12,  ///< 187.2 kHz — widest selectable option.
 };
 
 /// @brief Valid SX1276 RX bandwidth options (RegRxBw register bytes).
@@ -47,16 +61,20 @@ enum class SX1276RxBandwidth : uint8_t {
 
 /// @brief Valid LR1121 RX bandwidth options (register values).
 ///
-/// NOT the same encoding as SX1262, despite the earlier design assumption ("same encoding, same
-/// table") that this enum used to be a type alias of `SX1262RxBandwidth` on. 2026-07-17 hardware
-/// bring-up cross-checked the actual byte values against RadioLib's `LR11x0_commands.h` and found
-/// two of the five borrowed SX1262 values were wrong for this chip: the byte reused here for
-/// "156.2 kHz" actually selects 467.0 kHz on real LR1121 silicon, and the byte reused for
-/// "187.2 kHz" isn't a valid GFSK bandwidth code at all. This is now its own distinct enum with
-/// every value confirmed against RadioLib, plus two narrower options (39.0/46.9 kHz) added for
-/// tuning-bed experimentation — SX1276's own default (41.7 kHz, see `SX1276RxBandwidth`) is
-/// documented as validated against real devices, notably narrower than LR1121/SX1262's shared
-/// 117.3 kHz default, and a plausible lever for the marginal reception seen during bring-up.
+/// Byte-for-byte identical to `SX1262RxBandwidth` — both chips use the same Semtech GFSK
+/// bandwidth grid — and kept as a distinct enum only so each driver's options can diverge if a
+/// future chip's table does.
+///
+/// This enum used to be a type alias of `SX1262RxBandwidth`. 2026-07-17 LR1121 bring-up
+/// cross-checked the bytes against RadioLib's `LR11x0_commands.h` and found two of the five wrong:
+/// the code for "156.2 kHz" actually selects 467.0 kHz, and the one for "187.2 kHz" is not a valid
+/// GFSK bandwidth code at all. The conclusion drawn at the time — that the two chips must use
+/// *different* encodings — was the wrong one. The encodings agree; the SX1262 values had simply
+/// always been wrong, and this enum inherited them.
+///
+/// Because the diagnosis landed on "different table" rather than "shared bug", the correction was
+/// never carried back, and the SX1262 kept both bad codes for another month until a 2026-08-15
+/// field sweep hit them. If these two tables ever need to differ for real, say why here.
 enum class LR1121RxBandwidth : uint8_t {
   BW_39_0_KHZ = 0x1C,   ///< 39.0 kHz — narrowest; close to SX1276's validated 41.7 kHz default.
   BW_46_9_KHZ = 0x14,   ///< 46.9 kHz — narrow.
@@ -160,11 +178,20 @@ static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = SX1262_DISCOVERY_HOP_S
 /// configuration file.
 struct TuningConfig {
   // --- Radio / physical layer ---
-  SX1262RxBandwidth sx1262_rx_bandwidth{SX1262RxBandwidth::BW_117_3_KHZ};  ///< SX1262 RX bandwidth selector.
-  uint16_t sx1262_response_preamble{SX1262_RESPONSE_PREAMBLE};             ///< SX1262 response preamble in bytes.
-  uint16_t sx1262_post_tx_settle_us{SX1262_POST_TX_SETTLE_US};             ///< Delay after SX1262 TX before RX (µs).
-  SX1276RxBandwidth sx1276_rx_bandwidth{SX1276RxBandwidth::BW_41_7_KHZ};   ///< SX1276 RX bandwidth selector.
-  uint16_t sx1276_response_preamble{SX1276_RESPONSE_PREAMBLE};             ///< SX1276 response preamble in bytes.
+  /// SX1262 RX bandwidth selector.
+  ///
+  /// 58.6 kHz, not the former 117.3. The wide default existed to tolerate local-oscillator offset
+  /// across the TX->RX turnaround, back when that turnaround was slow and unmeasured; it is now
+  /// 390 us plus a 500 us settle, and the reason has expired. Narrow also matches the SX1276,
+  /// whose long-validated default is 41.7 kHz on the identical waveform, and a 2026-08-15 sweep
+  /// through every option on real hardware found reception improved monotonically as the filter
+  /// narrowed — at 58.6 kHz even a shutter that had never once obeyed this hub responded, and all
+  /// devices reported status correctly.
+  SX1262RxBandwidth sx1262_rx_bandwidth{SX1262RxBandwidth::BW_58_6_KHZ};
+  uint16_t sx1262_response_preamble{SX1262_RESPONSE_PREAMBLE};            ///< SX1262 response preamble in bytes.
+  uint16_t sx1262_post_tx_settle_us{SX1262_POST_TX_SETTLE_US};            ///< Delay after SX1262 TX before RX (µs).
+  SX1276RxBandwidth sx1276_rx_bandwidth{SX1276RxBandwidth::BW_41_7_KHZ};  ///< SX1276 RX bandwidth selector.
+  uint16_t sx1276_response_preamble{SX1276_RESPONSE_PREAMBLE};            ///< SX1276 response preamble in bytes.
   uint16_t sx1276_discovery_hop_slice_ms{
       SX1276_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while SX1276 discovery hops.
   uint16_t sx1262_discovery_hop_slice_ms{

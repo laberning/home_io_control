@@ -68,6 +68,8 @@ DiscoveryCommand = home_io_control_ns.enum("DiscoveryCommand", is_class=True)
 # Map each YAML option string to its C++ enum value. Options are bare kHz numbers (the "kHz"
 # unit lives in the entity name) for uniformity with the numeric parameters.
 SX1262_BANDWIDTH_OPTIONS = {
+    "39.0": SX1262RxBandwidth.BW_39_0_KHZ,
+    "46.9": SX1262RxBandwidth.BW_46_9_KHZ,
     "58.6": SX1262RxBandwidth.BW_58_6_KHZ,
     "78.2": SX1262RxBandwidth.BW_78_2_KHZ,
     "117.3": SX1262RxBandwidth.BW_117_3_KHZ,

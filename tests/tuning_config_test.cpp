@@ -11,7 +11,8 @@ using namespace esphome::home_io_control;
 
 TEST(TuningConfig, DefaultsMatchPlan) {
   TuningConfig cfg{};
-  EXPECT_EQ(cfg.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_117_3_KHZ);
+  EXPECT_EQ(cfg.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_58_6_KHZ)
+      << "narrow by default: a full-sweep field test found reception improved as the filter narrowed";
   EXPECT_EQ(cfg.sx1262_response_preamble, 8);
   EXPECT_EQ(cfg.sx1262_post_tx_settle_us, 500);
   // SX1276 radio defaults: RegRxBw 0x13 (unchanged fixed value) and a 12-byte response preamble
@@ -174,4 +175,36 @@ TEST(TuningConfig, PayloadStringFormatting) {
 TEST(TuningConfig, UpdateLogLineFormat) {
   EXPECT_EQ(tuning_update_log_line("sx1262_post_tx_settle_us", "750"),
             "Tuning updated via HA: sx1262_post_tx_settle_us=750");
+}
+
+// Every SX1262 bandwidth option must map to the register code the chip actually implements. Two of
+// these were wrong for months (0x09 selects 467.0 kHz, not 156.2; 0x07 is not a valid GFSK code at
+// all), which made a UI option silently select a filter four times too wide and another kill
+// reception outright. The table is a regular grid — triples of 0x1X / 0x1X-8 / 0x0X — so the codes
+// that were always right vouch for the ones that were not.
+TEST(TuningConfig, Sx1262BandwidthOptionsUseTheChipsRegisterCodes) {
+  const std::vector<std::pair<SX1262RxBandwidth, uint8_t>> expected = {
+      {SX1262RxBandwidth::BW_39_0_KHZ, 0x1C},  {SX1262RxBandwidth::BW_46_9_KHZ, 0x14},
+      {SX1262RxBandwidth::BW_58_6_KHZ, 0x0C},  {SX1262RxBandwidth::BW_78_2_KHZ, 0x1B},
+      {SX1262RxBandwidth::BW_117_3_KHZ, 0x0B}, {SX1262RxBandwidth::BW_156_2_KHZ, 0x1A},
+      {SX1262RxBandwidth::BW_187_2_KHZ, 0x12},
+  };
+  for (const auto &[bw, code] : expected)
+    EXPECT_EQ(static_cast<uint8_t>(bw), code) << "wrong register code for " << sx1262_bandwidth_to_khz(bw) << " kHz";
+}
+
+// The two chips share one Semtech bandwidth grid. They drifted apart once already — the LR1121
+// values were corrected and the SX1262 originals they came from were left wrong — so pin the
+// agreement rather than relying on someone noticing again.
+TEST(TuningConfig, Sx1262AndLr1121BandwidthTablesAgree) {
+  EXPECT_EQ(static_cast<uint8_t>(SX1262RxBandwidth::BW_39_0_KHZ), static_cast<uint8_t>(LR1121RxBandwidth::BW_39_0_KHZ));
+  EXPECT_EQ(static_cast<uint8_t>(SX1262RxBandwidth::BW_46_9_KHZ), static_cast<uint8_t>(LR1121RxBandwidth::BW_46_9_KHZ));
+  EXPECT_EQ(static_cast<uint8_t>(SX1262RxBandwidth::BW_58_6_KHZ), static_cast<uint8_t>(LR1121RxBandwidth::BW_58_6_KHZ));
+  EXPECT_EQ(static_cast<uint8_t>(SX1262RxBandwidth::BW_78_2_KHZ), static_cast<uint8_t>(LR1121RxBandwidth::BW_78_2_KHZ));
+  EXPECT_EQ(static_cast<uint8_t>(SX1262RxBandwidth::BW_117_3_KHZ),
+            static_cast<uint8_t>(LR1121RxBandwidth::BW_117_3_KHZ));
+  EXPECT_EQ(static_cast<uint8_t>(SX1262RxBandwidth::BW_156_2_KHZ),
+            static_cast<uint8_t>(LR1121RxBandwidth::BW_156_2_KHZ));
+  EXPECT_EQ(static_cast<uint8_t>(SX1262RxBandwidth::BW_187_2_KHZ),
+            static_cast<uint8_t>(LR1121RxBandwidth::BW_187_2_KHZ));
 }
