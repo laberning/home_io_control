@@ -460,7 +460,7 @@ class IOHomeControlComponent : public Component,
   /// @param response Output: received response IoFrame.
   /// @param freq RF frequency in Hz.
   /// @return true if exchange succeeded; false otherwise.
-  bool send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq);
+  ExchangeOutcome send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq);
   /// Handle an inbound authenticated command from a device (status updates, etc.).
   /// @param request Inbound authenticated request (e.g., CMD_STATUS_UPDATE).
   /// @param freq RF frequency the packet arrived on.
@@ -582,7 +582,17 @@ class IOHomeControlComponent : public Component,
   /// @param request Outbound request frame.
   /// @param warn_on_no_response If true, logs a warning when no response is received.
   /// @param retry_after_fail_ms If non-zero, schedules next status poll after this delay on failure.
-  /// @return true if device acknowledged; false otherwise.
+  /// @return true if the device acknowledged *or* accepted the request without replying — see
+  ///         @ref ExchangeOutcome, and the CMD_EXECUTE carve-out in the definition.
+  ///
+  /// Handle an explicit CMD_ERROR_RESP refusal from the device: record the result code, stamp link
+  /// health, and schedule the poll backoff. Split out of execute_request_and_update_() to keep that
+  /// function's outcome dispatch readable — a refusal is a distinct concern from "what did the
+  /// exchange achieve".
+  /// @return Always false; a refusal is never a success.
+  bool handle_error_response_(const std::string &device_id, const IoFrame &request, const IoFrame &response,
+                              uint32_t retry_after_fail_ms);
+
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
                                    uint32_t retry_after_fail_ms = 0);
   /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.

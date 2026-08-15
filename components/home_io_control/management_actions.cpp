@@ -284,10 +284,16 @@ IoDevice *ManagementActions::resolve_device_(const char *action, const std::stri
 
 bool ManagementActions::send_authenticated_request_(const IoFrame &request, IoFrame &response, const char *action_verb,
                                                     ManagementActionResult &result) {
-  if (engine_.send_and_receive(request, response, FREQ_CH2))
+  const ExchangeOutcome outcome = engine_.send_and_receive(request, response, FREQ_CH2);
+  if (outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE)
     return true;
   engine_.log_debug(result.device_id.c_str());
-  result.message = std::string("no valid response to ") + action_verb + " request";
+  // A management action's whole point is the payload it reads back (a name, an info block), so an
+  // unconfirmed acceptance still cannot satisfy the caller — but it is a materially different
+  // situation from silence, and saying so saves the user chasing a link problem that isn't one.
+  result.message = outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED
+                       ? std::string("device accepted the ") + action_verb + " request but sent no response"
+                       : std::string("no valid response to ") + action_verb + " request";
   return false;
 }
 

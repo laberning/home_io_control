@@ -200,7 +200,7 @@ bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
 
 }  // namespace
 
-bool ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq) {
+ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq) {
   this->reset_debug(request.cmd);
   const uint16_t request_preamble = is_start(request) ? LONG_PREAMBLE : (*this->radio_ptr_)->response_preamble();
   const uint32_t exchange_begin_ms = millis();
@@ -240,7 +240,7 @@ bool ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response,
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_direct", context.try_index, false);
       response = context.rx;
-      return true;
+      return ExchangeOutcome::SUCCESS_WITH_RESPONSE;
     }
 
     if (!this->handle_authentication_(request, freq, context))
@@ -249,16 +249,24 @@ bool ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response,
     context.state = exchange::OutboundExchangeState::WAIT_FINAL_RESPONSE;
     this->record_debug(outbound_stage_name(context.state), context.try_index, true);
     auto final_disp = this->wait_for_final_response_(request, context);
-    if (final_disp != decisions::ExchangeFinalResponseDisposition::ACCEPT)
-      continue;
+    if (final_disp != decisions::ExchangeFinalResponseDisposition::ACCEPT) {
+      // The device challenged us and accepted our answer, so it demonstrably received the request.
+      // Not every device closes the exchange with a synchronous reply (see ExchangeOutcome), and
+      // retrying here is actively harmful: the command is already executing, so the two remaining
+      // tries re-send a movement command to a device that is mid-move and, having already acted,
+      // ignores them — which is what turned a working command into a reported failure.
+      context.state = exchange::OutboundExchangeState::SUCCESS;
+      this->record_debug("success_auth_unconfirmed", context.try_index, true);
+      return ExchangeOutcome::SUCCESS_UNCONFIRMED;
+    }
 
     context.state = exchange::OutboundExchangeState::SUCCESS;
     this->record_debug("success_auth", context.try_index, true);
     response = context.rx;
-    return true;
+    return ExchangeOutcome::SUCCESS_WITH_RESPONSE;
   }
 
-  return false;
+  return ExchangeOutcome::FAILED;
 }
 
 // ============================================================================

@@ -1128,3 +1128,60 @@ TEST(HubOperations, CoalesceDoesNotAffectOtherPendingOps) {
   EXPECT_EQ(comp.op_queue_[0].position, 40u);
   EXPECT_EQ(comp.op_queue_[0].tilt, 60u);
 }
+
+// ============================================================================
+// A device that authenticates a command but never closes the exchange has still *taken* the
+// command. Whether that counts as success depends on what was asked — see ExchangeOutcome and
+// execute_request_and_update_().
+// ============================================================================
+
+TEST(HubOperations, CommandAuthenticatedWithoutFinalResponseCountsAsSuccess) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  // Queue only the challenge — no final response, exactly like a real RS100.
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.set_device_position("ABC123", 100))
+      << "the device challenged and we answered, so it has the command — that is not a failure";
+  EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 0u)
+      << "an accepted command must not be recorded as an auth-shaped failure";
+  EXPECT_EQ(dev->exchange_timeout_count, 0u) << "nor as a timeout";
+}
+
+TEST(HubOperations, StatusPollAuthenticatedWithoutFinalResponseStillFails) {
+  // The mirror image, and the reason the distinction exists: a status poll's entire purpose is the
+  // payload. Authenticating and then hearing nothing answers no question, so it stays a failure
+  // and keeps the aggressive auth-shaped backoff.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123")) << "a poll that returned no payload has not succeeded";
+  EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 1u) << "and it is the auth-shaped kind";
+}

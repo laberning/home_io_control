@@ -261,11 +261,11 @@ bool IOHomeControlComponent::transmit_frame_(const IoFrame &frame, uint32_t freq
 }
 
 /// Delegate outbound exchange to ExchangeEngine and manage the busy_ flag.
-bool IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq) {
+ExchangeOutcome IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq) {
   this->busy_ = true;
-  bool const ok = this->exchange_engine_.send_and_receive(request, response, freq);
+  ExchangeOutcome const outcome = this->exchange_engine_.send_and_receive(request, response, freq);
   this->busy_ = false;
-  return ok;
+  return outcome;
 }
 
 /// Delegate inbound authentication to ExchangeEngine.

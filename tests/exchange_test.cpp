@@ -141,7 +141,7 @@ TEST(Exchange, SendAndReceive_DirectSuccess) {
   radio.queue_rx(pkt);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   // Direct response should succeed without authentication
   EXPECT_TRUE(ok) << "direct status response should succeed without challenge";
@@ -166,7 +166,7 @@ TEST(Exchange, SendAndReceive_AllTransmitFails) {
   create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   // All transmit attempts fail — should exhaust retries and return false
   EXPECT_FALSE(ok) << "if every transmit attempt fails, exchange should return false";
@@ -204,7 +204,7 @@ TEST(Exchange, SendAndReceive_FirstResponseIgnoredThenDirectSuccess) {
   radio.queue_rx(pkt2);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   // Direct response should succeed without authentication
   EXPECT_TRUE(ok) << "direct status response should succeed without challenge";
@@ -244,7 +244,7 @@ TEST(Exchange, SendAndReceive_ChallengeSuccess) {
   radio.queue_rx(final_pkt);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   EXPECT_TRUE(ok);
   EXPECT_EQ(response.cmd, CMD_PRIVATE_RESP);
@@ -272,7 +272,7 @@ TEST(Exchange, SendAndReceive_DirectErrorResponseIsAccepted) {
   radio.queue_rx(pkt);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   EXPECT_TRUE(ok) << "transport layer should surface explicit device refusals to the caller";
   EXPECT_EQ(response.cmd, CMD_ERROR_RESP);
@@ -309,7 +309,7 @@ TEST(Exchange, SendAndReceive_FinalErrorResponseAfterChallengeIsAccepted) {
   radio.queue_rx(final_pkt);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   EXPECT_TRUE(ok) << "authenticated exchanges should also surface explicit device refusals";
   EXPECT_EQ(response.cmd, CMD_ERROR_RESP);
@@ -346,7 +346,7 @@ TEST(Exchange, SendAndReceive_AuthTransmitFailure) {
   radio.queue_tx_result(false);  // try 3 request fails
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   // All transmit attempts fail — should exhaust retries and return false
   EXPECT_FALSE(ok) << "if every transmit attempt fails, exchange should return false";
@@ -355,7 +355,7 @@ TEST(Exchange, SendAndReceive_AuthTransmitFailure) {
       << "should perform EXCHANGE_RETRY_COUNT request transmits plus one auth response attempt before giving up";
 }
 
-TEST(Exchange, SendAndReceive_FinalResponseTimeout) {
+TEST(Exchange, SendAndReceive_MissingFinalResponseIsUnconfirmedSuccessNotFailure) {
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
@@ -383,10 +383,19 @@ TEST(Exchange, SendAndReceive_FinalResponseTimeout) {
   radio.queue_tx_result(true);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  const ExchangeOutcome outcome = comp.send_and_receive_(request, response, FREQ_CH2);
 
-  // No final response received within auth wait window
-  EXPECT_FALSE(ok) << "final response timeout after successful challenge should cause exchange failure";
+  // A challenge we answered proves the device received and accepted the request, so this is not a
+  // failure — it is an acceptance we could not confirm. Some devices never close the exchange at
+  // all: a Somfy RS100's next transmission after our 0x3D was measured at 3.4-12 s, or never,
+  // against a 500 ms window, while a Somfy awning acks synchronously with 0x04. See
+  // ExchangeOutcome.
+  EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_UNCONFIRMED)
+      << "an authenticated request with no final response is accepted, not failed";
+  EXPECT_EQ(response.cmd, 0) << "there was no response frame, so none should be handed back";
+  // The retry is the part that actively hurt: the command is already executing, so re-sending it
+  // twice more only reaches a device that has acted and now ignores duplicates.
+  EXPECT_EQ(radio.get_send_count(), 2) << "expected exactly the request plus the auth response, with no retries";
 }
 
 // ============================================================================
@@ -676,7 +685,7 @@ TEST(Exchange, SendAndReceive_ChallengeResponseCarriesCorrectHmac) {
   radio.queue_rx(final_pkt);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
   ASSERT_TRUE(ok) << "challenge+response exchange should succeed";
 
   // TX 0 = initial request, TX 1 = 0x3D auth response.
@@ -715,7 +724,7 @@ TEST(Exchange, SendAndReceive_RetryExhaustion_NoResponse) {
   create_execute_position(request, comp.node_id_, test::DST_ID, false, 50);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   EXPECT_FALSE(ok) << "exchange with no device response should fail after exhausting all retries";
   EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
@@ -767,7 +776,7 @@ TEST(Exchange, SendAndReceive_UnrelatedFrameIgnoredDuringFinalWait) {
   radio.queue_rx(final_pkt);
 
   IoFrame response{};
-  bool ok = comp.send_and_receive_(request, response, FREQ_CH2);
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   EXPECT_TRUE(ok) << "unrelated frames in the auth-wait window must be ignored; exchange should still succeed";
   EXPECT_EQ(response.cmd, CMD_PRIVATE_RESP) << "final accepted response must be the legitimate device reply";
