@@ -1197,3 +1197,41 @@ TEST(Exchange, ExecuteUsesUserDefaultAceiPriority) {
   EXPECT_EQ(f.data[1], 0x63);
   EXPECT_EQ((f.data[1] & ACEI_LEVEL_MASK) >> ACEI_LEVEL_SHIFT, ACEI_LEVEL_USER_DEFAULT);
 }
+
+// ============================================================================
+// A failure report has to say which kind of failure it was. Every wait_for_packet() clears the
+// radio's capture before listening, so recording "the latest" meant the report always described
+// the final timed-out wait — making cap_valid=0 tautological and hiding whether the radio heard
+// nothing or heard something this layer discarded.
+// ============================================================================
+
+TEST(Exchange, FailureReportKeepsTheInformativeCaptureNotTheLastEmptyOne) {
+  MockRadio radio;
+  radio.set_emulate_capture_lifecycle(true);
+  radio.set_exchange_wait_slice_ms(1000000);
+  RadioDriver *radio_ptr = &radio;
+
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // One frame arrives and is correctly ignored (wrong endpoints), then nothing for the rest of the
+  // exchange. The radio demonstrably heard something.
+  const uint8_t other_device[3] = {0x55, 0x66, 0x77};
+  IoFrame unrelated = build_status_response(other_device, test::OWN_ID);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(unrelated, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, true, 100);
+  IoFrame response{};
+  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::FAILED);
+
+  EXPECT_TRUE(engine.get_debug().capture_valid)
+      << "the exchange received a frame, so its report must not claim the radio heard nothing";
+  EXPECT_EQ(engine.get_debug().capture_freq_hz, FREQ_CH2) << "and it should describe the frame actually heard";
+}

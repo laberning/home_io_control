@@ -9,6 +9,7 @@
 #include "exchange_engine.h"
 
 #include "hub_decisions.h"
+#include "log_frame.h"
 #include "proto_commands.h"
 #include "proto_constants.h"
 #include "proto_crypto.h"
@@ -48,6 +49,14 @@ void ExchangeEngine::record_debug(const char *stage, uint8_t tries, bool saw_cha
   this->debug_.saw_challenge = this->debug_.saw_challenge || saw_challenge;
 
   const RadioCaptureInfo &capture = (*this->radio_ptr_)->get_last_capture();
+  // Every wait_for_packet() clears the radio's capture before it starts listening, so a plain
+  // "latest wins" here meant a failure report always described the *final*, timed-out wait — which
+  // by construction saw nothing. `cap_valid=0` on a timeout was therefore tautological rather than
+  // evidence, and it hid the only distinction that matters when a device goes quiet: whether the
+  // radio never detected a frame at all, or received one this layer then threw away. Keep the
+  // first informative capture of the exchange instead of letting a later empty one erase it.
+  if (!capture.valid && this->debug_.capture_valid)
+    return;
   this->debug_.capture_valid = capture.valid;
   this->debug_.capture_rx_done = capture.rx_done;
   this->debug_.capture_crc_error = capture.crc_error;
@@ -186,6 +195,18 @@ const char *inbound_stage_name(exchange::InboundAuthState state) {
 /// Check if frame is a 0x3D challenge response.
 bool frame_is_challenge_response(const IoFrame &frame) { return frame.cmd == CMD_CHALLENGE_RESP; }
 
+/// Log a frame that arrived but could not be parsed. These were recorded into the debug snapshot
+/// and never printed, which made "the radio heard nothing" and "we heard something and rejected
+/// it" look identical in a failure report — the two need opposite fixes. Redacted through the same
+/// helper as every other frame log, so an unparsable frame can't leak key material by being
+/// unrecognisable (see ADR 0011).
+void log_unparsable_frame(const char *stage, int tries, const RadioRxPacket &packet) {
+  char hex[FRAME_LOG_HEX_BUFFER_SIZE];
+  render_frame_hex_redacted(packet.data, packet.len, hex, sizeof(hex));
+  ESP_LOGW(TAG, "%s try=%d: %u bytes did not parse as a frame on %" PRIu32 " Hz: %s", stage, tries, packet.len,
+           packet.freq_hz, hex);
+}
+
 /// Log an exchanged frame with context (stage, try index, length).
 void log_exchange_frame(const char *stage, int tries, const IoFrame &frame, uint8_t len) {
   ESP_LOGD(TAG, "%s try=%d cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X len=%u", stage, tries, frame.cmd, frame.src[0],
@@ -298,6 +319,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
     }
     if (!parse(packet.data, packet.len, ctx.rx)) {
       this->record_debug("first_parse_fail", ctx.try_index, false);
+      log_unparsable_frame("Unparsable first response", ctx.try_index, packet);
       continue;
     }
     auto disp = decisions::classify_exchange_first_response(request, ctx.rx);
@@ -363,6 +385,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
     }
     if (!parse(packet.data, packet.len, ctx.rx)) {
       this->record_debug("final_parse_fail", ctx.try_index, true);
+      log_unparsable_frame("Unparsable final response", ctx.try_index, packet);
       continue;
     }
     if (is_valid_final_response(ctx.rx, request))
