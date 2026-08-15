@@ -307,6 +307,10 @@ void IOHomeControlComponent::set_device_dimmable(const std::string &device_id, b
   this->registry_.set_dimmable(device_id, dimmable);
 }
 
+void IOHomeControlComponent::set_device_silent(const std::string &device_id, bool silent) {
+  this->registry_.set_silent(device_id, silent);
+}
+
 // === Main loop ===
 
 void IOHomeControlComponent::loop() {

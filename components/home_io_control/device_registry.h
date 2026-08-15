@@ -29,6 +29,7 @@ struct DeviceConfig {
   uint8_t subtype{0};                    ///< Device subtype byte.
   bool inverted{false};                  ///< Position-inversion flag.
   bool optimistic_state{true};           ///< Whether `apply_optimistic_target`/`clear_optimistic_target` may fire.
+  bool silent{false};                    ///< Send position moves in "silent operation" (slower) mode.
 };
 
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.
@@ -67,6 +68,12 @@ class DeviceRegistry {
   /// @param device_id Device to update.
   /// @param dimmable  New value for IoDevice::dimmable.
   void set_dimmable(const std::string &device_id, bool dimmable);
+
+  /// Select a device's travel profile. Like set_dimmable() this is a declared preference with no
+  /// protocol readback — nothing on the wire reports which profile a device is in.
+  /// @param device_id Hexadecimal node ID string.
+  /// @param silent    True to send position moves in "silent operation" (slower) mode.
+  void set_silent(const std::string &device_id, bool silent);
 
   /// Register a callback that fires whenever a device's state changes.
   /// @param cb Callable with signature void(const std::string &device_id, const IoDevice &device).

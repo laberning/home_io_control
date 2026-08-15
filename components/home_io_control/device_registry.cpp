@@ -29,6 +29,7 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   if (cfg.inverted)
     dev.inverted = true;
   dev.optimistic_state = cfg.optimistic_state;
+  dev.silent = cfg.silent;
   devices_[device_id] = dev;
 }
 
@@ -42,6 +43,11 @@ IoDevice *DeviceRegistry::get(const std::string &device_id) {
 void DeviceRegistry::set_dimmable(const std::string &device_id, bool dimmable) {
   if (IoDevice *dev = this->get(device_id))
     dev->dimmable = dimmable;
+}
+
+void DeviceRegistry::set_silent(const std::string &device_id, bool silent) {
+  if (IoDevice *dev = this->get(device_id))
+    dev->silent = silent;
 }
 
 void DeviceRegistry::subscribe(DeviceUpdateCallback cb) { callbacks_.push_back(std::move(cb)); }

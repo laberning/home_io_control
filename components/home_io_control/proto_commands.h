@@ -49,7 +49,12 @@ namespace home_io_control {
 /// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
 /// @param position Desired position 0–100 (0=fully open, 100=fully closed).
 /// @return true on success; false if position > 100.
-bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position);
+/// @param silent Send the reference hub's "silent operation" extended block, which makes the motor
+///        travel more slowly. Applies to position moves only — STOP has no speed, and no capture
+///        yet shows what the toggle does to FAVORITE/VENT or tilt, so those are left alone rather
+///        than guessed at.
+bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
+                             bool silent = false);
 
 /// @brief Build a named-command execute frame (0x00) for STOP, FAVORITE, or VENT.
 ///
@@ -70,7 +75,10 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
 /// @param cmd Named command to execute (STOP, FAVORITE, or VENT).
 /// @return true on success; false for invalid/unsupported command.
-bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd);
+/// @param silent Use the silent (slower) travel profile. Honoured for FAVORITE only — STOP has no
+///        travel speed, and nothing has been captured for VENT.
+bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd,
+                            bool silent = false);
 
 /// @brief Build a force-open execute frame (0x00): move to the device's wire-scale "fully open"
 /// position at elevated ACEI priority (level 0, protection_human) instead of the usual

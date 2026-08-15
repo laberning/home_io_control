@@ -68,6 +68,21 @@ constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
 constexpr uint8_t EXECUTE_POSITION_LAYOUT_FLAG = 0x80;
 /// Controller-capture matched helper byte used in normal execute payloads.
 constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
+/// Travel-profile byte — the last field of the extended block. Selects how fast the motor moves.
+///
+/// Isolated 2026-08-15 by the cleanest experiment available: a Somfy hub commanding one RS100,
+/// same command, same direction, with only the app's "silent operation" toggle flipped between the
+/// two (monitor locked to CH2):
+///   silent off: `01 67 00 00 80 D8 06 00`
+///   silent on : `01 67 00 00 80 D8 05 00`
+/// One byte. EXECUTE_POSITION_PROFILE (0x06) — carried here since long before this was understood,
+/// as an unexplained "controller-capture matched helper byte" — turns out to *be* the normal
+/// profile, so the payload this hub already sent was a correct normal-speed command all along.
+///
+/// The same toggle on a Velux KIG300 produces a different encoding (`80 32 00 00` for silent, and
+/// no extended block at all for normal). Two vendors filling an optional field their own way is
+/// unremarkable; ours matches Somfy byte for byte, so Somfy's is the encoding to follow.
+constexpr uint8_t EXECUTE_PROFILE_SILENT = 0x05;
 /// Short payload length for special execute commands such as stop/favorite.
 constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;
 /// Private sub-command for position status requests.
@@ -81,21 +96,31 @@ constexpr uint8_t IDENTIFY_PARAMETER = 0xFF;
 
 /// @brief Build the standard 8-byte position payload shared by create_execute_position() and
 /// create_force_open() — identical except for the ACEI byte.
-inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t acei, uint8_t position) {
-  return {EXECUTE_ORIGINATOR,           acei,         static_cast<uint8_t>(2 * position), 0x00,
-          EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
+inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t acei, uint8_t position,
+                                                                       bool silent = false) {
+  // Only the profile byte changes; the non-silent form is untouched and is byte-identical to what
+  // a Somfy hub sends for a normal-speed move.
+  return {EXECUTE_ORIGINATOR,
+          acei,
+          static_cast<uint8_t>(2 * position),
+          0x00,
+          EXECUTE_POSITION_LAYOUT_FLAG,
+          POS_FAVORITE,
+          silent ? EXECUTE_PROFILE_SILENT : EXECUTE_POSITION_PROFILE,
+          0x00};
 }
 
 }  // namespace
 
 /// Build a position execute command (0x00) to move a device to a numeric position.
-bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position) {
+bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
+                             bool silent) {
   if (position > POSITION_PERCENT_MAX)
     return false;
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
-  const auto payload = make_position_payload(EXECUTE_ACEI, position);
+  const auto payload = make_position_payload(EXECUTE_ACEI, position, silent);
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
 
@@ -105,7 +130,8 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// device's wire-scale "fully open" position (0 or 100 depending on IoDevice::inverted, e.g.
 /// horizontal awnings), which this builder has no way to know. Use create_force_open() instead;
 /// see its comments for why.
-bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd) {
+bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd,
+                            bool silent) {
   uint8_t main_byte = 0;
   uint8_t modifier_byte = 0;
   switch (cmd) {
@@ -127,6 +153,17 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
+  // FAVORITE is the one command here the capture covers: a Somfy hub sends the plain 6-byte form
+  // for a normal "My" press and the extended 8-byte form with the silent profile when the toggle
+  // is on, which is exactly the pair below. STOP is excluded because stopping has no travel speed,
+  // and VENT because nothing has been captured for it — every extended frame observed so far has
+  // byte 3 clear, whereas VENT puts its modifier there, so extending it would be a guess.
+  if (silent && cmd == CoverCommand::FAVORITE) {
+    const uint8_t extended[EXECUTE_PAYLOAD_SIZE] = {
+        EXECUTE_ORIGINATOR, EXECUTE_ACEI,           main_byte, modifier_byte, EXECUTE_POSITION_LAYOUT_FLAG,
+        POS_FAVORITE,       EXECUTE_PROFILE_SILENT, 0x00};
+    return set_cmd(f, CMD_EXECUTE, extended, sizeof(extended));
+  }
   const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, EXECUTE_ACEI, main_byte,
                                                          modifier_byte,      0x00,         0x00};
   return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));

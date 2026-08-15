@@ -8,11 +8,12 @@
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import button, cover
+from esphome.components import button, cover, switch
 from esphome.const import (
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_NAME,
+    ENTITY_CATEGORY_CONFIG,
 )
 from esphome.core import ID
 
@@ -31,6 +32,8 @@ from .platform_common import (
 DEPENDENCIES = ["home_io_control"]
 
 CONF_INVERT_POSITION = "invert_position"
+CONF_SILENT = "silent"
+CONF_SILENT_SWITCH_ID = "_silent_switch_id"
 CONF_OPTIMISTIC_STATE = "optimistic_state"
 
 # Internal config keys for the cover-only companion button IDs (injected by post-validator).
@@ -38,6 +41,9 @@ CONF_FAVORITE_BUTTON_ID = "_favorite_button_id"
 CONF_VENT_BUTTON_ID = "_vent_button_id"
 
 IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component)
+IOHomeCoverSilentSwitch = home_io_control_ns.class_(
+    "IOHomeCoverSilentSwitch", switch.Switch, cg.Component
+)
 IOHomeCoverFavoriteButton = home_io_control_ns.class_(
     "IOHomeCoverFavoriteButton", button.Button, cg.Component
 )
@@ -100,6 +106,14 @@ def vent_button_name(config):
     return "Ventilation Position"
 
 
+def silent_switch_name(config):
+    """Derive the silent-operation switch name from the parent cover name."""
+    base_name = config.get(CONF_NAME, "")
+    if base_name:
+        return f"{base_name} Silent Operation"
+    return "Silent Operation"
+
+
 def _inject_companion_ids(config):
     """Declare cover companion entity IDs during schema validation for StaticVector sizing.
 
@@ -127,6 +141,16 @@ def _inject_companion_ids(config):
             type=IOHomeCoverVentButton,
         )
 
+    # Silent-operation toggle — only when the cover declares `silent:` at all. Declaring the key
+    # is what opts a cover into runtime control of its travel profile; a config that never mentions
+    # it gains no entity, and the YAML value is simply the boot state.
+    if CONF_SILENT in config:
+        config[CONF_SILENT_SWITCH_ID] = ID(
+            f"{base}_silent_switch",
+            is_declaration=True,
+            type=IOHomeCoverSilentSwitch,
+        )
+
     # Companion diagnostic sensors — always generated (shared with other platforms).
     return inject_companion_sensor_ids(config, CONF_ID)
 
@@ -135,6 +159,7 @@ CONFIG_SCHEMA = cv.All(
     cover.cover_schema(IOHomeCover)
     .extend(platform_schema_extension())
     .extend({cv.Optional(CONF_INVERT_POSITION): cv.boolean})
+    .extend({cv.Optional(CONF_SILENT): cv.boolean})
     .extend({cv.Optional(CONF_OPTIMISTIC_STATE, default=True): cv.boolean})
     .extend(cv.COMPONENT_SCHEMA),
     _inject_companion_ids,
@@ -152,6 +177,29 @@ async def to_code(config):
         cg.add(var.set_invert_position(config[CONF_INVERT_POSITION]))
 
     cg.add(var.set_optimistic_state(config[CONF_OPTIMISTIC_STATE]))
+    if CONF_SILENT in config:
+        cg.add(var.set_silent(config[CONF_SILENT]))
+
+    if CONF_SILENT_SWITCH_ID in config:
+        # Built through switch_schema()+COMPONENT_SCHEMA so it carries the entity/component
+        # defaults register_switch() requires, matching _create_accept_foreign_pairing_switch().
+        # Restore mode DISABLED on purpose: the YAML `silent:` value is the boot state, and
+        # setup() publishes it. Any restoring mode would either fight that or drive write_state()
+        # before the device is even registered.
+        silent_config = switch.switch_schema(
+            IOHomeCoverSilentSwitch,
+            default_restore_mode="DISABLED",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ).extend(cv.COMPONENT_SCHEMA)(
+            {
+                CONF_ID: config[CONF_SILENT_SWITCH_ID],
+                CONF_NAME: silent_switch_name(config),
+            }
+        )
+        silent_switch = await switch.new_switch(silent_config)
+        await cg.register_component(silent_switch, silent_config)
+        cg.add(silent_switch.set_parent(parent))
+        cg.add(silent_switch.set_device_id(config[CONF_DEVICE_ID]))
 
     if CONF_FAVORITE_BUTTON_ID in config:
         favorite_config = {

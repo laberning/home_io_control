@@ -181,7 +181,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
            operation_profile_name(*dev));
 
   IoFrame request;
-  if (!create_execute_position(request, this->node_id_, dev->node_id, true, position)) {
+  if (!create_execute_position(request, this->node_id_, dev->node_id, true, position, dev->silent)) {
     this->poll_policy_.clear(device_id);
     return false;
   }
@@ -217,7 +217,7 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
   // device access to resolve that, so it's built separately here where dev is in scope.
   bool const built = cmd == CoverCommand::FORCE_OPEN
                          ? create_force_open(request, this->node_id_, dev->node_id, true, dev->inverted ? 100 : 0)
-                         : create_execute_command(request, this->node_id_, dev->node_id, true, cmd);
+                         : create_execute_command(request, this->node_id_, dev->node_id, true, cmd, dev->silent);
   if (!built) {
     this->poll_policy_.clear(device_id);
     return false;

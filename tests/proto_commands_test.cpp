@@ -557,3 +557,75 @@ TEST(ProtoCommands, CoverCommandNameLookup) {
   EXPECT_STREQ(cover_command_name(CoverCommand::VENT), "VENT");
   EXPECT_STREQ(cover_command_name(CoverCommand::FORCE_OPEN), "FORCE_OPEN");
 }
+
+// ============================================================================
+// Silent operation: the reference hub's slower travel profile, isolated by A/B capture on
+// 2026-08-15 with the Velux app's toggle flipped between otherwise identical close commands.
+// ============================================================================
+
+TEST(ProtoCommands, CreateExecutePositionSilentOnlyChangesTheProfileByte) {
+  // A Somfy hub with silent on sends `01 67 00 00 80 D8 05 00` and with it off `... 80 D8 06 00`,
+  // for the same command in the same direction. Only the profile byte moves; our ACEI differs from
+  // that hub's by design (see EXECUTE_ACEI), so compare the payload shape rather than all 8 bytes.
+  IoFrame silent{};
+  ASSERT_TRUE(create_execute_position(silent, test::OWN_ID, test::DST_ID, true, 100, /*silent=*/true));
+  ASSERT_EQ(silent.data_len, 8u);
+  EXPECT_EQ(silent.data[4], 0x80) << "the extended block is present either way";
+  EXPECT_EQ(silent.data[5], POS_FAVORITE) << "silent does not disturb the secondary-target byte";
+  EXPECT_EQ(silent.data[6], 0x05) << "0x05 is the silent travel profile";
+}
+
+TEST(ProtoCommands, CreateExecutePositionDefaultsToNonSilent) {
+  IoFrame normal{};
+  ASSERT_TRUE(create_execute_position(normal, test::OWN_ID, test::DST_ID, true, 100));
+  IoFrame explicit_off{};
+  ASSERT_TRUE(create_execute_position(explicit_off, test::OWN_ID, test::DST_ID, true, 100, /*silent=*/false));
+  EXPECT_EQ(memcmp(normal.data, explicit_off.data, normal.data_len), 0) << "omitting the flag must mean not silent";
+
+  IoFrame silent{};
+  ASSERT_TRUE(create_execute_position(silent, test::OWN_ID, test::DST_ID, true, 100, /*silent=*/true));
+  // Exactly one byte separates the two forms, which is what the controlled capture showed.
+  EXPECT_EQ(normal.data_len, silent.data_len);
+  for (uint8_t i = 0; i < normal.data_len; i++) {
+    if (i == 6)
+      continue;
+    EXPECT_EQ(normal.data[i], silent.data[i])
+        << "silent must only move the profile byte, but byte " << int{i} << " changed too";
+  }
+  EXPECT_EQ(normal.data[6], 0x06) << "0x06 is the normal profile";
+  EXPECT_EQ(silent.data[6], 0x05) << "0x05 is the silent profile";
+}
+
+TEST(ProtoCommands, FavoriteHonoursSilentBySwitchingToTheExtendedForm) {
+  // Captured pair from a Somfy hub pressing "My" on one RS100:
+  //   silent off: `01 67 D8 00 00 00`            6-byte, no extended block
+  //   silent on : `01 67 D8 00 80 D8 05 00`      8-byte, silent profile
+  IoFrame normal{};
+  ASSERT_TRUE(create_execute_command(normal, test::OWN_ID, test::DST_ID, true, CoverCommand::FAVORITE));
+  EXPECT_EQ(normal.data_len, 6u) << "a normal My press is the short form";
+  EXPECT_EQ(normal.data[2], POS_FAVORITE);
+
+  IoFrame silent{};
+  ASSERT_TRUE(create_execute_command(silent, test::OWN_ID, test::DST_ID, true, CoverCommand::FAVORITE,
+                                     /*silent=*/true));
+  ASSERT_EQ(silent.data_len, 8u) << "silent switches to the extended form";
+  EXPECT_EQ(silent.data[2], POS_FAVORITE) << "still a My press";
+  EXPECT_EQ(silent.data[4], 0x80);
+  EXPECT_EQ(silent.data[5], POS_FAVORITE);
+  EXPECT_EQ(silent.data[6], 0x05);
+}
+
+TEST(ProtoCommands, SilentDoesNotLeakIntoStopVentOrForceOpen) {
+  // STOP has no travel speed. VENT is unobserved, and every extended frame captured so far has
+  // byte 3 clear where VENT puts its modifier, so extending it would be a guess. Force-open is an
+  // override — slowing it down would work against the point of it.
+  for (auto cmd : {CoverCommand::STOP, CoverCommand::VENT}) {
+    IoFrame f{};
+    ASSERT_TRUE(create_execute_command(f, test::OWN_ID, test::DST_ID, true, cmd, /*silent=*/true));
+    EXPECT_EQ(f.data_len, 6u) << "silent must not alter this command's payload";
+  }
+
+  IoFrame forced{};
+  ASSERT_TRUE(create_force_open(forced, test::OWN_ID, test::DST_ID, true, 0));
+  EXPECT_EQ(forced.data[6], 0x06) << "force-open stays on the normal travel profile";
+}

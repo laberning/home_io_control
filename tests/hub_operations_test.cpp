@@ -1185,3 +1185,40 @@ TEST(HubOperations, StatusPollAuthenticatedWithoutFinalResponseStillFails) {
   EXPECT_FALSE(comp.request_device_status("ABC123")) << "a poll that returned no payload has not succeeded";
   EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 1u) << "and it is the auth-shaped kind";
 }
+
+TEST(HubOperations, SilentDeviceSendsTheSilentExecutePayload) {
+  // End-to-end: the YAML-declared per-cover flag has to reach the wire, not just the builder.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->silent = true;
+
+  comp.set_device_position("ABC123", 100);
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  const auto &frame = radio.get_sent_data().front();
+  ASSERT_GE(frame.size(), 17u) << "an execute frame is 9 header bytes plus an 8-byte payload";
+  EXPECT_EQ(frame[14], POS_FAVORITE) << "the secondary-target byte is unaffected";
+  EXPECT_EQ(frame[15], 0x05) << "silent devices travel on the slow profile";
+}
+
+TEST(HubOperations, NonSilentDeviceKeepsTheExistingExecutePayload) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_FALSE(dev->silent) << "silent is opt-in";
+
+  comp.set_device_position("ABC123", 100);
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  const auto &frame = radio.get_sent_data().front();
+  ASSERT_GE(frame.size(), 17u);
+  EXPECT_EQ(frame[14], POS_FAVORITE) << "the default payload is unchanged by this feature";
+  EXPECT_EQ(frame[15], 0x06);
+}

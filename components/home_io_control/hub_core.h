@@ -276,6 +276,12 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Hexadecimal node ID string.
   /// @param dimmable New value for IoDevice::dimmable.
   virtual void set_device_dimmable(const std::string &device_id, bool dimmable);
+
+  /// Select a device's travel profile at runtime (see IOHomeCoverSilentSwitch).
+  /// Virtual for the same reason as set_device_dimmable: platform tests substitute a mock registry.
+  /// @param device_id Hexadecimal node ID string.
+  /// @param silent    True to send position moves in "silent operation" (slower) mode.
+  virtual void set_device_silent(const std::string &device_id, bool silent);
   /// Register a callback invoked when any device updates.
   /// @param cb Callable with signature void(const std::string&, const IoDevice&).
   virtual void register_device_callback(DeviceUpdateCallback cb) { this->registry_.subscribe(std::move(cb)); }
