@@ -839,10 +839,16 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
   }
 
   IoFrame response;
-  if (!engine_.send_and_receive(request, response, FREQ_CH2)) {
+  // A probe exists to read back a payload, so -- like a status poll or name read, and unlike a
+  // bare CMD_EXECUTE -- SUCCESS_UNCONFIRMED (device accepted the request but sent nothing back)
+  // does not satisfy the caller here.
+  const ExchangeOutcome outcome = engine_.send_and_receive(request, response, FREQ_CH2);
+  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE) {
     engine_.log_debug(result.device_id.c_str());
-    result.message = "no reply after " + std::to_string(EXCHANGE_RETRY_COUNT) +
-                     " attempts (device asleep, unreachable, or silently ignoring this opcode)";
+    result.message = outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED
+                         ? "device accepted the probe request but sent no response"
+                         : "no reply after " + std::to_string(EXCHANGE_RETRY_COUNT) +
+                               " attempts (device asleep, unreachable, or silently ignoring this opcode)";
     return result;
   }
 

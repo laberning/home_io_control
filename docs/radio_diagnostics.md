@@ -463,9 +463,8 @@ aggressive LBT values in a production configuration.
 `home_io_control.diagnostic_probes: true` enables two Home Assistant actions, `probe_device` and
 `probe_sweep`, for sending a handful of opcodes this project has observed on the wire but never
 fully decoded, and for reading back the raw, uninterpreted reply. This is protocol-research
-tooling for closing exactly that kind of open question on hardware you own — see
-[ADR 0024](adr/0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) for the full
-reasoning behind how it's gated and isolated from the rest of this component.
+tooling for closing exactly that kind of open question on hardware you own — see ADR 0024 for the
+full reasoning behind how it's gated and isolated from the rest of this component.
 
 ```yaml
 home_io_control:
