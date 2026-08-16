@@ -44,23 +44,25 @@ namespace home_io_control {
 /// Deliberately not a bool: "the device accepted the command" and "the device told us what
 /// happened" are different facts, and some devices only ever deliver the first.
 ///
-/// A Somfy RS100 challenges a command, authenticates it, executes it — and then transmits nothing
-/// for 3–12 seconds, reporting via an asynchronous status update instead (measured 2026-08-15
-/// across eight authenticated commands: next device frame at 3.4 s, 3.6 s, 5.3 s, 12.0 s, or
-/// never, against a 500 ms window). A Somfy awning on the same protocol closes the exchange
-/// properly with a synchronous 0x04 (tests/corpus/captures/somfy_awning/exchange_open_sx1276.yaml),
-/// so the four-frame exchange is real — just not universal.
+/// Some devices challenge a command, authenticate it, execute it, and then transmit nothing for
+/// several seconds — up to a dozen — reporting via an asynchronous status update later instead of
+/// closing the exchange with a synchronous reply, all well outside the exchange's own response
+/// window. Other devices on the same protocol close the exchange properly with a synchronous 0x04
+/// (see tests/corpus/captures/somfy_awning/exchange_open_sx1276.yaml), so the four-frame exchange
+/// is real — just not universal, and a caller cannot assume either shape from the command alone.
 ///
-/// Treating the RS100's silence as failure made every command it *did* execute report as failed,
-/// left the hub's position permanently stale, and re-sent two more copies of a movement command to
-/// a shutter that was already moving.
+/// SUCCESS_UNCONFIRMED exists so that silence after a real authentication is not treated the same
+/// as a request the device may never have heard at all: the two need different retry rules (see
+/// decisions::retry_after_unconfirmed_accept_is_safe()) and different reporting to the caller.
 enum class ExchangeOutcome : uint8_t {
   FAILED,                 ///< No usable reply; the device may never have heard the request.
   SUCCESS_WITH_RESPONSE,  ///< Device replied; the caller's `response` frame is populated.
   SUCCESS_UNCONFIRMED,    ///< Device authenticated the request — so it received and accepted it —
                           ///< but sent no final response. `response` is NOT populated. Callers that
                           ///< need payload (key exchange) must treat this as failure; callers that
-                          ///< only need "the command landed" should treat it as success.
+                          ///< only need "the command landed" should treat it as success. For every
+                          ///< command but CMD_EXECUTE, this outcome is only returned after the full
+                          ///< retry budget is spent — see retry_after_unconfirmed_accept_is_safe().
 };
 
 class ExchangeEngine {

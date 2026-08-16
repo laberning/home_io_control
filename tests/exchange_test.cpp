@@ -82,6 +82,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
+  using IOHomeControlComponent::exchange_engine_;
 };
 
 // --- Frame builders ---------------------------------------------------------
@@ -396,6 +397,154 @@ TEST(Exchange, SendAndReceive_MissingFinalResponseIsUnconfirmedSuccessNotFailure
   // The retry is the part that actively hurt: the command is already executing, so re-sending it
   // twice more only reaches a device that has acted and now ignores duplicates.
   EXPECT_EQ(radio.get_send_count(), 2) << "expected exactly the request plus the auth response, with no retries";
+}
+
+TEST(Exchange, SendAndReceive_ExecuteStopsAfterOneUnconfirmedAccept) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  uint8_t chal_data[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  uint8_t len_chal = serialize(challenge, raw_chal, sizeof(raw_chal));
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = len_chal;
+  memcpy(chal_pkt.data, raw_chal, len_chal);
+  radio.queue_rx(chal_pkt);
+  // No final response queued.
+
+  IoFrame response{};
+  const ExchangeOutcome outcome = comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_UNCONFIRMED)
+      << "CMD_EXECUTE authenticated without a final reply must still count as accepted";
+  EXPECT_EQ(radio.get_send_count(), 2)
+      << "CMD_EXECUTE must not retry after an unconfirmed accept: the device is already acting on it";
+}
+
+TEST(Exchange, SendAndReceive_StatusPollRetriesAfterUnconfirmedAccept) {
+  // Same radio script as SendAndReceive_ExecuteStopsAfterOneUnconfirmedAccept: one challenge
+  // answered, then silence for the rest of the exchange. Unlike CMD_EXECUTE, CMD_PRIVATE has no
+  // side effect to repeat, so an unconfirmed accept on try 1 must not stop the retry loop.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_get_status(request, comp.node_id_, test::DST_ID);
+
+  uint8_t chal_data[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  uint8_t len_chal = serialize(challenge, raw_chal, sizeof(raw_chal));
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = len_chal;
+  memcpy(chal_pkt.data, raw_chal, len_chal);
+  radio.queue_rx(chal_pkt);
+  // No final response, and no more challenges: tries 2 and 3 see nothing at all.
+
+  IoFrame response{};
+  const ExchangeOutcome outcome = comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_UNCONFIRMED)
+      << "a status poll that never got a reply is still an unconfirmed accept, not a failure";
+  EXPECT_EQ(comp.exchange_engine_.get_debug().tries, EXCHANGE_RETRY_COUNT)
+      << "every one of the EXCHANGE_RETRY_COUNT tries must actually run, not stop after the first accept";
+  EXPECT_EQ(radio.get_send_count(), 4)
+      << "try 1 sends the request plus the auth response (2); tries 2 and 3 each send only the "
+         "request, since no challenge arrives to answer (1 + 1)";
+}
+
+namespace {
+
+/// @brief Reactive mock: answers every transmitted request with a fresh challenge, but only closes
+/// the exchange with a real final response on the second auth response — modelling a device that
+/// accepted the first try silently (challenge answered, no reply) and only replied on retry.
+///
+/// A pre-queued script doesn't work here: MockRadio's RX queue is strict FIFO across the whole
+/// exchange, so a final response queued ahead of time gets dequeued during try 1's final-response
+/// wait instead of try 2's — classify_exchange_final_response() only checks endpoints, and a 0x3C
+/// challenge matches them just as well as a 0x04 reply. Reacting to each outbound frame as it is
+/// sent keeps every queued reply aligned with the wait it's meant for.
+class UnconfirmedThenFinalOnRetryMockRadio : public MockRadio {
+ public:
+  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx) override {
+    bool result = MockRadio::send_packet(data, len, tx);
+    IoFrame frame;
+    if (!parse(data, len, frame))
+      return result;
+    if (frame.cmd == CMD_PRIVATE) {
+      this->auth_count_this_try_ = 0;
+      this->queue_rx(build_challenge_packet(frame));
+    } else if (frame.cmd == CMD_CHALLENGE_RESP) {
+      if (++this->auth_count_this_try_ == 1 && ++this->try_count_ == 2)
+        this->queue_rx(build_final_packet(frame));
+    }
+    return result;
+  }
+
+ private:
+  static RadioRxPacket build_challenge_packet(const IoFrame &request) {
+    uint8_t chal_data[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+    IoFrame challenge{};
+    init_frame(challenge, true, false, false, false);
+    set_dst(challenge, request.src);
+    set_src(challenge, request.dst);
+    set_cmd(challenge, CMD_CHALLENGE_REQ, chal_data, sizeof(chal_data));
+    RadioRxPacket pkt{};
+    uint8_t raw[64];
+    pkt.len = serialize(challenge, raw, sizeof(raw));
+    memcpy(pkt.data, raw, pkt.len);
+    return pkt;
+  }
+
+  static RadioRxPacket build_final_packet(const IoFrame &auth_response) {
+    IoFrame resp{};
+    init_frame(resp, true, false, true, false);
+    set_dst(resp, auth_response.src);
+    set_src(resp, auth_response.dst);
+    uint8_t payload[6] = {0};
+    set_cmd(resp, CMD_PRIVATE_RESP, payload, sizeof(payload));
+    RadioRxPacket pkt{};
+    uint8_t raw[64];
+    pkt.len = serialize(resp, raw, sizeof(raw));
+    memcpy(pkt.data, raw, pkt.len);
+    return pkt;
+  }
+
+  uint8_t auth_count_this_try_{0};
+  uint8_t try_count_{0};
+};
+
+}  // namespace
+
+TEST(Exchange, SendAndReceive_StatusPollUnconfirmedThenAnsweredReturnsResponse) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  UnconfirmedThenFinalOnRetryMockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_get_status(request, comp.node_id_, test::DST_ID);
+
+  IoFrame response{};
+  const ExchangeOutcome outcome = comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE)
+      << "a retried status poll must still return the response once one arrives";
+  EXPECT_EQ(response.cmd, CMD_PRIVATE_RESP);
 }
 
 // ============================================================================

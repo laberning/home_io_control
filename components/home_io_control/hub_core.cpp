@@ -329,19 +329,20 @@ void IOHomeControlComponent::loop() {
   // A blocking exchange makes the radio deaf for 1–3 s. When a linked remote's press schedules a
   // status poll, dispatching it while that same remote is still transmitting would blind the hub
   // to the rest of the press — so background polls yield for a moment. Control operations never do.
-  if (!this->busy_ && !this->defer_background_poll_())
+  if (!this->busy_ && !this->defer_background_poll_()) {
     this->process_pending_operation_();
+  }
 
-    // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
-    // loop() every ~16-30ms. This is acceptable for a controller: we initiate all
-    // exchanges with a long preamble (1024 bytes ≈ 330ms airtime) so the device has
-    // time to detect us regardless of channel alignment. Precise hopping would only
-    // matter for a passive receiver scanning for unsolicited frames.
-    // Diagnostics build flag: park the receiver on one channel instead of hopping. A hopping monitor
-    // is on any given channel roughly a third of the time, so "the capture never shows frame X" is
-    // weak evidence — locking to the channel under study makes an absence mean something. Define it
-    // to the channel in Hz, e.g. -DIOHOME_LOCK_CHANNEL_HZ=868950000 for CH2, the command channel.
-    // Only useful for a passive monitor: a hub that cannot hop will miss replies on other channels.
+  // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
+  // loop() every ~16-30ms. This is acceptable for a controller: we initiate all
+  // exchanges with a long preamble (1024 bytes ≈ 330ms airtime) so the device has
+  // time to detect us regardless of channel alignment. Precise hopping would only
+  // matter for a passive receiver scanning for unsolicited frames.
+  // Diagnostics build flag: park the receiver on one channel instead of hopping. A hopping monitor
+  // is on any given channel roughly a third of the time, so "the capture never shows frame X" is
+  // weak evidence — locking to the channel under study makes an absence mean something. Define it
+  // to the channel in Hz, e.g. -DIOHOME_LOCK_CHANNEL_HZ=868950000 for CH2, the command channel.
+  // Only useful for a passive monitor: a hub that cannot hop will miss replies on other channels.
 #ifdef IOHOME_LOCK_CHANNEL_HZ
   if (!this->busy_ && this->radio_ != nullptr && this->radio_->get_current_freq() != IOHOME_LOCK_CHANNEL_HZ)
     this->radio_->change_frequency(IOHOME_LOCK_CHANNEL_HZ);

@@ -570,6 +570,32 @@ TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
       << "auth-shaped failures should increment their own streak";
 }
 
+TEST(HubOperations, RequestDeviceStatusUnconfirmedAcceptStillReturnsFalse) {
+  // ExchangeEngine now reports SUCCESS_UNCONFIRMED for a status poll that authenticated but never
+  // got a final reply (Step 1's retry fix). execute_request_and_update_()'s
+  // unconfirmed_counts_as_success rule must still treat that as a failure for anything but
+  // CMD_EXECUTE — a status poll exists to obtain a payload, and there is none to hand back.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+  // No final response queued on any try.
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"))
+      << "a status poll ending SUCCESS_UNCONFIRMED must still be reported as a failure to the caller";
+}
+
 TEST(HubOperations, SetDevicePositionArmsTrackedPollingWhenConfigured) {
   TestableComponent comp;
   MockRadio radio;
@@ -620,12 +646,16 @@ TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalUsesTrackedSettleP
 }
 
 TEST(HubOperations, StopCommandArmsTrackedPollingToConfirmRestingPosition) {
+  // The execute ack is never trusted for position (see update_device_status_()'s trust_position
+  // parameter), but is_stopped IS applied from it — and an untrusted "stopped" claim used to clear
+  // tracking outright, leaving the one thing that actually writes position (a trusted CMD_PRIVATE
+  // poll) never scheduled. arm_execute_confirmation_poll_() re-arms the window after every execute,
+  // so a STOP must still end with a confirming poll due within STOP_SETTLE_POLL_CAP_MS.
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
 
-  // STOP reply arrives with is_stopped=true — tracking should be cleared after confirming position.
-  IoFrame resp = build_status_response(comp.node_id_);
+  IoFrame resp = build_status_response(comp.node_id_);  // is_stopped=true, as a real STOP ack reports
   uint8_t raw[64];
   uint8_t raw_len = serialize(resp, raw, sizeof(raw));
   RadioRxPacket pkt{};
@@ -634,12 +664,15 @@ TEST(HubOperations, StopCommandArmsTrackedPollingToConfirmRestingPosition) {
   pkt.freq_hz = FREQ_CH2;
   radio.queue_rx(pkt);
 
+  uint32_t const before_ms = esphome::millis();
   EXPECT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
 
-  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
-      << "STOP confirmed by stopped reply should clear tracking";
-  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u)
-      << "no further polls needed once the stopped position is confirmed";
+  EXPECT_NE(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
+      << "STOP must leave an active tracking window so the confirming poll can actually fire";
+  uint32_t const next_update = comp.poll_policy_.get_next_update("ABC123");
+  EXPECT_NE(next_update, 0u) << "STOP must schedule a confirming poll despite the untrusted stopped ack";
+  EXPECT_LE(next_update, before_ms + STOP_SETTLE_POLL_CAP_MS + 50u)
+      << "the confirming poll after STOP must be due within the STOP settle cap";
 }
 
 TEST(HubOperations, StopCommandWithMovingReplySchedulesShortSettlePoll) {
@@ -672,6 +705,69 @@ TEST(HubOperations, StopCommandWithMovingReplySchedulesShortSettlePoll) {
       << "STOP settle poll must be capped to the STOP settle window";
   EXPECT_LT(STOP_SETTLE_POLL_CAP_MS, DEFAULT_SETTLE_POLL_DELAY_MS)
       << "STOP must settle faster than a normal move for this test to be meaningful";
+}
+
+TEST(HubOperations, MoveWithStoppedAckSchedulesConfirmingPollWithoutConfiguredInterval) {
+  // The bug class is broader than STOP: set_device_position() used to re-arm only when a poll
+  // interval was configured, so an interval-less device hit the same dead end on an ordinary move
+  // whenever its untrusted execute ack happened to claim is_stopped=true.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);  // no poll interval configured for "ABC123"
+
+  IoFrame resp = build_status_response(comp.node_id_);  // is_stopped=true in the untrusted execute ack
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  uint32_t const before_ms = esphome::millis();
+  EXPECT_TRUE(comp.set_device_position("ABC123", 50));
+
+  uint32_t const next_update = comp.poll_policy_.get_next_update("ABC123");
+  EXPECT_NE(next_update, 0u) << "a move must schedule a confirming poll even without a configured interval";
+  EXPECT_LE(next_update, before_ms + DEFAULT_SETTLE_POLL_DELAY_MS + 50u)
+      << "an interval-less device must fall back to DEFAULT_SETTLE_POLL_DELAY_MS";
+}
+
+TEST(HubOperations, ConfirmingPollStopsOnceATrustedReplyReportsStopped) {
+  // arm_execute_confirmation_poll_() re-arms tracking after every execute, so its termination
+  // argument matters: the confirming poll itself is a real CMD_PRIVATE request, whose reply IS
+  // trusted, so once it reports the device at rest polling must actually stop.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  IoFrame moving_resp = build_moving_status_response(comp.node_id_, 0xFF);
+  uint8_t raw1[64];
+  uint8_t raw1_len = serialize(moving_resp, raw1, sizeof(raw1));
+  RadioRxPacket pkt1{};
+  pkt1.len = raw1_len;
+  memcpy(pkt1.data, raw1, raw1_len);
+  pkt1.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt1);
+
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  ASSERT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "setup: confirming poll must be armed";
+
+  IoFrame stopped_resp = build_status_response(comp.node_id_);
+  uint8_t raw2[64];
+  uint8_t raw2_len = serialize(stopped_resp, raw2, sizeof(raw2));
+  RadioRxPacket pkt2{};
+  pkt2.len = raw2_len;
+  memcpy(pkt2.data, raw2, raw2_len);
+  pkt2.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt2);
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "a trusted stopped reply must stop the confirming poll from repeating — one extra poll, not a loop";
+  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
+      << "a trusted stopped reply must clear the tracking window entirely";
 }
 
 TEST(HubOperations, ForceOpenSendsPositionZeroForNonInvertedDevice) {

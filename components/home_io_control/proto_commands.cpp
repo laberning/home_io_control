@@ -24,23 +24,15 @@ constexpr uint8_t POSITION_PERCENT_MAX = 100;
 constexpr uint8_t EXECUTE_ORIGINATOR = ORIGINATOR_USER_REMOTE;
 /// ACEI byte for execute commands — composed from priority and validity bits.
 ///
-/// Level=3 (user_default), matching what a real 2W hub puts on the air. A 2026-08-14 third-party
-/// capture of a Velux KIG300 commanding a Somfy RS100 shows its EXECUTE payload as
-/// `01 63 C8 00 80 32 00 00` — ACEI 0x63, level 3 — and that command is obeyed, on the same
-/// shutter and in the same minutes that this hub's own commands were being silently ignored.
+/// Level=3 (user_default), matching what a real 2W hub puts on the air: a third-party capture of a
+/// Velux KIG300 commanding a Somfy RS100 shows its EXECUTE payload as `01 63 C8 00 80 32 00 00` —
+/// ACEI 0x63, level 3. The 0x43 (user_high) alternative comes from a 1W remote reference vector
+/// (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml), not a 2W hub, and a
+/// handheld remote claiming a higher priority than a home-automation hub is unsurprising.
 ///
-/// This was level=2 (user_high, 0x43). Two things argued for that and neither survives contact
-/// with the KIG300 capture:
-///   - "matches real IO-homecontrol remotes": the 0x43 reference
-///     (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml) is a *1W remote*
-///     frame, and its origin is a documentation example whose own MAC field is a stated
-///     placeholder — not a captured 2W hub. A handheld remote claiming a higher priority than a
-///     home-automation hub is entirely plausible; we are the hub.
-///   - "avoids RESULT_PRIORITY_LOCKED_NON_EXEC (0x38) rejections on devices locked at level 3":
-///     still a real risk, and the reason to keep this in one named place. But the observed failure
-///     mode is not a 0x38 rejection — it is no reply at all, while a level-3 controller on the same
-///     network is obeyed. Watch for 0x38 in command results after this change; if it reappears, the
-///     old value is one edit away and the tradeoff is genuine.
+/// A device locked at level 3 rejects this with RESULT_PRIORITY_LOCKED_NON_EXEC (0x38) rather than
+/// silence. Watch command results for 0x38 after touching this value; if it appears, level=2
+/// (0x43) is the fallback and the priority/reliability tradeoff is real.
 ///
 /// Composition: (ACEI_LEVEL_USER_DEFAULT << 5) | (0 << 3) | (1 << 1) | 1 = 0x63.
 constexpr uint8_t EXECUTE_ACEI =
@@ -66,22 +58,15 @@ constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
 constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
 /// Bit flag that marks the standard position payload layout after the encoded position byte.
 constexpr uint8_t EXECUTE_POSITION_LAYOUT_FLAG = 0x80;
-/// Controller-capture matched helper byte used in normal execute payloads.
+/// Travel-profile byte for a normal-speed move — the last field of the extended execute block.
 constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
-/// Travel-profile byte — the last field of the extended block. Selects how fast the motor moves.
+/// Travel-profile byte for a silent (slow) move — same field, selecting reduced motor speed.
 ///
-/// Isolated 2026-08-15 by the cleanest experiment available: a Somfy hub commanding one RS100,
-/// same command, same direction, with only the app's "silent operation" toggle flipped between the
-/// two (monitor locked to CH2):
-///   silent off: `01 67 00 00 80 D8 06 00`
-///   silent on : `01 67 00 00 80 D8 05 00`
-/// One byte. EXECUTE_POSITION_PROFILE (0x06) — carried here since long before this was understood,
-/// as an unexplained "controller-capture matched helper byte" — turns out to *be* the normal
-/// profile, so the payload this hub already sent was a correct normal-speed command all along.
-///
-/// The same toggle on a Velux KIG300 produces a different encoding (`80 32 00 00` for silent, and
-/// no extended block at all for normal). Two vendors filling an optional field their own way is
-/// unremarkable; ours matches Somfy byte for byte, so Somfy's is the encoding to follow.
+/// A Somfy hub commanding one RS100, same command and direction, with only the app's "silent
+/// operation" toggle flipped, differs by exactly this one byte (`... D8 06 00` normal vs.
+/// `... D8 05 00` silent); this hub follows Somfy's encoding rather than Velux's (which uses a
+/// different byte, `80 32 00 00`, and omits the extended block entirely for a normal move) because
+/// this hub's own hardware matches Somfy byte for byte.
 constexpr uint8_t EXECUTE_PROFILE_SILENT = 0x05;
 /// Short payload length for special execute commands such as stop/favorite.
 constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;
@@ -432,21 +417,11 @@ static bool create_challenge_req_framed(IoFrame &f, const uint8_t *dst, const ui
 
 /// Build a challenge request (0x3C) using a caller-supplied challenge. See proto_commands.h.
 ///
-/// Framed exactly like the device-role builder below (`0E 00 ...`), which is not an oversight.
-/// This used to set START and LOW_POWER on the theory that a controller challenging a device
-/// opens its own exchange and should flag its target's power class. Nothing on air supports that:
-/// across three field captures (2026-08-14) every single 0x3C observed — from a Somfy RS100 and
-/// three other actuators — is `0E 00`, and the one reference 2W hub on that network (a Velux
-/// KIG300) never issues a 0x3C at all, only ever answering them. Our hub was the only node
-/// emitting `4E 20`, and not one of those challenges was ever answered: five sent, zero replies,
-/// which is why every status update addressed to us ends in `auth_failed` and its position is
-/// discarded.
-///
-/// So the controller-role framing was an assumption with no positive evidence behind it, and the
-/// observed-on-air framing is the better default. Kept as a separate entry point from
-/// create_challenge_req_device_role() because the call sites and rationale differ (inbound
-/// authentication vs the key-extraction responder) and because this is a field experiment — if
-/// devices still do not answer, the flags here are the one thing to put back.
+/// Framed exactly like the device-role builder below (`0E 00`, no START, no LOW_POWER) — matches
+/// every 0x3C observed on air across multiple actuators and vendors. Kept as a separate entry
+/// point from create_challenge_req_device_role() because the call sites and rationale differ
+/// (inbound authentication vs the key-extraction responder). If devices ever stop answering our
+/// challenges, START/LOW_POWER framing is the first thing to try restoring here.
 bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE]) {
   return create_challenge_req_framed(f, dst, src, challenge, /*start=*/false, /*low_power=*/false);
 }

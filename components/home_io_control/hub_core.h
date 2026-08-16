@@ -538,6 +538,16 @@ class IOHomeControlComponent : public Component,
   /// @param device_id ID of the device to poll.
   /// @param initial_delay_ms Delay before the first follow-up poll.
   void begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms);
+  /// Arm the confirming poll that follows a command, because a CMD_EXECUTE reply is never trusted
+  /// for position (see update_device_status_()'s trust_position parameter) and therefore leaves the
+  /// hub with no idea where the device actually is. Re-arms the bounded tracking window rather than
+  /// only setting a due time: the same untrusted reply clears that window whenever it claims the
+  /// device is stopped, and pop_due_device() discards a due poll that has no active window. An
+  /// already-scheduled earlier poll wins.
+  /// @param device_id Device the command was sent to.
+  /// @param for_stop True for STOP (and position POS_STOP), which settles under
+  ///        STOP_SETTLE_POLL_CAP_MS instead of the normal settle cadence.
+  void arm_execute_confirmation_poll_(const std::string &device_id, bool for_stop);
   /// Schedule status polls for a fixed list of devices (shared by the id-linked and
   /// class-linked 1W paths, and by schedule_linked_remote_polls_()).
   /// @param device_ids Devices to poll.
@@ -583,22 +593,26 @@ class IOHomeControlComponent : public Component,
   /// @param linked True if the sender is linked to at least one registered device.
   /// @param src_id Sender's node ID as a string (already computed by the caller).
   void maybe_fire_sender_event_(const OneWayFrameInfo &info, bool linked, const std::string &src_id);
+  /// Handle an explicit CMD_ERROR_RESP refusal from the device: record the result code, stamp link
+  /// health, and schedule the poll backoff. Split out of execute_request_and_update_() to keep that
+  /// function's outcome dispatch readable — a refusal is a distinct concern from "what did the
+  /// exchange achieve".
+  /// @param device_id Target device ID.
+  /// @param request Outbound request frame that drew the refusal.
+  /// @param response The CMD_ERROR_RESP frame.
+  /// @param retry_after_fail_ms If non-zero, schedules next status poll after this delay.
+  /// @return Always false; a refusal is never a success.
+  bool handle_error_response_(const std::string &device_id, const IoFrame &request, const IoFrame &response,
+                              uint32_t retry_after_fail_ms);
+
   /// Shared request/response helper for high-level operations.
   /// @param device_id Target device ID.
   /// @param request Outbound request frame.
   /// @param warn_on_no_response If true, logs a warning when no response is received.
   /// @param retry_after_fail_ms If non-zero, schedules next status poll after this delay on failure.
-  /// @return true if the device acknowledged *or* accepted the request without replying — see
-  ///         @ref ExchangeOutcome, and the CMD_EXECUTE carve-out in the definition.
-  ///
-  /// Handle an explicit CMD_ERROR_RESP refusal from the device: record the result code, stamp link
-  /// health, and schedule the poll backoff. Split out of execute_request_and_update_() to keep that
-  /// function's outcome dispatch readable — a refusal is a distinct concern from "what did the
-  /// exchange achieve".
-  /// @return Always false; a refusal is never a success.
-  bool handle_error_response_(const std::string &device_id, const IoFrame &request, const IoFrame &response,
-                              uint32_t retry_after_fail_ms);
-
+  /// @return true when the device replied, or when a CMD_EXECUTE was accepted without a reply —
+  ///         every other command's unconfirmed acceptance is still a failure here (see
+  ///         @ref ExchangeOutcome and decisions::retry_after_unconfirmed_accept_is_safe()).
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
                                    uint32_t retry_after_fail_ms = 0);
   /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.

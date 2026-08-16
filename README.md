@@ -164,11 +164,10 @@ For window-type devices (`io_device_type: "window_opener"` or `"ventilation_poin
 
 `silent: true` makes the motor travel more slowly and quietly, matching the "silent operation"
 toggle in the manufacturer apps. It selects the protocol's slow travel profile on position moves
-and on the favorite ("My") command, both isolated by capturing the same command either side of that
-toggle. STOP is excluded because stopping has no travel speed, and ventilation and tilt because
-nothing has been captured for them yet — they keep their existing payloads rather than being
-guessed at. Nothing on the wire reports a device's current profile, so — like `invert_position` —
-this is a declared preference, not a readback.
+and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and
+ventilation and tilt because nothing has been captured for them yet — they keep their existing
+payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so —
+like `invert_position` — this is a declared preference, not a readback.
 
 Declaring `silent:` on a cover also generates a `<Cover Name> Silent Operation` switch in Home
 Assistant, so the profile can be changed at runtime; the YAML value is the boot state. Omit the

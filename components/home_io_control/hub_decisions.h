@@ -105,6 +105,16 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
                                                               : ExchangeFinalResponseDisposition::IGNORE_UNRELATED;
 }
 
+/// Whether an authenticated-but-unanswered request may be sent again.
+///
+/// CMD_EXECUTE is the only request the hub sends that moves something, so a retry there is a
+/// second side effect on a device already acting on the first copy. Every other request (status
+/// polls, name reads, management actions, config writes) is idempotent and keeps its full retry
+/// budget when the device authenticates but never closes the exchange.
+/// @param cmd Command byte of the outbound request.
+/// @return true when the remaining retries should still be spent.
+[[nodiscard]] inline bool retry_after_unconfirmed_accept_is_safe(uint8_t cmd) { return cmd != CMD_EXECUTE; }
+
 // == Pairing discovery & key-challenge classification ==
 
 /// Decide if a frame is a valid discovery response (0x29) during pairing.

@@ -77,6 +77,14 @@ const char *position_rejection_profile(const IoDevice &dev, uint8_t position) {
 
 }  // namespace
 
+void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &device_id, bool for_stop) {
+  uint32_t const existing = this->poll_policy_.get_next_update(device_id);
+  uint32_t const delay_ms = settle_delay_ms(this->poll_policy_.get_interval(device_id), 0, for_stop);
+  this->begin_status_poll_tracking_(device_id, delay_ms);
+  if (existing != 0 && existing < millis() + delay_ms)
+    this->poll_policy_.set_next_update(device_id, existing);
+}
+
 // Execute an authenticated request on the standard command channel and, on success, feed the
 // device's reply back through the normal inbound status parser so all state normalization stays
 // in one place.
@@ -190,9 +198,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  if (position != POS_STOP && this->poll_policy_.get_interval(device_id) != 0 &&
-      this->poll_policy_.get_next_update(device_id) == 0)
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
+  this->arm_execute_confirmation_poll_(device_id, position == POS_STOP);
   return true;
 }
 
@@ -227,19 +233,7 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  if (cmd != CoverCommand::STOP && this->poll_policy_.get_interval(device_id) != 0 &&
-      this->poll_policy_.get_next_update(device_id) == 0)
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
-  // STOP: if the device is still moving (decelerating or settling to a rest position), cap the
-  // settle poll to STOP_SETTLE_POLL_CAP_MS. The private response is the shared reply to both polls
-  // and commands, so it cannot mark itself as a STOP; this is the one place that knows a STOP was
-  // sent and shortens the settle the response handler scheduled (which already folded in any hint).
-  if (cmd == CoverCommand::STOP && dev != nullptr && !dev->is_stopped) {
-    uint32_t const cap = millis() + STOP_SETTLE_POLL_CAP_MS;
-    uint32_t const existing = this->poll_policy_.get_next_update(device_id);
-    if (existing == 0 || cap < existing)
-      this->poll_policy_.set_next_update(device_id, cap);
-  }
+  this->arm_execute_confirmation_poll_(device_id, cmd == CoverCommand::STOP);
   return true;
 }
 
@@ -268,8 +262,7 @@ bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  if (this->poll_policy_.get_interval(device_id) != 0 && this->poll_policy_.get_next_update(device_id) == 0)
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
+  this->arm_execute_confirmation_poll_(device_id, false);
   return true;
 }
 
@@ -299,8 +292,7 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  if (this->poll_policy_.get_interval(device_id) != 0 && this->poll_policy_.get_next_update(device_id) == 0)
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
+  this->arm_execute_confirmation_poll_(device_id, false);
   return true;
 }
 

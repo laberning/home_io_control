@@ -49,12 +49,11 @@ void ExchangeEngine::record_debug(const char *stage, uint8_t tries, bool saw_cha
   this->debug_.saw_challenge = this->debug_.saw_challenge || saw_challenge;
 
   const RadioCaptureInfo &capture = (*this->radio_ptr_)->get_last_capture();
-  // Every wait_for_packet() clears the radio's capture before it starts listening, so a plain
-  // "latest wins" here meant a failure report always described the *final*, timed-out wait — which
-  // by construction saw nothing. `cap_valid=0` on a timeout was therefore tautological rather than
-  // evidence, and it hid the only distinction that matters when a device goes quiet: whether the
-  // radio never detected a frame at all, or received one this layer then threw away. Keep the
-  // first informative capture of the exchange instead of letting a later empty one erase it.
+  // wait_for_packet() clears the radio's capture before it starts listening, so the *last* call
+  // recorded here is always the final, timed-out wait — which by construction saw nothing. Keep the
+  // first informative capture of the exchange instead: it's the only one that can distinguish "the
+  // radio never detected a frame" from "it received one and this layer discarded it", which is the
+  // question a failure report actually needs to answer.
   if (!capture.valid && this->debug_.capture_valid)
     return;
   this->debug_.capture_valid = capture.valid;
@@ -195,17 +194,17 @@ const char *inbound_stage_name(exchange::InboundAuthState state) {
 /// Check if frame is a 0x3D challenge response.
 bool frame_is_challenge_response(const IoFrame &frame) { return frame.cmd == CMD_CHALLENGE_RESP; }
 
-/// Log a frame that arrived but could not be parsed. These were recorded into the debug snapshot
-/// and never printed, which made "the radio heard nothing" and "we heard something and rejected
-/// it" look identical in a failure report — the two need opposite fixes. Redacted through the same
-/// helper as every other frame log, so an unparsable frame can't leak key material by being
-/// unrecognisable (see ADR 0011).
+/// Log a frame that arrived but could not be parsed. Printing it distinguishes "the radio heard
+/// nothing" from "we heard something and rejected it" in a failure report — the two need opposite
+/// fixes: a device that never transmitted needs a longer wait or a link check, while one that
+/// transmits noise this layer can't decode needs the RX bandwidth or framing looked at. Redacted
+/// through the same helper as every other frame log, so an unparsable frame can't leak key material
+/// by being unrecognisable (see ADR 0011).
 void log_unparsable_frame(const char *stage, int tries, const RadioRxPacket &packet) {
-  // The *fact* stays unconditional: it means the receiver is demodulating traffic it cannot
-  // decode, which is a real fault worth surfacing to someone who never enables a debug flag — a
-  // misconfigured RX bandwidth showed up as several of these a minute. The bytes only help someone
-  // already debugging the PHY, and dumping them at that rate is what makes a log unreadable, so
-  // they sit behind the frame-log flag with the rest of that detail.
+  // The *fact* that a frame failed to parse stays unconditional — it is a real fault worth
+  // surfacing to someone who never enables a debug flag. The raw bytes only help someone already
+  // debugging the PHY, and a noisy channel can produce several of these a minute, so they sit
+  // behind the frame-log flag with the rest of that detail.
   ESP_LOGW(TAG, "%s try=%d: %u bytes did not parse as a frame on %" PRIu32 " Hz", stage, tries, packet.len,
            packet.freq_hz);
 #ifdef IOHOME_FRAME_LOG
@@ -233,6 +232,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   this->reset_debug(request.cmd);
   const uint16_t request_preamble = is_start(request) ? LONG_PREAMBLE : (*this->radio_ptr_)->response_preamble();
   const uint32_t exchange_begin_ms = millis();
+  bool accepted_without_reply = false;
 
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
     exchange::OutboundExchangeContext context;
@@ -280,13 +280,15 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     auto final_disp = this->wait_for_final_response_(request, context);
     if (final_disp != decisions::ExchangeFinalResponseDisposition::ACCEPT) {
       // The device challenged us and accepted our answer, so it demonstrably received the request.
-      // Not every device closes the exchange with a synchronous reply (see ExchangeOutcome), and
-      // retrying here is actively harmful: the command is already executing, so the two remaining
-      // tries re-send a movement command to a device that is mid-move and, having already acted,
-      // ignores them — which is what turned a working command into a reported failure.
+      // Not every device closes the exchange with a synchronous reply (see ExchangeOutcome). A
+      // retry is safe only for a request with no side effect to repeat — CMD_EXECUTE is already
+      // acting on the first copy, so it stops here; everything else spends its full retry budget.
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_auth_unconfirmed", context.try_index, true);
-      return ExchangeOutcome::SUCCESS_UNCONFIRMED;
+      accepted_without_reply = true;
+      if (!decisions::retry_after_unconfirmed_accept_is_safe(request.cmd))
+        return ExchangeOutcome::SUCCESS_UNCONFIRMED;
+      continue;
     }
 
     context.state = exchange::OutboundExchangeState::SUCCESS;
@@ -295,7 +297,10 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     return ExchangeOutcome::SUCCESS_WITH_RESPONSE;
   }
 
-  return ExchangeOutcome::FAILED;
+  // An exchange that authenticated on some try but never got a reply is not the same as one the
+  // device never answered at all: callers that only need "the request landed" can act on it, and
+  // callers that need the payload still cannot.
+  return accepted_without_reply ? ExchangeOutcome::SUCCESS_UNCONFIRMED : ExchangeOutcome::FAILED;
 }
 
 // ============================================================================

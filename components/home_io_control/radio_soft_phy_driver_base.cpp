@@ -433,14 +433,11 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
   // point, so a frame arriving during the delay is still captured in hardware.
   delayMicroseconds(this->post_tx_settle_us_);
 
-  // A peer can reply within a millisecond or two of our carrier dropping — field measurement of a
-  // Somfy RS100 puts its challenge at a fixed ~22 ms after exchange start, i.e. within ms of the
-  // transmission ending. That makes this number the margin the whole exchange lives on: if
-  // re-arming outlasts the peer's turnaround the reply is not late, it is never heard at all, and
-  // no response-window length can recover it. Behind the frame-log flag with the rest of the
-  // PHY-level instrumentation: it fires on *every* transmission, and the measurement it exists to
-  // settle (~390 us, against the ~20 ms available) is long since settled. The timing calls compile
-  // out with it, because this is the one code path where microseconds were ever in question.
+  // A peer can reply within a millisecond or two of our carrier dropping, so re-arm time is the
+  // margin the whole exchange lives on: if it outlasts the peer's turnaround, the reply is not
+  // late, it is never heard at all, and no response-window length can recover it. Behind the
+  // frame-log flag with the rest of the PHY-level instrumentation because it fires on *every*
+  // transmission; the timing calls compile out with it.
 #ifdef IOHOME_FRAME_LOG
   ESP_LOGD(TAG, "TX->RX re-arm: %" PRIu32 " us (+%u us settle)", micros() - tx_done_us, this->post_tx_settle_us_);
 #endif
