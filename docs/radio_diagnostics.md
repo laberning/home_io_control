@@ -127,16 +127,17 @@ your device may differ.
 
 | Parameter | Radio | Default | Range / options | What it does |
 |---|---|---|---|---|
-| `sx1262_rx_bandwidth` | SX1262 | `117.3` | `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
+| `sx1262_rx_bandwidth` | SX1262 | `58.6` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; narrower rejects more noise. |
 | `sx1262_response_preamble` | SX1262 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth; wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell while hopping during discovery. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
-| `exchange_start_response_wait_ms` | both | `1000` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
+| `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
-| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
+| `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
+| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth. Still `117.3` by default — untested on LR1121, but the SX1262 result below suggests trying narrower. |
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
@@ -157,16 +158,16 @@ not a tunable.
 
 #### `sx1262_rx_bandwidth`
 
-GFSK receiver bandwidth on the SX1262. Change it when discovery or key-exchange replies fail to
-decode cleanly on an SX1262 board.
+GFSK receiver bandwidth on the SX1262. Change it when frames arrive but fail to decode — the
+`did not parse as a frame` warnings in the log are a direct count of that.
 
-*Observations:* the SX1262's local oscillator needs frequency headroom to recover after a
-TX→RX turnaround. Experiments here found that at `58.6` kHz the demodulator corrupted roughly
-half the bytes of a post-transmit frame (pairing succeeded only about one attempt in five);
-widening to `117.3` kHz removed the problem entirely. Going wider still (`156.2`/`187.2`) can
-help when a device's transmitter drifts more than the controller's own radio, at the cost of
-more noise. `58.6` is close to the narrow default used on the older SX1276 chip (≈41.7 kHz), but
-is marginal on the SX1262's tight turnaround.
+*Observations:* `58.6` kHz is the default — narrower rejects more out-of-band noise, and reception
+on this waveform improves as the filter narrows. It also brings the SX1262 into line with the
+SX1276's long-validated `41.7` kHz default on the identical waveform. A wide default would exist
+only to tolerate local-oscillator offset across the TX→RX turnaround, but that turnaround is now a
+measured ~390 µs plus a 500 µs settle, well within what the narrow filter tolerates.
+
+`39.0` and `46.9` bracket the SX1276's `41.7` — worth trying if `58.6` still shows decode failures.
 
 #### `sx1262_response_preamble`
 
@@ -198,27 +199,30 @@ How long the hub listens for a device's reply before giving up on a try. Raise
 `exchange_start_response_wait_ms` when a device ignores commands but is known to be in range and
 correctly paired.
 
-*Observations:* reply latency is a property of the **device model**, not of the radio, and the
-spread is enormous. A third-party capture of one network (2026-08-14, three controllers) measured a
-Somfy RS100 replying at 29 ms, 781 ms, 1548 ms, 1945 ms, 2469 ms and 3052 ms within a few minutes,
-while a Somfy Oximo 40 on the same network answered in ~23 ms every time.
-
-Both of those are solar actuators, so **don't try to predict this from the power source** — the
-Oximo stays fast at night, the RS100 does not. Nor is it stable per device: the RS100's own spread
-covers two orders of magnitude, and it drifts slower over the course of a day. Treat the setting as
-something to measure per installation, not to infer.
-
-The start-frame default used to be `300`, *shorter* than the continuation default of `500` even
-though its own comment promised "longer" — backwards for the one case where the target may have
-been asleep until the 213 ms wake-up preamble reached it. Against 300 ms the RS100 was reachable
-only in its fastest state, so it answered intermittently and got worse as the day went on. Both
-radios failed identically, which is the signature of a chip-neutral protocol constant rather than a
-radio problem. The default is now `1000`.
+*Observations:* for this device class, reply latency is fast-or-never rather than variably slow —
+a device answers within a few milliseconds of the carrier dropping, or it does not answer at all.
+A failure therefore shows up as no frame received rather than as a late arrival, so raising this
+value cannot fix a device that genuinely fails to respond; check `wait_ms` in the logs first. The
+`400` ms default sits comfortably above every directly measured reply from this device class while
+keeping a failed exchange inside `exchange_total_budget_ms`. Raise it only for a device you have
+confirmed genuinely answers late.
 
 Every millisecond here is loop-blocking time on a *failed* exchange only (a successful one returns
-as soon as the reply lands, see [ADR 0013](adr/0013-blocking-exchange-on-the-esphome-loop.md)), and
-a failure costs this window once per retry. Raise it for a stubborn device; lower it if slow
-failures are worse for you than missed commands.
+as soon as the reply lands, see `docs/adr/0013-blocking-exchange-on-the-esphome-loop.md`), and a
+failure costs this window once per retry. Raise it for a stubborn device; lower it if slow failures
+are worse for you than missed commands.
+
+#### `exchange_total_budget_ms`
+
+Wall-clock ceiling on one whole exchange, including retries. `exchange_start_response_wait_ms` and
+`exchange_response_wait_ms` set how long each try waits; this caps how long *all* of them together
+may run, so a try only starts if there is still budget left for it.
+
+*Observations:* this exists to keep a failing command from blocking the ESPHome loop past its own
+"took a long time for an operation" warning threshold (2550 ms — see
+`docs/adr/0013-blocking-exchange-on-the-esphome-loop.md`). If you raise either response-wait
+parameter, raise this too, or later retries within the same command will silently be skipped once
+the budget runs out.
 
 #### `sx1276_rx_bandwidth`
 
@@ -422,7 +426,7 @@ is a general starting point, not a guarantee — different devices need differen
    LR1121 boards use the `lr1121_*` equivalents instead):
    ```yaml
    sx1262_post_tx_settle_us: 750    # then 1000
-   sx1262_rx_bandwidth: 156.2
+   sx1262_rx_bandwidth: 46.9        # then 39.0 — narrower, not wider; see the section above
    sx1262_response_preamble: 12     # then 16
    ```
 

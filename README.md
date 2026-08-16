@@ -148,6 +148,8 @@ cover:
     io_subtype: 0
     # Optional explicit override. If omitted, inversion follows the learned device type.
     invert_position: true
+    # Optional: move at the manufacturer app's "silent operation" speed (slower and quieter).
+    silent: true
     # Optional bounded follow-up polling while movement is expected.
     status_poll_interval: 500ms
 
@@ -159,6 +161,17 @@ button:
 With `io_device_type: "awning"` declared, the cover above also generates a separate Home Assistant button named `Awning Favorite Position`. Pressing it sends the protocol's built-in favorite or My-position command. The same cover also generates a diagnostic text sensor named `Awning Device Name`, disabled by default, which requests and displays the actuator's stored device name after boot when enabled. There is currently no separate sensor for reading back the stored favorite value because the protocol support for that has not been identified.
 
 For window-type devices (`io_device_type: "window_opener"` or `"ventilation_point"`), a second button named `<Cover Name> Ventilation Position` is generated in addition to the favorite button. That button moves the actuator to its predefined ventilation opening without fully opening the window.
+
+`silent: true` makes the motor travel more slowly and quietly, matching the "silent operation"
+toggle in the manufacturer apps. It selects the protocol's slow travel profile on position moves
+and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and
+ventilation and tilt because nothing has been captured for them yet — they keep their existing
+payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so —
+like `invert_position` — this is a declared preference, not a readback.
+
+Declaring `silent:` on a cover also generates a `<Cover Name> Silent Operation` switch in Home
+Assistant, so the profile can be changed at runtime; the YAML value is the boot state. Omit the
+option entirely and no switch is created.
 
 The hub also exposes three node-scoped Home Assistant actions — `rename_device`, `identify_device`, and `force_open_device` — for advanced, one-off operations that stay out of the entity UI. See ["Home Assistant Actions" in docs/home_io_control.md](docs/home_io_control.md#home-assistant-actions) for what each one does, its fields, and how to trigger it.
 

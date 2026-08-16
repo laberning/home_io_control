@@ -369,7 +369,10 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   // re-send the key-init to trigger the device's auto-confirm.
   bool key_ok = false;
   if (radio_()->has_fast_tx_rx_turnaround()) {
-    key_ok = engine_.send_and_receive(context.req, context.resp, FREQ_CH2) && frame_is_key_confirm(context.resp);
+    // Key exchange is the one caller that genuinely needs the payload: without the 0x33 there is
+    // no confirmation the device took the key, so an unconfirmed acceptance is not good enough.
+    key_ok = engine_.send_and_receive(context.req, context.resp, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
+             frame_is_key_confirm(context.resp);
   } else {
     key_ok = wait_for_key_confirm_(context);
     for (int re = 0; !key_ok && re < 2; re++) {
@@ -396,7 +399,8 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
 bool PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &context) {
   if (!create_set_config1(context.req, node_id_, context.device.node_id))
     return false;
-  return engine_.send_and_receive(context.req, context.resp, FREQ_CH2);
+  // Best-effort, and its reply is never read — an unconfirmed acceptance is a success here.
+  return engine_.send_and_receive(context.req, context.resp, FREQ_CH2) != ExchangeOutcome::FAILED;
 }
 
 // --- Orchestrator ---

@@ -23,11 +23,20 @@ constexpr uint8_t POSITION_PERCENT_MAX = 100;
 /// Uses the public ORIGINATOR_USER_REMOTE constant from proto_frame.h.
 constexpr uint8_t EXECUTE_ORIGINATOR = ORIGINATOR_USER_REMOTE;
 /// ACEI byte for execute commands — composed from priority and validity bits.
-/// Level=2 (user_high) matches real IO-homecontrol remotes and avoids
-/// RESULT_PRIORITY_LOCKED_NON_EXEC (0x38) rejections on devices locked at level 3.
-/// Composition: (ACEI_LEVEL_USER_HIGH << 5) | (0 << 3) | (1 << 1) | 1 = 0x43.
+///
+/// Level=3 (user_default), matching what a real 2W hub puts on the air: a third-party capture of a
+/// Velux KIG300 commanding a Somfy RS100 shows its EXECUTE payload as `01 63 C8 00 80 32 00 00` —
+/// ACEI 0x63, level 3. The 0x43 (user_high) alternative comes from a 1W remote reference vector
+/// (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml), not a 2W hub, and a
+/// handheld remote claiming a higher priority than a home-automation hub is unsurprising.
+///
+/// A device locked at level 3 rejects this with RESULT_PRIORITY_LOCKED_NON_EXEC (0x38) rather than
+/// silence. Watch command results for 0x38 after touching this value; if it appears, level=2
+/// (0x43) is the fallback and the priority/reliability tradeoff is real.
+///
+/// Composition: (ACEI_LEVEL_USER_DEFAULT << 5) | (0 << 3) | (1 << 1) | 1 = 0x63.
 constexpr uint8_t EXECUTE_ACEI =
-    (ACEI_LEVEL_USER_HIGH << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
+    (ACEI_LEVEL_USER_DEFAULT << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
 /// @brief ACEI byte for the force-open command — same bit layout as EXECUTE_ACEI but at the
 /// highest priority level instead of user_high.
 ///
@@ -49,8 +58,16 @@ constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
 constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
 /// Bit flag that marks the standard position payload layout after the encoded position byte.
 constexpr uint8_t EXECUTE_POSITION_LAYOUT_FLAG = 0x80;
-/// Controller-capture matched helper byte used in normal execute payloads.
+/// Travel-profile byte for a normal-speed move — the last field of the extended execute block.
 constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
+/// Travel-profile byte for a silent (slow) move — same field, selecting reduced motor speed.
+///
+/// A Somfy hub commanding one RS100, same command and direction, with only the app's "silent
+/// operation" toggle flipped, differs by exactly this one byte (`... D8 06 00` normal vs.
+/// `... D8 05 00` silent); this hub follows Somfy's encoding rather than Velux's (which uses a
+/// different byte, `80 32 00 00`, and omits the extended block entirely for a normal move) because
+/// this hub's own hardware matches Somfy byte for byte.
+constexpr uint8_t EXECUTE_PROFILE_SILENT = 0x05;
 /// Short payload length for special execute commands such as stop/favorite.
 constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;
 /// Private sub-command for position status requests.
@@ -73,21 +90,31 @@ constexpr uint8_t IDENTIFY_PARAMETER = 0xFF;
 
 /// @brief Build the standard 8-byte position payload shared by create_execute_position() and
 /// create_force_open() — identical except for the ACEI byte.
-inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t acei, uint8_t position) {
-  return {EXECUTE_ORIGINATOR,           acei,         static_cast<uint8_t>(2 * position), 0x00,
-          EXECUTE_POSITION_LAYOUT_FLAG, POS_FAVORITE, EXECUTE_POSITION_PROFILE,           0x00};
+inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t acei, uint8_t position,
+                                                                       bool silent = false) {
+  // Only the profile byte changes; the non-silent form is untouched and is byte-identical to what
+  // a Somfy hub sends for a normal-speed move.
+  return {EXECUTE_ORIGINATOR,
+          acei,
+          static_cast<uint8_t>(2 * position),
+          0x00,
+          EXECUTE_POSITION_LAYOUT_FLAG,
+          POS_FAVORITE,
+          silent ? EXECUTE_PROFILE_SILENT : EXECUTE_POSITION_PROFILE,
+          0x00};
 }
 
 }  // namespace
 
 /// Build a position execute command (0x00) to move a device to a numeric position.
-bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position) {
+bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
+                             bool silent) {
   if (position > POSITION_PERCENT_MAX)
     return false;
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
-  const auto payload = make_position_payload(EXECUTE_ACEI, position);
+  const auto payload = make_position_payload(EXECUTE_ACEI, position, silent);
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
 
@@ -97,7 +124,8 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// device's wire-scale "fully open" position (0 or 100 depending on IoDevice::inverted, e.g.
 /// horizontal awnings), which this builder has no way to know. Use create_force_open() instead;
 /// see its comments for why.
-bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd) {
+bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd,
+                            bool silent) {
   uint8_t main_byte = 0;
   uint8_t modifier_byte = 0;
   switch (cmd) {
@@ -119,6 +147,17 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
+  // FAVORITE is the one command here the capture covers: a Somfy hub sends the plain 6-byte form
+  // for a normal "My" press and the extended 8-byte form with the silent profile when the toggle
+  // is on, which is exactly the pair below. STOP is excluded because stopping has no travel speed,
+  // and VENT because nothing has been captured for it — every extended frame observed so far has
+  // byte 3 clear, whereas VENT puts its modifier there, so extending it would be a guess.
+  if (silent && cmd == CoverCommand::FAVORITE) {
+    const uint8_t extended[EXECUTE_PAYLOAD_SIZE] = {
+        EXECUTE_ORIGINATOR, EXECUTE_ACEI,           main_byte, modifier_byte, EXECUTE_POSITION_LAYOUT_FLAG,
+        POS_FAVORITE,       EXECUTE_PROFILE_SILENT, 0x00};
+    return set_cmd(f, CMD_EXECUTE, extended, sizeof(extended));
+  }
   const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, EXECUTE_ACEI, main_byte,
                                                          modifier_byte,      0x00,         0x00};
   return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
@@ -436,10 +475,14 @@ static bool create_challenge_req_framed(IoFrame &f, const uint8_t *dst, const ui
 }
 
 /// Build a challenge request (0x3C) using a caller-supplied challenge. See proto_commands.h.
-/// low_power is set because the target is a device that may be battery/solar powered (see
-/// create_set_name above).
+///
+/// Framed exactly like the device-role builder below (`0E 00`, no START, no LOW_POWER) — matches
+/// every 0x3C observed on air across multiple actuators and vendors. Kept as a separate entry
+/// point from create_challenge_req_device_role() because the call sites and rationale differ
+/// (inbound authentication vs the key-extraction responder). If devices ever stop answering our
+/// challenges, START/LOW_POWER framing is the first thing to try restoring here.
 bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE]) {
-  return create_challenge_req_framed(f, dst, src, challenge, /*start=*/true, /*low_power=*/true);
+  return create_challenge_req_framed(f, dst, src, challenge, /*start=*/false, /*low_power=*/false);
 }
 
 /// Build a challenge request (0x3C) containing 6 random bytes.

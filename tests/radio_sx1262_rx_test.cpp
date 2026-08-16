@@ -751,3 +751,67 @@ TEST(SoftPhy, EncodeLeavesNoPaddingWhenCellsFillWholeBytes) {
   ASSERT_EQ(decode_uart_probe(encoded, 5, 0, decoded, sizeof(decoded)), sizeof(data));
   EXPECT_EQ(memcmp(decoded, data, sizeof(data)), 0);
 }
+
+// ============================================================================
+// Post-TX re-arm: the peer can answer within a millisecond or two of our carrier dropping, so the
+// path back into RX carries only what it must. SetStandby is redundant (SetRxTxFallbackMode puts
+// the chip in standby the instant TxDone fires) and the buffer base has not moved since init.
+// ============================================================================
+
+// Raises the TxDone interrupt the moment SetTx is issued. send_packet() clears the DIO latch
+// immediately before arming, so a flag set beforehand is discarded — the interrupt has to arrive
+// after. This is the only way to reach send_packet()'s success path in a synchronous host test,
+// and the post-TX re-arm runs nowhere else.
+class TxCompletingRadioSX1262 : public TestableRadioSX1262 {
+ public:
+  using TestableRadioSX1262::TestableRadioSX1262;
+
+ protected:
+  void start_tx() override {
+    TestableRadioSX1262::start_tx();
+    this->mark_dio_fired_from_isr();
+  }
+};
+
+TEST(RadioSX1262, PostTxRearmSkipsRedundantStandbyAndBufferBase) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TxCompletingRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  radio.set_irq_sequence({SX1262_IRQ_TX_DONE});
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  ASSERT_TRUE(radio.send_packet(frame, sizeof(frame), cfg)) << "TxDone was driven, so this must succeed";
+
+  int set_tx_idx = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_SET_TX) {
+      set_tx_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(set_tx_idx, 0);
+
+  // Everything after SetTx is the re-arm path.
+  int standby = 0, buffer_base = 0, packet_params = 0, set_rx = 0;
+  for (size_t i = static_cast<size_t>(set_tx_idx) + 1; i < spi.transactions().size(); i++) {
+    const auto &tx = spi.transactions()[i];
+    if (tx.empty())
+      continue;
+    if (tx[0] == SX1262_SET_STANDBY)
+      standby++;
+    else if (tx[0] == SX1262_SET_BUFFER_BASE_ADDRESS)
+      buffer_base++;
+    else if (tx[0] == SX1262_SET_PACKET_PARAMS)
+      packet_params++;
+    else if (tx[0] == SX1262_SET_RX)
+      set_rx++;
+  }
+
+  EXPECT_EQ(standby, 0) << "the chip is already in standby via SetRxTxFallbackMode when TxDone fires";
+  EXPECT_EQ(buffer_base, 0) << "the RX buffer base was written at init and has not moved";
+  EXPECT_EQ(packet_params, 1) << "RX packet params must be restored — the transmission overwrote them";
+  EXPECT_EQ(set_rx, 1) << "and the radio must actually re-enter RX";
+}

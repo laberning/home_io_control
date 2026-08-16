@@ -211,6 +211,21 @@ bool SoftPhyDriverBase::finalize_receive_(RadioRxPacket &packet, uint32_t irq) {
   return this->read_rx_packet(packet, true, irq);
 }
 
+void SoftPhyDriverBase::rearm_rx_after_tx_() {
+  // The minimum needed to be listening again, because the peer can answer within a millisecond or
+  // two of our carrier dropping. Deliberately *not* reset_rx_state_(): that also issues SetStandby
+  // and re-writes the buffer base address, and on this path both are dead weight on the one code
+  // path where microseconds decide whether a fast reply is heard at all --
+  //   - both drivers program SetRxTxFallbackMode = STDBY_XOSC at init, so the chip is already in
+  //     standby the instant TxDone fires;
+  //   - the buffer base is written at init and nothing since has moved it.
+  // What genuinely must happen: clear the latched TxDone (it shares the IRQ word with RX events),
+  // restore the RX packet params that this transmission overwrote, and re-enter RX.
+  this->clear_irq_status(0xFFFFFFFF);
+  this->set_rx_packet_params();
+  this->set_mode_rx();
+}
+
 void SoftPhyDriverBase::reset_rx_state_(bool force_standby) {
   if (force_standby)
     this->set_mode_standby();
@@ -406,14 +421,26 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
   // immediate reply remains visible to wait_for_packet().
   this->clear_dio_fired();
 
-  this->clear_irq_status(0xFFFFFFFF);
-  this->reset_rx_state_(true);
+#ifdef IOHOME_FRAME_LOG
+  uint32_t const tx_done_us = micros();
+#endif
+  this->rearm_rx_after_tx_();
 
   // Post-TX settling delay: the GFSK demodulator needs time to stabilize after the TX→STDBY→RX
   // transition. Without this, frames received immediately after TX (e.g. the 0x3C challenge
   // during pairing) can suffer UART decode bit errors before the demodulator's frequency
-  // discrimination has settled. Runtime-tunable per chip.
+  // discrimination has settled. Runtime-tunable per chip. The radio is already armed by this
+  // point, so a frame arriving during the delay is still captured in hardware.
   delayMicroseconds(this->post_tx_settle_us_);
+
+  // A peer can reply within a millisecond or two of our carrier dropping, so re-arm time is the
+  // margin the whole exchange lives on: if it outlasts the peer's turnaround, the reply is not
+  // late, it is never heard at all, and no response-window length can recover it. Behind the
+  // frame-log flag with the rest of the PHY-level instrumentation because it fires on *every*
+  // transmission; the timing calls compile out with it.
+#ifdef IOHOME_FRAME_LOG
+  ESP_LOGD(TAG, "TX->RX re-arm: %" PRIu32 " us (+%u us settle)", micros() - tx_done_us, this->post_tx_settle_us_);
+#endif
 
   return true;
 }

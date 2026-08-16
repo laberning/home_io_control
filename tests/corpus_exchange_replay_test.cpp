@@ -107,7 +107,7 @@ TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
 
   IoFrame response{};
   const uint32_t tx_freq = origin_cf->freq_hz != 0 ? origin_cf->freq_hz : FREQ_CH2;
-  const bool ok = comp.send_and_receive_(request, response, tx_freq);
+  const bool ok = comp.send_and_receive_(request, response, tx_freq) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   if (capture->outcome == corpus::ExchangeOutcome::SUCCESS) {
     EXPECT_TRUE(ok) << "expected the replayed exchange to succeed, matching expect.exchange.outcome";

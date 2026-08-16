@@ -558,3 +558,172 @@ TEST(PlatformCover, UnknownPositionNotPublished) {
 
   EXPECT_FLOAT_EQ(cover.position, 0.0f) << "UNKNOWN_POSITION from device should not update HA position";
 }
+
+// ============================================================================
+// A device that reports its pre-command target while already flagging itself as moving must not be
+// rendered as travelling in the wrong direction. Observed on a Somfy RS100: after "open", a closed
+// shutter reports `position=100 target=100 moving` for about a second before its target catches
+// up, and Home Assistant showed the cover briefly *closing* before it began to open. 16 such
+// frames appear across the field logs.
+// ============================================================================
+
+TEST(PlatformCover, MovingWithTargetEqualToPositionIsNotReportedAsClosing) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice dev{};
+  dev.position = 100.0f;  // fully closed on the IO scale
+  dev.target = 100.0f;    // pre-command target, not yet caught up
+  dev.is_stopped = false;
+  hub.trigger_device_update("ABC123", dev);
+
+  EXPECT_NE(cover.current_operation, COVER_OPERATION_CLOSING)
+      << "a closed cover told to open must never be shown as closing";
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE)
+      << "with no position change yet, the direction is simply not known";
+}
+
+TEST(PlatformCover, DirectionIsReportedOnceTheTargetCatchesUp) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice stale{};
+  stale.position = 100.0f;
+  stale.target = 100.0f;
+  stale.is_stopped = false;
+  hub.trigger_device_update("ABC123", stale);
+
+  IoDevice moving{};
+  moving.position = 38.0f;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
+}
+
+TEST(PlatformCover, MovingWithTargetEqualToPositionStillTracksAnObservedDelta) {
+  // Equal target and position does not mean "stationary" — if the position has actually changed
+  // since the last frame that delta is real direction information, and the fallback must use it.
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice first{};
+  first.position = 100.0f;
+  first.target = 100.0f;
+  first.is_stopped = false;
+  hub.trigger_device_update("ABC123", first);
+
+  IoDevice second{};
+  second.position = 80.0f;  // actually moved toward open
+  second.target = 80.0f;    // target still merely echoing the current position
+  second.is_stopped = false;
+  hub.trigger_device_update("ABC123", second);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING)
+      << "a real position change reveals the direction even when the target is uninformative";
+}
+
+// ============================================================================
+// Some actuators withhold their live position while travelling. A Somfy RS100 answers every poll
+// mid-travel with current = POS_UNKNOWN (0xD4) and only reports a real value once it settles. The
+// target is still reported, so the direction is knowable from the last position actually seen.
+// ============================================================================
+
+TEST(PlatformCover, MovingWithWithheldPositionStillReportsDirectionFromLastKnown) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice resting{};
+  resting.position = 100.0f;  // fully closed, last value the device published
+  resting.target = 100.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+
+  IoDevice moving{};
+  moving.position = UNKNOWN_POSITION;  // device declines to say while travelling
+  moving.target = 0.0f;                // but it does say where it is going
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING)
+      << "target 0 from a last-known 100 is opening, whether or not the live position is published";
+}
+
+TEST(PlatformCover, WithheldPositionKeepsTheLastPublishedPositionRatherThanBlanking) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice resting{};
+  resting.position = 100.0f;
+  resting.target = 100.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+  const float shown_when_resting = cover.position;
+
+  IoDevice moving{};
+  moving.position = UNKNOWN_POSITION;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_FLOAT_EQ(cover.position, shown_when_resting)
+      << "an unknown reading must not blank a position Home Assistant was already showing";
+}
+
+TEST(PlatformCover, WithheldPositionDirectionRespectsInversion) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_invert_position(true);
+  cover.setup();
+
+  IoDevice resting{};
+  resting.position = 100.0f;
+  resting.target = 100.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+
+  IoDevice moving{};
+  moving.position = UNKNOWN_POSITION;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING)
+      << "on an inverted device the same travel is the opposite direction";
+}
+
+TEST(PlatformCover, WithheldPositionWithNoLastKnownStaysIdle) {
+  // Nothing to compare against yet — inventing a direction would be worse than admitting none.
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice moving{};
+  moving.position = UNKNOWN_POSITION;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
