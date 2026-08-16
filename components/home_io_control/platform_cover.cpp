@@ -11,6 +11,28 @@ namespace home_io_control {
 
 static const char *const TAG = "home_io_control.cover";
 
+namespace {
+
+/// Movement direction implied by travelling from one IO position toward another.
+///
+/// One rule for every direction question this entity asks, so the inversion handling and the
+/// "no information" case cannot drift between call sites. Equal endpoints, or either end unknown,
+/// mean the direction is not known — never a direction picked by whichever way a comparison
+/// happens to fall. Pure position arithmetic, so it lives here rather than on the entity.
+/// @param invert Whether this device's open/close mapping is inverted.
+/// @param from_io_position Starting IO position, or UNKNOWN_POSITION.
+/// @param to_io_position Destination IO position, or UNKNOWN_POSITION.
+cover::CoverOperation operation_toward(bool invert, float from_io_position, float to_io_position) {
+  if (from_io_position == UNKNOWN_POSITION || to_io_position == UNKNOWN_POSITION ||
+      from_io_position == to_io_position) {
+    return cover::COVER_OPERATION_IDLE;
+  }
+  const bool opening = invert ? (to_io_position > from_io_position) : (to_io_position < from_io_position);
+  return opening ? cover::COVER_OPERATION_OPENING : cover::COVER_OPERATION_CLOSING;
+}
+
+}  // namespace
+
 void IOHomeCover::setup() {
   // Covers compute their initial inversion from the explicit YAML override or the device-type
   // default; the rest of the registration ritual is shared with the other entity types.
@@ -42,18 +64,7 @@ bool IOHomeCover::effective_invert_() const {
 }
 
 cover::CoverOperation IOHomeCover::infer_operation_from_position_delta_(bool invert, float current_io_position) const {
-  if (this->last_io_position_ == UNKNOWN_POSITION || current_io_position == UNKNOWN_POSITION ||
-      current_io_position == this->last_io_position_) {
-    return cover::COVER_OPERATION_IDLE;
-  }
-
-  if (invert) {
-    return (current_io_position > this->last_io_position_) ? cover::COVER_OPERATION_OPENING
-                                                           : cover::COVER_OPERATION_CLOSING;
-  }
-
-  return (current_io_position < this->last_io_position_) ? cover::COVER_OPERATION_OPENING
-                                                         : cover::COVER_OPERATION_CLOSING;
+  return operation_toward(invert, this->last_io_position_, current_io_position);
 }
 
 void IOHomeCover::control(const cover::CoverCall &call) {
@@ -143,15 +154,18 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   if (dev.is_stopped) {
     this->current_operation = cover::COVER_OPERATION_IDLE;
   } else if (dev.target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION && dev.target != dev.position) {
-    // Figure out if we're opening or closing based on target vs current position
-    if (invert) {
-      this->current_operation =
-          (dev.target > dev.position) ? cover::COVER_OPERATION_OPENING : cover::COVER_OPERATION_CLOSING;
-    } else {
-      // Standard: lower IO position = more open, so target < current = opening
-      this->current_operation =
-          (dev.target < dev.position) ? cover::COVER_OPERATION_OPENING : cover::COVER_OPERATION_CLOSING;
-    }
+    // Travelling toward a target we can see, from a position we can see.
+    this->current_operation = operation_toward(invert, dev.position, dev.target);
+  } else if (dev.target != UNKNOWN_POSITION && dev.position == UNKNOWN_POSITION) {
+    // Moving, target known, live position withheld. Not every actuator publishes intermediate
+    // positions: a Somfy RS100 answers every poll mid-travel with current = POS_UNKNOWN (0xD4),
+    // flagging itself 0x61 while moving against 0x60 at rest, and only reports a real value once
+    // it settles. Both remaining branches below need a live position, so this used to fall off the
+    // end leaving current_operation at whatever it was before the command — Home Assistant showed
+    // the cover sitting idle for the entire travel. The last position we *did* see is enough to
+    // say which way it is going, and `this->position` keeps displaying that value meanwhile
+    // rather than blanking, because the assignment above is skipped for an unknown reading.
+    this->current_operation = operation_toward(invert, previous_io_position, dev.target);
   } else if (dev.position != UNKNOWN_POSITION) {
     // Either no target at all, or a target equal to the current position while the device says it
     // is moving. The second case is not a standstill and it is emphatically not "closing": devices

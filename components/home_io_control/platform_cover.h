@@ -71,6 +71,7 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   /// @param invert Effective inversion mode for this device.
   /// @param current_io_position Latest reported IO position (0=open, 100=closed).
   /// @return OPENING, CLOSING, or IDLE when no direction can be inferred yet.
+  ///
   [[nodiscard]] cover::CoverOperation infer_operation_from_position_delta_(bool invert,
                                                                            float current_io_position) const;
 

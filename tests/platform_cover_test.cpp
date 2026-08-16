@@ -632,3 +632,98 @@ TEST(PlatformCover, MovingWithTargetEqualToPositionStillTracksAnObservedDelta) {
   EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING)
       << "a real position change reveals the direction even when the target is uninformative";
 }
+
+// ============================================================================
+// Some actuators withhold their live position while travelling. A Somfy RS100 answers every poll
+// mid-travel with current = POS_UNKNOWN (0xD4) and only reports a real value once it settles. The
+// target is still reported, so the direction is knowable from the last position actually seen.
+// ============================================================================
+
+TEST(PlatformCover, MovingWithWithheldPositionStillReportsDirectionFromLastKnown) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice resting{};
+  resting.position = 100.0f;  // fully closed, last value the device published
+  resting.target = 100.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+
+  IoDevice moving{};
+  moving.position = UNKNOWN_POSITION;  // device declines to say while travelling
+  moving.target = 0.0f;                // but it does say where it is going
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING)
+      << "target 0 from a last-known 100 is opening, whether or not the live position is published";
+}
+
+TEST(PlatformCover, WithheldPositionKeepsTheLastPublishedPositionRatherThanBlanking) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice resting{};
+  resting.position = 100.0f;
+  resting.target = 100.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+  const float shown_when_resting = cover.position;
+
+  IoDevice moving{};
+  moving.position = UNKNOWN_POSITION;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_FLOAT_EQ(cover.position, shown_when_resting)
+      << "an unknown reading must not blank a position Home Assistant was already showing";
+}
+
+TEST(PlatformCover, WithheldPositionDirectionRespectsInversion) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_invert_position(true);
+  cover.setup();
+
+  IoDevice resting{};
+  resting.position = 100.0f;
+  resting.target = 100.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+
+  IoDevice moving{};
+  moving.position = UNKNOWN_POSITION;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING)
+      << "on an inverted device the same travel is the opposite direction";
+}
+
+TEST(PlatformCover, WithheldPositionWithNoLastKnownStaysIdle) {
+  // Nothing to compare against yet — inventing a direction would be worse than admitting none.
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice moving{};
+  moving.position = UNKNOWN_POSITION;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
