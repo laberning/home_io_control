@@ -129,12 +129,11 @@ static constexpr uint8_t CMD_ADDRESS_RESP =
            ///< pairing with 0x36 and then challenges the 0x37 it gets back (see
            ///< CMD_CHALLENGE_REQ). Neither command is sent or handled anywhere in this codebase.
 static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
-    0x38;  ///< Device-initiated ("pull") key transfer request. `reference/iown-homecontrol`
-           ///< documents its shape as a command ID plus a 6-byte challenge, nothing more. Never
-           ///< observed in our corpus or in any field log, and not sent or handled anywhere in
-           ///< this codebase — the constant is used only to construct a hypothetical device-side
-           ///< IV in tests/proto_crypto_test.cpp, exercising the crypto primitive, not a dispatch
-           ///< path.
+    0x38;  ///< Device-initiated ("pull") key transfer request: documented elsewhere as a command
+           ///< ID plus a 6-byte challenge, nothing more — never observed in our corpus or in any
+           ///< field log, and not sent or handled anywhere in this codebase — the constant is
+           ///< used only to construct a hypothetical device-side IV in
+           ///< tests/proto_crypto_test.cpp, exercising the crypto primitive, not a dispatch path.
 
 // Authentication commands (challenge-response for secured commands)
 static constexpr uint8_t CMD_CHALLENGE_REQ =
@@ -177,7 +176,13 @@ static constexpr uint8_t CMD_GET_INFO1 =
 static constexpr uint8_t CMD_GET_INFO1_RESP = 0x55;  ///< Device general info 1 response (unimplemented; we only use
                                                      ///< 0x56/0x57). Never observed in our corpus or in any field log —
                                                      ///< this codebase has never sent CMD_GET_INFO1 to prompt one.
-static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info
+static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info. This codebase
+                                                     ///< sends it during device-add, but the corpus has
+                                                     ///< no fixture for the request itself -- every
+                                                     ///< 0x57 capture on hand is a reply to someone
+                                                     ///< else's request. Closing this needs a fresh
+                                                     ///< device-add on owned hardware, ingested with
+                                                     ///< `--rekey` (tests/corpus/README.md).
 static constexpr uint8_t CMD_GET_INFO2_RESP = 0x57;  ///< Device type/model response
 static constexpr uint8_t CMD_GET_GENERAL_INFO3 =
     0x58;  ///< Observed on the wire (tests/corpus/captures/issues/) with no payload. Content
@@ -190,31 +195,28 @@ static constexpr uint8_t CMD_GET_GENERAL_INFO3_RESP =
 // Configuration and status update commands
 static constexpr uint8_t CMD_SET_CONFIG1 = 0x6F;  ///< Configure device to auto-send status updates
 static constexpr uint8_t CMD_SET_CONFIG1_RESP =
-    0x70;  ///< Config response. `reference/iown-homecontrol` does not document this opcode at
-           ///< all. Never observed in our corpus or in any field log, and not sent or handled
-           ///< anywhere in this codebase beyond the generic "is this a known command byte" check
-           ///< in radio_soft_phy.cpp.
+    0x70;  ///< Config response, otherwise undocumented. Never observed in our corpus or in any
+           ///< field log, and not sent or handled anywhere in this codebase beyond the generic
+           ///< "is this a known command byte" check in radio_soft_phy.cpp.
 static constexpr uint8_t CMD_STATUS_UPDATE = 0x71;       ///< Device-initiated status update (needs auth)
 static constexpr uint8_t CMD_STATUS_UPDATE_RESP = 0x72;  ///< Acknowledge status update
 
 static constexpr uint8_t CMD_SEND_RAW_MESSAGE =
-    0xF0;  ///< `reference/iown-homecontrol` heads this "Send Raw Message / Find Hardware
-           ///< ("Service")" — its own quoting, not settled naming. Never observed in our corpus
-           ///< or in any field log, and not sent or handled anywhere in this codebase.
+    0xF0;  ///< Named "Send Raw Message" / "Find Hardware" — two candidate names, neither settled.
+           ///< Never observed in our corpus or in any field log, and not sent or handled
+           ///< anywhere in this codebase.
 static constexpr uint8_t CMD_READ_GROUPS =
-    0xF1;  ///< `reference/iown-homecontrol` heads this "Actuator: Read Groups /
-           ///< "ActuatorAnyConfigIsLocal" (?) / "Service ACK"" — three candidate names, one
-           ///< flagged with its own question mark, from the source itself. Never observed in our
+    0xF1;  ///< Named "Actuator: Read Groups" / "ActuatorAnyConfigIsLocal" (uncertain) / "Service
+           ///< ACK" — three candidate names, one itself flagged uncertain. Never observed in our
            ///< corpus or in any field log, and not sent or handled anywhere in this codebase.
 static constexpr uint8_t CMD_REBOOT =
-    0xF2;  ///< `reference/iown-homecontrol` heads this "Reboot / Service Status" — two candidate
-           ///< names, one of them destructive-sounding, on no field evidence at all. Never
-           ///< observed in our corpus or in any field log, and not sent or handled anywhere in
-           ///< this codebase; treat the "reboot" reading with particular caution; it is a guess.
-static constexpr uint8_t CMD_SERVICE_STATUS_ACK =
-    0xF3;  ///< `reference/iown-homecontrol` lists this opcode with its body marked TBD — no
-           ///< description at all, not even a hedge to reproduce. Never observed in our corpus
-           ///< or in any field log, and not sent or handled anywhere in this codebase.
+    0xF2;  ///< Named "Reboot" / "Service Status" — two candidate names, one of them
+           ///< destructive-sounding, on no field evidence at all. Never observed in our corpus or
+           ///< in any field log, and not sent or handled anywhere in this codebase; treat the
+           ///< "reboot" reading with particular caution — it is a guess.
+static constexpr uint8_t CMD_SERVICE_STATUS_ACK = 0xF3;  ///< No description available at all for this opcode, not even
+                                                         ///< a hedge. Never observed in our corpus or in any field log,
+                                                         ///< and not sent or handled anywhere in this codebase.
 
 static constexpr uint8_t CMD_ERROR_RESP = 0xFE;  ///< Error response to any command
 

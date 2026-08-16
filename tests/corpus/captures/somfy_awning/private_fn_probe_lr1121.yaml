@@ -1,0 +1,51 @@
+id: somfy_awning_private_fn_probe_lr1121
+description: >
+  Step 2 Q0: CMD_PRIVATE (0x03) probes with function IDs 0x06 and 0x09 against our own
+  mains-powered awning. Both replies are byte-identical (data=05 00 00 00 00 00), data[1]=0x00
+  (not 0x60) -- consistent with mains-powered per the Q0 prediction, but the identical reply for
+  both function IDs means this device does not appear to distinguish them. Contrast with the
+  companion dimmer capture (somfy_dimmer/private_fn_probe_lr1121.yaml), whose reply *does* differ
+  by function ID.
+source:
+  device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2), probed with CMD_PRIVATE function IDs 0x06/0x09"
+  captured_with: lr1121
+  firmware: null
+  date: 2026-08-16
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4B 20 30 E1 F2 C0 FF EE 03 06 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), data=06 00 00 -- function ID 0x06 (Q0 probe, create_private_function())."
+  - dir: rx
+    t_ms: 283
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 05 00 00 00 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE_RESP(0x04), data=05 00 00 00 00 00. data[1]=0x00 (not 0x60), consistent with
+      mains-powered per the Q0 prediction. Byte-identical to the reply to function ID 0x09 below.
+  - dir: tx
+    t_ms: 6536
+    freq: 868950000
+    hex: "4B 20 30 E1 F2 C0 FF EE 03 09 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), data=09 00 00 -- function ID 0x09 (Q0 probe, create_private_function())."
+  - dir: rx
+    t_ms: 6820
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 05 00 00 00 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE_RESP(0x04), data=05 00 00 00 00 00 -- byte-identical to the reply to function ID
+      0x06 above. This device does not appear to distinguish the two function IDs.
+expect:
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

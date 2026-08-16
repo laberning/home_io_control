@@ -7,6 +7,8 @@
 #include "stubs/radio_test_common.h"
 #include "stubs/scripted_spi.h"
 
+#include <algorithm>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <vector>
 
@@ -317,6 +319,103 @@ TEST(RadioSX1262, UartProbeRejectsBitErrors) {
     EXPECT_FALSE(matches_original) << "Bit-corrupted frame should not pass CRC validation";
   }
   // Either probe.valid==false (rejected entirely) or it found a different candidate — both are acceptable
+}
+
+TEST(RadioSX1262, UartProbeAcceptsEveryKnownIoCommand) {
+  // Regression for a real hardware failure (2026-08-16): find_uart_probe() only accepts a
+  // CRC-valid candidate whose cmd passes is_known_io_command() (radio_soft_phy.cpp/.h).
+  // CMD_GET_GENERAL_INFO3_RESP (0x59) was missing from that switch, so a real, CRC-valid probe
+  // reply on real hardware was silently dropped on the SX1262/LR1121 software PHY and reported
+  // as a timeout; the same audit also found CMD_IDENTIFY and
+  // CMD_WRITE_PRIVATE/CMD_WRITE_PRIVATE_ACK missing, affecting the shipped identify_device()
+  // action (and climate writes). This test does not hand-maintain its own opcode list -- an
+  // earlier version did, and that duplicate list was itself a third hand-maintained table that
+  // could (and did) drift from is_known_io_command(). Instead it iterates every possible command
+  // byte and calls is_known_io_command() directly, so the two can never disagree by construction;
+  // what it verifies is that find_uart_probe() actually honors that answer for every byte value,
+  // not a fixed sample of them.
+  for (int cmd_int = 0; cmd_int <= 0xFF; cmd_int++) {
+    const auto cmd = static_cast<uint8_t>(cmd_int);
+    if (!is_known_io_command(cmd))
+      continue;
+    SCOPED_TRACE(::testing::Message() << "cmd=0x" << std::hex << static_cast<int>(cmd));
+    const uint8_t frame[] = {0xCE, 0x00, 0xC0, 0xFF, 0xEE, 0xAA, 0xBB, 0xCC, cmd, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+    const uint8_t frame_len = sizeof(frame);
+
+    const uint16_t crc = crc_ccitt(frame, frame_len);
+    uint8_t frame_with_crc[32];
+    memcpy(frame_with_crc, frame, frame_len);
+    frame_with_crc[frame_len] = crc & 0xFF;
+    frame_with_crc[frame_len + 1] = (crc >> 8) & 0xFF;
+
+    uint8_t encoded[64] = {0};
+    const uint8_t encoded_len = uart_encode_packet(frame_with_crc, frame_len + 2, encoded, sizeof(encoded));
+    ASSERT_GT(encoded_len, 0u);
+
+    const UartProbeResult probe = find_uart_probe(encoded, encoded_len);
+    ASSERT_TRUE(probe.valid) << "find_uart_probe() rejected a cmd that is_known_io_command() accepts: 0x" << std::hex
+                             << static_cast<int>(cmd);
+    EXPECT_EQ(probe.frame_len, frame_len);
+    EXPECT_EQ(memcmp(probe.decoded + probe.frame_start, frame, frame_len), 0);
+  }
+}
+
+TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
+  // UartProbeAcceptsEveryKnownIoCommand above closes the class of bug where find_uart_probe()
+  // disagrees with is_known_io_command() -- but it cannot catch the original bug itself: an
+  // opcode that proto_constants.h names (so this codebase knows about it and gives it a symbol)
+  // yet is_known_io_command() has never been taught to accept, because that opcode is genuinely
+  // never expected to arrive on the soft-PHY receive path this codebase controls. Every such
+  // opcode must be *this specific, checked, and reasoned-about list* -- not silence. An opcode
+  // that's missing from both this list and is_known_io_command() fails this test, so a newly
+  // named constant forces a deliberate choice (teach is_known_io_command() about it, or document
+  // here why it's exempt) instead of silently falling through a soft-PHY reception gap.
+  //
+  // Reasoned exclusions, checked against actual usage in this codebase (not proto_constants.h's
+  // doxygen alone) as of 2026-08-16:
+  //   - CMD_ACTIVATE_MODE: only decoded by decode_1w_frame() (proto_codecs.cpp), and every 1W
+  //     frame carries CTRL0_PROTOCOL_1W, which is_plausible_uart_frame() (radio_soft_phy.cpp)
+  //     already accepts unconditionally -- is_known_io_command() is never consulted for it.
+  //   - CMD_SET_SENSOR / CMD_SET_SENSOR_ACK: zero references anywhere outside proto_constants.*.
+  //   - CMD_DISCOVER_ALT_REQ: this codebase can transmit it (proto_commands.cpp, as an optional
+  //     `pairing_discovery_commands` entry), but the reply PairingEngine actually waits for is the
+  //     generic CMD_DISCOVER_RESP (0x29, already known) regardless of which discovery variant was
+  //     sent -- and hub_key_extraction.cpp's try_handle_key_extraction_frame_() only recognizes
+  //     CMD_DISCOVER_REQ (0x28), not this variant, so there is no live dispatch path that needs
+  //     to receive 0x2E itself.
+  //   - CMD_DISCOVER_ALT_RESP: captured once (velux_kux100/discover_alt_addressed_challenge_
+  //     response.yaml) but "not otherwise used anywhere in this codebase" per its own doxygen --
+  //     nothing dispatches on it, corpus replay doesn't go through this soft-PHY gate at all.
+  //   - CMD_ADDRESS_REQ / CMD_ADDRESS_RESP: captured once (velux_kux100/pairing_full.yaml) but
+  //     "neither command is sent or handled anywhere in this codebase" per proto_constants.h.
+  //   - CMD_LAUNCH_KEY_TRANSFER: never observed in corpus or field log; not sent or handled
+  //     anywhere; used only to construct a hypothetical IV in proto_crypto_test.cpp.
+  //   - CMD_UNKNOWN4A_REQ: deliberately excluded, see ADR 0024 -- nothing this codebase sends
+  //     would ever draw a reply carrying this opcode.
+  //   - CMD_GET_INFO1 / CMD_GET_INFO1_RESP: unimplemented, never sent, so never a reply to wait
+  //     for; this codebase only uses CMD_GET_INFO2/CMD_GET_GENERAL_INFO3 (both already known).
+  //   - CMD_SEND_RAW_MESSAGE / CMD_READ_GROUPS / CMD_REBOOT / CMD_SERVICE_STATUS_ACK: never
+  //     observed in corpus or field log, not sent or handled anywhere in this codebase -- named
+  //     purely so a future capture of one of them has a symbol to log against.
+  static constexpr uint8_t NEVER_RECEIVED_ALLOWLIST[] = {
+      CMD_ACTIVATE_MODE,  CMD_SET_SENSOR,       CMD_SET_SENSOR_ACK,      CMD_DISCOVER_ALT_REQ, CMD_DISCOVER_ALT_RESP,
+      CMD_ADDRESS_REQ,    CMD_ADDRESS_RESP,     CMD_LAUNCH_KEY_TRANSFER, CMD_UNKNOWN4A_REQ,    CMD_GET_INFO1,
+      CMD_GET_INFO1_RESP, CMD_SEND_RAW_MESSAGE, CMD_READ_GROUPS,         CMD_REBOOT,           CMD_SERVICE_STATUS_ACK,
+  };
+
+  for (int cmd_int = 0; cmd_int <= 0xFF; cmd_int++) {
+    const auto cmd = static_cast<uint8_t>(cmd_int);
+    if (std::strcmp(command_name(cmd), "UNKNOWN_CMD") == 0)
+      continue;  // Not a named opcode at all -- outside this test's scope.
+    if (is_known_io_command(cmd))
+      continue;
+    const bool allowlisted = std::find(std::begin(NEVER_RECEIVED_ALLOWLIST), std::end(NEVER_RECEIVED_ALLOWLIST), cmd) !=
+                             std::end(NEVER_RECEIVED_ALLOWLIST);
+    EXPECT_TRUE(allowlisted) << "cmd=0x" << std::hex << static_cast<int>(cmd) << " (" << command_name(cmd)
+                             << ") is named by command_name() but missing from both "
+                                "is_known_io_command() and this test's documented allowlist -- decide "
+                                "which one it belongs in";
+  }
 }
 
 TEST(RadioSX1262, UartDecodeFixedStride) {

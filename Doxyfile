@@ -6,6 +6,11 @@
 PROJECT_NAME           = "Home IO Control"
 PROJECT_BRIEF          = "ESPHome add-on for IO-Homecontrol devices"
 OUTPUT_DIRECTORY       = docs/doxygen
+# docs/adr/*.md is deliberately not listed here -- ADRs are standalone decision records, not part
+# of the generated API docs. Markdown links from an INPUT file to an ADR (e.g. radio_diagnostics.md
+# -> adr/0013-...md, adr/0024-...md) therefore produce an expected "unable to resolve reference ...
+# for \ref command" warning; this is not a broken link, just doxygen's markdown preprocessor
+# reaching outside its own INPUT set.
 INPUT                  = components/home_io_control/ \
                           build/docs/README.md \
                           build/docs/home_io_control.md \

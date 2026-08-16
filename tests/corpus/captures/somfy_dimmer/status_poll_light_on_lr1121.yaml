@@ -6,7 +6,7 @@ description: >
   both decode to 0% (fully on, per this device's inverted 0=on convention).
 source:
   device: "Somfy Izymo dimmer (io light actuator)"
-  captured_with: other
+  captured_with: lr1121
   firmware: null
   date: 2026-08-03
   origin: own-hardware

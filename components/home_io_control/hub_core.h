@@ -256,6 +256,18 @@ class IOHomeControlComponent : public Component,
     this->key_extraction_armed_callback_ = std::move(cb);
   }
 
+  /// @brief Set whether ManagementActions::probe_device()/probe_sweep() are allowed to run.
+  ///
+  /// Set once from the `diagnostic_probes:` YAML boolean (`__init__.py`); off by default, so a
+  /// build that doesn't opt in never sends an undecoded probe opcode. Not a runtime toggle: there
+  /// is no entity and nothing else calls this after setup — the gate is "was this build
+  /// configured with `diagnostic_probes: true`", not a state a user flips per session.
+  /// @param enabled Desired state.
+  void set_diagnostic_probes_enabled(bool enabled) { this->diagnostic_probes_enabled_ = enabled; }
+
+  /// @brief Whether diagnostic probes are enabled for this build.
+  [[nodiscard]] bool diagnostic_probes_enabled() const { return this->diagnostic_probes_enabled_; }
+
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (undeclared/legacy path).
   /// Type, subtype, inverted, and optimistic_state default to UNKNOWN / 0 / false / true; use the
@@ -337,6 +349,27 @@ class IOHomeControlComponent : public Component,
   /// answer, DeviceRegistry is never written, and zero replies is a successful result).
   /// @return Structured result whose `message` is the full multi-line report.
   virtual ManagementActionResult scan_paired_devices();
+  /// Send a single diagnostic probe frame to a registered device and report the raw reply (see
+  /// ManagementActions::probe_device() for the full contract, argument formats, and safety
+  /// gating). Protocol-research instrumentation for opcodes this codebase has not decoded — see
+  /// docs/radio_diagnostics.md and ADR 0024.
+  /// @param device_id Target device ID.
+  /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2", or
+  ///        "private2_short").
+  /// @param index Function ID / selector block / modifier, as a decimal or `0x`-prefixed hex
+  ///        string; ignored for "general_info3".
+  /// @return Structured result whose `message` carries the reply's command byte and raw hex.
+  virtual ManagementActionResult probe_device(const std::string &device_id, const std::string &probe,
+                                              const std::string &index);
+  /// Walk a bounded index range, one probe_device() call per index (see
+  /// ManagementActions::probe_sweep()).
+  /// @param device_id Target device ID.
+  /// @param probe Probe name, same as probe_device().
+  /// @param first_index First index in the sweep (inclusive).
+  /// @param last_index Last index in the sweep (inclusive).
+  /// @return Structured result whose `message` is one line per index.
+  virtual ManagementActionResult probe_sweep(const std::string &device_id, const std::string &probe,
+                                             const std::string &first_index, const std::string &last_index);
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
@@ -624,6 +657,15 @@ class IOHomeControlComponent : public Component,
   }
   /// Native API callback: broadcast a roll-call scan of already-paired devices.
   void api_scan_paired_devices_() { this->management_actions_.api_scan_paired_devices(); }
+  /// Native API callback: run a single diagnostic probe against a registered device.
+  void api_probe_device_(const std::string &device_id, const std::string &probe, const std::string &index) {
+    this->management_actions_.api_probe_device(device_id, probe, index);
+  }
+  /// Native API callback: run a bounded diagnostic probe sweep against a registered device.
+  void api_probe_sweep_(const std::string &device_id, const std::string &probe, const std::string &first_index,
+                        const std::string &last_index) {
+    this->management_actions_.api_probe_sweep(device_id, probe, first_index, last_index);
+  }
 
   // --- Frequency hopping ---
   void hop_frequency_();
@@ -757,6 +799,10 @@ class IOHomeControlComponent : public Component,
   pairing_responder::ResponderContext key_extraction_ctx_;
   /// Invoked whenever the key-extraction armed state changes; see set_key_extraction_armed_callback().
   std::function<void(bool)> key_extraction_armed_callback_;
+  /// Whether diagnostic probes (ManagementActions::probe_device()/probe_sweep()) are enabled.
+  /// False by default so a build that didn't opt in via `diagnostic_probes: true` never sends an
+  /// undecoded probe opcode. See set_diagnostic_probes_enabled().
+  bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
   PairingTelemetry pairing_telemetry_;    ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.

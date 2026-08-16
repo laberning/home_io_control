@@ -20,6 +20,8 @@ class TestableManagementComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::api_force_open_device_;
   using IOHomeControlComponent::api_identify_device_;
+  using IOHomeControlComponent::api_probe_device_;
+  using IOHomeControlComponent::api_probe_sweep_;
   using IOHomeControlComponent::api_rename_device_;
   using IOHomeControlComponent::api_scan_paired_devices_;
   using IOHomeControlComponent::initialized_;
@@ -114,6 +116,23 @@ static IoFrame make_identify_ack_response(const uint8_t dst[3]) {
   set_dst(frame, dst);
   set_src(frame, device_node_id);
   set_cmd(frame, CMD_IDENTIFY, nullptr, 0);
+  return frame;
+}
+
+/// A 6-byte CMD_PRIVATE_RESP function-ID reply, shaped exactly like
+/// tests/corpus/captures/issues/issue_45_private_function_id_replies.yaml frame 0
+/// (data = 04 60 00 12 00 00). data_len == 6 clears PRIVATE_RESPONSE_MIN_DATA_LEN
+/// (hub_status.cpp), so this is the frame shape that would misread as a position update if a
+/// probe reply were ever routed through apply_private_response_status() instead of staying on
+/// its own reporting path — see ManagementActions::probe_device()'s doxygen and ADR 0024.
+static IoFrame make_private_function_reply(const uint8_t dst[3]) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, dst);
+  set_src(frame, device_node_id);
+  const uint8_t payload[6] = {0x04, 0x60, 0x00, 0x12, 0x00, 0x00};
+  set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload));
   return frame;
 }
 
@@ -396,7 +415,10 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllFourServices) {
+TEST(HubManagement, RegisterManagementActionsRegistersOnlyFourServicesByDefault) {
+  // diagnostic_probes_enabled_ defaults to false (no set_diagnostic_probes_enabled() call), so
+  // probe_device/probe_sweep must not appear in the action list at all -- this is what keeps a
+  // default build's Home Assistant action list clean, not just what refuses at call time.
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -407,6 +429,25 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllFourServices) {
   component.register_management_actions_();
 
   ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 4u);
+  for (const auto &service : esphome::api::global_api_server->user_services_) {
+    const auto name = service->encode_list_service_response().name.str();
+    EXPECT_NE(name, "probe_device");
+    EXPECT_NE(name, "probe_sweep");
+  }
+}
+
+TEST(HubManagement, RegisterManagementActionsRegistersAllSixServicesWhenDiagnosticProbesEnabled) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  component.register_management_actions_();
+
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 6u);
 
   const auto rename_response = esphome::api::global_api_server->user_services_[0]->encode_list_service_response();
   EXPECT_EQ(rename_response.name.str(), "rename_device");
@@ -435,6 +476,26 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllFourServices) {
   EXPECT_EQ(scan_response.name.str(), "scan_paired_devices");
   EXPECT_EQ(scan_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   EXPECT_EQ(scan_response.args.size(), 0u) << "scan_paired_devices takes no arguments";
+
+  const auto probe_device_response = esphome::api::global_api_server->user_services_[4]->encode_list_service_response();
+  EXPECT_EQ(probe_device_response.name.str(), "probe_device");
+  EXPECT_EQ(probe_device_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(probe_device_response.args.size(), 3u);
+  EXPECT_EQ(probe_device_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(probe_device_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+  EXPECT_EQ(probe_device_response.args[1].name.str(), "probe");
+  EXPECT_EQ(probe_device_response.args[1].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+  EXPECT_EQ(probe_device_response.args[2].name.str(), "index");
+  EXPECT_EQ(probe_device_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[5]->encode_list_service_response();
+  EXPECT_EQ(probe_sweep_response.name.str(), "probe_sweep");
+  EXPECT_EQ(probe_sweep_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(probe_sweep_response.args.size(), 4u);
+  EXPECT_EQ(probe_sweep_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(probe_sweep_response.args[1].name.str(), "probe");
+  EXPECT_EQ(probe_sweep_response.args[2].name.str(), "first_index");
+  EXPECT_EQ(probe_sweep_response.args[3].name.str(), "last_index");
 }
 
 TEST(HubManagement, ApiRenameDevicePublishesManagementResultEvent) {
@@ -814,4 +875,304 @@ TEST(HubManagement, ApiScanPairedDevicesFailurePublishesEventWithEmptyDeviceId) 
   EXPECT_EQ(event.data.at("device_id"), "") << "scan action never has a single target device";
   EXPECT_EQ(event.data.at("success"), "false");
   EXPECT_EQ(event.data.at("message"), "hub is not initialized");
+}
+
+// --- probe_device() / probe_sweep() ---
+
+TEST(HubManagement, ProbeDeviceRejectsUnknownDevice) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.probe_device("123456", "private_fn", "6");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device is not registered on this hub");
+  EXPECT_EQ(result.probe_name, "private_fn")
+      << "the failure event must still carry the probe that was requested, not lose it to an "
+         "early return";
+  EXPECT_EQ(result.probe_index, "6");
+}
+
+TEST(HubManagement, ProbeDeviceRejectsWhenDiagnosticProbesDisabled) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  // Deliberately not enabled (no diagnostic_probes_enabled_() call).
+
+  const auto result = component.probe_device("ABC123", "private_fn", "6");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "diagnostic probes are not enabled; set diagnostic_probes: true in YAML");
+  EXPECT_TRUE(result.terminal_refusal)
+      << "disabled is a refusal that will recur for every remaining sweep index -- probe_sweep() "
+         "must stop on it via this flag, not by matching message text";
+}
+
+TEST(HubManagement, ProbeDeviceRejectsWhenDeviceMoving) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  const auto result = component.probe_device("ABC123", "private_fn", "6");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device is moving; refusing to probe mid-transaction");
+  EXPECT_TRUE(result.terminal_refusal) << "a device that is moving stays moving for the rest of a sweep";
+}
+
+TEST(HubManagement, ProbeDeviceRejectsInvalidIndex) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_device("ABC123", "private_fn", "not-a-number");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "index must be a decimal or 0x-prefixed byte value (0-255)");
+  EXPECT_FALSE(result.terminal_refusal) << "a bad index for this index doesn't imply the next index is also bad";
+}
+
+TEST(HubManagement, ProbeDeviceRejectsLeadingZeroDecimalIndex) {
+  // "010" is valid octal (8) to strtoul(), which would silently probe a different index than a
+  // user copying a byte value out of a hex dump intended -- must be rejected, not parsed as octal.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_device("ABC123", "private_fn", "010");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "index must be a decimal or 0x-prefixed byte value (0-255)");
+}
+
+TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_device("ABC123", "unknown4a", "0");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "unknown probe \"unknown4a\" (expected private_fn, status_ext, general_info3, private2, or "
+                            "private2_short)");
+  EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
+                                           "not by looping until this flag stops it";
+}
+
+TEST(HubManagement, ProbeDeviceNoResponseFails) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  // No queued RX: send_and_receive times out.
+
+  const auto result = component.probe_device("ABC123", "private_fn", "0x06");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "no reply after " + std::to_string(EXCHANGE_RETRY_COUNT) +
+                                " attempts (device asleep, unreachable, or silently ignoring this opcode)");
+  EXPECT_FALSE(result.terminal_refusal)
+      << "one silent index doesn't mean the rest of a sweep will be -- a sweep must keep going";
+}
+
+TEST(HubManagement, ProbeDeviceSuccessReportsRawReplyHexAndCmd) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_private_function_reply(component.node_id_)));
+
+  const auto result = component.probe_device("ABC123", "private_fn", "0x06");
+  EXPECT_TRUE(result.success);
+  EXPECT_FALSE(result.verified) << "a probe reply's meaning is not known, so it is never verified";
+  EXPECT_EQ(result.probe_name, "private_fn");
+  EXPECT_EQ(result.probe_index, "0x06");
+  EXPECT_TRUE(result.has_response_cmd);
+  EXPECT_EQ(result.response_cmd, CMD_PRIVATE_RESP);
+  EXPECT_FALSE(result.response_hex.empty());
+}
+
+TEST(HubManagement, ProbeDeviceErrorResponseReportsDecodedResultCode) {
+  // The exact shape a real awning returned to a general_info3 probe: CMD_ERROR_RESP with
+  // RESULT_ERROR_DURING_EXECUTION (0x08).
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_ERROR_DURING_EXECUTION)));
+
+  const auto result = component.probe_device("ABC123", "private_fn", "0x06");
+  EXPECT_TRUE(result.success) << "CMD_ERROR_RESP is a real, decoded reply, not a probe failure";
+  EXPECT_TRUE(result.has_response_cmd);
+  EXPECT_EQ(result.response_cmd, CMD_ERROR_RESP);
+  EXPECT_FALSE(result.response_hex.empty()) << "the raw reply is still reported alongside the decode";
+  EXPECT_TRUE(result.has_result_code);
+  EXPECT_EQ(result.result_code, RESULT_ERROR_DURING_EXECUTION);
+  EXPECT_NE(result.message.find(command_result_name(RESULT_ERROR_DURING_EXECUTION)), std::string::npos);
+}
+
+TEST(HubManagement, ProbeDeviceFunctionIdReplyNeverUpdatesDevicePosition) {
+  // A probe's CMD_PRIVATE_RESP reply clears PRIVATE_RESPONSE_MIN_DATA_LEN (hub_status.cpp) and
+  // would misread as a position update if it were ever routed through
+  // apply_private_response_status(). ManagementActions has no access to the hub's protected
+  // update_device_status_() at all (see hub_core.h), so this is a structural guarantee, not a
+  // runtime check -- this test locks that guarantee in as a regression.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->position = 42.0F;
+  dev->target = 42.0F;
+  dev->tilt = 17.0F;
+  dev->is_stopped = true;
+  radio.queue_rx(frame_to_packet(make_private_function_reply(component.node_id_)));
+
+  const auto result = component.probe_device("ABC123", "private_fn", "0x06");
+  ASSERT_TRUE(result.success);
+
+  EXPECT_FLOAT_EQ(dev->position, 42.0F) << "probe reply must never update device position";
+  EXPECT_FLOAT_EQ(dev->target, 42.0F) << "probe reply must never update device target";
+  EXPECT_FLOAT_EQ(dev->tilt, 17.0F) << "probe reply must never update device tilt";
+  EXPECT_TRUE(dev->is_stopped) << "probe reply must never update the stopped flag";
+}
+
+TEST(HubManagement, ApiProbeDevicePublishesManagementResultEvent) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_private_function_reply(component.node_id_)));
+
+  component.api_probe_device_("ABC123", "private_fn", "0x06");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  const auto &event = api_server.events_.front();
+  EXPECT_EQ(event.event_type, "esphome.home_io_control_action_result");
+  EXPECT_EQ(event.data.at("action"), "probe_device");
+  EXPECT_EQ(event.data.at("device_id"), "ABC123");
+  EXPECT_EQ(event.data.at("success"), "true");
+  EXPECT_EQ(event.data.at("probe"), "private_fn");
+  EXPECT_EQ(event.data.at("index"), "0x06");
+  EXPECT_EQ(event.data.at("response_cmd"), "04");
+  EXPECT_FALSE(event.data.at("response_hex").empty());
+}
+
+TEST(HubManagement, ProbeSweepRejectsInvertedRange) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "private_fn", "9", "6");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "last_index must be >= first_index");
+}
+
+TEST(HubManagement, ProbeSweepRejectsRangeTooWide) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "private_fn", "0x00", "0x20");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "sweep range too wide: 33 indices, max 16");
+}
+
+TEST(HubManagement, ProbeSweepRejectsInvalidIndexArguments) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "private_fn", "nope", "6");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "first_index/last_index must be decimal or 0x-prefixed byte values (0-255)");
+}
+
+TEST(HubManagement, ProbeSweepReportsOneLinePerIndex) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  // Index 6 answers, index 7 gets no reply -- one queued RX only.
+  radio.queue_rx(frame_to_packet(make_private_function_reply(component.node_id_)));
+
+  const auto result = component.probe_sweep("ABC123", "private_fn", "6", "7");
+  EXPECT_TRUE(result.success) << "the sweep action itself succeeds even if individual indices don't answer";
+  EXPECT_NE(result.message.find("1 answered"), std::string::npos)
+      << "expected 1 answered of 2 attempted, got: " << result.message;
+  EXPECT_NE(result.message.find("index=0x06: cmd=0x04"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("index=0x07: no reply"), std::string::npos) << result.message;
+}
+
+TEST(HubManagement, ProbeSweepStopsEarlyWhenDeviceIsMoving) {
+  // A terminal refusal (here, the device being mid-transaction for the whole sweep) must stop the
+  // loop after the first index rather than repeating the same refusal for every remaining one in
+  // the requested range.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  const auto result = component.probe_sweep("ABC123", "private_fn", "6", "8");
+  EXPECT_FALSE(result.success) << "a sweep cut short by a terminal refusal did not complete the requested range";
+  EXPECT_NE(result.message.find("stopping sweep"), std::string::npos)
+      << "device-moving mid-sweep should stop rather than repeat the same refusal: " << result.message;
+  EXPECT_EQ(result.message.find("index=0x08"), std::string::npos)
+      << "sweep should not have reached the third index: " << result.message;
+}
+
+TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
+  // An unrecognized probe name must be rejected once, up front, not retried for every index in
+  // the range.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "unknown4a", "0", "5");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "unknown probe \"unknown4a\" (expected private_fn, status_ext, general_info3, private2, or "
+                            "private2_short)");
+  EXPECT_EQ(result.message.find("index="), std::string::npos)
+      << "an invalid probe name must not enter the per-index loop at all: " << result.message;
+}
+
+TEST(HubManagement, ProbeSweepRejectsNoIndexProbeWithoutLooping) {
+  // general_info3 takes no index (ProbeDescriptor::needs_index == false); sweeping it would send
+  // the identical zero-payload frame up to PROBE_SWEEP_MAX_INDICES times for no new information.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "general_info3", "0", "15");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "probe \"general_info3\" takes no index; use probe_device");
+  EXPECT_EQ(result.message.find("index="), std::string::npos)
+      << "a no-index probe must not enter the per-index loop at all: " << result.message;
+}
+
+TEST(HubManagement, ProbeSweepRejectsUnregisteredDeviceWithoutLooping) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("123456", "private_fn", "0", "5");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device is not registered on this hub");
+  EXPECT_EQ(result.message.find("index="), std::string::npos)
+      << "an unregistered device must not enter the per-index loop at all: " << result.message;
 }

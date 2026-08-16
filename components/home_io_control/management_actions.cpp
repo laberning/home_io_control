@@ -13,6 +13,9 @@
 #include "hub_internal.h"  // brings in hub_core.h + all internal helpers + logging
 #include "proto_commands.h"
 
+#include "esphome/core/application.h"
+#include "esphome/core/hal.h"
+
 #if defined(USE_API_USER_DEFINED_ACTIONS) && defined(USE_API_CUSTOM_SERVICES)
 #include "esphome/core/helpers.h"
 #endif
@@ -20,9 +23,12 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <map>
 #include <vector>
 
@@ -35,9 +41,93 @@ constexpr const char *MANAGEMENT_ACTION_RENAME_DEVICE = "rename_device";
 constexpr const char *MANAGEMENT_ACTION_IDENTIFY_DEVICE = "identify_device";
 constexpr const char *MANAGEMENT_ACTION_FORCE_OPEN_DEVICE = "force_open_device";
 constexpr const char *MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES = "scan_paired_devices";
+constexpr const char *MANAGEMENT_ACTION_PROBE_DEVICE = "probe_device";
+constexpr const char *MANAGEMENT_ACTION_PROBE_SWEEP = "probe_sweep";
 constexpr const char *MANAGEMENT_RESULT_EVENT = "esphome.home_io_control_action_result";
 constexpr size_t RESULT_CODE_BUFFER_SIZE = 5;
 constexpr size_t UNEXPECTED_RESPONSE_MESSAGE_BUFFER_SIZE = 64;
+
+// --- Diagnostic probe names (probe_device()/probe_sweep() `probe` argument) ---
+constexpr const char *PROBE_NAME_PRIVATE_FN = "private_fn";          ///< Q0: create_private_function().
+constexpr const char *PROBE_NAME_STATUS_EXT = "status_ext";          ///< Q1: create_get_status_extended().
+constexpr const char *PROBE_NAME_GENERAL_INFO3 = "general_info3";    ///< Q2: create_general_info3().
+constexpr const char *PROBE_NAME_PRIVATE2 = "private2";              ///< Q3 long form: create_private2_read().
+constexpr const char *PROBE_NAME_PRIVATE2_SHORT = "private2_short";  ///< Q3 short form: create_private2_read().
+/// Extended-CMD_PRIVATE selector "status_ext" probes: the field-observed, never-decoded 0x80.
+/// Selector 0x20 (tilt) already has a permanent builder/action (create_get_status_tilt()) and is
+/// not part of this probe.
+constexpr uint8_t PROBE_STATUS_EXT_SELECTOR = 0x80;
+/// Bound on probe_sweep()'s index range — this transmits on a shared ISM band to what may be a
+/// battery device; an unbounded sweep is antisocial and would keep the device awake needlessly.
+constexpr uint8_t PROBE_SWEEP_MAX_INDICES = 16;
+/// Spacing between probe_sweep() indices. Sweep steps are sequential and blocking, so they never
+/// overlap regardless of this value; it exists for ISM-band duty cycling and to give a battery
+/// device real idle time between reads.
+constexpr uint32_t PROBE_SWEEP_DELAY_MS = 1000;
+
+/// @brief Uniform wrapper signature every probe builder is adapted to, so PROBE_TABLE below can
+/// hold one function-pointer type regardless of each create_*() builder's own parameter list.
+using ProbeBuilderFn = bool (*)(IoFrame &, const uint8_t *, const uint8_t *, uint8_t index);
+
+bool build_probe_private_fn(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index) {
+  return create_private_function(f, own, dst, index);
+}
+bool build_probe_status_ext(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index) {
+  return create_get_status_extended(f, own, dst, PROBE_STATUS_EXT_SELECTOR, index);
+}
+bool build_probe_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t /*index*/) {
+  return create_general_info3(f, own, dst, /*low_power=*/true);
+}
+bool build_probe_private2_long(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index) {
+  return create_private2_read(f, own, dst, index, /*long_form=*/true, /*low_power=*/true);
+}
+bool build_probe_private2_short(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index) {
+  return create_private2_read(f, own, dst, index, /*long_form=*/false, /*low_power=*/true);
+}
+
+/// @brief One row per probe_device()/probe_sweep() `probe` argument value.
+struct ProbeDescriptor {
+  const char *name;
+  bool needs_index;  ///< False only for "general_info3" -- its builder takes no index/selector.
+  ProbeBuilderFn builder;
+};
+
+/// @brief The full set of probes probe_device()/probe_sweep() can dispatch to.
+///
+/// Single source of truth for probe names, replacing what used to be an if/else-if chain with
+/// the "index must be..." error message written out once per branch. Adding, removing, or
+/// renaming a probe is a one-line change here rather than a change to both probe_device()'s
+/// dispatch and its error message. Deliberately has no "unknown4a" row -- see ADR 0024.
+constexpr ProbeDescriptor PROBE_TABLE[] = {
+    {PROBE_NAME_PRIVATE_FN, true, build_probe_private_fn},
+    {PROBE_NAME_STATUS_EXT, true, build_probe_status_ext},
+    {PROBE_NAME_GENERAL_INFO3, false, build_probe_general_info3},
+    {PROBE_NAME_PRIVATE2, true, build_probe_private2_long},
+    {PROBE_NAME_PRIVATE2_SHORT, true, build_probe_private2_short},
+};
+constexpr uint8_t PROBE_TABLE_SIZE = sizeof(PROBE_TABLE) / sizeof(PROBE_TABLE[0]);
+
+/// @brief Look up a probe by name.
+/// @return Pointer into PROBE_TABLE, or nullptr if `probe` names none of its rows.
+const ProbeDescriptor *find_probe_descriptor(const std::string &probe) {
+  for (const auto &descriptor : PROBE_TABLE) {
+    if (probe == descriptor.name)
+      return &descriptor;
+  }
+  return nullptr;
+}
+
+/// @brief The error message probe_device()/probe_sweep() report for an unrecognized `probe`
+/// argument, built from PROBE_TABLE so the list of names can never drift out of sync with it.
+std::string unknown_probe_message(const std::string &probe) {
+  std::string names;
+  for (uint8_t i = 0; i < PROBE_TABLE_SIZE; i++) {
+    if (i > 0)
+      names += (i + 1 == PROBE_TABLE_SIZE) ? ", or " : ", ";
+    names += PROBE_TABLE[i].name;
+  }
+  return "unknown probe \"" + probe + "\" (expected " + names + ")";
+}
 
 /// @brief Maximum distinct responders reported by one scan_paired_devices() call.
 ///
@@ -153,9 +243,12 @@ static std::string normalize_device_id_argument(const std::string &device_id) {
 
 static std::string bool_to_string(bool value) { return value ? "true" : "false"; }
 
-static std::string format_result_code(uint8_t result_code) {
+/// @brief Format a byte as two uppercase hex digits, no prefix. Named neutrally rather than
+/// after any one caller: used for CMD_ERROR_RESP result codes, probe reply/index command bytes,
+/// and sweep index values alike -- none of those is a "result code" except the first.
+static std::string format_hex_byte(uint8_t value) {
   std::array<char, RESULT_CODE_BUFFER_SIZE> buffer{};
-  std::snprintf(buffer.data(), buffer.size(), "%02X", result_code);
+  std::snprintf(buffer.data(), buffer.size(), "%02X", value);
   return std::string(buffer.data());
 }
 
@@ -221,6 +314,38 @@ static bool apply_error_response(const IoFrame &response, ManagementActionResult
   return true;
 }
 
+/// @brief Parse a probe_device()/probe_sweep() index argument into a byte.
+///
+/// Accepts both a bare decimal string ("6") and a "0x"-prefixed hex string ("0x06") — the two
+/// shapes a Home Assistant user is likely to type when copying a value out of a captured frame
+/// dump. Rejects anything else (empty string, trailing garbage, out-of-range value) rather than
+/// silently defaulting to 0, since a wrong index silently sent as 0 would misrepresent what was
+/// actually probed.
+/// @param text Argument as received from the native API call.
+/// @param out Parsed byte on success; left untouched on failure.
+/// @return true if `text` is exactly one well-formed byte value.
+static bool parse_probe_index(const std::string &text, uint8_t &out) {
+  if (text.empty())
+    return false;
+  // A leading "0" followed by another digit (e.g. "010") is valid octal to strtoul() below and
+  // would silently probe a different index than a user copying a byte value out of a hex dump
+  // intended -- reject it explicitly rather than relying on strtoul()'s octal parsing, which only
+  // rejects the invalid-octal-digit cases ("08", "09"), not the valid ones.
+  if (text.size() > 1 && text[0] == '0' && text[1] != 'x' && text[1] != 'X')
+    return false;
+  errno = 0;
+  char *end = nullptr;
+  // Base 0: strtoul() itself recognizes a "0x"/"0X" prefix as hex and a bare "0" as decimal
+  // zero, which is exactly the "6" / "0x06" / "0" shape probes need to accept.
+  const uint32_t value = std::strtoul(text.c_str(), &end, 0);
+  if (end != text.c_str() + text.size())
+    return false;
+  if (errno == ERANGE || value > std::numeric_limits<uint8_t>::max())
+    return false;
+  out = static_cast<uint8_t>(value);
+  return true;
+}
+
 // --- ManagementActions ---
 
 ManagementActions::ManagementActions(const uint8_t *node_id, const uint8_t *system_key, const TuningConfig *tuning,
@@ -254,6 +379,25 @@ void ManagementActions::register_actions() {
   api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
       MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES, {},
       [this](const api::ExecuteServiceRequest &) { this->api_scan_paired_devices(); }));
+  // Registered only when diagnostic_probes: true was set in YAML, so the action list stays clean
+  // on a default build -- diagnostic_probes_enabled() already holds its final YAML-configured
+  // value here: __init__.py's to_code() emits set_diagnostic_probes_enabled() as a plain
+  // property-setter call in generated main.cpp, which runs before App.setup() calls this
+  // component's setup() (and therefore this method), not after.
+  if (hub_->diagnostic_probes_enabled()) {
+    api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
+        MANAGEMENT_ACTION_PROBE_DEVICE, {"device_id", "probe", "index"},
+        [this](const api::ExecuteServiceRequest &request) {
+          this->api_probe_device(request.args[0].string_.str(), request.args[1].string_.str(),
+                                 request.args[2].string_.str());
+        }));
+    api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
+        MANAGEMENT_ACTION_PROBE_SWEEP, {"device_id", "probe", "first_index", "last_index"},
+        [this](const api::ExecuteServiceRequest &request) {
+          this->api_probe_sweep(request.args[0].string_.str(), request.args[1].string_.str(),
+                                request.args[2].string_.str(), request.args[3].string_.str());
+        }));
+  }
 #endif
 }
 
@@ -319,9 +463,23 @@ void ManagementActions::publish_result(const ManagementActionResult &result) {
   if (!result.applied_name.empty())
     event_data["applied_name"] = result.applied_name;
   if (result.has_result_code) {
-    event_data["result_code"] = format_result_code(result.result_code);
+    event_data["result_code"] = format_hex_byte(result.result_code);
     event_data["result_code_name"] = command_result_name(result.result_code);
   }
+  if (!result.probe_name.empty()) {
+    event_data["probe"] = result.probe_name;
+    // probe_index is empty only until a sweep has parsed its range; both probe_device() and
+    // probe_sweep() fill it before publishing, so an absent key means "no index applies" rather
+    // than "the index was blank".
+    if (!result.probe_index.empty())
+      event_data["index"] = result.probe_index;
+  }
+  if (result.has_response_cmd) {
+    event_data["response_cmd"] = format_hex_byte(result.response_cmd);
+    event_data["response_cmd_name"] = command_name(result.response_cmd);
+  }
+  if (!result.response_hex.empty())
+    event_data["response_hex"] = result.response_hex;
 
   hub_->fire_homeassistant_event(MANAGEMENT_RESULT_EVENT, event_data);
 }
@@ -615,6 +773,193 @@ ManagementActionResult ManagementActions::scan_paired_devices() {
                       "appear, and raise SCAN_MAX_REPLIES if this install really is larger.\n";
   }
   result.message += body;
+  return result;
+}
+
+void ManagementActions::api_probe_device(const std::string &device_id, const std::string &probe,
+                                         const std::string &index) {
+  publish_result(probe_device(device_id, probe, index));
+}
+
+ManagementActionResult ManagementActions::probe_device(const std::string &device_id, const std::string &probe,
+                                                       const std::string &index) {
+  // resolve_device_() reassigns its `result` argument wholesale (via make_management_result()),
+  // so it must write into its own object rather than the one already carrying probe_name/index --
+  // matches probe_sweep()'s resolve_result pattern below.
+  ManagementActionResult resolve_result;
+  auto *dev = resolve_device_(MANAGEMENT_ACTION_PROBE_DEVICE, device_id, resolve_result);
+  if (dev == nullptr) {
+    resolve_result.probe_name = probe;
+    resolve_result.probe_index = index;
+    return resolve_result;
+  }
+
+  ManagementActionResult result = resolve_result;
+  result.probe_name = probe;
+  result.probe_index = index;
+
+  if (!hub_->diagnostic_probes_enabled()) {
+    result.message = "diagnostic probes are not enabled; set diagnostic_probes: true in YAML";
+    result.terminal_refusal = true;
+    return result;
+  }
+  // An unknown frame into a mid-transaction device state machine is the one avoidable way a
+  // read-shaped probe could cause harm.
+  if (!dev->is_stopped) {
+    result.message = "device is moving; refusing to probe mid-transaction";
+    result.terminal_refusal = true;
+    return result;
+  }
+
+  const ProbeDescriptor *descriptor = find_probe_descriptor(probe);
+  if (descriptor == nullptr) {
+    result.message = unknown_probe_message(probe);
+    return result;
+  }
+
+  uint8_t index_byte = 0;
+  if (descriptor->needs_index && !parse_probe_index(index, index_byte)) {
+    result.message = "index must be a decimal or 0x-prefixed byte value (0-255)";
+    return result;
+  }
+
+  // low_power=true for every probe that takes it as a parameter: this codebase does not track
+  // per-device power class (see create_get_name()'s call site in hub_operations.cpp for the same
+  // reasoning), and the corpus shows real devices accepting the flag whether or not they need it.
+  IoFrame request;
+  if (!descriptor->builder(request, node_id_, dev->node_id, index_byte)) {
+    result.message = "failed to build probe request";
+    return result;
+  }
+
+  IoFrame response;
+  if (!engine_.send_and_receive(request, response, FREQ_CH2)) {
+    engine_.log_debug(result.device_id.c_str());
+    result.message = "no reply after " + std::to_string(EXCHANGE_RETRY_COUNT) +
+                     " attempts (device asleep, unreachable, or silently ignoring this opcode)";
+    return result;
+  }
+
+  // Report the raw reply, not an interpretation -- the whole point of a probe is that we do not
+  // know what these bytes mean yet. This never touches update_device_status_(): ManagementActions
+  // has no access to that protected hub method at all (see hub_core.h), so a probe reply can
+  // never be misread as a position update.
+  uint8_t raw[FRAME_MAX_SIZE] = {0};
+  const uint8_t raw_len = serialize(response, raw, sizeof(raw));
+  char hex[FRAME_LOG_HEX_BUFFER_SIZE];
+  render_frame_hex_redacted(raw, raw_len, hex, sizeof(hex));
+
+  // Log through the same "io_capture" structured tag every other received frame uses
+  // (log_component_capture(), hub_internal.h) rather than relying on IOHOME_FRAME_LOG -- that
+  // build flag is opt-in (only set in the loopback/monitor configs under config/), and the
+  // always-on receive path (process_received_packet_(), gated on !busy_) never sees a probe
+  // reply at all, since the reply is consumed here, inside a blocking send_and_receive() call,
+  // while busy_ is still true. Without this call a probe reply would only appear in the action's
+  // hex message/event on a default build -- not a form scripts/corpus/ingest.py parses -- despite
+  // the reply already having gone out over an authenticated, radio-verified exchange.
+  detail::log_component_capture(hub_->get_radio(), "probe_rx", raw, raw_len, &response);
+
+  result.success = true;
+  result.has_response_cmd = true;
+  result.response_cmd = response.cmd;
+  result.response_hex = hex;
+  result.message = "probe \"" + probe + "\" reply cmd=0x" + format_hex_byte(response.cmd) + " (" +
+                   command_name(response.cmd) + ") hex=" + hex;
+  // The status-reply table is a decoded part of the protocol, unlike the probe payload itself --
+  // unlike the payload bytes, a result code is not something the probe exists to discover.
+  if (response.cmd == CMD_ERROR_RESP && apply_error_response(response, result)) {
+    result.message += " [" + std::string(command_result_name(result.result_code)) + ": " +
+                      command_result_description(result.result_code) + "]";
+  }
+  return result;
+}
+
+void ManagementActions::api_probe_sweep(const std::string &device_id, const std::string &probe,
+                                        const std::string &first_index, const std::string &last_index) {
+  publish_result(probe_sweep(device_id, probe, first_index, last_index));
+}
+
+ManagementActionResult ManagementActions::probe_sweep(const std::string &device_id, const std::string &probe,
+                                                      const std::string &first_index, const std::string &last_index) {
+  ManagementActionResult result =
+      make_management_result(MANAGEMENT_ACTION_PROBE_SWEEP, normalize_device_id_argument(device_id));
+  result.probe_name = probe;
+
+  // Validate the device and the probe name once, up front. Neither can start succeeding partway
+  // through a range: an unregistered device or an unrecognized probe name fails identically for
+  // every index, so without this check the loop below would run the full span and append the
+  // same error line up to PROBE_SWEEP_MAX_INDICES times.
+  ManagementActionResult resolve_result;
+  if (resolve_device_(MANAGEMENT_ACTION_PROBE_SWEEP, device_id, resolve_result) == nullptr) {
+    result.message = resolve_result.message;
+    return result;
+  }
+  const ProbeDescriptor *descriptor = find_probe_descriptor(probe);
+  if (descriptor == nullptr) {
+    result.message = unknown_probe_message(probe);
+    return result;
+  }
+  if (!descriptor->needs_index) {
+    result.message = "probe \"" + probe + "\" takes no index; use probe_device";
+    return result;
+  }
+
+  uint8_t first = 0;
+  uint8_t last = 0;
+  if (!parse_probe_index(first_index, first) || !parse_probe_index(last_index, last)) {
+    result.message = "first_index/last_index must be decimal or 0x-prefixed byte values (0-255)";
+    return result;
+  }
+  if (last < first) {
+    result.message = "last_index must be >= first_index";
+    return result;
+  }
+  const uint32_t span = static_cast<uint32_t>(last) - first + 1;
+  if (span > PROBE_SWEEP_MAX_INDICES) {
+    result.message =
+        "sweep range too wide: " + std::to_string(span) + " indices, max " + std::to_string(PROBE_SWEEP_MAX_INDICES);
+    return result;
+  }
+
+  std::string report;
+  uint32_t answered_count = 0;
+  bool stopped_early = false;
+  for (uint32_t idx = first; idx <= last; idx++) {
+    if (idx != first) {
+      App.feed_wdt();
+      delay(PROBE_SWEEP_DELAY_MS);
+    }
+    const std::string index_str = std::to_string(idx);
+    const ManagementActionResult step = probe_device(device_id, probe, index_str);
+    report += "index=0x" + format_hex_byte(static_cast<uint8_t>(idx)) + ": ";
+    if (step.success) {
+      answered_count++;
+      report += "cmd=0x" + format_hex_byte(step.response_cmd) + " hex=" + step.response_hex + "\n";
+    } else {
+      report += step.message + "\n";
+    }
+    // terminal_refusal (diagnostic probes not enabled, device moving) applies to every remaining
+    // index the same way it applied to this one -- stop rather than repeat it N more times. A
+    // structured flag, not a search over `step.message`: probe_device() sets it explicitly, so
+    // rewording a refusal message can never silently break this check.
+    if (step.terminal_refusal) {
+      report += "(stopping sweep: " + step.message + ")\n";
+      stopped_early = true;
+      break;
+    }
+  }
+
+  // A sweep that ran its full requested range is a success even if nothing answered -- "no
+  // device answered any index" is a valid, reportable outcome, the same philosophy
+  // scan_paired_devices() uses for zero replies. A sweep cut short by a terminal refusal did not
+  // complete what was asked of it and must not report success.
+  result.success = !stopped_early;
+  // Renders the same 0x-prefixed form as the report body, so the Home Assistant event carries the
+  // swept range rather than a blank `index` field left over from the per-index probe_device()
+  // results this loop discards.
+  result.probe_index = "0x" + format_hex_byte(first) + "-0x" + format_hex_byte(last);
+  result.message = "Sweep \"" + probe + "\" over [0x" + format_hex_byte(first) + ",0x" + format_hex_byte(last) +
+                   "]: " + std::to_string(answered_count) + " answered\n" + report;
   return result;
 }
 

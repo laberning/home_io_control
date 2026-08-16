@@ -69,16 +69,27 @@ uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offse
   return decoded_len;
 }
 
-namespace {
-
-/// @brief Check if a command ID is one of the known IO‑Homecontrol commands.
-/// @param cmd Command byte.
-/// @return true if cmd matches a known command constant.
+/// This list missing CMD_GET_GENERAL_INFO3_RESP (0x59) is exactly what turned a real Q2 probe
+/// reply into a false "no reply" timeout on real hardware (2026-08-16); the same audit also found
+/// CMD_IDENTIFY and CMD_WRITE_PRIVATE/CMD_WRITE_PRIVATE_ACK missing, unrelated to that probe but
+/// affecting the already-shipped identify_device() action (and climate writes) on SX1262/LR1121.
+/// Add every new opcode this codebase sends a request for, or expects a reply to, here as well as
+/// in proto_constants.h. Deliberately
+/// excludes CMD_UNKNOWN4A_REQ (0x4A, see ADR 0024) — recognizing a *received* 0x4A would not
+/// violate the "never transmitted" rule, but nothing in this codebase currently sends anything
+/// that would draw one, so there is no exchange for it to unblock; CMD_UNKNOWN4A_RESP (0x4B) is
+/// included because it is a plausible reply to CMD_GET_GENERAL_INFO3 (0x58), which this codebase
+/// does send. Declared in radio_soft_phy.h so tests can enumerate every accepted command directly.
 bool is_known_io_command(uint8_t cmd) {
   switch (cmd) {
     case CMD_EXECUTE:
     case CMD_PRIVATE:
     case CMD_PRIVATE_RESP:
+    case CMD_PRIVATE2:
+    case CMD_PRIVATE2_RESP:
+    case CMD_IDENTIFY:
+    case CMD_WRITE_PRIVATE:
+    case CMD_WRITE_PRIVATE_ACK:
     case CMD_DISCOVER_REQ:
     case CMD_DISCOVER_RESP:
     case CMD_DISCOVER_SPE_REQ:
@@ -90,12 +101,15 @@ bool is_known_io_command(uint8_t cmd) {
     case CMD_KEY_CONFIRM:
     case CMD_CHALLENGE_REQ:
     case CMD_CHALLENGE_RESP:
+    case CMD_UNKNOWN4A_RESP:
     case CMD_GET_NAME:
     case CMD_GET_NAME_RESP:
     case CMD_SET_NAME:
     case CMD_SET_NAME_RESP:
     case CMD_GET_INFO2:
     case CMD_GET_INFO2_RESP:
+    case CMD_GET_GENERAL_INFO3:
+    case CMD_GET_GENERAL_INFO3_RESP:
     case CMD_SET_CONFIG1:
     case CMD_SET_CONFIG1_RESP:
     case CMD_STATUS_UPDATE:
@@ -106,6 +120,8 @@ bool is_known_io_command(uint8_t cmd) {
       return false;
   }
 }
+
+namespace {
 
 /// @brief Check if a UART-decoded frame is plausible as an IO-Homecontrol packet.
 /// Accepts frames at or above FRAME_MIN_SIZE (9 bytes) that contain a known command

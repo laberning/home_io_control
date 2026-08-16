@@ -61,6 +61,7 @@ CONF_FEM_PA_PIN = "fem_pa_pin"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_EXPOSED_SENDERS = "exposed_senders"
 CONF_ACCEPT_FOREIGN_PAIRING = "accept_foreign_pairing"
+CONF_DIAGNOSTIC_PROBES = "diagnostic_probes"
 CONF_LR1121_FIRMWARE_UPDATE = "lr1121_firmware_update"
 CONF_LR1121_BOOTLOADER = "bootloader"
 CONF_CHECKSUM_MD5 = "checksum_md5"
@@ -443,6 +444,7 @@ CONFIG_SCHEMA = cv.All(
                 validate_device_id
             ),
             cv.Optional(CONF_ACCEPT_FOREIGN_PAIRING, default=False): cv.boolean,
+            cv.Optional(CONF_DIAGNOSTIC_PROBES, default=False): cv.boolean,
             cv.Optional(CONF_LR1121_FIRMWARE_UPDATE): LR1121_FIRMWARE_UPDATE_SCHEMA,
             cv.Optional(tuning_module.CONF_TUNING): tuning_module.TUNING_CONFIG_SCHEMA,
         }
@@ -513,6 +515,8 @@ async def to_code(config):
 
     if config[CONF_ACCEPT_FOREIGN_PAIRING]:
         await _create_accept_foreign_pairing_switch(config, var)
+
+    cg.add(var.set_diagnostic_probes_enabled(config[CONF_DIAGNOSTIC_PROBES]))
 
     if CONF_LR1121_FIRMWARE_UPDATE in config:
         await _create_lr1121_firmware_update(config, var)

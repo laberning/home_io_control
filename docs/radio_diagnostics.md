@@ -444,3 +444,111 @@ so the defaults can improve.
 threshold too high (e.g. `-45 dBm`) or the retry count too low can force transmissions on a
 busy channel and may violate local regulations for the 868 MHz SRD band. Do not leave
 aggressive LBT values in a production configuration.
+
+## Diagnostic probes
+
+> [!WARNING]
+> **Sends opcodes this project has not decoded — use with caution.** A probe's reply format is,
+> by definition, not yet understood. Sending one to a real device is normally low-risk (most of
+> these are read-shaped requests real hubs send routinely), but it is not risk-free: an unknown
+> command could have effects on the target device that this project cannot predict. Probes only
+> ever reach devices already paired to this hub (see below).
+> Prefer the field-observed starting values given below over inventing your own, and prefer
+> testing on a light/switch over a motor when you do widen — see "Widen carefully" below.
+
+`home_io_control.diagnostic_probes: true` enables two Home Assistant actions, `probe_device` and
+`probe_sweep`, for sending a handful of opcodes this project has observed on the wire but never
+fully decoded, and for reading back the raw, uninterpreted reply. This is protocol-research
+tooling for closing exactly that kind of open question on hardware you own — see
+[ADR 0024](adr/0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) for the full
+reasoning behind how it's gated and isolated from the rest of this component.
+
+```yaml
+home_io_control:
+  node_id: "C0FFEE"
+  system_key: "..."
+  diagnostic_probes: true
+```
+
+**It only ever targets a device already paired to this hub.** `probe_device`/`probe_sweep`
+resolve their target the same way every other management action does — there is no path from this
+instrumentation to a device this hub has not already paired with and does not already hold a key
+for. Every probe additionally refuses while the target device's last known state is "moving" —
+an unknown frame is never sent into a device state machine that is already mid-transaction. This
+is the device's last reported movement state, not a check on anything in flight: it never applies
+to a light/switch, and it can be stale if the device was last moved from a physical remote the hub
+never saw.
+
+### Calling the actions
+
+Same node-scoped naming as every other action in this component — see
+[Home Assistant Actions](home_io_control.md#home-assistant-actions) for the full explanation of
+how `<node_name>` is derived from `esphome.name`. For a config with `name: hioc-heltec-v2`:
+
+```yaml
+action: esphome.hioc_heltec_v2_probe_device
+data:
+  device_id: "FEEB1E"
+  probe: "private2"
+  index: "0x09"
+```
+
+`probe_sweep` takes a range instead of a single `index`:
+
+```yaml
+action: esphome.hioc_heltec_v2_probe_sweep
+data:
+  device_id: "FEEB1E"
+  probe: "status_ext"
+  first_index: "0x00"
+  last_index: "0x01"
+```
+
+- `device_id` (required, both actions): the 6-hex-character IO-homecontrol device ID, same as
+  every other management action.
+- `probe` (required, both actions): which frame to send — see the table below.
+- `index` (`probe_device`) / `first_index` + `last_index` (`probe_sweep`): always plain strings —
+  `"6"` and `"0x06"` are both accepted; anything else is rejected with a clear error rather than
+  silently defaulting to `0`. `probe_sweep` is bounded to 16 indices per call, spaced a second
+  apart, and reports one line per index (answered / error-coded / silent / refused).
+- Every reply is reported as raw hex plus its command byte, deliberately uninterpreted: the point
+  of a probe is that the reply's meaning is not yet known. Every successful reply is also logged
+  at the `io_capture` DEBUG tag (the same structured logging every other received frame uses), so
+  with `logger: level: DEBUG` a captured reply pastes directly into `scripts/corpus/ingest.py`
+  with no reformatting — this does not require the `-DIOHOME_FRAME_LOG` build flag.
+
+### Available probes
+
+| `probe` | Sends | `index` selects | Start with | Evidence for the starting values |
+|---|---|---|---|---|
+| `private_fn` | `CMD_PRIVATE` (0x03) with a chosen function ID | The function ID | `0x06` or `0x09` | Not field-observed on our own wire — every `CMD_PRIVATE` frame captured here uses function ID `0x03`. `0x06`/`0x09` are known from production software elsewhere. |
+| `status_ext` | Extended `CMD_PRIVATE` at selector `0x80` | The block/`N` value | `0x00` and `0x01` | Field-observed: real hubs send exactly these two values to real motors. |
+| `general_info3` | `CMD_GET_GENERAL_INFO3` (0x58), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | — |
+| `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte (the stored-position selector used elsewhere in this component, e.g. favorite/vent) | `0x00` (favorite/My), `0x03` (vent) | Field-observed long-form shape; `0x00`/`0x03` match this component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` constants. |
+| `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | Same as `private2` | Field-observed short-form shape. |
+
+**There is deliberately no probe for `0x4A`.** Its leading published interpretation is a
+destructive file-management operation, and no reference this project has consulted has ever
+transmitted it. See ADR 0024 for the reasoning.
+
+### Widen carefully
+
+The starting values above are the safest available for each probe — for `status_ext` and
+`private2`/`private2_short` because a real hub sends exactly those bytes to real motors routinely;
+for `private_fn` because, absent an on-air observation of our own, production software using this
+exact command is the next-best evidence available. Widening beyond them is a separate, deliberate
+decision, not something to do by default — and when you do, prefer the dimmer/light over a motor: a
+wrong write-shaped result on a light is visible and trivially reversible, while a motor's stored
+configuration is not.
+
+### Expect a long block from `probe_sweep`
+
+A full-range sweep can block the ESPHome loop (API, other components, OTA) for on the order of a
+minute at default tuning, longer if a device never answers or if `exchange_start_response_wait_ms`
+has been raised — up to 16 indices, each up to 3 retries at the configured response-wait time,
+plus a spacing delay between indices. This is
+accepted deliberately for this maintainer-triggered, explicitly-opted-in diagnostic rather than
+restructured into scheduled steps — expect a warning about a long-blocking operation, and expect
+other Home Assistant traffic against this device to stall for the duration. `probe_device` (a
+single index) does not have this problem; reach for `probe_sweep` only when you actually need the
+range in one gesture.

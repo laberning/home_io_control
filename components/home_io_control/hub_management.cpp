@@ -4,7 +4,8 @@
 ///
 /// All management logic lives in management_actions.cpp. This file provides only the
 /// IOHomeControlComponent::rename_device() / identify_device() / force_open_device() /
-/// scan_paired_devices() implementations that the virtual dispatch table requires.
+/// scan_paired_devices() / probe_device() / probe_sweep() implementations that the virtual
+/// dispatch table requires.
 
 #include "hub_internal.h"
 
@@ -43,6 +44,27 @@ IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::force_ope
 /// the virtual dispatch defined in hub_core.h is fulfilled.
 IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::scan_paired_devices() {
   return this->management_actions_.scan_paired_devices();
+}
+
+/// Send a single diagnostic probe frame to a registered device and report the raw reply.
+///
+/// Thin wrapper that delegates to management_actions_.probe_device() so that
+/// the virtual dispatch defined in hub_core.h is fulfilled.
+IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::probe_device(const std::string &device_id,
+                                                                                    const std::string &probe,
+                                                                                    const std::string &index) {
+  return this->management_actions_.probe_device(device_id, probe, index);
+}
+
+/// Walk a bounded index range, one probe per index.
+///
+/// Thin wrapper that delegates to management_actions_.probe_sweep() so that
+/// the virtual dispatch defined in hub_core.h is fulfilled.
+IOHomeControlComponent::ManagementActionResult IOHomeControlComponent::probe_sweep(const std::string &device_id,
+                                                                                   const std::string &probe,
+                                                                                   const std::string &first_index,
+                                                                                   const std::string &last_index) {
+  return this->management_actions_.probe_sweep(device_id, probe, first_index, last_index);
 }
 
 }  // namespace home_io_control

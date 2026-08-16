@@ -55,6 +55,15 @@ constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
 constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;
 /// Private sub-command for position status requests.
 constexpr uint8_t PRIVATE_GET_POSITION_STATUS = 0x03;
+/// Long-form CMD_PRIVATE2 (0x0C) payload length. Coincides numerically with
+/// EXECUTE_SPECIAL_PAYLOAD_SIZE but is a distinct command's payload shape — do not merge the two
+/// constants; a change to one must not silently change the other.
+constexpr size_t PRIVATE2_LONG_PAYLOAD_SIZE = 6;
+/// Extended-block flag at data[2] of the long-form CMD_PRIVATE2 payload — the same 0x80 byte
+/// value the field-observed extended-CMD_PRIVATE selector uses (create_get_status_extended()),
+/// but a distinct field on a distinct command. EXECUTE_POSITION_LAYOUT_FLAG above is CMD_EXECUTE's
+/// unrelated data[4] flag and must not be reused here even though it is also 0x80.
+constexpr uint8_t PRIVATE2_EXTENDED_BLOCK_FLAG = 0x80;
 /// Status-update acknowledgement payload matched from controller traffic.
 constexpr uint8_t STATUS_UPDATE_ACK_PAYLOAD[] = {0x05, 0x00};
 /// Set-config payload that enables automatic status updates from the device.
@@ -132,15 +141,22 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
 
-/// Build a get-status request (0x03). The device responds with its current position.
-bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+/// Build a CMD_PRIVATE (0x03) request for an arbitrary function ID. function_id = 0x06/0x09
+/// reads battery state; create_get_status() below is this builder frozen at function_id =
+/// PRIVATE_GET_POSITION_STATUS (0x03), the only function ID this codebase has ever captured on
+/// its own wire.
+bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t function_id) {
   // low_power=true for solar devices.
   init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, own);
-  // Private sub-command = get position status.
-  uint8_t d[3] = {PRIVATE_GET_POSITION_STATUS, 0x00, 0x00};
+  uint8_t d[3] = {function_id, 0x00, 0x00};
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
+}
+
+/// Build a get-status request (0x03). The device responds with its current position.
+bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+  return create_private_function(f, own, dst, PRIVATE_GET_POSITION_STATUS);
 }
 
 bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
@@ -148,6 +164,15 @@ bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
   set_dst(f, dst);
   set_src(f, own);
   return set_cmd(f, CMD_GET_NAME);
+}
+
+/// Build a CMD_GET_GENERAL_INFO3 (0x58) request. No payload, byte-for-byte like
+/// create_get_name() above.
+bool create_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, CMD_GET_GENERAL_INFO3);
 }
 
 bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
@@ -212,14 +237,48 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
   return set_cmd(f, CMD_EXECUTE, d, sizeof(d));
 }
 
-/// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
-bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+/// Build an extended CMD_PRIVATE (0x03) request with a selector/block pair — the shape real
+/// hubs use for both the tilt block (selector STATUS_TILT_SELECTOR) and the field-observed
+/// selector 0x80 (tests/corpus/captures/issues/issue_45_extended_private_both_selectors.yaml),
+/// which this codebase has never decoded. `block` is the field-observed name for the byte that
+/// varies (0x00/0x01) for selector 0x80; create_get_status_tilt() below is this builder frozen
+/// at selector = STATUS_TILT_SELECTOR, block = 0x01.
+bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t selector, uint8_t block) {
   init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, own);
-  // The selector byte switches the private status response to the extended tilt layout.
-  uint8_t d[4] = {PRIVATE_GET_POSITION_STATUS, STATUS_TILT_SELECTOR, 0x01, 0x00};
+  uint8_t d[4] = {PRIVATE_GET_POSITION_STATUS, selector, block, 0x00};
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
+}
+
+/// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
+bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+  return create_get_status_extended(f, own, dst, STATUS_TILT_SELECTOR, 0x01);
+}
+
+/// Build a CMD_PRIVATE2 (0x0C) request in either of the two field-observed shapes. The payload
+/// is CMD_EXECUTE's POS_FAVORITE/POS_VENT_MODIFIER stored-position selector with the execution
+/// prefix stripped — `modifier` is that same selector byte (e.g. POS_VENT_MODIFIER for vent).
+///
+/// `low_power` is a separate parameter, not derived from `long_form`: the two captured fixtures
+/// (tests/corpus/captures/issues/issue_45_private2_{long_form_request_response,short_form}.yaml)
+/// do carry CTRL1_LOW_POWER set on the long-form request and clear on the short-form ones, but
+/// that tracks the *target device's* power class in each capture (a solar shutter vs. a
+/// mains-powered switch), not the payload shape — the same relationship every other
+/// device-addressed builder in this file has to `low_power`. Deriving it from `long_form` would
+/// silently clear the flag on a short-form probe sent to a solar device.
+bool create_private2_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t modifier, bool long_form,
+                          bool low_power) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  if (long_form) {
+    uint8_t d[PRIVATE2_LONG_PAYLOAD_SIZE] = {POS_UNKNOWN,  0x00,     PRIVATE2_EXTENDED_BLOCK_FLAG,
+                                             POS_FAVORITE, modifier, 0x00};
+    return set_cmd(f, CMD_PRIVATE2, d, sizeof(d));
+  }
+  uint8_t d[4] = {POS_FAVORITE, modifier, 0x00, 0x00};
+  return set_cmd(f, CMD_PRIVATE2, d, sizeof(d));
 }
 
 /// Build a discovery broadcast (0x28). Sent to the broadcast address 0x00003B.

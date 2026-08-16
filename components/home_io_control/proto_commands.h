@@ -92,12 +92,38 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 ///       environmental lock.
 bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t open_position);
 
+/// @brief Build a CMD_PRIVATE (0x03) request for an arbitrary function ID.
+///
+/// function_id = 0x06 (battery-status) or 0x09 (battery-state) is reported elsewhere to read the
+/// CMD_PRIVATE_RESP reply as data[1]==0x60 => battery/solar powered, value = data[2]<<8|data[3].
+/// Unverified here -- both devices this project has probed are mains-powered and answered
+/// data[1]==0x00 (tests/corpus/captures/somfy_{awning,dimmer}/private_fn_probe_lr1121.yaml).
+/// create_get_status() below is this builder frozen at function_id =
+/// PRIVATE_GET_POSITION_STATUS (0x03), the only function ID this codebase has ever captured on
+/// its own wire.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param function_id Private function ID (data[0] of the CMD_PRIVATE payload).
+/// @return true on success.
+bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t function_id);
+
 /// Build a get‑status request (0x03). The device responds with its current position.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID.
 /// @param dst Target device's 3‑byte node ID.
 /// @return true on success.
 bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+
+/// @brief Build a CMD_GET_GENERAL_INFO3 (0x58) request. No payload.
+///
+/// Byte-for-byte like create_get_name() above.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param low_power True if target is battery/solar-powered (sets CTRL1_LOW_POWER).
+/// @return true on success.
+bool create_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
 
 /// Build a get-name request (0x50). The device responds with its stored display name.
 /// @param f IoFrame to populate.
@@ -153,6 +179,22 @@ bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, boo
 bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                                       uint8_t position, uint8_t tilt_percent);
 
+/// @brief Build an extended CMD_PRIVATE (0x03) request with a selector/block pair.
+///
+/// The shape real hubs use for both the tilt block (selector STATUS_TILT_SELECTOR) and the
+/// field-observed selector 0x80 (tests/corpus/captures/issues/
+/// issue_45_extended_private_both_selectors.yaml), which this codebase has never decoded.
+/// create_get_status_tilt() below is this builder frozen at selector = STATUS_TILT_SELECTOR,
+/// block = 0x01.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param selector Extended-status selector byte (data[1]).
+/// @param block Selector-specific block/index byte (data[2]) — the field-observed name for
+///        this byte is "N" for selector 0x80, where the corpus has only ever observed 0x00/0x01.
+/// @return true on success.
+bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t selector, uint8_t block);
+
 /// Build a tilt‑aware get‑status request (0x03 with extended payload) that returns
 /// the 16‑byte tilt block in the response.
 /// @param f IoFrame to populate.
@@ -160,6 +202,27 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 /// @param dst Target device node ID.
 /// @return true on success.
 bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+
+/// @brief Build a CMD_PRIVATE2 (0x0C) request in either of the two field-observed shapes.
+///
+/// The payload is CMD_EXECUTE's POS_FAVORITE/POS_VENT_MODIFIER stored-position selector with
+/// the execution prefix stripped. `low_power` is an explicit parameter like every other
+/// device-addressed builder in this file, not derived from `long_form`: the two captures this
+/// builder is pinned against happen to carry CTRL1_LOW_POWER set on the long-form request and
+/// clear on the short-form one, but that tracks each capture's *target device's* power class
+/// (solar shutter vs. mains switch), not the payload shape — see proto_commands.cpp for the
+/// full reasoning.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param modifier The POS_FAVORITE/POS_VENT_MODIFIER-family selector byte to read back.
+/// @param long_form True for the 6-byte long form (data = POS_UNKNOWN, 0x00, 0x80,
+///        POS_FAVORITE, modifier, 0x00); false for the 4-byte short form (data = POS_FAVORITE,
+///        modifier, 0x00, 0x00).
+/// @param low_power True if target is battery/solar-powered (sets CTRL1_LOW_POWER).
+/// @return true on success.
+bool create_private2_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t modifier, bool long_form,
+                          bool low_power);
 
 /// @brief Build a discovery request with configurable command, destination, and payload.
 ///

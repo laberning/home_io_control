@@ -5,7 +5,7 @@ description: >
   as exchange_on_lr1121.yaml, target=200 (raw) this time.
 source:
   device: "Somfy Izymo dimmer (io light actuator)"
-  captured_with: other
+  captured_with: lr1121
   firmware: null
   date: 2026-08-03
   origin: own-hardware

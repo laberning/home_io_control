@@ -83,6 +83,8 @@ Configuration variables:
 - `tcxo_voltage` (Optional, default: `1_8V`): SX1262/LR1121 TCXO voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, and `3_3V`.
 - `exposed_senders` (Optional, default: empty list): List of 1W sender node IDs (6 hex characters each — remotes *or* sensors, see below) allowed to fire the `esphome.home_io_control_sender_event` event to Home Assistant. Empty by default — see the Sender Events section below for why this is opt-in and how it relates to `linked_remotes`.
 - `tuning` (Optional): Diagnostics block for pairing/radio parameters. See [Radio Diagnostics Tuning](radio_diagnostics.md).
+- `accept_foreign_pairing` (Optional, default: `false`): Adds an "Accept Foreign Pairing (Key Extraction)" switch entity for pulling a device's system key from another controller. See the Key Extraction section below.
+- `diagnostic_probes` (Optional, default: `false`): Enables the `probe_device`/`probe_sweep` actions for sending opcodes this project hasn't fully decoded yet. See [Diagnostic probes](radio_diagnostics.md#diagnostic-probes).
 
 Notes:
 
@@ -168,6 +170,10 @@ Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML
 | `force_open_device` ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. Confirmed to move the device correctly; **not yet confirmed to actually override an active lock** — see the warning below. | No — the outcome is asynchronous |
 | `scan_paired_devices` | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. | No — nothing here is read back either |
 
+Two more actions, `probe_device` and `probe_sweep`, exist behind a separate opt-in
+(`diagnostic_probes: true`) for sending opcodes this project hasn't fully decoded yet — see
+[Diagnostic probes](radio_diagnostics.md#diagnostic-probes) in the tuning guide.
+
 ### Enabling and triggering actions
 
 Requires a normal `api:` block — Home IO Control enables the extra native-API feature flags this needs internally, so no `custom_services:` or `homeassistant_services:` is needed:
@@ -212,7 +218,9 @@ Every action fires the same Home Assistant event, `esphome.home_io_control_actio
 | `verified` | always | Whether a follow-up readback confirmed the result — see the table above for which actions can ever set this `true`. |
 | `message` | always | Human-readable outcome summary. For `scan_paired_devices` this is the full multi-line report (see below), not a one-line summary. |
 | `requested_name`, `applied_name` | `rename_device` only | Requested vs. verified device name. |
-| `result_code`, `result_code_name` | `rename_device` and `identify_device` only, when the device replies `CMD_ERROR_RESP` | Decoded protocol result code. |
+| `result_code`, `result_code_name` | `rename_device`, `identify_device`, and `probe_device`, when the device replies `CMD_ERROR_RESP` | Decoded protocol result code. |
+| `probe`, `index` | `probe_device` and `probe_sweep` only | Probe name and the requested index (or swept range). |
+| `response_cmd`, `response_cmd_name`, `response_hex` | `probe_device` only — a sweep's per-index replies are in `message` | The reply's command byte, decoded command name, and full raw wire hex. |
 
 ### `rename_device`
 
@@ -325,6 +333,26 @@ An unknown responder in the report is not, on its own, a sign of an intruder —
 means a device you paired earlier whose YAML entry never got saved (or got lost), not a foreign
 controller. The reply itself proves nothing more than "this device once received your system
 key"; see the roll-call's protocol notes for why the reply carries no per-transaction proof.
+
+### `probe_device` / `probe_sweep`
+
+Fields: `device_id` (required), `probe` (required probe name), `index` (`probe_device`) or
+`first_index` + `last_index` (`probe_sweep`).
+
+Behind the separate `diagnostic_probes: true` opt-in — sends opcodes this project has observed on
+the wire but not fully decoded, and reports the raw reply rather than an interpretation:
+`probe_device` in the structured `response_cmd`/`response_cmd_name`/`response_hex` event fields, a
+sweep's per-index replies inline in `message` instead. See [Diagnostic
+probes](radio_diagnostics.md#diagnostic-probes) for the available probe names, argument shapes,
+worked examples, and safety notes.
+
+```yaml
+action: esphome.hioc_heltec_v2_probe_device
+data:
+  device_id: "FEEB1E"
+  probe: "private_fn"
+  index: "0x06"
+```
 
 ## Light Platform
 

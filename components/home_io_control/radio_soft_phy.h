@@ -34,6 +34,18 @@ uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offse
 /// @brief Search raw RX buffer for the best CRC-validated IO-Homecontrol frame.
 UartProbeResult find_uart_probe(const uint8_t *raw, uint8_t raw_len);
 
+/// @brief Check if a command ID is one of the known IO-Homecontrol commands.
+///
+/// This is a gate, not a directory: find_uart_probe() only accepts a CRC-valid candidate whose
+/// cmd passes this check (or whose CTRL0_PROTOCOL_1W bit is set), so a command missing here makes
+/// every SX1262/LR1121 reception of that opcode silently unrecoverable on this software PHY —
+/// the frame is on air, its CRC matches, and it still never reaches the parser. Exposed (out of
+/// radio_soft_phy.cpp's anonymous namespace) so tests can iterate every accepted command directly
+/// instead of hand-maintaining a parallel list that can drift out of sync with this one.
+/// @param cmd Command byte.
+/// @return true if cmd matches a known command constant.
+bool is_known_io_command(uint8_t cmd);
+
 /// @brief Bits an on-air UART cell spends per protocol byte: start(1) + data(8) + stop(1).
 static constexpr uint8_t UART_CELL_BITS = 10;
 

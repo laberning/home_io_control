@@ -250,7 +250,7 @@ struct CorpusFrame {{
 struct CorpusCapture {{
   const char *id;
   const char *source_origin;  ///< "own-hardware" | "github-issue" | "synthetic-bootstrap" | "reference-material".
-  const char *captured_with;  ///< "sx1276" | "sx1262" | "other" | "synthetic" — radio chip.
+  const char *captured_with;  ///< "sx1276" | "sx1262" | "lr1121" | "other" | "synthetic" — radio chip.
   KeyMode key;
   bool has_exchange;
   ExchangeKind kind;

@@ -4,13 +4,11 @@ description: >
   config) with a Somfy Izymo dimmer, captured on the LilyGO T3-S3/LR1121 hub — the third radio
   chip alongside `pairing_full.yaml` (sx1276) and `pairing_full_sx1262.yaml`, all against the
   same physical device (node CF5F20 here, re-paired after a factory reset between captures).
-  `captured_with: other` since the schema's chip enum (`tests/corpus/README.md`) only names
-  sx1276/sx1262 explicitly; the LR1121 board is noted in `source.device` instead. Challenge RSSI
-  is -41 dBm, consistent with SX1262's -38 dBm for the same device — LR1121 RSSI reflects the
-  received frame's actual signal level, comparable across chips.
+  Challenge RSSI is -41 dBm, consistent with SX1262's -38 dBm for the same device — LR1121 RSSI
+  reflects the received frame's actual signal level, comparable across chips.
 source:
   device: "Somfy Izymo dimmer (io light actuator)"
-  captured_with: other
+  captured_with: lr1121
   firmware: null
   date: 2026-08-03
   origin: own-hardware

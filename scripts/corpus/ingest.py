@@ -381,7 +381,8 @@ def main() -> int:
     parser.add_argument("input", help="log file to parse, or '-' for stdin")
     parser.add_argument("--id", required=True, help="capture id (globally unique across the corpus)")
     parser.add_argument("--device", required=True, help="free-text device description")
-    parser.add_argument("--captured-with", default="other", choices=["sx1276", "sx1262", "other", "synthetic"])
+    parser.add_argument("--captured-with", default="other",
+                        choices=["sx1276", "sx1262", "lr1121", "other", "synthetic"])
     parser.add_argument(
         "--origin",
         required=True,
