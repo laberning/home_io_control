@@ -1,0 +1,30 @@
+id: issue_45_unsolicited_status_update_burst
+description: >
+  Device-initiated STATUS_UPDATE (0x71) frames, foreign-keyed so they exercise the parser only, not the auth-gated decode path. Full verified count across the corpus is 24 (030365 x7, 1F3807 x7, 93C4A3 x5, E461E9 x5); this fixture keeps a representative sample of 3.
+source:
+  device: "Multiple foreign-keyed Somfy devices sending unsolicited STATUS_UPDATE"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/45"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 869850000
+    hex: "58 00 CA 0A 18 93 C4 A3 71 04 61 10 0A 0B C8 00 D4 00 FF FF 0A 6F 56 01 00"
+    crc: absent
+    note: "cmd=STATUS_UPDATE(0x71)"
+  - dir: rx
+    t_ms: 3448325
+    freq: 868250000
+    hex: "58 00 CA 0A 18 1F 38 07 71 04 60 10 0A 0B C8 00 19 4B 00 10 BE FE DB 01 00"
+    crc: absent
+    note: "cmd=STATUS_UPDATE(0x71)"
+  - dir: rx
+    t_ms: 3475848
+    freq: 868250000
+    hex: "58 00 A0 25 E1 03 03 65 71 04 60 10 0A 0B C8 00 12 4F 00 13 CA 0A 18 01 00"
+    crc: absent
+    note: "cmd=STATUS_UPDATE(0x71)"

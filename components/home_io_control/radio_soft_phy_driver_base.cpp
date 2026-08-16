@@ -22,6 +22,27 @@ namespace home_io_control {
 
 static const char *const TAG = "home_io_control.soft_phy";
 
+namespace {
+
+/// Block until `raw_bytes` (plus @ref SOFT_PHY_EARLY_READ_MARGIN_BYTES) have had time to arrive
+/// since the sync word was observed at `sync_us`. Pure wall-clock waiting against the protocol's
+/// line rate — it reads no chip state, so it lives here rather than on the driver.
+/// @return false if the caller's `timeout_ms` window closed first.
+bool wait_for_air_time(uint32_t sync_us, uint8_t raw_bytes, uint32_t start_ms, uint32_t timeout_ms) {
+  uint32_t const needed_us = soft_phy_air_time_us((uint32_t) raw_bytes + SOFT_PHY_EARLY_READ_MARGIN_BYTES);
+  while (micros() - sync_us < needed_us) {
+    // Never outstay the window the caller asked for: a receive that has run out of time falls back
+    // to the RX_DONE path (which will time out on its own terms) rather than silently overrunning.
+    if (millis() - start_ms > timeout_ms)
+      return false;
+    App.feed_wdt();
+    delayMicroseconds(SOFT_PHY_EARLY_POLL_US);
+  }
+  return true;
+}
+
+}  // namespace
+
 // === Packet RX (blocking) ===
 
 bool SoftPhyDriverBase::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
@@ -37,9 +58,14 @@ bool SoftPhyDriverBase::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_
     return false;
   }
 
-  // Phase 2: resolve the SYNC_WORD_VALID → RX_DONE race condition.
-  if (!this->resolve_sync_race_(start, timeout_ms, irq)) {
+  // Phase 2: resolve the SYNC_WORD_VALID → RX_DONE race condition, and take the length-driven
+  // shortcut when the chip supports it.
+  bool early_completed = false;
+  if (!this->resolve_sync_race_(start, timeout_ms, irq, packet, early_completed)) {
     return false;
+  }
+  if (early_completed) {
+    return true;
   }
 
   // Phase 3: finalize — either read the packet or treat as a failure.
@@ -71,13 +97,24 @@ bool SoftPhyDriverBase::poll_until_activity_(uint32_t start, uint32_t timeout_ms
 /// Resolve the SYNC_WORD_VALID → RX_DONE race condition common to both chips: the sync-word IRQ
 /// can assert before the packet is fully received. If we observe SYNC without RX_DONE, clear the
 /// sticky SYNC flag and spin until RX_DONE arrives or the remaining timeout elapses.
-bool SoftPhyDriverBase::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint32_t &irq) {
+bool SoftPhyDriverBase::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint32_t &irq, RadioRxPacket &packet,
+                                           bool &early_completed) {
+  early_completed = false;
   // If RX_DONE already set or SYNC not set, nothing to resolve.
   if ((irq & this->sync_word_valid_bit()) == 0 || (irq & this->rx_done_bit()) != 0) {
     return true;
   }
+  // SYNC is the frame's own start marker, so from here everything about the frame's arrival is a
+  // question of air time. Timestamp it before any SPI work so the length-driven receive below
+  // measures from as close to the on-air event as this loop can see.
+  uint32_t const sync_us = micros();
   // SYNC seen without RX_DONE — clear sticky SYNC and wait for RX_DONE.
   this->clear_irq_status(this->sync_word_valid_bit());
+
+  if (this->try_early_completion_(packet, sync_us, irq, start, timeout_ms)) {
+    early_completed = true;
+    return true;
+  }
   while (millis() - start <= timeout_ms) {
     if (!this->is_dio_fired()) {
       irq = this->read_irq_status_raw();
@@ -97,6 +134,73 @@ bool SoftPhyDriverBase::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, 
   return false;  // timeout
 }
 
+/// Finish a reception on the frame's own air time instead of the chip's fixed-length RX_DONE.
+///
+/// Three stages, each of which can bail out harmlessly:
+///   1. wait out the first UART cell and read it — CTRL0 carries the whole frame's length;
+///   2. wait out exactly that frame's air time and read exactly its bytes;
+///   3. run the normal UART probe and accept only a CRC-valid frame.
+///
+/// Stage 3 is the safety property that makes this worth doing at all. CRC-CCITT is a 1-in-65536
+/// gate, so a frame accepted here is a frame that would have been accepted at RX_DONE anyway —
+/// and *any* failure (a chip that turns out not to expose its buffer mid-reception, a spurious
+/// sync detect, a mis-guessed length, a bit error) simply returns false and leaves the caller on
+/// the original RX_DONE path, which re-reads the full buffer from scratch. A wrong guess here
+/// costs some latency; it can never cost a frame.
+bool SoftPhyDriverBase::try_early_completion_(RadioRxPacket &packet, uint32_t sync_us, uint32_t irq_status,
+                                              uint32_t start_ms, uint32_t timeout_ms) {
+  int16_t const base = this->early_rx_read_offset();
+  if (base < 0)
+    return false;  // chip does not expose its data buffer mid-reception
+  if (timeout_ms < SOFT_PHY_EARLY_MIN_WINDOW_MS)
+    return false;  // no room left in this window to receive a whole frame either way
+  auto const offset = (uint8_t) base;
+
+  // Stage 1: ten bits of air time is all it takes to learn how long the frame will be.
+  if (!wait_for_air_time(sync_us, SOFT_PHY_EARLY_HEADER_RAW_BYTES, start_ms, timeout_ms))
+    return false;
+  uint8_t header[SOFT_PHY_EARLY_HEADER_RAW_BYTES] = {0};
+  this->read_rx_buffer(offset, header, sizeof(header));
+  uint8_t const frame_len = soft_phy_peek_frame_length(header, sizeof(header));
+  if (frame_len == 0)
+    return false;
+
+  // Stage 2: wait out only what this frame needs, then take the whole thing. The margin bytes
+  // have been waited for either way, so read them too — they give the probe slack to work with
+  // when the stream is not byte-aligned.
+  uint8_t const frame_raw_len = soft_phy_raw_bytes_for_frame(frame_len);
+  if (!wait_for_air_time(sync_us, frame_raw_len, start_ms, timeout_ms))
+    return false;
+  uint8_t raw[RADIO_PACKET_BUFFER_SIZE] = {0};
+  auto const read_len =
+      (uint8_t) std::min<uint16_t>((uint16_t) frame_raw_len + SOFT_PHY_EARLY_READ_MARGIN_BYTES, sizeof(raw));
+  this->read_rx_buffer(offset, raw, read_len);
+
+  // Stage 3: CRC decides.
+  UartProbeResult const probe = find_uart_probe(raw, read_len);
+  if (!probe.valid)
+    return false;
+
+  memcpy(packet.data, probe.decoded + probe.frame_start, probe.frame_len);
+  packet.len = probe.frame_len;
+  packet.freq_hz = this->current_freq_;
+  // Reading packet status this early is still sound: the RSSI a driver reports from it is latched
+  // at sync-word detection, which by definition has already happened.
+  this->fill_capture_info(true, irq_status, offset, read_len, raw, read_len, packet.data, packet.len);
+
+#ifdef IOHOME_FRAME_LOG
+  ESP_LOGD(TAG, "Early RX: frame_len=%u raw_len=%u air_us=%" PRIu32, frame_len, read_len,
+           (uint32_t) (micros() - sync_us));
+  log_frame("RX", packet.data, packet.len, this->current_freq_);
+#endif
+
+  // The reception this latch refers to is being torn down deliberately, so drop it rather than
+  // let a stale edge look like a fresh packet to the next wait.
+  this->clear_dio_fired();
+  this->reset_rx_state_();
+  return true;
+}
+
 /// Finalize receive: read the packet if RX_DONE is set, otherwise record failure.
 bool SoftPhyDriverBase::finalize_receive_(RadioRxPacket &packet, uint32_t irq) {
   if ((irq & this->rx_done_bit()) == 0) {
@@ -105,6 +209,21 @@ bool SoftPhyDriverBase::finalize_receive_(RadioRxPacket &packet, uint32_t irq) {
     return false;
   }
   return this->read_rx_packet(packet, true, irq);
+}
+
+void SoftPhyDriverBase::rearm_rx_after_tx_() {
+  // The minimum needed to be listening again, because the peer can answer within a millisecond or
+  // two of our carrier dropping. Deliberately *not* reset_rx_state_(): that also issues SetStandby
+  // and re-writes the buffer base address, and on this path both are dead weight on the one code
+  // path where microseconds decide whether a fast reply is heard at all --
+  //   - both drivers program SetRxTxFallbackMode = STDBY_XOSC at init, so the chip is already in
+  //     standby the instant TxDone fires;
+  //   - the buffer base is written at init and nothing since has moved it.
+  // What genuinely must happen: clear the latched TxDone (it shares the IRQ word with RX events),
+  // restore the RX packet params that this transmission overwrote, and re-enter RX.
+  this->clear_irq_status(0xFFFFFFFF);
+  this->set_rx_packet_params();
+  this->set_mode_rx();
 }
 
 void SoftPhyDriverBase::reset_rx_state_(bool force_standby) {
@@ -314,14 +433,26 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
   // immediate reply remains visible to wait_for_packet().
   this->clear_dio_fired();
 
-  this->clear_irq_status(0xFFFFFFFF);
-  this->reset_rx_state_(true);
+#ifdef IOHOME_FRAME_LOG
+  uint32_t const tx_done_us = micros();
+#endif
+  this->rearm_rx_after_tx_();
 
   // Post-TX settling delay: the GFSK demodulator needs time to stabilize after the TX→STDBY→RX
   // transition. Without this, frames received immediately after TX (e.g. the 0x3C challenge
   // during pairing) can suffer UART decode bit errors before the demodulator's frequency
-  // discrimination has settled. Runtime-tunable per chip.
+  // discrimination has settled. Runtime-tunable per chip. The radio is already armed by this
+  // point, so a frame arriving during the delay is still captured in hardware.
   delayMicroseconds(this->post_tx_settle_us_);
+
+  // A peer can reply within a millisecond or two of our carrier dropping, so re-arm time is the
+  // margin the whole exchange lives on: if it outlasts the peer's turnaround, the reply is not
+  // late, it is never heard at all, and no response-window length can recover it. Behind the
+  // frame-log flag with the rest of the PHY-level instrumentation because it fires on *every*
+  // transmission; the timing calls compile out with it.
+#ifdef IOHOME_FRAME_LOG
+  ESP_LOGD(TAG, "TX->RX re-arm: %" PRIu32 " us (+%u us settle)", micros() - tx_done_us, this->post_tx_settle_us_);
+#endif
 
   return true;
 }

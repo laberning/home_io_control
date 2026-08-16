@@ -77,13 +77,31 @@ const char *position_rejection_profile(const IoDevice &dev, uint8_t position) {
 
 }  // namespace
 
+void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &device_id, bool for_stop) {
+  uint32_t const existing = this->poll_policy_.get_next_update(device_id);
+  uint32_t const delay_ms = settle_delay_ms(this->poll_policy_.get_interval(device_id), 0, for_stop);
+  this->begin_status_poll_tracking_(device_id, delay_ms);
+  if (existing != 0 && existing < millis() + delay_ms)
+    this->poll_policy_.set_next_update(device_id, existing);
+}
+
 // Execute an authenticated request on the standard command channel and, on success, feed the
 // device's reply back through the normal inbound status parser so all state normalization stays
 // in one place.
 bool IOHomeControlComponent::execute_request_and_update_(const std::string &device_id, const IoFrame &request,
                                                          bool warn_on_no_response, uint32_t retry_after_fail_ms) {
   IoFrame response;
-  if (!this->send_and_receive_(request, response, FREQ_CH2)) {
+  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2);
+  // An unconfirmed acceptance means the device authenticated the request but never closed the
+  // exchange. Whether that counts as success depends entirely on what the request was *for*:
+  //   - a command (CMD_EXECUTE) is done — the device has it and is acting on it, and its own
+  //     asynchronous status update carries the result a few seconds later;
+  //   - a status poll or a name read exists to obtain a payload. Getting none means the question
+  //     went unanswered, so it stays a failure and keeps the aggressive auth-shaped poll backoff
+  //     that exists for precisely this shape of miss.
+  const bool unconfirmed_counts_as_success = request.cmd == CMD_EXECUTE;
+  if (outcome == ExchangeOutcome::FAILED ||
+      (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED && !unconfirmed_counts_as_success)) {
     const auto &dbg = this->exchange_engine_.get_debug();
     if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
       detail::record_exchange_timeout(*dev, dbg.tries);
@@ -99,26 +117,23 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
     return false;
   }
 
-  if (response.cmd == CMD_ERROR_RESP) {
-    IoDevice *dev = this->registry_.get(device_id);
-    // An explicit refusal is still a reply from the device: this branch returns before the
-    // update_device_status_() call below, so it must stamp link health itself to keep
-    // update_link_health()'s "every frame from a registered device" contract.
-    if (dev != nullptr)
-      detail::update_link_health(*dev, this->radio_);
-    if (response.data_len == 0) {
-      detail::log_frame_issue(this, "rx", "unsupported_payload", response, frame_length(response));
-    } else if (dev != nullptr) {
-      detail::record_command_result(*dev, device_id, response.data[0], request.cmd, true);
-    } else {
-      detail::log_command_result(device_id, response.data[0], request.cmd, true);
-    }
-    if (dev != nullptr)
-      this->notify_device_update_(device_id);
+  if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
+    // The device authenticated the request, so it has the command; it just does not close the
+    // exchange with a reply (see ExchangeOutcome). There is no frame to parse, and inventing a
+    // position from a request we only know was *accepted* would be worse than leaving the last
+    // known state alone — the device's own asynchronous status update supplies the real one, and
+    // that path authenticates now. Clear the failure streaks: this was not a failure.
     if (retry_after_fail_ms != 0)
-      this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
-    return false;
+      this->poll_policy_.clear_failure_streaks(device_id);
+    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
+      detail::update_link_health(*dev, this->radio_);
+      this->notify_device_update_(device_id);
+    }
+    return true;
   }
+
+  if (response.cmd == CMD_ERROR_RESP)
+    return this->handle_error_response_(device_id, request, response, retry_after_fail_ms);
 
   if (retry_after_fail_ms != 0)
     this->poll_policy_.clear_failure_streaks(device_id);
@@ -129,6 +144,28 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   // (status poll, get name, ...) keeps trusting its reply as before.
   this->update_device_status_(response, request.cmd != CMD_EXECUTE);
   return true;
+}
+
+bool IOHomeControlComponent::handle_error_response_(const std::string &device_id, const IoFrame &request,
+                                                    const IoFrame &response, uint32_t retry_after_fail_ms) {
+  IoDevice *dev = this->registry_.get(device_id);
+  // An explicit refusal is still a reply from the device: this path returns before
+  // execute_request_and_update_()'s update_device_status_() call, so it must stamp link health
+  // itself to keep update_link_health()'s "every frame from a registered device" contract.
+  if (dev != nullptr)
+    detail::update_link_health(*dev, this->radio_);
+  if (response.data_len == 0) {
+    detail::log_frame_issue(this, "rx", "unsupported_payload", response, frame_length(response));
+  } else if (dev != nullptr) {
+    detail::record_command_result(*dev, device_id, response.data[0], request.cmd, true);
+  } else {
+    detail::log_command_result(device_id, response.data[0], request.cmd, true);
+  }
+  if (dev != nullptr)
+    this->notify_device_update_(device_id);
+  if (retry_after_fail_ms != 0)
+    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
+  return false;
 }
 
 bool IOHomeControlComponent::set_device_position(const std::string &device_id, uint8_t position) {
@@ -152,7 +189,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
            operation_profile_name(*dev));
 
   IoFrame request;
-  if (!create_execute_position(request, this->node_id_, dev->node_id, true, position)) {
+  if (!create_execute_position(request, this->node_id_, dev->node_id, true, position, dev->silent)) {
     this->poll_policy_.clear(device_id);
     return false;
   }
@@ -161,9 +198,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  if (position != POS_STOP && this->poll_policy_.get_interval(device_id) != 0 &&
-      this->poll_policy_.get_next_update(device_id) == 0)
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
+  this->arm_execute_confirmation_poll_(device_id, position == POS_STOP);
   return true;
 }
 
@@ -188,7 +223,7 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
   // device access to resolve that, so it's built separately here where dev is in scope.
   bool const built = cmd == CoverCommand::FORCE_OPEN
                          ? create_force_open(request, this->node_id_, dev->node_id, true, dev->inverted ? 100 : 0)
-                         : create_execute_command(request, this->node_id_, dev->node_id, true, cmd);
+                         : create_execute_command(request, this->node_id_, dev->node_id, true, cmd, dev->silent);
   if (!built) {
     this->poll_policy_.clear(device_id);
     return false;
@@ -198,19 +233,7 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  if (cmd != CoverCommand::STOP && this->poll_policy_.get_interval(device_id) != 0 &&
-      this->poll_policy_.get_next_update(device_id) == 0)
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
-  // STOP: if the device is still moving (decelerating or settling to a rest position), cap the
-  // settle poll to STOP_SETTLE_POLL_CAP_MS. The private response is the shared reply to both polls
-  // and commands, so it cannot mark itself as a STOP; this is the one place that knows a STOP was
-  // sent and shortens the settle the response handler scheduled (which already folded in any hint).
-  if (cmd == CoverCommand::STOP && dev != nullptr && !dev->is_stopped) {
-    uint32_t const cap = millis() + STOP_SETTLE_POLL_CAP_MS;
-    uint32_t const existing = this->poll_policy_.get_next_update(device_id);
-    if (existing == 0 || cap < existing)
-      this->poll_policy_.set_next_update(device_id, cap);
-  }
+  this->arm_execute_confirmation_poll_(device_id, cmd == CoverCommand::STOP);
   return true;
 }
 
@@ -239,8 +262,7 @@ bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  if (this->poll_policy_.get_interval(device_id) != 0 && this->poll_policy_.get_next_update(device_id) == 0)
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
+  this->arm_execute_confirmation_poll_(device_id, false);
   return true;
 }
 
@@ -270,8 +292,7 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  if (this->poll_policy_.get_interval(device_id) != 0 && this->poll_policy_.get_next_update(device_id) == 0)
-    this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
+  this->arm_execute_confirmation_poll_(device_id, false);
   return true;
 }
 

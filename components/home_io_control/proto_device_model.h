@@ -248,6 +248,11 @@ struct IoDevice {
   float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.
   bool is_stopped{true};                 ///< True if device is not moving.
   bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning).
+  bool silent{false};                    ///< True to send position moves with the reference hub's "silent
+                                         ///< operation" extended block, which makes the motor travel more
+                                         ///< slowly. Like `inverted`/`dimmable` this is a YAML-declared
+                                         ///< preference, not a protocol-reported fact — nothing on the wire
+                                         ///< tells us whether a device is in that mode.
   bool optimistic_state{true};           ///< True if `target` may be set ahead of a confirming poll/response.
   bool dimmable{false};                  ///< True for a LIGHT-class device configured `dimmable: true` in YAML.
                                          ///< Not a protocol-level fact (the wire gives no dimmable-capability

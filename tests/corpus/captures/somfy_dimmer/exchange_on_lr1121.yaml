@@ -7,7 +7,7 @@ description: >
   "Dimmable Light RSSI" sensor read -40 dBm in this session, consistent with SX1262.
 source:
   device: "Somfy Izymo dimmer (io light actuator)"
-  captured_with: other
+  captured_with: lr1121
   firmware: null
   date: 2026-08-03
   origin: own-hardware

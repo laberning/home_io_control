@@ -43,6 +43,43 @@ static constexpr uint8_t SOFT_PHY_RX_PROBE_PACKET_LEN = 48;
 /// mask already excludes the one bit (PreambleDetected) that would need special handling.
 static constexpr uint32_t SOFT_PHY_ALL_IRQ_BITS = 0xFFFFFFFF;
 
+/// Raw bytes read in the first stage of a length-driven receive — enough to hold CTRL0's UART
+/// cell (10 bits) at any of the probe's bit alignments (up to 9 bits of slack).
+static constexpr uint8_t SOFT_PHY_EARLY_HEADER_RAW_BYTES = 3;
+
+/// Air-time margin added before every mid-reception buffer read, in raw bytes.
+///
+/// Covers the lag between a byte finishing on air and the chip having it in its data buffer, plus
+/// the granularity of the polled sync-word observation. Two byte-times is generous at this line
+/// rate and still leaves a length-driven receive far ahead of the fixed-length RX_DONE.
+static constexpr uint8_t SOFT_PHY_EARLY_READ_MARGIN_BYTES = 2;
+
+/// Poll interval while waiting out a frame's remaining air time, in microseconds.
+static constexpr uint32_t SOFT_PHY_EARLY_POLL_US = 100;
+
+/// Smallest receive window a length-driven receive will be attempted in, in milliseconds.
+///
+/// The longest possible frame (FRAME_MAX_SIZE + CRC, UART-packed) occupies ~9.4 ms of air time, so
+/// a caller with less than this left cannot finish one either way. Declining up front keeps the
+/// early path from spending a short window's whole budget on a receive it cannot complete.
+static constexpr uint32_t SOFT_PHY_EARLY_MIN_WINDOW_MS = 12;
+
+/// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
+static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
+/// Microseconds in a second, for the air-time arithmetic below.
+static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
+
+/// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.
+///
+/// One byte is 8 / 38400 s = 208.333 µs. Computed as an integer division rounded *up*, so the
+/// result never falls short of a whole byte's air time and a caller that waits on it never reads
+/// the chip's buffer early. The numerator peaks around 360 million for the longest frame this is
+/// ever asked about, well inside uint32_t.
+constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
+  const uint32_t bit_periods = raw_bytes * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
+  return (bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS;
+}
+
 /// @brief Shared RX/TX driver flow for the software-PHY radios (SX1262, LR1121).
 /// @ingroup hioc_radio
 class SoftPhyDriverBase : public RadioDriver {
@@ -91,6 +128,9 @@ class SoftPhyDriverBase : public RadioDriver {
   virtual bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint32_t irq_status);
   /// Reset RX state machine and buffer. Optionally force standby first.
   void reset_rx_state_(bool force_standby = true);
+  /// Minimal path back into RX immediately after a transmission — see the definition for why this
+  /// is deliberately not @ref reset_rx_state_.
+  void rearm_rx_after_tx_();
 
   /// @brief Read the raw IRQ status word from the radio.
   /// Virtual to allow test doubles (both concrete drivers' tests override this).
@@ -118,6 +158,21 @@ class SoftPhyDriverBase : public RadioDriver {
   /// this to exclude it: a preamble-only reading means a frame may still be arriving, and treating
   /// it as terminal activity would tear down RX mid-reception.
   [[nodiscard]] virtual uint32_t activity_irq_mask() const { return SOFT_PHY_ALL_IRQ_BITS; }
+
+  /// @brief Data-buffer offset an in-flight reception is being written to, or a negative value
+  /// when this chip must not be read before RX_DONE.
+  ///
+  /// Neither chip's RX_DONE marks the end of the *frame*: with no hardware framing, RX runs in
+  /// fixed-length mode at @ref SOFT_PHY_RX_PROBE_PACKET_LEN, so RX_DONE arrives a fixed ~10 ms
+  /// after the sync word no matter how short the frame actually was. That delay lands squarely on
+  /// the protocol's tightest turnaround — the hub's reply to a device's challenge — so a driver
+  /// that can read its buffer while reception is still running opts in here and the shared flow
+  /// finishes on the frame's own air time instead (see `try_early_completion_`).
+  ///
+  /// Default is -1: wait for RX_DONE exactly as before. SX1262 overrides it with the RX base
+  /// address it programs in configure_buffer_base(), which is where a single in-flight packet
+  /// always starts. LR1121 is left on the RX_DONE path pending hardware validation.
+  [[nodiscard]] virtual int16_t early_rx_read_offset() const { return -1; }
 
   /// Set RF frequency via the chip's own frequency register/opcode encoding, and update
   /// `current_freq_`. Called from both @ref change_frequency and the shared `send_packet()`.
@@ -157,8 +212,16 @@ class SoftPhyDriverBase : public RadioDriver {
   /// Poll for first *terminal* radio activity (IRQ pin or an IRQ status bit within
   /// @ref activity_irq_mask) within timeout.
   bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, uint32_t &irq);
-  /// Resolve the SYNC_WORD_VALID → RX_DONE race condition common to both chips.
-  bool resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint32_t &irq);
+  /// Resolve the SYNC_WORD_VALID → RX_DONE race condition common to both chips, and — on a chip
+  /// that opts into @ref early_rx_read_offset — give the length-driven receive its chance first.
+  /// @param early_completed Set when a whole CRC-valid frame was recovered without waiting for
+  ///   RX_DONE; `packet` is then already populated and the caller is done.
+  bool resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint32_t &irq, RadioRxPacket &packet,
+                          bool &early_completed);
+  /// Finish a reception on the frame's own air time rather than on the chip's fixed-length
+  /// RX_DONE. Returns true only when a CRC-valid frame was recovered.
+  bool try_early_completion_(RadioRxPacket &packet, uint32_t sync_us, uint32_t irq_status, uint32_t start_ms,
+                             uint32_t timeout_ms);
   /// Finalize receive: read the packet if RX_DONE is set, otherwise record failure.
   bool finalize_receive_(RadioRxPacket &packet, uint32_t irq);
 

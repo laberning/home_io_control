@@ -78,6 +78,7 @@ CONF_COMMANDS = "commands"
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"
 CONF_LAST_COMMAND_SENSOR_ID = "last_command_sensor_id"
+CONF_DIAGNOSTIC_PROBES = "diagnostic_probes"
 CONF_LR1121_FIRMWARE_UPDATE = "lr1121_firmware_update"
 CONF_LR1121_BOOTLOADER = "bootloader"
 CONF_CHECKSUM_MD5 = "checksum_md5"
@@ -696,6 +697,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ONEWAY_CONTROLLERS, default=[]): cv.ensure_list(
                 ONEWAY_CONTROLLER_SCHEMA
             ),
+            cv.Optional(CONF_DIAGNOSTIC_PROBES, default=False): cv.boolean,
             cv.Optional(CONF_LR1121_FIRMWARE_UPDATE): LR1121_FIRMWARE_UPDATE_SCHEMA,
             cv.Optional(tuning_module.CONF_TUNING): tuning_module.TUNING_CONFIG_SCHEMA,
         }
@@ -779,6 +781,8 @@ async def to_code(config):
 
     if config[CONF_ACCEPT_ONEWAY_KEY]:
         await _create_accept_oneway_key_switch(config, var)
+
+    cg.add(var.set_diagnostic_probes_enabled(config[CONF_DIAGNOSTIC_PROBES]))
 
     if CONF_LR1121_FIRMWARE_UPDATE in config:
         await _create_lr1121_firmware_update(config, var)

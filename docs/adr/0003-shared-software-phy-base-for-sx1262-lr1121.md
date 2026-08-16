@@ -71,8 +71,31 @@ classDiagram
   preamble/post-TX-settle tuning fields.
 - **Virtual primitives and hooks** carry what differs: SPI opcode encoding and
   transport, IRQ bit values and word width, register-level parameter encoding,
-  and one-off steps only one chip needs (the SX1262's buffer-base write; the
-  LR1121's high-ACP pre-TX workaround and preamble-tolerant activity check).
+  and one-off steps only one chip needs (the SX1262's buffer-base write and its
+  TX modulation-quality erratum; the LR1121's high-ACP pre-TX workaround and
+  preamble-tolerant activity check).
+
+### Length-driven receive
+
+Neither chip's `RX_DONE` marks the end of a *frame*. With no hardware framing,
+RX runs in fixed-length mode at the raw-probe length, so `RX_DONE` arrives a
+fixed ~10 ms after the sync word however short the frame actually was — and
+that delay lands on the protocol's tightest turnaround, the hub's reply to a
+device's challenge.
+
+A frame's own length is knowable long before then: `CTRL0` bits [4:0] carry it,
+and `CTRL0` is the first byte after the sync word. So the shared flow reads the
+first UART cell, computes how many raw bytes the frame will occupy, waits out
+exactly that much air time, and reads it — no chip needs to tell it where the
+frame ends.
+
+CRC-CCITT is the gate on that path, and that is what makes it safe to take.
+Any failure — a chip that turns out not to expose its buffer mid-reception, a
+spurious sync detect, a mis-guessed length, a bit error — falls back to the
+`RX_DONE` path, which re-reads the whole buffer from scratch. A wrong guess
+costs latency; it cannot cost a frame. Chips opt in through
+`early_rx_read_offset()`; the default declines, so a driver only takes this
+path once its buffer is known to be readable mid-reception.
 
 ## Consequences
 

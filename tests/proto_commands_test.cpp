@@ -71,7 +71,7 @@ TEST(ProtoCommands, CreateDiscoverConfirmAck) {
       << "discovery-confirm ack is device-originated, not low-power targeted";
 }
 
-TEST(ProtoCommands, CreateChallengeReqDeviceRoleOmitsControllerFramingBits) {
+TEST(ProtoCommands, CreateChallengeReqUsesTheFramingObservedOnAir) {
   IoFrame device_role{};
   ASSERT_TRUE(create_challenge_req_device_role(device_role, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE))
       << "create_challenge_req_device_role should succeed";
@@ -86,12 +86,15 @@ TEST(ProtoCommands, CreateChallengeReqDeviceRoleOmitsControllerFramingBits) {
   EXPECT_FALSE((device_role.ctrl1 & CTRL1_LOW_POWER) != 0)
       << "device-role challenge-req is addressed to a mains-powered hub";
 
-  // The controller-role builder must keep its own framing — it serves a different direction.
+  // The controller-role builder now matches. It used to set START and LOW_POWER, but field
+  // captures show every 0x3C on a real network is `0E 00` regardless of who sent it, and the
+  // hub's own `4E 20` challenges were never once answered. See create_challenge_req().
   IoFrame controller_role{};
   ASSERT_TRUE(create_challenge_req(controller_role, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE));
-  EXPECT_TRUE(is_start(controller_role)) << "controller-role challenge-req still opens its own exchange";
-  EXPECT_TRUE((controller_role.ctrl1 & CTRL1_LOW_POWER) != 0)
-      << "controller-role challenge-req still flags its device target as possibly low-power";
+  EXPECT_FALSE(is_start(controller_role)) << "no 0x3C observed on air is a start frame";
+  EXPECT_FALSE((controller_role.ctrl1 & CTRL1_LOW_POWER) != 0) << "no 0x3C observed on air sets LOW_POWER";
+  EXPECT_EQ(controller_role.ctrl0, device_role.ctrl0) << "both roles now use the observed framing";
+  EXPECT_EQ(controller_role.ctrl1, device_role.ctrl1);
 }
 
 TEST(ProtoCommands, CreateChallengeReqWithSuppliedChallengeMatchesGenerated) {
@@ -121,9 +124,10 @@ TEST(ProtoCommands, CreateChallengeReq) {
   ASSERT_TRUE(create_challenge_req(frame, test::DST_ID, test::OWN_ID)) << "create_challenge_req should succeed";
   EXPECT_EQ(frame.cmd, CMD_CHALLENGE_REQ) << "challenge-req command should be CMD_CHALLENGE_REQ (0x3C)";
   EXPECT_EQ(frame.data_len, HMAC_SIZE) << "challenge-req should carry 6-byte random challenge";
-  EXPECT_TRUE(is_start(frame)) << "challenge-req should be a start frame";
+  // Framing matches every 0x3C seen on a real network (`0E 00 ...`); see create_challenge_req().
+  EXPECT_FALSE(is_start(frame)) << "challenge-req should not be a start frame";
   EXPECT_FALSE(is_end(frame)) << "challenge-req should not be an end frame";
-  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
+  EXPECT_FALSE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "challenge-req should not set LOW_POWER";
 }
 
 TEST(ProtoCommands, CreateStatusUpdateResp) {
@@ -227,7 +231,7 @@ TEST(ProtoCommands, CreateExecuteTilt) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "tilt execute should still use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "tilt execute should use 8-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "tilt originator should be user";
-  EXPECT_EQ(frame.data[1], 0x43) << "tilt ACEI should use user_high priority (0x43)";
+  EXPECT_EQ(frame.data[1], 0x63) << "tilt ACEI should use user_default priority (0x63), as a real 2W hub does";
   EXPECT_EQ(frame.data[2], POS_UNKNOWN) << "tilt execute should keep position unchanged via unknown marker";
   EXPECT_EQ(frame.data[3], 0x00);
   EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt execute should set the tilt separator flag";
@@ -244,7 +248,7 @@ TEST(ProtoCommands, CreateExecutePositionAndTilt) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "combined command should use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "combined command should use 8-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "originator should be user";
-  EXPECT_EQ(frame.data[1], 0x43) << "ACEI should be user_high priority (0x43)";
+  EXPECT_EQ(frame.data[1], 0x63) << "ACEI should be user_default priority (0x63), as a real 2W hub does";
   EXPECT_EQ(frame.data[2], 100) << "position 50% => 2*50 = 100 (0x64)";
   EXPECT_EQ(frame.data[3], 0x00);
   EXPECT_EQ(frame.data[4], STATUS_TILT_SELECTOR) << "tilt separator flag (FP3 bitmap)";
@@ -403,7 +407,7 @@ TEST(ProtoCommands, CreateExecutePositionZero) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "position execute should use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 8) << "position execute should use 8-byte payload";
   EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
-  EXPECT_EQ(frame.data[1], 0x43) << "ACEI byte should be 0x43 (user_high priority)";
+  EXPECT_EQ(frame.data[1], 0x63) << "ACEI byte should be 0x63 (user_default priority, matching a real 2W hub)";
   EXPECT_EQ(frame.data[2], 0x00) << "position 0 doubles to 0x00";
   EXPECT_EQ(frame.data[3], 0x00) << "position 0 second byte should be 0x00";
   EXPECT_TRUE(is_start(frame)) << "position execute should be a start frame";
@@ -459,7 +463,7 @@ TEST(ProtoCommands, CreateExecuteCommandStop) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE) << "command execute should use CMD_EXECUTE (0x00)";
   EXPECT_EQ(frame.data_len, 6) << "command execute should use 6-byte special payload";
   EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
-  EXPECT_EQ(frame.data[1], 0x43) << "ACEI byte should be 0x43 (user_high priority)";
+  EXPECT_EQ(frame.data[1], 0x63) << "ACEI byte should be 0x63 (user_default priority, matching a real 2W hub)";
   EXPECT_EQ(frame.data[2], POS_STOP) << "stop command main byte should be POS_STOP (0xD2)";
   EXPECT_EQ(frame.data[3], 0x00) << "stop command modifier should be 0x00";
   EXPECT_TRUE(is_start(frame));
@@ -473,7 +477,7 @@ TEST(ProtoCommands, CreateExecuteCommandFavorite) {
   EXPECT_EQ(frame.cmd, CMD_EXECUTE);
   EXPECT_EQ(frame.data_len, 6) << "favorite should use 6-byte special payload";
   EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE) << "originator should be USER_REMOTE";
-  EXPECT_EQ(frame.data[1], 0x43) << "ACEI byte should be 0x43 (user_high priority)";
+  EXPECT_EQ(frame.data[1], 0x63) << "ACEI byte should be 0x63 (user_default priority, matching a real 2W hub)";
   EXPECT_EQ(frame.data[2], POS_FAVORITE) << "favorite main byte should be POS_FAVORITE (0xD8)";
   EXPECT_EQ(frame.data[3], 0x00) << "favorite modifier should be 0x00";
   EXPECT_EQ(frame.data[4], 0x00);
@@ -552,4 +556,76 @@ TEST(ProtoCommands, CoverCommandNameLookup) {
   EXPECT_STREQ(cover_command_name(CoverCommand::FAVORITE), "FAVORITE");
   EXPECT_STREQ(cover_command_name(CoverCommand::VENT), "VENT");
   EXPECT_STREQ(cover_command_name(CoverCommand::FORCE_OPEN), "FORCE_OPEN");
+}
+
+// ============================================================================
+// Silent operation: the reference hub's slower travel profile, isolated by A/B capture on
+// 2026-08-15 with the Velux app's toggle flipped between otherwise identical close commands.
+// ============================================================================
+
+TEST(ProtoCommands, CreateExecutePositionSilentOnlyChangesTheProfileByte) {
+  // A Somfy hub with silent on sends `01 67 00 00 80 D8 05 00` and with it off `... 80 D8 06 00`,
+  // for the same command in the same direction. Only the profile byte moves; our ACEI differs from
+  // that hub's by design (see EXECUTE_ACEI), so compare the payload shape rather than all 8 bytes.
+  IoFrame silent{};
+  ASSERT_TRUE(create_execute_position(silent, test::OWN_ID, test::DST_ID, true, 100, /*silent=*/true));
+  ASSERT_EQ(silent.data_len, 8u);
+  EXPECT_EQ(silent.data[4], 0x80) << "the extended block is present either way";
+  EXPECT_EQ(silent.data[5], POS_FAVORITE) << "silent does not disturb the secondary-target byte";
+  EXPECT_EQ(silent.data[6], 0x05) << "0x05 is the silent travel profile";
+}
+
+TEST(ProtoCommands, CreateExecutePositionDefaultsToNonSilent) {
+  IoFrame normal{};
+  ASSERT_TRUE(create_execute_position(normal, test::OWN_ID, test::DST_ID, true, 100));
+  IoFrame explicit_off{};
+  ASSERT_TRUE(create_execute_position(explicit_off, test::OWN_ID, test::DST_ID, true, 100, /*silent=*/false));
+  EXPECT_EQ(memcmp(normal.data, explicit_off.data, normal.data_len), 0) << "omitting the flag must mean not silent";
+
+  IoFrame silent{};
+  ASSERT_TRUE(create_execute_position(silent, test::OWN_ID, test::DST_ID, true, 100, /*silent=*/true));
+  // Exactly one byte separates the two forms, which is what the controlled capture showed.
+  EXPECT_EQ(normal.data_len, silent.data_len);
+  for (uint8_t i = 0; i < normal.data_len; i++) {
+    if (i == 6)
+      continue;
+    EXPECT_EQ(normal.data[i], silent.data[i])
+        << "silent must only move the profile byte, but byte " << int{i} << " changed too";
+  }
+  EXPECT_EQ(normal.data[6], 0x06) << "0x06 is the normal profile";
+  EXPECT_EQ(silent.data[6], 0x05) << "0x05 is the silent profile";
+}
+
+TEST(ProtoCommands, FavoriteHonoursSilentBySwitchingToTheExtendedForm) {
+  // Captured pair from a Somfy hub pressing "My" on one RS100:
+  //   silent off: `01 67 D8 00 00 00`            6-byte, no extended block
+  //   silent on : `01 67 D8 00 80 D8 05 00`      8-byte, silent profile
+  IoFrame normal{};
+  ASSERT_TRUE(create_execute_command(normal, test::OWN_ID, test::DST_ID, true, CoverCommand::FAVORITE));
+  EXPECT_EQ(normal.data_len, 6u) << "a normal My press is the short form";
+  EXPECT_EQ(normal.data[2], POS_FAVORITE);
+
+  IoFrame silent{};
+  ASSERT_TRUE(create_execute_command(silent, test::OWN_ID, test::DST_ID, true, CoverCommand::FAVORITE,
+                                     /*silent=*/true));
+  ASSERT_EQ(silent.data_len, 8u) << "silent switches to the extended form";
+  EXPECT_EQ(silent.data[2], POS_FAVORITE) << "still a My press";
+  EXPECT_EQ(silent.data[4], 0x80);
+  EXPECT_EQ(silent.data[5], POS_FAVORITE);
+  EXPECT_EQ(silent.data[6], 0x05);
+}
+
+TEST(ProtoCommands, SilentDoesNotLeakIntoStopVentOrForceOpen) {
+  // STOP has no travel speed. VENT is unobserved, and every extended frame captured so far has
+  // byte 3 clear where VENT puts its modifier, so extending it would be a guess. Force-open is an
+  // override — slowing it down would work against the point of it.
+  for (auto cmd : {CoverCommand::STOP, CoverCommand::VENT}) {
+    IoFrame f{};
+    ASSERT_TRUE(create_execute_command(f, test::OWN_ID, test::DST_ID, true, cmd, /*silent=*/true));
+    EXPECT_EQ(f.data_len, 6u) << "silent must not alter this command's payload";
+  }
+
+  IoFrame forced{};
+  ASSERT_TRUE(create_force_open(forced, test::OWN_ID, test::DST_ID, true, 0));
+  EXPECT_EQ(forced.data[6], 0x06) << "force-open stays on the normal travel profile";
 }

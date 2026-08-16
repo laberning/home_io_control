@@ -108,7 +108,7 @@ FUZZ_TIME ?= 60
 fuzz-frame:
 	@mkdir -p build/fuzz/seeds build/fuzz/corpus
 	@python3 scripts/corpus/extract_fuzz_seeds.py
-	clang++ -std=c++17 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
+	clang++ -std=c++20 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
 		-Icomponents/home_io_control \
 		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
 		components/home_io_control/proto_device_model.cpp tests/fuzz/fuzz_frame_parse.cpp \
@@ -232,7 +232,11 @@ HOST_EXTRA_FLAGS ?=
 # unused-variable warnings ever reappears, that stub was broken — fix it there, not here.
 # -Wno-unused-parameter stays: callback signatures conforming to an interface genuinely have
 # unused parameters. -Wno-reorder stays: member-init-order patterns here rely on it.
-HOST_CXXFLAGS := -std=c++17 -Wall -Wextra -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
+# -std=c++20 matches the device build (ESP-IDF compiles this component as gnu++20), so the host
+# tests exercise the sources under the same language rules the firmware does. They were on c++17,
+# which meant C++20 library calls the device build accepts -- and that clang-tidy's device-side
+# analysis actively recommends, e.g. modernize-use-starts-ends-with -- would not compile here.
+HOST_CXXFLAGS := -std=c++20 -Wall -Wextra -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
                  $(UNIT_TEST_DEFINES) $(INCLUDES) $(HOST_EXTRA_FLAGS)
 
 HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)

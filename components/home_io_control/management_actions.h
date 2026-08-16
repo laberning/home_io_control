@@ -33,15 +33,30 @@ struct TuningConfig;
 /// Returned by ManagementActions::rename_device() and re-exported from the hub
 /// as IOHomeControlComponent::ManagementActionResult via a public type alias.
 struct ManagementActionResult {
-  bool success{false};          ///< Whether the requested management action succeeded.
-  bool verified{false};         ///< Whether a follow-up readback confirmed the applied state.
-  bool has_result_code{false};  ///< True when result_code contains a decoded CMD_ERROR_RESP byte.
-  uint8_t result_code{0};       ///< Optional CMD_ERROR_RESP result byte.
-  std::string action;           ///< Action name, e.g. "rename_device".
-  std::string device_id;        ///< Target IO-homecontrol device ID.
-  std::string message;          ///< Human-readable outcome summary.
-  std::string requested_name;   ///< Requested normalized UTF-8 name for rename actions.
-  std::string applied_name;     ///< Verified cached UTF-8 name after a readback, when available.
+  bool success{false};           ///< Whether the requested management action succeeded.
+  bool verified{false};          ///< Whether a follow-up readback confirmed the applied state.
+  bool has_result_code{false};   ///< True when result_code contains a decoded CMD_ERROR_RESP byte.
+  uint8_t result_code{0};        ///< Optional CMD_ERROR_RESP result byte.
+  std::string action;            ///< Action name, e.g. "rename_device".
+  std::string device_id;         ///< Target IO-homecontrol device ID.
+  std::string message;           ///< Human-readable outcome summary.
+  std::string requested_name;    ///< Requested normalized UTF-8 name for rename actions.
+  std::string applied_name;      ///< Verified cached UTF-8 name after a readback, when available.
+  std::string probe_name;        ///< Probe name for probe_device()/probe_sweep(), e.g. "private_fn".
+  std::string probe_index;       ///< Requested index argument, as received (before parsing).
+  bool has_response_cmd{false};  ///< True when response_cmd contains a probe reply's command byte.
+  uint8_t response_cmd{0};       ///< Probe reply's command byte (distinct from a CMD_ERROR_RESP
+                                 ///< result_code above, which is a different byte with a
+                                 ///< different meaning).
+  std::string response_hex;      ///< Probe reply's full raw wire hex, for pasting into
+                                 ///< scripts/corpus/ingest.py.
+  bool terminal_refusal{false};  ///< True when probe_device() failed for a reason that will
+                                 ///< recur identically for every remaining index in a sweep
+                                 ///< (diagnostic probes not enabled, device moving) — set only by
+                                 ///< probe_device(), read only by probe_sweep() to decide
+                                 ///< whether to stop early. A structured flag rather than
+                                 ///< probe_sweep() pattern-matching `message` text, which would
+                                 ///< silently break if that text were ever reworded.
 };
 
 /// Encapsulates hub-level management operations exposed as Home Assistant actions.
@@ -190,6 +205,81 @@ class ManagementActions {
   /// blocking unit approaches 2550 ms — not done here.
   /// @return Structured result whose `message` is the full report.
   ManagementActionResult scan_paired_devices();
+
+  /// Native API callback: run a single diagnostic probe and publish the result as a HA event.
+  void api_probe_device(const std::string &device_id, const std::string &probe, const std::string &index);
+
+  /// @brief Send a single diagnostic probe frame to an already-paired device and report the raw
+  /// reply.
+  ///
+  /// Protocol-research instrumentation for opcodes this codebase has not decoded — see
+  /// docs/radio_diagnostics.md and ADR 0024. Refuses unless
+  /// this build was configured with `diagnostic_probes: true`
+  /// (IOHomeControlComponent::diagnostic_probes_enabled()), and separately refuses while the
+  /// target device's last known state is "moving" (`!dev->is_stopped`) — an unknown frame into a
+  /// mid-transaction device state machine is the one avoidable way a read-shaped probe could
+  /// cause harm. This is the device's last *reported* movement state, not a check on anything in
+  /// flight: it is always `true` (never refuses) for a light/switch, and can be stale if the
+  /// device was last moved from a physical remote the hub never saw. Routes
+  /// the response straight into `result.message` as raw hex; it
+  /// is never passed to the hub's status decoder (`update_device_status_()` is not reachable
+  /// from this class at all — see hub_core.h), so a probe can never be misread as a position
+  /// update. `verified` is always false: the whole point is that the reply's meaning is not yet
+  /// known.
+  ///
+  /// `probe` selects the frame builder:
+  ///   - "private_fn": create_private_function(), `index` = function ID (Q0).
+  ///   - "status_ext": create_get_status_extended() at the field-observed selector 0x80,
+  ///     `index` = block/N (Q1). The selector-0x20 tilt control is create_get_status_tilt()
+  ///     (already shipped) and is not part of this probe.
+  ///   - "general_info3": create_general_info3(), `index` ignored (Q2).
+  ///   - "private2": create_private2_read() long form, `index` = modifier (Q3).
+  ///   - "private2_short": create_private2_read() short form, `index` = modifier (Q3).
+  /// There is deliberately no "unknown4a" probe and no builder for CMD_UNKNOWN4A_REQ (0x4A)
+  /// anywhere in this codebase — see ADR 0024 for the standing safety decision.
+  ///
+  /// `index` is a string, not an int, because ManagementServiceDescriptor::
+  /// encode_list_service_response() hardcodes every native-API action argument as
+  /// SERVICE_ARG_TYPE_STRING (see the .cpp) — parsed here via parse_probe_index(), which
+  /// accepts both "6" and "0x06".
+  /// @param device_id Target device ID (hex string, case-insensitive).
+  /// @param probe One of the probe names above.
+  /// @param index Function ID / selector block / modifier, depending on `probe`; a decimal or
+  ///        `0x`-prefixed hex string. Ignored for "general_info3".
+  /// @return Structured result whose `message` carries the attempt count, and on a reply, the
+  ///         response command byte and full raw hex.
+  ManagementActionResult probe_device(const std::string &device_id, const std::string &probe, const std::string &index);
+
+  /// Native API callback: run a bounded probe sweep and publish the result as a HA event.
+  void api_probe_sweep(const std::string &device_id, const std::string &probe, const std::string &first_index,
+                       const std::string &last_index);
+
+  /// @brief Walk a bounded index range, one probe_device() call per index, in one user gesture.
+  ///
+  /// Answers Q0/Q1/Q3 (the multi-value probes) without one native-API call per value. Bounded to
+  /// PROBE_SWEEP_MAX_INDICES indices and spaced PROBE_SWEEP_DELAY_MS apart — this transmits on a
+  /// shared ISM band to what may be a battery device, so a tight loop is antisocial and would
+  /// also keep the device awake and skew results. Each index costs up to
+  /// EXCHANGE_RETRY_COUNT frames (proto_timing.h), same as a single probe_device() call.
+  ///
+  /// @note This blocks the ESPHome loop (API, other components, OTA) for the whole sweep, same
+  ///       blocking-exchange model as every other management action (ADR 0013) — but a full
+  ///       sweep multiplies it: worst case (every index silent) is roughly
+  ///       `PROBE_SWEEP_MAX_INDICES * (EXCHANGE_RETRY_COUNT * exchange_start_response_wait_ms +
+  ///       (EXCHANGE_RETRY_COUNT-1) * EXCHANGE_RETRY_DELAY_MS + PROBE_SWEEP_DELAY_MS)`, on the
+  ///       order of a minute at default tuning and longer if `exchange_start_response_wait_ms`
+  ///       is raised. Accepted deliberately for this maintainer-triggered, explicitly-opted-in
+  ///       diagnostic (`diagnostic_probes: true`) rather than restructured into scheduled steps — see
+  ///       docs/radio_diagnostics.md's "Diagnostic probes" section, which states this to the
+  ///       user rather than leaving it to be discovered as a frozen dashboard.
+  /// @param device_id Target device ID (hex string, case-insensitive).
+  /// @param probe One of probe_device()'s probe names.
+  /// @param first_index First index in the sweep (inclusive), same string format as probe_device().
+  /// @param last_index Last index in the sweep (inclusive).
+  /// @return Structured result whose `message` is one line per index: answered / error-coded /
+  ///         silent / refused.
+  ManagementActionResult probe_sweep(const std::string &device_id, const std::string &probe,
+                                     const std::string &first_index, const std::string &last_index);
 
   /// Publish a management result as one or more structured log lines (one call per line of
   /// `result.message`, see log_multiline_result() in the .cpp) and a Home Assistant event.

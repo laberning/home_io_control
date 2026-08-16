@@ -350,6 +350,18 @@ class IOHomeControlComponent : public Component,
   /// @return true while armed.
   [[nodiscard]] bool oneway_key_adoption_armed() const { return this->oneway_key_adoption_armed_; }
 
+  /// @brief Set whether ManagementActions::probe_device()/probe_sweep() are allowed to run.
+  ///
+  /// Set once from the `diagnostic_probes:` YAML boolean (`__init__.py`); off by default, so a
+  /// build that doesn't opt in never sends an undecoded probe opcode. Not a runtime toggle: there
+  /// is no entity and nothing else calls this after setup — the gate is "was this build
+  /// configured with `diagnostic_probes: true`", not a state a user flips per session.
+  /// @param enabled Desired state.
+  void set_diagnostic_probes_enabled(bool enabled) { this->diagnostic_probes_enabled_ = enabled; }
+
+  /// @brief Whether diagnostic probes are enabled for this build.
+  [[nodiscard]] bool diagnostic_probes_enabled() const { return this->diagnostic_probes_enabled_; }
+
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (undeclared/legacy path).
   /// Type, subtype, inverted, and optimistic_state default to UNKNOWN / 0 / false / true; use the
@@ -370,6 +382,12 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Hexadecimal node ID string.
   /// @param dimmable New value for IoDevice::dimmable.
   virtual void set_device_dimmable(const std::string &device_id, bool dimmable);
+
+  /// Select a device's travel profile at runtime (see IOHomeCoverSilentSwitch).
+  /// Virtual for the same reason as set_device_dimmable: platform tests substitute a mock registry.
+  /// @param device_id Hexadecimal node ID string.
+  /// @param silent    True to send position moves in "silent operation" (slower) mode.
+  virtual void set_device_silent(const std::string &device_id, bool silent);
   /// Register a callback invoked when any device updates.
   /// @param cb Callable with signature void(const std::string&, const IoDevice&).
   virtual void register_device_callback(DeviceUpdateCallback cb) { this->registry_.subscribe(std::move(cb)); }
@@ -431,6 +449,27 @@ class IOHomeControlComponent : public Component,
   /// answer, DeviceRegistry is never written, and zero replies is a successful result).
   /// @return Structured result whose `message` is the full multi-line report.
   virtual ManagementActionResult scan_paired_devices();
+  /// Send a single diagnostic probe frame to a registered device and report the raw reply (see
+  /// ManagementActions::probe_device() for the full contract, argument formats, and safety
+  /// gating). Protocol-research instrumentation for opcodes this codebase has not decoded — see
+  /// docs/radio_diagnostics.md and ADR 0024.
+  /// @param device_id Target device ID.
+  /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2", or
+  ///        "private2_short").
+  /// @param index Function ID / selector block / modifier, as a decimal or `0x`-prefixed hex
+  ///        string; ignored for "general_info3".
+  /// @return Structured result whose `message` carries the reply's command byte and raw hex.
+  virtual ManagementActionResult probe_device(const std::string &device_id, const std::string &probe,
+                                              const std::string &index);
+  /// Walk a bounded index range, one probe_device() call per index (see
+  /// ManagementActions::probe_sweep()).
+  /// @param device_id Target device ID.
+  /// @param probe Probe name, same as probe_device().
+  /// @param first_index First index in the sweep (inclusive).
+  /// @param last_index Last index in the sweep (inclusive).
+  /// @return Structured result whose `message` is one line per index.
+  virtual ManagementActionResult probe_sweep(const std::string &device_id, const std::string &probe,
+                                             const std::string &first_index, const std::string &last_index);
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
@@ -554,7 +593,7 @@ class IOHomeControlComponent : public Component,
   /// @param response Output: received response IoFrame.
   /// @param freq RF frequency in Hz.
   /// @return true if exchange succeeded; false otherwise.
-  bool send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq);
+  ExchangeOutcome send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq);
   /// Handle an inbound authenticated command from a device (status updates, etc.).
   /// @param request Inbound authenticated request (e.g., CMD_STATUS_UPDATE).
   /// @param freq RF frequency the packet arrived on.
@@ -649,6 +688,16 @@ class IOHomeControlComponent : public Component,
   /// @param device_id ID of the device to poll.
   /// @param initial_delay_ms Delay before the first follow-up poll.
   void begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms);
+  /// Arm the confirming poll that follows a command, because a CMD_EXECUTE reply is never trusted
+  /// for position (see update_device_status_()'s trust_position parameter) and therefore leaves the
+  /// hub with no idea where the device actually is. Re-arms the bounded tracking window rather than
+  /// only setting a due time: the same untrusted reply clears that window whenever it claims the
+  /// device is stopped, and pop_due_device() discards a due poll that has no active window. An
+  /// already-scheduled earlier poll wins.
+  /// @param device_id Device the command was sent to.
+  /// @param for_stop True for STOP (and position POS_STOP), which settles under
+  ///        STOP_SETTLE_POLL_CAP_MS instead of the normal settle cadence.
+  void arm_execute_confirmation_poll_(const std::string &device_id, bool for_stop);
   /// Schedule status polls for a fixed list of devices (shared by the id-linked and
   /// class-linked 1W paths, and by schedule_linked_remote_polls_()).
   /// @param device_ids Devices to poll.
@@ -694,12 +743,26 @@ class IOHomeControlComponent : public Component,
   /// @param linked True if the sender is linked to at least one registered device.
   /// @param src_id Sender's node ID as a string (already computed by the caller).
   void maybe_fire_sender_event_(const OneWayFrameInfo &info, bool linked, const std::string &src_id);
+  /// Handle an explicit CMD_ERROR_RESP refusal from the device: record the result code, stamp link
+  /// health, and schedule the poll backoff. Split out of execute_request_and_update_() to keep that
+  /// function's outcome dispatch readable — a refusal is a distinct concern from "what did the
+  /// exchange achieve".
+  /// @param device_id Target device ID.
+  /// @param request Outbound request frame that drew the refusal.
+  /// @param response The CMD_ERROR_RESP frame.
+  /// @param retry_after_fail_ms If non-zero, schedules next status poll after this delay.
+  /// @return Always false; a refusal is never a success.
+  bool handle_error_response_(const std::string &device_id, const IoFrame &request, const IoFrame &response,
+                              uint32_t retry_after_fail_ms);
+
   /// Shared request/response helper for high-level operations.
   /// @param device_id Target device ID.
   /// @param request Outbound request frame.
   /// @param warn_on_no_response If true, logs a warning when no response is received.
   /// @param retry_after_fail_ms If non-zero, schedules next status poll after this delay on failure.
-  /// @return true if device acknowledged; false otherwise.
+  /// @return true when the device replied, or when a CMD_EXECUTE was accepted without a reply —
+  ///         every other command's unconfirmed acceptance is still a failure here (see
+  ///         @ref ExchangeOutcome and decisions::retry_after_unconfirmed_accept_is_safe()).
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
                                    uint32_t retry_after_fail_ms = 0);
   /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.
@@ -755,6 +818,15 @@ class IOHomeControlComponent : public Component,
   /// Native API callback: queue a 1W position for a controller identity.
   void api_oneway_set_position_(const std::string &controller_id, const std::string &position) {
     this->management_actions_.api_oneway_set_position(controller_id, position);
+  }
+  /// Native API callback: run a single diagnostic probe against a registered device.
+  void api_probe_device_(const std::string &device_id, const std::string &probe, const std::string &index) {
+    this->management_actions_.api_probe_device(device_id, probe, index);
+  }
+  /// Native API callback: run a bounded diagnostic probe sweep against a registered device.
+  void api_probe_sweep_(const std::string &device_id, const std::string &probe, const std::string &first_index,
+                        const std::string &last_index) {
+    this->management_actions_.api_probe_sweep(device_id, probe, first_index, last_index);
   }
 
   // --- Frequency hopping ---
@@ -904,6 +976,10 @@ class IOHomeControlComponent : public Component,
     bool valid{false};
   };
   OneWayObservedClass oneway_last_observed_class_{};
+  /// Whether diagnostic probes (ManagementActions::probe_device()/probe_sweep()) are enabled.
+  /// False by default so a build that didn't opt in via `diagnostic_probes: true` never sends an
+  /// undecoded probe opcode. See set_diagnostic_probes_enabled().
+  bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
   PairingTelemetry pairing_telemetry_;    ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.

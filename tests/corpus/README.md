@@ -34,7 +34,7 @@ description: >
   Free-text summary of the scenario.
 source:
   device: "Somfy awning actuator (io Vertical)"   # free text, as much as known
-  captured_with: sx1262                           # sx1276 | sx1262 | other | synthetic (radio chip)
+  captured_with: sx1262                    # sx1276 | sx1262 | lr1121 | other | synthetic (radio chip)
   firmware: "2026.6 / commit f981dce"              # best effort, optional
   date: 2026-07-06
   origin: own-hardware                # own-hardware | github-issue | synthetic-bootstrap
@@ -81,11 +81,13 @@ expect:                              # deliberately sparse — only assert what 
 - `source.*`: provenance metadata, enforced by `validate.py`. Required: `origin` (one of
   `own-hardware`, `github-issue`, `synthetic-bootstrap`, `reference-material` — see
   `docs/adr/0023-reference-material-as-a-corpus-origin.md` for what each one means), `captured_with` (one of `sx1276`,
-  `sx1262`, `other`, `synthetic` — the **radio chip**, not the board model; `build.py` reads this
-  unconditionally to pick a chip-mock in `corpus_exchange_replay_test.cpp`, which only branches
-  on chip-specific timing behavior. Note the exact board/product if useful in
-  `source.device` or `firmware` free text — e.g. "Heltec WiFi LoRa32 V3" — `captured_with` itself
-  should not encode it), `device`, `date`. Optional: `firmware`, `issue` (set to `null` when
+  `sx1262`, `lr1121`, `other`, `synthetic` — the **radio chip**, not the board model; `build.py` reads this
+  unconditionally to pick a chip-mock in `corpus_exchange_replay_test.cpp`, which today only
+  branches for `sx1262` — `sx1276`, `lr1121`, `other` and `synthetic` all replay against the same
+  generic mock, since only SX1262's exchange timing has been found to differ. Note the exact
+  board/product if useful in `source.device` or `firmware` free text — e.g. "Heltec WiFi LoRa32
+  V3" or "LilyGO T3-S3" — `captured_with` itself should not encode it), `device`, `date`.
+  Optional: `firmware`, `issue` (set to `null` when
   there is no originating discussion, e.g. synthetic-bootstrap captures).
 - `key` (required): `corpus` or `unknown`. See "Key hygiene" below — this is a promise the file
   makes, and `validate.py` enforces it cryptographically: every `key: corpus` capture's 0x3C/0x3D
@@ -149,6 +151,22 @@ are the bytes that were on the wire") holds only until someone decides otherwise
 whose provenance is "we edited it later" is worth less than a re-recorded one. If the re-record
 cannot happen immediately, note the missing coverage where the next reader will look — the
 deleted capture's id is what someone will grep for.
+
+### Malformed / truncated frames cannot be represented here
+
+`frames[].hex`'s byte count must agree with its own CTRL0 length field — this is one of the
+universal wire invariants `validate.py` enforces on every frame, with no per-fixture opt-out. A
+genuinely malformed or truncated capture (a partial reception, a corrupted length byte) fails that
+check by definition, so it cannot become a corpus fixture no matter how real the underlying
+capture is. This came up concretely for three community-log samples tagged `stage=parse_fail`, and
+for one frame originally proposed for `issue_45_capability_probe_burst.yaml` (a 10-of-25-byte
+truncated `GET_NAME_RESP`, still documented in that fixture's own `description:`): none of the
+four could be ingested, and none is in the tree.
+
+Parser robustness against malformed/truncated *input* is real coverage this project wants — it is
+just not this mechanism's job. `ProtoFrame.ParseRejectsNullAndTruncatedInputs`
+(`tests/proto_frame_test.cpp`) is the place for it: it constructs short/invalid byte buffers
+directly, unconstrained by the golden-frame corpus's "these are real captured wire bytes" promise.
 
 ### Key hygiene — ⚠️ read before ever pasting a pairing log
 

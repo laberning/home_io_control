@@ -127,14 +127,17 @@ your device may differ.
 
 | Parameter | Radio | Default | Range / options | What it does |
 |---|---|---|---|---|
-| `sx1262_rx_bandwidth` | SX1262 | `117.3` | `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
+| `sx1262_rx_bandwidth` | SX1262 | `58.6` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; narrower rejects more noise. |
 | `sx1262_response_preamble` | SX1262 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth; wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell while hopping during discovery. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
-| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; wider tolerates post-TX frequency offset. |
+| `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
+| `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
+| `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
+| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth. Still `117.3` by default — untested on LR1121, but the SX1262 result below suggests trying narrower. |
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
@@ -155,16 +158,16 @@ not a tunable.
 
 #### `sx1262_rx_bandwidth`
 
-GFSK receiver bandwidth on the SX1262. Change it when discovery or key-exchange replies fail to
-decode cleanly on an SX1262 board.
+GFSK receiver bandwidth on the SX1262. Change it when frames arrive but fail to decode — the
+`did not parse as a frame` warnings in the log are a direct count of that.
 
-*Observations:* the SX1262's local oscillator needs frequency headroom to recover after a
-TX→RX turnaround. Experiments here found that at `58.6` kHz the demodulator corrupted roughly
-half the bytes of a post-transmit frame (pairing succeeded only about one attempt in five);
-widening to `117.3` kHz removed the problem entirely. Going wider still (`156.2`/`187.2`) can
-help when a device's transmitter drifts more than the controller's own radio, at the cost of
-more noise. `58.6` is close to the narrow default used on the older SX1276 chip (≈41.7 kHz), but
-is marginal on the SX1262's tight turnaround.
+*Observations:* `58.6` kHz is the default — narrower rejects more out-of-band noise, and reception
+on this waveform improves as the filter narrows. It also brings the SX1262 into line with the
+SX1276's long-validated `41.7` kHz default on the identical waveform. A wide default would exist
+only to tolerate local-oscillator offset across the TX→RX turnaround, but that turnaround is now a
+measured ~390 µs plus a 500 µs settle, well within what the narrow filter tolerates.
+
+`39.0` and `46.9` bracket the SX1276's `41.7` — worth trying if `58.6` still shows decode failures.
 
 #### `sx1262_response_preamble`
 
@@ -189,6 +192,37 @@ fast replies (the challenge or key frames) arrive corrupted.
 demodulator from mangling the first bytes of a quick reply after the transmit→standby→receive
 transition. It works hand-in-hand with bandwidth — a narrower bandwidth generally wants a
 longer settle.
+
+#### `exchange_start_response_wait_ms` / `exchange_response_wait_ms`
+
+How long the hub listens for a device's reply before giving up on a try. Raise
+`exchange_start_response_wait_ms` when a device ignores commands but is known to be in range and
+correctly paired.
+
+*Observations:* for this device class, reply latency is fast-or-never rather than variably slow —
+a device answers within a few milliseconds of the carrier dropping, or it does not answer at all.
+A failure therefore shows up as no frame received rather than as a late arrival, so raising this
+value cannot fix a device that genuinely fails to respond; check `wait_ms` in the logs first. The
+`400` ms default sits comfortably above every directly measured reply from this device class while
+keeping a failed exchange inside `exchange_total_budget_ms`. Raise it only for a device you have
+confirmed genuinely answers late.
+
+Every millisecond here is loop-blocking time on a *failed* exchange only (a successful one returns
+as soon as the reply lands, see `docs/adr/0013-blocking-exchange-on-the-esphome-loop.md`), and a
+failure costs this window once per retry. Raise it for a stubborn device; lower it if slow failures
+are worse for you than missed commands.
+
+#### `exchange_total_budget_ms`
+
+Wall-clock ceiling on one whole exchange, including retries. `exchange_start_response_wait_ms` and
+`exchange_response_wait_ms` set how long each try waits; this caps how long *all* of them together
+may run, so a try only starts if there is still budget left for it.
+
+*Observations:* this exists to keep a failing command from blocking the ESPHome loop past its own
+"took a long time for an operation" warning threshold (2550 ms — see
+`docs/adr/0013-blocking-exchange-on-the-esphome-loop.md`). If you raise either response-wait
+parameter, raise this too, or later retries within the same command will silently be skipped once
+the budget runs out.
 
 #### `sx1276_rx_bandwidth`
 
@@ -392,7 +426,7 @@ is a general starting point, not a guarantee — different devices need differen
    LR1121 boards use the `lr1121_*` equivalents instead):
    ```yaml
    sx1262_post_tx_settle_us: 750    # then 1000
-   sx1262_rx_bandwidth: 156.2
+   sx1262_rx_bandwidth: 46.9        # then 39.0 — narrower, not wider; see the section above
    sx1262_response_preamble: 12     # then 16
    ```
 
@@ -414,3 +448,110 @@ so the defaults can improve.
 threshold too high (e.g. `-45 dBm`) or the retry count too low can force transmissions on a
 busy channel and may violate local regulations for the 868 MHz SRD band. Do not leave
 aggressive LBT values in a production configuration.
+
+## Diagnostic probes
+
+> [!WARNING]
+> **Sends opcodes this project has not decoded — use with caution.** A probe's reply format is,
+> by definition, not yet understood. Sending one to a real device is normally low-risk (most of
+> these are read-shaped requests real hubs send routinely), but it is not risk-free: an unknown
+> command could have effects on the target device that this project cannot predict. Probes only
+> ever reach devices already paired to this hub (see below).
+> Prefer the field-observed starting values given below over inventing your own, and prefer
+> testing on a light/switch over a motor when you do widen — see "Widen carefully" below.
+
+`home_io_control.diagnostic_probes: true` enables two Home Assistant actions, `probe_device` and
+`probe_sweep`, for sending a handful of opcodes this project has observed on the wire but never
+fully decoded, and for reading back the raw, uninterpreted reply. This is protocol-research
+tooling for closing exactly that kind of open question on hardware you own — see ADR 0024 for the
+full reasoning behind how it's gated and isolated from the rest of this component.
+
+```yaml
+home_io_control:
+  node_id: "C0FFEE"
+  system_key: "..."
+  diagnostic_probes: true
+```
+
+**It only ever targets a device already paired to this hub.** `probe_device`/`probe_sweep`
+resolve their target the same way every other management action does — there is no path from this
+instrumentation to a device this hub has not already paired with and does not already hold a key
+for. Every probe additionally refuses while the target device's last known state is "moving" —
+an unknown frame is never sent into a device state machine that is already mid-transaction. This
+is the device's last reported movement state, not a check on anything in flight: it never applies
+to a light/switch, and it can be stale if the device was last moved from a physical remote the hub
+never saw.
+
+### Calling the actions
+
+Same node-scoped naming as every other action in this component — see
+[Home Assistant Actions](home_io_control.md#home-assistant-actions) for the full explanation of
+how `<node_name>` is derived from `esphome.name`. For a config with `name: hioc-heltec-v2`:
+
+```yaml
+action: esphome.hioc_heltec_v2_probe_device
+data:
+  device_id: "FEEB1E"
+  probe: "private2"
+  index: "0x09"
+```
+
+`probe_sweep` takes a range instead of a single `index`:
+
+```yaml
+action: esphome.hioc_heltec_v2_probe_sweep
+data:
+  device_id: "FEEB1E"
+  probe: "status_ext"
+  first_index: "0x00"
+  last_index: "0x01"
+```
+
+- `device_id` (required, both actions): the 6-hex-character IO-homecontrol device ID, same as
+  every other management action.
+- `probe` (required, both actions): which frame to send — see the table below.
+- `index` (`probe_device`) / `first_index` + `last_index` (`probe_sweep`): always plain strings —
+  `"6"` and `"0x06"` are both accepted; anything else is rejected with a clear error rather than
+  silently defaulting to `0`. `probe_sweep` is bounded to 16 indices per call, spaced a second
+  apart, and reports one line per index (answered / error-coded / silent / refused).
+- Every reply is reported as raw hex plus its command byte, deliberately uninterpreted: the point
+  of a probe is that the reply's meaning is not yet known. Every successful reply is also logged
+  at the `io_capture` DEBUG tag (the same structured logging every other received frame uses), so
+  with `logger: level: DEBUG` a captured reply pastes directly into `scripts/corpus/ingest.py`
+  with no reformatting — this does not require the `-DIOHOME_FRAME_LOG` build flag.
+
+### Available probes
+
+| `probe` | Sends | `index` selects | Start with | Evidence for the starting values |
+|---|---|---|---|---|
+| `private_fn` | `CMD_PRIVATE` (0x03) with a chosen function ID | The function ID | `0x06` or `0x09` | Not field-observed on our own wire — every `CMD_PRIVATE` frame captured here uses function ID `0x03`. `0x06`/`0x09` are known from production software elsewhere. |
+| `status_ext` | Extended `CMD_PRIVATE` at selector `0x80` | The block/`N` value | `0x00` and `0x01` | Field-observed: real hubs send exactly these two values to real motors. |
+| `general_info3` | `CMD_GET_GENERAL_INFO3` (0x58), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | — |
+| `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte (the stored-position selector used elsewhere in this component, e.g. favorite/vent) | `0x00` (favorite/My), `0x03` (vent) | Field-observed long-form shape; `0x00`/`0x03` match this component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` constants. |
+| `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | Same as `private2` | Field-observed short-form shape. |
+
+**There is deliberately no probe for `0x4A`.** Its leading published interpretation is a
+destructive file-management operation, and no reference this project has consulted has ever
+transmitted it. See ADR 0024 for the reasoning.
+
+### Widen carefully
+
+The starting values above are the safest available for each probe — for `status_ext` and
+`private2`/`private2_short` because a real hub sends exactly those bytes to real motors routinely;
+for `private_fn` because, absent an on-air observation of our own, production software using this
+exact command is the next-best evidence available. Widening beyond them is a separate, deliberate
+decision, not something to do by default — and when you do, prefer the dimmer/light over a motor: a
+wrong write-shaped result on a light is visible and trivially reversible, while a motor's stored
+configuration is not.
+
+### Expect a long block from `probe_sweep`
+
+A full-range sweep can block the ESPHome loop (API, other components, OTA) for on the order of a
+minute at default tuning, longer if a device never answers or if `exchange_start_response_wait_ms`
+has been raised — up to 16 indices, each up to 3 retries at the configured response-wait time,
+plus a spacing delay between indices. This is
+accepted deliberately for this maintainer-triggered, explicitly-opted-in diagnostic rather than
+restructured into scheduled steps — expect a warning about a long-blocking operation, and expect
+other Home Assistant traffic against this device to stall for the duration. `probe_device` (a
+single index) does not have this problem; reach for `probe_sweep` only when you actually need the
+range in one gesture.

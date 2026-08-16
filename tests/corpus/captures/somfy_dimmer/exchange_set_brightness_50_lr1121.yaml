@@ -6,7 +6,7 @@ description: >
   io_position = 100 - brightness, so 50% brightness is io_position 50 (raw 0x64).
 source:
   device: "Somfy Izymo dimmer (io light actuator)"
-  captured_with: other
+  captured_with: lr1121
   firmware: null
   date: 2026-08-03
   origin: own-hardware

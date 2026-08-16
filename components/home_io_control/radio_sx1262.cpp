@@ -188,7 +188,7 @@ void RadioSX1262::clear_device_errors_() {
 }
 
 void RadioSX1262::configure_buffer_base() {
-  uint8_t buf_base[2] = {0x00, 0x80};
+  uint8_t buf_base[2] = {SX1262_TX_BUFFER_BASE, SX1262_RX_BUFFER_BASE};
   this->write_opcode_(SX1262_SET_BUFFER_BASE_ADDRESS, buf_base, sizeof(buf_base));
 }
 
@@ -218,6 +218,14 @@ void RadioSX1262::get_rx_buffer_status(uint8_t &reported_len, uint8_t &rx_offset
   this->read_opcode_(SX1262_GET_RX_BUFFER_STATUS, rx_status, sizeof(rx_status));
   reported_len = rx_status[0];
   rx_offset = rx_status[1];
+}
+
+void RadioSX1262::apply_tx_modulation_workaround_() {
+  // Read-modify-write so the reserved bits of the register keep whatever the chip put there.
+  uint8_t tx_modulation = 0;
+  this->read_register_(SX1262_REG_TX_MODULATION, &tx_modulation, 1);
+  tx_modulation |= SX1262_TX_MODULATION_GFSK_BIT;
+  this->write_register_(SX1262_REG_TX_MODULATION, &tx_modulation, 1);
 }
 
 void RadioSX1262::start_tx() {
@@ -405,8 +413,15 @@ void RadioSX1262::configure_radio_() {
   // 17. Attach DIO1 interrupt
   this->dio1_pin_->attach_interrupt(&RadioSX1262::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
 
-  // 18. Clear any pending IRQs
+  // 18. Clear any pending IRQs, and report the device-error word before clearing it. A chip that
+  // came up with XOSC_START_ERR (wrong tcxo_voltage for the board), PLL_LOCK_ERR or IMG_CALIB_ERR
+  // still initializes and still transmits — it just does so off-frequency or off-calibration,
+  // which on air looks like flaky exchanges at any range rather than an outright failure. Clearing
+  // it unseen threw away the one cheap piece of evidence for that.
   this->clear_irq_status(0xFFFF);
+  uint16_t const init_errors = this->get_device_errors_();
+  if (init_errors != 0)
+    ESP_LOGW(TAG, "SX1262 device errors after init: 0x%04X — check tcxo_voltage for this board", init_errors);
   this->clear_device_errors_();
 
   // 19. Enter continuous receive

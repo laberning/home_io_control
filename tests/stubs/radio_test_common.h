@@ -67,12 +67,16 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     return result;
   }
   bool wait_for_packet(esphome::home_io_control::RadioRxPacket &packet, uint32_t timeout_ms) override {
-    (void) timeout_ms;
+    wait_timeouts_.push_back(timeout_ms);
+    if (emulate_capture_lifecycle_)
+      this->clear_last_capture_();
     if (rx_queue_.empty()) {
       return false;
     }
     packet = rx_queue_.front();
     rx_queue_.pop_front();
+    if (emulate_capture_lifecycle_)
+      this->populate_capture_base_(true, packet.freq_hz, -55, packet.data, packet.len, packet.data, packet.len);
     return true;
   }
   bool check_for_packet(esphome::home_io_control::RadioRxPacket &packet) override {
@@ -114,7 +118,19 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void set_last_capture_rssi(int16_t rssi_dbm) {
     this->populate_capture_base_(false, 0, rssi_dbm, nullptr, 0, nullptr, 0);
   }
+  /// Emulate the real drivers' capture lifecycle: every wait_for_packet() clears the capture
+  /// before listening, and a delivered frame populates it. Off by default because most tests stage
+  /// a capture directly via set_last_capture_rssi() and would simply have it wiped; on for tests
+  /// that care a later empty wait must not erase an earlier informative one.
+  void set_emulate_capture_lifecycle(bool on) { emulate_capture_lifecycle_ = on; }
   int get_send_count() const { return send_count_; }
+  /// Every timeout the engine handed to wait_for_packet(), in order. Lets tests observe the
+  /// response window an exchange budgeted without depending on the host clock stubs.
+  const std::vector<uint32_t> &wait_timeouts() const { return wait_timeouts_; }
+  /// Per-channel dwell this mock reports. Tests that want to observe the *whole* window set this
+  /// large so slicing never masks it.
+  void set_exchange_wait_slice_ms(uint32_t ms) { exchange_wait_slice_ms_ = ms; }
+  uint32_t exchange_wait_slice_ms() const override { return exchange_wait_slice_ms_; }
   const std::vector<esphome::home_io_control::RadioTxConfig> &get_tx_configs() const { return tx_configs_; }
   const std::vector<std::vector<uint8_t>> &get_sent_data() const { return sent_data_; }
   void clear() {
@@ -134,6 +150,9 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::vector<std::vector<uint8_t>> sent_data_;
   int16_t rssi_default_{-120};
   int send_count_;
+  std::vector<uint32_t> wait_timeouts_;
+  bool emulate_capture_lifecycle_{false};
+  uint32_t exchange_wait_slice_ms_{esphome::home_io_control::RESPONSE_CHANNEL_WAIT_MS};
 };
 
 // --- SX1262 mock — inherits MockRadio but overrides chip-specific behavior ----

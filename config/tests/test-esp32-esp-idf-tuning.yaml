@@ -51,3 +51,4 @@ home_io_control:
     pairing_discovery_wait_ms: 3000
     pairing_discovery_initial_dwell_ms: 200
     pairing_key_exchange_retries: 5
+  diagnostic_probes: true

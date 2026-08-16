@@ -200,7 +200,7 @@ TEST(TuningDispatch, GetSelectValueMatchesOptionStrings) {
   setup_component(comp, radio);
 
   // Defaults.
-  EXPECT_EQ(comp.get_tuning_select_value("sx1262_rx_bandwidth"), "117.3");
+  EXPECT_EQ(comp.get_tuning_select_value("sx1262_rx_bandwidth"), "58.6");
   EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_commands"), "0x28");
   EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_destination"), "auto");
   EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_payload"), "none");

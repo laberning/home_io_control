@@ -137,15 +137,16 @@ TEST(Redaction, ContainsKeyMaterial_DetectsRecovered1wKey) {
 // command_carries_key_material()
 // ============================================================================
 
-TEST(Redaction, CommandCarriesKeyMaterial_KeyTransferAndOneWayAddController) {
+TEST(Redaction, CommandCarriesKeyMaterial_KeyTransferAndChallengePair) {
   EXPECT_TRUE(command_carries_key_material(CMD_KEY_TRANSFER));
+  EXPECT_TRUE(command_carries_key_material(CMD_CHALLENGE_REQ));
+  EXPECT_TRUE(command_carries_key_material(CMD_CHALLENGE_RESP));
   // The 1W add-controller payload unwraps to the network key using only public inputs (the
   // TRANSFER_KEY and the sender address in the same frame header), so rendering it verbatim is
   // equivalent to printing the key.
   EXPECT_TRUE(command_carries_key_material(CMD_ONEWAY_ADD_CONTROLLER));
   EXPECT_FALSE(command_carries_key_material(CMD_KEY_INIT));
   EXPECT_FALSE(command_carries_key_material(CMD_KEY_CONFIRM));
-  EXPECT_FALSE(command_carries_key_material(CMD_CHALLENGE_REQ));
   EXPECT_FALSE(command_carries_key_material(CMD_ONEWAY_REMOVE));
 }
 

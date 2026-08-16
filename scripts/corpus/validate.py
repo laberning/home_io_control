@@ -47,7 +47,7 @@ ALLOWED_ORIGINS = {"own-hardware", "github-issue", "synthetic-bootstrap", "refer
 # (render_capture() reads capture["source"]["captured_with"] unconditionally) but validate.py
 # didn't check it was present, so a hand-edited or older capture missing it passed validation
 # and then died in build.py with a raw KeyError traceback instead of a readable message.
-ALLOWED_CAPTURED_WITH = {"sx1276", "sx1262", "other", "synthetic"}
+ALLOWED_CAPTURED_WITH = {"sx1276", "sx1262", "lr1121", "other", "synthetic"}
 ALLOWED_DIRS = {"tx", "rx"}
 ALLOWED_CRC = {"present", "absent"}
 

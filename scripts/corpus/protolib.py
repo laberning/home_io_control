@@ -77,9 +77,9 @@ CMD_CHALLENGE_RESP = 0x3D
 # Commands that authenticate themselves in a single frame — payload = [challenge(6) | HMAC(6)],
 # the HMAC taken over just the command byte, so one broadcast frame carries both halves of a
 # challenge-response instead of a 0x3C/0x3D round trip. Only 0x2A is listed: it is the only shape
-# this project has real evidence for (velux_kux100/pairing_full.yaml, matching the payload the
-# io-rts-esp32 reference builds for SPE discovery). Adding a command here without a
-# capture that verifies under a known key would make --rekey rewrite bytes it does not understand.
+# this project has real evidence for (velux_kux100/pairing_full.yaml). Adding a command here
+# without a capture that verifies under a known key would make --rekey rewrite bytes it does not
+# understand.
 SELF_AUTHENTICATED_COMMANDS = {CMD_DISCOVER_SPE_REQ}
 
 # --- Mirrors components/home_io_control/proto_constants.h :: CMD_* (subset used for scaffold
@@ -90,6 +90,8 @@ CMD_NAMES = {
     0x01: "ACTIVATE_MODE",
     0x03: "PRIVATE",
     0x04: "PRIVATE_RESP",
+    0x0C: "PRIVATE2",
+    0x0D: "PRIVATE2_RESP",
     0x19: "SET_SENSOR",
     0x1A: "SET_SENSOR_ACK",
     0x1E: "IDENTIFY",
@@ -110,12 +112,16 @@ CMD_NAMES = {
     0x38: "LAUNCH_KEY_TRANSFER",
     0x3C: "CHALLENGE_REQ",
     0x3D: "CHALLENGE_RESP",
+    0x4A: "UNKNOWN4A_REQ",
+    0x4B: "UNKNOWN4A_RESP",
     0x50: "GET_NAME",
     0x51: "GET_NAME_RESP",
     0x52: "SET_NAME",
     0x53: "SET_NAME_RESP",
     0x56: "GET_INFO2",
     0x57: "GET_INFO2_RESP",
+    0x58: "GET_GENERAL_INFO3",
+    0x59: "GET_GENERAL_INFO3_RESP",
     0x6F: "SET_CONFIG1",
     0x70: "SET_CONFIG1_RESP",
     0x71: "STATUS_UPDATE",

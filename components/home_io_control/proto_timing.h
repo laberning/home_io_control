@@ -39,11 +39,39 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/conti
 static constexpr int32_t HOP_TIME_US = 2700;             ///< Time per channel when hopping (2.7ms)
 static constexpr int32_t RESPONSE_CHANNEL_WAIT_MS = 50;  ///< Per-channel dwell while waiting for an exchange response
 static constexpr int32_t RESPONSE_WAIT_MS = 500;         ///< Wait for response to non-start frame
-static constexpr int32_t RESPONSE_START_WAIT_MS = 300;   ///< Wait for response to start frame (longer)
+
+/// Wait for a response to a start frame — the first frame of an exchange, and the one a sleeping
+/// device has just been woken by.
+///
+/// This device class replies within a few milliseconds of the carrier dropping, or not at all —
+/// it is fast-or-never, not slow. A failure therefore shows up as `saw_challenge=0` with no frame
+/// received at all, rather than as a late arrival, so a longer window cannot fix a device that
+/// genuinely fails to answer.
+///
+/// 400 ms sits comfortably above every directly measured reply while keeping a failed exchange
+/// inside EXCHANGE_TOTAL_BUDGET_MS, so a dead device no longer blocks the ESPHome loop past its own
+/// warning threshold (ADR 0013). Raise `exchange_start_response_wait_ms` from YAML if a device ever
+/// genuinely answers late — but check `wait_ms` in the logs first, since a fast-or-never device is a
+/// turnaround problem that a longer window cannot fix.
+static constexpr int32_t RESPONSE_START_WAIT_MS = 400;
+
 static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
     RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
+
+/// Wall-clock ceiling on one whole exchange, retries included.
+///
+/// EXCHANGE_RETRY_COUNT tries x (long preamble + response window + retry gap) is what actually
+/// determines how long a failing command blocks the ESPHome loop, and that blocking also starves
+/// the receive path the rest of the exchange depends on. ESPHome itself warns when one operation
+/// takes longer than 2550 ms (ADR 0013); this budget must stay under that threshold.
+///
+/// So the retry count is a maximum, not a promise: a try only starts if the exchange has budget
+/// left. At the current 400 ms response window all three tries still fit (~2.3 s); raising the
+/// window well past the default is what starts trimming retries, since three full tries stop being
+/// affordable at that point — one long listen is the better trade there anyway.
+static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 
 /// One-way (1W) transmit cadence.
 ///

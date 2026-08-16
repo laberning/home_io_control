@@ -25,6 +25,14 @@ static constexpr uint8_t CMD_EXECUTE = 0x00;        ///< Set position/open/close
 static constexpr uint8_t CMD_ACTIVATE_MODE = 0x01;  ///< Activate device mode (scene, ventilation) — requires auth
 static constexpr uint8_t CMD_PRIVATE = 0x03;        ///< Get device status — no authentication needed
 static constexpr uint8_t CMD_PRIVATE_RESP = 0x04;   ///< Response to 0x00 and 0x03 (contains position data)
+static constexpr uint8_t CMD_PRIVATE2 =
+    0x0C;  ///< Content otherwise undecoded by the wire parser. Its request payload matches
+           ///< CMD_EXECUTE's POS_FAVORITE/POS_VENT_MODIFIER stored-position selector with the
+           ///< execution prefix stripped, so it reads like a stored-position readback rather
+           ///< than a live telemetry poll — see tests/corpus/captures/somfy_rs100_oximo/ and
+           ///< captures/issues/issue_45_*.yaml for real request/response pairs. Not handled by
+           ///< any dispatch path in this codebase.
+static constexpr uint8_t CMD_PRIVATE2_RESP = 0x0D;  ///< Response to CMD_PRIVATE2. See CMD_PRIVATE2's comment.
 
 // Sensor and private register commands
 static constexpr uint8_t CMD_SET_SENSOR = 0x19;      ///< Inject sensor value into a device
@@ -120,7 +128,12 @@ static constexpr uint8_t CMD_ADDRESS_RESP =
            ///< tests/corpus/captures/velux_kux100/pairing_full.yaml, where a Velux KLR200 closes
            ///< pairing with 0x36 and then challenges the 0x37 it gets back (see
            ///< CMD_CHALLENGE_REQ). Neither command is sent or handled anywhere in this codebase.
-static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER = 0x38;  ///< Device-initiated key transfer request
+static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
+    0x38;  ///< Device-initiated ("pull") key transfer request: documented elsewhere as a command
+           ///< ID plus a 6-byte challenge, nothing more — never observed in our corpus or in any
+           ///< field log, and not sent or handled anywhere in this codebase — the constant is
+           ///< used only to construct a hypothetical device-side IV in
+           ///< tests/proto_crypto_test.cpp, exercising the crypto primitive, not a dispatch path.
 
 // Authentication commands (challenge-response for secured commands)
 static constexpr uint8_t CMD_CHALLENGE_REQ =
@@ -137,6 +150,22 @@ static constexpr uint8_t CMD_CHALLENGE_RESP =
            ///< recomputed under that installation's recovered key and confirmed before the
            ///< capture was re-keyed, so it is measured, not assumed by symmetry.
 
+// File/blob management block (0x48-0x4B)
+static constexpr uint8_t CMD_UNKNOWN4A_REQ =
+    0x4A;  ///< Content undecoded. The leading published interpretation of this opcode is "Delete
+           ///< File" (a large-data-transfer / "ioblob" request), with "Rename File" as a
+           ///< conflicting second reading — both writes, and no project this codebase draws on
+           ///< has ever transmitted it. Never captured on the wire either. This constant exists
+           ///< solely so a received 0x4A frame renders by name in the log instead of as
+           ///< UNKNOWN_CMD; it must never be sent, and no builder for it exists anywhere in this
+           ///< codebase — see CMD_ONEWAY_ADD_CONTROLLER for the same "named but never sent"
+           ///< precedent, and docs/adr/ for the standing decision not to add one.
+static constexpr uint8_t CMD_UNKNOWN4A_RESP =
+    0x4B;  ///< Observed on the wire (tests/corpus/captures/issues/) answering an ON_OFF_SWITCH-type device's
+           ///< traffic, but its request opcode is unconfirmed — it is not established to be
+           ///< CMD_UNKNOWN4A_REQ's reply rather than CMD_GET_GENERAL_INFO3's. Content undecoded.
+           ///< Not sent or handled anywhere in this codebase.
+
 // Device info commands
 static constexpr uint8_t CMD_GET_NAME = 0x50;       ///< Request device name
 static constexpr uint8_t CMD_GET_NAME_RESP = 0x51;  ///< Device name response
@@ -144,21 +173,50 @@ static constexpr uint8_t CMD_SET_NAME = 0x52;       ///< Set device name (authen
 static constexpr uint8_t CMD_SET_NAME_RESP = 0x53;  ///< Device-name write response
 static constexpr uint8_t CMD_GET_INFO1 =
     0x54;  ///< Request device general info 1 (unimplemented; we only use 0x56/0x57)
-static constexpr uint8_t CMD_GET_INFO1_RESP =
-    0x55;  ///< Device general info 1 response (unimplemented; we only use 0x56/0x57)
-static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info
+static constexpr uint8_t CMD_GET_INFO1_RESP = 0x55;  ///< Device general info 1 response (unimplemented; we only use
+                                                     ///< 0x56/0x57). Never observed in our corpus or in any field log —
+                                                     ///< this codebase has never sent CMD_GET_INFO1 to prompt one.
+static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info. This codebase
+                                                     ///< sends it during device-add, but the corpus has
+                                                     ///< no fixture for the request itself -- every
+                                                     ///< 0x57 capture on hand is a reply to someone
+                                                     ///< else's request. Closing this needs a fresh
+                                                     ///< device-add on owned hardware, ingested with
+                                                     ///< `--rekey` (tests/corpus/README.md).
 static constexpr uint8_t CMD_GET_INFO2_RESP = 0x57;  ///< Device type/model response
+static constexpr uint8_t CMD_GET_GENERAL_INFO3 =
+    0x58;  ///< Observed on the wire (tests/corpus/captures/issues/) with no payload. Content
+           ///< undecoded. Not sent or handled anywhere in this codebase.
+static constexpr uint8_t CMD_GET_GENERAL_INFO3_RESP =
+    0x59;  ///< Never captured on our own wire. This constant exists so a received 0x59 frame
+           ///< renders by name instead of as UNKNOWN_CMD. Not sent or handled anywhere in this
+           ///< codebase.
 
 // Configuration and status update commands
-static constexpr uint8_t CMD_SET_CONFIG1 = 0x6F;         ///< Configure device to auto-send status updates
-static constexpr uint8_t CMD_SET_CONFIG1_RESP = 0x70;    ///< Config response
+static constexpr uint8_t CMD_SET_CONFIG1 = 0x6F;  ///< Configure device to auto-send status updates
+static constexpr uint8_t CMD_SET_CONFIG1_RESP =
+    0x70;  ///< Config response, otherwise undocumented. Never observed in our corpus or in any
+           ///< field log, and not sent or handled anywhere in this codebase beyond the generic
+           ///< "is this a known command byte" check in radio_soft_phy.cpp.
 static constexpr uint8_t CMD_STATUS_UPDATE = 0x71;       ///< Device-initiated status update (needs auth)
 static constexpr uint8_t CMD_STATUS_UPDATE_RESP = 0x72;  ///< Acknowledge status update
 
-static constexpr uint8_t CMD_SEND_RAW_MESSAGE = 0xF0;    ///< Send raw message / "find hardware" (service)
-static constexpr uint8_t CMD_READ_GROUPS = 0xF1;         ///< Actuator: read groups / service ACK
-static constexpr uint8_t CMD_REBOOT = 0xF2;              ///< Reboot / service status
-static constexpr uint8_t CMD_SERVICE_STATUS_ACK = 0xF3;  ///< Service status ACK
+static constexpr uint8_t CMD_SEND_RAW_MESSAGE =
+    0xF0;  ///< Named "Send Raw Message" / "Find Hardware" — two candidate names, neither settled.
+           ///< Never observed in our corpus or in any field log, and not sent or handled
+           ///< anywhere in this codebase.
+static constexpr uint8_t CMD_READ_GROUPS =
+    0xF1;  ///< Named "Actuator: Read Groups" / "ActuatorAnyConfigIsLocal" (uncertain) / "Service
+           ///< ACK" — three candidate names, one itself flagged uncertain. Never observed in our
+           ///< corpus or in any field log, and not sent or handled anywhere in this codebase.
+static constexpr uint8_t CMD_REBOOT =
+    0xF2;  ///< Named "Reboot" / "Service Status" — two candidate names, one of them
+           ///< destructive-sounding, on no field evidence at all. Never observed in our corpus or
+           ///< in any field log, and not sent or handled anywhere in this codebase; treat the
+           ///< "reboot" reading with particular caution — it is a guess.
+static constexpr uint8_t CMD_SERVICE_STATUS_ACK = 0xF3;  ///< No description available at all for this opcode, not even
+                                                         ///< a hedge. Never observed in our corpus or in any field log,
+                                                         ///< and not sent or handled anywhere in this codebase.
 
 static constexpr uint8_t CMD_ERROR_RESP = 0xFE;  ///< Error response to any command
 

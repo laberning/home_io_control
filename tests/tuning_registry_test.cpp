@@ -48,11 +48,12 @@ std::set<std::string> select_param_names() {
 
 TEST(TuningRegistry, NumberTableContainsExactlyExpectedParameters) {
   const std::set<std::string> expected = {
-      "sx1262_response_preamble",      "sx1262_post_tx_settle_us",      "sx1276_response_preamble",
-      "sx1276_discovery_hop_slice_ms", "sx1262_discovery_hop_slice_ms", "lr1121_response_preamble",
-      "lr1121_post_tx_settle_us",      "lr1121_discovery_hop_slice_ms", "lbt_max_retries",
-      "lbt_rssi_threshold_dbm",        "pairing_discovery_wait_ms",     "pairing_discovery_initial_dwell_ms",
-      "pairing_key_exchange_retries",
+      "sx1262_response_preamble",      "sx1262_post_tx_settle_us",        "sx1276_response_preamble",
+      "sx1276_discovery_hop_slice_ms", "sx1262_discovery_hop_slice_ms",   "lr1121_response_preamble",
+      "lr1121_post_tx_settle_us",      "lr1121_discovery_hop_slice_ms",   "lbt_max_retries",
+      "lbt_rssi_threshold_dbm",        "pairing_discovery_wait_ms",       "pairing_discovery_initial_dwell_ms",
+      "pairing_key_exchange_retries",  "exchange_start_response_wait_ms", "exchange_response_wait_ms",
+      "exchange_total_budget_ms",
   };
   EXPECT_EQ(number_param_names(), expected) << "number table drifted from the expected inventory";
 }
@@ -66,8 +67,8 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
   EXPECT_EQ(select_param_names(), expected) << "select table drifted from the expected inventory";
 }
 
-TEST(TuningRegistry, TotalParameterCountIsTwenty) {
-  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 20u);
+TEST(TuningRegistry, TotalParameterCountIsTwentyThree) {
+  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 23u);
 }
 
 // ============================================================================

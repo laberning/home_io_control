@@ -8,6 +8,8 @@
 #include "stubs/radio_test_common.h"
 #include "stubs/scripted_spi.h"
 
+#include <algorithm>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <vector>
 
@@ -160,7 +162,11 @@ TEST(RadioSX1262, WaitForPacketRaceCondition_Resolved) {
   radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID, SX1262_IRQ_SYNC_WORD_VALID | SX1262_IRQ_RX_DONE});
 
   RadioRxPacket result{};
-  bool ok = radio.wait_for_packet(result, 100);
+  // The length-driven receive now runs ahead of the race handler and declines on this all-zero
+  // mock buffer, but it spends real air time getting there. The host hal.h stubs advance millis()
+  // and micros() one unit per call, so that ~1 ms of air time costs ~1000 fake milliseconds of
+  // budget; the window is sized for the stub, not for the protocol.
+  bool ok = radio.wait_for_packet(result, 20000);
 
   // SYNC before RX_DONE race handled by resolve_sync_race → eventual success
   EXPECT_TRUE(ok) << "SYNC_WORD_VALID followed by RX_DONE should be resolved and yield packet";
@@ -367,6 +373,103 @@ TEST(RadioSX1262, UartProbeAcceptsMacTrailerFrame) {
   EXPECT_EQ(parsed.cmd, CMD_ONEWAY_ADD_CONTROLLER);
 }
 
+TEST(RadioSX1262, UartProbeAcceptsEveryKnownIoCommand) {
+  // Regression for a real hardware failure (2026-08-16): find_uart_probe() only accepts a
+  // CRC-valid candidate whose cmd passes is_known_io_command() (radio_soft_phy.cpp/.h).
+  // CMD_GET_GENERAL_INFO3_RESP (0x59) was missing from that switch, so a real, CRC-valid probe
+  // reply on real hardware was silently dropped on the SX1262/LR1121 software PHY and reported
+  // as a timeout; the same audit also found CMD_IDENTIFY and
+  // CMD_WRITE_PRIVATE/CMD_WRITE_PRIVATE_ACK missing, affecting the shipped identify_device()
+  // action (and climate writes). This test does not hand-maintain its own opcode list -- an
+  // earlier version did, and that duplicate list was itself a third hand-maintained table that
+  // could (and did) drift from is_known_io_command(). Instead it iterates every possible command
+  // byte and calls is_known_io_command() directly, so the two can never disagree by construction;
+  // what it verifies is that find_uart_probe() actually honors that answer for every byte value,
+  // not a fixed sample of them.
+  for (int cmd_int = 0; cmd_int <= 0xFF; cmd_int++) {
+    const auto cmd = static_cast<uint8_t>(cmd_int);
+    if (!is_known_io_command(cmd))
+      continue;
+    SCOPED_TRACE(::testing::Message() << "cmd=0x" << std::hex << static_cast<int>(cmd));
+    const uint8_t frame[] = {0xCE, 0x00, 0xC0, 0xFF, 0xEE, 0xAA, 0xBB, 0xCC, cmd, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+    const uint8_t frame_len = sizeof(frame);
+
+    const uint16_t crc = crc_ccitt(frame, frame_len);
+    uint8_t frame_with_crc[32];
+    memcpy(frame_with_crc, frame, frame_len);
+    frame_with_crc[frame_len] = crc & 0xFF;
+    frame_with_crc[frame_len + 1] = (crc >> 8) & 0xFF;
+
+    uint8_t encoded[64] = {0};
+    const uint8_t encoded_len = uart_encode_packet(frame_with_crc, frame_len + 2, encoded, sizeof(encoded));
+    ASSERT_GT(encoded_len, 0u);
+
+    const UartProbeResult probe = find_uart_probe(encoded, encoded_len);
+    ASSERT_TRUE(probe.valid) << "find_uart_probe() rejected a cmd that is_known_io_command() accepts: 0x" << std::hex
+                             << static_cast<int>(cmd);
+    EXPECT_EQ(probe.frame_len, frame_len);
+    EXPECT_EQ(memcmp(probe.decoded + probe.frame_start, frame, frame_len), 0);
+  }
+}
+
+TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
+  // UartProbeAcceptsEveryKnownIoCommand above closes the class of bug where find_uart_probe()
+  // disagrees with is_known_io_command() -- but it cannot catch the original bug itself: an
+  // opcode that proto_constants.h names (so this codebase knows about it and gives it a symbol)
+  // yet is_known_io_command() has never been taught to accept, because that opcode is genuinely
+  // never expected to arrive on the soft-PHY receive path this codebase controls. Every such
+  // opcode must be *this specific, checked, and reasoned-about list* -- not silence. An opcode
+  // that's missing from both this list and is_known_io_command() fails this test, so a newly
+  // named constant forces a deliberate choice (teach is_known_io_command() about it, or document
+  // here why it's exempt) instead of silently falling through a soft-PHY reception gap.
+  //
+  // Reasoned exclusions, checked against actual usage in this codebase (not proto_constants.h's
+  // doxygen alone) as of 2026-08-16:
+  //   - CMD_ACTIVATE_MODE: only decoded by decode_1w_frame() (proto_codecs.cpp), and every 1W
+  //     frame carries CTRL0_PROTOCOL_1W, which is_plausible_uart_frame() (radio_soft_phy.cpp)
+  //     already accepts unconditionally -- is_known_io_command() is never consulted for it.
+  //   - CMD_SET_SENSOR / CMD_SET_SENSOR_ACK: zero references anywhere outside proto_constants.*.
+  //   - CMD_DISCOVER_ALT_REQ: this codebase can transmit it (proto_commands.cpp, as an optional
+  //     `pairing_discovery_commands` entry), but the reply PairingEngine actually waits for is the
+  //     generic CMD_DISCOVER_RESP (0x29, already known) regardless of which discovery variant was
+  //     sent -- and hub_key_extraction.cpp's try_handle_key_extraction_frame_() only recognizes
+  //     CMD_DISCOVER_REQ (0x28), not this variant, so there is no live dispatch path that needs
+  //     to receive 0x2E itself.
+  //   - CMD_DISCOVER_ALT_RESP: captured once (velux_kux100/discover_alt_addressed_challenge_
+  //     response.yaml) but "not otherwise used anywhere in this codebase" per its own doxygen --
+  //     nothing dispatches on it, corpus replay doesn't go through this soft-PHY gate at all.
+  //   - CMD_ADDRESS_REQ / CMD_ADDRESS_RESP: captured once (velux_kux100/pairing_full.yaml) but
+  //     "neither command is sent or handled anywhere in this codebase" per proto_constants.h.
+  //   - CMD_LAUNCH_KEY_TRANSFER: never observed in corpus or field log; not sent or handled
+  //     anywhere; used only to construct a hypothetical IV in proto_crypto_test.cpp.
+  //   - CMD_UNKNOWN4A_REQ: deliberately excluded, see ADR 0024 -- nothing this codebase sends
+  //     would ever draw a reply carrying this opcode.
+  //   - CMD_GET_INFO1 / CMD_GET_INFO1_RESP: unimplemented, never sent, so never a reply to wait
+  //     for; this codebase only uses CMD_GET_INFO2/CMD_GET_GENERAL_INFO3 (both already known).
+  //   - CMD_SEND_RAW_MESSAGE / CMD_READ_GROUPS / CMD_REBOOT / CMD_SERVICE_STATUS_ACK: never
+  //     observed in corpus or field log, not sent or handled anywhere in this codebase -- named
+  //     purely so a future capture of one of them has a symbol to log against.
+  static constexpr uint8_t NEVER_RECEIVED_ALLOWLIST[] = {
+      CMD_ACTIVATE_MODE,  CMD_SET_SENSOR,       CMD_SET_SENSOR_ACK,      CMD_DISCOVER_ALT_REQ, CMD_DISCOVER_ALT_RESP,
+      CMD_ADDRESS_REQ,    CMD_ADDRESS_RESP,     CMD_LAUNCH_KEY_TRANSFER, CMD_UNKNOWN4A_REQ,    CMD_GET_INFO1,
+      CMD_GET_INFO1_RESP, CMD_SEND_RAW_MESSAGE, CMD_READ_GROUPS,         CMD_REBOOT,           CMD_SERVICE_STATUS_ACK,
+  };
+
+  for (int cmd_int = 0; cmd_int <= 0xFF; cmd_int++) {
+    const auto cmd = static_cast<uint8_t>(cmd_int);
+    if (std::strcmp(command_name(cmd), "UNKNOWN_CMD") == 0)
+      continue;  // Not a named opcode at all -- outside this test's scope.
+    if (is_known_io_command(cmd))
+      continue;
+    const bool allowlisted = std::find(std::begin(NEVER_RECEIVED_ALLOWLIST), std::end(NEVER_RECEIVED_ALLOWLIST), cmd) !=
+                             std::end(NEVER_RECEIVED_ALLOWLIST);
+    EXPECT_TRUE(allowlisted) << "cmd=0x" << std::hex << static_cast<int>(cmd) << " (" << command_name(cmd)
+                             << ") is named by command_name() but missing from both "
+                                "is_known_io_command() and this test's documented allowlist -- decide "
+                                "which one it belongs in";
+  }
+}
+
 TEST(RadioSX1262, UartDecodeFixedStride) {
   // Verify decode_uart_probe correctly decodes a known UART-encoded byte.
   // UART frame for byte 0xA5: start(0), 1,0,1,0,0,1,0,1, stop(1) = 10 bits
@@ -429,4 +532,338 @@ TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
       << "SetPacketParams' PreambleLength is in bits: LONG_PREAMBLE (" << LONG_PREAMBLE
       << " bytes) must reach the chip as " << (LONG_PREAMBLE * 8) << " bits, not " << LONG_PREAMBLE
       << " bits (an 8x-too-short on-air preamble)";
+}
+
+// ============================================================================
+// TX modulation-quality erratum (datasheet §15.1): bit 2 of SX1262_REG_TX_MODULATION must be set
+// for every (G)FSK transmission. The chip transmits perfectly happily without it, just with
+// degraded modulation quality, so nothing but this test catches a regression.
+// ============================================================================
+
+TEST(RadioSX1262, SendPacketAppliesTxModulationWorkaroundBeforeSetTx) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  // As in SendPacketSetsPacketParamsPreambleInBits: send_packet times out waiting for TX_DONE in a
+  // synchronous host test, but everything up to and including SetTx has already been issued.
+  radio.send_packet(frame, sizeof(frame), cfg);
+
+  int set_tx_idx = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_SET_TX) {
+      set_tx_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(set_tx_idx, 0);
+
+  int workaround_idx = -1;
+  for (int i = set_tx_idx - 1; i >= 0; i--) {
+    const auto &tx = spi.transactions()[i];
+    if (tx.size() == 4 && tx[0] == SX1262_WRITE_REGISTER &&
+        tx[1] == static_cast<uint8_t>(SX1262_REG_TX_MODULATION >> 8) &&
+        tx[2] == static_cast<uint8_t>(SX1262_REG_TX_MODULATION)) {
+      workaround_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(workaround_idx, 0) << "SX1262_REG_TX_MODULATION must be written before every SetTx "
+                                  "(datasheet §15.1 TX modulation-quality erratum)";
+  EXPECT_NE(spi.transactions()[workaround_idx][3] & SX1262_TX_MODULATION_GFSK_BIT, 0)
+      << "the (G)FSK-correct value for bit 2 of SX1262_REG_TX_MODULATION is 1, not 0";
+}
+
+// ============================================================================
+// Length-driven receive: RX runs in fixed-length mode at SOFT_PHY_RX_PROBE_PACKET_LEN, so
+// RX_DONE lands a fixed ~10 ms after the sync word regardless of how short the frame was. A
+// frame's own length is knowable from its first decoded byte, so the shared flow reads it out on
+// air time instead. CRC validation is the gate; anything less falls back to the RX_DONE path.
+// ============================================================================
+
+namespace {
+
+// Build the raw bytes the chip's data buffer holds mid-reception: the frame, its CRC-CCITT
+// trailer, and the whole lot UART-packed exactly as it arrived off air.
+std::vector<uint8_t> uart_packed_on_air_bytes(const std::vector<uint8_t> &frame) {
+  std::vector<uint8_t> with_crc = frame;
+  const uint16_t crc = crc_ccitt(frame.data(), static_cast<uint8_t>(frame.size()));
+  with_crc.push_back(static_cast<uint8_t>(crc & 0xFF));
+  with_crc.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
+
+  uint8_t encoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  const uint8_t encoded_len =
+      uart_encode_packet(with_crc.data(), static_cast<uint8_t>(with_crc.size()), encoded, sizeof(encoded));
+  return std::vector<uint8_t>(encoded, encoded + encoded_len);
+}
+
+// A real 15-byte RS100 challenge (0x3C) — the exact frame the hub must turn around fastest, from
+// tests/corpus/captures/issues/field_rs100_pairing_key_transfer_timeout.yaml.
+const std::vector<uint8_t> kRs100Challenge = {0x0E, 0x00, 0xD1, 0xD4, 0xFF, 0x8C, 0x08, 0x3C,
+                                              0x3C, 0x45, 0x51, 0x6F, 0xFE, 0x59, 0x80};
+
+}  // namespace
+
+// Serves a scripted data buffer, standing in for the chip's buffer as reception progresses, and
+// records every read so tests can assert what the early path actually asked for.
+class EarlyRxRadioSX1262 : public RadioSX1262 {
+ public:
+  using RadioSX1262::RadioSX1262;
+
+  void set_irq_sequence(std::initializer_list<uint32_t> seq) {
+    irq_seq_.assign(seq);
+    irq_idx_ = 0;
+  }
+  void set_rx_buffer(std::vector<uint8_t> buf) { rx_buffer_ = std::move(buf); }
+  void set_fallback_packet(const RadioRxPacket &pkt) { fallback_packet_ = pkt; }
+  using RadioSX1262::early_rx_read_offset;
+
+  const std::vector<uint8_t> &read_lengths() const { return read_lengths_; }
+  const std::vector<uint8_t> &read_offsets() const { return read_offsets_; }
+  bool fallback_used() const { return fallback_used_; }
+
+ protected:
+  uint32_t read_irq_status_raw() override {
+    if (irq_idx_ < irq_seq_.size())
+      return irq_seq_[irq_idx_++];
+    return 0;
+  }
+
+  void read_rx_buffer(uint8_t offset, uint8_t *data, uint8_t len) override {
+    read_offsets_.push_back(offset);
+    read_lengths_.push_back(len);
+    for (uint8_t i = 0; i < len; i++)
+      data[i] = i < rx_buffer_.size() ? rx_buffer_[i] : 0x00;
+  }
+
+  bool read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint32_t irq_status) override {
+    (void) blocking_wait;
+    (void) irq_status;
+    fallback_used_ = true;
+    packet = fallback_packet_;
+    return packet.len > 0;
+  }
+
+ private:
+  std::vector<uint32_t> irq_seq_;
+  size_t irq_idx_ = 0;
+  std::vector<uint8_t> rx_buffer_;
+  std::vector<uint8_t> read_lengths_;
+  std::vector<uint8_t> read_offsets_;
+  RadioRxPacket fallback_packet_{};
+  bool fallback_used_ = false;
+};
+
+TEST(SoftPhy, RawBytesForFrameCoversFrameAndCrcCells) {
+  // 15 protocol bytes + 2 CRC = 17 UART cells = 170 bits = 22 raw bytes.
+  EXPECT_EQ(soft_phy_raw_bytes_for_frame(15), 22);
+  EXPECT_EQ(soft_phy_raw_bytes_for_frame(FRAME_MIN_SIZE), 14);
+  // Even the longest possible frame stays well inside the raw scratch buffer.
+  EXPECT_EQ(soft_phy_raw_bytes_for_frame(FRAME_MAX_SIZE), 43);
+  EXPECT_LE(soft_phy_raw_bytes_for_frame(FRAME_MAX_SIZE), RADIO_PACKET_BUFFER_SIZE);
+}
+
+TEST(SoftPhy, PeekFrameLengthRecoversLengthFromFirstUartCell) {
+  const std::vector<uint8_t> raw = uart_packed_on_air_bytes(kRs100Challenge);
+  ASSERT_GE(raw.size(), SOFT_PHY_EARLY_HEADER_RAW_BYTES);
+
+  // Three raw bytes — a quarter of a millisecond of air time — is enough to learn the whole
+  // frame's length, because CTRL0 bits [4:0] carry it.
+  EXPECT_EQ(soft_phy_peek_frame_length(raw.data(), SOFT_PHY_EARLY_HEADER_RAW_BYTES), kRs100Challenge.size());
+}
+
+TEST(SoftPhy, PeekFrameLengthRejectsNoise) {
+  const uint8_t zeros[SOFT_PHY_EARLY_HEADER_RAW_BYTES] = {0x00, 0x00, 0x00};
+  EXPECT_EQ(soft_phy_peek_frame_length(zeros, sizeof(zeros)), 0) << "no stop bit — not a UART cell at any offset";
+
+  const uint8_t ones[SOFT_PHY_EARLY_HEADER_RAW_BYTES] = {0xFF, 0xFF, 0xFF};
+  EXPECT_EQ(soft_phy_peek_frame_length(ones, sizeof(ones)), 0) << "no start bit — not a UART cell at any offset";
+}
+
+TEST(SoftPhy, AirTimeIsRoundedUpToWholeBytes) {
+  // 38400 bps: one byte is 208.33 µs, and the helper must never round below that.
+  EXPECT_GE(soft_phy_air_time_us(1), 208u);
+  EXPECT_GE(soft_phy_air_time_us(48), 10000u) << "the fixed-length RX window costs a full 10 ms";
+  EXPECT_LT(soft_phy_air_time_us(22 + SOFT_PHY_EARLY_READ_MARGIN_BYTES), soft_phy_air_time_us(48))
+      << "a 15-byte frame must complete well before the fixed-length window would";
+}
+
+TEST(RadioSX1262, WaitForPacketCompletesOnAirTimeWithoutRxDone) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.set_rx_buffer(uart_packed_on_air_bytes(kRs100Challenge));
+  // SYNC_WORD_VALID only — RX_DONE never arrives. Under the old flow this receive could only
+  // time out; the frame is nonetheless entirely on air and recoverable.
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  // The host hal.h stubs advance millis() and micros() by one unit per call, so a real frame's
+  // ~5 ms of air time costs several thousand fake milliseconds here. The timeout is sized for the
+  // stub, not for the protocol.
+  ASSERT_TRUE(radio.wait_for_packet(pkt, 20000)) << "a complete, CRC-valid frame must not need RX_DONE";
+  EXPECT_FALSE(radio.fallback_used()) << "the RX_DONE path must not have been reached";
+
+  ASSERT_EQ(pkt.len, kRs100Challenge.size());
+  EXPECT_EQ(std::vector<uint8_t>(pkt.data, pkt.data + pkt.len), kRs100Challenge);
+
+  // It must read from the RX base address, and read only the frame's own bytes plus margin —
+  // never the full fixed-length window.
+  ASSERT_GE(radio.read_lengths().size(), 2u) << "expected a header read then a whole-frame read";
+  for (uint8_t offset : radio.read_offsets())
+    EXPECT_EQ(offset, SX1262_RX_BUFFER_BASE);
+  EXPECT_EQ(radio.read_lengths().front(), SOFT_PHY_EARLY_HEADER_RAW_BYTES);
+  EXPECT_EQ(radio.read_lengths().back(),
+            soft_phy_raw_bytes_for_frame(kRs100Challenge.size()) + SOFT_PHY_EARLY_READ_MARGIN_BYTES);
+  EXPECT_LT(radio.read_lengths().back(), SOFT_PHY_RX_PROBE_PACKET_LEN);
+}
+
+TEST(RadioSX1262, WaitForPacketFallsBackToRxDoneWhenEarlyReadDoesNotValidate) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  // A buffer that never yields a CRC-valid frame — the shape of a chip that turns out not to
+  // expose its buffer mid-reception, or of a spurious sync detect.
+  radio.set_rx_buffer(std::vector<uint8_t>(SOFT_PHY_RX_PROBE_PACKET_LEN, 0x00));
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID, SX1262_IRQ_RX_DONE});
+
+  RadioRxPacket fallback{};
+  fallback.len = 4;
+  fallback.data[0] = 0xDE;
+  radio.set_fallback_packet(fallback);
+
+  RadioRxPacket pkt{};
+  // Generous for the same host-stub clock reason as the test above: the early path must get far
+  // enough to read the buffer and reject it on its merits, not be cut short by the timeout.
+  ASSERT_TRUE(radio.wait_for_packet(pkt, 20000));
+  EXPECT_TRUE(radio.fallback_used()) << "a failed early read must cost latency, never the frame";
+  EXPECT_EQ(pkt.len, 4);
+  EXPECT_EQ(pkt.data[0], 0xDE);
+}
+
+TEST(RadioSX1262, EarlyCompletionIsOptInPerChip) {
+  // The base class default keeps a chip on the RX_DONE path until it declares its buffer
+  // readable mid-reception; SX1262 opts in with the RX base it already programs.
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  EXPECT_EQ(radio.early_rx_read_offset(), SX1262_RX_BUFFER_BASE);
+}
+
+TEST(RadioSX1262, EarlyCompletionDeclinesWindowsTooShortToFinishIn) {
+  // A window smaller than the longest frame's air time cannot complete a receive either way, so
+  // the early path must not spend that whole budget discovering it.
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.set_rx_buffer(uart_packed_on_air_bytes(kRs100Challenge));
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  EXPECT_FALSE(radio.wait_for_packet(pkt, SOFT_PHY_EARLY_MIN_WINDOW_MS - 1));
+  EXPECT_TRUE(radio.read_lengths().empty()) << "no buffer read should have been attempted at all";
+}
+
+TEST(SoftPhy, EncodePadsTrailingIdleBitsHigh) {
+  // 3 bytes = 30 bits = 4 encoded bytes (32 bits), so 2 bits of the last byte are line-idle time
+  // rather than data. They must go out as idle-high, not as a spurious start bit.
+  const uint8_t data[3] = {0x00, 0xFF, 0x5A};
+  uint8_t encoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  const uint8_t encoded_len = uart_encode_packet(data, sizeof(data), encoded, sizeof(encoded));
+  ASSERT_EQ(encoded_len, 4);
+
+  const uint16_t data_bits = sizeof(data) * UART_CELL_BITS;
+  for (uint16_t pos = data_bits; pos < static_cast<uint16_t>(encoded_len) * 8; pos++) {
+    const uint8_t bit = (encoded[pos / 8] >> (7 - (pos % 8))) & 0x01;
+    EXPECT_EQ(bit, 1) << "trailing bit " << pos << " must idle high";
+  }
+
+  // Padding must not disturb the cells themselves: the stream still round-trips.
+  uint8_t decoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  ASSERT_EQ(decode_uart_probe(encoded, encoded_len, 0, decoded, sizeof(decoded)), sizeof(data));
+  EXPECT_EQ(memcmp(decoded, data, sizeof(data)), 0);
+}
+
+TEST(SoftPhy, EncodeLeavesNoPaddingWhenCellsFillWholeBytes) {
+  // 4 bytes = 40 bits = exactly 5 encoded bytes, so there is nothing to pad and the last bit
+  // written is the frame's own stop bit.
+  const uint8_t data[4] = {0xC8, 0x00, 0x12, 0x34};
+  uint8_t encoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  ASSERT_EQ(uart_encode_packet(data, sizeof(data), encoded, sizeof(encoded)), 5);
+
+  uint8_t decoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  ASSERT_EQ(decode_uart_probe(encoded, 5, 0, decoded, sizeof(decoded)), sizeof(data));
+  EXPECT_EQ(memcmp(decoded, data, sizeof(data)), 0);
+}
+
+// ============================================================================
+// Post-TX re-arm: the peer can answer within a millisecond or two of our carrier dropping, so the
+// path back into RX carries only what it must. SetStandby is redundant (SetRxTxFallbackMode puts
+// the chip in standby the instant TxDone fires) and the buffer base has not moved since init.
+// ============================================================================
+
+// Raises the TxDone interrupt the moment SetTx is issued. send_packet() clears the DIO latch
+// immediately before arming, so a flag set beforehand is discarded — the interrupt has to arrive
+// after. This is the only way to reach send_packet()'s success path in a synchronous host test,
+// and the post-TX re-arm runs nowhere else.
+class TxCompletingRadioSX1262 : public TestableRadioSX1262 {
+ public:
+  using TestableRadioSX1262::TestableRadioSX1262;
+
+ protected:
+  void start_tx() override {
+    TestableRadioSX1262::start_tx();
+    this->mark_dio_fired_from_isr();
+  }
+};
+
+TEST(RadioSX1262, PostTxRearmSkipsRedundantStandbyAndBufferBase) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TxCompletingRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  radio.set_irq_sequence({SX1262_IRQ_TX_DONE});
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  ASSERT_TRUE(radio.send_packet(frame, sizeof(frame), cfg)) << "TxDone was driven, so this must succeed";
+
+  int set_tx_idx = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_SET_TX) {
+      set_tx_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(set_tx_idx, 0);
+
+  // Everything after SetTx is the re-arm path.
+  int standby = 0, buffer_base = 0, packet_params = 0, set_rx = 0;
+  for (size_t i = static_cast<size_t>(set_tx_idx) + 1; i < spi.transactions().size(); i++) {
+    const auto &tx = spi.transactions()[i];
+    if (tx.empty())
+      continue;
+    if (tx[0] == SX1262_SET_STANDBY)
+      standby++;
+    else if (tx[0] == SX1262_SET_BUFFER_BASE_ADDRESS)
+      buffer_base++;
+    else if (tx[0] == SX1262_SET_PACKET_PARAMS)
+      packet_params++;
+    else if (tx[0] == SX1262_SET_RX)
+      set_rx++;
+  }
+
+  EXPECT_EQ(standby, 0) << "the chip is already in standby via SetRxTxFallbackMode when TxDone fires";
+  EXPECT_EQ(buffer_base, 0) << "the RX buffer base was written at init and has not moved";
+  EXPECT_EQ(packet_params, 1) << "RX packet params must be restored — the transmission overwrote them";
+  EXPECT_EQ(set_rx, 1) << "and the radio must actually re-enter RX";
 }

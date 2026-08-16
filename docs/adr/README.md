@@ -34,6 +34,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0006](0006-management-actions-as-native-api-actions.md) | Admin ops as native API actions | Rarely-used operations get no permanent entity |
 | [0016](0016-sender-events-are-opt-in-by-allowlist.md) | Sender events are opt-in | The radio has no ownership marker, so nothing fires until named |
 | [0017](0017-device-poll-hint-shortens-but-never-stretches.md) | Poll hint shortens, never stretches | The configured interval is a ceiling, not a target |
+| [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
 
 ### Interfaces and naming
 
