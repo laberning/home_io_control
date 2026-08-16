@@ -844,17 +844,24 @@ Extraction)" (not configurable).
 > listens for a frame your own 1W remote broadcasts during its key-copy gesture and decrypts it.
 > The decryption needs nothing secret — see the security note below — so treat the recovered key
 > exactly as you would treat your `system_key`.
+>
+> **And recovering the key does not let the hub command anything.** Real-hardware testing showed
+> that a device obeys a 1W command only from a controller it was explicitly **taught** — holding
+> the right key is not enough. Enrolling this hub as a controller is a separate capability that
+> **does not ship yet**, so today this feature recovers and reports a key, and nothing more.
 
 One-way (1W) installations — a handheld remote driving a shutter or awning directly, with no hub —
-have their own network key. If you want this component to join such an installation, you need that
-key. This feature recovers it by overhearing a single `0x30` "add controller" broadcast, which is
-what a 1W remote sends while its **remote-to-remote key-copy mode** is active in order to hand its
-network key to a new remote.
+have their own network key. This feature recovers it by overhearing a single `0x30` "add
+controller" broadcast, which is what a 1W remote sends while its **remote-to-remote key-copy mode**
+is active in order to hand its network key to a new remote.
 
-The alternative — enrolling this hub into the device from scratch — is destructive: the enrollment
-command clears the device's existing one-way controls, which would unpair the remote you already
-use. **Adoption is the non-destructive route into an installation that already works**, so prefer
-it whenever you have a functioning remote.
+**What the key does and does not buy you.** A 1W device decides whether to obey a command from the
+triple *(source address, key, rolling sequence)*, and it checks the source address against a table
+of controllers it has been taught. So the key is *necessary* — a frame signed with the wrong one is
+rejected outright — but not *sufficient*: an unenrolled hub is ignored no matter which key it signs
+with. Enrollment (teaching the device this hub's address) is what closes that gap, and it is not
+implemented yet. Until it is, adopt a key if you want it recorded for later, or to identify which
+network a remote belongs to; do not expect commands to work afterwards.
 
 ```yaml
 home_io_control:
@@ -897,7 +904,9 @@ is correct:
 - **`MAC FAILED`** — the authenticator did not check out. The key is probably wrong (a marginal
   reception is the usual cause). Re-arm and repeat the gesture closer to the hub.
 - **`MAC not present`** — the frame carried no authenticator to check. Not an error; the key may
-  still be correct, but treat it as unconfirmed until you have controlled something with it.
+  still be correct, but it stays unconfirmed. Note that "control something with it" is not
+  currently a way to confirm it either — see the warning at the top of this section — so
+  `MAC VERIFIED` is the only confirmation available today.
 
 Two fields in the emitted block deserve a note:
 
@@ -927,6 +936,19 @@ that reason — the recovered key is printed in exactly one deliberate place, th
 The hub can act as a **1W controller** — the kind of thing a wall remote is — and drive devices by
 transmitting. This is off unless you configure it, and it signs with a key you already hold: the
 same authorisation as any 2W command this component sends.
+
+> **⚠️ Read this before configuring: a device only obeys a controller it has been taught.**
+> Real-hardware testing established that 1W actuators keep a **table of registered controllers**.
+> A frame that is correctly built, correctly addressed and signed with a key the device accepts is
+> still ignored if this hub's source address is not in that table — which, for a device you have
+> never enrolled the hub into, it is not. The commands below will transmit correctly and the device
+> will do nothing.
+>
+> **Enrolling the hub as a controller does not ship yet.** Until it does, treat this section as a
+> transmit engine you can exercise and inspect (the "Last 1W Command" sensor shows exactly what
+> went out) rather than a way to control hardware. Enrollment also requires a physical button press
+> on the receiving device — typically a ~2 second hold on its PROG button — so it will never be
+> something that happens without your involvement.
 
 ### What 1W is, and what it is not
 
@@ -1067,14 +1089,19 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
 
 **The sensor updates but the device does not move.** In order of likelihood:
 
-1. **Wrong key.** The device is on a network whose key you do not hold. Adopting it is a separate
-   step — see the "Adopting a 1W Controller Key" section.
-2. **Wrong device class.** `io_device_type` selects the broadcast address. A shutter will not act
+1. **The device does not know this controller — and today this is always the reason.** A 1W device
+   obeys only source addresses it has been *taught*, and teaching it (enrollment) is not
+   implemented yet, so a device you have not enrolled this hub into will ignore every command it
+   sends. This is established on real hardware, not inferred: devices holding the exact key the hub
+   signed with, addressed correctly, did not react — and one of them obeyed a physical remote
+   minutes later once that remote had been enrolled. **Work through the rest of this list only if
+   you have somehow enrolled the hub by other means**; otherwise there is nothing to diagnose.
+2. **Wrong key.** The device is on a network whose key you do not hold. Adopting it is a separate
+   step — see the "Adopting a 1W Controller Key" section. Note that adopting the key does *not*
+   remove reason 1.
+3. **Wrong device class.** `io_device_type` selects the broadcast address. A shutter will not act
    on a command addressed to the awning class. Compare against the class you see in overheard 1W
    traffic from the real remote.
-3. **The device does not know this controller.** A device that has never been taught this source
-   address may ignore it even with the right key. Enrolling as an additional controller is not
-   implemented yet.
 4. **Desynced counter.** The device remembers the highest sequence it accepted from you and rejects
    anything at or below it. If your counter fell behind — a replaced board, a restored backup — every
    command is silently dropped. **Remedy:** raise `initial_sequence:` above the value in the sensor
