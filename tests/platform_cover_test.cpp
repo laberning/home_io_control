@@ -558,3 +558,77 @@ TEST(PlatformCover, UnknownPositionNotPublished) {
 
   EXPECT_FLOAT_EQ(cover.position, 0.0f) << "UNKNOWN_POSITION from device should not update HA position";
 }
+
+// ============================================================================
+// A device that reports its pre-command target while already flagging itself as moving must not be
+// rendered as travelling in the wrong direction. Observed on a Somfy RS100: after "open", a closed
+// shutter reports `position=100 target=100 moving` for about a second before its target catches
+// up, and Home Assistant showed the cover briefly *closing* before it began to open. 16 such
+// frames appear across the field logs.
+// ============================================================================
+
+TEST(PlatformCover, MovingWithTargetEqualToPositionIsNotReportedAsClosing) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice dev{};
+  dev.position = 100.0f;  // fully closed on the IO scale
+  dev.target = 100.0f;    // pre-command target, not yet caught up
+  dev.is_stopped = false;
+  hub.trigger_device_update("ABC123", dev);
+
+  EXPECT_NE(cover.current_operation, COVER_OPERATION_CLOSING)
+      << "a closed cover told to open must never be shown as closing";
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE)
+      << "with no position change yet, the direction is simply not known";
+}
+
+TEST(PlatformCover, DirectionIsReportedOnceTheTargetCatchesUp) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice stale{};
+  stale.position = 100.0f;
+  stale.target = 100.0f;
+  stale.is_stopped = false;
+  hub.trigger_device_update("ABC123", stale);
+
+  IoDevice moving{};
+  moving.position = 38.0f;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
+}
+
+TEST(PlatformCover, MovingWithTargetEqualToPositionStillTracksAnObservedDelta) {
+  // Equal target and position does not mean "stationary" — if the position has actually changed
+  // since the last frame that delta is real direction information, and the fallback must use it.
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice first{};
+  first.position = 100.0f;
+  first.target = 100.0f;
+  first.is_stopped = false;
+  hub.trigger_device_update("ABC123", first);
+
+  IoDevice second{};
+  second.position = 80.0f;  // actually moved toward open
+  second.target = 80.0f;    // target still merely echoing the current position
+  second.is_stopped = false;
+  hub.trigger_device_update("ABC123", second);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING)
+      << "a real position change reveals the direction even when the target is uninformative";
+}

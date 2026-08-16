@@ -142,7 +142,7 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   // Determine movement direction for the HA UI animation
   if (dev.is_stopped) {
     this->current_operation = cover::COVER_OPERATION_IDLE;
-  } else if (dev.target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION) {
+  } else if (dev.target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION && dev.target != dev.position) {
     // Figure out if we're opening or closing based on target vs current position
     if (invert) {
       this->current_operation =
@@ -153,6 +153,14 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
           (dev.target < dev.position) ? cover::COVER_OPERATION_OPENING : cover::COVER_OPERATION_CLOSING;
     }
   } else if (dev.position != UNKNOWN_POSITION) {
+    // Either no target at all, or a target equal to the current position while the device says it
+    // is moving. The second case is not a standstill and it is emphatically not "closing": devices
+    // flag themselves as moving while still reporting their *pre-command* target, so a shutter
+    // resting closed at 100 and told to open reports `position=100 target=100 moving` for the
+    // first second or so. Comparing those two with `<` put that in the CLOSING bucket, and Home
+    // Assistant showed a closed cover briefly closing before it began to open — observed on a
+    // Somfy RS100, 16 such frames across the field logs. Fall through to the delta inference,
+    // which reports IDLE until an actual position change reveals the direction.
     this->current_operation = this->infer_operation_from_position_delta_(invert, dev.position);
   }
 
