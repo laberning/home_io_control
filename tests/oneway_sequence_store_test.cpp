@@ -52,8 +52,9 @@ TEST_F(OneWaySequenceStoreTest, HandsOutStrictlyIncreasingValuesAcrossBlockBound
   uint16_t previous = 0;
   for (uint16_t i = 0; i < count; i++) {
     const uint16_t value = take(store, NODE_A);
-    if (i > 0)
+    if (i > 0) {
       EXPECT_EQ(value, static_cast<uint16_t>(previous + 1)) << "sequences must advance by exactly one per command";
+    }
     EXPECT_TRUE(seen.insert(value).second) << "a sequence must never be handed out twice";
     previous = value;
   }

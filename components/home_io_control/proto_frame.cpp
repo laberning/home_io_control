@@ -68,7 +68,7 @@ uint16_t crc_ccitt(const uint8_t *data, uint8_t len) {
 }
 
 void init_frame(IoFrame &f, bool is_2w, bool start, bool end, bool low_power) {
-  memset(&f, 0, sizeof(IoFrame));
+  f = IoFrame();
   if (end)
     f.ctrl0 |= CTRL0_END;
   if (start)
@@ -156,7 +156,7 @@ bool parse(const uint8_t *buf, uint8_t buf_len, IoFrame &f) {
     return false;
   if (buf_len < FRAME_MIN_SIZE)
     return false;
-  memset(&f, 0, sizeof(IoFrame));
+  f = IoFrame();
   uint8_t offset = 0;
   f.ctrl0 = buf[offset++];
   f.ctrl1 = buf[offset++];

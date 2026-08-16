@@ -369,7 +369,7 @@ TEST(OneWayCommands, ForceOpenHasNoOneWayEncoding) {
   EXPECT_EQ(position_frame.data[3], 0x00);
 
   IoFrame force_frame{};
-  memset(&force_frame, 0xAA, sizeof(force_frame));
+  memset(reinterpret_cast<uint8_t *>(&force_frame), 0xAA, sizeof(force_frame));
   const IoFrame untouched = force_frame;
   EXPECT_FALSE(create_1w_execute_command(force_frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::FORCE_OPEN,
                                          42, test::TEST_SYSTEM_KEY))
@@ -413,7 +413,7 @@ TEST(OneWayCommands, PositionAboveHundredIsRejectedWithoutTouchingTheFrame) {
   // 1W has no reply, so a half-built frame that a caller ignored the return value for would go
   // on air and fail silently. Refuse before writing anything.
   IoFrame frame{};
-  memset(&frame, 0xEE, sizeof(frame));
+  memset(reinterpret_cast<uint8_t *>(&frame), 0xEE, sizeof(frame));
   EXPECT_FALSE(create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, 101, 1, test::TEST_SYSTEM_KEY))
       << "positions run 0-100";
   EXPECT_EQ(frame.ctrl0, 0xEE) << "a rejected build must leave the caller's frame untouched";
