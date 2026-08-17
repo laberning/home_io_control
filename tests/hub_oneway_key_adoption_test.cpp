@@ -212,8 +212,9 @@ TEST(HubOneWayKeyAdoption, ReportContainsPasteableBlockAndKeyExactlyOnce) {
   EXPECT_NE(report.find("- id: adopted_abcdef"), std::string::npos) << "identity id derives from the sender node";
   EXPECT_NE(report.find("manufacturer: 0x02"), std::string::npos);
   EXPECT_NE(report.find("commands: [open, close, stop]"), std::string::npos);
-  EXPECT_NE(report.find("!secret adopted_1w_key"), std::string::npos)
-      << "the block must steer the key into secrets.yaml rather than inline YAML";
+  EXPECT_NE(report.find("system_key: \"01020304050607080910111213141516\""), std::string::npos)
+      << "the key must be inline in the YAML block, mirroring the 2W key-extraction report's "
+         "format, not a !secret placeholder pointing at a field name to fill in separately";
 
   // node_id is deliberately omitted -- a later step derives it, and asking a user to invent a
   // 3-byte address is an unanswerable question.

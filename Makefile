@@ -126,6 +126,12 @@ tuning-sync:
 	@echo "Checking tuning parameter sync (tuning.py <-> tuning_registry.cpp)..."
 	@python3 scripts/check-tuning-sync.py
 
+# Cross-language check: this component's hand-built paste-ready YAML emitters
+# (build_oneway_adoption_report(), build_key_extraction_report(), build_device_yaml_snippet()) must
+# emit keys that exist in their real ESPHome schemas -- see scripts/check-yaml-emitters.py.
+yaml-emitter-sync:
+	@python3 scripts/check-yaml-emitters.py
+
 # Detects (and reports) config/tests/.esphome/build/<env>/ dirs with a stale or
 # half-regenerated object cache; see scripts/check-build-cache.py. Wired automatically
 # (with --clean) into firmware-test and run-clang-tidy.sh, so this is mainly for manual
@@ -303,7 +309,7 @@ doxygen:
 #   tuning-sync      -> tuning-sync
 #   corpus-validate  -> corpus-validate
 #   docs-link-check  -> docs-link-check
-lint: format-check yamllint clang-tidy tuning-sync corpus-validate docs-link-check
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync corpus-validate docs-link-check
 test: unit-test unit-test-asan firmware-test
 check: lint test doxygen
 

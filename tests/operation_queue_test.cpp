@@ -360,4 +360,44 @@ TEST(OperationQueue, OneWayOpsAreNotBackgroundWork) {
   EXPECT_FALSE(OperationQueue::is_background_op(PendingOperationType::ONEWAY_COMMAND))
       << "a 1W press is a user command and must never yield to one";
   EXPECT_FALSE(OperationQueue::is_background_op(PendingOperationType::ONEWAY_POSITION));
+  EXPECT_FALSE(OperationQueue::is_background_op(PendingOperationType::ONEWAY_ENROLL));
+  EXPECT_FALSE(OperationQueue::is_background_op(PendingOperationType::ONEWAY_UNENROLL));
+}
+
+// ========================================================================================
+// 1W enrollment / un-enrollment
+// ========================================================================================
+
+TEST(OperationQueue, OneWayEnrollmentIsAControlOpAndPrecedesBackgroundPolls) {
+  OperationQueue q;
+  q.enqueue_request_status("DEV");
+  q.enqueue_oneway_enroll("awning_remote");
+
+  ASSERT_EQ(q.size(), 2u);
+  EXPECT_EQ(q[0].type, PendingOperationType::ONEWAY_ENROLL);
+  EXPECT_EQ(q[0].device_id, "awning_remote") << "device_id carries the controller-identity handle, like every 1W op";
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_STATUS);
+}
+
+TEST(OperationQueue, OneWayUnenrollmentIsAControlOpAndPrecedesBackgroundPolls) {
+  OperationQueue q;
+  q.enqueue_request_status("DEV");
+  q.enqueue_oneway_unenroll("awning_remote");
+
+  ASSERT_EQ(q.size(), 2u);
+  EXPECT_EQ(q[0].type, PendingOperationType::ONEWAY_UNENROLL);
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_STATUS);
+}
+
+TEST(OperationQueue, EnrollOpsDoNotCancelAStatusPoll) {
+  // The push_control_() trap this project has already been bitten by once for ONEWAY_COMMAND/
+  // ONEWAY_POSITION: a new 1W op type not added to the addresses_a_device predicate silently
+  // cancels a device's status poll whenever the identity handle happens to match a device ID.
+  OperationQueue q;
+  q.enqueue_request_status("SAME");
+  q.enqueue_oneway_enroll("SAME");
+  q.enqueue_request_status("OTHER");
+  q.enqueue_oneway_unenroll("OTHER");
+
+  ASSERT_EQ(q.size(), 4u) << "neither status poll may be dropped by the enroll/unenroll op that shares its handle";
 }

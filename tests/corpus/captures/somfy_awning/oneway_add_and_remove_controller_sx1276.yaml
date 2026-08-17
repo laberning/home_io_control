@@ -1,0 +1,63 @@
+id: somfy_smoove_9d6085_oneway_add_and_remove_controller
+description: >
+  The Somfy Smoove io remote's 1W key-copy gesture (node 9D6085, same remote as this directory's
+  oneway_remote_{open,close,stop,favorite}_sx1276.yaml), captured while re-teaching a
+  factory-reset Izymo dimmer: 2s PROG on the receiver to enter association mode, then a short
+  (<0.5s) PROG tap on the remote. Two facts this capture pins that the published
+  reference_1w_vectors/oneway_add_controller_kat.yaml vector could not, because that vector is a
+  documentation worked example, not a real transmission:
+
+  1. Real hardware's CMD_ONEWAY_ADD_CONTROLLER (0x30) carries NO out-of-length MAC trailer --
+     29 bytes on air, not 35. The published vector (35 bytes, MAC included) and the reference
+     `_p0x30` struct (iohcPacket.h, no MAC field) both turn out to be real: different real
+     implementations chose differently, and this remote picked the no-MAC form. Confirmed twice
+     independently on real captures before this one was re-keyed and committed.
+  2. CMD_ONEWAY_REMOVE (0x39)'s MAC span -- unpinned by any vector when
+     create_1w_remove_controller() (proto_commands.cpp) was first built -- is `cmd + data` (2
+     bytes). Verified against 11 real 0x39 captures from this same remote (spanning three bench
+     sessions) under the real recovered key before re-keying; all 11 verified under that span and
+     no other span tried.
+
+  A single short PROG tap on the remote was not reliably enough to produce a 0x30: across the
+  captures this fixture is drawn from, several taps produced only a 0x39 ("clear") before one
+  finally also produced a 0x30 ("here is my key"), 128ms after that tap's own 0x39, same burst.
+
+  Re-keyed with scripts/corpus/ingest.py --rekey --oneway-key-from (2026-08-16): the 0x30's
+  enc_key is verified to unwrap to the real key (then rewritten to unwrap to
+  tests/support/test_helpers.h::TEST_SYSTEM_KEY instead), and both 0x39 MACs are verified under
+  the `cmd + data` span and the real key (then rewritten under the corpus key). The real key was
+  never the hub's own hub_system_key -- confirmed by direct comparison before re-keying -- so a
+  1W controller's key is not assumed to be the hub's installation key anywhere this capture is
+  used.
+source:
+  device: "Somfy Smoove io (1W remote, own hardware, node 9D6085), re-pairing a factory-reset Somfy Izymo dimmer"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-16
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F1 00 00 00 3F 9D 60 85 39 00 5E 0F A3 3C BD C1 70 0A"
+    crc: absent
+    note: "cmd=ONEWAY_REMOVE(0x39) -- 'clear' half of the gesture, PROG tap 1 of 2 in this fixture"
+  - dir: rx
+    t_ms: 5926
+    freq: 868950000
+    hex: "F1 00 00 00 3F 9D 60 85 39 00 5E 17 B4 8F F4 14 CF E1"
+    crc: absent
+    note: "cmd=ONEWAY_REMOVE(0x39) -- PROG tap 2, immediately followed by the 0x30 below (128ms later, same burst)"
+  - dir: rx
+    t_ms: 6030
+    freq: 868950000
+    hex: "FC 00 00 00 3F 9D 60 85 30 6E 31 FA 3C 53 52 84 FF 08 20 67 CA 24 74 D9 3D 02 01 5E 18"
+    crc: absent
+    note: "cmd=ONEWAY_ADD_CONTROLLER(0x30) -- 29 bytes on air, no MAC trailer (see description)"
+expect:
+  frames:
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}

@@ -10,7 +10,7 @@ using namespace esphome::home_io_control;
 // ============================================================================
 // OneWayController test suite
 // ============================================================================
-// The 1W controller-identity model (ADR 0024): class-addressed destinations, per-identity keys,
+// The 1W controller-identity model (ADR 0027): class-addressed destinations, per-identity keys,
 // and the registry the transmit engine will consume.
 
 namespace {

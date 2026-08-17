@@ -114,7 +114,11 @@ void ExchangeEngine::maybe_hop() {
 
 bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble) {
   RadioDriver *radio = *this->radio_ptr_;
-  uint8_t buf[FRAME_MAX_SIZE];
+  // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: a frame with an out-of-length MAC trailer
+  // (IoFrame::has_mac, e.g. CMD_ONEWAY_ADD_CONTROLLER) serializes to more than
+  // FRAME_MAX_SIZE/FRAME_MAX_DECLARED_SIZE bytes, and serialize() rejects a buffer too small to
+  // hold its actual output rather than truncating into it.
+  uint8_t buf[FRAME_MAX_WIRE_SIZE];
   uint8_t const len = serialize(frame, buf, sizeof(buf));
   if (len == 0) {
     ESP_LOGW(TAG, "tx: serialize_failed cmd=0x%02X", frame.cmd);

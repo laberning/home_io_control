@@ -18,7 +18,7 @@ using test::TestableHubComponent;
 // ============================================================================
 // HubKeyExtraction test suite
 // ============================================================================
-// "Accept Foreign Pairing (Key Extraction)" hub wiring: arm/disarm, the 0x28/0x2C/0x31/0x32 RX
+// "Recover System Key" (key extraction) hub wiring: arm/disarm, the 0x28/0x2C/0x31/0x32 RX
 // branches, address disambiguation against the real node_id_ and against other devices' traffic,
 // auto-off timeout scheduling, and the disarm-on-extraction guarantee.
 
@@ -408,4 +408,41 @@ TEST(HubKeyExtraction, AutoOffTimeoutCallbackDisarms) {
   timeout_cb();
 
   EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
+}
+
+// ========================================================================================
+// The ready-to-paste extraction report
+// ========================================================================================
+// build_key_extraction_report() is pure, so these assert the exact text a user will be asked to
+// copy — mirroring HubOneWayKeyAdoption's report tests (tests/hub_oneway_key_adoption_test.cpp),
+// the host ESP_LOG stub discards its arguments, so testing the builder directly is the only way
+// to pin the report's contents.
+
+TEST(HubKeyExtraction, ReportContainsPasteableBlockAndKeyExactlyOnce) {
+  constexpr uint8_t node_id[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
+  constexpr uint8_t key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                         0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+  const std::string report = detail::build_key_extraction_report(node_id, key);
+
+  EXPECT_NE(report.find("home_io_control:"), std::string::npos);
+  EXPECT_NE(report.find("node_id: \"ABCDEF\""), std::string::npos);
+  EXPECT_NE(report.find("system_key: \"01020304050607080910111213141516\""), std::string::npos);
+
+  const std::string key_hex = "01020304050607080910111213141516";
+  const size_t first = report.find(key_hex);
+  ASSERT_NE(first, std::string::npos) << "the recovered key must be present for the user to copy";
+  EXPECT_EQ(report.find(key_hex, first + 1), std::string::npos) << "and must appear exactly once";
+}
+
+TEST(HubKeyExtraction, ReportNeverClaimsTheKeyIsConfirmed) {
+  // This exchange is never independently confirmed against the specific hub it came from (see
+  // log_key_extraction_result_()'s file-level @warning) -- wording that implied otherwise would
+  // be a claim this feature cannot support.
+  constexpr uint8_t node_id[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
+  constexpr uint8_t key[AES_KEY_SIZE] = {0};
+  const std::string report = detail::build_key_extraction_report(node_id, key);
+
+  EXPECT_NE(report.find("has not been independently confirmed"), std::string::npos);
+  for (const char *forbidden : {"success", "confirmed key", "verified key"})
+    EXPECT_EQ(report.find(forbidden), std::string::npos) << "the report must not contain '" << forbidden << "'";
 }

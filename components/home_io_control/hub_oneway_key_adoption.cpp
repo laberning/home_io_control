@@ -117,10 +117,17 @@ void IOHomeControlComponent::try_adopt_oneway_key_(const IoFrame &frame) {
   // The single intentional emission of the recovered key — a deliberate, narrow exception to
   // redaction.h's masking, exactly as log_key_extraction_result_() is for the 2W path. The key
   // must not reach any other log path, and the generic frame-log helpers keep masking 0x30.
+  //
+  // The report is logged line-by-line via log_multiline_result(), not as one ESP_LOGW("%s", ...)
+  // call: a single call silently truncates at ESPHome's 512-byte log buffer, and this report is
+  // long enough to do exactly that — cutting off before the recovered key ever appears, which
+  // defeats the entire feature with no error and no indication anything was lost. See
+  // log_multiline_result()'s doxygen (hub_internal.h) for the root cause.
   ESP_LOGW(detail::TAG, "========================================");
   ESP_LOGW(detail::TAG, "1W CONTROLLER KEY ADOPTED FROM %s -- DO NOT SHARE THIS KEY",
            node_id_to_string(adopted.sender_node).c_str());
-  ESP_LOGW(detail::TAG, "%s", detail::build_oneway_adoption_report(adopted, observed_known, observed_type).c_str());
+  detail::log_multiline_result(detail::TAG, /*is_warning=*/true, /*prefix=*/"",
+                               detail::build_oneway_adoption_report(adopted, observed_known, observed_type));
   ESP_LOGW(detail::TAG, "========================================");
 
   // One adoption per arm.

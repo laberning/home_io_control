@@ -205,6 +205,123 @@ TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
       << "a reboot must not replay a sequence the device has already accepted";
 }
 
+// ============================================================================
+// OneWayTransmitter::send_enrollment / send_unenrollment
+// ============================================================================
+// Same seam as send_command()/send_position() above -- one sequence per press, per-identity
+// keys, unknown-identity refusal -- plus two properties specific to enrollment: with_mac=false
+// (see create_1w_add_controller()'s @warning, proto_commands.h) and an explicit "ENROLL"/
+// "UNENROLL" report label, since decode_1w_frame() cannot read an intent out of a 0x30/0x39.
+
+TEST_F(OneWaySendCommandTest, EnrollmentConsumesExactlyOneSequence) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 500));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("awning"));
+
+  ASSERT_EQ(recorder.frames.size(), ONEWAY_BURST_REPEATS);
+  for (const auto &frame : recorder.frames) {
+    ASSERT_EQ(frame.data_len, 20) << "0x30 declared payload is enc_key(16)+man(1)+data(1)+seq(2)";
+    const uint16_t sequence = static_cast<uint16_t>((frame.data[18] << 8) | frame.data[19]);
+    EXPECT_EQ(sequence, 500) << "every copy of one enrollment must carry the same sequence";
+  }
+}
+
+TEST_F(OneWaySendCommandTest, EnrollmentAndUnenrollmentShareTheCommandSequenceCounter) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 500));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_command("awning", CoverCommand::STOP));
+  ASSERT_TRUE(transmitter.send_enrollment("awning"));
+  ASSERT_TRUE(transmitter.send_unenrollment("awning"));
+
+  const uint16_t enroll_seq = static_cast<uint16_t>((recorder.frames[ONEWAY_BURST_REPEATS].data[18] << 8) |
+                                                    recorder.frames[ONEWAY_BURST_REPEATS].data[19]);
+  const uint16_t unenroll_seq = static_cast<uint16_t>((recorder.frames[ONEWAY_BURST_REPEATS * 2].data[1] << 8) |
+                                                      recorder.frames[ONEWAY_BURST_REPEATS * 2].data[2]);
+  EXPECT_EQ(enroll_seq, 501) << "one counter per node, shared across every command type it sends";
+  EXPECT_EQ(unenroll_seq, 502);
+}
+
+TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailer) {
+  // with_mac=false: every real hardware capture this project holds carries no MAC trailer, unlike
+  // the published documentation vector create_1w_add_controller() defaults to. The enroll button
+  // is the one caller that transmits to real hardware, so it must not use that default.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("awning"));
+
+  EXPECT_FALSE(recorder.frames[0].has_mac) << "enrollment must use the no-MAC shape, not the builder's own default";
+  EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_ADD_CONTROLLER);
+}
+
+TEST_F(OneWaySendCommandTest, EnrollmentMatchesTheBuilderDirectly) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 7));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("awning"));
+
+  IoFrame expected{};
+  uint8_t key[AES_KEY_SIZE];
+  memset(key, 0x11, AES_KEY_SIZE);
+  ASSERT_TRUE(create_1w_add_controller(expected, OWN_NET_NODE, DeviceType::AWNING, 0, 7, key, /*with_mac=*/false));
+  EXPECT_EQ(0, memcmp(recorder.frames[0].data, expected.data, expected.data_len))
+      << "send_enrollment() must add nothing to what the builder produces";
+}
+
+TEST_F(OneWaySendCommandTest, UnenrollmentBuildsARemoveControllerFrame) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 9));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_unenrollment("awning"));
+
+  EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_REMOVE);
+  EXPECT_FALSE(recorder.frames[0].has_mac) << "0x39's MAC lives inside the declared payload";
+}
+
+TEST_F(OneWaySendCommandTest, AnUnknownIdentityEnrollsAndUnenrollsNothing) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11));
+  transmitter.setup();
+
+  EXPECT_FALSE(transmitter.send_enrollment("typo"));
+  EXPECT_FALSE(transmitter.send_unenrollment("typo"));
+  EXPECT_TRUE(recorder.frames.empty());
+}
+
+TEST_F(OneWaySendCommandTest, ReportsCarryExplicitEnrollUnenrollLabels) {
+  // decode_1w_frame() has no intent to read out of a 0x30/0x39 (it only understands
+  // CMD_EXECUTE/CMD_ACTIVATE_MODE), so without an explicit label the "Last 1W Command" sensor
+  // would show a blank intent for the one feature whose whole diagnostic story is that sensor.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
+  transmitter.setup();
+
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &report) { reports.push_back(report); });
+
+  ASSERT_TRUE(transmitter.send_enrollment("awning"));
+  ASSERT_TRUE(transmitter.send_unenrollment("awning"));
+
+  ASSERT_EQ(reports.size(), 2u);
+  EXPECT_EQ(reports[0].intent, "ENROLL");
+  EXPECT_EQ(reports[0].target_type, DeviceType::AWNING);
+  EXPECT_EQ(reports[1].intent, "UNENROLL");
+}
+
 TEST_F(OneWaySendCommandTest, PositionsAreEncodedAsTheBuilderWould) {
   BurstRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn());

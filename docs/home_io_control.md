@@ -83,7 +83,7 @@ Configuration variables:
 - `tcxo_voltage` (Optional, default: `1_8V`): SX1262/LR1121 TCXO voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, and `3_3V`.
 - `exposed_senders` (Optional, default: empty list): List of 1W sender node IDs (6 hex characters each — remotes *or* sensors, see below) allowed to fire the `esphome.home_io_control_sender_event` event to Home Assistant. Empty by default — see the Sender Events section below for why this is opt-in and how it relates to `linked_remotes`.
 - `tuning` (Optional): Diagnostics block for pairing/radio parameters. See [Radio Diagnostics Tuning](radio_diagnostics.md).
-- `accept_foreign_pairing` (Optional, default: `false`): Adds an "Accept Foreign Pairing (Key Extraction)" switch entity for pulling a device's system key from another controller. See the Key Extraction section below.
+- `accept_foreign_pairing` (Optional, default: `false`): Adds a "Recover System Key" switch entity for pulling a device's system key from another controller. See the Key Extraction section below.
 - `diagnostic_probes` (Optional, default: `false`): Enables the `probe_device`/`probe_sweep` actions for sending opcodes this project hasn't fully decoded yet. See [Diagnostic probes](radio_diagnostics.md#diagnostic-probes).
 
 Notes:
@@ -819,7 +819,7 @@ home_io_control:
 Configuration variable:
 
 - `accept_foreign_pairing` (Optional, boolean, default `false`): When `true`, dynamically creates
-  the **"Accept Foreign Pairing (Key Extraction)"** switch entity, bound directly to this hub.
+  the **"Recover System Key"** switch entity, bound directly to this hub.
 
 This lives directly under `home_io_control:`, alongside options like `tuning:` and
 `exposed_senders:`. The generated switch always boots off (`restore_mode: ALWAYS_OFF`) so a
@@ -829,7 +829,7 @@ Extraction)" (not configurable).
 ### Workflow
 
 1. Flash the firmware with `accept_foreign_pairing: true` set in your `home_io_control:` block.
-2. Turn the **"Accept Foreign Pairing (Key Extraction)"** switch on in Home Assistant. The hub
+2. Turn the **"Recover System Key"** switch on in Home Assistant. The hub
    arms for **10 minutes** and logs the throwaway node ID it will advertise.
 3. Put your **existing** hub into its own "add device" / pairing mode, the same way you would to
    pair a new shutter to it.
@@ -866,41 +866,46 @@ Extraction)" (not configurable).
   don't be surprised if it takes several hub-side retries (or, if the whole attempt times out, a
   fresh switch toggle) rather than a single clean pass on the first try.
 
-## Adopting a 1W Controller Key
+## Recovering a 1W Controller Key
 
 > **⚠️ Receive-only, but it recovers a real secret.** This feature never transmits anything. It
-> listens for a frame your own 1W remote broadcasts during its key-copy gesture and decrypts it.
-> The decryption needs nothing secret — see the security note below — so treat the recovered key
+> listens for a frame a 1W remote broadcasts during its key-copy gesture and decrypts it. The
+> decryption needs no secret of its own — see the security note below — so treat the recovered key
 > exactly as you would treat your `system_key`.
->
-> **And recovering the key does not let the hub command anything.** Real-hardware testing showed
-> that a device obeys a 1W command only from a controller it was explicitly **taught** — holding
-> the right key is not enough. Enrolling this hub as a controller is a separate capability that
-> **does not ship yet**, so today this feature recovers and reports a key, and nothing more.
 
 One-way (1W) installations — a handheld remote driving a shutter or awning directly, with no hub —
 have their own network key. This feature recovers it by overhearing a single `0x30` "add
 controller" broadcast, which is what a 1W remote sends while its **remote-to-remote key-copy mode**
 is active in order to hand its network key to a new remote.
 
-**What the key does and does not buy you.** A 1W device decides whether to obey a command from the
-triple *(source address, key, rolling sequence)*, and it checks the source address against a table
-of controllers it has been taught. So the key is *necessary* — a frame signed with the wrong one is
-rejected outright — but not *sufficient*: an unenrolled hub is ignored no matter which key it signs
-with. Enrollment (teaching the device this hub's address) is what closes that gap, and it is not
-implemented yet. Until it is, adopt a key if you want it recorded for later, or to identify which
-network a remote belongs to; do not expect commands to work afterwards.
+**For controlling a device, you almost never need this.** A device accepts whichever key arrives
+during its own association-mode window — enrolling this hub as a controller (see "Sending 1W
+Commands" below) works just as well with a freshly generated key as with a recovered one, so there
+is nothing to gain from recovering a key just to enroll with it. Recover a key only when you
+specifically need to **become** an existing, already-registered identity rather than add a new one:
+
+- **Replacing a remote that is gone for good** (lost, broken, retired), so the hub can take over
+  its exact identity instead of the device learning a new one.
+- **Understanding or documenting an existing network** — a diagnostic use, not a control one.
+
+**Never reuse a recovered key under the original remote's address while that remote is still in
+use.** A device tracks one rolling-sequence high-water mark per source address, fed by whichever
+transmitter used it most recently. Two independent transmitters sharing one address — the original
+remote and this hub — cannot coordinate that counter: the hub's own persisted value only reflects
+what *it* has sent, so its next frame is very likely to land at or below what the device already
+accepted from the real remote and be silently rejected as a replay. Reuse an identity's address
+only once its original transmitter will never transmit again.
 
 ```yaml
 home_io_control:
   # ... rst_pin / node_id / system_key / etc. as usual ...
-  accept_oneway_key: true
+  recover_oneway_key: true
 ```
 
 Configuration variable:
 
-- `accept_oneway_key` (Optional, boolean, default `false`): When `true`, dynamically creates the
-  **"Adopt 1W Controller Key"** switch entity, bound directly to this hub.
+- `recover_oneway_key` (Optional, boolean, default `false`): When `true`, dynamically creates the
+  **"Recover 1W Controller Key"** switch entity, bound directly to this hub.
 
 Like `accept_foreign_pairing`, this lives directly under `home_io_control:`, the generated switch
 always boots off (`restore_mode: ALWAYS_OFF`) so a reboot can never leave it armed, and its name is
@@ -908,8 +913,8 @@ fixed (not configurable). The two features are independent — arming one never 
 
 ### Workflow
 
-1. Flash the firmware with `accept_oneway_key: true` set in your `home_io_control:` block.
-2. Turn the **"Adopt 1W Controller Key"** switch on in Home Assistant. The hub arms for
+1. Flash the firmware with `recover_oneway_key: true` set in your `home_io_control:` block.
+2. Turn the **"Recover 1W Controller Key"** switch on in Home Assistant. The hub arms for
    **10 minutes** and logs that it is listening. Nothing is transmitted.
 3. Trigger the **key-copy gesture on your existing 1W remote** — the remote-to-remote copy mode
    described in its manual, the one you would use to teach a second remote the same network.
@@ -917,8 +922,8 @@ fixed (not configurable). The two features are independent — arming one never 
 4. Watch the ESPHome logs. On success you will see a clearly-delimited block containing the
    recovered key and a ready-to-paste `oneway_controllers:` entry. The switch turns itself off
    immediately — one adoption per arm.
-5. Put the key into `secrets.yaml` as `adopted_1w_key`, paste the block into your YAML, and
-   reflash.
+5. Paste the block directly into your `home_io_control:` block — the recovered key is already
+   inline (`system_key: "..."`), same as the 2W Key Extraction report — and reflash.
 6. If nothing happens within 10 minutes, the switch turns itself off and says so. Re-arm and try
    again closer to the device.
 
@@ -931,10 +936,9 @@ is correct:
   was just recovered*. This is the strongest confirmation available without commanding a device.
 - **`MAC FAILED`** — the authenticator did not check out. The key is probably wrong (a marginal
   reception is the usual cause). Re-arm and repeat the gesture closer to the hub.
-- **`MAC not present`** — the frame carried no authenticator to check. Not an error; the key may
-  still be correct, but it stays unconfirmed. Note that "control something with it" is not
-  currently a way to confirm it either — see the warning at the top of this section — so
-  `MAC VERIFIED` is the only confirmation available today.
+- **`MAC not present`** — the frame carried no authenticator to check. Not an error; real hardware
+  frequently omits it. The key may still be correct — enroll with it (see "Sending 1W Commands")
+  and confirm by actually commanding the device, which is now possible.
 
 Two fields in the emitted block deserve a note:
 
@@ -968,15 +972,8 @@ same authorisation as any 2W command this component sends.
 > **⚠️ Read this before configuring: a device only obeys a controller it has been taught.**
 > Real-hardware testing established that 1W actuators keep a **table of registered controllers**.
 > A frame that is correctly built, correctly addressed and signed with a key the device accepts is
-> still ignored if this hub's source address is not in that table — which, for a device you have
-> never enrolled the hub into, it is not. The commands below will transmit correctly and the device
-> will do nothing.
->
-> **Enrolling the hub as a controller does not ship yet.** Until it does, treat this section as a
-> transmit engine you can exercise and inspect (the "Last 1W Command" sensor shows exactly what
-> went out) rather than a way to control hardware. Enrollment also requires a physical button press
-> on the receiving device — typically a ~2 second hold on its PROG button — so it will never be
-> something that happens without your involvement.
+> still ignored if this hub's source address is not in that table. **Enrollment (below) is what
+> registers it** — do that first, for every identity, before expecting any command to move a device.
 
 ### What 1W is, and what it is not
 
@@ -995,7 +992,9 @@ The second one shapes the whole feature. There is no failure you can be notified
 
 Because nothing on the wire names a device, what distinguishes one 1W control surface from another
 is the *controller* doing the transmitting. That triple — source address, network key, device class
-— is a **controller identity**, and it takes the place node addressing has for 2W (ADR 0024).
+— is a **controller identity**, and it takes the place node addressing has for 2W (ADR 0027).
+
+**Minimal example** — the fewest fields that generate a working set of buttons:
 
 ```yaml
 home_io_control:
@@ -1004,40 +1003,99 @@ home_io_control:
     - id: velux_windows
       io_device_type: window_opener
       commands: [open, close, stop]
+```
 
-    - id: neighbours_shutters
-      node_id: A11CE0
-      system_key: FEDCBA98765432100123456789ABCDEF
-      io_device_type: roller_shutter
-      initial_sequence: 4000
+**Full example** — every optional key at once, so you can see the whole shape in one place:
+
+```yaml
+home_io_control:
+  oneway_controllers:
+    - id: velux_windows
+      io_device_type: window_opener                    # see "Named device types" below
       commands: [open, close, stop, favorite]
+      node_id: A11CE0                                   # optional -- overrides the derived address
+      system_key: FEDCBA98765432100123456789ABCDEF      # optional -- reuse a recovered network's key
+      initial_sequence: 4000                            # optional -- seed the rolling counter
+      manufacturer: somfy                               # required only because enrollment: true, below
+      enrollment: true                                  # generates the "Enroll 1W Controller" button
 ```
 
 | Key | Required | Meaning |
 |---|---|---|
 | `id` | yes | Handle the generated entities are named and ID'd from. |
-| `io_device_type` | yes | The device class this identity commands. |
-| `node_id` | no | Source address to transmit as. **Derived from your hub's `node_id` and this `id` when omitted** — see below. |
-| `system_key` | no | Network key for this identity. Defaults to the hub's own; set it to drive a network whose key you adopted. |
+| `io_device_type` | yes | The device class this identity commands — see the "Named device types" table under Device Type and Capability Notes below for the full list. |
+| `node_id` | no | Source address to transmit as. **Derived from your hub's `node_id` and this `id` when omitted**, deterministically at *compile* time — a derived address takes part in the same collision checks as an explicit one (a clash fails the build), and is printed at boot marked `(derived)`, since nothing in your YAML shows it otherwise. Asking you to invent a 3-byte radio address instead would be an unanswerable question: nothing tells you which addresses are safe, and colliding with a real remote in range silently desyncs both transmitters' counters. |
+| `system_key` | no | Network key for this identity. **Defaults to the hub's own** — every new identity works fine with the default. Only set this to a recovered key when reusing an existing, already-registered identity (see "Recovering a 1W Controller Key"). |
 | `initial_sequence` | no | Seeds the rolling counter. The day-one remedy for a desynced device — see troubleshooting. |
 | `commands` | no | Which buttons to generate: `open`, `close`, `stop`, `vent`, `favorite`. `stop` is pinned by a published reference vector; `vent` matches the reference remote's source but is unconfirmed by any capture; `favorite` is extrapolated with no reference support and is directly contradicted by this project's own capture of a real My/favorite button press, which encodes it a different way entirely — see `create_1w_execute_command()` in proto_commands.h. Treat `favorite` as untested. |
-| `manufacturer` | no | Accepted and stored; used only by 1W enrollment, which does not ship yet. |
+| `manufacturer` | conditional | The manufacturer ID byte an enrollment frame carries on air — a named value such as `somfy`, or a raw integer; see the "Named manufacturers" table under Device Type and Capability Notes below for the full list. **Required whenever `enrollment: true` is set** — the build fails otherwise, rather than silently broadcasting `0`. Find the value from a "Recovering a 1W Controller Key" report for this network, or the device's own documentation. |
+| `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
 
 There is no 1W `force_open` button. The only wire byte this project ever associated with a
 "force open" label, `0x64`, decodes to an ordinary numeric position (50%) when tested against real
 hardware as an outbound command — see the "Numeric positions" section below. The hub's
 force-open (`force_open_device`) is a separate, 2W, per-device action; see that section above.
 
-**Why `node_id` is optional.** Asking you to invent a 3-byte radio address is an unanswerable
-question: nothing tells you which addresses are safe, and colliding with a real remote in range
-silently desyncs both transmitters' counters. So it is derived — deterministically, at *compile*
-time, from your hub's `node_id` plus the identity's `id`. That means a derived address takes part
-in the same collision checks as an explicit one and a clash fails the build. The value is printed
-at boot, marked `(derived)`, because nothing in your YAML shows it.
+### Enrolling this hub as a controller
 
-**Per-identity keys are the point of the optional `system_key`.** A key adopted from a foreign 1W
-network (see the "Adopting a 1W Controller Key" section) has to coexist with
-your own network's identities, not replace them.
+**This is the step that makes every command above actually move something.** A 1W device ignores
+any frame from a source it has not been taught, no matter how correctly it is built or signed —
+see the warning at the top of this section. Enrollment is what teaches it.
+
+Add `manufacturer:` and `enrollment: true` to an identity — see the full example above. `enrollment:
+true` is the build flag: its presence is the whole gate, and adding or removing the line and
+reflashing is the feature's entire lifecycle. Setting it creates one more entity for that identity:
+**"\<Identity\> Enroll 1W Controller"**, `entity_category: config`.
+
+**Enrolling is additive, not destructive.** A device's controller table holds more than one entry,
+each with its own key — enrolling this hub alongside an already-registered remote leaves that
+remote working exactly as before; the device answers commands from either.
+
+**The gesture is two-sided, and only one half is a button press.**
+
+| Half | Who does it | What it is |
+|---|---|---|
+| Receiver enters association mode | **you, physically** | **2 second** hold on the actuator's PROG button, confirmed by its own indicator |
+| Controller offers its credential | **the hub** | one **short** press of the "Enroll 1W Controller" entity |
+
+Get the order and the durations right: 2 seconds on the receiver, *then* one press on the hub — not
+the other way around, and not a long hold on the hub's entity (there is nothing to hold; a press is
+a press). Getting the two halves' timing backwards is the most common failure mode here, not a
+protocol problem.
+
+The press sends a single ~125 ms burst (`0x30`, 4 copies) and nothing else — there is no "learn
+window" on the hub's side, because the device owns its own timeout and there is nothing to wait
+for. **Only one device should be in association mode at a time**: the frame reaches every device of
+that class in range that is currently listening, so a second actuator in learn mode nearby would be
+taught too.
+
+**A hub cannot enroll into a device nobody has walked up to.** The receiver's physical PROG hold is
+the real safety interlock here, stronger than any software confirmation could be — it is why this
+feature has no separate arming switch the way the (irreversible) LR1121 bootloader rewrite does.
+
+**Un-enrolling** is the rollback path, reached only through its own explicitly-named action, never
+automatically:
+
+```yaml
+- action: esphome.<device_name>_oneway_remove_controller
+  data:
+    controller_id: velux_windows
+```
+
+This sends `0x39` alone. It is deliberately not a hidden prelude to the Enroll button — keeping it
+behind its own action means it is never something a button labelled "Enroll" does without you
+asking for it by name.
+
+> **⚠️ Un-enrollment is unconfirmed on real hardware.** This action has not been shown to have any
+> effect on real hardware — the hub keeps controlling the device afterwards regardless. The most
+> likely explanation, by analogy with enrollment itself, is that a device only acts on `0x39`
+> while its receiver is in the same **2 second PROG association mode** enrollment needs. Treat
+> "un-enroll" as the documented design intent, not a confirmed rollback, until this is retested
+> with that gesture.
+
+**When you are done enrolling**, remove `enrollment: true` from the identity and reflash. A build
+that can put a device into someone else's controller table should not be the build that runs
+permanently — the same reasoning as removing `recover_oneway_key: true` after a key recovery.
 
 ### Generated buttons
 
@@ -1052,13 +1110,15 @@ what the button *is* from the presence of some key, which is how a device-bound 
 forgot its `io_device_id` once became the security-sensitive one instead of failing validation.
 Creating these from the hub block makes that class of mistake structurally impossible.
 
-### Position feedback: compose with `time_based`
+### Continuous control: composing sliders from buttons
 
-There is no 1W cover entity, and there will not be one: travel duration is unknowable from the
-radio, so it is a declaration you make, never something this component infers (ADR 0019).
-ESPHome's `time_based` cover already does exactly this, with asymmetric durations and endstop
-handling, and it is a standalone platform rather than a mixin — so it composes rather than
-inherits:
+**1W support is still very early: there currently is no 1W cover entity. What
+this component gives you natively is buttons and the `oneway_set_position` action below. But you
+can build a slider on your own with ESPHome:
+
+**Covers: `time_based`.** ESPHome's `time_based` cover platform already does exactly this, with
+asymmetric durations and endstop handling, and it is a standalone platform rather than a mixin —
+so it composes rather than inherits:
 
 ```yaml
 cover:
@@ -1117,16 +1177,16 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
 
 **The sensor updates but the device does not move.** In order of likelihood:
 
-1. **The device does not know this controller — and today this is always the reason.** A 1W device
-   obeys only source addresses it has been *taught*, and teaching it (enrollment) is not
-   implemented yet, so a device you have not enrolled this hub into will ignore every command it
-   sends. This is established on real hardware, not inferred: devices holding the exact key the hub
-   signed with, addressed correctly, did not react — and one of them obeyed a physical remote
-   minutes later once that remote had been enrolled. **Work through the rest of this list only if
-   you have somehow enrolled the hub by other means**; otherwise there is nothing to diagnose.
-2. **Wrong key.** The device is on a network whose key you do not hold. Adopting it is a separate
-   step — see the "Adopting a 1W Controller Key" section. Note that adopting the key does *not*
-   remove reason 1.
+1. **The device does not know this controller.** A 1W device obeys only source addresses it has
+   been *taught* — see "Enrolling this hub as a controller" above. This is established on real
+   hardware, not inferred: devices holding the exact key the hub signed with, addressed correctly,
+   did not react until the hub's own address was actually enrolled into them. **Enroll this
+   identity first**, following the two-sided gesture exactly (durations matter), before working
+   through the rest of this list.
+2. **Key mismatch.** The identity's `system_key` no longer matches what this address enrolled with
+   — most often because `system_key` was changed after enrollment, or an identity meant to reuse an
+   existing network's key (see "Recovering a 1W Controller Key") was never actually re-enrolled
+   with that key. Re-run enrollment for this identity after any `system_key` change.
 3. **Wrong device class.** `io_device_type` selects the broadcast address. A shutter will not act
    on a command addressed to the awning class. Compare against the class you see in overheard 1W
    traffic from the real remote.
@@ -1382,11 +1442,31 @@ A device type not in this table can still be declared as a raw hex ID, in either
 
 **Finding your device's type:** the surest way is to pair it through Home Assistant and check the "Last Pairing Result" diagnostic sensor — its `type=` field reports the device's actual type name (see "Pairing Workflow" above, e.g. `type=awning`). If you already know the device (e.g. you're configuring a Somfy awning), just use the matching name from the table above.
 
+### Named manufacturers
+
+The `manufacturer` key on a 1W `oneway_controllers:` identity (see "Sending 1W Commands" above)
+accepts these named values, the IO-Homecontrol alliance's own manufacturer IDs:
+
+| Name | Hex ID | Name | Hex ID |
+|---|---|---|---|
+| `velux` | `0x01` | `window_master` | `0x07` |
+| `somfy` | `0x02` | `renson` | `0x08` |
+| `honeywell` | `0x03` | `ciat` | `0x09` |
+| `hormann` | `0x04` | `secuyou` | `0x0A` |
+| `assa_abloy` | `0x05` | `overkiz` | `0x0B` |
+| `niko` | `0x06` | `atlantic_group` | `0x0C` |
+
+A manufacturer not in this table can still be declared as a raw hex ID, e.g. `manufacturer: 0x0D`.
+
 ## Linked Remotes
 
 Physical IO-Homecontrol remotes (wall switches, handheld remotes, wind sensors) use the 1W (one-way) protocol to send commands. Unlike 2W devices that address a specific device ID, 1W remotes broadcast to a type-class address (e.g., "all awning devices"). This means the controller cannot automatically detect which of your devices a particular remote controls — you need to configure the link explicitly.
 
-**This is receive-only.** The hub reacts to physical 1W remotes and sensors it overhears — decoding intent, firing events, updating linked devices — but it does not transmit 1W commands itself, and it does not control 1W-only devices (devices that have no 2W/authenticated protocol at all). Everything on this page assumes the devices you control are 2W, and that `linked_remotes` / `exposed_senders` only change how the hub *reacts* to radio traffic it overhears from other transmitters.
+**`linked_remotes` and `exposed_senders` are receive-only.** They only change how the hub *reacts*
+to 1W radio traffic it overhears from other transmitters — decoding intent, firing events,
+updating linked devices — and neither one transmits anything. That is a separate capability: the
+hub can also transmit 1W commands of its own, including to 1W-only devices with no 2W/authenticated
+protocol at all. See "Sending 1W Commands (Controller Identities)" above for the transmit side.
 
 ### Why link a remote?
 

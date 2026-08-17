@@ -1,8 +1,6 @@
-# ADR 0024: Controller identities replace node addressing for 1W
+# ADR 0027: Controller identities replace node addressing for 1W
 
-## Status
-
-Accepted
+**Status:** Accepted · **Recorded:** 2026-08
 
 ## Context
 

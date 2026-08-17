@@ -164,6 +164,11 @@ std::string format_device_type_for_yaml(DeviceType type);
 /// `type` and fills in `io_subtype` and (for an inverted cover) `invert_position: true`. If
 /// `type` has no known ESPHome platform, an empty string is returned instead — the caller
 /// decides what to say when there's no snippet to show.
+///
+/// The emitted keys must track the device-bound platform schemas (`platform_schema_extension()`
+/// in platform_common.py, plus each of cover.py/light.py/switch.py/lock.py's own extra keys) by
+/// hand. `make yaml-emitter-sync` (scripts/check-yaml-emitters.py) catches drift between the two
+/// statically.
 /// @param type Decoded device type.
 /// @param subtype Decoded device subtype; only used when `metadata_complete` is true.
 /// @param device_id Hex device ID string (e.g. "38B4A1").

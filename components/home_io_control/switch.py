@@ -4,7 +4,7 @@
 ##
 ## Defines the experimental on/off switch integration and wires it to the shared hub.
 ## Shared device-binding logic lives in platform_common.py; only switch-specific entity
-## construction/registration stays here. The hub-level "Accept Foreign Pairing (Key Extraction)"
+## construction/registration stays here. The hub-level "Recover System Key" (key extraction)
 ## switch is unrelated to this platform — it has no device to bind to, so it is not exposed
 ## through `switch:` at all; see `accept_foreign_pairing` in `__init__.py`.
 

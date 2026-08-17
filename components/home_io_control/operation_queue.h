@@ -34,6 +34,8 @@ enum class PendingOperationType : uint8_t {
   SET_SWITCH_STATE,       ///< set_switch_state call (binary on/off).
   ONEWAY_COMMAND,         ///< 1W named command sent as a controller identity.
   ONEWAY_POSITION,        ///< 1W numeric position sent as a controller identity.
+  ONEWAY_ENROLL,          ///< 1W add-controller (0x30) registering an identity.
+  ONEWAY_UNENROLL,        ///< 1W remove-controller (0x39) un-registering an identity.
   REQUEST_STATUS,         ///< request_device_status call (poll for current position).
   REQUEST_NAME,           ///< request_device_name call (poll for stored device name).
   DISCOVER_AND_PAIR,      ///< discover_and_pair call (starts 3-phase pairing flow).
@@ -118,6 +120,15 @@ class OperationQueue {
   /// @param controller_id Controller-identity handle (see PendingOperation::device_id).
   /// @param position Target position 0–100.
   void enqueue_oneway_position(const std::string &controller_id, uint8_t position);
+
+  /// Enqueue a 1W enrollment (add-controller) for a controller identity. Same no-coalesce,
+  /// no-dedup contract as the other 1W ops, for the same reason.
+  /// @param controller_id Controller-identity handle (see PendingOperation::device_id).
+  void enqueue_oneway_enroll(const std::string &controller_id);
+
+  /// Enqueue a 1W un-enrollment (remove-controller) for a controller identity.
+  /// @param controller_id Controller-identity handle (see PendingOperation::device_id).
+  void enqueue_oneway_unenroll(const std::string &controller_id);
 
   // --- Background polls (with deduplication) ---
 

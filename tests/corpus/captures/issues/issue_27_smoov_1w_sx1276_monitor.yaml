@@ -10,14 +10,14 @@ source:
   date: 2026-07-06
   origin: github-issue
   issue: "https://github.com/laberning/home_io_control/issues/27"
-key: unknown
+key: corpus
 frames:
   - dir: rx
     t_ms: 0
     freq: 868950000
-    hex: "FC 00 00 00 3F 2F 9A 98 30 4F F4 52 A5 1F E8 BF 3A B9 B4 DC CA F9 2F 9A 98 02 01 17 41"
+    hex: "FC 00 00 00 3F 2F 9A 98 30 FF EF E0 BC 82 5F 94 00 66 60 A9 4E 1E F9 FF 99 02 01 17 41"
     crc: absent
-    note: "cmd=0x30 (undecoded); device's own log: 'targets all: UNKNOWN_CMD(0x30) data_len=20'"
+    note: "cmd=ONEWAY_ADD_CONTROLLER(0x30); at capture time command_name() did not yet recognize this opcode and the device's own log rendered it unnamed (data_len=20) — command_name() now names it. RE-KEYED, these are not the captured payload bytes"
   - dir: rx
     t_ms: 1424
     freq: 868950000

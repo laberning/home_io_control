@@ -68,11 +68,13 @@ def is_oneway(ctrl0: int) -> bool:
 
 # --- Mirrors components/home_io_control/proto_constants.h :: CMD_* values needed by the
 # --rekey pipeline (ingest.py) to locate challenge/response and key-init/key-transfer pairs.
-CMD_DISCOVER_SPE_REQ = 0x2A
+CMD_ONEWAY_ADD_CONTROLLER = 0x30
+CMD_ONEWAY_REMOVE = 0x39
 CMD_KEY_INIT = 0x31
 CMD_KEY_TRANSFER = 0x32
 CMD_CHALLENGE_REQ = 0x3C
 CMD_CHALLENGE_RESP = 0x3D
+CMD_DISCOVER_SPE_REQ = 0x2A
 
 # Commands that authenticate themselves in a single frame — payload = [challenge(6) | HMAC(6)],
 # the HMAC taken over just the command byte, so one broadcast frame carries both halves of a
@@ -104,7 +106,9 @@ CMD_NAMES = {
     0x2C: "DISCOVER_CONFIRM",
     0x2D: "DISCOVER_CONFIRM_ACK",
     0x2E: "DISCOVER_ALT_REQ",
+    0x30: "ONEWAY_ADD_CONTROLLER",
     0x31: "KEY_INIT",
+    0x39: "ONEWAY_REMOVE",
     0x32: "KEY_TRANSFER",
     0x33: "KEY_CONFIRM",
     0x36: "ADDRESS_REQ",
@@ -221,6 +225,128 @@ def crypt_key(data: bytes, challenge: bytes, in_key: bytes, transfer_key: bytes 
     iv = construct_iv(data, challenge)
     enc_iv = aes128_ecb_encrypt_block(iv, transfer_key)
     return bytes(a ^ b for a, b in zip(in_key, enc_iv))
+
+
+def construct_iv_1w_node(node: bytes) -> bytes:
+    """Port of construct_iv_1w_node() (proto_crypto.cpp): the 1W key-wrap IV -- the sender's
+    3-byte node address repeated to fill 16 bytes (node[i % 3]), naturally landing iv[15] on
+    node[0]. Used only by crypt_1w_key(); a 1W broadcast has no per-exchange challenge to bind
+    the IV to, so the public, already-plaintext node address is the only per-sender input.
+    """
+    if len(node) != 3:
+        raise ValueError("node must be 3 bytes")
+    return bytes(node[i % 3] for i in range(IV_SIZE))
+
+
+def crypt_1w_key(node: bytes, in_key: bytes, transfer_key: bytes = TRANSFER_KEY) -> bytes:
+    """Port of crypt_1w_key() (proto_crypto.cpp): crypt_key()'s 1W sibling -- same
+    XOR-with-AES-128-ECB(IV, transfer_key) core, node-derived IV instead of a
+    challenge/frame-data-derived one (construct_iv_1w_node()). Self-inverse like crypt_key(): the
+    same call wraps a plaintext key for transmission (CMD_ONEWAY_ADD_CONTROLLER, 0x30) or unwraps
+    an overheard one.
+    """
+    if len(in_key) != AES_KEY_SIZE:
+        raise ValueError(f"in_key must be {AES_KEY_SIZE} bytes, got {len(in_key)}")
+    iv = construct_iv_1w_node(node)
+    enc_iv = aes128_ecb_encrypt_block(iv, transfer_key)
+    return bytes(a ^ b for a, b in zip(in_key, enc_iv))
+
+
+def construct_iv_1w_sequence(data: bytes, sequence: int) -> bytes:
+    """Port of construct_iv_1w_sequence() (proto_crypto.cpp): shares construct_iv()'s
+    checksum/pad core over `data` (bytes 0-7 = span data or 0x55 padding, bytes 8-9 = running
+    checksum), but bytes 10-11 are the 2-byte sequence (big-endian) and 12-15 are 0x55 padding,
+    in place of construct_iv()'s 6-byte challenge tail -- a 1W frame has no per-exchange
+    challenge, only the sequence being transmitted.
+    """
+    iv = bytearray(IV_SIZE)
+    c1 = 0
+    c2 = 0
+    for i, byte in enumerate(data):
+        c1, c2 = compute_checksum(byte, c1, c2)
+        if i < 8:
+            iv[i] = byte
+    for i in range(len(data), 8):
+        iv[i] = IV_PADDING
+    iv[8] = c1
+    iv[9] = c2
+    iv[10] = (sequence >> 8) & 0xFF
+    iv[11] = sequence & 0xFF
+    iv[12] = iv[13] = iv[14] = iv[15] = IV_PADDING
+    return bytes(iv)
+
+
+def create_1w_hmac(data: bytes, sequence: int, controller_key: bytes) -> bytes:
+    """Port of create_1w_hmac() (proto_crypto.cpp): create_hmac()'s 1W sibling -- IV from
+    construct_iv_1w_sequence(), AES-128-ECB with `controller_key`, truncate to HMAC_SIZE bytes.
+    `data` is a command-specific span with NO default; the caller must supply exactly what the
+    target command authenticates (see proto_crypto.h's `@warning` -- spans do not generalise
+    across commands, e.g. CMD_ONEWAY_ADD_CONTROLLER signs only `cmd + enc_key`, while
+    CMD_ONEWAY_REMOVE signs `cmd + data` -- verified against real hardware captures, not merely
+    assumed; see tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml).
+    """
+    iv = construct_iv_1w_sequence(data, sequence)
+    encrypted = aes128_ecb_encrypt_block(iv, controller_key)
+    return encrypted[:HMAC_SIZE]
+
+
+# --- 1W frame slicing (CMD_ONEWAY_ADD_CONTROLLER / CMD_ONEWAY_REMOVE) -----------------------
+# Declared-payload sizes mirror proto_codecs.cpp's ONEWAY_ADD_CONTROLLER_PAYLOAD_SIZE and
+# proto_commands.cpp's ONEWAY_REMOVE_PAYLOAD_SIZE.
+ONEWAY_ADD_CONTROLLER_DECLARED_PAYLOAD_SIZE = AES_KEY_SIZE + 4  # enc_key(16) + man(1) + data(1) + seq(2)
+ONEWAY_REMOVE_DECLARED_PAYLOAD_SIZE = 9  # data(1) + seq(2) + mac(6)
+
+OneWayAddControllerParts = namedtuple("OneWayAddControllerParts", ["src", "enc_key", "rest", "sequence", "trailer"])
+OneWayRemoveControllerParts = namedtuple("OneWayRemoveControllerParts", ["data", "span", "sequence", "mac"])
+
+
+def find_oneway_add_controller_frames(frames):
+    """Locate CMD_ONEWAY_ADD_CONTROLLER (0x30) frames. No surrounding context needed -- the
+    key-wrap and optional MAC trailer live entirely in one frame."""
+    return [f for f in frames if _frame_cmd(f) == CMD_ONEWAY_ADD_CONTROLLER]
+
+
+def find_oneway_remove_controller_frames(frames):
+    """Locate CMD_ONEWAY_REMOVE (0x39) frames."""
+    return [f for f in frames if _frame_cmd(f) == CMD_ONEWAY_REMOVE]
+
+
+def oneway_add_controller_parts(frame) -> OneWayAddControllerParts:
+    """Slice a CMD_ONEWAY_ADD_CONTROLLER frame into its key-wrap, echoed man/data/sequence bytes,
+    and optional out-of-length MAC trailer (IoFrame::has_mac, proto_frame.h).
+
+    `trailer` is `b""` when the frame carries no MAC -- real Somfy hardware sends 29 bytes with no
+    trailer, even though the published linklayer.md vector is 35 bytes with a genuine MAC. Both
+    shapes are real; a rewriter must handle either.
+    `frame.raw()` (via non_crc_bytes()) is expected to be exactly the declared 20 bytes, or that
+    plus a 6-byte trailer -- anything else is a malformed capture.
+    """
+    raw = non_crc_bytes(frame)
+    payload = raw[FRAME_MIN_SIZE:]
+    if len(payload) < ONEWAY_ADD_CONTROLLER_DECLARED_PAYLOAD_SIZE:
+        raise ValueError(f"0x30 payload is {len(payload)} bytes, shorter than the declared "
+                         f"{ONEWAY_ADD_CONTROLLER_DECLARED_PAYLOAD_SIZE}")
+    src = raw[5:8]
+    enc_key = payload[:AES_KEY_SIZE]
+    rest = payload[AES_KEY_SIZE:ONEWAY_ADD_CONTROLLER_DECLARED_PAYLOAD_SIZE]  # man(1) + data(1) + seq(2)
+    trailer = payload[ONEWAY_ADD_CONTROLLER_DECLARED_PAYLOAD_SIZE:]
+    sequence = (rest[2] << 8) | rest[3]
+    return OneWayAddControllerParts(src, enc_key, rest, sequence, trailer)
+
+
+def oneway_remove_controller_parts(frame) -> OneWayRemoveControllerParts:
+    """Slice a CMD_ONEWAY_REMOVE frame into the signed span (`cmd + data` -- see
+    create_1w_hmac()'s doxygen for why this span and not another), sequence, and MAC.
+    """
+    raw = non_crc_bytes(frame)
+    payload = raw[FRAME_MIN_SIZE:]
+    if len(payload) != ONEWAY_REMOVE_DECLARED_PAYLOAD_SIZE:
+        raise ValueError(f"0x39 payload is {len(payload)} bytes, expected {ONEWAY_REMOVE_DECLARED_PAYLOAD_SIZE}")
+    data_byte = payload[0:1]
+    sequence = (payload[1] << 8) | payload[2]
+    mac = payload[3:9]
+    span = bytes([CMD_ONEWAY_REMOVE]) + data_byte
+    return OneWayRemoveControllerParts(data_byte, span, sequence, mac)
 
 
 # The public corpus key (must byte-for-byte match tests/support/test_helpers.h ::

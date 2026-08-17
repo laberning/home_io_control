@@ -1,5 +1,5 @@
 /// @file platform_accept_foreign_pairing_switch.cpp
-/// @brief Hub-level "Accept Foreign Pairing (Key Extraction)" switch entity.
+/// @brief Hub-level "Recover System Key" switch entity (key extraction, 2W).
 /// @ingroup hioc_platforms
 
 #include "platform_accept_foreign_pairing_switch.h"
@@ -24,7 +24,7 @@ void IOHomeAcceptForeignPairingSwitch::write_state(bool state) {
 }
 
 void IOHomeAcceptForeignPairingSwitch::dump_config() {
-  LOG_SWITCH("", "IO-Homecontrol Accept Foreign Pairing (Key Extraction)", this);
+  LOG_SWITCH("", "IO-Homecontrol Recover System Key (Key Extraction)", this);
   ESP_LOGCONFIG(TAG, "  Status: hardware-confirmed protocol; not yet confirmed against a third-party hub");
 }
 

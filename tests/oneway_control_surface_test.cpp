@@ -70,6 +70,7 @@ TEST(OneWayControlSurface, ReportNamesTheIntentClassAndSequence) {
   report.intent = "STOP";
   report.target_type = DeviceType::AWNING;
   report.sequence = 1234;
+  report.sequence_reserved = true;
   report.transmitted = true;
 
   const std::string summary = format_oneway_command_report(report);
@@ -86,6 +87,7 @@ TEST(OneWayControlSurface, ReportNeverClaimsTheDeviceActed) {
   report.intent = "CLOSE";
   report.target_type = DeviceType::AWNING;
   report.sequence = 9;
+  report.sequence_reserved = true;
   report.transmitted = true;
 
   const std::string summary = format_oneway_command_report(report);
@@ -98,6 +100,7 @@ TEST(OneWayControlSurface, ReportDistinguishesNotTransmittedFromTransmitted) {
   report.intent = "STOP";
   report.target_type = DeviceType::AWNING;
   report.sequence = 5;
+  report.sequence_reserved = true;
   report.transmitted = false;
 
   const std::string sent_nothing = format_oneway_command_report(report);
@@ -116,4 +119,24 @@ TEST(OneWayControlSurface, ReportForAnUnreservedSequenceSaysSo) {
 
   EXPECT_NE(format_oneway_command_report(report).find("no sequence"), std::string::npos)
       << "the report must name the reason, not just report emptiness";
+}
+
+TEST(OneWayControlSurface, ReportForAGenuineSequenceZeroDoesNotSayNoSequence) {
+  // Regression for the sentinel collision: sequence 0 is a legitimate value (the first command an
+  // identity with no configured initial_sequence: ever sends), distinct from "no sequence was
+  // reserved at all". A report that reserved sequence 0 but failed to transmit must say so as a
+  // real command, not fall back to the "no sequence reserved" wording meant for the other case.
+  OneWayCommandReport report{};
+  report.controller_id = "awning_remote";
+  report.intent = "STOP";
+  report.target_type = DeviceType::AWNING;
+  report.sequence = 0;
+  report.sequence_reserved = true;
+  report.transmitted = false;
+
+  const std::string summary = format_oneway_command_report(report);
+  EXPECT_EQ(summary.find("no sequence"), std::string::npos)
+      << "sequence 0 was genuinely reserved and must not be reported as unreserved";
+  EXPECT_NE(summary.find("seq 0"), std::string::npos) << "the reserved sequence must be visible";
+  EXPECT_NE(summary.find("not sent"), std::string::npos) << "it did not transmit, and that must still be visible";
 }

@@ -1,0 +1,28 @@
+id: somfy_izymo_dimmer_oneway_add_controller_with_mac
+description: >
+  This project's own hub sending CMD 0x30 (1W add-controller) with with_mac=true -- the 35-byte
+  form with the out-of-length MAC trailer, matching reference_1w_vectors/
+  oneway_add_controller_kat.yaml's shape rather than the no-MAC 29-byte form every other real
+  capture this project holds uses (see that vector's sibling capture,
+  somfy_awning/oneway_add_and_remove_controller_sx1276.yaml). Companion to that capture: this one
+  pins the other side of create_1w_add_controller()'s `with_mac` parameter against real hardware.
+  A factory-reset Izymo dimmer accepted this frame during enrollment and remained controllable
+  (open/close) afterward, so both shapes are confirmed safe to send.
+source:
+  device: "Somfy Izymo dimmer, 1W add-controller enrollment (own hub, MAC-trailer variant)"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-17
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "FC 00 00 01 BF 7F 84 A2 30 A1 AD F7 2F 58 DA 78 59 6A 33 6C 44 25 B1 B8 9F 02 01 00 60 F0 01 C0 F5 15 59"
+    crc: absent
+    note: "cmd=ONEWAY_ADD_CONTROLLER(0x30) -- 35 bytes on air, with_mac=true's out-of-length MAC trailer present"
+expect:
+  frames:
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}

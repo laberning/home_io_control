@@ -42,7 +42,7 @@ home_io_control:
   node_id: C0FFEE
   system_key: 0123456789ABCDEF0123456789ABCDEF
   accept_foreign_pairing: true
-  accept_oneway_key: true
+  recover_oneway_key: true
   # Two identities: one inheriting the hub system_key with a derived node_id, one with its own
   # key and an explicit address — the two shapes the schema has to support.
   oneway_controllers:
@@ -52,12 +52,18 @@ home_io_control:
     - id: adopted_neighbour_net
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF
-      manufacturer: 0x02
+      # Named form (validate_manufacturer()), not raw hex -- the raw-hex escape hatch is exercised
+      # separately by hub_management_test.cpp / the schema unit tests.
+      manufacturer: somfy
       io_device_type: roller_shutter
       initial_sequence: 1234
       # Exercises the "no commands:" shape too — an identity driven only by the
       # oneway_set_position action still gets its Last 1W Command sensor.
       commands: []
+      # Exercises the enrollment: true build flag (Phase 3B) so its generated "Enroll 1W
+      # Controller" button compiles — manufacturer: above is already set, which enrollment
+      # requires.
+      enrollment: true
 
 # At least one entity of each type is needed to ensure all platform code compiles
 cover:

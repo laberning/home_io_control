@@ -95,14 +95,11 @@ class OneWaySequenceStore {
 
   /// @brief Force an identity's counter to a specific value and persist it immediately.
   ///
-  /// The primitive a future resync action would call: unlike add_identity(), this *may* move the
-  /// counter backwards, which is the whole point — re-seed from a sequence observed on air, or
-  /// from a user's estimate, when a counter has desynced from the device. Nothing user-facing
-  /// reaches this yet — no button, no service call, no diagnostic surface calls it — so today's
-  /// only documented remedy for a desynced counter is `initial_sequence:` (docs/home_io_control.md
-  /// troubleshooting), which goes through add_identity() at boot instead. This method and peek()
-  /// below are tested directly (tests/oneway_sequence_store_test.cpp) so the primitives are proven
-  /// ready for whenever that resync action is built.
+  /// Unlike add_identity(), this *may* move the counter backwards, which is the whole point —
+  /// re-seed from a sequence observed on air, or from a user's estimate, when a counter has
+  /// desynced from the device. Today's documented remedy for a desynced counter is
+  /// `initial_sequence:` (docs/home_io_control.md troubleshooting), which goes through
+  /// add_identity() at boot instead.
   /// @param node_id Identity's 3-byte source address.
   /// @param value Next sequence to hand out.
   /// @return false if the address is not registered or the write could not be persisted.
@@ -110,9 +107,8 @@ class OneWaySequenceStore {
 
   /// @brief The next sequence this identity would hand out, without reserving it.
   ///
-  /// Same status as seed() above: nothing user-facing calls this today, only its test. Reaches no
-  /// diagnostic sensor or log line yet — a future one would use this rather than next(), since
-  /// next() commits to transmitting the value it returns.
+  /// Unlike next(), this does not commit to transmitting the value it returns — it does not
+  /// reserve, persist, or advance the counter.
   /// @param node_id Identity's 3-byte source address.
   /// @param out Output: the sequence next() would return.
   /// @return false if the address is not a registered identity.

@@ -20,7 +20,8 @@ void OperationQueue::push_control_(PendingOperation op) {
   // cancel that device's status poll. Exclude them rather than rely on the two namespaces never
   // colliding.
   const bool addresses_a_device =
-      op.type != PendingOperationType::ONEWAY_COMMAND && op.type != PendingOperationType::ONEWAY_POSITION;
+      op.type != PendingOperationType::ONEWAY_COMMAND && op.type != PendingOperationType::ONEWAY_POSITION &&
+      op.type != PendingOperationType::ONEWAY_ENROLL && op.type != PendingOperationType::ONEWAY_UNENROLL;
   if (addresses_a_device) {
     queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
                                 [&op](const PendingOperation &existing) {
@@ -85,6 +86,14 @@ void OperationQueue::enqueue_oneway_command(const std::string &controller_id, Co
 
 void OperationQueue::enqueue_oneway_position(const std::string &controller_id, uint8_t position) {
   push_control_({PendingOperationType::ONEWAY_POSITION, controller_id, position});
+}
+
+void OperationQueue::enqueue_oneway_enroll(const std::string &controller_id) {
+  push_control_({PendingOperationType::ONEWAY_ENROLL, controller_id, 0});
+}
+
+void OperationQueue::enqueue_oneway_unenroll(const std::string &controller_id) {
+  push_control_({PendingOperationType::ONEWAY_UNENROLL, controller_id, 0});
 }
 
 void OperationQueue::enqueue_set_light_position(const std::string &device_id, uint8_t position) {

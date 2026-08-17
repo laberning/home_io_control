@@ -12,7 +12,7 @@ namespace home_io_control {
 std::string format_oneway_command_report(const OneWayCommandReport &report) {
   // "not sent" rather than "failed": the hub knows only that nothing left the radio. It never
   // knows that a command failed, because it never learns that one succeeded either.
-  if (report.sequence == 0 && !report.transmitted)
+  if (!report.sequence_reserved)
     return "not sent (no sequence reserved)";
 
   std::string summary = report.intent.empty() ? "command" : report.intent;

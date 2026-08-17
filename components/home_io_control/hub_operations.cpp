@@ -506,17 +506,19 @@ void IOHomeControlComponent::queue_set_switch_state(const std::string &device_id
 // === 1W transmit ===
 
 void IOHomeControlComponent::execute_oneway_command_(const std::string &controller_id, CoverCommand cmd) {
-  this->busy_ = true;
-  this->oneway_transmitter_.send_command(controller_id, cmd);
-  this->busy_ = false;
-  this->record_1w_activity_(millis());
+  this->execute_oneway_([&] { this->oneway_transmitter_.send_command(controller_id, cmd); });
 }
 
 void IOHomeControlComponent::execute_oneway_position_(const std::string &controller_id, uint8_t position) {
-  this->busy_ = true;
-  this->oneway_transmitter_.send_position(controller_id, position);
-  this->busy_ = false;
-  this->record_1w_activity_(millis());
+  this->execute_oneway_([&] { this->oneway_transmitter_.send_position(controller_id, position); });
+}
+
+void IOHomeControlComponent::execute_oneway_enroll_(const std::string &controller_id) {
+  this->execute_oneway_([&] { this->oneway_transmitter_.send_enrollment(controller_id); });
+}
+
+void IOHomeControlComponent::execute_oneway_unenroll_(const std::string &controller_id) {
+  this->execute_oneway_([&] { this->oneway_transmitter_.send_unenrollment(controller_id); });
 }
 
 void IOHomeControlComponent::process_pending_operation_() {
@@ -561,6 +563,12 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::ONEWAY_POSITION:
       this->execute_oneway_position_(operation.device_id, operation.position);
+      break;
+    case PendingOperationType::ONEWAY_ENROLL:
+      this->execute_oneway_enroll_(operation.device_id);
+      break;
+    case PendingOperationType::ONEWAY_UNENROLL:
+      this->execute_oneway_unenroll_(operation.device_id);
       break;
     case PendingOperationType::REQUEST_STATUS:
       this->request_device_status(operation.device_id);

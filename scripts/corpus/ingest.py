@@ -32,6 +32,21 @@ any mismatch), rewrites them under the public corpus key, and emits `key: corpus
 secret (see tests/corpus/README.md :: "Key hygiene") — node IDs are kept as captured by
 default; `--remap OLDHEX=NEWHEX`/`--role NEWHEX=name` exist if you want to anonymize a specific
 node ID for some other reason, but are optional, not required for privacy.
+
+A capture containing a CMD_ONEWAY_ADD_CONTROLLER (0x30) / CMD_ONEWAY_REMOVE (0x39) frame also
+needs `--oneway-key-from <path>` — a 1W controller's key is frequently NOT the same as the hub's
+own `hub_system_key`, so it is resolved and verified independently. Point it at wherever you
+pasted the "Recover 1W Controller Key" switch's report —
+it emits the recovered key inline in a ready-to-paste `oneway_controllers:` block, so any
+git-ignored file containing that block works, `config/secrets.yaml` or otherwise:
+  python3 scripts/corpus/ingest.py my_1w_capture.log --rekey \\
+      --oneway-key-from config/secrets.yaml \\
+      --id somfy_smoove_9d6085_add_and_remove_controller --device "Somfy Smoove io 1W remote" \\
+      --captured-with sx1276 --origin own-hardware --date 2026-08-16 \\
+      -o tests/corpus/captures/somfy_smoove_9d6085/oneway_add_and_remove_controller.yaml
+`--system-key-from` and `--oneway-key-from` are each only required when a capture actually needs
+them — a pure-1W capture with no 0x3C/0x3D/0x32/0x2A frames needs no `--system-key-from`, and vice
+versa.
 """
 
 import argparse
@@ -197,6 +212,49 @@ def resolve_system_key(args) -> bytes:
     return key
 
 
+def resolve_oneway_key(args) -> bytes:
+    """Resolve the real 1W controller key from --oneway-key-from <path> or IOHOME_ONEWAY_KEY.
+
+    Deliberately separate from resolve_system_key(), not a fallback to it: a 1W controller's key
+    is frequently NOT the hub's own 2W hub_system_key -- a real Smoove remote's adopted 1W key has
+    been observed to differ from its own hub's hub_system_key. Silently reusing the wrong key here
+    would make rekey_oneway_*_frames() below either hard-abort (if the frames happen not to
+    verify) or, worse, succeed against the wrong key by coincidence. Same git-ignore refusal as
+    resolve_system_key().
+    """
+    if args.oneway_key_from is None:
+        env_value = os.environ.get("IOHOME_ONEWAY_KEY")
+        if env_value is None:
+            raise RekeyError(
+                "this capture contains a CMD_ONEWAY_ADD_CONTROLLER/CMD_ONEWAY_REMOVE frame, which needs the "
+                "real 1W controller key -- pass --oneway-key-from <path> or set IOHOME_ONEWAY_KEY "
+                "(this is frequently NOT the same value as hub_system_key)")
+        try:
+            key = bytes.fromhex(env_value.strip().replace(" ", ""))
+        except ValueError as exc:
+            raise RekeyError(f"IOHOME_ONEWAY_KEY is not valid hex ({exc})") from exc
+    else:
+        path = Path(args.oneway_key_from)
+        result = subprocess.run(["git", "check-ignore", str(path)], cwd=REPO_ROOT, capture_output=True, text=True,
+                                check=False)
+        if result.returncode != 0:
+            raise RekeyError(f"--oneway-key-from refuses to read {path}: not git-ignored "
+                             f"(run `git check-ignore {path}` to confirm before pointing --rekey at it)")
+        text = path.read_text(encoding="utf-8")
+        # No fixed field name to key off: the hub's own adoption report (hub_internal.h ::
+        # build_oneway_adoption_report()) emits the recovered key inline in the pasteable YAML
+        # block (`system_key: "..."`) rather than naming a secrets.yaml field, mirroring the 2W
+        # key-extraction report's style. Any 32-hex-digit run in the pointed-at file is accepted,
+        # same fallback resolve_system_key() uses.
+        match = re.search(r"\b([0-9A-Fa-f]{32})\b", text)
+        if match is None:
+            raise RekeyError(f"could not find a 32-hex-digit 1W controller key in {path}")
+        key = bytes.fromhex(match.group(1))
+    if len(key) != protolib.AES_KEY_SIZE:
+        raise RekeyError(f"resolved 1W controller key is {len(key)} bytes, expected {protolib.AES_KEY_SIZE}")
+    return key
+
+
 def parse_remap_args(remap_args: "list[str]", role_args: "list[str]") -> "tuple[dict, dict]":
     """--remap OLD=NEW (repeatable) -> {old_bytes: new_bytes}; --role NEW=name -> {new_hex: role}."""
     remap = {}
@@ -308,6 +366,73 @@ def rekey_key_transfer_frames(frames, real_key: bytes, corpus_key: bytes) -> int
     return rewritten
 
 
+def rekey_oneway_add_controller_frames(frames, real_oneway_key: bytes, corpus_key: bytes) -> int:
+    """Verify + rewrite every CMD_ONEWAY_ADD_CONTROLLER (0x30) frame's key-wrap, and its
+    out-of-length MAC trailer when present. Same tier as rekey_key_transfer_frames() (design
+    §4.3): `enc_key` is wrapped only under the public TRANSFER_KEY with an IV derived from the
+    sender's own node address, itself plaintext in the frame header -- so an un-re-keyed payload
+    leaks the real 1W controller key to anyone who reads it. Hard aborts rather than silently
+    skipping, same contract as every other rewriter here.
+
+    The trailer is optional (protolib.oneway_add_controller_parts()'s docstring): real Somfy
+    hardware omits it even though the published documentation vector carries one, so this only
+    verifies+rewrites a MAC when the captured frame actually has one.
+    """
+    rewritten = 0
+    for frame in protolib.find_oneway_add_controller_frames(frames):
+        parts = protolib.oneway_add_controller_parts(frame)
+        unwrapped = protolib.crypt_1w_key(parts.src, parts.enc_key)
+        if unwrapped != real_oneway_key:
+            raise RekeyError(
+                f"0x30 enc_key does NOT unwrap to the real 1W key (fingerprint sha256="
+                f"{key_fingerprint(real_oneway_key)}) for frame {frame.raw().hex().upper()} — wrong key, "
+                "mis-copied bytes, or a corrupted capture. Aborting; nothing was written.")
+
+        new_enc_key = protolib.crypt_1w_key(parts.src, corpus_key)
+        new_payload = new_enc_key + parts.rest
+
+        if parts.trailer:
+            span = bytes([protolib.CMD_ONEWAY_ADD_CONTROLLER]) + parts.enc_key
+            expected_mac = protolib.create_1w_hmac(span, parts.sequence, real_oneway_key)
+            if expected_mac != parts.trailer:
+                raise RekeyError(f"0x30 MAC trailer does NOT verify under the real 1W key for frame "
+                                 f"{frame.raw().hex().upper()} — aborting; nothing was written.")
+            new_span = bytes([protolib.CMD_ONEWAY_ADD_CONTROLLER]) + new_enc_key
+            new_payload += protolib.create_1w_hmac(new_span, parts.sequence, corpus_key)
+
+        new_raw = protolib.non_crc_bytes(frame)[:protolib.FRAME_MIN_SIZE] + new_payload
+        _set_frame_raw(frame, new_raw)
+        rewritten += 1
+    return rewritten
+
+
+def rekey_oneway_remove_controller_frames(frames, real_oneway_key: bytes, corpus_key: bytes) -> int:
+    """Verify + rewrite every CMD_ONEWAY_REMOVE (0x39) frame's MAC.
+
+    Unlike 0x30's enc_key, this MAC does not directly encode key material — it is a truncated
+    block-cipher output, not recoverable back to the key — but it is rewritten under the corpus
+    key anyway, for the same reason every other captured HMAC in this pipeline is: `key: corpus`
+    promises every signature in the capture verifies under the public key, not the real one.
+    Span is `cmd + data` (protolib.create_1w_hmac()'s doxygen) — confirmed against 11 real
+    CMD_ONEWAY_REMOVE captures from the same real-hardware session this function was built to
+    re-key, not merely assumed.
+    """
+    rewritten = 0
+    for frame in protolib.find_oneway_remove_controller_frames(frames):
+        parts = protolib.oneway_remove_controller_parts(frame)
+        expected_mac = protolib.create_1w_hmac(parts.span, parts.sequence, real_oneway_key)
+        if expected_mac != parts.mac:
+            raise RekeyError(f"0x39 MAC does NOT verify under the real 1W key for frame "
+                             f"{frame.raw().hex().upper()} — aborting; nothing was written.")
+        new_mac = protolib.create_1w_hmac(parts.span, parts.sequence, corpus_key)
+        sequence_bytes = bytes([(parts.sequence >> 8) & 0xFF, parts.sequence & 0xFF])
+        new_payload = parts.data + sequence_bytes + new_mac
+        new_raw = protolib.non_crc_bytes(frame)[:protolib.FRAME_MIN_SIZE] + new_payload
+        _set_frame_raw(frame, new_raw)
+        rewritten += 1
+    return rewritten
+
+
 def rekey_self_authenticated_frames(frames, real_key: bytes, corpus_key: bytes) -> int:
     """Verify + rewrite the HMAC half of every self-authenticated frame (payload =
     [challenge | HMAC], see protolib.SELF_AUTHENTICATED_COMMANDS). The challenge half is left
@@ -353,21 +478,50 @@ def assert_no_key_leakage(frames, real_key: bytes) -> None:
 def apply_rekey(frames, args) -> "tuple[bytes, list[str], dict[str, str]]":
     """Run the full --rekey pipeline in place on `frames`. Returns (real_key, warnings,
     node_map) — the caller uses the returned key only for log messages (fingerprint only, never
-    the key itself) since assert_no_key_leakage() already ran before returning.
+    the key itself) since assert_no_key_leakage() already ran before returning. `real_key` is the
+    2W system key (None if this capture has no 2W crypto at all — a pure 1W capture needs no
+    --system-key-from).
+
+    The 2W system key and the 1W controller key are resolved and required independently, each
+    only when frames of that kind are actually present: a --system-key-from that isn't needed
+    (pure 1W capture) or a --oneway-key-from that isn't needed (pure 2W capture) must not become a
+    spurious requirement. The two keys can differ (see resolve_oneway_key()'s docstring), so
+    neither is ever used to satisfy the other.
     """
-    real_key = resolve_system_key(args)
     corpus_key = protolib.CORPUS_SYSTEM_KEY
     remap, roles = parse_remap_args(args.remap, args.role)
 
-    hmac_count = rekey_hmac_frames(frames, real_key, corpus_key)
-    hmac_count += rekey_self_authenticated_frames(frames, real_key, corpus_key)
-    transfer_count = rekey_key_transfer_frames(frames, real_key, corpus_key)
-    warnings = apply_node_remap(frames, remap)
-    assert_no_key_leakage(frames, real_key)
+    has_2w_crypto = bool(protolib.find_key_transfer_triples(frames) or
+                         protolib.find_challenge_response_triples(frames) or
+                         protolib.find_self_authenticated_frames(frames))
+    has_oneway = bool(protolib.find_oneway_add_controller_frames(frames) or
+                      protolib.find_oneway_remove_controller_frames(frames))
 
-    print(f"ingest.py --rekey: verified+rewrote {hmac_count} HMAC frame(s), {transfer_count} key-transfer "
-          f"frame(s), under real key (fingerprint sha256={key_fingerprint(real_key)}) -> corpus key "
-          f"(fingerprint sha256={key_fingerprint(corpus_key)})")
+    real_key = resolve_system_key(args) if has_2w_crypto else None
+    real_oneway_key = resolve_oneway_key(args) if has_oneway else None
+
+    summary_parts = []
+    if has_2w_crypto:
+        hmac_count = rekey_hmac_frames(frames, real_key, corpus_key)
+        hmac_count += rekey_self_authenticated_frames(frames, real_key, corpus_key)
+        transfer_count = rekey_key_transfer_frames(frames, real_key, corpus_key)
+        summary_parts.append(f"{hmac_count} HMAC frame(s), {transfer_count} key-transfer frame(s) under real "
+                             f"system key (fingerprint sha256={key_fingerprint(real_key)})")
+    if has_oneway:
+        add_count = rekey_oneway_add_controller_frames(frames, real_oneway_key, corpus_key)
+        remove_count = rekey_oneway_remove_controller_frames(frames, real_oneway_key, corpus_key)
+        summary_parts.append(f"{add_count} 1W add-controller frame(s), {remove_count} 1W remove-controller "
+                             f"frame(s) under real 1W key (fingerprint sha256="
+                             f"{key_fingerprint(real_oneway_key)})")
+
+    warnings = apply_node_remap(frames, remap)
+    if real_key is not None:
+        assert_no_key_leakage(frames, real_key)
+    if real_oneway_key is not None:
+        assert_no_key_leakage(frames, real_oneway_key)
+
+    print(f"ingest.py --rekey: verified+rewrote " + "; ".join(summary_parts) +
+          f" -> corpus key (fingerprint sha256={key_fingerprint(corpus_key)})")
     for warning in warnings:
         print(f"ingest.py --rekey: WARNING: {warning}", file=sys.stderr)
 
@@ -397,6 +551,10 @@ def main() -> int:
                         help="verify captured crypto against the real key and rewrite it under the corpus key")
     parser.add_argument("--system-key-from", default=None,
                         help="path to a git-ignored file containing the real system key (32 hex digits)")
+    parser.add_argument("--oneway-key-from", default=None,
+                        help="path to a git-ignored file containing the real 1W controller key (32 hex digits) "
+                             "-- only needed if the capture contains a CMD_ONEWAY_ADD_CONTROLLER/"
+                             "CMD_ONEWAY_REMOVE frame; not necessarily the same key as --system-key-from")
     parser.add_argument("--remap", action="append", default=[], metavar="OLDHEX=NEWHEX",
                         help="remap a 3-byte node ID (repeatable)")
     parser.add_argument("--role", action="append", default=[], metavar="NEWHEX=name",

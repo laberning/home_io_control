@@ -313,6 +313,42 @@ inline std::string format_key_hex(const uint8_t key[AES_KEY_SIZE]) {
   return out;
 }
 
+/// @brief Log `prefix` followed by `message`, one line per log call rather than one call for the
+/// whole (possibly multi-line) string.
+///
+/// ESPHome formats each log call into a fixed 512-byte buffer (`ESPHOME_LOGGER_TX_BUFFER_SIZE`,
+/// esphome/core/defines.h) and silently truncates anything longer; a multi-line report (a YAML
+/// snippet plus explanatory prose) routinely exceeds that and truncates mid-line if logged as a
+/// single call — confirmed on real hardware for both call sites this function serves:
+/// `scan_paired_devices()`'s report (a multi-device report cut off mid-snippet) and 1W
+/// controller-key adoption's report (the recovered `system_key` line itself never made it into
+/// the log at all). Splitting by line keeps every individual call's payload small regardless of
+/// how long the full message is. Shared rather than duplicated a third time — a second private
+/// copy is exactly how the 1W path ended up with the bug this fixes.
+/// @param tag        Log tag.
+/// @param is_warning True to log at WARN, false for INFO.
+/// @param prefix     Prepended to the message's first line only (e.g. "Management action X: ").
+/// @param message    Message to log; may contain embedded `\n` line breaks.
+inline void log_multiline_result(const char *tag, bool is_warning, const std::string &prefix,
+                                 const std::string &message) {
+  size_t start = 0;
+  bool first = true;
+  while (true) {
+    const size_t end = message.find('\n', start);
+    const std::string line = (end == std::string::npos) ? message.substr(start) : message.substr(start, end - start);
+    const std::string out = first ? prefix + line : line;
+    if (is_warning) {
+      ESP_LOGW(tag, "%s", out.c_str());
+    } else {
+      ESP_LOGI(tag, "%s", out.c_str());
+    }
+    first = false;
+    if (end == std::string::npos || end + 1 >= message.size())
+      break;
+    start = end + 1;
+  }
+}
+
 // ============================================================================
 // 1W controller-key adoption reporting
 // ============================================================================
@@ -345,6 +381,11 @@ inline const char *oneway_mac_status_name(OneWayMacStatus status) {
 /// from the hub's own node ID, and the report says so rather than asking the user to invent a
 /// 3-byte address. The report also explains that the hub always transmits under its own address:
 /// impersonating the sender would hijack that remote's rolling sequence counter and break it.
+///
+/// The emitted keys must track `ONEWAY_CONTROLLER_SCHEMA` (`__init__.py`) by hand — a newly
+/// required schema key needs a matching line here too. `make yaml-emitter-sync`
+/// (scripts/check-yaml-emitters.py) catches drift between the two statically; it does not tell
+/// you what to add here.
 ///
 /// @param adopted Decoded controller identity from decode_1w_add_controller() (proto_codecs.h).
 /// @param observed_type_known True if this sender's other 1W traffic was observed while armed
@@ -398,8 +439,35 @@ inline std::string build_oneway_adoption_report(const OneWayAdoptedKey &adopted,
          "oneway_controllers:\n"
          "  # node_id omitted -> derived from your hub node_id; see the boot log\n"
          "  - id: adopted_" +
-         sender_hex_lower + "\n" + "    system_key: !secret adopted_1w_key    # " + key_hex +
-         " -- put it in secrets.yaml\n" + manufacturer_line + "\n" + type_lines + "    commands: [open, close, stop]";
+         sender_hex_lower + "\n" + "    system_key: \"" + key_hex + "\"\n" + manufacturer_line + "\n" + type_lines +
+         "    commands: [open, close, stop]";
+}
+
+/// @brief Build the ready-to-paste 2W system-key-extraction report: `node_id:`/`system_key:` as a
+/// `home_io_control:` YAML block.
+///
+/// Pure — takes already-decoded values, performs no I/O — so it is directly unit-testable without
+/// a live radio, mirroring build_oneway_adoption_report() above; the two features end up sharing
+/// report *structure* as well as format_key_hex(). The caller (hub_key_extraction.cpp) logs the
+/// result through log_multiline_result() and nowhere else — this is the single intentional place
+/// the recovered `system_key` is formatted for display, a deliberate exception to redaction.h's
+/// masking.
+///
+/// The emitted keys must track the hub's own `CONFIG_SCHEMA` (`__init__.py`) by hand. `make
+/// yaml-emitter-sync` (scripts/check-yaml-emitters.py) catches drift between the two by
+/// cross-referencing this function's emitted key names against that schema statically.
+/// @param node_id Recovered hub node_id, 3 bytes.
+/// @param key Recovered system key, 16 bytes.
+/// @return Multi-line report text, ready to pass to log_multiline_result().
+inline std::string build_key_extraction_report(const uint8_t node_id[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
+  return "SYSTEM KEY EXTRACTED -- DO NOT SHARE YOUR SYSTEM KEY\n"
+         "Anyone with this key and node_id can control every device on this installation.\n"
+         "This exchange has not been independently confirmed against your specific hub -- test\n"
+         "this key (e.g. by controlling a device with it) before relying on it.\n"
+         "Copy the block below into a new hub's YAML.\n"
+         "home_io_control:\n"
+         "  node_id: \"" +
+         node_id_to_string(node_id) + "\"\n" + "  system_key: \"" + format_key_hex(key) + "\"";
 }
 
 // ============================================================================

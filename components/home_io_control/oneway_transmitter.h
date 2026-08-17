@@ -43,7 +43,8 @@ struct OneWayCommandReport {
   std::string controller_id;                    ///< Identity that transmitted (empty if unresolved).
   std::string intent;                           ///< Decoded intent, e.g. "STOP" or "CLOSE".
   DeviceType target_type{DeviceType::UNKNOWN};  ///< Device class addressed.
-  uint16_t sequence{0};                         ///< Sequence consumed; 0 if none was reserved.
+  uint16_t sequence{0};                         ///< Sequence consumed; meaningless unless sequence_reserved.
+  bool sequence_reserved{false};                ///< True if a sequence was consumed (0 is a valid sequence).
   bool transmitted{false};                      ///< True if at least one copy reached the radio.
 };
 
@@ -129,16 +130,48 @@ class OneWayTransmitter {
   ///         needs only one of them.
   bool send_burst(const IoFrame &frame);
 
+  /// @brief Register this identity as a controller on every device of its class currently in
+  /// association mode (CMD 0x30, no MAC trailer).
+  ///
+  /// **`with_mac=false`** — see create_1w_add_controller()'s `@warning` (proto_commands.h): most
+  /// real hardware captures this project holds carry no MAC trailer, and this is the shape used
+  /// by default. Real hardware has separately been shown to accept the MAC-bearing form
+  /// (the published documentation vector's own shape) too — either is a safe choice here.
+  ///
+  /// Sends `0x30` alone — never preceded by `0x39` (see send_unenrollment()). `0x30` alone is the
+  /// least-destructive option (registering does not require clearing what a device already
+  /// holds), so it is the only thing a press of "Enroll" ever does.
+  /// @param controller_id YAML handle of the controller identity to register.
+  /// @return true if at least one copy reached the radio.
+  bool send_enrollment(const std::string &controller_id);
+
+  /// @brief Un-register this identity from every device of its class currently in association
+  /// mode (CMD 0x39) — the rollback path for send_enrollment(), and the only caller of `0x39`.
+  ///
+  /// Never sent as an automatic prelude to send_enrollment(): keeping it behind an explicitly-named
+  /// action means it is never a hidden side effect of a button labelled "Enroll".
+  ///
+  /// @warning **Unconfirmed on real hardware.** `0x39` has had no observable effect on this
+  /// project's test hardware; the leading hypothesis is that it needs the same association-mode
+  /// window enrollment does. See ADR 0026 § Consequences.
+  /// @param controller_id YAML handle of the controller identity to remove.
+  /// @return true if at least one copy reached the radio.
+  bool send_unenrollment(const std::string &controller_id);
+
  private:
-  /// Shared tail of send_command()/send_position(): reserve one sequence, then burst whatever
-  /// `build` makes of it. The reservation happens **once per logical command** and outside the
-  /// burst loop — a sequence per frame would turn one press into four commands, of which a device
-  /// accepts one and rejects three.
+  /// Shared tail of send_command()/send_position()/send_enrollment()/send_unenrollment(): reserve
+  /// one sequence, then burst whatever `build` makes of it. The reservation happens **once per
+  /// logical command** and outside the burst loop — a sequence per frame would turn one press into
+  /// four commands, of which a device accepts one and rejects three.
+  /// @param explicit_intent Overrides the report's decoded intent (decode_1w_frame() cannot label
+  ///        a 0x30/0x39, so send_enrollment()/send_unenrollment() pass "ENROLL"/"UNENROLL" here;
+  ///        empty means "derive from the built frame as usual", every other caller's behavior).
   bool send_(const std::string &controller_id,
-             const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build);
+             const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
+             const char *explicit_intent = "");
 
   /// Emit a report for an attempt that never got as far as a frame.
-  void report_failure_(const std::string &controller_id, uint16_t sequence);
+  void report_failure_(const std::string &controller_id, uint16_t sequence, bool sequence_reserved);
 
   OneWayTransmitFn transmit_;
   OneWayCommandReportFn report_;

@@ -20,6 +20,7 @@ class TestableManagementComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::api_force_open_device_;
   using IOHomeControlComponent::api_identify_device_;
+  using IOHomeControlComponent::api_oneway_remove_controller_;
   using IOHomeControlComponent::api_oneway_set_position_;
   using IOHomeControlComponent::api_probe_device_;
   using IOHomeControlComponent::api_probe_sweep_;
@@ -416,7 +417,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersOnlyFiveServicesByDefault) {
+TEST(HubManagement, RegisterManagementActionsRegistersOnlySixServicesByDefault) {
   // diagnostic_probes_enabled_ defaults to false (no set_diagnostic_probes_enabled() call), so
   // probe_device/probe_sweep must not appear in the action list at all -- this is what keeps a
   // default build's Home Assistant action list clean, not just what refuses at call time.
@@ -429,7 +430,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyFiveServicesByDefault)
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 5u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 6u);
   for (const auto &service : esphome::api::global_api_server->user_services_) {
     const auto name = service->encode_list_service_response().name.str();
     EXPECT_NE(name, "probe_device");
@@ -473,9 +474,17 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyFiveServicesByDefault)
   EXPECT_EQ(oneway_set_position_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
   EXPECT_EQ(oneway_set_position_response.args[1].name.str(), "position");
   EXPECT_EQ(oneway_set_position_response.args[1].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto oneway_remove_controller_response =
+      esphome::api::global_api_server->user_services_[5]->encode_list_service_response();
+  EXPECT_EQ(oneway_remove_controller_response.name.str(), "oneway_remove_controller");
+  EXPECT_EQ(oneway_remove_controller_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(oneway_remove_controller_response.args.size(), 1u);
+  EXPECT_EQ(oneway_remove_controller_response.args[0].name.str(), "controller_id");
+  EXPECT_EQ(oneway_remove_controller_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllSevenServicesWhenDiagnosticProbesEnabled) {
+TEST(HubManagement, RegisterManagementActionsRegistersAllEightServicesWhenDiagnosticProbesEnabled) {
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -486,9 +495,9 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllSevenServicesWhenDiagno
   component.set_diagnostic_probes_enabled(true);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 7u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 8u);
 
-  const auto probe_device_response = esphome::api::global_api_server->user_services_[5]->encode_list_service_response();
+  const auto probe_device_response = esphome::api::global_api_server->user_services_[6]->encode_list_service_response();
   EXPECT_EQ(probe_device_response.name.str(), "probe_device");
   EXPECT_EQ(probe_device_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_device_response.args.size(), 3u);
@@ -499,7 +508,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllSevenServicesWhenDiagno
   EXPECT_EQ(probe_device_response.args[2].name.str(), "index");
   EXPECT_EQ(probe_device_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[6]->encode_list_service_response();
+  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[7]->encode_list_service_response();
   EXPECT_EQ(probe_sweep_response.name.str(), "probe_sweep");
   EXPECT_EQ(probe_sweep_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_sweep_response.args.size(), 4u);
@@ -557,7 +566,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 5u);
+  ASSERT_EQ(api_server.user_services_.size(), 6u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
@@ -829,7 +838,7 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 5u);
+  ASSERT_EQ(api_server.user_services_.size(), 6u);
 
   const auto response = api_server.user_services_[3]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "scan_paired_devices");
@@ -897,7 +906,7 @@ TEST(HubManagement, OneWaySetPositionActionIsRegisteredWithBothArguments) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 5u);
+  ASSERT_EQ(api_server.user_services_.size(), 6u);
 
   const auto response = api_server.user_services_[4]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "oneway_set_position");
@@ -948,6 +957,91 @@ TEST(HubManagement, OneWaySetPositionRejectsAMalformedPosition) {
     EXPECT_EQ(api_server.events_.front().data.at("success"), "false")
         << "position '" << bad << "' should be rejected, not coerced";
   }
+}
+
+TEST(HubManagement, OneWaySetPositionQueuesTheParsedPositionForAKnownIdentity) {
+  // The malformed-input test above only pins the rejection half. Nothing else asserts that the
+  // parsed value actually reaches the queue -- a wrong variable, a truncating cast, or an
+  // off-by-one on the bound would pass every existing test and 1W emits nothing at runtime that
+  // would reveal it.
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+
+  OneWayControllerIdentity identity{};
+  identity.id = "awning_remote";
+  identity.io_device_type = DeviceType::AWNING;
+
+  const struct {
+    const char *input;
+    uint8_t expected;
+  } cases[] = {
+      {"0", 0},
+      {"75", 75},
+      {"100", 100},
+  };
+
+  for (const auto &c : cases) {
+    api_server.reset();
+
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.add_oneway_controller(identity);
+
+    component.api_oneway_set_position_("awning_remote", c.input);
+
+    ASSERT_EQ(api_server.events_.size(), 1u) << "input '" << c.input << "' produced no result event";
+    EXPECT_EQ(api_server.events_.front().data.at("success"), "true") << "input '" << c.input << "'";
+    ASSERT_EQ(component.op_queue_.size(), 1u) << "input '" << c.input << "'";
+    EXPECT_EQ(component.op_queue_.front().type, PendingOperationType::ONEWAY_POSITION) << "input '" << c.input << "'";
+    EXPECT_EQ(component.op_queue_.front().device_id, "awning_remote")
+        << "device_id carries the controller-identity handle for 1W ops";
+    EXPECT_EQ(component.op_queue_.front().position, c.expected) << "input '" << c.input << "'";
+  }
+}
+
+TEST(HubManagement, OneWayRemoveControllerRejectsAnUnknownIdentity) {
+  // Same reasoning as OneWaySetPositionRejectsAnUnknownIdentity: 1W transmits nothing back, so a
+  // silently-ignored mistyped handle would be indistinguishable from a working un-enroll.
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  component.api_oneway_remove_controller_("nope");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  const auto &event = api_server.events_.front();
+  EXPECT_EQ(event.data.at("action"), "oneway_remove_controller");
+  EXPECT_EQ(event.data.at("success"), "false");
+  EXPECT_TRUE(component.op_queue_.empty()) << "an unknown identity must not queue a transmit";
+}
+
+TEST(HubManagement, OneWayRemoveControllerQueuesForAKnownIdentity) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  OneWayControllerIdentity identity{};
+  identity.id = "awning_remote";
+  identity.io_device_type = DeviceType::AWNING;
+  component.add_oneway_controller(identity);
+
+  component.api_oneway_remove_controller_("awning_remote");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  EXPECT_EQ(api_server.events_.front().data.at("success"), "true");
+  ASSERT_EQ(component.op_queue_.size(), 1u);
+  EXPECT_EQ(component.op_queue_.front().type, PendingOperationType::ONEWAY_UNENROLL);
+  EXPECT_EQ(component.op_queue_.front().device_id, "awning_remote")
+      << "device_id carries the controller-identity handle for 1W ops";
 }
 
 // --- probe_device() / probe_sweep() ---

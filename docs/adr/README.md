@@ -46,7 +46,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0018](0018-yaml-is-the-source-of-truth-hub-persists-nothing.md) | YAML is the only source of truth | The hub persists nothing; pairing ends in paste-and-reflash |
 | [0019](0019-declare-what-the-protocol-cannot-report.md) | Declare, don't guess | Undetectable capabilities are YAML options, not inferences |
 | [0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) | Counters are the one exception to 0018 | 1W's rolling sequence cannot be re-derived, so it is persisted — and nothing else is |
-| [0024](0024-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
+| [0027](0027-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
 
 ### Security
 
@@ -56,6 +56,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0011](0011-key-material-redaction-in-logs.md) | Key material masked in all logs | Masking is unconditional, not tied to the frame-logging flag |
 | [0012](0012-key-extraction-responder-for-owned-devices.md) | Key-extraction responder | Emulate a device so a user's own hub hands over its credentials |
 | [0022](0022-unauthenticated-status-frames-are-never-applied.md) | Unauthenticated status frames are never applied | Drop the merge rather than pay a challenge or an attacker-triggerable poll |
+| [0026](0026-1w-enrollment-is-required-and-safety-comes-from-a-physical-interlock.md) | 1W enrollment needs no arming switch | The receiver's own physical PROG hold is the interlock, and even a successful enrollment only adds a controller, never displaces one |
 
 ### Testing
 

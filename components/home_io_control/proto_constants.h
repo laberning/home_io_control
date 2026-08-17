@@ -400,6 +400,13 @@ static constexpr uint8_t MANUFACTURER_ATLANTIC_GROUP = 12;  ///< Atlantic Group 
 /// The manufacturer ID is a 1-based index assigned by the IO-Homecontrol alliance.
 /// IDs outside the known range return "unknown". When an unknown ID appears at runtime,
 /// the pairing flow logs a warning suggesting the user file a GitHub issue.
+/// @warning **Display-only — do not use this for YAML.** Four of the twelve names do not
+/// round-trip through `.strip().lower()` to their `manufacturer:` YAML token
+/// (`MANUFACTURER_OPTIONS`, `__init__.py`): `"Hörmann"` has an umlaut the YAML token
+/// (`hormann`) drops, and `"ASSA ABLOY"`/`"WINDOW MASTER"`/`"Atlantic Group"` use a space
+/// where the YAML token uses `_`. There is currently no YAML-token accessor for
+/// manufacturers — see `yaml_device_type_name()` (proto_device_model.h) for the pattern this
+/// would follow if one is ever added.
 /// @param id Manufacturer ID byte (1–12 for known manufacturers).
 /// @return Null-terminated lowercase string such as "unknown", or mixed-case name like "Somfy".
 const char *manufacturer_name(uint8_t id);

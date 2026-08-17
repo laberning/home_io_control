@@ -9,7 +9,7 @@
 /// device, so a 1W entity has no node address to bind to. What distinguishes one 1W control
 /// surface from another is the *controller* doing the transmitting — its source address, its
 /// network key, and the device class it speaks to. That triple is a controller identity, and it
-/// takes the place node addressing has for 2W. See ADR 0024.
+/// takes the place node addressing has for 2W. See ADR 0027.
 ///
 /// A hub holds several, deliberately: adopting a foreign 1W network's key (see
 /// hub_oneway_key_adoption.cpp) produces an identity whose key is *not* the hub's own, and it

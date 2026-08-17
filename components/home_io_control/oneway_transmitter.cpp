@@ -27,11 +27,12 @@ void OneWayTransmitter::setup() {
 }
 
 bool OneWayTransmitter::send_(const std::string &controller_id,
-                              const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build) {
+                              const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
+                              const char *explicit_intent) {
   const OneWayControllerIdentity *identity = this->identities_.get(controller_id);
   if (identity == nullptr) {
     ESP_LOGW(TAG, "1W tx: no controller identity '%s'", controller_id.c_str());
-    this->report_failure_(controller_id, 0);
+    this->report_failure_(controller_id, 0, /*sequence_reserved=*/false);
     return false;
   }
 
@@ -39,7 +40,7 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
   uint16_t sequence = 0;
   if (!this->sequences_.next(identity->node_id, sequence)) {
     // The store logs why; it refuses rather than risk reusing a sequence.
-    this->report_failure_(controller_id, 0);
+    this->report_failure_(controller_id, 0, /*sequence_reserved=*/false);
     return false;
   }
 
@@ -48,30 +49,41 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
     // The sequence is spent either way. Skipping one is free; reusing it is not, so it is not
     // returned to the store.
     ESP_LOGW(TAG, "1W tx: could not build a frame for '%s'", controller_id.c_str());
-    this->report_failure_(controller_id, sequence);
+    this->report_failure_(controller_id, sequence, /*sequence_reserved=*/true);
     return false;
   }
 
   const bool transmitted = this->send_burst(frame);
   if (this->report_) {
-    const OneWayFrameInfo info = decode_1w_frame(frame);
     OneWayCommandReport report{};
     report.controller_id = controller_id;
-    report.intent = info.has_intent ? info.intent : "";
-    report.target_type = info.target_type;
+    if (explicit_intent[0] != '\0') {
+      // 0x30/0x39 carry no intent decode_1w_frame() can read (it only understands
+      // CMD_EXECUTE/CMD_ACTIVATE_MODE payloads) -- send_enrollment()/send_unenrollment() supply
+      // the label directly rather than leave the "Last 1W Command" sensor blank on the one
+      // feature whose entire diagnostic story is that sensor.
+      report.intent = explicit_intent;
+      report.target_type = identity->io_device_type;
+    } else {
+      const OneWayFrameInfo info = decode_1w_frame(frame);
+      report.intent = info.has_intent ? info.intent : "";
+      report.target_type = info.target_type;
+    }
     report.sequence = sequence;
+    report.sequence_reserved = true;
     report.transmitted = transmitted;
     this->report_(report);
   }
   return transmitted;
 }
 
-void OneWayTransmitter::report_failure_(const std::string &controller_id, uint16_t sequence) {
+void OneWayTransmitter::report_failure_(const std::string &controller_id, uint16_t sequence, bool sequence_reserved) {
   if (!this->report_)
     return;
   OneWayCommandReport report{};
   report.controller_id = controller_id;
   report.sequence = sequence;
+  report.sequence_reserved = sequence_reserved;
   this->report_(report);
 }
 
@@ -88,6 +100,26 @@ bool OneWayTransmitter::send_position(const std::string &controller_id, uint8_t 
                        return create_1w_execute_position(frame, identity.node_id, identity.io_device_type, position,
                                                          sequence, identity.system_key);
                      });
+}
+
+bool OneWayTransmitter::send_enrollment(const std::string &controller_id) {
+  return this->send_(
+      controller_id,
+      [](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
+        return create_1w_add_controller(frame, identity.node_id, identity.io_device_type, identity.manufacturer,
+                                        sequence, identity.system_key, /*with_mac=*/false);
+      },
+      "ENROLL");
+}
+
+bool OneWayTransmitter::send_unenrollment(const std::string &controller_id) {
+  return this->send_(
+      controller_id,
+      [](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
+        return create_1w_remove_controller(frame, identity.node_id, identity.io_device_type, sequence,
+                                           identity.system_key);
+      },
+      "UNENROLL");
 }
 
 bool OneWayTransmitter::send_burst(const IoFrame &frame) {

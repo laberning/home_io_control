@@ -284,6 +284,25 @@ class IOHomeControlComponent : public Component,
     }
   }
 
+  /// @brief Queue a 1W enrollment (add-controller) for the given controller identity — the
+  /// enroll button's press handler.
+  ///
+  /// Sends `0x30` alone, no `0x39` prelude — see OneWayTransmitter::send_enrollment().
+  /// @param controller_id Controller-identity handle from `oneway_controllers:`.
+  void send_oneway_enroll(const std::string &controller_id) { this->op_queue_.enqueue_oneway_enroll(controller_id); }
+
+  /// @brief Queue a 1W un-enrollment (remove-controller) for the given controller identity — the
+  /// only caller of `0x39`, reached only through the explicitly-named `oneway_remove_controller`
+  /// native API action, never automatically.
+  ///
+  /// @warning **Unconfirmed on real hardware.** `0x39` has had no observable effect on this
+  /// project's test hardware; the leading hypothesis is that it needs the same association-mode
+  /// window enrollment does. See ADR 0026 § Consequences.
+  /// @param controller_id Controller-identity handle from `oneway_controllers:`.
+  void send_oneway_unenroll(const std::string &controller_id) {
+    this->op_queue_.enqueue_oneway_unenroll(controller_id);
+  }
+
   /// @brief Subscribe to the report emitted after every 1W command attempt.
   ///
   /// A list rather than a single slot: each identity gets its own "Last 1W Command" sensor, and
@@ -305,7 +324,7 @@ class IOHomeControlComponent : public Component,
   /// @param cb Callable with no arguments.
   void set_pairing_result_callback(std::function<void()> cb) { this->pairing_result_callback_ = std::move(cb); }
 
-  /// @brief Arm or disarm the "Accept Foreign Pairing (Key Extraction)" responder.
+  /// @brief Arm or disarm the "Recover System Key" (key extraction) responder.
   ///
   /// Arming picks a fresh throwaway node ID, resets the pairing_responder state machine to
   /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, the 0x28/0x2C/0x31/0x32 branches
@@ -770,10 +789,19 @@ class IOHomeControlComponent : public Component,
   /// @param cmd Named command to execute.
   /// @return true if device acknowledged; false otherwise.
   bool execute_device_command_(const std::string &device_id, CoverCommand cmd);
+  /// Shared bookkeeping for every 1W transmit: mark the radio busy for the duration of `send`,
+  /// then record it as 1W activity so background polls back off for it exactly as they do for a
+  /// remote's burst — the radio is equally busy either way. Every 1W execute must go through this;
+  /// a future one that skips it would compile, pass, and silently break poll-deferral.
+  /// @param send Callable that performs the actual transmit; takes no arguments.
+  template<typename F> void execute_oneway_(F &&send) {
+    this->busy_ = true;
+    send();
+    this->busy_ = false;
+    this->record_1w_activity_(millis());
+  }
   /// Send a queued 1W named command. Unlike its 2W sibling this returns nothing: there is no
   /// acknowledgement to report, and success here would only mean "bytes left the radio".
-  /// It marks the burst as 1W activity so background polls back off for it exactly as they do
-  /// for a remote's burst — the radio is equally busy either way.
   /// @param controller_id Controller-identity handle.
   /// @param cmd Named command to send.
   void execute_oneway_command_(const std::string &controller_id, CoverCommand cmd);
@@ -781,6 +809,12 @@ class IOHomeControlComponent : public Component,
   /// @param controller_id Controller-identity handle.
   /// @param position Target position 0–100.
   void execute_oneway_position_(const std::string &controller_id, uint8_t position);
+  /// Send a queued 1W enrollment (add-controller). See execute_oneway_command_().
+  /// @param controller_id Controller-identity handle.
+  void execute_oneway_enroll_(const std::string &controller_id);
+  /// Send a queued 1W un-enrollment (remove-controller). See execute_oneway_command_().
+  /// @param controller_id Controller-identity handle.
+  void execute_oneway_unenroll_(const std::string &controller_id);
   /// Fire all registered device update callbacks for the given device ID.
   /// @param id Device ID that updated.
   void notify_device_update_(const std::string &id);
@@ -818,6 +852,10 @@ class IOHomeControlComponent : public Component,
   /// Native API callback: queue a 1W position for a controller identity.
   void api_oneway_set_position_(const std::string &controller_id, const std::string &position) {
     this->management_actions_.api_oneway_set_position(controller_id, position);
+  }
+  /// Native API callback: queue a 1W un-enrollment (remove-controller) for a controller identity.
+  void api_oneway_remove_controller_(const std::string &controller_id) {
+    this->management_actions_.api_oneway_remove_controller(controller_id);
   }
   /// Native API callback: run a single diagnostic probe against a registered device.
   void api_probe_device_(const std::string &device_id, const std::string &probe, const std::string &index) {
