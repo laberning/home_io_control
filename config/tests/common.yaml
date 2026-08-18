@@ -5,10 +5,22 @@ substitutions:
 
 esphome:
   name: ${device_name}
+  # Required for the name: None case on "Test Window Cover" below (validate_entity_name()'s
+  # device-name idiom via the literal `None` requires esphome: friendly_name: to be set, matching
+  # ENTITY_BASE_SCHEMA's own upstream behavior).
+  friendly_name: "Test Common"
   # The framework-specific test-*.yaml files intentionally restate `substitutions` and `esp32`
   # after `<<: !include common.yaml` (YAML merge keys pick a winner per top-level key rather than
   # deep-merging) — silence the resulting "already defined" noise since that's expected here.
   merge_warnings: false
+  # Exercises the device_id: sub-device path (companion sensors/buttons inheriting their parent's
+  # ESPHome device) on "Test Cover"/"Test Window Cover"/"Test Light" below. "Test Silent Cover"/
+  # "Test Dimmable Light"/"Test Switch" deliberately have no device_id:, so both branches compile.
+  devices:
+    - id: dev_cover
+      name: "Test Cover Device"
+    - id: dev_light
+      name: "Test Light Device"
 
 # Minimal esp32 config; framework (arduino/esp-idf) set in platform-specific files
 esp32:
@@ -68,6 +80,7 @@ home_io_control:
 # At least one entity of each type is needed to ensure all platform code compiles
 cover:
   - platform: home_io_control
+    device_id: dev_cover
     name: "Test Cover"
     io_device_id: "FEEB1E"
     device_class: awning
@@ -82,9 +95,22 @@ cover:
     device_class: shutter
     io_device_type: "roller_shutter"
     silent: true
+  # window_opener is the one device type that also generates a ventilation-position companion
+  # button (device_supports_vent()) alongside the favorite-position one; neither cover above uses
+  # a vent-capable io_device_type, so without this entry that codegen path never compiles.
+  # name: None (rather than "") also exercises validate_entity_name()'s other device-name idiom
+  # branch — needs the explicit id: below since companion_id_base() has nothing else to key off.
+  - platform: home_io_control
+    device_id: dev_cover
+    id: test_window_cover
+    name: None
+    io_device_id: "FEEB2F"
+    device_class: window
+    io_device_type: "window_opener"
 
 light:
   - platform: home_io_control
+    device_id: dev_light
     name: "Test Light"
     io_device_id: "FEEB1F"
   - platform: home_io_control

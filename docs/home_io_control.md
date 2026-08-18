@@ -106,6 +106,30 @@ Notes:
 
 SX1276, SX1262, and LR1121 are all confirmed and validated on real hardware (see the [README hardware table](../README.md#hardware-requirements)). `radio_type` must always be set explicitly — there is no chip auto-detection, so an ambiguous or mis-wired chip can never be silently probed into the wrong SPI command set.
 
+## Grouping Entities into Home Assistant Devices
+
+The cover, light, switch, lock, and button platforms accept ESPHome's own `device_id:` key to group an entity — and every companion entity it automatically generates — under a distinct Home Assistant device, instead of everything landing on the single physical ESPHome node. This is unrelated to `io_device_id:` (the IO-homecontrol protocol address below); `device_id:` is purely an ESPHome/Home Assistant UI-grouping concept.
+
+```yaml
+esphome:
+  devices:
+    - id: patio_awning_device
+      name: "Patio Awning"
+
+cover:
+  - platform: home_io_control
+    device_id: patio_awning_device
+    id: patio_awning
+    name: ""
+    io_device_id: "FEEB1E"
+    io_device_type: "awning"
+```
+
+- Declare each sub-device once under `esphome: devices:`, then reference its `id:` from any entity's `device_id:`.
+- Every companion entity a platform generates (favorite/ventilation buttons, the silent-operation switch, the device-name/active-issue/RSSI/last-contact/exchange-failures sensors — see each platform section below) automatically inherits the same sub-device as its parent entity.
+- **Naming caveat**: Home Assistant composes an entity's displayed name as `<device name> <entity name>`. Giving the sub-device and the entity the same name (e.g. both "Patio Awning") doubles up as "Patio Awning Patio Awning" — and every companion's own generated name (e.g. "... Favorite Position") gets that device-name prefix on top too. To show only the sub-device's name, give the entity `name: ""` (ESPHome's convention for "this entity is the device"), as in the example above — or the equivalent YAML literal `name: None`/`name: none`, which also selects this idiom but additionally requires `esphome: friendly_name:` to be set (matching ESPHome's own behavior everywhere else; `name: ""` needs no such setting). Either form requires an explicit `id:` as well: with an empty name there is nothing left to derive the companion entities' internal IDs from, so config validation fails with a clear error unless `id:` is given.
+- Hub-level entities that are not tied to a single cover/light/switch/lock — the key-extraction/1W-key-adoption arming switches, the LR1121 firmware/bootloader controls, tuning numbers and selects, and each 1W controller identity's command buttons — do not currently support `device_id:` and always appear on the hub's main ESPHome device. The pairing button itself is not one of these: see the Button Platform section below, its `device_id:` (and its companion sensor's) work like any other device-bound platform.
+
 ## Cover Platform
 
 Use the cover platform for position-capable IO-homecontrol devices such as shutters, awnings, blinds, openers, curtains, and related families.
@@ -149,6 +173,7 @@ Notes:
 - Covers also automatically generate a diagnostic text sensor named `<Cover Name> Device Name`. That entity is disabled by default to avoid clutter. When enabled, it queues a boot-time `GET_NAME` protocol request, caches the returned UTF-8 device name, and publishes it to Home Assistant.
 - Covers also automatically generate a diagnostic text sensor named `<Cover Name> Active Issue`. Unlike the device-name sensor, this one is **enabled by default** — see "Active Issue" below.
 - Covers also automatically generate three disabled-by-default `<Cover Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
+- The favorite/ventilation buttons, the silent-operation switch (see below), and all of the diagnostic sensors above follow the cover's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 - Automatic favorite-button and ventilation-button generation is compile-time only. If `io_device_type` is omitted and learned later from radio traffic, the controller can still operate the cover normally, but it cannot add new ESPHome entities at runtime after boot.
 - Automatic device-name, active-issue, and link-health sensor generation is also compile-time only for the same reason.
 - The protocol support currently exposed here is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow because no verified controller-side protocol command has been identified.
@@ -392,6 +417,7 @@ Notes:
 - Lights automatically generate a diagnostic text sensor named `<Light Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 - Lights also automatically generate a `<Light Name> Active Issue` diagnostic text sensor, enabled by default. See "Active Issue" below.
 - Lights also automatically generate three disabled-by-default `<Light Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
+- All of the diagnostic sensors above follow the light's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 
 ## Lock Platform
 
@@ -427,6 +453,7 @@ Notes:
 - Locks automatically generate a diagnostic text sensor named `<Lock Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 - Locks also automatically generate a `<Lock Name> Active Issue` diagnostic text sensor, enabled by default. See "Active Issue" below.
 - Locks also automatically generate three disabled-by-default `<Lock Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
+- All of the diagnostic sensors above follow the lock's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 
 ## Switch Platform
 
@@ -458,6 +485,7 @@ Notes:
 - Switches automatically generate a diagnostic text sensor named `<Switch Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 - Switches also automatically generate a `<Switch Name> Active Issue` diagnostic text sensor, enabled by default. See "Active Issue" below.
 - Switches also automatically generate three disabled-by-default `<Switch Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
+- All of the diagnostic sensors above follow the switch's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 
 ## Button Platform
 
@@ -479,6 +507,7 @@ Notes:
 - The generated button defaults to the `config` entity category.
 - Pair devices one at a time.
 - This `button:` platform is only for the hub-level `Discover & Pair` action. Cover favorite buttons are generated automatically from eligible `cover:` entries and do not need a separate YAML block.
+- The companion "Last Pairing Result" diagnostic sensor (see "Diagnosing a failed pairing attempt" below) follows the button's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 
 ## Complete Examples
 
@@ -759,8 +788,9 @@ lambda: |-
 ### Diagnosing a failed pairing attempt
 
 Every `home_io_control` config with a `button:` entity automatically gets a companion
-**"Last Pairing Result"** diagnostic text sensor — no YAML configuration needed. It updates
-after every "Discover & Pair" attempt with a frozen, machine-readable summary:
+**"Last Pairing Result"** diagnostic text sensor — no YAML configuration needed. It follows the
+button's own `device_id:`, if one is set (see "Grouping Entities into Home Assistant Devices"
+above). It updates after every "Discover & Pair" attempt with a frozen, machine-readable summary:
 
 ```
 v1; outcome=paired; phase=complete; node=30E1F2; type=awning; attempts=1; lbt=0; dur_ms=842; heard=3; advice=none

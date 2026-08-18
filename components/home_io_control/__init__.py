@@ -27,6 +27,7 @@ from esphome.components import button as button_component
 from esphome.components import switch as switch_component
 from esphome.components import text_sensor as text_sensor_component
 from esphome.const import (
+    CONF_DEVICE_ID,
     CONF_ID,
     CONF_INVERTED,
     CONF_NAME,
@@ -758,13 +759,13 @@ def _collect_declared_device_addresses(full_config):
     `class:` linked_remotes entries name a device *type*, not a node, so they carry no address to
     collide with and are skipped.
 
-    CONF_DEVICE_ID/CONF_LINKED_REMOTES are imported locally from platform_common rather than at
+    CONF_IO_DEVICE_ID/CONF_LINKED_REMOTES are imported locally from platform_common rather than at
     module level: platform_common imports back from this module (`from . import ...`), so a
     module-level import here would be circular. By the time this function actually runs (final
     validation, after every used platform module has already been imported), the cycle has
     already resolved and the import is a plain cache hit.
     """
-    from .platform_common import CONF_DEVICE_ID, CONF_LINKED_REMOTES
+    from .platform_common import CONF_IO_DEVICE_ID, CONF_LINKED_REMOTES
 
     addresses = {}
     for domain in _DEVICE_BOUND_DOMAINS:
@@ -772,7 +773,7 @@ def _collect_declared_device_addresses(full_config):
             if not isinstance(entry, dict) or entry.get(CONF_PLATFORM) != "home_io_control":
                 continue
             owner_name = entry.get(CONF_NAME) or entry.get(CONF_ID) or "<unnamed>"
-            device_id = entry.get(CONF_DEVICE_ID)
+            device_id = entry.get(CONF_IO_DEVICE_ID)
             if device_id:
                 addresses[device_id] = f"{domain} '{owner_name}' io_device_id"
             for remote in entry.get(CONF_LINKED_REMOTES, []):
@@ -819,6 +820,34 @@ def validate_device_id(value):
     except ValueError:
         raise cv.Invalid("Device ID must be valid hexadecimal")
     return value
+
+
+def inherit_esphome_device(companion_config, parent_config):
+    """Propagate the parent entity's ESPHome sub-device (YAML `device_id:`) onto a hand-built
+    companion config dict, so the companion entity groups under the same HA device as its parent.
+
+    Lives here rather than in platform_common.py: it is needed by button.py's pairing-result
+    sensor, which is not a device-bound platform and would otherwise have to import the whole
+    platform-schema module for a four-line helper. platform_common.py re-exports it so cover.py's
+    existing import keeps working.
+
+    Companion entities (diagnostic sensors, cover favorite/vent buttons, ...) are built from
+    dicts fed straight to e.g. new_text_sensor()/new_button() rather than through the platform's
+    own cv.Schema(), so they never go through ENTITY_BASE_SCHEMA and never pick up `device_id:`
+    on their own. esphome.core.entity_helpers.setup_entity() reads it with
+    `config.get(CONF_DEVICE_ID)`, a truthiness check, so an explicit `None` and an absent key
+    behave identically; omitted here rather than set to None just to keep the dict shape
+    identical to a companion with no sub-device at all.
+
+    Deliberately not called anywhere for the hub-level dynamic entities (1W identity buttons/
+    sensors, the arming switches, LR1121 firmware controls, tuning numbers/selects): none of their
+    parent configs carry a `device_id:` schema slot, since those entities aren't attached to a
+    single cover/light/switch/lock to inherit one from. `device_id:` grouping is scoped to the
+    four device-bound platforms; hub-level entities always live on ESPHome's main device.
+    """
+    if (esphome_device_id := parent_config.get(CONF_DEVICE_ID)) is not None:
+        companion_config[CONF_DEVICE_ID] = esphome_device_id
+    return companion_config
 
 
 def validate_linked_remote_entry(value):

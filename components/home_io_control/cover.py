@@ -21,10 +21,11 @@ from . import home_io_control_ns
 from .platform_common import (
     companion_id_base,
     create_companion_sensors,
+    inherit_esphome_device,
     inject_companion_sensor_ids,
     platform_schema_extension,
     wire_device_binding,
-    CONF_DEVICE_ID,
+    CONF_IO_DEVICE_ID,
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
 )
@@ -191,36 +192,45 @@ async def to_code(config):
             default_restore_mode="DISABLED",
             entity_category=ENTITY_CATEGORY_CONFIG,
         ).extend(cv.COMPONENT_SCHEMA)(
-            {
-                CONF_ID: config[CONF_SILENT_SWITCH_ID],
-                CONF_NAME: silent_switch_name(config),
-            }
+            inherit_esphome_device(
+                {
+                    CONF_ID: config[CONF_SILENT_SWITCH_ID],
+                    CONF_NAME: silent_switch_name(config),
+                },
+                config,
+            )
         )
         silent_switch = await switch.new_switch(silent_config)
         await cg.register_component(silent_switch, silent_config)
         cg.add(silent_switch.set_parent(parent))
-        cg.add(silent_switch.set_device_id(config[CONF_DEVICE_ID]))
+        cg.add(silent_switch.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_FAVORITE_BUTTON_ID in config:
-        favorite_config = {
-            CONF_ID: config[CONF_FAVORITE_BUTTON_ID],
-            CONF_NAME: favorite_button_name(config),
-            CONF_DISABLED_BY_DEFAULT: False,
-        }
+        favorite_config = inherit_esphome_device(
+            {
+                CONF_ID: config[CONF_FAVORITE_BUTTON_ID],
+                CONF_NAME: favorite_button_name(config),
+                CONF_DISABLED_BY_DEFAULT: False,
+            },
+            config,
+        )
         favorite = await button.new_button(favorite_config)
         await cg.register_component(favorite, favorite_config)
         cg.add(favorite.set_parent(parent))
-        cg.add(favorite.set_device_id(config[CONF_DEVICE_ID]))
+        cg.add(favorite.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_VENT_BUTTON_ID in config:
-        vent_config = {
-            CONF_ID: config[CONF_VENT_BUTTON_ID],
-            CONF_NAME: vent_button_name(config),
-            CONF_DISABLED_BY_DEFAULT: False,
-        }
+        vent_config = inherit_esphome_device(
+            {
+                CONF_ID: config[CONF_VENT_BUTTON_ID],
+                CONF_NAME: vent_button_name(config),
+                CONF_DISABLED_BY_DEFAULT: False,
+            },
+            config,
+        )
         vent = await button.new_button(vent_config)
         await cg.register_component(vent, vent_config)
         cg.add(vent.set_parent(parent))
-        cg.add(vent.set_device_id(config[CONF_DEVICE_ID]))
+        cg.add(vent.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     await create_companion_sensors(config, parent)

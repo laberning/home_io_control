@@ -16,6 +16,12 @@ esphome:
   build_flags:
     - -DIOHOME_FRAME_LOG
 
+  devices:
+    - id: device_awning
+      name: "Patio Awning"
+    - id: device_dimmer
+      name: "Dimmable Light"
+
 esp32:
   variant: esp32
   framework:
@@ -171,6 +177,7 @@ home_io_control:
 
 cover:
   - platform: home_io_control
+    device_id: device_awning
     id: patio_awning
     name: "Patio Awning"
     device_class: awning
@@ -199,6 +206,8 @@ cover:
 
 light:
   - platform: home_io_control
+    id: dimmable_light
+    device_id: device_dimmer
     name: "Dimmable Light"
     io_device_id: !secret example_io_light_device_id
     io_device_type: "light"

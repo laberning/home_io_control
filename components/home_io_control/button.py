@@ -11,6 +11,7 @@ from esphome.components import button, text_sensor
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_DISABLED_BY_DEFAULT,
+    CONF_ENTITY_CATEGORY,
     CONF_ID,
     CONF_NAME,
     ENTITY_CATEGORY_CONFIG,
@@ -18,7 +19,12 @@ from esphome.const import (
 )
 from esphome.core import ID
 
-from . import home_io_control_ns, IOHomeControlComponent, CONF_HOME_IO_CONTROL_ID
+from . import (
+    home_io_control_ns,
+    IOHomeControlComponent,
+    CONF_HOME_IO_CONTROL_ID,
+    inherit_esphome_device,
+)
 
 DEPENDENCIES = ["home_io_control"]
 
@@ -78,12 +84,15 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_HOME_IO_CONTROL_ID])
     cg.add(var.set_parent(parent))
 
-    result_sensor_config = {
-        CONF_ID: config[CONF_PAIRING_RESULT_SENSOR_ID],
-        CONF_NAME: "Last Pairing Result",
-        CONF_DISABLED_BY_DEFAULT: False,
-        "entity_category": ENTITY_CATEGORY_DIAGNOSTIC,
-    }
+    result_sensor_config = inherit_esphome_device(
+        {
+            CONF_ID: config[CONF_PAIRING_RESULT_SENSOR_ID],
+            CONF_NAME: "Last Pairing Result",
+            CONF_DISABLED_BY_DEFAULT: False,
+            CONF_ENTITY_CATEGORY: ENTITY_CATEGORY_DIAGNOSTIC,
+        },
+        config,
+    )
     result_sensor = await text_sensor.new_text_sensor(result_sensor_config)
     await cg.register_component(result_sensor, result_sensor_config)
     cg.add(result_sensor.set_parent(parent))

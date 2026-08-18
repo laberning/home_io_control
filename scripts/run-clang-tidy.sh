@@ -49,6 +49,24 @@ if [ ! -f "$COMPILE_DB" ]; then
   docker compose run --rm esphome compile "$CONTAINER_CONFIG"
 fi
 
+# ESPHome's generated api/proto.h makes ProtoMessage's destructor public only under
+# `#ifndef USE_HOST`, specifically so value-initializing std::array<DeviceInfo, N> members
+# (e.g. api_pb2.h's DeviceInfoResponse::devices, added by this project's `esphome: devices:`
+# usage) doesn't hit a "protected destructor" error under clang -- but that guard only covers
+# ESPHome's own host-target test builds, not this script's clang-substituted-for-gcc analysis of
+# an ESP32-target build. Extend the guard to also honor CLANG_TIDY, matching the macro name
+# ESPHome's own components/spi/spi.h already uses for the same kind of clang-only concession, and
+# define it below (only for this analysis pass -- never for the real GCC/ESP-IDF firmware build).
+PROTO_H="$BUILD_DIR/src/esphome/components/api/proto.h"
+if [ -f "$PROTO_H" ]; then
+  # Written root-owned by the esphome container's bind mount -- a host-side `sed -i` can't write
+  # there (it errors on the temp file it needs to create alongside it), so patch it from inside
+  # the same container instead.
+  CONTAINER_PROTO_H="/${PROTO_H#./}"
+  docker compose run --rm --entrypoint sh esphome -c \
+    "sed -i 's/^#ifndef USE_HOST\$/#if !defined(USE_HOST) \&\& !defined(CLANG_TIDY)/' '$CONTAINER_PROTO_H'"
+fi
+
 # Derive the toolchain root from whichever compiler this build actually used, rather than
 # hardcoding a path: pioarduino has relocated the xtensa-esp-elf toolchain's install location
 # more than once (config/.pio/packages/ -> config/.pio/tools/ -> config/.esphome/idf/tools/
@@ -197,6 +215,7 @@ EXTRA_ARGS=(
   -nostdinc++
   -D__XTENSA__
   -D_LIBC
+  -DCLANG_TIDY
 )
 
 # Add toolchain system include directories
