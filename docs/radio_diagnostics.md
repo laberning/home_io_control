@@ -117,11 +117,11 @@ your device may differ.
 
 > [!NOTE]
 > **Background — channels & hopping.** The protocol uses three 868 MHz channels
-> (≈868.25 / 868.95 / 869.85 MHz). A device frequently *answers on a different channel* than
-> the one the request went out on, so the hub hops across all three while waiting and lingers
-> on any channel where it detects an incoming preamble. Several parameters below tune that
-> wait — but if a device is never heard at all, the cause is usually the command/address, not
-> the timing.
+> (≈868.25 / 868.95 / 869.85 MHz). A unicast reply comes back on the channel the request went
+> out on, so those waits hold still; a broadcast roll-call reply does not, so that wait covers
+> the channels a reply can actually use instead, and lingers on any channel where it detects an
+> incoming preamble. Several parameters below tune that wait — but if a device is never heard at
+> all, the cause is usually the command/address, not the timing.
 
 ### Quick reference
 

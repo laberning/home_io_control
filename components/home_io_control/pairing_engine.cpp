@@ -158,9 +158,13 @@ bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &
 
 /// Transmit the 0x32 key transfer and wait for 0x33 key confirm (with retry).
 ///
-/// Uses a dedicated wait loop with frequency hopping and the driver's
-/// response_preamble() (drivers whose TX waveform needs more lock-on margin
-/// return a longer preamble). Retries up to EXCHANGE_RETRY_COUNT times on timeout.
+/// Only reached on slow-turnaround radios (`RadioDriver::has_fast_tx_rx_turnaround() == false`,
+/// i.e. SX1262/LR1121): fast-turnaround radios (SX1276) catch the 0x33 through the standard
+/// `ExchangeEngine::send_and_receive_()` / `wait_for_first_response_()` path instead and never
+/// call this function — see `run_key_exchange_phase_()`. Uses a dedicated wait loop (does not
+/// hop, see below) and the driver's response_preamble() (drivers whose TX waveform needs more
+/// lock-on margin return a longer preamble). Retries up to EXCHANGE_RETRY_COUNT times on
+/// timeout.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
@@ -174,15 +178,27 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
     const uint32_t deadline = millis() + PAIRING_KEY_CONFIRM_TIMEOUT_MS;
     bool saw_any = false;
     while ((int32_t) (deadline - millis()) > 0) {
-      const uint32_t remaining = deadline - millis();
-      const uint32_t slice = std::min<uint32_t>(remaining, PAIRING_KEY_CONFIRM_SLICE_MS);
-      if (!radio_()->wait_for_packet(context.packet, slice)) {
-        if ((int32_t) (deadline - millis()) > 0) {
-          engine_.hop_frequency();
-          this->telemetry_.record_hop();
-        }
+      const uint32_t remaining_ms = deadline - millis();
+      // Deliberately does not hop, unlike discovery's wait: a key confirm is a unicast reply to a
+      // unicast request, and every measured unicast pairing reply — the 0x33 in the corpus pairing
+      // captures on all three chips, every 0x3C, field-logged 0xFE error replies — came back on the
+      // channel the request went out on. Only replies to *broadcasts* are measured off the request
+      // channel. So there is nothing here to hop for, and hopping loses any device that answers
+      // later than one slice (real devices answer some requests at 246+ ms). The challenge wait
+      // above holds still for the same reason; broadcast roll-call is the opposite case and is
+      // handled in ExchangeEngine::collect_broadcast_responses().
+      //
+      // Also deliberately does not slice the wait: slicing exists so a hopping loop gets a chance
+      // to hop between dwells, and to keep the watchdog fed during a long silent wait. Neither
+      // applies here — there is nothing to hop for (above), and wait_for_packet() already feeds
+      // the watchdog internally while it waits. Waiting the full remaining window in one call
+      // means strictly fewer RX re-arm gaps than any slicing would, which matters most on exactly
+      // the radios that reach this loop: has_fast_tx_rx_turnaround() routes fast-turnaround chips
+      // (SX1276) through ExchangeEngine::wait_for_first_response_() instead, so only the
+      // slow-turnaround chips (SX1262, LR1121) — the ones where a re-arm is most expensive — ever
+      // wait here.
+      if (!radio_()->wait_for_packet(context.packet, remaining_ms))
         continue;
-      }
       saw_any = true;
       ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, context.packet.len, context.packet.freq_hz);
       if (!parse(context.packet.data, context.packet.len, context.resp)) {

@@ -5,6 +5,7 @@
 #include <esphome/core/gpio.h>
 
 #include <deque>
+#include <optional>
 #include <vector>
 
 // ============================================================================
@@ -52,6 +53,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
  public:
   MockRadio() : send_count_(0) {}
 
+  /// One entry per wait_for_packet()/change_frequency() call, in call order. freq_history() and
+  /// wait_timeouts() each record only their own calls, so neither can answer "did it hop before
+  /// or after its first listen" for a loop that keeps running after a successful reply (e.g.
+  /// collect_broadcast_responses(), which collects for its whole window rather than returning on
+  /// the first match) — this interleaved log can.
+  enum class CallKind { kWait, kHop };
+
   // RadioDriver interface
   bool init() override { return true; }
   bool send_packet(const uint8_t *data, uint8_t len,
@@ -64,17 +72,29 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     tx_configs_.push_back(tx_config);
     sent_data_.push_back(std::vector<uint8_t>(data, data + len));
     send_count_++;
+    // Real drivers retune the receiver to the TX frequency as a side effect of sending (e.g.
+    // RadioSX1276::send_packet() calls change_frequency(); SoftPhyDriverBase::send_packet() calls
+    // set_frequency_register(), which assigns current_freq_ the same way). Assigned directly here,
+    // not via change_frequency(), so it does not appear in freq_history() — that vector must keep
+    // meaning "retunes the engine explicitly asked for while listening", not "every frequency the
+    // radio has ever been on".
+    current_freq_ = tx_config.freq_hz;
     return result;
   }
   bool wait_for_packet(esphome::home_io_control::RadioRxPacket &packet, uint32_t timeout_ms) override {
     wait_timeouts_.push_back(timeout_ms);
+    call_log_.push_back(CallKind::kWait);
     if (emulate_capture_lifecycle_)
       this->clear_last_capture_();
     if (rx_queue_.empty()) {
       return false;
     }
-    packet = rx_queue_.front();
+    std::optional<esphome::home_io_control::RadioRxPacket> entry = rx_queue_.front();
     rx_queue_.pop_front();
+    if (!entry.has_value()) {
+      return false;  // Queued silence: a slice that times out with nothing received.
+    }
+    packet = *entry;
     if (emulate_capture_lifecycle_)
       this->populate_capture_base_(true, packet.freq_hz, -55, packet.data, packet.len, packet.data, packet.len);
     return true;
@@ -83,7 +103,11 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     (void) packet;
     return false;
   }
-  void change_frequency(uint32_t freq_hz) override { current_freq_ = freq_hz; }
+  void change_frequency(uint32_t freq_hz) override {
+    freq_history_.push_back(freq_hz);
+    call_log_.push_back(CallKind::kHop);
+    current_freq_ = freq_hz;
+  }
   int16_t read_rssi() override {
     if (rssi_queue_.empty())
       return rssi_default_;
@@ -108,6 +132,16 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
 
   // Test helpers
   void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) { rx_queue_.push_back(pkt); }
+  /// Queue `n` empty slices: wait_for_packet() returns false for each, exactly as if nothing had
+  /// arrived, without needing to leave the whole queue empty (which a test can't do selectively
+  /// mid-sequence). Lets a test express "several genuinely silent waits, then a reply" — distinct
+  /// from queuing a frame that gets rejected for an unrelated reason (endpoint mismatch, wrong
+  /// command), which consumes a wait_for_packet() call immediately instead of leaving it empty and
+  /// so has a different timing profile.
+  void queue_rx_silence(uint8_t n = 1) {
+    for (uint8_t i = 0; i < n; i++)
+      rx_queue_.push_back(std::nullopt);
+  }
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
@@ -127,6 +161,16 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// Every timeout the engine handed to wait_for_packet(), in order. Lets tests observe the
   /// response window an exchange budgeted without depending on the host clock stubs.
   const std::vector<uint32_t> &wait_timeouts() const { return wait_timeouts_; }
+  /// Every channel the engine retuned to, in order. Channel policy — which loops hop, which stay
+  /// put, and which channels a hopping loop visits — is otherwise invisible to tests: only the
+  /// final frequency survives, and every wait loop ends on some frequency. An empty history means
+  /// the engine never called change_frequency(), not that it is on no channel: RadioDriver's
+  /// current_freq_ starts at FREQ_CH2 without one.
+  const std::vector<uint32_t> &freq_history() const { return freq_history_; }
+  /// See the `CallKind` doc comment above: interleaved wait/hop call order, for loops where
+  /// presence-in-freq_history() alone can't distinguish "hopped before the first listen" from
+  /// "hopped after a later one".
+  const std::vector<CallKind> &call_log() const { return call_log_; }
   /// Per-channel dwell this mock reports. Tests that want to observe the *whole* window set this
   /// large so slicing never masks it.
   void set_exchange_wait_slice_ms(uint32_t ms) { exchange_wait_slice_ms_ = ms; }
@@ -140,17 +184,22 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     rssi_queue_.clear();
     sent_data_.clear();
     send_count_ = 0;
+    freq_history_.clear();
+    wait_timeouts_.clear();
+    call_log_.clear();
   }
 
  private:
   std::deque<bool> tx_results_;
-  std::deque<esphome::home_io_control::RadioRxPacket> rx_queue_;
+  std::deque<std::optional<esphome::home_io_control::RadioRxPacket>> rx_queue_;
   std::deque<int16_t> rssi_queue_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
   std::vector<std::vector<uint8_t>> sent_data_;
+  std::vector<CallKind> call_log_;
   int16_t rssi_default_{-120};
   int send_count_;
   std::vector<uint32_t> wait_timeouts_;
+  std::vector<uint32_t> freq_history_;
   bool emulate_capture_lifecycle_{false};
   uint32_t exchange_wait_slice_ms_{esphome::home_io_control::RESPONSE_CHANNEL_WAIT_MS};
 };

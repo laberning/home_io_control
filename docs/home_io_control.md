@@ -332,21 +332,19 @@ known prints no `Unknown:` header at all).
 scan that hears nothing is a valid result, not a failure. `device_id` on the result event is
 always empty (there is no single target); the full report above is the event's `message`.
 
-**A single scan may still miss devices — run it again if one you expect is absent.** A paired
-device only answers if it happens to be awake and listening on the channel the hub transmits on
-at that instant, so the hub retries the broadcast on all three IO-homecontrol channels (CH2,
-then CH1, then CH3), each with its own full `pairing_discovery_wait_ms` listen window, before
-returning the merged report. That covers most cases, but a device's own listen schedule is
-outside the hub's control, so it is still possible for a device to be asleep — or simply still
-composing its reply — through all three attempts. This makes a single scan take a while: three
-full-length windows plus transmit time, roughly `3 × pairing_discovery_wait_ms` (~6 seconds at
-the 2000 ms default). It will also log an ESPHome "operation took a long time" warning on every
-run — a known, accepted tradeoff. That warning stops repeating for anything that blocks under
-~2.5 s, and a shorter window was tried for exactly that reason; it was reverted because it made
-devices' replies land just after the window closed, where they are dropped, so scans started
-missing devices. A recurring log line is the lesser problem. If a device you know is paired doesn't show up, just trigger
-the action again — it costs nothing else, since the action has no side effects to worry about
-repeating.
+**A single scan may still miss devices — run it again if one you expect is absent.** A reply can
+go unheard for reasons on either side of the link, so the hub retries the broadcast on all three
+IO-homecontrol channels (CH2, then CH1, then CH3), each with its own full
+`pairing_discovery_wait_ms` listen window, before returning the merged report. That covers most
+cases, but it is still possible for a device's reply to be missed through all three attempts. This
+makes a single scan take a while: three full-length windows plus transmit time, roughly `3 ×
+pairing_discovery_wait_ms` (~6 seconds at the 2000 ms default). It will also log an ESPHome
+"operation took a long time" warning on every run — a known, accepted tradeoff. That warning stops
+repeating for anything that blocks under ~2.5 s, and a shorter window was tried for exactly that
+reason; it was reverted because it made devices' replies land just after the window closed, where
+they are dropped, so scans started missing devices. A recurring log line is the lesser problem. If
+a device you know is paired doesn't show up, just trigger the action again — it costs nothing
+else, since the action has no side effects to worry about repeating.
 
 **This cannot help you pair a new device.** A device only answers 0x2A if it already holds
 this hub's system key — a device sitting in learning mode, waiting to be paired, holds no key

@@ -112,8 +112,11 @@ class ExchangeEngine {
   /// informational only (see the caller's protocol notes). Every candidate packet is parsed
   /// and checked against `expected_cmd` and `node_id_` (as the frame's destination); anything
   /// that fails `parse()`, carries a different `cmd`, or is not addressed to us is ignored
-  /// without ending collection. Silence on a slice hops to the next channel, exactly like
-  /// wait_for_first_response_(), so replies arriving on any of the three channels are caught.
+  /// without ending collection. The receiver leaves the request channel before the first
+  /// listen and alternates between the other two for the rest of the window — unlike
+  /// wait_for_first_response_(), which covers all three including the request channel — because
+  /// a broadcast reply does not come back on the channel that asked for it (1 of 149 measured).
+  /// Replies on the request channel are therefore not caught by this loop.
   ///
   /// This method stores nothing and imposes no capacity: it neither buffers replies nor
   /// deduplicates them, so the same responder answering twice within one window invokes
@@ -148,9 +151,11 @@ class ExchangeEngine {
   /// @return true if the radio accepted the packet; false otherwise.
   bool transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble);
 
-  /// Advance to the next IO-Homecontrol channel (CH1→CH2→CH3→CH1).
-  /// Respects the protocol-defined minimum dwell time (HOP_TIME_US).
-  void hop_frequency();
+  /// @brief Advance the receiver one step along the protocol's channel rotation
+  ///   (CH1→CH2→CH3→CH1).
+  /// @param skip_freq Channel to pass over, or 0 to rotate through all three. Used by the
+  ///   broadcast roll-call, whose replies never come back on the channel that asked.
+  void hop_frequency(uint32_t skip_freq = 0);
 
   /// Unconditionally hop only if the minimum dwell has elapsed.
   /// Called from the hub's `loop()` to honour passive channel scanning.

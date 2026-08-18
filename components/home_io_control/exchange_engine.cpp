@@ -84,21 +84,24 @@ void ExchangeEngine::log_debug(const char *device_id) const {
 
 void ExchangeEngine::reset_hop_timestamp() { this->last_hop_us_ = micros(); }
 
-void ExchangeEngine::hop_frequency() {
+void ExchangeEngine::hop_frequency(uint32_t skip_freq) {
   RadioDriver *radio = *this->radio_ptr_;
-  uint32_t const cur = radio->get_current_freq();
-  uint32_t next;
-  switch (cur) {
-    case FREQ_CH1:
-      next = FREQ_CH2;
-      break;
-    case FREQ_CH3:
-      next = FREQ_CH1;
-      break;
-    default:
-      next = FREQ_CH3;
-      break;
-  }
+  uint32_t next = radio->get_current_freq();
+  // At most two iterations: the rotation cycles through all three channels and only one of them
+  // can be skipped, so a channel that is not skip_freq is always one or two steps away.
+  do {
+    switch (next) {
+      case FREQ_CH1:
+        next = FREQ_CH2;
+        break;
+      case FREQ_CH3:
+        next = FREQ_CH1;
+        break;
+      default:
+        next = FREQ_CH3;
+        break;
+    }
+  } while (next == skip_freq);
   radio->change_frequency(next);
   this->last_hop_us_ = micros();
 }
@@ -436,12 +439,19 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
   uint8_t count = 0;
   const uint32_t deadline = millis() + window_ms;
 
+  // A roll-call reply is never sent back on the channel that asked for it — 1 of 149 measured
+  // replies, against the ~1 in 3 an even split would give. Dwelling on the request channel is
+  // therefore dead listening time: with three channels split evenly across the window, one of
+  // them going unused for replies costs a third of it. Leave it before the first listen and
+  // alternate between the two channels replies actually use.
+  this->hop_frequency(freq);
+
   while ((int32_t) (deadline - millis()) > 0) {
     const uint32_t remaining = deadline - millis();
     const uint32_t slice = std::min<uint32_t>(remaining, radio->exchange_wait_slice_ms());
     if (!radio->wait_for_packet(packet, slice)) {
       if ((int32_t) (deadline - millis()) > 0)
-        this->hop_frequency();
+        this->hop_frequency(freq);
       continue;
     }
     if (!parse(packet.data, packet.len, rx))

@@ -7,6 +7,7 @@
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <deque>
@@ -300,6 +301,26 @@ TEST(PairingHelpers, WaitForKeyChallenge_NonChallengeIgnored) {
   EXPECT_FALSE(ok) << "non‑challenge frame should be ignored during key‑challenge wait";
 }
 
+TEST(PairingHelpers, WaitForKeyChallengeStaysOnRequestChannel) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  uint8_t device_id[3] = {0x44, 0x55, 0x66};
+
+  // No challenge ever arrives — the wait runs the full window across several empty slices.
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+  bool ok =
+      comp.pairing_engine_.wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, out_pkt, out_frame, device_id);
+
+  EXPECT_FALSE(ok);
+  EXPECT_TRUE(radio.freq_history().empty())
+      << "key challenge wait must never retune: it is a unicast reply and always answers on the request channel";
+}
+
 // ============================================================================
 // parse_device_from_discovery tests
 // ============================================================================
@@ -474,8 +495,10 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataLock) {
 
 namespace {
 
-/// MockRadio variant that tracks hop count and simulates preamble/sync detection.
-class HopTrackingRadio : public MockRadio {
+/// MockRadio variant that simulates preamble/sync detection. Hop counting is MockRadio's own
+/// freq_history().size() — no separate counter needed since Step 0 gave every MockRadio that for
+/// free.
+class SignalDetectRadio : public MockRadio {
  public:
   bool is_sync_detected() override { return sync_detected_; }
   bool is_preamble_detected() override { return preamble_detected_; }
@@ -483,17 +506,9 @@ class HopTrackingRadio : public MockRadio {
   void set_sync_detected(bool v) { sync_detected_ = v; }
   void set_preamble_detected(bool v) { preamble_detected_ = v; }
 
-  void change_frequency(uint32_t freq_hz) override {
-    MockRadio::change_frequency(freq_hz);
-    hop_count_++;
-  }
-
-  int get_hop_count() const { return hop_count_; }
-
  private:
   bool sync_detected_{false};
   bool preamble_detected_{false};
-  int hop_count_{0};
 };
 
 }  // anonymous namespace
@@ -501,7 +516,7 @@ class HopTrackingRadio : public MockRadio {
 TEST(PairingHelpers, WaitForDiscoveryResponse_HopsBetweenSlicesWhenIdle) {
   TestableComponent comp;
   comp.initialized_ = true;
-  HopTrackingRadio radio;
+  SignalDetectRadio radio;
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
 
@@ -511,13 +526,13 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_HopsBetweenSlicesWhenIdle) {
   auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
 
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
-  EXPECT_GT(radio.get_hop_count(), 0) << "should hop at least once when no signal detected";
+  EXPECT_GT(radio.freq_history().size(), 0u) << "should hop at least once when no signal detected";
 }
 
 TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenPreambleDetected) {
   TestableComponent comp;
   comp.initialized_ = true;
-  HopTrackingRadio radio;
+  SignalDetectRadio radio;
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
 
@@ -529,13 +544,13 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenPreambleDetected) {
   auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
 
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
-  EXPECT_EQ(radio.get_hop_count(), 0) << "should not hop when preamble is detected (signal arriving)";
+  EXPECT_EQ(radio.freq_history().size(), 0u) << "should not hop when preamble is detected (signal arriving)";
 }
 
 TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenSyncDetected) {
   TestableComponent comp;
   comp.initialized_ = true;
-  HopTrackingRadio radio;
+  SignalDetectRadio radio;
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
 
@@ -547,7 +562,28 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenSyncDetected) {
   auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
 
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
-  EXPECT_EQ(radio.get_hop_count(), 0) << "should not hop when sync word is detected (frame arriving)";
+  EXPECT_EQ(radio.freq_history().size(), 0u) << "should not hop when sync word is detected (frame arriving)";
+}
+
+TEST(PairingHelpers, WaitForDiscoveryResponseVisitsAllThreeChannels) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  // No packets queued → hops every slice (SX1276_DISCOVERY_HOP_SLICE_MS = 5 ms) for the whole
+  // 150 ms window, unlike the unicast waits above: discovery is a broadcast whose reply channel
+  // is unknown, so it is the one wait loop that legitimately visits every channel.
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+  auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
+
+  EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
+  const auto &history = radio.freq_history();
+  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH1), history.end());
+  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH2), history.end());
+  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH3), history.end());
 }
 
 // ============================================================================
@@ -731,6 +767,21 @@ TEST(DiscoverAndPair, HappyPath_RegistersDevice) {
 // wait_for_key_confirm timeout (SX1262 dedicated path)
 // ============================================================================
 
+namespace {
+/// A minimal 0x32 key-transfer frame as the wait_for_key_confirm_() request context — real
+/// encrypted payload not needed, only the frame endpoints matter for the confirm-wait endpoint
+/// check. `own_id` must be the same node ID already copied into `comp.node_id_`.
+pairing::PairingContext make_key_transfer_context(const uint8_t own_id[NODE_ID_SIZE],
+                                                  const uint8_t device_id[NODE_ID_SIZE]) {
+  pairing::PairingContext context;
+  init_frame(context.req, true, false, false, false);
+  set_dst(context.req, device_id);
+  set_src(context.req, own_id);
+  set_cmd(context.req, CMD_KEY_TRANSFER, nullptr, 0);
+  return context;
+}
+}  // namespace
+
 TEST(PairingHelpers, WaitForKeyConfirm_TimeoutNoConfirm) {
   TestableComponent comp;
   comp.initialized_ = true;
@@ -739,13 +790,7 @@ TEST(PairingHelpers, WaitForKeyConfirm_TimeoutNoConfirm) {
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
-  // Build a minimal key-transfer frame as the request context (real encrypted payload not
-  // needed — only the frame endpoints matter for the confirm-wait endpoint check).
-  pairing::PairingContext context;
-  init_frame(context.req, true, false, false, false);
-  set_dst(context.req, test::DST_ID);
-  set_src(context.req, comp.node_id_);
-  set_cmd(context.req, CMD_KEY_TRANSFER, nullptr, 0);
+  pairing::PairingContext context = make_key_transfer_context(comp.node_id_, test::DST_ID);
 
   // No 0x33 ever arrives — MockRadio returns false from wait_for_packet immediately.
   bool ok = comp.pairing_engine_.wait_for_key_confirm_(context);
@@ -753,6 +798,90 @@ TEST(PairingHelpers, WaitForKeyConfirm_TimeoutNoConfirm) {
   EXPECT_FALSE(ok) << "timeout without receiving CMD_KEY_CONFIRM (0x33) should return false";
   EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
       << "should attempt the key-transfer TX once per retry before giving up";
+}
+
+// ============================================================================
+// wait_for_key_confirm channel policy (regression coverage for the removed hop)
+// ============================================================================
+
+// MockRadioSX1262 is used throughout this section — not for its longer exchange-wait slice
+// (wait_for_key_confirm_() never calls exchange_wait_slice_ms(), so that override has no effect
+// here), but because has_fast_tx_rx_turnaround() == false is the only configuration production
+// ever reaches this function in: fast-turnaround radios (SX1276) take the standard
+// send_and_receive_() / wait_for_first_response_() exchange path instead and never call
+// wait_for_key_confirm_() at all. Testing this loop under the plain MockRadio (which reports
+// has_fast_tx_rx_turnaround() == true) would be testing a configuration that can't occur.
+
+TEST(PairingHelpers, KeyConfirmWaitStaysOnRequestChannel) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  pairing::PairingContext context = make_key_transfer_context(comp.node_id_, test::DST_ID);
+
+  // No 0x33 ever arrives, so the wait runs the full window with nothing received.
+  bool ok = comp.pairing_engine_.wait_for_key_confirm_(context);
+
+  EXPECT_FALSE(ok);
+  EXPECT_TRUE(radio.freq_history().empty())
+      << "key confirm wait must never retune: it is a unicast reply and always answers on the request channel";
+}
+
+TEST(PairingHelpers, KeyConfirmWaitAcceptsLateReply) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+
+  pairing::PairingContext context = make_key_transfer_context(comp.node_id_, device_bytes);
+
+  // Old code hopped on every empty slice, so it would have left the request channel well before
+  // this reply arrives. Queue genuine silence first — wait_for_packet() returning false, not a
+  // frame that gets rejected for an unrelated reason — since a rejected frame is consumed
+  // immediately and never leaves a slice empty; three empty slices is comfortably past where the
+  // old 150 ms slicing would have hopped at least once.
+  radio.queue_rx_silence(3);
+  radio.queue_rx(frame_to_rx_packet(build_key_confirm(device_bytes, comp.node_id_)));
+
+  bool ok = comp.pairing_engine_.wait_for_key_confirm_(context);
+
+  EXPECT_TRUE(ok) << "a reply arriving after several empty slices must still be accepted, since the wait no "
+                     "longer hops away from the channel it is on";
+  EXPECT_TRUE(radio.freq_history().empty())
+      << "confirms the acceptance above wasn't a coincidental hop back onto the right channel";
+}
+
+TEST(PairingHelpers, KeyConfirmWaitStillReturnsFalseOnErrorResponse) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+
+  pairing::PairingContext context = make_key_transfer_context(comp.node_id_, device_bytes);
+
+  IoFrame error_resp{};
+  init_frame(error_resp, true, false, false, false);
+  set_dst(error_resp, comp.node_id_);
+  set_src(error_resp, device_bytes);
+  const uint8_t error_code[1] = {0x01};
+  set_cmd(error_resp, CMD_ERROR_RESP, error_code, 1);
+  radio.queue_rx(frame_to_rx_packet(error_resp));
+
+  bool ok = comp.pairing_engine_.wait_for_key_confirm_(context);
+
+  EXPECT_FALSE(ok) << "an explicit ERROR_RESP must still return false immediately, without exhausting retries";
+  EXPECT_EQ(radio.get_send_count(), 1) << "the wait must not retry after an explicit refusal";
 }
 
 // ============================================================================

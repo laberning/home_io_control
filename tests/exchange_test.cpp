@@ -8,6 +8,7 @@
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <vector>
@@ -880,6 +881,34 @@ TEST(Exchange, SendAndReceive_RetryExhaustion_NoResponse) {
       << "should attempt exactly EXCHANGE_RETRY_COUNT transmissions before giving up";
 }
 
+// --- Pinning test: wait_for_first_response_() hops, unlike the unicast pairing waits --------
+//
+// Deliberately unchanged by this branch: a command exchange's first response is also a unicast
+// reply to a unicast request, so the same argument that stopped the pairing key-confirm wait from
+// hopping applies here too. It is left alone because it sits on the hot path for every command
+// (not just pairing) and needs its own before/after measurement first. This test exists so a
+// later change to that decision is deliberate, not an accidental side effect of some other edit.
+
+TEST(Exchange, SendAndReceive_FirstResponseWaitStillHopsWhenIdle) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 50);
+
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  const auto &history = radio.freq_history();
+  EXPECT_FALSE(history.empty()) << "with no reply ever queued, the wait must still hop between slices";
+  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH1), history.end());
+  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH3), history.end());
+}
+
 // --- Pinning test 3: unrelated frame ignored during the auth-wait window -----
 
 TEST(Exchange, SendAndReceive_UnrelatedFrameIgnoredDuringFinalWait) {
@@ -1209,6 +1238,89 @@ TEST(Exchange, CollectBroadcastResponses_TransmitFailureReturnsZero) {
   EXPECT_EQ(count, 0u) << "a failed initial transmit must short-circuit with zero replies";
   EXPECT_TRUE(collected.frames.empty()) << "the handler must not be invoked when the transmit failed";
   EXPECT_EQ(radio.get_send_count(), 1) << "exactly one transmit attempt, no retry";
+}
+
+// ============================================================================
+// Roll-call channel policy: a reply is never sent back on the request channel (1 of 149
+// measured), so the listen rotation must skip it entirely.
+// ============================================================================
+
+TEST(Exchange, CollectBroadcastResponses_LeavesRequestChannelImmediately) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // A reply queued for the very first wait_for_packet() call is what this test needs to isolate
+  // "before the first listen" — but collect_broadcast_responses() keeps collecting for the whole
+  // window even after a match (it doesn't return on the first reply), so old code eventually hops
+  // too once the queue runs dry, and freq_history() alone can't tell "hopped before listening
+  // ever started" from "hopped after the queued reply was consumed". call_log() can: it's the
+  // interleaved order of wait/hop calls, so the very first entry reveals whether a hop preceded
+  // the first listen (new code, unconditional pre-listen hop) or a listen came first (old code,
+  // which only ever hops after a wait_for_packet() call already returned false).
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP, tuning.pairing_discovery_wait_ms,
+                                     collected.handler());
+
+  ASSERT_FALSE(radio.call_log().empty());
+  EXPECT_EQ(radio.call_log().front(), MockRadio::CallKind::kHop)
+      << "the engine must retune before its first listen, not after it";
+  ASSERT_FALSE(radio.freq_history().empty());
+  EXPECT_NE(radio.freq_history().front(), FREQ_CH2) << "the request channel must not be the first channel listened on";
+}
+
+TEST(Exchange, CollectBroadcastResponses_NeverListensOnRequestChannel) {
+  const uint32_t request_channels[] = {FREQ_CH1, FREQ_CH2, FREQ_CH3};
+  for (uint32_t request_freq : request_channels) {
+    MockRadio radio;
+    radio.set_exchange_wait_slice_ms(1);  // Force many iterations within the window.
+    RadioDriver *radio_ptr = &radio;
+    TuningConfig tuning = make_broadcast_test_tuning();
+    tuning.pairing_discovery_wait_ms = 20;
+    ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+    IoFrame request = build_spe_request(test::OWN_ID);
+    CollectedReplies collected;
+    engine.collect_broadcast_responses(request, request_freq, CMD_DISCOVER_SPE_RESP, tuning.pairing_discovery_wait_ms,
+                                       collected.handler());
+
+    for (uint32_t visited : radio.freq_history()) {
+      EXPECT_NE(visited, request_freq) << "request_freq=" << request_freq
+                                       << ": the rotation must never land back on the request channel";
+    }
+    const auto &history = radio.freq_history();
+    const bool saw_both_others =
+        std::find(history.begin(), history.end(), request_freq == FREQ_CH1 ? FREQ_CH2 : FREQ_CH1) != history.end() &&
+        std::find(history.begin(), history.end(), request_freq == FREQ_CH3 ? FREQ_CH2 : FREQ_CH3) != history.end();
+    EXPECT_TRUE(saw_both_others) << "request_freq=" << request_freq
+                                 << ": both non-request channels should appear over several hops";
+  }
+}
+
+// ============================================================================
+// hop_frequency(): the bare CH1→CH2→CH3→CH1 rotation, asserted directly so the skip_freq default
+// argument (used above) can be trusted to reproduce it exactly.
+// ============================================================================
+
+TEST(Exchange, HopFrequencyWithoutSkipIsUnchanged) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.change_frequency(FREQ_CH1);
+  engine.hop_frequency();
+  EXPECT_EQ(radio.get_current_freq(), FREQ_CH2);
+
+  engine.hop_frequency();
+  EXPECT_EQ(radio.get_current_freq(), FREQ_CH3);
+
+  engine.hop_frequency();
+  EXPECT_EQ(radio.get_current_freq(), FREQ_CH1);
 }
 
 // ============================================================================

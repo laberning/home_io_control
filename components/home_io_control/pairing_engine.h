@@ -49,7 +49,6 @@ inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Di
 inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;             ///< Retry discovery TX up to this many times.
 inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
 inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for 0x33 key confirm after sending 0x32.
-inline constexpr uint32_t PAIRING_KEY_CONFIRM_SLICE_MS = 150;  ///< RX slice during key confirm wait (hop each slice).
 ///@}
 
 /// Owns and drives all three phases of the IO-Homecontrol device pairing flow.
