@@ -827,13 +827,13 @@ TEST(PairingHelpers, WaitForKeyConfirm_TimeoutNoConfirm) {
 // wait_for_key_confirm channel policy (regression coverage for the removed hop)
 // ============================================================================
 
-// MockRadioSX1262 is used throughout this section — not for its longer exchange-wait slice
-// (wait_for_key_confirm_() never calls exchange_wait_slice_ms(), so that override has no effect
-// here), but because has_fast_tx_rx_turnaround() == false is the only configuration production
-// ever reaches this function in: fast-turnaround radios (SX1276) take the standard
-// send_and_receive_() / wait_for_first_response_() exchange path instead and never call
-// wait_for_key_confirm_() at all. Testing this loop under the plain MockRadio (which reports
-// has_fast_tx_rx_turnaround() == true) would be testing a configuration that can't occur.
+// MockRadioSX1262 is used throughout this section — not for any dwell it reports (this loop
+// holds the request channel and never dwells), but because has_fast_tx_rx_turnaround() == false
+// is the only configuration production ever reaches this function in: fast-turnaround radios
+// (SX1276) take the standard send_and_receive_() / wait_for_first_response_() exchange path
+// instead and never call wait_for_key_confirm_() at all. Testing this loop under the plain
+// MockRadio (which reports has_fast_tx_rx_turnaround() == true) would be testing a configuration
+// that can't occur.
 
 TEST(PairingHelpers, KeyConfirmWaitStaysOnRequestChannel) {
   TestableComponent comp;

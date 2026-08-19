@@ -114,12 +114,13 @@ class RadioSX1276 : public RadioDriver {
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
   bool is_preamble_detected() override;
-  /// @brief Per-channel dwell while pairing discovery hops (SX1276).
+  /// @brief Per-channel dwell for a rotating listen (SX1276).
   ///
-  /// The SX1276 supports FastHop (PllHop), so frequency changes need no standby
-  /// transition and a short slice is enough. The value comes from the user-facing
+  /// The SX1276 supports FastHop (PllHop), so frequency changes need no standby transition and a
+  /// short slice is enough. Governs discovery and the broadcast roll-call alike (see @ref
+  /// RadioDriver::hop_dwell_ms). The value comes from the user-facing
   /// `sx1276_discovery_hop_slice_ms` tuning field.
-  [[nodiscard]] uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const override {
+  [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.sx1276_discovery_hop_slice_ms;
   }
   /// @brief TX→RX turnaround capability (SX1276): fast.

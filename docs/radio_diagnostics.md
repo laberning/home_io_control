@@ -118,10 +118,11 @@ your device may differ.
 > [!NOTE]
 > **Background — channels & hopping.** The protocol uses three 868 MHz channels
 > (≈868.25 / 868.95 / 869.85 MHz). A unicast reply comes back on the channel the request went
-> out on, so those waits hold still; a broadcast roll-call reply does not, so that wait covers
-> the channels a reply can actually use instead, and lingers on any channel where it detects an
-> incoming preamble. Several parameters below tune that wait — but if a device is never heard at
-> all, the cause is usually the command/address, not the timing.
+> out on, so those waits hold still — pairing's key-challenge/key-confirm waits and every
+> command's wait for its first and final response alike; a broadcast roll-call reply does not, so
+> that wait covers the channels a reply can actually use instead, and lingers on any channel where
+> it detects an incoming preamble. Several parameters below tune that wait — but if a device is
+> never heard at all, the cause is usually the command/address, not the timing.
 
 ### Quick reference
 
@@ -132,15 +133,15 @@ your device may differ.
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth; wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
-| `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell while hopping during discovery. |
-| `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
+| `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
+| `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 50–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth. Still `117.3` by default — untested on LR1121, but the SX1262 result below suggests trying narrower. |
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
-| `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 50–500 ms | Per-channel dwell while hopping during discovery. |
+| `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 50–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -253,8 +254,11 @@ raising in testing here). Lengthen it further for a stubborn or marginal-range d
 
 #### `sx1276_discovery_hop_slice_ms` / `sx1262_discovery_hop_slice_ms`
 
-How long the receiver dwells on each channel while hopping during the discovery wait. Change
-these when a device is clearly present but its discovery response is never caught.
+How long the receiver dwells on each channel while hopping. This governs every rotating listen in
+the project, not just discovery: pairing discovery and the `scan_paired_devices` broadcast
+roll-call both rotate across channels and both fall back to this value when they have no
+loop-specific reason to dwell differently (neither does today). Change it when a device is
+clearly present but its discovery response, or its roll-call reply, is never caught.
 
 *Observations:* because a device often answers on a different channel than the request was
 sent on, hopping during the wait is essential (this was the single biggest discovery fix).
@@ -264,7 +268,8 @@ per-channel dwell (~200 ms) because its shorter-preamble responses are harder to
 
 #### `lr1121_rx_bandwidth` / `lr1121_response_preamble` / `lr1121_post_tx_settle_us` / `lr1121_discovery_hop_slice_ms`
 
-The LR1121 equivalents of the four SX1262 knobs above — same meaning, same defaults, same
+The LR1121 equivalents of the four SX1262 knobs above — same meaning (`lr1121_discovery_hop_slice_ms`
+governs the roll-call as well as discovery, same as its SX1262/SX1276 counterparts), same defaults, same
 register-level reasoning (the LR1121's GFSK bandwidth encoding is register-identical to the
 SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop).
 

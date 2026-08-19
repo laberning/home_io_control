@@ -881,15 +881,17 @@ TEST(Exchange, SendAndReceive_RetryExhaustion_NoResponse) {
       << "should attempt exactly EXCHANGE_RETRY_COUNT transmissions before giving up";
 }
 
-// --- Pinning test: wait_for_first_response_() hops, unlike the unicast pairing waits --------
+// --- Pinning test: wait_for_first_response_() stays on the request channel ------------------
 //
-// Deliberately unchanged by this branch: a command exchange's first response is also a unicast
-// reply to a unicast request, so the same argument that stopped the pairing key-confirm wait from
-// hopping applies here too. It is left alone because it sits on the hot path for every command
-// (not just pairing) and needs its own before/after measurement first. This test exists so a
-// later change to that decision is deliberate, not an accidental side effect of some other edit.
+// Step B: a unicast reply comes back on the channel the request went out on (0 of 300 unicast RX
+// events measured off-channel across SX1276/SX1262/LR1121), so this wait now holds the request
+// channel for its whole window rather than rotating. That subsumes what used to be two separate
+// pins — "still hops on a genuinely empty dwell" and "does not hop after a rejected frame" — into
+// one behaviour: HOLD_REQUEST_CHANNEL never calls change_frequency() at all, so the two stimuli
+// are no longer distinguishable at this call site. Both stimuli are kept, back to back, so this
+// test still exercises the same two code paths the two old tests did.
 
-TEST(Exchange, SendAndReceive_FirstResponseWaitStillHopsWhenIdle) {
+TEST(Exchange, SendAndReceive_FirstResponseWaitStaysOnRequestChannel) {
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
@@ -900,36 +902,8 @@ TEST(Exchange, SendAndReceive_FirstResponseWaitStillHopsWhenIdle) {
   IoFrame request{};
   create_execute_position(request, comp.node_id_, test::DST_ID, false, 50);
 
-  IoFrame response{};
-  comp.send_and_receive_(request, response, FREQ_CH2);
-
-  const auto &history = radio.freq_history();
-  EXPECT_FALSE(history.empty()) << "with no reply ever queued, the wait must still hop between slices";
-  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH1), history.end());
-  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH3), history.end());
-}
-
-// --- Pinning test: wait_for_first_response_() does not hop after a frame it rejected --------
-//
-// SendAndReceive_FirstResponseWaitStillHopsWhenIdle (above) pins the empty-dwell case; this pins
-// the other half of the same call site's hop_after_ignored_frame=false choice, which no existing
-// test exercised: a frame this layer rejected as unrelated is not evidence the channel is wrong,
-// so the wait must stay put and re-listen on the same channel rather than hopping away from it.
-
-TEST(Exchange, SendAndReceive_FirstResponseWaitDoesNotHopAfterAnUnrelatedFrame) {
-  TestableComponent comp;
-  comp.initialized_ = true;
-  MockRadio radio;
-  radio.set_exchange_wait_slice_ms(1);  // force several slices within the window
-  comp.radio_ = &radio;
-  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
-  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
-
-  IoFrame request{};
-  create_execute_position(request, comp.node_id_, test::DST_ID, false, 50);
-
-  // An unrelated frame (wrong src) lands on the very first listen, then silence for the rest of
-  // the window.
+  // An unrelated frame (wrong src) lands on the very first listen (the rejected-frame stimulus),
+  // then silence for the rest of the window (the idle-dwell stimulus).
   IoFrame noise = build_status_response(test::FOREIGN_ID, comp.node_id_);
   uint8_t raw_noise[64];
   uint8_t len_noise = serialize(noise, raw_noise, sizeof(raw_noise));
@@ -942,10 +916,13 @@ TEST(Exchange, SendAndReceive_FirstResponseWaitDoesNotHopAfterAnUnrelatedFrame) 
   IoFrame response{};
   comp.send_and_receive_(request, response, FREQ_CH2);
 
+  EXPECT_TRUE(radio.freq_history().empty())
+      << "HOLD_REQUEST_CHANNEL must never retune, whether the dwell is genuinely empty or a "
+         "rejected frame arrived";
   ASSERT_GE(radio.call_log().size(), 2u) << "need the reception plus at least one following slice";
   EXPECT_EQ(radio.call_log()[0], MockRadio::CallKind::kWait) << "the first listen is the one that receives the noise";
   EXPECT_EQ(radio.call_log()[1], MockRadio::CallKind::kWait)
-      << "hop_after_ignored_frame=false: no hop between the rejected reception and the next slice";
+      << "no hop between the rejected reception and the next slice";
 }
 
 // --- Pinning test 3: unrelated frame ignored during the auth-wait window -----
@@ -1316,10 +1293,12 @@ TEST(Exchange, CollectBroadcastResponses_NeverListensOnRequestChannel) {
   const uint32_t request_channels[] = {FREQ_CH1, FREQ_CH2, FREQ_CH3};
   for (uint32_t request_freq : request_channels) {
     MockRadio radio;
-    radio.set_exchange_wait_slice_ms(1);  // Force many iterations within the window.
     RadioDriver *radio_ptr = &radio;
     TuningConfig tuning = make_broadcast_test_tuning();
     tuning.pairing_discovery_wait_ms = 20;
+    // collect_broadcast_responses() leaves spec.dwell_ms at 0, so listen() asks MockRadio's
+    // hop_dwell_ms() (which reads this field) — force many iterations within the window.
+    tuning.sx1276_discovery_hop_slice_ms = 1;
     ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
     IoFrame request = build_spe_request(test::OWN_ID);
@@ -1348,10 +1327,12 @@ TEST(Exchange, CollectBroadcastResponses_NeverListensOnRequestChannel) {
 // from "a hop happened and the rotation later landed back here".
 TEST(Exchange, CollectBroadcastResponses_DoesNotHopAfterAReception) {
   MockRadio radio;
-  radio.set_exchange_wait_slice_ms(1);  // force several slices within the window
   RadioDriver *radio_ptr = &radio;
   TuningConfig tuning = make_broadcast_test_tuning();
   tuning.pairing_discovery_wait_ms = 20;
+  // collect_broadcast_responses() leaves spec.dwell_ms at 0, so listen() asks MockRadio's
+  // hop_dwell_ms() (which reads this field) — force several slices within the window.
+  tuning.sx1276_discovery_hop_slice_ms = 1;
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   // One matching reply lands on the very first listen after the pre-loop hop, then silence for
@@ -1418,8 +1399,6 @@ void expect_window_near(uint32_t actual, uint32_t expected) {
 
 TEST(Exchange, StartFrameBudgetsTheStartResponseWindow) {
   MockRadio radio;
-  // A slice larger than the window keeps per-channel hopping from masking the budget under test.
-  radio.set_exchange_wait_slice_ms(1000000);
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
@@ -1440,7 +1419,6 @@ TEST(Exchange, StartFrameBudgetsTheStartResponseWindow) {
 
 TEST(Exchange, ContinuationFrameBudgetsTheShorterResponseWindow) {
   MockRadio radio;
-  radio.set_exchange_wait_slice_ms(1000000);
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
@@ -1484,7 +1462,6 @@ TEST(Exchange, ResponseWindowDefaultsComeFromTheProtocolConstants) {
 
 TEST(Exchange, RetriesStopOnceTheTotalBudgetIsSpent) {
   MockRadio radio;
-  radio.set_exchange_wait_slice_ms(1000000);  // don't let per-channel slicing mask the window
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
@@ -1505,7 +1482,6 @@ TEST(Exchange, RetriesStopOnceTheTotalBudgetIsSpent) {
 
 TEST(Exchange, GenerousBudgetStillAllowsEveryRetry) {
   MockRadio radio;
-  radio.set_exchange_wait_slice_ms(1000000);
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
@@ -1540,7 +1516,6 @@ TEST(Exchange, ExecuteUsesUserDefaultAceiPriority) {
 TEST(Exchange, FailureReportKeepsTheInformativeCaptureNotTheLastEmptyOne) {
   MockRadio radio;
   radio.set_emulate_capture_lifecycle(true);
-  radio.set_exchange_wait_slice_ms(1000000);
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
@@ -1588,6 +1563,53 @@ class SignalDetectRadio : public MockRadio {
 };
 
 }  // namespace
+
+// Pins the roll-call's own call to spec.linger_on_preamble / spec.linger_dwell_ms in
+// collect_broadcast_responses() -- not just the listen() primitive those fields feed. A hardware
+// capture found the two unguarded: SX1276's 5 ms per-channel dwell is shorter than a
+// DISCOVER_SPE_RESP's ~10 ms air time, so the radio retuned mid-frame on nearly every reception
+// and the measured found-rate collapsed from 83% to 12%; hardware-measured 2026-08-19 confirmed
+// 100% once the guard was added. If either field is dropped from that call site, this test must
+// fail even though CollectBroadcastResponses_DoesNotHopAfterAReception and
+// Listen_LingerOnPreambleUsesLingerDwellAndSuppressesHopping both still pass.
+TEST(Exchange, CollectBroadcastResponses_LingersOnPreambleInsteadOfHoppingMidFrame) {
+  constexpr uint32_t WINDOW_MS = 150;
+
+  SignalDetectRadio radio;
+  radio.set_preamble_detected(true);  // asserted throughout; nothing is ever received
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  // Matches the hardware SX1276 dwell that exposed the bug: 5 ms dwell vs ~10 ms reply air time.
+  tuning.sx1276_discovery_hop_slice_ms = 5;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count =
+      engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP, WINDOW_MS, collected.handler());
+
+  EXPECT_EQ(count, 0u) << "nothing was ever queued; this test only cares about the wait/hop cadence";
+
+  // Exactly one hop precedes the whole listen -- leaving the request channel, per
+  // CollectBroadcastResponses_LeavesRequestChannelImmediately. With the dwell (5 ms) shorter than
+  // a reply's air time, an unguarded rotation would then hop roughly every 5 ms for the rest of
+  // the 150 ms window (dozens of hops); the preamble/sync guard must suppress every one of them.
+  EXPECT_EQ(radio.freq_history().size(), 1u)
+      << "asserted preamble/sync must suppress hopping for the whole window, not just the pre-loop skip";
+
+  // wait_timeouts() must alternate the per-channel dwell with a PREAMBLE_LINGER_DWELL_MS-sized
+  // linger extension, mirroring Listen_LingerOnPreambleUsesLingerDwellAndSuppressesHopping's
+  // canonical-pairs check but exercised through the roll-call call site instead of listen()
+  // directly.
+  const auto &timeouts = radio.wait_timeouts();
+  size_t canonical_pairs = 0;
+  for (size_t i = 0; i + 1 < timeouts.size(); i += 2) {
+    if (timeouts[i] != tuning.sx1276_discovery_hop_slice_ms || timeouts[i + 1] != PREAMBLE_LINGER_DWELL_MS)
+      break;
+    canonical_pairs++;
+  }
+  EXPECT_GE(canonical_pairs, 4u) << "need several unclamped dwell/linger pairs to prove the alternation";
+}
 
 TEST(Exchange, Listen_HoldNeverRetunesAndUsesTheWholeWindowAsOneTimeout) {
   MockRadio radio;
@@ -1765,7 +1787,6 @@ TEST(Exchange, Listen_UnparsablePacketReachesHandlerWithNullParsed) {
 
 TEST(Exchange, Listen_HopAfterIgnoredFrameFalseStaysPutAfterAReception) {
   MockRadio radio;
-  radio.set_exchange_wait_slice_ms(1);
   RadioDriver *radio_ptr = &radio;
   TuningConfig tuning = make_broadcast_test_tuning();
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);

@@ -332,12 +332,13 @@ known prints no `Unknown:` header at all).
 scan that hears nothing is a valid result, not a failure. `device_id` on the result event is
 always empty (there is no single target); the full report above is the event's `message`.
 
-**A single scan may still miss devices — run it again if one you expect is absent.** A reply can
-go unheard for reasons on either side of the link, so the hub retries the broadcast on all three
-IO-homecontrol channels (CH2, then CH1, then CH3), each with its own full
-`pairing_discovery_wait_ms` listen window, before returning the merged report. That covers most
-cases, but it is still possible for a device's reply to be missed through all three attempts. This
-makes a single scan take a while: three full-length windows plus transmit time, roughly `3 ×
+**A single scan may still miss devices — run it again if one you expect is absent.** Paired
+devices duty-cycle across the three radio channels independently of the hub, so the hub retries
+the broadcast on all three IO-homecontrol channels (CH2, then CH1, then CH3), each with its own
+full `pairing_discovery_wait_ms` listen window, before returning the merged report. A past hub-side
+listening bug used to cause most misses; that has since been fixed, so a missed reply is now
+genuinely uncommon, but it is still possible for a device to be missed through all three attempts.
+This makes a single scan take a while: three full-length windows plus transmit time, roughly `3 ×
 pairing_discovery_wait_ms` (~6 seconds at the 2000 ms default). It will also log an ESPHome
 "operation took a long time" warning on every run — a known, accepted tradeoff. That warning stops
 repeating for anything that blocks under ~2.5 s, and a shorter window was tried for exactly that

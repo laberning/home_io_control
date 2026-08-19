@@ -53,7 +53,7 @@ flowchart TB
    chip-specific *user-tunable* defaults live beside that chip's fields in the
    shared tuning config.
 3. **Controller (hub) layer** — reaches the radio only through `RadioDriver`
-   virtuals (`response_preamble()`, `exchange_wait_slice_ms()`,
+   virtuals (`response_preamble()`, `hop_dwell_ms()`,
    `has_fast_tx_rx_turnaround()`, the TX/RX primitives, …). A chip needing
    different behavior gets a driver override with a chip-neutral contract —
    never an `if (chip == …)` branch in hub code. `chip_name()` exists, but is

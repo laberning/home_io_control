@@ -143,26 +143,29 @@ struct ListenSpec {
   /// where it names the channel to leave before the first listen; ignored by the other policies.
   uint32_t request_freq{0};
   /// Per-channel dwell for the ROTATE_* policies, in milliseconds; ignored by
-  /// ListenPolicy::HOLD_REQUEST_CHANNEL. Must be non-zero for the ROTATE_* policies: today a `0`
-  /// here does not fall back to anything, it degenerates the loop into a hot cycle of ~1 ms
-  /// `wait_for_packet()` calls until the deadline. A later step will make 0 mean "ask the driver"
-  /// (`hop_dwell_ms(tuning)`); until then a 0 here is a caller bug, not a supported value. A
-  /// non-zero value is a per-loop override for the rare case where one listen has a measured
-  /// reason to dwell differently from the others on every chip. Not a tuning knob: a constant at
-  /// the call site, never user-configurable.
+  /// ListenPolicy::HOLD_REQUEST_CHANNEL. **0 (the default) means "ask the driver"** —
+  /// `listen()` falls back to `radio->hop_dwell_ms(tuning)`, the chip's own answer to "how long
+  /// must this radio sit on a channel before it can hear anything at all". Every ROTATE_* call
+  /// site today leaves this at 0: discovery and the broadcast roll-call have no measured reason to
+  /// dwell differently from each other. A non-zero value is reserved for the rare case where one
+  /// listen *does* have a measured reason to dwell differently from the others on every chip — a
+  /// difference that is per-chip and per-loop, not just per-chip, is the only thing that justifies
+  /// it; that measurement doesn't exist for any call site today. Not a tuning knob either way: a
+  /// constant at the call site, never user-configurable.
   uint32_t dwell_ms{0};
-  /// Hop after a frame the handler ignored. Only discovery sets this true: a broadcast discovery
-  /// window is full of unrelated traffic and the reply channel is unknown, so an ignored frame
-  /// there is no reason to keep spending the window on this channel. Every other rotating listen
-  /// leaves this false — both exchange waits (a frame this layer rejected is not evidence the
-  /// channel is wrong, only a genuinely empty dwell is) and the roll-call (a reception is positive
-  /// evidence the other way: it proves responders are on this channel, and replies arrive spread
-  /// across the whole window, so staying put costs nothing).
+  /// Hop after a frame the handler ignored. Only discovery sets this true (the default): a
+  /// broadcast discovery window is full of unrelated traffic and the reply channel is unknown, so
+  /// an ignored frame there is no reason to keep spending the window on this channel. The
+  /// roll-call is the one rotating listen that sets this false — a reception is positive evidence
+  /// the other way: it proves responders are on this channel, and replies arrive spread across the
+  /// whole window, so staying put costs nothing.
   bool hop_after_ignored_frame{true};
   /// Extend the listen instead of hopping while the chip reports a preamble or sync word, so an
-  /// arriving frame is not cut off mid-reception. Discovery only for now: on SX1262 the preamble
-  /// half of the guard is masked off in the driver's IRQ set, so enabling it elsewhere buys only
-  /// the sync half until that changes.
+  /// arriving frame is not cut off mid-reception. Set by both rotating listens (pairing discovery
+  /// and the broadcast roll-call) — SX1276's 5 ms rotating dwell is shorter than one frame's air
+  /// time, so without this guard nearly every reply is cut off mid-retune (hardware-measured
+  /// 2026-08-19). On SX1262 the preamble half of the guard is masked off in the driver's IRQ set,
+  /// so it buys only the sync half there until that changes.
   bool linger_on_preamble{false};
   /// Length of the preamble/sync extension, in milliseconds. Deliberately shorter than a dwell on
   /// the slow-hopping chips and longer than one on the fast-hopping chip: it is sized to a frame's

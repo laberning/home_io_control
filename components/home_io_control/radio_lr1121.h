@@ -215,22 +215,6 @@ static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_MID = 0x01;
 /// used to claim (that chip's tick base differs) — harmless either way (longer startup is safe).
 static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_LSB = 0x40;
 
-/// LR1121-specific per-channel dwell while waiting for authenticated exchange responses.
-///
-/// NOT seeded from the SX1262 value anymore (was 90, matching SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS
-/// exactly) — see 2026-07-17 hardware bring-up: golden captures for this exact device
-/// (tests/corpus/captures/somfy_awning/exchange_open_sx1276.yaml) show the device's first reply
-/// arriving ~287ms after the request, on the *same* channel the request went out on, against a
-/// 300ms total wait budget split into 90ms per-channel hop slices (CH2→CH3→CH1→CH2). That only
-/// leaves the *last* ~30ms hop-back-to-CH2 slice to catch it — survivable for SX1262/SX1276, but
-/// LR1121's two-transaction 16-bit-opcode SPI protocol makes each hop's SetStandby/SetRfFrequency/
-/// SetRx round-trip slower, which can push the hop-back-to-CH2 moment past 287ms and cause a clean
-/// miss every try. Set above the largest response-wait budget (RESPONSE_WAIT_MS=500 in
-/// proto_timing.h) so this driver never hops away from the request's channel while waiting for a
-/// reply — real replies for this device only ever arrive on that same channel anyway, so hopping
-/// during the wait was actively counterproductive, not just slow.
-static constexpr int32_t LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS = 600;
-
 // ============================================================================
 // LR1121 Radio Driver
 // ============================================================================
@@ -263,14 +247,16 @@ class RadioLR1121 : public SoftPhyDriverBase {
     this->set_response_preamble_(tuning.lr1121_response_preamble);
     this->set_post_tx_settle_us_(tuning.lr1121_post_tx_settle_us);
   }
-  /// @brief Per-channel dwell while waiting for exchange responses (LR1121).
-  [[nodiscard]] uint32_t exchange_wait_slice_ms() const override { return LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS; }
-  /// @brief Per-channel dwell while pairing discovery hops (LR1121).
+  /// @brief Per-channel dwell for a rotating listen (LR1121).
   ///
-  /// LR1121 frequency changes require a standby→SetRfFrequency→RX cycle (no fast hop),
-  /// same as the SX1262, so discovery needs the equivalent longer dwell. The value comes
-  /// from the user-facing `lr1121_discovery_hop_slice_ms` tuning field.
-  [[nodiscard]] uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const override {
+  /// LR1121 frequency changes require a standby→SetRfFrequency→RX cycle (no fast hop), same as
+  /// the SX1262, so a rotating listen needs the equivalent longer dwell. Governs discovery and
+  /// the broadcast roll-call alike (see @ref RadioDriver::hop_dwell_ms) — this driver no longer
+  /// carries a separate, longer dwell just for the exchange waits (removed: it existed only to
+  /// stop those two loops from hopping at all, which @ref ListenPolicy::HOLD_REQUEST_CHANNEL now
+  /// does directly). The value comes from the user-facing `lr1121_discovery_hop_slice_ms` tuning
+  /// field.
+  [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.lr1121_discovery_hop_slice_ms;
   }
   /// @brief TX→RX turnaround capability (LR1121): slow, same as SX1262.

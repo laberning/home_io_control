@@ -52,7 +52,7 @@ std::vector<const corpus::CorpusCapture *> exchange_replay_captures() {
 
 std::unique_ptr<MockRadio> make_mock_radio(const corpus::CorpusCapture *capture) {
   // "sx1262" is the only chip whose mock (MockRadioSX1262) differs in exchange-timing behavior
-  // (response_preamble/exchange_wait_slice_ms/has_fast_tx_rx_turnaround); every other
+  // (response_preamble/has_fast_tx_rx_turnaround); every other
   // captured_with value (sx1276, lr1121, other, synthetic) is fine on the generic MockRadio,
   // which already mirrors the fast-hopping SX1276-like reference behavior (radio_test_common.h).
   // LR1121 shares its exchange-flow implementation with SX1262 (SoftPhyDriverBase) but has not

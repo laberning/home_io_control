@@ -92,14 +92,6 @@ static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 
-/// SX1262-specific per-channel dwell while waiting for authenticated exchange responses.
-///
-/// A 50 ms dwell was short enough that the controller could hop away from the request channel
-/// just before the device emitted its post-auth reply. Using 90 ms keeps the SX1262 receiver on
-/// that channel long enough for the observed device turn-around after 0x3D, without inflating the
-/// overall 300/500 ms exchange windows for the rest of the protocol.
-static constexpr int32_t SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS = 90;
-
 // ============================================================================
 // SX1262 Radio Driver
 // ============================================================================
@@ -137,17 +129,13 @@ class RadioSX1262 : public SoftPhyDriverBase {
     this->set_response_preamble_(tuning.sx1262_response_preamble);
     this->set_post_tx_settle_us_(tuning.sx1262_post_tx_settle_us);
   }
-  /// @brief Per-channel dwell while waiting for exchange responses (SX1262).
+  /// @brief Per-channel dwell for a rotating listen (SX1262).
   ///
-  /// Longer than the protocol baseline; rationale is documented at
-  /// @ref SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS.
-  [[nodiscard]] uint32_t exchange_wait_slice_ms() const override { return SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS; }
-  /// @brief Per-channel dwell while pairing discovery hops (SX1262).
-  ///
-  /// SX1262 frequency changes require a standby→SetRfFrequency→RX cycle (no
-  /// fast hop), so discovery needs a much longer dwell than the SX1276. The
-  /// value comes from the user-facing `sx1262_discovery_hop_slice_ms` tuning field.
-  [[nodiscard]] uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const override {
+  /// SX1262 frequency changes require a standby→SetRfFrequency→RX cycle (no fast hop), so a
+  /// rotating listen needs a much longer dwell than the SX1276. Governs discovery and the
+  /// broadcast roll-call alike (see @ref RadioDriver::hop_dwell_ms). The value comes from the
+  /// user-facing `sx1262_discovery_hop_slice_ms` tuning field.
+  [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.sx1262_discovery_hop_slice_ms;
   }
   /// @brief TX→RX turnaround capability (SX1262): slow.

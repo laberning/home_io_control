@@ -1,7 +1,7 @@
 #pragma once
 
 #include "radio_interface.h"
-#include "radio_sx1262.h"  // SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS for the SX1262 mock
+#include "radio_sx1262.h"  // SX1262_RESPONSE_PREAMBLE for the SX1262 mock
 #include <esphome/core/gpio.h>
 
 #include <deque>
@@ -117,10 +117,10 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   }
   bool is_sync_detected() override { return false; }
   bool is_preamble_detected() override { return false; }
-  // discovery_hop_slice_ms and has_fast_tx_rx_turnaround are pure virtual in RadioDriver; the
+  // hop_dwell_ms and has_fast_tx_rx_turnaround are pure virtual in RadioDriver; the
   // generic mock behaves like the fast-hopping, fast-turnaround reference platform so existing
   // discovery-timing and key-exchange flow tests keep exercising the standard paths.
-  uint16_t discovery_hop_slice_ms(const esphome::home_io_control::TuningConfig &tuning) const override {
+  uint16_t hop_dwell_ms(const esphome::home_io_control::TuningConfig &tuning) const override {
     return tuning.sx1276_discovery_hop_slice_ms;
   }
   bool has_fast_tx_rx_turnaround() const override { return true; }
@@ -171,10 +171,6 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// presence-in-freq_history() alone can't distinguish "hopped before the first listen" from
   /// "hopped after a later one".
   const std::vector<CallKind> &call_log() const { return call_log_; }
-  /// Per-channel dwell this mock reports. Tests that want to observe the *whole* window set this
-  /// large so slicing never masks it.
-  void set_exchange_wait_slice_ms(uint32_t ms) { exchange_wait_slice_ms_ = ms; }
-  uint32_t exchange_wait_slice_ms() const override { return exchange_wait_slice_ms_; }
   const std::vector<esphome::home_io_control::RadioTxConfig> &get_tx_configs() const { return tx_configs_; }
   const std::vector<std::vector<uint8_t>> &get_sent_data() const { return sent_data_; }
   void clear() {
@@ -201,7 +197,6 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::vector<uint32_t> wait_timeouts_;
   std::vector<uint32_t> freq_history_;
   bool emulate_capture_lifecycle_{false};
-  uint32_t exchange_wait_slice_ms_{esphome::home_io_control::RESPONSE_CHANNEL_WAIT_MS};
 };
 
 // --- SX1262 mock — inherits MockRadio but overrides chip-specific behavior ----
@@ -210,10 +205,7 @@ class MockRadioSX1262 : public MockRadio {
  public:
   const char *chip_name() const override { return "sx1262"; }
   uint16_t response_preamble() const override { return esphome::home_io_control::SX1262_RESPONSE_PREAMBLE; }
-  uint32_t exchange_wait_slice_ms() const override {
-    return esphome::home_io_control::SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS;
-  }
-  uint16_t discovery_hop_slice_ms(const esphome::home_io_control::TuningConfig &tuning) const override {
+  uint16_t hop_dwell_ms(const esphome::home_io_control::TuningConfig &tuning) const override {
     return tuning.sx1262_discovery_hop_slice_ms;
   }
   bool has_fast_tx_rx_turnaround() const override { return false; }

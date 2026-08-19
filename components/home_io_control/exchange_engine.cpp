@@ -326,16 +326,13 @@ bool ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq, ui
 
 decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_response_(
     const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
-  RadioDriver *radio = *this->radio_ptr_;
-
   ListenSpec spec;
   spec.window_ms = ctx.wait_ms;
-  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
-  spec.dwell_ms = radio->exchange_wait_slice_ms();
-  // A channel that just delivered a frame this layer rejected (unparsable, or not this exchange)
-  // is not evidence the channel is wrong — only a genuinely empty dwell is. Hop on timeout only,
-  // same as this loop has always done.
-  spec.hop_after_ignored_frame = false;
+  // A unicast reply comes back on the channel the request went out on: 0 of 300 unicast RX
+  // events (CHALLENGE_REQ + PRIVATE_RESP, 50 cycles each on SX1276/SX1262/LR1121) arrived off
+  // the request channel. Holding the channel needs no dwell and no hop-after-timeout guard —
+  // there is nowhere else a reply could come from.
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
 
   auto disp = decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED;
   RadioRxPacket packet{};
@@ -396,18 +393,16 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
 
 decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_response_(
     const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
-  RadioDriver *radio = *this->radio_ptr_;
   // Same budget as any other continuation frame — RESPONSE_AUTH_WAIT_MS was always an alias for
   // RESPONSE_WAIT_MS, so the two share one knob rather than inventing a third.
   const uint32_t auth_wait_ms = this->tuning_->exchange_response_wait_ms;
 
   ListenSpec spec;
   spec.window_ms = auth_wait_ms;
-  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
-  spec.dwell_ms = radio->exchange_wait_slice_ms();
-  // Same reasoning as wait_for_first_response_(): a rejected reception is not evidence the
-  // channel is wrong, so this loop has always hopped on a genuinely empty dwell only.
-  spec.hop_after_ignored_frame = false;
+  // Same reasoning as wait_for_first_response_(): a unicast reply comes back on the request
+  // channel (0 of 300 unicast RX events measured off-channel across all three chips), so holding
+  // the channel for the whole wait is strictly correct and needs no dwell.
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
 
   RadioRxPacket packet{};
   auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
@@ -457,11 +452,18 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
   // them going unused for replies costs a third of it.
   spec.policy = ListenPolicy::ROTATE_SKIPPING_REQUEST;
   spec.request_freq = freq;
-  spec.dwell_ms = radio->exchange_wait_slice_ms();
+  // dwell_ms is left at 0: no measured reason to dwell differently from discovery, so listen()
+  // asks the driver (radio->hop_dwell_ms(tuning)) the same way discovery does — 5 ms on SX1276,
+  // 200 ms on SX1262, 200 ms on LR1121. SX1276's 5 ms dwell is shorter than a reply's air time
+  // (~10 ms for a DISCOVER_SPE_RESP at the protocol's 38400 bps line rate), so without a linger
+  // guard the radio retunes mid-frame on nearly every reception — hardware-measured 2026-08-19:
+  // found-rate collapsed from 83% to 12% before linger_on_preamble was added below.
   // A reception proves this channel carries responders and replies arrive spread across the whole
   // window, so staying on it costs nothing; hopping away would only shrink the time spent where
   // responders already are.
   spec.hop_after_ignored_frame = false;
+  spec.linger_on_preamble = true;
+  spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
 
   RadioRxPacket packet{};
   IoFrame frame{};
@@ -522,6 +524,20 @@ bool preamble_or_sync_incoming(RadioDriver *radio, const ListenSpec &spec) {
   return spec.linger_on_preamble && (radio->is_preamble_detected() || radio->is_sync_detected());
 }
 
+/// Per-channel dwell for a rotating listen: `spec.dwell_ms` if the caller set one, otherwise the
+/// driver's own answer to "how long must this radio sit on a channel after retuning before it can
+/// hear anything at all" (see RadioDriver::hop_dwell_ms()). Unused (returns 0) for a holding
+/// listen — HOLD never slices, so it never asks. Factored out of listen() purely to avoid a
+/// nested conditional operator and keep that function's cognitive complexity under the clang-tidy
+/// threshold — no behavior beyond the two-way fallback.
+uint32_t resolve_dwell_ms(const ListenSpec &spec, bool rotating, RadioDriver *radio, const TuningConfig &tuning) {
+  if (!rotating)
+    return 0;
+  if (spec.dwell_ms != 0)
+    return spec.dwell_ms;
+  return radio->hop_dwell_ms(tuning);
+}
+
 }  // namespace
 
 void ExchangeEngine::listen_hop_(uint32_t skip, const ListenSpec &spec) {
@@ -536,6 +552,10 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
   const uint32_t deadline = millis() + spec.window_ms;
   const bool rotating = spec.policy != ListenPolicy::HOLD_REQUEST_CHANNEL;
   const uint32_t skip = spec.policy == ListenPolicy::ROTATE_SKIPPING_REQUEST ? spec.request_freq : 0;
+  // 0 means "ask the driver": neither rotating call site in this project has a measured reason to
+  // dwell differently from the chip's own retune-cost answer (RadioDriver::hop_dwell_ms()), so
+  // both leave spec.dwell_ms at 0 and share one chip-specific knob instead of inventing a second.
+  const uint32_t dwell = resolve_dwell_ms(spec, rotating, radio, *this->tuning_);
 
   // A reply to a broadcast never comes back on the channel that asked (1 of 149 measured), so a
   // skipping listen leaves that channel before its first dwell rather than spending one there.
@@ -547,15 +567,15 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
     // A holding listen waits the whole remaining window in one call: it has nothing to do between
     // slices, wait_for_packet() feeds the watchdog while it blocks, and every expired slice costs
     // an RX re-arm. Only a rotating listen needs a per-channel dwell.
-    const uint32_t slice = rotating ? std::min(remaining, spec.dwell_ms) : remaining;
+    const uint32_t slice = rotating ? std::min(remaining, dwell) : remaining;
 
     if (radio->wait_for_packet(packet, slice)) {
       ListenOutcome outcome = ListenOutcome::TIMED_OUT;
       if (dispatch_received_packet(on_frame, packet, frame, outcome))
         return outcome;
-      // Only discovery sets hop_after_ignored_frame=true; the roll-call and both exchange waits
-      // leave it false, each for its own reason (see the field doc in hub_exchange.h) — staying
-      // put after a rejected reception is the default here, not the roll-call's special case.
+      // The roll-call leaves this false because a reception proves responders are on this
+      // channel (see the field doc in hub_exchange.h); discovery is the only listen that hops
+      // after an ignored frame.
       if (rotating && spec.hop_after_ignored_frame && (int32_t) (deadline - millis()) > 0 &&
           !preamble_or_sync_incoming(radio, spec))
         this->listen_hop_(skip, spec);

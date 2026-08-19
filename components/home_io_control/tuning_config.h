@@ -83,7 +83,7 @@ enum class DiscoveryCommand : uint8_t {
 
 // Chip-specific radio defaults live here beside the TuningConfig fields they initialize — the
 // single source of truth for defaults. proto_timing.h holds only chip-neutral protocol values;
-// the radio drivers consume these via apply_tuning / discovery_hop_slice_ms.
+// the radio drivers consume these via apply_tuning / hop_dwell_ms.
 
 /// SX1262-specific preamble for response/continuation frames within an exchange.
 ///

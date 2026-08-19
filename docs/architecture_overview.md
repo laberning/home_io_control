@@ -22,7 +22,7 @@ Start there for *why* something is built the way it is, not just *what* it is.
 These invariants keep the layers independent; changes should preserve them:
 
 1. The protocol layer is radio-agnostic: no chip names, chip registers, or driver behavior in `proto_*` files. `proto_timing.h` holds only chip-neutral protocol timing.
-2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `exchange_wait_slice_ms()`, `discovery_hop_slice_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only.
+2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `hop_dwell_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only.
 3. Chip-specific constants live either in the driver header (`radio_sx1276.h` / `radio_sx1262.h` / `radio_lr1121.h`) or, when they are user-tunable defaults, next to their `TuningConfig` fields in `tuning_config.h`.
 4. The composition root is `hub_core.cpp` `setup()`: it is the only place that names concrete driver classes, selecting one by the required `radio_type` YAML field.
 

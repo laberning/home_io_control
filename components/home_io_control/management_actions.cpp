@@ -170,6 +170,11 @@ struct ScanResponder {
 /// chances to be listening when the hub transmits. CH2 first since it is the protocol's
 /// designated TX channel (see FREQ_CH2's doc comment) and therefore the most likely to catch a
 /// reply on the first attempt.
+///
+/// This TX retry is not compensating for a receive-side bug: for a long time the larger loss
+/// was on the hub's own listen path (devices answered ~83% of attempts, the hub only received
+/// ~36% of those replies, from a blind channel rotation), which has since been fixed by having
+/// the listen extend its dwell on a detected preamble/sync instead of hopping mid-frame.
 constexpr uint32_t SCAN_CHANNELS[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
 constexpr uint8_t SCAN_CHANNEL_COUNT = sizeof(SCAN_CHANNELS) / sizeof(SCAN_CHANNELS[0]);
 

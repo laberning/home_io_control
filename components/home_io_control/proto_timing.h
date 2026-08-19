@@ -29,6 +29,14 @@ static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W 
 /// on the same channel. Solar-powered devices need the long preamble to wake up.
 static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes for initial/start frames
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
+
+/// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
+/// longer to stay on a channel once a frame is visibly incoming, so a hop doesn't cut it off
+/// mid-reception. Sized to a frame's air time, not to a hop slice — on SX1276 it is longer than
+/// the per-channel dwell (15 vs. 5 ms), on SX1262/LR1121 far shorter (15 vs. 200 ms). Shared by
+/// every rotating listen (pairing discovery, broadcast roll-call): both wait for the same class of
+/// short protocol frame, so there is no measured reason for them to differ.
+static constexpr uint32_t PREAMBLE_LINGER_DWELL_MS = 15;
 // Chip-specific defaults (response preamble, post-TX settle, per-chip discovery hop slices
 // for SX1262 and LR1121) live beside their TuningConfig fields in tuning_config.h; the
 // SX1262/LR1121 exchange dwell constants live in radio_sx1262.h / radio_lr1121.h respectively.
@@ -36,9 +44,8 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/conti
 // holds only chip-neutral protocol values.
 
 /// Timing constants for frequency hopping and response waiting.
-static constexpr int32_t HOP_TIME_US = 2700;             ///< Time per channel when hopping (2.7ms)
-static constexpr int32_t RESPONSE_CHANNEL_WAIT_MS = 50;  ///< Per-channel dwell while waiting for an exchange response
-static constexpr int32_t RESPONSE_WAIT_MS = 500;         ///< Wait for response to non-start frame
+static constexpr int32_t HOP_TIME_US = 2700;      ///< Time per channel when hopping (2.7ms)
+static constexpr int32_t RESPONSE_WAIT_MS = 500;  ///< Wait for response to non-start frame
 
 /// Wait for a response to a start frame — the first frame of an exchange, and the one a sleeping
 /// device has just been woken by.

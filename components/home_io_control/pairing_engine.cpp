@@ -68,24 +68,21 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
 /// NO_RESPONSE (no packets at all) and INVALID (packets seen but none valid).
 ///
 /// Frequency hopping: hops between the 3 IO-homecontrol channels after each slice.
-/// The slice length comes from RadioDriver::discovery_hop_slice_ms() — chips that
-/// retune slowly need a much longer dwell than fast-hopping chips. When preamble or
-/// sync detection fires, the dwell extends by PREAMBLE_DWELL_MS so the incoming
-/// frame can complete without interruption.
+/// The slice length comes from RadioDriver::hop_dwell_ms() (spec.dwell_ms left at 0, so
+/// listen() asks the driver) — chips that retune slowly need a much longer dwell than
+/// fast-hopping chips. When preamble or sync detection fires, the dwell extends by
+/// PREAMBLE_LINGER_DWELL_MS so the incoming frame can complete without interruption.
 decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_response_(uint32_t timeout_ms,
                                                                                    RadioRxPacket &packet,
                                                                                    IoFrame &response_frame) {
-  // A short extension wait, not another full per-channel dwell: on SX1276 it is longer than the
-  // dwell (15 vs 5 ms), on SX1262/LR1121 far shorter (15 vs 200 ms), so it is sized to a frame's
-  // air time rather than to a hop.
-  static constexpr uint32_t PREAMBLE_DWELL_MS = 15;
-
   ListenSpec spec;
   spec.window_ms = timeout_ms;
   spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
-  spec.dwell_ms = radio_()->discovery_hop_slice_ms(*tuning_);
+  // dwell_ms left at 0: no measured reason to dwell differently from the roll-call, so listen()
+  // asks the driver (radio_()->hop_dwell_ms(*tuning_)) the same way collect_broadcast_responses()
+  // does.
   spec.linger_on_preamble = true;
-  spec.linger_dwell_ms = PREAMBLE_DWELL_MS;
+  spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
   spec.on_hop = [this]() { this->telemetry_.record_hop(); };
 
   bool saw_traffic = false;

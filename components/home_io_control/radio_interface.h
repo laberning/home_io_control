@@ -159,24 +159,21 @@ class RadioDriver {
   /// @param tuning Current tuning configuration.
   virtual void apply_tuning(const TuningConfig &tuning) {}
 
-  /// @brief Per-channel dwell while waiting for an authenticated exchange response.
+  /// @brief Per-channel dwell for a rotating listen that does not name its own dwell.
   ///
-  /// The default RESPONSE_CHANNEL_WAIT_MS slice is correct for the baseline protocol
-  /// flow and pairing. A driver overrides this with a longer dwell when its RX path
-  /// needs more margin to catch the final post-auth response before hopping away
-  /// (see the concrete drivers for the chip-specific rationale).
-  /// @return Slice length in milliseconds.
-  [[nodiscard]] virtual uint32_t exchange_wait_slice_ms() const { return RESPONSE_CHANNEL_WAIT_MS; }
-
-  /// @brief Per-channel dwell while pairing discovery hops across channels.
-  ///
-  /// The right dwell is inherently chip-specific — it depends on how fast the chip
-  /// can retune (fast hop vs. a standby→retune→RX cycle) — so there is no generic
-  /// default: each driver must return its value, normally from its user-facing
-  /// tuning field.
+  /// Every @ref ListenPolicy::ROTATE_ALL_CHANNELS or @ref ListenPolicy::ROTATE_SKIPPING_REQUEST
+  /// listen falls back to this when @ref ListenSpec::dwell_ms is left at 0 — which is every call
+  /// site today: pairing discovery and the broadcast roll-call both rotate, and neither has a
+  /// measured reason to dwell differently from the other. The right dwell is inherently
+  /// chip-specific — it depends on how fast the chip can retune (fast hop vs. a
+  /// standby→retune→RX cycle) — so there is no generic default: each driver must return its
+  /// value, normally from its user-facing tuning field. This answers a chip question ("how long
+  /// must this radio sit on a channel before it can hear anything at all"), never a protocol one
+  /// — a loop with a measured reason to dwell differently sets @ref ListenSpec::dwell_ms instead
+  /// of asking for a second driver virtual.
   /// @param tuning Current tuning configuration.
-  /// @return Slice length in milliseconds.
-  [[nodiscard]] virtual uint16_t discovery_hop_slice_ms(const TuningConfig &tuning) const = 0;
+  /// @return Dwell length in milliseconds.
+  [[nodiscard]] virtual uint16_t hop_dwell_ms(const TuningConfig &tuning) const = 0;
 
   /// @brief Whether the chip re-enters RX fast enough after a TX to catch an
   /// immediate reply through the standard exchange wait.

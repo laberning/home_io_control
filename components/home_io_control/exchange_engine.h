@@ -114,9 +114,10 @@ class ExchangeEngine {
   /// that fails `parse()`, carries a different `cmd`, or is not addressed to us is ignored
   /// without ending collection. The receiver leaves the request channel before the first
   /// listen and alternates between the other two for the rest of the window — unlike
-  /// wait_for_first_response_(), which covers all three including the request channel — because
-  /// a broadcast reply does not come back on the channel that asked for it (1 of 149 measured).
-  /// Replies on the request channel are therefore not caught by this loop.
+  /// wait_for_first_response_(), which holds the request channel for the whole wait — because a
+  /// broadcast reply does not come back on the channel that asked for it (1 of 149 measured),
+  /// while a unicast reply does. Replies on the request channel are therefore not caught by this
+  /// loop.
   ///
   /// This method stores nothing and imposes no capacity: it neither buffers replies nor
   /// deduplicates them, so the same responder answering twice within one window invokes
