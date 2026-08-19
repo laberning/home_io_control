@@ -245,27 +245,6 @@ inline bool defer_background_poll_for_1w_activity(bool next_op_is_background, ui
   return last_1w_activity_ms == 0 || (now - last_1w_activity_ms) >= quiet_ms;
 }
 
-// == Timing/slicing helper ==
-
-/// Slice remaining wait time into bounded intervals so a long wait stays responsive.
-///
-/// A pairing wait loop uses this to avoid blocking the radio for too long at a stretch, keeping
-/// the watchdog fed. The three exchange-engine wait loops use a different, per-chip value instead
-/// (`RadioDriver::exchange_wait_slice_ms()`), not this fixed one. Whether a caller hops between
-/// slices is a separate decision made by the caller — some do, some deliberately do not. Each
-/// slice is at most RESPONSE_CHANNEL_WAIT_MS.
-///
-/// A caller that neither hops nor needs to wake early for any other reason has no reason to slice
-/// at all: `RadioDriver::wait_for_packet()` already feeds the watchdog internally while it
-/// blocks, so slicing such a wait only adds RX re-arm gaps for no benefit — a non-hopping caller
-/// with nothing else to wait for should wait its full remaining window in one call instead.
-///
-/// @param remaining_ms Total time left in the wait window.
-/// @return Time slice to wait in milliseconds.
-inline uint32_t response_wait_slice_ms(uint32_t remaining_ms) {
-  return std::min<uint32_t>(remaining_ms, RESPONSE_CHANNEL_WAIT_MS);
-}
-
 }  // namespace decisions
 }  // namespace home_io_control
 }  // namespace esphome

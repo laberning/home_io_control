@@ -100,36 +100,6 @@ TEST(ProtocolBoundary, IsExchangeInternalCommand_ZeroNotInternal) {
 }
 
 // ========================================================================================
-// HubDecisions: response_wait_slice_ms
-// doxygen: "Each slice is at most RESPONSE_CHANNEL_WAIT_MS (50ms)."
-// ========================================================================================
-
-TEST(ProtocolBoundary, ResponseWaitSliceMs_ExactThreshold) {
-  EXPECT_EQ(response_wait_slice_ms(50), 50u) << "50ms must clamp to exactly 50ms (the RESPONSE_CHANNEL_WAIT_MS limit)";
-}
-
-TEST(ProtocolBoundary, ResponseWaitSliceMs_BelowThreshold) {
-  EXPECT_EQ(response_wait_slice_ms(30), 30u)
-      << "remaining_ms below RESPONSE_CHANNEL_WAIT_MS must return unchanged (30ms)";
-}
-
-TEST(ProtocolBoundary, ResponseWaitSliceMs_AboveThreshold) {
-  EXPECT_EQ(response_wait_slice_ms(200), 50u) << "remaining_ms above RESPONSE_CHANNEL_WAIT_MS must clamp to 50ms";
-}
-
-TEST(ProtocolBoundary, ResponseWaitSliceMs_OneMsBelowThreshold) {
-  EXPECT_EQ(response_wait_slice_ms(49), 49u) << "49ms (one below clamp threshold) must pass through unclamped";
-}
-
-TEST(ProtocolBoundary, ResponseWaitSliceMs_OneMsAboveThreshold) {
-  EXPECT_EQ(response_wait_slice_ms(51), 50u) << "51ms (one above clamp threshold) must clamp to 50ms";
-}
-
-TEST(ProtocolBoundary, ResponseWaitSliceMs_Zero) {
-  EXPECT_EQ(response_wait_slice_ms(0), 0u) << "zero remaining_ms must return zero";
-}
-
-// ========================================================================================
 // Device support queries: device_supports_tilt
 // doxygen: "true for venetian blinds, blinds, external venetian blinds, louvre blinds"
 // device_supports_tilt is in proto_frame.h (doxygen) / proto_frame.cpp (impl)

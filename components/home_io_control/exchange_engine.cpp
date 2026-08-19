@@ -327,30 +327,37 @@ bool ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq, ui
 decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_response_(
     const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
   RadioDriver *radio = *this->radio_ptr_;
+
+  ListenSpec spec;
+  spec.window_ms = ctx.wait_ms;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.dwell_ms = radio->exchange_wait_slice_ms();
+  // A channel that just delivered a frame this layer rejected (unparsable, or not this exchange)
+  // is not evidence the channel is wrong — only a genuinely empty dwell is. Hop on timeout only,
+  // same as this loop has always done.
+  spec.hop_after_ignored_frame = false;
+
+  auto disp = decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED;
   RadioRxPacket packet{};
-  const uint32_t deadline = millis() + ctx.wait_ms;
-  while ((int32_t) (deadline - millis()) > 0) {
-    const uint32_t remaining = deadline - millis();
-    const uint32_t slice = std::min<uint32_t>(remaining, radio->exchange_wait_slice_ms());
-    if (!radio->wait_for_packet(packet, slice)) {
-      if ((int32_t) (deadline - millis()) > 0)
-        this->hop_frequency();
-      continue;
-    }
-    if (!parse(packet.data, packet.len, ctx.rx)) {
+  auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
+    if (parsed == nullptr) {
       this->record_debug("first_parse_fail", ctx.try_index, false);
-      log_unparsable_frame("Unparsable first response", ctx.try_index, packet);
-      continue;
+      log_unparsable_frame("Unparsable first response", ctx.try_index, pkt);
+      return ReplyDisposition::IGNORE;
     }
-    auto disp = decisions::classify_exchange_first_response(request, ctx.rx);
+    disp = decisions::classify_exchange_first_response(request, *parsed);
     if (disp == decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED) {
       this->record_debug("first_wrong_exchange", ctx.try_index, false);
-      log_exchange_frame("Ignored first response", ctx.try_index, ctx.rx, packet.len);
-      continue;
+      log_exchange_frame("Ignored first response", ctx.try_index, *parsed, pkt.len);
+      return ReplyDisposition::IGNORE;
     }
     ctx.first_response_ms = millis();
+    return ReplyDisposition::ACCEPT;
+  });
+
+  if (outcome == ListenOutcome::ACCEPTED)
     return disp;
-  }
+
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_debug("wait_first_timeout", ctx.try_index, false);
   ESP_LOGI(TAG, "Try %d ended: no first response for cmd=%s(0x%02X) within %" PRIu32 " ms", ctx.try_index,
@@ -390,29 +397,35 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
 decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_response_(
     const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
   RadioDriver *radio = *this->radio_ptr_;
-  RadioRxPacket packet{};
   // Same budget as any other continuation frame — RESPONSE_AUTH_WAIT_MS was always an alias for
   // RESPONSE_WAIT_MS, so the two share one knob rather than inventing a third.
   const uint32_t auth_wait_ms = this->tuning_->exchange_response_wait_ms;
-  const uint32_t deadline = millis() + auth_wait_ms;
-  while ((int32_t) (deadline - millis()) > 0) {
-    const uint32_t remaining = deadline - millis();
-    const uint32_t slice = std::min<uint32_t>(remaining, radio->exchange_wait_slice_ms());
-    if (!radio->wait_for_packet(packet, slice)) {
-      if ((int32_t) (deadline - millis()) > 0)
-        this->hop_frequency();
-      continue;
-    }
-    if (!parse(packet.data, packet.len, ctx.rx)) {
+
+  ListenSpec spec;
+  spec.window_ms = auth_wait_ms;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.dwell_ms = radio->exchange_wait_slice_ms();
+  // Same reasoning as wait_for_first_response_(): a rejected reception is not evidence the
+  // channel is wrong, so this loop has always hopped on a genuinely empty dwell only.
+  spec.hop_after_ignored_frame = false;
+
+  RadioRxPacket packet{};
+  auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
+    if (parsed == nullptr) {
       this->record_debug("final_parse_fail", ctx.try_index, true);
-      log_unparsable_frame("Unparsable final response", ctx.try_index, packet);
-      continue;
+      log_unparsable_frame("Unparsable final response", ctx.try_index, pkt);
+      return ReplyDisposition::IGNORE;
     }
-    if (is_valid_final_response(ctx.rx, request))
-      return decisions::ExchangeFinalResponseDisposition::ACCEPT;
+    if (is_valid_final_response(*parsed, request))
+      return ReplyDisposition::ACCEPT;
     this->record_debug("final_wrong_exchange", ctx.try_index, true);
-    log_exchange_frame("Ignored final response", ctx.try_index, ctx.rx, packet.len);
-  }
+    log_exchange_frame("Ignored final response", ctx.try_index, *parsed, pkt.len);
+    return ReplyDisposition::IGNORE;
+  });
+
+  if (outcome == ListenOutcome::ACCEPTED)
+    return decisions::ExchangeFinalResponseDisposition::ACCEPT;
+
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_debug("wait_final_timeout", ctx.try_index, true);
   ESP_LOGI(TAG, "Try %d ended: no matching final response for cmd=%s(0x%02X) within %" PRIu32 " ms", ctx.try_index,
@@ -434,40 +447,137 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
   }
 
   RadioDriver *radio = *this->radio_ptr_;
-  RadioRxPacket packet{};
-  IoFrame rx{};
   uint8_t count = 0;
-  const uint32_t deadline = millis() + window_ms;
 
+  ListenSpec spec;
+  spec.window_ms = window_ms;
   // A roll-call reply is never sent back on the channel that asked for it — 1 of 149 measured
   // replies, against the ~1 in 3 an even split would give. Dwelling on the request channel is
   // therefore dead listening time: with three channels split evenly across the window, one of
-  // them going unused for replies costs a third of it. Leave it before the first listen and
-  // alternate between the two channels replies actually use.
-  this->hop_frequency(freq);
+  // them going unused for replies costs a third of it.
+  spec.policy = ListenPolicy::ROTATE_SKIPPING_REQUEST;
+  spec.request_freq = freq;
+  spec.dwell_ms = radio->exchange_wait_slice_ms();
+  // A reception proves this channel carries responders and replies arrive spread across the whole
+  // window, so staying on it costs nothing; hopping away would only shrink the time spent where
+  // responders already are.
+  spec.hop_after_ignored_frame = false;
 
-  while ((int32_t) (deadline - millis()) > 0) {
-    const uint32_t remaining = deadline - millis();
-    const uint32_t slice = std::min<uint32_t>(remaining, radio->exchange_wait_slice_ms());
-    if (!radio->wait_for_packet(packet, slice)) {
-      if ((int32_t) (deadline - millis()) > 0)
-        this->hop_frequency(freq);
-      continue;
-    }
-    if (!parse(packet.data, packet.len, rx))
-      continue;
-    if (rx.cmd != expected_cmd)
-      continue;
-    if (memcmp(rx.dst, this->node_id_, NODE_ID_SIZE) != 0)
-      continue;
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  this->listen(spec, packet, frame, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
+    if (parsed == nullptr || parsed->cmd != expected_cmd || memcmp(parsed->dst, this->node_id_, NODE_ID_SIZE) != 0)
+      return ReplyDisposition::IGNORE;
 
-    on_reply(rx, radio->get_last_capture().rssi_dbm);
+    on_reply(*parsed, radio->get_last_capture().rssi_dbm);
     if (count < UINT8_MAX)
       ++count;
-  }
+    // Collection always runs to the deadline: a roll-call has no single "the" reply, so nothing
+    // this loop can see is ever a reason to stop early.
+    return ReplyDisposition::IGNORE;
+  });
 
   this->record_debug("broadcast_collect_done", 1, false);
   return count;
+}
+
+// ============================================================================
+// Shared listen primitive
+//
+// The one listen loop every radio wait in this project runs through: send_and_receive()'s
+// first/final-response waits, collect_broadcast_responses(), and PairingEngine's discovery/
+// key-transfer/key-confirm waits all call listen() below with a ListenSpec that picks one of
+// the three ListenPolicy values (hold the request channel, rotate all three, or rotate skipping
+// the request channel). Per-loop behavior — what counts as a match, what aborts, what gets
+// logged — lives entirely in the caller's ReplyHandler; this function owns only the
+// slice/hop/deadline mechanics common to all of them.
+// ============================================================================
+
+namespace {
+
+/// Parse one received packet, hand it to `on_frame`, and translate an ACCEPT/ABORT disposition
+/// into `outcome`. Factored out of listen()'s two reception sites purely to keep that function's
+/// cognitive complexity under the clang-tidy threshold — no behavior beyond the parse/dispatch.
+/// @return true if the listen should stop (ACCEPT or ABORT was returned); false to keep waiting.
+bool dispatch_received_packet(const ReplyHandler &on_frame, const RadioRxPacket &packet, IoFrame &frame,
+                              ListenOutcome &outcome) {
+  const bool parsed = parse(packet.data, packet.len, frame);
+  switch (on_frame(parsed ? &frame : nullptr, packet)) {
+    case ReplyDisposition::ACCEPT:
+      outcome = ListenOutcome::ACCEPTED;
+      return true;
+    case ReplyDisposition::ABORT:
+      outcome = ListenOutcome::ABORTED;
+      return true;
+    case ReplyDisposition::IGNORE:
+      return false;
+  }
+  return false;
+}
+
+/// A frame is arriving: hopping now would cut it off mid-reception. Only the *preamble* half of
+/// this guard is chip-limited (masked off on SX1262's IRQ set today); the sync half is live on
+/// every chip.
+bool preamble_or_sync_incoming(RadioDriver *radio, const ListenSpec &spec) {
+  return spec.linger_on_preamble && (radio->is_preamble_detected() || radio->is_sync_detected());
+}
+
+}  // namespace
+
+void ExchangeEngine::listen_hop_(uint32_t skip, const ListenSpec &spec) {
+  this->hop_frequency(skip);
+  if (spec.on_hop)
+    spec.on_hop();
+}
+
+ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &packet, IoFrame &frame,
+                                     const ReplyHandler &on_frame) {
+  RadioDriver *radio = *this->radio_ptr_;
+  const uint32_t deadline = millis() + spec.window_ms;
+  const bool rotating = spec.policy != ListenPolicy::HOLD_REQUEST_CHANNEL;
+  const uint32_t skip = spec.policy == ListenPolicy::ROTATE_SKIPPING_REQUEST ? spec.request_freq : 0;
+
+  // A reply to a broadcast never comes back on the channel that asked (1 of 149 measured), so a
+  // skipping listen leaves that channel before its first dwell rather than spending one there.
+  if (spec.policy == ListenPolicy::ROTATE_SKIPPING_REQUEST)
+    this->listen_hop_(skip, spec);
+
+  while ((int32_t) (deadline - millis()) > 0) {
+    const uint32_t remaining = deadline - millis();
+    // A holding listen waits the whole remaining window in one call: it has nothing to do between
+    // slices, wait_for_packet() feeds the watchdog while it blocks, and every expired slice costs
+    // an RX re-arm. Only a rotating listen needs a per-channel dwell.
+    const uint32_t slice = rotating ? std::min(remaining, spec.dwell_ms) : remaining;
+
+    if (radio->wait_for_packet(packet, slice)) {
+      ListenOutcome outcome = ListenOutcome::TIMED_OUT;
+      if (dispatch_received_packet(on_frame, packet, frame, outcome))
+        return outcome;
+      // Only discovery sets hop_after_ignored_frame=true; the roll-call and both exchange waits
+      // leave it false, each for its own reason (see the field doc in hub_exchange.h) — staying
+      // put after a rejected reception is the default here, not the roll-call's special case.
+      if (rotating && spec.hop_after_ignored_frame && (int32_t) (deadline - millis()) > 0 &&
+          !preamble_or_sync_incoming(radio, spec))
+        this->listen_hop_(skip, spec);
+      continue;
+    }
+
+    if ((int32_t) (deadline - millis()) <= 0)
+      break;
+    if (!rotating)
+      continue;  // HOLD: an early false is a failed reception, not a timeout.
+    if (!preamble_or_sync_incoming(radio, spec)) {
+      this->listen_hop_(skip, spec);
+      continue;
+    }
+    // Preamble/sync seen at the dwell boundary: extend by linger_dwell_ms and give the frame its
+    // air time instead of hopping — a short extension wait, not another full per-channel dwell.
+    const uint32_t ext = std::min((uint32_t) (deadline - millis()), spec.linger_dwell_ms);
+    ListenOutcome outcome = ListenOutcome::TIMED_OUT;
+    if (radio->wait_for_packet(packet, ext) && dispatch_received_packet(on_frame, packet, frame, outcome))
+      return outcome;
+  }
+  return ListenOutcome::TIMED_OUT;
 }
 
 // ============================================================================

@@ -909,6 +909,45 @@ TEST(Exchange, SendAndReceive_FirstResponseWaitStillHopsWhenIdle) {
   EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH3), history.end());
 }
 
+// --- Pinning test: wait_for_first_response_() does not hop after a frame it rejected --------
+//
+// SendAndReceive_FirstResponseWaitStillHopsWhenIdle (above) pins the empty-dwell case; this pins
+// the other half of the same call site's hop_after_ignored_frame=false choice, which no existing
+// test exercised: a frame this layer rejected as unrelated is not evidence the channel is wrong,
+// so the wait must stay put and re-listen on the same channel rather than hopping away from it.
+
+TEST(Exchange, SendAndReceive_FirstResponseWaitDoesNotHopAfterAnUnrelatedFrame) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  radio.set_exchange_wait_slice_ms(1);  // force several slices within the window
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 50);
+
+  // An unrelated frame (wrong src) lands on the very first listen, then silence for the rest of
+  // the window.
+  IoFrame noise = build_status_response(test::FOREIGN_ID, comp.node_id_);
+  uint8_t raw_noise[64];
+  uint8_t len_noise = serialize(noise, raw_noise, sizeof(raw_noise));
+  RadioRxPacket noise_pkt{};
+  noise_pkt.len = len_noise;
+  memcpy(noise_pkt.data, raw_noise, len_noise);
+  radio.queue_rx(noise_pkt);
+  radio.queue_rx_silence(5);
+
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  ASSERT_GE(radio.call_log().size(), 2u) << "need the reception plus at least one following slice";
+  EXPECT_EQ(radio.call_log()[0], MockRadio::CallKind::kWait) << "the first listen is the one that receives the noise";
+  EXPECT_EQ(radio.call_log()[1], MockRadio::CallKind::kWait)
+      << "hop_after_ignored_frame=false: no hop between the rejected reception and the next slice";
+}
+
 // --- Pinning test 3: unrelated frame ignored during the auth-wait window -----
 
 TEST(Exchange, SendAndReceive_UnrelatedFrameIgnoredDuringFinalWait) {
@@ -1301,6 +1340,38 @@ TEST(Exchange, CollectBroadcastResponses_NeverListensOnRequestChannel) {
   }
 }
 
+// Pins a property no existing test asserts directly: staying put after a reception is
+// deliberate — the hub is demonstrably on a channel this device population uses, and replies
+// arrive spread across the whole window — not merely "the mock happened to still be on the right
+// channel". call_log() (not freq_history()) is what can show this: it is the interleaved
+// wait/hop call order, so it can distinguish "no hop between this reception and the next slice"
+// from "a hop happened and the rotation later landed back here".
+TEST(Exchange, CollectBroadcastResponses_DoesNotHopAfterAReception) {
+  MockRadio radio;
+  radio.set_exchange_wait_slice_ms(1);  // force several slices within the window
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  tuning.pairing_discovery_wait_ms = 20;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // One matching reply lands on the very first listen after the pre-loop hop, then silence for
+  // the rest of the window.
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+  radio.queue_rx_silence(5);
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP, tuning.pairing_discovery_wait_ms,
+                                     collected.handler());
+
+  ASSERT_EQ(collected.frames.size(), 1u) << "the reply must have been collected for this test to say anything";
+  ASSERT_GE(radio.call_log().size(), 3u) << "need the reception plus at least one following slice";
+  EXPECT_EQ(radio.call_log()[0], MockRadio::CallKind::kHop) << "exactly one hop precedes the first listen";
+  EXPECT_EQ(radio.call_log()[1], MockRadio::CallKind::kWait) << "the first listen is the one that receives the reply";
+  EXPECT_EQ(radio.call_log()[2], MockRadio::CallKind::kWait)
+      << "no hop between the reception and the next slice: the roll-call stays on a channel that just answered";
+}
+
 // ============================================================================
 // hop_frequency(): the bare CH1→CH2→CH3→CH1 rotation, asserted directly so the skip_freq default
 // argument (used above) can be trusted to reproduce it exactly.
@@ -1495,4 +1566,281 @@ TEST(Exchange, FailureReportKeepsTheInformativeCaptureNotTheLastEmptyOne) {
   EXPECT_TRUE(engine.get_debug().capture_valid)
       << "the exchange received a frame, so its report must not claim the radio heard nothing";
   EXPECT_EQ(engine.get_debug().capture_freq_hz, FREQ_CH2) << "and it should describe the frame actually heard";
+}
+
+// ============================================================================
+// ExchangeEngine::listen() — the shared listen primitive, exercised directly through MockRadio.
+// Not yet called by any of the six wait loops (that porting happens loop by loop in later steps);
+// these tests pin the primitive's own behaviour so a later port can be bisected from it.
+// ============================================================================
+
+namespace {
+
+/// Radio double that reports a controllable, constant preamble/sync state — used to test
+/// linger_on_preamble without depending on a real chip's IRQ timing.
+class SignalDetectRadio : public MockRadio {
+ public:
+  bool is_preamble_detected() override { return preamble_detected_; }
+  void set_preamble_detected(bool v) { preamble_detected_ = v; }
+
+ private:
+  bool preamble_detected_{false};
+};
+
+}  // namespace
+
+TEST(Exchange, Listen_HoldNeverRetunesAndUsesTheWholeWindowAsOneTimeout) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  ListenSpec spec;
+  spec.window_ms = 300;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  auto outcome = engine.listen(spec, packet, frame,
+                               [](const IoFrame *, const RadioRxPacket &) { return ReplyDisposition::ACCEPT; });
+
+  EXPECT_EQ(outcome, ListenOutcome::ACCEPTED);
+  EXPECT_TRUE(radio.freq_history().empty()) << "HOLD_REQUEST_CHANNEL must never retune";
+  ASSERT_EQ(radio.wait_timeouts().size(), 1u) << "HOLD waits the whole remaining window in one call, not slices";
+  expect_window_near(radio.wait_timeouts().front(), spec.window_ms);
+}
+
+TEST(Exchange, Listen_RotateAllChannelsVisitsAllThreeChannels) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  ListenSpec spec;
+  spec.window_ms = 150;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.dwell_ms = 5;
+
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  // Nothing queued: every slice times out, so the loop hops for the whole window.
+  auto outcome = engine.listen(spec, packet, frame,
+                               [](const IoFrame *, const RadioRxPacket &) { return ReplyDisposition::IGNORE; });
+
+  EXPECT_EQ(outcome, ListenOutcome::TIMED_OUT);
+  const auto &history = radio.freq_history();
+  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH1), history.end());
+  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH2), history.end());
+  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH3), history.end());
+}
+
+TEST(Exchange, Listen_RotateSkippingRequestHopsFirstAndNeverLandsOnRequestChannel) {
+  const uint32_t request_channels[] = {FREQ_CH1, FREQ_CH2, FREQ_CH3};
+  for (uint32_t request_freq : request_channels) {
+    MockRadio radio;
+    RadioDriver *radio_ptr = &radio;
+    TuningConfig tuning = make_broadcast_test_tuning();
+    ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+    ListenSpec spec;
+    spec.window_ms = 20;
+    spec.policy = ListenPolicy::ROTATE_SKIPPING_REQUEST;
+    spec.request_freq = request_freq;
+    spec.dwell_ms = 1;  // force several iterations within the window
+    spec.hop_after_ignored_frame = false;
+
+    RadioRxPacket packet{};
+    IoFrame frame{};
+    engine.listen(spec, packet, frame, [](const IoFrame *, const RadioRxPacket &) { return ReplyDisposition::IGNORE; });
+
+    ASSERT_FALSE(radio.call_log().empty());
+    EXPECT_EQ(radio.call_log().front(), MockRadio::CallKind::kHop)
+        << "request_freq=" << request_freq << ": must retune before the first listen";
+    for (uint32_t visited : radio.freq_history()) {
+      EXPECT_NE(visited, request_freq) << "request_freq=" << request_freq << ": must never land on it";
+    }
+  }
+}
+
+TEST(Exchange, Listen_AcceptStopsImmediately) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));  // must never be consumed
+
+  ListenSpec spec;
+  spec.window_ms = 300;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+
+  int calls = 0;
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  auto outcome = engine.listen(spec, packet, frame, [&](const IoFrame *, const RadioRxPacket &) {
+    calls++;
+    return ReplyDisposition::ACCEPT;
+  });
+
+  EXPECT_EQ(outcome, ListenOutcome::ACCEPTED);
+  EXPECT_EQ(calls, 1) << "ACCEPT on the first packet must stop the listen before the second is ever read";
+  EXPECT_EQ(frame.cmd, CMD_DISCOVER_SPE_RESP) << "the caller's frame must hold the accepted frame";
+}
+
+TEST(Exchange, Listen_AbortStopsImmediatelyAndIsDistinguishableFromAccept) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  ListenSpec spec;
+  spec.window_ms = 300;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  auto outcome = engine.listen(spec, packet, frame,
+                               [](const IoFrame *, const RadioRxPacket &) { return ReplyDisposition::ABORT; });
+
+  EXPECT_EQ(outcome, ListenOutcome::ABORTED);
+  EXPECT_NE(outcome, ListenOutcome::ACCEPTED);
+}
+
+TEST(Exchange, Listen_IgnoreRunsToDeadline) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  ListenSpec spec;
+  spec.window_ms = 300;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+
+  int calls = 0;
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  auto outcome = engine.listen(spec, packet, frame, [&](const IoFrame *, const RadioRxPacket &) {
+    calls++;
+    return ReplyDisposition::IGNORE;
+  });
+
+  EXPECT_EQ(outcome, ListenOutcome::TIMED_OUT) << "an always-IGNORE handler must run the listen to the deadline";
+  EXPECT_EQ(calls, 1) << "the one queued packet was still handed to the handler on the way to timing out";
+}
+
+TEST(Exchange, Listen_UnparsablePacketReachesHandlerWithNullParsed) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // Shorter than FRAME_MIN_SIZE: parse() must reject it outright.
+  RadioRxPacket garbage{};
+  garbage.len = 4;
+  radio.queue_rx(garbage);
+
+  ListenSpec spec;
+  spec.window_ms = 300;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+
+  bool saw_null_parsed = false;
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  auto outcome = engine.listen(spec, packet, frame, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
+    saw_null_parsed = parsed == nullptr;
+    EXPECT_EQ(pkt.len, 4u) << "the raw packet must still reach the handler even though it didn't parse";
+    return ReplyDisposition::ACCEPT;
+  });
+
+  EXPECT_EQ(outcome, ListenOutcome::ACCEPTED);
+  EXPECT_TRUE(saw_null_parsed) << "a packet that fails parse() must reach the handler with parsed == nullptr";
+}
+
+TEST(Exchange, Listen_HopAfterIgnoredFrameFalseStaysPutAfterAReception) {
+  MockRadio radio;
+  radio.set_exchange_wait_slice_ms(1);
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+  radio.queue_rx_silence(5);
+
+  ListenSpec spec;
+  spec.window_ms = 20;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.dwell_ms = 1;
+  spec.hop_after_ignored_frame = false;
+
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  engine.listen(spec, packet, frame, [](const IoFrame *, const RadioRxPacket &) { return ReplyDisposition::IGNORE; });
+
+  ASSERT_GE(radio.call_log().size(), 2u) << "need the reception plus at least one following slice";
+  EXPECT_EQ(radio.call_log()[0], MockRadio::CallKind::kWait) << "ROTATE_ALL_CHANNELS starts listening immediately";
+  EXPECT_EQ(radio.call_log()[1], MockRadio::CallKind::kWait)
+      << "hop_after_ignored_frame=false: no hop between the reception and the next slice";
+}
+
+TEST(Exchange, Listen_LingerOnPreambleUsesLingerDwellAndSuppressesHopping) {
+  SignalDetectRadio radio;
+  radio.set_preamble_detected(true);  // asserted throughout; nothing is ever received
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  ListenSpec spec;
+  spec.window_ms = 150;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.dwell_ms = 5;
+  spec.linger_on_preamble = true;
+  spec.linger_dwell_ms = 15;
+
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  auto outcome = engine.listen(spec, packet, frame,
+                               [](const IoFrame *, const RadioRxPacket &) { return ReplyDisposition::IGNORE; });
+
+  EXPECT_EQ(outcome, ListenOutcome::TIMED_OUT);
+  EXPECT_TRUE(radio.freq_history().empty()) << "the preamble guard must suppress every hop for the whole window";
+
+  // Same clamped-tail caveat as the pairing-engine version of this property: walk pairs only as
+  // long as both timeouts come through unclamped by the window's edge.
+  const auto &timeouts = radio.wait_timeouts();
+  size_t canonical_pairs = 0;
+  for (size_t i = 0; i + 1 < timeouts.size(); i += 2) {
+    if (timeouts[i] != spec.dwell_ms || timeouts[i + 1] != spec.linger_dwell_ms)
+      break;
+    canonical_pairs++;
+  }
+  EXPECT_GE(canonical_pairs, 4u) << "need several unclamped dwell/extension pairs to prove the alternation";
+}
+
+TEST(Exchange, Listen_OnHopFiresExactlyOncePerHop) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  ListenSpec spec;
+  spec.window_ms = 150;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.dwell_ms = 5;
+  int hop_calls = 0;
+  spec.on_hop = [&]() { hop_calls++; };
+
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  engine.listen(spec, packet, frame, [](const IoFrame *, const RadioRxPacket &) { return ReplyDisposition::IGNORE; });
+
+  ASSERT_FALSE(radio.freq_history().empty());
+  EXPECT_EQ(static_cast<size_t>(hop_calls), radio.freq_history().size())
+      << "on_hop must fire exactly once per change_frequency() call, no more and no less";
 }

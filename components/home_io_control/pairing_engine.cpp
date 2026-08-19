@@ -18,7 +18,6 @@
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
-#include <algorithm>
 #include <cinttypes>
 #include <cstring>
 
@@ -76,46 +75,33 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
 decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_response_(uint32_t timeout_ms,
                                                                                    RadioRxPacket &packet,
                                                                                    IoFrame &response_frame) {
-  const uint32_t hop_slice_ms = radio_()->discovery_hop_slice_ms(*tuning_);
+  // A short extension wait, not another full per-channel dwell: on SX1276 it is longer than the
+  // dwell (15 vs 5 ms), on SX1262/LR1121 far shorter (15 vs 200 ms), so it is sized to a frame's
+  // air time rather than to a hop.
   static constexpr uint32_t PREAMBLE_DWELL_MS = 15;
 
-  auto try_accept = [&]() {
-    if (!parse(packet.data, packet.len, response_frame))
-      return false;
-    const bool accepted = decisions::classify_pairing_discovery_response(response_frame, node_id_) ==
-                          decisions::PairingDiscoveryDisposition::ACCEPT;
-    this->record_discovery_rx_telemetry_(response_frame, accepted, radio_()->get_last_capture().rssi_dbm);
-    return accepted;
-  };
+  ListenSpec spec;
+  spec.window_ms = timeout_ms;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.dwell_ms = radio_()->discovery_hop_slice_ms(*tuning_);
+  spec.linger_on_preamble = true;
+  spec.linger_dwell_ms = PREAMBLE_DWELL_MS;
+  spec.on_hop = [this]() { this->telemetry_.record_hop(); };
 
   bool saw_traffic = false;
-  const uint32_t deadline = millis() + timeout_ms;
-  while ((int32_t) (deadline - millis()) > 0) {
-    const uint32_t slice = std::min((uint32_t) (deadline - millis()), hop_slice_ms);
-    if (radio_()->wait_for_packet(packet, slice)) {
-      saw_traffic = true;
-      if (try_accept())
-        return decisions::PairingDiscoveryDisposition::ACCEPT;
-      if ((int32_t) (deadline - millis()) > 0 && !radio_()->is_preamble_detected() && !radio_()->is_sync_detected()) {
-        engine_.hop_frequency();
-        this->telemetry_.record_hop();
-      }
-      continue;
-    }
-    if ((int32_t) (deadline - millis()) <= 0)
-      break;
-    if (!radio_()->is_preamble_detected() && !radio_()->is_sync_detected()) {
-      engine_.hop_frequency();
-      this->telemetry_.record_hop();
-      continue;
-    }
-    const uint32_t ext = std::min((uint32_t) (deadline - millis()), PREAMBLE_DWELL_MS);
-    if (radio_()->wait_for_packet(packet, ext)) {
-      saw_traffic = true;
-      if (try_accept())
-        return decisions::PairingDiscoveryDisposition::ACCEPT;
-    }
-  }
+  auto outcome =
+      engine_.listen(spec, packet, response_frame, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
+        saw_traffic = true;
+        if (parsed == nullptr)
+          return ReplyDisposition::IGNORE;
+        const bool accepted = decisions::classify_pairing_discovery_response(*parsed, node_id_) ==
+                              decisions::PairingDiscoveryDisposition::ACCEPT;
+        this->record_discovery_rx_telemetry_(*parsed, accepted, radio_()->get_last_capture().rssi_dbm);
+        return accepted ? ReplyDisposition::ACCEPT : ReplyDisposition::IGNORE;
+      });
+
+  if (outcome == ListenOutcome::ACCEPTED)
+    return decisions::PairingDiscoveryDisposition::ACCEPT;
   return saw_traffic ? decisions::PairingDiscoveryDisposition::INVALID
                      : decisions::PairingDiscoveryDisposition::NO_RESPONSE;
 }
@@ -126,32 +112,42 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
 /// challenge (0x3C). Some devices skip the challenge and send 0x33 directly —
 /// indicating immediate key acceptance (observed mostly when the controller's
 /// TX→RX turnaround is slow enough that the 0x3C is missed). Both are accepted.
+///
+/// Uses `ExchangeEngine::listen()` with `ListenPolicy::HOLD_REQUEST_CHANNEL`: this is a unicast
+/// reply to a unicast request (the 0x31 key-init), and every measured unicast pairing reply came
+/// back on the request channel, so there is nothing here to hop for — same reasoning as
+/// `wait_for_key_confirm_()`. This loop runs on all three chips (it is called before the
+/// `has_fast_tx_rx_turnaround()` branch in `run_key_exchange_phase_()`), unlike the dedicated
+/// confirm wait, which only slow-turnaround radios reach.
 bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet, IoFrame &challenge_frame,
                                             const uint8_t device_node_id[NODE_ID_SIZE]) {
+  ListenSpec spec;
+  spec.window_ms = timeout_ms;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+
   bool saw_traffic = false;
-  const uint32_t deadline = millis() + timeout_ms;
-  while ((int32_t) (deadline - millis()) > 0) {
-    const uint32_t remaining_ms = deadline - millis();
-    const uint32_t slice = decisions::response_wait_slice_ms(remaining_ms);
-    if (!radio_()->wait_for_packet(packet, slice))
-      continue;
-    saw_traffic = true;
-    if (!parse(packet.data, packet.len, challenge_frame))
-      continue;
-    const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
-    if (challenge_frame.cmd == CMD_KEY_CONFIRM && memcmp(challenge_frame.src, device_node_id, NODE_ID_SIZE) == 0 &&
-        memcmp(challenge_frame.dst, node_id_, NODE_ID_SIZE) == 0) {
-      this->telemetry_.record_rx(challenge_frame, rssi);
-      return true;
-    }
-    if (decisions::classify_pairing_key_challenge(challenge_frame, device_node_id, node_id_) !=
-        decisions::PairingKeyChallengeDisposition::ACCEPT) {
-      this->telemetry_.record_rx_reject(challenge_frame, rssi);
-      continue;
-    }
-    this->telemetry_.record_rx(challenge_frame, rssi);
+  auto outcome =
+      engine_.listen(spec, packet, challenge_frame, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
+        saw_traffic = true;
+        if (parsed == nullptr)
+          return ReplyDisposition::IGNORE;
+        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+        if (parsed->cmd == CMD_KEY_CONFIRM && memcmp(parsed->src, device_node_id, NODE_ID_SIZE) == 0 &&
+            memcmp(parsed->dst, node_id_, NODE_ID_SIZE) == 0) {
+          this->telemetry_.record_rx(*parsed, rssi);
+          return ReplyDisposition::ACCEPT;
+        }
+        if (decisions::classify_pairing_key_challenge(*parsed, device_node_id, node_id_) !=
+            decisions::PairingKeyChallengeDisposition::ACCEPT) {
+          this->telemetry_.record_rx_reject(*parsed, rssi);
+          return ReplyDisposition::IGNORE;
+        }
+        this->telemetry_.record_rx(*parsed, rssi);
+        return ReplyDisposition::ACCEPT;
+      });
+
+  if (outcome == ListenOutcome::ACCEPTED)
     return true;
-  }
   ESP_LOGW(TAG, saw_traffic ? "Key exchange: no valid challenge received" : "Key exchange: no challenge received");
   return false;
 }
@@ -161,11 +157,10 @@ bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &
 /// Only reached on slow-turnaround radios (`RadioDriver::has_fast_tx_rx_turnaround() == false`,
 /// i.e. SX1262/LR1121): fast-turnaround radios (SX1276) catch the 0x33 through the standard
 /// `ExchangeEngine::send_and_receive_()` / `wait_for_first_response_()` path instead and never
-/// call this function — see `run_key_exchange_phase_()`. Uses a dedicated wait loop (does not
-/// hop, see below) and the driver's response_preamble() (drivers whose TX waveform needs more
-/// lock-on margin return a longer preamble). Retries up to EXCHANGE_RETRY_COUNT times on
-/// timeout.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+/// call this function — see `run_key_exchange_phase_()`. Uses `ExchangeEngine::listen()` with
+/// `ListenPolicy::HOLD_REQUEST_CHANNEL` (does not hop, does not slice, see below) and the driver's
+/// response_preamble() (drivers whose TX waveform needs more lock-on margin return a longer
+/// preamble). Retries up to EXCHANGE_RETRY_COUNT times on timeout.
 bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
     if (tries > 0) {
@@ -175,53 +170,59 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
     if (!engine_.transmit_frame(context.req, FREQ_CH2, radio_()->response_preamble()))
       continue;
 
-    const uint32_t deadline = millis() + PAIRING_KEY_CONFIRM_TIMEOUT_MS;
+    // Deliberately holds the request channel rather than hopping: a key confirm is a unicast
+    // reply to a unicast request, and every measured unicast pairing reply — the 0x33 in the
+    // corpus pairing captures on all three chips, every 0x3C, field-logged 0xFE error replies —
+    // came back on the channel the request went out on. Only replies to *broadcasts* are measured
+    // off the request channel. So there is nothing here to hop for, and hopping loses any device
+    // that answers later than one slice (real devices answer some requests at 246+ ms). The
+    // challenge wait above holds still for the same reason; the broadcast roll-call is the
+    // opposite case and uses ListenPolicy::ROTATE_SKIPPING_REQUEST instead.
+    //
+    // HOLD also does not slice the wait: slicing exists so a hopping loop gets a chance to hop
+    // between dwells, and to keep the watchdog fed during a long silent wait. Neither applies
+    // here — there is nothing to hop for (above), and wait_for_packet() already feeds the
+    // watchdog internally while it waits. Waiting the full remaining window in one call means
+    // strictly fewer RX re-arm gaps than any slicing would, which matters most on exactly the
+    // radios that reach this loop: has_fast_tx_rx_turnaround() routes fast-turnaround chips
+    // (SX1276) through ExchangeEngine::wait_for_first_response_() instead, so only the
+    // slow-turnaround chips (SX1262, LR1121) — the ones where a re-arm is most expensive — ever
+    // wait here.
+    ListenSpec spec;
+    spec.window_ms = PAIRING_KEY_CONFIRM_TIMEOUT_MS;
+    spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+
     bool saw_any = false;
-    while ((int32_t) (deadline - millis()) > 0) {
-      const uint32_t remaining_ms = deadline - millis();
-      // Deliberately does not hop, unlike discovery's wait: a key confirm is a unicast reply to a
-      // unicast request, and every measured unicast pairing reply — the 0x33 in the corpus pairing
-      // captures on all three chips, every 0x3C, field-logged 0xFE error replies — came back on the
-      // channel the request went out on. Only replies to *broadcasts* are measured off the request
-      // channel. So there is nothing here to hop for, and hopping loses any device that answers
-      // later than one slice (real devices answer some requests at 246+ ms). The challenge wait
-      // above holds still for the same reason; broadcast roll-call is the opposite case and is
-      // handled in ExchangeEngine::collect_broadcast_responses().
-      //
-      // Also deliberately does not slice the wait: slicing exists so a hopping loop gets a chance
-      // to hop between dwells, and to keep the watchdog fed during a long silent wait. Neither
-      // applies here — there is nothing to hop for (above), and wait_for_packet() already feeds
-      // the watchdog internally while it waits. Waiting the full remaining window in one call
-      // means strictly fewer RX re-arm gaps than any slicing would, which matters most on exactly
-      // the radios that reach this loop: has_fast_tx_rx_turnaround() routes fast-turnaround chips
-      // (SX1276) through ExchangeEngine::wait_for_first_response_() instead, so only the
-      // slow-turnaround chips (SX1262, LR1121) — the ones where a re-arm is most expensive — ever
-      // wait here.
-      if (!radio_()->wait_for_packet(context.packet, remaining_ms))
-        continue;
-      saw_any = true;
-      ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, context.packet.len, context.packet.freq_hz);
-      if (!parse(context.packet.data, context.packet.len, context.resp)) {
-        ESP_LOGD(TAG, "Key confirm wait: parse failed");
-        continue;
-      }
-      ESP_LOGD(TAG, "Key confirm wait: parsed cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X", context.resp.cmd,
-               context.resp.src[0], context.resp.src[1], context.resp.src[2], context.resp.dst[0], context.resp.dst[1],
-               context.resp.dst[2]);
-      if (!decisions::frame_matches_exchange_endpoints(context.req, context.resp))
-        continue;
-      const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
-      if (frame_is_key_confirm(context.resp)) {
-        this->telemetry_.record_rx(context.resp, rssi);
-        return true;
-      }
-      this->telemetry_.record_rx_reject(context.resp, rssi);
-      ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
-               command_name(context.resp.cmd), context.resp.cmd);
-      if (context.resp.cmd == CMD_ERROR_RESP && context.resp.data_len > 0)
-        ESP_LOGW(TAG, "Key transfer: error code=0x%02X", context.resp.data[0]);
-      return false;
-    }
+    auto outcome =
+        engine_.listen(spec, context.packet, context.resp, [&](const IoFrame *parsed, const RadioRxPacket &packet) {
+          saw_any = true;
+          ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
+          if (parsed == nullptr) {
+            ESP_LOGD(TAG, "Key confirm wait: parse failed");
+            return ReplyDisposition::IGNORE;
+          }
+          ESP_LOGD(TAG, "Key confirm wait: parsed cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X", parsed->cmd,
+                   parsed->src[0], parsed->src[1], parsed->src[2], parsed->dst[0], parsed->dst[1], parsed->dst[2]);
+          if (!decisions::frame_matches_exchange_endpoints(context.req, *parsed))
+            return ReplyDisposition::IGNORE;
+          const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+          if (frame_is_key_confirm(*parsed)) {
+            this->telemetry_.record_rx(*parsed, rssi);
+            return ReplyDisposition::ACCEPT;
+          }
+          this->telemetry_.record_rx_reject(*parsed, rssi);
+          ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
+                   command_name(parsed->cmd), parsed->cmd);
+          if (parsed->cmd == CMD_ERROR_RESP && parsed->data_len > 0)
+            ESP_LOGW(TAG, "Key transfer: error code=0x%02X", parsed->data[0]);
+          return ReplyDisposition::ABORT;
+        });
+
+    if (outcome == ListenOutcome::ACCEPTED)
+      return true;
+    if (outcome == ListenOutcome::ABORTED)
+      return false;  // An explicit refusal must not spend the remaining retries.
+
     ESP_LOGI(TAG, "Try %d ended: no response for key transfer (0x32) within %" PRIu32 " ms (saw_any=%d)", tries + 1,
              PAIRING_KEY_CONFIRM_TIMEOUT_MS, saw_any);
   }

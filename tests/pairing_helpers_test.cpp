@@ -513,22 +513,6 @@ class SignalDetectRadio : public MockRadio {
 
 }  // anonymous namespace
 
-TEST(PairingHelpers, WaitForDiscoveryResponse_HopsBetweenSlicesWhenIdle) {
-  TestableComponent comp;
-  comp.initialized_ = true;
-  SignalDetectRadio radio;
-  comp.radio_ = &radio;
-  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
-
-  // No packets queued → wait_for_packet returns false each slice, should trigger hops
-  RadioRxPacket out_pkt{};
-  IoFrame out_frame{};
-  auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
-
-  EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
-  EXPECT_GT(radio.freq_history().size(), 0u) << "should hop at least once when no signal detected";
-}
-
 TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenPreambleDetected) {
   TestableComponent comp;
   comp.initialized_ = true;
@@ -584,6 +568,45 @@ TEST(PairingHelpers, WaitForDiscoveryResponseVisitsAllThreeChannels) {
   EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH1), history.end());
   EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH2), history.end());
   EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH3), history.end());
+}
+
+// A preamble/sync detection responds by extending the current dwell a short, fixed amount
+// (PREAMBLE_DWELL_MS = 15 ms) rather than by taking another full per-channel hop-slice dwell.
+// The two differ in both directions depending on chip (15 vs 5 ms on SX1276, 15 vs 200 ms on
+// SX1262/LR1121), so a port that models "preamble detected" as "skip the hop, take another
+// full dwell" is wrong on every chip. wait_timeouts() makes the two indistinguishable-by-count
+// mistake visible: the sequence must alternate hop-slice, 15, hop-slice, 15, … and never repeat
+// the same value twice in a row.
+TEST(PairingHelpers, WaitForDiscoveryResponse_PreambleLingerUsesShortExtensionDwell) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  SignalDetectRadio radio;  // preamble asserted throughout; nothing is ever received
+  radio.set_preamble_detected(true);
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+  auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
+
+  EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
+  EXPECT_TRUE(radio.freq_history().empty()) << "the preamble guard must suppress every hop for the whole window";
+
+  // Walk pairs of (hop-slice, extension) timeouts as long as both come through unclamped. Near
+  // the very end of the window std::min() against the shrinking remaining time clamps the last
+  // one or two entries to less than their canonical value — that is the window closing, not a
+  // different alternation, so it ends the walk without failing the test.
+  const auto &timeouts = radio.wait_timeouts();
+  size_t canonical_pairs = 0;
+  for (size_t i = 0; i + 1 < timeouts.size(); i += 2) {
+    if (timeouts[i] != SX1276_DISCOVERY_HOP_SLICE_MS || timeouts[i + 1] != 15u)
+      break;
+    canonical_pairs++;
+  }
+  EXPECT_GE(canonical_pairs, 4u) << "need several unclamped hop-slice/extension pairs — alternating "
+                                 << SX1276_DISCOVERY_HOP_SLICE_MS << ", 15, " << SX1276_DISCOVERY_HOP_SLICE_MS
+                                 << ", 15, … — to prove this is the short extension wait and not a repeat "
+                                 << "of the same dwell";
 }
 
 // ============================================================================
