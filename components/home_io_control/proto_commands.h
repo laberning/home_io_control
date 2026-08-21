@@ -303,8 +303,8 @@ bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devic
 
 /// @brief Build a 1W remove-controller frame (CMD 0x39) that un-registers this identity from every
 /// device of `target_type` currently in association mode — the un-enroll counterpart to
-/// create_1w_add_controller(), and (per the documented `0x39` → `0x30` flow) also its optional
-/// prelude.
+/// create_1w_add_controller(), and (per the documented `0x39` → `0x30` flow, `linklayer.md:396`)
+/// also the prelude OneWayTransmitter::send_enrollment() fires immediately before it.
 ///
 /// Declared payload (9 bytes), shape matching the reference `_p0x2e` struct: `data[1]=0x00 +
 /// sequence[2] + mac[6]`. **The MAC sits inside the declared payload here** — the opposite

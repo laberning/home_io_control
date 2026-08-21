@@ -43,6 +43,8 @@ struct OneWayControllerIdentity {
   DeviceType io_device_type{DeviceType::UNKNOWN};  ///< Device class this identity commands.
   uint16_t initial_sequence{0};                    ///< Seed for this identity's rolling counter on first use.
   bool node_id_derived{false};                     ///< True when `node_id` was derived rather than configured.
+  bool enrollment_with_mac{
+      false};  ///< Whether the enroll button's 0x30 carries a MAC trailer (`enrollment_with_mac:`).
 
   /// @brief Typed-broadcast destination address this identity transmits to.
   ///

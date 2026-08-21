@@ -154,23 +154,22 @@ class ManagementActions {
   /// @param position Target position 0-100 as a decimal string.
   void api_oneway_set_position(const std::string &controller_id, const std::string &position);
 
-  /// @brief Native API callback: queue a 1W un-enrollment (remove-controller, CMD 0x39) for a
-  /// controller identity.
+  /// @brief Native API callback: queue a standalone 1W un-enrollment (remove-controller, CMD
+  /// 0x39) for a controller identity.
   ///
-  /// The only caller of `0x39` in this codebase (ADR 0006 — a rare rollback path gets an action,
-  /// not a permanent entity) and deliberately not reachable from the "Enroll" button, which sends
-  /// `0x30` alone: keeping this frame behind its own explicitly-named action means it is never a
-  /// hidden side effect of a button labelled "Enroll". Same "queued, not confirmed" framing as
-  /// api_oneway_set_position() — 1W has no reply, so nothing here can ever say a device actually
-  /// forgot this identity.
+  /// The direct caller of `0x39` in this codebase (ADR 0006 — a rare rollback path gets an
+  /// action, not a permanent entity) — the "Enroll" button also fires this same frame, but only
+  /// as the documented prelude immediately before its own `0x30`, never on its own. Same "queued,
+  /// not confirmed" framing as api_oneway_set_position() — 1W has no reply, so nothing here can
+  /// ever say a device actually forgot this identity.
   ///
-  /// @warning **Unconfirmed on real hardware.** An enrolled device has been observed to ignore
-  /// this frame — the hub kept controlling it afterwards. The frame itself matches every real
-  /// captured `0x39` this project holds (payload shape, MAC span), so the most likely explanation
-  /// is the same physical gate enrollment has: a device may only act on `0x39` while its receiver
-  /// is in the 2 s PROG association-mode window, and the failed attempt was fired without it —
-  /// untested, not ruled out. Do not treat this action as a confirmed rollback until it is
-  /// retested with that gesture.
+  /// @warning **Unconfirmed standalone on real hardware.** An enrolled device has been observed
+  /// to ignore this frame sent alone — the hub kept controlling it afterwards. The frame itself
+  /// matches every real captured `0x39` this project holds (payload shape, MAC span), so the most
+  /// likely explanation is the same physical gate enrollment has: a device may only act on `0x39`
+  /// while its receiver is in the 2 s PROG association-mode window, and the failed attempt was
+  /// fired without it — untested, not ruled out. Do not treat this action as a confirmed rollback
+  /// until it is retested with that gesture.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   void api_oneway_remove_controller(const std::string &controller_id);
 

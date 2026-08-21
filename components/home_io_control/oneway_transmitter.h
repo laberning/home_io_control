@@ -131,29 +131,39 @@ class OneWayTransmitter {
   bool send_burst(const IoFrame &frame);
 
   /// @brief Register this identity as a controller on every device of its class currently in
-  /// association mode (CMD 0x30, no MAC trailer).
+  /// association mode: `0x39` (remove, self-directed) immediately followed by `0x30` (add, no MAC
+  /// trailer) — the documented 1W pairing handshake.
   ///
-  /// **`with_mac=false`** — see create_1w_add_controller()'s `@warning` (proto_commands.h): most
-  /// real hardware captures this project holds carry no MAC trailer, and this is the shape used
-  /// by default. Real hardware has separately been shown to accept the MAC-bearing form
-  /// (the published documentation vector's own shape) too — either is a safe choice here.
+  /// **The `0x30` half's MAC trailer is configurable** via the identity's `enrollment_with_mac:`
+  /// (default `false`, i.e. no MAC at all — not "MAC inline", there is no inline form for this
+  /// command, see create_1w_add_controller()'s `@warning`, proto_commands.h). Most real hardware
+  /// captures this project holds carry no MAC, but a real Izymo has separately been shown to
+  /// accept the MAC-bearing form too (the published documentation vector's own shape) — untested
+  /// manufacturers may need either.
   ///
-  /// Sends `0x30` alone — never preceded by `0x39` (see send_unenrollment()). `0x30` alone is the
-  /// least-destructive option (registering does not require clearing what a device already
-  /// holds), so it is the only thing a press of "Enroll" ever does.
+  /// **Sends `0x39` then `0x30`, back to back, one burst each** —
+  /// `reference/iown-homecontrol/docs/linklayer.md:396`'s "1W Discovery" sequence diagram, matched
+  /// by a real Smoove capture landing the two 128 ms apart within one gesture
+  /// (`tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml`; see also
+  /// `analysis/completed/oneway_1w_support_plan.md` Step 13). This `0x39` carries only this
+  /// identity's own `src` address — nothing on the wire lets it name a different controller — so
+  /// it can only clear this identity's own prior entry, never someone else's; ADR 0026's
+  /// additive-registration property is unaffected by sending it here.
   /// @param controller_id YAML handle of the controller identity to register.
-  /// @return true if at least one copy reached the radio.
+  /// @return true if the `0x30` half reached the radio (the credential that actually registers
+  ///         this identity). A failed `0x39` prelude only logs a warning and does not block it.
   bool send_enrollment(const std::string &controller_id);
 
   /// @brief Un-register this identity from every device of its class currently in association
-  /// mode (CMD 0x39) — the rollback path for send_enrollment(), and the only caller of `0x39`.
+  /// mode (CMD 0x39) alone — also the prelude send_enrollment() fires before its own `0x30`.
   ///
-  /// Never sent as an automatic prelude to send_enrollment(): keeping it behind an explicitly-named
-  /// action means it is never a hidden side effect of a button labelled "Enroll".
+  /// Reachable directly through the explicitly-named `oneway_remove_controller` native API
+  /// action, for un-enrolling without immediately re-enrolling.
   ///
-  /// @warning **Unconfirmed on real hardware.** `0x39` has had no observable effect on this
-  /// project's test hardware; the leading hypothesis is that it needs the same association-mode
-  /// window enrollment does. See ADR 0026 § Consequences.
+  /// @warning **Unconfirmed standalone on real hardware.** Firing `0x39` alone (outside the
+  /// enrollment handshake) has had no observable effect on this project's test hardware; the
+  /// leading hypothesis is that it needs the same association-mode window enrollment does. See
+  /// ADR 0026 § Consequences.
   /// @param controller_id YAML handle of the controller identity to remove.
   /// @return true if at least one copy reached the radio.
   bool send_unenrollment(const std::string &controller_id);

@@ -11,10 +11,10 @@
 /// which is exactly how a device-bound switch that merely forgot a key once became the
 /// security-sensitive one instead of failing validation.
 ///
-/// A press sends `0x30` alone (OneWayTransmitter::send_enrollment()) — never a `0x39` prelude.
-/// The receiver's half of enrollment is a physical 2s PROG hold on the actuator itself; that
-/// physical requirement is the real interlock against a stray or unintended enrollment, not a
-/// software arming switch — see ADR 0026.
+/// A press sends `0x39` then `0x30`, back to back (OneWayTransmitter::send_enrollment()) — the
+/// documented 1W pairing handshake. The receiver's half of enrollment is a physical 2s PROG hold
+/// on the actuator itself; that physical requirement is the real interlock against a stray or
+/// unintended enrollment, not a software arming switch — see ADR 0026.
 
 #include <string>
 

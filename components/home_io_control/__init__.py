@@ -81,6 +81,10 @@ CONF_COMMANDS = "commands"
 # gate -- adding or removing this line and reflashing is the enrollment feature's entire
 # lifecycle, same shape as accept_foreign_pairing/recover_oneway_key.
 CONF_ENROLLMENT = "enrollment"
+# Whether the "Enroll 1W Controller" button's 0x30 carries a trailing MAC. Only meaningful with
+# enrollment: true -- see ONEWAY_CONTROLLER_SCHEMA's own comment and create_1w_add_controller()'s
+# @warning (proto_commands.h) for why real hardware disagrees on this byte.
+CONF_ENROLLMENT_WITH_MAC = "enrollment_with_mac"
 # Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"
@@ -547,6 +551,13 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # The build flag for this identity's "Enroll 1W Controller" button. See CONF_ENROLLMENT's
         # own comment for the lifecycle this presence/absence gates.
         cv.Optional(CONF_ENROLLMENT, default=False): cv.boolean,
+        # Whether the enroll button's 0x30 carries a 6-byte MAC trailer. Real hardware disagrees:
+        # most captures this project holds carry no MAC at all (default here, matching real Somfy
+        # traffic), but a real Izymo has separately been shown to accept the MAC-bearing form too
+        # (the published documentation vector's own shape) -- see create_1w_add_controller()'s
+        # @warning (proto_commands.h). Untested manufacturers (e.g. Velux) may require one shape
+        # or the other; this exists so trying the other one needs a YAML edit, not a code change.
+        cv.Optional(CONF_ENROLLMENT_WITH_MAC, default=False): cv.boolean,
     }
 )
 
@@ -600,6 +611,7 @@ def oneway_controller_expression(identity, hub_node_id):
             f"(0x{identity[CONF_IO_DEVICE_TYPE]:02X})",
             f".initial_sequence = 0x{identity[CONF_INITIAL_SEQUENCE]:04X}",
             f".node_id_derived = {'true' if derived else 'false'}",
+            f".enrollment_with_mac = {'true' if identity[CONF_ENROLLMENT_WITH_MAC] else 'false'}",
         ]
     )
     if derived:
@@ -719,26 +731,6 @@ def _validate_oneway_controllers(config):
                 is_declaration=True,
                 type=IOHomeOneWayEnrollButton,
             )
-
-    # Two identities of the same class transmitting from the hub are byte-identical on air apart
-    # from their source address, so whether they are separable at all depends on whether devices
-    # discriminate by source node -- an open question. Sharing a class is therefore allowed but
-    # worth saying out loud, because the symptom (both sets of devices reacting to either
-    # identity) has no other diagnostic.
-    classes_seen = {}
-    for identity in identities:
-        device_type = identity[CONF_IO_DEVICE_TYPE]
-        if device_type in classes_seen:
-            _LOGGER.warning(
-                "oneway_controllers '%s' and '%s' both address device class '%s'. 1W is "
-                "class-addressed, so unless your devices discriminate by source address, every "
-                "device of that class will act on commands from both.",
-                classes_seen[device_type],
-                identity[CONF_ID],
-                device_type,
-            )
-        else:
-            classes_seen[device_type] = identity[CONF_ID]
 
     return config
 

@@ -284,20 +284,21 @@ class IOHomeControlComponent : public Component,
     }
   }
 
-  /// @brief Queue a 1W enrollment (add-controller) for the given controller identity — the
-  /// enroll button's press handler.
+  /// @brief Queue a 1W enrollment for the given controller identity — the enroll button's press
+  /// handler.
   ///
-  /// Sends `0x30` alone, no `0x39` prelude — see OneWayTransmitter::send_enrollment().
+  /// Sends `0x39` (self-directed) then `0x30`, back to back — see
+  /// OneWayTransmitter::send_enrollment().
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   void send_oneway_enroll(const std::string &controller_id) { this->op_queue_.enqueue_oneway_enroll(controller_id); }
 
-  /// @brief Queue a 1W un-enrollment (remove-controller) for the given controller identity — the
-  /// only caller of `0x39`, reached only through the explicitly-named `oneway_remove_controller`
-  /// native API action, never automatically.
+  /// @brief Queue a standalone 1W un-enrollment (remove-controller) for the given controller
+  /// identity, reached only through the explicitly-named `oneway_remove_controller` native API
+  /// action — the same `0x39` send_oneway_enroll() also fires as its own prelude, but here alone.
   ///
-  /// @warning **Unconfirmed on real hardware.** `0x39` has had no observable effect on this
-  /// project's test hardware; the leading hypothesis is that it needs the same association-mode
-  /// window enrollment does. See ADR 0026 § Consequences.
+  /// @warning **Unconfirmed standalone on real hardware.** Firing `0x39` alone has had no
+  /// observable effect on this project's test hardware; the leading hypothesis is that it needs
+  /// the same association-mode window enrollment does. See ADR 0026 § Consequences.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   void send_oneway_unenroll(const std::string &controller_id) {
     this->op_queue_.enqueue_oneway_unenroll(controller_id);

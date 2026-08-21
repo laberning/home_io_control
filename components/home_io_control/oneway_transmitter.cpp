@@ -103,11 +103,32 @@ bool OneWayTransmitter::send_position(const std::string &controller_id, uint8_t 
 }
 
 bool OneWayTransmitter::send_enrollment(const std::string &controller_id) {
+  // The documented 1W pairing handshake (reference/iown-homecontrol/docs/linklayer.md:396, "1W
+  // Discovery") is `0x39` immediately followed by `0x30`, both from the same controller, back to
+  // back within one gesture -- a real Smoove capture landed them 128 ms apart, same burst (see
+  // tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml and
+  // analysis/completed/oneway_1w_support_plan.md Step 13). `0x39` here carries only this
+  // identity's own `src` address, so on the wire it can only mean "clear my own prior entry
+  // before I re-register" -- it cannot name or displace a different controller. Sending it right
+  // before `0x30` clears a stale slot from an earlier enrollment attempt under this identity,
+  // which a bare `0x30` re-add is not guaranteed to overwrite.
+  const bool removed = this->send_(
+      controller_id,
+      [](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
+        return create_1w_remove_controller(frame, identity.node_id, identity.io_device_type, sequence,
+                                           identity.system_key);
+      },
+      "UNENROLL");
+  if (!removed) {
+    ESP_LOGW(TAG, "1W tx: enrollment's 0x39 prelude did not reach the radio for '%s' -- trying 0x30 anyway",
+             controller_id.c_str());
+  }
+
   return this->send_(
       controller_id,
       [](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
         return create_1w_add_controller(frame, identity.node_id, identity.io_device_type, identity.manufacturer,
-                                        sequence, identity.system_key, /*with_mac=*/false);
+                                        sequence, identity.system_key, identity.enrollment_with_mac);
       },
       "ENROLL");
 }

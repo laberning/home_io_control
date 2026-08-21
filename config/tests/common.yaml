@@ -76,6 +76,9 @@ home_io_control:
       # Controller" button compiles — manufacturer: above is already set, which enrollment
       # requires.
       enrollment: true
+      # Exercises the enrollment_with_mac: true schema/codegen path — the default (false) is
+      # already covered by awning_remote above having no enrollment: true at all.
+      enrollment_with_mac: true
 
 # At least one entity of each type is needed to ensure all platform code compiles
 cover:

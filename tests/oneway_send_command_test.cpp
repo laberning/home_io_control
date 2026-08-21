@@ -208,12 +208,14 @@ TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
 // ============================================================================
 // OneWayTransmitter::send_enrollment / send_unenrollment
 // ============================================================================
-// Same seam as send_command()/send_position() above -- one sequence per press, per-identity
-// keys, unknown-identity refusal -- plus two properties specific to enrollment: with_mac=false
-// (see create_1w_add_controller()'s @warning, proto_commands.h) and an explicit "ENROLL"/
-// "UNENROLL" report label, since decode_1w_frame() cannot read an intent out of a 0x30/0x39.
+// Same seam as send_command()/send_position() above -- one sequence per burst, per-identity
+// keys, unknown-identity refusal -- plus properties specific to enrollment: it is two bursts back
+// to back (0x39 self-directed remove, then 0x30 add -- the documented 1W pairing handshake, see
+// linklayer.md:396 and ADR 0026), with_mac=false on the 0x30 half (see create_1w_add_controller()'s
+// @warning, proto_commands.h), and explicit "ENROLL"/"UNENROLL" report labels, since
+// decode_1w_frame() cannot read an intent out of a 0x30/0x39.
 
-TEST_F(OneWaySendCommandTest, EnrollmentConsumesExactlyOneSequence) {
+TEST_F(OneWaySendCommandTest, EnrollmentConsumesTwoSequencesOneEach) {
   BurstRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn());
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 500));
@@ -221,11 +223,19 @@ TEST_F(OneWaySendCommandTest, EnrollmentConsumesExactlyOneSequence) {
 
   ASSERT_TRUE(transmitter.send_enrollment("awning"));
 
-  ASSERT_EQ(recorder.frames.size(), ONEWAY_BURST_REPEATS);
-  for (const auto &frame : recorder.frames) {
+  ASSERT_EQ(recorder.frames.size(), 2 * ONEWAY_BURST_REPEATS) << "0x39 burst then 0x30 burst, back to back";
+  for (uint8_t i = 0; i < ONEWAY_BURST_REPEATS; i++) {
+    const auto &frame = recorder.frames[i];
+    EXPECT_EQ(frame.cmd, CMD_ONEWAY_REMOVE);
+    const uint16_t sequence = static_cast<uint16_t>((frame.data[1] << 8) | frame.data[2]);
+    EXPECT_EQ(sequence, 500) << "every copy of the 0x39 prelude must carry the same sequence";
+  }
+  for (uint8_t i = ONEWAY_BURST_REPEATS; i < 2 * ONEWAY_BURST_REPEATS; i++) {
+    const auto &frame = recorder.frames[i];
     ASSERT_EQ(frame.data_len, 20) << "0x30 declared payload is enc_key(16)+man(1)+data(1)+seq(2)";
+    EXPECT_EQ(frame.cmd, CMD_ONEWAY_ADD_CONTROLLER);
     const uint16_t sequence = static_cast<uint16_t>((frame.data[18] << 8) | frame.data[19]);
-    EXPECT_EQ(sequence, 500) << "every copy of one enrollment must carry the same sequence";
+    EXPECT_EQ(sequence, 501) << "the 0x30 half consumes the next sequence after the 0x39 prelude";
   }
 }
 
@@ -239,15 +249,20 @@ TEST_F(OneWaySendCommandTest, EnrollmentAndUnenrollmentShareTheCommandSequenceCo
   ASSERT_TRUE(transmitter.send_enrollment("awning"));
   ASSERT_TRUE(transmitter.send_unenrollment("awning"));
 
-  const uint16_t enroll_seq = static_cast<uint16_t>((recorder.frames[ONEWAY_BURST_REPEATS].data[18] << 8) |
-                                                    recorder.frames[ONEWAY_BURST_REPEATS].data[19]);
-  const uint16_t unenroll_seq = static_cast<uint16_t>((recorder.frames[ONEWAY_BURST_REPEATS * 2].data[1] << 8) |
-                                                      recorder.frames[ONEWAY_BURST_REPEATS * 2].data[2]);
-  EXPECT_EQ(enroll_seq, 501) << "one counter per node, shared across every command type it sends";
-  EXPECT_EQ(unenroll_seq, 502);
+  // Layout: [0..3] STOP (seq 500), [4..7] enrollment's 0x39 prelude (seq 501),
+  // [8..11] enrollment's 0x30 (seq 502), [12..15] the standalone 0x39 (seq 503).
+  const uint16_t enroll_prelude_seq = static_cast<uint16_t>((recorder.frames[ONEWAY_BURST_REPEATS].data[1] << 8) |
+                                                            recorder.frames[ONEWAY_BURST_REPEATS].data[2]);
+  const uint16_t enroll_seq = static_cast<uint16_t>((recorder.frames[ONEWAY_BURST_REPEATS * 2].data[18] << 8) |
+                                                    recorder.frames[ONEWAY_BURST_REPEATS * 2].data[19]);
+  const uint16_t unenroll_seq = static_cast<uint16_t>((recorder.frames[ONEWAY_BURST_REPEATS * 3].data[1] << 8) |
+                                                      recorder.frames[ONEWAY_BURST_REPEATS * 3].data[2]);
+  EXPECT_EQ(enroll_prelude_seq, 501) << "one counter per node, shared across every command type it sends";
+  EXPECT_EQ(enroll_seq, 502);
+  EXPECT_EQ(unenroll_seq, 503);
 }
 
-TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailer) {
+TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailerOnTheAddHalf) {
   // with_mac=false: every real hardware capture this project holds carries no MAC trailer, unlike
   // the published documentation vector create_1w_add_controller() defaults to. The enroll button
   // is the one caller that transmits to real hardware, so it must not use that default.
@@ -258,11 +273,29 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailer) {
 
   ASSERT_TRUE(transmitter.send_enrollment("awning"));
 
-  EXPECT_FALSE(recorder.frames[0].has_mac) << "enrollment must use the no-MAC shape, not the builder's own default";
-  EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_ADD_CONTROLLER);
+  const auto &add_frame = recorder.frames[ONEWAY_BURST_REPEATS];
+  EXPECT_FALSE(add_frame.has_mac) << "enrollment must use the no-MAC shape, not the builder's own default";
+  EXPECT_EQ(add_frame.cmd, CMD_ONEWAY_ADD_CONTROLLER);
 }
 
-TEST_F(OneWaySendCommandTest, EnrollmentMatchesTheBuilderDirectly) {
+TEST_F(OneWaySendCommandTest, EnrollmentSendsRemoveThenAddBackToBack) {
+  // The documented 1W pairing handshake (linklayer.md:396, "1W Discovery"): 0x39 then 0x30, both
+  // from the same identity, one burst each, no gap beyond the bursts' own airtime.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("awning"));
+
+  ASSERT_EQ(recorder.frames.size(), 2 * ONEWAY_BURST_REPEATS);
+  EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_REMOVE);
+  EXPECT_EQ(recorder.frames[ONEWAY_BURST_REPEATS].cmd, CMD_ONEWAY_ADD_CONTROLLER);
+  for (const auto &frame : recorder.frames)
+    EXPECT_EQ(0, memcmp(frame.src, OWN_NET_NODE, NODE_ID_SIZE)) << "both halves transmit as the same identity";
+}
+
+TEST_F(OneWaySendCommandTest, EnrollmentMatchesTheBuildersDirectly) {
   BurstRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn());
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 7));
@@ -270,12 +303,35 @@ TEST_F(OneWaySendCommandTest, EnrollmentMatchesTheBuilderDirectly) {
 
   ASSERT_TRUE(transmitter.send_enrollment("awning"));
 
-  IoFrame expected{};
   uint8_t key[AES_KEY_SIZE];
   memset(key, 0x11, AES_KEY_SIZE);
-  ASSERT_TRUE(create_1w_add_controller(expected, OWN_NET_NODE, DeviceType::AWNING, 0, 7, key, /*with_mac=*/false));
-  EXPECT_EQ(0, memcmp(recorder.frames[0].data, expected.data, expected.data_len))
-      << "send_enrollment() must add nothing to what the builder produces";
+
+  IoFrame expected_remove{};
+  ASSERT_TRUE(create_1w_remove_controller(expected_remove, OWN_NET_NODE, DeviceType::AWNING, 7, key));
+  EXPECT_EQ(0, memcmp(recorder.frames[0].data, expected_remove.data, expected_remove.data_len))
+      << "the 0x39 prelude must match create_1w_remove_controller() at the sequence it actually consumed";
+
+  IoFrame expected_add{};
+  ASSERT_TRUE(create_1w_add_controller(expected_add, OWN_NET_NODE, DeviceType::AWNING, 0, 8, key, /*with_mac=*/false));
+  EXPECT_EQ(0, memcmp(recorder.frames[ONEWAY_BURST_REPEATS].data, expected_add.data, expected_add.data_len))
+      << "the 0x30 half must match create_1w_add_controller() at the sequence it actually consumed";
+}
+
+TEST_F(OneWaySendCommandTest, EnrollmentWithMacConfiguredTrueAddsTheTrailer) {
+  // enrollment_with_mac: true -- the YAML escape hatch for hardware that needs the MAC-bearing
+  // 0x30 shape (the published documentation vector's own shape) instead of the no-MAC default.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  OneWayControllerIdentity identity = make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 3);
+  identity.enrollment_with_mac = true;
+  transmitter.add_identity(identity);
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("awning"));
+
+  const auto &add_frame = recorder.frames[ONEWAY_BURST_REPEATS];
+  EXPECT_TRUE(add_frame.has_mac) << "enrollment_with_mac: true must reach create_1w_add_controller()'s with_mac";
+  EXPECT_EQ(add_frame.cmd, CMD_ONEWAY_ADD_CONTROLLER);
 }
 
 TEST_F(OneWaySendCommandTest, UnenrollmentBuildsARemoveControllerFrame) {
@@ -316,10 +372,14 @@ TEST_F(OneWaySendCommandTest, ReportsCarryExplicitEnrollUnenrollLabels) {
   ASSERT_TRUE(transmitter.send_enrollment("awning"));
   ASSERT_TRUE(transmitter.send_unenrollment("awning"));
 
-  ASSERT_EQ(reports.size(), 2u);
-  EXPECT_EQ(reports[0].intent, "ENROLL");
+  // send_enrollment() itself reports twice -- once for its 0x39 prelude, once for the 0x30 that
+  // follows -- then the standalone send_unenrollment() call reports a third time.
+  ASSERT_EQ(reports.size(), 3u);
+  EXPECT_EQ(reports[0].intent, "UNENROLL");
   EXPECT_EQ(reports[0].target_type, DeviceType::AWNING);
-  EXPECT_EQ(reports[1].intent, "UNENROLL");
+  EXPECT_EQ(reports[1].intent, "ENROLL");
+  EXPECT_EQ(reports[1].target_type, DeviceType::AWNING);
+  EXPECT_EQ(reports[2].intent, "UNENROLL");
 }
 
 TEST_F(OneWaySendCommandTest, PositionsAreEncodedAsTheBuilderWould) {

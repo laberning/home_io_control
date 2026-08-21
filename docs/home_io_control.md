@@ -1047,6 +1047,7 @@ home_io_control:
       initial_sequence: 4000                            # optional -- seed the rolling counter
       manufacturer: somfy                               # required only because enrollment: true, below
       enrollment: true                                  # generates the "Enroll 1W Controller" button
+      enrollment_with_mac: false                        # optional -- see the table below
 ```
 
 | Key | Required | Meaning |
@@ -1059,6 +1060,7 @@ home_io_control:
 | `commands` | no | Which buttons to generate: `open`, `close`, `stop`, `vent`, `favorite`. `stop` is pinned by a published reference vector; `vent` matches the reference remote's source but is unconfirmed by any capture; `favorite` is extrapolated with no reference support and is directly contradicted by this project's own capture of a real My/favorite button press, which encodes it a different way entirely — see `create_1w_execute_command()` in proto_commands.h. Treat `favorite` as untested. |
 | `manufacturer` | conditional | The manufacturer ID byte an enrollment frame carries on air — a named value such as `somfy`, or a raw integer; see the "Named manufacturers" table under Device Type and Capability Notes below for the full list. **Required whenever `enrollment: true` is set** — the build fails otherwise, rather than silently broadcasting `0`. Find the value from a "Recovering a 1W Controller Key" report for this network, or the device's own documentation. |
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
+| `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), but a real Somfy Izymo has separately been shown to accept the MAC-bearing form too. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. |
 
 There is no 1W `force_open` button. The only wire byte this project ever associated with a
 "force open" label, `0x64`, decodes to an ordinary numeric position (50%) when tested against real
@@ -1092,18 +1094,26 @@ the other way around, and not a long hold on the hub's entity (there is nothing 
 a press). Getting the two halves' timing backwards is the most common failure mode here, not a
 protocol problem.
 
-The press sends a single ~125 ms burst (`0x30`, 4 copies) and nothing else — there is no "learn
-window" on the hub's side, because the device owns its own timeout and there is nothing to wait
-for. **Only one device should be in association mode at a time**: the frame reaches every device of
-that class in range that is currently listening, so a second actuator in learn mode nearby would be
-taught too.
+The press sends two bursts back to back — `0x39` (self-directed; carries only this identity's own
+address, so it can only ever clear its own prior entry, never a different controller's),
+immediately followed by `0x30` (the credential itself) — each ~125 ms, ~4 copies, no gap beyond the
+bursts' own airtime. This is the documented 1W pairing handshake (a real Somfy Smoove remote does
+exactly this, corpus-captured), not two independent actions. There is no "learn window" on the
+hub's side beyond that, because the device owns its own timeout and there is nothing further to
+wait for. **Only one device should be in association mode at a time**: the frames reach every
+device of that class in range that is currently listening, so a second actuator in learn mode
+nearby would be taught too.
+
+The `0x30` half's MAC trailer is controlled by `enrollment_with_mac:` (default `false`, no MAC at
+all) — see the option table above if enrollment doesn't take with the default shape.
 
 **A hub cannot enroll into a device nobody has walked up to.** The receiver's physical PROG hold is
 the real safety interlock here, stronger than any software confirmation could be — it is why this
 feature has no separate arming switch the way the (irreversible) LR1121 bootloader rewrite does.
 
-**Un-enrolling** is the rollback path, reached only through its own explicitly-named action, never
-automatically:
+**Un-enrolling without re-enrolling** is reached through its own explicitly-named action — the
+Enroll button's `0x39` above always re-registers via the `0x30` that follows it, so this is the
+path when you want the removal without the re-add:
 
 ```yaml
 - action: esphome.<device_name>_oneway_remove_controller
@@ -1111,9 +1121,9 @@ automatically:
     controller_id: velux_windows
 ```
 
-This sends `0x39` alone. It is deliberately not a hidden prelude to the Enroll button — keeping it
-behind its own action means it is never something a button labelled "Enroll" does without you
-asking for it by name.
+This sends `0x39` alone, nothing else. It carries only this identity's own source address, so it
+cannot remove a different remote's registration — the same property that makes the Enroll button's
+`0x39` prelude safe to send automatically.
 
 > **⚠️ Un-enrollment is unconfirmed on real hardware.** This action has not been shown to have any
 > effect on real hardware — the hub keeps controlling the device afterwards regardless. The most

@@ -32,20 +32,21 @@ Enrollment is two-sided, and only one side is something the hub can ever emit:
 | Half | Who does it | What it is |
 |---|---|---|
 | Receiver enters association mode | **a person, physically** | a multi-second hold on the actuator's own PROG button, confirmed by the actuator's own indicator |
-| Controller offers its credential | **the hub** | one short `0x30` burst |
+| Controller offers its credential | **the hub** | one short `0x39` burst, immediately followed by one short `0x30` burst — the documented pairing handshake, see "What the enroll button sends" below |
 
 A device that is not in association mode does not accept a `0x30` at all. So a hub sitting on
 someone's shelf, or one whose YAML happens to carry `enrollment: true` for longer than intended,
 cannot enroll into anything: no device is listening. This interlock cannot be triggered from
 software or from range — someone has to be standing at the actuator with their finger on it.
 
-**2. Even a successful enrollment only adds a controller; it does not remove one.** A device that
-already has a registered remote keeps obeying that remote after the hub also enrolls — enrollment
-is additive, not a takeover. This bounds the *consequence* of the first property ever failing (an
-enrollment nobody meant to trigger still leaves every existing controller working), independently
-of whatever bounds who can trigger it in the first place. Neither property depends on the other:
-the interlock would still be worth having even if enrollment were destructive, and additive
-registration would still limit the blast radius even if the interlock were somehow bypassed.
+**2. Even a successful enrollment only adds a controller; it does not remove *another* one.** A
+device that already has a registered remote keeps obeying that remote after the hub also enrolls —
+enrollment is additive across controllers, not a takeover. This bounds the *consequence* of the
+first property ever failing (an enrollment nobody meant to trigger still leaves every existing
+controller working), independently of whatever bounds who can trigger it in the first place.
+Neither property depends on the other: the interlock would still be worth having even if
+enrollment were destructive, and additive registration would still limit the blast radius even if
+the interlock were somehow bypassed.
 
 Both properties fall out of how the protocol and this feature are already built — neither had to
 be added for safety's sake.
@@ -61,13 +62,49 @@ but against the capability sitting in a permanently-running build. It is the sam
 the whole gate, add-and-remove-and-reflash is the lifecycle" shape as `accept_foreign_pairing`
 and `recover_oneway_key`, and the docs say so: remove the line once you are done enrolling.
 
-**Removal stays behind its own action.** `0x39` (remove-controller) is reachable only through the
-explicitly-named `oneway_remove_controller` native API action, never as an automatic prelude to a
-press of "Enroll." Hiding a removal inside a button labelled "Enroll" would be the one way this
-feature could still surprise a user despite everything above.
+**What the enroll button sends (revised 2026-08-21, hardware-confirmed 2026-08-21).** The
+documented 1W pairing handshake (`reference/iown-homecontrol/docs/linklayer.md:396`, "1W
+Discovery") is `0x39` immediately followed by `0x30`, both from the same controller, back to back
+within one gesture — and this project's own
+`tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml` shows a real
+Somfy Smoove remote doing exactly that against a real Izymo, 128 ms apart, same burst. This ADR
+originally decided the enroll button would send `0x30` alone and keep `0x39` behind its own
+explicitly-named action, on the strength of a single 2026-08-13 bench success with `0x30` alone.
 
-This decision does not depend on removal working. Safety here rests on enrollment being hard to
-trigger and low-consequence when it happens, not on being able to undo it afterward.
+A 2026-08-21 retest against that same Izymo appeared to reproduce a failure with `0x30` alone,
+initially read as evidence of a stale controller-table slot needing `0x39` to clear. **That
+reading was wrong.** The retest's `oneway_controllers` config had been copied from an external bug
+report and carried `io_device_type: roller_shutter`, not `light` — 1W is class-addressed typed
+broadcast, so the frames never reached the Izymo at all, regardless of which handshake was used.
+Once the device class was corrected, **both forms worked**: `0x30` alone enrolled successfully,
+and so did `0x39` then `0x30`. The stale-controller-table-slot hypothesis is therefore neither
+confirmed nor needed to explain anything observed so far — it remains a plausible failure mode for
+some other receiver family, just not a demonstrated one.
+
+The enroll button sends `0x39` then `0x30` anyway — not because `0x30` alone is known to fail on
+this hardware, but because that is what a real remote's own pairing gesture does on the wire (the
+Smoove capture above), and matching the documented, hardware-observed handshake is the safer
+default for the many 1W receiver families this project has not bench-tested. `0x30`-alone remains
+a known-working fallback if some other receiver ever turns out to react badly to the `0x39`
+prelude — nothing observed rules that out either, with two data points.
+
+**This does not weaken property 2 above.** The `0x39` this button sends carries only this
+identity's own `src` address — nothing on the wire lets a `0x39` frame name a *different*
+controller for removal. So this prelude can only ever clear this identity's own prior entry
+before re-registering it; it still cannot touch another remote's registration. "Enrollment is
+additive across controllers, not a takeover" continues to hold; what changed is only that
+enrollment is no longer required to be non-destructive *to a previous attempt by this same
+identity*, which was never a safety property this ADR relied on.
+
+**Standalone removal stays behind its own action.** `oneway_remove_controller` (the native API
+action that fires `0x39` alone, with no following `0x30`) remains separate — for un-enrolling
+without immediately re-enrolling. What changed is only that "Enroll" no longer sends `0x30` in
+isolation; the self-directed `0x39` it now sends first was never the removal this section's
+original wording was guarding against.
+
+This decision does not depend on standalone removal working. Safety here rests on enrollment being
+hard to trigger and low-consequence to *other* controllers when it happens, not on being able to
+undo it afterward.
 
 ## Consequences
 
@@ -85,9 +122,16 @@ trigger and low-consequence when it happens, not on being able to undo it afterw
   window and the failed attempts were fired without it — but this is untested, not ruled out.
   Treat "enrollment is reversible" as design intent, not a demonstrated fact, until this is
   retested and confirmed.
-- **The one recorded real-world failure of the enrollment procedure was a timing mismatch
-  between its two halves** — a long hold where a short press was needed, or vice versa — not a
-  missing safeguard. The docs state both halves and their asymmetry explicitly for this reason.
+- **Both enrollment failures traced to real users in the same week (2026-08-21: an external
+  tester's Velux KUX 110 report, and this project's own Izymo retest) turned out to share one
+  root cause: a device-class mismatch in `oneway_controllers`' `io_device_type`, not the
+  enrollment handshake.** Once the class was corrected, the Izymo enrolled with either `0x30`
+  alone or `0x39` then `0x30`. Sending `0x39` first is not what fixed this class of failure and is
+  not required to; it is kept because it matches a real remote's own captured on-wire behavior
+  (`tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml`). A different,
+  still-live failure mode is a timing mismatch between the receiver's PROG hold and the
+  controller's press — a long hold where a short press was needed, or vice versa — which the docs
+  state both halves and their asymmetry explicitly for.
 - **If a future revision ever discovers association mode can be triggered remotely, or held open
   indefinitely, on some device family, the first property above weakens and the arming-switch
   question should be revisited.** Nothing observed so far suggests that; the additive-registration
