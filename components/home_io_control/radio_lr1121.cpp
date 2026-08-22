@@ -26,32 +26,7 @@ namespace home_io_control {
 
 static const char *const TAG = "home_io_control.lr1121";
 
-// The LR11xx runs an internal boot ROM after reset before BUSY is meaningful — cross-checked
-// against RadioLib's LRxxxx::reset(), which waits ~300ms ("typical transition duration should
-// be 273 ms") and then polls BUSY with a 3s timeout; matched here exactly rather than picking
-// an arbitrary shorter value, since the only cost of a longer timeout is on the already-failing
-// path (a genuinely dead chip takes a few seconds longer to report failure).
-static const uint32_t LR1121_BUSY_TIMEOUT_MS = 3000;
-
 // === SPI Communication (16-bit opcode, two-transaction) ===
-
-void RadioLR1121::wait_busy_() {
-  // Once a BUSY timeout has failed the driver, every later wait_busy_() call would otherwise
-  // re-run the same timeout again — init()'s remaining ~16 configure_radio_() steps would each
-  // block for LR1121_BUSY_TIMEOUT_MS before init() finally returns false. Short-circuit instead:
-  // the chip is already known-unresponsive, so there's nothing to wait for.
-  if (this->failed_)
-    return;
-  uint32_t const start = millis();
-  while (this->busy_pin_->digital_read()) {
-    if (millis() - start > LR1121_BUSY_TIMEOUT_MS) {
-      ESP_LOGE(TAG, "BUSY timeout");
-      this->failed_ = true;
-      return;
-    }
-    App.feed_wdt();
-  }
-}
 
 void RadioLR1121::write_command_(uint16_t opcode, const uint8_t *params, uint8_t len) {
   // Write-only phase: MISO is don't-care while we send the opcode + params, so spi_write()

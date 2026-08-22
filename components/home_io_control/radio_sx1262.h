@@ -65,6 +65,15 @@ static constexpr uint16_t SX1262_IRQ_RX_DONE = 0x0002;
 static constexpr uint16_t SX1262_IRQ_PREAMBLE_DETECTED = 0x0004;
 static constexpr uint16_t SX1262_IRQ_SYNC_WORD_VALID = 0x0008;
 static constexpr uint16_t SX1262_IRQ_CRC_ERR = 0x0040;
+
+/// IRQ bits that represent a *terminal* radio event — a frame finished decoding, an outbound
+/// frame completed, or the chip reported a bad CRC. Deliberately excludes PREAMBLE_DETECTED even
+/// though `configure_radio_()` now includes it in `irqMask`: a preamble alone means a frame may
+/// still be arriving, so SoftPhyDriverBase's poll_until_activity_()/check_for_packet() (gated by
+/// @ref RadioSX1262::activity_irq_mask) must not treat it as terminal — doing so would tear down
+/// RX mid-reception. Same trap, same fix shape as @ref LR1121_IRQ_ACTIVITY_MASK.
+static constexpr uint16_t SX1262_IRQ_ACTIVITY_MASK =
+    SX1262_IRQ_TX_DONE | SX1262_IRQ_RX_DONE | SX1262_IRQ_SYNC_WORD_VALID | SX1262_IRQ_CRC_ERR;
 // Sync word register base address
 static constexpr uint16_t SX1262_REG_SYNC_WORD = 0x06C0;
 static constexpr uint16_t SX1262_REG_RX_GAIN = 0x08AC;
@@ -92,6 +101,11 @@ static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 
+/// How long SoftPhyDriverBase::wait_busy_() waits for BUSY to drop before declaring the chip
+/// failed. Short: this chip's RC-oscillator-clocked commands settle quickly, unlike LR1121's
+/// post-reset boot ROM (see LR1121_BUSY_TIMEOUT_MS in radio_lr1121.h).
+static constexpr uint32_t SX1262_BUSY_TIMEOUT_MS = 10;
+
 // ============================================================================
 // SX1262 Radio Driver
 // ============================================================================
@@ -111,10 +125,10 @@ class RadioSX1262 : public SoftPhyDriverBase {
   RadioSX1262(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *dio1_pin, InternalGPIOPin *busy_pin,
               uint8_t tx_power, uint8_t tcxo_voltage, InternalGPIOPin *fem_en_pin = nullptr,
               InternalGPIOPin *vfem_pin = nullptr, InternalGPIOPin *fem_pa_pin = nullptr)
-      : SoftPhyDriverBase(rst_pin, SX1262_RESPONSE_PREAMBLE, SX1262_POST_TX_SETTLE_US),
+      : SoftPhyDriverBase(rst_pin, busy_pin, SX1262_BUSY_TIMEOUT_MS, SX1262_RESPONSE_PREAMBLE,
+                          SX1262_POST_TX_SETTLE_US),
         spi_(spi),
         dio1_pin_(dio1_pin),
-        busy_pin_(busy_pin),
         fem_en_pin_(fem_en_pin),
         vfem_pin_(vfem_pin),
         fem_pa_pin_(fem_pa_pin),
@@ -149,7 +163,6 @@ class RadioSX1262 : public SoftPhyDriverBase {
   void set_mode_rx() override;
   /// @copydoc RadioDriver::set_mode_standby
   void set_mode_standby() override;
-  [[nodiscard]] bool is_failed() const override { return this->failed_; }
   [[nodiscard]] const char *chip_name() const override { return "sx1262"; }
   /// @brief Dump SX1262‑specific debug info.
   void dump_debug() override;
@@ -162,8 +175,6 @@ class RadioSX1262 : public SoftPhyDriverBase {
   void set_rx_bandwidth_(SX1262RxBandwidth bandwidth);
 
   // --- SPI communication (opcode‑based) ---
-  /// Wait until BUSY pin is low before any SPI transaction.
-  void wait_busy_();
   /// Write an opcode with optional parameter bytes.
   /// @param opcode SX1262 opcode.
   /// @param params Pointer to parameter buffer (may be nullptr).
@@ -257,6 +268,11 @@ class RadioSX1262 : public SoftPhyDriverBase {
   [[nodiscard]] uint32_t tx_done_bit() const override { return SX1262_IRQ_TX_DONE; }
   /// @copydoc SoftPhyDriverBase::preamble_detected_bit
   [[nodiscard]] uint32_t preamble_detected_bit() const override { return SX1262_IRQ_PREAMBLE_DETECTED; }
+  /// @copydoc SoftPhyDriverBase::activity_irq_mask
+  ///
+  /// The base class default ("any bit") stopped being safe the moment `configure_radio_()`
+  /// unmasked PreambleDetected — see @ref SX1262_IRQ_ACTIVITY_MASK's doc comment.
+  [[nodiscard]] uint32_t activity_irq_mask() const override { return SX1262_IRQ_ACTIVITY_MASK; }
   /// @copydoc SoftPhyDriverBase::read_rssi_raw_byte
   uint8_t read_rssi_raw_byte() override;
   /// @copydoc SoftPhyDriverBase::write_tx_buffer
@@ -279,13 +295,11 @@ class RadioSX1262 : public SoftPhyDriverBase {
  private:
   SpiAccess *spi_;
   InternalGPIOPin *dio1_pin_;
-  InternalGPIOPin *busy_pin_;
   InternalGPIOPin *fem_en_pin_;
   InternalGPIOPin *vfem_pin_;
   InternalGPIOPin *fem_pa_pin_;
   uint8_t tx_power_;
   uint8_t tcxo_voltage_;
-  bool failed_{false};
   SX1262RxBandwidth rx_bandwidth_{SX1262RxBandwidth::BW_117_3_KHZ};  ///< Runtime-tunable RX bandwidth.
 };
 

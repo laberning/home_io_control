@@ -43,6 +43,26 @@ bool wait_for_air_time(uint32_t sync_us, uint8_t raw_bytes, uint32_t start_ms, u
 
 }  // namespace
 
+// === SPI transport helper shared by both chips ===
+
+void SoftPhyDriverBase::wait_busy_() {
+  // Once a BUSY timeout has failed the driver, every later call would otherwise re-run the same
+  // timeout again — init()'s remaining configure_radio_() steps would each block for
+  // busy_timeout_ms_ before init() finally returns false. Short-circuit instead: the chip is
+  // already known-unresponsive, so there's nothing to wait for.
+  if (this->failed_)
+    return;
+  uint32_t const start = millis();
+  while (this->busy_pin_->digital_read()) {
+    if (millis() - start > this->busy_timeout_ms_) {
+      ESP_LOGE(TAG, "BUSY timeout");
+      this->failed_ = true;
+      return;
+    }
+    App.feed_wdt();
+  }
+}
+
 // === Packet RX (blocking) ===
 
 bool SoftPhyDriverBase::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {

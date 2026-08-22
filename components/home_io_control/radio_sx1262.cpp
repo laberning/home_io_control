@@ -30,18 +30,6 @@ static const uint8_t SX1262_SYNC_WORD_PARAM_24_BITS = 0x18;
 
 // === SPI Communication (opcode-based) ===
 
-void RadioSX1262::wait_busy_() {
-  uint32_t const start = millis();
-  while (this->busy_pin_->digital_read()) {
-    if (millis() - start > 10) {
-      ESP_LOGE(TAG, "BUSY timeout");
-      this->failed_ = true;
-      return;
-    }
-    App.feed_wdt();
-  }
-}
-
 void RadioSX1262::write_opcode_(uint8_t opcode, const uint8_t *params, uint8_t len) {
   this->wait_busy_();
   this->spi_->spi_enable();
@@ -401,10 +389,18 @@ void RadioSX1262::configure_radio_() {
   uint8_t tx_params[2] = {(uint8_t) power, 0x04};
   this->write_opcode_(SX1262_SET_TX_PARAMS, tx_params, sizeof(tx_params));
 
-  // 16. IRQ config: map TxDone + RxDone + SyncWordValid + CrcErr to DIO1
+  // 16. IRQ config: map TxDone + RxDone + SyncWordValid + CrcErr to DIO1. irqMask additionally
+  // enables PreambleDetected system-wide (SX126x irqMask gates GetIrqStatus itself, not just DIO
+  // routing — confirmed against Semtech's own driver docs, see radio_robustness_plan.md §8.1) so
+  // is_preamble_detected() can finally return true on this chip; dio1Mask deliberately leaves it
+  // out so the ISR still only wakes on a terminal event, not on every preamble. See
+  // SX1262_IRQ_ACTIVITY_MASK's doc comment (radio_sx1262.h) for the other half of this change —
+  // poll_until_activity_() must not treat a bare preamble as terminal, or this unmask tears down
+  // RX mid-reception instead of fixing anything.
   uint8_t irq_params[8] = {
-      0x00, 0x4B,  // irqMask: TxDone(0x0001) | RxDone(0x0002) | SyncWordValid(0x0008) | CrcErr(0x0040)
-      0x00, 0x4B,  // dio1Mask: same
+      0x00, 0x4F,  // irqMask: TxDone(0x0001) | RxDone(0x0002) | PreambleDetected(0x0004) |
+                   // SyncWordValid(0x0008) | CrcErr(0x0040)
+      0x00, 0x4B,  // dio1Mask: unchanged — TxDone|RxDone|SyncWordValid|CrcErr only
       0x00, 0x00,  // dio2Mask: none
       0x00, 0x00,  // dio3Mask: none
   };

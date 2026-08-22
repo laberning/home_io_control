@@ -167,12 +167,18 @@ _NUMBER_PARAMS = {
     CONF_SX1262_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
     CONF_SX1276_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: (5, 200, 1, "ms"),
-    CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (50, 500, 1, "ms"),
+    # Floor is 0, not a physically-meaningful minimum: below the ~13.9 ms measured device reply
+    # preamble (issue #65 SDR analysis), a rotating listen can't dwell long enough on any channel
+    # to catch anything — wait_for_packet(..., 0) returns instantly and the loop just hops as fast
+    # as change_frequency() allows, burning SPI/CPU time with no chance of a reception. Left open
+    # to 0 anyway (radio_robustness_plan.md Experiment 1b, dwell-reduction sweep) so that floor can
+    # be measured empirically instead of assumed.
+    CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),
     # LR1121 numeric ranges reuse the SX1262 bounds — same chip-family physical constraints
     # (design doc §3.2: "seed every timing/tuning default from the validated SX1262 values").
     CONF_LR1121_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_LR1121_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
-    CONF_LR1121_DISCOVERY_HOP_SLICE_MS: (50, 500, 1, "ms"),
+    CONF_LR1121_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     # Ceilings are generous because the right value is a property of the target device, not of

@@ -263,6 +263,97 @@ TEST(RadioSX1262, IsSyncDetected_WithOtherBits) {
 }
 
 // ============================================================================
+// wait_busy_()/failed_ hoisted to SoftPhyDriverBase (shared verbatim with LR1121): this chip
+// never had LR1121's "already failed, don't re-run the timeout" short-circuit before the hoist —
+// harmless at this chip's 10 ms timeout, but the same bug shape. Mirrors
+// RadioLR1121.WaitBusyShortCircuitsAfterFailure (tests/radio_lr1121_test.cpp), proving the shared
+// base-class behavior now applies here too.
+// ============================================================================
+
+TEST(RadioSX1262, WaitBusyShortCircuitsAfterFailure) {
+  // BUSY pin held permanently high (never clears) simulates a genuinely dead chip.
+  MockSpi spi;
+  MockPin rst, dio1, busy(true);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  const uint32_t feeds_before = esphome::App.feed_wdt_calls;
+  radio.set_mode_standby();  // First BUSY wait times out (SX1262_BUSY_TIMEOUT_MS = 10) and sets failed_.
+  ASSERT_TRUE(radio.is_failed());
+  EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
+      << "the BUSY-pin wait is a distinct blocking path (SPI turnaround, not RX) and must feed too";
+
+  // The host hal.h millis() stub is a monotonic call counter (+1 per call), so a full 10 ms
+  // timeout costs ~11 calls to reach; a short-circuited call costs 0. 5 is a safe cut well below
+  // "ran the loop" and well above "returned immediately".
+  uint32_t const t_before_second = esphome::millis();
+  radio.set_mode_standby();  // Must short-circuit instead of re-running the full timeout.
+  uint32_t const t_after_second = esphome::millis();
+
+  EXPECT_LT(t_after_second - t_before_second, 5u)
+      << "a failed driver must not re-run the BUSY timeout on every subsequent command";
+}
+
+// ============================================================================
+// Preamble-unmask coupled fix (radio_robustness_plan.md Experiment 1): configure_radio_() now
+// includes PreambleDetected in irqMask, so read_irq_status_raw() can genuinely report it on real
+// hardware. activity_irq_mask() must exclude it from what poll_until_activity_()/check_for_packet()
+// treat as terminal, or a preamble mid-reception tears down RX via reset_rx_state_() before the
+// frame that follows ever arrives. Same trap, same fix, as the LR1121 bug this mirrors (see
+// SX1262_IRQ_ACTIVITY_MASK's doc comment in radio_sx1262.h).
+// ============================================================================
+
+TEST(RadioSX1262, WaitForPacketIgnoresPreambleOnlyActivity) {
+  // Guards against poll_until_activity_() treating a preamble-only IRQ status as terminal — that
+  // would make finalize_receive_() see no RX_DONE and call reset_rx_state_(), destroying the frame
+  // that is still arriving. Proves the driver waits through repeated preamble-only readings and
+  // still catches the later RX_DONE.
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  RadioRxPacket pkt{};
+  pkt.len = 2;
+  pkt.data[0] = 0x11;
+  pkt.data[1] = 0x22;
+  radio.set_expected_packet(pkt);
+  radio.set_irq_sequence({SX1262_IRQ_PREAMBLE_DETECTED, SX1262_IRQ_PREAMBLE_DETECTED, SX1262_IRQ_RX_DONE});
+
+  RadioRxPacket result{};
+  bool ok = radio.wait_for_packet(result, 100);
+
+  EXPECT_TRUE(ok) << "preamble-only readings must not be treated as terminal activity";
+  EXPECT_EQ(result.len, 2u);
+}
+
+TEST(RadioSX1262, CheckForPacketPreambleOnlyDoesNotResetRx) {
+  // Same trap on the non-blocking path: check_for_packet() must clear just the preamble bit (so
+  // the next real completion can still raise the DIO edge) and must NOT call reset_rx_state_(),
+  // which would issue SetStandby and tear down RX mid-reception.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  radio.mark_dio_fired_from_isr();
+  radio.set_irq_sequence({SX1262_IRQ_PREAMBLE_DETECTED});
+
+  RadioRxPacket packet{};
+  bool ok = radio.check_for_packet(packet);
+
+  EXPECT_FALSE(ok) << "preamble alone is not a complete packet yet";
+
+  bool cleared_irq = false, called_standby = false;
+  for (const auto &tx : spi.transactions()) {
+    if (tx.empty())
+      continue;
+    if (tx[0] == SX1262_CLEAR_IRQ_STATUS)
+      cleared_irq = true;
+    if (tx[0] == SX1262_SET_STANDBY)
+      called_standby = true;
+  }
+  EXPECT_TRUE(cleared_irq) << "the preamble bit must be cleared so it can re-fire";
+  EXPECT_FALSE(called_standby) << "must not tear down RX via reset_rx_state_()";
+}
+
+// ============================================================================
 // UART encode/decode and CRC validation tests
 // ============================================================================
 

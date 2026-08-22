@@ -39,8 +39,11 @@ namespace home_io_control {
 static constexpr uint8_t SOFT_PHY_RX_PROBE_PACKET_LEN = 48;
 
 /// Sentinel meaning "every IRQ bit counts as activity" — the default for @ref
-/// SoftPhyDriverBase::activity_irq_mask, correct for chips (SX1262) whose hardware-level IRQ
-/// mask already excludes the one bit (PreambleDetected) that would need special handling.
+/// SoftPhyDriverBase::activity_irq_mask. Neither concrete driver uses it any more: both SX1262
+/// and LR1121 unmask PreambleDetected at the hardware level and override this to exclude it (see
+/// SX1262_IRQ_ACTIVITY_MASK / LR1121_IRQ_ACTIVITY_MASK). Kept as the base-class default for a
+/// hypothetical future driver that never unmasks PreambleDetected in the first place, where "any
+/// bit" is genuinely safe again.
 static constexpr uint32_t SOFT_PHY_ALL_IRQ_BITS = 0xFFFFFFFF;
 
 /// Raw bytes read in the first stage of a length-driven receive — enough to hold CTRL0's UART
@@ -85,14 +88,24 @@ constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
 class SoftPhyDriverBase : public RadioDriver {
  public:
   /// @param rst_pin Active-low hardware reset pin, forwarded to RadioDriver.
+  /// @param busy_pin BUSY line polled by @ref wait_busy_ before every SPI transaction — both
+  ///   concrete drivers are opcode-based chips that require this, unlike the register-based
+  ///   SX1276.
+  /// @param busy_timeout_ms How long @ref wait_busy_ waits for BUSY to drop before declaring the
+  ///   chip failed. Chip-specific (SX1262: 10 ms: RC-oscillator timing; LR1121: 3000 ms, matched
+  ///   to RadioLib's post-reset boot-ROM wait) — this class has no opinion on the value, only on
+  ///   where it's stored and how it's used.
   /// @param default_response_preamble Chip-specific default for @ref response_preamble (each
   ///   concrete driver passes its own validated constant — this class has no opinion on the
   ///   value, only on where it's stored).
   /// @param default_post_tx_settle_us Chip-specific default post-TX settling delay, same rationale.
-  SoftPhyDriverBase(InternalGPIOPin *rst_pin, uint16_t default_response_preamble, uint16_t default_post_tx_settle_us)
+  SoftPhyDriverBase(InternalGPIOPin *rst_pin, InternalGPIOPin *busy_pin, uint32_t busy_timeout_ms,
+                    uint16_t default_response_preamble, uint16_t default_post_tx_settle_us)
       : RadioDriver(rst_pin),
+        busy_pin_(busy_pin),
         response_preamble_(default_response_preamble),
-        post_tx_settle_us_(default_post_tx_settle_us) {}
+        post_tx_settle_us_(default_post_tx_settle_us),
+        busy_timeout_ms_(busy_timeout_ms) {}
 
   /// @copydoc RadioDriver::send_packet
   bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
@@ -114,6 +127,12 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @brief Preamble for response/continuation frames — shared storage, see the concrete
   /// drivers' constructors/tuning defaults for the chip-specific rationale and value.
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
+  /// @copydoc RadioDriver::is_failed
+  ///
+  /// Shared storage: both concrete drivers only ever set @ref failed_ from within their own
+  /// SPI/opcode helpers (a BUSY timeout, a device-identity mismatch, ...), so there is nothing
+  /// chip-specific left in the accessor itself.
+  [[nodiscard]] bool is_failed() const override { return this->failed_; }
 
  protected:
   // --- Tuning helpers shared by both drivers (values/defaults stay chip-specific) ---
@@ -121,6 +140,22 @@ class SoftPhyDriverBase : public RadioDriver {
   void set_response_preamble_(uint16_t preamble) { this->response_preamble_ = preamble; }
   /// Set the delay between TX completion and re-entering RX.
   void set_post_tx_settle_us_(uint16_t delay_us) { this->post_tx_settle_us_ = delay_us; }
+  /// @brief Wait until @ref busy_pin_ reads low, feeding the watchdog while polling.
+  ///
+  /// Shared verbatim between SX1262 and LR1121 — the two chips differ only in how long they're
+  /// willing to wait (`busy_timeout_ms_`) and, prior to this refactor, differed by accident in
+  /// whether a call short-circuits once the driver already latched `failed_`: LR1121 had the
+  /// guard (needed at its 3000 ms timeout — without it, every remaining `configure_radio_()` step
+  /// after the first failure would re-run the full timeout, turning one bad boot into tens of
+  /// seconds of hang), SX1262 didn't (harmless at its 10 ms timeout, but still the same bug
+  /// shape). Unified here means both chips get the guard now.
+  void wait_busy_();
+  /// Set on a BUSY timeout or a chip-identity check failing; see @ref is_failed.
+  bool failed_{false};
+  /// BUSY line, read directly by both concrete drivers' own `dump_debug()` in addition to
+  /// @ref wait_busy_, so this stays protected rather than folding entirely into the private
+  /// wait-loop state below.
+  InternalGPIOPin *busy_pin_;
 
   // --- Shared RX/TX orchestration (moved verbatim from RadioSX1262/RadioLR1121) ---
   /// Read a received packet from the buffer and return the raw bytes reported by the chip.
@@ -152,11 +187,12 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @brief IRQ bits that count as "activity" for the internal `poll_until_activity_()` helper
   /// and @ref check_for_packet.
   ///
-  /// Default is "any bit" — correct for SX1262, whose `SetDioIrqParams` mask already excludes
-  /// `PreambleDetected` system-wide, so a preamble-only reading can never reach this check in the
-  /// first place. LR1121 routes `PreambleDetected` to its IRQ pin for other reasons and overrides
-  /// this to exclude it: a preamble-only reading means a frame may still be arriving, and treating
-  /// it as terminal activity would tear down RX mid-reception.
+  /// Default is "any bit" — safe only for a driver whose `SetDioIrqParams`-equivalent mask never
+  /// includes `PreambleDetected` in the first place, so a preamble-only reading can never reach
+  /// this check. Neither current driver qualifies: both SX1262 and LR1121 unmask
+  /// `PreambleDetected` (each for its own reason) and override this to exclude it — a
+  /// preamble-only reading means a frame may still be arriving, and treating it as terminal
+  /// activity would tear down RX mid-reception.
   [[nodiscard]] virtual uint32_t activity_irq_mask() const { return SOFT_PHY_ALL_IRQ_BITS; }
 
   /// @brief Data-buffer offset an in-flight reception is being written to, or a negative value
@@ -227,6 +263,7 @@ class SoftPhyDriverBase : public RadioDriver {
 
   uint16_t response_preamble_;
   uint16_t post_tx_settle_us_;
+  uint32_t busy_timeout_ms_;
 };
 
 }  // namespace home_io_control
