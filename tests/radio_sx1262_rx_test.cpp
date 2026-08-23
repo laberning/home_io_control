@@ -441,8 +441,11 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //   - CMD_DISCOVER_ALT_RESP: captured once (velux_kux100/discover_alt_addressed_challenge_
   //     response.yaml) but "not otherwise used anywhere in this codebase" per its own doxygen --
   //     nothing dispatches on it, corpus replay doesn't go through this soft-PHY gate at all.
-  //   - CMD_ADDRESS_REQ / CMD_ADDRESS_RESP: captured once (velux_kux100/pairing_full.yaml) but
-  //     "neither command is sent or handled anywhere in this codebase" per proto_constants.h.
+  //   - CMD_ADDRESS_RESP: captured once (velux_kux100/pairing_full.yaml) but we only ever
+  //     transmit it (create_address_resp_device_role(), the key-extraction responder's answer to
+  //     an inbound 0x36) -- we never wait for a reply carrying this opcode. CMD_ADDRESS_REQ is
+  //     deliberately NOT in this list any more: the key-extraction responder now expects to
+  //     receive it, so it belongs in is_known_io_command() instead (see radio_soft_phy.cpp).
   //   - CMD_LAUNCH_KEY_TRANSFER: never observed in corpus or field log; not sent or handled
   //     anywhere; used only to construct a hypothetical IV in proto_crypto_test.cpp.
   //   - CMD_UNKNOWN4A_REQ: deliberately excluded, see ADR 0024 -- nothing this codebase sends
@@ -453,10 +456,21 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //     observed in corpus or field log, not sent or handled anywhere in this codebase -- named
   //     purely so a future capture of one of them has a symbol to log against.
   static constexpr uint8_t NEVER_RECEIVED_ALLOWLIST[] = {
-      CMD_ACTIVATE_MODE,      CMD_ONEWAY_ADD_CONTROLLER, CMD_ONEWAY_REMOVE,     CMD_SET_SENSOR,
-      CMD_SET_SENSOR_ACK,     CMD_DISCOVER_ALT_REQ,      CMD_DISCOVER_ALT_RESP, CMD_ADDRESS_REQ,
-      CMD_ADDRESS_RESP,       CMD_LAUNCH_KEY_TRANSFER,   CMD_UNKNOWN4A_REQ,     CMD_GET_INFO1,
-      CMD_GET_INFO1_RESP,     CMD_SEND_RAW_MESSAGE,      CMD_READ_GROUPS,       CMD_REBOOT,
+      CMD_ACTIVATE_MODE,
+      CMD_ONEWAY_ADD_CONTROLLER,
+      CMD_ONEWAY_REMOVE,
+      CMD_SET_SENSOR,
+      CMD_SET_SENSOR_ACK,
+      CMD_DISCOVER_ALT_REQ,
+      CMD_DISCOVER_ALT_RESP,
+      CMD_ADDRESS_RESP,
+      CMD_LAUNCH_KEY_TRANSFER,
+      CMD_UNKNOWN4A_REQ,
+      CMD_GET_INFO1,
+      CMD_GET_INFO1_RESP,
+      CMD_SEND_RAW_MESSAGE,
+      CMD_READ_GROUPS,
+      CMD_REBOOT,
       CMD_SERVICE_STATUS_ACK,
   };
 

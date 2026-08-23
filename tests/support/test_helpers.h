@@ -89,6 +89,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::process_received_packet_;
   using IOHomeControlComponent::key_extraction_ctx_;
   using IOHomeControlComponent::generate_key_extraction_throwaway_id_;
+  using IOHomeControlComponent::arm_post_extraction_grace_;
   using IOHomeControlComponent::oneway_last_observed_class_;
   using IOHomeControlComponent::record_oneway_observed_class_;
   using IOHomeControlComponent::update_device_status_;

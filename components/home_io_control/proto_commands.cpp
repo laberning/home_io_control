@@ -715,12 +715,13 @@ bool create_challenge_req_device_role(IoFrame &f, const uint8_t *dst, const uint
   return create_challenge_req_framed(f, dst, src, challenge, /*start=*/false, /*low_power=*/false);
 }
 
-/// Build a challenge response (0x3D) proving we know the system key.
-/// The HMAC is computed over [original_command_id + original_data] using the challenge.
-bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE],
-                           const IoFrame &origin, const uint8_t *key) {
-  // low_power=true (see create_set_name above)
-  init_frame(f, true, false, false, true);
+/// Build a challenge response (0x3D) with caller-chosen framing bits. Shared by the
+/// controller-role and device-role builders below, which differ only in those bits — see
+/// create_challenge_req_framed() above for the identical pattern on the request side.
+static bool create_challenge_resp_framed(IoFrame &f, const uint8_t *dst, const uint8_t *src,
+                                         const uint8_t challenge[HMAC_SIZE], const IoFrame &origin, const uint8_t *key,
+                                         bool end, bool low_power) {
+  init_frame(f, true, /*start=*/false, end, low_power);
   set_dst(f, dst);
   set_src(f, src);
   // The authenticated transcript covers the original request, not the 0x3D wrapper. Using the
@@ -732,6 +733,43 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
   if (!crypto::create_hmac(frame_data, origin.data_len + 1, challenge, key, hmac))
     return false;
   return set_cmd(f, CMD_CHALLENGE_RESP, hmac, HMAC_SIZE);
+}
+
+/// Build a challenge response (0x3D) proving we know the system key.
+/// The HMAC is computed over [original_command_id + original_data] using the challenge.
+bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE],
+                           const IoFrame &origin, const uint8_t *key) {
+  return create_challenge_resp_framed(f, dst, src, challenge, origin, key, /*end=*/false, /*low_power=*/true);
+}
+
+/// Build an address response (0x37) — device side, used only by the key-extraction responder.
+/// See proto_commands.h for the full contract, including why the payload (our own node ID, not a
+/// separately-tracked backbone identity) is a known simplification rather than a confirmed match
+/// to real-device behavior.
+///
+/// TODO(hardware-verify): ctrl1 is 0x00 here (no CTRL1_PRIORITY), matching every other device-role
+/// builder in this file, but the one real capture of this command
+/// (tests/corpus/captures/velux_kux100/pairing_full.yaml line 87) shows CTRL1_PRIORITY set on the
+/// KLR200's 0x37. In that same capture the device also mirrors CTRL1_PRIORITY from whatever the
+/// hub's preceding request set, and its 0x36 request is the one request in the whole exchange that
+/// sets PRIORITY — but every other device-role builder here also emits ctrl1=0 against frames that
+/// same capture shows with reserved/other bits set, and those builders are hardware-confirmed
+/// working (issue #45's own captures), so this one bit's necessity is unproven rather than known
+/// missing. Not mirroring the request's PRIORITY bit until a second real capture settles it either
+/// way.
+bool create_address_resp_device_role(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+  init_frame(f, true, /*start=*/false, /*end=*/false, /*low_power=*/false);
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, CMD_ADDRESS_RESP, own, NODE_ID_SIZE);
+}
+
+/// Build a device-role challenge response (0x3D) — device side, used only by the key-extraction
+/// responder answering a hub-issued 0x3C challenging our own 0x37. See proto_commands.h for why
+/// the framing bits differ from the controller-role builder above.
+bool create_challenge_resp_device_role(IoFrame &f, const uint8_t *dst, const uint8_t *src,
+                                       const uint8_t challenge[HMAC_SIZE], const IoFrame &origin, const uint8_t *key) {
+  return create_challenge_resp_framed(f, dst, src, challenge, origin, key, /*end=*/true, /*low_power=*/false);
 }
 
 /// Build a status-update acknowledgment (0x72). Sent after authenticating a device's status update.

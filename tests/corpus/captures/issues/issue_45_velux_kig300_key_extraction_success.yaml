@@ -60,7 +60,7 @@ frames:
     freq: 868250000
     hex: "88 00 BE FE DB 53 F2 6E 33"
     crc: absent
-    note: "cmd=KEY_CONFIRM(0x33), sent ~9ms after the hub's CMD_KEY_TRANSFER (0x32, masked and not included -- see description) arrived at t_ms=7650. ctrl0=0x88 (end=true) -- create_key_confirm()'s Finding 4 fix; the pre-fix self-pair captures show end=false here. The responder logs 'SYSTEM KEY EXTRACTED' and disarms immediately after sending this; sent on all 3 channels, one shown"
+    note: "cmd=KEY_CONFIRM(0x33), sent ~9ms after the hub's CMD_KEY_TRANSFER (0x32, masked and not included -- see description) arrived at t_ms=7650. ctrl0=0x88 (end=true) -- create_key_confirm()'s Finding 4 fix; the pre-fix self-pair captures show end=false here. The responder logs 'SYSTEM KEY EXTRACTED' and disarms after sending this -- now grace-delayed rather than immediate, in case the hub follows up with an address-verification round (this KIG300 does not, see the description); sent on all 3 channels, one shown"
 expect:
   exchange:
     kind: pairing

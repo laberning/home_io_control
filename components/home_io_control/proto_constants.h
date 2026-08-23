@@ -119,15 +119,24 @@ static constexpr uint8_t CMD_KEY_TRANSFER = 0x32;  ///< Send encrypted system ke
 static constexpr uint8_t CMD_KEY_CONFIRM = 0x33;   ///< Device confirms key was received
 
 // Address and device-initiated key exchange
-static constexpr uint8_t CMD_ADDRESS_REQ = 0x36;  ///< Address assignment request
+static constexpr uint8_t CMD_ADDRESS_REQ =
+    0x36;  ///< "Report your address" request. Not pairing-specific: it's captured both closing a
+           ///< Velux KLR200 pairing (tests/corpus/captures/velux_kux100/pairing_full.yaml) and, on
+           ///< a completely different hub, sent to an already-paired device with no pairing in
+           ///< progress at all (a Velux KIG300 probing a Somfy dimmer in
+           ///< tests/corpus/captures/issues/issue_45_capability_probe_burst.yaml). Answered by the
+           ///< key-extraction responder's create_address_resp_device_role()
+           ///< (handle_key_extraction_address_req_() in hub_key_extraction.cpp).
 static constexpr uint8_t CMD_ADDRESS_RESP =
     0x37;  ///< Address assignment response: the device returns its own 3-byte backbone address,
            ///< byte-identical to the one it reported at data[2..4]
            ///< (DISCOVERY_RESP_BACKBONE_OFFSET) of its CMD_DISCOVER_RESP earlier in the same
-           ///< session — an independent confirmation of that offset. Only capture of this pair:
+           ///< session — an independent confirmation of that offset. The only capture of this
+           ///< command in the corpus is still
            ///< tests/corpus/captures/velux_kux100/pairing_full.yaml, where a Velux KLR200 closes
            ///< pairing with 0x36 and then challenges the 0x37 it gets back (see
-           ///< CMD_CHALLENGE_REQ). Neither command is sent or handled anywhere in this codebase.
+           ///< CMD_CHALLENGE_REQ) — sent by create_address_resp_device_role()
+           ///< (proto_commands.h/.cpp), the key-extraction responder's answer to CMD_ADDRESS_REQ.
 static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
     0x38;  ///< Device-initiated ("pull") key transfer request: documented elsewhere as a command
            ///< ID plus a 6-byte challenge, nothing more — never observed in our corpus or in any
@@ -137,11 +146,13 @@ static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
 
 // Authentication commands (challenge-response for secured commands)
 static constexpr uint8_t CMD_CHALLENGE_REQ =
-    0x3C;  ///< 6-byte random challenge. Usually a device challenging a controller's command —
-           ///< the only direction this codebase implements — but the protocol is symmetric and
-           ///< controllers challenge devices too: in
+    0x3C;  ///< 6-byte random challenge. Usually a device challenging a controller's command, but
+           ///< the protocol is symmetric and controllers challenge devices too: in
            ///< tests/corpus/captures/velux_kux100/pairing_full.yaml a KLR200 issues 0x3C against
-           ///< the device's own CMD_ADDRESS_RESP.
+           ///< the device's own CMD_ADDRESS_RESP. The key-extraction responder now answers exactly
+           ///< that inbound direction (handle_key_extraction_address_challenge_() in
+           ///< hub_key_extraction.cpp), so both directions are implemented, not just the outbound
+           ///< one.
 static constexpr uint8_t CMD_CHALLENGE_RESP =
     0x3D;  ///< HMAC proof answering a 0x3C. Whoever is challenged authenticates *its own*
            ///< preceding frame: the transcript is [cmd, data...] of the challenged party's last

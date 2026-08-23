@@ -661,6 +661,17 @@ class IOHomeControlComponent : public Component,
   /// Handle an inbound CMD_KEY_TRANSFER (0x32) addressed to our throwaway node ID while armed.
   /// @param frame Parsed inbound key-transfer frame.
   void handle_key_extraction_key_transfer_(const IoFrame &frame);
+  /// Handle an inbound CMD_ADDRESS_REQ (0x36) addressed to our throwaway node ID while armed.
+  /// Some hubs (Velux KLR200) send this after completing the key exchange, to verify the
+  /// backbone address they were given — see pairing_responder::on_address_req().
+  /// @param frame Parsed inbound address-request frame.
+  void handle_key_extraction_address_req_(const IoFrame &frame);
+  /// Handle an inbound CMD_CHALLENGE_REQ (0x3C) addressed to our throwaway node ID while armed and
+  /// in SENT_ADDRESS_RESP — the hub-issued challenge against our own CMD_ADDRESS_RESP, closing the
+  /// address-verification round a CMD_ADDRESS_REQ opened. See
+  /// pairing_responder::on_address_challenge().
+  /// @param frame Parsed inbound challenge-request frame.
+  void handle_key_extraction_address_challenge_(const IoFrame &frame);
   /// Generate a random throwaway node ID for one key-extraction arm cycle, avoiding collisions
   /// with the broadcast addresses, this hub's own real node ID, and any registered device.
   /// @param out Output: 3-byte node ID.
@@ -676,6 +687,13 @@ class IOHomeControlComponent : public Component,
   /// Emit the security-sensitive "system key extracted" log block (see redaction.h — this is the
   /// one deliberate, explicit exception to that file's masking, not a loosening of it).
   void log_key_extraction_result_();
+  /// (Re)arm the post-extraction grace window that replaces the old immediate disarm-on-extraction:
+  /// called once when the key is first recovered, and again on every sign of hub progress after
+  /// that (an inbound 0x36, an outbound 0x3D) so a slow multi-retry hub isn't cut off mid-round.
+  /// Uses the same named-timer replace-on-reschedule idiom as the 10-minute auto-off timer above —
+  /// see hub_key_extraction.cpp for why a naive "only disarm if DISARMED" guard inside the callback
+  /// is not enough once a manual disarm-and-rearm can happen inside the window.
+  void arm_post_extraction_grace_();
 
   /// Extract supported position or metadata info from a response frame and merge it into the device record.
   /// @param frame IoFrame containing a supported inbound command such as CMD_PRIVATE_RESP,
