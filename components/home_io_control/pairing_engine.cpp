@@ -67,17 +67,21 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
 /// Listens with per-chip frequency hopping between slices. Distinguishes between
 /// NO_RESPONSE (no packets at all) and INVALID (packets seen but none valid).
 ///
-/// Frequency hopping: hops between the 3 IO-homecontrol channels after each slice.
-/// The slice length comes from RadioDriver::hop_dwell_ms() (spec.dwell_ms left at 0, so
-/// listen() asks the driver) — chips that retune slowly need a much longer dwell than
-/// fast-hopping chips. When preamble or sync detection fires, the dwell extends by
-/// PREAMBLE_LINGER_DWELL_MS so the incoming frame can complete without interruption.
+/// Frequency hopping: hops between the 2 non-request IO-homecontrol channels after each slice —
+/// the request always goes out on FREQ_CH2 (see run_discovery_phase_()), and a broadcast reply
+/// essentially never lands back on that channel (see ListenPolicy's own doc comment for why), so
+/// dwelling there is wasted listening time. Same policy as collect_broadcast_responses() uses for
+/// its own broadcast wait (spec.request_freq below). The slice length comes from
+/// RadioDriver::hop_dwell_ms() (spec.dwell_ms left at 0, so listen() asks the driver). When
+/// preamble or sync detection fires, the dwell extends by PREAMBLE_LINGER_DWELL_MS so the
+/// incoming frame can complete without interruption.
 decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_response_(uint32_t timeout_ms,
                                                                                    RadioRxPacket &packet,
                                                                                    IoFrame &response_frame) {
   ListenSpec spec;
   spec.window_ms = timeout_ms;
-  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.policy = ListenPolicy::ROTATE_SKIPPING_REQUEST;
+  spec.request_freq = FREQ_CH2;
   // dwell_ms left at 0: no measured reason to dwell differently from the roll-call, so listen()
   // asks the driver (radio_()->hop_dwell_ms(*tuning_)) the same way collect_broadcast_responses()
   // does.

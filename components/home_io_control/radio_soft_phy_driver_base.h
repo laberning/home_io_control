@@ -146,6 +146,8 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @copydoc RadioDriver::is_sync_detected
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
+  ///
+  /// Consults @ref preamble_latched_at_timeout_ first; see that member's own doc comment for why.
   bool is_preamble_detected() override;
   /// @brief Preamble for response/continuation frames — shared storage, see the concrete
   /// drivers' constructors/tuning defaults for the chip-specific rationale and value.
@@ -318,6 +320,33 @@ class SoftPhyDriverBase : public RadioDriver {
   uint16_t response_preamble_;
   uint16_t post_tx_settle_us_;
   uint32_t busy_timeout_ms_;
+
+  /// @brief Whether `PreambleDetected` was latched at the exact moment a dwell's
+  /// `poll_until_activity_()` gave up waiting, captured before `reset_rx_state_()` wipes the IRQ
+  /// word out from under it.
+  ///
+  /// `PreambleDetected` is deliberately excluded from @ref activity_irq_mask (a bare preamble must
+  /// not look like terminal activity), and that exclusion is exactly why a dwell *can* time out
+  /// while the bit is still latched — the timeout branch has no way to notice, since
+  /// activity_irq_mask() never told it to look. What happens next is a separate problem:
+  /// `reset_rx_state_()` runs immediately afterward and clears the whole IRQ word, so a live
+  /// re-read a few tens of microseconds later (in `listen()`'s `preamble_or_sync_incoming()` guard)
+  /// would need the chip to re-observe a fresh preamble from scratch — which takes a little longer
+  /// on a chip with a longer preamble-detector length — and it almost never has done so by the time
+  /// the guard asks. This flag is the only way that information survives the reset long enough for
+  /// the guard to read it.
+  ///
+  /// `is_sync_detected()` needs no equivalent snapshot — not because no path clears sync before a
+  /// timeout (`resolve_sync_race_()` does exactly that: it clears `SYNC_WORD_VALID` up front once a
+  /// reception is underway, and can still time out later waiting for RX_DONE), but because that
+  /// path never calls `reset_rx_state_()` on its way out. Whatever `PreambleDetected` state existed
+  /// going into it survives untouched, which is all the guard actually depends on there.
+  ///
+  /// Lifetime is bounded to a single `poll_until_activity_()` call so a stale detection can never
+  /// suppress a later, unrelated hop: every exit from that function's loop sets this flag from
+  /// scratch (true only on the timeout branch, and only when the bit was actually set on that exact
+  /// read), and @ref is_preamble_detected consumes (clears) it the moment it is read as true.
+  bool preamble_latched_at_timeout_{false};
 };
 
 }  // namespace home_io_control

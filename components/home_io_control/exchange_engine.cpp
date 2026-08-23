@@ -454,18 +454,13 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
 
   ListenSpec spec;
   spec.window_ms = window_ms;
-  // A roll-call reply is never sent back on the channel that asked for it — 1 of 149 measured
-  // replies, against the ~1 in 3 an even split would give. Dwelling on the request channel is
-  // therefore dead listening time: with three channels split evenly across the window, one of
-  // them going unused for replies costs a third of it.
+  // A roll-call reply almost never returns on the channel that asked for it (see ListenPolicy's
+  // own doc comment for why), so dwelling there is wasted listening time: with three channels
+  // split evenly across the window, one of them going unused for replies costs a third of it.
   spec.policy = ListenPolicy::ROTATE_SKIPPING_REQUEST;
   spec.request_freq = freq;
   // dwell_ms is left at 0: no measured reason to dwell differently from discovery, so listen()
-  // asks the driver (radio->hop_dwell_ms(tuning)) the same way discovery does — 5 ms on SX1276,
-  // 200 ms on SX1262, 200 ms on LR1121. SX1276's 5 ms dwell is shorter than a reply's air time
-  // (~10 ms for a DISCOVER_SPE_RESP at the protocol's 38400 bps line rate), so without a linger
-  // guard the radio retunes mid-frame on nearly every reception — hardware-measured 2026-08-19:
-  // found-rate collapsed from 83% to 12% before linger_on_preamble was added below.
+  // asks the driver via hop_dwell_ms() instead of hardcoding a value here.
   // A reception proves this channel carries responders and replies arrive spread across the whole
   // window, so staying on it costs nothing; hopping away would only shrink the time spent where
   // responders already are.
@@ -525,9 +520,8 @@ bool dispatch_received_packet(const ReplyHandler &on_frame, const RadioRxPacket 
   return false;
 }
 
-/// A frame is arriving: hopping now would cut it off mid-reception. Only the *preamble* half of
-/// this guard is chip-limited (masked off on SX1262's IRQ set today); the sync half is live on
-/// every chip.
+/// A frame is arriving: hopping now would cut it off mid-reception. Both halves are live on every
+/// current chip.
 bool preamble_or_sync_incoming(RadioDriver *radio, const ListenSpec &spec) {
   return spec.linger_on_preamble && (radio->is_preamble_detected() || radio->is_sync_detected());
 }
@@ -565,8 +559,9 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
   // both leave spec.dwell_ms at 0 and share one chip-specific knob instead of inventing a second.
   const uint32_t dwell = resolve_dwell_ms(spec, rotating, radio, *this->tuning_);
 
-  // A reply to a broadcast never comes back on the channel that asked (1 of 149 measured), so a
-  // skipping listen leaves that channel before its first dwell rather than spending one there.
+  // A broadcast reply almost never returns on the requesting channel (see ListenPolicy's own doc
+  // comment for why), so a skipping listen leaves that channel before its first dwell rather than
+  // spending one there.
   if (spec.policy == ListenPolicy::ROTATE_SKIPPING_REQUEST)
     this->listen_hop_(skip, spec);
 

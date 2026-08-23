@@ -93,14 +93,15 @@ struct InboundAuthContext {
 
 /// @brief Which channels a listen covers.
 ///
-/// A property of what is being waited for, not of the radio: a unicast reply comes back on the
-/// channel the request went out on (measured on every unicast pairing reply captured — the 0x33
-/// in all three dimmer pairing captures across three chips at 4-41 ms, every 0x3C challenge, both
-/// field-logged 0xFE error replies at 20 ms, 12/12 hardware pairing trials across two chips), while
-/// a reply to a broadcast does not (1 of 149 roll-call replies measured, against the ~1 in 3 an
-/// even split would give). Shared by @ref ExchangeEngine::listen() and, prospectively, any other
-/// caller that waits for a radio reply — hence living beside the primitive rather than folded into
-/// one loop's local logic.
+/// A property of what is being waited for, not of the radio: a unicast exchange is a conversation
+/// pinned to the channel the request went out on, so its reply always lands there too and there is
+/// nothing to hop for. A broadcast has no single recipient, though — every device that answers is
+/// continuing its own independent channel-hopping rather than joining a pinned conversation, so the
+/// channel it happens to be on when it replies is effectively decoupled from whichever channel
+/// carried the request. In practice a broadcast reply essentially never lands back on the
+/// requesting channel, so dwelling there wastes part of the listen window. Shared by
+/// @ref ExchangeEngine::listen() and, prospectively, any other caller that waits for a radio reply
+/// — hence living beside the primitive rather than folded into one loop's local logic.
 enum class ListenPolicy : uint8_t {
   HOLD_REQUEST_CHANNEL,     ///< Never retunes, never slices. Unicast replies.
   ROTATE_ALL_CHANNELS,      ///< CH1->CH2->CH3->CH1. Broadcast whose reply channel is unknown.
@@ -162,14 +163,12 @@ struct ListenSpec {
   bool hop_after_ignored_frame{true};
   /// Extend the listen instead of hopping while the chip reports a preamble or sync word, so an
   /// arriving frame is not cut off mid-reception. Set by both rotating listens (pairing discovery
-  /// and the broadcast roll-call) — SX1276's 5 ms rotating dwell is shorter than one frame's air
-  /// time, so without this guard nearly every reply is cut off mid-retune (hardware-measured
-  /// 2026-08-19). On SX1262 the preamble half of the guard is masked off in the driver's IRQ set,
-  /// so it buys only the sync half there until that changes.
+  /// and the broadcast roll-call): every rotating dwell is short relative to one frame's air time,
+  /// so without this guard a reply would routinely get cut off mid-retune.
   bool linger_on_preamble{false};
-  /// Length of the preamble/sync extension, in milliseconds. Deliberately shorter than a dwell on
-  /// the slow-hopping chips and longer than one on the fast-hopping chip: it is sized to a frame's
-  /// air time, not to a hop.
+  /// Length of the preamble/sync extension, in milliseconds. Sized to one frame's air time rather
+  /// than to a hop slice, so it is the same on every chip regardless of how long that chip dwells
+  /// per channel.
   uint32_t linger_dwell_ms{0};
   /// Called on every hop, for callers that count hops in their own telemetry (pairing does; the
   /// exchange loops do not). Empty by default, in which case no callback fires.

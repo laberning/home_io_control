@@ -145,10 +145,10 @@ class RadioSX1262 : public SoftPhyDriverBase {
   }
   /// @brief Per-channel dwell for a rotating listen (SX1262).
   ///
-  /// SX1262 frequency changes require a standby→SetRfFrequency→RX cycle (no fast hop), so a
-  /// rotating listen needs a much longer dwell than the SX1276. Governs discovery and the
-  /// broadcast roll-call alike (see @ref RadioDriver::hop_dwell_ms). The value comes from the
-  /// user-facing `sx1262_discovery_hop_slice_ms` tuning field.
+  /// See @ref SX1262_DISCOVERY_HOP_SLICE_MS for why a short dwell is correct here despite SX1262's
+  /// slower per-channel retune than the SX1276's FastHop. Governs discovery and the broadcast
+  /// roll-call alike (see @ref RadioDriver::hop_dwell_ms). The value comes from the user-facing
+  /// `sx1262_discovery_hop_slice_ms` tuning field.
   [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.sx1262_discovery_hop_slice_ms;
   }

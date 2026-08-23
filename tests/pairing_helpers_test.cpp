@@ -520,7 +520,7 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenPreambleDetected) {
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
 
-  // Simulate preamble detected — radio should NOT hop
+  // Simulate preamble detected — radio should not hop *within the loop*
   radio.set_preamble_detected(true);
 
   RadioRxPacket out_pkt{};
@@ -528,7 +528,13 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenPreambleDetected) {
   auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
 
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
-  EXPECT_EQ(radio.freq_history().size(), 0u) << "should not hop when preamble is detected (signal arriving)";
+  // ROTATE_SKIPPING_REQUEST retunes once, unconditionally, before the first dwell (away from the
+  // request channel FREQ_CH2) — that one hop happens regardless of the preamble guard, which only
+  // suppresses hops *inside* the loop. FREQ_CH3 is the correct target: MockRadio starts at CH2,
+  // and hop_frequency()'s rotation goes CH2->CH3->CH1->CH2 skipping whichever is `request_freq`.
+  EXPECT_EQ(radio.freq_history(), std::vector<uint32_t>{FREQ_CH3})
+      << "should hop exactly once (the mandatory pre-loop skip away from the request channel), "
+         "then never again while preamble is detected";
 }
 
 TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenSyncDetected) {
@@ -538,7 +544,7 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenSyncDetected) {
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
 
-  // Simulate sync word detected — radio should NOT hop
+  // Simulate sync word detected — radio should not hop *within the loop*
   radio.set_sync_detected(true);
 
   RadioRxPacket out_pkt{};
@@ -546,10 +552,13 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_NoHopWhenSyncDetected) {
   auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
 
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
-  EXPECT_EQ(radio.freq_history().size(), 0u) << "should not hop when sync word is detected (frame arriving)";
+  // Same mandatory pre-loop skip-hop as the preamble case above — see its comment for why.
+  EXPECT_EQ(radio.freq_history(), std::vector<uint32_t>{FREQ_CH3})
+      << "should hop exactly once (the mandatory pre-loop skip away from the request channel), "
+         "then never again while sync is detected";
 }
 
-TEST(PairingHelpers, WaitForDiscoveryResponseVisitsAllThreeChannels) {
+TEST(PairingHelpers, WaitForDiscoveryResponseSkipsRequestChannel) {
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
@@ -557,8 +566,9 @@ TEST(PairingHelpers, WaitForDiscoveryResponseVisitsAllThreeChannels) {
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
 
   // No packets queued → hops every slice (SX1276_DISCOVERY_HOP_SLICE_MS = 5 ms) for the whole
-  // 150 ms window, unlike the unicast waits above: discovery is a broadcast whose reply channel
-  // is unknown, so it is the one wait loop that legitimately visits every channel.
+  // 150 ms window. Discovery's request always goes out on FREQ_CH2 (run_discovery_phase_()), and a
+  // broadcast reply almost never lands back on the requesting channel, so this rotates over the
+  // other two channels only.
   RadioRxPacket out_pkt{};
   IoFrame out_frame{};
   auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
@@ -566,17 +576,18 @@ TEST(PairingHelpers, WaitForDiscoveryResponseVisitsAllThreeChannels) {
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
   const auto &history = radio.freq_history();
   EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH1), history.end());
-  EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH2), history.end());
   EXPECT_NE(std::find(history.begin(), history.end(), FREQ_CH3), history.end());
+  EXPECT_EQ(std::find(history.begin(), history.end(), FREQ_CH2), history.end())
+      << "must not dwell on the request channel — a broadcast reply almost never lands there";
 }
 
 // A preamble/sync detection responds by extending the current dwell a short, fixed amount
-// (PREAMBLE_DWELL_MS = 15 ms) rather than by taking another full per-channel hop-slice dwell.
-// The two differ in both directions depending on chip (15 vs 5 ms on SX1276, 15 vs 200 ms on
-// SX1262/LR1121), so a port that models "preamble detected" as "skip the hop, take another
-// full dwell" is wrong on every chip. wait_timeouts() makes the two indistinguishable-by-count
-// mistake visible: the sequence must alternate hop-slice, 15, hop-slice, 15, … and never repeat
-// the same value twice in a row.
+// (PREAMBLE_LINGER_DWELL_MS = 15 ms) rather than by taking another full per-channel hop-slice
+// dwell. The extension is fixed while the hop slice is per-chip and tunable, so modeling
+// "preamble detected" as "skip the hop, take another full dwell" produces a different,
+// chip-dependent sequence instead of the intended one. wait_timeouts() below verifies the actual
+// sequence: it must alternate hop-slice, 15, hop-slice, 15, … and never repeat the same value
+// twice in a row.
 TEST(PairingHelpers, WaitForDiscoveryResponse_PreambleLingerUsesShortExtensionDwell) {
   TestableComponent comp;
   comp.initialized_ = true;
@@ -590,7 +601,10 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_PreambleLingerUsesShortExtensionDw
   auto result = comp.pairing_engine_.wait_for_discovery_response_(150, out_pkt, out_frame);
 
   EXPECT_EQ(result, decisions::PairingDiscoveryDisposition::NO_RESPONSE);
-  EXPECT_TRUE(radio.freq_history().empty()) << "the preamble guard must suppress every hop for the whole window";
+  // Same mandatory pre-loop skip-hop as the two tests above; the preamble guard suppresses every
+  // hop *after* that one for the whole window.
+  EXPECT_EQ(radio.freq_history(), std::vector<uint32_t>{FREQ_CH3})
+      << "the preamble guard must suppress every hop after the mandatory pre-loop skip";
 
   // Walk pairs of (hop-slice, extension) timeouts as long as both come through unclamped. Near
   // the very end of the window std::min() against the shrinking remaining time clamps the last

@@ -126,10 +126,17 @@ static constexpr uint16_t SX1276_DISCOVERY_HOP_SLICE_MS = 5;
 
 /// Per-channel dwell while SX1262 pairing discovery hops across channels.
 ///
-/// SX1262 frequency changes require a standby→SetRfFrequency→RX cycle, so the
-/// dwell must be much longer than on the SX1276 for short-preamble responses on
-/// alternate channels to be caught reliably.
-static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 200;
+/// SX1262 frequency changes require a standby→SetRfFrequency→RX cycle, unlike the SX1276's
+/// FastHop, but that changes only how much a single retune costs, not how long the radio should
+/// then sit still: a short dwell fits more retunes into the listen window than a long one, so the
+/// receiver is more often already parked on the right channel by the time a reply starts. The
+/// preamble/sync linger guard (`ListenSpec::linger_on_preamble`) is what makes a dwell this short
+/// safe — it keeps a caught reply from being cut off mid-reception by extending the dwell instead
+/// of hopping away. A dwell in the low single-digit milliseconds performs best; shorter than that,
+/// coverage degrades gradually and only truly collapses at `0`, where `wait_for_packet(..., 0)`
+/// returns before any guard can observe activity at all. `7` is the best-performing value found in
+/// that range.
+static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 7;
 
 /// LR1121-specific preamble for response/continuation frames within an exchange.
 ///
@@ -146,9 +153,11 @@ static constexpr uint16_t LR1121_POST_TX_SETTLE_US = SX1262_POST_TX_SETTLE_US;
 
 /// Per-channel dwell while LR1121 pairing discovery hops across channels.
 ///
-/// LR1121 frequency changes require a standby→SetRfFrequency→RX cycle, same as the SX1262,
-/// so the dwell is seeded from the SX1262-validated default pending Step 7 hardware tuning.
-static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = SX1262_DISCOVERY_HOP_SLICE_MS;
+/// Measured independently on LR1121 hardware rather than inherited from
+/// @ref SX1262_DISCOVERY_HOP_SLICE_MS — that constant's short-dwell reasoning applies equally
+/// here, but the two chips are validated separately and could in principle diverge, so this stays
+/// its own literal rather than an alias.
+static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = 7;
 
 /// @brief All runtime tunable parameters for pairing and radio diagnostics.
 ///

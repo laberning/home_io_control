@@ -32,10 +32,10 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/conti
 
 /// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
 /// longer to stay on a channel once a frame is visibly incoming, so a hop doesn't cut it off
-/// mid-reception. Sized to a frame's air time, not to a hop slice — on SX1276 it is longer than
-/// the per-channel dwell (15 vs. 5 ms), on SX1262/LR1121 far shorter (15 vs. 200 ms). Shared by
-/// every rotating listen (pairing discovery, broadcast roll-call): both wait for the same class of
-/// short protocol frame, so there is no measured reason for them to differ.
+/// mid-reception. Sized to a frame's air time, not to a hop slice, so it does not need to change
+/// when a chip's hop slice does. Shared by every rotating listen (pairing discovery, broadcast
+/// roll-call): both wait for the same class of short protocol frame, so there is no measured
+/// reason for them to differ.
 static constexpr uint32_t PREAMBLE_LINGER_DWELL_MS = 15;
 // Chip-specific defaults (response preamble, post-TX settle, per-chip discovery hop slices
 // for SX1262 and LR1121) live beside their TuningConfig fields in tuning_config.h; the

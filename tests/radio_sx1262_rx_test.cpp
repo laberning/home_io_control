@@ -359,6 +359,39 @@ TEST(RadioSX1262, CheckForPacketPreambleOnlyDoesNotResetRx) {
 }
 
 // ============================================================================
+// Dwell-timeout snapshot: poll_until_activity_()'s timeout branch calls reset_rx_state_(), which
+// clears the whole IRQ word before listen()'s preamble_or_sync_incoming() guard gets a chance to
+// read it — so a live read there almost always sees a freshly-cleared word, even though
+// PreambleDetected was genuinely latched right up until the timeout.
+// ============================================================================
+
+TEST(RadioSX1262, WaitForPacketTimeoutPreservesPreambleForGuard) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  // Preamble latched on every read up to and including the read that observes the timeout — no
+  // RX_DONE/sync ever arrives, so poll_until_activity_() only exits via its timeout branch. The
+  // trailing 0x0000 backs the second is_preamble_detected() call below explicitly, so that
+  // assertion checks a real "nothing set" read instead of relying on the sequence running dry.
+  radio.set_irq_sequence({SX1262_IRQ_PREAMBLE_DETECTED, SX1262_IRQ_PREAMBLE_DETECTED, 0x0000});
+
+  RadioRxPacket result{};
+  // Timeout of 1 ms takes exactly 2 loop iterations to exceed: the test's fake millis() advances
+  // by 1 on every call and the timeout check calls it once per iteration, so this pairing is an
+  // artifact of the test clock, not a real-time relationship between "1 ms" and "2 iterations".
+  bool ok = radio.wait_for_packet(result, 1);
+
+  EXPECT_FALSE(ok) << "no RX_DONE/sync ever arrived, so this dwell must time out";
+  EXPECT_TRUE(radio.is_preamble_detected())
+      << "the guard must still see the preamble that was latched right up to the timeout, even "
+         "though reset_rx_state_() has already cleared the chip's live IRQ word";
+  EXPECT_FALSE(radio.is_preamble_detected())
+      << "the snapshot must not survive being read once — a stale detection must not suppress "
+         "hopping on a later, unrelated dwell";
+}
+
+// ============================================================================
 // UART encode/decode and CRC validation tests
 // ============================================================================
 

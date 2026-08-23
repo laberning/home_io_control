@@ -134,14 +134,14 @@ your device may differ.
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth; wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
-| `sx1262_discovery_hop_slice_ms` | SX1262 | `200` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
+| `sx1262_discovery_hop_slice_ms` | SX1262 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth. Still `117.3` by default — untested on LR1121, but the SX1262 result below suggests trying narrower. |
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
-| `lr1121_discovery_hop_slice_ms` | LR1121 | `200` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
+| `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -261,32 +261,36 @@ loop-specific reason to dwell differently (neither does today). Change it when a
 clearly present but its discovery response, or its roll-call reply, is never caught.
 
 *Observations:* because a device often answers on a different channel than the request was
-sent on, hopping during the wait is essential (this was the single biggest discovery fix).
-Known implementations dwell only a few milliseconds per channel, extending the dwell when a
-preamble is detected — the SX1276 uses that fast cycle. The SX1262 needs a much longer
-per-channel dwell (~200 ms) because its shorter-preamble responses are harder to catch mid-hop.
-The floor is `0`, not a physically meaningful minimum — below the ~13.9 ms measured device reply
-preamble, a dwell can't last long enough to catch anything on any given channel, so values that
-low are for measuring where the wall actually is (radio_robustness_plan.md Experiment 1b), not
-for everyday tuning.
+sent on, hopping during the wait is essential — a hop slice that never rotates would miss it.
+Both chips dwell only a few milliseconds per channel and extend the dwell when a preamble or sync
+word is detected, so a caught reply is not cut off mid-retune: the SX1276 uses a naturally fast
+hop cycle, and a short SX1262 dwell fits more retunes into the same window, so the receiver is
+more often already on the right channel when a reply starts. The floor of `0` is not a physically
+meaningful minimum for the chip — coverage degrades gradually below the low single digits and
+only collapses at the literal `0`, where `wait_for_packet(..., 0)` returns before anything can be
+observed at all — so it is left open as an experimentally checkable floor rather than assumed.
+Values near that floor are for probing it, not for everyday tuning.
 
 #### `lr1121_rx_bandwidth` / `lr1121_response_preamble` / `lr1121_post_tx_settle_us` / `lr1121_discovery_hop_slice_ms`
 
 The LR1121 equivalents of the four SX1262 knobs above — same meaning (`lr1121_discovery_hop_slice_ms`
-governs the roll-call as well as discovery, same as its SX1262/SX1276 counterparts), same defaults, same
+governs the roll-call as well as discovery, same as its SX1262/SX1276 counterparts), same
 register-level reasoning (the LR1121's GFSK bandwidth encoding is register-identical to the
-SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop).
+SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop). Three of the four share
+SX1262's default values (`lr1121_response_preamble`, `lr1121_post_tx_settle_us`,
+`lr1121_discovery_hop_slice_ms`); `lr1121_rx_bandwidth` instead keeps its own wider default until
+a narrower one is validated on this chip. `lr1121_discovery_hop_slice_ms` is measured
+independently on LR1121 rather than merely inherited, since the two chips are validated
+separately and could in principle diverge.
 
-*Observations:* the defaults were seeded from SX1262's validated values and are now confirmed
+*Observations:* the defaults were seeded from SX1262's validated values and are confirmed
 working on real LR1121 hardware — authenticated open/close/stop exchanges complete reliably
-against a real awning at the stock `117.3` kHz / `8` B / `500` µs / `200` ms settings. Two of
-`lr1121_rx_bandwidth`'s enum values (39.0/46.9 kHz) turned out to have the wrong register
-encoding when borrowed directly from SX1262 and were corrected — the full, corrected option set
-is `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` kHz. The main variable that
-still matters in practice is RF link quality (RSSI) rather than these timing/bandwidth knobs —
-weak signal shows up as intermittent frame loss on either leg of an exchange, which the
-existing per-command retry already absorbs; there was no need to touch these defaults to get a
-working exchange.
+against a real awning at the stock settings. Two of `lr1121_rx_bandwidth`'s enum values
+(39.0/46.9 kHz) had the wrong register encoding when first borrowed directly from SX1262 and were
+corrected — the full, corrected option set is `39.0` / `46.9` / `58.6` / `78.2` / `117.3` /
+`156.2` / `187.2` kHz. The main variable that still matters in practice is RF link quality (RSSI)
+rather than these timing/bandwidth knobs — weak signal shows up as intermittent frame loss on
+either leg of an exchange, which the existing per-command retry already absorbs.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 
@@ -423,11 +427,14 @@ is a general starting point, not a guarantee — different devices need differen
    the *command* from the *address*, since a device may only answer on the specific address it is
    listening on — which is not always the command's conventional one.
 
-5. **If discovery is intermittent** (responses appear sometimes), widen the timing:
+5. **If discovery is intermittent** (responses appear sometimes), widen the overall wait and
+   initial dwell — but leave the hop slice alone or shorten it, not the other way around. Don't
+   raise `sx1262_discovery_hop_slice_ms` here: the short default already reflects the measured
+   optimum (see the section above), so widening it back toward a long dwell makes things worse,
+   not better:
    ```yaml
    pairing_discovery_wait_ms: 3000
    pairing_discovery_initial_dwell_ms: 500
-   sx1262_discovery_hop_slice_ms: 250   # SX1262 boards only; use lr1121_discovery_hop_slice_ms on LR1121
    ```
 
 6. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops

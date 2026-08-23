@@ -268,13 +268,11 @@ class RadioLR1121 : public SoftPhyDriverBase {
   }
   /// @brief Per-channel dwell for a rotating listen (LR1121).
   ///
-  /// LR1121 frequency changes require a standby→SetRfFrequency→RX cycle (no fast hop), same as
-  /// the SX1262, so a rotating listen needs the equivalent longer dwell. Governs discovery and
-  /// the broadcast roll-call alike (see @ref RadioDriver::hop_dwell_ms) — this driver no longer
-  /// carries a separate, longer dwell just for the exchange waits (removed: it existed only to
-  /// stop those two loops from hopping at all, which @ref ListenPolicy::HOLD_REQUEST_CHANNEL now
-  /// does directly). The value comes from the user-facing `lr1121_discovery_hop_slice_ms` tuning
-  /// field.
+  /// See @ref LR1121_DISCOVERY_HOP_SLICE_MS for why this is measured independently rather than
+  /// inherited from SX1262, and @ref SX1262_DISCOVERY_HOP_SLICE_MS for the shared short-dwell
+  /// reasoning. Governs discovery and the broadcast roll-call alike (see
+  /// @ref RadioDriver::hop_dwell_ms). The value comes from the user-facing
+  /// `lr1121_discovery_hop_slice_ms` tuning field.
   [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.lr1121_discovery_hop_slice_ms;
   }

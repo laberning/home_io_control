@@ -167,12 +167,11 @@ _NUMBER_PARAMS = {
     CONF_SX1262_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
     CONF_SX1276_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: (5, 200, 1, "ms"),
-    # Floor is 0, not a physically-meaningful minimum: below the ~13.9 ms measured device reply
-    # preamble (issue #65 SDR analysis), a rotating listen can't dwell long enough on any channel
-    # to catch anything — wait_for_packet(..., 0) returns instantly and the loop just hops as fast
-    # as change_frequency() allows, burning SPI/CPU time with no chance of a reception. Left open
-    # to 0 anyway (radio_robustness_plan.md Experiment 1b, dwell-reduction sweep) so that floor can
-    # be measured empirically instead of assumed.
+    # Floor is 0, not a physically meaningful minimum for the chip: coverage degrades gradually as
+    # the dwell shortens and only truly collapses at the literal 0 ms edge case, where
+    # wait_for_packet(..., 0) returns before any guard can observe activity at all. Left open so
+    # that floor stays empirically checkable rather than assumed. See
+    # SX1262_DISCOVERY_HOP_SLICE_MS in tuning_config.h for why the default itself is short.
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),
     # LR1121 numeric ranges reuse the SX1262 bounds — same chip-family physical constraints
     # (design doc §3.2: "seed every timing/tuning default from the validated SX1262 values").

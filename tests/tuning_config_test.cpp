@@ -21,12 +21,12 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_EQ(static_cast<uint8_t>(cfg.sx1276_rx_bandwidth), 0x13);
   EXPECT_EQ(cfg.sx1276_response_preamble, 12);
   EXPECT_EQ(cfg.sx1276_discovery_hop_slice_ms, 5);
-  EXPECT_EQ(cfg.sx1262_discovery_hop_slice_ms, 200);
-  // LR1121 radio defaults are seeded from the validated SX1262 values
+  EXPECT_EQ(cfg.sx1262_discovery_hop_slice_ms, 7);
+  // LR1121 radio defaults are seeded from the validated SX1262 values.
   EXPECT_EQ(cfg.lr1121_rx_bandwidth, LR1121RxBandwidth::BW_117_3_KHZ);
   EXPECT_EQ(cfg.lr1121_response_preamble, 8);
   EXPECT_EQ(cfg.lr1121_post_tx_settle_us, 500);
-  EXPECT_EQ(cfg.lr1121_discovery_hop_slice_ms, 200);
+  EXPECT_EQ(cfg.lr1121_discovery_hop_slice_ms, 7);
   EXPECT_EQ(cfg.lbt_max_retries, 5);
   EXPECT_EQ(cfg.lbt_rssi_threshold_dbm, -90);
   ASSERT_EQ(cfg.pairing_discovery_commands.size(), 1);
