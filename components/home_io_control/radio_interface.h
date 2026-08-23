@@ -22,6 +22,21 @@ namespace home_io_control {
 inline constexpr uint8_t RADIO_PACKET_BUFFER_SIZE =
     64;  ///< Scratch buffer size for raw radio packets and recovered frames.
 
+/// @brief Longest a frame arriving on the current channel may hold off an idle-path channel hop,
+/// in microseconds.
+///
+/// Sized to outlast the slowest thing a hop could destroy. On the software-PHY chips that is the
+/// fixed-length RX_DONE, which lands 48 raw bytes = 10.0 ms after the sync word
+/// (SOFT_PHY_RX_PROBE_PACKET_LEN at 38400 bps; a static_assert in radio_soft_phy_driver_base.h
+/// ties this constant to that arithmetic, since neither header can see the other's constants).
+/// On the SX1276 it is the frame's own air time, at most ~9.4 ms for the longest possible frame.
+/// 12 ms covers both with margin for poll granularity.
+///
+/// It is a *bound*, not a target: every mechanism that sets the holdoff is expected to clear it
+/// early, and the bound exists only so that a sync detection with no frame behind it — noise, a
+/// truncated burst, a peer that gave up — cannot wedge channel hopping permanently.
+inline constexpr uint32_t RX_HOP_HOLDOFF_US = 12000;
+
 /// Interface for SPI bus access.
 /// The ESPHome component implements this by delegating to its SPIDevice methods,
 /// allowing radio drivers to perform SPI transactions without depending on the
@@ -213,6 +228,31 @@ class RadioDriver {
   /// @return const reference to RadioCaptureInfo.
   [[nodiscard]] const RadioCaptureInfo &get_last_capture() const { return this->last_capture_; }
 
+  /// @brief True while a frame is arriving on the current channel and retuning would destroy it.
+  ///
+  /// Consulted by ExchangeEngine::maybe_hop() — the idle-path hop — which is purely time-gated and
+  /// otherwise fires on essentially every loop() pass (issue #81). Not consulted by
+  /// hop_frequency() itself: the blocking listen() loop does its own, differently-shaped gating
+  /// through preamble_or_sync_incoming(), and a caller that asked for a hop explicitly must get one.
+  ///
+  /// The default implementation is the recorded-state one: a driver reports a reception by calling
+  /// note_reception_in_progress_() from wherever it can actually observe one, and the holdoff
+  /// expires by itself after RX_HOP_HOLDOFF_US. That default is correct for any driver whose RX
+  /// path passes through check_for_packet() while the frame is still arriving, and it is what both
+  /// software-PHY drivers use. A driver that cannot observe a reception from check_for_packet()
+  /// overrides this and reads the chip at hop time instead — see RadioSX1276.
+  ///
+  /// Non-const because it expires its own latch, and because an override may do SPI.
+  [[nodiscard]] virtual bool reception_in_progress() {
+    if (!this->rx_hold_armed_)
+      return false;
+    if (micros() - this->rx_hold_since_us_ >= RX_HOP_HOLDOFF_US) {
+      this->rx_hold_armed_ = false;
+      return false;
+    }
+    return true;
+  }
+
   /// Set by the ISR when DIO fires. Using access helpers instead of touching the flag directly
   /// keeps the ISR/main-loop handoff explicit and lets ESP32 builds use atomic storage.
   [[nodiscard]] bool is_dio_fired() const {
@@ -261,6 +301,15 @@ class RadioDriver {
     this->clear_dio_fired();
   }
 
+  /// Record that a frame is arriving right now. Re-arming refreshes the deadline, so a driver may
+  /// call this on every poll that still sees the reception.
+  void note_reception_in_progress_() {
+    this->rx_hold_armed_ = true;
+    this->rx_hold_since_us_ = micros();
+  }
+  /// Drop the holdoff: the reception ended, was delivered, or was torn down deliberately.
+  void clear_reception_in_progress_() { this->rx_hold_armed_ = false; }
+
   /// Shared hardware reset sequence for chips with an active-low RST pin.
   /// Drives RST pin low → 10 ms → high → 10 ms. Called from derived driver init().
   void reset_hardware_();
@@ -296,6 +345,9 @@ class RadioDriver {
   uint32_t current_freq_{FREQ_CH2};
   RadioCaptureInfo last_capture_{};
   InternalGPIOPin *rst_pin_{nullptr};
+
+  bool rx_hold_armed_{false};     ///< Idle-hop holdoff latch — see reception_in_progress().
+  uint32_t rx_hold_since_us_{0};  ///< micros() timestamp the holdoff was last (re-)armed at.
 
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
   std::atomic<bool> dio_fired_{false};

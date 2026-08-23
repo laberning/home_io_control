@@ -240,13 +240,31 @@ void SoftPhyDriverBase::rearm_rx_after_tx_() {
   //     standby the instant TxDone fires;
   //   - the buffer base is written at init and nothing since has moved it.
   // What genuinely must happen: clear the latched TxDone (it shares the IRQ word with RX events),
-  // restore the RX packet params that this transmission overwrote, and re-enter RX.
+  // restore the RX packet params that this transmission overwrote, and re-enter RX. Also drop the
+  // hop holdoff (issue #81): whatever it was tracking belonged to the reception that this TX just
+  // destroyed by transmitting over it, and RX is genuinely re-arming here same as it does through
+  // reset_rx_state_() — unlike that call's SetStandby/buffer-base work, clearing the flag costs
+  // nothing, so there is no reason to leave it stale on this path.
+  //
+  // invalidate_stale_rx_content_after_tx() is the same shape: no-op on SX1262 (its buffer split
+  // already keeps TX content away from where a length-driven receive reads), so this path pays
+  // nothing extra there; only LR1121, whose shared buffer needs it, does real work here.
+  this->clear_reception_in_progress_();
   this->clear_irq_status(0xFFFFFFFF);
+  this->invalidate_stale_rx_content_after_tx();
   this->set_rx_packet_params();
   this->set_mode_rx();
 }
 
 void SoftPhyDriverBase::reset_rx_state_(bool force_standby) {
+  // Whatever was arriving is over — delivered, timed out, or deliberately discarded. Drop the hop
+  // holdoff with it, rather than leaving the next ~12 ms of hopping waiting on a deadline that no
+  // longer refers to anything (issue #81). This funnel covers every "RX torn down and re-armed"
+  // path except rearm_rx_after_tx_(), which clears the same flag itself for the same reason (see
+  // its own comment for why it can't just call this function): poll_until_activity_()'s timeout,
+  // try_early_completion_()'s success, read_rx_packet()'s end, finalize_receive_()'s failure, and
+  // check_for_packet()'s catch-all.
+  this->clear_reception_in_progress_();
   if (force_standby)
     this->set_mode_standby();
   this->clear_irq_status(0xFFFFFFFF);
@@ -285,8 +303,12 @@ bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait
     memcpy(packet.data, recovered_buf, probe.frame_len);
     packet.len = probe.frame_len;
 #ifdef IOHOME_FRAME_LOG
-    ESP_LOGD(TAG, "UART probe: valid=1 bit_offset=%u frame_start=%u frame_len=%u decoded_len=%u", probe.bit_offset,
-             probe.frame_start, probe.frame_len, probe.decoded_len);
+    // rx_offset is the chip-reported buffer offset this reception was read from — logged here
+    // (issue #81) because it is otherwise populated by every driver's fill_capture_info() and read
+    // by nothing, and it is the one fact that would confirm or correct LR1121_RX_BUFFER_BASE
+    // against a real LR1121 (see RadioLR1121::early_rx_read_offset's doc comment).
+    ESP_LOGD(TAG, "UART probe: valid=1 bit_offset=%u frame_start=%u frame_len=%u decoded_len=%u rx_offset=%u",
+             probe.bit_offset, probe.frame_start, probe.frame_len, probe.decoded_len, rx_offset);
 #endif
   } else {
 #ifdef IOHOME_FRAME_LOG
@@ -364,8 +386,39 @@ bool SoftPhyDriverBase::check_for_packet(RadioRxPacket &packet) {
   }
 
   if ((irq & this->sync_word_valid_bit()) != 0 && (irq & this->rx_done_bit()) == 0) {
+    // A frame is genuinely arriving. Record it so maybe_hop() (which runs a few lines up the
+    // caller's stack in loop()) holds the idle-path hop off instead of retuning under it —
+    // change_frequency() clears the whole IRQ word and the DIO latch, so a frame that loses that
+    // race is destroyed outright, not merely delayed (issue #81). A fresh is_sync_detected() read
+    // from maybe_hop() would not work here: the clear_irq_status() call right below has already
+    // dropped the sync bit by the time maybe_hop() could look at it, so the observation has to be
+    // captured now, before it disappears. The holdoff expires on its own; see RX_HOP_HOLDOFF_US.
+    //
+    // Past the holdoff arm above, finish the reception here instead of leaving it to the RX_DONE
+    // ~10 ms away and a loop() pass after that (issue #81, Mechanism B). sync_us is timestamped now,
+    // not when the sync word actually landed on air, so it can be a whole loop period stale — that
+    // only ever makes wait_for_air_time() (inside try_early_completion_()) wait longer than the
+    // frame needed, never shorter, so reading the buffer late is harmless while reading it early
+    // would not be. Timestamped before the SPI clear below for the same reason resolve_sync_race_()
+    // does it: keep the reference as close to the on-air event as this loop can see.
+    uint32_t const sync_us = micros();
+    uint32_t const start_ms = millis();
+    this->note_reception_in_progress_();
     this->clear_irq_status(this->sync_word_valid_bit());
-    return false;
+    // Falling through here is not a lost frame: try_early_completion_()'s failure paths issue only
+    // reads; nothing re-arms, retunes, or clears an IRQ, so the caller is free to fall back to the
+    // ordinary RX_DONE path. try_early_completion_() can itself block for up to
+    // idle_rx_completion_budget_ms() (~9.4 ms worst case), which eats into the holdoff armed above
+    // before this function even returns — on the fall-through path, re-arm it fresh right here so
+    // maybe_hop() (a few lines up the caller's stack in loop()) still sees the full holdoff window
+    // instead of whatever fraction survived this call, and can't retune under a frame whose RX_DONE
+    // hasn't been read yet. The success path does not need this: try_early_completion_() already
+    // clears the holdoff itself via reset_rx_state_() once the frame is fully recovered.
+    bool const completed =
+        this->try_early_completion_(packet, sync_us, irq, start_ms, this->idle_rx_completion_budget_ms());
+    if (!completed)
+      this->note_reception_in_progress_();
+    return completed;
   }
 
   if ((irq & this->rx_done_bit()) != 0) {

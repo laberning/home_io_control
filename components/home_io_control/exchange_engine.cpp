@@ -107,8 +107,16 @@ void ExchangeEngine::hop_frequency(uint32_t skip_freq) {
 }
 
 void ExchangeEngine::maybe_hop() {
-  if ((micros() - this->last_hop_us_) > HOP_TIME_US)
-    this->hop_frequency();
+  if ((micros() - this->last_hop_us_) <= HOP_TIME_US)
+    return;
+  // A frame arriving on this channel outranks the dwell timer: change_frequency() retunes under a
+  // running demodulator and, on the software-PHY chips, also clears the IRQ word and the DIO
+  // latch, so hopping here destroys the frame rather than deferring it (issue #81).
+  // last_hop_us_ is deliberately left alone: the dwell has already been served, so the hop should
+  // happen on the very next pass once the reception clears, not a further HOP_TIME_US later.
+  if ((*this->radio_ptr_)->reception_in_progress())
+    return;
+  this->hop_frequency();
 }
 
 // ============================================================================

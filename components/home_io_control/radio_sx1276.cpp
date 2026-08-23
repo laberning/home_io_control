@@ -105,6 +105,29 @@ bool RadioSX1276::is_preamble_detected() {
   return (this->read_register_(REG_IRQ_FLAGS1) & 0x02) != 0;  // Bit 1 = PreambleDetect
 }
 
+bool RadioSX1276::reception_in_progress() {
+  if (!this->is_sync_detected()) {
+    this->sync_hold_since_us_ = 0;
+    return false;
+  }
+  uint32_t const now = micros();
+  if (this->sync_hold_since_us_ == 0) {
+    this->sync_hold_since_us_ = now;  // first sighting of this reception
+    return true;
+  }
+  if (now - this->sync_hold_since_us_ < RX_HOP_HOLDOFF_US)
+    return true;
+  // The bit has outlived any real frame. SyncAddressMatch is read-only in packet mode and clears
+  // only on leaving Rx or emptying the FIFO, and a hop does neither (change_frequency() writes FRF
+  // only) — so without this the stale bit would block hopping for good. Cycle out of Rx once,
+  // which is the clear the datasheet guarantees, then let the hop proceed. Costs the same
+  // standby->RX transition the other two radios pay on *every* hop, and only on this path.
+  this->set_mode_standby();
+  this->set_mode_rx();
+  this->sync_hold_since_us_ = 0;
+  return false;
+}
+
 // === Initialization ===
 
 bool RadioSX1276::init() {

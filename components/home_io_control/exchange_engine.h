@@ -187,7 +187,11 @@ class ExchangeEngine {
   ///   broadcast roll-call, whose replies never come back on the channel that asked.
   void hop_frequency(uint32_t skip_freq = 0);
 
-  /// Unconditionally hop only if the minimum dwell has elapsed.
+  /// Hop only if the minimum dwell has elapsed and no frame is currently arriving on this
+  /// channel — @ref RadioDriver::reception_in_progress() gates the hop so a reception in
+  /// progress is never destroyed mid-arrival (issue #81). A deferred hop does not reset the
+  /// dwell timer: it fires on the first call after the reception clears, not a further
+  /// HOP_TIME_US later.
   /// Called from the hub's `loop()` to honour passive channel scanning.
   void maybe_hop();
 

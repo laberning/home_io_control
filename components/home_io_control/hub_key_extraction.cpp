@@ -6,6 +6,7 @@
 
 #include <esp_random.h>
 
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 
@@ -14,10 +15,11 @@
 /// @ingroup hioc_hub
 ///
 /// Owns the impure side of the key-extraction feature: arming/disarming, throwaway node-ID
-/// generation, the 10-minute auto-off timer, transmitting device-role replies, and the
-/// security-sensitive result log block. The pure state-transition decisions live in
-/// pairing_responder.h/.cpp; the four RX branches that call into this file are in
-/// process_received_packet_() (hub_status.cpp).
+/// generation, the 10-minute auto-off timer, the post-extraction grace window, transmitting
+/// device-role replies, and the security-sensitive result log block. The pure state-transition
+/// decisions live in pairing_responder.h/.cpp; the six RX branches
+/// (0x28/0x2C/0x31/0x32/0x36/0x3C) dispatch through try_handle_key_extraction_frame_(), called
+/// from process_received_packet_() (hub_status.cpp).
 ///
 /// @note Hardware-confirmed 2026-08-02: a full extraction (0x28 through 0x33) between two real
 /// boards — SX1276 running this responder, SX1262 running this project's own PairingEngine as
@@ -62,6 +64,16 @@ constexpr uint8_t KEY_EXTRACTION_ADVERTISED_SUBTYPE = 0;
 constexpr uint8_t KEY_EXTRACTION_ID_GEN_MAX_ATTEMPTS = 16;  ///< Collision-retry budget for the throwaway node ID.
 constexpr const char *KEY_EXTRACTION_TIMEOUT_NAME = "key_extraction_auto_off";
 constexpr uint32_t RANDOM_LOW_BYTE_MASK = 0xFF;  ///< Isolates one random byte from esp_random()'s 32-bit output.
+
+constexpr uint32_t KEY_EXTRACTION_POST_EXTRACT_GRACE_MS = 60000;  ///< One minute.
+// TODO(hardware-verify): no timing data exists for the 0x33->0x36 gap on real hardware (the only
+// capture of that gap is an untimed SPI trace). One minute is deliberately generous rather than
+// tight: the window is inert by construction (every pre-EXTRACTED guard in pairing_responder.cpp
+// rejects EXTRACTED/SENT_ADDRESS_RESP, so nothing new can start inside it), it is hard-capped by
+// the 10-minute auto-off timer above, and the only cost of overshooting is that the HA switch
+// reports "still listening" for longer. Undershooting, by contrast, silently drops a slow hub's
+// address-verification round — the exact failure this feature exists to fix. Not measured.
+constexpr const char *KEY_EXTRACTION_GRACE_TIMER_NAME = "key_extraction_post_extract_grace";
 
 }  // namespace
 
@@ -148,6 +160,14 @@ bool IOHomeControlComponent::try_handle_key_extraction_frame_(const IoFrame &fra
     this->handle_key_extraction_key_transfer_(frame);
     return true;
   }
+  if (frame.cmd == CMD_ADDRESS_REQ) {
+    this->handle_key_extraction_address_req_(frame);
+    return true;
+  }
+  if (frame.cmd == CMD_CHALLENGE_REQ) {
+    this->handle_key_extraction_address_challenge_(frame);
+    return true;
+  }
   return false;
 }
 
@@ -229,12 +249,107 @@ void IOHomeControlComponent::handle_key_extraction_key_transfer_(const IoFrame &
     ESP_LOGW(detail::TAG, "Key extraction: failed to build key confirm");
   }
 
-  // Log before disarming: disarm resets key_extraction_ctx_, which is where the recovered key
-  // and the hub's real node ID live.
+  // Log before the grace window can disarm us: disarm resets key_extraction_ctx_, which is where
+  // the recovered key and the hub's real node ID live.
   this->log_key_extraction_result_();
-  // Immediately disarm: a second hub attempting to pair mid-window must not also succeed and
-  // produce a second, confusing log block (see the feature plan's rollout notes).
-  this->set_key_extraction_armed(false);
+  ESP_LOGI(detail::TAG,
+           "Key extraction: still listening for up to %" PRIu32
+           " more seconds in case the hub verifies this device's address (CMD_ADDRESS_REQ/0x36) — leave the "
+           "switch on until it turns off on its own.",
+           KEY_EXTRACTION_POST_EXTRACT_GRACE_MS / 1000);
+  // Don't disarm immediately: some hubs (Velux KLR200) follow the key exchange with an address
+  // request (0x36) and a challenge (0x3C) verifying it, and disarming here would make the
+  // responder deaf to that round before it can happen. A second hub attempting to pair mid-window
+  // still cannot succeed and produce a second, confusing log block — on_discover_request() and
+  // every other pure guard in pairing_responder.cpp reject EXTRACTED/SENT_ADDRESS_RESP, so the
+  // state machine refuses to go backwards; the grace timer below disarms once no further progress
+  // is seen, instead of doing it at once.
+  this->arm_post_extraction_grace_();
+}
+
+void IOHomeControlComponent::handle_key_extraction_address_req_(const IoFrame &frame) {
+  // Our throwaway ID is not a secret -- it went out in clear in our own 0x29/0x37 -- so the dst
+  // check in try_handle_key_extraction_frame_() alone doesn't establish this frame actually came
+  // from the hub we exchanged keys with. hub_node_id was captured from the 0x31 that started this
+  // attempt (pairing_responder::on_key_init()); anything else claiming our throwaway ID as dst is
+  // not that hub and gets no reply, closing an otherwise-unbounded loop an onlooker could drive to
+  // keep re-arming the grace window for as long as the arm cycle lasts.
+  if (memcmp(frame.src, this->key_extraction_ctx_.hub_node_id, NODE_ID_SIZE) != 0)
+    return;
+  if (!pairing_responder::on_address_req(this->key_extraction_ctx_))
+    return;
+  IoFrame resp;
+  if (!create_address_resp_device_role(resp, this->key_extraction_ctx_.throwaway_id, frame.src)) {
+    ESP_LOGW(detail::TAG, "Key extraction: failed to build address response");
+    return;
+  }
+  this->broadcast_key_extraction_reply_(resp);
+  this->arm_post_extraction_grace_();  // Hub is still progressing — push the disarm back out.
+  ESP_LOGI(detail::TAG, "Key extraction: answered address request from hub %s", node_id_to_string(frame.src).c_str());
+}
+
+void IOHomeControlComponent::handle_key_extraction_address_challenge_(const IoFrame &frame) {
+  // Hub-identity guard, mirroring handle_key_extraction_address_req_()'s: only the hub we actually
+  // exchanged keys with may drive this round.
+  if (memcmp(frame.src, this->key_extraction_ctx_.hub_node_id, NODE_ID_SIZE) != 0)
+    return;
+  // Length guard, mirroring handle_key_extraction_key_transfer_()'s: frame.data is passed straight
+  // into a `const uint8_t challenge[HMAC_SIZE]` parameter, so a short 0x3C would silently
+  // authenticate over stale bytes left in IoFrame::data from a previous parse.
+  if (frame.data_len < HMAC_SIZE) {
+    ESP_LOGW(detail::TAG, "Key extraction: address challenge payload too short (%u bytes)", frame.data_len);
+    return;
+  }
+  if (!pairing_responder::on_address_challenge(this->key_extraction_ctx_))
+    return;
+  // Rebuild the 0x37 we last sent — deterministic from ctx, nothing stored across the two calls.
+  // Only origin.cmd/origin.data/origin.data_len feed the transcript, so the dst passed here is
+  // irrelevant to the HMAC; the real builder is used anyway so the transcript cannot drift if the
+  // 0x37 payload ever changes.
+  IoFrame our_address_resp;
+  if (!create_address_resp_device_role(our_address_resp, /*own=*/this->key_extraction_ctx_.throwaway_id,
+                                       /*dst=*/frame.src))
+    return;
+  IoFrame resp;
+  if (!create_challenge_resp_device_role(resp, /*dst=*/frame.src, /*src=*/this->key_extraction_ctx_.throwaway_id,
+                                         frame.data, our_address_resp, this->key_extraction_ctx_.recovered_key)) {
+    ESP_LOGW(detail::TAG, "Key extraction: failed to build address challenge response");
+    return;
+  }
+  this->broadcast_key_extraction_reply_(resp);
+  ESP_LOGI(detail::TAG, "Key extraction: answered address challenge from hub %s", node_id_to_string(frame.src).c_str());
+  // Do NOT disarm here — re-arm the grace window instead and stay in SENT_ADDRESS_RESP so a
+  // retried 0x3C is answered (on_address_challenge() deliberately never advances state).
+  this->arm_post_extraction_grace_();
+}
+
+void IOHomeControlComponent::arm_post_extraction_grace_() {
+  // Same replace-on-reschedule idiom as KEY_EXTRACTION_TIMEOUT_NAME's 10-minute timer above —
+  // every new sign of hub progress (0x36 received, 0x3D sent, and this same call at extraction
+  // time) pushes the disarm back out, so a slow multi-retry hub isn't cut off mid-round. That
+  // 10-minute timer is deliberately neither cancelled nor extended here, so it still bounds the
+  // whole arm cycle: no amount of grace-window re-arming can keep the responder listening past the
+  // 10 minutes the switch entity documents.
+  this->set_timeout(KEY_EXTRACTION_GRACE_TIMER_NAME, KEY_EXTRACTION_POST_EXTRACT_GRACE_MS, [this]() {
+    // Only a still-running post-extraction cycle may be disarmed from here. Checking DISARMED
+    // alone is NOT enough: a user who toggles the switch off and back on inside the grace window
+    // leaves this callback pending against a brand-new, unrelated arm cycle (set_timeout() only
+    // replaces a *pending* timer of the same name, and re-arming schedules the 10-minute auto-off
+    // timer, not this one) — and that new cycle is ARMED_IDLE, not DISARMED, so a DISARMED-only
+    // guard would let a stale callback kill it.
+    // The converse worry — that the new cycle reaches EXTRACTED (a state this guard accepts)
+    // before the stale callback fires — cannot happen: reaching EXTRACTED calls this function,
+    // whose set_timeout() replaces the pending callback under the same name. The stale timer is
+    // destroyed exactly when the state becomes acceptable to it, so the only window it can fire in
+    // is one this guard rejects.
+    const auto state = this->key_extraction_ctx_.state;
+    if (state != pairing_responder::ResponderState::EXTRACTED &&
+        state != pairing_responder::ResponderState::SENT_ADDRESS_RESP)
+      return;
+    ESP_LOGI(detail::TAG, "Key extraction: post-extraction grace window elapsed (stage=%s). Disarming.",
+             pairing_responder::responder_stage_name(state));
+    this->set_key_extraction_armed(false);
+  });
 }
 
 // TODO(hardware-verify): an authenticated read-back to the foreign hub using the recovered key,
@@ -242,11 +357,10 @@ void IOHomeControlComponent::handle_key_extraction_key_transfer_(const IoFrame &
 // independently pinned against externally-captured known-answer key transfers (see the file-level
 // @warning above), but nothing here confirms this specific extraction talks to a real third-party
 // hub correctly — the single highest-risk unverified piece of this feature. That read-back subflow
-// is deliberately not implemented: it would require carving a narrow exception into
-// is_exchange_internal_command()'s 0x3C/0x3D early-drop (hub_status.cpp) for a second unverified
-// vendor-hub interaction, doubling the protocol-speculation surface for a feature that already
-// ships marked experimental. The key is still always printed (gating it on an equally-unverified
-// secondary check risks hiding a correct key), but the log below says so.
+// is deliberately not implemented: doubling the protocol-speculation surface for a feature that
+// already ships marked experimental is not worth it for a second unverified vendor-hub
+// interaction. The key is still always printed (gating it on an equally-unverified secondary check
+// risks hiding a correct key), but the log below says so.
 void IOHomeControlComponent::log_key_extraction_result_() {
   // Deliberate, explicit exception to redaction.h's masking — see that file and README.md's
   // "Reporting Unsupported Devices" section, which already warns about pairing logs and the

@@ -11,8 +11,12 @@
 /// simply not answer it.
 ///
 /// This suite closes that specific gap: for each device-role builder, it asserts our framing bits
-/// against every genuine device frame of that command in the corpus. That is evidence no
-/// self-pair test can provide, because the counterparty here is a real Somfy/Velux device.
+/// against every genuine device frame of that command in the corpus — with one deliberate
+/// exception. CMD_CHALLENGE_RESP (0x3D)'s framing is context-dependent rather than role-constant
+/// (a device's 0x3D sets END when it closes an exchange, and clears it answering a mid-exchange
+/// controller challenge), so the all-captures assertion cannot express it for that one command;
+/// expect_matches_real_device_capture() below scopes that builder's pin to the one capture that
+/// shows the terminal shape it actually builds, instead of weakening the general assertion.
 ///
 /// Only frames a genuine third-party device actually transmitted count as evidence here. Two
 /// kinds of corpus `rx` frame do not, and are excluded (see `INDEPENDENT_SOURCE_EXCLUSIONS` and
@@ -137,6 +141,35 @@ void expect_matches_real_devices(uint8_t cmd, const IoFrame &built) {
   }
 }
 
+/// Assert `built` frames the same way one specific capture's device frames of `cmd` do. Needed
+/// where a command's framing is context-dependent rather than role-constant: a device's 0x3D sets
+/// END when it closes an exchange (the KLR200's answer to a 0x36/0x37 round) and clears it
+/// mid-exchange (a Somfy actuator answering a controller's challenge on an open command exchange),
+/// so expect_matches_real_devices() above cannot express it -- it would fail on every capture but
+/// the one this test cares about, whatever the builder does.
+void expect_matches_real_device_capture(uint8_t cmd, std::string_view capture_id, const IoFrame &built) {
+  const corpus::CorpusCapture *cap = corpus_test::capture_by_id(std::string(capture_id).c_str());
+  ASSERT_NE(cap, nullptr) << "capture '" << capture_id << "' not found -- was it renamed?";
+
+  const FramingBits ours = framing_of(built);
+  uint8_t checked = 0;
+  for (uint8_t i = 0; i < cap->frame_count; i++) {
+    const corpus::CorpusFrame &cf = cap->frames[i];
+    if (cf.tx)
+      continue;  // controller-originated
+    const IoFrame parsed = corpus_test::parse_capture_frame(cf);
+    if (parsed.cmd != cmd)
+      continue;
+    SCOPED_TRACE(::testing::Message() << "captured in " << capture_id);
+    EXPECT_EQ(ours, framing_of(parsed)) << "device-role builder frames 0x" << std::hex << static_cast<int>(cmd)
+                                        << " as [" << describe(ours) << "] but capture '" << capture_id << "' shows ["
+                                        << describe(framing_of(parsed)) << "]";
+    checked++;
+  }
+  ASSERT_GT(checked, 0u) << "no device-originated 0x" << std::hex << static_cast<int>(cmd) << " frame in capture '"
+                         << capture_id << "' to pin this builder against";
+}
+
 }  // namespace
 
 /// A hub sends CMD_DISCOVER_CONFIRM (0x2C) straight to a device it just discovered and generally
@@ -169,4 +202,46 @@ TEST(CorpusDeviceRoleBuilders, DiscoverRespMatchesRealDevices) {
   ASSERT_TRUE(
       create_discover_resp(built, test::OWN_ID, test::DST_ID, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_SOMFY));
   expect_matches_real_devices(CMD_DISCOVER_RESP, built);
+}
+
+/// Our answer to a hub's CMD_ADDRESS_REQ (0x36). The KLR200 pairing capture is the only corpus
+/// evidence for this command in either direction, so this is a single-capture pin by necessity,
+/// not a choice -- expect_matches_real_devices() still applies unmodified because there's exactly
+/// one capture to sweep.
+TEST(CorpusDeviceRoleBuilders, AddressRespDeviceRoleMatchesRealDevices) {
+  IoFrame built{};
+  ASSERT_TRUE(create_address_resp_device_role(built, test::OWN_ID, test::DST_ID));
+  expect_matches_real_devices(CMD_ADDRESS_RESP, built);
+}
+
+/// The KLR200 capture shows our 0x37 payload as byte-identical to our own earlier 0x29's backbone
+/// address (data[DISCOVERY_RESP_BACKBONE_OFFSET..+3), tests/corpus/captures/velux_kux100/
+/// pairing_full.yaml lines 47 and 87) -- both report the same throwaway node ID we advertised.
+/// create_discover_resp() and create_address_resp_device_role() are two independent call sites for
+/// that same `own` value, so nothing stops a future edit from swapping an argument at either one
+/// without any other test noticing: the framing-bits pin above covers CTRL0/CTRL1 only, not
+/// payload content.
+TEST(CorpusDeviceRoleBuilders, AddressRespPayloadMatchesOwnDiscoverRespBackboneAddress) {
+  IoFrame discover_resp{};
+  ASSERT_TRUE(create_discover_resp(discover_resp, test::OWN_ID, test::DST_ID, DeviceType::ROLLER_SHUTTER, 0,
+                                   MANUFACTURER_SOMFY));
+  IoFrame address_resp{};
+  ASSERT_TRUE(create_address_resp_device_role(address_resp, test::OWN_ID, test::DST_ID));
+
+  ASSERT_EQ(address_resp.data_len, NODE_ID_SIZE);
+  EXPECT_EQ(0, memcmp(address_resp.data, discover_resp.data + DISCOVERY_RESP_BACKBONE_OFFSET, NODE_ID_SIZE))
+      << "0x37 payload must equal our own 0x29's backbone address, the cross-check the KLR200 capture documents";
+}
+
+/// Our answer to a hub-issued CMD_CHALLENGE_REQ (0x3C) challenging our own 0x37 -- the terminal
+/// 0x3D that closes the address-verification round. Scoped to the one capture that shows this
+/// specific shape (END set): see expect_matches_real_device_capture()'s doxygen for why the
+/// all-captures assertion can't be used for this command.
+TEST(CorpusDeviceRoleBuilders, ChallengeRespDeviceRoleMatchesKlr200AddressVerification) {
+  IoFrame origin{};
+  ASSERT_TRUE(create_address_resp_device_role(origin, test::OWN_ID, test::DST_ID));
+  IoFrame built{};
+  ASSERT_TRUE(create_challenge_resp_device_role(built, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE, origin,
+                                                test::TEST_SYSTEM_KEY));
+  expect_matches_real_device_capture(CMD_CHALLENGE_RESP, "velux_kux100_pairing_full", built);
 }

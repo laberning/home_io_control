@@ -3,6 +3,7 @@
 
 #include "esphome/core/application.h"
 
+#include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
 #include <gtest/gtest.h>
@@ -470,6 +471,81 @@ TEST(RadioSX1276, IsPreambleDetectedFalse) {
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
   spi.set_reg(REG_IRQ_FLAGS1, 0x00);
   EXPECT_FALSE(radio.is_preamble_detected());
+}
+
+// ============================================================================
+// reception_in_progress() — the idle-path hop gate (issue #81). Unlike the software-PHY chips,
+// SX1276's check_for_packet() never touches a register while a frame is still arriving (DIO0
+// carries PayloadReady only), so this reads REG_IRQ_FLAGS1 live at hop time instead of relying on
+// recorded state. See radio_sx1276.cpp for the un-stick logic this section exercises.
+// ============================================================================
+
+TEST(RadioSX1276, ReceptionInProgressTrueWhileSyncAddressMatchSet) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);  // SyncAddressMatch
+
+  EXPECT_TRUE(radio.reception_in_progress());
+}
+
+TEST(RadioSX1276, ReceptionInProgressFalseWhenNoSync) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x00);
+
+  EXPECT_FALSE(radio.reception_in_progress());
+}
+
+TEST(RadioSX1276, StaleSyncAddressMatchIsClearedByCyclingOutOfRx) {
+  // The single riskiest property in Step 1: SyncAddressMatch is read-only in packet mode and a
+  // hop's change_frequency() never clears it (FRF writes only), so a sync match with no frame
+  // behind it must not wedge hopping off forever.
+  //
+  // Burn one micros() call before anything else touches the clock: the host stub's first call in
+  // a process returns 0, which collides with sync_hold_since_us_'s own "not armed" sentinel and
+  // would make reception_in_progress() read a genuinely expired holdoff as an unarmed one instead
+  // (a second "first sighting"). Only matters when this test runs first/alone; burning the
+  // collision away here keeps the test's outcome independent of suite ordering.
+  test::burn_micros(1);
+
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);  // SyncAddressMatch, stuck on
+
+  EXPECT_TRUE(radio.reception_in_progress()) << "first sighting arms the un-stick bound";
+
+  // Register-model SPI reflects mode writes, so set_mode_()'s own poll-until-it-sticks loop
+  // terminates naturally once the un-stick path writes REG_OP_MODE.
+  test::burn_micros(RX_HOP_HOLDOFF_US + 2);
+
+  EXPECT_FALSE(radio.reception_in_progress()) << "the bound expired; the stale bit must be un-stuck";
+
+  bool saw_standby = false;
+  bool saw_rx_after_standby = false;
+  for (const auto &entry : spi.write_log()) {
+    if (entry.first != (REG_OP_MODE & 0x7F))
+      continue;
+    if ((entry.second & MODE_MASK) == MODE_STDBY)
+      saw_standby = true;
+    else if ((entry.second & MODE_MASK) == MODE_RX && saw_standby)
+      saw_rx_after_standby = true;
+  }
+  EXPECT_TRUE(saw_standby) << "un-sticking must cycle through standby (the datasheet-guaranteed clear)";
+  EXPECT_TRUE(saw_rx_after_standby) << "un-sticking must return to RX afterwards";
+}
+
+TEST(RadioSX1276, ReceptionInProgressIgnoresPreambleDetect) {
+  // PreambleDetect (bit 1) is write-1-to-clear and this driver never writes it, so gating on it
+  // would disable hopping permanently after the first preamble ever seen. Sync only.
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x02);  // PreambleDetect only, no SyncAddressMatch
+
+  EXPECT_FALSE(radio.reception_in_progress());
 }
 
 // ============================================================================

@@ -26,6 +26,8 @@ const char *responder_stage_name(ResponderState state) {
       return "sent_challenge";
     case ResponderState::EXTRACTED:
       return "extracted";
+    case ResponderState::SENT_ADDRESS_RESP:
+      return "sent_address_resp";
   }
   return "disarmed";
 }
@@ -66,6 +68,15 @@ bool on_key_transfer(ResponderContext &ctx, const uint8_t transfer_payload[AES_K
   ctx.state = ResponderState::EXTRACTED;
   return true;
 }
+
+bool on_address_req(ResponderContext &ctx) {
+  if (ctx.state != ResponderState::EXTRACTED && ctx.state != ResponderState::SENT_ADDRESS_RESP)
+    return false;
+  ctx.state = ResponderState::SENT_ADDRESS_RESP;
+  return true;
+}
+
+bool on_address_challenge(const ResponderContext &ctx) { return ctx.state == ResponderState::SENT_ADDRESS_RESP; }
 
 }  // namespace pairing_responder
 }  // namespace home_io_control

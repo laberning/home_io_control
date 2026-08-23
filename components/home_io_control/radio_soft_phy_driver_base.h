@@ -67,6 +67,20 @@ static constexpr uint32_t SOFT_PHY_EARLY_POLL_US = 100;
 /// early path from spending a short window's whole budget on a receive it cannot complete.
 static constexpr uint32_t SOFT_PHY_EARLY_MIN_WINDOW_MS = 12;
 
+/// Blocking budget @ref SoftPhyDriverBase::check_for_packet gives a length-driven receive, in
+/// milliseconds — the `timeout_ms` passed to `try_early_completion_()` from the non-blocking
+/// idle-loop RX path (issue #81). The real bound on how long that call can block is the frame's
+/// own air time (~9.4 ms worst case, see @ref SOFT_PHY_EARLY_MIN_WINDOW_MS), not this number; this
+/// value only has to be large enough not to cut a genuine frame short. It is not itself a tight
+/// bound on loop() latency — the actual air time is what stays well inside a loop() tick
+/// (~16-30 ms) — and either way it is dwarfed by the 1-3 s a blocking exchange already costs
+/// `loop()`.
+static constexpr uint32_t SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS = 20;
+
+static_assert(SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS >= SOFT_PHY_EARLY_MIN_WINDOW_MS,
+              "a budget below the minimum window makes try_early_completion_() decline every "
+              "idle-path call, silently turning issue #81's fix into a no-op");
+
 /// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
 static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
 /// Microseconds in a second, for the air-time arithmetic below.
@@ -82,6 +96,15 @@ constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
   const uint32_t bit_periods = raw_bytes * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
   return (bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS;
 }
+
+// RX_HOP_HOLDOFF_US (radio_interface.h) exists to outlast the fixed-length RX_DONE on the
+// software-PHY chips. Tied here, in the one header that can see both sides of the arithmetic,
+// so a change to either constant that breaks the relationship fails the build instead of
+// silently turning issue #81's gate back into the bug it fixes.
+static_assert(RX_HOP_HOLDOFF_US >= soft_phy_air_time_us(SOFT_PHY_RX_PROBE_PACKET_LEN),
+              "the hop holdoff must outlast the fixed-length RX_DONE it exists to wait for — a "
+              "shorter bound lets the hop fire while the frame it is protecting is still on air, "
+              "silently turning issue #81's gate back into the bug");
 
 /// @brief Shared RX/TX driver flow for the software-PHY radios (SX1262, LR1121).
 /// @ingroup hioc_radio
@@ -207,8 +230,20 @@ class SoftPhyDriverBase : public RadioDriver {
   ///
   /// Default is -1: wait for RX_DONE exactly as before. SX1262 overrides it with the RX base
   /// address it programs in configure_buffer_base(), which is where a single in-flight packet
-  /// always starts. LR1121 is left on the RX_DONE path pending hardware validation.
+  /// always starts. LR1121 also opts in, at the base of its one shared TX/RX buffer — see
+  /// RadioLR1121::early_rx_read_offset for why a wrong guess there is safe only in combination
+  /// with @ref invalidate_stale_rx_content_after_tx.
   [[nodiscard]] virtual int16_t early_rx_read_offset() const { return -1; }
+
+  /// @brief Blocking budget for the idle-path length-driven receive, in milliseconds (issue #81).
+  ///
+  /// Virtual only so tests can widen it. The host clock stubs advance `millis()`/`micros()` by one
+  /// unit per call (`tests/include/esphome/core/hal.h`), so a frame's few thousand microseconds of
+  /// air time also burns a few thousand fake milliseconds — any production-sized budget expires
+  /// inside `wait_for_air_time()`'s first stage and the whole path becomes untestable. The existing
+  /// blocking-path early-completion tests dodge this by passing `wait_for_packet()` a 20000 ms
+  /// timeout; this path has no caller-supplied timeout to widen, so the seam has to live here.
+  [[nodiscard]] virtual uint32_t idle_rx_completion_budget_ms() const { return SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS; }
 
   /// Set RF frequency via the chip's own frequency register/opcode encoding, and update
   /// `current_freq_`. Called from both @ref change_frequency and the shared `send_packet()`.
@@ -242,6 +277,25 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @brief Hook run as part of @ref reset_rx_state_, before re-entering RX. No-op by default;
   /// SX1262 overrides this to (re-)write its buffer base address, which LR1121 doesn't need.
   virtual void configure_buffer_base() {}
+  /// @brief Hook run from @ref rearm_rx_after_tx_, after a transmission and before re-entering RX.
+  /// No-op by default.
+  ///
+  /// SX1262 has a real address split written once at init (@ref configure_buffer_base): TX always
+  /// builds at its own base, RX always lands at a different one, so nothing a transmission wrote
+  /// can ever appear where a length-driven receive (@ref early_rx_read_offset) later reads from.
+  /// LR1121 has no such split — one shared 256-byte buffer for both directions, and `WriteBuffer`
+  /// always starts from the buffer base (see `write_buffer_`'s doc comment) — so after every LR1121
+  /// transmission, the offset a length-driven receive will read from holds a real, CRC-valid,
+  /// UART-encoded copy of the hub's own last-sent frame. That is not noise: if
+  /// `early_rx_read_offset()`'s offset guess ever turns out to be wrong, reading that residue back
+  /// would pass every stage of `try_early_completion_()` and hand back the hub's own transmission as
+  /// a phantom received packet — worse than doing nothing, since `check_for_packet()` would then
+  /// tear down and re-arm RX (issue #81's `force_standby` path) over whatever real reception was
+  /// actually in progress. RadioLR1121 overrides this to overwrite that offset with a few
+  /// non-frame-shaped bytes after every TX, so a wrong offset guess degrades back to reading genuine
+  /// garbage — which correctly fails the length-driven receive's stage 1 or stage 3 — instead of a
+  /// valid-looking phantom frame.
+  virtual void invalidate_stale_rx_content_after_tx() {}
 
  private:
   // === wait_for_packet/check_for_packet state-machine helpers (private) ===

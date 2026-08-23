@@ -1376,6 +1376,90 @@ TEST(Exchange, HopFrequencyWithoutSkipIsUnchanged) {
 }
 
 // ============================================================================
+// maybe_hop(): the idle-path hop. maybe_hop() is time-gated; RadioDriver::reception_in_progress()
+// additionally gates it so a hop cannot retune under an arriving frame and destroy it via
+// change_frequency()'s IRQ/DIO-latch clear (issue #81).
+// ============================================================================
+
+TEST(Exchange, MaybeHopHopsOnceTheDwellElapses) {
+  // Baseline: pins that the reception_in_progress() guard did not break the ordinary path.
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  engine.reset_hop_timestamp();
+  test::burn_micros(HOP_TIME_US + 2);
+  engine.maybe_hop();
+
+  EXPECT_EQ(radio.freq_history().size(), 1u) << "the dwell elapsed and nothing was arriving, so the hop must fire";
+}
+
+TEST(Exchange, MaybeHopDoesNotHopWhileAFrameIsArriving) {
+  // The core assertion of the whole step: a reception in progress must outrank the dwell timer.
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  engine.reset_hop_timestamp();
+  test::burn_micros(HOP_TIME_US + 2);
+  radio.note_reception_from_test();
+  engine.maybe_hop();
+
+  EXPECT_TRUE(radio.freq_history().empty()) << "a frame arriving on this channel must suppress the hop entirely";
+}
+
+TEST(Exchange, MaybeHopHopsAsSoonAsTheReceptionClears) {
+  // Pins both that the holdoff expires on its own and that the deferred hop is not lost — it
+  // happens on the very next call, not never.
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  engine.reset_hop_timestamp();
+  test::burn_micros(HOP_TIME_US + 2);
+  radio.note_reception_from_test();
+  engine.maybe_hop();
+  ASSERT_TRUE(radio.freq_history().empty()) << "sanity: the first call must still have been suppressed";
+
+  test::burn_micros(RX_HOP_HOLDOFF_US + 2);
+  engine.maybe_hop();
+
+  EXPECT_EQ(radio.freq_history().size(), 1u) << "the holdoff expired, so the deferred hop must now fire";
+}
+
+TEST(Exchange, DeferredHopDoesNotRestartTheDwellTimer) {
+  // Pins the "last_hop_us_ deliberately left alone" decision (exchange_engine.cpp maybe_hop()).
+  // A wrong implementation that stamped last_hop_us_ = micros() on the suppressed call too (e.g.
+  // by moving the update above the reception check) would still pass
+  // MaybeHopHopsAsSoonAsTheReceptionClears above, because RX_HOP_HOLDOFF_US already exceeds
+  // HOP_TIME_US on its own. Clearing the holdoff directly rather than waiting out its own timer
+  // isolates the property: once the dwell has genuinely elapsed, a single further microsecond
+  // must be enough to hop.
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  engine.reset_hop_timestamp();
+  test::burn_micros(HOP_TIME_US + 2);
+  radio.note_reception_from_test();
+  engine.maybe_hop();
+  ASSERT_TRUE(radio.freq_history().empty()) << "sanity: the first call must still have been suppressed";
+
+  radio.clear_reception_from_test();
+  test::burn_micros(1);
+  engine.maybe_hop();
+
+  EXPECT_EQ(radio.freq_history().size(), 1u)
+      << "the dwell had already elapsed before the suppressed call; one more microsecond after the "
+         "reception clears must be enough to hop, proving last_hop_us_ was not touched while the "
+         "hop was held off";
+}
+
+// ============================================================================
 // Response windows: a start frame wakes a sleeping device, so it gets the *longer* budget.
 //
 // These were fixed constants, and RESPONSE_START_WAIT_MS (300 ms) was shorter than

@@ -52,6 +52,17 @@ inline IoFrame make_frame(const uint8_t src[3], const uint8_t dst[3], uint8_t cm
   return frame;
 }
 
+/// Burn `n` calls to esphome::micros() without caring about the return values.
+///
+/// The host stub's micros() (tests/include/esphome/core/hal.h) is a free-running counter that
+/// advances by one per *call*, not per unit of real time, so a test that needs a real deadline
+/// (e.g. HOP_TIME_US, RX_HOP_HOLDOFF_US) to elapse has to spend that many calls, not that many
+/// microseconds.
+inline void burn_micros(uint32_t n) {
+  for (uint32_t i = 0; i < n; i++)
+    (void) esphome::micros();
+}
+
 /// PairingEngine subclass that promotes protected phase helpers to public.
 ///
 /// Used by the pairing test suite as a shadow member in TestableComponent so
@@ -89,6 +100,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::process_received_packet_;
   using IOHomeControlComponent::key_extraction_ctx_;
   using IOHomeControlComponent::generate_key_extraction_throwaway_id_;
+  using IOHomeControlComponent::arm_post_extraction_grace_;
   using IOHomeControlComponent::oneway_last_observed_class_;
   using IOHomeControlComponent::record_oneway_observed_class_;
   using IOHomeControlComponent::update_device_status_;

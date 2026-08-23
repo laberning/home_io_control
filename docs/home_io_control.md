@@ -863,9 +863,14 @@ Extraction)" (not configurable).
 3. Put your **existing** hub into its own "add device" / pairing mode, the same way you would to
    pair a new shutter to it.
 4. Watch the ESPHome logs. On success, within a few seconds you will see a clearly-delimited
-   block containing your installation's real `node_id` and `system_key`, ready to paste
-   into a new `home_io_control:` block. The switch turns itself off immediately after a
-   successful extraction.
+   block containing your installation's real `node_id` and `system_key`, ready to paste into a new
+   `home_io_control:` block. Some hubs (Velux KLR200 confirmed) don't stop there: after the key
+   exchange they verify the address they were just handed with a follow-up request/challenge
+   round, so the switch stays on — listening, not stuck — for up to one more minute after the key
+   is printed rather than turning off immediately. Leave it on until it turns off on its own; a hub
+   that never sends this follow-up simply leaves the extra minute unused — not observed in the one
+   Velux KIG300 capture available, which itself ends at the key-confirm step and so has no
+   post-key-exchange observation window to establish that hub sends nothing further.
 5. If nothing happens within 10 minutes, the switch turns itself off and the log explains that no
    pairing attempt was seen (or, if a partial attempt was seen, which phase it reached — useful
    for diagnosing a missed frame, see the note below).
@@ -878,6 +883,16 @@ Extraction)" (not configurable).
   relying on it; if it doesn't work, please file a GitHub issue with the (redacted, per the
   warning above) circumstances so the discovery-response format or IV-derivation assumptions can
   be corrected.
+- The address-verification round (step 4's follow-up request/challenge, `CMD_ADDRESS_REQ`/
+  `CMD_ADDRESS_RESP`/`CMD_CHALLENGE_REQ`/`CMD_CHALLENGE_RESP`) is implemented from a single
+  third-party capture (a Velux KLR200 pairing session) and has not been exercised against any real
+  hub by this project — unlike the key exchange it follows, which has separately been
+  hardware-confirmed as described in the warning above. That capture also shows the real device
+  reporting a persistent identity in its `CMD_ADDRESS_RESP` distinct from its own node/session
+  address — a distinction the io-homecontrol wire format appears to track generally, not something
+  specific to that one device. This feature's emulated device only ever has one identity to offer
+  per arm cycle, so it reports that same identity for both; whether any real hub requires (or even
+  inspects) a genuinely separate value here is unconfirmed.
 - On SX1262-based boards, a slow TX→RX turnaround can cause the responder to miss the hub's next
   frame right after transmitting a reply. The responder tolerates this by staying in its current
   state and waiting for the hub's own retry rather than assuming a single clean pass — if
@@ -885,8 +900,15 @@ Extraction)" (not configurable).
   with SX1262 on both sides (as the *hub* and as the *responder*, the more demanding direction for
   this specific risk) — occasionally needing one automatic retry at the key-init or key-transfer
   step is expected and not a sign of failure.
-- Only one extraction attempt is honored per 10-minute arm; the switch disarms itself immediately
-  after the first successful extraction.
+- Only one extraction attempt is honored per 10-minute arm. The switch does not disarm the instant
+  the key is recovered any more — it stays armed for up to one more minute in case your hub follows
+  up with an address-verification round (see the workflow above) — but a second hub's pairing
+  attempt inside that window still cannot succeed or produce a second, confusing log block.
+- This feature does not tell the foreign hub that the extraction happened. After a successful run
+  (and especially after an address-verification round, which hands the hub a backbone address it
+  then treats as confirmed) your existing hub believes it paired a new device and may show it as
+  such in its own UI. That device will never answer again; there is currently no way to make this
+  component un-enroll or otherwise clean up that phantom entry from your hub's side.
 - Pairing timing generally — hop/dwell slicing, preamble selection, and discovery-window sizing —
   is not yet perfectly tuned across this project, and the key-extraction responder shares that
   same radio timing machinery with normal device pairing (`PairingEngine`). In practice this means

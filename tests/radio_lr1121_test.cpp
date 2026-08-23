@@ -41,6 +41,10 @@ class TestableRadioLR1121 : public RadioLR1121 {
   // transaction/parsing against a ScriptedSpi.
   uint32_t call_real_read_irq_status_raw() { return RadioLR1121::read_irq_status_raw(); }
 
+  // Arm the hop holdoff directly — exposed here since note_reception_in_progress_() is protected
+  // on RadioDriver.
+  void note_reception_from_test() { this->note_reception_in_progress_(); }
+
  protected:
   uint32_t read_irq_status_raw() override {
     if (irq_idx_ < irq_seq_.size()) {
@@ -496,7 +500,11 @@ TEST(RadioLR1121, WaitForPacketRaceCondition_Resolved) {
   radio.set_irq_sequence({LR1121_IRQ_SYNC_WORD_VALID, LR1121_IRQ_SYNC_WORD_VALID | LR1121_IRQ_RX_DONE});
 
   RadioRxPacket result{};
-  bool ok = radio.wait_for_packet(result, 100);
+  // The length-driven receive runs ahead of the race handler and declines on this all-zero mock
+  // buffer, but it spends real air time getting there. The host hal.h stubs advance millis() and
+  // micros() one unit per call, so that ~1 ms of air time costs ~1000 fake milliseconds of budget;
+  // the window is sized for the stub, not for the protocol.
+  bool ok = radio.wait_for_packet(result, 20000);
 
   EXPECT_TRUE(ok) << "SYNC_WORD_VALID followed by RX_DONE should be resolved and yield a packet";
   EXPECT_EQ(result.len, 3u);
@@ -605,10 +613,30 @@ TEST(RadioLR1121, CheckForPacketReturnsFalseWhenDioNotFired) {
   EXPECT_TRUE(spi.transactions().empty()) << "no SPI transaction should occur when DIO never fired";
 }
 
+// Test double whose early_rx_read_offset() stays negative, unlike RadioLR1121's own
+// LR1121_RX_BUFFER_BASE default — a stand-in for a chip that must not be read before RX_DONE, so
+// CheckForPacketSyncWithoutRxDoneClearsIrqAndReturnsFalse below exercises the RX_DONE-only branch
+// regardless of the shared idle-path budget/host-clock trap — see that test's comment.
+class LegacyRxTestableRadioLR1121 : public TestableRadioLR1121 {
+ public:
+  using TestableRadioLR1121::TestableRadioLR1121;
+
+ protected:
+  int16_t early_rx_read_offset() const override { return -1; }
+};
+
 TEST(RadioLR1121, CheckForPacketSyncWithoutRxDoneClearsIrqAndReturnsFalse) {
+  // TestableRadioLR1121 inherits RadioLR1121's real, non-negative early_rx_read_offset(), so it
+  // reaches try_early_completion_() from this branch instead of bailing out before touching SPI —
+  // that shape is covered by CheckForPacketSyncWithoutRxDoneFallsBackWhenCrcInvalid below. This
+  // test targets the RX_DONE-only branch specifically (offset < 0), so it pins that shape
+  // explicitly via LegacyRxTestableRadioLR1121 rather than leaning on the fact that the fixture's
+  // default idle_rx_completion_budget_ms() (20 ms) also happens to expire before any buffer read on
+  // the host clock stubs: that coincidence would make this test's meaning drift silently the next
+  // time either budget or clock stub changes.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+  LegacyRxTestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
   radio.mark_dio_fired_from_isr();
   radio.set_irq_sequence({LR1121_IRQ_SYNC_WORD_VALID});
 
@@ -618,6 +646,60 @@ TEST(RadioLR1121, CheckForPacketSyncWithoutRxDoneClearsIrqAndReturnsFalse) {
   EXPECT_FALSE(ok) << "SYNC_WORD_VALID without RX_DONE is not a complete packet yet";
   int clear_idx = spi.find_opcode(LR1121_CMD_CLEAR_IRQ);
   EXPECT_GE(clear_idx, 0) << "the sticky SYNC flag must be cleared so it doesn't wedge the next poll";
+  // issue #81: this branch must also arm the idle-path hop holdoff, so maybe_hop() does not
+  // retune under a frame that is still arriving.
+  EXPECT_TRUE(radio.reception_in_progress())
+      << "the sync-without-RX_DONE branch must record the reception so the idle-path hop holds off";
+}
+
+TEST(RadioLR1121, ResetRxStateClearsHopHoldoff) {
+  // read_rx_packet() itself is overridden away from the real SPI path by this fixture (unless
+  // set_use_real_read_rx_packet() is set), so this drives reset_rx_state_() — the single funnel
+  // every "RX torn down and re-armed" path goes through — via check_for_packet()'s catch-all
+  // branch instead: an IRQ reading that is activity (CRC_ERR) but neither SYNC_WORD_VALID nor
+  // RX_DONE reaches the same real, non-overridden reset_rx_state_() call that read_rx_packet()
+  // reaches on every one of its own return paths.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+  radio.note_reception_from_test();
+  ASSERT_TRUE(radio.reception_in_progress()) << "sanity: the holdoff must start armed";
+
+  radio.mark_dio_fired_from_isr();
+  radio.set_irq_sequence({LR1121_IRQ_CRC_ERR});
+
+  RadioRxPacket packet{};
+  EXPECT_FALSE(radio.check_for_packet(packet));
+  EXPECT_FALSE(radio.reception_in_progress())
+      << "reset_rx_state_() must drop the holdoff, not leave a stale deadline blocking the next "
+         "~12 ms of hopping";
+}
+
+TEST(RadioLR1121, RealTwoPassReceiveArmsThenClearsHopHoldoff) {
+  // Every other holdoff test either arms the latch artificially (note_reception_from_test()) or
+  // clears it through the CRC_ERR catch-all — neither exercises the actual two-pass sequence the
+  // whole fix depends on: pass 1 arms the holdoff from the sync-only branch, pass 2 delivers via
+  // RX_DONE and clears it through the real (non-overridden) read_rx_packet(). LR1121 is the one
+  // fixture with a real-path seam (set_use_real_read_rx_packet()); SX1262's fixture overrides
+  // read_rx_packet() unconditionally and can't drive this, so this case is LR1121-only.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+  radio.set_use_real_read_rx_packet(true);
+  radio.set_irq_sequence({LR1121_IRQ_SYNC_WORD_VALID, LR1121_IRQ_RX_DONE});
+
+  // Pass 1: sync-only. Arms the holdoff; not a complete packet yet.
+  radio.mark_dio_fired_from_isr();
+  RadioRxPacket packet{};
+  EXPECT_FALSE(radio.check_for_packet(packet));
+  EXPECT_TRUE(radio.reception_in_progress()) << "the sync-only pass must arm the holdoff";
+
+  // Pass 2: RX_DONE. Delivers (or at least tears down) the reception via the real read_rx_packet(),
+  // whose every return path funnels through reset_rx_state_() and clears the holdoff.
+  radio.mark_dio_fired_from_isr();
+  (void) radio.check_for_packet(packet);
+  EXPECT_FALSE(radio.reception_in_progress())
+      << "the real RX_DONE pass must clear the holdoff armed by the sync-only pass";
 }
 
 TEST(RadioLR1121, CheckForPacketPreambleOnlyDoesNotResetRx) {
@@ -636,6 +718,166 @@ TEST(RadioLR1121, CheckForPacketPreambleOnlyDoesNotResetRx) {
   EXPECT_FALSE(ok) << "preamble alone is not a complete packet yet";
   EXPECT_GE(spi.find_opcode(LR1121_CMD_CLEAR_IRQ), 0) << "the preamble bit must be cleared so it can re-fire";
   EXPECT_LT(spi.find_opcode(LR1121_CMD_SET_STANDBY), 0) << "must not tear down RX via reset_rx_state_()";
+}
+
+// ============================================================================
+// Idle-path early completion (issue #81, Mechanism B, Step 3): check_for_packet()'s
+// sync-without-RX_DONE branch is shared, chip-agnostic code in SoftPhyDriverBase (already
+// exercised above) — what Step 3 adds is a real, non-negative early_rx_read_offset() on LR1121,
+// which is the only thing that makes try_early_completion_() actually reachable here instead of
+// declining immediately (radio_lr1121.h's early_rx_read_offset doc comment explains the offset
+// choice and why a wrong guess only costs latency, never a frame). Mirrors
+// tests/radio_sx1262_rx_test.cpp's equivalent section for SX1262.
+// ============================================================================
+
+namespace {
+
+// Build the raw bytes the chip's data buffer holds mid-reception: the frame, its CRC-CCITT
+// trailer, and the whole lot UART-packed exactly as it arrived off air. Copied from
+// tests/radio_sx1262_rx_test.cpp rather than promoted to a shared header for two call sites.
+std::vector<uint8_t> uart_packed_on_air_bytes(const std::vector<uint8_t> &frame) {
+  std::vector<uint8_t> with_crc = frame;
+  const uint16_t crc = crc_ccitt(frame.data(), static_cast<uint8_t>(frame.size()));
+  with_crc.push_back(static_cast<uint8_t>(crc & 0xFF));
+  with_crc.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
+
+  uint8_t encoded[RADIO_PACKET_BUFFER_SIZE] = {0};
+  const uint8_t encoded_len =
+      uart_encode_packet(with_crc.data(), static_cast<uint8_t>(with_crc.size()), encoded, sizeof(encoded));
+  return std::vector<uint8_t>(encoded, encoded + encoded_len);
+}
+
+// A real 15-byte RS100 challenge (0x3C) — the same reference frame
+// tests/radio_sx1262_rx_test.cpp uses, from
+// tests/corpus/captures/issues/field_rs100_pairing_key_transfer_timeout.yaml.
+const std::vector<uint8_t> kRs100Challenge = {0x0E, 0x00, 0xD1, 0xD4, 0xFF, 0x8C, 0x08, 0x3C,
+                                              0x3C, 0x45, 0x51, 0x6F, 0xFE, 0x59, 0x80};
+
+// A genuine on-air encoding of `frame` with one byte flipped past the header, so
+// soft_phy_peek_frame_length() (which only looks at CTRL0's cell) still returns the real length and
+// stage 1 proceeds — it is stage 3's CRC check that must reject it. An all-noise buffer would
+// instead be rejected at stage 1 (see PeekFrameLengthRejectsNoise) and never exercise the CRC gate
+// the tests using this helper target.
+std::vector<uint8_t> crc_corrupted_on_air_bytes(const std::vector<uint8_t> &frame) {
+  std::vector<uint8_t> corrupted = uart_packed_on_air_bytes(frame);
+  EXPECT_GT(corrupted.size(), 5u);
+  corrupted[5] ^= 0xFF;
+  return corrupted;
+}
+
+}  // namespace
+
+// Serves a scripted data buffer, standing in for the chip's buffer as reception progresses, and
+// records every read so tests can assert what the early path actually asked for. Mirrors
+// tests/radio_sx1262_rx_test.cpp's EarlyRxRadioSX1262; unlike that fixture this one doesn't need
+// to fake the RX_DONE fallback read (read_rx_packet()), since none of the tests below drive an
+// IRQ sequence that reaches that branch within the same check_for_packet() call.
+class EarlyRxRadioLR1121 : public RadioLR1121 {
+ public:
+  using RadioLR1121::RadioLR1121;
+
+  void set_irq_sequence(std::initializer_list<uint32_t> seq) {
+    irq_seq_.assign(seq);
+    irq_idx_ = 0;
+  }
+  // Regardless of the requested offset, serves rx_buffer_[i] and only *records* what was asked
+  // for — the offset assertion below stays an explicit EXPECT_EQ(..., LR1121_RX_BUFFER_BASE)
+  // rather than being smuggled into whether the bytes decode.
+  void set_rx_buffer(std::vector<uint8_t> buf) { rx_buffer_ = std::move(buf); }
+  using RadioLR1121::early_rx_read_offset;
+
+  const std::vector<uint8_t> &read_lengths() const { return read_lengths_; }
+  const std::vector<uint8_t> &read_offsets() const { return read_offsets_; }
+
+ protected:
+  uint32_t read_irq_status_raw() override {
+    if (irq_idx_ < irq_seq_.size())
+      return irq_seq_[irq_idx_++];
+    return 0;
+  }
+
+  void read_rx_buffer(uint8_t offset, uint8_t *data, uint8_t len) override {
+    read_offsets_.push_back(offset);
+    read_lengths_.push_back(len);
+    for (uint8_t i = 0; i < len; i++)
+      data[i] = i < rx_buffer_.size() ? rx_buffer_[i] : 0x00;
+  }
+
+  // check_for_packet()'s idle-path early completion has no caller-supplied timeout to widen the
+  // way wait_for_packet()'s tests do, and the production default (20 ms) expires inside
+  // wait_for_air_time()'s first stage on the host clock stubs (millis()/micros() advance one unit
+  // per call, not per unit of real time) — see idle_rx_completion_budget_ms()'s own doc comment.
+  // Widen it here the same way EarlyRxRadioSX1262 does.
+  uint32_t idle_rx_completion_budget_ms() const override { return 20000; }
+
+ private:
+  std::vector<uint32_t> irq_seq_;
+  size_t irq_idx_ = 0;
+  std::vector<uint8_t> rx_buffer_;
+  std::vector<uint8_t> read_lengths_;
+  std::vector<uint8_t> read_offsets_;
+};
+
+TEST(RadioLR1121, EarlyCompletionIsOptInWithLr1121BufferBase) {
+  // Pins the per-chip judgment call itself (design plan §5.3): unlike the base class's -1
+  // default, RadioLR1121 opts in at LR1121_RX_BUFFER_BASE (0x00) — the whole 256-byte buffer,
+  // there being no SetBufferBaseAddress equivalent on this chip to program a split with.
+  MockSpi spi;
+  MockPin rst, irq, busy(false);
+  EarlyRxRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+  EXPECT_EQ(radio.early_rx_read_offset(), LR1121_RX_BUFFER_BASE);
+}
+
+TEST(RadioLR1121, CheckForPacketSyncWithoutRxDoneCompletesEarlyOnValidCrc) {
+  MockSpi spi;
+  MockPin rst, irq, busy(false);
+  EarlyRxRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+
+  radio.mark_dio_fired_from_isr();
+  radio.set_rx_buffer(uart_packed_on_air_bytes(kRs100Challenge));
+  // RX_DONE deliberately absent — this is the branch that, before Step 3, could only wait a whole
+  // loop() pass (or lose the frame outright, pre-#81) for the fixed-length RX_DONE.
+  radio.set_irq_sequence({LR1121_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  EXPECT_TRUE(radio.check_for_packet(pkt)) << "a complete, CRC-valid frame must not need to wait for RX_DONE";
+
+  ASSERT_EQ(pkt.len, kRs100Challenge.size());
+  EXPECT_EQ(std::vector<uint8_t>(pkt.data, pkt.data + pkt.len), kRs100Challenge);
+
+  ASSERT_GE(radio.read_lengths().size(), 2u) << "expected a header read then a whole-frame read";
+  for (uint8_t offset : radio.read_offsets())
+    EXPECT_EQ(offset, LR1121_RX_BUFFER_BASE);
+  EXPECT_FALSE(radio.reception_in_progress())
+      << "try_early_completion_()'s success clears the holdoff via reset_rx_state_() (Step 1); a "
+         "regression here would spuriously block hops for up to RX_HOP_HOLDOFF_US after every "
+         "successful idle-path receive";
+}
+
+TEST(RadioLR1121, CheckForPacketSyncWithoutRxDoneFallsBackWhenCrcInvalid) {
+  // ScriptedSpi, not MockSpi: the assertion below needs to see whether reset_rx_state_() ran, and
+  // that shows up as a real LR1121_CMD_SET_STANDBY transaction that MockSpi discards.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  EarlyRxRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+
+  radio.mark_dio_fired_from_isr();
+  std::vector<uint8_t> corrupted = crc_corrupted_on_air_bytes(kRs100Challenge);
+  radio.set_rx_buffer(corrupted);
+  radio.set_irq_sequence({LR1121_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  EXPECT_FALSE(radio.check_for_packet(pkt));
+  // Pins that this test actually reaches stage 3's CRC gate rather than being rejected earlier at
+  // stage 1's length peek: a header read followed by a whole-frame read means stage 1 succeeded
+  // and stage 2 ran, so the false above can only be stage 3's CRC check.
+  ASSERT_GE(radio.read_lengths().size(), 2u) << "expected a header read then a whole-frame read";
+
+  // Load-bearing: this is what proves the failure path leaves the chip alone rather than tearing
+  // RX down — the basis of the whole "fall-through is benign, not lossy" claim (issue #81 §0.3).
+  EXPECT_LT(spi.find_opcode(LR1121_CMD_SET_STANDBY), 0) << "reset_rx_state_() must not have run";
+  EXPECT_TRUE(radio.reception_in_progress())
+      << "the hop holdoff armed before the early-completion attempt must survive it declining";
 }
 
 // ============================================================================
@@ -829,6 +1071,66 @@ TEST(RadioLR1121, SendPacketSetsPacketParamsLengthToEncodedLength) {
   EXPECT_EQ(preamble_field, static_cast<uint16_t>(SHORT_PREAMBLE * 8))
       << "SetPacketParams' PreambleLength is in bits: SHORT_PREAMBLE (" << SHORT_PREAMBLE
       << " bytes) must reach the chip as " << (SHORT_PREAMBLE * 8) << " bits";
+}
+
+// Raises the TxDone interrupt the moment SetTx is issued — mirrors
+// tests/radio_sx1262_rx_test.cpp's TxCompletingRadioSX1262; this is the only way to reach
+// send_packet()'s success path (and hence rearm_rx_after_tx_()) in a synchronous host test.
+class TxCompletingRadioLR1121 : public TestableRadioLR1121 {
+ public:
+  using TestableRadioLR1121::TestableRadioLR1121;
+
+ protected:
+  void start_tx() override {
+    TestableRadioLR1121::start_tx();
+    this->mark_dio_fired_from_isr();
+  }
+};
+
+TEST(RadioLR1121, PostTxRearmInvalidatesRxBufferBaseContent) {
+  // F1 regression (issue #81): LR1121 has one shared 256-byte buffer for both TX and RX (no
+  // SetBufferBaseAddress split like SX1262's — see invalidate_stale_rx_content_after_tx()'s doc
+  // comment), so after every transmission the bytes this driver just sent sit at exactly the
+  // offset a length-driven receive later reads from (LR1121_RX_BUFFER_BASE). Left alone, that
+  // residue is a real, CRC-valid, UART-encoded frame, not noise — so rearm_rx_after_tx_() must
+  // overwrite it before re-entering RX, or a wrong early_rx_read_offset() guess would hand back
+  // the hub's own last transmission as a phantom received packet.
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TxCompletingRadioLR1121 radio(&spi, &rst, &irq, &busy, 0, 0x07);
+  radio.set_irq_sequence({LR1121_IRQ_TX_DONE});
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  ASSERT_TRUE(radio.send_packet(frame, sizeof(frame), cfg)) << "TxDone was driven, so this must succeed";
+
+  int const set_tx_idx = spi.find_opcode(LR1121_CMD_SET_TX);
+  ASSERT_GE(set_tx_idx, 0);
+
+  // The invalidating WriteBuffer must come after SetTx — before it is the actual TX payload
+  // write, which this test is not about. WriteBuffer always starts from the chip's internal
+  // write pointer, which resets to the buffer base for a fresh sequence (write_buffer_()'s own
+  // doc comment), the same address early_rx_read_offset() reads from, so there is no separate
+  // offset parameter to check here the way ReadBuffer's would need.
+  int invalidate_idx = -1;
+  for (size_t i = static_cast<size_t>(set_tx_idx) + 1; i < spi.transactions().size(); i++) {
+    const auto &tx = spi.transactions()[i];
+    if (tx.size() >= 2 && tx[0] == ((LR1121_CMD_WRITE_BUFFER >> 8) & 0xFF) &&
+        tx[1] == (LR1121_CMD_WRITE_BUFFER & 0xFF)) {
+      invalidate_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(invalidate_idx, 0)
+      << "rearm_rx_after_tx_() must issue a WriteBuffer targeting the buffer base to invalidate "
+         "stale TX residue before re-entering RX";
+  const auto &invalidate_tx = spi.transactions()[invalidate_idx];
+  ASSERT_EQ(invalidate_tx.size(), 2u + SOFT_PHY_EARLY_HEADER_RAW_BYTES)
+      << "must overwrite exactly the header-peek window try_early_completion_()'s stage 1 reads";
+  for (size_t i = 2; i < invalidate_tx.size(); i++)
+    EXPECT_EQ(invalidate_tx[i], 0x00) << "invalidating content must not itself decode as a UART frame";
 }
 
 // ============================================================================

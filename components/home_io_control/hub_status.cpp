@@ -416,19 +416,23 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
 
   detail::log_component_capture(this->radio_, "parse_ok", packet.data, packet.len, &frame);
 
-  // Exchange-internal frames (0x3C challenge request, 0x3D challenge response) are part of
-  // another controller's authenticated exchange. They carry no extractable status data for
-  // a passive observer — skip silently. They remain visible in io_capture (stage=parse_ok).
+  // === Key-extraction responder ("Accept Foreign Pairing") ===
+  // Runs before the exchange-internal drop below: a hub-issued 0x3C challenging our own 0x37 is
+  // addressed to us and is ours to answer (hub_key_extraction.cpp). Self-gated on armed + our
+  // throwaway ID, so the disarmed path (and every command other than 0x28/0x2C/0x31/0x32/0x36/0x3C)
+  // is bit-for-bit unchanged by this ordering — try_handle_key_extraction_frame_() returns false
+  // immediately whenever it doesn't apply, and this reorder can only affect frames where BOTH this
+  // call and the is_exchange_internal_command() check below would otherwise fire, i.e. only 0x3C/
+  // 0x3D (that predicate's entire domain, hub_decisions.h).
+  if (this->try_handle_key_extraction_frame_(frame))
+    return;
+
+  // Exchange-internal frames (0x3C challenge request, 0x3D challenge response) belonging to
+  // *another* controller's authenticated exchange carry no extractable status data for a passive
+  // observer — skip silently. They remain visible in io_capture (stage=parse_ok).
   if (decisions::is_exchange_internal_command(frame.cmd)) {
     return;
   }
-
-  // === Key-extraction responder ("Accept Foreign Pairing") ===
-  // Narrow, armed-only branches for the device-role pairing responder (pairing_responder.h);
-  // see hub_key_extraction.cpp. When disarmed these frames fall through unchanged to the normal
-  // handling below (0x28/0x2C/0x31/0x32 are not otherwise acted on by this hub, so that's a no-op).
-  if (this->try_handle_key_extraction_frame_(frame))
-    return;
 
   // === 1W remote frame decode ===
   // 1W remotes broadcast commands to a typed device-class address (e.g., "all awnings").

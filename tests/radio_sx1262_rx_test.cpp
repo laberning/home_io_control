@@ -41,6 +41,11 @@ class TestableRadioSX1262 : public RadioSX1262 {
   // Control whether the final packet read succeeds.
   void set_read_success(bool success) { read_success_ = success; }
 
+  // Arm the hop holdoff directly — exposed here since note_reception_in_progress_() is protected
+  // on RadioDriver, and this fixture's overridden read_rx_packet() below never reaches the
+  // sync-without-RX_DONE branch that would normally arm it.
+  void note_reception_from_test() { this->note_reception_in_progress_(); }
+
  protected:
   uint32_t read_irq_status_raw() override {
     if (irq_idx_ < irq_seq_.size()) {
@@ -532,8 +537,11 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //   - CMD_DISCOVER_ALT_RESP: captured once (velux_kux100/discover_alt_addressed_challenge_
   //     response.yaml) but "not otherwise used anywhere in this codebase" per its own doxygen --
   //     nothing dispatches on it, corpus replay doesn't go through this soft-PHY gate at all.
-  //   - CMD_ADDRESS_REQ / CMD_ADDRESS_RESP: captured once (velux_kux100/pairing_full.yaml) but
-  //     "neither command is sent or handled anywhere in this codebase" per proto_constants.h.
+  //   - CMD_ADDRESS_RESP: captured once (velux_kux100/pairing_full.yaml) but we only ever
+  //     transmit it (create_address_resp_device_role(), the key-extraction responder's answer to
+  //     an inbound 0x36) -- we never wait for a reply carrying this opcode. CMD_ADDRESS_REQ is
+  //     deliberately NOT in this list any more: the key-extraction responder now expects to
+  //     receive it, so it belongs in is_known_io_command() instead (see radio_soft_phy.cpp).
   //   - CMD_LAUNCH_KEY_TRANSFER: never observed in corpus or field log; not sent or handled
   //     anywhere; used only to construct a hypothetical IV in proto_crypto_test.cpp.
   //   - CMD_UNKNOWN4A_REQ: deliberately excluded, see ADR 0024 -- nothing this codebase sends
@@ -544,10 +552,21 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //     observed in corpus or field log, not sent or handled anywhere in this codebase -- named
   //     purely so a future capture of one of them has a symbol to log against.
   static constexpr uint8_t NEVER_RECEIVED_ALLOWLIST[] = {
-      CMD_ACTIVATE_MODE,      CMD_ONEWAY_ADD_CONTROLLER, CMD_ONEWAY_REMOVE,     CMD_SET_SENSOR,
-      CMD_SET_SENSOR_ACK,     CMD_DISCOVER_ALT_REQ,      CMD_DISCOVER_ALT_RESP, CMD_ADDRESS_REQ,
-      CMD_ADDRESS_RESP,       CMD_LAUNCH_KEY_TRANSFER,   CMD_UNKNOWN4A_REQ,     CMD_GET_INFO1,
-      CMD_GET_INFO1_RESP,     CMD_SEND_RAW_MESSAGE,      CMD_READ_GROUPS,       CMD_REBOOT,
+      CMD_ACTIVATE_MODE,
+      CMD_ONEWAY_ADD_CONTROLLER,
+      CMD_ONEWAY_REMOVE,
+      CMD_SET_SENSOR,
+      CMD_SET_SENSOR_ACK,
+      CMD_DISCOVER_ALT_REQ,
+      CMD_DISCOVER_ALT_RESP,
+      CMD_ADDRESS_RESP,
+      CMD_LAUNCH_KEY_TRANSFER,
+      CMD_UNKNOWN4A_REQ,
+      CMD_GET_INFO1,
+      CMD_GET_INFO1_RESP,
+      CMD_SEND_RAW_MESSAGE,
+      CMD_READ_GROUPS,
+      CMD_REBOOT,
       CMD_SERVICE_STATUS_ACK,
   };
 
@@ -703,6 +722,18 @@ std::vector<uint8_t> uart_packed_on_air_bytes(const std::vector<uint8_t> &frame)
 const std::vector<uint8_t> kRs100Challenge = {0x0E, 0x00, 0xD1, 0xD4, 0xFF, 0x8C, 0x08, 0x3C,
                                               0x3C, 0x45, 0x51, 0x6F, 0xFE, 0x59, 0x80};
 
+// A genuine on-air encoding of `frame` with one byte flipped past the header, so
+// soft_phy_peek_frame_length() (which only looks at CTRL0's cell) still returns the real length and
+// stage 1 proceeds — it is stage 3's CRC check that must reject it. An all-noise buffer would
+// instead be rejected at stage 1 (see PeekFrameLengthRejectsNoise) and never exercise the CRC gate
+// the tests using this helper target.
+std::vector<uint8_t> crc_corrupted_on_air_bytes(const std::vector<uint8_t> &frame) {
+  std::vector<uint8_t> corrupted = uart_packed_on_air_bytes(frame);
+  EXPECT_GT(corrupted.size(), 5u);
+  corrupted[5] ^= 0xFF;
+  return corrupted;
+}
+
 }  // namespace
 
 // Serves a scripted data buffer, standing in for the chip's buffer as reception progresses, and
@@ -718,6 +749,12 @@ class EarlyRxRadioSX1262 : public RadioSX1262 {
   void set_rx_buffer(std::vector<uint8_t> buf) { rx_buffer_ = std::move(buf); }
   void set_fallback_packet(const RadioRxPacket &pkt) { fallback_packet_ = pkt; }
   using RadioSX1262::early_rx_read_offset;
+  // check_for_packet()'s idle-path early completion (issue #81, Mechanism B) has no
+  // caller-supplied timeout to widen the way wait_for_packet()'s tests do, so the budget itself is
+  // the seam — default it to the same generous 20000 ms those tests pass, and let a test narrow it
+  // to exercise the decline path (see idle_rx_completion_budget_ms()'s own doc comment for why the
+  // host clock stubs make this the only workable seam).
+  void set_idle_rx_completion_budget_ms(uint32_t ms) { idle_rx_completion_budget_ms_ = ms; }
 
   const std::vector<uint8_t> &read_lengths() const { return read_lengths_; }
   const std::vector<uint8_t> &read_offsets() const { return read_offsets_; }
@@ -745,6 +782,8 @@ class EarlyRxRadioSX1262 : public RadioSX1262 {
     return packet.len > 0;
   }
 
+  uint32_t idle_rx_completion_budget_ms() const override { return idle_rx_completion_budget_ms_; }
+
  private:
   std::vector<uint32_t> irq_seq_;
   size_t irq_idx_ = 0;
@@ -753,6 +792,7 @@ class EarlyRxRadioSX1262 : public RadioSX1262 {
   std::vector<uint8_t> read_offsets_;
   RadioRxPacket fallback_packet_{};
   bool fallback_used_ = false;
+  uint32_t idle_rx_completion_budget_ms_ = 20000;
 };
 
 TEST(SoftPhy, RawBytesForFrameCoversFrameAndCrcCells) {
@@ -853,6 +893,51 @@ TEST(RadioSX1262, EarlyCompletionIsOptInPerChip) {
   EXPECT_EQ(radio.early_rx_read_offset(), SX1262_RX_BUFFER_BASE);
 }
 
+// ============================================================================
+// Idle-path hop holdoff (issue #81): check_for_packet()'s sync-without-RX_DONE branch must arm
+// reception_in_progress() so ExchangeEngine::maybe_hop() does not retune under a frame that is
+// still arriving, and a completed reception (successful or not) must drop the holdoff again via
+// reset_rx_state_().
+// ============================================================================
+
+TEST(RadioSX1262, CheckForPacketSyncWithoutRxDoneArmsHopHoldoff) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  radio.mark_dio_fired_from_isr();
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket packet{};
+  bool ok = radio.check_for_packet(packet);
+
+  EXPECT_FALSE(ok) << "SYNC_WORD_VALID without RX_DONE is not a complete packet yet";
+  EXPECT_TRUE(radio.reception_in_progress())
+      << "the sync-without-RX_DONE branch must record the reception so the idle-path hop holds off";
+}
+
+TEST(RadioSX1262, ResetRxStateClearsHopHoldoff) {
+  // read_rx_packet() itself is overridden away from the real SPI path by this fixture (as in
+  // every other test in this file), so this drives reset_rx_state_() — the single funnel every
+  // "RX torn down and re-armed" path goes through, including read_rx_packet()'s own end — via
+  // check_for_packet()'s catch-all branch instead: an IRQ reading that is activity (CRC_ERR) but
+  // neither SYNC_WORD_VALID nor RX_DONE reaches the same real, non-overridden reset_rx_state_()
+  // call that read_rx_packet() reaches on every one of its own return paths.
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  radio.note_reception_from_test();
+  ASSERT_TRUE(radio.reception_in_progress()) << "sanity: the holdoff must start armed";
+
+  radio.mark_dio_fired_from_isr();
+  radio.set_irq_sequence({SX1262_IRQ_CRC_ERR});
+
+  RadioRxPacket result{};
+  EXPECT_FALSE(radio.check_for_packet(result));
+  EXPECT_FALSE(radio.reception_in_progress())
+      << "reset_rx_state_() must drop the holdoff, not leave a stale deadline blocking the next "
+         "~12 ms of hopping";
+}
+
 TEST(RadioSX1262, EarlyCompletionDeclinesWindowsTooShortToFinishIn) {
   // A window smaller than the longest frame's air time cannot complete a receive either way, so
   // the early path must not spend that whole budget discovering it.
@@ -866,6 +951,107 @@ TEST(RadioSX1262, EarlyCompletionDeclinesWindowsTooShortToFinishIn) {
   RadioRxPacket pkt{};
   EXPECT_FALSE(radio.wait_for_packet(pkt, SOFT_PHY_EARLY_MIN_WINDOW_MS - 1));
   EXPECT_TRUE(radio.read_lengths().empty()) << "no buffer read should have been attempted at all";
+}
+
+// ============================================================================
+// Idle-path early completion (issue #81, Mechanism B): check_for_packet()'s sync-without-RX_DONE
+// branch, which Step 1 made non-lossy by arming the hop holdoff before falling through, now also
+// attempts try_early_completion_() itself instead of leaving every sync-only poll to the following
+// loop() pass. A wrong guess here must never cost the frame — only latency — so the interesting
+// assertions are about what did *not* happen (no chip teardown, holdoff still armed) as much as
+// about what did.
+// ============================================================================
+
+TEST(RadioSX1262, CheckForPacketSyncWithoutRxDoneCompletesEarlyOnValidCrc) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.mark_dio_fired_from_isr();
+  radio.set_rx_buffer(uart_packed_on_air_bytes(kRs100Challenge));
+  // RX_DONE deliberately absent — this is the branch that used to just return false and wait a
+  // whole loop() pass (or lose the frame outright, pre-#81) for it.
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  EXPECT_TRUE(radio.check_for_packet(pkt)) << "a complete, CRC-valid frame must not need to wait for RX_DONE";
+  EXPECT_FALSE(radio.fallback_used()) << "the RX_DONE path must not have been reached";
+
+  ASSERT_EQ(pkt.len, kRs100Challenge.size());
+  EXPECT_EQ(std::vector<uint8_t>(pkt.data, pkt.data + pkt.len), kRs100Challenge);
+
+  ASSERT_GE(radio.read_lengths().size(), 2u) << "expected a header read then a whole-frame read";
+  for (uint8_t offset : radio.read_offsets())
+    EXPECT_EQ(offset, SX1262_RX_BUFFER_BASE);
+  EXPECT_FALSE(radio.reception_in_progress())
+      << "try_early_completion_()'s success clears the holdoff via reset_rx_state_() (Step 1); a "
+         "regression here would spuriously block hops for up to RX_HOP_HOLDOFF_US after every "
+         "successful idle-path receive";
+}
+
+TEST(RadioSX1262, CheckForPacketSyncWithoutRxDoneFallsBackWhenCrcInvalid) {
+  // ScriptedSpi, not MockSpi: the assertion below needs to see whether reset_rx_state_() ran, and
+  // that shows up as real SPI transactions (SetStandby among them) that MockSpi discards.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.mark_dio_fired_from_isr();
+  std::vector<uint8_t> corrupted = crc_corrupted_on_air_bytes(kRs100Challenge);
+  radio.set_rx_buffer(corrupted);
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  EXPECT_FALSE(radio.check_for_packet(pkt));
+  EXPECT_FALSE(radio.fallback_used()) << "check_for_packet() must not have gone through read_rx_packet()";
+  // Pins that this test actually reaches stage 3's CRC gate rather than being rejected earlier at
+  // stage 1's length peek: a header read followed by a whole-frame read means stage 1 succeeded and
+  // stage 2 ran, so the false above can only be stage 3's CRC check.
+  ASSERT_GE(radio.read_lengths().size(), 2u) << "expected a header read then a whole-frame read";
+
+  // Load-bearing: this is what proves the failure path leaves the chip alone (§4.1(b) of the plan)
+  // rather than tearing RX down — the basis of the whole "fall-through is benign, not lossy" claim.
+  for (const auto &txn : spi.transactions())
+    ASSERT_FALSE(!txn.empty() && txn[0] == SX1262_SET_STANDBY) << "reset_rx_state_() must not have run";
+}
+
+TEST(RadioSX1262, CheckForPacketSyncWithoutRxDoneKeepsHopHoldoffOnFallBack) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  radio.mark_dio_fired_from_isr();
+  std::vector<uint8_t> corrupted = crc_corrupted_on_air_bytes(kRs100Challenge);
+  radio.set_rx_buffer(corrupted);
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  EXPECT_FALSE(radio.check_for_packet(pkt));
+  // Pins that this test actually reaches stage 3's CRC gate rather than being rejected earlier at
+  // stage 1's length peek (see the sibling FallsBackWhenCrcInvalid test's identical assertion).
+  ASSERT_GE(radio.read_lengths().size(), 2u) << "expected a header read then a whole-frame read";
+  // This is what pins issue #81's §0.3 recovery claim: without the holdoff still standing after
+  // early completion declines, nothing in the suite would distinguish "fall-through is recoverable
+  // next loop() pass" from "fall-through is lossy" — a future edit that dropped the re-arm on the
+  // fall-through path would pass every other test in this file.
+  EXPECT_TRUE(radio.reception_in_progress())
+      << "the hop holdoff armed before the early-completion attempt must survive it declining";
+}
+
+TEST(RadioSX1262, CheckForPacketSyncWithoutRxDoneDeclinesWhenBudgetTooShort) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  EarlyRxRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  radio.set_idle_rx_completion_budget_ms(SOFT_PHY_EARLY_MIN_WINDOW_MS - 1);
+
+  radio.mark_dio_fired_from_isr();
+  radio.set_rx_buffer(uart_packed_on_air_bytes(kRs100Challenge));
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+
+  RadioRxPacket pkt{};
+  EXPECT_FALSE(radio.check_for_packet(pkt));
+  EXPECT_TRUE(radio.read_lengths().empty())
+      << "a budget below SOFT_PHY_EARLY_MIN_WINDOW_MS must decline before touching the buffer";
 }
 
 TEST(SoftPhy, EncodePadsTrailingIdleBitsHigh) {

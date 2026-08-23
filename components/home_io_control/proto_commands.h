@@ -632,6 +632,54 @@ bool create_challenge_req_device_role(IoFrame &f, const uint8_t *dst, const uint
 bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE],
                            const IoFrame &origin, const uint8_t *key);
 
+/// @brief Build an address response (0x37) — device side, answering a hub's CMD_ADDRESS_REQ
+/// (0x36).
+///
+/// Payload is our own advertised node ID — the only identity this emulated device has to offer —
+/// the same value create_discover_resp() reports at DISCOVERY_RESP_BACKBONE_OFFSET.
+/// CorpusDeviceRoleBuilders.AddressRespPayloadMatchesOwnDiscoverRespBackboneAddress
+/// (tests/corpus_device_role_builder_test.cpp) pins that these two builders agree with *each
+/// other*, not that this matches a real device's own backbone value: the one real capture of this
+/// exchange (tests/corpus/captures/velux_kux100/pairing_full.yaml) shows a genuine device whose 0x37
+/// payload — a persistent identity the io-homecontrol wire format tracks separately from a device's
+/// node/session address — does NOT equal that device's own node ID. Our emulated device only ever
+/// generates one identity per arm cycle, so it structurally cannot reproduce a real device's
+/// separate backbone value; whether any real hub requires the two to differ, or even inspects this
+/// field at all rather than treating it as informational, is unconfirmed. See docs/home_io_control.md's
+/// Key Extraction "Known limitations" for the field-facing version of this note.
+/// Also unverified: the full CTRL1 framing. This builder's ctrl1 is 0x00 (see init_frame() call in
+/// the .cpp), but the KLR200 capture's 0x37 carries CTRL1_PRIORITY set. See the
+/// TODO(hardware-verify) on the .cpp definition for why that bit is not mirrored here.
+/// No controller-role counterpart exists to share with: this codebase has never sent 0x36, so there
+/// is no analogous controller-role code that receives a 0x37 to keep in sync with.
+/// @param f IoFrame to populate.
+/// @param own Our advertised (throwaway) node ID — used as both src and the payload.
+/// @param dst Destination node ID (the hub that sent the address request, from its 0x36's src).
+/// @return true on success.
+bool create_address_resp_device_role(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+
+/// @brief Build a challenge response (0x3D) in the *device* direction — used only by the
+/// key-extraction responder to answer a hub-issued CMD_CHALLENGE_REQ (0x3C) challenging our own
+/// CMD_ADDRESS_RESP (0x37).
+///
+/// Same transcript rule as create_challenge_resp() above (the challenged party HMACs its own
+/// preceding frame's cmd+data), but END is set: this 0x3D closes the address-verification round the
+/// hub opened with 0x36 (tests/corpus/captures/velux_kux100/pairing_full.yaml's `8E 08 …`, END
+/// set). LOW_POWER is clear because this hub is mains-powered and never sleeps, the same
+/// self-description create_discover_resp() already advertises via POWER_SAVE_ALWAYS_ALIVE. Neither
+/// bit is a blanket "device role" convention — real devices also send mid-exchange 0x3D frames with
+/// END clear and LOW_POWER set (somfy_rs100_oximo/exchange_oximo40_sx1262.yaml) — so this framing is
+/// specific to the terminal shape this feature needs, not a general device-role rule.
+/// @param f IoFrame to populate.
+/// @param dst The hub's node ID (from the inbound 0x3C's src).
+/// @param src Our advertised (throwaway) node ID.
+/// @param challenge 6-byte challenge from the hub's 0x3C.
+/// @param origin Our own preceding CMD_ADDRESS_RESP (0x37) frame — its cmd+data is the transcript.
+/// @param key System key (16 bytes).
+/// @return true on success.
+bool create_challenge_resp_device_role(IoFrame &f, const uint8_t *dst, const uint8_t *src,
+                                       const uint8_t challenge[HMAC_SIZE], const IoFrame &origin, const uint8_t *key);
+
 /// Build a status‑update acknowledgment (0x72). Sent after authenticating a device's
 /// status update; broadcast on all 3 channels for reliability.
 /// @param f IoFrame to populate.

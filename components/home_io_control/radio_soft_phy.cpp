@@ -99,6 +99,7 @@ bool is_known_io_command(uint8_t cmd) {
     case CMD_KEY_INIT:
     case CMD_KEY_TRANSFER:
     case CMD_KEY_CONFIRM:
+    case CMD_ADDRESS_REQ:
     case CMD_CHALLENGE_REQ:
     case CMD_CHALLENGE_RESP:
     case CMD_UNKNOWN4A_RESP:

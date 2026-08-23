@@ -114,6 +114,12 @@ class RadioSX1276 : public RadioDriver {
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
   bool is_preamble_detected() override;
+  /// @copydoc RadioDriver::reception_in_progress
+  ///
+  /// Read live from REG_IRQ_FLAGS1 rather than recorded from check_for_packet(): DIO0 carries
+  /// PayloadReady only, so this driver's check_for_packet() returns before reading any register
+  /// while a frame is still arriving and has nothing to record (issue #81).
+  [[nodiscard]] bool reception_in_progress() override;
   /// @brief Per-channel dwell for a rotating listen (SX1276).
   ///
   /// The SX1276 supports FastHop (PllHop), so frequency changes need no standby transition and a
@@ -214,6 +220,7 @@ class RadioSX1276 : public RadioDriver {
   bool failed_{false};
   SX1276RxBandwidth rx_bandwidth_{SX1276RxBandwidth::BW_41_7_KHZ};  ///< Runtime-tunable RX bandwidth.
   uint16_t response_preamble_{SX1276_RESPONSE_PREAMBLE};            ///< Runtime-tunable response preamble.
+  uint32_t sync_hold_since_us_{0};  ///< First-sighting timestamp for reception_in_progress()'s un-stick bound.
 };
 
 }  // namespace home_io_control

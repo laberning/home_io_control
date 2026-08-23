@@ -32,7 +32,15 @@ enum class ResponderState : uint8_t {
   SENT_DISCOVER_RESP,  ///< Replied to discovery (0x29); waiting for discovery-confirm (0x2C) or key-init (0x31).
   SENT_CONFIRM_ACK,    ///< Acknowledged discovery-confirm (0x2D); waiting for key-init (0x31).
   SENT_CHALLENGE,      ///< Replied to key-init with our challenge (0x3C); waiting for key-transfer (0x32).
-  EXTRACTED,           ///< System key recovered from a valid 0x32; the hub disarms immediately after.
+  EXTRACTED,           ///< System key recovered from a valid 0x32. Some hubs (KIG300) need nothing more and
+                       ///< the responder disarms after a grace window; others (KLR200) follow up with an
+                       ///< address request (0x36) — see SENT_ADDRESS_RESP.
+  SENT_ADDRESS_RESP,   ///< Answered a hub's CMD_ADDRESS_REQ (0x36) with our CMD_ADDRESS_RESP (0x37);
+                       ///< waiting for the hub's own CMD_CHALLENGE_REQ (0x3C) challenging it, or a
+                       ///< retry of 0x36 itself. Appended at the end of the enum rather than in
+                       ///< sequence order after EXTRACTED: nothing serializes or compares this
+                       ///< uint8_t-backed enum ordinally (every guard below is an explicit == set),
+                       ///< so ordering is cosmetic, and appending keeps the diff minimal.
 };
 
 /// @brief Get a short, log/telemetry-friendly name for a responder state.
@@ -117,6 +125,31 @@ bool on_key_init(ResponderContext &ctx, const uint8_t challenge[HMAC_SIZE], cons
 /// @return true if the key was recovered and the caller should build and send a
 ///         CMD_KEY_CONFIRM (0x33) reply and report ctx.recovered_key to the user.
 bool on_key_transfer(ResponderContext &ctx, const uint8_t transfer_payload[AES_KEY_SIZE]);
+
+/// @brief Decide how to react to an inbound CMD_ADDRESS_REQ (0x36) addressed to our throwaway ID.
+///
+/// Valid from EXTRACTED (first reply) and SENT_ADDRESS_RESP (a hub retry — resend the same 0x37,
+/// nothing regenerated, matching on_discover_request()'s established retry idiom). No-op from any
+/// earlier state: a hub that hasn't completed the key exchange yet has no business asking for our
+/// address. No-op from DISARMED/ARMED_IDLE etc. too, same as every other on_*() here.
+/// @param ctx Responder context (mutated: state only).
+/// @return true if the caller should build and send a CMD_ADDRESS_RESP (0x37) reply.
+bool on_address_req(ResponderContext &ctx);
+
+/// @brief Decide how to react to an inbound CMD_CHALLENGE_REQ (0x3C) — issued by the hub this
+/// time, challenging our own CMD_ADDRESS_RESP (0x37) rather than us challenging the hub.
+///
+/// Valid only from SENT_ADDRESS_RESP: a hub-issued 0x3C only makes sense after we've told it our
+/// address. No new fields to store — the caller has everything it needs (ctx.recovered_key,
+/// ctx.throwaway_id, the inbound frame's own challenge bytes) to build 0x3D on the spot.
+///
+/// Unlike every other on_*() in this file, this function does NOT clear or advance state on
+/// success — it stays in SENT_ADDRESS_RESP precisely so a retried 0x3C is answered the same way a
+/// retried 0x31 is by on_key_init(). That makes it the only on_*() here that returns true without
+/// ever changing @p ctx; that is intentional, not an oversight.
+/// @param ctx Responder context (read-only; not mutated).
+/// @return true if the caller should build and send a CMD_CHALLENGE_RESP (0x3D) reply.
+bool on_address_challenge(const ResponderContext &ctx);
 
 }  // namespace pairing_responder
 }  // namespace home_io_control

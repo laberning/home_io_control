@@ -117,6 +117,14 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   }
   bool is_sync_detected() override { return false; }
   bool is_preamble_detected() override { return false; }
+  /// Arm the hop holdoff the way a real driver's check_for_packet() would — exposed here since
+  /// note_reception_in_progress_() is protected on RadioDriver.
+  void note_reception_from_test() { this->note_reception_in_progress_(); }
+  /// Drop the hop holdoff the way a real driver's reset_rx_state_() would, without waiting out
+  /// RX_HOP_HOLDOFF_US's own (much longer) expiry — lets a test isolate "was the reception still
+  /// arriving" from "did the holdoff merely time out" when both would otherwise return the same
+  /// answer.
+  void clear_reception_from_test() { this->clear_reception_in_progress_(); }
   // hop_dwell_ms and has_fast_tx_rx_turnaround are pure virtual in RadioDriver; the
   // generic mock behaves like the fast-hopping, fast-turnaround reference platform so existing
   // discovery-timing and key-exchange flow tests keep exercising the standard paths.

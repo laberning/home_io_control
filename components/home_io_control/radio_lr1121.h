@@ -158,6 +158,15 @@ static constexpr uint8_t LR1121_CALIBRATE_ALL_BLOCKS = 0x3F;
 /// reused directly in that field.
 static constexpr uint8_t LR1121_FALLBACK_STDBY_XOSC = 0x02;
 
+/// Offset a reception is written to in the LR1121's data buffer.
+///
+/// Unlike the SX1262 there is no SetBufferBaseAddress on this chip — the whole 256-byte buffer is
+/// one area whose pointers the chip manages, and a fresh reception after SetRx starts at the
+/// bottom of it (the same buffer model @ref RadioLR1121::write_buffer_'s own doc comment records
+/// for the TX direction). Used as the read offset for the length-driven receive; see
+/// @ref RadioLR1121::early_rx_read_offset.
+static constexpr uint8_t LR1121_RX_BUFFER_BASE = 0x00;
+
 // ============================================================================
 // Vendor errata / calibration workaround registers — Semtech's own driver (lr11xx_radio.c) and
 // RadioLib both apply these unconditionally. Register addresses/masks/values are byte-for-byte
@@ -377,6 +386,25 @@ class RadioLR1121 : public SoftPhyDriverBase {
   /// Excludes PREAMBLE_DETECTED, unlike the base's "any bit" default — see
   /// LR1121_IRQ_ACTIVITY_MASK's doc comment for why this chip needs the distinction.
   [[nodiscard]] uint32_t activity_irq_mask() const override { return LR1121_IRQ_ACTIVITY_MASK; }
+  /// @copydoc SoftPhyDriverBase::early_rx_read_offset
+  ///
+  /// Opted in (issue #81). The LR1121's ReadBuffer8 is the same non-destructive, offset-addressed
+  /// read the SX1262's is, so the length-driven receive ports unchanged; only the offset differs,
+  /// and this chip's has to be reasoned about rather than programmed (see @ref
+  /// LR1121_RX_BUFFER_BASE).
+  ///
+  /// Not yet confirmed against a real LR1121, and deliberately shipped that way: a wrong offset
+  /// here is safe, but *not* merely because try_early_completion_() gates on CRC-CCITT. On this
+  /// chip's single shared TX/RX buffer, the bytes sitting at a wrong offset right after a
+  /// transmission would otherwise be the hub's own last-sent frame — genuinely CRC-valid, not
+  /// noise, so the CRC gate alone would not catch it. What actually makes a wrong guess harmless
+  /// is @ref invalidate_stale_rx_content_after_tx overwriting that content after every TX, so a
+  /// wrong offset degrades to reading real garbage instead — which the CRC gate (or the stage-1
+  /// length peek) then correctly rejects, falling through to the RX_DONE path exactly as it does
+  /// today. Either way it cannot cost a frame, only the latency saving. `RadioCaptureInfo::rx_offset`
+  /// (logged in @ref SoftPhyDriverBase::read_rx_packet under `IOHOME_FRAME_LOG`) carries the
+  /// chip's own post-RX_DONE answer if the assumption ever needs checking on hardware.
+  [[nodiscard]] int16_t early_rx_read_offset() const override { return LR1121_RX_BUFFER_BASE; }
   /// @copydoc SoftPhyDriverBase::read_rssi_raw_byte
   uint8_t read_rssi_raw_byte() override;
   /// @copydoc SoftPhyDriverBase::write_tx_buffer
@@ -392,6 +420,19 @@ class RadioLR1121 : public SoftPhyDriverBase {
   /// High-ACP workaround (analysis §4.1) — Semtech applies this unconditionally before every
   /// SetTx, same as before every SetRx (see set_mode_rx()).
   void before_tx_arm() override { this->apply_high_acp_workaround_(); }
+  /// @copydoc SoftPhyDriverBase::invalidate_stale_rx_content_after_tx
+  ///
+  /// Overwrites the header-peek window at @ref LR1121_RX_BUFFER_BASE with non-frame-shaped bytes
+  /// (all-zero: a run of zero bits can never satisfy `decode_uart_probe`'s stop-bit check, so
+  /// `soft_phy_peek_frame_length()` fails deterministically on it, not merely with high
+  /// probability). `write_buffer_()` always starts from the chip's own buffer base — the same
+  /// address `early_rx_read_offset()` reads from — so this needs no separate offset parameter.
+  /// Sized to exactly the bytes `try_early_completion_()`'s stage 1 reads, so it stays a single
+  /// short SPI write rather than clearing the whole probe window.
+  void invalidate_stale_rx_content_after_tx() override {
+    uint8_t const zeros[SOFT_PHY_EARLY_HEADER_RAW_BYTES] = {0};
+    this->write_buffer_(zeros, sizeof(zeros));
+  }
 
  private:
   SpiAccess *spi_;
