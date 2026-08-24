@@ -494,7 +494,10 @@ bool create_discover(IoFrame &f, const uint8_t *own);
 /// @param subtype Device subtype to advertise.
 /// @param manufacturer_id Manufacturer ID to advertise (see MANUFACTURER_* in proto_constants.h).
 /// @note The flags byte (turnaround class, power-save) and timestamp are best-effort placeholder
-///       values (0x00) — a real hub may require different values; unverified without hardware.
+///       values — ATT_CLASS_40S/POWER_SAVE_LOW_POWER and a non-zero timestamp, matching a real
+///       captured device rather than the honest-but-misleading ATT_CLASS_5S/POWER_SAVE_ALWAYS_ALIVE
+///       (0x00) — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_commands.cpp for the
+///       full reasoning. Still unverified against a real hub.
 /// @return true on success.
 bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
                           uint8_t manufacturer_id);
@@ -665,8 +668,12 @@ bool create_address_resp_device_role(IoFrame &f, const uint8_t *own, const uint8
 /// Same transcript rule as create_challenge_resp() above (the challenged party HMACs its own
 /// preceding frame's cmd+data), but END is set: this 0x3D closes the address-verification round the
 /// hub opened with 0x36 (tests/corpus/captures/velux_kux100/pairing_full.yaml's `8E 08 …`, END
-/// set). LOW_POWER is clear because this hub is mains-powered and never sleeps, the same
-/// self-description create_discover_resp() already advertises via POWER_SAVE_ALWAYS_ALIVE. Neither
+/// set). LOW_POWER is clear because CTRL1_LOW_POWER describes a controller-originated frame's
+/// *target*, not the sender — irrelevant here, since this is a device-role frame sent to a
+/// mains-powered hub. Unrelated to create_discover_resp()'s own Multi Information Byte, which as of
+/// KEY_EXTRACTION_DISCOVER_RESP_FLAGS (proto_commands.cpp) deliberately advertises
+/// POWER_SAVE_LOW_POWER for this responder's own (different) power-save self-description — the two
+/// bits answer different questions and are not expected to match. Neither
 /// bit is a blanket "device role" convention — real devices also send mid-exchange 0x3D frames with
 /// END clear and LOW_POWER set (somfy_rs100_oximo/exchange_oximo40_sx1262.yaml) — so this framing is
 /// specific to the terminal shape this feature needs, not a general device-role rule.

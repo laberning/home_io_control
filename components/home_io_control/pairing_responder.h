@@ -66,16 +66,42 @@ struct ResponderContext {
 ///
 /// Valid from ARMED_IDLE (first response — replies using the throwaway ID/advertised type
 /// already stored in @p ctx by the caller at arm time) and SENT_DISCOVER_RESP (a hub retry —
-/// resend the same values without regenerating anything). No-op from any later state: a discovery
-/// request must never re-arm or restart an exchange already past this phase. That silence is what
-/// a real device does too — in tests/corpus/captures/velux_kux100/pairing_full.yaml the hub
-/// re-broadcasts 0x28 right after the confirm-ack and the device pointedly does not answer,
-/// before the hub moves on to the key exchange. A second, independent hub does the same thing in
+/// resend the same values without regenerating anything). No-op from SENT_CONFIRM_ACK or
+/// SENT_CHALLENGE: a discovery request must never pull an in-flight exchange back a phase. That
+/// silence is what a real device does too — in
+/// tests/corpus/captures/velux_kux100/pairing_full.yaml the hub re-broadcasts 0x28 right after the
+/// confirm-ack (landing in SENT_CONFIRM_ACK) and the device pointedly does not answer, before the
+/// hub moves on to the key exchange. A second, independent hub does the same thing in
 /// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml (re-broadcast
-/// omitted from that capture's frame list as redundant, per its own notes).
+/// omitted from that capture's frame list as redundant, per its own notes). Neither of those
+/// mid-exchange states depends on @p hub_node_id — ARMED_IDLE/SENT_DISCOVER_RESP accept
+/// unconditionally too, since ctx.hub_node_id isn't meaningfully populated this early (it is first
+/// captured by on_key_init(), below) and the original design never restricted this case.
+///
+/// Also valid from EXTRACTED and SENT_ADDRESS_RESP — but, unlike every other case above, *only*
+/// when @p hub_node_id matches ctx.hub_node_id (the hub this responder actually extracted a key
+/// from, captured by on_key_init()). These two states are a *completed* attempt, so a fresh 0x28
+/// from the *same* hub here cannot be the mid-exchange rebroadcast the corpus evidence above
+/// documents — every corpus capture with one shows it landing between the confirm-ack and the key
+/// transfer, never after extraction — and is therefore a genuinely new attempt by that hub trying
+/// again. Without accepting this case, one successful extraction would deafen the responder to
+/// every later attempt by the same hub for the rest of the 10-minute arm window, recoverable only
+/// by manually disarming and re-arming the switch.
+///
+/// The hub-identity check is what @p hub_node_id is for: CMD_DISCOVER_REQ is a broadcast handled
+/// before the throwaway-ID destination filter (try_handle_key_extraction_frame_(),
+/// hub_key_extraction.cpp), so without it *any* hub in radio range — not necessarily the one this
+/// responder is actually doing business with — could knock a live post-extraction
+/// address-verification round (0x36→0x37→0x3C→0x3D with the real hub) back to
+/// SENT_DISCOVER_RESP merely by broadcasting its own unrelated 0x28. Restricting the restart to the
+/// same hub closes that hole while still fixing the "second attempt permanently dead" bug above for
+/// its actual repro case (the same hub, or test rig, starting a fresh attempt without a switch
+/// toggle).
 /// @param ctx Responder context (mutated: state only).
+/// @param hub_node_id The inbound frame's src (the broadcasting hub's real node ID) — only
+///        consulted from EXTRACTED/SENT_ADDRESS_RESP; ignored otherwise.
 /// @return true if the caller should build and send a CMD_DISCOVER_RESP (0x29) reply.
-bool on_discover_request(ResponderContext &ctx);
+bool on_discover_request(ResponderContext &ctx, const uint8_t hub_node_id[NODE_ID_SIZE]);
 
 /// @brief Decide how to react to an inbound CMD_DISCOVER_CONFIRM (0x2C) addressed to our
 /// throwaway ID.

@@ -122,6 +122,13 @@ class PairingEngine {
   /// Transmit the 0x32 key transfer and wait for the 0x33 key confirm with retry.
   bool wait_for_key_confirm_(pairing::PairingContext &context);
 
+  /// Build CMD_KEY_TRANSFER against the current challenge and wait for the 0x33 confirm; see
+  /// run_key_exchange_phase_()'s doc comment for why this is a separate, replayable step.
+  /// @param context Pairing context; `context.rx.data` supplies the challenge bytes, `context.req`
+  ///        is filled with the outbound 0x32, `context.resp` with the inbound 0x33 on success.
+  /// @return true if the device confirmed the key.
+  bool transfer_key_and_wait_confirm_(pairing::PairingContext &context);
+
  private:
   /// Convenience accessor returning the current radio driver (dereferences double pointer).
   [[nodiscard]] RadioDriver *radio_() const { return *radio_ptr_; }

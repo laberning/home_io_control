@@ -172,20 +172,22 @@ TEST(HubKeyExtraction, ThrowawayIdGenerationFallsBackWhenEveryCandidateCollides)
 }
 
 // ========================================================================================
-// Preamble regression: replies must use the driver's chip-tuned response_preamble(), not a
-// fixed SHORT_PREAMBLE/LONG_PREAMBLE constant. Hardware-confirmed 2026-08-02: both fixed choices
-// broke real exchanges — SHORT_PREAMBLE(8) was too short for a hopping receiver to reliably catch
-// from a slower-turnaround chip, and LONG_PREAMBLE(1024) blocked the main loop long enough to
-// blow through the hub's tight per-try wait windows on both chips.
+// Preamble regression: the discovery reply (0x29, the sole start=true device-role reply) must use
+// the tunable `cold_broadcast_reply_preamble` field, not the driver's chip-tuned
+// response_preamble() and not a fixed LONG_PREAMBLE/SHORT_PREAMBLE constant. Every other
+// device-role reply (0x2D, 0x3C, 0x33, 0x37, 0x3D — all start=false) keeps response_preamble()
+// unchanged; see the companion test below.
 //
-// SX1262_RESPONSE_PREAMBLE == SHORT_PREAMBLE (8 bytes): both are byte-denominated, and the
-// hardware-validated SX1262 response preamble turns out to equal the protocol's nominal short
-// preamble. So MockRadioSX1262 no longer discriminates "used response_preamble()" from
-// "hardcoded SHORT_PREAMBLE" on that constant alone — only the LONG_PREAMBLE check still catches
-// a regression to a fixed constant.
+// Hardware-confirmed 2026-08-02: two fixed-constant choices both broke real exchanges — a flat
+// SHORT_PREAMBLE(8) was too short for a hopping receiver to reliably catch from a
+// slower-turnaround chip, and a flat LONG_PREAMBLE(1024) on every reply blocked the main loop
+// long enough to blow through the hub's tight per-try wait windows on both chips. That is exactly
+// why 0x29 needs its own field instead of reusing response_preamble(): SX1262_RESPONSE_PREAMBLE ==
+// SHORT_PREAMBLE(8), so response_preamble() on SX1262/LR1121 already equals the value hardware
+// testing found too short for a hopping catch.
 // ========================================================================================
 
-TEST(HubKeyExtraction, DiscoveryReplyUsesRadioResponsePreambleNotFixedConstant) {
+TEST(HubKeyExtraction, DiscoveryReplyUsesColdBroadcastPreambleNotFixedShortConstant) {
   TestableHubComponent comp;
   MockRadioSX1262 radio;
   setup_component(comp, radio);
@@ -197,10 +199,92 @@ TEST(HubKeyExtraction, DiscoveryReplyUsesRadioResponsePreambleNotFixedConstant) 
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u) << "0x29 should be sent on all 3 channels";
   for (const auto &tx_config : radio.get_tx_configs()) {
-    EXPECT_EQ(tx_config.preamble_len, radio.response_preamble())
-        << "discovery reply must use the driver's response_preamble(), not a fixed constant";
+    EXPECT_EQ(tx_config.preamble_len, comp.tuning_.cold_broadcast_reply_preamble)
+        << "discovery reply (start=true) must use cold_broadcast_reply_preamble, not "
+           "response_preamble() or a fixed constant";
+    EXPECT_NE(tx_config.preamble_len, radio.response_preamble())
+        << "cold_broadcast_reply_preamble's default must not silently collapse back onto "
+           "response_preamble() (it is SX1262's default that was hardware-confirmed too short)";
     EXPECT_NE(tx_config.preamble_len, LONG_PREAMBLE);
   }
+}
+
+/// Pins the CH2-last broadcast order: the peer's next frame after hearing our CH2 leg must not
+/// land while we're still transmitting a later leg. CH1/CH3 must go out before CH2, in either
+/// relative order — only CH2's position (last) is load-bearing.
+TEST(HubKeyExtraction, BroadcastReplyTransmitsCh2Last) {
+  TestableHubComponent comp;
+  MockRadioSX1262 radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+
+  const auto &tx_configs = radio.get_tx_configs();
+  ASSERT_EQ(tx_configs.size(), 3u) << "0x29 should be sent on all 3 channels";
+  EXPECT_EQ(tx_configs[2].freq_hz, FREQ_CH2) << "CH2 must be the last leg transmitted";
+  EXPECT_NE(tx_configs[0].freq_hz, FREQ_CH2) << "CH2 must not be transmitted first";
+  EXPECT_NE(tx_configs[1].freq_hz, FREQ_CH2) << "CH2 must not be transmitted second";
+}
+
+/// Companion to the test above: a non-start device-role reply must still use the driver's
+/// response_preamble(), unchanged — this is the original 2026-08-02 regression coverage, kept
+/// alive so a future "just make everything cold_broadcast_reply_preamble" overcorrection is
+/// caught. 0x2D (discover-confirm-ack) is start=false, same as every other device-role reply
+/// besides 0x29.
+TEST(HubKeyExtraction, DiscoverConfirmAckStillUsesRadioResponsePreamble) {
+  TestableHubComponent comp;
+  MockRadioSX1262 radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  uint8_t throwaway_id[NODE_ID_SIZE];
+  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
+
+  IoFrame discover_confirm{};
+  init_frame(discover_confirm, true, true, false, false);
+  set_dst(discover_confirm, throwaway_id);
+  set_src(discover_confirm, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
+  comp.process_received_packet_(make_rx_packet(discover_confirm));
+
+  // The prior 0x29 broadcast already emitted 3 tx_configs; the 0x2D broadcast appends 3 more.
+  const auto &tx_configs = radio.get_tx_configs();
+  ASSERT_EQ(tx_configs.size(), 6u) << "0x29 (3 legs) + 0x2D (3 legs) should be sent";
+  for (size_t i = 3; i < tx_configs.size(); i++) {
+    EXPECT_EQ(tx_configs[i].preamble_len, radio.response_preamble())
+        << "0x2D (start=false) must keep using response_preamble(), not cold_broadcast_reply_preamble";
+  }
+}
+
+/// Confirms `cold_broadcast_reply_preamble` is actually live end-to-end -- plumbed through and
+/// read at TX time, not just declared and ignored. A non-default value set directly on the
+/// TuningConfig (the same field an HA number entity or YAML `tuning:` block would update) must
+/// show up verbatim on the wire for the 0x29 broadcast.
+TEST(HubKeyExtraction, NonDefaultColdBroadcastReplyPreambleChangesDiscoveryReplyTx) {
+  TestableHubComponent comp;
+  MockRadioSX1262 radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+
+  constexpr uint16_t kNonDefaultPreamble = 150;
+  ASSERT_NE(kNonDefaultPreamble, comp.tuning_.cold_broadcast_reply_preamble)
+      << "test value must actually differ from the default to prove anything";
+  comp.tuning_.cold_broadcast_reply_preamble = kNonDefaultPreamble;
+
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 3u) << "0x29 should be sent on all 3 channels";
+  for (const auto &tx_config : radio.get_tx_configs())
+    EXPECT_EQ(tx_config.preamble_len, kNonDefaultPreamble);
 }
 
 // ========================================================================================
@@ -303,6 +387,92 @@ TEST(HubKeyExtraction, ExchangeWithoutDiscoverConfirmStillExtractsKey) {
       << "a hub that skips the discovery-confirm step must still complete the extraction";
 }
 
+/// The CH2 hold (key_extraction_hold_deadline_ms_) is deliberately decoupled from
+/// key_extraction_ctx_.state: letting the hold lapse only stops loop() from parking on CH2 for
+/// this responder, and never touches state. If it touched state instead, a real hub's key-transfer
+/// (0x32) arriving even slightly after the hold window would be silently dropped -- the pure guard
+/// in pairing_responder.cpp (on_key_transfer()) requires exactly SENT_CHALLENGE, and resetting
+/// state to ARMED_IDLE would make it reject the frame with no log line at all. This test proves the
+/// decoupling holds: with the hold already expired and state still SENT_CHALLENGE, a late
+/// key-transfer must still be accepted and complete the extraction.
+TEST(HubKeyExtraction, LateKeyTransferAfterHoldExpiryStillCompletesExtraction) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  uint8_t throwaway_id[NODE_ID_SIZE];
+  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
+
+  IoFrame key_init{};
+  create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
+  comp.process_received_packet_(make_rx_packet(key_init));
+  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
+
+  // Simulate the mid-attempt CH2 hold having expired -- e.g. a real hub that took longer than 5s to
+  // send its key-transfer -- without anything having touched key_extraction_ctx_.state.
+  comp.key_extraction_hold_deadline_ms_ = 0;
+  ASSERT_FALSE(comp.key_extraction_awaiting_reply_()) << "precondition: the hold must actually be expired";
+  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE)
+      << "precondition: letting the hold expire must not by itself reset state";
+
+  IoFrame key_transfer{};
+  const uint8_t foreign_system_key[AES_KEY_SIZE] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+                                                    0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30};
+  ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
+                                  comp.key_extraction_ctx_.challenge));
+  comp.process_received_packet_(make_rx_packet(key_transfer));
+
+  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+      << "a key-transfer arriving after the CH2 hold has expired must still complete the extraction";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should still be sent on all 3 channels";
+  EXPECT_EQ(0, memcmp(comp.key_extraction_ctx_.recovered_key, foreign_system_key, AES_KEY_SIZE))
+      << "the recovered key should match what the late key-transfer actually carried";
+}
+
+/// Each of the three pre-extraction reply handlers (handle_key_extraction_discover_(),
+/// ..._discover_confirm_(), ..._key_init_()) must actually set key_extraction_hold_deadline_ms_,
+/// not just be documented as doing so. Resetting the field to 0 between each step means a
+/// regression in any one of the three call sites is caught individually, rather than only the
+/// aggregate (which the awaiting_reply_()-based tests elsewhere would still pass as long as at
+/// least one of the three worked).
+TEST(HubKeyExtraction, EachPreExtractionReplyAdvancesTheHoldDeadline) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  uint8_t throwaway_id[NODE_ID_SIZE];
+  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  ASSERT_EQ(comp.key_extraction_hold_deadline_ms_, 0u) << "precondition: no hold armed yet";
+
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  EXPECT_GT(comp.key_extraction_hold_deadline_ms_, esphome::millis())
+      << "the discovery reply (0x29) must arm the CH2 hold";
+
+  comp.key_extraction_hold_deadline_ms_ = 0;
+  IoFrame discover_confirm{};
+  init_frame(discover_confirm, true, true, false, false);
+  set_dst(discover_confirm, throwaway_id);
+  set_src(discover_confirm, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
+  comp.process_received_packet_(make_rx_packet(discover_confirm));
+  EXPECT_GT(comp.key_extraction_hold_deadline_ms_, esphome::millis())
+      << "the discovery-confirm ack (0x2D) must arm the CH2 hold";
+
+  comp.key_extraction_hold_deadline_ms_ = 0;
+  IoFrame key_init{};
+  create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
+  comp.process_received_packet_(make_rx_packet(key_init));
+  EXPECT_GT(comp.key_extraction_hold_deadline_ms_, esphome::millis())
+      << "the challenge reply (0x3C) must arm the CH2 hold";
+}
+
 /// The literal real-world counterpart to the two tests above, closing the gap their own use of a
 /// freshly-generated throwaway ID and a freshly-random challenge necessarily leaves: this test
 /// scripts esp_random() (test_rng, tests/include/esp_random.h -- built for exactly this purpose,
@@ -320,6 +490,11 @@ TEST(HubKeyExtraction, ExchangeWithoutDiscoverConfirmStillExtractsKey) {
 /// to that real installation's real secret system key -- so this test cannot replay past the
 /// challenge step with real bytes; a synthetic key transfer under a test key closes out the state
 /// machine afterward, the same way every other full-exchange test here already does.
+///
+/// One deliberate exception to "byte-identical": the 0x29's flags/timestamp bytes. This capture's
+/// hub session used the placeholder 0x00/0x0000, but the code deliberately sends 0xDD/0x000E
+/// instead (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP, proto_commands.cpp), so those two
+/// bytes are checked against the current constants instead of the historical capture.
 TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHistoricalBytes) {
   const corpus::CorpusCapture *cap = corpus_test::capture_by_id("issue_45_velux_kig300_key_extraction_success");
   ASSERT_NE(cap, nullptr);
@@ -353,8 +528,16 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
         continue;
       found = true;
       ASSERT_EQ(sent.data_len, expected_discover_resp.data_len);
-      EXPECT_EQ(memcmp(sent.data, expected_discover_resp.data, sent.data_len), 0)
-          << "0x29 payload must reproduce this real KIG300 session's captured 0x29";
+      // Bytes [0, DISCOVERY_RESP_FLAGS_OFFSET) -- type/subtype/backbone/manufacturer -- are
+      // unaffected by the flags/timestamp bytes and must still reproduce this real KIG300
+      // session's captured 0x29 exactly.
+      EXPECT_EQ(memcmp(sent.data, expected_discover_resp.data, DISCOVERY_RESP_FLAGS_OFFSET), 0)
+          << "0x29 payload up to the flags byte must reproduce this real KIG300 session's captured 0x29";
+      // Flags/timestamp deliberately do NOT reproduce the historical capture -- see the header
+      // comment above.
+      EXPECT_EQ(sent.data[DISCOVERY_RESP_FLAGS_OFFSET], 0xDD);
+      EXPECT_EQ(sent.data[DISCOVERY_RESP_TIMESTAMP_OFFSET], 0x00);
+      EXPECT_EQ(sent.data[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1], 0x0E);
     }
     EXPECT_TRUE(found);
   }
@@ -405,7 +588,54 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
   EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3);
 }
 
-TEST(HubKeyExtraction, SecondExtractionAttemptMidWindowIsIgnoredAfterFirstSucceeds) {
+/// A second, independent extraction attempt from the same hub, in the same armed window, must
+/// succeed without a manual disarm/re-arm: on_discover_request() treats a fresh 0x28 from
+/// EXTRACTED/SENT_ADDRESS_RESP the same as ARMED_IDLE when it comes from the hub this responder
+/// actually extracted a key from (see that function's doxygen for why only the same hub qualifies).
+/// This test drives a full first extraction to EXTRACTED, then a full second one, both within the
+/// same arm cycle and with no manual re-arm.
+TEST(HubKeyExtraction, SecondExtractionAttemptSucceedsWithoutRearmingAfterFirstSucceeds) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  uint8_t throwaway_id[NODE_ID_SIZE];
+  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+
+  auto run_extraction_cycle = [&]() {
+    IoFrame discover{};
+    create_discover(discover, FOREIGN_HUB_ID);
+    comp.process_received_packet_(make_rx_packet(discover));
+    IoFrame key_init{};
+    create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
+    comp.process_received_packet_(make_rx_packet(key_init));
+    IoFrame key_transfer{};
+    const uint8_t foreign_system_key[AES_KEY_SIZE] = {0};
+    ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
+                                    comp.key_extraction_ctx_.challenge));
+    comp.process_received_packet_(make_rx_packet(key_transfer));
+  };
+
+  run_extraction_cycle();
+  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
+  radio.clear();
+
+  // Still armed at this point (the grace window replaced the immediate disarm), no switch toggle
+  // in between -- exactly the field scenario. The same hub starting a second attempt must be
+  // answered, not silently dropped.
+  run_extraction_cycle();
+  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+      << "a second extraction attempt in the same arm cycle must succeed without a manual disarm/re-arm";
+  EXPECT_GT(radio.get_send_count(), 0) << "the second attempt's discovery request must draw a reply";
+}
+
+/// End-to-end twin of PairingResponder.DiscoverRequestFromDifferentHubAfterExtractedIsIgnored
+/// (pairing_responder_test.cpp), driven through the real dispatch path. A stray 0x28 from an
+/// unrelated hub after a successful extraction must not disturb the responder's state or draw a
+/// reply -- CMD_DISCOVER_REQ is a broadcast handled before the throwaway-ID dst filter, so any hub
+/// in range could otherwise knock a live post-extraction address-verification round with the real
+/// hub back to SENT_DISCOVER_RESP.
+TEST(HubKeyExtraction, DiscoveryFromUnrelatedHubAfterExtractionIsIgnored) {
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
@@ -427,15 +657,15 @@ TEST(HubKeyExtraction, SecondExtractionAttemptMidWindowIsIgnoredAfterFirstSuccee
   ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
   radio.clear();
 
-  // A second hub's discovery broadcast arrives in the same window, after the first extraction
-  // already succeeded — must not respond. Still armed at this point (the grace window replaced the
-  // immediate disarm), so this is on_discover_request()'s EXTRACTED guard doing the work, not the
-  // DISARMED early-return in try_handle_key_extraction_frame_().
-  IoFrame second_discover{};
-  create_discover(second_discover, FOREIGN_HUB_ID);
-  comp.process_received_packet_(make_rx_packet(second_discover));
-  EXPECT_EQ(radio.get_send_count(), 0)
-      << "a responder that already extracted a key must not reply to further discovery";
+  constexpr uint8_t UNRELATED_HUB_ID[NODE_ID_SIZE] = {0x99, 0x98, 0x97};
+  IoFrame unrelated_discover{};
+  create_discover(unrelated_discover, UNRELATED_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(unrelated_discover));
+
+  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+      << "an unrelated hub's stray 0x28 must not restart the attempt or disturb a live "
+         "post-extraction round with the real hub";
+  EXPECT_EQ(radio.get_send_count(), 0) << "an unrelated hub's 0x28 must not draw a reply either";
 }
 
 // ========================================================================================

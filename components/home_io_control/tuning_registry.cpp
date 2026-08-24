@@ -17,7 +17,7 @@
 namespace esphome {
 namespace home_io_control {
 
-// === Numeric parameters (16) ===================================================
+// === Numeric parameters (17) ===================================================
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
@@ -40,6 +40,13 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
     {"lr1121_discovery_hop_slice_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.lr1121_discovery_hop_slice_ms); },
      [](TuningConfig &t, float v) { t.lr1121_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
+    // false: unlike sx1262/sx1276/lr1121_response_preamble, this field is not chip-specific and
+    // is never cached into a radio driver via apply_tuning() — hub_key_extraction.cpp reads it
+    // straight out of TuningConfig at TX time, the same way the *_discovery_hop_slice_ms fields
+    // above are read live rather than applied.
+    {"cold_broadcast_reply_preamble",
+     [](const TuningConfig &t) { return static_cast<float>(t.cold_broadcast_reply_preamble); },
+     [](TuningConfig &t, float v) { t.cold_broadcast_reply_preamble = static_cast<uint16_t>(v); }, false},
     {"lbt_max_retries", [](const TuningConfig &t) { return static_cast<float>(t.lbt_max_retries); },
      [](TuningConfig &t, float v) { t.lbt_max_retries = static_cast<uint8_t>(v); }, false},
     {"lbt_rssi_threshold_dbm", [](const TuningConfig &t) { return static_cast<float>(t.lbt_rssi_threshold_dbm); },

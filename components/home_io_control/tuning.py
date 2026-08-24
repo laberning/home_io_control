@@ -33,6 +33,7 @@ CONF_LR1121_RX_BANDWIDTH = "lr1121_rx_bandwidth"
 CONF_LR1121_RESPONSE_PREAMBLE = "lr1121_response_preamble"
 CONF_LR1121_POST_TX_SETTLE_US = "lr1121_post_tx_settle_us"
 CONF_LR1121_DISCOVERY_HOP_SLICE_MS = "lr1121_discovery_hop_slice_ms"
+CONF_COLD_BROADCAST_REPLY_PREAMBLE = "cold_broadcast_reply_preamble"
 CONF_LBT_MAX_RETRIES = "lbt_max_retries"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
 CONF_EXCHANGE_START_RESPONSE_WAIT_MS = "exchange_start_response_wait_ms"
@@ -142,6 +143,7 @@ UI_NAMES = {
     CONF_LR1121_RESPONSE_PREAMBLE: "Radio LR1121 Response Preamble",
     CONF_LR1121_POST_TX_SETTLE_US: "Radio LR1121 Post-TX Settle",
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: "Radio LR1121 Discovery Hop Slice",
+    CONF_COLD_BROADCAST_REPLY_PREAMBLE: "Radio Cold Broadcast Reply Preamble",
     CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: "Exchange Start Response Wait",
@@ -178,6 +180,13 @@ _NUMBER_PARAMS = {
     CONF_LR1121_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_LR1121_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),
+    # Same (8, 256) floor/ceiling as sx1262_response_preamble above, for the same reason: 8 is
+    # SHORT_PREAMBLE, the lowest value that leaves the peer's detector anything to lock on to.
+    # This field is chip-neutral (see proto_timing.h COLD_BROADCAST_REPLY_PREAMBLE, which lives
+    # there rather than in tuning_config.h precisely because it is chip-neutral -- see that header's
+    # own "chip-neutral defaults live in proto_timing.h" comment) so it has no per-chip range to
+    # inherit the way lr1121_response_preamble does.
+    CONF_COLD_BROADCAST_REPLY_PREAMBLE: (8, 256, 1, "B"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     # Ceilings are generous because the right value is a property of the target device, not of

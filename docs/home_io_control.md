@@ -899,11 +899,23 @@ Extraction)" (not configurable).
   extraction seems stuck, give it a few more seconds before assuming failure. Confirmed working
   with SX1262 on both sides (as the *hub* and as the *responder*, the more demanding direction for
   this specific risk) — occasionally needing one automatic retry at the key-init or key-transfer
-  step is expected and not a sign of failure.
-- Only one extraction attempt is honored per 10-minute arm. The switch does not disarm the instant
-  the key is recovered any more — it stays armed for up to one more minute in case your hub follows
-  up with an address-verification round (see the workflow above) — but a second hub's pairing
-  attempt inside that window still cannot succeed or produce a second, confusing log block.
+  step is expected and not a sign of failure. While an attempt is in progress (any state past the
+  initial arm) the responder also holds the request channel instead of running its normal
+  background channel scan — and defers its own background status polls, for the same reason a
+  linked remote's press does — so it doesn't itself contribute to a missed reply by having hopped
+  away or being mid-exchange with a device. Before the key is recovered, that hold releases on its
+  own after a few seconds of no further progress from the hub, so a stray or abandoned attempt from
+  another hub in range can't pin the responder to one channel for the rest of the 10-minute arm
+  window. After the key is recovered, the hold is bound to the (longer) post-extraction grace window
+  instead — see the next bullet — so it can legitimately last up to a minute or more while your hub
+  runs its address-verification round, re-arming on every sign of progress from it.
+- The switch does not disarm the instant the key is recovered — it stays armed for up to one more
+  minute in case your hub follows up with an address-verification round (see the workflow above).
+  A second (or repeated) extraction attempt from the *same* hub, inside that same arm window or
+  after it, is honored too: a fresh discovery request from it starts a brand-new attempt rather
+  than being silently ignored, so you can retry without toggling the switch off and back on in
+  between. A different hub's discovery request during that window is still ignored, so it can't
+  interrupt an address-verification round in progress with the hub you actually extracted from.
 - This feature does not tell the foreign hub that the extraction happened. After a successful run
   (and especially after an address-verification round, which hands the hub a backbone address it
   then treats as confirmed) your existing hub believes it paired a new device and may show it as
@@ -911,11 +923,16 @@ Extraction)" (not configurable).
   component un-enroll or otherwise clean up that phantom entry from your hub's side.
 - Pairing timing generally — hop/dwell slicing, preamble selection, and discovery-window sizing —
   is not yet perfectly tuned across this project, and the key-extraction responder shares that
-  same radio timing machinery with normal device pairing (`PairingEngine`). In practice this means
-  discovery, key-init, or key-transfer can each need a retry before landing, on top of the
-  turnaround-specific SX1262 behavior noted above. Extraction is still expected to succeed, but
-  don't be surprised if it takes several hub-side retries (or, if the whole attempt times out, a
-  fresh switch toggle) rather than a single clean pass on the first try.
+  same radio timing machinery with normal device pairing (`PairingEngine`). Three things keep the
+  key-exchange step landing reliably within the first one or two tries instead of needing several:
+  the discovery reply (0x29, the one frame a hopping listener has to catch cold) uses its own
+  tunable preamble long enough to be reliably caught — see `cold_broadcast_reply_preamble` in
+  [radio_diagnostics.md](radio_diagnostics.md); the responder holds the request channel instead of
+  idle-hopping away mid-attempt (the bullet above); and the responder's 3-channel broadcast sends
+  the request channel *last*, so a peer that reacts the instant it hears that channel doesn't fire
+  its next frame while the responder is still transmitting a later leg. Occasional retries are
+  still expected and not a sign of failure; if the whole attempt times out, retry it (a second
+  attempt works without a switch toggle, per the bullet above).
 
 ## Recovering a 1W Controller Key
 

@@ -355,8 +355,25 @@ void IOHomeControlComponent::loop() {
   if (!this->busy_ && this->radio_ != nullptr && this->radio_->get_current_freq() != IOHOME_LOCK_CHANNEL_HZ)
     this->radio_->change_frequency(IOHOME_LOCK_CHANNEL_HZ);
 #else
-  if (!this->busy_)
-    this->exchange_engine_.maybe_hop();
+  if (!this->busy_) {
+    if (this->key_extraction_awaiting_reply_()) {
+      // The key-extraction responder is mid-attempt and expecting the hub's next CH2-only unicast
+      // frame (see wait_for_key_confirm_()'s doc comment in pairing_engine.cpp) — hold CH2 instead
+      // of running the generic idle-hop scan, which would otherwise cycle away from CH2 for 2/3 of
+      // every hop cycle with no key-extraction awareness at all. Frequency test first, deliberately:
+      // reception_in_progress() is not a free predicate (on SX1276 it can force a
+      // set_mode_standby()/set_mode_rx() cycle), so this branch must be as sparing as maybe_hop()
+      // itself, which only consults it once the dwell timer has already decided to hop.
+      if (this->radio_->get_current_freq() != FREQ_CH2 && !this->radio_->reception_in_progress())
+        this->radio_->change_frequency(FREQ_CH2);
+      // exchange_engine_'s last_hop_us_ goes stale while the hold is active (it bypasses
+      // hop_frequency(), which is what normally updates that timestamp). Harmless: once the hold
+      // ends, maybe_hop() will very likely hop on its next call instead of waiting out a full
+      // HOP_TIME_US — resuming idle scanning a little early is not a bug.
+    } else {
+      this->exchange_engine_.maybe_hop();
+    }
+  }
 #endif
 
   // Periodic status polling

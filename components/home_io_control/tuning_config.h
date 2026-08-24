@@ -190,8 +190,10 @@ struct TuningConfig {
   uint16_t lr1121_response_preamble{LR1121_RESPONSE_PREAMBLE};             ///< LR1121 response preamble in bytes.
   uint16_t lr1121_post_tx_settle_us{LR1121_POST_TX_SETTLE_US};             ///< Delay after LR1121 TX before RX (µs).
   uint16_t lr1121_discovery_hop_slice_ms{
-      LR1121_DISCOVERY_HOP_SLICE_MS};                      ///< Per-channel dwell while LR1121 discovery hops.
-  uint8_t lbt_max_retries{LBT_MAX_RETRIES};                ///< LBT retries before forced TX.
+      LR1121_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while LR1121 discovery hops.
+  uint16_t cold_broadcast_reply_preamble{
+      COLD_BROADCAST_REPLY_PREAMBLE};        ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
+  uint8_t lbt_max_retries{LBT_MAX_RETRIES};  ///< LBT retries before forced TX.
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
 
   // --- Exchange response windows ---

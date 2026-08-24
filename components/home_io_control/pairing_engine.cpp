@@ -230,6 +230,35 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
   return false;
 }
 
+/// Build CMD_KEY_TRANSFER against the challenge currently held in `context.rx.data` and wait for
+/// the 0x33 confirm, routing through the fast- or slow-turnaround path. Shared by
+/// run_key_exchange_phase_()'s first attempt and its slow-turnaround retry loop, which calls this
+/// again against a freshly re-issued challenge (see that function's doc comment) rather than
+/// discarding it.
+bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &context) {
+  context.state = pairing::PairingState::TX_KEY_TRANSFER;
+  engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
+  if (!create_key_transfer(context.req, context.key_init, context.device.node_id, node_id_, system_key_,
+                           context.rx.data)) {
+    return false;
+  }
+
+  context.state = pairing::PairingState::WAIT_KEY_CONFIRM;
+  engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
+  // Fast-turnaround radios catch the 0x33 through the standard exchange wait. Slow-turnaround
+  // radios miss it while re-entering RX, so run_key_exchange_phase_()'s retry loop calls this
+  // helper again instead, rather than using the dedicated wait loop directly.
+  if (radio_()->has_fast_tx_rx_turnaround()) {
+    // Key exchange is the one caller that genuinely needs the payload: without the 0x33 there is
+    // no confirmation the device took the key, so an unconfirmed acceptance is not good enough.
+    return engine_.send_and_receive(context.req, context.resp, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
+           frame_is_key_confirm(context.resp);
+  }
+  return wait_for_key_confirm_(context);
+}
+
 // --- Discovery metadata ---
 
 /// Parse a discovery response frame into device metadata and ID.
@@ -342,6 +371,25 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
 /// radios use the dedicated wait_for_key_confirm_() path with a key-init
 /// re-trigger, because the 0x33 would otherwise arrive while the receiver is
 /// still settling (see RadioDriver::has_fast_tx_rx_turnaround()).
+///
+/// The slow-turnaround re-trigger loop below (`for (int re = 0; ...)`) has two distinct outcomes
+/// for its re-sent CMD_KEY_INIT, and they are handled differently:
+///   - The device replies with CMD_KEY_CONFIRM (0x33) directly — it already had the key from the
+///     first 0x32 and is just auto-confirming again. Nothing more to send.
+///   - The device replies with a *fresh* CMD_CHALLENGE_REQ (0x3C) instead — proof it never received
+///     the first 0x32 at all (a device that already holds the key doesn't re-challenge), so there
+///     is no key transfer for it to confirm yet. The loop calls transfer_key_and_wait_confirm_()
+///     again here, replaying CMD_KEY_TRANSFER against this new challenge, rather than discarding
+///     the 0x3C and burning the retry for nothing — the device's next 0x31 would just produce
+///     another fresh challenge either way, so retrying without resending 0x32 could never succeed.
+///
+/// That replay roughly doubles this function's worst-case blocking time when every wait times out
+/// (approximately 3.5s -> 6.6s: two of the loop's iterations can now each wait out a full
+/// key-transfer-and-confirm cycle instead of returning immediately on a missed 0x33). This is a
+/// known, accepted trade-off: pairing already tolerates multi-second blocking exchanges (see
+/// EXCHANGE_TOTAL_BUDGET_MS's own reasoning, proto_timing.h), and the alternative — leaving a
+/// slow-turnaround device that never got its key stuck retrying forever — is worse than the
+/// occasional slower failure path.
 bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   context.state = pairing::PairingState::TX_KEY_INIT;
   engine_.record_debug(pairing_stage_name(context.state), 1, false);
@@ -371,39 +419,29 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%d", context.rx.data_len,
            context.packet.freq_hz, radio_()->get_last_capture().rssi_dbm);
 
-  context.state = pairing::PairingState::TX_KEY_TRANSFER;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
-  if (!create_key_transfer(context.req, context.key_init, context.device.node_id, node_id_, system_key_,
-                           context.rx.data)) {
-    return false;
-  }
-
-  context.state = pairing::PairingState::WAIT_KEY_CONFIRM;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
-  // Fast-turnaround radios catch the 0x33 through the standard exchange wait. Slow-turnaround
-  // radios miss it while re-entering RX, so they use the dedicated wait loop and, on a miss,
-  // re-send the key-init to trigger the device's auto-confirm.
-  bool key_ok = false;
-  if (radio_()->has_fast_tx_rx_turnaround()) {
-    // Key exchange is the one caller that genuinely needs the payload: without the 0x33 there is
-    // no confirmation the device took the key, so an unconfirmed acceptance is not good enough.
-    key_ok = engine_.send_and_receive(context.req, context.resp, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
-             frame_is_key_confirm(context.resp);
-  } else {
-    key_ok = wait_for_key_confirm_(context);
+  bool key_ok = transfer_key_and_wait_confirm_(context);
+  // Fast-turnaround radios catch the 0x33 through the standard exchange wait inside the helper
+  // above and never reach this loop. Slow-turnaround radios miss it while re-entering RX, so on a
+  // miss they re-send the key-init to trigger the device's auto-confirm.
+  if (!radio_()->has_fast_tx_rx_turnaround()) {
     for (int re = 0; !key_ok && re < 2; re++) {
       ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %d/2)", re + 1);
       App.feed_wdt();
       delay(EXCHANGE_RETRY_DELAY_MS);
       if (!engine_.transmit_frame(context.key_init, FREQ_CH2, LONG_PREAMBLE))
         continue;
-      if (wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
-                                  context.device.node_id) &&
-          context.rx.cmd == CMD_KEY_CONFIRM) {
+      if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
+                                   context.device.node_id))
+        continue;
+      if (context.rx.cmd == CMD_KEY_CONFIRM) {
         key_ok = true;
+        continue;
       }
+      // A fresh CHALLENGE_REQ (0x3C), not a direct KEY_CONFIRM (0x33): the device never received
+      // our first 0x32 in the first place, so there is no key for it to auto-confirm yet -- a
+      // fresh 0x3C is exactly the signal that the right response is "resend 0x32 against this new
+      // challenge", not "give up and burn the retry for nothing".
+      key_ok = transfer_key_and_wait_confirm_(context);
     }
   }
   if (!key_ok) {

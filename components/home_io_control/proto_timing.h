@@ -30,6 +30,20 @@ static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W 
 static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes for initial/start frames
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
 
+/// Default for `TuningConfig::cold_broadcast_reply_preamble` — preamble for a *broadcast* reply to
+/// a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
+/// responder's 0x29, the sole `start=true` frame any device-role builder in this codebase
+/// produces) — long enough to be reliably caught by a hopping receiver, short enough that
+/// broadcasting it across all 3 channels doesn't block the loop the way LONG_PREAMBLE does.
+///
+/// Sized above the ~13.9 ms real-device discovery-reply preamble this project's own SX1262/LR1121
+/// discovery hop-slice tuning was measured against (analysis/radio_robustness_plan.md, issue #65
+/// SDR analysis) — that measurement is what "reliably caught by a hopping receiver" is calibrated
+/// to here. 80 bytes ≈ 16.7 ms at the protocol's 38400 bps line rate (soft_phy_air_time_us()),
+/// budgeted as a starting point, not yet hardware-validated for this exact chip/scenario
+/// combination. Runtime-tunable via `cold_broadcast_reply_preamble` for exactly that reason.
+static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
+
 /// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
 /// longer to stay on a channel once a frame is visibly incoming, so a hop doesn't cut it off
 /// mid-reception. Sized to a frame's air time, not to a hop slice, so it does not need to change

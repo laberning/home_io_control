@@ -524,9 +524,15 @@ static constexpr uint8_t DISCOVERY_RESP_FULL_SIZE = 9;            ///< Full disc
 
 /// @brief Bit masks and shifts for the Multi Information Byte fields.
 /// @{
-static constexpr uint8_t DISCOVERY_FLAGS_ATT_MASK = 0xC0;         ///< Bits [7:6]: actuator turnaround time class.
-static constexpr uint8_t DISCOVERY_FLAGS_ATT_SHIFT = 6;           ///< Shift for ATT field extraction.
-static constexpr uint8_t DISCOVERY_FLAGS_SYNC_CTRL_GRP = 0x20;    ///< Bit 5: supports sync control group.
+static constexpr uint8_t DISCOVERY_FLAGS_ATT_MASK = 0xC0;       ///< Bits [7:6]: actuator turnaround time class.
+static constexpr uint8_t DISCOVERY_FLAGS_ATT_SHIFT = 6;         ///< Shift for ATT field extraction.
+static constexpr uint8_t DISCOVERY_FLAGS_SYNC_CTRL_GRP = 0x20;  ///< Bit 5: supports sync control group.
+// TODO(hardware-verify): a set bit here would literally read as "no RF support in node," which is
+// an odd claim for a radio responder to make of itself (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS in
+// proto_commands.cpp, which sets this bit because a real captured device did too). Left as an open
+// question rather than resolved here — not clear whether the polarity note is backwards, the field
+// means something narrower than "RF support" suggests, or the captured device is simply also
+// getting this bit "wrong" in some sense that doesn't matter to real hubs in practice.
 static constexpr uint8_t DISCOVERY_FLAGS_RF_SUPPORT = 0x08;       ///< Bit 3: RF support in node (0=yes, 1=no).
 static constexpr uint8_t DISCOVERY_FLAGS_POWER_SAVE_MASK = 0x03;  ///< Bits [1:0]: power save mode.
 /// @}

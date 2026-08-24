@@ -996,3 +996,58 @@ TEST(PairingHelpers, KeyExchangePhase_SlowTurnaroundUsesDedicatedConfirmWait) {
   EXPECT_EQ(sent_command_bytes(radio), expected)
       << "slow-turnaround driver should use the dedicated confirm wait with key-init re-trigger";
 }
+
+/// run_key_exchange_phase_()'s slow-turnaround retry loop must replay the key-transfer against a
+/// freshly re-issued CHALLENGE_REQ (0x3C) drawn by its key-init resend, not discard it. This is the
+/// scenario where that matters: the device never received the first 0x32 at all, so on a repeat
+/// 0x31 it re-issues its stored challenge (0x3C) rather than auto-confirming with 0x33.
+///
+/// The first key-transfer is made to draw silence via TX failure, not RX silence: HOLD_REQUEST_
+/// CHANNEL's listen() is not sliced, so any frame already sitting in MockRadio's rx_queue_ gets
+/// consumed by whichever wait_for_packet() call happens to run next, regardless of which logical
+/// "try" is asking -- there is no way to park a second real RX frame safely behind an unknown
+/// number of genuinely-silent polls. Forcing the TX itself to fail sidesteps that entirely: the
+/// three key-transfer tries never call wait_for_packet() at all, so the queued second challenge
+/// survives untouched for the retry loop's own wait, exactly where this test needs it.
+TEST(PairingHelpers, KeyExchangePhase_ReplaysKeyTransferAgainstFreshlyReissuedChallenge) {
+  TestableComponent comp;
+  MockRadioSX1262 radio;  // slow turnaround: only this path ever reaches the retry loop
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  pairing::PairingContext context;
+  uint8_t device_id[3] = {0x44, 0x55, 0x66};
+  memcpy(context.device.node_id, device_id, NODE_ID_SIZE);
+
+  uint8_t challenge1[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  // A distinct value from challenge1, standing in for the device's freshly re-issued challenge --
+  // the mechanism under test doesn't depend on the bytes differing, but a distinct value makes
+  // clear this isn't accidentally reusing challenge1.
+  uint8_t challenge2[6] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60};
+
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_id, comp.node_id_, challenge1)));
+  radio.queue_tx_result(true);   // CMD_KEY_INIT (initial) succeeds.
+  radio.queue_tx_result(false);  // CMD_KEY_TRANSFER try 1/3: TX fails, so no RX wait happens at all.
+  radio.queue_tx_result(false);  // CMD_KEY_TRANSFER try 2/3: same.
+  radio.queue_tx_result(false);  // CMD_KEY_TRANSFER try 3/3: same -- wait_for_key_confirm_() now
+                                 // exhausts its retries and transfer_key_and_wait_confirm_() returns
+                                 // false without ever touching the RX queue.
+  // The re-issued challenge the retry loop's key-init resend draws. Queued right behind
+  // challenge1 with nothing else ahead of it in the RX queue, since nothing above consumed a slot.
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_id, comp.node_id_, challenge2)));
+
+  EXPECT_FALSE(comp.pairing_engine_.run_key_exchange_phase_(context))
+      << "no confirm ever arrives even after the replay, so the phase still ultimately fails -- "
+         "this test is about what got tried, not about eventually succeeding";
+
+  // KEY_INIT, then 3x KEY_TRANSFER (silent tries), then the retry loop's key-init resend draws
+  // challenge2 and *replays* the key-transfer (3 more KEY_TRANSFER) instead of discarding it, then
+  // one final key-init resend (retry loop's re=1) that draws nothing and ends the loop.
+  std::vector<uint8_t> expected = {CMD_KEY_INIT,     CMD_KEY_TRANSFER, CMD_KEY_TRANSFER, CMD_KEY_TRANSFER, CMD_KEY_INIT,
+                                   CMD_KEY_TRANSFER, CMD_KEY_TRANSFER, CMD_KEY_TRANSFER, CMD_KEY_INIT};
+  EXPECT_EQ(sent_command_bytes(radio), expected)
+      << "a freshly re-issued challenge (0x3C) drawn by the key-init retry must trigger a replayed "
+         "key-transfer against it, not be discarded as if the retry itself had simply failed";
+}

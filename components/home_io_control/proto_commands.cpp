@@ -54,6 +54,51 @@ constexpr uint8_t EXECUTE_ACEI =
 ///       the frame when nothing is locking it.
 constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
     (ACEI_LEVEL_PROTECTION_HUMAN << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
+
+/// Multi Information Byte for our device-role CMD_DISCOVER_RESP (0x29) — the turnaround-time
+/// class and power-save mode this responder advertises to a foreign hub.
+///
+/// ATT_CLASS_5S | POWER_SAVE_ALWAYS_ALIVE (0x00) would be an honest-looking but false claim: it
+/// tells a hub to expect a reply within 5s from a device that never sleeps, when this responder
+/// actually hops across 3 channels on the ESPHome loop cadence and is briefly deaf while
+/// transmitting its own replies. A real device with that profile signals ATT_CLASS_40S instead.
+///
+/// 0xDD = 1101_1101: bits [7:6] are ATT_CLASS_40S, bit [0] is POWER_SAVE_LOW_POWER, bit [3] is
+/// DISCOVERY_FLAGS_RF_SUPPORT, and bits [4]/[2] have no named constant here yet. All of this byte
+/// except the power-save bit mirrors the exact byte a real Somfy Izymo dimmer advertised in this
+/// project's own corpus
+/// (tests/corpus/captures/somfy_dimmer/pairing_full.yaml: flags=0xDC, ATT_CLASS_40S |
+/// POWER_SAVE_ALWAYS_ALIVE), on the theory that matching a real device's full byte is safer than
+/// guessing at bits this codebase doesn't yet have a documented meaning for — the unnamed bits and
+/// the RF-support bit are carried over unmodified for exactly that reason.
+///
+/// The power-save bit is the one deliberate departure from that real capture: POWER_SAVE_LOW_POWER
+/// here, not the captured device's POWER_SAVE_ALWAYS_ALIVE. That is a reasoned choice, not a
+/// guess — this responder's own true behavior (hopping across 3 channels, briefly deaf while
+/// transmitting its own replies) is genuinely closer to a low-power device's profile than to an
+/// always-listening one, so mirroring the capture's power-save bit would make the same false claim
+/// ATT_CLASS_5S | POWER_SAVE_ALWAYS_ALIVE made above, just with the opposite polarity.
+/// TODO(hardware-verify): unconfirmed against a real hub — see create_discover_resp()'s callers'
+/// file-level @warning (hub_key_extraction.cpp) for the general caveat this falls under.
+constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
+
+/// Timestamp for our device-role CMD_DISCOVER_RESP (0x29), alongside the flags constant above. Set
+/// to the same Somfy Izymo dimmer capture's value (0x000E) for the same reason: an unverified
+/// field is safer matched to a real device's exact bytes than left at the one value no real
+/// capture in this project's corpus ever shows (0x0000 — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS
+/// above for the flags half of the same reasoning).
+/// TODO(hardware-verify): unconfirmed against a real hub — same caveat as the flags constant above.
+constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP = 0x000E;
+
+/// Mask for the low byte of a 16-bit field split across 2 wire bytes — same big-endian split
+/// proto_codecs.cpp's decode side uses (DISCOVERY_TIMESTAMP_MSB_SHIFT there).
+///
+/// This is one of several file-local 0xFF low-byte masks in this codebase (see also
+/// RANDOM_LOW_BYTE_MASK in hub_key_extraction.cpp and the inline `& 0xFF` uses in
+/// proto_crypto.cpp's construct_iv_1w_sequence()) — a recurring pattern with no shared constant.
+/// That is consistent with how this codebase treats single-purpose local masks generally (kept
+/// file-local rather than centralized), not an oversight specific to this one.
+constexpr uint16_t LOW_BYTE_MASK = 0xFF;
 /// Standard payload length for full execute-family commands.
 constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
 /// Bit flag that marks the standard position payload layout after the encoded position byte.
@@ -606,14 +651,12 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
   // device's own node ID here, so we mirror that rather than inventing a separate address.
   memcpy(&payload[DISCOVERY_RESP_BACKBONE_OFFSET], own, NODE_ID_SIZE);
   payload[DISCOVERY_RESP_MANUFACTURER_OFFSET] = manufacturer_id;
-  // Flags: turnaround class ATT_CLASS_5S (0) and POWER_SAVE_ALWAYS_ALIVE (0) both encode to 0 —
-  // an honest description of this responder (it never sleeps while armed). Best-effort; see
-  // proto_commands.h @note.
-  // TODO(hardware-verify): confirm a real hub accepts these flags/timestamp values, or whether
-  // it requires specific ATT/power-save/timestamp semantics before completing pairing.
-  payload[DISCOVERY_RESP_FLAGS_OFFSET] = 0x00;
-  payload[DISCOVERY_RESP_TIMESTAMP_OFFSET] = 0x00;
-  payload[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1] = 0x00;
+  // See KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP above for the derivation of these two values.
+  payload[DISCOVERY_RESP_FLAGS_OFFSET] = KEY_EXTRACTION_DISCOVER_RESP_FLAGS;
+  payload[DISCOVERY_RESP_TIMESTAMP_OFFSET] =
+      static_cast<uint8_t>(KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP >> BITS_PER_BYTE);
+  payload[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1] =
+      static_cast<uint8_t>(KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP & LOW_BYTE_MASK);
   return set_cmd(f, CMD_DISCOVER_RESP, payload, sizeof(payload));
 }
 

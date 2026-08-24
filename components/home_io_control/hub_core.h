@@ -694,6 +694,27 @@ class IOHomeControlComponent : public Component,
   /// see hub_key_extraction.cpp for why a naive "only disarm if DISARMED" guard inside the callback
   /// is not enough once a manual disarm-and-rearm can happen inside the window.
   void arm_post_extraction_grace_();
+  /// True whenever the key-extraction responder has replied at least once, is waiting on the hub's
+  /// next step, and that wait is still within its bounded hold window — i.e.
+  /// `key_extraction_ctx_.state` is neither DISARMED (feature unused) nor ARMED_IDLE (armed, but no
+  /// discovery request seen yet), AND `key_extraction_hold_deadline_ms_` has not yet passed. loop()
+  /// uses this to hold CH2 instead of running the generic idle-hop scan, and to defer background
+  /// status polls, while an attempt is in flight.
+  ///
+  /// The deadline is a plain timestamp, not a named `set_timeout()` timer: releasing the CH2 hold
+  /// is purely a radio-scheduling optimization (see key_extraction_hold_deadline_ms_'s own doc
+  /// comment for why it is deliberately decoupled from `key_extraction_ctx_.state` itself), so
+  /// nothing needs to fire a callback when it lapses — the next loop() iteration simply stops
+  /// taking the CH2-hold branch on its own. Default-constructed, the deadline is 0, which is always
+  /// in the past relative to any real `millis()` reading once the device has been running — so a
+  /// mid-exchange state reached without the deadline having been (re)set (e.g. a reply-builder
+  /// failure between the state guard and the deadline update) safely never holds CH2, rather than
+  /// holding it unboundedly.
+  [[nodiscard]] bool key_extraction_awaiting_reply_() const {
+    return this->key_extraction_ctx_.state != pairing_responder::ResponderState::DISARMED &&
+           this->key_extraction_ctx_.state != pairing_responder::ResponderState::ARMED_IDLE &&
+           millis() < this->key_extraction_hold_deadline_ms_;
+  }
 
   /// Extract supported position or metadata info from a response frame and merge it into the device record.
   /// @param frame IoFrame containing a supported inbound command such as CMD_PRIVATE_RESP,
@@ -742,13 +763,22 @@ class IOHomeControlComponent : public Component,
   /// @param delay_ms Poll delay in milliseconds.
   void schedule_device_polls_(const std::vector<std::string> &device_ids, uint32_t delay_ms);
   /// Whether loop() should skip dispatching the queue this iteration because the pending work is a
-  /// background poll and a 1W remote transmitted very recently. Thin wrapper binding the component's
-  /// state to decisions::defer_background_poll_for_1w_activity().
+  /// background poll and either a 1W remote transmitted very recently, or a key-extraction attempt
+  /// is mid-flight. Thin wrapper binding the component's state to
+  /// decisions::defer_background_poll_for_1w_activity(), plus a second, independent yield condition:
+  /// a background poll is a blocking exchange that owns the radio for 1-3 s, and dispatching one
+  /// while the key-extraction responder is holding CH2 for an expected CMD_KEY_TRANSFER (0x32)
+  /// would swallow it just as thoroughly as a mistimed hop — see loop()'s hop branch (hub_core.cpp)
+  /// for the other half of that hold. Only background polls yield here, same as the 1W rule: a user
+  /// command must never wait on either kind of background activity.
   [[nodiscard]] bool defer_background_poll_() const {
-    return decisions::defer_background_poll_for_1w_activity(
-        !this->op_queue_.empty() && OperationQueue::is_background_op(this->op_queue_.front().type),
-        this->first_1w_activity_ms_, this->last_1w_activity_ms_, millis(), ONEWAY_QUIET_PERIOD_MS,
-        ONEWAY_POLL_DEFER_CAP_MS);
+    const bool next_op_is_background =
+        !this->op_queue_.empty() && OperationQueue::is_background_op(this->op_queue_.front().type);
+    if (next_op_is_background && this->key_extraction_awaiting_reply_())
+      return true;
+    return decisions::defer_background_poll_for_1w_activity(next_op_is_background, this->first_1w_activity_ms_,
+                                                            this->last_1w_activity_ms_, millis(),
+                                                            ONEWAY_QUIET_PERIOD_MS, ONEWAY_POLL_DEFER_CAP_MS);
   }
   /// Schedule status polls for all devices associated with a linked remote.
   /// @param remote_id Source node ID of the remote.
@@ -1016,6 +1046,22 @@ class IOHomeControlComponent : public Component,
   /// State for the current "Accept Foreign Pairing" (key-extraction) arm cycle; DISARMED by
   /// default so a fresh boot never responds to foreign pairing traffic. See pairing_responder.h.
   pairing_responder::ResponderContext key_extraction_ctx_;
+  /// Deadline (millis()) until which loop() should hold CH2 for the key-extraction responder,
+  /// deliberately independent of `key_extraction_ctx_.state` itself. Set (not "armed" — this is a
+  /// plain timestamp, not a named `set_timeout()` timer) on every sign of hub progress: the three
+  /// pre-extraction reply handlers (handle_key_extraction_discover_(), ..._discover_confirm_(),
+  /// ..._key_init_(), hub_key_extraction.cpp) push it out by KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS,
+  /// and arm_post_extraction_grace_() pushes it out by KEY_EXTRACTION_POST_EXTRACT_GRACE_MS so the
+  /// hold also covers the (much longer) post-extraction address-verification phase it governs.
+  ///
+  /// Deliberately independent of `key_extraction_ctx_.state`: the pure guards in
+  /// pairing_responder.cpp decide whether an inbound frame is accepted by checking `state` alone,
+  /// never this deadline, so a real (slower) hub's next frame still completes the exchange
+  /// correctly even if it arrives after the hold has expired. Coupling the two — letting the
+  /// deadline also force `state` back to ARMED_IDLE — would silently discard that live protocol
+  /// progress instead of just releasing the radio hold. See key_extraction_awaiting_reply_()'s doc
+  /// comment for how this is consumed.
+  uint32_t key_extraction_hold_deadline_ms_{0};
   /// Invoked whenever the key-extraction armed state changes; see set_key_extraction_armed_callback().
   std::function<void(bool)> key_extraction_armed_callback_;
   /// True while the 1W key-adoption listener is armed; see set_oneway_key_adoption_armed().

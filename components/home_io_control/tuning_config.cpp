@@ -288,6 +288,8 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
     result += " lr1121_post_tx_settle_us=" + std::to_string(cfg.lr1121_post_tx_settle_us);
   if (cfg.lr1121_discovery_hop_slice_ms != DEFAULTS.lr1121_discovery_hop_slice_ms)
     result += " lr1121_discovery_hop_slice_ms=" + std::to_string(cfg.lr1121_discovery_hop_slice_ms);
+  if (cfg.cold_broadcast_reply_preamble != DEFAULTS.cold_broadcast_reply_preamble)
+    result += " cold_broadcast_reply_preamble=" + std::to_string(cfg.cold_broadcast_reply_preamble);
   if (cfg.lbt_max_retries != DEFAULTS.lbt_max_retries)
     result += " lbt_max_retries=" + std::to_string(cfg.lbt_max_retries);
   if (cfg.lbt_rssi_threshold_dbm != DEFAULTS.lbt_rssi_threshold_dbm)

@@ -142,6 +142,7 @@ your device may differ.
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
+| `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -291,6 +292,12 @@ corrected — the full, corrected option set is `39.0` / `46.9` / `58.6` / `78.2
 `156.2` / `187.2` kHz. The main variable that still matters in practice is RF link quality (RSSI)
 rather than these timing/bandwidth knobs — weak signal shows up as intermittent frame loss on
 either leg of an exchange, which the existing per-command retry already absorbs.
+
+#### `cold_broadcast_reply_preamble`
+
+Sized independently of `response_preamble()`: it governs only the "Recover System Key" feature's
+discovery reply (0x29), the sole device-role reply that is `start=true` and therefore the one a
+hopping/scanning peer has to catch cold, rather than a peer already parked on a held channel.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 

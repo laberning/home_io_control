@@ -17,6 +17,10 @@ using namespace esphome::home_io_control::pairing_responder;
 
 namespace {
 
+/// Used everywhere on_discover_request()'s hub_node_id parameter is irrelevant to the case under
+/// test (every state but EXTRACTED/SENT_ADDRESS_RESP accepts unconditionally — see its doxygen).
+constexpr uint8_t ARBITRARY_HUB_ID[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
+
 ResponderContext make_armed_ctx() {
   ResponderContext ctx;
   ctx.state = ResponderState::ARMED_IDLE;
@@ -35,7 +39,8 @@ ResponderContext make_armed_ctx() {
 TEST(PairingResponder, FullFlowTransitionsThroughAllStates) {
   ResponderContext ctx = make_armed_ctx();
 
-  EXPECT_TRUE(on_discover_request(ctx)) << "discovery request should be accepted while ARMED_IDLE";
+  EXPECT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID))
+      << "discovery request should be accepted while ARMED_IDLE, regardless of hub_node_id";
   EXPECT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP);
 
   EXPECT_TRUE(on_discover_confirm(ctx)) << "discovery confirm should be accepted while SENT_DISCOVER_RESP";
@@ -67,17 +72,18 @@ TEST(PairingResponder, FullFlowTransitionsThroughAllStates) {
 
 TEST(PairingResponder, DiscoverRequestRetryResendsWithoutRegenerating) {
   ResponderContext ctx = make_armed_ctx();
-  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID));
   ASSERT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP);
 
   // Hub missed our first 0x29 and retries the 0x28.
-  EXPECT_TRUE(on_discover_request(ctx)) << "a discovery retry while SENT_DISCOVER_RESP should still be accepted";
+  EXPECT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID))
+      << "a discovery retry while SENT_DISCOVER_RESP should still be accepted";
   EXPECT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP) << "state should not regress or advance on a retry";
 }
 
 TEST(PairingResponder, DiscoverConfirmRetryResendsSameAck) {
   ResponderContext ctx = make_armed_ctx();
-  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID));
   ASSERT_TRUE(on_discover_confirm(ctx));
   ASSERT_EQ(ctx.state, ResponderState::SENT_CONFIRM_ACK);
 
@@ -90,7 +96,7 @@ TEST(PairingResponder, DiscoverConfirmRetryResendsSameAck) {
 /// be reachable without the discovery-confirm step ever completing.
 TEST(PairingResponder, KeyInitAcceptedWithoutDiscoverConfirm) {
   ResponderContext ctx = make_armed_ctx();
-  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID));
   ASSERT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP);
 
   const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
@@ -103,7 +109,7 @@ TEST(PairingResponder, KeyInitAcceptedWithoutDiscoverConfirm) {
 
 TEST(PairingResponder, KeyInitRetryKeepsStoredChallenge) {
   ResponderContext ctx = make_armed_ctx();
-  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID));
 
   const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
   ASSERT_TRUE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id));
@@ -133,7 +139,7 @@ TEST(PairingResponder, KeyInitBeforeDiscoverIsIgnored) {
 
 TEST(PairingResponder, KeyTransferBeforeKeyInitIsIgnored) {
   ResponderContext ctx = make_armed_ctx();
-  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID));
 
   uint8_t payload[AES_KEY_SIZE] = {0};
   EXPECT_FALSE(on_key_transfer(ctx, payload)) << "key-transfer while SENT_DISCOVER_RESP should be ignored";
@@ -148,7 +154,7 @@ TEST(PairingResponder, DiscoverConfirmBeforeDiscoverIsIgnored) {
 
 TEST(PairingResponder, DiscoverConfirmAfterKeyInitIsIgnored) {
   ResponderContext ctx = make_armed_ctx();
-  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID));
   const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
   ASSERT_TRUE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id));
   ASSERT_EQ(ctx.state, ResponderState::SENT_CHALLENGE);
@@ -157,11 +163,15 @@ TEST(PairingResponder, DiscoverConfirmAfterKeyInitIsIgnored) {
   EXPECT_EQ(ctx.state, ResponderState::SENT_CHALLENGE) << "state should be unchanged";
 }
 
-TEST(PairingResponder, DiscoverRequestAfterExtractedIsIgnored) {
+TEST(PairingResponder, DiscoverRequestAfterExtractedStartsNewAttempt) {
   ResponderContext ctx = make_armed_ctx();
   ctx.state = ResponderState::EXTRACTED;
-  EXPECT_FALSE(on_discover_request(ctx)) << "a second discovery request after extraction must not re-arm the exchange";
-  EXPECT_EQ(ctx.state, ResponderState::EXTRACTED) << "state should be unchanged";
+  const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  memcpy(ctx.hub_node_id, hub_id, NODE_ID_SIZE);  // The hub this responder actually extracted a key from.
+  EXPECT_TRUE(on_discover_request(ctx, hub_id))
+      << "a discovery request from the SAME hub after a completed extraction must start a new attempt, not stay "
+         "deafened for the rest of the arm window";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP);
 }
 
 TEST(PairingResponder, KeyInitAfterExtractedIsIgnored) {
@@ -172,13 +182,16 @@ TEST(PairingResponder, KeyInitAfterExtractedIsIgnored) {
   EXPECT_EQ(ctx.state, ResponderState::EXTRACTED);
 }
 
-/// SENT_ADDRESS_RESP twin of DiscoverRequestAfterExtractedIsIgnored above: the new state widens
-/// every existing on_*() guard's surface, so each must be re-pinned against it too.
-TEST(PairingResponder, DiscoverRequestAfterAddressRespIsIgnored) {
+/// SENT_ADDRESS_RESP twin of DiscoverRequestAfterExtractedStartsNewAttempt above: the new state
+/// widens every existing on_*() guard's surface, so each must be re-pinned against it too.
+TEST(PairingResponder, DiscoverRequestAfterAddressRespStartsNewAttempt) {
   ResponderContext ctx = make_armed_ctx();
   ctx.state = ResponderState::SENT_ADDRESS_RESP;
-  EXPECT_FALSE(on_discover_request(ctx)) << "a discovery request after address verification must not re-arm";
-  EXPECT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP) << "state should be unchanged";
+  const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  memcpy(ctx.hub_node_id, hub_id, NODE_ID_SIZE);
+  EXPECT_TRUE(on_discover_request(ctx, hub_id))
+      << "a discovery request from the SAME hub after address verification must also start a new attempt";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP);
 }
 
 /// SENT_ADDRESS_RESP twin of KeyInitAfterExtractedIsIgnored above.
@@ -188,6 +201,44 @@ TEST(PairingResponder, KeyInitAfterAddressRespIsIgnored) {
   const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
   EXPECT_FALSE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id)) << "key-init after address verification must be ignored";
   EXPECT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP);
+}
+
+// ========================================================================================
+// A stray 0x28 from a DIFFERENT hub must not disrupt a live post-extraction
+// address-verification round with the real hub.
+// ========================================================================================
+
+/// EXTRACTED/SENT_ADDRESS_RESP only restart for the same hub_node_id that completed the original
+/// extraction (captured in ctx.hub_node_id by on_key_init()) -- a different hub's 0x28 must be
+/// silently ignored. CMD_DISCOVER_REQ is a broadcast handled before the throwaway-ID destination
+/// filter, so without this restriction any hub in range could knock a live address-verification
+/// round back a phase.
+TEST(PairingResponder, DiscoverRequestFromDifferentHubAfterExtractedIsIgnored) {
+  ResponderContext ctx = make_armed_ctx();
+  ctx.state = ResponderState::EXTRACTED;
+  const uint8_t real_hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  const uint8_t other_hub_id[NODE_ID_SIZE] = {0x99, 0x98, 0x97};
+  memcpy(ctx.hub_node_id, real_hub_id, NODE_ID_SIZE);
+
+  EXPECT_FALSE(on_discover_request(ctx, other_hub_id))
+      << "a different hub's discovery request must not restart the attempt or disturb a live "
+         "post-extraction round with the real hub";
+  EXPECT_EQ(ctx.state, ResponderState::EXTRACTED) << "state must be unchanged";
+}
+
+/// SENT_ADDRESS_RESP twin of the test above -- the state where an address-verification round with
+/// the real hub is actually in progress, the scenario this restriction exists to protect.
+TEST(PairingResponder, DiscoverRequestFromDifferentHubAfterAddressRespIsIgnored) {
+  ResponderContext ctx = make_armed_ctx();
+  ctx.state = ResponderState::SENT_ADDRESS_RESP;
+  const uint8_t real_hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  const uint8_t other_hub_id[NODE_ID_SIZE] = {0x99, 0x98, 0x97};
+  memcpy(ctx.hub_node_id, real_hub_id, NODE_ID_SIZE);
+
+  EXPECT_FALSE(on_discover_request(ctx, other_hub_id))
+      << "a different hub's discovery request during a live address-verification round must be "
+         "ignored, not knock the responder back to SENT_DISCOVER_RESP";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP) << "state must be unchanged";
 }
 
 TEST(PairingResponder, KeyTransferWhileDisarmedIsIgnored) {
@@ -205,7 +256,7 @@ TEST(PairingResponder, KeyTransferWhileDisarmedIsIgnored) {
 
 TEST(PairingResponder, KeyTransferWithBogusPayloadStillExtractsSomeKey) {
   ResponderContext ctx = make_armed_ctx();
-  ASSERT_TRUE(on_discover_request(ctx));
+  ASSERT_TRUE(on_discover_request(ctx, ARBITRARY_HUB_ID));
   const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
   ASSERT_TRUE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id));
 

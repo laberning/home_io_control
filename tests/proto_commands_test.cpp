@@ -41,11 +41,12 @@ TEST(ProtoCommands, CreateDiscoverResp) {
       << "backbone address should be our own node ID, matching the real-capture cross-check";
   EXPECT_EQ(frame.data[DISCOVERY_RESP_MANUFACTURER_OFFSET], MANUFACTURER_SOMFY)
       << "manufacturer byte should be as supplied";
-  EXPECT_EQ(frame.data[DISCOVERY_RESP_FLAGS_OFFSET], 0x00)
-      << "flags byte is a best-effort placeholder (see proto_commands.h @note) — pinned here so a "
-         "future change to it is deliberate, not accidental";
+  EXPECT_EQ(frame.data[DISCOVERY_RESP_FLAGS_OFFSET], 0xDD)
+      << "flags byte is a best-effort placeholder (see proto_commands.h @note / "
+         "KEY_EXTRACTION_DISCOVER_RESP_FLAGS in proto_commands.cpp) — pinned here so a future change "
+         "to it is deliberate, not accidental";
   EXPECT_EQ(frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET], 0x00);
-  EXPECT_EQ(frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1], 0x00);
+  EXPECT_EQ(frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1], 0x0E);
 }
 
 TEST(ProtoCommands, CreateKeyConfirm) {
