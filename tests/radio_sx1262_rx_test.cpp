@@ -1182,3 +1182,90 @@ TEST(RadioSX1262, PostTxRearmSkipsRedundantStandbyAndBufferBase) {
   EXPECT_EQ(packet_params, 1) << "RX packet params must be restored — the transmission overwrote them";
   EXPECT_EQ(set_rx, 1) << "and the radio must actually re-enter RX";
 }
+
+// ============================================================================
+// init()/configure_radio_() register-programming tests.
+//
+// Until now, nothing exercised RadioSX1262::init() end to end (unlike RadioLR1121, which has
+// GetVersionTransactionBytes/InitSequenceOrder/etc.) — the 2026-08-22 preamble-unmask fix
+// (SX1262_IRQ_ACTIVITY_MASK / irqMask 0x004B -> 0x004F) landed with unit coverage for the
+// *consuming* logic (poll_until_activity_ treating a bare preamble as non-terminal) but nothing
+// pinning that configure_radio_() actually programs the chip that way. These tests close that gap.
+// ============================================================================
+
+TEST(RadioSX1262, InitSucceeds) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  EXPECT_TRUE(radio.init());
+  EXPECT_FALSE(radio.is_failed());
+}
+
+TEST(RadioSX1262, InitFailsOnBusyTimeout) {
+  // BUSY pin held permanently high simulates a dead/unresponsive chip: init()'s very first SPI
+  // transaction blocks in wait_busy_() until SX1262_BUSY_TIMEOUT_MS elapses, which is the only way
+  // init() itself can return false.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(true);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  EXPECT_FALSE(radio.init());
+  EXPECT_TRUE(radio.is_failed());
+}
+
+TEST(RadioSX1262, InitProgramsIrqMaskWithPreambleDetectedButNotDio1) {
+  // PreambleDetected (bit 2, 0x0004) must be unmasked in irqMask so is_preamble_detected() can
+  // ever see it on real hardware, but left OUT of dio1Mask so the ISR still only wakes on a
+  // terminal event, not on every preamble.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  ASSERT_TRUE(radio.init());
+
+  int irq_params_idx = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_SET_DIO_IRQ_PARAMS) {
+      irq_params_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(irq_params_idx, 0) << "SetDioIrqParams must be issued during init()";
+
+  const auto &tx = spi.transactions()[irq_params_idx];
+  ASSERT_EQ(tx.size(), 9u) << "opcode(1) + irqMask(2) + dio1Mask(2) + dio2Mask(2) + dio3Mask(2)";
+  const uint16_t irq_mask = (static_cast<uint16_t>(tx[1]) << 8) | tx[2];
+  const uint16_t dio1_mask = (static_cast<uint16_t>(tx[3]) << 8) | tx[4];
+
+  EXPECT_EQ(irq_mask & 0x0004, 0x0004u) << "irqMask must unmask PreambleDetected (bit 2)";
+  EXPECT_EQ(irq_mask, 0x004F) << "irqMask: TxDone|RxDone|PreambleDetected|SyncWordValid|CrcErr";
+  EXPECT_EQ(dio1_mask, 0x004B) << "dio1Mask must stay narrower than irqMask — PreambleDetected must not wake the ISR";
+}
+
+TEST(RadioSX1262, InitWritesExpectedSyncWordRegister) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  ASSERT_TRUE(radio.init());
+
+  int sync_word_idx = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    const auto &tx = spi.transactions()[i];
+    if (tx.size() >= 3 && tx[0] == SX1262_WRITE_REGISTER && tx[1] == ((SX1262_REG_SYNC_WORD >> 8) & 0xFF) &&
+        tx[2] == (SX1262_REG_SYNC_WORD & 0xFF)) {
+      sync_word_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(sync_word_idx, 0) << "the sync-word register must be written during init()";
+
+  // Payload starts after opcode(1) + address(2); see SyncWordDerivation
+  // (tests/radio_soft_phy_test.cpp) for where this specific value comes from.
+  const auto &tx = spi.transactions()[sync_word_idx];
+  ASSERT_GE(tx.size(), 6u);
+  EXPECT_EQ(tx[3], 0x57);
+  EXPECT_EQ(tx[4], 0xFD);
+  EXPECT_EQ(tx[5], 0x99);
+}

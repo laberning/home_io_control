@@ -300,7 +300,7 @@ class RadioSX1262 : public SoftPhyDriverBase {
   InternalGPIOPin *fem_pa_pin_;
   uint8_t tx_power_;
   uint8_t tcxo_voltage_;
-  SX1262RxBandwidth rx_bandwidth_{SX1262RxBandwidth::BW_117_3_KHZ};  ///< Runtime-tunable RX bandwidth.
+  SX1262RxBandwidth rx_bandwidth_{SX1262RxBandwidth::BW_58_6_KHZ};  ///< Runtime-tunable RX bandwidth.
 };
 
 }  // namespace home_io_control

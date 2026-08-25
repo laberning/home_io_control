@@ -978,6 +978,56 @@ TEST(Exchange, SendAndReceive_UnrelatedFrameIgnoredDuringFinalWait) {
       << "accepted response must originate from the correct device";
 }
 
+// --- Pinning test: wait_for_final_response_() stays on the request channel -----------------
+//
+// Every wait loop's channel policy is pinned by its own test — wait_for_first_response_ (above),
+// wait_for_key_challenge_, wait_for_key_confirm_, wait_for_discovery_response_, and
+// collect_broadcast_responses each already have one; this is wait_for_final_response_'s. Same
+// reasoning as the first-response case: HOLD_REQUEST_CHANNEL, so a unicast final reply (0 of 300
+// measured off-channel) never needs a hop.
+
+TEST(Exchange, SendAndReceive_FinalResponseWaitStaysOnRequestChannel) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  // Challenge from the correct device, so the exchange proceeds into the final-response wait.
+  uint8_t chal_data[6] = {0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x01};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  uint8_t len_chal = serialize(challenge, raw_chal, sizeof(raw_chal));
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = len_chal;
+  memcpy(chal_pkt.data, raw_chal, len_chal);
+  radio.queue_rx(chal_pkt);
+
+  // An unrelated frame during the final-response wait (rejected-frame stimulus), then silence
+  // (idle-dwell stimulus) — same two-stimulus shape as the first-response pin above.
+  IoFrame noise = build_status_response(test::FOREIGN_ID, comp.node_id_);
+  uint8_t raw_noise[64];
+  uint8_t len_noise = serialize(noise, raw_noise, sizeof(raw_noise));
+  RadioRxPacket noise_pkt{};
+  noise_pkt.len = len_noise;
+  memcpy(noise_pkt.data, raw_noise, len_noise);
+  radio.queue_rx(noise_pkt);
+  radio.queue_rx_silence(5);
+
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_TRUE(radio.freq_history().empty())
+      << "HOLD_REQUEST_CHANNEL must never retune during the final-response wait, whether the "
+         "dwell is genuinely empty or a rejected frame arrived";
+  EXPECT_GE(radio.get_send_count(), 2) << "request + auth response — proves the exchange actually "
+                                          "reached wait_for_final_response_() rather than dying earlier";
+}
+
 // --- Pinning test 4: inbound authenticate_request_ with valid HMAC -----------
 
 TEST(Exchange, AuthenticateRequest_ValidHmacAccepted) {
@@ -1948,4 +1998,170 @@ TEST(Exchange, Listen_OnHopFiresExactlyOncePerHop) {
   ASSERT_FALSE(radio.freq_history().empty());
   EXPECT_EQ(static_cast<size_t>(hop_calls), radio.freq_history().size())
       << "on_hop must fire exactly once per change_frequency() call, no more and no less";
+}
+
+// ============================================================================
+// Exchange-engine counters. Pure additive telemetry: free-running, engine-wide, no behavior
+// change. Internal-only for now — see the Counters doc comment in exchange_engine.h for why
+// there's no sensor/log consumer yet. One test per increment site.
+// ============================================================================
+
+TEST(Exchange, CountersTrackLbtRetries) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  // Two busy reads (>= LBT_RSSI_THRESHOLD_DBM) force two retries; the queue then runs dry and
+  // read_rssi() falls back to MockRadio's default (-120 dBm, well clear), so the third read lets
+  // transmit_frame() proceed without a third retry being counted.
+  radio.queue_rssi(-50);
+  radio.queue_rssi(-50);
+
+  IoFrame correct = build_status_response(test::DST_ID, comp.node_id_);
+  radio.queue_rx(to_rx_packet(correct));
+
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 2u);
+}
+
+TEST(Exchange, CountersTrackRetransmits) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  // Try 1's request TX itself fails (mirrors SendAndReceive_AllTransmitFails' pattern), which
+  // forces a retry without needing to simulate an entire wait-window timeout via the RX queue —
+  // MockRadio's HOLD-policy busy-loop drains queued RX entries near-instantly regardless of which
+  // logical "try" is current, so queue_rx_silence() can't stand in for a whole-window timeout here.
+  radio.queue_tx_result(false);  // try 1: request TX fails.
+
+  IoFrame correct = build_status_response(test::DST_ID, comp.node_id_);
+  radio.queue_rx(to_rx_packet(correct));  // try 2: TX defaults to success, and this is the response.
+
+  IoFrame response{};
+  bool ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
+
+  EXPECT_TRUE(ok) << "sanity: the second try must be the one that succeeds";
+  EXPECT_EQ(comp.exchange_engine_.counters().retransmits, 1u) << "one retry beyond the first attempt";
+}
+
+TEST(Exchange, CountersTrackChallengeRoundTripsBothDirections) {
+  // Outbound direction: a device challenges our command; handle_authentication_() answers it.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  uint8_t chal_data[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  radio.queue_rx(to_rx_packet(challenge));
+
+  IoFrame final_resp = build_status_response(test::DST_ID, comp.node_id_);
+  radio.queue_rx(to_rx_packet(final_resp));
+
+  IoFrame response{};
+  bool outbound_ok = comp.send_and_receive_(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
+  ASSERT_TRUE(outbound_ok);
+  EXPECT_EQ(comp.exchange_engine_.counters().challenge_round_trips, 1u)
+      << "a device challenging our outbound command must count as one round trip";
+
+  // Inbound direction: we challenge a device's unsolicited command; authenticate_request_()
+  // verifies it. Same TestableComponent/counters — this is the second increment site, not a
+  // second engine, so the count accumulates on top of the outbound one above.
+  RespondOnChallengeMockRadio inbound_radio;
+  comp.radio_ = &inbound_radio;
+  IoFrame status_update = build_status_update_from_device(test::DST_ID, comp.node_id_);
+  inbound_radio.arm(status_update, test::TEST_SYSTEM_KEY, /*valid=*/true);
+
+  bool inbound_ok = comp.authenticate_request_(status_update, FREQ_CH2);
+  ASSERT_TRUE(inbound_ok);
+  EXPECT_EQ(comp.exchange_engine_.counters().challenge_round_trips, 2u)
+      << "both challenge directions must feed the same counter";
+}
+
+TEST(Exchange, CountersTrackParseFailures) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  // Shorter than FRAME_MIN_SIZE: parse() must reject it outright (mirrors
+  // Listen_UnparsablePacketReachesHandlerWithNullParsed's stimulus).
+  RadioRxPacket garbage{};
+  garbage.len = 4;
+  radio.queue_rx(garbage);
+
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);  // expected to fail overall; only the counter matters here
+
+  EXPECT_EQ(comp.exchange_engine_.counters().parse_failures, 1u);
+}
+
+TEST(Exchange, CountersResetZeroesEveryField) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  // Drive all four counters nonzero before reset, mirroring each field's own CountersTrack* test
+  // above: two busy RSSI reads for lbt_retries, a failed request TX for retransmits, a queued
+  // challenge for challenge_round_trips, and a garbage packet for parse_failures.
+  radio.queue_rssi(-50);
+  radio.queue_rssi(-50);
+  radio.queue_tx_result(false);  // try 1: request TX fails, forcing a retry.
+
+  uint8_t chal_data[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  radio.queue_rx(to_rx_packet(challenge));
+
+  RadioRxPacket garbage{};
+  garbage.len = 4;
+  radio.queue_rx(garbage);
+
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  ASSERT_GT(comp.exchange_engine_.counters().lbt_retries, 0u) << "sanity: lbt_retries must be nonzero before reset";
+  ASSERT_GT(comp.exchange_engine_.counters().retransmits, 0u) << "sanity: retransmits must be nonzero before reset";
+  ASSERT_GT(comp.exchange_engine_.counters().challenge_round_trips, 0u)
+      << "sanity: challenge_round_trips must be nonzero before reset";
+  ASSERT_GT(comp.exchange_engine_.counters().parse_failures, 0u)
+      << "sanity: parse_failures must be nonzero before reset";
+
+  comp.exchange_engine_.reset_counters();
+
+  const auto &c = comp.exchange_engine_.counters();
+  EXPECT_EQ(c.lbt_retries, 0u);
+  EXPECT_EQ(c.retransmits, 0u);
+  EXPECT_EQ(c.challenge_round_trips, 0u);
+  EXPECT_EQ(c.parse_failures, 0u);
 }

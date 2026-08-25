@@ -187,8 +187,12 @@ void RadioSX1276::configure_radio_() {
                                 // path serves as the baseline against which SX1262 captures are compared.
   this->write_register_(REG_PACKET_CONFIG2, 0x70);  // Packet mode, IoHomeOn, PowerFrame
   this->write_register_(REG_SYNC_CONFIG, 0x50);     // Auto restart PLL off, AA, sync on
-  this->write_register_(REG_DIO_MAPPING1, 0x3D);    // DIO0: PayloadReady/PacketSent, DIO2: SyncAddress (for gated hop)
-  this->write_register_(REG_DIO_MAPPING2, 0xF1);    // DIO4: PreambleDetect
+  // DIO0: PayloadReady/PacketSent. DIO2 is also mapped to SyncAddress here, but the component
+  // only exposes dio0_pin_/dio4_pin_ in its pin config — the component never wires or reads DIO2,
+  // so this mapping is inert. This chip's idle-hop gating (reception_in_progress()) reads
+  // SyncAddressMatch via SPI polling instead (see RadioSX1276::reception_in_progress()).
+  this->write_register_(REG_DIO_MAPPING1, 0x3D);
+  this->write_register_(REG_DIO_MAPPING2, 0xF1);                               // DIO4: PreambleDetect
   this->write_register_(REG_PLLHOP, this->read_register_(REG_PLLHOP) | 0x80);  // Fast hop
   this->write_register_(REG_PA_RAMP, 0x2D);          // Gaussian BT=1.0 shaping (0x20) | 15μs ramp (0x0D)
   this->write_register_(REG_FIFO_THRESH, 0x80);      // TX start FIFO not empty

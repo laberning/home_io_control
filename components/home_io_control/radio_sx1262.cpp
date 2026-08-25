@@ -137,11 +137,11 @@ void RadioSX1262::write_modulation_params_() {
   //
   // BitRate = 32 * Fxosc / BR_reg → BR_reg = 32 * 32MHz / 38400 = 26667 = 0x00682B
   // Pulse shape: Gaussian BT=1.0 (0x0B) — reduces TX spectral occupation.
-  // Bandwidth: the register byte is runtime-tunable via rx_bandwidth_. The default
-  //   117.3 kHz (0x0B) is wider than the Carson-rule minimum (77 kHz) but needed
-  //   to tolerate the SX1262 LO frequency offset after the TX→RX transition. At
-  //   58.6 kHz the demodulator produced ~50% bit errors on post-TX frames; 117.3 kHz
-  //   gives a clean decode (confirmed via loopback turnaround test).
+  // Bandwidth: the register byte is runtime-tunable via rx_bandwidth_ — see
+  // TuningConfig::sx1262_rx_bandwidth (tuning_config.h) for the current default (58.6 kHz). The
+  // narrower filter is safe because the measured TX->RX turnaround (~390 us plus a 500 us settle)
+  // is well inside what it tolerates, and reception improves as the filter narrows on this
+  // waveform — matching the SX1276's long-validated 41.7 kHz default on the identical waveform.
   // Fdev = fdev_hz * 2^25 / 32e6 → 19200 * 2^25 / 32e6 = 20133 = 0x004EA5
   uint8_t mod_params[8] = {
       0x00,
@@ -359,7 +359,10 @@ void RadioSX1262::configure_radio_() {
   // 11. Default RX packet params: variable-size GFSK with hardware CCITT CRC validation.
   this->set_rx_packet_params();
 
-  // 12. Sync word: 0x57 0xFD 0x99 (24-bit UART-derived IO-homecontrol hypothesis)
+  // 12. Sync word: 0x57 0xFD 0x99 (24 bits). Not an independent value: it is exactly
+  // uart_encode_packet({0x55, 0xFF, 0x33}) — SX1276's own raw, confirmed-working sync bytes — read
+  // starting 6 bits into the first UART cell instead of at the start bit. SyncWordDerivation
+  // (radio_soft_phy_test.cpp) confirms this is the unique 10-bit-cell offset that reproduces it.
   uint8_t sync_word[8] = {0x57, 0xFD, 0x99, 0x00, 0x00, 0x00, 0x00, 0x00};
   this->write_register_(SX1262_REG_SYNC_WORD, sync_word, sizeof(sync_word));
 

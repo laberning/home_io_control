@@ -140,6 +140,7 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
     if (rssi < this->tuning_->lbt_rssi_threshold_dbm)
       break;
     ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm), retry %u/%u", rssi, lbt + 1, this->tuning_->lbt_max_retries);
+    this->counters_.lbt_retries++;
     if (this->pairing_telemetry_ != nullptr)
       this->pairing_telemetry_->record_lbt_defer(rssi);
     delay(LBT_RETRY_DELAY_MS);
@@ -270,6 +271,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       }
       App.feed_wdt();
       delay(EXCHANGE_RETRY_DELAY_MS);
+      this->counters_.retransmits++;
     }
 
     if (!this->transmit_request_(request, freq, request_preamble, context))
@@ -347,6 +349,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
   auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
     if (parsed == nullptr) {
       this->record_debug("first_parse_fail", ctx.try_index, false);
+      this->counters_.parse_failures++;
       log_unparsable_frame("Unparsable first response", ctx.try_index, pkt);
       return ReplyDisposition::IGNORE;
     }
@@ -396,6 +399,7 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
     this->record_debug("tx_auth_failed", ctx.try_index, true);
     return false;
   }
+  this->counters_.challenge_round_trips++;
   return true;
 }
 
@@ -416,6 +420,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
   auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
     if (parsed == nullptr) {
       this->record_debug("final_parse_fail", ctx.try_index, true);
+      this->counters_.parse_failures++;
       log_unparsable_frame("Unparsable final response", ctx.try_index, pkt);
       return ReplyDisposition::IGNORE;
     }
@@ -656,6 +661,7 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq)
 
   context.state = exchange::InboundAuthState::VERIFIED;
   this->record_debug(inbound_stage_name(context.state), 1, true);
+  this->counters_.challenge_round_trips++;
   return true;
 }
 

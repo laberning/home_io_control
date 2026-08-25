@@ -242,6 +242,47 @@ class ExchangeEngine {
   /// Read-only access to the current debug snapshot.
   [[nodiscard]] const DebugInfo &get_debug() const { return debug_; }
 
+  // -------------------------------------------------------------------------
+  // Exchange-engine counters
+  // -------------------------------------------------------------------------
+
+  /// @brief Free-running counters for the engine's own retry/parse behavior — not per-device (see
+  /// the RSSI/Exchange-Failures per-device sensors for that) and not per-attempt (see DebugInfo for
+  /// that). Persist until explicitly reset, so a caller can diff two snapshots across an arbitrary
+  /// window. Coverage differs per field, see each field's own comment below: `lbt_retries` is the
+  /// only one that covers pairing traffic too (pairing calls transmit_frame() the same way normal
+  /// exchanges do); the other three only observe ExchangeEngine's own send_and_receive() path.
+  ///
+  /// Internal-only, deliberately: nothing outside the unit tests reads counters() today — no HA
+  /// sensor, no log line, no periodic dump. Built to back a scripted continuous-operation
+  /// reliability test against dedicated bench hardware; that hardware was retired before the test
+  /// could run, so no consumer exists yet. Kept anyway (zero runtime cost, no YAML/schema surface,
+  /// already tested) as a cheap, ready primitive for whenever someone next needs to debug
+  /// exchange-level health — wiring it to a sensor or log line at that point is a small,
+  /// self-contained addition, not a redesign.
+  struct Counters {
+    uint32_t lbt_retries{0};            ///< transmit_frame() LBT backoff iterations (channel busy);
+                                        ///< covers pairing traffic too, via pairing_engine.cpp's
+                                        ///< own transmit_frame() calls.
+    uint32_t retransmits{0};            ///< send_and_receive() TX attempts beyond the first; no
+                                        ///< pairing path.
+    uint32_t challenge_round_trips{0};  ///< Completed 0x3C/0x3D challenge-response cycles, either
+                                        ///< direction: a device challenging our outbound command
+                                        ///< (handle_authentication_()) or us authenticating an
+                                        ///< inbound one (authenticate_request()); no pairing path.
+    uint32_t parse_failures{0};         ///< Frames wait_for_first_response_()/wait_for_final_response_()
+                                        ///< could not parse; does not count pairing_engine.cpp's own
+                                        ///< parse-null sites or collect_broadcast_responses()'s.
+  };
+
+  /// Read-only access to the running counters. No production caller yet — see the Counters
+  /// doc comment above.
+  [[nodiscard]] const Counters &counters() const { return this->counters_; }
+
+  /// Zero every counter (e.g. to start a fresh measurement window). No production caller yet —
+  /// see the Counters doc comment above.
+  void reset_counters() { this->counters_ = Counters{}; }
+
  private:
   // --- listen() helper -------------------------------------------------------
 
@@ -282,6 +323,7 @@ class ExchangeEngine {
 
   uint32_t last_hop_us_{0};  ///< Timestamp of the last channel hop (µs, from micros()).
   DebugInfo debug_{};        ///< Snapshot updated throughout each exchange attempt.
+  Counters counters_{};      ///< Free-running counters; see counters()/reset_counters().
 };
 
 }  // namespace home_io_control

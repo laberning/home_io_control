@@ -352,9 +352,11 @@ void RadioLR1121::configure_radio_() {
   //    same reasoning as SX1262, see radio_sx1262.cpp file header).
   this->set_rx_packet_params();
 
-  // 9. Sync word: 0x57 0xFD 0x99 + zero padding (identical bytes to the SX1262/SX1276 UART sync
-  //    word hypothesis — written via the LR1121's own SetGfskSyncWord opcode rather than a raw
-  //    register write).
+  // 9. Sync word: 0x57 0xFD 0x99 + zero padding — same derivation as SX1262 (see the comment on
+  //    RadioSX1262::configure_radio_()'s equivalent step): SX1276's raw sync bytes {0x55, 0xFF,
+  //    0x33} run through the UART encoder and read 6 bits into the first cell, not an independent
+  //    hypothesis. Written via the LR1121's own SetGfskSyncWord opcode rather than a raw register
+  //    write.
   uint8_t sync_word[8] = {0x57, 0xFD, 0x99, 0x00, 0x00, 0x00, 0x00, 0x00};
   this->write_command_(LR1121_CMD_SET_GFSK_SYNC_WORD, sync_word, sizeof(sync_word));
 
