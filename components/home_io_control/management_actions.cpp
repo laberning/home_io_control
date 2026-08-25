@@ -772,10 +772,13 @@ ManagementActionResult ManagementActions::scan_paired_devices() {
         });
     // Diagnostic only (not part of the user-facing report). Reporting heard and new separately is
     // what makes it useful: "heard 3, 0 new" means devices are answering every attempt (so the
-    // extra channels are redundant here), while "heard 0" on a channel means nothing was listening
-    // there — the channel-alignment vs. duty-cycle question a single number cannot answer.
+    // extra channels are redundant here). The Hz below is the TX channel for this attempt only —
+    // collect_broadcast_responses() listens with ROTATE_SKIPPING_REQUEST (see SCAN_CHANNELS' doc
+    // comment), so replies are never received on it. "heard 0" therefore says nothing about that
+    // channel specifically; it means neither of the *other* two channels caught a reply in this
+    // attempt's window.
     const uint8_t new_count = count - before;
-    ESP_LOGD(detail::TAG, "Roll-call attempt %u/%u (%" PRIu32 " Hz, %u ms window): %u repl%s heard, %u new",
+    ESP_LOGD(detail::TAG, "Roll-call attempt %u/%u (tx %" PRIu32 " Hz, %u ms window): %u repl%s heard, %u new",
              attempt + 1, SCAN_CHANNEL_COUNT, SCAN_CHANNELS[attempt], tuning_->pairing_discovery_wait_ms, heard,
              heard == 1 ? "y" : "ies", new_count);
   }
