@@ -17,45 +17,18 @@
 
 #include <algorithm>
 #include <cctype>
-#include <fstream>
 #include <map>
 #include <string>
 
 namespace {
 
-/// Parse every `static constexpr uint8_t MANUFACTURER_XXX = N;` from proto_constants.h.
-/// MANUFACTURER_ID_MAX is a bound, not a manufacturer, and is deliberately excluded.
+/// Parse every `static constexpr uint8_t MANUFACTURER_XXX = N;` from proto_constants.h, via the
+/// shared C++-side constant scanner (python_dict_parser.h). MANUFACTURER_ID_MAX is a bound, not a
+/// manufacturer, and is deliberately excluded here at the call site -- that's
+/// manufacturer-specific filtering, not something the shared parser should know about.
 std::map<std::string, uint8_t> parse_cpp_manufacturer_constants() {
-  const char *path = "components/home_io_control/proto_constants.h";
-  std::ifstream file(path);
-  EXPECT_TRUE(file.is_open()) << "Cannot open " << path << " — run tests from the project root.";
-  if (!file.is_open())
-    return {};
-
-  static const std::string prefix = "static constexpr uint8_t MANUFACTURER_";
-  std::map<std::string, uint8_t> entries;
-  std::string line;
-  while (std::getline(file, line)) {
-    auto start = line.find(prefix);
-    if (start == std::string::npos)
-      continue;
-    start += prefix.size();
-    auto name_end = line.find_first_of(" =", start);
-    if (name_end == std::string::npos)
-      continue;
-    std::string name = line.substr(start, name_end - start);
-    if (name == "ID_MAX")
-      continue;
-    auto eq = line.find('=', name_end);
-    auto semi = line.find(';', eq);
-    if (eq == std::string::npos || semi == std::string::npos)
-      continue;
-    std::string val_str = line.substr(eq + 1, semi - eq - 1);
-    auto vstart = val_str.find_first_not_of(" \t");
-    auto vend = val_str.find_last_not_of(" \t");
-    val_str = val_str.substr(vstart, vend - vstart + 1);
-    entries[name] = static_cast<uint8_t>(std::stoul(val_str, nullptr, 0));
-  }
+  auto entries = test::parse_cpp_uint8_constants("components/home_io_control/proto_constants.h", "MANUFACTURER_");
+  entries.erase("ID_MAX");
   return entries;
 }
 

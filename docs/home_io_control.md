@@ -831,6 +831,9 @@ TX/RX/RX_REJECT/LBT-defer/hop/phase event, in order) plus, when applicable, one 
 > were reverse-engineered from this project's own encoder and a small number of captures, and a
 > real hub's exact requirements may differ.
 
+> **⚠️ Use only on a hub and network you own or are authorized to modify** — see the project
+> [Disclaimer](../README.md#disclaimer--license).
+
 If you already own a working IO-Homecontrol installation (a hub plus paired devices) and want to
 move it to this component, you normally need to extract that installation's `node_id`/
 `system_key` — which otherwise requires resetting a device and sniffing a re-pair with an
@@ -884,10 +887,14 @@ Extraction)" (not configurable).
   warning above) circumstances so the discovery-response format or IV-derivation assumptions can
   be corrected.
 - The address-verification round (step 4's follow-up request/challenge, `CMD_ADDRESS_REQ`/
-  `CMD_ADDRESS_RESP`/`CMD_CHALLENGE_REQ`/`CMD_CHALLENGE_RESP`) is implemented from a single
-  third-party capture (a Velux KLR200 pairing session) and has not been exercised against any real
-  hub by this project — unlike the key exchange it follows, which has separately been
-  hardware-confirmed as described in the warning above. That capture also shows the real device
+  `CMD_ADDRESS_RESP`/`CMD_CHALLENGE_REQ`/`CMD_CHALLENGE_RESP`) was implemented from a single
+  third-party capture (a Velux KLR200 pairing session). The `CMD_ADDRESS_REQ`/`CMD_ADDRESS_RESP`
+  half is now confirmed against a real Velux KLR200 — a real hub sent the
+  request and accepted this feature's response, registering the device on its display. The
+  `CMD_CHALLENGE_REQ`/`CMD_CHALLENGE_RESP` half that capture showed following it has not been
+  exercised against a real hub: that same real KLR200 run never sent a follow-up challenge, unlike
+  the capture. Whether that's because the challenge is conditional on something (device category,
+  hub firmware) or simply doesn't apply here is unconfirmed. That capture also shows the real device
   reporting a persistent identity in its `CMD_ADDRESS_RESP` distinct from its own node/session
   address — a distinction the io-homecontrol wire format appears to track generally, not something
   specific to that one device. This feature's emulated device only ever has one identity to offer
@@ -899,7 +906,9 @@ Extraction)" (not configurable).
   extraction seems stuck, give it a few more seconds before assuming failure. Confirmed working
   with SX1262 on both sides (as the *hub* and as the *responder*, the more demanding direction for
   this specific risk) — occasionally needing one automatic retry at the key-init or key-transfer
-  step is expected and not a sign of failure. While an attempt is in progress (any state past the
+  step is expected and not a sign of failure. Also confirmed against a real third-party hub (a
+  Velux KLR200, GitHub issue #80), which previously stalled completely on this exact risk before the
+  fix; after it, the full extraction completed first-try with no retries needed. While an attempt is in progress (any state past the
   initial arm) the responder also holds the request channel instead of running its normal
   background channel scan — and defers its own background status polls, for the same reason a
   linked remote's press does — so it doesn't itself contribute to a missed reply by having hopped
@@ -939,7 +948,8 @@ Extraction)" (not configurable).
 > **⚠️ Receive-only, but it recovers a real secret.** This feature never transmits anything. It
 > listens for a frame a 1W remote broadcasts during its key-copy gesture and decrypts it. The
 > decryption needs no secret of its own — see the security note below — so treat the recovered key
-> exactly as you would treat your `system_key`.
+> exactly as you would treat your `system_key`. Recover a key only from a remote or network you own
+> or are authorized to access — see the project [Disclaimer](../README.md#disclaimer--license).
 
 One-way (1W) installations — a handheld remote driving a shutter or awning directly, with no hub —
 have their own network key. This feature recovers it by overhearing a single `0x30` "add

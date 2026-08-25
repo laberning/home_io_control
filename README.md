@@ -342,6 +342,6 @@ This project is only possible thanks to the effort and shared knowledge from the
 ## Disclaimer & License
 
 > [!WARNING]
-> **This tool is designed for educational and testing purposes, provided "as is", without warranty of any kind. It is forbidden in most countries to interact with IO-Homecontrol devices that are not yours.**
+> **This project is built for interoperability and right-to-repair: freeing devices, hubs, and networks you already own from lock-in, provided "as is", without warranty of any kind. Only use it on devices, hubs, and networks you own or are authorized to modify — doing so with someone else's is unauthorized access, which is illegal in most jurisdictions.**
 
 This project is licensed under the [MIT License](https://github.com/laberning/home_io_control/blob/main/LICENSE).
