@@ -46,6 +46,12 @@ jobs:
       - uses: actions/checkout@v7
       - run: make docs-link-check
 
+  key-material-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: make key-material-scan
+
   test-compile:
     runs-on: ubuntu-24.04
     steps:

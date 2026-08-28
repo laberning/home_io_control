@@ -126,6 +126,16 @@ tuning-sync:
 	@echo "Checking tuning parameter sync (tuning.py <-> tuning_registry.cpp)..."
 	@python3 scripts/check-tuning-sync.py
 
+# Backstop scan for accidentally-committed, byte-exact key-transfer/challenge-response frames in
+# tracked prose/doc-shaped and source files (*.md/*.txt/*.yaml/*.yml/*.cpp/*.h/*.hpp outside
+# tests/corpus/captures/, which has its own stronger crypto-verifying gate above), plus a check
+# that no *_key value from a local config/secrets.yaml (if one exists) leaks verbatim into any
+# tracked file. See scripts/check-key-material.py's module docstring for both algorithms.
+key-material-scan:
+	@echo "Scanning for accidentally-committed key material..."
+	@python3 scripts/check-key-material.py
+	@python3 scripts/check_key_material_test.py
+
 # Cross-language check: this component's hand-built paste-ready YAML emitters
 # (build_oneway_adoption_report(), build_key_extraction_report(), build_device_yaml_snippet()) must
 # emit keys that exist in their real ESPHome schemas -- see scripts/check-yaml-emitters.py.
@@ -303,13 +313,14 @@ doxygen:
 
 # Every sub-target of `lint` below must have a matching CI job in .github/workflows/ci.yml,
 # so a local-only check can never silently drift out of CI coverage:
-#   format-check     -> format
-#   yamllint         -> yamllint
-#   clang-tidy       -> tidy
-#   tuning-sync      -> tuning-sync
-#   corpus-validate  -> corpus-validate
-#   docs-link-check  -> docs-link-check
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync corpus-validate docs-link-check
+#   format-check        -> format
+#   yamllint            -> yamllint
+#   clang-tidy          -> tidy
+#   tuning-sync         -> tuning-sync
+#   corpus-validate     -> corpus-validate
+#   docs-link-check     -> docs-link-check
+#   key-material-scan   -> key-material-scan
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync corpus-validate docs-link-check key-material-scan
 test: unit-test unit-test-asan firmware-test
 check: lint test doxygen
 
@@ -323,6 +334,7 @@ test-unit: unit-test
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
 		docs-link-check \
+		key-material-scan \
 		fuzz-frame \
 		firmware-test unit-test unit-test-asan host-run clean-host lint test check \
 		test-compile test-unit \
