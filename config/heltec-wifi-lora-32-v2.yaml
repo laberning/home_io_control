@@ -22,10 +22,9 @@ esphome:
     - id: device_dimmer
       name: "Dimmable Light"
 
-esp32:
-  variant: esp32
-  framework:
-    type: esp-idf
+# Board SPI bus + radio pinout — single source of truth in config/boards/.
+packages:
+  board: !include boards/heltec-v2.yaml
 
 logger:
   level: DEBUG
@@ -49,13 +48,6 @@ i2c:
     ignore_strapping_warning: true
   scan: false
   frequency: 400kHz
-
-spi:
-  clk_pin:
-    number: 5
-    ignore_strapping_warning: true
-  mosi_pin: 27
-  miso_pin: 19
 
 external_components:
   - source:
@@ -165,10 +157,6 @@ display:
       it.printf(0, 46, id(oled_font_small), "%s %s", id(oled_active_cover).c_str(), id(oled_status_text).c_str());
 
 home_io_control:
-  cs_pin: 18
-  rst_pin: 14
-  dio0_pin: 26
-  radio_type: sx1276
   node_id: !secret hub_node_id
   system_key: !secret hub_system_key
   exposed_senders:

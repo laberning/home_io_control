@@ -1,0 +1,27 @@
+# Board pinout — Heltec WiFi LoRa32 V3.2 (ESP32-S3 + Semtech SX1262).
+#
+# The single source of truth for this board's SPI bus and radio pin assignment. Consumed via
+# `packages:` by every config/*-v3*.yaml. Holds ONLY what is genuinely per-board: the esp32
+# variant/framework, the SPI pin block, and the radio pin subset of home_io_control:. Everything
+# else (node_id, system_key, entities, device name) belongs to the consuming file, which
+# deep-merges its own home_io_control: keys on top of these.
+#
+# V3.2 has the TCXO at 1.8 V and no external PA amplifier (no FEM pins).
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+spi:
+  clk_pin: 9
+  mosi_pin: 10
+  miso_pin: 11
+
+home_io_control:
+  cs_pin: 8
+  rst_pin: 12
+  dio1_pin: 14
+  busy_pin: 13
+  radio_type: sx1262
+  tcxo_voltage: 1_8V

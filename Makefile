@@ -88,7 +88,7 @@ format-check:
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
 	@echo "Linting YAML configuration files..."
-	yamllint config/tests/*.yaml config/*.yaml tests/corpus/captures/ .github/workflows/*.yml .github/dependabot.yml
+	yamllint config/tests/*.yaml config/boards/*.yaml config/*.yaml tests/corpus/captures/ .github/workflows/*.yml .github/dependabot.yml
 
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
 # (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.
@@ -141,6 +141,12 @@ key-material-scan:
 # emit keys that exist in their real ESPHome schemas -- see scripts/check-yaml-emitters.py.
 yaml-emitter-sync:
 	@python3 scripts/check-yaml-emitters.py
+
+# Cross-source check: board pinouts documented in README.md / docs/home_io_control.md must match
+# the single source of truth in config/boards/*.yaml -- see scripts/check-board-pinouts.py.
+board-pinout-sync:
+	@echo "Checking board pinout sync (docs <-> config/boards/)..."
+	@python3 scripts/check-board-pinouts.py
 
 # Detects (and reports) config/tests/.esphome/build/<env>/ dirs with a stale or
 # half-regenerated object cache; see scripts/check-build-cache.py. Wired automatically
@@ -252,7 +258,12 @@ HOST_EXTRA_FLAGS ?=
 # tests exercise the sources under the same language rules the firmware does. They were on c++17,
 # which meant C++20 library calls the device build accepts -- and that clang-tidy's device-side
 # analysis actively recommends, e.g. modernize-use-starts-ends-with -- would not compile here.
-HOST_CXXFLAGS := -std=c++20 -Wall -Wextra -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
+# -Werror=switch: several switches over DeviceType / capability-class enums deliberately omit a
+# default: label so an unhandled new enumerator is caught at build time rather than silently
+# mapping to UNKNOWN. The reverse cross-language sync tests (device_type_sync_test.cpp) rely on
+# every enumerator being reachable through a named case, so this promotion is what makes that
+# guarantee hard on the host build.
+HOST_CXXFLAGS := -std=c++20 -Wall -Wextra -Werror=switch -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
                  $(UNIT_TEST_DEFINES) $(INCLUDES) $(HOST_EXTRA_FLAGS)
 
 HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)
@@ -317,10 +328,12 @@ doxygen:
 #   yamllint            -> yamllint
 #   clang-tidy          -> tidy
 #   tuning-sync         -> tuning-sync
+#   yaml-emitter-sync   -> yaml-emitter-sync
+#   board-pinout-sync   -> board-pinout-sync
 #   corpus-validate     -> corpus-validate
 #   docs-link-check     -> docs-link-check
 #   key-material-scan   -> key-material-scan
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync corpus-validate docs-link-check key-material-scan
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync board-pinout-sync corpus-validate docs-link-check key-material-scan
 test: unit-test unit-test-asan firmware-test
 check: lint test doxygen
 

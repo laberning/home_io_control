@@ -211,9 +211,15 @@ const char *yaml_device_type_name(DeviceType type) {
       return "intrusion_alarm";
     case DeviceType::SWINGING_SHUTTER:
       return "swinging_shutter";
-    default:
+    // Not YAML-selectable (nullptr, so callers fall back to a raw numeric value). Listed
+    // explicitly instead of default: so -Wswitch flags any new DeviceType that skips this switch.
+    case DeviceType::BEACON:
+    case DeviceType::VENTILATION_POINT:
+    case DeviceType::EXTERIOR_HEATING:
+    case DeviceType::HEAT_PUMP:
       return nullptr;
   }
+  return nullptr;
 }
 
 DeviceCapabilityClass device_capability_class(DeviceType type) {
@@ -256,9 +262,13 @@ DeviceCapabilityClass device_capability_class(DeviceType type) {
       return DeviceCapabilityClass::SENSOR;
 
     case DeviceType::UNKNOWN:
-    default:
       return DeviceCapabilityClass::UNKNOWN;
   }
+  // No default: -Wswitch flags any new DeviceType not handled above (a hard error in the host unit
+  // build via -Werror=switch, a warning in the firmware build), rather than letting it fall through
+  // silently to UNKNOWN (which would make known_device_matches_entity_class() accept everything for
+  // that type).
+  return DeviceCapabilityClass::UNKNOWN;
 }
 
 const char *device_capability_class_name(DeviceType type) {
@@ -278,9 +288,9 @@ const char *device_capability_class_name(DeviceType type) {
     case DeviceCapabilityClass::LOCK:
       return "lock";
     case DeviceCapabilityClass::UNKNOWN:
-    default:
       return "unknown";
   }
+  return "unknown";
 }
 
 bool device_supports_position_control(DeviceType type) {
@@ -302,25 +312,73 @@ bool device_supports_status_requests(DeviceType type) {
 }
 
 bool device_supports_tilt(DeviceType type) {
+  // No default: every DeviceType is listed so -Wswitch catches any new one (error in the host
+  // unit build, warning in the firmware build), forcing an explicit tilt/vent decision.
   switch (type) {
     case DeviceType::VENETIAN_BLIND:
     case DeviceType::BLIND:
     case DeviceType::EXTERNAL_VENETIAN_BLIND:
     case DeviceType::LOUVRE_BLIND:
       return true;
-    default:
+    case DeviceType::UNKNOWN:
+    case DeviceType::ROLLER_SHUTTER:
+    case DeviceType::AWNING:
+    case DeviceType::WINDOW_OPENER:
+    case DeviceType::GARAGE_OPENER:
+    case DeviceType::LIGHT:
+    case DeviceType::GATE_OPENER:
+    case DeviceType::ROLLING_DOOR_OPENER:
+    case DeviceType::LOCK:
+    case DeviceType::SCREEN:
+    case DeviceType::BEACON:
+    case DeviceType::DUAL_SHUTTER:
+    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
+    case DeviceType::ON_OFF_SWITCH:
+    case DeviceType::HORIZONTAL_AWNING:
+    case DeviceType::CURTAIN_TRACK:
+    case DeviceType::VENTILATION_POINT:
+    case DeviceType::EXTERIOR_HEATING:
+    case DeviceType::HEAT_PUMP:
+    case DeviceType::INTRUSION_ALARM:
+    case DeviceType::SWINGING_SHUTTER:
       return false;
   }
+  return false;
 }
 
 bool device_supports_vent(DeviceType type) {
+  // No default: every DeviceType is listed so -Wswitch catches any new one (error in the host
+  // unit build, warning in the firmware build), forcing an explicit tilt/vent decision.
   switch (type) {
     case DeviceType::WINDOW_OPENER:
     case DeviceType::VENTILATION_POINT:
       return true;
-    default:
+    case DeviceType::UNKNOWN:
+    case DeviceType::VENETIAN_BLIND:
+    case DeviceType::ROLLER_SHUTTER:
+    case DeviceType::AWNING:
+    case DeviceType::GARAGE_OPENER:
+    case DeviceType::LIGHT:
+    case DeviceType::GATE_OPENER:
+    case DeviceType::ROLLING_DOOR_OPENER:
+    case DeviceType::LOCK:
+    case DeviceType::BLIND:
+    case DeviceType::SCREEN:
+    case DeviceType::BEACON:
+    case DeviceType::DUAL_SHUTTER:
+    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
+    case DeviceType::ON_OFF_SWITCH:
+    case DeviceType::HORIZONTAL_AWNING:
+    case DeviceType::EXTERNAL_VENETIAN_BLIND:
+    case DeviceType::LOUVRE_BLIND:
+    case DeviceType::CURTAIN_TRACK:
+    case DeviceType::EXTERIOR_HEATING:
+    case DeviceType::HEAT_PUMP:
+    case DeviceType::INTRUSION_ALARM:
+    case DeviceType::SWINGING_SHUTTER:
       return false;
   }
+  return false;
 }
 
 const char *device_operation_profile_name(DeviceType type) {
@@ -338,10 +396,15 @@ const char *device_operation_profile_name(DeviceType type) {
       return "sensor";
     case DeviceCapabilityClass::BEACON:
       return "beacon";
+    // COVER/LIGHT/SWITCH are handled by the position/binary guards above and never reach here;
+    // listed explicitly (no default:) so -Wswitch covers any new capability class.
+    case DeviceCapabilityClass::COVER:
+    case DeviceCapabilityClass::LIGHT:
+    case DeviceCapabilityClass::SWITCH:
     case DeviceCapabilityClass::UNKNOWN:
-    default:
       return "unknown";
   }
+  return "unknown";
 }
 
 std::string format_device_type_diagnostic(DeviceType type) {

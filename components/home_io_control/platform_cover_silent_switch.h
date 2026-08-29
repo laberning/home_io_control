@@ -9,6 +9,7 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/core/component.h"
 #include "hub_core.h"
+#include "platform_entity_base.h"
 
 namespace esphome {
 namespace home_io_control {
@@ -25,16 +26,8 @@ namespace home_io_control {
 /// IOHomeAcceptForeignPairingSwitch: the setting is per actuator. Nothing on the wire reports a
 /// device's current profile, so this reflects only what this hub has been told to send — there is
 /// no readback to reconcile against, and none is faked.
-class IOHomeCoverSilentSwitch : public switch_::Switch, public Component {
+class IOHomeCoverSilentSwitch : public switch_::Switch, public Component, public DeviceBoundCompanion {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-
-  /// @brief Set the device ID whose travel profile this switch selects.
-  /// @param id Hexadecimal node ID string (e.g. "123ABC").
-  void set_device_id(const std::string &id) { this->device_id_ = id; }
-
   /// @brief Publish the boot state declared in YAML so Home Assistant starts in sync.
   void setup() override;
 
@@ -49,9 +42,6 @@ class IOHomeCoverSilentSwitch : public switch_::Switch, public Component {
   /// @brief Apply the requested travel profile to the bound device.
   /// @param state True for silent (slower) operation.
   void write_state(bool state) override;
-
-  IOHomeControlComponent *parent_{nullptr};
-  std::string device_id_;
 };
 
 }  // namespace home_io_control

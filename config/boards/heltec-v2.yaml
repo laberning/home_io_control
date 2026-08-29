@@ -1,0 +1,26 @@
+# Board pinout — Heltec WiFi LoRa32 V2 (ESP32 + Semtech SX1276).
+#
+# The single source of truth for this board's SPI bus and radio pin assignment. Consumed via
+# `packages:` by every config/*-v2*.yaml. Holds ONLY what is genuinely per-board: the esp32
+# variant/framework, the SPI pin block, and the radio pin subset of home_io_control:. Everything
+# else (node_id, system_key, entities, device name, OLED) belongs to the consuming file, which
+# deep-merges its own home_io_control: keys on top of these.
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+spi:
+  clk_pin:
+    number: 5
+    # GPIO5 is a strapping pin on the ESP32; it is only ever driven as SPI CLK here.
+    ignore_strapping_warning: true
+  mosi_pin: 27
+  miso_pin: 19
+
+home_io_control:
+  cs_pin: 18
+  rst_pin: 14
+  dio0_pin: 26
+  radio_type: sx1276

@@ -54,6 +54,8 @@ The table below lists board mappings that are known to be plausible for this com
 
 GPIO5 (`clk_pin` on the classic-ESP32 boards above) and GPIO3 (`miso_pin` on the ESP32-S3 T3-S3 boards) are hardware strapping pins. ESPHome refuses to reuse a strapping pin as a plain GPIO unless `ignore_strapping_warning: true` is set on that pin's expanded schema, e.g. `clk_pin: {number: 5, ignore_strapping_warning: true}` — see [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml) or [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) for the pattern.
 
+The `config/*.yaml` files linked in the table above are **not standalone**: each one pulls its board's `spi:` bus and radio pins from a package with `packages: {board: !include boards/heltec-v3.yaml}`. The per-board pinouts live once in [config/boards/](https://github.com/laberning/home_io_control/tree/main/config/boards) (`heltec-v2.yaml`, `heltec-v3.yaml`, `t3s3.yaml`). To reuse one of those configs, copy the matching `config/boards/*.yaml` alongside it, or inline the pin values from this table.
+
 ### Confirmed Board Notes
 
 - Heltec LoRa32 v2 is the confirmed SX1276 reference platform used during development. Pairing (discover & pair) is confirmed working on this board.
@@ -90,6 +92,7 @@ Both `esp-idf` and `arduino` framework are supported, but testing and developmen
 
 ### Simple Example
 
+<!-- board-pinout: heltec-v2 -->
 ```yaml
 esphome:
   name: io-homecontrol

@@ -1,0 +1,31 @@
+# Board pinout — LilyGo T3-S3 (ESP32-S3 + Semtech LR1121).
+#
+# The single source of truth for this board's SPI bus and radio pin assignment. Consumed via
+# `packages:` by every config/t3s3-*.yaml. Holds ONLY what is genuinely per-board: the esp32
+# variant/framework, the SPI pin block, and the radio pin subset of home_io_control:. Everything
+# else (node_id, system_key, entities, device name) belongs to the consuming file, which
+# deep-merges its own home_io_control: keys on top of these.
+#
+# Not the plain SX1276/SX1262 "LilyGO T3-S3" boards in the README hardware table: same
+# silkscreen/form factor, different radio chip, different IRQ pin. TCXO at 3.0 V, no FEM pins.
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+spi:
+  clk_pin: 5
+  mosi_pin: 6
+  miso_pin:
+    number: 3
+    # GPIO3 is a strapping pin on the ESP32-S3; it is only ever driven as SPI MISO here.
+    ignore_strapping_warning: true
+
+home_io_control:
+  cs_pin: 7
+  rst_pin: 8
+  busy_pin: 34
+  dio1_pin: 36  # LR1121 DIO9 — reuses the dio1_pin key
+  radio_type: lr1121
+  tcxo_voltage: 3_0V

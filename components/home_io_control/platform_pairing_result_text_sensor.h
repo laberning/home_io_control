@@ -7,6 +7,7 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "hub_core.h"
+#include "platform_entity_base.h"
 
 namespace esphome {
 namespace home_io_control {
@@ -18,12 +19,8 @@ namespace home_io_control {
 /// PairingTelemetry::result_sensor_string() — the Phase 2 automated-rig read-back contract.
 /// Nothing is published before the first pairing attempt of this boot.
 /// @ingroup hioc_platforms
-class IOHomePairingResultTextSensor : public text_sensor::TextSensor, public Component {
+class IOHomePairingResultTextSensor : public text_sensor::TextSensor, public Component, public HubBoundEntity {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-
   /// @brief Register the pairing-result callback.
   void setup() override;
 
@@ -37,8 +34,6 @@ class IOHomePairingResultTextSensor : public text_sensor::TextSensor, public Com
  protected:
   /// @brief Publish the latest pairing telemetry result string.
   void on_pairing_result_();
-
-  IOHomeControlComponent *parent_{nullptr};
 };
 
 }  // namespace home_io_control

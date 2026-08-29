@@ -6,10 +6,9 @@ esphome:
   name: ${device_name}
   friendly_name: ${device_friendly_name}
 
-esp32:
-  variant: esp32
-  framework:
-    type: esp-idf
+# Board SPI bus + radio pinout — single source of truth in config/boards/.
+packages:
+  board: !include boards/heltec-v2.yaml
 
 logger:
   level: DEBUG
@@ -26,13 +25,6 @@ ota:
   - platform: esphome
     password: !secret ota_password
 
-spi:
-  clk_pin:
-    number: 5
-    ignore_strapping_warning: true
-  mosi_pin: 27
-  miso_pin: 19
-
 external_components:
   - source:
       type: local
@@ -40,10 +32,6 @@ external_components:
 
 home_io_control:
   id: home_io_hub
-  cs_pin: 18
-  rst_pin: 14
-  dio0_pin: 26
-  radio_type: sx1276
   node_id: !secret hub_node_id
   system_key: !secret hub_system_key
 

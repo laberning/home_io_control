@@ -18,6 +18,7 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/core/component.h"
 #include "hub_core.h"
+#include "platform_entity_base.h"
 
 namespace esphome {
 namespace home_io_control {
@@ -26,12 +27,8 @@ namespace home_io_control {
 /// immediately. Publishes its own state changes when the hub disarms itself (after a key is
 /// recovered, or on auto-off timeout), not just on a user-initiated toggle.
 /// @ingroup hioc_platforms
-class IOHomeRecoverOneWayKeySwitch : public switch_::Switch, public Component {
+class IOHomeRecoverOneWayKeySwitch : public switch_::Switch, public Component, public HubBoundEntity {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-
   /// @brief Register the armed-state callback so this entity mirrors the hub's own disarm events.
   void setup() override;
 
@@ -46,8 +43,6 @@ class IOHomeRecoverOneWayKeySwitch : public switch_::Switch, public Component {
   /// @brief Arm or disarm the hub's 1W key-recovery listener.
   /// @param state Desired switch state.
   void write_state(bool state) override;
-
-  IOHomeControlComponent *parent_{nullptr};
 };
 
 }  // namespace home_io_control

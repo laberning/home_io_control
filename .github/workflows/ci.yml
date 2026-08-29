@@ -33,6 +33,18 @@ jobs:
       - uses: actions/checkout@v7
       - run: make tuning-sync
 
+  yaml-emitter-sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: make yaml-emitter-sync
+
+  board-pinout-sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: make board-pinout-sync
+
   corpus-validate:
     runs-on: ubuntu-24.04
     steps:

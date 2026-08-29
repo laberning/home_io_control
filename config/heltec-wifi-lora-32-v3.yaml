@@ -11,10 +11,9 @@ esphome:
   build_flags:
     - -DIOHOME_FRAME_LOG
 
-esp32:
-  variant: esp32s3
-  framework:
-    type: esp-idf
+# Board SPI bus + radio pinout — single source of truth in config/boards/.
+packages:
+  board: !include boards/heltec-v3.yaml
 
 logger:
   level: DEBUG
@@ -31,23 +30,12 @@ ota:
   - platform: esphome
     password: !secret ota_password
 
-spi:
-  clk_pin: 9
-  mosi_pin: 10
-  miso_pin: 11
-
 external_components:
   - source:
       type: local
       path: components
 
 home_io_control:
-  cs_pin: 8
-  rst_pin: 12
-  dio1_pin: 14
-  busy_pin: 13
-  radio_type: sx1262
-  tcxo_voltage: 1_8V
   node_id: !secret hub_node_id
   system_key: !secret hub_system_key
   exposed_senders:

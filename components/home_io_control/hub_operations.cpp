@@ -3,6 +3,7 @@
 #include "proto_commands.h"
 
 #include <algorithm>
+#include <cstdio>
 
 /// @file hub_operations.cpp
 /// @brief High-level command execution and queued operation dispatch.
@@ -22,6 +23,15 @@ namespace esphome {
 namespace home_io_control {
 
 namespace {
+
+/// Stack-buffer size for a pre-formatted execute action phrase such as
+/// "position=100%% tilt=100%%".
+constexpr size_t EXECUTE_ACTION_BUF_SIZE = 40;
+
+/// Wire-scale "fully open" position for a FORCE_OPEN. A normal actuator reads fully open as 0;
+/// an IoDevice::inverted actuator (a horizontal awning, say) reads it as 100.
+constexpr uint8_t FORCE_OPEN_WIRE_POSITION = 0;
+constexpr uint8_t FORCE_OPEN_WIRE_POSITION_INVERTED = 100;
 
 /// @brief Return the human-readable verb for a position-style command.
 /// @param dev Device receiving the command.
@@ -73,6 +83,56 @@ const char *position_rejection_profile(const IoDevice &dev, uint8_t position) {
   if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT)
     return "0-100";
   return detail::is_binary_entity_position(position) ? "cover_position or binary_on_off" : "cover_position";
+}
+
+/// @brief The queue-time capability guard for one family of queued operation.
+///
+/// Every `queue_*` method applies the same early-reject as its execute-time counterpart, for fast
+/// user feedback, with a "queued ..." rejection noun. This table is the one place those pairings
+/// are recorded, so a deliberate asymmetry is a visible row rather than an accident. The lone
+/// `queue_*` method with a guard that is NOT a row here is `queue_device_command`: it returns
+/// bool and uses the command name as its rejection noun, so it keeps its guard inline (see there).
+/// NOTE the asymmetry `queue_set_device_position` carries a COVER guard that `set_device_position`
+/// deliberately does *not* — light/switch/lock all funnel through `set_device_position`, so an
+/// entity-class guard there would break them; at queue time each entity has its own method.
+struct QueueGuard {
+  bool (*accepts)(const IoDevice &dev);  ///< false → reject this operation for this device.
+  const char *rejection_noun;            ///< e.g. "queued cover command".
+  const char *expected;                  ///< e.g. "cover entity".
+};
+
+constexpr QueueGuard QUEUE_GUARD_COVER{
+    [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::COVER); },
+    "queued cover command", "cover entity"};
+constexpr QueueGuard QUEUE_GUARD_TILT{[](const IoDevice &d) { return detail::known_device_accepts_execute_tilt(d); },
+                                      "queued tilt command", "tilt-capable cover"};
+constexpr QueueGuard QUEUE_GUARD_POSITION_AND_TILT{
+    [](const IoDevice &d) { return detail::known_device_accepts_execute_tilt(d); }, "queued position+tilt command",
+    "tilt-capable cover"};
+constexpr QueueGuard QUEUE_GUARD_LIGHT{
+    [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::LIGHT); },
+    "queued light command", "light entity"};
+constexpr QueueGuard QUEUE_GUARD_LOCK{
+    [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::LOCK); },
+    "queued lock command", "lock entity"};
+constexpr QueueGuard QUEUE_GUARD_SWITCH{
+    [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::SWITCH); },
+    "queued switch command", "switch entity"};
+constexpr QueueGuard QUEUE_GUARD_STATUS{
+    [](const IoDevice &d) { return detail::known_device_supports_status_requests(d); }, "queued status request",
+    "status-capable actuator"};
+
+/// @brief Apply one QueueGuard. Returns true (and logs) when the operation must be rejected.
+///
+/// Matches the historical guard exactly: an unregistered/unknown device (dev == nullptr) is *not*
+/// rejected here — it passes through so discovery and imported devices keep working.
+bool queue_guard_rejects(IOHomeControlComponent *hub, const std::string &device_id, const QueueGuard &guard) {
+  const IoDevice *dev = hub->get_device(device_id);
+  if (dev != nullptr && !guard.accepts(*dev)) {
+    detail::log_rejected_operation(device_id, *dev, guard.rejection_noun, guard.expected);
+    return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -168,132 +228,92 @@ bool IOHomeControlComponent::handle_error_response_(const std::string &device_id
   return false;
 }
 
-bool IOHomeControlComponent::set_device_position(const std::string &device_id, uint8_t position) {
+bool IOHomeControlComponent::run_execute_operation_(const std::string &device_id, const ExecuteRequestSpec &spec,
+                                                    const std::function<bool(const IoDevice &)> &accepts,
+                                                    const char *rejection_profile,
+                                                    const std::function<bool(IoFrame &, const IoDevice &)> &build) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
     return false;
-
-  const char *action = position_command_action(*dev, position);
 
   // Once a device family is known, use the profile helpers to reject YAML/entity mismatches
   // before they hit the radio path. Unknown types still pass through so discovery and imported
   // devices keep working as before.
-  if (!detail::known_device_accepts_execute_position(*dev, position)) {
-    detail::log_rejected_operation(device_id, *dev, action, position_rejection_profile(*dev, position));
+  if (!accepts(*dev)) {
+    detail::log_rejected_operation(device_id, *dev, spec.action, rejection_profile);
     return false;
   }
 
   this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
-  ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", action, device_id.c_str(),
+  ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", spec.action, device_id.c_str(),
            operation_profile_name(*dev));
 
   IoFrame request;
-  if (!create_execute_position(request, this->node_id_, dev->node_id, true, position, dev->silent)) {
+  if (!build(request, *dev)) {
     this->poll_policy_.clear(device_id);
     return false;
   }
-  bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
-  if (!ok) {
+  if (!this->execute_request_and_update_(device_id, request, true, 0)) {
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }
-  this->arm_execute_confirmation_poll_(device_id, position == POS_STOP);
+  this->arm_execute_confirmation_poll_(device_id, spec.settle_as_stop);
   return true;
+}
+
+bool IOHomeControlComponent::set_device_position(const std::string &device_id, uint8_t position) {
+  const auto *dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return false;
+  // action and rejection profile depend on this device's class and the requested value, so
+  // resolve them here where dev is in scope; run_execute_operation_() re-checks dev/initialized_.
+  return this->run_execute_operation_(
+      device_id, {position_command_action(*dev, position), position == POS_STOP},
+      [position](const IoDevice &d) { return detail::known_device_accepts_execute_position(d, position); },
+      position_rejection_profile(*dev, position),
+      [this, position](IoFrame &request, const IoDevice &d) {
+        return create_execute_position(request, this->node_id_, d.node_id, true, position, d.silent);
+      });
 }
 
 bool IOHomeControlComponent::execute_device_command_(const std::string &device_id, CoverCommand cmd) {
-  auto *dev = this->get_device(device_id);
-  if (dev == nullptr || !this->initialized_)
-    return false;
-
-  if (!detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
-    detail::log_rejected_operation(device_id, *dev, cover_command_name(cmd), "cover entity");
-    return false;
-  }
-
-  this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
-
-  ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", cover_command_name(cmd), device_id.c_str(),
-           operation_profile_name(*dev));
-
-  IoFrame request;
-  // FORCE_OPEN needs the device's own wire-scale "fully open" position (0, or 100 for an
-  // IoDevice::inverted device such as a horizontal awning) — create_execute_command() has no
-  // device access to resolve that, so it's built separately here where dev is in scope.
-  bool const built = cmd == CoverCommand::FORCE_OPEN
-                         ? create_force_open(request, this->node_id_, dev->node_id, true, dev->inverted ? 100 : 0)
-                         : create_execute_command(request, this->node_id_, dev->node_id, true, cmd, dev->silent);
-  if (!built) {
-    this->poll_policy_.clear(device_id);
-    return false;
-  }
-  bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
-  if (!ok) {
-    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
-    return false;
-  }
-  this->arm_execute_confirmation_poll_(device_id, cmd == CoverCommand::STOP);
-  return true;
+  return this->run_execute_operation_(
+      device_id, {cover_command_name(cmd), cmd == CoverCommand::STOP},
+      [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::COVER); },
+      "cover entity",
+      [this, cmd](IoFrame &request, const IoDevice &d) {
+        // FORCE_OPEN needs the device's own wire-scale "fully open" position (0, or 100 for an
+        // IoDevice::inverted device such as a horizontal awning) — create_execute_command() has no
+        // device access to resolve that, so it is built separately here where d is in scope.
+        return cmd == CoverCommand::FORCE_OPEN
+                   ? create_force_open(request, this->node_id_, d.node_id, true,
+                                       d.inverted ? FORCE_OPEN_WIRE_POSITION_INVERTED : FORCE_OPEN_WIRE_POSITION)
+                   : create_execute_command(request, this->node_id_, d.node_id, true, cmd, d.silent);
+      });
 }
 
 bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
-  auto *dev = this->get_device(device_id);
-  if (dev == nullptr || !this->initialized_)
-    return false;
-
-  if (!detail::known_device_accepts_execute_tilt(*dev)) {
-    detail::log_rejected_operation(device_id, *dev, "set tilt", "tilt-capable cover");
-    return false;
-  }
-
-  this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
-
-  ESP_LOGI(detail::TAG, "Sending tilt=%u%% to device %s (profile=%s)", tilt_percent, device_id.c_str(),
-           operation_profile_name(*dev));
-
-  IoFrame request;
-  if (!create_execute_tilt(request, this->node_id_, dev->node_id, true, tilt_percent)) {
-    this->poll_policy_.clear(device_id);
-    return false;
-  }
-  bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
-  if (!ok) {
-    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
-    return false;
-  }
-  this->arm_execute_confirmation_poll_(device_id, false);
-  return true;
+  char action[EXECUTE_ACTION_BUF_SIZE];
+  snprintf(action, sizeof(action), "tilt=%u%%", tilt_percent);
+  return this->run_execute_operation_(
+      device_id, {action, false}, [](const IoDevice &d) { return detail::known_device_accepts_execute_tilt(d); },
+      "tilt-capable cover",
+      [this, tilt_percent](IoFrame &request, const IoDevice &d) {
+        return create_execute_tilt(request, this->node_id_, d.node_id, true, tilt_percent);
+      });
 }
 
 bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &device_id, uint8_t position,
                                                           uint8_t tilt_percent) {
-  auto *dev = this->get_device(device_id);
-  if (dev == nullptr || !this->initialized_)
-    return false;
-
-  if (!detail::known_device_accepts_execute_tilt(*dev)) {
-    detail::log_rejected_operation(device_id, *dev, "set position+tilt", "tilt-capable cover");
-    return false;
-  }
-
-  this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
-
-  ESP_LOGI(detail::TAG, "Sending position=%u%% tilt=%u%% to device %s (profile=%s)", position, tilt_percent,
-           device_id.c_str(), operation_profile_name(*dev));
-
-  IoFrame request;
-  if (!create_execute_position_and_tilt(request, this->node_id_, dev->node_id, true, position, tilt_percent)) {
-    this->poll_policy_.clear(device_id);
-    return false;
-  }
-  bool const ok = this->execute_request_and_update_(device_id, request, true, 0);
-  if (!ok) {
-    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
-    return false;
-  }
-  this->arm_execute_confirmation_poll_(device_id, false);
-  return true;
+  char action[EXECUTE_ACTION_BUF_SIZE];
+  snprintf(action, sizeof(action), "position=%u%% tilt=%u%%", position, tilt_percent);
+  return this->run_execute_operation_(
+      device_id, {action, false}, [](const IoDevice &d) { return detail::known_device_accepts_execute_tilt(d); },
+      "tilt-capable cover",
+      [this, position, tilt_percent](IoFrame &request, const IoDevice &d) {
+        return create_execute_position_and_tilt(request, this->node_id_, d.node_id, true, position, tilt_percent);
+      });
 }
 
 bool IOHomeControlComponent::request_device_status(const std::string &device_id) {
@@ -379,11 +399,8 @@ bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool l
 }
 
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {
-  const IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
-    detail::log_rejected_operation(device_id, *dev, "queued cover command", "cover entity");
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_COVER))
     return;
-  }
 
   // Pre-scan for a pending SET_TILT so we can log its value if coalescing happens.
   uint8_t pending_tilt = 0;
@@ -407,6 +424,8 @@ bool IOHomeControlComponent::queue_device_command(const std::string &device_id, 
   const IoDevice *dev = this->get_device(device_id);
   if (dev == nullptr)
     return false;
+  // Same COVER guard as QUEUE_GUARD_COVER, kept inline here: this method returns bool and its
+  // rejection noun is the specific command name rather than a fixed "queued cover command".
   if (!detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
     detail::log_rejected_operation(device_id, *dev, cover_command_name(cmd), "cover entity");
     return false;
@@ -416,11 +435,8 @@ bool IOHomeControlComponent::queue_device_command(const std::string &device_id, 
 }
 
 void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
-  const IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !detail::known_device_accepts_execute_tilt(*dev)) {
-    detail::log_rejected_operation(device_id, *dev, "queued tilt command", "tilt-capable cover");
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_TILT))
     return;
-  }
 
   // Pre-scan for a pending SET_POSITION so we can log its value if coalescing happens.
   uint8_t pending_pos = 0;
@@ -440,20 +456,14 @@ void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id,
 
 void IOHomeControlComponent::queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position,
                                                                 uint8_t tilt_percent) {
-  const IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !detail::known_device_accepts_execute_tilt(*dev)) {
-    detail::log_rejected_operation(device_id, *dev, "queued position+tilt command", "tilt-capable cover");
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_POSITION_AND_TILT))
     return;
-  }
   this->op_queue_.enqueue_set_position_and_tilt(device_id, position, tilt_percent);
 }
 
 void IOHomeControlComponent::queue_request_device_status(const std::string &device_id) {
-  const IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !detail::known_device_supports_status_requests(*dev)) {
-    detail::log_rejected_operation(device_id, *dev, "queued status request", "status-capable actuator");
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_STATUS))
     return;
-  }
   // Keep at most one pending status poll per device. Without this, an overdue next_update can add
   // the same poll on every main-loop iteration until the first queued request is finally processed.
   this->op_queue_.enqueue_request_status(device_id);
@@ -473,11 +483,8 @@ void IOHomeControlComponent::queue_request_device_name(const std::string &device
 void IOHomeControlComponent::queue_discover_and_pair() { this->op_queue_.enqueue_discover_and_pair(); }
 
 void IOHomeControlComponent::queue_set_light_position(const std::string &device_id, uint8_t position) {
-  const IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::LIGHT)) {
-    detail::log_rejected_operation(device_id, *dev, "queued light command", "light entity");
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_LIGHT))
     return;
-  }
   this->op_queue_.enqueue_set_light_position(device_id, position);
 }
 
@@ -486,20 +493,14 @@ void IOHomeControlComponent::queue_set_light_state(const std::string &device_id,
 }
 
 void IOHomeControlComponent::queue_set_lock_state(const std::string &device_id, bool locked) {
-  const IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::LOCK)) {
-    detail::log_rejected_operation(device_id, *dev, "queued lock command", "lock entity");
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_LOCK))
     return;
-  }
   this->op_queue_.enqueue_set_lock_state(device_id, locked);
 }
 
 void IOHomeControlComponent::queue_set_switch_state(const std::string &device_id, bool on) {
-  const IoDevice *dev = this->get_device(device_id);
-  if (dev != nullptr && !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::SWITCH)) {
-    detail::log_rejected_operation(device_id, *dev, "queued switch command", "switch entity");
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_SWITCH))
     return;
-  }
   this->op_queue_.enqueue_set_switch_state(device_id, on);
 }
 

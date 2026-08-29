@@ -21,18 +21,15 @@
 #include "esphome/components/button/button.h"
 #include "esphome/core/component.h"
 #include "hub_core.h"
+#include "platform_entity_base.h"
 
 namespace esphome {
 namespace home_io_control {
 
 /// @brief Button entity that registers a configured controller identity as a 1W controller.
 /// @ingroup hioc_platforms
-class IOHomeOneWayEnrollButton : public button::Button, public Component {
+class IOHomeOneWayEnrollButton : public button::Button, public Component, public HubBoundEntity {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-
   /// @brief Set the controller identity this button enrolls.
   /// @param id Handle from the `oneway_controllers:` block.
   void set_controller_id(const std::string &id) { this->controller_id_ = id; }
@@ -49,7 +46,6 @@ class IOHomeOneWayEnrollButton : public button::Button, public Component {
   /// cannot interleave with a 2W exchange (ADR 0013).
   void press_action() override { this->parent_->send_oneway_enroll(this->controller_id_); }
 
-  IOHomeControlComponent *parent_{nullptr};
   std::string controller_id_;
 };
 

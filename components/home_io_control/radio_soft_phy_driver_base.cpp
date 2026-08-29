@@ -263,6 +263,24 @@ void SoftPhyDriverBase::rearm_rx_after_tx_() {
   this->set_mode_rx();
 }
 
+void SoftPhyDriverBase::build_gfsk_packet_params(const SoftPhyPacketParams &p, uint8_t out[GFSK_PACKET_PARAMS_LEN]) {
+  // The SetPacketParams preamble field is bit-denominated on both chips (sx126x's
+  // preamble_len_in_bits / lr11xx's pbl_len_in_bit), but preamble_bytes arrives in bytes, matching
+  // every other layer in this codebase (LONG_PREAMBLE, SHORT_PREAMBLE, the tuning defaults, the
+  // SX1276's byte-wide RegPreambleMsb/Lsb). Convert here, once, at the last step before the wire —
+  // this is the conversion the 63e2502 fix had to patch separately in each driver.
+  const uint16_t preamble_bits = p.preamble_bytes * 8;
+  out[0] = static_cast<uint8_t>(preamble_bits >> 8);  // Preamble length MSB
+  out[1] = static_cast<uint8_t>(preamble_bits);       // Preamble length LSB
+  out[2] = p.preamble_detector;                       // Preamble detector length (chip constant)
+  out[3] = p.sync_word_param;                         // Sync word length: 24 bits (chip constant)
+  out[4] = 0x00;                                      // Address comparison: off
+  out[5] = p.packet_type;                             // GFSK packet type: known/fixed length
+  out[6] = p.payload_len;                             // Configured payload length
+  out[7] = p.crc_type;                                // CRC mode (chip constant)
+  out[8] = 0x00;                                      // Whitening: off
+}
+
 void SoftPhyDriverBase::reset_rx_state_(bool force_standby) {
   // Whatever was arriving is over — delivered, timed out, or deliberately discarded. Drop the hop
   // holdoff with it, rather than leaving the next ~12 ms of hopping waiting on a deadline that no

@@ -109,24 +109,44 @@ TEST(TuningRegistry, EverySelectOptionRoundTrips) {
   MockRadio radio;
   setup_component(comp, radio);
 
+  // The three RX-bandwidth option lists are derived from the same constexpr tables production
+  // uses (via tuning_config.h accessors), so a shipping option can never be silently skipped
+  // here. Rendering matches production: bandwidth_to_string() on each row's kHz value.
+  auto bandwidth_options = [](BandwidthTableView table) {
+    std::vector<std::string> options;
+    for (size_t i = 0; i < table.size; ++i)
+      options.push_back(bandwidth_to_string(table.data[i].khz));
+    return options;
+  };
+
   const std::vector<std::pair<std::string, std::vector<std::string>>> legal_options = {
-      {"sx1262_rx_bandwidth", {"58.6", "78.2", "117.3", "156.2", "187.2"}},
-      {"sx1276_rx_bandwidth", {"20.8", "41.7", "62.5", "83.3", "125.0"}},
-      {"lr1121_rx_bandwidth", {"39.0", "46.9", "58.6", "78.2", "117.3", "156.2", "187.2"}},
+      {"sx1262_rx_bandwidth", bandwidth_options(sx1262_bandwidth_table())},
+      {"sx1276_rx_bandwidth", bandwidth_options(sx1276_bandwidth_table())},
+      {"lr1121_rx_bandwidth", bandwidth_options(lr1121_bandwidth_table())},
       {"pairing_discovery_commands", {"0x28", "0x2E", "0x28,0x2E"}},
       {"pairing_discovery_destination", {"auto", "0x00003B", "0x00003F"}},
       {"pairing_discovery_payload", {"none", "0x00"}},
       {"pairing_discovery_low_power", {"Off", "On"}},
   };
 
+  const std::set<std::string> bandwidth_params = {"sx1262_rx_bandwidth", "sx1276_rx_bandwidth", "lr1121_rx_bandwidth"};
+  size_t bandwidth_option_count = 0;
   for (const auto &entry : legal_options) {
     ASSERT_NE(find_tuning_select(entry.first), nullptr) << "expected select parameter missing: " << entry.first;
     for (const std::string &option : entry.second) {
       comp.update_tuning_select(entry.first, option);
       EXPECT_EQ(comp.get_tuning_select_value(entry.first), option)
           << "option did not round-trip: " << entry.first << " = " << option;
+      if (bandwidth_params.count(entry.first) != 0)
+        ++bandwidth_option_count;
     }
   }
+  // Floor guard: this test exists to prove every *table-derived* bandwidth option round-trips, so
+  // the guard is pinned to the bandwidth subtotal (7 SX1262 + 5 SX1276 + 7 LR1121 = 19), not to a
+  // total that also counts the hand-written non-bandwidth rows. An exact assert on the subtotal is
+  // both non-vacuous if a chip table is emptied (the original >= 27-total floor was not) and stable
+  // when an unrelated non-bandwidth select option is added later.
+  ASSERT_EQ(bandwidth_option_count, 19u);
 }
 
 // ============================================================================

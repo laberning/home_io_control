@@ -20,6 +20,7 @@
 #include "esphome/core/component.h"
 #include "hub_core.h"
 #include "oneway_transmitter.h"
+#include "platform_entity_base.h"
 
 namespace esphome {
 namespace home_io_control {
@@ -34,12 +35,8 @@ std::string format_oneway_command_report(const OneWayCommandReport &report);
 
 /// @brief Diagnostic text sensor: what this identity last put on air.
 /// @ingroup hioc_platforms
-class IOHomeOneWayLastCommandTextSensor : public text_sensor::TextSensor, public Component {
+class IOHomeOneWayLastCommandTextSensor : public text_sensor::TextSensor, public Component, public HubBoundEntity {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-
   /// @brief Set the controller identity this sensor reports on.
   /// @param id Handle from the `oneway_controllers:` block.
   void set_controller_id(const std::string &id) { this->controller_id_ = id; }
@@ -55,7 +52,6 @@ class IOHomeOneWayLastCommandTextSensor : public text_sensor::TextSensor, public
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 
  protected:
-  IOHomeControlComponent *parent_{nullptr};
   std::string controller_id_;
 };
 

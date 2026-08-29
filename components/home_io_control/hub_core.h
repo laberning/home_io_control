@@ -446,13 +446,17 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param new_name Requested UTF-8 device name.
   /// @return Structured result describing success, verification, and any validation failure.
-  virtual ManagementActionResult rename_device(const std::string &device_id, const std::string &new_name);
+  virtual ManagementActionResult rename_device(const std::string &device_id, const std::string &new_name) {
+    return this->management_actions_.rename_device(device_id, new_name);
+  }
   /// Trigger a device's physical identify (brief jog/flash) so a user can confirm which
   /// physical motor a device ID maps to.
   /// @param device_id Target device ID.
   /// @return Structured result describing success and any validation failure. `verified` is
   ///         always false — there is no readback for a physical identify jog.
-  virtual ManagementActionResult identify_device(const std::string &device_id);
+  virtual ManagementActionResult identify_device(const std::string &device_id) {
+    return this->management_actions_.identify_device(device_id);
+  }
   /// @brief Move a cover device to fully open at elevated priority, intended to bypass
   /// wind/rain soft locks.
   ///
@@ -463,12 +467,14 @@ class IOHomeControlComponent : public Component,
   /// ManagementActions::force_open_device()'s doxygen for details.
   /// @param device_id Target device ID.
   /// @return Structured result describing whether the command was queued.
-  virtual ManagementActionResult force_open_device(const std::string &device_id);
+  virtual ManagementActionResult force_open_device(const std::string &device_id) {
+    return this->management_actions_.force_open_device(device_id);
+  }
   /// Broadcast a roll-call and report every device that answers (see
   /// ManagementActions::scan_paired_devices() for the full contract: only key-holding devices
   /// answer, DeviceRegistry is never written, and zero replies is a successful result).
   /// @return Structured result whose `message` is the full multi-line report.
-  virtual ManagementActionResult scan_paired_devices();
+  virtual ManagementActionResult scan_paired_devices() { return this->management_actions_.scan_paired_devices(); }
   /// Send a single diagnostic probe frame to a registered device and report the raw reply (see
   /// ManagementActions::probe_device() for the full contract, argument formats, and safety
   /// gating). Protocol-research instrumentation for opcodes this codebase has not decoded — see
@@ -480,7 +486,9 @@ class IOHomeControlComponent : public Component,
   ///        string; ignored for "general_info3".
   /// @return Structured result whose `message` carries the reply's command byte and raw hex.
   virtual ManagementActionResult probe_device(const std::string &device_id, const std::string &probe,
-                                              const std::string &index);
+                                              const std::string &index) {
+    return this->management_actions_.probe_device(device_id, probe, index);
+  }
   /// Walk a bounded index range, one probe_device() call per index (see
   /// ManagementActions::probe_sweep()).
   /// @param device_id Target device ID.
@@ -489,7 +497,9 @@ class IOHomeControlComponent : public Component,
   /// @param last_index Last index in the sweep (inclusive).
   /// @return Structured result whose `message` is one line per index.
   virtual ManagementActionResult probe_sweep(const std::string &device_id, const std::string &probe,
-                                             const std::string &first_index, const std::string &last_index);
+                                             const std::string &first_index, const std::string &last_index) {
+    return this->management_actions_.probe_sweep(device_id, probe, first_index, last_index);
+  }
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
@@ -833,6 +843,27 @@ class IOHomeControlComponent : public Component,
   ///         @ref ExchangeOutcome and decisions::retry_after_unconfirmed_accept_is_safe()).
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
                                    uint32_t retry_after_fail_ms = 0);
+
+  /// @brief Everything one execute-family operation needs beyond its own guard and frame builder.
+  struct ExecuteRequestSpec {
+    const char *action;   ///< Verb/phrase for the "Sending ..." and rejection logs.
+    bool settle_as_stop;  ///< Passed through to arm_execute_confirmation_poll_().
+  };
+  /// Shared skeleton for the four execute-family operations (position, named command, tilt,
+  /// position+tilt): device lookup + initialized guard, capability guard, poll-tracking start,
+  /// "Sending ..." log, frame build, exchange, failure backoff, and the settle poll. The four
+  /// public methods supply only their guard predicate, rejection profile label, and frame
+  /// builder.
+  /// @param device_id Target device ID.
+  /// @param spec Pre-formatted action phrase and the settle-as-stop flag.
+  /// @param accepts Capability guard; returns false to reject the operation for this device.
+  /// @param rejection_profile Expected-profile label for the rejection log.
+  /// @param build Fills the request frame from the resolved device; returns false on failure.
+  /// @return true when the exchange succeeded and the settle poll was armed.
+  bool run_execute_operation_(const std::string &device_id, const ExecuteRequestSpec &spec,
+                              const std::function<bool(const IoDevice &)> &accepts, const char *rejection_profile,
+                              const std::function<bool(IoFrame &, const IoDevice &)> &build);
+
   /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.
   /// @param device_id Target device ID.
   /// @param cmd Named command to execute.

@@ -18,6 +18,7 @@
 // this ordering matters and how it stayed invisible in host unit tests).
 #include "esphome/components/button/button.h"
 #include "hub_core.h"
+#include "platform_entity_base.h"
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
 
@@ -27,18 +28,14 @@ namespace home_io_control {
 /// @brief Hub-level button entity: press dispatches to
 /// IOHomeControlComponent::trigger_lr1121_firmware_update().
 /// @ingroup hioc_platforms
-class IOHomeLr1121FirmwareUpdateButton : public button::Button, public Component {
+class IOHomeLr1121FirmwareUpdateButton : public button::Button, public Component, public HubBoundEntity {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
   void dump_config() override {}
 
  protected:
   /// @brief When pressed, hand off to the hub — see hub_lr1121_firmware_update.cpp for the full
   /// guard/decision/flash sequence.
   void press_action() override { this->parent_->trigger_lr1121_firmware_update(); }
-  IOHomeControlComponent *parent_{nullptr};
 };
 
 }  // namespace home_io_control

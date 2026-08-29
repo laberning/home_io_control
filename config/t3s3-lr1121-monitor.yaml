@@ -14,10 +14,9 @@ esphome:
   build_flags:
     - -DIOHOME_FRAME_LOG
 
-esp32:
-  variant: esp32s3
-  framework:
-    type: esp-idf
+# Board SPI bus + radio pinout — single source of truth in config/boards/.
+packages:
+  board: !include boards/t3s3.yaml
 
 logger:
   level: DEBUG
@@ -34,24 +33,11 @@ ota:
   - platform: esphome
     password: !secret ota_password
 
-spi:
-  clk_pin: 5
-  mosi_pin: 6
-  miso_pin:
-    number: 3
-    ignore_strapping_warning: true
-
 external_components:
   - source:
       type: local
       path: components
 
 home_io_control:
-  cs_pin: 7
-  rst_pin: 8
-  busy_pin: 34
-  dio1_pin: 36  # LR1121 DIO9 — reuses the dio1_pin key (design plan §3.3)
-  radio_type: lr1121
-  tcxo_voltage: 3_0V
   node_id: ABC124
   system_key: ABCDEF1234567890ABCDEF1234567890

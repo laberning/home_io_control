@@ -17,6 +17,7 @@ Key concepts:
 
 ## Minimal Example
 
+<!-- board-pinout: heltec-v2 -->
 ```yaml
 api:
 
@@ -53,6 +54,7 @@ button:
 
 The `home_io_control:` block defines the shared radio/controller hub. All cover, light, lock, switch, and button entities attach to this hub.
 
+<!-- board-pinout: heltec-v2 -->
 ```yaml
 home_io_control:
   cs_pin: 18
@@ -512,6 +514,7 @@ Notes:
 
 ### Minimal SX1276 Cover Controller
 
+<!-- board-pinout: heltec-v2 -->
 ```yaml
 esphome:
   name: io-homecontrol-sx1276
@@ -566,6 +569,7 @@ With `io_device_type: "awning"`, the example above also generates an `Awning Fav
 
 ### Minimal SX1262 Cover Controller
 
+<!-- board-pinout: heltec-v3 -->
 ```yaml
 esphome:
   name: io-homecontrol-sx1262
@@ -620,6 +624,7 @@ With `io_device_type: "awning"`, the example above also generates an `Awning Fav
 
 ### Minimal LR1121 Cover Controller
 
+<!-- board-pinout: t3s3 -->
 ```yaml
 esphome:
   name: io-homecontrol-lr1121
@@ -674,6 +679,7 @@ button:
 
 ### Minimal Example with all Device Types: Cover, Light, Lock, and Switch
 
+<!-- board-pinout: heltec-v2 -->
 ```yaml
 home_io_control:
   cs_pin: 18
@@ -729,6 +735,20 @@ For larger working examples, see the configs already in this repo:
 - [config/heltec-wifi-lora-32-v2-all-types.yaml](../config/heltec-wifi-lora-32-v2-all-types.yaml): SX1276 Heltec LoRa32 V2 controller config without OLED support that exercises every currently supported ESPHome platform in this component: cover, light, lock, switch, and the Discover & Pair button, all with dummy device IDs ready to replace.
 - [config/heltec-wifi-lora-32-v3.yaml](../config/heltec-wifi-lora-32-v3.yaml): SX1262 Heltec WiFi LoRa32 V3/V3.2 controller config with one awning cover, a Discover & Pair button, and an OLED status display tuned for the V3 pinout and TCXO settings.
 - [config/heltec-wifi-lora-32-v3-monitor.yaml](../config/heltec-wifi-lora-32-v3-monitor.yaml): SX1262 passive monitor config for Heltec WiFi LoRa32 V3/V3.2 that keeps the radio in RX, enables `IOHOME_FRAME_LOG`, and logs parsed traffic without creating entities or exposing a pairing button.
+
+**These files are not standalone.** Each one pulls its board's SPI bus and radio pin
+assignment from a package:
+
+```yaml
+packages:
+  board: !include boards/heltec-v3.yaml
+```
+
+The per-board pinouts live once in [config/boards/](../config/boards/) —
+`heltec-v2.yaml`, `heltec-v3.yaml`, `t3s3.yaml`. To reuse one
+of the configs above, copy the whole `config/` directory (or at least the matching
+`config/boards/*.yaml` alongside the file you took), or replace the `packages:` line with the full
+inline pinout from the fenced block for your board earlier on this page.
 
 ## Diagnostics and Unknown Position
 
@@ -1345,6 +1365,7 @@ bootloader update.
 Triggered from a Home Assistant button, straight from your existing build — no extra hardware, no
 vendor tooling.
 
+<!-- board-pinout: t3s3 -->
 ```yaml
 home_io_control:
   radio_type: lr1121   # required
@@ -1418,6 +1439,7 @@ whole sequence takes about 10 seconds, during which the device is unresponsive.
 Opt in with a nested `bootloader:` block, pointing at the matching **loader** image (not a
 transceiver image) Semtech publishes alongside the transceiver firmware:
 
+<!-- board-pinout: t3s3 -->
 ```yaml
 home_io_control:
   radio_type: lr1121   # required
@@ -1677,6 +1699,7 @@ This is a separate mechanism from `linked_remotes` (which drives optimistic stat
 
 Find the sender's node ID the same way as for `linked_remotes` (see "Finding your remote's node ID" above — the same log line works for a wind/rain sensor's node ID too), then add it to the hub-level `exposed_senders` list:
 
+<!-- board-pinout: heltec-v2 -->
 ```yaml
 home_io_control:
   cs_pin: 18

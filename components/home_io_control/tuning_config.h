@@ -11,6 +11,7 @@
 #include "proto_frame.h"
 #include "proto_timing.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -226,9 +227,51 @@ struct TuningConfig {
   bool active{false};  ///< True when the YAML `tuning:` block is present.
 };
 
+/// @brief One selectable RX bandwidth: the chip's register byte and its nominal kHz value.
+///
+/// The per-chip bandwidth conversion functions below (SX1262/SX1276/LR1121) are all the same
+/// logic over a different table of these; they are thin typed wrappers around the three generic
+/// helpers that follow, which own the register-byte lookup, the "%.1f" formatting, and the
+/// input normalization once instead of three times.
+struct BandwidthOption {
+  uint8_t reg;
+  float khz;
+};
+
+/// @brief Look up the kHz value for a register byte in a bandwidth table.
+/// @param table Bandwidth option table.
+/// @param n Number of entries in @p table.
+/// @param reg Register byte to look up.
+/// @param fallback kHz value returned when @p reg is not in the table.
+float bandwidth_to_khz(const BandwidthOption *table, size_t n, uint8_t reg, float fallback);
+
+/// @brief Format a kHz value as its YAML/UI option string (bare number, one decimal, e.g. "117.3").
+std::string bandwidth_to_string(float khz);
+
+/// @brief Parse a YAML/UI bandwidth string against a table, returning the matching register byte.
+///
+/// Accepts surrounding whitespace and a trailing "kHz" suffix in any case, and accepts both the
+/// one-decimal spelling ("39.0") and the integer-truncated spelling ("39") of every table entry.
+/// @return The register byte, or std::nullopt when the string matches no entry.
+std::optional<uint8_t> bandwidth_from_string(const BandwidthOption *table, size_t n, const std::string &value);
+
+/// @brief A pointer/size view over one chip's RX-bandwidth option table.
+struct BandwidthTableView {
+  const BandwidthOption *data;
+  size_t size;
+};
+
+/// @brief The SX1262 RX-bandwidth option table. Exposed so tests derive their legal-option
+/// lists from the same source production uses rather than re-listing them by hand.
+BandwidthTableView sx1262_bandwidth_table();
+/// @brief The SX1276 RX-bandwidth option table (see sx1262_bandwidth_table()).
+BandwidthTableView sx1276_bandwidth_table();
+/// @brief The LR1121 RX-bandwidth option table (see sx1262_bandwidth_table()).
+BandwidthTableView lr1121_bandwidth_table();
+
 /// @brief Convert a bandwidth enum to the numeric kHz value used in YAML/logs.
 /// @param bw SX1262 bandwidth enum.
-/// @return Floating-point kHz value (58.6, 78.2, 117.3, 156.2, or 187.2).
+/// @return Floating-point kHz value (39.0, 46.9, 58.6, 78.2, 117.3, 156.2, or 187.2).
 float sx1262_bandwidth_to_khz(SX1262RxBandwidth bw);
 
 /// @brief Format a bandwidth enum as its YAML/UI option string (bare kHz number, e.g. "117.3").

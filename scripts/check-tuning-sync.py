@@ -13,6 +13,18 @@ disagree. Run via ``make tuning-sync``; it is part of the ``lint`` composite tar
 
 Adding a parameter means adding one C++ table row and one tuning.py entry; this guard
 fails loudly if only one side is updated.
+
+A second check covers the RX-bandwidth *option values* for the three software-PHY chips.
+The selectable bandwidths also live in two places:
+  * Python: ``SX1262_BANDWIDTH_OPTIONS`` / ``SX1276_BANDWIDTH_OPTIONS`` /
+    ``LR1121_BANDWIDTH_OPTIONS`` dicts in tuning.py — the keys are the bare-kHz option
+    strings the HA select entity offers.
+  * C++: the ``constexpr BandwidthOption SX1262_BANDWIDTHS[]`` / ``SX1276_BANDWIDTHS[]`` /
+    ``LR1121_BANDWIDTHS[]`` tables in tuning_config.cpp — the ``{reg, khz}`` rows the
+    parser and formatter run off.
+The name-level check above does not see these; a wrong or missing bandwidth option
+produces no error and no symptom, it just silently omits or mis-selects a receiver
+bandwidth. This diffs the Python option strings against ``f"{khz:.1f}"`` of each C++ row.
 """
 
 import ast
@@ -23,6 +35,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TUNING_PY = REPO_ROOT / "components" / "home_io_control" / "tuning.py"
 TUNING_REGISTRY_CPP = REPO_ROOT / "components" / "home_io_control" / "tuning_registry.cpp"
+TUNING_CONFIG_CPP = REPO_ROOT / "components" / "home_io_control" / "tuning_config.cpp"
+
+# Python dict in tuning.py -> C++ constexpr BandwidthOption table in tuning_config.cpp.
+_BANDWIDTH_TABLES = {
+    "SX1262_BANDWIDTH_OPTIONS": "SX1262_BANDWIDTHS",
+    "SX1276_BANDWIDTH_OPTIONS": "SX1276_BANDWIDTHS",
+    "LR1121_BANDWIDTH_OPTIONS": "LR1121_BANDWIDTHS",
+}
 
 
 def _string_constants(module: ast.Module) -> dict:
@@ -88,16 +108,47 @@ def cpp_param_names() -> "tuple[set, set]":
     return _cpp_table_names(source, "NUMBER_PARAMS"), _cpp_table_names(source, "SELECT_PARAMS")
 
 
-def _report(kind: str, py_names: set, cpp_names: set) -> bool:
+# Match a BandwidthOption row inside a table body and capture its kHz literal. The register-byte
+# field is either a bare hex literal (`{ 0x1C, 39.0F }`) or an enum cast that keeps the byte's one
+# definition in the C++ enum (`{ static_cast<uint8_t>(SX1262RxBandwidth::BW_39_0_KHZ), 39.0F }`).
+_BW_ROW_RE = re.compile(
+    r"\{\s*(?:0[xX][0-9A-Fa-f]+|static_cast<\s*uint8_t\s*>\([A-Za-z_][A-Za-z0-9_:]*\))"
+    r"\s*,\s*([0-9]+(?:\.[0-9]+)?)[fF]?\s*\}"
+)
+
+
+def python_bandwidth_options() -> dict:
+    """Map each Python ``*_BANDWIDTH_OPTIONS`` dict name to its set of option strings."""
+    module = ast.parse(TUNING_PY.read_text(encoding="utf-8"))
+    constants = _string_constants(module)
+    return {name: _resolve_keys(_dict_keys(module, name), constants) for name in _BANDWIDTH_TABLES}
+
+
+def cpp_bandwidth_options() -> dict:
+    """Map each Python dict name to the option strings implied by its C++ table's kHz values."""
+    source = TUNING_CONFIG_CPP.read_text(encoding="utf-8")
+    result = {}
+    for py_name, cpp_name in _BANDWIDTH_TABLES.items():
+        match = re.search(_TABLE_RE_TEMPLATE.format(name=re.escape(cpp_name)), source, re.DOTALL)
+        if not match:
+            raise SystemExit(f"error: could not find C++ table '{cpp_name}' in {TUNING_CONFIG_CPP}")
+        khz_values = _BW_ROW_RE.findall(match.group("body"))
+        if not khz_values:
+            raise SystemExit(f"error: C++ table '{cpp_name}' in {TUNING_CONFIG_CPP} has no parseable rows")
+        result[py_name] = {f"{float(v):.1f}" for v in khz_values}
+    return result
+
+
+def _report(kind: str, py_names: set, cpp_names: set, cpp_file: str = "tuning_registry.cpp") -> bool:
     if py_names == cpp_names:
         return True
-    print(f"tuning-sync: {kind} parameter mismatch between tuning.py and tuning_registry.cpp", file=sys.stderr)
+    print(f"tuning-sync: {kind} mismatch between tuning.py and {cpp_file}", file=sys.stderr)
     only_py = sorted(py_names - cpp_names)
     only_cpp = sorted(cpp_names - py_names)
     if only_py:
-        print(f"  only in tuning.py:            {only_py}", file=sys.stderr)
+        print(f"  only in tuning.py:   {only_py}", file=sys.stderr)
     if only_cpp:
-        print(f"  only in tuning_registry.cpp:  {only_cpp}", file=sys.stderr)
+        print(f"  only in {cpp_file}:  {only_cpp}", file=sys.stderr)
     return False
 
 
@@ -105,12 +156,28 @@ def main() -> int:
     py_numbers, py_selects = python_param_names()
     cpp_numbers, cpp_selects = cpp_param_names()
 
-    ok = _report("number", py_numbers, cpp_numbers)
-    ok = _report("select", py_selects, cpp_selects) and ok
+    ok = _report("number parameter", py_numbers, cpp_numbers)
+    ok = _report("select parameter", py_selects, cpp_selects) and ok
+
+    py_bandwidths = python_bandwidth_options()
+    cpp_bandwidths = cpp_bandwidth_options()
+    bandwidth_option_count = 0
+    for py_name in _BANDWIDTH_TABLES:
+        ok = (
+            _report(
+                f"{py_name} bandwidth option",
+                py_bandwidths[py_name],
+                cpp_bandwidths[py_name],
+                cpp_file="tuning_config.cpp",
+            )
+            and ok
+        )
+        bandwidth_option_count += len(cpp_bandwidths[py_name])
 
     if ok:
         total = len(cpp_numbers) + len(cpp_selects)
         print(f"tuning-sync: OK ({len(cpp_numbers)} number + {len(cpp_selects)} select = {total} parameters in sync)")
+        print(f"tuning-sync: OK ({bandwidth_option_count} RX-bandwidth options across 3 chips in sync)")
         return 0
     return 1
 

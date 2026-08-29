@@ -131,6 +131,18 @@ std::string unknown_probe_message(const std::string &probe) {
   return "unknown probe \"" + probe + "\" (expected " + names + ")";
 }
 
+/// @brief Shared probe-name lookup for probe_device()/probe_sweep(): returns the descriptor, or
+/// nullptr after writing the "unknown probe" message into @p result. The device-resolution and
+/// index-parse steps stay per-method: probe_device keeps the resolved device (for the moving
+/// check and node_id), probe_sweep discards it, and one parses a single index while the other
+/// parses a first/last range.
+const ProbeDescriptor *resolve_probe_descriptor(const std::string &probe, ManagementActionResult &result) {
+  const ProbeDescriptor *descriptor = find_probe_descriptor(probe);
+  if (descriptor == nullptr)
+    result.message = unknown_probe_message(probe);
+  return descriptor;
+}
+
 /// @brief Maximum distinct responders reported by one scan_paired_devices() call.
 ///
 /// Sized against the loop task's stack, which is where this runs: ESPHome spawns its own
@@ -337,51 +349,72 @@ void ManagementActions::register_actions() {
     ESP_LOGW(detail::TAG, "Native API server not available, management actions will not be registered");
     return;
   }
-  api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
-      MANAGEMENT_ACTION_RENAME_DEVICE, {"device_id", "new_name"}, [this](const api::ExecuteServiceRequest &request) {
-        this->api_rename_device(request.args[0].string_.str(), request.args[1].string_.str());
-      }));
-  api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
-      MANAGEMENT_ACTION_IDENTIFY_DEVICE, {"device_id"},
-      [this](const api::ExecuteServiceRequest &request) { this->api_identify_device(request.args[0].string_.str()); }));
-  api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
-      MANAGEMENT_ACTION_FORCE_OPEN_DEVICE, {"device_id"}, [this](const api::ExecuteServiceRequest &request) {
-        this->api_force_open_device(request.args[0].string_.str());
-      }));
-  api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
-      MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES, {},
-      [this](const api::ExecuteServiceRequest &) { this->api_scan_paired_devices(); }));
-  // `position` arrives as a string because ManagementServiceDescriptor exposes every argument as
-  // SERVICE_ARG_TYPE_STRING. Widening it to typed arguments would change a shipped API surface
-  // for one new parameter, so this action parses instead — and rejects loudly, since an
-  // unparseable position that silently became 0 would send a fully-open command.
-  api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
-      MANAGEMENT_ACTION_ONEWAY_SET_POSITION, {"controller_id", "position"},
-      [this](const api::ExecuteServiceRequest &request) {
-        this->api_oneway_set_position(request.args[0].string_.str(), request.args[1].string_.str());
-      }));
-  api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
-      MANAGEMENT_ACTION_ONEWAY_REMOVE_CONTROLLER, {"controller_id"}, [this](const api::ExecuteServiceRequest &request) {
-        this->api_oneway_remove_controller(request.args[0].string_.str());
-      }));
-  // Registered only when diagnostic_probes: true was set in YAML, so the action list stays clean
-  // on a default build -- diagnostic_probes_enabled() already holds its final YAML-configured
-  // value here: __init__.py's to_code() emits set_diagnostic_probes_enabled() as a plain
-  // property-setter call in generated main.cpp, which runs before App.setup() calls this
+
+  // One row per user-visible action: name, argument-name list (every argument is exposed as
+  // SERVICE_ARG_TYPE_STRING — `oneway_set_position` parses its "position" string itself rather
+  // than widening a shipped API surface), whether it is gated behind `diagnostic_probes: true`,
+  // and the callback that unpacks its arguments. Adding an action is one row here.
+  struct ActionReg {
+    const char *name;
+    std::vector<const char *> arg_names;
+    bool diagnostic_only;
+    std::function<void(const api::ExecuteServiceRequest &)> callback;
+  };
+  const ActionReg actions[] = {
+      {MANAGEMENT_ACTION_RENAME_DEVICE,
+       {"device_id", "new_name"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_rename_device(r.args[0].string_.str(), r.args[1].string_.str());
+       }},
+      {MANAGEMENT_ACTION_IDENTIFY_DEVICE,
+       {"device_id"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) { this->api_identify_device(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_FORCE_OPEN_DEVICE,
+       {"device_id"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) { this->api_force_open_device(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES,
+       {},
+       false,
+       [this](const api::ExecuteServiceRequest &) { this->api_scan_paired_devices(); }},
+      {MANAGEMENT_ACTION_ONEWAY_SET_POSITION,
+       {"controller_id", "position"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_oneway_set_position(r.args[0].string_.str(), r.args[1].string_.str());
+       }},
+      {MANAGEMENT_ACTION_ONEWAY_REMOVE_CONTROLLER,
+       {"controller_id"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) { this->api_oneway_remove_controller(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_PROBE_DEVICE,
+       {"device_id", "probe", "index"},
+       true,
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_probe_device(r.args[0].string_.str(), r.args[1].string_.str(), r.args[2].string_.str());
+       }},
+      {MANAGEMENT_ACTION_PROBE_SWEEP,
+       {"device_id", "probe", "first_index", "last_index"},
+       true,
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_probe_sweep(r.args[0].string_.str(), r.args[1].string_.str(), r.args[2].string_.str(),
+                               r.args[3].string_.str());
+       }},
+  };
+
+  // The two probe actions are registered only when diagnostic_probes: true was set in YAML, so the
+  // action list stays clean on a default build. diagnostic_probes_enabled() already holds its
+  // final YAML-configured value here: __init__.py's to_code() emits set_diagnostic_probes_enabled()
+  // as a plain property-setter call in generated main.cpp, which runs before App.setup() calls this
   // component's setup() (and therefore this method), not after.
-  if (hub_->diagnostic_probes_enabled()) {
-    api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
-        MANAGEMENT_ACTION_PROBE_DEVICE, {"device_id", "probe", "index"},
-        [this](const api::ExecuteServiceRequest &request) {
-          this->api_probe_device(request.args[0].string_.str(), request.args[1].string_.str(),
-                                 request.args[2].string_.str());
-        }));
-    api::global_api_server->register_user_service(new detail::ManagementServiceDescriptor(  // NOLINT
-        MANAGEMENT_ACTION_PROBE_SWEEP, {"device_id", "probe", "first_index", "last_index"},
-        [this](const api::ExecuteServiceRequest &request) {
-          this->api_probe_sweep(request.args[0].string_.str(), request.args[1].string_.str(),
-                                request.args[2].string_.str(), request.args[3].string_.str());
-        }));
+  const bool probes_enabled = hub_->diagnostic_probes_enabled();
+  for (const auto &action : actions) {
+    if (action.diagnostic_only && !probes_enabled)
+      continue;
+    api::global_api_server->register_user_service(  // NOLINT
+        new detail::ManagementServiceDescriptor(action.name, action.arg_names, action.callback));
   }
 #endif
 }
@@ -616,6 +649,9 @@ void ManagementActions::api_oneway_set_position(const std::string &controller_id
     return;
   }
 
+  // Parse the position string here and reject loudly on anything unparseable. Do NOT relax this to
+  // atoi()/strtoul()-with-default: a value that silently became 0 would send a fully-open command
+  // to every actuator bound to this 1W identity.
   const std::string trimmed = trim_ascii_whitespace(position);
   if (trimmed.empty() || trimmed.find_first_not_of("0123456789") != std::string::npos) {
     result.message = "position must be a whole number between 0 and 100";
@@ -855,11 +891,9 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     return result;
   }
 
-  const ProbeDescriptor *descriptor = find_probe_descriptor(probe);
-  if (descriptor == nullptr) {
-    result.message = unknown_probe_message(probe);
+  const ProbeDescriptor *descriptor = resolve_probe_descriptor(probe, result);
+  if (descriptor == nullptr)
     return result;
-  }
 
   uint8_t index_byte = 0;
   if (descriptor->needs_index && !parse_probe_index(index, index_byte)) {
@@ -944,11 +978,9 @@ ManagementActionResult ManagementActions::probe_sweep(const std::string &device_
     result.message = resolve_result.message;
     return result;
   }
-  const ProbeDescriptor *descriptor = find_probe_descriptor(probe);
-  if (descriptor == nullptr) {
-    result.message = unknown_probe_message(probe);
+  const ProbeDescriptor *descriptor = resolve_probe_descriptor(probe, result);
+  if (descriptor == nullptr)
     return result;
-  }
   if (!descriptor->needs_index) {
     result.message = "probe \"" + probe + "\" takes no index; use probe_device";
     return result;

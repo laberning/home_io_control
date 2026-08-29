@@ -147,7 +147,8 @@ class SoftPhyDriverBase : public RadioDriver {
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
   ///
-  /// Consults @ref preamble_latched_at_timeout_ first; see that member's own doc comment for why.
+  /// Consults the private `preamble_latched_at_timeout_` flag first; see that member's declaration
+  /// for why.
   bool is_preamble_detected() override;
   /// @brief Preamble for response/continuation frames — shared storage, see the concrete
   /// drivers' constructors/tuning defaults for the chip-specific rationale and value.
@@ -191,6 +192,38 @@ class SoftPhyDriverBase : public RadioDriver {
   /// Minimal path back into RX immediately after a transmission — see the definition for why this
   /// is deliberately not @ref reset_rx_state_.
   void rearm_rx_after_tx_();
+
+  /// @brief The GFSK SetPacketParams fields both software-PHY chips program identically.
+  ///
+  /// Both drivers build the same nine-byte SetPacketParams payload in the same order; only the
+  /// preamble-detector length and the sync-word selector are chip constants, and only the opcode
+  /// and transport differ. Everything else — the field order and the byte/bit preamble conversion
+  /// that the `63e2502` fix had to patch in two places — lives in @ref build_gfsk_packet_params.
+  struct SoftPhyPacketParams {
+    uint16_t preamble_bytes;    ///< Byte-denominated, like every other preamble value in this codebase.
+    uint8_t preamble_detector;  ///< Chip-specific detector-length selector.
+    uint8_t sync_word_param;    ///< Chip-specific 24-bit sync-word selector.
+    uint8_t packet_type;        ///< Known-length / fixed-length selector.
+    uint8_t payload_len;        ///< Configured payload length.
+    uint8_t crc_type;           ///< Chip-specific CRC-mode selector.
+  };
+  /// Byte count of the GFSK SetPacketParams payload — identical on both software-PHY chips.
+  static constexpr uint8_t GFSK_PACKET_PARAMS_LEN = 9;
+  /// @brief Fill the nine-byte GFSK SetPacketParams payload shared by both chips.
+  ///
+  /// Owns the field order and the ×8 preamble conversion: the SetPacketParams preamble field is
+  /// bit-denominated on both chips (Semtech names it `preamble_len_in_bits` /
+  /// `pbl_len_in_bit`), but every caller in this codebase passes a byte count. Address comparison
+  /// and whitening are always off.
+  /// @param p   The chip-independent field values (byte-denominated preamble, chip constants).
+  /// @param out Buffer for exactly @ref GFSK_PACKET_PARAMS_LEN bytes.
+  ///
+  /// Named without the trailing `_` the file's other protected helpers carry (the plan asked for
+  /// `build_gfsk_packet_params_`): it uses no instance state, so clang-tidy's
+  /// `readability-convert-member-functions-to-static` wants it `static`, and `.clang-tidy`'s
+  /// `ClassMethodCase = lower_case` then rejects a trailing `_` on a `static` method. Leaving it
+  /// `static` and dropping the underscore keeps clang-tidy quiet without a suppression.
+  static void build_gfsk_packet_params(const SoftPhyPacketParams &p, uint8_t out[GFSK_PACKET_PARAMS_LEN]);
 
   /// @brief Read the raw IRQ status word from the radio.
   /// Virtual to allow test doubles (both concrete drivers' tests override this).

@@ -8,9 +8,11 @@
 /// device: the same five YAML setters, the same registration ritual in setup(), and the same
 /// poll-interval dump_config line. DeviceBoundEntity centralizes exactly that shared state and
 /// wiring. The auto-generated companion diagnostic sensors share a smaller, observe-only
-/// binding; DeviceBoundCompanion centralizes that one.
+/// binding; DeviceBoundCompanion centralizes that one. A third mixin, HubBoundEntity, holds the
+/// single parent pointer that the hub-level control entities (which act on the hub as a whole and
+/// have no device to bind to) would otherwise each restate.
 ///
-/// Both are intentionally NOT ESPHome base classes — they are plain mixins the entities inherit
+/// All three are intentionally NOT ESPHome base classes — they are plain mixins the entities inherit
 /// alongside their real ESPHome base (cover::Cover, light::LightOutput, switch_::Switch,
 /// lock::Lock, text_sensor::TextSensor, sensor::Sensor). Entity-specific state mapping (cover
 /// position/tilt/movement inference, binary on/off decoding, each companion's value rendering)
@@ -106,16 +108,18 @@ class DeviceBoundEntity {
   bool silent_{false};
 };
 
-/// @brief Mixin holding the hub/device binding shared by the auto-generated per-device
-/// companion diagnostic sensors (device name, active issue, RSSI, last contact, exchange
-/// failures).
+/// @brief Mixin holding the parent + device-id binding shared by per-device entities that are
+/// not full entity platforms: the auto-generated companion diagnostic sensors (device name,
+/// active issue, RSSI, last contact, exchange failures) and the per-device auxiliary control
+/// entities (cover favorite/vent buttons, cover silent switch).
 /// @ingroup hioc_platforms
 ///
-/// Companions differ from the main entity platforms (DeviceBoundEntity above) in that they only
-/// *observe* a device the main entity already registered: they never call add_device() or
-/// configure polling, they just subscribe to update notifications and republish their one
-/// value. This mixin centralizes that subscribe-and-republish ritual; each sensor class keeps
-/// only its value rendering (including its decision whether a given device state is
+/// These differ from the main entity platforms (DeviceBoundEntity above) in that they do not own
+/// the device: they never call add_device() or configure polling. The companion sensors use
+/// register_companion_binding_() to subscribe to update notifications and republish their one
+/// value; the auxiliary control entities take only the parent + device-id pair and act on their
+/// already-registered device on demand, so register_companion_binding_() stays opt-in. Each class
+/// keeps its own value rendering / action logic (including whether a given device state is
 /// publishable at all).
 class DeviceBoundCompanion {
  public:
@@ -148,6 +152,26 @@ class DeviceBoundCompanion {
 
   IOHomeControlComponent *parent_{nullptr};
   std::string device_id_;
+};
+
+/// @brief Mixin for entities bound to the hub itself rather than to one device.
+/// @ingroup hioc_platforms
+///
+/// The hub-level control entities (discover button, arming switches, firmware-update button,
+/// 1W command/enroll buttons, pairing-result and 1W-last-command text sensors) need only a parent
+/// pointer — they act on the hub as a whole and have no device to bind to. This holds that one
+/// setter and one member so each entity does not restate it. The tuning number/select entities
+/// are deliberately not migrated: they take the parent by constructor injection and keep
+/// hub_core.h out of their header via a forward declaration, which this mixin's include of
+/// hub_internal.h would defeat.
+class HubBoundEntity {
+ public:
+  /// @brief Set the parent controller component.
+  /// @param parent Pointer to the IOHomeControlComponent instance.
+  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
+
+ protected:
+  IOHomeControlComponent *parent_{nullptr};
 };
 
 }  // namespace home_io_control

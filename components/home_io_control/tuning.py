@@ -86,10 +86,12 @@ SX1276_BANDWIDTH_OPTIONS = {
     "125.0": SX1276RxBandwidth.BW_125_0_KHZ,
 }
 
-# LR1121 has its own register encoding, distinct from SX1262's (see tuning_config.h
-# LR1121RxBandwidth — two of the five values borrowed from SX1262 turned out wrong for this
-# chip). Includes two narrower options (39.0/46.9kHz) not offered for SX1262, added to get
-# closer to SX1276's real-hardware-validated 41.7kHz default.
+# LR1121 shares the Semtech GFSK bandwidth grid with SX1262, so LR1121RxBandwidth is
+# byte-for-byte identical to SX1262RxBandwidth today (tuning_config.h; the
+# Sx1262AndLr1121BandwidthTablesAgree test pins them together). They are kept as separate C++
+# enums, and separate option dicts here, only so each chip's option set can diverge if a real
+# chip difference ever demands it. The two narrowest options (39.0/46.9 kHz) are offered on
+# both chips, to get closer to SX1276's real-hardware-validated 41.7 kHz default.
 LR1121_BANDWIDTH_OPTIONS = {
     "39.0": LR1121RxBandwidth.BW_39_0_KHZ,
     "46.9": LR1121RxBandwidth.BW_46_9_KHZ,

@@ -25,53 +25,67 @@ constexpr size_t HEX_ADDR_STR_SIZE = 16;
 /// Buffer size for a formatted bandwidth string such as "117.3kHz".
 constexpr size_t BANDWIDTH_STR_SIZE = 16;
 
-/// Numeric kHz value for each SX1262 RX bandwidth option.
-constexpr float BW_KHZ_58_6 = 58.6F;
-constexpr float BW_KHZ_78_2 = 78.2F;
-constexpr float BW_KHZ_117_3 = 117.3F;
-constexpr float BW_KHZ_156_2 = 156.2F;
-constexpr float BW_KHZ_187_2 = 187.2F;
+/// One selectable RX bandwidth per chip: register byte plus its nominal kHz value.
+///
+/// SX1262 and LR1121 share the Semtech GFSK bandwidth grid, so these two tables are
+/// byte-for-byte identical today (the `Sx1262AndLr1121BandwidthTablesAgree` test pins that);
+/// they are kept separate only so each chip's option set can diverge for a real chip
+/// difference. SX1276 has its own RegRxBw encoding. Keys must match `tuning.py`'s
+/// `*_BANDWIDTH_OPTIONS`, which `scripts/check-tuning-sync.py` verifies.
+// The register byte in every row comes from the chip's bandwidth enum so it keeps exactly one
+// definition; the kHz literal is this table's only added datum. `scripts/check-tuning-sync.py`
+// pins the kHz column against `tuning.py`; the enum cast pins the register byte.
+constexpr BandwidthOption SX1262_BANDWIDTHS[] = {
+    {static_cast<uint8_t>(SX1262RxBandwidth::BW_39_0_KHZ), 39.0F},
+    {static_cast<uint8_t>(SX1262RxBandwidth::BW_46_9_KHZ), 46.9F},
+    {static_cast<uint8_t>(SX1262RxBandwidth::BW_58_6_KHZ), 58.6F},
+    {static_cast<uint8_t>(SX1262RxBandwidth::BW_78_2_KHZ), 78.2F},
+    {static_cast<uint8_t>(SX1262RxBandwidth::BW_117_3_KHZ), 117.3F},
+    {static_cast<uint8_t>(SX1262RxBandwidth::BW_156_2_KHZ), 156.2F},
+    {static_cast<uint8_t>(SX1262RxBandwidth::BW_187_2_KHZ), 187.2F},
+};
+constexpr BandwidthOption SX1276_BANDWIDTHS[] = {
+    {static_cast<uint8_t>(SX1276RxBandwidth::BW_20_8_KHZ), 20.8F},
+    {static_cast<uint8_t>(SX1276RxBandwidth::BW_41_7_KHZ), 41.7F},
+    {static_cast<uint8_t>(SX1276RxBandwidth::BW_62_5_KHZ), 62.5F},
+    {static_cast<uint8_t>(SX1276RxBandwidth::BW_83_3_KHZ), 83.3F},
+    {static_cast<uint8_t>(SX1276RxBandwidth::BW_125_0_KHZ), 125.0F},
+};
+constexpr BandwidthOption LR1121_BANDWIDTHS[] = {
+    {static_cast<uint8_t>(LR1121RxBandwidth::BW_39_0_KHZ), 39.0F},
+    {static_cast<uint8_t>(LR1121RxBandwidth::BW_46_9_KHZ), 46.9F},
+    {static_cast<uint8_t>(LR1121RxBandwidth::BW_58_6_KHZ), 58.6F},
+    {static_cast<uint8_t>(LR1121RxBandwidth::BW_78_2_KHZ), 78.2F},
+    {static_cast<uint8_t>(LR1121RxBandwidth::BW_117_3_KHZ), 117.3F},
+    {static_cast<uint8_t>(LR1121RxBandwidth::BW_156_2_KHZ), 156.2F},
+    {static_cast<uint8_t>(LR1121RxBandwidth::BW_187_2_KHZ), 187.2F},
+};
 
-/// Numeric kHz value for each SX1276 RX bandwidth option.
-constexpr float BW_KHZ_20_8 = 20.8F;
-constexpr float BW_KHZ_41_7 = 41.7F;
-constexpr float BW_KHZ_62_5 = 62.5F;
-constexpr float BW_KHZ_83_3 = 83.3F;
-constexpr float BW_KHZ_125_0 = 125.0F;
+/// kHz returned for a register byte not in the chip's table — the chip's configured default,
+/// matching the fall-through of the previous per-chip switch statements.
+constexpr float SX1262_BW_FALLBACK_KHZ = 117.3F;
+constexpr float SX1276_BW_FALLBACK_KHZ = 41.7F;
+constexpr float LR1121_BW_FALLBACK_KHZ = 117.3F;
 
-/// Numeric kHz value for each LR1121 RX bandwidth option.
-constexpr float BW_KHZ_39_0 = 39.0F;
-constexpr float BW_KHZ_46_9 = 46.9F;
+template<size_t N> constexpr size_t bw_count(const BandwidthOption (& /*table*/)[N]) { return N; }
 
 }  // namespace
 
-float sx1262_bandwidth_to_khz(SX1262RxBandwidth bw) {
-  switch (bw) {
-    case SX1262RxBandwidth::BW_39_0_KHZ:
-      return BW_KHZ_39_0;
-    case SX1262RxBandwidth::BW_46_9_KHZ:
-      return BW_KHZ_46_9;
-    case SX1262RxBandwidth::BW_58_6_KHZ:
-      return BW_KHZ_58_6;
-    case SX1262RxBandwidth::BW_78_2_KHZ:
-      return BW_KHZ_78_2;
-    case SX1262RxBandwidth::BW_117_3_KHZ:
-      return BW_KHZ_117_3;
-    case SX1262RxBandwidth::BW_156_2_KHZ:
-      return BW_KHZ_156_2;
-    case SX1262RxBandwidth::BW_187_2_KHZ:
-      return BW_KHZ_187_2;
+float bandwidth_to_khz(const BandwidthOption *table, size_t n, uint8_t reg, float fallback) {
+  for (size_t i = 0; i < n; ++i) {
+    if (table[i].reg == reg)
+      return table[i].khz;
   }
-  return BW_KHZ_117_3;
+  return fallback;
 }
 
-std::string sx1262_bandwidth_to_string(SX1262RxBandwidth bw) {
+std::string bandwidth_to_string(float khz) {
   char buf[BANDWIDTH_STR_SIZE];
-  snprintf(buf, sizeof(buf), "%.1f", sx1262_bandwidth_to_khz(bw));
+  snprintf(buf, sizeof(buf), "%.1f", khz);
   return std::string(buf);
 }
 
-std::optional<SX1262RxBandwidth> sx1262_bandwidth_from_string(const std::string &value) {
+std::optional<uint8_t> bandwidth_from_string(const BandwidthOption *table, size_t n, const std::string &value) {
   std::string normalized = value;
   // Normalize: strip whitespace and a trailing "kHz"/"khz" suffix.
   normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
@@ -80,116 +94,63 @@ std::optional<SX1262RxBandwidth> sx1262_bandwidth_from_string(const std::string 
   if (normalized.size() > 3 && normalized.ends_with("khz"))
     normalized.resize(normalized.size() - 3);
 
-  if (normalized == "39.0" || normalized == "39")
-    return SX1262RxBandwidth::BW_39_0_KHZ;
-  if (normalized == "46.9" || normalized == "46")
-    return SX1262RxBandwidth::BW_46_9_KHZ;
-  if (normalized == "58.6" || normalized == "58")
-    return SX1262RxBandwidth::BW_58_6_KHZ;
-  if (normalized == "78.2" || normalized == "78")
-    return SX1262RxBandwidth::BW_78_2_KHZ;
-  if (normalized == "117.3" || normalized == "117")
-    return SX1262RxBandwidth::BW_117_3_KHZ;
-  if (normalized == "156.2" || normalized == "156")
-    return SX1262RxBandwidth::BW_156_2_KHZ;
-  if (normalized == "187.2" || normalized == "187")
-    return SX1262RxBandwidth::BW_187_2_KHZ;
+  for (size_t i = 0; i < n; ++i) {
+    char one_decimal[BANDWIDTH_STR_SIZE];
+    char truncated[BANDWIDTH_STR_SIZE];
+    snprintf(one_decimal, sizeof(one_decimal), "%.1f", table[i].khz);
+    snprintf(truncated, sizeof(truncated), "%d", static_cast<int>(table[i].khz));
+    if (normalized == one_decimal || normalized == truncated)
+      return table[i].reg;
+  }
+  return std::nullopt;
+}
+
+BandwidthTableView sx1262_bandwidth_table() { return {SX1262_BANDWIDTHS, bw_count(SX1262_BANDWIDTHS)}; }
+BandwidthTableView sx1276_bandwidth_table() { return {SX1276_BANDWIDTHS, bw_count(SX1276_BANDWIDTHS)}; }
+BandwidthTableView lr1121_bandwidth_table() { return {LR1121_BANDWIDTHS, bw_count(LR1121_BANDWIDTHS)}; }
+
+float sx1262_bandwidth_to_khz(SX1262RxBandwidth bw) {
+  return bandwidth_to_khz(SX1262_BANDWIDTHS, bw_count(SX1262_BANDWIDTHS), static_cast<uint8_t>(bw),
+                          SX1262_BW_FALLBACK_KHZ);
+}
+
+std::string sx1262_bandwidth_to_string(SX1262RxBandwidth bw) {
+  return bandwidth_to_string(sx1262_bandwidth_to_khz(bw));
+}
+
+std::optional<SX1262RxBandwidth> sx1262_bandwidth_from_string(const std::string &value) {
+  if (const auto reg = bandwidth_from_string(SX1262_BANDWIDTHS, bw_count(SX1262_BANDWIDTHS), value))
+    return static_cast<SX1262RxBandwidth>(*reg);
   return std::nullopt;
 }
 
 float sx1276_bandwidth_to_khz(SX1276RxBandwidth bw) {
-  switch (bw) {
-    case SX1276RxBandwidth::BW_20_8_KHZ:
-      return BW_KHZ_20_8;
-    case SX1276RxBandwidth::BW_41_7_KHZ:
-      return BW_KHZ_41_7;
-    case SX1276RxBandwidth::BW_62_5_KHZ:
-      return BW_KHZ_62_5;
-    case SX1276RxBandwidth::BW_83_3_KHZ:
-      return BW_KHZ_83_3;
-    case SX1276RxBandwidth::BW_125_0_KHZ:
-      return BW_KHZ_125_0;
-  }
-  return BW_KHZ_41_7;
+  return bandwidth_to_khz(SX1276_BANDWIDTHS, bw_count(SX1276_BANDWIDTHS), static_cast<uint8_t>(bw),
+                          SX1276_BW_FALLBACK_KHZ);
 }
 
 std::string sx1276_bandwidth_to_string(SX1276RxBandwidth bw) {
-  char buf[BANDWIDTH_STR_SIZE];
-  snprintf(buf, sizeof(buf), "%.1f", sx1276_bandwidth_to_khz(bw));
-  return std::string(buf);
+  return bandwidth_to_string(sx1276_bandwidth_to_khz(bw));
 }
 
 std::optional<SX1276RxBandwidth> sx1276_bandwidth_from_string(const std::string &value) {
-  std::string normalized = value;
-  // Normalize: strip whitespace and a trailing "kHz"/"khz" suffix.
-  normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
-  for (char &c : normalized)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (normalized.size() > 3 && normalized.ends_with("khz"))
-    normalized.resize(normalized.size() - 3);
-
-  if (normalized == "20.8" || normalized == "20")
-    return SX1276RxBandwidth::BW_20_8_KHZ;
-  if (normalized == "41.7" || normalized == "41")
-    return SX1276RxBandwidth::BW_41_7_KHZ;
-  if (normalized == "62.5" || normalized == "62")
-    return SX1276RxBandwidth::BW_62_5_KHZ;
-  if (normalized == "83.3" || normalized == "83")
-    return SX1276RxBandwidth::BW_83_3_KHZ;
-  if (normalized == "125.0" || normalized == "125")
-    return SX1276RxBandwidth::BW_125_0_KHZ;
+  if (const auto reg = bandwidth_from_string(SX1276_BANDWIDTHS, bw_count(SX1276_BANDWIDTHS), value))
+    return static_cast<SX1276RxBandwidth>(*reg);
   return std::nullopt;
 }
 
 float lr1121_bandwidth_to_khz(LR1121RxBandwidth bw) {
-  switch (bw) {
-    case LR1121RxBandwidth::BW_39_0_KHZ:
-      return BW_KHZ_39_0;
-    case LR1121RxBandwidth::BW_46_9_KHZ:
-      return BW_KHZ_46_9;
-    case LR1121RxBandwidth::BW_58_6_KHZ:
-      return BW_KHZ_58_6;
-    case LR1121RxBandwidth::BW_78_2_KHZ:
-      return BW_KHZ_78_2;
-    case LR1121RxBandwidth::BW_117_3_KHZ:
-      return BW_KHZ_117_3;
-    case LR1121RxBandwidth::BW_156_2_KHZ:
-      return BW_KHZ_156_2;
-    case LR1121RxBandwidth::BW_187_2_KHZ:
-      return BW_KHZ_187_2;
-  }
-  return BW_KHZ_117_3;
+  return bandwidth_to_khz(LR1121_BANDWIDTHS, bw_count(LR1121_BANDWIDTHS), static_cast<uint8_t>(bw),
+                          LR1121_BW_FALLBACK_KHZ);
 }
 
 std::string lr1121_bandwidth_to_string(LR1121RxBandwidth bw) {
-  char buf[BANDWIDTH_STR_SIZE];
-  snprintf(buf, sizeof(buf), "%.1f", lr1121_bandwidth_to_khz(bw));
-  return std::string(buf);
+  return bandwidth_to_string(lr1121_bandwidth_to_khz(bw));
 }
 
 std::optional<LR1121RxBandwidth> lr1121_bandwidth_from_string(const std::string &value) {
-  std::string normalized = value;
-  // Normalize: strip whitespace and a trailing "kHz"/"khz" suffix.
-  normalized.erase(std::remove_if(normalized.begin(), normalized.end(), ::isspace), normalized.end());
-  for (char &c : normalized)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (normalized.size() > 3 && normalized.ends_with("khz"))
-    normalized.resize(normalized.size() - 3);
-
-  if (normalized == "39.0" || normalized == "39")
-    return LR1121RxBandwidth::BW_39_0_KHZ;
-  if (normalized == "46.9" || normalized == "46")
-    return LR1121RxBandwidth::BW_46_9_KHZ;
-  if (normalized == "58.6" || normalized == "58")
-    return LR1121RxBandwidth::BW_58_6_KHZ;
-  if (normalized == "78.2" || normalized == "78")
-    return LR1121RxBandwidth::BW_78_2_KHZ;
-  if (normalized == "117.3" || normalized == "117")
-    return LR1121RxBandwidth::BW_117_3_KHZ;
-  if (normalized == "156.2" || normalized == "156")
-    return LR1121RxBandwidth::BW_156_2_KHZ;
-  if (normalized == "187.2" || normalized == "187")
-    return LR1121RxBandwidth::BW_187_2_KHZ;
+  if (const auto reg = bandwidth_from_string(LR1121_BANDWIDTHS, bw_count(LR1121_BANDWIDTHS), value))
+    return static_cast<LR1121RxBandwidth>(*reg);
   return std::nullopt;
 }
 

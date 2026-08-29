@@ -23,6 +23,7 @@
 // this ordering matters and how it stayed invisible in host unit tests).
 #include "esphome/components/switch/switch.h"
 #include "hub_core.h"
+#include "platform_entity_base.h"
 
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
 
@@ -34,12 +35,8 @@ namespace home_io_control {
 /// restore-on-boot state -- `ALWAYS_OFF`) refuses it. No auto-off timer: see ADR 0021 for why the
 /// window is already self-limiting.
 /// @ingroup hioc_platforms
-class IOHomeLr1121BootloaderRewriteSwitch : public switch_::Switch, public Component {
+class IOHomeLr1121BootloaderRewriteSwitch : public switch_::Switch, public Component, public HubBoundEntity {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
-
   /// @brief Publish the initial OFF state.
   ///
   /// Unlike IOHomeAcceptForeignPairingSwitch, this switch has no auto-off timer, so the hub never
@@ -62,8 +59,6 @@ class IOHomeLr1121BootloaderRewriteSwitch : public switch_::Switch, public Compo
   /// IOHomeControlComponent::set_bootloader_rewrite_allowed().
   /// @param state Desired switch state.
   void write_state(bool state) override;
-
-  IOHomeControlComponent *parent_{nullptr};
 };
 
 }  // namespace home_io_control

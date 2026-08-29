@@ -103,23 +103,17 @@ void RadioSX1262::read_buffer_(uint8_t offset, uint8_t *data, uint8_t len) {
 
 void RadioSX1262::set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type,
                                      uint8_t crc_type) {
-  // preamble_len arrives in bytes, matching every other layer in this codebase (LONG_PREAMBLE,
-  // SHORT_PREAMBLE, the tuning defaults) and the SX1276's byte-wide RegPreambleMsb/Lsb. This
-  // chip's SetPacketParams field is bit-denominated instead — Semtech's own struct names it
-  // sx126x_pkt_params_gfsk_t.preamble_len_in_bits — so convert at this last step, right before
-  // the value leaves for the wire.
-  const uint16_t preamble_bits = preamble_len * 8;
-  uint8_t params[9] = {
-      (uint8_t) (preamble_bits >> 8),  // Preamble length MSB
-      (uint8_t) preamble_bits,         // Preamble length LSB
-      0x04,                            // Preamble detector: 8 bits (1 byte)
-      SX1262_SYNC_WORD_PARAM_24_BITS,  // Sync word length: 24 bits (3 bytes)
-      0x00,                            // Address comparison: off
-      packet_type,                     // GFSK packet type: known length or variable size
-      payload_len,                     // Configured payload length
-      crc_type,                        // CRC type: SX1262 GFSK CRC mode
-      0x00,                            // Whitening: off
-  };
+  // Field order and the byte->bit preamble conversion are shared with LR1121 — see
+  // SoftPhyDriverBase::build_gfsk_packet_params. Only the detector length (8 bits / 1 byte here),
+  // the sync-word selector, and the opcode/transport are SX1262-specific.
+  uint8_t params[GFSK_PACKET_PARAMS_LEN];
+  build_gfsk_packet_params({.preamble_bytes = preamble_len,
+                            .preamble_detector = 0x04,  // 8 bits (1 byte)
+                            .sync_word_param = SX1262_SYNC_WORD_PARAM_24_BITS,
+                            .packet_type = packet_type,
+                            .payload_len = payload_len,
+                            .crc_type = crc_type},
+                           params);
   this->write_opcode_(SX1262_SET_PACKET_PARAMS, params, sizeof(params));
 }
 
@@ -394,9 +388,9 @@ void RadioSX1262::configure_radio_() {
 
   // 16. IRQ config: map TxDone + RxDone + SyncWordValid + CrcErr to DIO1. irqMask additionally
   // enables PreambleDetected system-wide (SX126x irqMask gates GetIrqStatus itself, not just DIO
-  // routing — confirmed against Semtech's own driver docs, see radio_robustness_plan.md §8.1) so
-  // is_preamble_detected() can finally return true on this chip; dio1Mask deliberately leaves it
-  // out so the ISR still only wakes on a terminal event, not on every preamble. See
+  // routing — confirmed against Semtech's own driver docs) so is_preamble_detected() can finally
+  // return true on this chip; dio1Mask deliberately leaves it out so the ISR still only wakes on
+  // a terminal event, not on every preamble. See
   // SX1262_IRQ_ACTIVITY_MASK's doc comment (radio_sx1262.h) for the other half of this change —
   // poll_until_activity_() must not treat a bare preamble as terminal, or this unmask tears down
   // RX mid-reception instead of fixing anything.

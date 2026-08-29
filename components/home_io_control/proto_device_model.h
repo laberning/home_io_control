@@ -35,7 +35,9 @@ enum class DeviceType : uint8_t {
   LOCK = 0x09,                           ///< Lock.
   BLIND = 0x0A,                          ///< Generic blind.
   SCREEN = 0x0B,                         ///< Insect/privacy screen.
-  BEACON = 0x0C,                         ///< Beacon (unpaired/announcement).
+  BEACON = 0x0C,                         ///< Beacon (unpaired/announcement). Not YAML-selectable: a
+                                         ///< discovery pseudo-type, not a configurable actuator.
+                                         ///< Allowlisted in device_type_sync_test.cpp.
   DUAL_SHUTTER = 0x0D,                   ///< Dual-section shutter.
   HEATING_TEMPERATURE_INTERFACE = 0x0E,  ///< Heating temperature interface.
   ON_OFF_SWITCH = 0x0F,                  ///< Generic on/off switch.
@@ -43,11 +45,16 @@ enum class DeviceType : uint8_t {
   EXTERNAL_VENETIAN_BLIND = 0x11,        ///< External venetian blind.
   LOUVRE_BLIND = 0x12,                   ///< Louvre blind.
   CURTAIN_TRACK = 0x13,                  ///< Curtain track.
-  VENTILATION_POINT = 0x14,              ///< Ventilation point.
-  EXTERIOR_HEATING = 0x15,               ///< Exterior heating.
-  HEAT_PUMP = 0x16,                      ///< Heat pump.
-  INTRUSION_ALARM = 0x17,                ///< Intrusion alarm.
-  SWINGING_SHUTTER = 0x18,               ///< Swinging shutter.
+  // VENTILATION_POINT (capability class SWITCH), EXTERIOR_HEATING and HEAT_PUMP (both CLIMATE)
+  // decode and carry capability classes but are deliberately withheld from YAML: no platform
+  // consumes CLIMATE yet, and the climate/ventilation platform is unbuilt. They are allowlisted
+  // in device_type_sync_test.cpp's reverse check; move them into __init__.py's
+  // DEVICE_TYPE_OPTIONS (and yaml_device_type_name()) when that platform lands.
+  VENTILATION_POINT = 0x14,  ///< Ventilation point.
+  EXTERIOR_HEATING = 0x15,   ///< Exterior heating.
+  HEAT_PUMP = 0x16,          ///< Heat pump.
+  INTRUSION_ALARM = 0x17,    ///< Intrusion alarm.
+  SWINGING_SHUTTER = 0x18,   ///< Swinging shutter.
 };
 
 /// @brief High‑level capability class derived from DeviceType.
