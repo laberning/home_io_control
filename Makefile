@@ -102,16 +102,18 @@ corpus-validate:
 # libFuzzer target for the frame parser and its pure decoders, seeded from the golden-frame
 # corpus. Time-boxed background check (FUZZ_TIME seconds, default 60) — not part of `make check`/
 # `make test`, since fuzzing doesn't have a pass/fail gate the way a fixed test suite does. The
-# parser TUs (proto_frame/proto_codecs/proto_device_model) are ESPHome-free, so this links
-# directly with clang, no stubs needed.
+# parser TUs (proto_frame/proto_codecs/proto_device_model/proto_crypto) are ESPHome-free; the
+# only host shim needed is tests/include/esp_random.h, which proto_crypto.cpp pulls in for
+# crypto::generate_challenge().
 FUZZ_TIME ?= 60
 fuzz-frame:
 	@mkdir -p build/fuzz/seeds build/fuzz/corpus
 	@python3 scripts/corpus/extract_fuzz_seeds.py
 	clang++ -std=c++20 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
-		-Icomponents/home_io_control \
+		-Icomponents/home_io_control -Itests/include \
 		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
-		components/home_io_control/proto_device_model.cpp tests/fuzz/fuzz_frame_parse.cpp \
+		components/home_io_control/proto_device_model.cpp components/home_io_control/proto_crypto.cpp \
+		tests/fuzz/fuzz_frame_parse.cpp \
 		-o build/fuzz/fuzz_frame_parse
 	./build/fuzz/fuzz_frame_parse -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
 		build/fuzz/corpus build/fuzz/seeds
