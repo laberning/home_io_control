@@ -38,6 +38,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::poll_policy_;
+  using IOHomeControlComponent::tuning_;
 };
 
 // Build a response frame from device (matching device node_id 0xABC123)
@@ -1317,4 +1318,77 @@ TEST(HubOperations, NonSilentDeviceKeepsTheExistingExecutePayload) {
   ASSERT_GE(frame.size(), 17u);
   EXPECT_EQ(frame[14], POS_FAVORITE) << "the default payload is unchanged by this feature";
   EXPECT_EQ(frame[15], 0x06);
+}
+
+// ============================================================================
+// low_power class -> CTRL1_LOW_POWER bit + start-frame preamble (end-to-end)
+// ============================================================================
+// The per-device low_power class, declared in YAML and carried through DeviceConfig into the
+// registry, must reach BOTH the transmitted frame's CTRL1_LOW_POWER bit AND the preamble the
+// exchange engine picks for the start frame. A call site reverting to a hardcoded low_power
+// literal (the exact regression of issue #87) has to trip one of these assertions.
+
+// Register "ABC123" as a ROLLER_SHUTTER with an explicit low_power class via DeviceConfig — the
+// same path the codegen'd entity binding uses, exercised here without the entity mixin (that side
+// is covered in platform_cover_test.cpp).
+static void setup_low_power_cover(TestableComponent &comp, MockRadio &radio, bool low_power) {
+  comp.node_id_[0] = 0xC0;
+  comp.node_id_[1] = 0xFF;
+  comp.node_id_[2] = 0xEE;
+  static const uint8_t key[] = {0xD1, 0x74, 0x34, 0x93, 0xFA, 0x94, 0x38, 0x45,
+                                0xAC, 0x43, 0x50, 0xEE, 0xFF, 0x34, 0x29, 0x34};
+  std::memcpy(comp.system_key_, key, AES_KEY_SIZE);
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  DeviceConfig cfg;
+  cfg.type = DeviceType::ROLLER_SHUTTER;
+  cfg.low_power = low_power;
+  comp.add_device("ABC123", cfg);
+  ASSERT_NE(comp.get_device("ABC123"), nullptr);
+}
+
+TEST(HubOperations, LowPowerDeviceExecuteUsesLongPreambleAndSetsLowPowerBit) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+
+  comp.set_device_position("ABC123", 50);
+
+  ASSERT_GE(radio.get_tx_configs().size(), 1u) << "the EXECUTE start frame should have been transmitted";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
+      << "a low_power target's directed start frame must use the 1024-byte wake-up preamble";
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_NE(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
+      << "a low_power target's frame must carry CTRL1_LOW_POWER";
+}
+
+TEST(HubOperations, DefaultDeviceExecuteUsesNormalStartPreambleAndClearsLowPowerBit) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/false);
+
+  comp.set_device_position("ABC123", 50);
+
+  ASSERT_GE(radio.get_tx_configs().size(), 1u) << "the EXECUTE start frame should have been transmitted";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
+      << "an always-alive target's directed start frame uses normal_start_preamble, not LONG_PREAMBLE";
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_EQ(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
+      << "an always-alive target's frame must leave CTRL1_LOW_POWER clear";
+}
+
+TEST(HubOperations, LowPowerDeviceStatusPollUsesLongPreambleAndSetsLowPowerBit) {
+  // create_get_status is the frame the issue #87 reporter watched time out — cover it explicitly.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+
+  comp.request_device_status("ABC123");
+
+  ASSERT_GE(radio.get_tx_configs().size(), 1u) << "the status poll start frame should have been transmitted";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
+      << "a low_power target's status poll must use the wake-up preamble";
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_NE(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
+      << "a low_power target's status poll must carry CTRL1_LOW_POWER";
 }

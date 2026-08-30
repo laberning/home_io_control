@@ -1,0 +1,73 @@
+id: issue_65_key_transfer_rejected_error_resp
+description: >
+  A pairing attempt that fails at the key-transfer step with an ERROR_RESP (0xFE) carrying result
+  code 0x80 where a KEY_CONFIRM (0x33) was expected. 0x80 has no RESULT_* mapping anywhere in this
+  codebase (proto_constants.h stops at 0x38, then jumps to 0xDF+); the maintainer has noted on the
+  thread that it is documented nowhere. The device answered discovery normally
+  (manufacturer=Somfy, turnaround=40s, power_save=always_alive, flags=0xDC) and issued challenges
+  on every key-init, so this is a rejection at key transfer specifically, not a silent/no-contact
+  device. The same 0xFE/0x80 frame recurs byte-identical on the next key-exchange retry, so it is a
+  deterministic device response, not a one-off. The discovery reply also arrived on 868.25 MHz
+  though the request went out on 868.95 MHz (the off-request-channel reply behaviour issue #65 is
+  really about) — preserved here in the per-frame freq fields.
+
+  The TX KEY_TRANSFER (0x32) frames that each ERROR_RESP answers are not in this capture: their
+  payloads were masked in the source log (a community capture, real system key not available), and
+  a 0x32 frame that does not decrypt to the public corpus key cannot be committed. The 0x3C and
+  0xFE frames sit adjacent below with a masked 0x32 omitted between them; see each frame note.
+source:
+  device: "Somfy Sunilus IO 50/12 (io) tubular motor (most likely — node A84B94, a never-paired motor distinct from the session's already-paired Sunea IO 70/17)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-08-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/65"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B D4 C2 82 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), broadcast to backbone group 00003B"
+  - dir: rx
+    t_ms: 670
+    freq: 868250000
+    hex: "D1 00 D4 C2 82 A8 4B 94 29 04 00 A8 4B 94 02 DC D4 AB"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), device A84B94 answers; manufacturer=2 (Somfy), turnaround=40s, power_save=always_alive, flags=0xDC. Reply on 868.25 MHz although DISCOVER_REQ went out on 868.95 MHz."
+  - dir: tx
+    t_ms: 4687
+    freq: 868950000
+    hex: "48 20 A8 4B 94 D4 C2 82 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31). This is a later retry — three earlier key-transfer rounds (masked 0x32, omitted) each timed out with saw_any=0, and the exchange re-issued key-init twice before this one."
+  - dir: rx
+    t_ms: 4933
+    freq: 868950000
+    hex: "0E 00 D4 C2 82 A8 4B 94 3C ED 8A 38 7A C0 2D"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), challenge = ED 8A 38 7A C0 2D, rssi -46"
+  - dir: rx
+    t_ms: 4975
+    freq: 868950000
+    hex: "89 00 D4 C2 82 A8 4B 94 FE 80"
+    crc: absent
+    note: "cmd=ERROR_RESP(0xFE), result code 0x80 (UNMAPPED — no RESULT_* constant), END. Answers a TX KEY_TRANSFER(0x32) sent between this frame and the 0x3C above whose payload was masked in the source log and is therefore not in this capture."
+  - dir: rx
+    t_ms: 6503
+    freq: 868950000
+    hex: "89 00 D4 C2 82 A8 4B 94 FE 80"
+    crc: absent
+    note: "cmd=ERROR_RESP(0xFE), result code 0x80 again — byte-identical, on the next key-exchange retry (its own KEY_INIT/CHALLENGE_REQ/masked-KEY_TRANSFER round omitted). Confirms the rejection is deterministic."
+expect:
+  exchange:
+    kind: pairing
+    outcome: failure
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w}

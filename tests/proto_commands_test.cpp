@@ -165,7 +165,8 @@ TEST(ProtoCommands, CreateSetConfig1) {
 
 TEST(ProtoCommands, CreateGetStatus) {
   IoFrame frame{};
-  ASSERT_TRUE(create_get_status(frame, test::OWN_ID, test::DST_ID)) << "create_get_status should succeed";
+  ASSERT_TRUE(create_get_status(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true))
+      << "create_get_status should succeed";
   EXPECT_EQ(frame.cmd, CMD_PRIVATE) << "get-status command should be CMD_PRIVATE (0x03)";
   EXPECT_EQ(frame.data_len, 3) << "get-status should have 3-byte payload";
   EXPECT_EQ(frame.data[0], 0x03) << "get-status sub-command byte 0 should be 0x03";
@@ -173,6 +174,13 @@ TEST(ProtoCommands, CreateGetStatus) {
   EXPECT_EQ(frame.data[2], 0x00) << "get-status sub-command byte 2 should be 0x00";
   EXPECT_TRUE(is_start(frame)) << "get-status should be a start frame";
   EXPECT_FALSE(is_end(frame)) << "get-status should not be an end frame";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=true must set CTRL1_LOW_POWER";
+}
+
+TEST(ProtoCommands, CreateGetStatusNormalPowerClearsLowPower) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_get_status(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false));
+  EXPECT_EQ(frame.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=false must leave CTRL1_LOW_POWER clear";
 }
 
 TEST(ProtoCommands, CreateGetName) {
@@ -188,7 +196,8 @@ TEST(ProtoCommands, CreateSetName) {
   IoFrame frame{};
   const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {'P', 'a', 't', 'i', 'o'};
 
-  ASSERT_TRUE(create_set_name(frame, test::OWN_ID, test::DST_ID, payload)) << "create_set_name should succeed";
+  ASSERT_TRUE(create_set_name(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true, payload))
+      << "create_set_name should succeed";
   EXPECT_EQ(frame.cmd, CMD_SET_NAME) << "set-name command should be CMD_SET_NAME (0x52)";
   EXPECT_EQ(frame.data_len, DEVICE_NAME_WRITE_PAYLOAD_SIZE) << "set-name should use the fixed 16-byte payload";
   EXPECT_EQ(frame.data[0], 'P');
@@ -200,30 +209,52 @@ TEST(ProtoCommands, CreateSetName) {
     EXPECT_EQ(frame.data[index], 0x00) << "set-name payload should preserve zero padding";
   EXPECT_TRUE(is_start(frame)) << "set-name should be a start frame";
   EXPECT_FALSE(is_end(frame)) << "set-name should not be an end frame";
-  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=true must set CTRL1_LOW_POWER";
+}
+
+TEST(ProtoCommands, CreateSetNameNormalPowerClearsLowPower) {
+  IoFrame frame{};
+  const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE] = {'P', 'a', 't', 'i', 'o'};
+  ASSERT_TRUE(create_set_name(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false, payload));
+  EXPECT_EQ(frame.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=false must leave CTRL1_LOW_POWER clear";
 }
 
 TEST(ProtoCommands, CreateIdentify) {
   IoFrame frame{};
-  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID)) << "create_identify should succeed";
+  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true))
+      << "create_identify should succeed";
   EXPECT_EQ(frame.cmd, CMD_IDENTIFY) << "identify command should be CMD_IDENTIFY (0x1E)";
   EXPECT_EQ(frame.data_len, 2) << "identify should carry a 2-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "identify payload byte 0 (origin) should be 0x01";
   EXPECT_EQ(frame.data[1], 0xFF) << "identify payload byte 1 (parameter) should be 0xFF";
   EXPECT_TRUE(is_start(frame)) << "identify should be a start frame";
   EXPECT_FALSE(is_end(frame)) << "identify should not be an end frame";
-  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "device-targeted frame should set LOW_POWER";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=true must set CTRL1_LOW_POWER";
+}
+
+TEST(ProtoCommands, CreateIdentifyNormalPowerClearsLowPower) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false));
+  EXPECT_EQ(frame.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=false must leave CTRL1_LOW_POWER clear";
 }
 
 TEST(ProtoCommands, CreateGetStatusTilt) {
   IoFrame frame{};
-  ASSERT_TRUE(create_get_status_tilt(frame, test::OWN_ID, test::DST_ID)) << "create_get_status_tilt should succeed";
+  ASSERT_TRUE(create_get_status_tilt(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true))
+      << "create_get_status_tilt should succeed";
   EXPECT_EQ(frame.cmd, CMD_PRIVATE) << "tilt-aware get-status should still use CMD_PRIVATE (0x03)";
   EXPECT_EQ(frame.data_len, 4) << "tilt-aware get-status should have 4-byte payload";
   EXPECT_EQ(frame.data[0], 0x03);
   EXPECT_EQ(frame.data[1], STATUS_TILT_SELECTOR);
   EXPECT_EQ(frame.data[2], 0x01);
   EXPECT_EQ(frame.data[3], 0x00);
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=true must set CTRL1_LOW_POWER";
+}
+
+TEST(ProtoCommands, CreateGetStatusTiltNormalPowerClearsLowPower) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_get_status_tilt(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false));
+  EXPECT_EQ(frame.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=false must leave CTRL1_LOW_POWER clear";
 }
 
 TEST(ProtoCommands, CreateExecuteTilt) {

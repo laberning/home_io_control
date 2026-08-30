@@ -658,8 +658,13 @@ TEST(HubManagement, ScanPairedDevicesRetriesOnAllThreeChannels) {
   EXPECT_EQ(radio.get_tx_configs()[0].freq_hz, FREQ_CH2) << "CH2 first: the protocol's designated TX channel";
   EXPECT_EQ(radio.get_tx_configs()[1].freq_hz, FREQ_CH1);
   EXPECT_EQ(radio.get_tx_configs()[2].freq_hz, FREQ_CH3);
+  // The roll-call 0x2A is built low_power=false, so it goes out at the normal start preamble, not
+  // the 1024-byte wake-up burst. A genuinely sleeping device is reached by repetition — the
+  // three-channel sweep here, and the reference hub's constant background 0x2A traffic — not by
+  // preamble length. Deliberate, reviewed reversal of the previous assumption.
   for (const auto &tx_config : radio.get_tx_configs())
-    EXPECT_EQ(tx_config.preamble_len, LONG_PREAMBLE) << "each attempt must still wake a possibly-sleeping device";
+    EXPECT_EQ(tx_config.preamble_len, component.tuning_.normal_start_preamble)
+        << "roll-call targets are addressed at the normal start preamble; repetition reaches a sleeper";
 }
 
 TEST(HubManagement, ScanPairedDevicesKnownResponderReportedWithoutYamlSnippet) {
@@ -700,7 +705,43 @@ TEST(HubManagement, ScanPairedDevicesUnknownResponderGetsYamlSnippet) {
   EXPECT_NE(result.message.find("io_device_id: \"415CE4\""), std::string::npos);
   EXPECT_NE(result.message.find("io_device_type: \"light\""), std::string::npos);
   EXPECT_NE(result.message.find("io_subtype: 0"), std::string::npos);
+  EXPECT_EQ(result.message.find("low_power"), std::string::npos)
+      << "Multi Information Byte data[6]=0xCC decodes to power_save=0 (ALWAYS_ALIVE), so no low_power line";
   EXPECT_EQ(component.get_device("415CE4"), nullptr) << "an unknown responder must not be auto-registered";
+}
+
+TEST(HubManagement, ScanPairedDevicesLowPowerResponderGetsLowPowerLineInSnippet) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  // Multi Information Byte is data[6]. 0xCD -> power_save = 0xCD & 0x03 = 1 = POWER_SAVE_LOW_POWER.
+  const uint8_t payload[] = {0x01, 0x80, 0x41, 0x5C, 0xE4, 0x02, 0xCD, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE4};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("io_device_id: \"415CE4\""), std::string::npos);
+  EXPECT_NE(result.message.find("low_power: true"), std::string::npos)
+      << "a responder reporting POWER_SAVE_LOW_POWER must get low_power: true pre-filled in its snippet";
+}
+
+TEST(HubManagement, ScanPairedDevicesAlwaysAliveResponderOmitsLowPowerLine) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  // Multi Information Byte is data[6]. 0xCC -> power_save = 0xCC & 0x03 = 0 = POWER_SAVE_ALWAYS_ALIVE.
+  const uint8_t payload[] = {0x01, 0x80, 0x41, 0x5C, 0xE4, 0x02, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE4};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("io_device_id: \"415CE4\""), std::string::npos);
+  EXPECT_EQ(result.message.find("low_power"), std::string::npos)
+      << "an always-alive responder must not get a low_power line";
 }
 
 TEST(HubManagement, ScanPairedDevicesCarriesInversionAndRssiIntoTheReport) {

@@ -66,6 +66,7 @@ struct PairingContext {
   RadioRxPacket packet{};                  ///< Raw radio capture for the current phase.
   std::string device_id;                   ///< Hex string representation of the paired node ID.
   bool discovery_metadata_complete{false};  ///< True when discovery carried type/subtype bytes.
+  bool discovery_low_power{false};          ///< True when discovery reported POWER_SAVE_LOW_POWER.
 };
 
 }  // namespace pairing

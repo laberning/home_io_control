@@ -23,11 +23,13 @@ static constexpr uint32_t FREQ_CH2 = 868950000;  ///< Channel 2: 868.95 MHz (1W 
 static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W only)
 
 /// Preamble is a sequence of 0xAA bytes that precedes every frame.
-/// The first frame in an exchange uses a long preamble (1024 bytes = 8192 bits)
-/// so the receiver has time to detect it while hopping. Subsequent frames in the
-/// same exchange use a short preamble (8 bytes) since both sides are already
-/// on the same channel. Solar-powered devices need the long preamble to wake up.
-static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes for initial/start frames
+/// A directed start frame to a **low-power** target (`CTRL1_LOW_POWER` set) uses the long preamble
+/// (1024 bytes = 8192 bits) as a wake-up burst for its duty-cycled receiver; every other start
+/// frame uses the runtime-tunable `normal_start_preamble`, which an always-listening receiver
+/// detects fine. Subsequent frames in the same exchange use a short preamble (8 bytes) since both
+/// sides are already on the same channel. The exchange engine derives all of this from the frame
+/// (exchange_engine.cpp).
+static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: wake-up burst for a low-power start frame
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
 
 /// Default for `TuningConfig::cold_broadcast_reply_preamble` — preamble for a *broadcast* reply to
@@ -43,6 +45,21 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/conti
 /// budgeted as a starting point, not yet hardware-validated for this exact chip/scenario
 /// combination. Runtime-tunable via `cold_broadcast_reply_preamble` for exactly that reason.
 static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
+
+/// Default for `TuningConfig::normal_start_preamble` — the preamble in front of a directed *start*
+/// frame whose target is **not** a low-power / duty-cycled device (`CTRL1_LOW_POWER` clear). An
+/// always-listening receiver does not need the ~213 ms `LONG_PREAMBLE` wake-up burst, and some
+/// receivers never lock onto one that long; a normal start frame gets this shorter preamble
+/// instead, matching what a reference hub sends to an always-alive device.
+///
+/// 32 bytes = 256 bits sits inside the preamble band the protocol reference documents (256 bits in
+/// `reference/iown-homecontrol/docs/radio.md:31`; 128 bits is the "Long PPDU" preamble in
+/// `reference/iown-homecontrol/docs/linklayer.md:133`), well above the ~12-byte response preamble a
+/// short-turnaround chip uses, ~6.7 ms of air time, and two orders of magnitude below the 1024-byte
+/// burst. 8 bytes is a proven lower bound against paired always-alive devices but nothing bounds
+/// where a start frame stops being heard, so 32 is the defensible middle — and `normal_start_preamble`
+/// is a live tuning knob so a wrong guess costs a number change, not a rebuild.
+static constexpr uint16_t NORMAL_START_PREAMBLE = 32;
 
 /// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
 /// longer to stay on a channel once a frame is visibly incoming, so a hop doesn't cut it off

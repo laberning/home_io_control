@@ -55,6 +55,11 @@ class DeviceBoundEntity {
   /// slower travel profile. Cover-only in practice; harmless on other platforms, which never
   /// issue position moves.
   void set_silent(bool silent) { this->silent_ = silent; }
+  /// @brief Mark this device as a low-power / duty-cycled receiver. Directed frames to it then set
+  /// CTRL1_LOW_POWER and use the long wake-up preamble; an always-alive device (the default) gets
+  /// neither. Radio property of the device, shared by all four platforms.
+  /// @param low_power True for a battery/solar or otherwise sleeping receiver; default false.
+  void set_low_power(bool low_power) { this->low_power_ = low_power; }
   /// @brief Configure bounded follow-up polling while a state change is expected.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
   void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
@@ -71,7 +76,7 @@ class DeviceBoundEntity {
   void register_device_binding_(Component *self, bool inverted,
                                 std::function<void(const std::string &, const IoDevice &)> on_update) {
     this->parent_->add_device(this->device_id_, DeviceConfig{this->device_type_, this->subtype_, inverted,
-                                                             this->optimistic_state_, this->silent_});
+                                                             this->optimistic_state_, this->silent_, this->low_power_});
     this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
     this->parent_->register_device_callback(std::move(on_update));
     // Schedule the delayed initial poll through the public scheduler: Component::set_timeout is
@@ -106,6 +111,7 @@ class DeviceBoundEntity {
   uint32_t status_poll_interval_ms_{0};
   bool optimistic_state_{true};
   bool silent_{false};
+  bool low_power_{false};
 };
 
 /// @brief Mixin holding the parent + device-id binding shared by per-device entities that are

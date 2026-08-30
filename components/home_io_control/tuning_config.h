@@ -193,7 +193,9 @@ struct TuningConfig {
   uint16_t lr1121_discovery_hop_slice_ms{
       LR1121_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while LR1121 discovery hops.
   uint16_t cold_broadcast_reply_preamble{
-      COLD_BROADCAST_REPLY_PREAMBLE};        ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
+      COLD_BROADCAST_REPLY_PREAMBLE};  ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
+  uint16_t normal_start_preamble{
+      NORMAL_START_PREAMBLE};                ///< Preamble for a directed start frame to a non-low-power target.
   uint8_t lbt_max_retries{LBT_MAX_RETRIES};  ///< LBT retries before forced TX.
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
 

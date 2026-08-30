@@ -24,12 +24,18 @@
 ///     devices; see platform_cover.h.
 ///
 /// Low‑power flag and preamble handling:
-///   - Every frame addressed to a specific device sets CTRL1_LOW_POWER: the codebase does
-///     not track per‑device power class, battery/solar devices need the flag on every frame
-///     sent to them, and the golden‑frame corpus shows real devices accepting it.
-///   - The flag does not select the TX preamble. The exchange engine picks the preamble from
-///     frame position: start frames use LONG_PREAMBLE (1024 bytes) so a sleeping receiver
-///     can wake, follow‑up frames use the driver's response_preamble() (exchange_engine.cpp).
+///   - CTRL1_LOW_POWER is a per‑device property on the command path. Every device‑addressed
+///     builder on that path takes an explicit `low_power` argument, set from the target's
+///     YAML‑declared `low_power` class (default false: an always‑listening receiver).
+///     Battery/solar devices that duty‑cycle their receiver get the flag; mains devices do not,
+///     matching a reference hub's own traffic. The pairing and device‑role builders
+///     (`create_key_init`, `create_key_transfer`, `create_set_config1`,
+///     `create_status_update_resp`) keep a fixed value instead — see ADR 0029's out‑of‑scope note.
+///   - The preamble follows the flag. For a start frame the exchange engine uses LONG_PREAMBLE
+///     (1024 bytes) when CTRL1_LOW_POWER is set — the wake‑up burst for a sleeping receiver —
+///     and the runtime‑tunable `normal_start_preamble` otherwise; follow‑up frames use the
+///     driver's response_preamble() (exchange_engine.cpp). The flag and the preamble can never
+///     disagree because both derive from the same per‑device property.
 
 #include "proto_codecs.h"
 #include "proto_device_model.h"
@@ -112,9 +118,11 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param dst Target device's 3-byte node ID.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER;
+///        the exchange layer then also uses the long wake-up preamble).
 /// @param function_id Private function ID (data[0] of the CMD_PRIVATE payload).
 /// @return true on success.
-bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t function_id);
+bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t function_id);
 
 // ============================================================================
 // 1W Execute (fire-and-forget class broadcast)
@@ -334,8 +342,9 @@ bool create_1w_remove_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], De
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID.
 /// @param dst Target device's 3‑byte node ID.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
 /// @return true on success.
-bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
 
 /// @brief Build a CMD_GET_GENERAL_INFO3 (0x58) request. No payload.
 ///
@@ -359,9 +368,10 @@ bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param dst Target device's 3-byte node ID.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
 /// @param payload Pre-validated fixed payload produced by encode_device_name_payload().
 /// @return true on success.
-bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
+bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                      const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]);
 
 /// @brief Build an authenticated device-identify request (0x1E) that makes a device
@@ -370,10 +380,11 @@ bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID (source address).
 /// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
 /// @note The device may reply with CMD_ERROR_RESP instead of a dedicated identify response;
 ///       callers should treat that reply as an expected, non-fatal outcome rather than a failure.
 /// @return true on success.
-bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
 
 /// Build an execute‑tilt command (0x00) for slat angle control.
 /// @param f IoFrame to populate.
@@ -411,19 +422,22 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param dst Target device's 3-byte node ID.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
 /// @param selector Extended-status selector byte (data[1]).
 /// @param block Selector-specific block/index byte (data[2]) — the field-observed name for
 ///        this byte is "N" for selector 0x80, where the corpus has only ever observed 0x00/0x01.
 /// @return true on success.
-bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t selector, uint8_t block);
+bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t selector,
+                                uint8_t block);
 
 /// Build a tilt‑aware get‑status request (0x03 with extended payload) that returns
 /// the 16‑byte tilt block in the response.
 /// @param f IoFrame to populate.
 /// @param own Controller node ID.
 /// @param dst Target device node ID.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
 /// @return true on success.
-bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
 
 /// @brief Build a CMD_PRIVATE2 (0x0C) request in either of the two field-observed shapes.
 ///

@@ -30,6 +30,7 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
     dev.inverted = true;
   dev.optimistic_state = cfg.optimistic_state;
   dev.silent = cfg.silent;
+  dev.low_power = cfg.low_power;
   devices_[device_id] = dev;
 }
 

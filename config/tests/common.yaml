@@ -98,6 +98,9 @@ cover:
     device_class: shutter
     io_device_type: "roller_shutter"
     silent: true
+    # low_power: on one entity only, so `make firmware-test` compiles both the guarded-present
+    # and the absent branch of the shared low_power codegen.
+    low_power: true
   # window_opener is the one device type that also generates a ventilation-position companion
   # button (device_supports_vent()) alongside the favorite-position one; neither cover above uses
   # a vent-capable io_device_type, so without this entry that codegen path never compiles.

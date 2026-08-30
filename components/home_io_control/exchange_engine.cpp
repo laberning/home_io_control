@@ -246,7 +246,7 @@ bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
 
 ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq) {
   this->reset_debug(request.cmd);
-  const uint16_t request_preamble = is_start(request) ? LONG_PREAMBLE : (*this->radio_ptr_)->response_preamble();
+  const uint16_t request_preamble = this->request_preamble_for_(request);
   const uint32_t exchange_begin_ms = millis();
   bool accepted_without_reply = false;
 
@@ -323,6 +323,15 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
 // ============================================================================
 // Outbound exchange step helpers
 // ============================================================================
+
+uint16_t ExchangeEngine::request_preamble_for_(const IoFrame &request) const {
+  // Gate on is_start() first: several device-role / continuation builders (key transfer,
+  // status-update response) set CTRL1_LOW_POWER on a non-start frame, and those must keep the
+  // short response preamble, not be lengthened.
+  if (!is_start(request))
+    return (*this->radio_ptr_)->response_preamble();
+  return (request.ctrl1 & CTRL1_LOW_POWER) != 0 ? LONG_PREAMBLE : this->tuning_->normal_start_preamble;
+}
 
 bool ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
                                        exchange::OutboundExchangeContext &ctx) {
@@ -449,7 +458,7 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
                                                     uint32_t window_ms, const BroadcastReplyHandler &on_reply) {
   this->reset_debug(request.cmd);
 
-  if (!this->transmit_frame(request, freq, LONG_PREAMBLE)) {
+  if (!this->transmit_frame(request, freq, this->request_preamble_for_(request))) {
     this->record_debug("broadcast_tx_failed", 1, false);
     return 0;
   }

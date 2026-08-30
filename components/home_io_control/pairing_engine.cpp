@@ -267,7 +267,8 @@ bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &cont
 /// Multi Information Byte) via decode_discovery_response(), then emits pairing's diagnostic log
 /// lines for whichever extended fields the payload actually included.
 /// The inversion flag is derived from the type via `default_inverted_for_type()`.
-void PairingEngine::parse_device_from_discovery(const IoFrame &frame, IoDevice &device, std::string &device_id) {
+DiscoveryResponseInfo PairingEngine::parse_device_from_discovery(const IoFrame &frame, IoDevice &device,
+                                                                 std::string &device_id) {
   const DiscoveryResponseInfo info = decode_discovery_response(frame, device, device_id);
 
   if (frame.data_len > DISCOVERY_RESP_MANUFACTURER_OFFSET) {
@@ -290,11 +291,12 @@ void PairingEngine::parse_device_from_discovery(const IoFrame &frame, IoDevice &
              att_class_name(att), power_save_mode_name(power_save), info.flags);
     if (power_save == POWER_SAVE_LOW_POWER) {
       ESP_LOGI(TAG,
-               "Device %s reports low-power mode. "
-               "Consider adding 'low_power: true' to YAML if commands are unreliable.",
+               "Device %s reports low-power mode: add 'low_power: true' to its YAML entry. "
+               "The pairing snippet below pre-fills it when one is printed.",
                device_id.c_str());
     }
   }
+  return info;
 }
 
 // --- Phase helpers ---
@@ -340,8 +342,10 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       this->telemetry_.set_phase(context.state);
       auto result = wait_for_discovery_response_(tuning_->pairing_discovery_wait_ms, context.packet, context.rx);
       if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
-        parse_device_from_discovery(context.rx, context.device, context.device_id);
+        const DiscoveryResponseInfo info = parse_device_from_discovery(context.rx, context.device, context.device_id);
         context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
+        context.discovery_low_power =
+            info.has_extended && discovery_power_save_mode(info.flags) == POWER_SAVE_LOW_POWER;
         return result;
       }
       if (result == decisions::PairingDiscoveryDisposition::INVALID) {
@@ -521,7 +525,8 @@ bool PairingEngine::discover_and_pair() {
   const std::string type_diag = format_device_type_diagnostic(context.device.type);
   const std::string type_yaml = format_device_type_for_yaml(context.device.type);
   const std::string snippet = build_device_yaml_snippet(context.device.type, context.device.subtype, context.device_id,
-                                                        context.discovery_metadata_complete, context.device.inverted);
+                                                        context.discovery_metadata_complete, context.device.inverted,
+                                                        context.discovery_low_power);
 
   if (snippet.empty()) {
     // metadata_complete is true here (build_device_yaml_snippet() never returns empty for

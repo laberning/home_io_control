@@ -342,10 +342,13 @@ void IOHomeControlComponent::loop() {
   }
 
   // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
-  // loop() every ~16-30ms. This is acceptable for a controller: we initiate all
-  // exchanges with a long preamble (1024 bytes ≈ 330ms airtime) so the device has
-  // time to detect us regardless of channel alignment. Precise hopping would only
-  // matter for a passive receiver scanning for unsolicited frames.
+  // loop() every ~16-30ms. This is acceptable for a controller: a directed start frame to a
+  // low-power target still goes out with LONG_PREAMBLE (1024 bytes ≈ 330ms airtime), long enough
+  // to be detected regardless of channel alignment; a start frame to an always-alive target uses
+  // the shorter normal_start_preamble (default 32 bytes), which such a receiver hears fine. This
+  // coarse idle hop causes no exchange to miss its channel either way, because every TX retunes
+  // explicitly to a named channel before sending. Precise hopping would only matter for a passive
+  // receiver scanning for unsolicited frames.
   // Diagnostics build flag: park the receiver on one channel instead of hopping. A hopping monitor
   // is on any given channel roughly a third of the time, so "the capture never shows frame X" is
   // weak evidence — locking to the channel under study makes an absence mean something. Define it

@@ -273,7 +273,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
       [position](const IoDevice &d) { return detail::known_device_accepts_execute_position(d, position); },
       position_rejection_profile(*dev, position),
       [this, position](IoFrame &request, const IoDevice &d) {
-        return create_execute_position(request, this->node_id_, d.node_id, true, position, d.silent);
+        return create_execute_position(request, this->node_id_, d.node_id, d.low_power, position, d.silent);
       });
 }
 
@@ -287,9 +287,9 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
         // IoDevice::inverted device such as a horizontal awning) — create_execute_command() has no
         // device access to resolve that, so it is built separately here where d is in scope.
         return cmd == CoverCommand::FORCE_OPEN
-                   ? create_force_open(request, this->node_id_, d.node_id, true,
+                   ? create_force_open(request, this->node_id_, d.node_id, d.low_power,
                                        d.inverted ? FORCE_OPEN_WIRE_POSITION_INVERTED : FORCE_OPEN_WIRE_POSITION)
-                   : create_execute_command(request, this->node_id_, d.node_id, true, cmd, d.silent);
+                   : create_execute_command(request, this->node_id_, d.node_id, d.low_power, cmd, d.silent);
       });
 }
 
@@ -300,7 +300,7 @@ bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8
       device_id, {action, false}, [](const IoDevice &d) { return detail::known_device_accepts_execute_tilt(d); },
       "tilt-capable cover",
       [this, tilt_percent](IoFrame &request, const IoDevice &d) {
-        return create_execute_tilt(request, this->node_id_, d.node_id, true, tilt_percent);
+        return create_execute_tilt(request, this->node_id_, d.node_id, d.low_power, tilt_percent);
       });
 }
 
@@ -312,7 +312,8 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
       device_id, {action, false}, [](const IoDevice &d) { return detail::known_device_accepts_execute_tilt(d); },
       "tilt-capable cover",
       [this, position, tilt_percent](IoFrame &request, const IoDevice &d) {
-        return create_execute_position_and_tilt(request, this->node_id_, d.node_id, true, position, tilt_percent);
+        return create_execute_position_and_tilt(request, this->node_id_, d.node_id, d.low_power, position,
+                                                tilt_percent);
       });
 }
 
@@ -330,8 +331,8 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   // Tilt-capable covers need the extended 0x03200100 status request so the response includes
   // the reliable 16-byte tilt block. Other devices stay on the shorter generic request.
   bool const request_ok = device_supports_tilt(dev->type)
-                              ? create_get_status_tilt(request, this->node_id_, dev->node_id)
-                              : create_get_status(request, this->node_id_, dev->node_id);
+                              ? create_get_status_tilt(request, this->node_id_, dev->node_id, dev->low_power)
+                              : create_get_status(request, this->node_id_, dev->node_id, dev->low_power);
   if (!request_ok)
     return false;
   uint32_t const retry_after_fail_ms =
@@ -345,7 +346,7 @@ bool IOHomeControlComponent::request_device_name(const std::string &device_id) {
     return false;
 
   IoFrame request;
-  if (!create_get_name(request, this->node_id_, dev->node_id, true))
+  if (!create_get_name(request, this->node_id_, dev->node_id, dev->low_power))
     return false;
   return this->execute_request_and_update_(device_id, request, false, 0);
 }

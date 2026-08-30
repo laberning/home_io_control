@@ -55,8 +55,8 @@ TEST(ProtoCommandsProbeBuilders, PrivateFunctionMatchesGetStatusShape) {
   // the existing CreateGetStatus test already pins this byte-for-byte; this just confirms the
   // generalized entry point produces the identical frame for the same function_id.
   IoFrame via_status{}, via_function{};
-  ASSERT_TRUE(create_get_status(via_status, test::OWN_ID, test::DST_ID));
-  ASSERT_TRUE(create_private_function(via_function, test::OWN_ID, test::DST_ID, 0x03));
+  ASSERT_TRUE(create_get_status(via_status, test::OWN_ID, test::DST_ID, /*low_power=*/true));
+  ASSERT_TRUE(create_private_function(via_function, test::OWN_ID, test::DST_ID, /*low_power=*/true, 0x03));
 
   uint8_t status_bytes[64] = {0}, function_bytes[64] = {0};
   uint8_t status_len = serialize(via_status, status_bytes, sizeof(status_bytes));
@@ -68,14 +68,14 @@ TEST(ProtoCommandsProbeBuilders, PrivateFunctionMatchesGetStatusShape) {
 TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesFixture11SelectorN0) {
   expect_builder_matches_capture("issue_45_extended_private_both_selectors", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-                                   return create_get_status_extended(f, own, dst, 0x80, 0x00);
+                                   return create_get_status_extended(f, own, dst, /*low_power=*/true, 0x80, 0x00);
                                  });
 }
 
 TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesFixture11SelectorN1) {
   expect_builder_matches_capture("issue_45_extended_private_both_selectors", 1,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-                                   return create_get_status_extended(f, own, dst, 0x80, 0x01);
+                                   return create_get_status_extended(f, own, dst, /*low_power=*/true, 0x80, 0x01);
                                  });
 }
 
@@ -148,28 +148,30 @@ TEST(ProtoCommandsProbeBuilders, GeneralInfo3MatchesFixture12CapturedRequest) {
 // hub's bytes" and "the builder reproduces what we actually put on air".
 
 TEST(ProtoCommandsProbeBuilders, PrivateFunctionMatchesOwnHardwareFn06Probe) {
-  expect_builder_matches_capture(
-      "somfy_awning_private_fn_probe_lr1121", 0,
-      [](IoFrame &f, const uint8_t *own, const uint8_t *dst) { return create_private_function(f, own, dst, 0x06); });
+  expect_builder_matches_capture("somfy_awning_private_fn_probe_lr1121", 0,
+                                 [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+                                   return create_private_function(f, own, dst, /*low_power=*/true, 0x06);
+                                 });
 }
 
 TEST(ProtoCommandsProbeBuilders, PrivateFunctionMatchesOwnHardwareFn09Probe) {
-  expect_builder_matches_capture(
-      "somfy_dimmer_private_fn_probe_lr1121", 2,
-      [](IoFrame &f, const uint8_t *own, const uint8_t *dst) { return create_private_function(f, own, dst, 0x09); });
+  expect_builder_matches_capture("somfy_dimmer_private_fn_probe_lr1121", 2,
+                                 [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+                                   return create_private_function(f, own, dst, /*low_power=*/true, 0x09);
+                                 });
 }
 
 TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesOwnHardwareBlock00Probe) {
   expect_builder_matches_capture("somfy_awning_status_ext_probe_lr1121", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-                                   return create_get_status_extended(f, own, dst, 0x80, 0x00);
+                                   return create_get_status_extended(f, own, dst, /*low_power=*/true, 0x80, 0x00);
                                  });
 }
 
 TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesOwnHardwareBlock01Probe) {
   expect_builder_matches_capture("somfy_awning_status_ext_probe_lr1121", 2,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-                                   return create_get_status_extended(f, own, dst, 0x80, 0x01);
+                                   return create_get_status_extended(f, own, dst, /*low_power=*/true, 0x80, 0x01);
                                  });
 }
 

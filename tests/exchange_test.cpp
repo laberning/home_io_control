@@ -84,6 +84,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
   using IOHomeControlComponent::exchange_engine_;
+  using IOHomeControlComponent::tuning_;
 };
 
 // --- Frame builders ---------------------------------------------------------
@@ -442,7 +443,7 @@ TEST(Exchange, SendAndReceive_StatusPollRetriesAfterUnconfirmedAccept) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_get_status(request, comp.node_id_, test::DST_ID);
+  create_get_status(request, comp.node_id_, test::DST_ID, /*low_power=*/false);
 
   uint8_t chal_data[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
   IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
@@ -538,7 +539,7 @@ TEST(Exchange, SendAndReceive_StatusPollUnconfirmedThenAnsweredReturnsResponse) 
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_get_status(request, comp.node_id_, test::DST_ID);
+  create_get_status(request, comp.node_id_, test::DST_ID, /*low_power=*/false);
 
   IoFrame response{};
   const ExchangeOutcome outcome = comp.send_and_receive_(request, response, FREQ_CH2);
@@ -612,8 +613,9 @@ TEST(Exchange, RadioSX1276_ApplyTuningRoutesRadioParameters) {
   EXPECT_EQ(sx1276.response_preamble(), SX1276_RESPONSE_PREAMBLE);
 }
 
-TEST(Exchange, SendAndReceive_StartFrameUsesLongPreamble) {
-  // START frames must always use LONG_PREAMBLE regardless of chip type.
+TEST(Exchange, SendAndReceive_LowPowerStartFrameUsesLongPreamble) {
+  // A START frame whose target is a low-power device (CTRL1_LOW_POWER set) keeps LONG_PREAMBLE:
+  // the long preamble is the wake-up burst for a duty-cycled receiver.
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
@@ -622,9 +624,9 @@ TEST(Exchange, SendAndReceive_StartFrameUsesLongPreamble) {
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
   IoFrame request{};
-  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
-  // create_execute_position sets START flag — verify it
+  create_execute_position(request, comp.node_id_, test::DST_ID, /*low_power=*/true, 100);
   ASSERT_TRUE(is_start(request)) << "execute command should have START flag set";
+  ASSERT_NE(request.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=true must set CTRL1_LOW_POWER";
 
   // No RX → times out after retries, but we can inspect the TX config
   IoFrame response{};
@@ -632,7 +634,31 @@ TEST(Exchange, SendAndReceive_StartFrameUsesLongPreamble) {
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "at least one TX should have been attempted";
   EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
-      << "START frame should always use LONG_PREAMBLE regardless of radio type";
+      << "a low-power START frame must use LONG_PREAMBLE to wake the target";
+}
+
+TEST(Exchange, SendAndReceive_NormalStartFrameUsesNormalStartPreamble) {
+  // A START frame to a non-low-power (always-alive) target uses the runtime-tunable
+  // normal_start_preamble, not the 1024-byte wake-up burst.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, /*low_power=*/false, 100);
+  ASSERT_TRUE(is_start(request)) << "execute command should have START flag set";
+  ASSERT_EQ(request.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=false must leave CTRL1_LOW_POWER clear";
+
+  // No RX → times out after retries, but we can inspect the TX config
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+
+  ASSERT_GE(radio.get_tx_configs().size(), 1u) << "at least one TX should have been attempted";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
+      << "a normal START frame must use normal_start_preamble, not LONG_PREAMBLE";
 }
 
 TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_Default) {
@@ -713,11 +739,11 @@ TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
   IoFrame response{};
   comp.send_and_receive_(request, response, FREQ_CH2);
 
-  // TX 0 = request (LONG_PREAMBLE, start frame)
+  // TX 0 = request (normal_start_preamble — start frame to a non-low-power target)
   // TX 1 = auth response (should use SX1262_RESPONSE_PREAMBLE)
   ASSERT_GE(radio.get_tx_configs().size(), 2u) << "should have sent at least request + auth response";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
-      << "initial request (START) should use LONG_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
+      << "initial request (START, low_power=false) should use normal_start_preamble";
   EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, SX1262_RESPONSE_PREAMBLE)
       << "auth response on SX1262 should use SX1262_RESPONSE_PREAMBLE";
 }
@@ -1514,8 +1540,8 @@ TEST(Exchange, DeferredHopDoesNotRestartTheDwellTimer) {
 //
 // These were fixed constants, and RESPONSE_START_WAIT_MS (300 ms) was shorter than
 // RESPONSE_WAIT_MS (500 ms) despite its own comment promising "longer" — backwards for the one
-// case where the target may have been asleep until the 213 ms wake-up preamble reached it. Field
-// captures of a solar RS100 measured replies from 29 ms to 3052 ms on the same device; see
+// case where a low-power target may have been asleep until the 213 ms wake-up preamble reached it.
+// Field captures of a solar RS100 measured replies from 29 ms to 3052 ms on the same device; see
 // RESPONSE_START_WAIT_MS.
 // ============================================================================
 

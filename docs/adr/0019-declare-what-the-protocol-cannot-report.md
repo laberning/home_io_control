@@ -27,7 +27,10 @@ Concretely, three shapes appear:
   with a dimmable device says so.
 - **Learned default, explicit override.** Position inversion falls back to a
   per-device-type profile, which the user can override outright when their
-  particular device disagrees.
+  particular device disagrees. The `low_power` radio class works the same way
+  (ADR 0029): pairing and roll-call pre-fill it from the device's self-reported
+  `POWER_SAVE` byte into the paste-ready snippet, and the user edits the one
+  line if the device mis-reports.
 - **Safe default, explicit opt-out.** Optimistic state updates default on, and
   can be turned off for a device where predicting the outcome proves wrong.
 

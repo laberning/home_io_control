@@ -177,7 +177,8 @@ class ExchangeEngine {
   /// Transmit a raw IoFrame with LBT and the given preamble length.
   /// @param frame    Frame to transmit.
   /// @param freq     RF frequency in Hz.
-  /// @param preamble Preamble length (LONG_PREAMBLE or SHORT_PREAMBLE).
+  /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
+  ///        tuning-configured value such as `normal_start_preamble`).
   /// @return true if the radio accepted the packet; false otherwise.
   bool transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble);
 
@@ -299,6 +300,13 @@ class ExchangeEngine {
   /// Transmit one request attempt and update context state on failure.
   bool transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
                          exchange::OutboundExchangeContext &ctx);
+
+  /// Preamble length for an outbound request frame. A non-start frame keeps the chip's short
+  /// response preamble. A start frame gets `LONG_PREAMBLE` only when it carries `CTRL1_LOW_POWER`
+  /// (its target is a duty-cycled receiver that must be woken); every other start frame gets the
+  /// runtime-tunable `normal_start_preamble`. The bit and the preamble therefore always agree,
+  /// because both derive from the target's per-device `low_power` property.
+  [[nodiscard]] uint16_t request_preamble_for_(const IoFrame &request) const;
 
   /// Block until the first response arrives or the wait window expires.
   decisions::ExchangeFirstResponseDisposition wait_for_first_response_(const IoFrame &request,

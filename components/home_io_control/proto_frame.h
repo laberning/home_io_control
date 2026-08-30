@@ -32,13 +32,14 @@ namespace home_io_control {
 /// Control byte 0 (CTRL0) bit definitions.
 /// CTRL0 encodes frame flags and the total frame length.
 /// Bits [4:0] = frame_length - 1 (so 0x08 means 9 bytes total).
-/// - START (bit 6): first frame in an exchange; uses long preamble (1024 bytes).
+/// - START (bit 6): first frame in an exchange. Its TX preamble depends on CTRL1_LOW_POWER, not on
+///   START alone: a low-power target gets the 1024-byte wake-up burst, others a normal preamble.
 /// - END (bit 7): last frame in an exchange; set on responses and command completions.
 /// - 1W (bit 5): 1=OneWay protocol (no response expected), 0=TwoWay (response expected).
 /// For 2W operation, the controller sets START on initial command and device replies with END; subsequent frames in an
 /// authenticated exchange also carry END.
 static constexpr uint8_t CTRL0_END = 0x80;          ///< Bit 7: last frame in exchange
-static constexpr uint8_t CTRL0_START = 0x40;        ///< Bit 6: first frame in exchange (uses long preamble)
+static constexpr uint8_t CTRL0_START = 0x40;        ///< Bit 6: first frame in exchange
 static constexpr uint8_t CTRL0_PROTOCOL_1W = 0x20;  ///< Bit 5: 1=OneWay protocol, 0=TwoWay protocol
 static constexpr uint8_t CTRL0_LENGTH_MASK = 0x1F;  ///< Bits [4:0]: frame length - 1
 
@@ -54,7 +55,9 @@ static_assert(FRAME_MAX_DECLARED_SIZE == CTRL0_LENGTH_MASK + 1,
 /// - VERSION (bits [1:0]): protocol version number (usually 0 for current devices).
 /// - PRIORITY (bit 2): marks a high-priority frame (e.g., discovery, security commands).
 /// - ACK (bit 4): sender can handle 2W responses (set on all outbound 2W frames).
-/// - LOW_POWER (bit 5): device is battery/solar powered; may sleep and requires long preamble to wake.
+/// - LOW_POWER (bit 5): device is battery/solar powered; may sleep and requires long preamble to
+///   wake. Set from the target's per-device YAML `low_power` class (default false); drives both
+///   this bit and the start-frame preamble (see proto_commands.h, exchange_engine.cpp).
 /// - ROUTED (bit 6): frame was relayed through a repeater node rather than direct.
 /// - BEACON (bit 7): beacon announcement frame (device presence advertisement).
 static constexpr uint8_t CTRL1_VERSION_MASK = 0x03;  ///< Bits [1:0]: protocol version (usually 0).

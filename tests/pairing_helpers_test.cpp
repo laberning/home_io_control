@@ -396,13 +396,57 @@ TEST(PairingHelpers, ParseDeviceFromDiscovery_ShortPayloadFallsBackToUnknown) {
   EXPECT_EQ(device_id, "112233") << "node ID string should still be extracted from source address";
 }
 
+TEST(PairingHelpers, ParseDeviceFromDiscovery_ReturnsLowPowerClassFromFlagsByte) {
+  TestableComponent comp;
+  IoDevice device{};
+  std::string device_id;
+
+  uint8_t node_id[3] = {0x11, 0x22, 0x33};
+  IoFrame frame{};
+  init_frame(frame, true, true, true, false);
+  set_src(frame, node_id);
+  set_dst(frame, test::DST_ID);
+  // Full DISCOVERY_RESP_FULL_SIZE payload: metadata[0..1], backbone[2..4], manufacturer[5],
+  // Multi Information Byte at DISCOVERY_RESP_FLAGS_OFFSET (6), timestamp[7..8]. Flags bit 0 set
+  // → power_save == POWER_SAVE_LOW_POWER.
+  uint8_t payload[DISCOVERY_RESP_FULL_SIZE] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x01, 0x00, 0x00};
+  set_cmd(frame, CMD_DISCOVER_RESP, payload, sizeof(payload));
+
+  const DiscoveryResponseInfo info = PairingEngine::parse_device_from_discovery(frame, device, device_id);
+
+  EXPECT_TRUE(info.has_extended) << "a DISCOVERY_RESP_FULL_SIZE payload carries the Multi Information Byte";
+  EXPECT_EQ(discovery_power_save_mode(info.flags), POWER_SAVE_LOW_POWER)
+      << "the returned info must expose the self-reported low-power class; it feeds "
+         "PairingContext::discovery_low_power and the pre-filled snippet";
+}
+
+TEST(PairingHelpers, ParseDeviceFromDiscovery_ReturnsAlwaysAliveWhenFlagsByteClear) {
+  TestableComponent comp;
+  IoDevice device{};
+  std::string device_id;
+
+  uint8_t node_id[3] = {0x11, 0x22, 0x33};
+  IoFrame frame{};
+  init_frame(frame, true, true, true, false);
+  set_src(frame, node_id);
+  set_dst(frame, test::DST_ID);
+  uint8_t payload[DISCOVERY_RESP_FULL_SIZE] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00};
+  set_cmd(frame, CMD_DISCOVER_RESP, payload, sizeof(payload));
+
+  const DiscoveryResponseInfo info = PairingEngine::parse_device_from_discovery(frame, device, device_id);
+
+  EXPECT_TRUE(info.has_extended);
+  EXPECT_EQ(discovery_power_save_mode(info.flags), POWER_SAVE_ALWAYS_ALIVE)
+      << "a clear power-save field must stay always-alive so no low_power line is pre-filled";
+}
+
 // ============================================================================
 // build_device_yaml_snippet tests
 // ============================================================================
 
 TEST(PairingHelpers, BuildDeviceYamlSnippet_IncompleteMetadata_ContainsDeviceIdAndName) {
-  const std::string snippet =
-      build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "38B4A1", /*metadata_complete=*/false, /*inverted=*/false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "38B4A1", /*metadata_complete=*/false,
+                                                        /*inverted=*/false, /*low_power=*/false);
 
   EXPECT_NE(snippet.find("io_device_id: \"38B4A1\""), std::string::npos)
       << "the one thing the user can't guess (the device ID) must be present verbatim";
@@ -412,8 +456,8 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_IncompleteMetadata_ContainsDeviceIdA
 }
 
 TEST(PairingHelpers, BuildDeviceYamlSnippet_IncompleteMetadata_DoesNotGuessAPlatform) {
-  const std::string snippet =
-      build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "38B4A1", /*metadata_complete=*/false, /*inverted=*/false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "38B4A1", /*metadata_complete=*/false,
+                                                        /*inverted=*/false, /*low_power=*/false);
 
   // A wrong guess (e.g. defaulting to "cover") would be worse than no guess: the user might
   // paste it under the wrong platform's schema without noticing. Only the placeholder token
@@ -423,8 +467,8 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_IncompleteMetadata_DoesNotGuessAPlat
 }
 
 TEST(PairingHelpers, BuildDeviceYamlSnippet_IncompleteMetadata_DoesNotEmitUncommentedDeviceType) {
-  const std::string snippet =
-      build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "38B4A1", /*metadata_complete=*/false, /*inverted=*/false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "38B4A1", /*metadata_complete=*/false,
+                                                        /*inverted=*/false, /*low_power=*/false);
 
   EXPECT_EQ(snippet.find("\n    io_device_type:"), std::string::npos)
       << "io_device_type is unknown here and must stay commented out, never a bare guessed line";
@@ -433,10 +477,10 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_IncompleteMetadata_DoesNotEmitUncomm
 }
 
 TEST(PairingHelpers, BuildDeviceYamlSnippet_IncompleteMetadata_DifferentDeviceIdsProduceDifferentSnippets) {
-  const std::string snippet_a =
-      build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "112233", /*metadata_complete=*/false, /*inverted=*/false);
-  const std::string snippet_b =
-      build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "AABBCC", /*metadata_complete=*/false, /*inverted=*/false);
+  const std::string snippet_a = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "112233", /*metadata_complete=*/false,
+                                                          /*inverted=*/false, /*low_power=*/false);
+  const std::string snippet_b = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "AABBCC", /*metadata_complete=*/false,
+                                                          /*inverted=*/false, /*low_power=*/false);
 
   EXPECT_NE(snippet_a, snippet_b);
   EXPECT_NE(snippet_a.find("112233"), std::string::npos);
@@ -445,8 +489,9 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_IncompleteMetadata_DifferentDeviceId
 
 TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataInvertedCover) {
   // HORIZONTAL_AWNING is a cover type; inverted=true should emit invert_position.
-  const std::string snippet = build_device_yaml_snippet(DeviceType::HORIZONTAL_AWNING, 5, "30E1F2",
-                                                        /*metadata_complete=*/true, /*inverted=*/true);
+  const std::string snippet =
+      build_device_yaml_snippet(DeviceType::HORIZONTAL_AWNING, 5, "30E1F2",
+                                /*metadata_complete=*/true, /*inverted=*/true, /*low_power=*/false);
 
   EXPECT_NE(snippet.find("  cover:\n"), std::string::npos) << "cover-class device should name the cover platform";
   EXPECT_NE(snippet.find("io_device_id: \"30E1F2\""), std::string::npos);
@@ -457,8 +502,8 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataInvertedCover) {
 }
 
 TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataNonInvertedLight) {
-  const std::string snippet =
-      build_device_yaml_snippet(DeviceType::LIGHT, 0, "415CE4", /*metadata_complete=*/true, /*inverted=*/false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::LIGHT, 0, "415CE4", /*metadata_complete=*/true,
+                                                        /*inverted=*/false, /*low_power=*/false);
 
   EXPECT_NE(snippet.find("  light:\n"), std::string::npos) << "light-class device should name the light platform";
   EXPECT_NE(snippet.find("io_device_id: \"415CE4\""), std::string::npos);
@@ -470,8 +515,9 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataNonInvertedLight) {
 TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataNoPlatformReturnsEmpty) {
   // HEATING_TEMPERATURE_INTERFACE maps to DeviceCapabilityClass::CLIMATE, which has no
   // ESPHome platform in this repo (no platform_climate.{h,cpp}, unlike cover/light/switch/lock).
-  const std::string snippet = build_device_yaml_snippet(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, "AABBCC",
-                                                        /*metadata_complete=*/true, /*inverted=*/false);
+  const std::string snippet =
+      build_device_yaml_snippet(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, "AABBCC",
+                                /*metadata_complete=*/true, /*inverted=*/false, /*low_power=*/false);
 
   EXPECT_TRUE(snippet.empty()) << "a type with no known ESPHome platform must yield an empty snippet";
 }
@@ -479,14 +525,39 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataNoPlatformReturnsEmp
 TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataLock) {
   // LOCK maps to DeviceCapabilityClass::LOCK, which has a dedicated ESPHome platform
   // (components/home_io_control/platform_lock.{h,cpp}).
-  const std::string snippet =
-      build_device_yaml_snippet(DeviceType::LOCK, 0, "AABBCC", /*metadata_complete=*/true, /*inverted=*/false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::LOCK, 0, "AABBCC", /*metadata_complete=*/true,
+                                                        /*inverted=*/false, /*low_power=*/false);
 
   EXPECT_NE(snippet.find("  lock:\n"), std::string::npos) << "lock-class device should name the lock platform";
   EXPECT_NE(snippet.find("io_device_id: \"AABBCC\""), std::string::npos);
   EXPECT_NE(snippet.find("io_device_type: \"lock\""), std::string::npos);
   EXPECT_NE(snippet.find("io_subtype: 0"), std::string::npos);
   EXPECT_EQ(snippet.find("invert_position"), std::string::npos) << "lock must not emit invert_position";
+}
+
+TEST(PairingHelpers, BuildDeviceYamlSnippet_LowPowerEmitsLowPowerLine) {
+  const std::string snippet =
+      build_device_yaml_snippet(DeviceType::LIGHT, 0, "415CE4", /*metadata_complete=*/true, /*inverted=*/false,
+                                /*low_power=*/true);
+  EXPECT_NE(snippet.find("\n    low_power: true\n"), std::string::npos)
+      << "a device that reported POWER_SAVE_LOW_POWER must get a paste-ready low_power line";
+}
+
+TEST(PairingHelpers, BuildDeviceYamlSnippet_NotLowPowerOmitsLowPowerLine) {
+  const std::string snippet =
+      build_device_yaml_snippet(DeviceType::LIGHT, 0, "415CE4", /*metadata_complete=*/true, /*inverted=*/false,
+                                /*low_power=*/false);
+  EXPECT_EQ(snippet.find("low_power"), std::string::npos)
+      << "low_power's absence is a valid config — no line, no 'unknown' comment";
+}
+
+TEST(PairingHelpers, BuildDeviceYamlSnippet_LowPowerLineAppearsEvenWithoutMetadata) {
+  const std::string snippet =
+      build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "38B4A1", /*metadata_complete=*/false, /*inverted=*/false,
+                                /*low_power=*/true);
+  EXPECT_NE(snippet.find("<cover|light|switch|lock>:"), std::string::npos) << "still the placeholder-platform shape";
+  EXPECT_NE(snippet.find("\n    low_power: true\n"), std::string::npos)
+      << "a low-power device that withheld its type is exactly the case a user most needs told";
 }
 
 // ============================================================================

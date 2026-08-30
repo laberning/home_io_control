@@ -42,7 +42,7 @@ TEST(ProtoFrame, StatusRequestRoundTrip) {
   const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
 
   IoFrame frame{};
-  ASSERT_TRUE(create_get_status(frame, own, dst)) << "create_get_status should succeed";
+  ASSERT_TRUE(create_get_status(frame, own, dst, /*low_power=*/false)) << "create_get_status should succeed";
   EXPECT_EQ(frame.cmd, CMD_PRIVATE) << "status request command should match";
   EXPECT_EQ(frame.data_len, 3) << "status request payload length should match";
 
@@ -98,7 +98,8 @@ TEST(ProtoFrame, ParseRejectsLengthMismatch) {
   const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
 
   IoFrame frame{};
-  ASSERT_TRUE(create_get_status(frame, own, dst)) << "status request should be created for malformed-length test";
+  ASSERT_TRUE(create_get_status(frame, own, dst, /*low_power=*/false))
+      << "status request should be created for malformed-length test";
 
   uint8_t serialized[FRAME_MAX_SIZE] = {0};
   uint8_t serialized_len = serialize(frame, serialized, sizeof(serialized));
@@ -120,7 +121,8 @@ TEST(ProtoFrame, ParseRejectsNullAndTruncatedInputs) {
   const uint8_t own[NODE_ID_SIZE] = {0xC0, 0xFF, 0xEE};
   const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
   IoFrame frame{};
-  ASSERT_TRUE(create_get_status(frame, own, dst)) << "status request should be created for truncation test";
+  ASSERT_TRUE(create_get_status(frame, own, dst, /*low_power=*/false))
+      << "status request should be created for truncation test";
 
   uint8_t serialized[FRAME_MAX_SIZE] = {0};
   uint8_t serialized_len = serialize(frame, serialized, sizeof(serialized));
@@ -133,7 +135,8 @@ TEST(ProtoFrame, ParseRejectsLengthOutsideDeclaredOrTrailerShape) {
   const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
 
   IoFrame frame{};
-  ASSERT_TRUE(create_get_status(frame, own, dst)) << "status request should be created for length-shape test";
+  ASSERT_TRUE(create_get_status(frame, own, dst, /*low_power=*/false))
+      << "status request should be created for length-shape test";
 
   uint8_t serialized[FRAME_MAX_SIZE] = {0};
   const uint8_t serialized_len = serialize(frame, serialized, sizeof(serialized));
@@ -159,7 +162,8 @@ TEST(ProtoFrame, ParseRejectsMacTrailerShapeForNonTrailerCommand) {
   const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
 
   IoFrame frame{};
-  ASSERT_TRUE(create_get_status(frame, own, dst)) << "status request should be created for the non-trailer test";
+  ASSERT_TRUE(create_get_status(frame, own, dst, /*low_power=*/false))
+      << "status request should be created for the non-trailer test";
   ASSERT_NE(frame.cmd, CMD_ONEWAY_ADD_CONTROLLER) << "test fixture must be a command that carries no trailer";
   ASSERT_FALSE(frame_carries_mac_trailer(frame.cmd)) << "CMD_PRIVATE must not be treated as trailer-bearing";
 
@@ -185,7 +189,8 @@ TEST(ProtoFrame, SerializeRefusesTrailerOnNonTrailerCommand) {
   const uint8_t dst[NODE_ID_SIZE] = {0x9C, 0xA3, 0x9C};
 
   IoFrame frame{};
-  ASSERT_TRUE(create_get_status(frame, own, dst)) << "status request should be created for the non-trailer test";
+  ASSERT_TRUE(create_get_status(frame, own, dst, /*low_power=*/false))
+      << "status request should be created for the non-trailer test";
   ASSERT_FALSE(frame_carries_mac_trailer(frame.cmd)) << "test fixture must be a command that carries no trailer";
 
   uint8_t serialized[FRAME_MAX_WIRE_SIZE] = {0};

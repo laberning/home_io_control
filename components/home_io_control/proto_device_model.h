@@ -172,6 +172,10 @@ std::string format_device_type_for_yaml(DeviceType type);
 /// `type` has no known ESPHome platform, an empty string is returned instead — the caller
 /// decides what to say when there's no snippet to show.
 ///
+/// `low_power: true` is emitted in **both** shapes when `low_power` is set (the device
+/// self-reported POWER_SAVE_LOW_POWER in its discovery Multi Information Byte); it is omitted
+/// entirely otherwise, since its absence is a valid, correct config.
+///
 /// The emitted keys must track the device-bound platform schemas (`platform_schema_extension()`
 /// in platform_common.py, plus each of cover.py/light.py/switch.py/lock.py's own extra keys) by
 /// hand. `make yaml-emitter-sync` (scripts/check-yaml-emitters.py) catches drift between the two
@@ -182,10 +186,12 @@ std::string format_device_type_for_yaml(DeviceType type);
 /// @param metadata_complete Whether the discovery response included type/subtype metadata.
 /// @param inverted Whether the device's open/close positions are swapped; only used when
 ///        `metadata_complete` is true and `type` is a cover.
+/// @param low_power Whether the device self-reported a low-power / duty-cycled class; emits
+///        `low_power: true` when set, in both snippet shapes.
 /// @return Multi-line YAML snippet, or an empty string when `metadata_complete` is true but
 ///         `type` maps to no ESPHome platform.
 std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
-                                      bool metadata_complete, bool inverted);
+                                      bool metadata_complete, bool inverted, bool low_power);
 
 // ============================================================================
 // Cover Commands
@@ -266,6 +272,10 @@ struct IoDevice {
                                          ///< preference, not a protocol-reported fact — nothing on the wire
                                          ///< tells us whether a device is in that mode.
   bool optimistic_state{true};           ///< True if `target` may be set ahead of a confirming poll/response.
+  bool low_power{false};                 ///< YAML-declared: this target is a low-power / duty-cycled receiver, so
+                                         ///< directed frames set CTRL1_LOW_POWER and use the long wake-up preamble.
+                                         ///< A protocol-reported class exists (discovery Multi Information Byte) but
+                                         ///< is surfaced through the pairing/scan snippet, never applied at runtime.
   bool dimmable{false};                  ///< True for a LIGHT-class device configured `dimmable: true` in YAML.
                                          ///< Not a protocol-level fact (the wire gives no dimmable-capability
                                          ///< signal) — set from platform_light.cpp's YAML config via

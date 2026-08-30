@@ -69,22 +69,25 @@ constexpr uint32_t PROBE_SWEEP_DELAY_MS = 1000;
 
 /// @brief Uniform wrapper signature every probe builder is adapted to, so PROBE_TABLE below can
 /// hold one function-pointer type regardless of each create_*() builder's own parameter list.
-using ProbeBuilderFn = bool (*)(IoFrame &, const uint8_t *, const uint8_t *, uint8_t index);
+/// `low_power` is the target device's YAML-declared power class, forwarded to each builder so a
+/// probe to an always-alive device is shaped like one — the diagnostic subsystem has to work on
+/// the very device class a silent-device investigation reaches for it.
+using ProbeBuilderFn = bool (*)(IoFrame &, const uint8_t *, const uint8_t *, uint8_t index, bool low_power);
 
-bool build_probe_private_fn(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index) {
-  return create_private_function(f, own, dst, index);
+bool build_probe_private_fn(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_private_function(f, own, dst, low_power, index);
 }
-bool build_probe_status_ext(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index) {
-  return create_get_status_extended(f, own, dst, PROBE_STATUS_EXT_SELECTOR, index);
+bool build_probe_status_ext(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_get_status_extended(f, own, dst, low_power, PROBE_STATUS_EXT_SELECTOR, index);
 }
-bool build_probe_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t /*index*/) {
-  return create_general_info3(f, own, dst, /*low_power=*/true);
+bool build_probe_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t /*index*/, bool low_power) {
+  return create_general_info3(f, own, dst, low_power);
 }
-bool build_probe_private2_long(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index) {
-  return create_private2_read(f, own, dst, index, /*long_form=*/true, /*low_power=*/true);
+bool build_probe_private2_long(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_private2_read(f, own, dst, index, /*long_form=*/true, low_power);
 }
-bool build_probe_private2_short(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index) {
-  return create_private2_read(f, own, dst, index, /*long_form=*/false, /*low_power=*/true);
+bool build_probe_private2_short(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_private2_read(f, own, dst, index, /*long_form=*/false, low_power);
 }
 
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
@@ -524,7 +527,7 @@ ManagementActionResult ManagementActions::rename_device(const std::string &devic
   }
 
   IoFrame request;
-  if (!create_set_name(request, node_id_, dev->node_id, payload)) {
+  if (!create_set_name(request, node_id_, dev->node_id, dev->low_power, payload)) {
     result.message = "failed to build rename request";
     return result;
   }
@@ -583,7 +586,7 @@ ManagementActionResult ManagementActions::identify_device(const std::string &dev
     return result;
 
   IoFrame request;
-  if (!create_identify(request, node_id_, dev->node_id)) {
+  if (!create_identify(request, node_id_, dev->node_id, dev->low_power)) {
     result.message = "failed to build identify request";
     return result;
   }
@@ -715,8 +718,9 @@ static std::string format_scan_reply_line(const ScanResponder &responder, const 
   if (known)
     return line;
 
+  const bool low_power = responder.has_extended && discovery_power_save_mode(responder.flags) == POWER_SAVE_LOW_POWER;
   const std::string snippet = build_device_yaml_snippet(responder.type, responder.subtype, device_id,
-                                                        responder.metadata_complete, responder.inverted);
+                                                        responder.metadata_complete, responder.inverted, low_power);
   if (!snippet.empty())
     return line + "    Paste this into your YAML to register it:\n" + snippet;
 
@@ -901,11 +905,8 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     return result;
   }
 
-  // low_power=true for every probe that takes it as a parameter: this codebase does not track
-  // per-device power class (see create_get_name()'s call site in hub_operations.cpp for the same
-  // reasoning), and the corpus shows real devices accepting the flag whether or not they need it.
   IoFrame request;
-  if (!descriptor->builder(request, node_id_, dev->node_id, index_byte)) {
+  if (!descriptor->builder(request, node_id_, dev->node_id, index_byte, dev->low_power)) {
     result.message = "failed to build probe request";
     return result;
   }

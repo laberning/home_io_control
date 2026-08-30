@@ -27,6 +27,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0020](0020-flash-lr1121-transceiver-firmware-not-the-bootloader.md) | Flash LR1121 firmware, not the bootloader | *Superseded by 0021.* Stage the riskier operation for later; keep every failed flash recoverable now |
 | [0021](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md) | Flash the bootloader, behind an arming switch | Reach the CVE-fixing `0x0104`; gate the one unrecoverable write behind visible armed state and a build-time recovery image |
 | [0028](0028-channel-policy-is-a-property-of-the-frame-not-of-the-chip.md) | Channel policy is a property of the frame | One shared listen primitive, three named policies picked by reply shape — not by chip |
+| [0029](0029-start-preamble-is-a-property-of-the-target.md) | Start preamble is a property of the target's power class | `LONG_PREAMBLE` iff `CTRL1_LOW_POWER`, iff the per-device `low_power` YAML property (default false) — not iff the frame is a start frame |
 
 ### Behavior
 

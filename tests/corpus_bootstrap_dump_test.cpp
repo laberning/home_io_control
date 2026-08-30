@@ -113,7 +113,7 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
 
   // --- synthetic_identify_exchange: identify(0x1E) -> challenge -> challenge-resp -> ack(END) ---
   IoFrame identify{};
-  ASSERT_TRUE(create_identify(identify, test::OWN_ID, test::DST_ID));
+  ASSERT_TRUE(create_identify(identify, test::OWN_ID, test::DST_ID, /*low_power=*/true));
   print_wire("synthetic_identify_exchange identify", identify);
 
   IoFrame identify_challenge{};

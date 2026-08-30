@@ -29,6 +29,8 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_EQ(cfg.lr1121_discovery_hop_slice_ms, 7);
   // Chip-neutral: sized for the key-extraction responder's 0x29 broadcast, not any one radio.
   EXPECT_EQ(cfg.cold_broadcast_reply_preamble, 80);
+  // Chip-neutral: directed start frame to a non-low-power target (NORMAL_START_PREAMBLE).
+  EXPECT_EQ(cfg.normal_start_preamble, 32);
   EXPECT_EQ(cfg.lbt_max_retries, 5);
   EXPECT_EQ(cfg.lbt_rssi_threshold_dbm, -90);
   ASSERT_EQ(cfg.pairing_discovery_commands.size(), 1);
@@ -142,6 +144,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   cfg.lr1121_rx_bandwidth = LR1121RxBandwidth::BW_187_2_KHZ;
   cfg.lr1121_discovery_hop_slice_ms = 150;
   cfg.cold_broadcast_reply_preamble = 120;
+  cfg.normal_start_preamble = 48;
 
   std::string snapshot = tuning_config_snapshot(cfg);
   EXPECT_NE(snapshot.find("sx1262_post_tx_settle_us=750"), std::string::npos);
@@ -150,6 +153,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   EXPECT_NE(snapshot.find("lr1121_rx_bandwidth=187.2"), std::string::npos);
   EXPECT_NE(snapshot.find("lr1121_discovery_hop_slice_ms=150"), std::string::npos);
   EXPECT_NE(snapshot.find("cold_broadcast_reply_preamble=120"), std::string::npos);
+  EXPECT_NE(snapshot.find("normal_start_preamble=48"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_commands=[0x28,0x2E]"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_payload=0x00"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_low_power=true"), std::string::npos);

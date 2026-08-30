@@ -226,6 +226,33 @@ TEST(PlatformCover, SetupStoresConfiguredStatusPollInterval) {
       << "entity setup should store the configured status poll interval in the shared device registry";
 }
 
+TEST(PlatformCover, SetupStoresLowPowerFlag) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_low_power(true);
+
+  cover.setup();
+
+  auto *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->low_power) << "set_low_power(true) must reach the device registry through the binding";
+}
+
+TEST(PlatformCover, SetupDefaultsLowPowerToFalse) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+
+  cover.setup();
+
+  auto *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->low_power) << "a cover with no low_power: declaration is not low-power";
+}
+
 TEST(PlatformCover, ExplicitInvertFalseOverridesLearnedInversion) {
   MockHub hub;
   TestableCover cover;

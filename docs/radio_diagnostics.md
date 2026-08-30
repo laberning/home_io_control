@@ -143,6 +143,7 @@ your device may differ.
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
+| `normal_start_preamble` | both | `32` | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices still get `LONG_PREAMBLE`. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -183,7 +184,8 @@ turnaround. Already-paired devices lock onto an on-air preamble of 8 bytes relia
 devices often fail to decode on-air preambles of 1/4/8 bytes and need something substantially
 longer — exactly how much, up to the protocol's full 1024-byte long preamble, has not yet been
 independently validated on this chip, so treat any specific number above 8 as untested rather
-than known-good.
+than known-good. The same "not below the tens of bytes" caution is why `normal_start_preamble`
+(below) defaults to 32 rather than 8.
 
 #### `sx1262_post_tx_settle_us`
 
@@ -298,6 +300,21 @@ either leg of an exchange, which the existing per-command retry already absorbs.
 Sized independently of `response_preamble()`: it governs only the "Recover System Key" feature's
 discovery reply (0x29), the sole device-role reply that is `start=true` and therefore the one a
 hopping/scanning peer has to catch cold, rather than a peer already parked on a held channel.
+
+#### `normal_start_preamble`
+
+The preamble in front of a directed *start* frame (`EXECUTE`, status poll, `GET_NAME`, rename,
+identify, probe) whose target is **not** declared `low_power:`. An always-listening receiver does
+not need the ~213 ms 1024-byte wake-up burst, and some receivers never lock onto one that long —
+so a normal start frame gets this shorter preamble, matching what a reference hub sends to an
+always-alive device. A device declared `low_power: true` still gets `LONG_PREAMBLE` on its start
+frames, unchanged.
+
+Sized independently of `response_preamble()` (that knob is a per-chip TX→RX turnaround property;
+this is a cold-peer property). The `32`-byte default is 256 bits, inside the preamble band the
+protocol reference documents; drop it toward `8` only if a start frame is still not being heard
+and raise it toward `LONG_PREAMBLE` if a marginal always-alive link needs more. Because it is a
+live tuning knob, bisecting the right value needs no rebuild.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 

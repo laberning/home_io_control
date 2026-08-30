@@ -57,6 +57,7 @@ TEST(TuningRegistry, NumberTableContainsExactlyExpectedParameters) {
       "lr1121_post_tx_settle_us",
       "lr1121_discovery_hop_slice_ms",
       "cold_broadcast_reply_preamble",
+      "normal_start_preamble",
       "lbt_max_retries",
       "lbt_rssi_threshold_dbm",
       "pairing_discovery_wait_ms",
@@ -78,8 +79,8 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
   EXPECT_EQ(select_param_names(), expected) << "select table drifted from the expected inventory";
 }
 
-TEST(TuningRegistry, TotalParameterCountIsTwentyFour) {
-  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 24u);
+TEST(TuningRegistry, TotalParameterCountIsTwentyFive) {
+  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 25u);
 }
 
 // ============================================================================

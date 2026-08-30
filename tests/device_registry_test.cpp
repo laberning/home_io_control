@@ -35,6 +35,24 @@ TEST(DeviceRegistry, AddWithMetadataStoresFields) {
   EXPECT_TRUE(dev->inverted);
 }
 
+TEST(DeviceRegistry, AddStoresLowPowerFlag) {
+  DeviceRegistry reg;
+  DeviceConfig cfg;
+  cfg.low_power = true;
+  reg.add("AABBCC", cfg);
+  IoDevice *dev = reg.get("AABBCC");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->low_power) << "low_power must survive add(id, cfg)";
+}
+
+TEST(DeviceRegistry, AddDefaultsLowPowerToFalse) {
+  DeviceRegistry reg;
+  reg.add("ABC123");
+  IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->low_power) << "an undeclared device is not low-power";
+}
+
 TEST(DeviceRegistry, AddStoresNodeIdBytes) {
   DeviceRegistry reg;
   reg.add("ABC123");

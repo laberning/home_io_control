@@ -616,7 +616,8 @@ class IOHomeControlComponent : public Component,
   /// Transmit a raw IoFrame on the current frequency with given preamble length.
   /// @param frame IoFrame to transmit.
   /// @param freq RF frequency in Hz.
-  /// @param preamble Preamble length in bytes (LONG_PREAMBLE or SHORT_PREAMBLE).
+  /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
+  ///        tuning-configured value such as `normal_start_preamble`).
   bool transmit_frame_(const IoFrame &frame, uint32_t freq, uint16_t preamble);
   /// Main request/response exchange with retry and automatic authentication.
   /// @param request Outbound request IoFrame.

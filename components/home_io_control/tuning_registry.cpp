@@ -47,6 +47,11 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
     {"cold_broadcast_reply_preamble",
      [](const TuningConfig &t) { return static_cast<float>(t.cold_broadcast_reply_preamble); },
      [](TuningConfig &t, float v) { t.cold_broadcast_reply_preamble = static_cast<uint16_t>(v); }, false},
+    // false: not chip-specific and never cached into a radio driver via apply_tuning() — the
+    // exchange engine reads it straight out of TuningConfig at TX time, the same as
+    // cold_broadcast_reply_preamble above.
+    {"normal_start_preamble", [](const TuningConfig &t) { return static_cast<float>(t.normal_start_preamble); },
+     [](TuningConfig &t, float v) { t.normal_start_preamble = static_cast<uint16_t>(v); }, false},
     {"lbt_max_retries", [](const TuningConfig &t) { return static_cast<float>(t.lbt_max_retries); },
      [](TuningConfig &t, float v) { t.lbt_max_retries = static_cast<uint8_t>(v); }, false},
     {"lbt_rssi_threshold_dbm", [](const TuningConfig &t) { return static_cast<float>(t.lbt_rssi_threshold_dbm); },

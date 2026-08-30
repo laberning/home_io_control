@@ -27,6 +27,7 @@
 /// addresses that would dangle in a copy.
 
 #include "proto_frame.h"
+#include "proto_codecs.h"
 #include "hub_pairing.h"
 #include "hub_decisions.h"
 #include "exchange_engine.h"
@@ -79,7 +80,10 @@ class PairingEngine {
   bool discover_and_pair();
 
   /// Extract node ID, device type, and subtype from a CMD_DISCOVER_RESP frame.
-  static void parse_device_from_discovery(const IoFrame &frame, IoDevice &device, std::string &device_id);
+  /// @return The decoded extended discovery fields (manufacturer / Multi Information Byte / length
+  ///         flags), so a caller can read the self-reported power class without decoding twice.
+  static DiscoveryResponseInfo parse_device_from_discovery(const IoFrame &frame, IoDevice &device,
+                                                           std::string &device_id);
 
  protected:
   // --- Phase helpers (protected; exposed to tests via TestablePairingEngine in test_helpers.h) ---

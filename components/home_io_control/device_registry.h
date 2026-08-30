@@ -30,6 +30,8 @@ struct DeviceConfig {
   bool inverted{false};                  ///< Position-inversion flag.
   bool optimistic_state{true};           ///< Whether `apply_optimistic_target`/`clear_optimistic_target` may fire.
   bool silent{false};                    ///< Send position moves in "silent operation" (slower) mode.
+  bool low_power{false};                 ///< Target is a low-power / duty-cycled receiver: directed frames set
+                                         ///< CTRL1_LOW_POWER and use the long wake-up preamble.
 };
 
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.

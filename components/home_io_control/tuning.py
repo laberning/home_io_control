@@ -34,6 +34,7 @@ CONF_LR1121_RESPONSE_PREAMBLE = "lr1121_response_preamble"
 CONF_LR1121_POST_TX_SETTLE_US = "lr1121_post_tx_settle_us"
 CONF_LR1121_DISCOVERY_HOP_SLICE_MS = "lr1121_discovery_hop_slice_ms"
 CONF_COLD_BROADCAST_REPLY_PREAMBLE = "cold_broadcast_reply_preamble"
+CONF_NORMAL_START_PREAMBLE = "normal_start_preamble"
 CONF_LBT_MAX_RETRIES = "lbt_max_retries"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
 CONF_EXCHANGE_START_RESPONSE_WAIT_MS = "exchange_start_response_wait_ms"
@@ -146,6 +147,7 @@ UI_NAMES = {
     CONF_LR1121_POST_TX_SETTLE_US: "Radio LR1121 Post-TX Settle",
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: "Radio LR1121 Discovery Hop Slice",
     CONF_COLD_BROADCAST_REPLY_PREAMBLE: "Radio Cold Broadcast Reply Preamble",
+    CONF_NORMAL_START_PREAMBLE: "Radio Normal Start Preamble",
     CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: "Exchange Start Response Wait",
@@ -189,6 +191,12 @@ _NUMBER_PARAMS = {
     # own "chip-neutral defaults live in proto_timing.h" comment) so it has no per-chip range to
     # inherit the way lr1121_response_preamble does.
     CONF_COLD_BROADCAST_REPLY_PREAMBLE: (8, 256, 1, "B"),
+    # Same (8, 256) floor/ceiling as the response-preamble params: 8 is SHORT_PREAMBLE, the lowest
+    # value that leaves the peer's detector anything to lock on to. The default is 32
+    # (NORMAL_START_PREAMBLE in proto_timing.h) -- 256 bits, inside the preamble band the protocol
+    # reference documents -- not 8: brand-new devices have been seen failing at 1/4/8 B
+    # (docs/radio_diagnostics.md), so 8 is a proven-safe floor for the knob, not a sensible default.
+    CONF_NORMAL_START_PREAMBLE: (8, 256, 1, "B"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     # Ceilings are generous because the right value is a property of the target device, not of

@@ -54,6 +54,7 @@ CONF_LINKED_REMOTES = "linked_remotes"
 CONF_DEVICE_TYPE = "io_device_type"
 CONF_SUBTYPE = "io_subtype"
 CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
+CONF_LOW_POWER = "low_power"
 
 # Internal config key for the companion device-name sensor ID (injected by post-validator).
 CONF_DEVICE_NAME_SENSOR_ID = "_device_name_sensor_id"
@@ -193,6 +194,7 @@ def platform_schema_extension():
         cv.Optional(CONF_SUBTYPE): cv.int_range(min=0, max=63),
         cv.Optional(CONF_LINKED_REMOTES): cv.ensure_list(validate_linked_remote_entry),
         cv.Optional(CONF_STATUS_POLL_INTERVAL): validate_status_poll_interval,
+        cv.Optional(CONF_LOW_POWER): cv.boolean,
     }
 
 
@@ -200,8 +202,8 @@ async def wire_device_binding(var, parent, config):
     """Emit the shared to_code() wiring that binds an entity to its hub device.
 
     Covers set_parent / set_device_id, the optional device type / subtype / status
-    poll interval, and the linked-remotes registration loop — identical across all
-    four device-bound platforms.
+    poll interval / low-power class, and the linked-remotes registration loop —
+    identical across all four device-bound platforms.
     """
     cg.add(var.set_parent(parent))
     cg.add(var.set_device_id(config[CONF_IO_DEVICE_ID]))
@@ -216,6 +218,8 @@ async def wire_device_binding(var, parent, config):
                 config[CONF_STATUS_POLL_INTERVAL].total_milliseconds
             )
         )
+    if CONF_LOW_POWER in config:
+        cg.add(var.set_low_power(config[CONF_LOW_POWER]))
 
     if CONF_LINKED_REMOTES in config:
         for remote_id in config[CONF_LINKED_REMOTES]:

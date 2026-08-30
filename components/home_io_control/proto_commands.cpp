@@ -443,9 +443,8 @@ bool create_1w_remove_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], De
 /// reads battery state; create_get_status() below is this builder frozen at function_id =
 /// PRIVATE_GET_POSITION_STATUS (0x03), the only function ID this codebase has ever captured on
 /// its own wire.
-bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t function_id) {
-  // low_power=true for solar devices.
-  init_frame(f, true, true, false, true);
+bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t function_id) {
+  init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
   uint8_t d[3] = {function_id, 0x00, 0x00};
@@ -453,8 +452,8 @@ bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 }
 
 /// Build a get-status request (0x03). The device responds with its current position.
-bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  return create_private_function(f, own, dst, PRIVATE_GET_POSITION_STATUS);
+bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  return create_private_function(f, own, dst, low_power, PRIVATE_GET_POSITION_STATUS);
 }
 
 bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
@@ -473,21 +472,17 @@ bool create_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, bo
   return set_cmd(f, CMD_GET_GENERAL_INFO3);
 }
 
-bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst,
+bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                      const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]) {
-  // low_power=true: matches every other frame addressed to a specific device (see
-  // create_get_status/create_key_init) — solar/battery devices need CTRL1_LOW_POWER set on
-  // every frame sent to them, not only the initiating request.
-  init_frame(f, true, true, false, true);
+  init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
   return set_cmd(f, CMD_SET_NAME, payload, DEVICE_NAME_WRITE_PAYLOAD_SIZE);
 }
 
 /// Build an authenticated device-identify request (0x1E).
-bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  // low_power=true (see create_set_name above).
-  init_frame(f, true, true, false, true);
+bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
   const uint8_t payload[2] = {ORIGINATOR_USER_REMOTE, IDENTIFY_PARAMETER};
@@ -541,8 +536,9 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 /// which this codebase has never decoded. `block` is the field-observed name for the byte that
 /// varies (0x00/0x01) for selector 0x80; create_get_status_tilt() below is this builder frozen
 /// at selector = STATUS_TILT_SELECTOR, block = 0x01.
-bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t selector, uint8_t block) {
-  init_frame(f, true, true, false, true);
+bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t selector,
+                                uint8_t block) {
+  init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
   uint8_t d[4] = {PRIVATE_GET_POSITION_STATUS, selector, block, 0x00};
@@ -550,8 +546,8 @@ bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *d
 }
 
 /// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
-bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  return create_get_status_extended(f, own, dst, STATUS_TILT_SELECTOR, 0x01);
+bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  return create_get_status_extended(f, own, dst, low_power, STATUS_TILT_SELECTOR, 0x01);
 }
 
 /// Build a CMD_PRIVATE2 (0x0C) request in either of the two field-observed shapes. The payload
@@ -709,7 +705,8 @@ bool create_key_init(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
 /// Build a key-transfer frame (0x32) containing the system key encrypted with the transfer key.
 bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, const uint8_t *src,
                          const uint8_t key[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE]) {
-  // low_power=true: see create_set_name above.
+  // low_power=true: the pairing key-transfer keeps a fixed frame shape, hardware-validated as-is.
+  // It is a non-start continuation frame and stays outside the per-device low_power rule (ADR 0029).
   init_frame(f, true, false, false, true);
   set_dst(f, dst);
   set_src(f, src);
@@ -818,7 +815,8 @@ bool create_challenge_resp_device_role(IoFrame &f, const uint8_t *dst, const uin
 /// Build a status-update acknowledgment (0x72). Sent after authenticating a device's status update.
 /// The response is sent on all 3 channels to ensure the device receives it.
 bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  // end=true: final frame. low_power=true (see create_set_name above).
+  // end=true: final frame. low_power=true: this device-role response keeps a fixed shape,
+  // hardware-validated as-is, and stays outside the per-device low_power rule (ADR 0029).
   init_frame(f, true, false, true, true);
   set_dst(f, dst);
   set_src(f, own);
@@ -829,7 +827,9 @@ bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *ds
 /// Build a set-config command (0x6F) to tell the device to automatically send status updates
 /// when controlled by any remote (not just us). Not all devices support this.
 bool create_set_config1(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  // low_power=true (see create_set_name above).
+  // low_power=true: this pairing phase-3 config write keeps the fixed long-preamble shape it was
+  // hardware-validated at; the per-device low_power rule deliberately does not reach pairing
+  // frames (ADR 0029).
   init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, own);
