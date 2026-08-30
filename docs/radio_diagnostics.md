@@ -564,15 +564,63 @@ data:
 
 | `probe` | Sends | `index` selects | Start with | Evidence for the starting values |
 |---|---|---|---|---|
-| `private_fn` | `CMD_PRIVATE` (0x03) with a chosen function ID | The function ID | `0x06` or `0x09` | Not field-observed on our own wire — every `CMD_PRIVATE` frame captured here uses function ID `0x03`. `0x06`/`0x09` are known from production software elsewhere. |
+| `private_fn` | `CMD_PRIVATE` (0x03) with a chosen function ID | The function ID | `0x06` or `0x09` | Not field-observed on our own wire — every `CMD_PRIVATE` frame captured here uses function ID `0x03`. `0x06`/`0x09` are known from production software elsewhere, where they are described as a battery read. On real hardware (17 solar devices + our own mains motors) they returned a stored/target **position**, not a battery value — `0x06` is always `00 00`; `0x09` tracked shutters closing. Not a battery probe. |
+| `private_fn_sub` | `CMD_PRIVATE` (0x03) at function ID `0x09`, with a chosen second payload byte | The second payload byte (`data[1]`) | `0x01` | **Not field-observed.** Every `CMD_PRIVATE` frame ever captured — by this project or by a real hub — has `0x00` in this byte, so nothing on air pins what it means. Reference material describes a two-field parameter address here, but the field-to-byte mapping is unknown: at least three encodings fit every observed payload equally well, because all of them have both fields zero. Treat any reply as uninterpreted. |
 | `status_ext` | Extended `CMD_PRIVATE` at selector `0x80` | The block/`N` value | `0x00` and `0x01` | Field-observed: real hubs send exactly these two values to real motors. |
+| `status_ext_fn6` | Extended `CMD_PRIVATE` at selector `0x80`, function ID `0x06` | The block/`N` value | `0x00`, then `0x80` | The 4-byte extended **shape** is field-observed: a real hub sends `03 80 00 00` and `03 80 01 00` to real motors (40 frames across two logs), and the `0x80` at `data[1]` is what makes the `0x04` reply carry its trailing extended block. The **function ID** `0x06` in that shape is *not* field-observed — no hub has ever been seen sending it. `probe_sweep` caps a run at 16 consecutive indices, so `0x80` is out of reach of a sweep starting at 0 — send it with `probe_device` (or sweep `0x80`–`0x8F` explicitly). |
+| `status_ext_fn9` | Extended `CMD_PRIVATE` at selector `0x80`, function ID `0x09` | The block/`N` value | `0x00`, then `0x01` | Same shape evidence as `status_ext_fn6`; the function ID `0x09` in this shape is not field-observed. On the ordinary 3-byte form, `0x09` returned a stored position on every device tested — not a battery value. |
+| `get_info1` | `CMD_GET_INFO1` (0x54), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | Field-observed: a real hub sends `0x54` on air. No `0x55` answer has ever been captured, so this probe may well draw an `0xFE` "opcode not supported" or nothing at all — that is itself a result worth recording. |
+| `get_info2` | `CMD_GET_INFO2` (0x56), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | The **request** has never been captured; it rests on the protocol's even=request / odd=answer pairing rule. The **answer** `0x57` is captured and carries a leading ASCII reference string followed by the packed type/subtype bytes this component already decodes. Reply strings are wire-observable and citable as-is; do not attempt to resolve one to a model name from any non-public source. |
 | `general_info3` | `CMD_GET_GENERAL_INFO3` (0x58), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | — |
-| `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte (the stored-position selector used elsewhere in this component, e.g. favorite/vent) | `0x00` (favorite/My), `0x03` (vent) | Field-observed long-form shape; `0x00`/`0x03` match this component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` constants. |
-| `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | Same as `private2` | Field-observed short-form shape. |
+| `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte | `0x06`, then `0x05`, `0x09` | Field-observed: a real hub sends exactly these modifier bytes in the long form to real motors (e.g. request data `D4 00 80 D8 06 00`). Earlier revisions of this table suggested `0x00`/`0x03` — those were taken from this component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` constants, **not** from the wire, and never drew the extended block described below. |
+| `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | `0x03`, then `0x09` | Field-observed: a real hub sends the short form with these modifiers (e.g. request data `D8 03 00 00`). |
 
 **There is deliberately no probe for `0x4A`.** Its leading published interpretation is a
 destructive file-management operation, and no reference this project has consulted has ever
 transmitted it. See ADR 0024 for the reasoning.
+
+A `get_info2` reply (`0x57`) leads with printable ASCII: paste the raw hex into the corpus and
+read the string off it, but record only what the wire shows — do not resolve it to a model name
+from any non-public source.
+
+### What each probe and index has returned
+
+A running record of what these frames actually draw back — as much as is understood so far.
+
+| probe / index | what came back |
+|---|---|
+| `private_fn` fn `0x06` | `data[2..3]` = `00 00` on every device probed — two mains motors of ours plus 17 solar shutters via a field reporter. No content. |
+| `private_fn` fn `0x09` | `data[2..3]` = a stored position: `D8 0A` on the dimmer (`0xD8` == `POS_FAVORITE`), `58 22` on the awning; solar shutters in the field data tracked their real position as they closed. |
+| `status_ext` (fn `0x03`), index = block | Field-observed selector. Device-dependent framing (see `status_ext_fn9`). Blocks `0x00`/`0x01` are what real hubs send. |
+| `status_ext_fn9`, index = block | Reply framing is device-dependent: some devices answer `data[0]` = the `0x04`/`0x05` stopped-flag byte with an `0x80`-tagged block, others answer `data[0] = 0x2D` with no block. On the dimmer the `0x80` block **tail changes with the index** (`… 80 00 00 00` at `0x00` → `… 80 D8 06 00` at `0x01`) — first time one of our own probes drew a non-empty, index-selected block; content is position family (`D8 06`). The awning ignores the index. |
+| `status_ext_fn6`, index = block | `data[2..3]` zeroed, same as `private_fn` fn `0x06`. Index `0x80` draws `ERROR_RESP` result code `0x58` — not mapped by `command_result_name()` or any reference error table; read as "index rejected". |
+| `private_fn_sub` (fn `0x09`), index = `data[1]` | Byte-identical to the `private_fn` fn `0x09` reply on both mains devices — the non-zero second payload byte changed nothing. |
+| `get_info2` (`0x56`) | `0x57` reply: 10 printable ASCII bytes (`5143802A06`, `5071662B09`, `5165948A01`) — a Somfy-internal reference / sw-version code, **not** a public catalogue number. The next two bytes (`data[10..11]`) are the packed device type/subtype this component already decodes via `decode_packed_device_type()` — verified: dimmer → `LIGHT`, awning → `HORIZONTAL_AWNING`. `data[12..15]` undecoded. |
+| `get_info1` (`0x54`) | Not yet sent to a device by this project. No `0x55` answer has ever been captured from anything. |
+| `general_info3` (`0x58`) | Dimmer answered a real `0x59`; awning replied `ERROR_RESP` result `0x08` (`ERROR_DURING_EXECUTION`, "opcode not supported"). Device-dependent. |
+| `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices. See "Reading a `private2` reply" below. |
+
+**What the replies do and don't carry.** Across every probe and device tried so far — mains and
+solar, day and night — the only things recovered are position/target data and, via `status_ext` /
+`private_fn` `data[8..10]`, the last commanding node ID. No reply has carried a per-device
+sensor value (battery, charge, luminance, temperature). The recurring non-position unknowns —
+`data[0] = 0x2D` framing, result code `0x58`, `get_info2` `data[12..15]` — have no decode and no
+external source.
+
+### Reading a `private2` / `private2_short` reply
+
+The reply command byte is `CMD_PRIVATE2_RESP` (**0x0D**), not `0x04`. In every reply captured so
+far the two bytes right after the flags byte are `D4 00` — this is the **request's own leading
+payload bytes echoed back**, not a `POS_UNKNOWN` position reading. The per-device content, when
+there is any, rides in an optional `0x80`-tagged block after that echo:
+
+- Our `0x00` / `0x03` modifiers have only ever drawn the bare echo (`… D4 00 00 00`).
+- A real hub's `0x06` modifier draws the block: e.g. `1F3807` answers with `05 D4 00 80 C8 00 00`
+  where this component's probe at `0x00` gets `6D D4 00 00 00`.
+
+The block content observed to date is position-family (`C8 00 00`, `72 49 00`) and matches the
+`status_ext` last-command tail — it is **not** battery/charge telemetry, and it does not vary over
+a day/night cycle (checked on 17 solar devices). `0x0C` is not a live-telemetry read.
 
 ### Widen carefully
 
@@ -583,6 +631,11 @@ exact command is the next-best evidence available. Widening beyond them is a sep
 decision, not something to do by default — and when you do, prefer the dimmer/light over a motor: a
 wrong write-shaped result on a light is visible and trivially reversible, while a motor's stored
 configuration is not.
+
+`private_fn_sub`, `status_ext_fn6` and `status_ext_fn9` differ from `status_ext`/`private_fn` in
+that only their *shape*, not their *function ID* or *sub-index*, is field-observed — so they are one
+byte further from known-safe traffic than anything else in this table. The same "prefer the
+dimmer/light over a motor" advice applies, with more reason.
 
 ### Expect a long block from `probe_sweep`
 

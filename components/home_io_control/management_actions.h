@@ -248,9 +248,17 @@ class ManagementActions {
   ///
   /// `probe` selects the frame builder:
   ///   - "private_fn": create_private_function(), `index` = function ID (Q0).
+  ///   - "private_fn_sub": create_private_function() at function ID 0x09, `index` = the second
+  ///     payload byte (data[1]) — an undecoded parameter-addressing byte no project has ever
+  ///     sent as non-zero.
   ///   - "status_ext": create_get_status_extended() at the field-observed selector 0x80,
   ///     `index` = block/N (Q1). The selector-0x20 tilt control is create_get_status_tilt()
   ///     (already shipped) and is not part of this probe.
+  ///   - "status_ext_fn6" / "status_ext_fn9": create_get_status_extended() at selector 0x80 with
+  ///     function ID 0x06 / 0x09 instead of the usual 0x03, `index` = block/N. The 4-byte shape
+  ///     is field-observed; the function ID in it is not.
+  ///   - "get_info1": create_get_info1() (CMD_GET_INFO1 0x54, no payload), `index` ignored.
+  ///   - "get_info2": create_get_info2() (CMD_GET_INFO2 0x56, no payload), `index` ignored.
   ///   - "general_info3": create_general_info3(), `index` ignored (Q2).
   ///   - "private2": create_private2_read() long form, `index` = modifier (Q3).
   ///   - "private2_short": create_private2_read() short form, `index` = modifier (Q3).

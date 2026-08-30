@@ -1163,8 +1163,9 @@ TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
 
   const auto result = component.probe_device("ABC123", "unknown4a", "0");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(result.message, "unknown probe \"unknown4a\" (expected private_fn, status_ext, general_info3, private2, or "
-                            "private2_short)");
+  EXPECT_EQ(result.message,
+            "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
+            "status_ext_fn9, get_info1, get_info2, general_info3, private2, or private2_short)");
   EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
                                            "not by looping until this flag stops it";
 }
@@ -1351,8 +1352,9 @@ TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
 
   const auto result = component.probe_sweep("ABC123", "unknown4a", "0", "5");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(result.message, "unknown probe \"unknown4a\" (expected private_fn, status_ext, general_info3, private2, or "
-                            "private2_short)");
+  EXPECT_EQ(result.message,
+            "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
+            "status_ext_fn9, get_info1, get_info2, general_info3, private2, or private2_short)");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an invalid probe name must not enter the per-index loop at all: " << result.message;
 }
@@ -1368,6 +1370,21 @@ TEST(HubManagement, ProbeSweepRejectsNoIndexProbeWithoutLooping) {
   const auto result = component.probe_sweep("ABC123", "general_info3", "0", "15");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "probe \"general_info3\" takes no index; use probe_device");
+  EXPECT_EQ(result.message.find("index="), std::string::npos)
+      << "a no-index probe must not enter the per-index loop at all: " << result.message;
+}
+
+TEST(HubManagement, ProbeSweepRejectsGetInfo1NoIndexProbeWithoutLooping) {
+  // get_info1 (0x54) carries no payload -- like general_info3, ProbeDescriptor::needs_index is
+  // false, so probe_sweep() must reject it up front rather than resend the identical frame.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "get_info1", "0", "15");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "probe \"get_info1\" takes no index; use probe_device");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "a no-index probe must not enter the per-index loop at all: " << result.message;
 }

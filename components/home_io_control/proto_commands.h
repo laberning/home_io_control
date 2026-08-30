@@ -38,6 +38,7 @@
 ///     disagree because both derive from the same per‑device property.
 
 #include "proto_codecs.h"
+#include "proto_constants.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
 
@@ -121,8 +122,16 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER;
 ///        the exchange layer then also uses the long wake-up preamble).
 /// @param function_id Private function ID (data[0] of the CMD_PRIVATE payload).
+/// @param sub_index Second payload byte (data[1]). Defaults to 0x00 — the only value any project
+///        has ever transmitted in this 3-byte form, and what every existing capture of ours
+///        contains. A non-zero value is a diagnostic probe into an undecoded parameter encoding:
+///        reference material describes a two-field (main parameter, functional parameter)
+///        addressing scheme here, but the field->byte mapping is **not known** — at least three
+///        encodings fit every payload observed to date equally well, because every one of them
+///        has both fields zero.
 /// @return true on success.
-bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t function_id);
+bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t function_id,
+                             uint8_t sub_index = 0x00);
 
 // ============================================================================
 // 1W Execute (fire-and-forget class broadcast)
@@ -348,13 +357,38 @@ bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 
 /// @brief Build a CMD_GET_GENERAL_INFO3 (0x58) request. No payload.
 ///
-/// Byte-for-byte like create_get_name() above.
+/// Shares the no-payload addressed-request shape with create_get_name(), create_get_info1() and
+/// create_get_info2() via a common file-local helper (proto_commands.cpp).
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param dst Target device's 3-byte node ID.
 /// @param low_power True if target is battery/solar-powered (sets CTRL1_LOW_POWER).
 /// @return true on success.
 bool create_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
+
+/// @brief Build a CMD_GET_INFO1 (0x54) request. No payload.
+///
+/// The request is field-observed — a real hub sends it — but no `0x55` answer has ever been
+/// captured. Diagnostic probe only; nothing in this codebase decodes a `0x55`.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param low_power True if target is battery/solar-powered (sets CTRL1_LOW_POWER).
+/// @return true on success.
+bool create_get_info1(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
+
+/// @brief Build a CMD_GET_INFO2 (0x56) request. No payload.
+///
+/// The request has **never** been captured on air; it rests on the even=request / odd=answer
+/// pairing rule, and on the fact that a `0x57` answer *is* captured (carrying a leading ASCII
+/// reference string plus the packed type/subtype bytes hub_status.cpp already reads at offsets
+/// 10/11).
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param low_power True if target is battery/solar-powered (sets CTRL1_LOW_POWER).
+/// @return true on success.
+bool create_get_info2(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
 
 /// Build a get-name request (0x50). The device responds with its stored display name.
 /// @param f IoFrame to populate.
@@ -426,9 +460,13 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 /// @param selector Extended-status selector byte (data[1]).
 /// @param block Selector-specific block/index byte (data[2]) — the field-observed name for
 ///        this byte is "N" for selector 0x80, where the corpus has only ever observed 0x00/0x01.
+/// @param function_id CMD_PRIVATE function ID at data[0]. Defaults to PRIVATE_GET_POSITION_STATUS
+///        (0x03) — the only value ever observed on air in this 4-byte extended shape. Other values
+///        are diagnostic probes: the *shape* `03 80 00 00` / `03 80 01 00` is field-observed from
+///        a real hub, but no other function ID has ever been seen in it.
 /// @return true on success.
 bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t selector,
-                                uint8_t block);
+                                uint8_t block, uint8_t function_id = PRIVATE_GET_POSITION_STATUS);
 
 /// Build a tilt‑aware get‑status request (0x03 with extended payload) that returns
 /// the 16‑byte tilt block in the response.

@@ -340,12 +340,12 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
     detail::clear_command_result(dev);
 
-    // The originator byte at data[1] tells us what caused the device to move.
-    // Log it so users can understand device-initiated movements (e.g., wind sensor, timer).
-    if (frame.data_len > 1) {
-      ESP_LOGD(detail::TAG, "Device %s: status update originator=%s(0x%02X)", id.c_str(),
-               originator_name(frame.data[1]), frame.data[1]);
-    }
+    // What caused the device to move (wind sensor, timer, a remote). Empty when the payload is
+    // too short to carry the byte — a 11-14 byte 0x71 is still applied for its position fields,
+    // it just has no originator to report.
+    const std::string originator = detail::describe_status_update_originator(frame);
+    if (!originator.empty())
+      ESP_LOGD(detail::TAG, "Device %s: status update originator=%s", id.c_str(), originator.c_str());
 
     detail::log_status_update(id, dev, " (status update)");
     this->notify_device_update_(id);

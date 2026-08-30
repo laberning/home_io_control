@@ -183,16 +183,17 @@ static constexpr uint8_t CMD_GET_NAME_RESP = 0x51;  ///< Device name response
 static constexpr uint8_t CMD_SET_NAME = 0x52;       ///< Set device name (authenticated)
 static constexpr uint8_t CMD_SET_NAME_RESP = 0x53;  ///< Device-name write response
 static constexpr uint8_t CMD_GET_INFO1 =
-    0x54;  ///< Request device general info 1 (unimplemented; we only use 0x56/0x57)
-static constexpr uint8_t CMD_GET_INFO1_RESP = 0x55;  ///< Device general info 1 response (unimplemented; we only use
-                                                     ///< 0x56/0x57). Never observed in our corpus or in any field log —
-                                                     ///< this codebase has never sent CMD_GET_INFO1 to prompt one.
-static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info. This codebase
-                                                     ///< sends it during device-add, but the corpus has
-                                                     ///< no fixture for the request itself -- every
-                                                     ///< 0x57 capture on hand is a reply to someone
-                                                     ///< else's request. Closing this needs a fresh
-                                                     ///< device-add on owned hardware, ingested with
+    0x54;  ///< Request device general info 1. Sent by the `get_info1` diagnostic probe
+           ///< (docs/radio_diagnostics.md, ADR 0024); field-observed on air from a real hub.
+static constexpr uint8_t CMD_GET_INFO1_RESP = 0x55;  ///< Device general info 1 response. Still never captured on our
+                                                     ///< wire or in any field log, and nothing decodes it — accepted by
+                                                     ///< the soft-PHY only so a probe reply is not dropped as an
+                                                     ///< unknown command.
+static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info. The only thing that sends
+                                                     ///< it is the `get_info2` diagnostic probe; the corpus has no
+                                                     ///< fixture for the request itself -- every 0x57 capture on
+                                                     ///< hand is a reply to someone else's request. Closing this
+                                                     ///< needs a fresh device-add on owned hardware, ingested with
                                                      ///< `--rekey` (tests/corpus/README.md).
 static constexpr uint8_t CMD_GET_INFO2_RESP = 0x57;  ///< Device type/model response
 static constexpr uint8_t CMD_GET_GENERAL_INFO3 =
@@ -345,6 +346,14 @@ static constexpr uint8_t POSITION_WIRE_MAX = 200;
 static constexpr uint8_t STATUS_STOPPED = 0x01;        ///< Byte 0 bit 0: device is not moving
 static constexpr uint8_t STATUS_EXPECTED = 0x80;       ///< Byte 1 bit 7: device will send auto status update
 static constexpr uint8_t STATUS_TILT_SELECTOR = 0x20;  ///< Extended status payload marker for tilt-capable devices
+
+/// @brief CMD_PRIVATE (0x03) function ID for a position-status request — data[0] of the payload.
+///
+/// The only function ID this codebase has ever captured on its own wire: it is what
+/// create_get_status() freezes create_private_function() at, and the default `function_id` of
+/// create_get_status_extended(). Lives here rather than in proto_commands.cpp because that
+/// default argument is spelled in proto_commands.h.
+static constexpr uint8_t PRIVATE_GET_POSITION_STATUS = 0x03;
 
 // ============================================================================
 // Cryptographic Constants

@@ -536,6 +536,29 @@ inline void record_exchange_timeout(IoDevice &dev, uint8_t tries) {
       static_cast<uint16_t>(std::min<uint32_t>(static_cast<uint32_t>(dev.exchange_attempt_count) + tries, UINT16_MAX));
 }
 
+/// @brief Offset of the Command Originator byte in a CMD_STATUS_UPDATE (0x71) payload.
+///
+/// Deliberately not offset 1: `data[1]` on a 0x71 is the status byte (0x60/0x61, bit 0 = current
+/// position unknown), which matches no ORIGINATOR_* value, so reading it as an originator rendered
+/// "unknown" on every frame this project has ever captured. Every captured 0x71 carries 0x01
+/// (ORIGINATOR_USER_REMOTE) here.
+inline constexpr uint8_t STATUS_UPDATE_ORIGINATOR_OFFSET = 14;
+
+/// @brief Describe a 0x71 status update's Command Originator as "name(0xXX)".
+///
+/// Pure rather than inlined into the log line it feeds, so the offset is testable: ESP_LOG* is a
+/// no-op stub in host tests, which makes the rendered line itself unobservable.
+/// @param frame A CMD_STATUS_UPDATE frame.
+/// @return "name(0xXX)", e.g. "user_remote(0x01)", or an empty string when the payload is too
+///         short to carry the byte. Shorter frames still carry usable position data — the branch
+///         gate is STATUS_UPDATE_MIN_DATA_LEN (11) — they just have no originator to report.
+inline std::string describe_status_update_originator(const IoFrame &frame) {
+  if (frame.data_len <= STATUS_UPDATE_ORIGINATOR_OFFSET)
+    return {};
+  const uint8_t originator = frame.data[STATUS_UPDATE_ORIGINATOR_OFFSET];
+  return format_name_and_hex(originator_name(originator), originator);
+}
+
 /// @brief Log a concise status‑update line used by inbound handlers.
 /// @param id Device ID.
 /// @param dev Current device state.

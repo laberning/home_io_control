@@ -51,10 +51,23 @@ constexpr size_t UNEXPECTED_RESPONSE_MESSAGE_BUFFER_SIZE = 64;
 
 // --- Diagnostic probe names (probe_device()/probe_sweep() `probe` argument) ---
 constexpr const char *PROBE_NAME_PRIVATE_FN = "private_fn";          ///< Q0: create_private_function().
+constexpr const char *PROBE_NAME_PRIVATE_FN_SUB = "private_fn_sub";  ///< CMD_PRIVATE fn 0x09, chosen second byte.
 constexpr const char *PROBE_NAME_STATUS_EXT = "status_ext";          ///< Q1: create_get_status_extended().
+constexpr const char *PROBE_NAME_STATUS_EXT_FN6 = "status_ext_fn6";  ///< Extended CMD_PRIVATE at function ID 0x06.
+constexpr const char *PROBE_NAME_STATUS_EXT_FN9 = "status_ext_fn9";  ///< Extended CMD_PRIVATE at function ID 0x09.
+constexpr const char *PROBE_NAME_GET_INFO1 = "get_info1";            ///< create_get_info1() (0x54, no payload).
+constexpr const char *PROBE_NAME_GET_INFO2 = "get_info2";            ///< create_get_info2() (0x56, no payload).
 constexpr const char *PROBE_NAME_GENERAL_INFO3 = "general_info3";    ///< Q2: create_general_info3().
 constexpr const char *PROBE_NAME_PRIVATE2 = "private2";              ///< Q3 long form: create_private2_read().
 constexpr const char *PROBE_NAME_PRIVATE2_SHORT = "private2_short";  ///< Q3 short form: create_private2_read().
+/// Function IDs the extended-shape probes hold fixed. Production software elsewhere describes
+/// these two as a battery read; on real hardware (17 solar devices plus our own mains motors)
+/// the *short* 3-byte form at these IDs returned position-family values, never a charge value.
+/// The extended 4-byte shape at these IDs has never been sent by anything.
+constexpr uint8_t PROBE_EXT_FUNCTION_ID_06 = 0x06;
+constexpr uint8_t PROBE_EXT_FUNCTION_ID_09 = 0x09;
+/// Function ID `private_fn_sub` holds fixed while `index` walks the second payload byte.
+constexpr uint8_t PROBE_PRIVATE_FN_SUB_FUNCTION_ID = 0x09;
 /// Extended-CMD_PRIVATE selector "status_ext" probes: the field-observed, never-decoded 0x80.
 /// Selector 0x20 (tilt) already has a permanent builder/action (create_get_status_tilt()) and is
 /// not part of this probe.
@@ -77,8 +90,23 @@ using ProbeBuilderFn = bool (*)(IoFrame &, const uint8_t *, const uint8_t *, uin
 bool build_probe_private_fn(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
   return create_private_function(f, own, dst, low_power, index);
 }
+bool build_probe_private_fn_sub(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_private_function(f, own, dst, low_power, PROBE_PRIVATE_FN_SUB_FUNCTION_ID, index);
+}
 bool build_probe_status_ext(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
   return create_get_status_extended(f, own, dst, low_power, PROBE_STATUS_EXT_SELECTOR, index);
+}
+bool build_probe_status_ext_fn6(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_get_status_extended(f, own, dst, low_power, PROBE_STATUS_EXT_SELECTOR, index, PROBE_EXT_FUNCTION_ID_06);
+}
+bool build_probe_status_ext_fn9(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_get_status_extended(f, own, dst, low_power, PROBE_STATUS_EXT_SELECTOR, index, PROBE_EXT_FUNCTION_ID_09);
+}
+bool build_probe_get_info1(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t /*index*/, bool low_power) {
+  return create_get_info1(f, own, dst, low_power);
+}
+bool build_probe_get_info2(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t /*index*/, bool low_power) {
+  return create_get_info2(f, own, dst, low_power);
 }
 bool build_probe_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t /*index*/, bool low_power) {
   return create_general_info3(f, own, dst, low_power);
@@ -93,7 +121,8 @@ bool build_probe_private2_short(IoFrame &f, const uint8_t *own, const uint8_t *d
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
 struct ProbeDescriptor {
   const char *name;
-  bool needs_index;  ///< False only for "general_info3" -- its builder takes no index/selector.
+  bool needs_index;  ///< False for the no-payload probes ("general_info3", "get_info1", "get_info2") -- their
+                     ///< builders take no index/selector.
   ProbeBuilderFn builder;
 };
 
@@ -105,7 +134,12 @@ struct ProbeDescriptor {
 /// dispatch and its error message. Deliberately has no "unknown4a" row -- see ADR 0024.
 constexpr ProbeDescriptor PROBE_TABLE[] = {
     {PROBE_NAME_PRIVATE_FN, true, build_probe_private_fn},
+    {PROBE_NAME_PRIVATE_FN_SUB, true, build_probe_private_fn_sub},
     {PROBE_NAME_STATUS_EXT, true, build_probe_status_ext},
+    {PROBE_NAME_STATUS_EXT_FN6, true, build_probe_status_ext_fn6},
+    {PROBE_NAME_STATUS_EXT_FN9, true, build_probe_status_ext_fn9},
+    {PROBE_NAME_GET_INFO1, false, build_probe_get_info1},
+    {PROBE_NAME_GET_INFO2, false, build_probe_get_info2},
     {PROBE_NAME_GENERAL_INFO3, false, build_probe_general_info3},
     {PROBE_NAME_PRIVATE2, true, build_probe_private2_long},
     {PROBE_NAME_PRIVATE2_SHORT, true, build_probe_private2_short},

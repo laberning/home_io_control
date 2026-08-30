@@ -107,6 +107,8 @@ bool is_known_io_command(uint8_t cmd) {
     case CMD_GET_NAME_RESP:
     case CMD_SET_NAME:
     case CMD_SET_NAME_RESP:
+    case CMD_GET_INFO1:
+    case CMD_GET_INFO1_RESP:
     case CMD_GET_INFO2:
     case CMD_GET_INFO2_RESP:
     case CMD_GET_GENERAL_INFO3:

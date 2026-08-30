@@ -507,7 +507,7 @@ TEST(HubStatus, SuccessfulStatusUpdateClearsLastResultCode) {
   uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
   set_src(f, src);
   set_dst(f, dst);
-  // 0x71 status update: byte0=flags(stopped), byte1=originator, bytes5-6=target, bytes7-8=current.
+  // 0x71 status update: byte0=flags(stopped), byte1=status byte, bytes5-6=target, bytes7-8=current.
   uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
@@ -516,6 +516,71 @@ TEST(HubStatus, SuccessfulStatusUpdateClearsLastResultCode) {
   EXPECT_EQ(dev->last_result_code, 0u)
       << "a subsequent device-initiated status update should clear a stale result reason";
   EXPECT_EQ(dev->last_result_at_ms, 0u) << "clearing the result code should also clear its timestamp";
+}
+
+// The 0x71 Command Originator used to be read at data[1] — the status byte, which names no
+// ORIGINATOR_* value, so the log line rendered "unknown" on every frame ever captured. The
+// rendered line is unobservable on host (ESP_LOG* is a no-op stub), so the log call was split
+// into detail::describe_status_update_originator() (hub_internal.h) and these tests assert that
+// pure function's output directly — the same call the production log line makes. The second test
+// pins that the length guard skips only the log line and does not tighten branch acceptance.
+TEST(HubStatus, StatusUpdateOriginatorIsAtOffset14AndDecodePathUndisturbed) {
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // Real fixture bytes: issue_45_unsolicited_status_update_burst frame 0 (16-byte 0x71 payload).
+  // data[0]=0x04 moving, data[1]=0x61 status byte, data[5..6]=C8 00 target 100%,
+  // data[7..8]=D4 00 current unknown, data[14]=0x01 Command Originator (User Remote Control).
+  uint8_t payload[16] = {0x04, 0x61, 0x10, 0x0A, 0x0B, 0xC8, 0x00, 0xD4,
+                         0x00, 0xFF, 0xFF, 0x0A, 0x6F, 0x56, 0x01, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->target, 100.0f) << "target at data[5..6]=C8 00 should still decode to 100%";
+  EXPECT_FLOAT_EQ(dev->position, UNKNOWN_POSITION) << "current at data[7..8]=D4 00 is unknown, unchanged by the fix";
+  EXPECT_FALSE(dev->is_stopped) << "data[0]=0x04 has STATUS_STOPPED clear";
+
+  // The production log line's own argument. Reading data[1] instead would render
+  // "unknown(0x61)" here, which is exactly the bug this pins.
+  EXPECT_EQ(detail::describe_status_update_originator(f), "user_remote(0x01)")
+      << "the Command Originator is data[14], not data[1] (the status byte 0x61)";
+}
+
+TEST(HubStatus, StatusUpdateMinimumLengthFrameStillApplied) {
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // 11-byte 0x71 (== STATUS_UPDATE_MIN_DATA_LEN): stopped, target [5..6]=C8 00, current [7..8]=C8 00.
+  // Too short to carry data[14], so the originator log line is skipped — but the frame must still
+  // be decoded and applied.
+  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  EXPECT_TRUE(detail::describe_status_update_originator(f).empty())
+      << "a frame too short to carry data[14] must report no originator rather than a stale byte";
+
+  comp.update_device_status_(f);
+
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->target, 100.0f) << "a minimum-length 0x71 must still decode its target";
+  EXPECT_FLOAT_EQ(dev->position, 100.0f) << "a minimum-length 0x71 must still decode its position";
+  EXPECT_TRUE(dev->is_stopped) << "the originator length guard must not tighten branch acceptance";
 }
 
 // ========================================================================================

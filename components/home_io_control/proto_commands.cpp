@@ -115,8 +115,6 @@ constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
 constexpr uint8_t EXECUTE_PROFILE_SILENT = 0x05;
 /// Short payload length for special execute commands such as stop/favorite.
 constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;
-/// Private sub-command for position status requests.
-constexpr uint8_t PRIVATE_GET_POSITION_STATUS = 0x03;
 /// Long-form CMD_PRIVATE2 (0x0C) payload length. Coincides numerically with
 /// EXECUTE_SPECIAL_PAYLOAD_SIZE but is a distinct command's payload shape — do not merge the two
 /// constants; a change to one must not silently change the other.
@@ -255,6 +253,15 @@ constexpr uint8_t ONEWAY_REMOVE_DATA_VALUE = 0x00;
 /// CMD 0x39's MAC span. No known-answer vector pins this — see create_1w_remove_controller()'s
 /// `@warning` (proto_commands.h) for why `cmd + data` was chosen over the alternatives.
 constexpr uint8_t ONEWAY_REMOVE_MAC_SPAN_SIZE = 2;
+
+/// Build a no-payload, addressed, authenticated request for `cmd` — the shape every
+/// device-info read (CMD_GET_NAME, CMD_GET_INFO1/2, CMD_GET_GENERAL_INFO3) uses.
+bool create_no_payload_request(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t cmd) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, cmd);
+}
 
 }  // namespace
 
@@ -443,11 +450,12 @@ bool create_1w_remove_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], De
 /// reads battery state; create_get_status() below is this builder frozen at function_id =
 /// PRIVATE_GET_POSITION_STATUS (0x03), the only function ID this codebase has ever captured on
 /// its own wire.
-bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t function_id) {
+bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t function_id,
+                             uint8_t sub_index) {
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
-  uint8_t d[3] = {function_id, 0x00, 0x00};
+  uint8_t d[3] = {function_id, sub_index, 0x00};
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
 
@@ -457,19 +465,23 @@ bool create_get_status(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 }
 
 bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
-  return set_cmd(f, CMD_GET_NAME);
+  return create_no_payload_request(f, own, dst, low_power, CMD_GET_NAME);
 }
 
-/// Build a CMD_GET_GENERAL_INFO3 (0x58) request. No payload, byte-for-byte like
-/// create_get_name() above.
+/// Build a CMD_GET_GENERAL_INFO3 (0x58) request. No payload — delegates to the shared
+/// create_no_payload_request() helper, the shape every device-info read uses.
 bool create_general_info3(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
-  return set_cmd(f, CMD_GET_GENERAL_INFO3);
+  return create_no_payload_request(f, own, dst, low_power, CMD_GET_GENERAL_INFO3);
+}
+
+/// Build a CMD_GET_INFO1 (0x54) request. No payload. See proto_commands.h for the evidence note.
+bool create_get_info1(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  return create_no_payload_request(f, own, dst, low_power, CMD_GET_INFO1);
+}
+
+/// Build a CMD_GET_INFO2 (0x56) request. No payload. See proto_commands.h for the evidence note.
+bool create_get_info2(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  return create_no_payload_request(f, own, dst, low_power, CMD_GET_INFO2);
 }
 
 bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
@@ -535,13 +547,15 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 /// selector 0x80 (tests/corpus/captures/issues/issue_45_extended_private_both_selectors.yaml),
 /// which this codebase has never decoded. `block` is the field-observed name for the byte that
 /// varies (0x00/0x01) for selector 0x80; create_get_status_tilt() below is this builder frozen
-/// at selector = STATUS_TILT_SELECTOR, block = 0x01.
+/// at selector = STATUS_TILT_SELECTOR, block = 0x01. `function_id` defaults to
+/// PRIVATE_GET_POSITION_STATUS (0x03) — the only value ever seen on air in this shape; other
+/// values are diagnostic probes into an undecoded function ID.
 bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t selector,
-                                uint8_t block) {
+                                uint8_t block, uint8_t function_id) {
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
-  uint8_t d[4] = {PRIVATE_GET_POSITION_STATUS, selector, block, 0x00};
+  uint8_t d[4] = {function_id, selector, block, 0x00};
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
 

@@ -1,0 +1,39 @@
+id: somfy_dimmer_get_info2_probe_sx1262
+description: >
+  CMD_GET_INFO2 (0x56) probe against our own mains-powered dimmer (node 4200E0), from the 2026-08
+  battery/solar-telemetry follow-up. First capture of this request built by our own stack
+  (create_get_info2(), probe get_info2) drawing a live GET_INFO2_RESP (0x57) -- prior corpus 0x57
+  frames (issues/issue_45_capability_probe_burst.yaml) were replies to a Velux hub's request.
+  Reply payload: 10 ASCII bytes "5143802A06" (a Somfy-internal reference/sw-version code, not a
+  public catalogue number), then the packed type/subtype bytes this component already decodes at
+  data[10..11]. Human-verified: data[10]=0x01, data[11]=0x80 -> (0x01<<2)|(0x80>>6) = 0x06 = LIGHT
+  via decode_packed_device_type() (proto_device_model.cpp), matching this device's known identity
+  ("Dimmable Light"). No auth challenge preceded the reply on this device.
+source:
+  device: "Somfy Izymo dimmer (Dimmable Light, node 4200E0), probed with CMD_GET_INFO2 (0x56)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-08-30
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "48 00 42 00 E0 C0 FF EE 56"
+    crc: absent
+    note: "cmd=GET_INFO2(0x56), no payload (create_get_info2(), probe get_info2)."
+  - dir: rx
+    t_ms: 34
+    freq: 868950000
+    hex: "98 00 C0 FF EE 42 00 E0 57 35 31 34 33 38 30 32 41 30 36 01 80 03 00 00 00"
+    crc: absent
+    note: >
+      cmd=GET_INFO2_RESP(0x57). data[0..9]="5143802A06" (ASCII reference/sw-version code).
+      data[10]=0x01, data[11]=0x80 -> decode_packed_device_type() = 0x06 = LIGHT (human-verified
+      against the device's known identity). data[12]=0x03, data[13..15]=00 00 00 undecoded.
+expect:
+  frames:
+    - {cmd: 0x56, start: true, end: false, protocol: 2w}
+    - {cmd: 0x57, start: false, end: true, protocol: 2w}

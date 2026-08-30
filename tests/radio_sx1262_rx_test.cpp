@@ -228,28 +228,13 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //     anywhere; used only to construct a hypothetical IV in proto_crypto_test.cpp.
   //   - CMD_UNKNOWN4A_REQ: deliberately excluded, see ADR 0024 -- nothing this codebase sends
   //     would ever draw a reply carrying this opcode.
-  //   - CMD_GET_INFO1 / CMD_GET_INFO1_RESP: unimplemented, never sent, so never a reply to wait
-  //     for; this codebase only uses CMD_GET_INFO2/CMD_GET_GENERAL_INFO3 (both already known).
   //   - CMD_SEND_RAW_MESSAGE / CMD_READ_GROUPS / CMD_REBOOT / CMD_SERVICE_STATUS_ACK: never
   //     observed in corpus or field log, not sent or handled anywhere in this codebase -- named
   //     purely so a future capture of one of them has a symbol to log against.
   static constexpr uint8_t NEVER_RECEIVED_ALLOWLIST[] = {
-      CMD_ACTIVATE_MODE,
-      CMD_ONEWAY_ADD_CONTROLLER,
-      CMD_ONEWAY_REMOVE,
-      CMD_SET_SENSOR,
-      CMD_SET_SENSOR_ACK,
-      CMD_DISCOVER_ALT_REQ,
-      CMD_DISCOVER_ALT_RESP,
-      CMD_ADDRESS_RESP,
-      CMD_LAUNCH_KEY_TRANSFER,
-      CMD_UNKNOWN4A_REQ,
-      CMD_GET_INFO1,
-      CMD_GET_INFO1_RESP,
-      CMD_SEND_RAW_MESSAGE,
-      CMD_READ_GROUPS,
-      CMD_REBOOT,
-      CMD_SERVICE_STATUS_ACK,
+      CMD_ACTIVATE_MODE,    CMD_ONEWAY_ADD_CONTROLLER, CMD_ONEWAY_REMOVE, CMD_SET_SENSOR,          CMD_SET_SENSOR_ACK,
+      CMD_DISCOVER_ALT_REQ, CMD_DISCOVER_ALT_RESP,     CMD_ADDRESS_RESP,  CMD_LAUNCH_KEY_TRANSFER, CMD_UNKNOWN4A_REQ,
+      CMD_SEND_RAW_MESSAGE, CMD_READ_GROUPS,           CMD_REBOOT,        CMD_SERVICE_STATUS_ACK,
   };
 
   for (int cmd_int = 0; cmd_int <= 0xFF; cmd_int++) {

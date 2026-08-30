@@ -170,3 +170,43 @@ TEST_P(CorpusDecode, ExpectationsMatchDecodedFrames) {
 
 INSTANTIATE_TEST_SUITE_P(CorpusDecode, CorpusDecode, ::testing::ValuesIn(corpus_test::all_captures()),
                          corpus_test::capture_name_generator);
+
+namespace {
+
+// Mirrors detail::STATUS_UPDATE_ORIGINATOR_OFFSET (hub_internal.h). Reproduced rather than
+// included: this is a codec-layer file that deliberately pulls in only the proto_* headers, and
+// the constant is what the corpus evidence below is about, not a value borrowed from production.
+// hub_status_test.cpp covers the production call site (detail::describe_status_update_originator);
+// what this test adds is the corpus-wide evidence for the offset — data[14] names a real
+// originator on every captured 0x71, data[1] never does.
+constexpr uint8_t STATUS_UPDATE_ORIGINATOR_OFFSET = 14;
+
+}  // namespace
+
+TEST(CorpusStatusUpdateOriginator, OriginatorLivesAtOffset14NotOffset1) {
+  int frames_seen = 0;
+  for (const corpus::CorpusCapture *capture :
+       corpus_test::captures_where([](const corpus::CorpusCapture *) { return true; })) {
+    SCOPED_TRACE(::testing::Message() << "capture=" << capture->id);
+    for (uint8_t i = 0; i < capture->frame_count; i++) {
+      const corpus::CorpusFrame &cf = capture->frames[i];
+      // No corpus fixture attaches a `cmd:` expectation to its 0x71 frames, so filter on the
+      // parsed command byte rather than cf.has_cmd/cf.cmd (which would match nothing).
+      IoFrame frame = corpus_test::parse_capture_frame(cf);
+      if (frame.cmd != CMD_STATUS_UPDATE)
+        continue;
+      frames_seen++;
+      ASSERT_GT(frame.data_len, STATUS_UPDATE_ORIGINATOR_OFFSET)
+          << "0x71 frame " << static_cast<int>(i) << " too short to carry an originator byte";
+      EXPECT_EQ(frame.data[STATUS_UPDATE_ORIGINATOR_OFFSET], ORIGINATOR_USER_REMOTE)
+          << "0x71 frame " << static_cast<int>(i) << ": data[14] is not ORIGINATOR_USER_REMOTE";
+      EXPECT_NE(std::strcmp(originator_name(frame.data[STATUS_UPDATE_ORIGINATOR_OFFSET]), "unknown"), 0)
+          << "0x71 frame " << static_cast<int>(i) << ": data[14] does not name a known originator";
+      EXPECT_EQ(std::strcmp(originator_name(frame.data[1]), "unknown"), 0)
+          << "0x71 frame " << static_cast<int>(i)
+          << ": data[1] coincidentally aliases an ORIGINATOR_* value on this fixture — the two "
+             "assertions above (data[14] carries the real originator) are the load-bearing ones";
+    }
+  }
+  EXPECT_GT(frames_seen, 0) << "no CMD_STATUS_UPDATE frame found in the corpus — test matched nothing";
+}
