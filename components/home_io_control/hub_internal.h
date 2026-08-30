@@ -475,6 +475,13 @@ inline std::string build_key_extraction_report(const uint8_t node_id[NODE_ID_SIZ
 // ============================================================================
 
 /// @brief Normalize stopped state: some devices briefly report stopped before target/current converge.
+///
+/// Deliberately reads and writes observed fields only — never effective_*(). Its job is "the device
+/// said stopped but its own reported target and current disagree", a statement about observations;
+/// feeding it a prediction would push a guess back into an observed field. One consequence: on the
+/// execute-ack path (`trust_position = false`) `dev.target` no longer holds the commanded value, so
+/// this function no longer flips `is_stopped` back to false using the hub's own guess there —
+/// effective_is_stopped() carries that responsibility now, which is where it belongs.
 /// @param dev Device record to update (may clear is_stopped if positions differ).
 inline void normalize_stopped_state(IoDevice &dev) {
   // Some devices briefly report STATUS_STOPPED before current and target have numerically

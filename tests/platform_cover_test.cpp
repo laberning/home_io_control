@@ -107,6 +107,10 @@ class MockHub : public test::MockPlatformHubBase {
     test::MockPlatformHubBase::trigger_device_update(device_id, dev, true);
   }
 
+  // Stands in for run_execute_operation_()'s failure path, which is what withdraws the overlay in
+  // production. DeviceRegistry::rollback_optimistic() has no hub wrapper, so reach it directly.
+  bool rollback_optimistic(const std::string &device_id) { return this->registry_.rollback_optimistic(device_id); }
+
  private:
   std::string last_set_device_id_;
   uint8_t last_set_position_{0};
@@ -311,8 +315,11 @@ TEST(PlatformCover, ControlSetPositionAppliesOptimisticTargetImmediately) {
 
   const auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_FLOAT_EQ(dev->target, 75.0f) << "control() should apply the optimistic target before the queued command runs";
-  EXPECT_FALSE(dev->is_stopped) << "optimistic apply should mark the device as moving";
+  EXPECT_FLOAT_EQ(effective_target(*dev), 75.0f)
+      << "control() should apply the optimistic target before the queued command runs";
+  EXPECT_FALSE(effective_is_stopped(*dev)) << "optimistic apply should mark the device as moving";
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "the prediction must not be written into the observed target";
+  EXPECT_TRUE(dev->is_stopped) << "the prediction must not be written into the observed is_stopped";
 }
 
 TEST(PlatformCover, ControlStopClearsOptimisticTargetImmediately) {
@@ -321,8 +328,11 @@ TEST(PlatformCover, ControlStopClearsOptimisticTargetImmediately) {
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
-  hub.get_device("ABC123")->target = 50.0f;
-  hub.get_device("ABC123")->is_stopped = false;
+  auto *seed = hub.get_device("ABC123");
+  ASSERT_NE(seed, nullptr);
+  seed->target = 50.0f;                          // a genuine wire-reported target the STOP must not discard
+  seed->is_stopped = false;                      // wire-reported movement state
+  hub.apply_optimistic_target("ABC123", 50.0f);  // a prior optimistic move
 
   CoverCall call(&cover);
   call.set_stop(true);
@@ -330,9 +340,11 @@ TEST(PlatformCover, ControlStopClearsOptimisticTargetImmediately) {
 
   const auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "control() STOP should clear any optimistic target immediately";
-  EXPECT_TRUE(dev->is_stopped) << "control() STOP must also mark the device stopped, or the HA cover UI keeps "
-                                  "animating movement until the confirming response arrives";
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION) << "control() STOP should withdraw any optimistic target";
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "control() STOP must predict stopped, or the HA cover UI keeps "
+                                             "animating movement until the confirming response arrives";
+  EXPECT_FLOAT_EQ(dev->target, 50.0f) << "a wire-reported target must survive a predicted stop";
+  EXPECT_FALSE(dev->is_stopped) << "the prediction must not be written into the observed is_stopped";
 }
 
 TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTargetImmediately) {
@@ -352,9 +364,10 @@ TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTargetImmedia
   // queue_* methods), so this only verifies the optimistic-target side effect, not queuing.
   const auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_FLOAT_EQ(dev->target, 75.0f)
+  EXPECT_FLOAT_EQ(effective_target(*dev), 75.0f)
       << "the combined position+tilt branch should apply the optimistic target immediately, same as position-only";
-  EXPECT_FALSE(dev->is_stopped);
+  EXPECT_FALSE(effective_is_stopped(*dev));
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "the prediction must not be written into the observed target";
 }
 
 TEST(PlatformCover, ControlSetTiltAppliesOptimisticTiltImmediately) {
@@ -373,9 +386,11 @@ TEST(PlatformCover, ControlSetTiltAppliesOptimisticTiltImmediately) {
 
   const auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_FLOAT_EQ(dev->tilt, 83.0f) << "control() should apply the optimistic tilt before the queued command runs";
-  EXPECT_TRUE(dev->is_stopped) << "a tilt-only command must not start the HA open/close animation";
-  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "a tilt-only command must not invent a position target";
+  EXPECT_FLOAT_EQ(effective_tilt(*dev), 83.0f)
+      << "control() should apply the optimistic tilt before the queued command runs";
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "a tilt-only command must not start the HA open/close animation";
+  EXPECT_EQ(effective_target(*dev), UNKNOWN_POSITION) << "a tilt-only command must not invent a position target";
+  EXPECT_EQ(dev->tilt, UNKNOWN_POSITION) << "the prediction must not be written into the observed tilt";
   EXPECT_EQ(hub.last_set_tilt(), 83u) << "the command itself should still be queued as normal";
 }
 
@@ -394,8 +409,11 @@ TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTiltToo) {
 
   const auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_FLOAT_EQ(dev->tilt, 50.0f) << "the combined branch should apply optimistic tilt alongside optimistic target";
-  EXPECT_FLOAT_EQ(dev->target, 75.0f);
+  EXPECT_FLOAT_EQ(effective_tilt(*dev), 50.0f)
+      << "the combined branch should apply optimistic tilt alongside optimistic target";
+  EXPECT_FLOAT_EQ(effective_target(*dev), 75.0f);
+  EXPECT_EQ(dev->tilt, UNKNOWN_POSITION) << "predictions must not be written into the observed fields";
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "predictions must not be written into the observed fields";
 }
 
 TEST(PlatformCover, ControlSetTiltRespectsOptimisticStateFalse) {
@@ -431,6 +449,68 @@ TEST(PlatformCover, ControlRespectsOptimisticStateFalse) {
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "optimistic_state=false must leave target untouched (poll-only)";
   EXPECT_EQ(hub.last_set_position(), 75u) << "the command itself should still be queued as normal";
+}
+
+// §7.17 — after a failed command the entity goes back to IDLE at the last position the device
+// actually reported, instead of animating a move that is not happening.
+TEST(PlatformCover, FailedCommandRevertsEntityToIdleAtLastKnownPosition) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  // A prior poll established the cover at rest at IO 30.
+  IoDevice observed{};
+  observed.position = 30.0f;
+  observed.target = 30.0f;
+  observed.is_stopped = true;
+  hub.trigger_device_update("ABC123", observed);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+  const float resting_position = cover.position;
+
+  // HA commands a full close; the entity animates optimistically.
+  CoverCall call(&cover);
+  call.set_position(0.0f);  // fully closed -> IO 100
+  cover.control(call);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_CLOSING);
+
+  // The command fails on the wire; run_execute_operation_() withdraws the prediction.
+  ASSERT_TRUE(hub.rollback_optimistic("ABC123"));
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE) << "a withdrawn prediction must stop the animation";
+  EXPECT_FLOAT_EQ(cover.position, resting_position)
+      << "the entity keeps showing the last position the device actually reported";
+}
+
+// §7.18 — a failed STOP falls back to the observed movement state rather than claiming the
+// device stopped.
+TEST(PlatformCover, FailedStopResumesReportingObservedMovement) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  // The device is observed mid-travel: at IO 40, heading for IO 100 (closing).
+  IoDevice moving{};
+  moving.position = 40.0f;
+  moving.target = 100.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_CLOSING);
+
+  // HA hits STOP; the entity idles optimistically.
+  CoverCall call(&cover);
+  call.set_stop(true);
+  cover.control(call);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+
+  // The STOP never reaches the device; the prediction is withdrawn.
+  ASSERT_TRUE(hub.rollback_optimistic("ABC123"));
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING)
+      << "a failed STOP falls back to the observed movement — the device is presumably still moving";
 }
 
 TEST(PlatformCover, SupportsTiltBasedOnDeviceType) {

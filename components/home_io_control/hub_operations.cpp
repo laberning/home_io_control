@@ -232,6 +232,21 @@ bool IOHomeControlComponent::run_execute_operation_(const std::string &device_id
                                                     const std::function<bool(const IoDevice &)> &accepts,
                                                     const char *rejection_profile,
                                                     const std::function<bool(IoFrame &, const IoDevice &)> &build) {
+  // Every false return means this command will not happen: an unregistered or not-yet-initialized
+  // device, a profile guard rejection, a builder failure, or an exchange that ended with no valid
+  // response or an explicit CMD_ERROR_RESP. In all of them the prediction the entity applied at
+  // control() time must be withdrawn, or the Home Assistant cover animates a movement that is not
+  // occurring — indefinitely, since only a frame from the device can settle it.
+  const bool accepted = this->try_execute_operation_(device_id, spec, accepts, rejection_profile, build);
+  if (!accepted)
+    this->registry_.rollback_optimistic(device_id);
+  return accepted;
+}
+
+bool IOHomeControlComponent::try_execute_operation_(const std::string &device_id, const ExecuteRequestSpec &spec,
+                                                    const std::function<bool(const IoDevice &)> &accepts,
+                                                    const char *rejection_profile,
+                                                    const std::function<bool(IoFrame &, const IoDevice &)> &build) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
     return false;
@@ -400,8 +415,13 @@ bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool l
 }
 
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {
-  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_COVER))
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_COVER)) {
+    // control() applies the optimistic prediction before calling this method, so a queue-time
+    // guard rejection is a command that will not happen and must withdraw it, exactly as
+    // run_execute_operation_() does for a dispatch-time failure. No-op when nothing was predicted.
+    this->registry_.rollback_optimistic(device_id);
     return;
+  }
 
   // Pre-scan for a pending SET_TILT so we can log its value if coalescing happens.
   uint8_t pending_tilt = 0;
@@ -420,15 +440,18 @@ void IOHomeControlComponent::queue_set_device_position(const std::string &device
 }
 
 bool IOHomeControlComponent::queue_device_command(const std::string &device_id, CoverCommand cmd) {
-  if (!this->initialized_)
-    return false;
   const IoDevice *dev = this->get_device(device_id);
-  if (dev == nullptr)
+  // Every false return below is a command that will not happen; control() (STOP →
+  // apply_optimistic_stop) already predicted, so withdraw it — see queue_set_device_position().
+  if (!this->initialized_ || dev == nullptr) {
+    this->registry_.rollback_optimistic(device_id);
     return false;
+  }
   // Same COVER guard as QUEUE_GUARD_COVER, kept inline here: this method returns bool and its
   // rejection noun is the specific command name rather than a fixed "queued cover command".
   if (!detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER)) {
     detail::log_rejected_operation(device_id, *dev, cover_command_name(cmd), "cover entity");
+    this->registry_.rollback_optimistic(device_id);
     return false;
   }
   this->op_queue_.enqueue_device_command(device_id, cmd);
@@ -436,8 +459,11 @@ bool IOHomeControlComponent::queue_device_command(const std::string &device_id, 
 }
 
 void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
-  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_TILT))
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_TILT)) {
+    // Withdraw the entity's optimistic prediction — see queue_set_device_position().
+    this->registry_.rollback_optimistic(device_id);
     return;
+  }
 
   // Pre-scan for a pending SET_POSITION so we can log its value if coalescing happens.
   uint8_t pending_pos = 0;
@@ -457,8 +483,11 @@ void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id,
 
 void IOHomeControlComponent::queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position,
                                                                 uint8_t tilt_percent) {
-  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_POSITION_AND_TILT))
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_POSITION_AND_TILT)) {
+    // Withdraw the entity's optimistic prediction — see queue_set_device_position().
+    this->registry_.rollback_optimistic(device_id);
     return;
+  }
   this->op_queue_.enqueue_set_position_and_tilt(device_id, position, tilt_percent);
 }
 

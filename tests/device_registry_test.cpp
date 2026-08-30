@@ -234,9 +234,10 @@ TEST(DeviceRegistry, ForEachLinkedRemoteVisitsAllEntries) {
   EXPECT_EQ(collected["RB"][1], "DB2");
 }
 
-// --- optimistic target ---
+// --- optimistic overlay: writers keep predictions off the observed fields ---
 
-TEST(DeviceRegistry, ApplyOptimisticTargetSetsTargetAndClearsStopped) {
+// §7.1 — apply_optimistic_target() writes only the overlay.
+TEST(DeviceRegistry, ApplyOptimisticTargetSetsOverlayAndLeavesObservationUntouched) {
   DeviceRegistry reg;
   reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
 
@@ -244,22 +245,57 @@ TEST(DeviceRegistry, ApplyOptimisticTargetSetsTargetAndClearsStopped) {
 
   const IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_FLOAT_EQ(dev->target, 75.0f);
-  EXPECT_FALSE(dev->is_stopped);
+  EXPECT_FLOAT_EQ(dev->optimistic.target, 75.0f);
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::MOVING);
+  EXPECT_FLOAT_EQ(effective_target(*dev), 75.0f);
+  EXPECT_FALSE(effective_is_stopped(*dev));
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "a prediction must not be written into the observed target";
+  EXPECT_TRUE(dev->is_stopped) << "a prediction must not be written into the observed is_stopped";
 }
 
-TEST(DeviceRegistry, ClearOptimisticTargetResetsTargetAndSetsStopped) {
+// §7.2 — apply_optimistic_stop() predicts STOPPED without touching observations, and in
+// particular without discarding a wire-reported target that happens to be present.
+TEST(DeviceRegistry, ApplyOptimisticStopPredictsStoppedAndLeavesObservationUntouched) {
   DeviceRegistry reg;
   reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
-  reg.apply_optimistic_target("ABC123", 75.0f);
 
-  EXPECT_TRUE(reg.clear_optimistic_target("ABC123"));
-
-  const IoDevice *dev = reg.get("ABC123");
+  IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->target, UNKNOWN_POSITION);
-  EXPECT_TRUE(dev->is_stopped) << "clearing the optimistic target on STOP must also mark the "
-                                  "device stopped, or the HA cover UI keeps animating movement";
+  dev->target = 60.0f;                           // a genuine wire-reported target...
+  dev->position = 55.0f;                         // ...and position...
+  dev->is_stopped = false;                       // ...and movement state
+  reg.apply_optimistic_target("ABC123", 75.0f);  // a standing target prediction to withdraw
+
+  EXPECT_TRUE(reg.apply_optimistic_stop("ABC123"));
+
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::STOPPED);
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION) << "the standing target prediction is withdrawn by the stop";
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "a predicted stop must read as stopped, or the HA cover UI keeps "
+                                             "animating movement";
+  EXPECT_FLOAT_EQ(dev->target, 60.0f) << "a wire-reported target must survive a predicted stop";
+  EXPECT_FLOAT_EQ(dev->position, 55.0f) << "observed position untouched";
+  EXPECT_FALSE(dev->is_stopped) << "the prediction must not be written into the observed is_stopped";
+}
+
+// §7.3 — apply_optimistic_tilt() writes only the overlay, leaving a wire-reported slat angle intact.
+TEST(DeviceRegistry, ApplyOptimisticTiltSetsOverlayAndLeavesObservationUntouched) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+
+  IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->tilt = 15.0f;  // a genuine wire-reported slat angle the prediction must not overwrite
+
+  EXPECT_TRUE(reg.apply_optimistic_tilt("ABC123", 83.0f));
+
+  EXPECT_FLOAT_EQ(dev->optimistic.tilt, 83.0f);
+  EXPECT_FLOAT_EQ(effective_tilt(*dev), 83.0f);
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::NONE)
+      << "a tilt-only command does not move the main position, so it must not predict motion";
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION) << "optimistic tilt must not invent a position target";
+  EXPECT_FLOAT_EQ(dev->tilt, 15.0f) << "a prediction must not be written into the observed tilt";
+  EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "optimistic tilt must not touch the reported position";
+  EXPECT_TRUE(dev->is_stopped) << "optimistic tilt must not touch the observed is_stopped";
 }
 
 TEST(DeviceRegistry, ApplyOptimisticTargetOnUnknownDeviceReturnsFalseWithoutCrashing) {
@@ -267,38 +303,9 @@ TEST(DeviceRegistry, ApplyOptimisticTargetOnUnknownDeviceReturnsFalseWithoutCras
   EXPECT_FALSE(reg.apply_optimistic_target("UNKNOWN1", 50.0f));
 }
 
-TEST(DeviceRegistry, ClearOptimisticTargetOnUnknownDeviceReturnsFalseWithoutCrashing) {
+TEST(DeviceRegistry, ApplyOptimisticStopOnUnknownDeviceReturnsFalseWithoutCrashing) {
   DeviceRegistry reg;
-  EXPECT_FALSE(reg.clear_optimistic_target("UNKNOWN1"));
-}
-
-TEST(DeviceRegistry, OptimisticTargetNoOpWhenOptimisticStateDisabled) {
-  DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false});
-
-  EXPECT_FALSE(reg.apply_optimistic_target("ABC123", 75.0f));
-  EXPECT_FALSE(reg.clear_optimistic_target("ABC123"));
-
-  const IoDevice *dev = reg.get("ABC123");
-  ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "optimistic_state=false must leave target untouched";
-}
-
-// --- optimistic tilt ---
-
-TEST(DeviceRegistry, ApplyOptimisticTiltSetsTiltWithoutClearingStopped) {
-  DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
-
-  EXPECT_TRUE(reg.apply_optimistic_tilt("ABC123", 83.0f));
-
-  const IoDevice *dev = reg.get("ABC123");
-  ASSERT_NE(dev, nullptr);
-  EXPECT_FLOAT_EQ(dev->tilt, 83.0f);
-  EXPECT_TRUE(dev->is_stopped) << "a tilt-only command does not move the main position, so it must "
-                                  "not start the HA open/close animation the way a target does";
-  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "optimistic tilt must not invent a position target";
-  EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "optimistic tilt must not touch the reported position";
+  EXPECT_FALSE(reg.apply_optimistic_stop("UNKNOWN1"));
 }
 
 TEST(DeviceRegistry, ApplyOptimisticTiltNoOpForNonTiltDevice) {
@@ -311,6 +318,7 @@ TEST(DeviceRegistry, ApplyOptimisticTiltNoOpForNonTiltDevice) {
 
   const IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->optimistic.tilt, UNKNOWN_POSITION);
   EXPECT_EQ(dev->tilt, UNKNOWN_POSITION);
 }
 
@@ -319,15 +327,80 @@ TEST(DeviceRegistry, ApplyOptimisticTiltOnUnknownDeviceReturnsFalseWithoutCrashi
   EXPECT_FALSE(reg.apply_optimistic_tilt("UNKNOWN1", 50.0f));
 }
 
-TEST(DeviceRegistry, OptimisticTiltNoOpWhenOptimisticStateDisabled) {
+TEST(DeviceRegistry, OptimisticNoOpWhenOptimisticStateDisabled) {
   DeviceRegistry reg;
   reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
 
+  EXPECT_FALSE(reg.apply_optimistic_target("ABC123", 75.0f));
+  EXPECT_FALSE(reg.apply_optimistic_stop("ABC123"));
   EXPECT_FALSE(reg.apply_optimistic_tilt("ABC123", 83.0f));
 
   const IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->tilt, UNKNOWN_POSITION) << "optimistic_state=false must leave tilt untouched";
+  EXPECT_TRUE(dev->optimistic.empty()) << "optimistic_state=false must leave the overlay empty";
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "optimistic_state=false must leave observed target untouched";
+  EXPECT_EQ(dev->tilt, UNKNOWN_POSITION) << "optimistic_state=false must leave observed tilt untouched";
+}
+
+// --- optimistic overlay: rollback lifecycle ---
+
+// §7.4 — rollback_optimistic() withdraws every axis and is idempotent.
+TEST(DeviceRegistry, RollbackOptimisticWithdrawsBothAxesThenNoOps) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  reg.apply_optimistic_target("ABC123", 75.0f);
+  reg.apply_optimistic_tilt("ABC123", 83.0f);
+
+  EXPECT_TRUE(reg.rollback_optimistic("ABC123"));
+
+  const IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->optimistic.empty());
+  EXPECT_EQ(effective_target(*dev), UNKNOWN_POSITION);
+  EXPECT_EQ(effective_tilt(*dev), UNKNOWN_POSITION);
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "with no prediction, the effective value falls back to the observation";
+
+  EXPECT_FALSE(reg.rollback_optimistic("ABC123")) << "a second rollback has nothing to withdraw";
+}
+
+// §7.5 — rollback on an optimistic_state:false device is a no-op (overlay never filled).
+TEST(DeviceRegistry, RollbackOptimisticOnOptimisticDisabledDeviceReturnsFalse) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false});
+  reg.apply_optimistic_target("ABC123", 75.0f);  // no-op
+
+  EXPECT_FALSE(reg.rollback_optimistic("ABC123"));
+}
+
+TEST(DeviceRegistry, RollbackOptimisticOnUnknownDeviceReturnsFalseWithoutCrashing) {
+  DeviceRegistry reg;
+  EXPECT_FALSE(reg.rollback_optimistic("UNKNOWN1"));
+}
+
+// §7.6 — effective_*() prefer the prediction, fall back to the observation.
+TEST(DeviceRegistry, EffectiveAccessorsPreferPredictionOtherwiseObservation) {
+  IoDevice dev{};
+  dev.target = 10.0f;
+  dev.tilt = 20.0f;
+  dev.is_stopped = false;
+
+  // Empty overlay: the observation shows through.
+  EXPECT_FLOAT_EQ(effective_target(dev), 10.0f);
+  EXPECT_FLOAT_EQ(effective_tilt(dev), 20.0f);
+  EXPECT_FALSE(effective_is_stopped(dev));
+
+  // Predictions override, per axis.
+  dev.optimistic.target = 90.0f;
+  dev.optimistic.tilt = 5.0f;
+  dev.optimistic.motion = OptimisticState::Motion::STOPPED;
+  EXPECT_FLOAT_EQ(effective_target(dev), 90.0f);
+  EXPECT_FLOAT_EQ(effective_tilt(dev), 5.0f);
+  EXPECT_TRUE(effective_is_stopped(dev)) << "Motion::STOPPED overrides an observed is_stopped == false";
+
+  // Motion::MOVING overrides an observed is_stopped == true.
+  dev.is_stopped = true;
+  dev.optimistic.motion = OptimisticState::Motion::MOVING;
+  EXPECT_FALSE(effective_is_stopped(dev));
 }
 
 // --- linked remote class lookup ---

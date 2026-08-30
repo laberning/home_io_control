@@ -235,11 +235,13 @@ class ManagementActions {
   /// docs/radio_diagnostics.md and ADR 0024. Refuses unless
   /// this build was configured with `diagnostic_probes: true`
   /// (IOHomeControlComponent::diagnostic_probes_enabled()), and separately refuses while the
-  /// target device's last known state is "moving" (`!dev->is_stopped`) — an unknown frame into a
+  /// target device is moving (`!effective_is_stopped(*dev)`) — an unknown frame into a
   /// mid-transaction device state machine is the one avoidable way a read-shaped probe could
-  /// cause harm. This is the device's last *reported* movement state, not a check on anything in
-  /// flight: it is always `true` (never refuses) for a light/switch, and can be stale if the
-  /// device was last moved from a physical remote the hub never saw. Routes
+  /// cause harm. That is the device's last *reported* movement state *or* a standing hub
+  /// prediction that it is moving (a command the hub just issued, not yet confirmed): both
+  /// warrant the same refusal. It is always "stopped" (never refuses) for a light/switch, and the
+  /// reported state can be stale if the device was last moved from a physical remote the hub
+  /// never saw. Routes
   /// the response straight into `result.message` as raw hex; it
   /// is never passed to the hub's status decoder (`update_device_status_()` is not reachable
   /// from this class at all — see hub_core.h), so a probe can never be misread as a position

@@ -69,11 +69,12 @@ cover::CoverOperation IOHomeCover::infer_operation_from_position_delta_(bool inv
 
 void IOHomeCover::control(const cover::CoverCall &call) {
   // Optimistic state gives immediate HA UI feedback for the queue-dispatch + TX/response gap;
-  // the queued command's own response (update_device_status_()) remains the source of truth
-  // and will overwrite this. No-op when this device has optimistic_state=false (see
-  // DeviceRegistry::apply_optimistic_target()/clear_optimistic_target()).
+  // the queued command's own response (update_device_status_()) supersedes the prediction, and a
+  // failed command withdraws it (DeviceRegistry::rollback_optimistic()). No-op when this device
+  // has optimistic_state=false (see
+  // DeviceRegistry::apply_optimistic_target()/apply_optimistic_stop()).
   if (call.get_stop()) {
-    this->parent_->clear_optimistic_target(this->device_id_);
+    this->parent_->apply_optimistic_stop(this->device_id_);
     this->parent_->queue_device_command(this->device_id_, CoverCommand::STOP);
     return;
   }
@@ -134,6 +135,12 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   const bool invert = this->effective_invert_();
   const float previous_io_position = this->last_io_position_;
 
+  // Predictions win over the last observation, per axis (see OptimisticState). `position` is
+  // observed-only — the hub never guesses a live position — so it is read directly.
+  const float eff_tilt = effective_tilt(dev);
+  const bool eff_stopped = effective_is_stopped(dev);
+  const float eff_target = effective_target(dev);
+
   if (dev.position != UNKNOWN_POSITION) {
     // Convert IO position (0-100) back to HA position (0.0-1.0)
     float ha_pos;
@@ -146,24 +153,24 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
     this->position = ha_pos;
   }
 
-  if (this->supports_tilt() && dev.tilt != UNKNOWN_POSITION) {
-    this->tilt = dev.tilt / 100.0F;
+  if (this->supports_tilt() && eff_tilt != UNKNOWN_POSITION) {
+    this->tilt = eff_tilt / 100.0F;
   }
 
   // Determine movement direction for the HA UI animation
-  if (dev.is_stopped) {
+  if (eff_stopped) {
     this->current_operation = cover::COVER_OPERATION_IDLE;
-  } else if (dev.target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION && dev.target != dev.position) {
+  } else if (eff_target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION && eff_target != dev.position) {
     // Travelling toward a target we can see, from a position we can see.
-    this->current_operation = operation_toward(invert, dev.position, dev.target);
-  } else if (dev.target != UNKNOWN_POSITION && dev.position == UNKNOWN_POSITION) {
+    this->current_operation = operation_toward(invert, dev.position, eff_target);
+  } else if (eff_target != UNKNOWN_POSITION && dev.position == UNKNOWN_POSITION) {
     // Moving, target known, live position withheld. Not every actuator publishes intermediate
     // positions: some report current = POS_UNKNOWN (0xD4) on every poll mid-travel (flagging
     // themselves "moving" vs. "at rest" instead), and only report a real value once they settle.
     // The last position we *did* see is enough to say which way the device is going, and
     // `this->position` keeps displaying that value meanwhile rather than blanking, because the
     // assignment above is skipped for an unknown reading.
-    this->current_operation = operation_toward(invert, previous_io_position, dev.target);
+    this->current_operation = operation_toward(invert, previous_io_position, eff_target);
   } else if (dev.position != UNKNOWN_POSITION) {
     // Either no target at all, or a target equal to the current position while the device says it
     // is moving. The second case is not a standstill: a device flags itself moving while still

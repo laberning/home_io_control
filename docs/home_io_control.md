@@ -759,6 +759,7 @@ inline pinout from the fenced block for your board earlier on this page.
 - Warn-level logs now decode explicit `CMD_ERROR_RESP (0xFE)` replies instead of collapsing them into generic command failures. A refused command will look like `Device ABC123: command 0x00 returned limitation result=0xEB LIMITATION_BY_WIND (parameter was limited by a wind sensor)`.
 - The component's internal protocol layer uses `212.0F` as an unknown-position sentinel (matching `POS_UNKNOWN (0xD4)`), but this value is **never** exposed through the ESPHome cover's `position` field. Cover entities start at `1.0` (fully open) and update to the real device position once the first status response arrives. Custom lambdas can therefore treat any value in [0.0, 1.0] as valid.
 - The OLED example configs in this repo render `--` plus `Unknown` when a cover position is out of range, which now only applies before the first status poll completes on a fresh boot.
+- A command to an unreachable or refusing device reverts the entity to its last reported position and an idle state, instead of leaving it animating mid-travel until you notice. This covers a silent timeout and an explicit refusal (`LIMITATION_BY_WIND` and the like) alike. A failed **stop** falls back to the device's last observed movement rather than claiming it stopped, and a failed **tilt** command withdraws its predicted slat angle and falls back to the last observed one. Only a device configured `optimistic_state: false` is unaffected, since it shows no assumed movement in the first place.
 
 ### Active Issue
 
@@ -1663,9 +1664,10 @@ cover:
 
 ### Optimistic state
 
-By default (`optimistic_state: true`), a linked remote's press — or an HA-issued open/close/stop/set-position command — shows the requested direction in Home Assistant immediately, before the confirming poll (linked remote) or device response (HA command) arrives. This is a pure UX bridge: the confirming poll/response always still runs and overwrites the optimistic value with the device's real reported position. Set `optimistic_state: false` on a device to disable this and fall back to polling only.
+By default (`optimistic_state: true`), a linked remote's press — or an HA-issued open/close/stop/set-position command — shows the requested direction in Home Assistant immediately, before the confirming poll (linked remote) or device response (HA command) arrives. This is a pure UX bridge: the prediction is held in its own layer, never written over the device's last reported values, and the confirming poll/response supersedes it with real data as soon as that arrives. Set `optimistic_state: false` on a device to disable this and fall back to polling only.
 
 Notes:
+- **A failed HA command reverts the prediction.** If the command never reaches the device — a silent timeout, or an explicit refusal such as `LIMITATION_BY_WIND` — the entity drops the assumed movement and goes back to the last position the device actually reported, instead of animating indefinitely. A linked-remote press has no such failure to detect and is only ever settled by the follow-up poll.
 - **Tilt-only commands are not optimistic.** Setting only a tilt value (no position) queues the command normally but does not show an optimistic state change, since tilt has no equivalent "direction" concept in the cover UI. A combined position+tilt command *does* apply the optimistic position target.
 - **Class-linked devices are safety-filtered.** When a typed broadcast (e.g. "all awnings") also fans out to `class:`-linked devices, a device is only optimistically moved if its own declared `io_device_type` matches the broadcast's target type — it is never skipped for polling, only for the optimistic nudge. This prevents an "all awnings" press from optimistically moving a device you've linked to that class but declared as a different type.
 

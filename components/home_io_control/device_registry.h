@@ -28,7 +28,7 @@ struct DeviceConfig {
   DeviceType type{DeviceType::UNKNOWN};  ///< Device type from YAML declaration.
   uint8_t subtype{0};                    ///< Device subtype byte.
   bool inverted{false};                  ///< Position-inversion flag.
-  bool optimistic_state{true};           ///< Whether `apply_optimistic_target`/`clear_optimistic_target` may fire.
+  bool optimistic_state{true};           ///< Whether `apply_optimistic_target`/`apply_optimistic_stop` may fire.
   bool silent{false};                    ///< Send position moves in "silent operation" (slower) mode.
   bool low_power{false};                 ///< Target is a low-power / duty-cycled receiver: directed frames set
                                          ///< CTRL1_LOW_POWER and use the long wake-up preamble.
@@ -119,12 +119,15 @@ class DeviceRegistry {
   /// @return true if the optimistic state was applied.
   bool apply_optimistic_target(const std::string &device_id, float target_io_position);
 
-  /// Clear a device's optimistic target (e.g. on STOP), and notify.
+  /// Predict that a device has stopped (e.g. on STOP), and notify.
   ///
   /// No-op (and returns false) when the device is unknown or has `optimistic_state == false`.
+  /// Records a `Motion::STOPPED` prediction rather than merely withdrawing the position
+  /// prediction: a bare withdrawal would fall back to an observed `is_stopped == false` and keep
+  /// the HA cover animating. The prediction is superseded by the next decoded status.
   /// @param device_id Device to update.
-  /// @return true if the optimistic target was cleared.
-  bool clear_optimistic_target(const std::string &device_id);
+  /// @return true if the optimistic stop was applied.
+  bool apply_optimistic_stop(const std::string &device_id);
 
   /// Set an optimistic slat angle ahead of a confirming poll, and notify.
   ///
@@ -136,14 +139,24 @@ class DeviceRegistry {
   /// tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block*.yaml), so without this the
   /// entity would keep showing the pre-command angle until the next status poll seconds later.
   ///
-  /// Deliberately does not touch `is_stopped`, unlike apply_optimistic_target(): the HA movement
-  /// animation is derived from main-position delta, and a tilt-only command does not move the
-  /// main position — marking the device as moving would animate an open/close that is not
-  /// happening. The EXECUTE ack settles `is_stopped` from the wire a fraction of a second later.
+  /// Deliberately records no movement prediction, unlike apply_optimistic_target(): the HA
+  /// movement animation is derived from main-position delta, and a tilt-only command does not move
+  /// the main position — predicting motion would animate an open/close that is not happening. The
+  /// EXECUTE ack settles `is_stopped` from the wire a fraction of a second later.
   /// @param device_id   Device to update.
   /// @param tilt_percent Slat angle in the same percent scale as `IoDevice::tilt` (0-100).
   /// @return true if the optimistic tilt was applied.
   bool apply_optimistic_tilt(const std::string &device_id, float tilt_percent);
+
+  /// Withdraw every prediction for a device after the command that produced them failed, and notify.
+  ///
+  /// Self-guarding: an empty overlay means nothing was predicted (including every device configured
+  /// `optimistic_state: false`, whose apply_* calls all no-op), so there is nothing to withdraw and
+  /// no reason to republish. Never touches an observed field — the device did not move, so its last
+  /// reported position remains correct and stays on display.
+  /// @param device_id Device whose failed command's predictions should be withdrawn.
+  /// @return true if a prediction was withdrawn.
+  bool rollback_optimistic(const std::string &device_id);
 
   /// @return Number of registered devices.
   [[nodiscard]] size_t size() const { return devices_.size(); }

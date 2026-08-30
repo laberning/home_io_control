@@ -200,13 +200,14 @@ class IOHomeControlComponent : public Component,
     return this->registry_.apply_optimistic_target(device_id, target_io_position);
   }
 
-  /// Clear a device's optimistic target (e.g. on STOP), and notify.
-  /// No-op when the device is unknown or has `optimistic_state == false`.
+  /// Predict that a device has stopped (e.g. on STOP), and notify.
+  /// No-op when the device is unknown or has `optimistic_state == false`. See
+  /// DeviceRegistry::apply_optimistic_stop() for why this records a prediction rather than a clear.
   /// Virtual (like add_device/get_device) so platform unit tests can substitute a mock registry.
   /// @param device_id Target device ID.
-  /// @return true if the optimistic target was cleared.
-  virtual bool clear_optimistic_target(const std::string &device_id) {
-    return this->registry_.clear_optimistic_target(device_id);
+  /// @return true if the optimistic stop was applied.
+  virtual bool apply_optimistic_stop(const std::string &device_id) {
+    return this->registry_.apply_optimistic_stop(device_id);
   }
 
   /// Set an optimistic slat angle ahead of a confirming status poll, and notify.
@@ -850,11 +851,10 @@ class IOHomeControlComponent : public Component,
     const char *action;   ///< Verb/phrase for the "Sending ..." and rejection logs.
     bool settle_as_stop;  ///< Passed through to arm_execute_confirmation_poll_().
   };
-  /// Shared skeleton for the four execute-family operations (position, named command, tilt,
-  /// position+tilt): device lookup + initialized guard, capability guard, poll-tracking start,
-  /// "Sending ..." log, frame build, exchange, failure backoff, and the settle poll. The four
-  /// public methods supply only their guard predicate, rejection profile label, and frame
-  /// builder.
+  /// Funnel for the four execute-family operations: runs try_execute_operation_() and, on any
+  /// false return (the command will not reach the device), withdraws the optimistic prediction the
+  /// entity applied at control() time via DeviceRegistry::rollback_optimistic(). Wrapping rather
+  /// than inlining the rollback keeps every current and future failure exit covered by one call.
   /// @param device_id Target device ID.
   /// @param spec Pre-formatted action phrase and the settle-as-stop flag.
   /// @param accepts Capability guard; returns false to reject the operation for this device.
@@ -862,6 +862,21 @@ class IOHomeControlComponent : public Component,
   /// @param build Fills the request frame from the resolved device; returns false on failure.
   /// @return true when the exchange succeeded and the settle poll was armed.
   bool run_execute_operation_(const std::string &device_id, const ExecuteRequestSpec &spec,
+                              const std::function<bool(const IoDevice &)> &accepts, const char *rejection_profile,
+                              const std::function<bool(IoFrame &, const IoDevice &)> &build);
+
+  /// Shared skeleton for the four execute-family operations (position, named command, tilt,
+  /// position+tilt): device lookup + initialized guard, capability guard, poll-tracking start,
+  /// "Sending ..." log, frame build, exchange, failure backoff, and the settle poll. The four
+  /// public methods supply only their guard predicate, rejection profile label, and frame
+  /// builder. Called only through run_execute_operation_(), which owns the failure rollback.
+  /// @param device_id Target device ID.
+  /// @param spec Pre-formatted action phrase and the settle-as-stop flag.
+  /// @param accepts Capability guard; returns false to reject the operation for this device.
+  /// @param rejection_profile Expected-profile label for the rejection log.
+  /// @param build Fills the request frame from the resolved device; returns false on failure.
+  /// @return true when the exchange succeeded and the settle poll was armed.
+  bool try_execute_operation_(const std::string &device_id, const ExecuteRequestSpec &spec,
                               const std::function<bool(const IoDevice &)> &accepts, const char *rejection_profile,
                               const std::function<bool(IoFrame &, const IoDevice &)> &build);
 

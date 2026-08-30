@@ -1392,3 +1392,124 @@ TEST(HubOperations, LowPowerDeviceStatusPollUsesLongPreambleAndSetsLowPowerBit) 
   EXPECT_NE(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
       << "a low_power target's status poll must carry CTRL1_LOW_POWER";
 }
+
+// ============================================================================
+// Optimistic-prediction rollback on command failure (run_execute_operation_ wraps
+// try_execute_operation_ and withdraws the overlay on every false return).
+// ============================================================================
+
+// §7.12 — a silent exchange failure after an optimistic target withdraws the overlay.
+TEST(HubOperations, SilentExchangeFailureRollsBackOptimisticPrediction) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 40.0f));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  EXPECT_FALSE(comp.set_device_position("ABC123", 40)) << "no response -> the command fails";
+  EXPECT_TRUE(dev->optimistic.empty()) << "a failed command withdraws the prediction";
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "the entity falls back to the observed (stopped) state";
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "the observed target was never touched";
+}
+
+// §7.13 — an explicit CMD_ERROR_RESP refusal withdraws the overlay too.
+TEST(HubOperations, ErrorResponseRollsBackOptimisticPrediction) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 40.0f));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame resp = build_error_response(comp.node_id_, RESULT_LIMITATION_BY_WIND);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.set_device_position("ABC123", 40));
+  EXPECT_TRUE(dev->optimistic.empty()) << "a device refusal (LIMITATION_BY_WIND) also withdraws the prediction";
+  EXPECT_TRUE(effective_is_stopped(*dev));
+}
+
+// §7.14 — a profile-guard rejection (device retyped so accepts() fails) withdraws the overlay.
+TEST(HubOperations, ProfileGuardRejectionRollsBackOptimisticPrediction) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 40.0f));
+  dev->type = DeviceType::LIGHT;  // the cover-position guard now rejects a mid position
+
+  EXPECT_FALSE(comp.set_device_position("ABC123", 50));
+  EXPECT_TRUE(dev->optimistic.empty()) << "a guard rejection is still a command that will not happen";
+}
+
+// §7.15 — a SUCCESS_UNCONFIRMED CMD_EXECUTE (authenticated, no final response) KEEPS the prediction.
+TEST(HubOperations, SuccessUnconfirmedExecuteRetainsOptimisticPrediction) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 40.0f));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  // Queue only the challenge — the device authenticated the command, so it has it.
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.set_device_position("ABC123", 40)) << "an authenticated command is not a failure";
+  EXPECT_FALSE(dev->optimistic.empty()) << "an accepted command must keep its prediction";
+  EXPECT_FLOAT_EQ(dev->optimistic.target, 40.0f);
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::MOVING);
+}
+
+// §7.16 — a failed tilt command withdraws the predicted angle; effective_tilt falls back to the
+// last observed one.
+TEST(HubOperations, FailedTiltCommandRollsBackOptimisticTilt) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::VENETIAN_BLIND;  // tilt-capable
+  dev->tilt = 15.0f;                       // a real angle from an earlier poll
+  ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 80.0f));
+  ASSERT_FLOAT_EQ(effective_tilt(*dev), 80.0f);
+
+  EXPECT_FALSE(comp.set_device_tilt("ABC123", 80)) << "no response -> the tilt command fails";
+  EXPECT_TRUE(dev->optimistic.empty());
+  EXPECT_FLOAT_EQ(effective_tilt(*dev), 15.0f) << "effective tilt falls back to the last observed angle";
+}
+
+// A queue-time guard rejection also withdraws the prediction. control() predicts, then calls a
+// queue_*() method; a guard that rejects there never reaches run_execute_operation_(), so the
+// queue method must roll back itself or the entity animates a command that will not happen.
+TEST(HubOperations, QueueTimeGuardRejectionRollsBackOptimisticPrediction) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 40.0f));
+  dev->type = DeviceType::LIGHT;  // the queued cover-position guard now rejects
+
+  comp.queue_set_device_position("ABC123", 50);
+  EXPECT_TRUE(dev->optimistic.empty()) << "a queue-time guard rejection withdraws the prediction too";
+
+  // Same for the bool-returning STOP path (queue_device_command's inline COVER guard).
+  ASSERT_TRUE(comp.apply_optimistic_stop("ABC123"));
+  EXPECT_FALSE(comp.queue_device_command("ABC123", CoverCommand::STOP));
+  EXPECT_TRUE(dev->optimistic.empty()) << "a rejected queued STOP withdraws the predicted stop";
+}

@@ -50,9 +50,10 @@ void IOHomeLock::on_device_update_(const std::string &id, const IoDevice &dev) {
   if (id != this->device_id_ || dev.position == UNKNOWN_POSITION)
     return;
 
-  if (!dev.is_stopped) {
-    if (dev.target != UNKNOWN_POSITION) {
-      this->publish_state(dev.target < detail::BINARY_ENTITY_ON_POSITION_THRESHOLD ? lock::LOCK_STATE_UNLOCKING
+  if (!effective_is_stopped(dev)) {
+    const float eff_target = effective_target(dev);
+    if (eff_target != UNKNOWN_POSITION) {
+      this->publish_state(eff_target < detail::BINARY_ENTITY_ON_POSITION_THRESHOLD ? lock::LOCK_STATE_UNLOCKING
                                                                                    : lock::LOCK_STATE_LOCKING);
     }
     return;

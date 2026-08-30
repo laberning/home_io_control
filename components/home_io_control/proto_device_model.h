@@ -255,6 +255,45 @@ static constexpr int16_t RSSI_UNKNOWN_DBM = INT16_MIN;
 /// new sample `x` in at weight 1/N while keeping `S = N × EMA`.
 static constexpr int16_t RSSI_EMA_SCALE = 8;
 
+/// @brief What the hub predicted ahead of confirmation, kept apart from what the device reported.
+///
+/// The observed fields on IoDevice (`position`, `target`, `tilt`, `is_stopped`) mean "this is what
+/// the device last told us" and are never written by a guess. Anything the hub predicts — to give
+/// the Home Assistant UI immediate feedback across the queue-dispatch and exchange gap — lands
+/// here instead, so it can be withdrawn when the command that produced it fails
+/// (DeviceRegistry::rollback_optimistic()) without risking a real observation.
+///
+/// Consumers read through effective_target() / effective_tilt() / effective_is_stopped() rather
+/// than either set of fields directly.
+struct OptimisticState {
+  /// Predicted movement. NONE defers to the observed `is_stopped`; a bool could not express
+  /// "predict stopped" (apply_optimistic_stop) distinctly from "no prediction".
+  enum class Motion : uint8_t {
+    NONE = 0,  ///< No movement prediction; the observed `is_stopped` decides.
+    MOVING,    ///< Predicted to be travelling (a position command was issued).
+    STOPPED,   ///< Predicted to be at rest (a STOP was issued).
+  };
+
+  float target{UNKNOWN_POSITION};  ///< Predicted main-position target, or UNKNOWN_POSITION.
+  float tilt{UNKNOWN_POSITION};    ///< Predicted slat angle, or UNKNOWN_POSITION.
+  Motion motion{Motion::NONE};     ///< Predicted movement state.
+
+  /// @return true when nothing is predicted, so a rollback would be a no-op.
+  [[nodiscard]] bool empty() const {
+    return target == UNKNOWN_POSITION && tilt == UNKNOWN_POSITION && motion == Motion::NONE;
+  }
+  /// Withdraw every prediction.
+  void clear() { *this = {}; }
+  /// Withdraw the position prediction; call when a decoded position observation supersedes it.
+  /// Clears `motion` with `target` because apply_optimistic_target() sets the two together.
+  void clear_position() {
+    target = UNKNOWN_POSITION;
+    motion = Motion::NONE;
+  }
+  /// Withdraw the tilt prediction; call when a decoded tilt observation supersedes it.
+  void clear_tilt() { tilt = UNKNOWN_POSITION; }
+};
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -302,6 +341,7 @@ struct IoDevice {
   uint16_t exchange_attempt_count{0};  ///< Cumulative attempts (`ExchangeEngine::DebugInfo::tries`, 1-based per
                                        ///< exchange) across those timed-out exchanges only — attempts within an
                                        ///< ultimately successful exchange are not counted (deliberate scope limit).
+  OptimisticState optimistic{};        ///< Hub-side predictions; see OptimisticState. Never observation.
 };
 
 /// @brief Convert an `rssi_ema_scaled` fixed-point value to whole dBm (round half away from zero).
@@ -317,6 +357,36 @@ inline int16_t rssi_scaled_to_dbm(int16_t scaled) {
 /// @return Rounded EMA in dBm, or RSSI_UNKNOWN_DBM when no sample has been recorded yet.
 inline int16_t device_rssi_ema_dbm(const IoDevice &dev) {
   return dev.rssi_ema_scaled == RSSI_UNKNOWN_DBM ? RSSI_UNKNOWN_DBM : rssi_scaled_to_dbm(dev.rssi_ema_scaled);
+}
+
+/// @brief The main-position target a consumer should act on: the prediction when one stands,
+/// otherwise the device's own last reported target.
+/// @param dev Device record to read.
+/// @return The predicted target when set, otherwise `dev.target`.
+inline float effective_target(const IoDevice &dev) {
+  return dev.optimistic.target != UNKNOWN_POSITION ? dev.optimistic.target : dev.target;
+}
+
+/// @brief The slat angle a consumer should act on, prediction first.
+/// @param dev Device record to read.
+/// @return The predicted tilt when set, otherwise `dev.tilt`.
+inline float effective_tilt(const IoDevice &dev) {
+  return dev.optimistic.tilt != UNKNOWN_POSITION ? dev.optimistic.tilt : dev.tilt;
+}
+
+/// @brief Whether a consumer should treat the device as at rest, prediction first.
+/// @param dev Device record to read.
+/// @return The predicted movement state when one stands, otherwise `dev.is_stopped`.
+inline bool effective_is_stopped(const IoDevice &dev) {
+  switch (dev.optimistic.motion) {
+    case OptimisticState::Motion::MOVING:
+      return false;
+    case OptimisticState::Motion::STOPPED:
+      return true;
+    case OptimisticState::Motion::NONE:
+    default:
+      return dev.is_stopped;
+  }
 }
 
 /// @brief Determine whether a device type has inverted position mapping by default.

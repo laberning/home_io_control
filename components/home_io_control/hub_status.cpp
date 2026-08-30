@@ -77,12 +77,15 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
   uint16_t const cur = (frame.data[current_offset] << 8) | frame.data[current_offset + 1];
   decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
   detail::normalize_stopped_state(dev);
+  // A decoded position is the observation this prediction existed to stand in for.
+  dev.optimistic.clear_position();
 
   if (allow_tilt_from_extended_response && device_supports_tilt(dev.type) &&
       frame.data_len >= EXTENDED_TILT_RESPONSE_MIN_DATA_LEN &&
       frame.data[EXTENDED_TILT_SELECTOR_OFFSET] == STATUS_TILT_SELECTOR) {
     uint16_t const tilt_raw = (frame.data[EXTENDED_TILT_MSB_OFFSET] << 8) | frame.data[EXTENDED_TILT_LSB_OFFSET];
     dev.tilt = decode_tilt_report(tilt_raw);
+    dev.optimistic.clear_tilt();
   }
 }
 
@@ -94,7 +97,7 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
 /// @return Delay in milliseconds, or 0 if the device is stopped.
 uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame, const StatusPollPolicy &policy,
                                            const std::string &id) {
-  if (dev.is_stopped)
+  if (effective_is_stopped(dev))
     return 0;
 
   // Private responses carry a coarse follow‑up timer in byte 7 on many devices. Decode it here
@@ -118,7 +121,7 @@ uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &f
 /// @param id Device ID for policy lookup.
 /// @return Delay in milliseconds for tracked polling; 0 if stopped.
 uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPolicy &policy, const std::string &id) {
-  if (dev.is_stopped)
+  if (effective_is_stopped(dev))
     return 0;
   // Device-originated updates carry no follow-up hint and are never STOP replies.
   return settle_delay_ms(policy.get_interval(id), /*hint_delay_ms=*/0, /*cap_for_stop=*/false);
@@ -145,7 +148,7 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
     detail::normalize_stopped_state(dev);
   }
 
-  if (dev.is_stopped || !policy.is_tracking_active(id, dev.last_status)) {
+  if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
     return;
   }
@@ -178,7 +181,7 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
   dev.last_status = millis();
   decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
 
-  if (dev.is_stopped || !policy.is_tracking_active(id, dev.last_status)) {
+  if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
     return;
   }
@@ -271,7 +274,7 @@ bool IOHomeControlComponent::apply_optimistic_linked_state_(const OneWayFrameInf
       continue;  // Type mismatch: still polled by schedule_device_polls_(), just not moved optimistically.
     }
     if (is_stop) {
-      this->registry_.clear_optimistic_target(device_id);
+      this->registry_.apply_optimistic_stop(device_id);
     } else if (target.has_value()) {
       this->registry_.apply_optimistic_target(device_id, *target);
     }

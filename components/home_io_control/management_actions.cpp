@@ -923,7 +923,7 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
   }
   // An unknown frame into a mid-transaction device state machine is the one avoidable way a
   // read-shaped probe could cause harm.
-  if (!dev->is_stopped) {
+  if (!effective_is_stopped(*dev)) {
     result.message = "device is moving; refusing to probe mid-transaction";
     result.terminal_refusal = true;
     return result;

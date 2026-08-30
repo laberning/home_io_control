@@ -71,6 +71,119 @@ TEST(HubStatus, StoppedFlagMismatchKeepsDeviceMoving) {
 }
 
 // ============================================================================
+// Optimistic-overlay supersede rule (a decoded observation replaces a prediction, per axis)
+// ============================================================================
+
+// §7.7 — a trusted status observation supersedes the position prediction.
+TEST(HubStatus, TrustedStatusObservationSupersedesPositionPrediction) {
+  TestableHubComponent comp;
+  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_EQ(dev->optimistic.motion, OptimisticState::Motion::MOVING);
+
+  IoFrame frame{};
+  init_frame(frame, true, false, false, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t device[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, own);
+  set_src(frame, device);
+  // stopped, target=0xC800 (100%), current=0xC800 (100%)
+  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  comp.update_device_status_(frame);
+
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION) << "a decoded position supersedes the position prediction";
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::NONE);
+  EXPECT_FLOAT_EQ(dev->position, 100.0f);
+  EXPECT_FLOAT_EQ(effective_target(*dev), 100.0f) << "effective now follows the observation";
+}
+
+// §7.8 — a trusted extended status observation supersedes the tilt prediction.
+TEST(HubStatus, TrustedExtendedStatusObservationSupersedesTiltPrediction) {
+  TestableHubComponent comp;
+  comp.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame frame{};
+  init_frame(frame, true, false, false, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t device[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, own);
+  set_src(frame, device);
+  // stopped, target/current 0xC800, then the extended tilt block: selector at [12], raw 0x6400 -> 50%.
+  uint8_t payload[15] = {STATUS_STOPPED,       0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         STATUS_TILT_SELECTOR, 0x64, 0x00};
+  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  comp.update_device_status_(frame);
+
+  EXPECT_EQ(dev->optimistic.tilt, UNKNOWN_POSITION) << "a decoded tilt supersedes the tilt prediction";
+  EXPECT_FLOAT_EQ(dev->tilt, 50.0f);
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION) << "the decoded position also supersedes the position prediction";
+}
+
+// §7.9 — regression guard: an execute ack decoded with trust_position=false clears *nothing*.
+TEST(HubStatus, ExecuteAckWithoutTrustedPositionSupersedesNothing) {
+  TestableHubComponent comp;
+  comp.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
+  ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame frame{};
+  init_frame(frame, true, false, false, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t device[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, own);
+  set_src(frame, device);
+  // The ack reports stopped and echoes pre-command (here: zeroed) target/current.
+  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  comp.update_device_status_(frame, /*trust_position=*/false);
+
+  EXPECT_FLOAT_EQ(dev->optimistic.target, 25.0f) << "the execute-ack path decodes no position, so it clears nothing";
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::MOVING);
+  EXPECT_FLOAT_EQ(dev->optimistic.tilt, 70.0f);
+  EXPECT_FLOAT_EQ(effective_target(*dev), 25.0f) << "the prediction still drives the effective value";
+  EXPECT_FALSE(effective_is_stopped(*dev)) << "motion is still MOVING even though the ack said stopped";
+}
+
+// §7.10 — an unsolicited 0x71 supersedes the position prediction but leaves the tilt prediction standing.
+TEST(HubStatus, UnsolicitedStatusUpdateSupersedesPositionButNotTilt) {
+  TestableHubComponent comp;
+  comp.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
+  ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame frame{};
+  init_frame(frame, true, false, false, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t device[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, own);
+  set_src(frame, device);
+  // 0x71 layout: stopped flag at [0], target MSB at [5], current MSB at [7]; both 0xC800 -> 100%.
+  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(frame, CMD_STATUS_UPDATE, payload, sizeof(payload)));
+
+  comp.update_device_status_(frame);
+
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION) << "the 0x71 decodes a position, superseding that prediction";
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::NONE);
+  EXPECT_FLOAT_EQ(dev->optimistic.tilt, 70.0f) << "the 0x71 path decodes no tilt, so the tilt prediction stands";
+  EXPECT_FLOAT_EQ(effective_tilt(*dev), 70.0f);
+}
+
+// ============================================================================
 // Remote activity detection tests (Issue #3)
 // ============================================================================
 

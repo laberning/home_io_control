@@ -48,7 +48,7 @@ class DeviceBoundEntity {
   void set_subtype(uint8_t subtype) { this->subtype_ = subtype; }
   /// @brief Enable or disable optimistic target updates for this device (from YAML).
   /// Only covers expose this in YAML today; other platforms keep the default (true), which is
-  /// inert for entity types that never read `IoDevice.target`/`is_stopped`.
+  /// inert for entity types that never consult the effective target / movement state.
   /// @param optimistic_state False to disable optimistic state; default true.
   void set_optimistic_state(bool optimistic_state) { this->optimistic_state_ = optimistic_state; }
   /// @brief Send this device's position moves in "silent operation" mode — the reference hub's
@@ -91,7 +91,7 @@ class DeviceBoundEntity {
   /// Matches this device and accepts only a settled (stopped) status with a known position.
   /// Covers and locks intentionally use their own richer guards instead of this filter.
   [[nodiscard]] bool passes_binary_update_filter_(const std::string &id, const IoDevice &dev) const {
-    return id == this->device_id_ && dev.position != UNKNOWN_POSITION && dev.is_stopped;
+    return id == this->device_id_ && dev.position != UNKNOWN_POSITION && effective_is_stopped(dev);
   }
 
   /// @brief Emit the shared two-branch poll-interval line for dump_config().

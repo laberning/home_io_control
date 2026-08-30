@@ -93,19 +93,19 @@ bool DeviceRegistry::apply_optimistic_target(const std::string &device_id, float
     ESP_LOGD(TAG, "Device %s: optimistic target=%.0f (inverted=%s, last reported position=%.0f)", device_id.c_str(),
              target_io_position, YESNO(it->second.inverted), it->second.position);
   }
-  it->second.target = target_io_position;
-  it->second.is_stopped = false;
+  it->second.optimistic.target = target_io_position;
+  it->second.optimistic.motion = OptimisticState::Motion::MOVING;
   notify(device_id);
   return true;
 }
 
-bool DeviceRegistry::clear_optimistic_target(const std::string &device_id) {
+bool DeviceRegistry::apply_optimistic_stop(const std::string &device_id) {
   auto it = devices_.find(device_id);
   if (it == devices_.end() || !it->second.optimistic_state)
     return false;
   ESP_LOGD(TAG, "Device %s: optimistic stop", device_id.c_str());
-  it->second.target = UNKNOWN_POSITION;
-  it->second.is_stopped = true;
+  it->second.optimistic.target = UNKNOWN_POSITION;
+  it->second.optimistic.motion = OptimisticState::Motion::STOPPED;
   notify(device_id);
   return true;
 }
@@ -127,7 +127,17 @@ bool DeviceRegistry::apply_optimistic_tilt(const std::string &device_id, float t
     ESP_LOGD(TAG, "Device %s: optimistic tilt=%.0f (last reported tilt=%.0f)", device_id.c_str(), tilt_percent,
              it->second.tilt);
   }
-  it->second.tilt = tilt_percent;
+  it->second.optimistic.tilt = tilt_percent;
+  notify(device_id);
+  return true;
+}
+
+bool DeviceRegistry::rollback_optimistic(const std::string &device_id) {
+  auto it = devices_.find(device_id);
+  if (it == devices_.end() || it->second.optimistic.empty())
+    return false;
+  ESP_LOGD(TAG, "Device %s: optimistic rollback (command failed)", device_id.c_str());
+  it->second.optimistic.clear();
   notify(device_id);
   return true;
 }

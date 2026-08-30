@@ -21,6 +21,7 @@ class RxTestableComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::process_received_packet_;
   using IOHomeControlComponent::resolve_1w_target_devices_;
+  using IOHomeControlComponent::update_device_status_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::radio_;
@@ -282,10 +283,44 @@ TEST(OnewayRx, OptimisticState_LinkedDeviceGetsTargetFromCloseIntent) {
 
   const auto *dev = comp.get_device("112233");
   ASSERT_NE(dev, nullptr);
-  EXPECT_FLOAT_EQ(dev->target, 100.0f) << "CLOSE intent should set an optimistic target of 100 (closed)";
-  EXPECT_FALSE(dev->is_stopped) << "optimistic apply should mark the device as moving";
+  EXPECT_FLOAT_EQ(effective_target(*dev), 100.0f) << "CLOSE intent should set an optimistic target of 100 (closed)";
+  EXPECT_FALSE(effective_is_stopped(*dev)) << "optimistic apply should mark the device as moving";
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "the prediction must not be written into the observed target";
+  EXPECT_TRUE(dev->is_stopped) << "the prediction must not be written into the observed is_stopped";
   EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS)
       << "the confirmation poll should still be scheduled at the normal delay for a non-STOP intent";
+}
+
+// §7.11 — a prediction applied by the 1W path is superseded by the next status observation,
+// exactly as a command-applied one is. The 1W producer has no failure to attribute, so nothing
+// rolls it back — only a real observation clears it.
+TEST(OnewayRx, OptimisticState_OneWayPredictionSupersededByStatusObservation) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
+  comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
+
+  comp.process_received_packet_(make_rx_packet(make_1w_execute(0xC8, 0x00)));  // CLOSE
+  auto *dev = comp.get_device("112233");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_FLOAT_EQ(effective_target(*dev), 100.0f) << "precondition: the 1W press applied a prediction";
+  ASSERT_EQ(dev->optimistic.motion, OptimisticState::Motion::MOVING);
+
+  // The status poll schedule_device_polls_() armed eventually lands as a real observation.
+  IoFrame obs{};
+  init_frame(obs, /*is_2w=*/true, /*start=*/false, /*end=*/false, /*low_power=*/false);
+  uint8_t device[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
+  set_dst(obs, test::OWN_ID);
+  set_src(obs, device);
+  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(obs, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  comp.update_device_status_(obs);
+
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION)
+      << "a real status observation supersedes a 1W-applied prediction, same as a command-applied one";
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::NONE);
+  EXPECT_FLOAT_EQ(dev->position, 100.0f);
 }
 
 TEST(OnewayRx, OptimisticState_StopClearsTargetAndPollsImmediately) {
@@ -294,8 +329,11 @@ TEST(OnewayRx, OptimisticState_StopClearsTargetAndPollsImmediately) {
   setup_component(comp, radio);
   comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
-  comp.get_device("112233")->target = 50.0f;
-  comp.get_device("112233")->is_stopped = false;
+  auto *seed = comp.get_device("112233");
+  ASSERT_NE(seed, nullptr);
+  seed->target = 50.0f;                           // a genuine wire-reported target the STOP must not discard
+  seed->is_stopped = false;                       // wire-reported movement state
+  comp.apply_optimistic_target("112233", 50.0f);  // a prior overheard move
 
   IoFrame frame = make_1w_execute(POS_STOP, 0x00);
   RadioRxPacket pkt = make_rx_packet(frame);
@@ -303,8 +341,10 @@ TEST(OnewayRx, OptimisticState_StopClearsTargetAndPollsImmediately) {
 
   const auto *dev = comp.get_device("112233");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "STOP intent should clear any optimistic target";
-  EXPECT_TRUE(dev->is_stopped) << "STOP must also mark the device stopped, or the HA cover UI keeps animating";
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION) << "STOP intent should withdraw any optimistic target";
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "STOP must predict stopped, or the HA cover UI keeps animating";
+  EXPECT_FLOAT_EQ(dev->target, 50.0f) << "a wire-reported target must survive a predicted stop";
+  EXPECT_FALSE(dev->is_stopped) << "the prediction must not be written into the observed is_stopped";
   EXPECT_EQ(comp.last_timeout_ms_, 0u) << "STOP should schedule the confirmation poll immediately";
 }
 
@@ -395,7 +435,9 @@ TEST(OnewayRx, OptimisticState_ClassLinkedDeviceGetsOptimisticStateWithoutIdLink
 
   const auto *dev = comp.get_device("112233");
   ASSERT_NE(dev, nullptr);
-  EXPECT_FLOAT_EQ(dev->target, 100.0f) << "a class-linked device should get optimistic state from a typed broadcast";
+  EXPECT_FLOAT_EQ(effective_target(*dev), 100.0f)
+      << "a class-linked device should get optimistic state from a typed broadcast";
+  EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "the prediction must not be written into the observed target";
 }
 
 TEST(OnewayRx, ResolveTargetDevices_DedupsDeviceLinkedByBothIdAndClass) {
@@ -488,16 +530,17 @@ TEST(OnewayRx, StopAfterMoveInsideDedupWindowClearsTargetAndPollsImmediately) {
 
   RadioRxPacket move = make_rx_packet(make_1w_execute(0xC8, 0x00));  // CLOSE
   comp.process_received_packet_(move);
-  ASSERT_FLOAT_EQ(comp.get_device("112233")->target, 100.0f) << "precondition: the move set a target";
+  ASSERT_FLOAT_EQ(effective_target(*comp.get_device("112233")), 100.0f) << "precondition: the move set a target";
 
   RadioRxPacket stop = make_rx_packet(make_1w_execute(POS_STOP, 0x00));
   comp.process_received_packet_(stop);
 
   const auto *dev = comp.get_device("112233");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->target, UNKNOWN_POSITION)
+  EXPECT_EQ(dev->optimistic.target, UNKNOWN_POSITION)
       << "a swallowed stop leaves the HA cover animating toward a target the device abandoned";
-  EXPECT_TRUE(dev->is_stopped) << "the stop must mark the device stopped";
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "the stop must predict stopped";
+  EXPECT_TRUE(dev->is_stopped) << "the prediction must not be written into the observed is_stopped";
   EXPECT_EQ(comp.last_timeout_ms_, 0u) << "the stop must still get its immediate confirmation poll";
 }
 
