@@ -30,6 +30,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <span>
 #include <vector>
 
 namespace esphome {
@@ -232,6 +233,23 @@ constexpr uint8_t SCAN_CHANNEL_COUNT = sizeof(SCAN_CHANNELS) / sizeof(SCAN_CHANN
 namespace detail {
 
 #if defined(USE_API_USER_DEFINED_ACTIONS) && defined(USE_API_CUSTOM_SERVICES)
+
+// ESPHome 2026.9 added a `std::span<char> scratch` parameter to
+// UserServiceDescriptor::encode_list_service_response(): on ESP8266 the arg-name
+// string literals live in PROGMEM and are copied into `scratch`, so the returned
+// message is only valid while `scratch` is. 2026.8.x (incl. beta) still has the
+// zero-arg signature, hence the >= 2026.9.0 gate. Detect that ABI here so our
+// override keeps matching the pure virtual across ESPHome versions. The nested #if
+// is deliberate: VERSION_CODE is undefined on older ESPHome and in the host test
+// stubs, and a skipped outer group is not parsed, so the macro call never leaks.
+// The host unit-test build always takes the zero-arg branch (its api stub mirrors
+// stable), so the scratch branch is only exercised by the weekly ESPHome-dev CI.
+#if defined(ESPHOME_VERSION_CODE) && defined(VERSION_CODE)
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 9, 0)
+#define IOHOME_USERSERVICE_ENCODE_TAKES_SCRATCH 1
+#endif
+#endif
+
 /// @brief Native API descriptor shared by every management action.
 ///
 /// ESPHome 2026.x does not expose the generated YAML action helper runtime to external
@@ -251,7 +269,14 @@ class ManagementServiceDescriptor : public api::UserServiceDescriptor {
                               std::function<void(const api::ExecuteServiceRequest &)> callback)
       : name_(name), key_(fnv1_hash(name)), arg_names_(std::move(arg_names)), callback_(std::move(callback)) {}
 
+  // name_ and arg_names_ point at ordinary (non-PROGMEM) .rodata string literals, so
+  // the StringRefs stay valid after return on any target and the scratch buffer is
+  // unused -- same reasoning as upstream's own UserServiceDynamic.
+#ifdef IOHOME_USERSERVICE_ENCODE_TAKES_SCRATCH
+  api::ListEntitiesServicesResponse encode_list_service_response(std::span<char> /*scratch*/) override {
+#else
   api::ListEntitiesServicesResponse encode_list_service_response() override {
+#endif
     api::ListEntitiesServicesResponse response;
     response.name = StringRef(this->name_);
     response.key = this->key_;
@@ -284,6 +309,8 @@ class ManagementServiceDescriptor : public api::UserServiceDescriptor {
   std::vector<const char *> arg_names_;
   std::function<void(const api::ExecuteServiceRequest &)> callback_;
 };
+
+#undef IOHOME_USERSERVICE_ENCODE_TAKES_SCRATCH
 #endif
 
 }  // namespace detail

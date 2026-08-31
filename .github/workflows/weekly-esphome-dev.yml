@@ -1,11 +1,12 @@
-name: Weekly (ESPHome dev channel)
+name: Weekly (ESPHome pre-release channels)
 
 on:
   schedule:
     # ESPHome's external_components API and codegen are still moving underneath us -- this is
     # the early-warning system for a breaking upstream change, failing weeks before a routine
-    # `latest` bump would surface it on hardware. Never blocks merges -- see ci.yml for the
-    # check that does.
+    # `latest` bump would surface it on hardware. `dev` catches it earliest; `beta` catches
+    # what is already locked for the next stable release (and would hit real users first).
+    # Never blocks merges -- see ci.yml for the check that does.
     - cron: "23 5 * * 1"
   workflow_dispatch:
 
@@ -15,14 +16,18 @@ permissions:
 
 jobs:
   weekly:
-    name: Compile test configs against ESPHome dev
+    name: Compile test configs against ESPHome ${{ matrix.channel }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [dev, beta]
     env:
-      ESPHOME_TAG: dev
+      ESPHOME_TAG: ${{ matrix.channel }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: firmware-test (ESPHOME_TAG=dev)
+      - name: firmware-test (ESPHOME_TAG=${{ matrix.channel }})
         run: make firmware-test
 
       - name: Open an issue on failure
@@ -30,7 +35,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          marker="Weekly build failed against the ESPHome dev channel"
+          marker="Weekly build failed against the ESPHome ${{ matrix.channel }} channel"
           existing=$(gh issue list --repo "${{ github.repository }}" --state open \
             --search "in:title \"$marker\"" --json number --jq '.[0].number')
           if [ -z "$existing" ]; then
