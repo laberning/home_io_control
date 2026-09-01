@@ -1,0 +1,32 @@
+id: multi_somfy_exchange_overheard_challenge_and_status
+description: >
+  A passively overheard challenge exchange between two third-party devices, alongside a real
+  status-poll response received by our own controller. Verifies that overheard third-party
+  challenge traffic parses correctly and that a fully-open, stopped position decodes to 0.
+source:
+  device: "Own controller (0842E3); overheard third-party devices"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-07-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/3"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 869850000
+    hex: "96 00 08 42 E3 14 E0 0E 04 05 00 00 00 00 00 00 00 9A 50 65 01 00 00"
+    crc: absent
+    note: "status response to our own controller 0842E3 from device 14E00E, stopped at open (0%)"
+  - dir: rx
+    t_ms: 35039
+    freq: 868250000
+    hex: "0E 00 26 94 11 43 44 E3 3C 0F 76 11 69 64 9E"
+    crc: absent
+    note: "overheard 0x3C challenge between two third-party nodes we never addressed"
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+  device:
+    reported_position: 0

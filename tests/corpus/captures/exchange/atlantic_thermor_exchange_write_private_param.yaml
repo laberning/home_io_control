@@ -1,0 +1,50 @@
+id: atlantic_thermor_exchange_write_private_param
+description: >
+  Authenticated CMD_WRITE_PRIVATE (0x20) exchange with an Atlantic Thermor-style climate/heating
+  actuator: write register 0x0129=0x01, 0x3C/0x3D challenge-response, CMD_WRITE_PRIVATE_ACK
+  (0x21) echo. First real-device coverage of CMD_WRITE_PRIVATE in this corpus — every other
+  authenticated_command capture here uses CMD_EXECUTE (0x00) on a motor/dimmer, not this command
+  on a climate device. Transcribed from Velocet/iown-homecontrol's
+  docs/devices/misc/AtlanticThermor/README.md (CC0-1.0 licensed): decoded command/address/payload
+  only, no raw wire bytes, so `hex`/CRC here are reconstructed with this project's own
+  serialize()/crc_ccitt() — wire-valid, not literal captured bytes. CTRL1=0x00 (version 0, no flags)
+  is an assumption; the source didn't report raw header bits. This project has no Atlantic Thermor
+  hardware.
+source:
+  device: "Atlantic Thermor-style climate/heating actuator (2W)"
+  captured_with: other
+  firmware: null
+  date: 2026-08-08
+  origin: reference-material
+  issue: "https://github.com/Velocet/iown-homecontrol/blob/main/docs/devices/misc/AtlanticThermor/README.md"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    hex: "4D 00 8C CB 31 47 77 06 20 0C 61 01 29 01 88 44"
+    crc: present
+    note: "CMD_WRITE_PRIVATE, START: write register 0x0129=0x01"
+  - dir: rx
+    t_ms: 9
+    hex: "0E 00 47 77 06 8C CB 31 3C 8A 74 D9 12 86 0A 88 25"
+    crc: present
+    note: "challenge request, challenge = 8A 74 D9 12 86 0A"
+  - dir: tx
+    t_ms: 17
+    hex: "0E 00 8C CB 31 47 77 06 3D D2 F0 8D 3A CE B4 18 F3"
+    crc: present
+    note: "challenge response (key unknown, HMAC not verifiable)"
+  - dir: rx
+    t_ms: 26
+    hex: "8D 00 47 77 06 8C CB 31 21 0C 61 01 29 01 AA 2F"
+    crc: present
+    note: "CMD_WRITE_PRIVATE_ACK, END: echoes register 0x0129=0x01"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w, classification: ACCEPT}

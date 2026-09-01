@@ -1,0 +1,26 @@
+id: wind_sensor_oneway_execute_sx1276
+description: >
+  Overheard 1W EXECUTE broadcast from a third-party wind sensor (SECURED_TARGET, originator=wind_sensor, priority=protection_sensor), targeting all (00003F). Not addressed to our controller, not encrypted to our key - key: unknown by construction, same as a community capture.
+source:
+  device: "Overheard 1W wind/protection sensor (node 1333C7) broadcasting to all"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-12
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 869850000
+    hex: "F8 00 00 00 3F 13 33 C7 00 09 23 D1 00 80 D4 00 00 9E 91 C0 CA BE C5 FC 7F"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: SECURED_TARGET
+    originator: 0x09
+    acei: 1
+    target_type: 0

@@ -1,0 +1,75 @@
+id: velux_kig300_pairing_key_extraction_success
+description: >
+  Community capture from issue #45, the requested retest against the same real Velux
+  KIG300 hub (node BEFEDB) that the issue shows stalling.
+  This later session completes the full
+  key-extraction cycle end to end: CMD_DISCOVER_REQ (0x28) -> CMD_DISCOVER_RESP (0x29) ->
+  CMD_DISCOVER_CONFIRM (0x2C) -> CMD_DISCOVER_CONFIRM_ACK (0x2D) -> [hub re-broadcasts 0x28 once
+  more, omitted as redundant, matching the documented pattern] -> CMD_KEY_INIT (0x31) ->
+  CMD_CHALLENGE_REQ (0x3C) -> CMD_KEY_TRANSFER (0x32, omitted -- see below) -> CMD_KEY_CONFIRM
+  (0x33), ending in the responder logging "SYSTEM KEY EXTRACTED" and disarming.
+  the device-role 0x3C is `0E 00` (start=false, low_power=false) -- byte-for-byte the corrected
+  shape, matching a real device's genuine pairing 0x3C
+source:
+  device: "Velux KIG300 hub (node BEFEDB) -- real third-party hub, community capture"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-13
+  origin: github-issue
+  issue: https://github.com/laberning/home_io_control/issues/45
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868250000
+    hex: "C8 10 00 00 3B BE FE DB 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), broadcast to backbone group 00003B"
+  - dir: rx
+    t_ms: 13
+    freq: 868250000
+    hex: "D1 00 BE FE DB 53 F2 6E 29 00 80 53 F2 6E 02 00 00 00"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), throwaway device id 53F26E, manufacturer=2 (Somfy), type=roller_shutter; sent identically on all 3 channels, one shown"
+  - dir: tx
+    t_ms: 1876
+    freq: 868950000
+    hex: "48 10 53 F2 6E BE FE DB 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), addressed directly to the discovered device"
+  - dir: rx
+    t_ms: 1888
+    freq: 868250000
+    hex: "88 00 BE FE DB 53 F2 6E 2D"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM_ACK(0x2D) -- the new handler (on_discover_confirm(), Finding 1's fix) replies where the stall capture shows silence here; sent on all 3 channels, one shown. The hub re-broadcasts CMD_DISCOVER_REQ (0x28) once more ~4s later before proceeding, identical to the pattern documented in the stall capture -- omitted here as redundant"
+  - dir: tx
+    t_ms: 7128
+    freq: 868950000
+    hex: "48 10 53 F2 6E BE FE DB 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31)"
+  - dir: rx
+    t_ms: 7136
+    freq: 868250000
+    hex: "0E 00 BE FE DB 53 F2 6E 3C 7D 8E 24 40 55 57"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), challenge = 7D 8E 24 40 55 57. ctrl0=0x0E (start=false), ctrl1=0x00 (low_power=false) -- create_challenge_req_device_role() (Finding 3's fix). Byte-for-byte matches a real device's genuine pairing 0x3C in tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml, where the pre-fix stall capture showed ctrl0=0x4E/ctrl1=0x20; sent on all 3 channels, one shown"
+  - dir: rx
+    t_ms: 7659
+    freq: 868250000
+    hex: "88 00 BE FE DB 53 F2 6E 33"
+    crc: absent
+    note: "cmd=KEY_CONFIRM(0x33), sent ~9ms after the hub's CMD_KEY_TRANSFER (0x32, masked and not included -- see description) arrived at t_ms=7650. ctrl0=0x88 (end=true) -- create_key_confirm()'s Finding 4 fix; the pre-fix self-pair captures show end=false here. The responder logs 'SYSTEM KEY EXTRACTED' and disarms after sending this -- now grace-delayed rather than immediate, in case the hub follows up with an address-verification round (this KIG300 does not, see the description); sent on all 3 channels, one shown"
+expect:
+  exchange:
+    kind: pairing
+    outcome: success
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x33, start: false, end: true, protocol: 2w}

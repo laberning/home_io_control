@@ -34,7 +34,8 @@
 /// is blind to two things in particular: a device-role frame that is self-consistent but wrong on
 /// air, and a protocol step a real hub requires that this project's own controller role never
 /// sends. Both are real failure modes against real hubs; see
-/// tests/corpus/captures/issues/issue_45_*_key_extraction_stall.yaml.
+/// tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_stall.yaml and
+/// tests/corpus/captures/pairing/somfy_connectivity_kit_pairing_key_extraction_stall.yaml.
 ///
 /// The device-role builders (create_discover_resp(), create_challenge_req_device_role(),
 /// create_key_confirm(), create_discover_confirm_ack()) are each pinned against a real device's

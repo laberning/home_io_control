@@ -79,7 +79,7 @@ CMD_DISCOVER_SPE_REQ = 0x2A
 # Commands that authenticate themselves in a single frame — payload = [challenge(6) | HMAC(6)],
 # the HMAC taken over just the command byte, so one broadcast frame carries both halves of a
 # challenge-response instead of a 0x3C/0x3D round trip. Only 0x2A is listed: it is the only shape
-# this project has real evidence for (velux_kux100/pairing_full.yaml). Adding a command here
+# this project has real evidence for (velux_kux100_pairing_full.yaml). Adding a command here
 # without a capture that verifies under a known key would make --rekey rewrite bytes it does not
 # understand.
 SELF_AUTHENTICATED_COMMANDS = {CMD_DISCOVER_SPE_REQ}
@@ -290,7 +290,7 @@ def create_1w_hmac(data: bytes, sequence: int, controller_key: bytes) -> bytes:
     target command authenticates (see proto_crypto.h's `@warning` -- spans do not generalise
     across commands, e.g. CMD_ONEWAY_ADD_CONTROLLER signs only `cmd + enc_key`, while
     CMD_ONEWAY_REMOVE signs `cmd + data` -- verified against real hardware captures, not merely
-    assumed; see tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml).
+    assumed; see tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml).
     """
     iv = construct_iv_1w_sequence(data, sequence)
     encrypted = aes128_ecb_encrypt_block(iv, controller_key)
@@ -377,7 +377,7 @@ def find_challenge_response_triples(frames):
     is challenged authenticates their own last frame. The common case is the controller being
     challenged (tx 0x3D — origin is the preceding tx command, e.g. 0x00 EXECUTE, challenged by
     an rx 0x3C), but the protocol is symmetric and the reverse occurs for real: in
-    velux_kux100/pairing_full.yaml the *device* answers a controller-issued challenge
+    velux_kux100_pairing_full.yaml the *device* answers a controller-issued challenge
     (rx 0x3D over its own preceding rx 0x37 ADDRESS_RESP), confirmed by recomputation against
     that installation's recovered key before the capture was re-keyed. Matching only tx 0x3D
     would leave those HMACs unrewritten by ingest.py --rekey and unchecked by validate.py's

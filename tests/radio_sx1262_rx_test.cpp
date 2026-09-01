@@ -108,8 +108,8 @@ TEST(RadioSX1262, UartProbeAcceptsMacTrailerFrame) {
   // the 1W bit) before this test's own parse() call re-derives the same fields from the recovered
   // bytes — mirroring UartEncodeDecodeRoundTrip above, the established pattern for driving this
   // path, extended with the trailer-specific assertions. Same field values as
-  // proto_frame_test.cpp's AddControllerMacTrailerRoundTrip / tests/corpus/captures/
-  // reference_1w_vectors/oneway_add_controller_kat.yaml.
+  // proto_frame_test.cpp's AddControllerMacTrailerRoundTrip /
+  // tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml.
   IoFrame frame{};
   init_frame(frame, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
   const uint8_t src[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
@@ -219,7 +219,7 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //   - CMD_DISCOVER_ALT_RESP: captured once (velux_kux100/discover_alt_addressed_challenge_
   //     response.yaml) but "not otherwise used anywhere in this codebase" per its own doxygen --
   //     nothing dispatches on it, corpus replay doesn't go through this soft-PHY gate at all.
-  //   - CMD_ADDRESS_RESP: captured once (velux_kux100/pairing_full.yaml) but we only ever
+  //   - CMD_ADDRESS_RESP: captured once (velux_kux100_pairing_full.yaml) but we only ever
   //     transmit it (create_address_resp_device_role(), the key-extraction responder's answer to
   //     an inbound 0x36) -- we never wait for a reply carrying this opcode. CMD_ADDRESS_REQ is
   //     deliberately NOT in this list any more: the key-extraction responder now expects to
@@ -399,7 +399,7 @@ std::vector<uint8_t> uart_packed_on_air_bytes(const std::vector<uint8_t> &frame)
 }
 
 // A real 15-byte RS100 challenge (0x3C) — the exact frame the hub must turn around fastest, from
-// tests/corpus/captures/issues/field_rs100_pairing_key_transfer_timeout.yaml.
+// tests/corpus/captures/pairing/somfy_rs100_pairing_key_transfer_timeout.yaml.
 const std::vector<uint8_t> kRs100Challenge = {0x0E, 0x00, 0xD1, 0xD4, 0xFF, 0x8C, 0x08, 0x3C,
                                               0x3C, 0x45, 0x51, 0x6F, 0xFE, 0x59, 0x80};
 

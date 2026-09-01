@@ -5,7 +5,7 @@
 ///
 /// Scope: only `kind: pairing`, `outcome: success`, **own-hardware** captures are replayed here.
 /// `source.origin == "own-hardware"` is used as the completeness proxy — these are raw captures
-/// from this project's own log, not user-pasted excerpts. The two `field_rs100_pairing_*`
+/// from this project's own log, not user-pasted excerpts. The two `somfy_rs100_pairing_*`
 /// captures (`source.origin: github-issue`) are deliberately excluded: one is `outcome: timeout`
 /// (this suite only covers success), and the other has frames explicitly marked
 /// "RECONSTRUCTED"/"UNVERIFIED" in their own notes (no raw 0x33 ever existed to check against)

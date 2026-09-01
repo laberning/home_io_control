@@ -1,0 +1,40 @@
+id: somfy_j406_discovery_1w_overheard
+description: >
+  1W remote traffic and a discovery request that precede a successful pairing of a Somfy j406
+  IO shutter motor (device type 0x11, external_venetian_blind). Verifies 1W and
+  discovery-request framing; the pairing's key-exchange frames are deliberately excluded from
+  this capture.
+source:
+  device: "Somfy j406 IO shutter motor"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/19"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F5 00 00 00 3F AE 29 7D 20 02 03 05 05 00 08 AF C0 B8 12 1F 73 A2"
+    crc: absent
+    note: "1W WRITE_PRIVATE from remote AE297D"
+  - dir: rx
+    t_ms: 1243
+    freq: 868950000
+    hex: "F1 20 00 00 3F AE 29 7D 2E 00 08 B3 72 F2 2A E0 92 38"
+    crc: absent
+    note: "1W DISCOVER_ALT_REQ-shaped beacon from the same remote"
+  - dir: tx
+    t_ms: 4658
+    freq: 868950000
+    hex: "C8 00 00 00 3B 31 BA F7 28"
+    crc: absent
+    note: "CMD_DISCOVER_REQ (0x28) — start of the successful pairing sequence (key-exchange frames deliberately not captured, see description)"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+  oneway:
+    target_type: 0

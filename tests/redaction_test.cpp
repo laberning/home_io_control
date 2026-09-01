@@ -113,7 +113,7 @@ TEST(Redaction, ContainsKeyMaterial_ShortBufferNeverMatches) {
 TEST(Redaction, ContainsKeyMaterial_DetectsRecovered1wKey) {
   const uint8_t node[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
   // Published add-controller vector (reference/iown-homecontrol docs/linklayer.md, CC0-1.0;
-  // also tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml).
+  // also tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml).
   const uint8_t wire_ciphertext[AES_KEY_SIZE] = {0x7E, 0x60, 0x49, 0x1F, 0x97, 0x6A, 0xDF, 0x65,
                                                  0x3D, 0xB0, 0xED, 0x78, 0x5E, 0x49, 0xA2, 0x01};
 

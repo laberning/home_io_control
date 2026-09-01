@@ -33,6 +33,8 @@ directly, so they follow the 0x3D tier: enforced only for `key: corpus` captures
 Run via `make corpus-validate` (part of the `lint` composite). Dependencies: PyYAML, cryptography.
 """
 
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,6 +42,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build import CLASSIFICATION_ENUM  # noqa: E402
+from naming import PHASES, id_naming_problem, phase_of_id  # noqa: E402,F401
 import protolib  # noqa: E402
 from protolib import CTRL0_LENGTH_MASK, FRAME_MAX_SIZE, FRAME_MIN_SIZE, HMAC_SIZE, crc_ccitt  # noqa: E402
 from protolib import parse_hex as protolib_parse_hex  # noqa: E402
@@ -56,6 +59,108 @@ ALLOWED_ORIGINS = {"own-hardware", "github-issue", "synthetic-bootstrap", "refer
 ALLOWED_CAPTURED_WITH = {"sx1276", "sx1262", "lr1121", "other", "synthetic"}
 ALLOWED_DIRS = {"tx", "rx"}
 ALLOWED_CRC = {"present", "absent"}
+
+
+def check_names_and_citations(seen_ids: dict) -> list:
+    """filename == id, capture lives in its phase directory, and every cited capture path resolves.
+
+    The corpus is `tests/corpus/captures/<phase>/<id>.yaml` with `filename == id` and `<phase>`
+    the phase token of the id. A citation from code/docs is that path — optionally line-wrapped
+    through a comment lead, or ending in a `*` glob / `{a,b}` brace group. Nothing checked these
+    before, and a rename silently rotted them. (Bare `` `<id>` `` mentions are intentionally not
+    checked: too many unrelated snake_case tokens in the docs to tell apart without a
+    false-positive storm.)
+    """
+    problems: list = []
+    real_dir = CAPTURES_DIR.resolve() == (REPO_ROOT / "tests" / "corpus" / "captures").resolve()
+    valid_ids = set()  # ids that pass id_naming_problem() — safe to call phase_of_id() on
+
+    for cid, path in seen_ids.items():
+        if path.stem != cid:
+            problems.append(f"{path}: filename stem {path.stem!r} != id {cid!r} (filename must equal id)")
+        naming = id_naming_problem(cid)
+        if naming:
+            problems.append(f"{path}: id {cid!r} {naming} (see tests/corpus/README.md 'Naming convention')")
+            continue
+        valid_ids.add(cid)
+        if real_dir and path.parent.name != phase_of_id(cid):
+            problems.append(
+                f"{path}: capture is in {path.parent.name!r}/ but its phase is {phase_of_id(cid)!r} "
+                f"— move it to tests/corpus/captures/{phase_of_id(cid)}/"
+            )
+
+    # The citation half only makes sense against the real, complete corpus — skip it when a
+    # caller has pointed CAPTURES_DIR at a scratch dir (the tool self-tests do this).
+    if not real_dir:
+        return problems
+
+    try:
+        tracked = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files",
+             "components", "tests", "scripts", "docs", "AGENTS.md", "README.md"],
+            capture_output=True, text=True, check=True,
+        ).stdout.split()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return problems  # not a git checkout — skip the citation half
+
+    # Scan source/doc files AND the capture YAMLs themselves — the corpus cross-references itself
+    # in `description:`/`note:` prose, and a rename rots those exactly as it rots a code comment.
+    scan = [
+        REPO_ROOT / f for f in tracked
+        if f.rsplit(".", 1)[-1] in ("h", "hpp", "cpp", "c", "py", "md", "yaml", "yml")
+        and not f.startswith("docs/doxygen/")
+        and not f.startswith("scripts/corpus/tests/")  # self-tests carry deliberately-fake citations
+    ]
+    # join a path split across a comment continuation: "<...>captures/\n /// exchange/foo.yaml"
+    unwrap = re.compile(r"[ \t]*\n[ \t]*(?:///?|\*|#)+[ \t]*")
+    # tests/corpus/captures/<phase>/<stem>[*].yaml.  The <phase>/ dir group is optional (so a
+    # stale flat citation still fails resolution) and accepts a `*` (so `*/synthetic_*.yaml` is
+    # checked). The stem accepts `{a,b}` brace groups anywhere and must contain at least one
+    # underscore outside a brace — every real id has several — so a fake path like "foo/bar.yaml"
+    # in an unrelated predicate test is not mistaken for a citation.
+    tok = r"(?:[A-Za-z0-9_]|\{[A-Za-z0-9_,]+\})"
+    path_ref = re.compile(
+        r"tests/corpus/captures/(?:([a-z0-9_]+|\*)/)?"
+        rf"({tok}*_{tok}*)(\*)?\.yaml"
+    )
+
+    def expand(stem: str):
+        """Cartesian-expand every {a,b} group in a stem."""
+        out = [stem]
+        while True:
+            nxt = []
+            grew = False
+            for s in out:
+                m = re.search(r"\{([A-Za-z0-9_,]+)\}", s)
+                if not m:
+                    nxt.append(s)
+                    continue
+                grew = True
+                nxt += [s[:m.start()] + opt + s[m.end():] for opt in m.group(1).split(",")]
+            out = nxt
+            if not grew:
+                return out
+
+    for f in scan:
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        joined = unwrap.sub("", text)
+        rel = f.relative_to(REPO_ROOT)
+        for phase_dir, stem, glob_star in path_ref.findall(joined):
+            for cand in expand(stem):
+                matches = [cid for cid in valid_ids if cid == cand or (glob_star and cid.startswith(cand))]
+                if not matches:
+                    shown = f"{phase_dir + '/' if phase_dir else ''}{cand}{glob_star}.yaml"
+                    problems.append(f"{rel}: cites tests/corpus/captures/{shown} — no such capture")
+                    continue
+                if phase_dir and phase_dir != "*" and any(phase_of_id(cid) != phase_dir for cid in matches):
+                    problems.append(
+                        f"{rel}: cites tests/corpus/captures/{phase_dir}/{cand}{glob_star}.yaml — "
+                        f"wrong phase dir (capture is under {phase_of_id(matches[0])}/)"
+                    )
+    return problems
 
 # --- Mirrors the expect-schema keys scripts/corpus/build.py actually consumes -------------
 # A key outside these sets is silently ignored by build.py (dict.get() just returns None), so
@@ -113,7 +218,7 @@ def validate_frame(frame: dict, index: int, capture_id: str) -> None:
     # A frame's non-CRC bytes are either exactly the CTRL0-declared length, or that length plus
     # the out-of-length MAC trailer some 1W frames carry (a CMD 0x30 add-controller payload
     # overflows CTRL0's 5-bit length field alongside its MAC — see
-    # reference_1w_vectors/oneway_add_controller_kat.yaml — so the MAC rides after the declared
+    # reference_1w_enrollment_add_controller_kat.yaml — so the MAC rides after the declared
     # length instead, mirrored by proto_frame.cpp parse()'s two accepted shapes, IoFrame::has_mac).
     # The declared length alone can never exceed FRAME_MAX_SIZE (CTRL0's 5-bit field), so the
     # widest legal non_crc_len is FRAME_MAX_SIZE + HMAC_SIZE; this still hard-rejects a genuinely
@@ -203,18 +308,17 @@ def _non_crc_raw_frame(frame: dict) -> "protolib.RawFrame":
 
 # CMD_ONEWAY_ADD_CONTROLLER captures whose enc_key wraps a synthetic, publicly-published
 # (CC0-1.0) documentation example — `01020304050607080910111213141516` — rather than any real
-# device's key. `origin: reference-material` alone does not imply this (velux_kux100/
-# pairing_full.yaml is reference-material and still encodes a real installation's real key, so it
+# device's key. `origin: reference-material` alone does not imply this (velux_kux100_pairing_full.yaml is reference-material and still encodes a real installation's real key, so it
 # still had to be re-keyed); the distinction this set captures is specifically "is there a real
 # key behind these bytes".
 #
 # These captures' value is being byte-exact against their published source, so re-keying them
 # would defeat their purpose rather than protect anything — see oneway_add_controller_kat.yaml's
-# own description, and OneWayEnrollment.AddControllerReproducesPublishedVector / ProtoCrypto.
+# own description (reference_1w_enrollment_add_controller_kat.yaml), and OneWayEnrollment.AddControllerReproducesPublishedVector / ProtoCrypto.
 # Create1wHmacMatchesPublishedAddControllerVector / ProtoCrypto.Crypt1wKeyMatchesPublishedAddControllerVector,
 # which all pin this exact vector by id. Add to this set only for a capture with the same
 # property: a synthetic, published example vector, checked and reasoned about individually.
-KNOWN_PUBLIC_VECTOR_IDS = {"reference_1w_add_controller_kat"}
+KNOWN_PUBLIC_VECTOR_IDS = {"reference_1w_enrollment_add_controller_kat"}
 
 
 def validate_crypto(data: dict, capture_id: str) -> None:
@@ -385,6 +489,8 @@ def main() -> int:
         else:
             seen_ids[capture_id] = path
             total_frames += len(data["frames"])
+
+    errors.extend(check_names_and_citations(seen_ids))
 
     if errors:
         print("validate.py: FAILED", file=sys.stderr)

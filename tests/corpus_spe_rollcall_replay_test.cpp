@@ -2,8 +2,8 @@
 /// @brief Corpus replay coverage for decode_discovery_response() against real captured
 /// CMD_DISCOVER_SPE_RESP (0x2B) roll-call replies.
 ///
-/// Both fixtures (`somfy_awning/discover_spe_paired_rollcall.yaml`,
-/// `somfy_dimmer/discover_spe_paired_rollcall.yaml`) are `has_exchange = false` /
+/// Both fixtures (`somfy_awning_discovery_spe_paired_rollcall.yaml`,
+/// `somfy_izymo_dimmer_discovery_spe_paired_rollcall.yaml`) are `has_exchange = false` /
 /// `ExchangeKind::NONE` / `ExchangeOutcome::NONE` — a `kind`-based predicate like
 /// CorpusPairingReplay's would select nothing here. The instantiation predicate below matches on
 /// the frames themselves instead ("any frame with cmd == CMD_DISCOVER_SPE_RESP"), so it keeps
@@ -46,7 +46,7 @@ struct ExpectedResponder {
 constexpr ExpectedResponder EXPECTED_RESPONDERS[] = {
     {{0x30, 0xE1, 0xF2}, DeviceType::HORIZONTAL_AWNING, 0},  // somfy_awning: first unit
     {{0xD2, 0x68, 0xCE}, DeviceType::HORIZONTAL_AWNING, 0},  // somfy_awning: second unit
-    {{0x41, 0x5C, 0xE4}, DeviceType::LIGHT, 0},              // somfy_dimmer
+    {{0x41, 0x5C, 0xE4}, DeviceType::LIGHT, 0},              // somfy_izymo_dimmer
 };
 
 const ExpectedResponder *find_expected_responder(const uint8_t backbone[NODE_ID_SIZE]) {

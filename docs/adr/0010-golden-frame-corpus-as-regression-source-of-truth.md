@@ -14,10 +14,17 @@ length edge case — is evidence. It happened.
 
 ## Decision
 
-Real captured frames are committed as git-tracked YAML, one file per scenario,
-grouped by device family with issue-derived captures traceable to their
-originating discussion. Tooling scaffolds a capture from a pasted on-air log,
-validates it, and compiles it into test fixtures.
+Real captured frames are committed as git-tracked YAML at
+`tests/corpus/captures/<phase>/<id>.yaml`, one file per scenario, with
+`filename == id` and the id naming its subject and protocol phase
+(`<subject>_<phase>[_<scenario>][_<chip>]`). Nothing in the tooling reads the
+path — it is grouped by phase purely because that is the axis the corpus is
+reached from; every other axis is a one-line `ls`/`grep`, and issue provenance is
+carried in `source.issue`, not a directory. Tooling scaffolds a capture from a
+pasted on-air log, validates it
+(including `filename == id`, that each capture sits in its phase directory, and
+that every capture path cited across the tree resolves), and compiles it into
+test fixtures.
 
 ```mermaid
 flowchart LR

@@ -142,8 +142,8 @@ TEST_P(CorpusDecode, ExpectationsMatchDecodedFrames) {
   // Only the extended (>=15-byte) CMD_PRIVATE_RESP layout used for status-poll replies carries a
   // real slat-angle reading (selector 0x20 at offset 12, 16-bit angle at 13..14) — the immediate
   // ack to our own EXECUTE-tilt echoes a *different*, pre-command tilt block at offset 4..6 (see
-  // tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block*.yaml and
-  // issue_60_tilt_execute_ack_echoes_precommand_tilt.yaml) and must never be checked here.
+  // tests/corpus/captures/exchange/tilt_cover_exchange_ack_tilt_block*.yaml and
+  // tilt_cover_exchange_ack_echoes_precommand_tilt.yaml) and must never be checked here.
   if (capture->has_reported_tilt) {
     int tilt_frames_seen = 0;
     for (uint8_t i = 0; i < capture->frame_count; i++) {

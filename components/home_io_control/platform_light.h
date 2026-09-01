@@ -5,7 +5,7 @@
 /// @ingroup hioc_platforms
 ///
 /// Defaults to a minimal on/off representation (position < 50 is treated as on), validated on
-/// real hardware (a Somfy Izymo dimmer; see tests/corpus/captures/somfy_dimmer/). Setting
+/// real hardware (a Somfy Izymo dimmer; see the somfy_izymo_dimmer_* captures). Setting
 /// `dimmable: true` in YAML switches to ColorMode::BRIGHTNESS, mapping HA's 0.0-1.0 brightness
 /// onto the same 0-100 IO position field platform_cover.cpp uses for position — confirmed on the
 /// same hardware to produce real intermediate brightness levels, not just the two binary

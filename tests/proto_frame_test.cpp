@@ -205,7 +205,7 @@ TEST(ProtoFrame, SerializeRefusesTrailerOnNonTrailerCommand) {
 
 TEST(ProtoFrame, AddControllerMacTrailerRoundTrip) {
   // Published worked example (reference/iown-homecontrol's docs/linklayer.md, CC0-1.0), captured
-  // verbatim as tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml. 29
+  // verbatim as tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml. 29
   // declared bytes (9 header + enc_key[16] + man_id[1] + data[1] + sequence[2] = 20 data bytes)
   // plus a genuine 6-byte MAC that does not fit inside CTRL0's 5-bit length field alongside the
   // declared payload (29 + 6 = 35, unrepresentable in 5 bits) — the MAC rides after the declared
@@ -293,6 +293,13 @@ TEST(ProtoFrame, CommandResultDecodeHelpers) {
   EXPECT_STREQ(command_result_description(RESULT_THERMAL_PROTECTION), "node has gone into thermal protection mode");
   EXPECT_FALSE(is_limitation_result(RESULT_THERMAL_PROTECTION))
       << "thermal protection should stay in the generic error bucket";
+
+  // 0x58: a diagnostic probe walked past the last function/sub-index the device implements.
+  // Seen cross-vendor; mapped so probe-sweep logs don't read as UNKNOWN_RESULT_CODE.
+  EXPECT_STREQ(command_result_name(RESULT_INVALID_FUNCTION_INDEX), "INVALID_FUNCTION_INDEX");
+  EXPECT_STREQ(command_result_description(RESULT_INVALID_FUNCTION_INDEX),
+               "requested function/sub-index is not implemented by the device");
+  EXPECT_FALSE(is_limitation_result(RESULT_INVALID_FUNCTION_INDEX)) << "an index rejection is not a limitation";
 
   EXPECT_STREQ(command_result_name(0xFF), "UNKNOWN_RESULT_CODE");
   EXPECT_STREQ(command_result_description(0xFF), "unknown result code");

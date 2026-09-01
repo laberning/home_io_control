@@ -69,10 +69,10 @@ struct ResponderContext {
 /// resend the same values without regenerating anything). No-op from SENT_CONFIRM_ACK or
 /// SENT_CHALLENGE: a discovery request must never pull an in-flight exchange back a phase. That
 /// silence is what a real device does too — in
-/// tests/corpus/captures/velux_kux100/pairing_full.yaml the hub re-broadcasts 0x28 right after the
+/// tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml the hub re-broadcasts 0x28 right after the
 /// confirm-ack (landing in SENT_CONFIRM_ACK) and the device pointedly does not answer, before the
 /// hub moves on to the key exchange. A second, independent hub does the same thing in
-/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml (re-broadcast
+/// tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml (re-broadcast
 /// omitted from that capture's frame list as redundant, per its own notes). Neither of those
 /// mid-exchange states depends on @p hub_node_id — ARMED_IDLE/SENT_DISCOVER_RESP accept
 /// unconditionally too, since ctx.hub_node_id isn't meaningfully populated this early (it is first
@@ -109,10 +109,10 @@ bool on_discover_request(ResponderContext &ctx, const uint8_t hub_node_id[NODE_I
 /// A hub sends 0x2C directly to a device it just discovered and, in general, will not proceed to
 /// the key exchange until that device answers with CMD_DISCOVER_CONFIRM_ACK (0x2D) — the step
 /// between discovery and key-init in a real pairing
-/// (tests/corpus/captures/velux_kux100/pairing_full.yaml, and this project's own responder
+/// (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml, and this project's own responder
 /// answering a real hub's 0x2C in
-/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml — the fixed,
-/// successful retest of issue_45_velux_kig300_key_extraction_stall.yaml's stalled session, where
+/// tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml — the fixed,
+/// successful retest of velux_kig300_pairing_key_extraction_stall.yaml's stalled session, where
 /// that same hub's 0x2C previously went unanswered). Hub strictness varies: some retry 0x2C
 /// indefinitely without it, others eventually send 0x31 anyway, which is why on_key_init() also
 /// accepts a key-init straight from SENT_DISCOVER_RESP.

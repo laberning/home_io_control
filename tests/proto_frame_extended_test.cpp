@@ -871,7 +871,7 @@ TEST(ProtoFrame, Decode1wFrameShortPayload) {
 // ============================================================================
 // decode_discovery_response tests
 // ============================================================================
-// Payload bytes match the real somfy_awning discover_spe_paired_rollcall corpus fixture
+// Payload bytes match the real somfy_awning_discovery_spe_paired_rollcall corpus fixture
 // (04 00 30 E1 F2 02 CC FC 03): a CMD_DISCOVER_SPE_RESP with the full 9-byte
 // DISCOVERY_RESP_FULL_SIZE layout, identical to a CMD_DISCOVER_RESP payload.
 

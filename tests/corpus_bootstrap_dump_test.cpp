@@ -3,7 +3,9 @@
 ///
 /// Never runs in CI or as part of `make unit-test` (DISABLED_ prefix, per gtest convention).
 /// Run explicitly to (re)generate the bytes hand-transcribed into
-/// tests/corpus/captures/_bootstrap/*.yaml — see tests/corpus/README.md:
+/// the synthetic bootstrap captures (tests/corpus/captures/*/synthetic_*.yaml:
+/// oneway/synthetic_oneway_close, exchange/synthetic_exchange_auth, identify/synthetic_identify)
+/// — see tests/corpus/README.md:
 ///
 ///   ./build/test_home_io_control --gtest_also_run_disabled_tests --gtest_filter='*BootstrapDump*'
 ///
@@ -67,7 +69,7 @@ void print_hmac_kat(const char *label, const uint8_t *data, uint8_t data_len, co
 }  // namespace
 
 TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
-  // --- synthetic_1w_close: typed broadcast (all roller-shutter devices) CLOSE ---
+  // --- synthetic_oneway_close: typed broadcast (all roller-shutter devices) CLOSE ---
   IoFrame oneway{};
   init_frame(oneway, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
   const uint8_t remote_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
@@ -77,30 +79,30 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   // originator=USER_REMOTE, acei level=2 (valid bit set), main0=0xC8 (percent 100 * 2 = CLOSE), main1=0 (no modifier)
   const uint8_t oneway_payload[4] = {ORIGINATOR_USER_REMOTE, 0x41, 0xC8, 0x00};
   ASSERT_TRUE(set_cmd(oneway, CMD_EXECUTE, oneway_payload, sizeof(oneway_payload)));
-  print_wire("synthetic_1w_close", oneway);
+  print_wire("synthetic_oneway_close", oneway);
 
   OneWayFrameInfo info = decode_1w_frame(oneway);
-  printf("synthetic_1w_close decoded: address_class=%d target_type=%d intent=%s originator=%u acei_level=%u\n",
+  printf("synthetic_oneway_close decoded: address_class=%d target_type=%d intent=%s originator=%u acei_level=%u\n",
          static_cast<int>(info.address_class), static_cast<int>(info.target_type), info.intent, info.originator,
          info.acei_level);
 
-  // --- synthetic_auth_exchange: execute(50) -> challenge -> challenge-resp -> status(END) ---
+  // --- synthetic_exchange_auth: execute(50) -> challenge -> challenge-resp -> status(END) ---
   IoFrame exec = test::make_execute(50);
-  print_wire("synthetic_auth_exchange exec", exec);
+  print_wire("synthetic_exchange_auth exec", exec);
 
   IoFrame challenge{};
   init_frame(challenge, /*is_2w=*/true, /*start=*/false, /*end=*/false, /*low_power=*/false);
   set_dst(challenge, test::OWN_ID);
   set_src(challenge, test::DST_ID);
   ASSERT_TRUE(set_cmd(challenge, CMD_CHALLENGE_REQ, test::TEST_CHALLENGE, HMAC_SIZE));
-  print_wire("synthetic_auth_exchange challenge", challenge);
+  print_wire("synthetic_exchange_auth challenge", challenge);
 
   // create_challenge_resp(f, dst, src, ...) — dst=device (the exec request's own dst), src=our
   // own id, matching how ExchangeEngine builds it (exchange_engine.cpp: request.dst, node_id_).
   IoFrame resp{};
   ASSERT_TRUE(
       create_challenge_resp(resp, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE, exec, test::TEST_SYSTEM_KEY));
-  print_wire("synthetic_auth_exchange challenge_resp", resp);
+  print_wire("synthetic_exchange_auth challenge_resp", resp);
 
   IoFrame status{};
   init_frame(status, /*is_2w=*/true, /*start=*/false, /*end=*/true, /*low_power=*/false);
@@ -109,26 +111,26 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   // STATUS_STOPPED, originator=LOCAL_USER, target MSB/LSB=0x64/0x00 (50%), current MSB/LSB=0x64/0x00, hint=0x00
   const uint8_t status_payload[8] = {STATUS_STOPPED, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(status, CMD_PRIVATE_RESP, status_payload, sizeof(status_payload)));
-  print_wire("synthetic_auth_exchange status", status);
+  print_wire("synthetic_exchange_auth status", status);
 
-  // --- synthetic_identify_exchange: identify(0x1E) -> challenge -> challenge-resp -> ack(END) ---
+  // --- synthetic_identify: identify(0x1E) -> challenge -> challenge-resp -> ack(END) ---
   IoFrame identify{};
   ASSERT_TRUE(create_identify(identify, test::OWN_ID, test::DST_ID, /*low_power=*/true));
-  print_wire("synthetic_identify_exchange identify", identify);
+  print_wire("synthetic_identify identify", identify);
 
   IoFrame identify_challenge{};
   init_frame(identify_challenge, /*is_2w=*/true, /*start=*/false, /*end=*/false, /*low_power=*/false);
   set_dst(identify_challenge, test::OWN_ID);
   set_src(identify_challenge, test::DST_ID);
   ASSERT_TRUE(set_cmd(identify_challenge, CMD_CHALLENGE_REQ, test::TEST_CHALLENGE, HMAC_SIZE));
-  print_wire("synthetic_identify_exchange challenge", identify_challenge);
+  print_wire("synthetic_identify challenge", identify_challenge);
 
   // create_challenge_resp(f, dst, src, ...) — dst=device (the identify request's own dst), src=our
   // own id, matching how ExchangeEngine builds it (exchange_engine.cpp: request.dst, node_id_).
   IoFrame identify_resp{};
   ASSERT_TRUE(create_challenge_resp(identify_resp, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE, identify,
                                     test::TEST_SYSTEM_KEY));
-  print_wire("synthetic_identify_exchange challenge_resp", identify_resp);
+  print_wire("synthetic_identify challenge_resp", identify_resp);
 
   // Final ack: identify_device() treats any endpoint-matched, non-error reply as success (there is
   // no dedicated CMD_IDENTIFY response), so the device echoing CMD_IDENTIFY back is a plausible
@@ -138,7 +140,7 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   set_dst(identify_ack, test::OWN_ID);
   set_src(identify_ack, test::DST_ID);
   ASSERT_TRUE(set_cmd(identify_ack, CMD_IDENTIFY, nullptr, 0));
-  print_wire("synthetic_identify_exchange ack", identify_ack);
+  print_wire("synthetic_identify ack", identify_ack);
 }
 
 /// Prints cross-language create_hmac() KAT vectors for scripts/corpus/tests/data/crypto_kat.yaml

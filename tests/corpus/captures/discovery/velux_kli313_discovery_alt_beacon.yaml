@@ -1,0 +1,38 @@
+id: velux_kli313_discovery_alt_beacon
+description: >
+  Periodic 1W beacons reusing a command byte (0x2E) that this project otherwise sends as a 2W
+  discovery request. Captured in an installation where a Velux KLI 313 remote drives a Velux SML
+  roof window shutter via a KUX110 control unit; the source (DA2C93) is the *remote*, not the
+  KUX110 or the shutter — 0x2E is controller-side (compare the KLR200 in
+  velux_kux100_discovery_alt_addressed_challenge_response.yaml), and the same address also emits
+  the controller-side EXECUTE in velux_kli313_oneway_stop.yaml. Verifies 1W frame parsing
+  across two different typed-broadcast destinations.
+source:
+  device: "Velux KLI 313 remote (driving a Velux SML shutter via a KUX110 control unit)"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/17"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "F1 00 00 00 BF DA 2C 93 2E 00 05 50 51 8E D6 D8 16 0A"
+    crc: absent
+    note: "1W CMD_DISCOVER_ALT_REQ(0x2E) used as a self-announcement beacon, dst=00 00 BF"
+  - dir: rx
+    freq: 868950000
+    hex: "F1 00 00 03 7F DA 2C 93 2E 00 05 52 DC 58 9E 0C 08 68"
+    crc: absent
+    note: "same beacon, dst=00 03 7F"
+  - dir: rx
+    freq: 868950000
+    hex: "F1 00 00 00 BF DA 2C 93 2E 00 05 53 26 56 5D DC AA DC"
+    crc: absent
+    note: "same beacon repeated ~146s later, dst=00 00 BF again"
+expect:
+  frames:
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}

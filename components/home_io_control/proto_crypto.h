@@ -119,8 +119,8 @@ bool verify_hmac(const uint8_t *data, uint8_t len, const uint8_t hmac[HMAC_SIZE]
 /// @warning There is NO default span. The authenticated bytes differ per command — e.g.
 ///          CMD_ONEWAY_ADD_CONTROLLER (0x30) signs only `cmd + enc_key` (17 bytes), while
 ///          CMD_EXECUTE (0x00) signs the full payload `cmd` through `fp2` (7 bytes) — see
-///          `tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml` and
-///          `tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml`. The
+///          `tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml` and
+///          `tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml`. The
 ///          caller must pass the span the target command actually authenticates, confirmed by a
 ///          known-answer vector — a wrong span silently produces a plausible-looking MAC that no
 ///          device will accept, and only a KAT catches the mistake.

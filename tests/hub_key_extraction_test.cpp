@@ -477,7 +477,7 @@ TEST(HubKeyExtraction, EachPreExtractionReplyAdvancesTheHoldDeadline) {
 /// freshly-generated throwaway ID and a freshly-random challenge necessarily leaves: this test
 /// scripts esp_random() (test_rng, tests/include/esp_random.h -- built for exactly this purpose,
 /// per its own doxygen) with the exact bytes
-/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml records for a
+/// tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml records for a
 /// real Velux KIG300 pairing session, so generate_key_extraction_throwaway_id_() and
 /// crypto::generate_challenge() reproduce that session's real values, then feeds the session's
 /// literal captured 0x28/0x2C/0x31 hub frames through the real dispatch path and checks the
@@ -496,7 +496,7 @@ TEST(HubKeyExtraction, EachPreExtractionReplyAdvancesTheHoldDeadline) {
 /// instead (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP, proto_commands.cpp), so those two
 /// bytes are checked against the current constants instead of the historical capture.
 TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHistoricalBytes) {
-  const corpus::CorpusCapture *cap = corpus_test::capture_by_id("issue_45_velux_kig300_key_extraction_success");
+  const corpus::CorpusCapture *cap = corpus_test::capture_by_id("velux_kig300_pairing_key_extraction_success");
   ASSERT_NE(cap, nullptr);
 
   const IoFrame hub_discover = find_capture_frame(cap, /*tx=*/true, CMD_DISCOVER_REQ);
@@ -1039,7 +1039,7 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
 /// exact node ID / hub ID / key and feeding its literal 0x36 through the real dispatch path
 /// revealed that the captured 0x37 payload (`B6 2B BB`) is NOT this device's own node ID
 /// (`38 ED A1`, the address the whole rest of the session — including the 0x36 that provoked this
-/// 0x37 — addresses it by). tests/corpus/captures/velux_kux100/pairing_full.yaml's own note says
+/// 0x37 — addresses it by). tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml's own note says
 /// so explicitly: 0x37's payload is that device's separately-tracked "backbone" identity, not its
 /// node/session address. create_address_resp_device_role() reports our one and only identity for
 /// both (see its doxygen in proto_commands.h), which this capture's own bytes prove is not what at

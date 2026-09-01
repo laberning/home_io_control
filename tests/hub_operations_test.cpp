@@ -81,7 +81,7 @@ static IoFrame build_short_moving_status_response(const uint8_t dst[3]) {
 // 8-byte private response in the EXECUTE-tilt ack layout: data[4] is the tilt selector and
 // data[5..6] a 16-bit slat angle, where a position-bearing 0x04 carries the current position in
 // data[4..5]. Byte-for-byte the ack from issue 60 — see
-// tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block.yaml.
+// tests/corpus/captures/exchange/tilt_cover_exchange_ack_tilt_block.yaml.
 static IoFrame build_tilt_execute_ack_response(const uint8_t dst[3]) {
   IoFrame f{};
   init_frame(f, true, false, true, false);
@@ -873,7 +873,7 @@ TEST(HubOperations, ShortPrivateResponseSixBytesIsAcceptedAndSchedulesSettlePoll
 TEST(HubOperations, ExecuteReplyDoesNotOverwriteTargetOrPositionWithStaleValues) {
   // Real hardware showed the immediate reply to a just-sent CMD_EXECUTE can carry stale
   // pre-command target/current bytes rather than the freshly-commanded target — see
-  // tests/corpus/captures/somfy_awning/execute_ack_reports_stale_target_*.yaml. Trusting them
+  // tests/corpus/captures/exchange/somfy_awning_exchange_ack_reports_stale_target_*.yaml. Trusting them
   // clobbers a correct optimistic UI state with a wrong one for a few seconds until the next
   // status poll self-corrects. update_device_status_()'s trust_position parameter fixes this:
   // an EXECUTE's own reply updates is_stopped but leaves target/position alone.
@@ -911,7 +911,7 @@ TEST(HubOperations, TiltExecuteReplyTiltBlockIsNotDecodedAsPosition) {
   // reads 0x2060 = 16%, so every tilt command appeared to snap the cover to the same position
   // (84% in Home Assistant, the inverted form) regardless of where it actually was.
   // The bytes below are the ones off the reporter's wire; see
-  // tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block.yaml.
+  // tests/corpus/captures/exchange/tilt_cover_exchange_ack_tilt_block.yaml.
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);

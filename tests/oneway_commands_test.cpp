@@ -22,7 +22,7 @@ using namespace esphome::home_io_control;
 // is therefore unverifiable at runtime — nothing answers to say it was wrong — so these tests
 // pin the output against real frames instead: three captures from this project's own Somfy
 // awning remote and one published worked example, plus a fourth own-hardware capture
-// (oneway_remote_favorite_sx1276) used the other way around, as counter-evidence that the
+// (somfy_smoove_oneway_favorite_sx1276) used the other way around, as counter-evidence that the
 // builder's FAVORITE encoding is *not* what that button actually sends on air. Expected bytes are
 // read out of the corpus by id (corpus_test::capture_by_id(), corpus_test_helpers.h) rather than
 // transcribed, so a corrected capture automatically corrects what these tests check.
@@ -40,19 +40,19 @@ constexpr uint8_t EXECUTE_FRAME_LEN = 23;
 /// Offset of the MAC within the data payload (after the parameters and the sequence).
 constexpr uint8_t EXECUTE_MAC_OFFSET = 8;
 
-/// tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml — the worked
+/// tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml — the worked
 /// initial-value example from Velocet/iown-homecontrol docs/linklayer.md. STOP from node
 /// 385762, typed-broadcast to all. Only the node address is transcribed here; everything else
 /// (sequence, prefix bytes, MAC, CRC) is read from the corpus by load_captured_execute() below —
 /// see its comment for why.
 const uint8_t PUBLISHED_STOP_SRC[NODE_ID_SIZE] = {0x38, 0x57, 0x62};
 
-/// tests/corpus/captures/somfy_awning/oneway_remote_{open,close,stop}_sx1276.yaml — three
+/// tests/corpus/captures/oneway/somfy_smoove_oneway_{open,close,stop}_sx1276.yaml — three
 /// presses of this project's own remote, node 9D6085, captured on an SX1276. Same note as above:
 /// only the shared node address is transcribed.
 const uint8_t SOMFY_REMOTE_SRC[NODE_ID_SIZE] = {0x9D, 0x60, 0x85};
 
-/// tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml — the published
+/// tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml — the published
 /// CMD 0x30 known-answer example (Velocet/iown-homecontrol docs/linklayer.md). Only the inputs a
 /// caller of create_1w_add_controller() must supply are transcribed here; the frame it must
 /// reproduce is read from the corpus by id, same discipline as the execute vectors above.
@@ -130,7 +130,7 @@ void load_captured_execute(const char *id, CapturedExecute &out) {
 
 TEST(OneWayCommands, StopReproducesThePublishedVectorPrefix) {
   CapturedExecute pub;
-  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_execute_iv_vector", pub));
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_oneway_execute_iv_vector", pub));
 
   IoFrame frame{};
   ASSERT_TRUE(create_1w_execute_command(frame, PUBLISHED_STOP_SRC, DeviceType::UNKNOWN, CoverCommand::STOP,
@@ -147,7 +147,7 @@ TEST(OneWayCommands, StopMacMatchesTheIndependentlyComputedSignature) {
   // The published frame's own MAC is a placeholder, so the signature is pinned against
   // create_1w_hmac() instead — which is itself pinned by a published KAT (proto_crypto_test).
   CapturedExecute pub;
-  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_execute_iv_vector", pub));
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_oneway_execute_iv_vector", pub));
   IoFrame frame{};
   ASSERT_TRUE(create_1w_execute_command(frame, PUBLISHED_STOP_SRC, DeviceType::UNKNOWN, CoverCommand::STOP,
                                         pub.sequence, test::TEST_SYSTEM_KEY));
@@ -163,7 +163,7 @@ TEST(OneWayCommands, FramingReproducesThePublishedCrc) {
   // framing plus its placeholder MAC and getting its published CRC back proves the header,
   // lengths and field order are byte-for-byte what a real receiver checksums.
   CapturedExecute pub;
-  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_execute_iv_vector", pub));
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("reference_1w_oneway_execute_iv_vector", pub));
   ASSERT_TRUE(pub.has_crc) << "the published vector capture must carry a CRC to pin against";
 
   IoFrame frame{};
@@ -184,7 +184,7 @@ TEST(OneWayCommands, PositionZeroReproducesTheRemotesOpenPress) {
   // it against a real press is what proves the position path and the named-command path agree
   // with one physical remote.
   CapturedExecute open;
-  ASSERT_NO_FATAL_FAILURE(load_captured_execute("oneway_remote_open_sx1276", open));
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("somfy_smoove_oneway_open_sx1276", open));
   IoFrame frame{};
   ASSERT_TRUE(
       create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, 0, open.sequence, test::TEST_SYSTEM_KEY))
@@ -198,7 +198,7 @@ TEST(OneWayCommands, PositionZeroReproducesTheRemotesOpenPress) {
 
 TEST(OneWayCommands, PositionHundredReproducesTheRemotesClosePress) {
   CapturedExecute close_press;
-  ASSERT_NO_FATAL_FAILURE(load_captured_execute("oneway_remote_close_sx1276", close_press));
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("somfy_smoove_oneway_close_sx1276", close_press));
   IoFrame frame{};
   ASSERT_TRUE(create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, 100, close_press.sequence,
                                          test::TEST_SYSTEM_KEY))
@@ -212,7 +212,7 @@ TEST(OneWayCommands, PositionHundredReproducesTheRemotesClosePress) {
 
 TEST(OneWayCommands, StopReproducesTheRemotesStopPress) {
   CapturedExecute stop_press;
-  ASSERT_NO_FATAL_FAILURE(load_captured_execute("oneway_remote_stop_sx1276", stop_press));
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("somfy_smoove_oneway_stop_sx1276", stop_press));
   IoFrame frame{};
   ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, CoverCommand::STOP,
                                         stop_press.sequence, test::TEST_SYSTEM_KEY));
@@ -412,8 +412,8 @@ TEST(OneWayCommands, FavoriteButtonCaptureIsWritePrivateNotExecute) {
   // this builder emits for CoverCommand::FAVORITE, or anything close to it. If the builder is
   // ever changed to match this capture, or the caveat above it is deleted, this test is what
   // still says the capture disagrees.
-  const auto *capture = corpus_test::capture_by_id("oneway_remote_favorite_sx1276");
-  ASSERT_NE(capture, nullptr) << "corpus capture 'oneway_remote_favorite_sx1276' not found — was it renamed?";
+  const auto *capture = corpus_test::capture_by_id("somfy_smoove_oneway_favorite_sx1276");
+  ASSERT_NE(capture, nullptr) << "corpus capture 'somfy_smoove_oneway_favorite_sx1276' not found — was it renamed?";
   ASSERT_EQ(capture->frame_count, 1);
 
   const IoFrame frame = corpus_test::parse_capture_frame(capture->frames[0]);
@@ -454,8 +454,9 @@ TEST(OneWayCommands, PositionAboveHundredIsRejectedWithoutTouchingTheFrame) {
 // constants rather than "expected" bytes.
 
 TEST(OneWayEnrollment, AddControllerReproducesPublishedVector) {
-  const auto *capture = corpus_test::capture_by_id("reference_1w_add_controller_kat");
-  ASSERT_NE(capture, nullptr) << "corpus capture 'reference_1w_add_controller_kat' not found — was it renamed?";
+  const auto *capture = corpus_test::capture_by_id("reference_1w_enrollment_add_controller_kat");
+  ASSERT_NE(capture, nullptr)
+      << "corpus capture 'reference_1w_enrollment_add_controller_kat' not found — was it renamed?";
   ASSERT_EQ(capture->frame_count, 1);
   const IoFrame expected = corpus_test::parse_capture_frame(capture->frames[0]);
   ASSERT_TRUE(expected.has_mac) << "the published 0x30 frame must parse with its out-of-length MAC trailer";
@@ -517,7 +518,7 @@ TEST(OneWayEnrollment, AddControllerReproducesRealHardwareCapture) {
   // absence of a MAC trailer — is exactly what that remote transmitted. This is the test that
   // would catch with_mac's default ever silently flipping to false, or vice versa, without
   // someone updating this capture's own note that it carries no trailer.
-  const auto *capture = corpus_test::capture_by_id("somfy_smoove_9d6085_oneway_add_and_remove_controller");
+  const auto *capture = corpus_test::capture_by_id("somfy_smoove_enrollment_add_and_remove_controller_sx1276");
   ASSERT_NE(capture, nullptr) << "corpus capture not found — was it renamed?";
   ASSERT_EQ(capture->frame_count, 3) << "expected 2x 0x39 followed by 1x 0x30";
   const IoFrame expected = corpus_test::parse_capture_frame(capture->frames[2]);
@@ -544,7 +545,7 @@ TEST(OneWayEnrollment, AddControllerWithMacReproducesRealHardwareCapture) {
   // Izymo dimmer, so with_mac's default can never silently flip to true without this test
   // catching the mismatch. Both shapes are confirmed accepted by real hardware — see
   // create_1w_add_controller()'s `@warning` (proto_commands.h).
-  const auto *capture = corpus_test::capture_by_id("somfy_izymo_dimmer_oneway_add_controller_with_mac");
+  const auto *capture = corpus_test::capture_by_id("somfy_izymo_dimmer_enrollment_add_controller_with_mac_sx1276");
   ASSERT_NE(capture, nullptr) << "corpus capture not found — was it renamed?";
   ASSERT_EQ(capture->frame_count, 1);
   const IoFrame expected = corpus_test::parse_capture_frame(capture->frames[0]);
@@ -585,7 +586,7 @@ TEST(OneWayEnrollment, RemoveControllerReproducesRealHardwareCapture) {
   // `cmd + data` MAC span create_1w_remove_controller() uses: if the span were wrong, this frame
   // would not match, even though frame *shape* alone (RemoveControllerKeepsMacInsideDeclaredLength
   // above) can't tell a wrong span from a right one.
-  const auto *capture = corpus_test::capture_by_id("somfy_smoove_9d6085_oneway_add_and_remove_controller");
+  const auto *capture = corpus_test::capture_by_id("somfy_smoove_enrollment_add_and_remove_controller_sx1276");
   ASSERT_NE(capture, nullptr) << "corpus capture not found — was it renamed?";
   ASSERT_EQ(capture->frame_count, 3) << "expected 2x 0x39 followed by 1x 0x30";
   const IoFrame expected = corpus_test::parse_capture_frame(capture->frames[0]);

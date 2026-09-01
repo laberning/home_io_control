@@ -1,0 +1,28 @@
+id: multi_somfy_probe_extended_private_both_selectors
+description: >
+  Extended PRIVATE (0x03), selector 0x80, both observed N values (0x00 and 0x01) — 40 such frames across the corpus, all from CA0A18.
+source:
+  device: "Somfy devices, extended CMD_PRIVATE (0x03) selector 0x80"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/45"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 20 1F 38 07 CA 0A 18 03 03 80 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE(0x03), data=03 80 00 00 — selector 0x80, N=0x00. Structurally identical to
+      this project's own create_get_status_tilt() (proto_commands.cpp), which sends data=20 01
+      00 — same extended-CMD_PRIVATE shape with a different selector (0x20 vs 0x80), showing the
+      mechanism has at least two selectable blocks.
+  - dir: rx
+    t_ms: 3442
+    freq: 868950000
+    hex: "4C 20 E4 61 E9 CA 0A 18 03 03 80 01 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), data=03 80 01 00 — selector 0x80, N=0x01."

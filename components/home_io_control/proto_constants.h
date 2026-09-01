@@ -29,9 +29,9 @@ static constexpr uint8_t CMD_PRIVATE2 =
     0x0C;  ///< Content otherwise undecoded by the wire parser. Its request payload matches
            ///< CMD_EXECUTE's POS_FAVORITE/POS_VENT_MODIFIER stored-position selector with the
            ///< execution prefix stripped, so it reads like a stored-position readback rather
-           ///< than a live telemetry poll — see tests/corpus/captures/somfy_rs100_oximo/ and
-           ///< captures/issues/issue_45_*.yaml for real request/response pairs. Not handled by
-           ///< any dispatch path in this codebase.
+           ///< than a live telemetry poll — see the somfy_rs100_* / somfy_oximo40_* captures and
+           ///< multi_somfy_probe_private2_{long_form,short_form}.yaml for real request/response
+           ///< pairs. Not handled by any dispatch path in this codebase.
 static constexpr uint8_t CMD_PRIVATE2_RESP = 0x0D;  ///< Response to CMD_PRIVATE2. See CMD_PRIVATE2's comment.
 
 // Sensor and private register commands
@@ -58,10 +58,10 @@ static constexpr uint8_t CMD_DISCOVER_SPE_REQ =
            ///< bytes followed by a 6-byte HMAC over the command byte alone — instead of the usual
            ///< 0x3C/0x3D round trip, which is what lets it be broadcast;
            ///< create_discovery_request() (proto_commands.cpp) builds it to match. Real captured
-           ///< bytes: tests/corpus/captures/velux_kux100/pairing_full.yaml (request shape, HMAC
+           ///< bytes: tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml (request shape, HMAC
            ///< recomputed under that installation's key before the capture was re-keyed) and
-           ///< tests/corpus/captures/somfy_awning/discover_spe_paired_rollcall.yaml plus
-           ///< tests/corpus/captures/somfy_dimmer/discover_spe_paired_rollcall.yaml (two awnings
+           ///< tests/corpus/captures/discovery/somfy_awning_discovery_spe_paired_rollcall.yaml plus
+           ///< tests/corpus/captures/discovery/somfy_izymo_dimmer_discovery_spe_paired_rollcall.yaml (two awnings
            ///< and a dimmer answering one broadcast). No dispatch path consumes the reply yet;
            ///< classify_pairing_discovery_response() accepts only 0x29 and must not be extended to
            ///< accept 0x2B, because a roll-call reply from an already-paired device is not a
@@ -76,8 +76,9 @@ static constexpr uint8_t CMD_DISCOVER_SPE_RESP =
            ///< Multi Information Byte at DISCOVERY_RESP_FLAGS_OFFSET, timestamp at
            ///< DISCOVERY_RESP_TIMESTAMP_OFFSET — and PairingEngine::parse_device_from_discovery()
            ///< decodes a 0x2B correctly with no special-casing. Real captured replies (two awnings
-           ///< and a dimmer) are in tests/corpus/captures/somfy_awning/ and .../somfy_dimmer/
-           ///< discover_spe_paired_rollcall.yaml. The timestamp is the field that advances between
+           ///< and a dimmer) are in tests/corpus/captures/discovery/somfy_awning_discovery_spe_paired_rollcall.yaml
+           ///< and tests/corpus/captures/discovery/somfy_izymo_dimmer_discovery_spe_paired_rollcall.yaml. The
+           ///< timestamp is the field that advances between
            ///< successive replies from one device; it is not a response to the request's random
            ///< challenge, since that HMAC covers only the constant command byte. Treat a reply as
            ///< self-description, not proof of identity: nothing in it is bound to the request, so
@@ -87,18 +88,18 @@ static constexpr uint8_t CMD_DISCOVER_CONFIRM_ACK = 0x2D;  ///< Device acknowled
 static constexpr uint8_t CMD_DISCOVER_ALT_REQ =
     0x2E;  ///< Alternate discovery. Broadcast (to 0x00003F) draws no response at all on every
            ///< device this project has real evidence for — a Somfy Izymo dimmer
-           ///< (tests/corpus/captures/somfy_dimmer/discover_alt_no_response.yaml) and a Velux
-           ///< KLR200/KUX100 pair (tests/corpus/captures/velux_kux100/
-           ///< discover_alt_broadcast_no_response.yaml) both went unanswered; the older
-           ///< "response is 0x29" guess never had real evidence and appears to have been wrong.
+           ///< (tests/corpus/captures/discovery/somfy_izymo_dimmer_discovery_alt_no_response.yaml) and a Velux
+           ///< KLR200/KUX100 pair
+           ///< (tests/corpus/captures/discovery/velux_kux100_discovery_alt_broadcast_no_response.yaml) both went
+           ///< unanswered; the older "response is 0x29" guess never had real evidence and appears to have been wrong.
            ///< Directly *addressed* to a known device instead of broadcast, it does draw a
            ///< response, but a 0x3C/0x3D challenge-response followed by CMD_DISCOVER_ALT_RESP
-           ///< (0x2F), not 0x29 — see tests/corpus/captures/velux_kux100/
-           ///< discover_alt_addressed_challenge_response.yaml.
+           ///< (0x2F), not 0x29 — see
+           ///< tests/corpus/captures/discovery/velux_kux100_discovery_alt_addressed_challenge_response.yaml.
 static constexpr uint8_t CMD_DISCOVER_ALT_RESP =
     0x2F;  ///< Reply to an addressed (non-broadcast) CMD_DISCOVER_ALT_REQ, following a
            ///< 0x3C/0x3D challenge-response. See CMD_DISCOVER_ALT_REQ's comment and
-           ///< tests/corpus/captures/velux_kux100/discover_alt_addressed_challenge_response.yaml
+           ///< tests/corpus/captures/discovery/velux_kux100_discovery_alt_addressed_challenge_response.yaml
            ///< — the only capture this project has of it. Not otherwise used anywhere in this
            ///< codebase (no dispatch logic added).
 static constexpr uint8_t CMD_ONEWAY_ADD_CONTROLLER =
@@ -109,7 +110,7 @@ static constexpr uint8_t CMD_ONEWAY_ADD_CONTROLLER =
            ///< field together (29 + 6 = 35, unrepresentable in 5 bits), so the MAC rides after
            ///< the declared length instead, still under the CRC — see IoFrame::has_mac and
            ///< frame_carries_mac_trailer() (proto_frame.h). Reference:
-           ///< tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml.
+           ///< tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml.
 static constexpr uint8_t CMD_ONEWAY_REMOVE = 0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device);
                                                     ///< same payload shape as 0x2E.
 
@@ -121,10 +122,10 @@ static constexpr uint8_t CMD_KEY_CONFIRM = 0x33;   ///< Device confirms key was 
 // Address and device-initiated key exchange
 static constexpr uint8_t CMD_ADDRESS_REQ =
     0x36;  ///< "Report your address" request. Not pairing-specific: it's captured both closing a
-           ///< Velux KLR200 pairing (tests/corpus/captures/velux_kux100/pairing_full.yaml) and, on
+           ///< Velux KLR200 pairing (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml) and, on
            ///< a completely different hub, sent to an already-paired device with no pairing in
            ///< progress at all (a Velux KIG300 probing a Somfy dimmer in
-           ///< tests/corpus/captures/issues/issue_45_capability_probe_burst.yaml). Answered by the
+           ///< tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml). Answered by the
            ///< key-extraction responder's create_address_resp_device_role()
            ///< (handle_key_extraction_address_req_() in hub_key_extraction.cpp).
 static constexpr uint8_t CMD_ADDRESS_RESP =
@@ -133,7 +134,7 @@ static constexpr uint8_t CMD_ADDRESS_RESP =
            ///< (DISCOVERY_RESP_BACKBONE_OFFSET) of its CMD_DISCOVER_RESP earlier in the same
            ///< session — an independent confirmation of that offset. The only capture of this
            ///< command in the corpus is still
-           ///< tests/corpus/captures/velux_kux100/pairing_full.yaml, where a Velux KLR200 closes
+           ///< tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml, where a Velux KLR200 closes
            ///< pairing with 0x36 and then challenges the 0x37 it gets back (see
            ///< CMD_CHALLENGE_REQ) — sent by create_address_resp_device_role()
            ///< (proto_commands.h/.cpp), the key-extraction responder's answer to CMD_ADDRESS_REQ.
@@ -148,7 +149,7 @@ static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
 static constexpr uint8_t CMD_CHALLENGE_REQ =
     0x3C;  ///< 6-byte random challenge. Usually a device challenging a controller's command, but
            ///< the protocol is symmetric and controllers challenge devices too: in
-           ///< tests/corpus/captures/velux_kux100/pairing_full.yaml a KLR200 issues 0x3C against
+           ///< tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml a KLR200 issues 0x3C against
            ///< the device's own CMD_ADDRESS_RESP. The key-extraction responder now answers exactly
            ///< that inbound direction (handle_key_extraction_address_challenge_() in
            ///< hub_key_extraction.cpp), so both directions are implemented, not just the outbound
@@ -157,7 +158,7 @@ static constexpr uint8_t CMD_CHALLENGE_RESP =
     0x3D;  ///< HMAC proof answering a 0x3C. Whoever is challenged authenticates *its own*
            ///< preceding frame: the transcript is [cmd, data...] of the challenged party's last
            ///< frame (create_challenge_resp()), never the challenger's. That holds in both
-           ///< directions — the device-side 0x3D in pairing_full.yaml (over its own 0x37) was
+           ///< directions — the device-side 0x3D in velux_kux100_pairing_full.yaml (over its own 0x37) was
            ///< recomputed under that installation's recovered key and confirmed before the
            ///< capture was re-keyed, so it is measured, not assumed by symmetry.
 
@@ -172,8 +173,8 @@ static constexpr uint8_t CMD_UNKNOWN4A_REQ =
            ///< codebase — see CMD_ONEWAY_ADD_CONTROLLER for the same "named but never sent"
            ///< precedent, and docs/adr/ for the standing decision not to add one.
 static constexpr uint8_t CMD_UNKNOWN4A_RESP =
-    0x4B;  ///< Observed on the wire (tests/corpus/captures/issues/) answering an ON_OFF_SWITCH-type device's
-           ///< traffic, but its request opcode is unconfirmed — it is not established to be
+    0x4B;  ///< Observed on the wire (tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml) answering an
+           ///< ON_OFF_SWITCH-type device's traffic, but its request opcode is unconfirmed — it is not established to be
            ///< CMD_UNKNOWN4A_REQ's reply rather than CMD_GET_GENERAL_INFO3's. Content undecoded.
            ///< Not sent or handled anywhere in this codebase.
 
@@ -197,8 +198,8 @@ static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/mo
                                                      ///< `--rekey` (tests/corpus/README.md).
 static constexpr uint8_t CMD_GET_INFO2_RESP = 0x57;  ///< Device type/model response
 static constexpr uint8_t CMD_GET_GENERAL_INFO3 =
-    0x58;  ///< Observed on the wire (tests/corpus/captures/issues/) with no payload. Content
-           ///< undecoded. Not sent or handled anywhere in this codebase.
+    0x58;  ///< Observed on the wire (tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml)
+           ///< with no payload. Content undecoded. Not sent or handled anywhere in this codebase.
 static constexpr uint8_t CMD_GET_GENERAL_INFO3_RESP =
     0x59;  ///< Never captured on our own wire. This constant exists so a received 0x59 frame
            ///< renders by name instead of as UNKNOWN_CMD. Not sent or handled anywhere in this
@@ -271,6 +272,11 @@ static constexpr uint8_t RESULT_IP_NOT_SET = 0x23;                        ///< I
 static constexpr uint8_t RESULT_OUT_OF_RANGE = 0x24;                      ///< Requested value is out of range.
 static constexpr uint8_t RESULT_PRIORITY_LOCKED_NON_EXEC =
     0x38;  ///< Priority locked, command not executed (ACEI priority too low).
+static constexpr uint8_t RESULT_INVALID_FUNCTION_INDEX =
+    0x58;  ///< CMD_PRIVATE-family function ID / sub-index / selector-block outside the range the
+           ///< device implements. Seen cross-vendor (Somfy Sunea awning + dimmer, Velux window)
+           ///< when a diagnostic probe walks past the last supported index; not in any reference
+           ///< error table. Distinct from RESULT_BAD_INDEX_RECEIVED (0x1C).
 static constexpr uint8_t RESULT_INFORMATION_CODE = 0xDF;              ///< Information-only code with unknown semantics.
 static constexpr uint8_t RESULT_PARAMETER_LIMITED = 0xE0;             ///< Parameter limited by an unknown device.
 static constexpr uint8_t RESULT_LIMITATION_BY_LOCAL_USER = 0xE1;      ///< Parameter limited by local button.

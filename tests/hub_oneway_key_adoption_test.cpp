@@ -26,7 +26,7 @@ constexpr uint8_t SENDER_NODE[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
 constexpr uint8_t BROADCAST_ALL[NODE_ID_SIZE] = {0x00, 0x00, 0x3F};
 
 /// The published add-controller vector's plaintext controller key
-/// (tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml).
+/// (tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml).
 constexpr uint8_t PUBLISHED_KEY[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
                                                  0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
 

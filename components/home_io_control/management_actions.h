@@ -179,7 +179,7 @@ class ManagementActions {
   /// system key answer a CMD_DISCOVER_SPE_REQ (the 0x2A payload is self-authenticating — 6
   /// random bytes plus a 6-byte HMAC over the command byte, computed with `system_key_`), so a
   /// device that has never paired with this hub stays silent. See
-  /// `tests/corpus/captures/somfy_awning/discover_spe_paired_rollcall.yaml` for a captured
+  /// `tests/corpus/captures/discovery/somfy_awning_discovery_spe_paired_rollcall.yaml` for a captured
   /// exchange. Never writes DeviceRegistry — every responder is only looked up, never
   /// registered; an unknown responder usually means a device paired earlier whose YAML config
   /// was never saved, not an intruder. `result.device_id` stays empty (there is no single

@@ -1,0 +1,88 @@
+id: velux_klr200_pairing_key_extraction_success
+description: >
+  Community capture from issue #80, the requested retest against the real Velux KLR200 two-way
+  control pad (node 810BAB) the issue shows stalling completely (zero retries of anything) before
+  the fix. This session, on the same reporter's hardware after pulling the SX1262 discovery-timing
+  fixes, completes the full cycle first-try with no retries at any step: CMD_DISCOVER_REQ (0x28) ->
+  CMD_DISCOVER_RESP (0x29) -> CMD_DISCOVER_CONFIRM (0x2C) -> CMD_DISCOVER_CONFIRM_ACK (0x2D) ->
+  CMD_KEY_INIT (0x31) -> CMD_CHALLENGE_REQ (0x3C, omitted -- see below) -> CMD_KEY_TRANSFER (0x32,
+  omitted -- see below) -> CMD_KEY_CONFIRM (0x33, "SYSTEM KEY EXTRACTED") -> CMD_ADDRESS_REQ (0x36)
+  -> CMD_ADDRESS_RESP (0x37). This is this project's first real-hardware confirmation of the
+  0x36/0x37 address-verification round (see tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml
+  for the only other real capture of that pair, a different, forum-sourced device) -- and the
+  first-party one, since these 0x36/0x37 bytes are this responder's own code talking to a real hub,
+  not a third-party device's.
+  0x29's flags/timestamp bytes (02 DD 00 0E) are the exact post-fix literal values
+  (KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_commands.cpp) -- direct real-hardware
+  confirmation that fix landed correctly, not just self-tested.
+  0x3C and 0x32 are omitted rather than included with a placeholder payload (see issue #45's corpus
+  entry for the same treatment of its own 0x32): this project's own redaction
+  (command_carries_key_material() in redaction.h, since commit b85d0d7) masks both in the log
+  before the line is even written, so their payload bytes were never in the reporter's log to begin
+  with, let alone shared here. 0x32 carries the system key; 0x3C/0x3D together would otherwise
+  publish a known-plaintext/known-ciphertext pair for the AES block cipher under that key. Their
+  ctrl0/ctrl1 framing bytes were visible (0x3C: 0E 00, matching create_challenge_req_device_role()'s
+  corrected shape; 0x32: 18 00) but a masked-payload frame can't satisfy this corpus format's
+  declared-length check, so both frames are dropped from the sequence entirely rather than force-fit.
+  No CHALLENGE_REQ/CHALLENGE_RESP (0x3C/0x3D) address-challenge followed the 0x37 in this run,
+  unlike the KLR200<->KUX100 capture above where one does -- open question, not yet understood (see
+  docs/home_io_control.md's Key Extraction "Known limitations").
+source:
+  device: "Velux KLR200 two-way control pad (node 810BAB) -- real third-party hub, community capture"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-08-25
+  origin: github-issue
+  issue: https://github.com/laberning/home_io_control/issues/80
+key: unknown
+frames:
+  - dir: rx
+    hex: "C8 10 00 00 3B 81 0B AB 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), broadcast to backbone group 00003B"
+  - dir: tx
+    hex: "D1 00 81 0B AB C4 33 3A 29 00 80 C4 33 3A 02 DD 00 0E"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), throwaway device id C4333A, manufacturer=2 (Somfy), type=roller_shutter, flags=0xDD (ATT_CLASS_40S | POWER_SAVE_LOW_POWER), timestamp=0x000E -- the exact post-fix-5 literal bytes, confirming that fix against a real hub for the first time"
+  - dir: rx
+    hex: "48 20 C4 33 3A 81 0B AB 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), addressed directly to the discovered device"
+  - dir: tx
+    hex: "88 00 81 0B AB C4 33 3A 2D"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM_ACK(0x2D)"
+  - dir: rx
+    hex: "48 20 C4 33 3A 81 0B AB 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31)"
+  # CMD_CHALLENGE_REQ (0x3C, tx, ctrl0=0x0E/ctrl1=0x00 -- matches create_challenge_req_device_role()'s
+  # corrected shape) and CMD_KEY_TRANSFER (0x32, rx, ctrl0=0x18/ctrl1=0x00) both happened here but are
+  # omitted: their payloads are masked by this project's own redaction before the reporter's log is
+  # even written (see description), so only the framing bytes are known, not enough to include as a
+  # frame here without misrepresenting a masked payload as captured data.
+  - dir: tx
+    hex: "88 00 81 0B AB C4 33 3A 33"
+    crc: absent
+    note: "cmd=KEY_CONFIRM(0x33), ctrl0=0x88 (end=true). Responder logs 'SYSTEM KEY EXTRACTED' and disarms after sending this -- grace-delayed, not immediate, in case the hub follows up with an address-verification round (this KLR200 does, unlike the KIG300 in issue #45)"
+  - dir: rx
+    hex: "48 24 C4 33 3A 81 0B AB 36"
+    crc: absent
+    note: "cmd=ADDRESS_REQ(0x36), addressed directly to the throwaway id, ~within the post-extraction grace window. First real-hardware 0x36 this project has received against its own key-extraction responder (handle_key_extraction_address_req_()); the only other 0x36 evidence on file is the KLR200<->KUX100 capture above (a different device) and a KIG300 capability-probe burst against an already-paired Somfy dimmer (velux_kig300_probe_capability_burst.yaml)"
+  - dir: tx
+    hex: "0B 00 81 0B AB C4 33 3A 37 C4 33 3A"
+    crc: absent
+    note: "cmd=ADDRESS_RESP(0x37), payload C4333A is the responder's own throwaway id, matching create_address_resp_device_role()'s convention of echoing the same backbone address advertised in 0x29. ctrl0=0x0B (start=false, end=false), ctrl1=0x00 (low_power=false) -- byte-for-byte the framing this project's address-verification plan predicted from the KUX100 capture alone, now confirmed against a real KLR200 accepting it (the reporter's product registered successfully on the hub's own display). No CMD_CHALLENGE_REQ (0x3C) followed this 0x37 anywhere in the ~60s grace window that followed -- unlike the KUX100 capture, where one does. Open question, not yet understood."
+expect:
+  exchange:
+    kind: pairing
+    outcome: success
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x33, start: false, end: true, protocol: 2w}
+    - {cmd: 0x36, start: true, end: false, protocol: 2w}
+    - {cmd: 0x37, start: false, end: false, protocol: 2w}

@@ -1,0 +1,47 @@
+id: synthetic_identify
+description: >
+  Synthetic authenticated identify exchange: identify(0x1E) -> challenge -> challenge-response ->
+  ack (END). HMAC is computed under the public corpus key (tests/support/test_helpers.h ::
+  TEST_SYSTEM_KEY), so this fixture's crypto is safe to commit. Pipeline self-test fixture —
+  see tests/corpus_bootstrap_dump_test.cpp for how these bytes were generated (real
+  serialize()/crc_ccitt()/create_challenge_resp() output, not hand-typed hex). The final ack
+  frame uses CMD_IDENTIFY as a stand-in response: there is no dedicated CMD_IDENTIFY response in
+  the protocol, and identify_device() treats any endpoint-matched, non-error reply as success.
+source:
+  device: "synthetic controller <-> synthetic device"
+  captured_with: synthetic
+  firmware: null
+  date: 2026-07-16
+  origin: synthetic-bootstrap
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    freq: 868950000
+    hex: "4A 20 44 55 66 11 22 33 1E 01 FF 8D 20"
+    crc: present
+    note: "identify request (CMD_IDENTIFY), payload originator=user_remote param=0xFF, START, low-power flag set"
+  - dir: rx
+    freq: 868950000
+    hex: "0E 00 11 22 33 44 55 66 3C 01 23 45 67 89 AB 2E 19"
+    crc: present
+    note: "challenge request, challenge = 01 23 45 67 89 AB"
+  - dir: tx
+    freq: 868950000
+    hex: "0E 20 44 55 66 11 22 33 3D BD 2F C9 76 EA 76 6E 47"
+    crc: present
+    note: "challenge response, HMAC under the corpus key"
+  - dir: rx
+    freq: 868950000
+    hex: "88 00 11 22 33 44 55 66 1E 55 C3"
+    crc: present
+    note: "identify ack (device echoes CMD_IDENTIFY), END, no payload"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x1E, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, hmac_valid: true}
+    - {cmd: 0x1E, start: false, end: true, protocol: 2w, classification: ACCEPT}

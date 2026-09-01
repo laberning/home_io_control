@@ -1,0 +1,49 @@
+id: multi_somfy_probe_private_function_id_replies
+description: >
+  Four short CMD_PRIVATE_RESP (0x04) replies — 11x len=15, 3x len=17 across the corpus, versus
+  109x len=23 / 32x len=25 for the ordinary position-status reply. Findings originally logged
+  this as a length curiosity; it is actually a family of replies to a private function ID other
+  than the default position-status one (CMD_PRIVATE's data[0], see PRIVATE_GET_POSITION_STATUS
+  in proto_constants.h). These are the reference fixtures for Step 2's Q0 probe builder test.
+source:
+  device: "Multiple Somfy devices (function-ID CMD_PRIVATE_RESP replies), passively monitored"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/45"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 869850000
+    hex: "8E 00 BE FE DB 1F 38 07 04 04 60 00 12 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE_RESP(0x04), data=04 60 00 12 00 00. Reading data[1]==0x60 as battery/solar
+      powered, value = data[2]<<8|data[3], this reads as battery-powered, value 0x0012 = 18.
+  - dir: rx
+    t_ms: 0
+    freq: 869850000
+    hex: "8E 00 BE FE DB 22 4B 0C 04 04 60 00 09 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE_RESP(0x04), data=04 60 00 09 00 00. Same rule: battery-powered, value
+      0x0009 = 9.
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "8E 00 BE FE DB 2A 8D 30 04 03 00 40 F0 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE_RESP(0x04), data=03 00 40 F0 00 00. data[1] != 0x60, so per the same rule this
+      device reads as mains-powered rather than battery/solar.
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "90 00 A0 25 E1 3D 37 BF 04 04 60 C8 00 80 00 00 00"
+    crc: absent
+    note: >
+      The 17-byte variant of the same shape: cmd=PRIVATE_RESP(0x04), data=04 60 C8 00 80 00 00
+      00. data[1]==0x60 (battery/solar-powered rule applies), two bytes longer than the 15-byte
+      frames above.

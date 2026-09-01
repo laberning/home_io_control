@@ -144,7 +144,7 @@ class OneWayTransmitter {
   /// **Sends `0x39` then `0x30`, back to back, one burst each** —
   /// `reference/iown-homecontrol/docs/linklayer.md:396`'s "1W Discovery" sequence diagram, matched
   /// by a real Smoove capture landing the two 128 ms apart within one gesture
-  /// (`tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml`; see also
+  /// (`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`; see also
   /// `analysis/completed/oneway_1w_support_plan.md` Step 13). This `0x39` carries only this
   /// identity's own `src` address — nothing on the wire lets it name a different controller — so
   /// it can only clear this identity's own prior entry, never someone else's; ADR 0026's

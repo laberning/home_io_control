@@ -231,14 +231,14 @@ TEST(ProtoCrypto, RecoverSystemKeyFromTransferWrongIvDataFails) {
 // create_1w_hmac() / construct_iv_1w_sequence() — the 1W frame authenticator
 // ========================================================================================
 // Two independent published vectors from reference/iown-homecontrol's docs/linklayer.md
-// (CC0-1.0), both captured in tests/corpus/captures/reference_1w_vectors/. They pin different
+// (CC0-1.0), captured as the reference_1w_* corpus vectors. They pin different
 // halves of the primitive: the add-controller vector pins the final MAC under a known key, and
 // the execute vector pins the IV construction itself (checksum bytes at 8-9, sequence at 10-11)
 // independently of any key — its own MAC is a documented placeholder and is deliberately not
 // asserted here.
 
 TEST(ProtoCrypto, ConstructIv1wSequenceMatchesPublishedExecuteVector) {
-  // oneway_execute_iv_vector.yaml: payload 00 01 43 D2 00 00 00 (7 bytes, padded to 8 with 0x55),
+  // reference_1w_oneway_execute_iv_vector.yaml: payload 00 01 43 D2 00 00 00 (7 bytes, padded to 8 with 0x55),
   // sequence 0x0599. The document states the resulting IV explicitly, so this asserts our IV
   // layout against a source outside this codebase rather than against our own expectations.
   const uint8_t span[] = {0x00, 0x01, 0x43, 0xD2, 0x00, 0x00, 0x00};
@@ -252,7 +252,7 @@ TEST(ProtoCrypto, ConstructIv1wSequenceMatchesPublishedExecuteVector) {
 }
 
 TEST(ProtoCrypto, Create1wHmacMatchesPublishedAddControllerVector) {
-  // oneway_add_controller_kat.yaml: span is cmd(0x30) followed by the 16 encrypted-key bytes —
+  // reference_1w_enrollment_add_controller_kat.yaml: span is cmd(0x30) followed by the 16 encrypted-key bytes —
   // 17 bytes, NOT the whole payload. The span is command-specific and does not generalise; see
   // Create1wHmacRejectsWrongSpan below for what a wrong choice looks like.
   const uint8_t span[] = {0x30, 0x7E, 0x60, 0x49, 0x1F, 0x97, 0x6A, 0xDF, 0x65,
@@ -288,7 +288,7 @@ TEST(ProtoCrypto, Create1wHmacRejectsWrongSpan) {
 // crypt_1w_key() / construct_iv_1w_node() — the 1W add-controller key wrap
 // ========================================================================================
 // Published worked example from reference/iown-homecontrol's docs/linklayer.md (CC0-1.0),
-// also captured verbatim in tests/corpus/captures/reference_1w_vectors/oneway_add_controller_kat.yaml:
+// also captured verbatim in tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml:
 // node ABCDEF, controller key 0102...1516, sequence 0x1234. Independent of this codebase, so a
 // match here is evidence crypt_1w_key()'s IV construction is correct, not merely self-consistent
 // — the same role the CryptKeyMatchesDocumentedIownHomecontrol* vectors play for the 2W sibling.

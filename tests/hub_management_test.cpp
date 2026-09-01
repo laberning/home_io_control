@@ -122,7 +122,7 @@ static IoFrame make_identify_ack_response(const uint8_t dst[3]) {
 }
 
 /// A 6-byte CMD_PRIVATE_RESP function-ID reply, shaped exactly like
-/// tests/corpus/captures/issues/issue_45_private_function_id_replies.yaml frame 0
+/// tests/corpus/captures/probe/multi_somfy_probe_private_function_id_replies.yaml frame 0
 /// (data = 04 60 00 12 00 00). data_len == 6 clears PRIVATE_RESPONSE_MIN_DATA_LEN
 /// (hub_status.cpp), so this is the frame shape that would misread as a position update if a
 /// probe reply were ever routed through apply_private_response_status() instead of staying on
@@ -589,8 +589,8 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
 // scan_paired_devices tests
 // ============================================================================
 // Reply payloads match the real fixtures in
-// tests/corpus/captures/somfy_awning/discover_spe_paired_rollcall.yaml and
-// tests/corpus/captures/somfy_dimmer/discover_spe_paired_rollcall.yaml:
+// tests/corpus/captures/discovery/somfy_awning_discovery_spe_paired_rollcall.yaml and
+// tests/corpus/captures/discovery/somfy_izymo_dimmer_discovery_spe_paired_rollcall.yaml:
 // awning "04 00 30 E1 F2 02 CC FC 03" -> HORIZONTAL_AWNING/0, backbone 30E1F2, MANUFACTURER_SOMFY;
 // dimmer "01 80 41 5C E4 02 CC 07 EB" -> LIGHT/0, backbone 415CE4, MANUFACTURER_SOMFY. Using real
 // bytes here and in the corpus replay tests (tests/corpus_spe_rollcall_replay_test.cpp) means

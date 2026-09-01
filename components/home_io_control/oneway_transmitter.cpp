@@ -106,7 +106,7 @@ bool OneWayTransmitter::send_enrollment(const std::string &controller_id) {
   // The documented 1W pairing handshake (reference/iown-homecontrol/docs/linklayer.md:396, "1W
   // Discovery") is `0x39` immediately followed by `0x30`, both from the same controller, back to
   // back within one gesture -- a real Smoove capture landed them 128 ms apart, same burst (see
-  // tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml and
+  // tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml and
   // analysis/completed/oneway_1w_support_plan.md Step 13). `0x39` here carries only this
   // identity's own `src` address, so on the wire it can only mean "clear my own prior entry
   // before I re-register" -- it cannot name or displace a different controller. Sending it right

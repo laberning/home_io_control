@@ -1,0 +1,44 @@
+id: somfy_izymo_dimmer_discovery_alt_no_response
+description: >
+  Alternate discovery (CMD_DISCOVER_ALT_REQ, 0x2E) sent alone via pairing_discovery_commands:
+  ["0x2E"] against the same Izymo dimmer paired with plain 0x28 in somfy_izymo_dimmer_pairing_full_sx1276.yaml, PROG
+  pressed immediately before each attempt. All 3 tries across 2 separate discovery runs drew
+  zero response and zero other RF activity on any channel (advice=rf_silent) — real evidence for
+  proto_constants.h's uncited "response is 0x29" comment on CMD_DISCOVER_ALT_REQ: this device
+  does not answer 0x2E at all, so its claimed response command is unconfirmed for this device
+  rather than contradicted by it.
+source:
+  device: "Somfy Izymo dimmer (io light actuator)"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-08
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C9 20 00 00 3F C0 FF EE 2E 00"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_REQ(0x2E), broadcast to alternate discovery group 00003F, attempt 1/3 (no response)"
+  - dir: tx
+    t_ms: 2048
+    freq: 868950000
+    hex: "C9 20 00 00 3F C0 FF EE 2E 00"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_REQ(0x2E), attempt 2/3 (no response)"
+  - dir: tx
+    t_ms: 4153
+    freq: 868950000
+    hex: "C9 20 00 00 3F C0 FF EE 2E 00"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_REQ(0x2E), attempt 3/3 (no response) — pairing advisor logged advice=rf_silent, nothing heard on any channel during the whole listen window"
+expect:
+  exchange:
+    kind: pairing
+    outcome: timeout
+  frames:
+    - {cmd: 0x2E, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 2w}

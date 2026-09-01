@@ -592,20 +592,21 @@ A running record of what these frames actually draw back — as much as is under
 | `private_fn` fn `0x06` | `data[2..3]` = `00 00` on every device probed — two mains motors of ours plus 17 solar shutters via a field reporter. No content. |
 | `private_fn` fn `0x09` | `data[2..3]` = a stored position: `D8 0A` on the dimmer (`0xD8` == `POS_FAVORITE`), `58 22` on the awning; solar shutters in the field data tracked their real position as they closed. |
 | `status_ext` (fn `0x03`), index = block | Field-observed selector. Device-dependent framing (see `status_ext_fn9`). Blocks `0x00`/`0x01` are what real hubs send. |
-| `status_ext_fn9`, index = block | Reply framing is device-dependent: some devices answer `data[0]` = the `0x04`/`0x05` stopped-flag byte with an `0x80`-tagged block, others answer `data[0] = 0x2D` with no block. On the dimmer the `0x80` block **tail changes with the index** (`… 80 00 00 00` at `0x00` → `… 80 D8 06 00` at `0x01`) — first time one of our own probes drew a non-empty, index-selected block; content is position family (`D8 06`). The awning ignores the index. |
-| `status_ext_fn6`, index = block | `data[2..3]` zeroed, same as `private_fn` fn `0x06`. Index `0x80` draws `ERROR_RESP` result code `0x58` — not mapped by `command_result_name()` or any reference error table; read as "index rejected". |
-| `private_fn_sub` (fn `0x09`), index = `data[1]` | Byte-identical to the `private_fn` fn `0x09` reply on both mains devices — the non-zero second payload byte changed nothing. |
-| `get_info2` (`0x56`) | `0x57` reply: 10 printable ASCII bytes (`5143802A06`, `5071662B09`, `5165948A01`) — a Somfy-internal reference / sw-version code, **not** a public catalogue number. The next two bytes (`data[10..11]`) are the packed device type/subtype this component already decodes via `decode_packed_device_type()` — verified: dimmer → `LIGHT`, awning → `HORIZONTAL_AWNING`. `data[12..15]` undecoded. |
+| `status_ext_fn9`, index = block | Reply framing is device-dependent: some devices answer `data[0]` = the `0x04`/`0x05` stopped-flag byte with an `0x80`-tagged block, others answer `data[0] = 0x2D` with no block. On the dimmer the `0x80` block **tail changes with the index** (`… 80 00 00 00` at `0x00` → `… 80 D8 06 00` at `0x01`) — first time one of our own probes drew a non-empty, index-selected block; content is position family (`D8 06`). The awning ignores the index. A Velux window kept `data[2..3]` = its live position and appended an index-selected `0x80` tail (`78 00` / `50 00` / `C8 00` at different blocks — position-family values, meaning undecoded). |
+| `status_ext_fn6`, index = block | `data[2..3]` zeroed, same as `private_fn` fn `0x06`. Walking past the last block the device implements draws `ERROR_RESP` result code `0x58`, now mapped as `INVALID_FUNCTION_INDEX` — seen cross-vendor (Somfy Sunea awning + dimmer at block `0x80`; a Velux window at block `0x0F` and every block `0x80`–`0x8F`). Not in any reference error table; treat purely as "that index does not exist on this device". |
+| `private_fn_sub` (fn `0x09`), index = `data[1]` | Byte-identical to the `private_fn` fn `0x09` reply on both mains devices — the non-zero second payload byte changed nothing. On a Velux window a non-zero `data[1]` flipped the reply's `data[0]` to `0x2D` and, at an irregular set of sub-indices, appended a `00 20` field — both undecoded. |
+| `get_info2` (`0x56`) | `0x57` reply: 10 printable ASCII bytes (`5143802A06`, `5071662B09`, `5165948A01`) — a Somfy-internal reference / sw-version code, **not** a public catalogue number. The next two bytes (`data[10..11]`) are the packed device type/subtype this component already decodes via `decode_packed_device_type()` — verified: dimmer → `LIGHT`, awning → `HORIZONTAL_AWNING`, Velux window → `WINDOW_OPENER`. `data[12..15]` undecoded. |
 | `get_info1` (`0x54`) | Not yet sent to a device by this project. No `0x55` answer has ever been captured from anything. |
-| `general_info3` (`0x58`) | Dimmer answered a real `0x59`; awning replied `ERROR_RESP` result `0x08` (`ERROR_DURING_EXECUTION`, "opcode not supported"). Device-dependent. |
-| `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices. See "Reading a `private2` reply" below. |
+| `general_info3` (`0x58`) | Dimmer answered a real `0x59`; a Somfy awning and a Velux window both replied `ERROR_RESP` result `0x08` (`ERROR_DURING_EXECUTION`, "opcode not supported"). Device-dependent. |
+| `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices, and byte-identical between two window positions on a Velux window (a stored parameter, not a live reading) — its short form at modifier `0x03` read back the stored ventilation position (`BA 00`). See "Reading a `private2` reply" below. |
 
 **What the replies do and don't carry.** Across every probe and device tried so far — mains and
 solar, day and night — the only things recovered are position/target data and, via `status_ext` /
 `private_fn` `data[8..10]`, the last commanding node ID. No reply has carried a per-device
-sensor value (battery, charge, luminance, temperature). The recurring non-position unknowns —
-`data[0] = 0x2D` framing, result code `0x58`, `get_info2` `data[12..15]` — have no decode and no
-external source.
+sensor value (battery, charge, luminance, temperature). Out-of-range indices answer result code
+`0x58` (`INVALID_FUNCTION_INDEX` — self-derived from the cross-vendor pattern, no external
+source). The remaining non-position unknowns — `data[0] = 0x2D` framing, the `00 20`
+`private_fn_sub` field, `get_info2` `data[12..15]` — have no decode and no external source.
 
 ### Reading a `private2` / `private2_short` reply
 

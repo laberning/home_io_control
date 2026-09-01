@@ -1,0 +1,39 @@
+id: somfy_awning_discovery_with_overheard_smoove_1w
+description: >
+  A failed discovery attempt against a Somfy Sunea IO awning motor, overheard alongside 1W
+  broadcasts from a nearby Smoov IO remote. Verifies 1W parsing of an undecoded command byte and
+  a pairing-mode beacon, plus discovery-with-no-response handling.
+source:
+  device: "Somfy Sunea IO awning motor; Smoov IO remote (overheard)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-07-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/27"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B C0 FF EE 28"
+    crc: absent
+    note: "CMD_DISCOVER_REQ (0x28) to 00 00 3B — the motor never responded"
+  - dir: rx
+    t_ms: 1284
+    freq: 868950000
+    hex: "F1 00 00 00 3F 2F 9A 98 39 00 0F 81 BC 35 2D 72 15 40"
+    crc: absent
+    note: "1W from Smoov remote 2F9A98, cmd=0x39 (undecoded — no established meaning)"
+  - dir: rx
+    t_ms: 1753
+    freq: 868950000
+    hex: "F5 00 00 00 3F 2F 9A 98 20 02 03 05 02 00 0F 84 FF FC 46 0E AC 87"
+    crc: absent
+    note: "1W from Smoov remote 2F9A98, cmd=0x20 WRITE_PRIVATE pairing-mode beacon"
+expect:
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+  oneway:
+    target_type: 0

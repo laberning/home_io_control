@@ -1,0 +1,103 @@
+id: velux_window_probe_private_fn_replies
+description: >
+  CMD_PRIVATE (0x03) function-ID readback replies from a Velux INTEGRA roof-window actuator
+  (WINDOW_OPENER, node 6544C6), captured by the reporter's own SX126x hub via the diagnostic
+  probe_sweep action on issue #98 (2026-09-01). Two probes: `private_fn` walks the function-ID
+  byte (data[0]) with data[1]=0x00, and `private_fn_sub` pins the function ID to 0x09 and walks
+  data[1]. The window was parked at its ventilation preset (~7% open) for the sweep; one
+  Session-1 frame from an earlier fully-open run is included for contrast.
+
+  Human-verified readings (see issue #98 conversation_log.md / probe_findings_2026-09-01.md):
+    - data[2..3] is big-endian on the STATUS_POS_MAX (0xC800) scale, 0x0000 = fully open.
+    - BA 00 = 0xBA00 = 47616/51200 = 93.0% closed = the reporter's "7% open" vent position.
+    - D8 03 = POS_FAVORITE (0xD8) + POS_VENT_MODIFIER (0x03): the "target = ventilation preset"
+      selector, not a number (0xD803 > STATUS_POS_MAX, so the shipped decoder treats it as a
+      marker). Same two bytes create_private2_read() sends.
+    - D1 00 = 0xD1 = POS_SECURED_TARGET marker (the secured/environmental retreat setting).
+    - C8 00 = 0xC800 = STATUS_POS_MAX (100% closed / full-scale).
+    - 27 10 = 0x2710 = 10000, a stable constant across window positions (not %-of-0xC800).
+    - fn 0x0F answers CMD_ERROR_RESP (0xFE) result code 0x58 -> RESULT_INVALID_FUNCTION_INDEX
+      ("requested function/sub-index is not implemented by the device"), the same rejection a
+      Somfy Sunea awning/dimmer gives for an out-of-range block
+      (somfy_awning_probe_extended_fn_sx1262.yaml).
+    - `private_fn_sub` with data[1] != 0 flips the reply's data[0] flags byte from 0x05 to 0x2D
+      and, at an irregular subset of sub-indices, appends a 00 20 field; both undecoded.
+
+  No TX probe frames were logged by the reporter; the replies stand alone (cf.
+  velux_kig300_probe_capability_burst.yaml). Community capture: no system key, HMAC not verifiable.
+source:
+  device: "Velux INTEGRA roof-window actuator (WINDOW_OPENER, node 6544C6)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-09-01
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/98"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    hex: "8E 00 51 3B 34 65 44 C6 04 05 00 00 00 00 00"
+    crc: absent
+    note: >
+      Session 1 (window fully open): `private_fn` fn 0x09 reply. data=05 00 00 00 00 00 — the
+      active-target-selector field (data[2..3]) reads 00 00 = no target / fully open. Contrast
+      the Session-2 fn 0x09 reply below (D8 03 = vent selector).
+  - dir: rx
+    t_ms: 0
+    hex: "8E 00 51 3B 34 65 44 C6 04 05 00 BA 00 00 00"
+    crc: absent
+    note: >
+      `private_fn` fn 0x01 reply. data=05 00 BA 00 00 00 — a single scalar field: 0xBA00 = 93.0%
+      closed, the resolved ventilation position.
+  - dir: rx
+    t_ms: 0
+    hex: "8E 00 51 3B 34 65 44 C6 04 05 00 D8 03 00 00"
+    crc: absent
+    note: "`private_fn` fn 0x09 reply, Session 2. Active-target selector = D8 03 (POS_FAVORITE + vent modifier)."
+  - dir: rx
+    t_ms: 0
+    hex: "96 00 51 3B 34 65 44 C6 04 05 00 D8 03 BA 00 00 00 51 3B 34 01 00 00"
+    crc: absent
+    note: >
+      `private_fn` fn 0x03 reply — the full motion-state record: target selector D8 03, resolved
+      position BA 00 (93%), 00 00, last-command originator node 51 3B 34 (the hub), priority
+      level 01. data[7] (the 01) is where the codec's shipped 0x04 decoder reads its settle
+      hint. fn 0x0C returns this record byte-identically (aliased).
+  - dir: rx
+    t_ms: 0
+    hex: "8E 00 51 3B 34 65 44 C6 04 05 00 27 10 00 00"
+    crc: absent
+    note: "`private_fn` fn 0x07 reply. data[2..3] = 27 10 = 0x2710 = 10000, a constant (identical in the fully-open run); not a position on the 0xC800 scale."
+  - dir: rx
+    t_ms: 0
+    hex: "8E 00 51 3B 34 65 44 C6 04 05 00 D1 00 00 00"
+    crc: absent
+    note: "`private_fn` fn 0x08 reply. data[2..3] = D1 00 = 0xD1 = POS_SECURED_TARGET marker (the secured/rain/wind retreat-position setting). Stable across both window positions."
+  - dir: rx
+    t_ms: 0
+    hex: "8E 00 51 3B 34 65 44 C6 04 05 00 C8 00 00 00"
+    crc: absent
+    note: "`private_fn` fn 0x0B reply. data[2..3] = C8 00 = 0xC800 = STATUS_POS_MAX (100% closed / full-scale). Stable across both window positions."
+  - dir: rx
+    t_ms: 0
+    hex: "96 00 51 3B 34 65 44 C6 04 05 00 D8 03 D8 03 00 00 51 3B 34 01 00 00"
+    crc: absent
+    note: "`private_fn` fn 0x0D reply — like the fn 0x03 record but the resolved-position slot also holds the D8 03 vent selector (target and setpoint both 'vent')."
+  - dir: rx
+    t_ms: 0
+    hex: "89 00 51 3B 34 65 44 C6 FE 58"
+    crc: absent
+    note: >
+      `private_fn` fn 0x0F reply: CMD_ERROR_RESP (0xFE), result code 0x58 =
+      RESULT_INVALID_FUNCTION_INDEX. The window implements function IDs 0x00–0x0E; 0x0F is past
+      the end. END frame.
+  - dir: rx
+    t_ms: 0
+    hex: "8E 00 51 3B 34 65 44 C6 04 2D 00 D8 03 00 00"
+    crc: absent
+    note: "`private_fn_sub` (fn 0x09), data[1] = 0x01. Reply data[0] = 0x2D (the 0x05 flags byte with two more bits set), then the D8 03 vent selector. No 00 20 field at this sub-index."
+  - dir: rx
+    t_ms: 0
+    hex: "90 00 51 3B 34 65 44 C6 04 2D 00 D8 03 00 20 00 00"
+    crc: absent
+    note: "`private_fn_sub` (fn 0x09), data[1] = 0x03. Same 0x2D record, now with an appended 00 20 field. Both the 0x2D flag bits and the 00 20 field are undecoded."

@@ -1,0 +1,48 @@
+id: somfy_awning_exchange_set_name_sx1276
+description: >
+  Rename request (SET_NAME 0x52) to the device's existing name 'Patio Awning' via the
+  rename_device management action - harmless no-op rename used to capture the
+  SET_NAME/SET_NAME_RESP exchange shape. Live confirmation that the device accepts a 0x52 frame
+  with CTRL1_LOW_POWER set
+source:
+  device: "Somfy Sunea IO awning motor (\"Patio Awning\")"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-16
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "58 20 30 E1 F2 C0 FF EE 52 50 61 74 69 6F 20 41 77 6E 69 6E 67 00 00 00 00"
+    crc: absent
+    note: "cmd=SET_NAME(0x52)"
+  - dir: rx
+    t_ms: 298
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C 7D E3 92 2F E7 3B"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 323
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 74 45 BC EC BE 02"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 345
+    freq: 868950000
+    hex: "88 00 C0 FF EE 30 E1 F2 53"
+    crc: absent
+    note: "cmd=SET_NAME_RESP(0x53)"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x52, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x53, start: false, end: true, protocol: 2w, classification: ACCEPT}

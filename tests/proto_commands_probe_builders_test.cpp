@@ -67,14 +67,14 @@ TEST(ProtoCommandsProbeBuilders, PrivateFunctionMatchesGetStatusShape) {
 }
 
 TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesFixture11SelectorN0) {
-  expect_builder_matches_capture("issue_45_extended_private_both_selectors", 0,
+  expect_builder_matches_capture("multi_somfy_probe_extended_private_both_selectors", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_get_status_extended(f, own, dst, /*low_power=*/true, 0x80, 0x00);
                                  });
 }
 
 TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesFixture11SelectorN1) {
-  expect_builder_matches_capture("issue_45_extended_private_both_selectors", 1,
+  expect_builder_matches_capture("multi_somfy_probe_extended_private_both_selectors", 1,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_get_status_extended(f, own, dst, /*low_power=*/true, 0x80, 0x01);
                                  });
@@ -82,7 +82,7 @@ TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesFixture11SelectorN1) {
 
 TEST(ProtoCommandsProbeBuilders, Private2ReadMatchesFixture9LongForm) {
   // Fixture 9's request carries CTRL1_LOW_POWER set (target: a solar shutter).
-  expect_builder_matches_capture("issue_45_private2_long_form_request_response", 0,
+  expect_builder_matches_capture("multi_somfy_probe_private2_long_form", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_private2_read(f, own, dst, 0x06, true, /*low_power=*/true);
                                  });
@@ -93,14 +93,14 @@ TEST(ProtoCommandsProbeBuilders, Private2ReadMatchesFixture10ShortFormModifier09
   // deliberately the opposite of fixture 9, so these two tests together would catch a
   // low_power/long_form mixup (see create_private2_read()'s doxygen for why they are not the
   // same parameter).
-  expect_builder_matches_capture("issue_45_private2_short_form", 0,
+  expect_builder_matches_capture("multi_somfy_probe_private2_short_form", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_private2_read(f, own, dst, 0x09, false, /*low_power=*/false);
                                  });
 }
 
 TEST(ProtoCommandsProbeBuilders, Private2ReadMatchesFixture10ShortFormModifier03) {
-  expect_builder_matches_capture("issue_45_private2_short_form", 1,
+  expect_builder_matches_capture("multi_somfy_probe_private2_short_form", 1,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_private2_read(f, own, dst, POS_VENT_MODIFIER, false,
                                                                /*low_power=*/false);
@@ -208,9 +208,9 @@ TEST(ProtoCommandsProbeBuilders, NoPayloadRequestsShareOneShape) {
 }
 
 TEST(ProtoCommandsProbeBuilders, GeneralInfo3MatchesFixture12CapturedRequest) {
-  // Frame 2 of issue_45_capability_probe_burst: "48 00 58 6E 36 CA 0A 18 58", a real captured
+  // Frame 2 of velux_kig300_probe_capability_burst: "48 00 58 6E 36 CA 0A 18 58", a real captured
   // CMD_GET_GENERAL_INFO3 request with CTRL1_LOW_POWER clear.
-  expect_builder_matches_capture("issue_45_capability_probe_burst", 2,
+  expect_builder_matches_capture("velux_kig300_probe_capability_burst", 2,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_general_info3(f, own, dst, /*low_power=*/false);
                                  });
@@ -222,28 +222,28 @@ TEST(ProtoCommandsProbeBuilders, GeneralInfo3MatchesFixture12CapturedRequest) {
 // hub's bytes" and "the builder reproduces what we actually put on air".
 
 TEST(ProtoCommandsProbeBuilders, PrivateFunctionMatchesOwnHardwareFn06Probe) {
-  expect_builder_matches_capture("somfy_awning_private_fn_probe_lr1121", 0,
+  expect_builder_matches_capture("somfy_awning_probe_private_fn_lr1121", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_private_function(f, own, dst, /*low_power=*/true, 0x06);
                                  });
 }
 
 TEST(ProtoCommandsProbeBuilders, PrivateFunctionMatchesOwnHardwareFn09Probe) {
-  expect_builder_matches_capture("somfy_dimmer_private_fn_probe_lr1121", 2,
+  expect_builder_matches_capture("somfy_izymo_dimmer_probe_private_fn_lr1121", 2,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_private_function(f, own, dst, /*low_power=*/true, 0x09);
                                  });
 }
 
 TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesOwnHardwareBlock00Probe) {
-  expect_builder_matches_capture("somfy_awning_status_ext_probe_lr1121", 0,
+  expect_builder_matches_capture("somfy_awning_probe_status_ext_lr1121", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_get_status_extended(f, own, dst, /*low_power=*/true, 0x80, 0x00);
                                  });
 }
 
 TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesOwnHardwareBlock01Probe) {
-  expect_builder_matches_capture("somfy_awning_status_ext_probe_lr1121", 2,
+  expect_builder_matches_capture("somfy_awning_probe_status_ext_lr1121", 2,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_get_status_extended(f, own, dst, /*low_power=*/true, 0x80, 0x01);
                                  });
@@ -252,14 +252,14 @@ TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesOwnHardwareBlock01Probe
 TEST(ProtoCommandsProbeBuilders, GeneralInfo3MatchesOwnHardwareProbe) {
   // low_power=true, unlike GeneralInfo3MatchesFixture12CapturedRequest above -- every probe
   // builder call sends low_power=true (see build_probe_general_info3() in management_actions.cpp).
-  expect_builder_matches_capture("somfy_awning_general_info3_probe_lr1121", 0,
+  expect_builder_matches_capture("somfy_awning_probe_general_info3_lr1121", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_general_info3(f, own, dst, /*low_power=*/true);
                                  });
 }
 
 TEST(ProtoCommandsProbeBuilders, Private2ReadMatchesOwnHardwareFavoriteProbe) {
-  expect_builder_matches_capture("somfy_awning_private2_probe_favorite_lr1121", 0,
+  expect_builder_matches_capture("somfy_awning_probe_private2_favorite_lr1121", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_private2_read(f, own, dst, 0x00, /*long_form=*/true,
                                                                /*low_power=*/true);
@@ -267,7 +267,7 @@ TEST(ProtoCommandsProbeBuilders, Private2ReadMatchesOwnHardwareFavoriteProbe) {
 }
 
 TEST(ProtoCommandsProbeBuilders, Private2ReadMatchesOwnHardwareVentProbe) {
-  expect_builder_matches_capture("somfy_awning_private2_probe_vent_lr1121", 0,
+  expect_builder_matches_capture("somfy_awning_probe_private2_vent_lr1121", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_private2_read(f, own, dst, POS_VENT_MODIFIER, /*long_form=*/true,
                                                                /*low_power=*/true);

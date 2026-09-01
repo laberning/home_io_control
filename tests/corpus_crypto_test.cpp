@@ -178,7 +178,7 @@ TEST_P(CorpusCryptoKeyTransfer, KeyTransferDecryptsToCorpusKey) {
 /// alone] — no 0x3C/0x3D round trip, which is what lets it be broadcast. Asserts the real C++
 /// crypto reproduces the captured HMAC, mirroring scripts/corpus/validate.py's enforcement of the
 /// same frames, so the two crypto ports cannot drift apart on this shape either. The rule itself
-/// was established from real KLR200 bytes (velux_kux100/pairing_full.yaml, recomputed under that
+/// was established from real KLR200 bytes (velux_kux100_pairing_full.yaml, recomputed under that
 /// installation's own key before re-keying) and is what create_discovery_request() builds.
 class CorpusCryptoSelfAuthenticated : public ::testing::TestWithParam<const corpus::CorpusCapture *> {};
 

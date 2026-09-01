@@ -1,0 +1,79 @@
+id: velux_window_probe_metadata_replies
+description: >
+  Metadata / stored-parameter probe replies from a Velux INTEGRA roof-window actuator
+  (WINDOW_OPENER, node 6544C6), captured by the reporter's own SX126x hub on issue #98
+  (2026-09-01): CMD_GET_INFO1 (0x54) -> 0x55, CMD_GET_INFO2 (0x56) -> 0x57,
+  CMD_GET_GENERAL_INFO3 (0x58), and CMD_PRIVATE2 (0x0C) long + short forms -> 0x0D.
+
+  Human-verified (see issue #98 probe_findings_2026-09-01.md §5–§6, and the review pass):
+    - GET_INFO2_RESP: data[10]=0x01, data[11]=0x01 -> decode_packed_device_type() =
+      (0x01<<2)|(0x01>>6) = 0x04 = WINDOW_OPENER, subtype 0x01. data[0..9] are all zero here
+      (no leading ASCII reference string, unlike the Somfy get_info2 replies). data[12..15]
+      undecoded.
+    - GET_GENERAL_INFO3: the window does not implement it — answers CMD_ERROR_RESP (0xFE)
+      result 0x08 = RESULT_ERROR_DURING_EXECUTION, same as a Somfy Sunea awning
+      (velux_kig300_probe_capability_burst.yaml shows a Somfy dimmer answering a real 0x59 instead —
+      device-dependent).
+    - GET_INFO1_RESP: body is 9 zero bytes then 30 03 then 00 00 00; static, no position/limit
+      content.
+    - PRIVATE2_RESP (0x0D): data[0] = 0x68 is the "bare echo, no value" form (data[2..3] = D4 00
+      is the request's own POS_UNKNOWN bytes echoed back). data[0] = 0x00 with a trailing 0x80
+      block is the "value present" form. This command returned byte-identical data with the
+      window fully open and at the vent preset — it carries stored config, not live state; its
+      short form at modifier 0x03 reads back the stored ventilation position (BA 00 = 93%) and
+      at modifier 0x0A the vent target selector (D8 03).
+
+  No TX probe frames were logged by the reporter. Community capture: no system key, HMAC not
+  verifiable.
+source:
+  device: "Velux INTEGRA roof-window actuator (WINDOW_OPENER, node 6544C6)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-09-01
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/98"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    hex: "96 00 51 3B 34 65 44 C6 55 00 00 00 00 00 00 00 00 00 30 03 00 00 00"
+    crc: absent
+    note: "cmd=GET_INFO1_RESP(0x55). Body: 9 zero bytes, then 30 03, then 00 00 00. Static device metadata, no position or limit content."
+  - dir: rx
+    t_ms: 0
+    hex: "98 00 51 3B 34 65 44 C6 57 00 00 00 00 00 00 00 00 00 02 01 01 03 00 03 00"
+    crc: absent
+    note: >
+      cmd=GET_INFO2_RESP(0x57). data[10]=0x01, data[11]=0x01 -> decode_packed_device_type() =
+      0x04 = WINDOW_OPENER, subtype 0x01 (human-verified; matches the device identity). No
+      leading ASCII string (data[0..9] all zero). data[12..15] = 03 00 03 00 undecoded.
+  - dir: rx
+    t_ms: 0
+    hex: "89 00 51 3B 34 65 44 C6 FE 08"
+    crc: absent
+    note: "cmd=ERROR_RESP(0xFE) answering CMD_GET_GENERAL_INFO3 (0x58): result code 0x08 = ERROR_DURING_EXECUTION — this window does not implement the opcode. END."
+  - dir: rx
+    t_ms: 0
+    hex: "8D 00 51 3B 34 65 44 C6 0D 68 D4 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D), `private2` long form, modifier 0x00. data[0]=0x68 = bare-echo form; D4 00 is the request's POS_UNKNOWN bytes echoed back; no 0x80 value block."
+  - dir: rx
+    t_ms: 0
+    hex: "8F 00 51 3B 34 65 44 C6 0D 00 D4 00 80 50 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D), `private2` long form, modifier 0x05. data[0]=0x00 with a trailing 0x80 block: 50 00 (= 0x5000 = 40.0% closed; undecoded). Identical in the fully-open run."
+  - dir: rx
+    t_ms: 0
+    hex: "8F 00 51 3B 34 65 44 C6 0D 00 D4 00 80 C8 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D), `private2` long form, modifier 0x06. 0x80 block: C8 00 = 0xC800 = STATUS_POS_MAX. Pairs with modifier 0x05's 40% as a possible stored min/max limit pair (undecoded, dry)."
+  - dir: rx
+    t_ms: 0
+    hex: "8D 00 51 3B 34 65 44 C6 0D 00 BA 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D), `private2_short` form, modifier 0x03 (POS_VENT_MODIFIER). data[2..3] = BA 00 = 93.0% closed: the stored ventilation position read back. Same value with the window fully open (a stored parameter)."
+  - dir: rx
+    t_ms: 0
+    hex: "8D 00 51 3B 34 65 44 C6 0D 00 D8 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D), `private2_short` form, modifier 0x0A. data[2..3] = D8 03 = the ventilation target selector (POS_FAVORITE + vent modifier) read back."

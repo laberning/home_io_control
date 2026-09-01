@@ -28,9 +28,10 @@
 ///    precisely the blind spot this suite exists to cover — they are in fact the only captures
 ///    holding 0x3C/0x33 frames that disagree with the real-device consensus asserted here. They
 ///    stay valuable as end-to-end crypto/state-machine fixtures in the other suites.
-/// 2. **Frames documented as reconstructed rather than captured.** `field_rs100_*`'s 0x33 has its
-///    flag bits guessed by analogy (its own `note:` says so); `corpus_pairing_replay_test.cpp`
-///    excludes the same capture for the same reason.
+/// 2. **Frames documented as reconstructed rather than captured.**
+///    `somfy_rs100_pairing_key_exchange_retry_success`'s 0x33 has its flag bits guessed by
+///    analogy (its own `note:` says so); `corpus_pairing_replay_test.cpp` excludes the same
+///    capture for the same reason.
 ///
 /// Note that "our own firmware" is the test, not `source.origin` — plenty of `own-hardware`
 /// captures are of Lars's real Somfy/Velux devices and are exactly the evidence wanted here.
@@ -78,14 +79,14 @@ std::string describe(const FramingBits &b) {
 /// not independent evidence of what a real device sends. See the file header.
 constexpr const char *INDEPENDENT_SOURCE_EXCLUSIONS[] = {
     // Both ends are this codebase: our responder as the device, our PairingEngine as the hub.
-    "key_extraction_self_pair_sx1262_device_sx1276_hub",
-    "key_extraction_self_pair_sx1276_device_sx1262_hub",
+    "selfpair_pairing_sx1262_device_sx1276_hub",
+    "selfpair_pairing_sx1276_device_sx1262_hub",
     // A Heltec V3 <-> V2 loopback rig — this project's firmware on both ends.
-    "pairing_lab_loopback_challenge_reply",
+    "selfpair_exchange_lab_loopback_challenge_reply",
     // Real third-party *hubs*, but the device side is our own key-extraction responder: every
     // `rx` frame in these is our output, which is exactly what they were captured to document.
-    "issue_45_velux_kig300_key_extraction_stall",
-    "issue_45_somfy_connectivity_kit_key_extraction_stall",
+    "velux_kig300_pairing_key_extraction_stall",
+    "somfy_connectivity_kit_pairing_key_extraction_stall",
 };
 
 bool is_independent_device_source(std::string_view capture_id) {
@@ -99,7 +100,7 @@ bool is_independent_device_source(std::string_view capture_id) {
 /// True for individual frames a capture's own `note:` documents as reconstructed rather than
 /// captured, so their flag bits are a guess and cannot pin a builder. Only one such frame exists.
 bool is_reconstructed_frame(std::string_view capture_id, uint8_t cmd) {
-  return capture_id == "field_rs100_pairing_key_exchange_retry_success" && cmd == CMD_KEY_CONFIRM;
+  return capture_id == "somfy_rs100_pairing_key_exchange_retry_success" && cmd == CMD_KEY_CONFIRM;
 }
 
 /// A genuine device-originated frame of one command: corpus `rx` frames (device -> controller),
@@ -215,12 +216,11 @@ TEST(CorpusDeviceRoleBuilders, AddressRespDeviceRoleMatchesRealDevices) {
 }
 
 /// The KLR200 capture shows our 0x37 payload as byte-identical to our own earlier 0x29's backbone
-/// address (data[DISCOVERY_RESP_BACKBONE_OFFSET..+3), tests/corpus/captures/velux_kux100/
-/// pairing_full.yaml lines 47 and 87) -- both report the same throwaway node ID we advertised.
-/// create_discover_resp() and create_address_resp_device_role() are two independent call sites for
-/// that same `own` value, so nothing stops a future edit from swapping an argument at either one
-/// without any other test noticing: the framing-bits pin above covers CTRL0/CTRL1 only, not
-/// payload content.
+/// address (data[DISCOVERY_RESP_BACKBONE_OFFSET..+3), tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml
+/// lines 47 and 87) -- both report the same throwaway node ID we advertised. create_discover_resp() and
+/// create_address_resp_device_role() are two independent call sites for that same `own` value, so nothing stops a
+/// future edit from swapping an argument at either one without any other test noticing: the framing-bits pin above
+/// covers CTRL0/CTRL1 only, not payload content.
 TEST(CorpusDeviceRoleBuilders, AddressRespPayloadMatchesOwnDiscoverRespBackboneAddress) {
   IoFrame discover_resp{};
   ASSERT_TRUE(create_discover_resp(discover_resp, test::OWN_ID, test::DST_ID, DeviceType::ROLLER_SHUTTER, 0,

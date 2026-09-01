@@ -1,0 +1,26 @@
+id: wind_sensor_oneway_horizontal_awning_sx1276
+description: >
+  Overheard 1W EXECUTE broadcast from a different wind sensor than wind_sensor_oneway_execute_sx1276 (SECURED_TARGET, originator=wind_sensor, priority=protection_sensor), targeting the horizontal_awning device class (00043F) rather than 'all' (00003F) - exercises a different broadcast_target_type() decode value.
+source:
+  device: "Overheard 1W wind/protection sensor (node 540B83) targeting the horizontal_awning device class"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-12
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F6 00 00 04 3F 54 0B 83 00 09 27 D1 00 00 00 60 50 C1 60 87 A4 F3 FE"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: SECURED_TARGET
+    originator: 0x09
+    acei: 1
+    target_type: 0x10

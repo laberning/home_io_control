@@ -1,0 +1,41 @@
+id: somfy_awning_probe_get_info2_sx1262
+description: >
+  CMD_GET_INFO2 (0x56) probe against our own mains-powered awning (node 30E1F2), companion to
+  somfy_izymo_dimmer_probe_get_info2_sx1262.yaml, from the 2026-08 battery/solar-telemetry follow-up.
+  This device required an auth challenge before replying (CHALLENGE_REQ/RESP, redacted and not
+  included here -- same omission as the status_ext/private_fn probe captures, whose replies also
+  arrive after an unshown challenge). Reply payload: 10 ASCII bytes "5071662B09" (Somfy-internal
+  reference/sw-version code, not a public catalogue number), then the packed type/subtype bytes.
+  Human-verified: data[10]=0x04, data[11]=0x00 -> (0x04<<2)|(0x00>>6) = 0x10 = HORIZONTAL_AWNING
+  via decode_packed_device_type() (proto_device_model.cpp), matching this device's known identity
+  ("Patio Awning") and the "targets horizontal_awning" seen on 1W wind-sensor frames to it.
+source:
+  device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2), probed with CMD_GET_INFO2 (0x56)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-08-30
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "48 00 30 E1 F2 C0 FF EE 56"
+    crc: absent
+    note: "cmd=GET_INFO2(0x56), no payload (create_get_info2(), probe get_info2). An auth challenge followed before the reply below; those frames are redacted and omitted."
+  - dir: rx
+    t_ms: 68
+    freq: 868950000
+    hex: "98 00 C0 FF EE 30 E1 F2 57 35 30 37 31 36 36 32 42 30 39 04 00 03 0B 00 00"
+    crc: absent
+    note: >
+      cmd=GET_INFO2_RESP(0x57). data[0..9]="5071662B09" (ASCII reference/sw-version code).
+      data[10]=0x04, data[11]=0x00 -> decode_packed_device_type() = 0x10 = HORIZONTAL_AWNING
+      (human-verified). data[12]=0x03, data[13]=0x0B, data[14..15]=00 00 undecoded. Note the
+      dimmer's reply has data[12]=0x03 too but data[13]=0x00 -- data[13] differs between the two
+      devices; not decoded.
+expect:
+  frames:
+    - {cmd: 0x56, start: true, end: false, protocol: 2w}
+    - {cmd: 0x57, start: false, end: true, protocol: 2w}

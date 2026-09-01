@@ -1,0 +1,116 @@
+id: velux_kux100_pairing_full
+description: >
+  A complete Velux KLR200 -> KUX100/PK03 pairing cycle, end to end: discovery
+  (CMD_DISCOVER_REQ 0x28 -> CMD_DISCOVER_RESP 0x29 -> CMD_DISCOVER_CONFIRM 0x2C ->
+  CMD_DISCOVER_CONFIRM_ACK 0x2D), key transfer (CMD_KEY_INIT 0x31 -> CMD_CHALLENGE_REQ 0x3C ->
+  CMD_KEY_TRANSFER 0x32 -> CMD_KEY_CONFIRM 0x33), a broadcast CMD_DISCOVER_SPE_REQ (0x2A), and a
+  closing CMD_ADDRESS_REQ/RESP (0x36/0x37) pair the KLR200 makes the device authenticate. A
+  device family this corpus otherwise has no coverage of.
+  Two things this capture is the corpus's only evidence for. First, the *device* answers a
+  controller-issued challenge here (0x3C tx, 0x3D rx) rather than the other way round, showing
+  the transcript rule is symmetric: the challenged party HMACs its own preceding frame's
+  cmd+data (here 37 B6 2B BB), exactly as create_challenge_resp() builds it in the usual
+  direction. Second, the 0x37 response payload is byte-identical to the backbone address the
+  same device reported in its 0x29 — an independent cross-check of this project's
+  DISCOVERY_RESP_BACKBONE_OFFSET.
+  The session opens on the backbone broadcast group (dst=00003B) right after the broadcast
+  CMD_DISCOVER_ALT_REQ attempts in velux_kux100_discovery_alt_broadcast_no_response.yaml drew no response, and
+  0x29 reveals the device's real address (38ED A1), matching this project's own
+  CMD_DISCOVER_RESP payload-offset comments in proto_constants.h.
+  Literal bytes (ADR 0023 sub-case 2), not reconstructed: captured by SPI-sniffing between the
+  KLR200's MCU and its CC1021 radio chip with a logic analyzer (forum user "Safepcb", openHAB
+  community forum, post #268, 2022-12-10:
+  https://community.openhab.org/t/io-homecontrol-velux-somethings-in-the-bush/11413/268), and
+  crc_ccitt() re-verifies every frame's trailing CRC here after stripping a leading 0x33 byte
+  present on every source line (the CC1021 SPI FIFO-access address, not part of the over-the-air
+  frame). The openHAB forum carries no explicit content-reuse license, so only the byte-level
+  facts of what was transmitted are used — this project has no KLR200/KUX100 hardware.
+  KEY HYGIENE: the source listing's 0x32 payload encodes that installation's real system key,
+  and three frames were computed under it — the 0x32 itself, the 0x3D HMAC, and the HMAC half of
+  the 0x2A payload. All three were rewritten under the public corpus key by
+  scripts/corpus/rekey_capture.py, so the real key never entered this repo. `key: corpus` is
+  enforced on all three by validate.py.
+source:
+  device: "Velux KLR200 remote <-> KUX100/PK03 (io-homecontrol wireless-to-wired bridge)"
+  captured_with: other
+  firmware: null
+  date: 2026-08-09
+  origin: reference-material
+  issue: "https://community.openhab.org/t/io-homecontrol-velux-somethings-in-the-bush/11413/268"
+key: corpus
+frames:
+  - dir: tx
+    hex: "C8 10 00 00 3B 43 8D 43 28 96 94"
+    crc: present
+    note: "cmd=DISCOVER_REQ(0x28), broadcast to backbone group 00003B"
+  - dir: rx
+    hex: "D1 08 43 8D 43 38 ED A1 29 02 80 B6 2B BB 01 54 00 A2 04 C7"
+    crc: present
+    note: "cmd=DISCOVER_RESP(0x29), device reveals its real address 38ED A1; data[2..4]=B6 2B BB is its backbone address (DISCOVERY_RESP_BACKBONE_OFFSET), returned again in the 0x37 below. CTRL1=0x08 — bit 3 has no name in this project's CTRL1 breakdown (proto_frame.h), logged as an INFO-level 'reserved bits set' notice by corpus_frame_test.cpp rather than a failure, by design"
+  - dir: tx
+    hex: "48 10 38 ED A1 43 8D 43 2C B2 DB"
+    crc: present
+    note: "cmd=DISCOVER_CONFIRM(0x2C), now addressed directly to the discovered device"
+  - dir: rx
+    hex: "88 08 43 8D 43 38 ED A1 2D 6E 06"
+    crc: present
+    note: "cmd=DISCOVER_CONFIRM_ACK(0x2D); CTRL1=0x08, same unnamed bit as the 0x29 frame above — both are this device's own outbound frames"
+  - dir: tx
+    hex: "C8 10 00 00 3B 43 8D 43 28 96 94"
+    crc: present
+    note: "cmd=DISCOVER_REQ(0x28) again, bitwise identical to the first — the KLR200 re-broadcasts discovery after the confirm-ack, drawing no response, before going straight to the key transfer (source shows three bitwise-identical transmissions here; one shown, the other two omitted as redundant)"
+  - dir: tx
+    hex: "48 10 38 ED A1 43 8D 43 31 D6 10"
+    crc: present
+    note: "cmd=KEY_INIT(0x31), addressed to the discovered device, START"
+  - dir: rx
+    hex: "0E 08 43 8D 43 38 ED A1 3C 9C 9C CD E3 20 1C 81 B8"
+    crc: present
+    note: "cmd=CHALLENGE_REQ(0x3C), device-issued pairing challenge = 9C 9C CD E3 20 1C; CTRL1=0x08, same unnamed reserved bit"
+  - dir: tx
+    hex: "18 10 38 ED A1 43 8D 43 32 70 31 3E EA BC 6F CF BC AB E1 83 46 B9 E7 00 A1 B8 D0"
+    crc: present
+    note: "cmd=KEY_TRANSFER(0x32), system key encrypted under the challenge above — RE-KEYED, these are not the captured payload bytes: the source's payload decrypted to that installation's real system key and was rewritten to the public corpus key (scripts/corpus/rekey_capture.py), CRC recomputed"
+  - dir: rx
+    hex: "88 08 43 8D 43 38 ED A1 33 91 FF"
+    crc: present
+    note: "cmd=KEY_CONFIRM(0x33), device confirms the key transfer — pairing is complete at this point, END"
+  - dir: tx
+    hex: "D4 30 00 00 3B 43 8D 43 2A 4A 15 C2 1F 97 33 F4 97 FD 5A C2 6E 3D 0D"
+    crc: present
+    note: "cmd=DISCOVER_SPE_REQ(0x2A), broadcast to backbone group 00003B; CTRL1=0x30. The 12-byte payload is a complete self-contained challenge-response: 6 random challenge bytes followed by a 6-byte HMAC over the command byte alone, confirmed by recomputation under the key recovered from the 0x32 above — the first real evidence for the shape the io-rts-esp32 reference builds for SPE discovery. RE-KEYED accordingly: the challenge half is the captured value (random, not key-derived), the HMAC half was rewritten under the corpus key. The source shows two further 0x2A transmissions immediately before this one whose trailing CRC does not verify (one with a corrupted SRC and cmd byte) — SPI-trace bit errors, omitted rather than committed as bytes no device could have sent"
+  - dir: tx
+    hex: "48 14 38 ED A1 43 8D 43 36 B7 72"
+    crc: present
+    note: "cmd=ADDRESS_REQ(0x36), addressed to the device, START; CTRL1=0x14"
+  - dir: rx
+    hex: "0B 0C 43 8D 43 38 ED A1 37 B6 2B BB AA B9"
+    crc: present
+    note: "cmd=ADDRESS_RESP(0x37), data = B6 2B BB — byte-identical to the backbone address this same device reported at data[2..4] of its 0x29 above (DISCOVERY_RESP_BACKBONE_OFFSET, proto_constants.h); CTRL1=0x0C"
+  - dir: tx
+    hex: "0E 10 38 ED A1 43 8D 43 3C 64 45 E0 81 DC 93 31 26"
+    crc: present
+    note: "cmd=CHALLENGE_REQ(0x3C), issued by the *controller* here — the KLR200 demanding proof for the 0x37 above; challenge = 64 45 E0 81 DC 93"
+  - dir: rx
+    hex: "8E 08 43 8D 43 38 ED A1 3D F0 30 3C C7 78 EF 79 E0"
+    crc: present
+    note: "cmd=CHALLENGE_RESP(0x3D), the device's HMAC over its own preceding 0x37 frame (transcript = 37 B6 2B BB), END — RE-KEYED: the captured HMAC verified under the key recovered from the 0x32 frame above (which is what independently proves both that recovered key and this transcript shape correct), and was rewritten so it verifies under the corpus key instead"
+expect:
+  exchange:
+    kind: pairing
+    outcome: success
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x32, start: false, end: false, protocol: 2w}
+    - {cmd: 0x33, start: false, end: true, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x36, start: true, end: false, protocol: 2w}
+    - {cmd: 0x37, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: true, protocol: 2w}

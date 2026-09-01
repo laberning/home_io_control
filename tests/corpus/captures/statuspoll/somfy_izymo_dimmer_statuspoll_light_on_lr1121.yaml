@@ -1,0 +1,36 @@
+id: somfy_izymo_dimmer_statuspoll_light_on_lr1121
+description: >
+  Status poll (PRIVATE 0x03, no challenge round-trip) of the Izymo dimmer over the LilyGO
+  T3-S3/LR1121 hub while logically on, following somfy_izymo_dimmer_exchange_on_lr1121.yaml — the LR1121 sibling
+  of somfy_izymo_dimmer_statuspoll_light_on_sx1276.yaml and somfy_izymo_dimmer_statuspoll_light_on_sx1262.yaml; settled position/target
+  both decode to 0% (fully on, per this device's inverted 0=on convention).
+source:
+  device: "Somfy Izymo dimmer (io light actuator)"
+  captured_with: lr1121
+  firmware: null
+  date: 2026-08-03
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4B 20 CF 5F 20 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), unlike the awning's somfy_awning_statuspoll_success_sx1262.yaml this device answers directly with no challenge round-trip at all — classify_exchange_first_response() sees a non-0x3C first reply and treats it as COMPLETE_DIRECT"
+  - dir: rx
+    t_ms: 59
+    freq: 868950000
+    hex: "96 00 C0 FF EE CF 5F 20 04 05 00 00 00 00 00 00 00 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), trust_position=true for this response type; target=data[2:4]=0x0000, current=data[4:6]=0x0000, both decode to 0% via decode_position_report()/STATUS_POS_MAX (0xC800) — 0%='fully on' per this device's inverted convention, matching the ON command's target=0 in somfy_izymo_dimmer_exchange_on_lr1121.yaml"
+expect:
+  exchange:
+    kind: status_poll
+    outcome: success
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: COMPLETE_DIRECT}
+  device:
+    reported_position: 0

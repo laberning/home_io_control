@@ -734,7 +734,7 @@ class IOHomeControlComponent : public Component,
   /// @param trust_position False to apply `is_stopped` but skip target/position decode for a
   /// CMD_PRIVATE_RESP — the immediate reply to our own just-sent CMD_EXECUTE echoes stale
   /// pre-command target/current values on at least some devices (see
-  /// tests/corpus/captures/somfy_awning/execute_ack_reports_stale_target_*.yaml), so
+  /// tests/corpus/captures/exchange/somfy_awning_exchange_ack_reports_stale_target_*.yaml), so
   /// execute_request_and_update_() passes false there; every other caller trusts as before.
   void update_device_status_(const IoFrame &frame, bool trust_position = true);
   /// Record that a 1W frame just went out on the radio — ours or someone else's — updating

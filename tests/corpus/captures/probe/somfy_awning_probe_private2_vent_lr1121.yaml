@@ -1,0 +1,31 @@
+id: somfy_awning_probe_private2_vent_lr1121
+description: >
+  CMD_PRIVATE2 (0x0C) long-form probe, modifier 0x03 (vent), against our own awning. Reply
+  data=6D D4 00 00 00 -- identical to the modifier 0x00 reading
+  (somfy_awning_probe_private2_favorite_lr1121.yaml); see somfy_awning_probe_private2_favorite_after_reprogram_lr1121.yaml
+  for the settled verdict on what the lack of variation means.
+source:
+  device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2), probed with CMD_PRIVATE2 (0x0C) long form, modifier 0x03 (vent)"
+  captured_with: lr1121
+  firmware: null
+  date: 2026-08-16
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 20 30 E1 F2 C0 FF EE 0C D4 00 80 D8 03 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C), data=D4 00 80 D8 03 00 -- long form, modifier 0x03 (vent)."
+  - dir: rx
+    t_ms: 286
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 0D 6D D4 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D), data=6D D4 00 00 00 -- identical to the modifier 0x00 reply."
+expect:
+  frames:
+    - {cmd: 0x0C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}

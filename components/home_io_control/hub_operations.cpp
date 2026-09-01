@@ -377,7 +377,7 @@ bool IOHomeControlComponent::set_light_position(const std::string &device_id, ui
   }
 
   // Light entities reuse the controller's existing execute path — the same position encoding
-  // covers use, confirmed on real dimmable hardware (see tests/corpus/captures/somfy_dimmer/).
+  // covers use, confirmed on real dimmable hardware (see the somfy_izymo_dimmer_* captures).
   return this->set_device_position(device_id, position);
 }
 

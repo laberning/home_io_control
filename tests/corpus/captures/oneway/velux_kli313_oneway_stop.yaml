@@ -1,0 +1,31 @@
+id: velux_kli313_oneway_stop
+description: >
+  A 1W EXECUTE (STOP) command broadcast to the generic all-devices address, captured in an
+  installation where a Velux KLI 313 remote drives a Velux SML roof window shutter via a
+  KUX110 control unit. The source (DA2C93) is the *remote*, not the KUX110 or the shutter:
+  EXECUTE is a controller-side command, and the same address also emits the controller-side
+  0x2E beacons in velux_kli313_discovery_alt_beacon.yaml. Verifies 1W STOP-intent
+  decoding for an installation whose control path is 1W, which this (2W-only) project cannot
+  pair with today.
+source:
+  device: "Velux KLI 313 remote (driving a Velux SML shutter via a KUX110 control unit)"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/17"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "F6 00 00 00 3F DA 2C 93 00 01 61 D2 00 00 00 06 13 60 65 60 DA E4 A7"
+    crc: absent
+    note: "1W EXECUTE, main0=0xD2 (POS_STOP), originator=0x01, ACEI byte=0x61 (level 3)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: STOP
+    target_type: 0
+    originator: 0x01
+    acei: 3

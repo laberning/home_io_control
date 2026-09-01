@@ -19,6 +19,7 @@ from pathlib import Path
 
 import yaml
 
+from naming import PHASES, SUBJECTS, id_naming_problem, phase_of_id  # noqa: F401  (re-exported)
 from protolib import parse_hex
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -321,6 +322,9 @@ def render(captures: list) -> str:
     parts.append("\ninline constexpr size_t CAPTURE_COUNT = sizeof(CAPTURES) / sizeof(CAPTURES[0]);")
     parts.append(HEADER_EPILOGUE)
     return "\n".join(parts)
+
+
+# PHASES / SUBJECTS / id_naming_problem / phase_of_id are imported from naming.py at the top.
 
 
 def main() -> int:

@@ -56,7 +56,7 @@ TEST(ProtoCommands, CreateKeyConfirm) {
   EXPECT_EQ(frame.data_len, 0) << "key-confirm should have no payload";
   EXPECT_FALSE(is_start(frame)) << "key-confirm should not be a start frame";
   EXPECT_TRUE(is_end(frame)) << "key-confirm closes the key exchange CMD_KEY_INIT opened — real devices' 0x33 "
-                                "sets END (somfy_dimmer/velux_kux100 pairing_full captures)";
+                                "sets END (somfy_izymo_dimmer / velux_kux100 pairing_full captures)";
   EXPECT_FALSE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "key-confirm is device-originated, not low-power targeted";
 }
 
@@ -80,7 +80,7 @@ TEST(ProtoCommands, CreateChallengeReqUsesTheFramingObservedOnAir) {
   EXPECT_EQ(0, memcmp(device_role.data, test::TEST_CHALLENGE, HMAC_SIZE))
       << "the supplied challenge bytes should appear verbatim in the frame payload";
   // The two bits that distinguish this from the controller-role builder. A real device answering a
-  // hub's key-init sets neither (somfy_dimmer/pairing_full.yaml's 0x3C is `0E 00 ...`): the frame
+  // hub's key-init sets neither (somfy_izymo_dimmer_pairing_full_sx1276.yaml's 0x3C is `0E 00 ...`): the frame
   // continues the hub's already-open exchange, and LOW_POWER describes a controller's *target*.
   EXPECT_FALSE(is_start(device_role)) << "device-role challenge-req should not be a start frame";
   EXPECT_FALSE(is_end(device_role)) << "device-role challenge-req should not be an end frame";

@@ -16,13 +16,13 @@ process; the only thing said about it out loud is a sha256 fingerprint, which id
 without revealing bytes.
 
     python3 scripts/corpus/rekey_capture.py /path/outside/repo/raw_capture.yaml \\
-        -o tests/corpus/captures/velux_kux100/pairing_full.yaml
+        -o tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml
 
 `--system-key-from` covers a capture with no 0x32 to recover a key from — an own-hardware exchange
 whose only crypto is a 0x3D HMAC, hand-assembled from a log rather than piped through `ingest.py`:
 
     python3 scripts/corpus/rekey_capture.py --system-key-from config/secrets.yaml \\
-        ~/outside-the-repo/exchange.yaml -o tests/corpus/captures/somfy_awning/exchange.yaml
+        ~/outside-the-repo/exchange.yaml -o tests/corpus/captures/exchange/somfy_awning_exchange_open_sx1262.yaml
 
 Either way this runs **before** the capture's first commit. A capture that reaches `main` still
 holding real key material is deleted and re-recorded, never rewritten in place — see

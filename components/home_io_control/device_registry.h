@@ -136,7 +136,7 @@ class DeviceRegistry {
   /// command's own reply carries no slat angle this hub can use. The EXECUTE ack lays its payload
   /// out differently from a status reply and is not decoded for tilt at all (see the offset
   /// constants in hub_status.cpp and
-  /// tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block*.yaml), so without this the
+  /// tests/corpus/captures/exchange/tilt_cover_exchange_ack_tilt_block*.yaml), so without this the
   /// entity would keep showing the pre-command angle until the next status poll seconds later.
   ///
   /// Deliberately records no movement prediction, unlike apply_optimistic_target(): the HA

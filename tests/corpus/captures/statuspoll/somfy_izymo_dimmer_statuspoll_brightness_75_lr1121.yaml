@@ -1,0 +1,38 @@
+id: somfy_izymo_dimmer_statuspoll_brightness_75_lr1121
+description: >
+  Status poll (PRIVATE 0x03, no challenge round-trip) of the Izymo dimmer over the LilyGO
+  T3-S3/LR1121 hub after settling at 75% brightness (commanded in
+  somfy_izymo_dimmer_exchange_set_brightness_75_lr1121.yaml) — the LR1121 sibling of
+  somfy_izymo_dimmer_statuspoll_brightness_75_sx1276.yaml and somfy_izymo_dimmer_statuspoll_brightness_75_sx1262.yaml. This device's
+  io_position = 100 - brightness, so the wire-level position/target fields decode to
+  io_position 25.
+source:
+  device: "Somfy Izymo dimmer (io light actuator)"
+  captured_with: lr1121
+  firmware: null
+  date: 2026-08-03
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4B 20 CF 5F 20 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), same no-challenge shape as the other somfy_izymo_dimmer status-poll captures"
+  - dir: rx
+    t_ms: 62
+    freq: 868950000
+    hex: "96 00 C0 FF EE CF 5F 20 04 05 00 32 00 32 00 00 00 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), trust_position=true; target=data[2:4]=0x3200, current=data[4:6]=0x3200, both decode to io_position 25 via decode_position_report()/STATUS_POS_MAX (0xC800) — matches the commanded raw=50 in somfy_izymo_dimmer_exchange_set_brightness_75_lr1121.yaml, and this device's inverted convention (75% brightness = io_position 25)."
+expect:
+  exchange:
+    kind: status_poll
+    outcome: success
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: COMPLETE_DIRECT}
+  device:
+    reported_position: 25

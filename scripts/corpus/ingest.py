@@ -8,12 +8,16 @@ frames, and mechanically-derived `expect:` proposals) that a human must review a
 before committing — see tests/corpus/README.md :: "Expectations are human-verified". Every
 capture this tool emits is `key: unknown` unless `--rekey` is given.
 
+The corpus is `tests/corpus/captures/<phase>/<id>.yaml` with `filename == id` and ids named
+`<subject>_<phase>[_<scenario>][_<chip>]` (see tests/corpus/README.md :: "Naming convention").
+`-o` defaults to `tests/corpus/captures/<phase>/<id>.yaml` (phase taken from the id) and rarely
+needs to be given.
+
 Usage:
   python3 scripts/corpus/ingest.py analysis/issues/27.txt \\
-      --id issue_27_somfy_sunea_discovery --device "Somfy Sunea IO motor" \\
+      --id somfy_awning_discovery_with_overheard_smoove_1w --device "Somfy Sunea IO motor" \\
       --captured-with sx1262 --origin github-issue \\
-      --issue https://github.com/laberning/home_io_control/issues/27 --date 2026-07-06 \\
-      -o tests/corpus/captures/issues/issue_27_somfy_sunea_discovery.yaml
+      --issue https://github.com/laberning/home_io_control/issues/27 --date 2026-07-06
 
 Read from stdin instead of a file with `-` as the input path — handy for piping a trimmed
 excerpt (`sed -n '10,40p' analysis/issues/27.txt | python3 scripts/corpus/ingest.py - ...`)
@@ -23,9 +27,8 @@ Re-key mode (--rekey) — run ONLY locally, by someone who has the real system
 key, and ONLY on your own hardware captures:
   python3 scripts/corpus/ingest.py my_pairing_capture.log --rekey \\
       --system-key-from config/secrets.yaml \\
-      --id somfy_awning_exchange_open --device "..." --captured-with sx1262 \\
-      --origin own-hardware --date 2026-07-06 \\
-      -o tests/corpus/captures/somfy_awning/exchange_open.yaml
+      --id somfy_awning_exchange_open_sx1262 --device "..." --captured-with sx1262 \\
+      --origin own-hardware --date 2026-07-06
 This verifies every captured HMAC / key-transfer payload against the real key (hard abort on
 any mismatch), rewrites them under the public corpus key, and emits `key: corpus`.
 `--system-key-from` refuses to read a path that is not git-ignored. Only the system key is
@@ -41,9 +44,8 @@ it emits the recovered key inline in a ready-to-paste `oneway_controllers:` bloc
 git-ignored file containing that block works, `config/secrets.yaml` or otherwise:
   python3 scripts/corpus/ingest.py my_1w_capture.log --rekey \\
       --oneway-key-from config/secrets.yaml \\
-      --id somfy_smoove_9d6085_add_and_remove_controller --device "Somfy Smoove io 1W remote" \\
-      --captured-with sx1276 --origin own-hardware --date 2026-08-16 \\
-      -o tests/corpus/captures/somfy_smoove_9d6085/oneway_add_and_remove_controller.yaml
+      --id somfy_smoove_enrollment_add_and_remove_controller_sx1276 --device "Somfy Smoove io 1W remote" \\
+      --captured-with sx1276 --origin own-hardware --date 2026-08-16
 `--system-key-from` and `--oneway-key-from` are each only required when a capture actually needs
 them — a pure-1W capture with no 0x3C/0x3D/0x32/0x2A frames needs no `--system-key-from`, and vice
 versa.
@@ -60,6 +62,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import protolib  # noqa: E402
 from protolib import cmd_name, ctrl0_implied_length, is_end, is_oneway, is_start, parse_log  # noqa: E402
+from naming import id_naming_problem, phase_of_id  # noqa: E402  (dependency-free, safe to import)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -546,7 +549,8 @@ def main() -> int:
     parser.add_argument("--date", required=True, help="YYYY-MM-DD")
     parser.add_argument("--firmware", default=None)
     parser.add_argument("--description", default=None, help="free-text scenario summary")
-    parser.add_argument("-o", "--output", required=True, help="output capture YAML path")
+    parser.add_argument("-o", "--output", default=None,
+                        help="output capture YAML path (default: tests/corpus/captures/<phase>/<id>.yaml)")
     parser.add_argument("--rekey", action="store_true",
                         help="verify captured crypto against the real key and rewrite it under the corpus key")
     parser.add_argument("--system-key-from", default=None,
@@ -560,6 +564,10 @@ def main() -> int:
     parser.add_argument("--role", action="append", default=[], metavar="NEWHEX=name",
                         help="label a remapped node ID's role for node_map: (repeatable)")
     args = parser.parse_args()
+
+    naming = id_naming_problem(args.id)
+    if naming:
+        parser.error(f"--id {args.id!r} {naming} — see tests/corpus/README.md 'Naming convention'")
 
     text = read_input(args.input)
     frames = parse_log(text)
@@ -579,7 +587,10 @@ def main() -> int:
         key_mode = "corpus"
 
     rendered = build_yaml(args, frames, key_mode, node_map)
-    output_path = Path(args.output)
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        output_path = REPO_ROOT / "tests" / "corpus" / "captures" / phase_of_id(args.id) / f"{args.id}.yaml"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered, encoding="utf-8")
     unverified_count = sum(1 for f in frames if f.unverified)

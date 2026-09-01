@@ -10,6 +10,7 @@ Exits non-zero with a description of the first failure.
 """
 
 import copy
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -117,7 +118,7 @@ def test_merge_prefers_nonzero_freq_and_t_ms() -> None:
 
 
 def test_crc_ccitt_matches_known_vector() -> None:
-    # Cross-check against tests/corpus/captures/_bootstrap/synthetic_1w_close.yaml, whose bytes
+    # Cross-check against tests/corpus/captures/oneway/synthetic_oneway_close.yaml, whose bytes
     # were generated from the real C++ crc_ccitt() (tests/corpus_bootstrap_dump_test.cpp).
     payload = bytes.fromhex("EC 00 00 00 BF AA BB CC 00 01 41 C8 00".replace(" ", ""))
     assert protolib.crc_ccitt(payload) == 0x7E35, f"crc mismatch: 0x{protolib.crc_ccitt(payload):04X}"
@@ -125,7 +126,7 @@ def test_crc_ccitt_matches_known_vector() -> None:
 
 def _valid_capture_dict() -> dict:
     """A minimal, self-consistent capture — the same bytes as
-    tests/corpus/captures/_bootstrap/synthetic_1w_close.yaml (real crc_ccitt() output, see
+    tests/corpus/captures/oneway/synthetic_oneway_close.yaml (real crc_ccitt() output, see
     test_crc_ccitt_matches_known_vector above), as a plain dict for validate_capture()/
     render_frame(), which both take dicts directly — no temp files needed for schema tests.
     """
@@ -193,6 +194,97 @@ def test_validate_bad_classification_name_is_rejected() -> None:
     _assert_validation_fails(data, "classification must be one of")
 
 
+def test_naming_convention_id_parsing() -> None:
+    import naming
+
+    ok = [
+        "somfy_awning_exchange_open_sx1276",
+        "somfy_izymo_dimmer_statuspoll_light_off_lr1121",
+        "somfy_rs100_pairing_key_exchange_retry_success",  # 'exchange' word inside the scenario is fine
+        "selfpair_pairing_sx1262_device_sx1276_hub",
+        "wind_sensor_oneway_execute_sx1276",
+        "reference_1w_enrollment_add_controller_kat",
+    ]
+    for cid in ok:
+        assert naming.id_naming_problem(cid) is None, f"{cid!r} should be a valid id"
+
+    assert naming.phase_of_id("somfy_rs100_pairing_key_exchange_retry_success") == "pairing", \
+        "phase is the FIRST phase token, not a later one in the scenario"
+    assert naming.phase_of_id("somfy_awning_exchange_open_sx1276") == "exchange"
+
+    bad = {
+        "somfy_awning_open_sx1276": "no phase token",
+        "somfy_dimmer_exchange_on": "unregistered subject",
+        "velux_windwo_probe_x": "typo'd subject",
+        "exchange_open_sx1276": "phase token but no subject before it",
+    }
+    for cid, why in bad.items():
+        assert naming.id_naming_problem(cid) is not None, f"{cid!r} should be rejected ({why})"
+
+    try:
+        naming.phase_of_id("no_phase_here")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("phase_of_id() must raise ValueError (not a bare StopIteration) for a phaseless id")
+
+
+def test_validate_citation_regex_covers_every_shape() -> None:
+    """The path_ref regex must match brace / dir-glob / stem-glob / stale-dir citation forms.
+
+    The regex is a function local in validate.check_names_and_citations; this reproduces it
+    verbatim, so a divergence here is a prompt to keep the two in sync.
+    """
+    import re
+
+    tok = r"(?:[A-Za-z0-9_]|\{[A-Za-z0-9_,]+\})"
+    path_ref = re.compile(
+        r"tests/corpus/captures/(?:([a-z0-9_]+|\*)/)?" + rf"({tok}*_{tok}*)(\*)?\.yaml"
+    )
+    cases = {
+        "tests/corpus/captures/oneway/somfy_smoove_oneway_{open,close,stop}_sx1276.yaml": ("oneway", 3),
+        "tests/corpus/captures/*/synthetic_*.yaml": ("*", 1),
+        "tests/corpus/captures/somfy_awning/exchange_open_sx1276.yaml": ("somfy_awning", 1),
+        "tests/corpus/captures/exchange/somfy_awning_exchange_ack_reports_stale_target_*.yaml": ("exchange", 1),
+    }
+    for text, (want_dir, want_expansions) in cases.items():
+        found = path_ref.findall(text)
+        assert found, f"regex must match {text!r}"
+        got_dir, stem, _ = found[0]
+        assert got_dir == want_dir, f"{text!r}: dir group {got_dir!r} != {want_dir!r}"
+    # A fake path with an underscore-free stem must NOT be treated as a citation.
+    assert not path_ref.findall("tests/corpus/captures/foo/bar.yaml")
+
+
+def test_validate_flags_stale_and_wrong_phase_citations(tmp_helpers=None) -> None:
+    """check_names_and_citations() catches a stale-dir citation and a wrong-phase-dir citation."""
+    seen = {
+        "somfy_awning_exchange_open_sx1276": Path("x/exchange/somfy_awning_exchange_open_sx1276.yaml"),
+    }
+    # Point the scan at a throwaway tree containing one .md with two bad citations.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "components").mkdir()
+        (root / "components" / "x.h").write_text(
+            "// see tests/corpus/captures/somfy_awning/exchange_open_sx1276.yaml\n"
+            "// and tests/corpus/captures/pairing/somfy_awning_exchange_open_sx1276.yaml\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        orig_root, orig_dir = validate_module.REPO_ROOT, validate_module.CAPTURES_DIR
+        try:
+            validate_module.REPO_ROOT = root
+            validate_module.CAPTURES_DIR = root / "tests" / "corpus" / "captures"
+            (root / "tests" / "corpus" / "captures").mkdir(parents=True)
+            problems = validate_module.check_names_and_citations(seen)
+        finally:
+            validate_module.REPO_ROOT, validate_module.CAPTURES_DIR = orig_root, orig_dir
+    joined = " ".join(problems)
+    assert "somfy_awning/exchange_open_sx1276.yaml — no such capture" in joined, joined
+    assert "wrong phase dir" in joined, joined
+
+
 def test_build_partial_flag_expectation_is_rejected() -> None:
     # build.py's own hard-error: start/end/protocol must be specified all together
     # or not at all — a partial set would silently assert false for the missing two.
@@ -224,12 +316,12 @@ def test_end_to_end_scaffold_validate_build_roundtrip() -> None:
         tmp_path = Path(tmp)
         captures_dir = tmp_path / "captures"
         captures_dir.mkdir()
-        output_yaml = captures_dir / "scaffold_smoke.yaml"
+        output_yaml = captures_dir / "synthetic_probe_scaffold_smoke.yaml"
 
         argv = [
             str(DATA_DIR / "clean_io_capture_sx1262.txt"),
             "--id",
-            "scaffold_smoke",
+            "synthetic_probe_scaffold_smoke",
             "--device",
             "self-test fixture",
             "--captured-with",
@@ -262,7 +354,7 @@ def test_end_to_end_scaffold_validate_build_roundtrip() -> None:
             assert build_module.main() == 0, "build.py must compile the scaffolded capture"
             assert build_module.OUTPUT_PATH.is_file()
             generated = build_module.OUTPUT_PATH.read_text(encoding="utf-8")
-            assert "scaffold_smoke" in generated
+            assert "synthetic_probe_scaffold_smoke" in generated
         finally:
             build_module.CAPTURES_DIR = original_build_captures_dir
             build_module.OUTPUT_PATH = original_output_path
@@ -427,7 +519,7 @@ def test_find_challenge_response_triple_device_side_response() -> None:
     """The protocol is symmetric: a controller can challenge a *device*'s response (tx 0x3C, rx
     0x3D), and the device HMACs its own preceding frame. Matching only tx 0x3D would leave such
     HMACs unrewritten by --rekey and unchecked by validate.py — see
-    tests/corpus/captures/velux_kux100/pairing_full.yaml for the real capture.
+    tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml for the real capture.
     """
     origin_data = bytes([0xB6, 0x2B, 0xBB])
     origin = _make_raw_frame("rx", 0x00, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, 0x37, origin_data)
@@ -694,6 +786,9 @@ TESTS = [
     test_validate_unknown_expect_key_is_rejected,
     test_validate_over_length_expect_frames_is_rejected,
     test_validate_bad_classification_name_is_rejected,
+    test_naming_convention_id_parsing,
+    test_validate_citation_regex_covers_every_shape,
+    test_validate_flags_stale_and_wrong_phase_citations,
     test_build_partial_flag_expectation_is_rejected,
     test_build_output_is_deterministic,
     test_build_main_skips_rewrite_when_unchanged,

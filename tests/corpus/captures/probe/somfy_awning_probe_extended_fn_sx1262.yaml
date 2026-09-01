@@ -1,0 +1,111 @@
+id: somfy_awning_probe_extended_fn_sx1262
+description: >
+  2026-08 battery/solar-telemetry follow-up. CMD_PRIVATE (0x03) probes against our own
+  mains-powered awning at function IDs 0x06 and 0x09, sent in two shapes: the field-observed
+  4-byte extended form 03 <fn> 80 <block> 00 (create_get_status_extended(), selector 0x80) at
+  block 0x00/0x01/0x80, and the 3-byte form 03 09 01 00 (create_private_function() with a
+  non-zero second payload byte). Results on this device:
+    - fn=0x09, every shape and block value: byte-identical reply data=2D 00 58 22 00 00. The
+      block byte and the 3-byte-form sub-index are ignored here; no 0x80 extended block is
+      returned (contrast somfy_izymo_dimmer_probe_extended_fn_sx1262.yaml, where the dimmer's fn=0x09
+      reply does carry an 0x80 block whose tail tracks the block byte).
+    - fn=0x06, block 0x00: reply data=2D 00 00 00 00 00 -- identical to fn=0x09 except data[2..3]
+      is zeroed. Consistent with the earlier somfy_awning_probe_private_fn_lr1121.yaml finding that fn=0x06
+      carries nothing on any device tested.
+    - fn=0x06, block 0x80: CMD_ERROR_RESP (0xFE) result code 0x58. Not a code the reference
+      material names; recorded as "block 0x80 rejected". The dimmer answers 0x58 to the same
+      frame, and a Velux window answers it to any out-of-range block -- so command_result_name()
+      now maps 0x58 to INVALID_FUNCTION_INDEX, derived from that cross-vendor pattern.
+  data[0]=0x2D is unexplained and constant across fn 0x06/0x09 here (it is 0x04/0x05, the
+  stopped-flag byte, only on the fn=0x03 position-status form). data[2..3]=58 22 on fn=0x09 is a
+  stored value in the position family (not a charge reading); 0x58 as a raw byte is ~44% of the
+  fine 0..0xC800 position scale, plausibly this awning's "My" position, but not independently
+  confirmed and not decoded. No charge/battery information in any reply -- the expected result
+  for a mains device.
+source:
+  device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2), probed with extended/3-byte CMD_PRIVATE at function IDs 0x06/0x09"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-08-30
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 00 30 E1 F2 C0 FF EE 03 09 80 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), data=09 80 00 00 -- extended selector 0x80, function ID 0x09, block 0x00 (create_get_status_extended(), probe status_ext_fn9)."
+  - dir: rx
+    t_ms: 72
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 2D 00 58 22 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE_RESP(0x04), data=2D 00 58 22 00 00 (6 bytes). data[0]=0x2D (not the 0x04/0x05
+      stopped-flag byte seen on the fn=0x03 form). data[2..3]=58 22 undecoded; position family,
+      not charge.
+  - dir: tx
+    t_ms: 22235
+    freq: 868950000
+    hex: "4C 00 30 E1 F2 C0 FF EE 03 09 80 01 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), data=09 80 01 00 -- same as above, block 0x01. Device answered on the second attempt (first send drew no reply within 400 ms)."
+  - dir: rx
+    t_ms: 22956
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 2D 00 58 22 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), data byte-identical to the block 0x00 reply -- the block byte does not select distinct content on this device."
+  - dir: tx
+    t_ms: 39942
+    freq: 868950000
+    hex: "4C 00 30 E1 F2 C0 FF EE 03 06 80 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), data=06 80 00 00 -- extended selector 0x80, function ID 0x06, block 0x00 (probe status_ext_fn6)."
+  - dir: rx
+    t_ms: 40001
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 2D 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), data=2D 00 00 00 00 00 -- identical to the fn=0x09 reply except data[2..3] is zeroed. fn=0x06 carries no content here."
+  - dir: tx
+    t_ms: 47939
+    freq: 868950000
+    hex: "4C 00 30 E1 F2 C0 FF EE 03 06 80 80 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), data=06 80 80 00 -- function ID 0x06, block 0x80. Device answered on the second attempt."
+  - dir: rx
+    t_ms: 48677
+    freq: 868950000
+    hex: "89 00 C0 FF EE 30 E1 F2 FE 58"
+    crc: absent
+    note: >
+      cmd=ERROR_RESP(0xFE), result code 0x58 -- "block 0x80 rejected". Not in the reference error
+      table; command_result_name() maps it to INVALID_FUNCTION_INDEX (self-derived: the dimmer
+      and a Velux window return the same 0x58 for any out-of-range function/block index).
+  - dir: tx
+    t_ms: 61447
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 03 09 01 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), data=09 01 00 -- 3-byte form, function ID 0x09, second payload byte 0x01 (create_private_function() sub_index, probe private_fn_sub)."
+  - dir: rx
+    t_ms: 61512
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 2D 00 58 22 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), data byte-identical to the fn=0x09 extended replies above -- the sub-index byte does not change the answer on this device."
+expect:
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

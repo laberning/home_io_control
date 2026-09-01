@@ -112,7 +112,8 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// function_id = 0x06 (battery-status) or 0x09 (battery-state) is reported elsewhere to read the
 /// CMD_PRIVATE_RESP reply as data[1]==0x60 => battery/solar powered, value = data[2]<<8|data[3].
 /// Unverified here -- both devices this project has probed are mains-powered and answered
-/// data[1]==0x00 (tests/corpus/captures/somfy_{awning,dimmer}/private_fn_probe_lr1121.yaml).
+/// data[1]==0x00 (tests/corpus/captures/probe/somfy_awning_probe_private_fn_lr1121.yaml,
+/// tests/corpus/captures/probe/somfy_izymo_dimmer_probe_private_fn_lr1121.yaml).
 /// create_get_status() below is this builder frozen at function_id =
 /// PRIVATE_GET_POSITION_STATUS (0x03), the only function ID this codebase has ever captured on
 /// its own wire.
@@ -189,7 +190,7 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 ///
 /// @warning **These three do not rest on the same evidence, even though they read as a uniform
 /// list.** STOP is the only one a real frame pins: the published IV vector
-/// (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml) is a documented
+/// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) is a documented
 /// worked example carrying main=0xD2. VENT is not captured anywhere in this project, but it does
 /// match the reference implementation's own 1W remote byte-for-byte — `RemoteButton::Vent` in
 /// reference/iohomecontrol/src/iohcRemote1W.cpp emits exactly main=0xD8/mod=0x03. FAVORITE has
@@ -198,7 +199,7 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// Mode1-4 — no Favorite), so main=0xD8/mod=0x00 here is extrapolated purely by analogy with the
 /// 2W builder's FAVORITE encoding, with no source behind it at all. Worse, the one real capture
 /// this project has of an actual My/favorite button press —
-/// tests/corpus/captures/somfy_awning/oneway_remote_favorite_sx1276.yaml, pinned by
+/// tests/corpus/captures/oneway/somfy_smoove_oneway_favorite_sx1276.yaml, pinned by
 /// `OneWayCommands.FavoriteButtonCaptureIsWritePrivateNotExecute` in tests/oneway_commands_test.cpp
 /// — contradicts it directly: that remote's My button is CMD_WRITE_PRIVATE (0x20) with a 16-byte
 /// payload, not CMD_EXECUTE with main=0xD8.
@@ -220,7 +221,7 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// The MAC span is the 7 bytes `cmd, origin, acei, main0, main1, fp1, fp2` — the command byte
 /// through fp2, stopping before the sequence, which is not frame data and never enters the MAC.
 /// Pinned by the published IV vector at
-/// tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml and by the reference
+/// tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml and by the reference
 /// implementation's own span (`toAdd = 6 + 1`, `reference/iohomecontrol/src/iohcRemote1W.cpp`).
 /// This span is command-specific and does not generalise: CMD 0x30's span is `cmd + enc_key`
 /// only — see crypto::create_1w_hmac()'s `@warning`.
@@ -283,7 +284,7 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 /// published `linklayer.md` vector (`with_mac=true`, 35 bytes) is what `with_mac` defaults to,
 /// for compatibility with that vector's own pinning tests. Most real hardware captures instead
 /// show 29 bytes with **no trailer at all** — see
-/// `tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml` — matching
+/// `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml` — matching
 /// the reference `_p0x30` struct (`iohcPacket.h`, no `hmac` field). **The enroll button calls
 /// this with `with_mac=false`** to match that shape, but this is a preference rather than a
 /// hardware requirement: a real Somfy Izymo dimmer has separately been shown to accept the
@@ -332,7 +333,7 @@ bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devic
 /// 0x00's span follows, though spans are command-specific and do not generalise on their own (see
 /// create_1w_hmac()'s `@warning`; CMD 0x30's span is `cmd + enc_key`, a different rule). This one
 /// is verified against real captures, not merely plausible: every `0x39` frame in
-/// `tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml` verifies
+/// `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml` verifies
 /// under this exact span, and `scripts/corpus/validate.py` re-checks that on every corpus
 /// validation run — a regression here would fail `make corpus-validate`, not just look wrong.
 /// @param f IoFrame to populate.
@@ -449,10 +450,9 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 /// @brief Build an extended CMD_PRIVATE (0x03) request with a selector/block pair.
 ///
 /// The shape real hubs use for both the tilt block (selector STATUS_TILT_SELECTOR) and the
-/// field-observed selector 0x80 (tests/corpus/captures/issues/
-/// issue_45_extended_private_both_selectors.yaml), which this codebase has never decoded.
-/// create_get_status_tilt() below is this builder frozen at selector = STATUS_TILT_SELECTOR,
-/// block = 0x01.
+/// field-observed selector 0x80 (tests/corpus/captures/probe/multi_somfy_probe_extended_private_both_selectors.yaml),
+/// which this codebase has never decoded. create_get_status_tilt() below is this builder frozen at selector =
+/// STATUS_TILT_SELECTOR, block = 0x01.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param dst Target device's 3-byte node ID.
@@ -537,7 +537,7 @@ bool create_discover(IoFrame &f, const uint8_t *own);
 /// Payload layout matches the full 9-byte discovery response format documented at
 /// DISCOVERY_RESP_BACKBONE_OFFSET/_MANUFACTURER_OFFSET/_FLAGS_OFFSET/_TIMESTAMP_OFFSET
 /// (proto_constants.h), cross-checked against a real Somfy actuator's captured 0x29
-/// (tests/corpus/captures/somfy_awning/pairing_lab_discovery_response.yaml): backbone address
+/// (tests/corpus/captures/discovery/somfy_awning_discovery_lab_response.yaml): backbone address
 /// equals the device's own node ID, start+end set, low_power clear.
 /// @param f IoFrame to populate.
 /// @param own Our advertised (throwaway) node ID — used as both src and the backbone address.
@@ -560,10 +560,10 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
 /// Device-side counterpart to create_key_transfer(); used only by the key-extraction responder
 /// (see create_discover_resp() above for why this direction exists at all). No payload and END
 /// set, matching real devices' 0x33 in
-/// tests/corpus/captures/somfy_dimmer/pairing_full.yaml, velux_kux100/pairing_full.yaml, and (this
-/// project's own key-extraction responder against a real hub)
-/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml —
-/// 0x33 closes the key-exchange sequence that CMD_KEY_INIT (0x31) opened with START.
+/// tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml,
+/// tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml, and (this project's own key-extraction responder
+/// against a real hub) tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml — 0x33 closes the
+/// key-exchange sequence that CMD_KEY_INIT (0x31) opened with START.
 /// @param f IoFrame to populate.
 /// @param own Our advertised (throwaway) node ID.
 /// @param dst Destination node ID (the hub that sent the key transfer).
@@ -577,11 +577,11 @@ bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 /// Device-side only, like create_discover_resp()/create_key_confirm() above; this project's own
 /// controller role never sends 0x2C, so there is no counterpart builder for the other direction.
 /// No payload and END set, matching real devices' 0x2D in
-/// tests/corpus/captures/velux_kux100/pairing_full.yaml; for a second independent hub,
-/// tests/corpus/captures/issues/issue_45_somfy_connectivity_kit_key_extraction_stall.yaml, where
+/// tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml; for a second independent hub,
+/// tests/corpus/captures/pairing/somfy_connectivity_kit_pairing_key_extraction_stall.yaml, where
 /// an already-paired device answers the same hub the key-extraction responder was talking to; and
 /// for this exact builder exercised against a real hub,
-/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml.
+/// tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml.
 /// @param f IoFrame to populate.
 /// @param own Our advertised (throwaway) node ID.
 /// @param dst Destination node ID (the hub that sent the discovery confirm).
@@ -659,11 +659,11 @@ bool create_challenge_req(IoFrame &f, const uint8_t *dst, const uint8_t *src, co
 /// controller-originated frame (a device that may be battery/solar powered, see this header's
 /// convention note), and the controller's 0x3C opens its own inbound-auth exchange. Neither holds
 /// for a device answering a hub's key-init: real devices' pairing 0x3C frames in
-/// tests/corpus/captures/somfy_dimmer/pairing_full.yaml (`0E 00 …`) and
-/// velux_kux100/pairing_full.yaml carry neither bit, because the frame is a continuation of the
-/// hub's already-open exchange and is addressed to a mains-powered hub — and this exact builder,
-/// exercised against a real hub, produces the identical `0E 00` shape in
-/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml.
+/// tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml (`0E 00 …`) and
+/// tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml carry neither bit, because the frame is a continuation
+/// of the hub's already-open exchange and is addressed to a mains-powered hub — and this exact builder, exercised
+/// against a real hub, produces the identical `0E 00` shape in
+/// tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml.
 /// @param f IoFrame to populate.
 /// @param dst The foreign hub's node ID (from the inbound 0x31's src).
 /// @param src Our advertised (throwaway) node ID.
@@ -695,7 +695,7 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 /// CorpusDeviceRoleBuilders.AddressRespPayloadMatchesOwnDiscoverRespBackboneAddress
 /// (tests/corpus_device_role_builder_test.cpp) pins that these two builders agree with *each
 /// other*, not that this matches a real device's own backbone value: the one real capture of this
-/// exchange (tests/corpus/captures/velux_kux100/pairing_full.yaml) shows a genuine device whose 0x37
+/// exchange (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml) shows a genuine device whose 0x37
 /// payload — a persistent identity the io-homecontrol wire format tracks separately from a device's
 /// node/session address — does NOT equal that device's own node ID. Our emulated device only ever
 /// generates one identity per arm cycle, so it structurally cannot reproduce a real device's
@@ -719,7 +719,7 @@ bool create_address_resp_device_role(IoFrame &f, const uint8_t *own, const uint8
 ///
 /// Same transcript rule as create_challenge_resp() above (the challenged party HMACs its own
 /// preceding frame's cmd+data), but END is set: this 0x3D closes the address-verification round the
-/// hub opened with 0x36 (tests/corpus/captures/velux_kux100/pairing_full.yaml's `8E 08 …`, END
+/// hub opened with 0x36 (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml's `8E 08 …`, END
 /// set). LOW_POWER is clear because CTRL1_LOW_POWER describes a controller-originated frame's
 /// *target*, not the sender — irrelevant here, since this is a device-role frame sent to a
 /// mains-powered hub. Unrelated to create_discover_resp()'s own Multi Information Byte, which as of
@@ -727,7 +727,7 @@ bool create_address_resp_device_role(IoFrame &f, const uint8_t *own, const uint8
 /// POWER_SAVE_LOW_POWER for this responder's own (different) power-save self-description — the two
 /// bits answer different questions and are not expected to match. Neither
 /// bit is a blanket "device role" convention — real devices also send mid-exchange 0x3D frames with
-/// END clear and LOW_POWER set (somfy_rs100_oximo/exchange_oximo40_sx1262.yaml) — so this framing is
+/// END clear and LOW_POWER set (somfy_oximo40_statuspoll_sx1262.yaml) — so this framing is
 /// specific to the terminal shape this feature needs, not a general device-role rule.
 /// @param f IoFrame to populate.
 /// @param dst The hub's node ID (from the inbound 0x3C's src).

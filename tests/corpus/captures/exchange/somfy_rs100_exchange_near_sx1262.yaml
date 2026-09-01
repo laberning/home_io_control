@@ -1,0 +1,36 @@
+id: somfy_rs100_exchange_near_sx1262
+description: >
+  RS100 Solar exchange overheard near the hub, passively monitored (community capture).
+source:
+  device: "Somfy RS100 Solar awning motor"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-08-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/45"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "50 20 1F 38 07 A0 25 E1 00 01 43 00 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+  - dir: rx
+    t_ms: 32998
+    freq: 869850000
+    hex: "58 00 CA 0A 18 1F 38 07 71 05 60 10 0A 0B 00 00 00 00 00 00 A0 25 E1 01 00"
+    crc: absent
+    note: "cmd=STATUS_UPDATE(0x71)"
+  - dir: rx
+    t_ms: 33043
+    freq: 868250000
+    hex: "0E 00 CA 0A 18 1F 38 07 3D B2 53 01 7A B2 D0"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 33475
+    freq: 868950000
+    hex: "58 00 A0 25 E1 1F 38 07 71 05 60 10 0A 0B 00 00 00 00 00 00 A0 25 E1 01 00"
+    crc: absent
+    note: "cmd=STATUS_UPDATE(0x71)"

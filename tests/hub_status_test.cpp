@@ -647,7 +647,7 @@ TEST(HubStatus, StatusUpdateOriginatorIsAtOffset14AndDecodePathUndisturbed) {
   uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
   set_src(f, src);
   set_dst(f, dst);
-  // Real fixture bytes: issue_45_unsolicited_status_update_burst frame 0 (16-byte 0x71 payload).
+  // Real fixture bytes: multi_somfy_unsolicited_status_burst frame 0 (16-byte 0x71 payload).
   // data[0]=0x04 moving, data[1]=0x61 status byte, data[5..6]=C8 00 target 100%,
   // data[7..8]=D4 00 current unknown, data[14]=0x01 Command Originator (User Remote Control).
   uint8_t payload[16] = {0x04, 0x61, 0x10, 0x0A, 0x0B, 0xC8, 0x00, 0xD4,

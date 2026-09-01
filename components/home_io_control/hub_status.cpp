@@ -47,7 +47,7 @@ constexpr uint8_t PRIVATE_RESPONSE_DELAY_HINT_OFFSET = 7;  ///< Coarse follow-up
 // so neither a `data[4] == STATUS_TILT_SELECTOR` test nor a length test can separate them — the
 // first would blank real readings from any cover resting near 16%. The request-derived
 // `trust_position` parameter on update_device_status_() is the discriminator, and the only
-// correct one. See tests/corpus/captures/issues/issue_60_tilt_execute_ack_tilt_block*.yaml.
+// correct one. See tests/corpus/captures/exchange/tilt_cover_exchange_ack_tilt_block*.yaml.
 constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;   ///< Target-position MSB offset in 0x04 replies.
 constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;  ///< Current-position MSB offset in 0x04 replies.
 constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;      ///< Target-position MSB offset in 0x71 updates.
@@ -134,7 +134,7 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
 /// @param policy Poll policy for scheduling follow-up polls.
 /// @param trust_position False to skip decoding target/current from `frame` — the immediate
 /// reply to our own just-sent CMD_EXECUTE has been observed (real hardware, see
-/// tests/corpus/captures/somfy_awning/execute_ack_reports_stale_target_*.yaml) echoing
+/// tests/corpus/captures/exchange/somfy_awning_exchange_ack_reports_stale_target_*.yaml) echoing
 /// pre-command target/current values rather than the freshly-commanded target. `is_stopped` is
 /// still applied either way; the optimistic target already set by the caller (or the follow-up
 /// status poll a few seconds later) remains the source of truth for target/current in that case.

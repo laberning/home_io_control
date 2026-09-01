@@ -380,7 +380,7 @@ std::vector<uint8_t> crc_corrupted_on_air_bytes(const std::vector<uint8_t> &fram
 }
 
 // A real 15-byte RS100 challenge (0x3C) — the frame the hub must turn around fastest, from
-// tests/corpus/captures/issues/field_rs100_pairing_key_transfer_timeout.yaml.
+// tests/corpus/captures/pairing/somfy_rs100_pairing_key_transfer_timeout.yaml.
 const std::vector<uint8_t> kRs100Challenge = {0x0E, 0x00, 0xD1, 0xD4, 0xFF, 0x8C, 0x08, 0x3C,
                                               0x3C, 0x45, 0x51, 0x6F, 0xFE, 0x59, 0x80};
 

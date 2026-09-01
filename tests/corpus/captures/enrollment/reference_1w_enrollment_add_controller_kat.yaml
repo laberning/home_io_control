@@ -1,0 +1,58 @@
+id: reference_1w_enrollment_add_controller_kat
+description: >
+  CMD 0x30 (1W "add controller") frame, published as the worked known-answer example in
+  Velocet/iown-homecontrol's docs/linklayer.md, CC0-1.0. This is the frame a 1W device
+  broadcasts during a key-copy gesture to hand its network's system key to a new controller:
+  sender node ABCDEF, controller key 01020304050607080910111213141516, manufacturer 0x02,
+  data 0x01, sequence 0x1234.
+
+  This capture is the reason FRAME_MAX_DECLARED_SIZE/FRAME_MAX_TRAILER_SIZE/FRAME_MAX_WIRE_SIZE
+  exist (proto_sizes.h): the frame's CTRL0 declares 29 bytes (9 header + enc_key[16] + man_id[1]
+  + data[1] + sequence[2] = 20 data bytes), but the document also gives a genuine 6-byte MAC
+  (19E81EC43D5E) that does not fit inside CTRL0's 5-bit length field alongside the declared
+  payload (29 + 6 = 35, unrepresentable in 5 bits). The MAC instead rides after the declared
+  length, still under the CRC — confirmed two ways:
+
+    1. CRC-CCITT over all 35 non-CRC bytes = 0xF29B, matching the published trailing "9B F2"
+       (little-endian on air). CRC-CCITT over just the 29 declared bytes = 0x1139 — no match.
+    2. reference/iohomecontrol/include/iohcPacket.h's `_p0x30` struct is exactly those 20 data
+       bytes with no `hmac` field at all, unlike its `_p0x2e`, whose MAC sits inside the
+       declared length. The struct's silence on the MAC is why an earlier reading of this frame
+       assumed it was unauthenticated — it's authenticated, just not inside the declared span.
+
+  The encrypted key (enc_key, 7E60...A201) was independently reproduced byte-exact both
+  directions against this project's own TRANSFER_KEY (proto_constants.h): encrypting the
+  published controller key under IV = ABCDEFABCDEFABCDEFABCDEFABCDEFAB (the sender node
+  repeated through byte 14, iv[15] = node[0]) with AES-128-ECB(TRANSFER_KEY) and XORing
+  reproduces 7E60491F976ADF653DB0ED785E49A201 exactly, and the same operation run in reverse on
+  the ciphertext reproduces the published key exactly (the wrap is self-inverse). This is what
+  makes the capture load-bearing for the 1W key-adoption steps that build on it — it proves the
+  wrap primitive against a source neither this project nor its author controls.
+
+  Unlike its sibling capture (reference_1w_oneway_execute_iv_vector), whose MAC is a documented
+  placeholder, this frame's MAC is genuine — but no decoder for the 0x30 payload exists yet
+  (that arrives in a later step), so this capture only exercises today's frame model: it parses
+  as a well-formed 1W frame with a MAC trailer, and round-trips byte-identically through
+  parse()/serialize() including that trailer.
+source:
+  device: "Documentation example — 1W add-controller frame from node ABCDEF (not a physical device)"
+  captured_with: other
+  firmware: null
+  date: 2026-08-10
+  origin: reference-material
+  issue: "https://github.com/Velocet/iown-homecontrol/blob/main/docs/linklayer.md"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "FC 00 00 00 3F AB CD EF 30 7E 60 49 1F 97 6A DF 65 3D B0 ED 78 5E 49 A2 01 02 01 12 34 19 E8 1E C4 3D 5E 9B F2"
+    crc: present
+    note: >
+      cmd=CMD_ADD_CONTROLLER(0x30), dst=00003F (typed broadcast), src=ABCDEF, START+END set,
+      enc_key=7E60491F976ADF653DB0ED785E49A201 (controller key 0102...1516 wrapped under
+      TRANSFER_KEY with IV derived from src), man_id=0x02, data=0x01, sequence=0x1234,
+      MAC=19E81EC43D5E (genuine, rides after the 29-byte declared length — see description),
+      crc=9BF2
+expect:
+  frames:
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}

@@ -1,0 +1,33 @@
+id: somfy_izymo_dimmer_probe_private2_vent_lr1121
+description: >
+  CMD_PRIVATE2 (0x0C) long-form probe, modifier 0x03 (vent), against the light, as a
+  device-type control. Reply data=6D D4 00 00 00 -- identical to this device's own modifier-0x00
+  reading and to both of the awning's readings; see
+  somfy_awning_probe_private2_favorite_after_reprogram_lr1121.yaml for the settled verdict.
+source:
+  device: "Somfy Izymo dimmer (Dimmable Light, node 1DAF16), probed with CMD_PRIVATE2 (0x0C) long form, modifier 0x03 (vent), as Q3's device-type control"
+  captured_with: lr1121
+  firmware: null
+  date: 2026-08-16
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 20 1D AF 16 C0 FF EE 0C D4 00 80 D8 03 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C), data=D4 00 80 D8 03 00 -- long form, modifier 0x03 (vent)."
+  - dir: rx
+    t_ms: 253
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 1D AF 16 0D 6D D4 00 00 00"
+    crc: absent
+    note: >
+      cmd=PRIVATE2_RESP(0x0D), data=6D D4 00 00 00 -- identical to every other reading in this
+      Q3 batch (both modifiers, both devices).
+expect:
+  frames:
+    - {cmd: 0x0C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}

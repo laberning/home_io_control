@@ -1,0 +1,63 @@
+id: tilt_cover_statuspoll_linked_remote_triggers
+description: >
+  A linked 1W remote's activity triggers a 2W status-poll exchange with its paired device, with
+  the remote's own frames overheard alongside it. Verifies that those overheard frames classify
+  as unrelated and that an out-of-range position decodes to unknown rather than a wrong number.
+source:
+  device: "Somfy blind/shutter with tilt"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/23"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F8 00 00 00 3F AE 29 7D 00 01 43 D2 00 20 CC 98 00 08 D4 A8 7A 6D 95 34 7A"
+    crc: absent
+    note: "1W EXECUTE (STOP, main0=0xD2) from linked remote AE297D — unrelated to the poll below"
+  - dir: rx
+    t_ms: 111
+    freq: 868950000
+    hex: "F8 00 00 00 3F AE 29 7D 20 02 FF 01 43 0E 0C 00 00 08 D5 78 61 57 55 86 38"
+    crc: absent
+    note: "1W WRITE_PRIVATE from the same remote — also unrelated to the poll below"
+  - dir: tx
+    t_ms: 2131
+    freq: 868950000
+    hex: "4C 20 7F 59 58 31 BA F7 03 03 20 01 00"
+    crc: absent
+    note: "CMD_PRIVATE (0x03) status poll, triggered by the linked-remote activity above"
+  - dir: rx
+    t_ms: 2429
+    freq: 868950000
+    hex: "0E 00 31 BA F7 7F 59 58 3C 55 4B A7 CE 88 9F"
+    crc: absent
+    note: "challenge request, challenge = 55 4B A7 CE 88 9F"
+  - dir: tx
+    t_ms: 2463
+    freq: 868950000
+    hex: "0E 00 7F 59 58 31 BA F7 3D 47 1E 1A EB DF 4F"
+    crc: absent
+    note: "challenge response (key unknown, HMAC not verifiable)"
+  - dir: rx
+    t_ms: 2497
+    freq: 868950000
+    hex: "98 00 31 BA F7 7F 59 58 04 05 00 D2 00 D8 00 00 00 AE 29 7D 01 20 89 EE 00"
+    crc: absent
+    note: "status response: position=unknown target=unknown, END"
+expect:
+  exchange:
+    kind: status_poll
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w, classification: IGNORE_UNRELATED}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w, classification: IGNORE_UNRELATED}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: ACCEPT}
+  oneway:
+    target_type: 0

@@ -325,7 +325,7 @@ void construct_iv(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC
 /// big-endian] [bytes 12-15: 0x55 padding]. Shares construct_iv_prefix() with the 2W
 /// construct_iv() — only the tail differs, matching a real 1W frame's shape: there is no
 /// per-exchange challenge, only the sequence number being transmitted. Verified against the
-/// published IV vector in tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml
+/// published IV vector in tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml
 /// (payload `00 01 43 D2 00 00 00`, sequence `0x0599` -> IV `000143D2000000550500059955555555`).
 void construct_iv_1w_sequence(const uint8_t *data, uint8_t len, uint16_t sequence, uint8_t iv[IV_SIZE]) {
   construct_iv_prefix(data, len, iv);

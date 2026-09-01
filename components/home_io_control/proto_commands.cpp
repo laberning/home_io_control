@@ -27,7 +27,7 @@ constexpr uint8_t EXECUTE_ORIGINATOR = ORIGINATOR_USER_REMOTE;
 /// Level=3 (user_default), matching what a real 2W hub puts on the air: a third-party capture of a
 /// Velux KIG300 commanding a Somfy RS100 shows its EXECUTE payload as `01 63 C8 00 80 32 00 00` —
 /// ACEI 0x63, level 3. The 0x43 (user_high) alternative comes from a 1W remote reference vector
-/// (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml), not a 2W hub, and a
+/// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml), not a 2W hub, and a
 /// handheld remote claiming a higher priority than a home-automation hub is unsurprising.
 ///
 /// A device locked at level 3 rejects this with RESULT_PRIORITY_LOCKED_NON_EXEC (0x38) rather than
@@ -67,7 +67,7 @@ constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
 /// DISCOVERY_FLAGS_RF_SUPPORT, and bits [4]/[2] have no named constant here yet. All of this byte
 /// except the power-save bit mirrors the exact byte a real Somfy Izymo dimmer advertised in this
 /// project's own corpus
-/// (tests/corpus/captures/somfy_dimmer/pairing_full.yaml: flags=0xDC, ATT_CLASS_40S |
+/// (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml: flags=0xDC, ATT_CLASS_40S |
 /// POWER_SAVE_ALWAYS_ALIVE), on the theory that matching a real device's full byte is safer than
 /// guessing at bits this codebase doesn't yet have a documented meaning for — the unnamed bits and
 /// the RF-support bit are carried over unmodified for exactly that reason.
@@ -150,7 +150,7 @@ constexpr uint8_t ONEWAY_EXECUTE_PARAMS_SIZE = 6;
 /// ACEI byte for 1W execute frames — level=2 (user_high), not EXECUTE_ACEI's level=3
 /// (user_default). EXECUTE_ACEI's own doc comment above pins level=3 to a real captured 2W hub;
 /// the 0x43/user_high alternative it mentions is what the published 1W reference vector
-/// (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml) actually carries, so
+/// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) actually carries, so
 /// 1W gets its own constant rather than sharing the 2W one.
 /// Composition: (ACEI_LEVEL_USER_HIGH << 5) | (0 << 3) | (1 << 1) | 1 = 0x43.
 constexpr uint8_t ONEWAY_EXECUTE_ACEI =
@@ -182,9 +182,9 @@ constexpr uint8_t ONEWAY_EXECUTE_FP2 = 0x00;
 /// ctrl1 is deliberately left at 0 (LOW_POWER / CTRL1_LOW_POWER NOT set), unlike every 2W builder
 /// in this file. The reference `forgePacket` sets it, but five independently captured real 1W
 /// frames all disagree: this project's own Somfy awning remote
-/// (tests/corpus/captures/somfy_awning/oneway_remote_{open,close,stop}_sx1276.yaml), an
-/// unidentified 1W remote (tests/corpus/captures/unidentified_1w_remote/oneway_execute.yaml), and
-/// the published vector (tests/corpus/captures/reference_1w_vectors/oneway_execute_iv_vector.yaml)
+/// (tests/corpus/captures/oneway/somfy_smoove_oneway_{open,close,stop}_sx1276.yaml), an
+/// unidentified 1W remote (tests/corpus/captures/oneway/unidentified_1w_remote_oneway_execute.yaml), and
+/// the published vector (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml)
 /// all carry ctrl1=0x00. Followed the captures over the reference source on this point.
 /// Shared frame-header setup for every 1W broadcast builder (build_1w_execute(),
 /// create_1w_add_controller(), create_1w_remove_controller()): all three address a device-class
@@ -544,7 +544,7 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 
 /// Build an extended CMD_PRIVATE (0x03) request with a selector/block pair — the shape real
 /// hubs use for both the tilt block (selector STATUS_TILT_SELECTOR) and the field-observed
-/// selector 0x80 (tests/corpus/captures/issues/issue_45_extended_private_both_selectors.yaml),
+/// selector 0x80 (tests/corpus/captures/probe/multi_somfy_probe_extended_private_both_selectors.yaml),
 /// which this codebase has never decoded. `block` is the field-observed name for the byte that
 /// varies (0x00/0x01) for selector 0x80; create_get_status_tilt() below is this builder frozen
 /// at selector = STATUS_TILT_SELECTOR, block = 0x01. `function_id` defaults to
@@ -569,7 +569,7 @@ bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 /// prefix stripped — `modifier` is that same selector byte (e.g. POS_VENT_MODIFIER for vent).
 ///
 /// `low_power` is a separate parameter, not derived from `long_form`: the two captured fixtures
-/// (tests/corpus/captures/issues/issue_45_private2_{long_form_request_response,short_form}.yaml)
+/// (tests/corpus/captures/probe/multi_somfy_probe_private2_{long_form,short_form}.yaml)
 /// do carry CTRL1_LOW_POWER set on the long-form request and clear on the short-form ones, but
 /// that tracks the *target device's* power class in each capture (a solar shutter vs. a
 /// mains-powered switch), not the payload shape — the same relationship every other
@@ -623,7 +623,7 @@ bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, c
       crypto::generate_challenge(nonce);
       // The HMAC covers the command byte *alone*, with the nonce as the challenge — not the
       // nonce as transcript data, which is what this built until real bytes settled it (a Velux
-      // KLR200's own 0x2A, tests/corpus/captures/velux_kux100/pairing_full.yaml, recomputed
+      // KLR200's own 0x2A, tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml, recomputed
       // under that installation's key). The old [cmd, nonce] transcript produced an HMAC no
       // device could verify, so every 0x2A we emitted was silently unanswerable.
       uint8_t hmac[HMAC_SIZE];
@@ -673,10 +673,10 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
 /// Build a bare device→hub terminal acknowledgement: no payload, END set, START and LOW_POWER
 /// clear. Shared by create_key_confirm() and create_discover_confirm_ack(), which are the same
 /// frame shape and differ only in command byte — real captures of both
-/// (tests/corpus/captures/somfy_dimmer/pairing_full.yaml's 0x33 `88 00 …`,
-/// velux_kux100/pairing_full.yaml's 0x2D `88 08 …`, and this project's own key-extraction
+/// (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml's 0x33 `88 00 …`,
+/// velux_kux100_pairing_full.yaml's 0x2D `88 08 …`, and this project's own key-extraction
 /// responder against a real hub in
-/// tests/corpus/captures/issues/issue_45_velux_kig300_key_extraction_success.yaml, both 0x2D and
+/// tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml, both 0x2D and
 /// 0x33 as `88 00 …`) show a device closing its half of a two-frame handshake this way. LOW_POWER
 /// stays clear because that bit describes the *target* of a controller-originated frame (see the
 /// header's convention note); a device does not flag a frame it sends *to* the hub as low-power.
@@ -803,7 +803,7 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 ///
 /// TODO(hardware-verify): ctrl1 is 0x00 here (no CTRL1_PRIORITY), matching every other device-role
 /// builder in this file, but the one real capture of this command
-/// (tests/corpus/captures/velux_kux100/pairing_full.yaml line 87) shows CTRL1_PRIORITY set on the
+/// (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml line 87) shows CTRL1_PRIORITY set on the
 /// KLR200's 0x37. In that same capture the device also mirrors CTRL1_PRIORITY from whatever the
 /// hub's preceding request set, and its 0x36 request is the one request in the whole exchange that
 /// sets PRIORITY — but every other device-role builder here also emits ctrl1=0 against frames that

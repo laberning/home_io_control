@@ -48,7 +48,7 @@ namespace home_io_control {
 /// several seconds — up to a dozen — reporting via an asynchronous status update later instead of
 /// closing the exchange with a synchronous reply, all well outside the exchange's own response
 /// window. Other devices on the same protocol close the exchange properly with a synchronous 0x04
-/// (see tests/corpus/captures/somfy_awning/exchange_open_sx1276.yaml), so the four-frame exchange
+/// (see tests/corpus/captures/exchange/somfy_awning_exchange_open_sx1276.yaml), so the four-frame exchange
 /// is real — just not universal, and a caller cannot assume either shape from the command alone.
 ///
 /// SUCCESS_UNCONFIRMED exists so that silence after a real authentication is not treated the same

@@ -12,24 +12,78 @@ normative format spec — read it before adding or editing a capture.
 tests/corpus/
   README.md                # this file
   captures/
-    _bootstrap/              # synthetic pipeline self-test fixtures, kept permanently
-    <device_family>/          # one directory per device/source family (e.g. somfy_awning)
-    issues/                   # community captures from GitHub issues
+    <phase>/               # one directory per protocol phase: exchange/ pairing/ probe/ oneway/ …
+      <id>.yaml            # filename is always the capture id + ".yaml"
 ```
+
+**One directory per protocol phase, one YAML file per scenario, `filename == id`.** Nothing in
+the tooling reads the path — `build.py`/`validate.py` `rglob` everything and key off the in-file
+`id:` — so the tree is purely a browse aid. It groups by the axis you reach the corpus from
+("I'm working on the pairing engine / status decode / 1W"); `validate.py` enforces that a
+capture sits in the directory matching its id's phase token.
+
+Every other axis is a one-line shell query: `ls captures/*/somfy_awning_*` (one device),
+`ls captures/pairing/` (one phase), `grep -rl 'origin: github-issue' captures/`,
+`grep -rl 'issues/98' captures/`.
+
+### Naming convention
+
+```
+id = <subject>_<phase>[_<scenario>][_<chip>]
+```
+
+- **`subject`** — the capture source. A real device family (`somfy_awning`, `somfy_izymo_dimmer`,
+  `velux_window`, `somfy_rs100`, …), a third-party controller whose traffic this is
+  (`velux_kig300`, `somfy_connectivity_kit`), a lab/synthetic device (`tilt_cover`, `synthetic`,
+  `reference_1w`, `selfpair`), `wind_sensor` / `unidentified_1w_remote` for an overheard device
+  whose vendor is not established, or `multi_somfy` for a passive capture of several foreign
+  devices at once. **For a 1W capture the subject is the *transmitting* device, not the
+  receiver** (the receiver, if relevant, goes in `scenario`) — unless the transmitter is our own
+  hub, in which case name the target device. **The full set is `SUBJECTS` in
+  `scripts/corpus/naming.py`, enforced by `validate.py`** — a genuinely new device/source is a
+  one-line addition there (it exists to stop `somfy_dimmer` drifting back in beside
+  `somfy_izymo_dimmer`, or a `velux_windwo` typo, from reaching `main`).
+- **`phase`** — a **closed** vocabulary (`PHASES` in `scripts/corpus/naming.py`, enforced by
+  `validate.py`). The token right after the subject must be one of:
+  - **`exchange`** — any 2W authenticated command (`0x00` EXECUTE, `0x20` WRITE_PRIVATE,
+    `0x50`/`0x52` name get/set) + `0x3C`/`0x3D` + ack. Also a bare `0x3C`/`0x3D` loopback.
+  - **`statuspoll`** — a `0x03` → `0x04` **plain** position poll, challenged or not.
+  - **`probe`** — a **diagnostic** read: `0x03` at a non-default function id / the extended
+    form, `0x0C` (private2), or `0x54`–`0x58`. (`0x50`/`0x52` name is a user-facing op →
+    `exchange`, not `probe`.)
+  - **`pairing`** — `0x31`/`0x32`/`0x33` key exchange, either role; key extraction is pairing
+    seen from the device side and goes in `scenario`.
+  - **`discovery`** — `0x28`/`0x29`, `0x2A`/`0x2B` roll-call, `0x2E`/`0x2F` alt-discovery.
+  - **`oneway`** — 1W transmit / overheard traffic (`0x00`/`0x20` with no 2W challenge).
+  - **`enrollment`** — 1W `0x30` add-controller / `0x39` remove-controller.
+  - **`unsolicited`** — `0x71` STATUS_UPDATE with no preceding request.
+  - **`identify`** — `0x1E` identify / jog.
+
+  A passive multi-phase sniff takes the phase of its dominant / most-interesting traffic. A
+  later phase word inside `scenario` (e.g. `..._pairing_key_exchange_retry_success`) is fine —
+  only the leading `<subject>_<phase>` is checked. Adding a phase is a one-line change to
+  `naming.py` — do it deliberately, not to dodge a `scenario`.
+- **`scenario`** — free snake_case, the distinguishing detail; omit when `subject`+`phase` is
+  already unique.
+- **`chip`** — `sx1276` / `sx1262` / `lr1121`, **required whenever two captures differ only by
+  radio chip**, omitted otherwise. (`selfpair_pairing_sx1262_device_sx1276_hub` names both chips
+  mid-scenario because it *is* the scenario — the trailing-`<chip>` rule doesn't apply there.)
+
+Issue provenance is **not** in the name — it lives in `source.issue:` (find them with
+`grep -rl 'issues/<n>' captures/`). Cite a capture — from code, docs, or another capture's
+`description:`/`note:` — as its full path `tests/corpus/captures/<phase>/<id>.yaml`;
+`validate.py` checks every such path (globs, `{a,b}` braces, comment-line-wrapped) resolves
+*and* points at the right phase directory. Bare `<id>.yaml` mentions are not gate-checked.
 
 The C++ fixture header (`build/corpus/corpus_generated.h`) is a **build artifact**, generated
 by `scripts/corpus/build.py` automatically as part of `make unit-test` and git-ignored — never
 hand-edit it, and there is nothing to commit or keep in sync: the YAML captures are the single
 source of truth, so there is no second copy of the data that can drift.
 
-One directory per device/source family, one YAML file per scenario. Issue-derived captures
-live under `captures/issues/` named `issue_<n>_<slug>.yaml` so each file is traceable to its
-origin discussion.
-
 ## Capture file schema
 
 ```yaml
-id: somfy_awning_exchange_position_50   # unique across the whole corpus; kebab/snake case
+id: somfy_awning_exchange_position_50   # unique across the whole corpus; snake_case, == filename, == <subject>_<phase>[_<scenario>][_<chip>]
 description: >
   Free-text summary of the scenario.
 source:
@@ -37,7 +91,7 @@ source:
   captured_with: sx1262                    # sx1276 | sx1262 | lr1121 | other | synthetic (radio chip)
   firmware: "2026.6 / commit f981dce"              # best effort, optional
   date: 2026-07-06
-  origin: own-hardware                # own-hardware | github-issue | synthetic-bootstrap
+  origin: own-hardware                # own-hardware | github-issue | reference-material | synthetic-bootstrap
   issue: null                          # e.g. "https://github.com/.../issues/42", else null
 key: corpus            # corpus = HMAC/key-transfer bytes verify under the public corpus key
                        # unknown = raw community capture, crypto not verifiable
@@ -129,7 +183,7 @@ expect:                              # deliberately sparse — only assert what 
     decoded via `decode_tilt_report()`. This is a **different** field from the tilt-shaped bytes at
     data offset 4..6 in the immediate reply to our own EXECUTE-tilt command — that one is the
     device's *pre-command* tilt, not a live or target reading (see
-    `issue_60_tilt_execute_ack_echoes_precommand_tilt.yaml`), and `hub_status.cpp` never decodes it
+    `tilt_cover_exchange_ack_echoes_precommand_tilt.yaml`), and `hub_status.cpp` never decodes it
     into device state. Only a status-poll reply is long enough and positioned right to trip the
     `reported_tilt` check, so don't set this expectation on an EXECUTE-ack capture even if its
     bytes happen to satisfy the length/selector test.
@@ -159,7 +213,7 @@ universal wire invariants `validate.py` enforces on every frame, with no per-fix
 genuinely malformed or truncated capture (a partial reception, a corrupted length byte) fails that
 check by definition, so it cannot become a corpus fixture no matter how real the underlying
 capture is. This came up concretely for three community-log samples tagged `stage=parse_fail`, and
-for one frame originally proposed for `issue_45_capability_probe_burst.yaml` (a 10-of-25-byte
+for one frame originally proposed for `velux_kig300_probe_capability_burst.yaml` (a 10-of-25-byte
 truncated `GET_NAME_RESP`, still documented in that fixture's own `description:`): none of the
 four could be ingested, and none is in the tree.
 
@@ -204,7 +258,7 @@ field claims:
   (`scripts/corpus/protolib.py :: CORPUS_SYSTEM_KEY`, mirroring
   `tests/support/test_helpers.h :: TEST_SYSTEM_KEY`). HMACs count in both directions: usually
   the controller answers a device's challenge (`tx` 0x3D), but a device answering a
-  controller-issued challenge (`rx` 0x3D, see `velux_kux100/pairing_full.yaml`) is the
+  controller-issued challenge (`rx` 0x3D, see `velux_kux100_pairing_full.yaml`) is the
   same construction mirrored — the challenged party HMACs its own preceding frame's cmd+data.
 - `key: corpus` captures also have their **self-authenticated** frames checked: a 0x2A payload
   is `[6-byte challenge | 6-byte HMAC over the command byte]`, a whole challenge-response inside
@@ -247,11 +301,13 @@ the two implementations fails a gate on both sides.
    proposes mechanically-derivable `expect:` fields (cmd/start/end/protocol only):
    ```bash
    python3 scripts/corpus/ingest.py analysis/issues/27.txt \
-       --id issue_27_somfy_sunea_discovery --device "Somfy Sunea IO motor" \
+       --id somfy_awning_discovery_with_overheard_smoove_1w --device "Somfy Sunea IO motor" \
        --captured-with sx1262 --origin github-issue \
-       --issue https://github.com/laberning/home_io_control/issues/27 --date 2026-07-06 \
-       -o tests/corpus/captures/issues/issue_27_somfy_sunea_discovery.yaml
+       --issue https://github.com/laberning/home_io_control/issues/27 --date 2026-07-06
    ```
+   `--id` must follow the `<subject>_<phase>[_<scenario>][_<chip>]` convention above; `-o`
+   defaults to `tests/corpus/captures/<phase>/<id>.yaml` (phase taken from the id) and rarely
+   needs to be given.
    Pipe a trimmed excerpt through stdin (`sed -n '10,40p' file.txt | ingest.py - ...`) instead of
    ingesting a whole log when you only want one scenario out of it. Every capture `ingest.py`
    emits is `key: unknown` unless you pass `--rekey`.
@@ -263,9 +319,8 @@ the two implementations fails a gate on both sides.
    ```bash
    python3 scripts/corpus/ingest.py my_capture.log --rekey \
        --system-key-from config/secrets.yaml \
-       --id somfy_awning_exchange_open --device "..." --captured-with sx1262 \
-       --origin own-hardware --date 2026-07-06 \
-       -o tests/corpus/captures/somfy_awning/exchange_open.yaml
+       --id somfy_awning_exchange_open_sx1262 --device "..." --captured-with sx1262 \
+       --origin own-hardware --date 2026-07-06
    ```
    `--system-key-from` refuses to read a path that is not git-ignored. Run this only locally,
    never in CI, and never on a community-supplied log you don't have the real key for.
@@ -280,7 +335,7 @@ the two implementations fails a gate on both sides.
    is a sha256 fingerprint:
    ```bash
    python3 scripts/corpus/rekey_capture.py ~/outside-the-repo/raw_capture.yaml \
-       -o tests/corpus/captures/velux_kux100/pairing_full.yaml
+       -o tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml
    ```
    Unlike `ingest.py`, it takes an already-written capture YAML rather than a log, and edits it
    as *text*: only the rewritten `hex:` values and `key:` change, so hand-written descriptions,
@@ -314,6 +369,7 @@ the two implementations fails a gate on both sides.
 
 A device-specific protocol bug is not considered fixed until its capture is in the corpus: the
 fixing PR should add the capture (and a decode/classification assertion that would have caught
-the bug) in the same change. Issue-derived captures live under `captures/issues/`, named
-`issue_<n>_<slug>.yaml`, with `source.issue` pointing at the originating discussion — so every
-fixture stays traceable to the report that motivated it.
+the bug) in the same change. Name it by its subject and protocol phase like every other capture
+(see "Naming convention" above) so it lands in the right `<phase>/` directory, and set
+`source.issue` to the originating discussion — issue traceability lives in that field
+(`grep -rl 'issues/<n>' captures/`), never in a filename prefix.

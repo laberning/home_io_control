@@ -1,0 +1,63 @@
+id: velux_window_probe_status_ext_replies
+description: >
+  Extended CMD_PRIVATE (0x03) replies from a Velux INTEGRA roof-window actuator (WINDOW_OPENER,
+  node 6544C6), captured by the reporter's own SX126x hub via probe_sweep on issue #98
+  (2026-09-01), window parked at its ventilation preset (~7% open). Three probes, all sending
+  selector 0x80 and walking the block byte: `status_ext` (function ID 0x03),
+  `status_ext_fn6` (0x06), `status_ext_fn9` (0x09).
+
+  Shape (human-verified, see issue #98 probe_findings_2026-09-01.md §3): every reply leads with
+  the same motion-state prefix as `private_fn` fn 0x03 —
+    data[0..1]  status flags (0x05 = STOPPED)
+    data[2..3]  target selector      (D8 03 = POS_FAVORITE + vent modifier)
+    data[4..5]  resolved position    (BA 00 = 0xBA00 = 93.0% closed)
+    data[6..7]  00 00
+    data[8..10] last-command node    (51 3B 34 = the hub)
+    data[11]    priority level       (01)
+  then, for most block values, a 0x80 marker and a per-block tail; blocks 0x03/0x0C/0x0D omit
+  the 0x80 tail (compact form). `status_ext_fn6` zeroes data[2..5]; `status_ext_fn9` keeps the
+  target selector but drops the resolved-position field. The tails seen dry (78 00, 50 00,
+  C8 00 — position-family values) have no decode. An out-of-range block answers CMD_ERROR_RESP
+  result 0x58 = RESULT_INVALID_FUNCTION_INDEX, same as `private_fn` fn 0x0F.
+
+  No TX probe frames were logged by the reporter. Community capture: no system key, HMAC not
+  verifiable.
+source:
+  device: "Velux INTEGRA roof-window actuator (WINDOW_OPENER, node 6544C6)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-09-01
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/98"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    hex: "98 00 51 3B 34 65 44 C6 04 05 00 D8 03 BA 00 00 00 51 3B 34 01 80 78 00 00"
+    crc: absent
+    note: "`status_ext` (fn 0x03), block 0x00. Motion-state prefix + 0x80 marker + tail 78 00 (= 0x7800 = 60.0% on the position scale; undecoded)."
+  - dir: rx
+    t_ms: 0
+    hex: "96 00 51 3B 34 65 44 C6 04 05 00 D8 03 BA 00 00 00 51 3B 34 01 00 00"
+    crc: absent
+    note: "`status_ext` (fn 0x03), block 0x03 — compact form: motion-state prefix only, no 0x80 tail. Byte-identical to `private_fn` fn 0x03."
+  - dir: rx
+    t_ms: 0
+    hex: "98 00 51 3B 34 65 44 C6 04 05 00 D8 03 BA 00 00 00 51 3B 34 01 80 C8 00 00"
+    crc: absent
+    note: "`status_ext` (fn 0x03), block 0x0B. Tail C8 00 = 0xC800 = STATUS_POS_MAX; pairs with the block-0x0A tail 50 00 (40.0%) as a possible min/max position-limit pair (undecoded, dry)."
+  - dir: rx
+    t_ms: 0
+    hex: "90 00 51 3B 34 65 44 C6 04 05 00 00 00 80 78 00 00"
+    crc: absent
+    note: "`status_ext_fn6` (fn 0x06), block 0x00. data[2..5] zeroed (no position), then 0x80 + tail 78 00. Same tail table as `status_ext`."
+  - dir: rx
+    t_ms: 0
+    hex: "89 00 51 3B 34 65 44 C6 FE 58"
+    crc: absent
+    note: "`status_ext_fn6` (fn 0x06), block 0x80: CMD_ERROR_RESP (0xFE) result code 0x58 = RESULT_INVALID_FUNCTION_INDEX. Every block 0x80–0x8F answered this; the block space is 0x00–0x0E. END."
+  - dir: rx
+    t_ms: 0
+    hex: "90 00 51 3B 34 65 44 C6 04 05 00 D8 03 80 78 00 00"
+    crc: absent
+    note: "`status_ext_fn9` (fn 0x09), block 0x00. Target selector D8 03 kept, resolved-position field dropped (shorter prefix), then 0x80 + tail 78 00."

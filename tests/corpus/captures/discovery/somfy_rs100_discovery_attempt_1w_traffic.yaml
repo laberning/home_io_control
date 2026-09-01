@@ -1,0 +1,39 @@
+id: somfy_rs100_discovery_attempt_1w_traffic
+description: >
+  Overheard 1W broadcast traffic and an unanswered discovery request during an unresolved Somfy
+  RS100/Sunea io pairing attempt. Verifies WRITE_PRIVATE 1W-broadcast parsing and round-trip
+  decoding of an unhandled 1W command byte (0x5A).
+source:
+  device: "Somfy RS100/Sunea io actuator"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-07-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/16"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "30 F8 0D 7A 6A 8B 9C 4D 5A CC C9 83 01 0D D9 34 A8"
+    crc: absent
+    note: "unattributed frame, cmd=0x5A (unicast dst, no established meaning)"
+  - dir: rx
+    t_ms: 948
+    freq: 868950000
+    hex: "F5 00 00 00 3F C3 8B 92 20 02 03 05 04 00 44 02 FE 32 51 28 03 98"
+    crc: absent
+    note: "1W WRITE_PRIVATE from an unattributed remote/device C38B92"
+  - dir: tx
+    t_ms: 23354
+    freq: 868950000
+    hex: "C8 00 00 00 3B D1 D4 FF 28"
+    crc: absent
+    note: "CMD_DISCOVER_REQ (0x28) — no device responded"
+expect:
+  frames:
+    - {cmd: 0x5A, start: false, end: false, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+  oneway:
+    target_type: 0

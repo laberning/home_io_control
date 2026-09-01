@@ -309,6 +309,8 @@ const char *command_result_name(uint8_t result) {
       return "OUT_OF_RANGE";
     case RESULT_PRIORITY_LOCKED_NON_EXEC:
       return "PRIORITY_LOCKED";
+    case RESULT_INVALID_FUNCTION_INDEX:
+      return "INVALID_FUNCTION_INDEX";
     case RESULT_INFORMATION_CODE:
       return "INFORMATION_CODE";
     case RESULT_PARAMETER_LIMITED:
@@ -418,6 +420,8 @@ const char *command_result_description(uint8_t result) {
       return "requested value is out of range";
     case RESULT_PRIORITY_LOCKED_NON_EXEC:
       return "command priority too low, node rejected execution";
+    case RESULT_INVALID_FUNCTION_INDEX:
+      return "requested function/sub-index is not implemented by the device";
     case RESULT_INFORMATION_CODE:
       return "information-only result with unknown semantics";
     case RESULT_PARAMETER_LIMITED:

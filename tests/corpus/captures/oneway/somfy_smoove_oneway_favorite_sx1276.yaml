@@ -1,0 +1,21 @@
+id: somfy_smoove_oneway_favorite_sx1276
+description: >
+  1W remote 'My'/favorite button press: WRITE_PRIVATE(0x20) targeting all (00003F), data_len=16, linked to our awning. Unlike the EXECUTE(0x00) open/close/stop buttons, the favorite/My button on this remote is encoded as WRITE_PRIVATE - confirmed by the follow-up status poll in the source log showing the device moved to and stopped at its stored favorite (25%). Not asserting oneway.intent here since decode_1w_frame()'s intent decoding is EXECUTE-payload-shaped; existing issue_16/19/23/27 captures treat 0x20 WRITE_PRIVATE the same way (structural cmd/start/end only).
+source:
+  device: "Somfy 1W remote (node 9D6085), linked to Patio Awning"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-12
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 02 05 FF 00 59 DC DD 49 4B 7A AE 1A"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20)"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}

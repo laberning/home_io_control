@@ -66,7 +66,7 @@ and `recover_oneway_key`, and the docs say so: remove the line once you are done
 documented 1W pairing handshake (`reference/iown-homecontrol/docs/linklayer.md:396`, "1W
 Discovery") is `0x39` immediately followed by `0x30`, both from the same controller, back to back
 within one gesture — and this project's own
-`tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml` shows a real
+`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml` shows a real
 Somfy Smoove remote doing exactly that against a real Izymo, 128 ms apart, same burst. This ADR
 originally decided the enroll button would send `0x30` alone and keep `0x39` behind its own
 explicitly-named action, on the strength of a single 2026-08-13 bench success with `0x30` alone.
@@ -128,7 +128,7 @@ undo it afterward.
   enrollment handshake.** Once the class was corrected, the Izymo enrolled with either `0x30`
   alone or `0x39` then `0x30`. Sending `0x39` first is not what fixed this class of failure and is
   not required to; it is kept because it matches a real remote's own captured on-wire behavior
-  (`tests/corpus/captures/somfy_awning/oneway_add_and_remove_controller_sx1276.yaml`). A different,
+  (`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`). A different,
   still-live failure mode is a timing mismatch between the receiver's PROG hold and the
   controller's press — a long hold where a short press was needed, or vice versa — which the docs
   state both halves and their asymmetry explicitly for.
