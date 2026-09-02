@@ -90,8 +90,13 @@ class ExchangeEngine {
   /// @param request  Frame to transmit (cmd + endpoints already filled).
   /// @param response Populated only for @ref ExchangeOutcome::SUCCESS_WITH_RESPONSE.
   /// @param freq     RF channel frequency (Hz).
+  /// @param max_tries Cap on transmit attempts for this exchange, clamped to
+  ///        [1, EXCHANGE_RETRY_COUNT]. Callers whose failure is already re-armed elsewhere (a
+  ///        scheduler-owned status poll) pass SCHEDULED_POLL_MAX_TRIES so a dead device does not
+  ///        block loop() for the full retry product.
   /// @return What the device actually told us — see @ref ExchangeOutcome.
-  ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq);
+  ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
+                                   uint8_t max_tries = EXCHANGE_RETRY_COUNT);
 
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).
@@ -215,19 +220,20 @@ class ExchangeEngine {
 
   /// @brief Snapshot of the last exchange attempt for diagnostics.
   struct DebugInfo {
-    const char *stage{"idle"};         ///< Last recorded stage label.
-    uint8_t tries{0};                  ///< Retry count (1-based).
-    uint8_t request_cmd{0};            ///< Command ID of the original request.
-    bool saw_challenge{false};         ///< True if a 0x3C was seen during this exchange.
-    bool capture_valid{false};         ///< True if radio capture is meaningful.
-    bool capture_rx_done{false};       ///< True if RxDone IRQ fired.
-    bool capture_crc_error{false};     ///< True if CRC error flagged (chip-dependent; see RadioCaptureInfo::crc_error).
-    uint32_t capture_freq_hz{0};       ///< RF frequency of the captured packet.
-    uint16_t capture_irq_status{0};    ///< Raw IRQ register value.
-    uint8_t capture_packet_status{0};  ///< Chip packet-status byte.
-    uint8_t capture_reported_len{0};   ///< Length reported by radio packet engine.
-    uint8_t capture_frame_len{0};      ///< Parsed protocol frame length.
-    int16_t capture_rssi_dbm{0};       ///< RSSI of the captured packet (dBm).
+    const char *stage{"idle"};                ///< Last recorded stage label.
+    uint8_t tries{0};                         ///< Retry count (1-based).
+    uint8_t max_tries{EXCHANGE_RETRY_COUNT};  ///< Attempt cap this exchange was budgeted for.
+    uint8_t request_cmd{0};                   ///< Command ID of the original request.
+    bool saw_challenge{false};                ///< True if a 0x3C was seen during this exchange.
+    bool capture_valid{false};                ///< True if radio capture is meaningful.
+    bool capture_rx_done{false};              ///< True if RxDone IRQ fired.
+    bool capture_crc_error{false};            ///< True if CRC error flagged; see RadioCaptureInfo::crc_error.
+    uint32_t capture_freq_hz{0};              ///< RF frequency of the captured packet.
+    uint16_t capture_irq_status{0};           ///< Raw IRQ register value.
+    uint8_t capture_packet_status{0};         ///< Chip packet-status byte.
+    uint8_t capture_reported_len{0};          ///< Length reported by radio packet engine.
+    uint8_t capture_frame_len{0};             ///< Parsed protocol frame length.
+    int16_t capture_rssi_dbm{0};              ///< RSSI of the captured packet (dBm).
   };
 
   /// Clear the debug snapshot and record the upcoming request command.

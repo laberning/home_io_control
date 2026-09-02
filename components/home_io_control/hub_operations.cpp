@@ -149,9 +149,10 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
 // device's reply back through the normal inbound status parser so all state normalization stays
 // in one place.
 bool IOHomeControlComponent::execute_request_and_update_(const std::string &device_id, const IoFrame &request,
-                                                         bool warn_on_no_response, uint32_t retry_after_fail_ms) {
+                                                         bool warn_on_no_response, uint32_t retry_after_fail_ms,
+                                                         uint8_t max_tries) {
   IoFrame response;
-  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2);
+  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
   // An unconfirmed acceptance means the device authenticated the request but never closed the
   // exchange. Whether that counts as success depends entirely on what the request was *for*:
   //   - a command (CMD_EXECUTE) is done — the device has it and is acting on it, and its own
@@ -350,9 +351,14 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
                               : create_get_status(request, this->node_id_, dev->node_id, dev->low_power);
   if (!request_ok)
     return false;
-  uint32_t const retry_after_fail_ms =
-      this->poll_policy_.is_tracking_active(device_id, millis()) ? STATUS_RETRY_AFTER_FAIL_MS : 0;
-  return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms);
+  // A poll the scheduler owns (StatusPollPolicy is tracking this device) is re-armed by the backoff
+  // ladder on failure, so the ladder is its retry mechanism; extra blocking in-exchange tries would
+  // only stall loop() while a device is unresponsive. A one-off poll with nothing behind it keeps
+  // the full retry budget. See SCHEDULED_POLL_MAX_TRIES.
+  const bool scheduler_managed = this->poll_policy_.is_tracking_active(device_id, millis());
+  const uint32_t retry_after_fail_ms = scheduler_managed ? STATUS_RETRY_AFTER_FAIL_MS : 0;
+  const uint8_t max_tries = scheduler_managed ? SCHEDULED_POLL_MAX_TRIES : EXCHANGE_RETRY_COUNT;
+  return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
 }
 
 bool IOHomeControlComponent::request_device_name(const std::string &device_id) {

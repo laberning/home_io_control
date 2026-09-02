@@ -696,6 +696,72 @@ TEST(HubStatus, StatusUpdateMinimumLengthFrameStillApplied) {
   EXPECT_TRUE(dev->is_stopped) << "the originator length guard must not tighten branch acceptance";
 }
 
+// ============================================================================
+// detail::describe_prediction() — appended to log_status_update()'s line when a live optimistic
+// prediction disagrees with what the device just reported. Pure, so tested directly (ESP_LOG* is a
+// no-op stub on host). A prediction must never be substituted into the observed target/motion
+// fields, only annotated alongside them.
+// ============================================================================
+
+TEST(HubStatus, DescribePredictionIsEmptyWhenNoPredictionStands) {
+  IoDevice dev{};
+  dev.target = 40.0f;
+  dev.is_stopped = true;
+  EXPECT_TRUE(detail::describe_prediction(dev).empty());
+}
+
+TEST(HubStatus, DescribePredictionIsEmptyWhenThePredictionAgreesWithTheObservation) {
+  IoDevice dev{};
+  dev.target = 100.0f;
+  dev.is_stopped = false;
+  dev.optimistic.target = 100.0f;
+  dev.optimistic.motion = OptimisticState::Motion::MOVING;
+  EXPECT_TRUE(detail::describe_prediction(dev).empty())
+      << "a prediction that merely confirms the observation adds nothing to the line";
+}
+
+TEST(HubStatus, DescribePredictionNamesADivergingTargetWithoutSubstitutingTheObserved) {
+  IoDevice dev{};
+  dev.target = 0.0f;               // what the device last reported
+  dev.optimistic.target = 100.0f;  // what the hub predicts
+  const std::string out = detail::describe_prediction(dev);
+  EXPECT_NE(out.find("target=100%"), std::string::npos) << "the predicted target is named";
+  EXPECT_EQ(out.find("target=0%"), std::string::npos) << "the observed target is not replaced by the prediction";
+}
+
+TEST(HubStatus, DescribePredictionNamesADivergingMotion) {
+  IoDevice dev{};
+  dev.is_stopped = false;                                    // the device reports moving
+  dev.optimistic.motion = OptimisticState::Motion::STOPPED;  // a STOP was sent; hub predicts stopped
+  EXPECT_NE(detail::describe_prediction(dev).find("stopped"), std::string::npos);
+}
+
+// The exact case that made the prior issue #95 analysis misread the log: an optimistic CLOSE
+// (target 100) then an EXECUTE ack whose echoed target field is stale, applied with
+// trust_position=false so the overlay stands. The log line must flag that target=<observed> is
+// not the whole story.
+TEST(HubStatus, DescribePredictionFlagsTheIssue95ExecuteAckScenario) {
+  TestableHubComponent comp;
+  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 100.0f));
+
+  IoFrame frame{};
+  init_frame(frame, true, false, false, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t device[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, own);
+  set_src(frame, device);
+  uint8_t payload[8] = {0x04, 0x60, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00};  // moving, stale echoed fields
+  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  comp.update_device_status_(frame, /*trust_position=*/false);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  const std::string out = detail::describe_prediction(*dev);
+  EXPECT_FALSE(out.empty());
+  EXPECT_NE(out.find("100%"), std::string::npos) << "and it names the predicted target";
+}
+
 // ========================================================================================
 // Link-health tests (RSSI EMA, last-seen, exchange failures)
 // ========================================================================================

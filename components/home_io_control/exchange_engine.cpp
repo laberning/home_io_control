@@ -49,11 +49,15 @@ void ExchangeEngine::record_debug(const char *stage, uint8_t tries, bool saw_cha
   this->debug_.saw_challenge = this->debug_.saw_challenge || saw_challenge;
 
   const RadioCaptureInfo &capture = (*this->radio_ptr_)->get_last_capture();
-  // wait_for_packet() clears the radio's capture before it starts listening, so the *last* call
-  // recorded here is always the final, timed-out wait — which by construction saw nothing. Keep the
-  // first informative capture of the exchange instead: it's the only one that can distinguish "the
-  // radio never detected a frame" from "it received one and this layer discarded it", which is the
-  // question a failure report actually needs to answer.
+  // send_and_receive() blanks the radio capture at the start of each exchange (the path this
+  // snapshot mainly serves), so a valid capture here belongs to the current exchange rather than a
+  // previous one. wait_for_packet() re-clears the capture before each listen, so the *last*
+  // record_debug() call is always the final timed-out wait, which saw nothing. Keep the first
+  // informative capture instead: it distinguishes "the radio never detected a frame" from "it
+  // received one and this layer discarded it" — the question a failure report has to answer.
+  // Known gap: record_debug() calls outside that blanking — the bare ones in pairing_engine.cpp,
+  // authenticate_request(), and collect_broadcast_responses()'s "broadcast_tx_failed" branch — can
+  // still carry a capture from before their flow began. None of those snapshots reaches log_debug().
   if (!capture.valid && this->debug_.capture_valid)
     return;
   this->debug_.capture_valid = capture.valid;
@@ -70,12 +74,12 @@ void ExchangeEngine::record_debug(const char *stage, uint8_t tries, bool saw_cha
 void ExchangeEngine::log_debug(const char *device_id) const {
   const auto &d = this->debug_;
   ESP_LOGW(TAG,
-           "Exchange failed: device=%s cmd=%s(0x%02X) stage=%s tries=%u saw_challenge=%u cap_valid=%u cap_rx_done=%u "
-           "cap_crc_err=%u cap_freq=%" PRIu32
+           "Exchange failed: device=%s cmd=%s(0x%02X) stage=%s tries=%u max_tries=%u saw_challenge=%u cap_valid=%u "
+           "cap_rx_done=%u cap_crc_err=%u cap_freq=%" PRIu32
            " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d",
-           device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.saw_challenge, d.capture_valid,
-           d.capture_rx_done, d.capture_crc_error, d.capture_freq_hz, d.capture_irq_status, d.capture_packet_status,
-           d.capture_reported_len, d.capture_frame_len, d.capture_rssi_dbm);
+           device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.max_tries, d.saw_challenge,
+           d.capture_valid, d.capture_rx_done, d.capture_crc_error, d.capture_freq_hz, d.capture_irq_status,
+           d.capture_packet_status, d.capture_reported_len, d.capture_frame_len, d.capture_rssi_dbm);
 }
 
 // ============================================================================
@@ -244,13 +248,25 @@ bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
 
 }  // namespace
 
-ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq) {
+ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
+                                                 uint8_t max_tries) {
   this->reset_debug(request.cmd);
+  // Blank the radio's diagnostic capture at the start of the exchange. The radio only clears it
+  // when it actually begins a listen, so an exchange that transmits and then hears nothing at all
+  // would otherwise inherit the *previous* exchange's capture and claim "we heard a frame" when
+  // nothing was on air. Done here rather than in reset_debug() because collect_broadcast_responses()
+  // shares that helper but does not need this: its only capture reader runs per delivered reply
+  // (with the listen repopulating the capture first), and its DebugInfo is never passed to log_debug().
+  (*this->radio_ptr_)->clear_last_capture();
+  // Clamp once: never below 1 (a caller passing 0 must not silently transmit nothing) and never
+  // above EXCHANGE_RETRY_COUNT (the budget check downstream assumes that ceiling).
+  const uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
+  this->debug_.max_tries = tries_allowed;
   const uint16_t request_preamble = this->request_preamble_for_(request);
   const uint32_t exchange_begin_ms = millis();
   bool accepted_without_reply = false;
 
-  for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
+  for (uint8_t tries = 0; tries < tries_allowed; tries++) {
     exchange::OutboundExchangeContext context;
     context.try_index = tries + 1;
     context.exchange_start_ms = millis();

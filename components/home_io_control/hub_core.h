@@ -624,8 +624,10 @@ class IOHomeControlComponent : public Component,
   /// @param request Outbound request IoFrame.
   /// @param response Output: received response IoFrame.
   /// @param freq RF frequency in Hz.
+  /// @param max_tries Transmit-attempt cap, forwarded to ExchangeEngine::send_and_receive().
   /// @return true if exchange succeeded; false otherwise.
-  ExchangeOutcome send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq);
+  ExchangeOutcome send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq,
+                                    uint8_t max_tries = EXCHANGE_RETRY_COUNT);
   /// Handle an inbound authenticated command from a device (status updates, etc.).
   /// @param request Inbound authenticated request (e.g., CMD_STATUS_UPDATE).
   /// @param freq RF frequency the packet arrived on.
@@ -840,11 +842,13 @@ class IOHomeControlComponent : public Component,
   /// @param request Outbound request frame.
   /// @param warn_on_no_response If true, logs a warning when no response is received.
   /// @param retry_after_fail_ms If non-zero, schedules next status poll after this delay on failure.
+  /// @param max_tries Transmit-attempt cap, forwarded to send_and_receive_(). Defaults to the full
+  ///        EXCHANGE_RETRY_COUNT; a scheduler-owned poll passes SCHEDULED_POLL_MAX_TRIES.
   /// @return true when the device replied, or when a CMD_EXECUTE was accepted without a reply —
   ///         every other command's unconfirmed acceptance is still a failure here (see
   ///         @ref ExchangeOutcome and decisions::retry_after_unconfirmed_accept_is_safe()).
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
-                                   uint32_t retry_after_fail_ms = 0);
+                                   uint32_t retry_after_fail_ms = 0, uint8_t max_tries = EXCHANGE_RETRY_COUNT);
 
   /// @brief Everything one execute-family operation needs beyond its own guard and frame builder.
   struct ExecuteRequestSpec {

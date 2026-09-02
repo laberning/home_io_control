@@ -566,13 +566,41 @@ inline std::string describe_status_update_originator(const IoFrame &frame) {
   return format_name_and_hex(originator_name(originator), originator);
 }
 
+/// @brief Describe the hub's live optimistic predictions where they disagree with the observation.
+///
+/// Pure rather than inlined into log_status_update() so it is testable (ESP_LOG* is a no-op stub in
+/// host tests). log_status_update() runs from the inbound frame handlers and reports what the device
+/// said; a hub-side prediction must never be substituted into those observed fields, so it is
+/// appended as a clearly-labelled annotation instead. Only terms that actually differ are rendered —
+/// a prediction that merely confirms the observation adds nothing.
+/// @param dev Device record to read.
+/// @return e.g. " [predicted: target=100% stopped]", or an empty string when no prediction stands
+///         or every prediction agrees with what the device reported.
+inline std::string describe_prediction(const IoDevice &dev) {
+  const bool target_differs = effective_target(dev) != dev.target;
+  const bool motion_differs = effective_is_stopped(dev) != dev.is_stopped;
+  if (!target_differs && !motion_differs)
+    return {};
+  std::string out = " [predicted:";
+  if (target_differs)
+    out += " target=" + format_position(effective_target(dev));
+  if (motion_differs)
+    out += effective_is_stopped(dev) ? " stopped" : " moving";
+  out += "]";
+  return out;
+}
+
 /// @brief Log a concise status‑update line used by inbound handlers.
+///
+/// The position/target/motion fields report what the device observed — never a hub prediction. A
+/// diverging live prediction is appended by describe_prediction(), clearly labelled, not merged in.
 /// @param id Device ID.
 /// @param dev Current device state.
 /// @param suffix Optional suffix added after the state string (e.g., " (status update)").
 inline void log_status_update(const std::string &id, const IoDevice &dev, const char *suffix = "") {
-  ESP_LOGI(TAG, "Device %s: position=%s target=%s %s%s", id.c_str(), format_position(dev.position).c_str(),
-           format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving", suffix);
+  ESP_LOGI(TAG, "Device %s: position=%s target=%s %s%s%s", id.c_str(), format_position(dev.position).c_str(),
+           format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving", describe_prediction(dev).c_str(),
+           suffix);
 }
 
 /// @brief Log a decoded CMD_ERROR_RESP result with optional request-command context.

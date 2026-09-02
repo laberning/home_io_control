@@ -228,6 +228,14 @@ class RadioDriver {
   /// @return const reference to RadioCaptureInfo.
   [[nodiscard]] const RadioCaptureInfo &get_last_capture() const { return this->last_capture_; }
 
+  /// @brief Reset the diagnostic capture buffer.
+  ///
+  /// Public because ExchangeEngine blanks it at the start of every exchange: the radio only clears
+  /// this buffer when it actually begins a listen, so without an explicit reset a fully-silent
+  /// exchange's failure report would inherit the *previous* exchange's capture (frame length, RSSI,
+  /// IRQ bits) and claim "we heard something" when nothing was on air.
+  void clear_last_capture() { this->last_capture_ = RadioCaptureInfo{}; }
+
   /// @brief True while a frame is arriving on the current channel and retuning would destroy it.
   ///
   /// Consulted by ExchangeEngine::maybe_hop() — the idle-path hop — which is purely time-gated and
@@ -283,20 +291,17 @@ class RadioDriver {
   }
 
  protected:
-  /// Clear the last capture info (resets diagnostic buffer).
-  void clear_last_capture_() { this->last_capture_ = RadioCaptureInfo{}; }
-
   /// Common preamble for blocking receive: clear diagnostics and output packet.
   /// @param packet Output packet buffer to zero and prepare.
   void prepare_blocking_receive_(RadioRxPacket &packet) {
-    this->clear_last_capture_();
+    this->clear_last_capture();
     packet = RadioRxPacket{};
   }
 
   /// Common preamble for non‑blocking receive: clear diagnostics, output packet, and DIO latch.
   /// @param packet Output packet buffer to zero and prepare.
   void prepare_nonblocking_receive_(RadioRxPacket &packet) {
-    this->clear_last_capture_();
+    this->clear_last_capture();
     packet = RadioRxPacket{};
     this->clear_dio_fired();
   }

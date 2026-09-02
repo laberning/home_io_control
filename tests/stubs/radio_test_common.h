@@ -85,7 +85,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     wait_timeouts_.push_back(timeout_ms);
     call_log_.push_back(CallKind::kWait);
     if (emulate_capture_lifecycle_)
-      this->clear_last_capture_();
+      this->clear_last_capture();
     if (rx_queue_.empty()) {
       return false;
     }

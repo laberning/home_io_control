@@ -1703,6 +1703,151 @@ TEST(Exchange, FailureReportKeepsTheInformativeCaptureNotTheLastEmptyOne) {
   EXPECT_EQ(engine.get_debug().capture_freq_hz, FREQ_CH2) << "and it should describe the frame actually heard";
 }
 
+// The radio only clears its capture when it begins a listen, so without an explicit reset a
+// fully-silent exchange would inherit the *previous* exchange's capture and claim "we heard a
+// frame". This is the exact misread that sent the issue #95 analysis down a wrong path.
+TEST(Exchange, FailureReportDoesNotInheritThePreviousExchangesCapture) {
+  MockRadio radio;
+  radio.set_emulate_capture_lifecycle(true);
+  RadioDriver *radio_ptr = &radio;
+
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // Exchange 1: a direct status reply arrives and succeeds, leaving a populated radio capture.
+  IoFrame reply = build_status_response(test::DST_ID, test::OWN_ID);
+  uint8_t raw[64];
+  RadioRxPacket pkt{};
+  pkt.len = serialize(reply, raw, sizeof(raw));
+  memcpy(pkt.data, raw, pkt.len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  IoFrame response{};
+  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  ASSERT_TRUE(engine.get_debug().capture_valid) << "sanity: exchange 1 heard a frame";
+
+  // Exchange 2: nothing on air at all. Its report must describe *this* exchange. This runs the
+  // realistic listen path (default budget, no queued TX failures) and only checks FAILED + capture
+  // fields on purpose — asserting a try count here would be fragile against the host millis() stub
+  // and the total budget (see CappedExchangeDoesProportionallyLessBlockingListening for that).
+  IoFrame request2{};
+  create_get_status(request2, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  IoFrame response2{};
+  ASSERT_EQ(engine.send_and_receive(request2, response2, FREQ_CH2), ExchangeOutcome::FAILED);
+
+  EXPECT_FALSE(engine.get_debug().capture_valid)
+      << "a fully-silent exchange must not report the previous exchange's radio capture";
+  EXPECT_EQ(engine.get_debug().capture_frame_len, 0);
+  EXPECT_EQ(engine.get_debug().capture_rssi_dbm, 0);
+}
+
+// ============================================================================
+// max_tries: a scheduler-owned status poll caps its transmit attempts at SCHEDULED_POLL_MAX_TRIES
+// so a dead device does not block loop() for the full EXCHANGE_RETRY_COUNT product. Everything
+// else keeps the default.
+// ============================================================================
+
+TEST(Exchange, MaxTriesOfOneTransmitsExactlyOnce) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+    radio.queue_tx_result(false);
+
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2, /*max_tries=*/1);
+
+  EXPECT_EQ(radio.get_send_count(), 1) << "max_tries=1 must transmit once, not EXCHANGE_RETRY_COUNT times";
+  EXPECT_EQ(engine.get_debug().tries, 1u);
+  EXPECT_EQ(engine.get_debug().max_tries, 1u) << "the budgeted cap is surfaced for the failure log";
+}
+
+TEST(Exchange, MaxTriesDefaultsToTheFullRetryCount) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+    radio.queue_tx_result(false);
+
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2);  // no max_tries argument
+
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "the default is still the full retry count";
+  EXPECT_EQ(engine.get_debug().max_tries, EXCHANGE_RETRY_COUNT);
+}
+
+TEST(Exchange, MaxTriesIsClampedToTheValidRange) {
+  {  // 0 must not mean "transmit nothing".
+    MockRadio radio;
+    RadioDriver *radio_ptr = &radio;
+    TuningConfig tuning;
+    ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+    for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+      radio.queue_tx_result(false);
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+    IoFrame response{};
+    engine.send_and_receive(request, response, FREQ_CH2, /*max_tries=*/0);
+    EXPECT_EQ(radio.get_send_count(), 1) << "max_tries=0 clamps up to one transmit";
+  }
+  {  // A too-large value must not exceed the budgeted ceiling.
+    MockRadio radio;
+    RadioDriver *radio_ptr = &radio;
+    TuningConfig tuning;
+    ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+    for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+      radio.queue_tx_result(false);
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+    IoFrame response{};
+    engine.send_and_receive(request, response, FREQ_CH2, /*max_tries=*/99);
+    EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "max_tries clamps down to EXCHANGE_RETRY_COUNT";
+  }
+}
+
+// The tests above pin the outer loop bound via TX failures, which never reach a listen. This one
+// pins what the change is actually for: a capped exchange spends proportionally less time in the
+// blocking first-response wait. Realistic path (TX succeeds, nothing replies) with the budget
+// lifted and the window tiny so the host millis() stub can't trip the budget on its own. The
+// first-response wait slices internally, so the count per try is an implementation detail — assert
+// the ratio, which is exact because each try re-runs the identical listen.
+TEST(Exchange, CappedExchangeDoesProportionallyLessBlockingListening) {
+  TuningConfig tuning;
+  tuning.exchange_start_response_wait_ms = 50;
+  tuning.exchange_total_budget_ms = 60000;
+
+  auto listen_slices_for = [&](uint8_t max_tries) {
+    MockRadio radio;
+    RadioDriver *radio_ptr = &radio;
+    ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+    IoFrame response{};
+    engine.send_and_receive(request, response, FREQ_CH2, max_tries);
+    return std::make_pair(radio.get_send_count(), radio.wait_timeouts().size());
+  };
+
+  const auto one = listen_slices_for(1);
+  const auto full = listen_slices_for(EXCHANGE_RETRY_COUNT);
+
+  EXPECT_EQ(one.first, 1) << "max_tries=1 transmits once";
+  EXPECT_EQ(full.first, EXCHANGE_RETRY_COUNT);
+  EXPECT_GE(one.second, 1u) << "a single try still performs a blocking listen (not just a TX)";
+  EXPECT_EQ(full.second, one.second * EXCHANGE_RETRY_COUNT)
+      << "the default blocks in the first-response wait EXCHANGE_RETRY_COUNT times as long";
+}
+
 // ============================================================================
 // ExchangeEngine::listen() — the shared listen primitive, exercised directly through MockRadio.
 // Not yet called by any of the six wait loops (that porting happens loop by loop in later steps);

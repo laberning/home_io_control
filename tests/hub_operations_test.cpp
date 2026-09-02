@@ -510,6 +510,51 @@ TEST(HubOperations, RequestDeviceStatusTimeoutBackoffEscalatesDuringTrackedPolli
       << "second silent failure should continue the normal failure streak";
 }
 
+// A scheduler-owned status poll (StatusPollPolicy is tracking the device) caps its exchange at
+// SCHEDULED_POLL_MAX_TRIES: its failure is re-armed by the backoff ladder, so extra blocking
+// in-exchange tries only stall loop() while a device is unresponsive. A one-off poll, and every
+// user command, keep the full EXCHANGE_RETRY_COUNT. All three cases fail every transmit so the
+// send count is exactly the try count.
+TEST(HubOperations, TrackedStatusPollUsesASingleExchangeTry) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+
+  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_send_count(), 1)
+      << "a scheduler-owned poll transmits once; the 5/15/30 s backoff ladder is its retry mechanism";
+}
+
+TEST(HubOperations, OneShotStatusPollKeepsTheFullRetryBudget) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  // No begin_status_poll_tracking_(): nothing re-arms this request, so it keeps all its tries.
+
+  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT);
+}
+
+TEST(HubOperations, UserCommandKeepsTheFullRetryBudgetWhilePollTrackingIsActive) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);  // tracking on -- must not leak into commands
+
+  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "the single-try rule must never extend to user commands";
+}
+
 TEST(HubOperations, ExchangeTimeoutIncrementsFailureCountersOnce) {
   TestableComponent comp;
   MockRadio radio;

@@ -98,6 +98,16 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
 
+/// Exchange tries for a status poll the scheduler owns (StatusPollPolicy is tracking the device).
+///
+/// Such a poll's failure is re-armed by the backoff ladder (STATUS_RETRY_AFTER_FAIL_MS and its
+/// successors), so the ladder *is* its retry mechanism; stacking EXCHANGE_RETRY_COUNT blocking
+/// in-exchange tries on top of it buys no freshness and costs ~1.6 s of blocked loop() while a
+/// device is unresponsive (e.g. an actuator mid-manoeuvre). A poll with no ladder behind it keeps
+/// the full EXCHANGE_RETRY_COUNT. Trade-off: a missed post-command settle poll — also scheduler-
+/// owned — defers the Home Assistant position update to the ladder's next slot rather than ~1.5 s.
+static constexpr uint8_t SCHEDULED_POLL_MAX_TRIES = 1;
+
 /// Wall-clock ceiling on one whole exchange, retries included.
 ///
 /// EXCHANGE_RETRY_COUNT tries x (long preamble + response window + retry gap) is what actually
