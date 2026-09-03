@@ -79,7 +79,7 @@ constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
 /// always-listening one, so mirroring the capture's power-save bit would make the same false claim
 /// ATT_CLASS_5S | POWER_SAVE_ALWAYS_ALIVE made above, just with the opposite polarity.
 /// TODO(hardware-verify): unconfirmed against a real hub — see create_discover_resp()'s callers'
-/// file-level @warning (hub_key_extraction.cpp) for the general caveat this falls under.
+/// file-level @warning (key_extraction_responder.cpp) for the general caveat this falls under.
 constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
 
 /// Timestamp for our device-role CMD_DISCOVER_RESP (0x29), alongside the flags constant above. Set
@@ -94,7 +94,7 @@ constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP = 0x000E;
 /// proto_codecs.cpp's decode side uses (DISCOVERY_TIMESTAMP_MSB_SHIFT there).
 ///
 /// This is one of several file-local 0xFF low-byte masks in this codebase (see also
-/// RANDOM_LOW_BYTE_MASK in hub_key_extraction.cpp and the inline `& 0xFF` uses in
+/// RANDOM_LOW_BYTE_MASK in key_extraction_responder.cpp and the inline `& 0xFF` uses in
 /// proto_crypto.cpp's construct_iv_1w_sequence()) — a recurring pattern with no shared constant.
 /// That is consistent with how this codebase treats single-purpose local masks generally (kept
 /// file-local rather than centralized), not an oversight specific to this one.

@@ -186,8 +186,9 @@ enum class BootloaderUpgradePath : uint8_t {
 /// write could be justified on insufficient evidence:
 ///   1. !block_present -> NOT_APPLICABLE -- feature not built in.
 ///   2. !bootloader_version_known -> NOT_APPLICABLE -- an unknown current bootloader cannot
-///      justify an irreversible write. Note run_lr1121_flash_sequence_() *adopts* a fresh reading
-///      at flash time for the ordinary transceiver path; that allowance must not extend to here.
+///      justify an irreversible write. Note Lr1121FirmwareUpdateController::run_flash_sequence_()
+///      *adopts* a fresh reading at flash time for the ordinary transceiver path; that allowance
+///      must not extend to here.
 ///   3. bootloader_version doesn't identify an LR1121 -> NOT_APPLICABLE -- REJECT_WRONG_CHIP owns
 ///      wrong-chip messaging, this function does not duplicate it.
 ///   4. loader_fw != bootloader_version -> NOT_APPLICABLE -- Semtech's equality rule for the

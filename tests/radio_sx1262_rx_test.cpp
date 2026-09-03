@@ -207,13 +207,13 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //     frame carries CTRL0_PROTOCOL_1W, which is_plausible_uart_frame() (radio_soft_phy.cpp)
   //     already accepts unconditionally -- is_known_io_command() is never consulted for it.
   //   - CMD_ONEWAY_ADD_CONTROLLER / CMD_ONEWAY_REMOVE: same 1W bypass as CMD_ACTIVATE_MODE above,
-  //     not a gap -- both are actively received and handled (hub_oneway_key_adoption.cpp's
-  //     try_adopt_oneway_key_(), pairing_advisor.cpp), just never through is_known_io_command().
+  //     not a gap -- both are actively received and handled (oneway_key_adoption.cpp's
+  //     OnewayKeyAdoption::try_adopt(), pairing_advisor.cpp), just never through is_known_io_command().
   //   - CMD_SET_SENSOR / CMD_SET_SENSOR_ACK: zero references anywhere outside proto_constants.*.
   //   - CMD_DISCOVER_ALT_REQ: this codebase can transmit it (proto_commands.cpp, as an optional
   //     `pairing_discovery_commands` entry), but the reply PairingEngine actually waits for is the
   //     generic CMD_DISCOVER_RESP (0x29, already known) regardless of which discovery variant was
-  //     sent -- and hub_key_extraction.cpp's try_handle_key_extraction_frame_() only recognizes
+  //     sent -- and key_extraction_responder.cpp's KeyExtractionResponder::try_handle_frame() only recognizes
   //     CMD_DISCOVER_REQ (0x28), not this variant, so there is no live dispatch path that needs
   //     to receive 0x2E itself.
   //   - CMD_DISCOVER_ALT_RESP: captured once (velux_kux100/discover_alt_addressed_challenge_
@@ -316,7 +316,7 @@ TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
       << " bits (an 8x-too-short on-air preamble)";
 
   // Pin every one of the nine payload bytes so a zeroed or transposed field in the shared
-  // build_gfsk_packet_params_ fails here instead of silently reaching the radio. pp[0] is the
+  // build_gfsk_packet_params fails here instead of silently reaching the radio. pp[0] is the
   // opcode; pp[1..9] are packet-param bytes 0..8.
   EXPECT_EQ(pp[1], static_cast<uint8_t>((LONG_PREAMBLE * 8) >> 8)) << "byte 0: preamble length MSB (bits)";
   EXPECT_EQ(pp[2], static_cast<uint8_t>(LONG_PREAMBLE * 8)) << "byte 1: preamble length LSB (bits)";

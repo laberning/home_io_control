@@ -1,6 +1,7 @@
 // IOHOME_LR1121_FIRMWARE_UPDATE is only visible after something pulls in esphome/core/defines.h
 // (via hub_internal.h -> hub_core.h -> esphome/core/hal.h) — these #includes must run before the
 // #ifdef check below, not after (see radio_lr1121_firmware_updater.h for the fuller explanation).
+#include "lr1121_firmware_update_controller.h"
 #include "hub_internal.h"
 #include "lr1121_firmware_decisions.h"
 #include "radio_lr1121_firmware_updater.h"
@@ -24,8 +25,8 @@
 #include <cstdio>
 #include <string>
 
-/// @file hub_lr1121_firmware_update.cpp
-/// @brief LR1121 transceiver-firmware-update feature — hub wiring.
+/// @file lr1121_firmware_update_controller.cpp
+/// @brief LR1121 transceiver-firmware-update feature — orchestration collaborator.
 /// @ingroup hioc_hub
 ///
 /// Owns the impure side of the feature: the boot-time bootloader-version excursion, the cached
@@ -37,7 +38,7 @@
 ///
 /// After any bootloader excursion, the chip is unconfigured. Exactly one of two things must
 /// happen next: radio_->init() runs (the boot-time excursion below), or the ESP32 reboots
-/// (run_lr1121_flash_sequence_(), every exit after calling enter_bootloader()). There is no third
+/// (run_flash_sequence_(), every exit after calling enter_bootloader()). There is no third
 /// option — an early `return` on an error path would leave the radio silently dead: it would
 /// answer SPI, look initialized to the driver, and never work again.
 ///
@@ -53,9 +54,6 @@ namespace home_io_control {
 namespace {
 
 constexpr uint32_t LR1121_FLASH_CONFIRM_WINDOW_MS = 60 * 1000;  ///< Q3: ~60s, a button two paces away.
-/// Max value representable by Component::warn_if_blocking_over_ (a centisecond uint8_t) — see
-/// run_lr1121_flash_sequence_() for why this only reduces log spam rather than eliminating it.
-constexpr uint8_t WARN_IF_BLOCKING_OVER_MAX_CS = 255;
 
 std::string format_lr1121_fw_version(uint16_t version) {
   if (version == 0)
@@ -83,8 +81,8 @@ std::string format_lr1121_bootloader_version(uint16_t version) {
   return version == 0 ? "unknown" : format_hex16(version);
 }
 
-/// @brief Outcome of the post-bootloader-entry sanity read, factored out of
-/// run_lr1121_flash_sequence_() to keep its cognitive complexity within clang-tidy's threshold.
+/// @brief Outcome of the post-bootloader-entry sanity read, factored out of run_flash_sequence_()
+/// to keep its cognitive complexity within clang-tidy's threshold.
 enum class Lr1121SanityResult {
   OK,                 ///< type matches, and either the version matches what boot recorded, or boot
                       ///< recorded nothing and the freshly-read version positively identifies an LR1121.
@@ -118,8 +116,8 @@ Lr1121SanityResult lr1121_check_bootloader_sanity(bool known, uint16_t known_boo
 }
 
 /// @brief Human-readable reason for a sanity-check failure, for the abort log line in
-/// run_lr1121_flash_sequence_(). Factored out so that line stays one statement regardless of how
-/// many distinct sanity failures exist.
+/// run_flash_sequence_(). Factored out so that line stays one statement regardless of how many
+/// distinct sanity failures exist.
 std::string lr1121_sanity_failure_reason(Lr1121SanityResult sanity, uint16_t sanity_bootloader_version) {
   switch (sanity) {
     case Lr1121SanityResult::WRONG_TYPE:
@@ -215,8 +213,8 @@ void lr1121_log_post_write_hash(Lr1121FirmwareUpdater &updater) {
 }
 
 /// @brief Erase, then chunk-write, one image -- with percentage progress logging prefixed by
-/// `stage_label`. Shared by run_lr1121_flash_sequence_() (the single-image transceiver flash) and,
-/// under IOHOME_LR1121_BOOTLOADER_UPDATE, run_lr1121_bootloader_upgrade_sequence_()'s two writes
+/// `stage_label`. Shared by run_flash_sequence_() (the single-image transceiver flash) and,
+/// under IOHOME_LR1121_BOOTLOADER_UPDATE, run_bootloader_upgrade_sequence_()'s two writes
 /// so the erase/write/progress shape exists in exactly one place rather than being duplicated
 /// per stage.
 /// @return true if both erase and write succeeded; false leaves the region partially written, same
@@ -287,8 +285,23 @@ std::string lr1121_needs_confirmation_reason(uint8_t device_type, uint16_t bootl
 
 }  // namespace
 
-void IOHomeControlComponent::run_lr1121_boot_time_bootloader_read_() {
-  this->lr1121_firmware_updater_ = new (std::nothrow) Lr1121FirmwareUpdater(this, this->rst_pin_, this->busy_pin_);
+Lr1121FirmwareUpdateController::Lr1121FirmwareUpdateController(RadioDriver **radio, SpiAccess *spi,
+                                                               InternalGPIOPin **rst_pin, InternalGPIOPin **busy_pin,
+                                                               bool *busy,
+                                                               BeginBlockingExcursionFn begin_blocking_excursion,
+                                                               IOHomeControlComponent *hub)
+    : lr1121_flash_verdict_(FlashDecision::NEEDS_CONFIRMATION),
+      radio_(radio),
+      spi_(spi),
+      rst_pin_(rst_pin),
+      busy_pin_(busy_pin),
+      busy_(busy),
+      begin_blocking_excursion_(std::move(begin_blocking_excursion)),
+      hub_(hub) {}
+
+void Lr1121FirmwareUpdateController::run_boot_time_bootloader_read() {
+  this->lr1121_firmware_updater_ =
+      new (std::nothrow) Lr1121FirmwareUpdater(this->spi_, *this->rst_pin_, *this->busy_pin_);
   if (this->lr1121_firmware_updater_ == nullptr) {
     ESP_LOGE(detail::TAG, "LR1121 firmware update: failed to allocate the updater; bootloader version unknown");
     return;
@@ -315,10 +328,10 @@ void IOHomeControlComponent::run_lr1121_boot_time_bootloader_read_() {
   }
 }
 
-void IOHomeControlComponent::cache_lr1121_flash_verdict_() {
+void Lr1121FirmwareUpdateController::cache_flash_verdict() {
   uint8_t device_type = 0;
   uint16_t installed_fw = 0;
-  if (this->radio_ != nullptr && this->lr1121_firmware_updater_ != nullptr) {
+  if (*this->radio_ != nullptr && this->lr1121_firmware_updater_ != nullptr) {
     // Re-read via the updater's own transport rather than plumbing a getter through
     // RadioDriver/RadioLR1121 for this one caller — radio_lr1121.h gains zero new surface area
     // (Step 3/4's design). GetVersion is the same benign, side-effect-free read
@@ -344,7 +357,7 @@ void IOHomeControlComponent::cache_lr1121_flash_verdict_() {
 // callers append their own context-appropriate follow-up (or none, at boot). Splitting the
 // "press again" wording out of here is what keeps the boot-time config dump honest: nothing is
 // armed at boot, so a sentence claiming otherwise would be false there.
-std::string IOHomeControlComponent::describe_lr1121_flash_verdict_() const {
+std::string Lr1121FirmwareUpdateController::describe_flash_verdict() const {
   const uint16_t target = LR1121_FIRMWARE_UPDATE_TARGET_VERSION;
   const std::string prefix = "Firmware update target: " + format_lr1121_fw_version(target) + " -- ";
 
@@ -379,10 +392,9 @@ std::string IOHomeControlComponent::describe_lr1121_flash_verdict_() const {
 #ifndef IOHOME_LR1121_BOOTLOADER_UPDATE
       // Only meaningful advice when the feature isn't compiled in at all: a build with the
       // bootloader: sub-block already configured knows exactly which upgrade path applies (or
-      // doesn't), and trigger_lr1121_firmware_update()/lr1121_firmware_update_debug_lines_() already
-      // append their own path-specific suffix -- appending this one unconditionally used to produce
-      // messages telling the user to add a block they had already added, or contradicting the
-      // path-specific suffix outright.
+      // doesn't), and trigger()/debug_lines() already append their own path-specific suffix --
+      // appending this one unconditionally used to produce messages telling the user to add a
+      // block they had already added, or contradicting the path-specific suffix outright.
       message += " -- add a bootloader: sub-block to lr1121_firmware_update: to enable the (irreversible) upgrade "
                  "path";
 #endif
@@ -403,12 +415,12 @@ std::string IOHomeControlComponent::describe_lr1121_flash_verdict_() const {
 
 // The verdict line must still be included when the bootloader version is unknown -- this
 // used to early-return before it, so a failed boot-time excursion silently dropped the verdict
-// line too, even though the verdict is cached independently (cache_lr1121_flash_verdict_() runs
-// in setup() regardless of whether the boot-time excursion succeeded).
+// line too, even though the verdict is cached independently (cache_flash_verdict() runs in
+// setup() regardless of whether the boot-time excursion succeeded).
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
-std::string IOHomeControlComponent::describe_lr1121_bootloader_refusal_(BootloaderUpgradePath path) const {
-  // Deliberately NOT built by appending to describe_lr1121_flash_verdict_(): that function opens
-  // with "CANNOT PROCEED", which reads as final and then contradicts a suffix explaining that the
+std::string Lr1121FirmwareUpdateController::describe_bootloader_refusal(BootloaderUpgradePath path) const {
+  // Deliberately NOT built by appending to describe_flash_verdict(): that function opens with
+  // "CANNOT PROCEED", which reads as final and then contradicts a suffix explaining that the
   // rewrite is in fact available. Someone who has just pressed a button wants, in this order: what
   // happened, why, and what to do next. A returned string (rather than a direct ESP_LOGE) is what
   // makes these testable at all -- host builds compile the logging macros to no-ops.
@@ -432,14 +444,14 @@ std::string IOHomeControlComponent::describe_lr1121_bootloader_refusal_(Bootload
              " supports (that image needs " + required_text + "), and there is no way back to an older bootloader.";
     case BootloaderUpgradePath::NOT_APPLICABLE:
     default:
-      // Not reached from trigger_lr1121_firmware_update(), which falls through to the ordinary
-      // transceiver-only refusal for NOT_APPLICABLE; present so the switch is total.
-      return this->describe_lr1121_flash_verdict_();
+      // Not reached from trigger(), which falls through to the ordinary transceiver-only refusal
+      // for NOT_APPLICABLE; present so the switch is total.
+      return this->describe_flash_verdict();
   }
 }
 #endif  // IOHOME_LR1121_BOOTLOADER_UPDATE
 
-std::vector<std::string> IOHomeControlComponent::lr1121_firmware_update_debug_lines_() const {
+std::vector<std::string> Lr1121FirmwareUpdateController::debug_lines() const {
   std::vector<std::string> lines;
   if (this->lr1121_bootloader_version_known_) {
     lines.push_back("LR1121 bootloader version: " + format_hex16(this->lr1121_bootloader_version_));
@@ -447,7 +459,7 @@ std::vector<std::string> IOHomeControlComponent::lr1121_firmware_update_debug_li
     lines.push_back("LR1121 firmware update: bootloader version could not be read at boot");
   }
   if (this->lr1121_flash_verdict_known_)
-    lines.push_back(this->describe_lr1121_flash_verdict_());
+    lines.push_back(this->describe_flash_verdict());
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
   // Computed independently of the cached verdict/press logic --
   // lr1121_bootloader_upgrade_path() already folds in every precondition (known bootloader,
@@ -475,25 +487,26 @@ std::vector<std::string> IOHomeControlComponent::lr1121_firmware_update_debug_li
   return lines;
 }
 
-void IOHomeControlComponent::dump_lr1121_firmware_update_debug_() const {
-  for (const auto &line : this->lr1121_firmware_update_debug_lines_())
+void Lr1121FirmwareUpdateController::dump_debug() const {
+  for (const auto &line : this->debug_lines())
     ESP_LOGCONFIG(detail::TAG, "  %s", line.c_str());
 }
 
-void IOHomeControlComponent::arm_lr1121_flash_confirmation_() {
+void Lr1121FirmwareUpdateController::arm_flash_confirmation_() {
   this->lr1121_flash_confirmation_armed_ = true;
   // Deliberately App.scheduler's self-keyed overload, not Component::set_timeout() (the
-  // hub_key_extraction.cpp idiom this would otherwise mirror). Component::set_timeout() records
+  // key_extraction_responder.cpp idiom this would otherwise mirror). Component::set_timeout() records
   // this component, and ESPHome's scheduler skips any scheduled item belonging to a *failed*
   // component (Scheduler::should_skip_item_() -> is_item_failed_()). This method exists precisely
   // for the recovery path where radio_->init() has failed and mark_failed() has already run -- if
   // the callback were skipped there too, the confirmation window would never auto-disarm on
   // exactly the board most likely to need a second press, degrading the two-press protection to
   // "two presses ever". The self-keyed overload stores no Component, so it always fires. Do not
-  // "fix" this back to the named Component::set_timeout() idiom.
-  App.scheduler.set_timeout(this, LR1121_FLASH_CONFIRM_WINDOW_MS, [this]() {
+  // "fix" this back to the named Component::set_timeout() idiom. The self key is the hub pointer
+  // (not this collaborator's `this`), so the recorded key is unchanged by the F5 move.
+  App.scheduler.set_timeout(static_cast<const void *>(this->hub_), LR1121_FLASH_CONFIRM_WINDOW_MS, [this]() {
     // Guards against a stale timeout firing after a fresh press already consumed/re-armed the
-    // window — mirrors hub_key_extraction.cpp's KEY_EXTRACTION_AUTO_OFF_MS idiom.
+    // window — mirrors key_extraction_responder.cpp's KEY_EXTRACTION_AUTO_OFF_MS idiom.
     if (!this->lr1121_flash_confirmation_armed_)
       return;
     this->lr1121_flash_confirmation_armed_ = false;
@@ -501,19 +514,19 @@ void IOHomeControlComponent::arm_lr1121_flash_confirmation_() {
   });
 }
 
-void IOHomeControlComponent::trigger_lr1121_firmware_update() {
+void Lr1121FirmwareUpdateController::trigger() {
   // Guard 0: setup() deletes the driver and nulls radio_ when init() fails, but this button is a
   // separate component whose press_action() still reaches the hub even after mark_failed().
   // Deliberately still allow the attempt -- skipping only the standby call below -- since a radio
   // that failed to initialize is exactly the case reflashing is meant to recover.
-  if (this->radio_ == nullptr)
+  if (*this->radio_ == nullptr)
     ESP_LOGW(detail::TAG, "LR1121 firmware update: radio_ is null (failed init); proceeding without standby");
 
   // loop() guards every radio action behind `if (!this->busy_)`, so this is the same mechanism a
   // blocking exchange already uses -- no new coordination. The safety here comes from ESPHome's
   // cooperative single-threaded loop: an API-dispatched button press cannot land in the middle of
   // a blocking exchange to begin with.
-  if (this->busy_) {
+  if (*this->busy_) {
     ESP_LOGW(detail::TAG, "LR1121 firmware update: radio busy with another operation, ignoring press");
     return;
   }
@@ -529,7 +542,7 @@ void IOHomeControlComponent::trigger_lr1121_firmware_update() {
   // (hard rule 6) -- the verdict was already computed and logged at boot, so refusing here is a
   // cached-verdict read, not a fresh bootloader entry.
   if (verdict == FlashDecision::REJECT_WRONG_CHIP) {
-    ESP_LOGE(detail::TAG, "%s", this->describe_lr1121_flash_verdict_().c_str());
+    ESP_LOGE(detail::TAG, "%s", this->describe_flash_verdict().c_str());
     return;
   }
 
@@ -543,26 +556,26 @@ void IOHomeControlComponent::trigger_lr1121_firmware_update() {
         LR1121_BOOTLOADER_LOADER_FW, LR1121_FIRMWARE_UPDATE_TARGET_VERSION);
     if (upgrade_path == BootloaderUpgradePath::AVAILABLE) {
       if (!this->bootloader_rewrite_allowed_) {
-        ESP_LOGE(detail::TAG, "%s", this->describe_lr1121_bootloader_refusal_(upgrade_path).c_str());
+        ESP_LOGE(detail::TAG, "%s", this->describe_bootloader_refusal(upgrade_path).c_str());
         return;
       }
       // The switch is read once, here, and replaces the two-press confirmation for this path --
       // it is a permission, not something that stacks with the two-press window (hard rule 6's
       // "never an override" applies the other way too: it only ever *adds* this one path).
       ESP_LOGW(detail::TAG, "LR1121 bootloader rewrite: arming switch is on -- running the three-stage sequence now.");
-      this->run_lr1121_bootloader_upgrade_sequence_();
+      this->run_bootloader_upgrade_sequence_();
       return;
     }
     if (upgrade_path == BootloaderUpgradePath::BLOCKED_UNKNOWN_TARGET ||
         upgrade_path == BootloaderUpgradePath::BLOCKED_BOOTLOADER_NEWER) {
-      ESP_LOGE(detail::TAG, "%s", this->describe_lr1121_bootloader_refusal_(upgrade_path).c_str());
+      ESP_LOGE(detail::TAG, "%s", this->describe_bootloader_refusal(upgrade_path).c_str());
       return;
     }
     // upgrade_path == NOT_APPLICABLE: no upgrade possible/needed from this state (e.g. the
     // boot-time bootloader read failed, or the configured loader doesn't match this bootloader) --
     // fall through to the same refusal the transceiver-only build always gave.
 #endif
-    ESP_LOGE(detail::TAG, "%s", this->describe_lr1121_flash_verdict_().c_str());
+    ESP_LOGE(detail::TAG, "%s", this->describe_flash_verdict().c_str());
     return;
   }
 
@@ -571,36 +584,37 @@ void IOHomeControlComponent::trigger_lr1121_firmware_update() {
     // ALREADY_INSTALLED is the state a *successful* user spends the rest of the build's life
     // in -- it must not read as a warning, and its "press again" follow-up talks about re-flashing
     // rather than proceeding. Both facts are decided here, at the one call site where anything is
-    // actually about to be armed; describe_lr1121_flash_verdict_() itself stays neutral about it
-    // (see that function's comment) so the boot-time config dump never claims a window is armed.
+    // actually about to be armed; describe_flash_verdict() itself stays neutral about it (see that
+    // function's comment) so the boot-time config dump never claims a window is armed.
     const bool already_installed = (verdict == FlashDecision::ALREADY_INSTALLED);
     const std::string confirm_suffix = " -- press \"Flash LR1121 Radio Firmware\" again within " +
                                        std::to_string(LR1121_FLASH_CONFIRM_WINDOW_MS / 1000) + "s to " +
                                        (already_installed ? "re-flash anyway" : "proceed anyway");
-    const std::string message = this->describe_lr1121_flash_verdict_() + confirm_suffix;
+    const std::string message = this->describe_flash_verdict() + confirm_suffix;
     if (already_installed) {
       ESP_LOGI(detail::TAG, "%s", message.c_str());
     } else {
       ESP_LOGW(detail::TAG, "%s", message.c_str());
     }
-    this->arm_lr1121_flash_confirmation_();
+    this->arm_flash_confirmation_();
     return;
   }
 
   this->lr1121_flash_confirmation_armed_ = false;
-  this->run_lr1121_flash_sequence_();
+  this->run_flash_sequence_();
 }
 
-void IOHomeControlComponent::run_lr1121_flash_sequence_() {
-  this->busy_ = true;
+void Lr1121FirmwareUpdateController::run_flash_sequence_() {
+  *this->busy_ = true;
   // Raised for the duration of the flash so the log fills with the progress output below rather
   // than component-blocking warnings. Component::warn_if_blocking_over_ is a centisecond uint8_t
   // (max 2550ms) -- a flash can run far longer than that regardless, so this reduces warning
   // spam, it cannot eliminate every warning for a longer block. Never restored -- every exit from
-  // this point on is App.safe_reboot(), which makes the saved value moot.
-  this->warn_if_blocking_over_ = WARN_IF_BLOCKING_OVER_MAX_CS;
-  if (this->radio_ != nullptr)
-    this->radio_->set_mode_standby();  // Never enter bootloader mode with RX armed.
+  // this point on is App.safe_reboot(), which makes the saved value moot. (Injected: the hub's
+  // lambda sets the protected Component member.)
+  this->begin_blocking_excursion_();
+  if (*this->radio_ != nullptr)
+    (*this->radio_)->set_mode_standby();  // Never enter bootloader mode with RX armed.
 
   // Every exit from here on is App.safe_reboot() -- see the file header's invariant. That includes
   // the enter_bootloader() failure branch immediately below: its entry sequence runs unconditionally
@@ -679,18 +693,18 @@ void IOHomeControlComponent::run_lr1121_flash_sequence_() {
 
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
 
-void IOHomeControlComponent::run_lr1121_bootloader_upgrade_sequence_() {
-  this->busy_ = true;
-  this->warn_if_blocking_over_ = WARN_IF_BLOCKING_OVER_MAX_CS;
-  if (this->radio_ != nullptr)
-    this->radio_->set_mode_standby();
+void Lr1121FirmwareUpdateController::run_bootloader_upgrade_sequence_() {
+  *this->busy_ = true;
+  this->begin_blocking_excursion_();
+  if (*this->radio_ != nullptr)
+    (*this->radio_)->set_mode_standby();
 
   ESP_LOGW(detail::TAG,
            "LR1121 bootloader rewrite: starting the three-stage sequence, ~10s total. Mains power, not "
            "battery -- do not interrupt power. Stage 2 has no recovery path in this project if power is lost.");
 
   // --- Stage 1a: bootloader mode -- erase + write the loader image. Every exit from here on is
-  // App.safe_reboot() (see this method's doc comment in hub_core.h). ---
+  // App.safe_reboot() (see this method's doc comment in lr1121_firmware_update_controller.h). ---
   uint8_t sanity_type = 0;
   uint16_t sanity_bootloader_version = 0;
   if (!this->lr1121_firmware_updater_->enter_bootloader(sanity_type, sanity_bootloader_version)) {
@@ -713,12 +727,12 @@ void IOHomeControlComponent::run_lr1121_bootloader_upgrade_sequence_() {
     App.safe_reboot();
     return;
   }
-  // No "adopt an unknown boot-time reading" branch here, unlike run_lr1121_flash_sequence_()'s
+  // No "adopt an unknown boot-time reading" branch here, unlike run_flash_sequence_()'s
   // equivalent point: this function only ever runs when lr1121_bootloader_upgrade_path() returned
-  // AVAILABLE (trigger_lr1121_firmware_update(), the only caller), and that function's rule 2
-  // returns NOT_APPLICABLE whenever !lr1121_bootloader_version_known_ -- so an unknown bootloader
-  // can never reach this far. Not adding that branch here is deliberate: it would silently imply a
-  // reachable state that doesn't exist, right next to the irreversible write.
+  // AVAILABLE (trigger(), the only caller), and that function's rule 2 returns NOT_APPLICABLE
+  // whenever !lr1121_bootloader_version_known_ -- so an unknown bootloader can never reach this
+  // far. Not adding that branch here is deliberate: it would silently imply a reachable state that
+  // doesn't exist, right next to the irreversible write.
 
   uint32_t erase_elapsed_ms = 0, write_elapsed_ms = 0;
   if (!lr1121_erase_and_write_image_(

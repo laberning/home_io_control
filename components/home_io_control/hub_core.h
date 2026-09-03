@@ -42,11 +42,14 @@
 #include "exchange_engine.h"
 #include "pairing_engine.h"
 #include "management_actions.h"
-#include "pairing_responder.h"
+#include "key_extraction_responder.h"
 #include "oneway_controller.h"
 #include "oneway_transmitter.h"
-#include "lr1121_firmware_decisions.h"
-#include "radio_lr1121_firmware_updater.h"
+#include "oneway_key_adoption.h"
+// lr1121_firmware_update_controller.h forward-declares FlashDecision / BootloaderUpgradePath /
+// Lr1121FirmwareUpdater so lr1121_firmware_decisions.h and radio_lr1121_firmware_updater.h are
+// NOT pulled into hub_core.h — that header weight stays in the collaborator's .cpp alone.
+#include "lr1121_firmware_update_controller.h"
 #include <map>
 #include <vector>
 #include <functional>
@@ -58,6 +61,16 @@ inline constexpr uint8_t DEFAULT_TX_POWER_DBM = 17;       ///< Default TX power 
 inline constexpr uint8_t DEFAULT_PA_PIN_PA_BOOST = 0x80;  ///< SX1276 PA_CONFIG selector for the PA_BOOST output path.
 inline constexpr uint8_t DEFAULT_TCXO_VOLTAGE_SETTING_1P8V = 0x03;  ///< SX1262 DIO3 setting value for a 1.8 V TCXO.
 inline constexpr size_t POSITION_TEXT_BUFFER_SIZE = 16;  ///< Buffer for formatted position strings such as "100%".
+
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+/// Max value representable by Component::warn_if_blocking_over_ (a centisecond uint8_t, ~2550 ms
+/// ceiling). Raised for a flash excursion so the log fills with progress output rather than
+/// component-blocking warnings — a flash still runs far longer than 2550 ms, so this reduces
+/// warning spam, it cannot eliminate it. Lives here rather than in the collaborator because
+/// warn_if_blocking_over_ is protected on ESPHome's Component and only the initializer-list lambda
+/// below legitimately writes it.
+inline constexpr uint8_t LR1121_FLASH_WARN_BLOCKING_MAX_CS = 255;
+#endif
 
 // ============================================================================
 // Main Component
@@ -87,7 +100,33 @@ class IOHomeControlComponent : public Component,
         // to whichever collaborator currently owns the radio.
         oneway_transmitter_([this](const IoFrame &frame, uint32_t freq, uint16_t preamble) {
           return this->transmit_frame_(frame, freq, preamble);
-        }) {}
+        }),
+        // set_timeout() is protected on the real ESPHome Component (only public in the host stub),
+        // so a lambda defined here — with protected access — is the one legitimate caller. See
+        // oneway_key_adoption.h's NamedTimeoutFn.
+        oneway_key_adoption_([this](const char *name, uint32_t delay_ms, std::function<void()> cb) {
+          this->set_timeout(name, delay_ms, std::move(cb));
+        }),
+        key_extraction_(
+            node_id_, &radio_, &tuning_, registry_,
+            [this](const IoFrame &frame, uint32_t freq, uint16_t preamble) {
+              return this->transmit_frame_(frame, freq, preamble);
+            },
+            [this](const char *name, uint32_t delay_ms, std::function<void()> cb) {
+              this->set_timeout(name, delay_ms, std::move(cb));
+            })
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+        // Guarded initializer for the guarded member. `busy_`/`warn_if_blocking_over_` are
+        // protected: the busy pointer is taken here, and the lambda — with protected access — is
+        // the one legitimate writer of warn_if_blocking_over_. `this` doubles as SpiAccess* and as
+        // the self key for App.scheduler.set_timeout(), never to reach a protected member.
+        ,
+        lr1121_firmware_update_(
+            &radio_, this, &rst_pin_, &busy_pin_, &busy_,
+            [this]() { this->warn_if_blocking_over_ = LR1121_FLASH_WARN_BLOCKING_MAX_CS; }, this)
+#endif
+  {
+  }
 
   /// @brief Result payload used by hub-level management actions such as rename.
   /// Alias of the standalone esphome::home_io_control::ManagementActionResult struct so that
@@ -328,6 +367,7 @@ class IOHomeControlComponent : public Component,
 
   /// @brief Arm or disarm the "Recover System Key" (key extraction) responder.
   ///
+  /// Thin forwarder to the KeyExtractionResponder collaborator (key_extraction_responder.h).
   /// Arming picks a fresh throwaway node ID, resets the pairing_responder state machine to
   /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, the 0x28/0x2C/0x31/0x32 branches
   /// in process_received_packet_() emulate an unpaired device so a user's existing hub can pair to
@@ -337,7 +377,7 @@ class IOHomeControlComponent : public Component,
   /// system_key_. Virtual so platform unit tests can substitute a mock hub, matching every other
   /// queue_*/set_* entry point on this component.
   /// @param armed Desired state.
-  virtual void set_key_extraction_armed(bool armed);
+  virtual void set_key_extraction_armed(bool armed) { this->key_extraction_.set_armed(armed); }
 
   /// Register a callback invoked whenever the key-extraction armed state changes — manual
   /// toggle, successful extraction, or auto-off timeout — so the switch entity can keep its
@@ -345,18 +385,17 @@ class IOHomeControlComponent : public Component,
   /// mirrors set_pairing_result_callback().
   /// @param cb Callable receiving the new armed state.
   void set_key_extraction_armed_callback(std::function<void(bool)> cb) {
-    this->key_extraction_armed_callback_ = std::move(cb);
+    this->key_extraction_.set_armed_callback(std::move(cb));
   }
 
-  /// Arm or disarm the 1W controller-key adoption listener. While armed, an overheard
-  /// CMD_ONEWAY_ADD_CONTROLLER broadcast is decrypted and reported once, after which the hub
-  /// disarms itself — one adoption per arm, which bounds how long a key-bearing frame can be
-  /// captured and matches the single physical key-copy gesture the user performs. Receive-only:
-  /// unlike 2W key extraction this never transmits, it only listens for a frame a 1W device
-  /// broadcasts of its own accord. Virtual so platform unit tests can substitute a mock hub,
-  /// matching every other queue_*/set_* entry point on this component.
+  /// Arm or disarm the 1W controller-key adoption listener. Thin forwarder to the OnewayKeyAdoption
+  /// collaborator (oneway_key_adoption.h) — while armed, an overheard CMD_ONEWAY_ADD_CONTROLLER
+  /// broadcast is decrypted and reported once, after which the listener disarms itself (one
+  /// adoption per arm). Receive-only: unlike 2W key extraction this never transmits, it only
+  /// listens for a frame a 1W device broadcasts of its own accord. Virtual so platform unit tests
+  /// can substitute a mock hub, matching every other queue_*/set_* entry point on this component.
   /// @param armed Desired state.
-  virtual void set_oneway_key_adoption_armed(bool armed);
+  virtual void set_oneway_key_adoption_armed(bool armed) { this->oneway_key_adoption_.set_armed(armed); }
 
   /// Register a callback invoked whenever the 1W key-adoption armed state changes — manual
   /// toggle, successful adoption, or auto-off timeout — so the switch entity stays in sync when
@@ -364,12 +403,12 @@ class IOHomeControlComponent : public Component,
   /// set_key_extraction_armed_callback().
   /// @param cb Callable receiving the new armed state.
   void set_oneway_key_adoption_armed_callback(std::function<void(bool)> cb) {
-    this->oneway_key_adoption_armed_callback_ = std::move(cb);
+    this->oneway_key_adoption_.set_armed_callback(std::move(cb));
   }
 
   /// Whether the 1W key-adoption listener is currently armed.
   /// @return true while armed.
-  [[nodiscard]] bool oneway_key_adoption_armed() const { return this->oneway_key_adoption_armed_; }
+  [[nodiscard]] bool oneway_key_adoption_armed() const { return this->oneway_key_adoption_.armed(); }
 
   /// @brief Set whether ManagementActions::probe_device()/probe_sweep() are allowed to run.
   ///
@@ -589,16 +628,18 @@ class IOHomeControlComponent : public Component,
   virtual void queue_set_lock_state(const std::string &device_id, bool locked);
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
-  /// @brief Entry point for the "Flash LR1121 Radio Firmware" button.
+  /// @brief Entry point for the "Flash LR1121 Radio Firmware" button. Thin forwarder to the
+  /// Lr1121FirmwareUpdateController collaborator (lr1121_firmware_update_controller.h).
   ///
   /// Only exists when a `lr1121_firmware_update:` block is configured. See
-  /// hub_lr1121_firmware_update.cpp for the full contract, including the safety invariant that
-  /// every bootloader excursion this triggers must end in either radio_->init() or
+  /// lr1121_firmware_update_controller.cpp for the full contract, including the safety invariant
+  /// that every bootloader excursion this triggers must end in either radio_->init() or
   /// App.safe_reboot() — there is no third option.
-  void trigger_lr1121_firmware_update();
+  void trigger_lr1121_firmware_update() { this->lr1121_firmware_update_.trigger(); }
 
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
   /// @brief Set by the "Allow LR1121 Bootloader Rewrite (Irreversible)" switch's write_state().
+  /// Thin forwarder to the Lr1121FirmwareUpdateController collaborator.
   ///
   /// A permission, not an override: this can only convert a cached
   /// BootloaderUpgradePath::AVAILABLE verdict into "run the three-stage sequence" (bootloader
@@ -608,7 +649,9 @@ class IOHomeControlComponent : public Component,
   /// sequence once it starts, so the switch cannot change mid-flash. Deliberately not named
   /// anything with "armed" -- lr1121_flash_confirmation_armed_ already means the two-press window
   /// this switch *replaces* for its own path, and a reader must never have to guess which is meant.
-  void set_bootloader_rewrite_allowed(bool allowed) { this->bootloader_rewrite_allowed_ = allowed; }
+  void set_bootloader_rewrite_allowed(bool allowed) {
+    this->lr1121_firmware_update_.set_bootloader_rewrite_allowed(allowed);
+  }
 #endif
 #endif
 
@@ -637,98 +680,11 @@ class IOHomeControlComponent : public Component,
   /// @param packet Raw radio packet containing a parsed IoFrame.
   void process_received_packet_(const RadioRxPacket &packet);
 
-  // --- Key-extraction responder ("Accept Foreign Pairing") RX handlers ---
-  // Small delegating wrappers called from process_received_packet_(); the actual decision logic
-  // lives in pairing_responder.h so it stays pure and host-testable. See hub_key_extraction.cpp.
-
-  /// Dispatch a frame to the key-extraction responder if it's one of its 0x28/0x2C/0x31/0x32
-  /// frames and the responder is armed. Factored out of process_received_packet_() purely to keep
-  /// that function's cognitive complexity under the clang-tidy threshold, mirroring
-  /// PairingEngine::record_discovery_rx_telemetry_()'s reason for existing.
-  /// @param frame Parsed inbound frame.
-  /// @return true if the frame was handled (caller should stop further dispatch for it).
-  bool try_handle_key_extraction_frame_(const IoFrame &frame);
-  /// Decode an inbound CMD_ONEWAY_ADD_CONTROLLER (0x30) while the 1W key-adoption listener is
-  /// armed, report the result, and disarm. Returns false — including when disarmed — so the
-  /// frame still flows through the normal 1W logging path unchanged; this listener observes,
-  /// it does not consume.
-  /// @param frame Parsed inbound 1W frame.
-  void try_adopt_oneway_key_(const IoFrame &frame);
-  /// Remember the most recent 1W target device class observed from `info.src`, for the 1W
-  /// key-adoption report's `io_device_type` prefill (see build_oneway_adoption_report(),
-  /// hub_internal.h). No-op unless armed and `info.target_type` is a real class — the
-  /// add-controller frame itself broadcasts to "all" (no class), so decoding it never clobbers a
-  /// genuine earlier observation from the same sender. Called unconditionally from the 1W RX
-  /// branch (hub_status.cpp), mirroring try_adopt_oneway_key_()'s "always call, self-gate on
-  /// armed" shape.
-  /// @param info Already-decoded 1W frame info (see decode_1w_frame()).
-  void record_oneway_observed_class_(const OneWayFrameInfo &info);
-  /// Handle an inbound CMD_DISCOVER_REQ (0x28) while the key-extraction responder is armed.
-  /// @param frame Parsed inbound discovery broadcast.
-  void handle_key_extraction_discover_(const IoFrame &frame);
-  /// Handle an inbound CMD_DISCOVER_CONFIRM (0x2C) addressed to our throwaway node ID while armed.
-  /// @param frame Parsed inbound discovery-confirm frame.
-  void handle_key_extraction_discover_confirm_(const IoFrame &frame);
-  /// Handle an inbound CMD_KEY_INIT (0x31) addressed to our throwaway node ID while armed.
-  /// @param frame Parsed inbound key-init frame.
-  void handle_key_extraction_key_init_(const IoFrame &frame);
-  /// Handle an inbound CMD_KEY_TRANSFER (0x32) addressed to our throwaway node ID while armed.
-  /// @param frame Parsed inbound key-transfer frame.
-  void handle_key_extraction_key_transfer_(const IoFrame &frame);
-  /// Handle an inbound CMD_ADDRESS_REQ (0x36) addressed to our throwaway node ID while armed.
-  /// Some hubs (Velux KLR200) send this after completing the key exchange, to verify the
-  /// backbone address they were given — see pairing_responder::on_address_req().
-  /// @param frame Parsed inbound address-request frame.
-  void handle_key_extraction_address_req_(const IoFrame &frame);
-  /// Handle an inbound CMD_CHALLENGE_REQ (0x3C) addressed to our throwaway node ID while armed and
-  /// in SENT_ADDRESS_RESP — the hub-issued challenge against our own CMD_ADDRESS_RESP, closing the
-  /// address-verification round a CMD_ADDRESS_REQ opened. See
-  /// pairing_responder::on_address_challenge().
-  /// @param frame Parsed inbound challenge-request frame.
-  void handle_key_extraction_address_challenge_(const IoFrame &frame);
-  /// Generate a random throwaway node ID for one key-extraction arm cycle, avoiding collisions
-  /// with the broadcast addresses, this hub's own real node ID, and any registered device.
-  /// @param out Output: 3-byte node ID.
-  void generate_key_extraction_throwaway_id_(uint8_t out[NODE_ID_SIZE]);
-  /// Transmit a key-extraction reply frame on all 3 IO-homecontrol channels, using the radio
-  /// driver's response_preamble() rather than a fixed SHORT_PREAMBLE/LONG_PREAMBLE constant —
-  /// long enough that a channel-hopping receiver reliably lands on it, short enough that 3
-  /// sequential transmissions don't block the main loop for the better part of a second (see the
-  /// implementation comment in hub_key_extraction.cpp for the hardware-confirmed reasoning).
-  /// Shared by every RX handler so the preamble choice and channel list are defined once.
-  /// @param frame Frame to broadcast (already built by the caller).
-  void broadcast_key_extraction_reply_(const IoFrame &frame);
-  /// Emit the security-sensitive "system key extracted" log block (see redaction.h — this is the
-  /// one deliberate, explicit exception to that file's masking, not a loosening of it).
-  void log_key_extraction_result_();
-  /// (Re)arm the post-extraction grace window that replaces the old immediate disarm-on-extraction:
-  /// called once when the key is first recovered, and again on every sign of hub progress after
-  /// that (an inbound 0x36, an outbound 0x3D) so a slow multi-retry hub isn't cut off mid-round.
-  /// Uses the same named-timer replace-on-reschedule idiom as the 10-minute auto-off timer above —
-  /// see hub_key_extraction.cpp for why a naive "only disarm if DISARMED" guard inside the callback
-  /// is not enough once a manual disarm-and-rearm can happen inside the window.
-  void arm_post_extraction_grace_();
-  /// True whenever the key-extraction responder has replied at least once, is waiting on the hub's
-  /// next step, and that wait is still within its bounded hold window — i.e.
-  /// `key_extraction_ctx_.state` is neither DISARMED (feature unused) nor ARMED_IDLE (armed, but no
-  /// discovery request seen yet), AND `key_extraction_hold_deadline_ms_` has not yet passed. loop()
-  /// uses this to hold CH2 instead of running the generic idle-hop scan, and to defer background
-  /// status polls, while an attempt is in flight.
-  ///
-  /// The deadline is a plain timestamp, not a named `set_timeout()` timer: releasing the CH2 hold
-  /// is purely a radio-scheduling optimization (see key_extraction_hold_deadline_ms_'s own doc
-  /// comment for why it is deliberately decoupled from `key_extraction_ctx_.state` itself), so
-  /// nothing needs to fire a callback when it lapses — the next loop() iteration simply stops
-  /// taking the CH2-hold branch on its own. Default-constructed, the deadline is 0, which is always
-  /// in the past relative to any real `millis()` reading once the device has been running — so a
-  /// mid-exchange state reached without the deadline having been (re)set (e.g. a reply-builder
-  /// failure between the state guard and the deadline update) safely never holds CH2, rather than
-  /// holding it unboundedly.
-  [[nodiscard]] bool key_extraction_awaiting_reply_() const {
-    return this->key_extraction_ctx_.state != pairing_responder::ResponderState::DISARMED &&
-           this->key_extraction_ctx_.state != pairing_responder::ResponderState::ARMED_IDLE &&
-           millis() < this->key_extraction_hold_deadline_ms_;
-  }
+  /// True while the key-extraction responder is mid-attempt and still within its bounded CH2-hold
+  /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
+  /// — kept on the hub because defer_background_poll_() and tests/hub_core_test.cpp reach it here,
+  /// mirroring the two set_key_extraction_armed* bindings.
+  [[nodiscard]] bool key_extraction_awaiting_reply_() const { return this->key_extraction_.awaiting_reply(); }
 
   /// Extract supported position or metadata info from a response frame and merge it into the device record.
   /// @param frame IoFrame containing a supported inbound command such as CMD_PRIVATE_RESP,
@@ -992,77 +948,19 @@ class IOHomeControlComponent : public Component,
   void dump_oneway_controllers_config_() const;
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
-  // --- LR1121 firmware update (hub_lr1121_firmware_update.cpp) ---
-  /// @brief Boot-time bootloader-version excursion.
-  ///
-  /// Called from setup() after select_and_construct_radio_() and before radio_->init() — at that
-  /// point nothing has configured the radio yet, so a bootloader excursion costs one extra chip
-  /// reset and needs no reboot afterward (unlike every other bootloader excursion in this
-  /// feature). Constructs lr1121_firmware_updater_, runs the excursion, and caches the bootloader
-  /// version/type. Never fails setup(): a failed read just leaves the bootloader version
-  /// "unknown" and lets radio_->init() proceed normally.
-  void run_lr1121_boot_time_bootloader_read_();
-  /// @brief Compute and cache the flash verdict once radio_->init() has produced (or failed to
-  /// produce) an installed-firmware-version read.
-  ///
-  /// Must run after init(), not during the boot-time excursion above: the installed version comes
-  /// from configure_radio_(), which runs inside init(). Called from setup() regardless of whether
-  /// init() succeeded — see the null-radio_ recovery-path reasoning in
-  /// trigger_lr1121_firmware_update()'s guard 0.
-  void cache_lr1121_flash_verdict_();
-  /// @brief Emit the bootloader version and cached flash verdict to the config dump.
-  /// Called from dump_config(), next to the existing radio_->dump_debug() call.
-  void dump_lr1121_firmware_update_debug_() const;
-  /// @brief Pure content behind dump_lr1121_firmware_update_debug_(), factored out so it is
-  /// testable without a log-capturing harness (ESP_LOGCONFIG is a no-op in host tests). Always
-  /// includes the verdict line when the verdict is known, independent of whether the bootloader
-  /// version is -- see the implementation for why that independence matters.
-  std::vector<std::string> lr1121_firmware_update_debug_lines_() const;
-  /// @brief Human-readable explanation of the cached verdict, shared by
-  /// dump_lr1121_firmware_update_debug_() and trigger_lr1121_firmware_update() so the boot-time
-  /// config dump and a button-press log always say the same thing.
-  /// @return A complete log message (no trailing newline).
-  std::string describe_lr1121_flash_verdict_() const;
-
-#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
-  /// @brief User-facing text for a bootloader-rewrite refusal at button-press time.
-  ///
-  /// Separate from describe_lr1121_flash_verdict_() rather than a suffix on it: that function
-  /// opens with "CANNOT PROCEED", which reads as final and would then contradict an explanation
-  /// that the rewrite is available. Leads with the outcome (nothing happened), then the reason,
-  /// then the next action. Returns a string rather than logging directly so it stays testable --
-  /// host builds compile the ESP_LOG* macros to no-ops.
-  /// @param path The cached upgrade path that produced the refusal.
-  /// @return The message to log.
-  std::string describe_lr1121_bootloader_refusal_(BootloaderUpgradePath path) const;
-#endif
-  /// @brief Arm the two-press confirmation window and schedule its auto-disarm.
-  /// Mirrors hub_key_extraction.cpp's KEY_EXTRACTION_AUTO_OFF_MS idiom (named set_timeout,
-  /// guard against a stale callback after a fresh press already disarmed).
-  void arm_lr1121_flash_confirmation_();
-  /// @brief The bootloader-entry-through-post-flash-verify sequence, run only once
-  /// trigger_lr1121_firmware_update() has decided to actually flash. Split out from that method
-  /// to keep its own cognitive complexity within clang-tidy's threshold (see the implementation
-  /// plan's ground rules).
-  ///
-  /// Per the ground rules' safety invariant: once this method's bootloader entry succeeds, every
-  /// exit — including every failure path — ends in `App.safe_reboot()`. There is no `return` in
-  /// here that leaves the chip unconfigured without also rebooting the ESP32.
-  void run_lr1121_flash_sequence_();
-
-#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
-  /// @brief The three-stage bootloader-rewrite sequence (ADR 0021): write the loader image,
-  /// reboot into it, rewrite the bootloader via 0x81xx, then write the transceiver image. Run
-  /// only once trigger_lr1121_firmware_update() has decided the switch permits it and
-  /// the cached path is BootloaderUpgradePath::AVAILABLE.
-  ///
-  /// Same safety invariant as run_lr1121_flash_sequence_(): every exit past the first
-  /// enter_bootloader() call is App.safe_reboot(), including every stage's failure path -- a
-  /// stage-2 failure must reboot, not fall through to stage 3. Stage 2 (0x8100 in flight) is the
-  /// one step with no recovery path in this project; every log line in that stage must say so
-  /// plainly and must never reuse this component's ordinary "press again" phrasing.
-  void run_lr1121_bootloader_upgrade_sequence_();
-#endif
+  // --- LR1121 firmware update: thin forwarders to the Lr1121FirmwareUpdateController collaborator
+  //     (lr1121_firmware_update_controller.h). setup()/dump_config() keep calling these names; the
+  //     orchestration and every safety invariant live in the collaborator's .cpp. ---
+  /// Boot-time bootloader-version excursion — forwards. Called from setup() after
+  /// select_and_construct_radio_() and before radio_->init().
+  void run_lr1121_boot_time_bootloader_read_() { this->lr1121_firmware_update_.run_boot_time_bootloader_read(); }
+  /// Compute and cache the flash verdict once radio_->init() has produced (or failed to produce)
+  /// an installed-firmware-version read — forwards. Called from setup() regardless of whether
+  /// init() succeeded.
+  void cache_lr1121_flash_verdict_() { this->lr1121_firmware_update_.cache_flash_verdict(); }
+  /// Emit the bootloader version and cached flash verdict to the config dump — forwards. Called
+  /// from dump_config(), next to the existing radio_->dump_debug() call.
+  void dump_lr1121_firmware_update_debug_() const { this->lr1121_firmware_update_.dump_debug(); }
 #endif
 
   // --- Radio driver ---
@@ -1099,42 +997,6 @@ class IOHomeControlComponent : public Component,
   std::vector<std::string> exposed_senders_;
   /// Invoked once after every pairing attempt completes; see set_pairing_result_callback().
   std::function<void()> pairing_result_callback_;
-  /// State for the current "Accept Foreign Pairing" (key-extraction) arm cycle; DISARMED by
-  /// default so a fresh boot never responds to foreign pairing traffic. See pairing_responder.h.
-  pairing_responder::ResponderContext key_extraction_ctx_;
-  /// Deadline (millis()) until which loop() should hold CH2 for the key-extraction responder,
-  /// deliberately independent of `key_extraction_ctx_.state` itself. Set (not "armed" — this is a
-  /// plain timestamp, not a named `set_timeout()` timer) on every sign of hub progress: the three
-  /// pre-extraction reply handlers (handle_key_extraction_discover_(), ..._discover_confirm_(),
-  /// ..._key_init_(), hub_key_extraction.cpp) push it out by KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS,
-  /// and arm_post_extraction_grace_() pushes it out by KEY_EXTRACTION_POST_EXTRACT_GRACE_MS so the
-  /// hold also covers the (much longer) post-extraction address-verification phase it governs.
-  ///
-  /// Deliberately independent of `key_extraction_ctx_.state`: the pure guards in
-  /// pairing_responder.cpp decide whether an inbound frame is accepted by checking `state` alone,
-  /// never this deadline, so a real (slower) hub's next frame still completes the exchange
-  /// correctly even if it arrives after the hold has expired. Coupling the two — letting the
-  /// deadline also force `state` back to ARMED_IDLE — would silently discard that live protocol
-  /// progress instead of just releasing the radio hold. See key_extraction_awaiting_reply_()'s doc
-  /// comment for how this is consumed.
-  uint32_t key_extraction_hold_deadline_ms_{0};
-  /// Invoked whenever the key-extraction armed state changes; see set_key_extraction_armed_callback().
-  std::function<void(bool)> key_extraction_armed_callback_;
-  /// True while the 1W key-adoption listener is armed; see set_oneway_key_adoption_armed().
-  bool oneway_key_adoption_armed_{false};
-  /// Invoked whenever the 1W key-adoption armed state changes; see
-  /// set_oneway_key_adoption_armed_callback().
-  std::function<void(bool)> oneway_key_adoption_armed_callback_;
-  /// Most recent 1W target device class observed from a sender while the key-adoption listener
-  /// is armed. Single-slot — this is a one-gesture flow, not a per-node registry — and reset on
-  /// every arm so a stale observation from an earlier window never leaks into the next one. Feeds
-  /// the `io_device_type` prefill in the adoption report; see record_oneway_observed_class_().
-  struct OneWayObservedClass {
-    uint8_t node[NODE_ID_SIZE]{};
-    DeviceType type{DeviceType::UNKNOWN};
-    bool valid{false};
-  };
-  OneWayObservedClass oneway_last_observed_class_{};
   /// Whether diagnostic probes (ManagementActions::probe_device()/probe_sweep()) are enabled.
   /// False by default so a build that didn't opt in via `diagnostic_probes: true` never sends an
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().
@@ -1150,6 +1012,25 @@ class IOHomeControlComponent : public Component,
   /// The third collaborator that drives the radio (ADR 0004), and the only one that awaits
   /// nothing — 1W has no reply to wait for.
   OneWayTransmitter oneway_transmitter_;
+  /// Opt-in, receive-only 1W controller-key adoption listener (oneway_key_adoption.cpp). Armed via
+  /// the "Recover 1W Controller Key" switch; observes an overheard CMD_ONEWAY_ADD_CONTROLLER and
+  /// reports the key once, then disarms. Declared after oneway_transmitter_ so member-init order
+  /// matches the initializer list.
+  OnewayKeyAdoption oneway_key_adoption_;
+  /// Device-role responder for the "Recover System Key" feature (key_extraction_responder.cpp).
+  /// Owns the pairing_responder::ResponderContext, the throwaway-ID/auto-off/grace-window
+  /// machinery, and the device-role reply TX. Declared after registry_/radio_/tuning_/node_id_
+  /// (which it references) and after oneway_key_adoption_ so member-init order matches the
+  /// initializer list.
+  KeyExtractionResponder key_extraction_;
+#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
+  /// Orchestrates the compile-gated LR1121 transceiver-firmware-update feature
+  /// (lr1121_firmware_update_controller.cpp): boot-time bootloader read, cached flash verdict,
+  /// two-press confirmation window, and the button-triggered flash/bootloader-rewrite sequences.
+  /// Guarded member AND guarded initializer — an unguarded initializer for a guarded member is the
+  /// classic way this breaks only under make firmware-test.
+  Lr1121FirmwareUpdateController lr1121_firmware_update_;
+#endif
   /// Subscribers to the per-command 1W report; one per "Last 1W Command" sensor.
   std::vector<OneWayCommandReportFn> oneway_report_callbacks_;
 
@@ -1165,31 +1046,6 @@ class IOHomeControlComponent : public Component,
   /// has already released any deferred poll, so this one starts fresh); otherwise holds at the
   /// burst's start. Bounds defer_background_poll_() via ONEWAY_POLL_DEFER_CAP_MS.
   uint32_t first_1w_activity_ms_{0};
-
-#ifdef IOHOME_LR1121_FIRMWARE_UPDATE
-  // --- LR1121 firmware update state (hub_lr1121_firmware_update.cpp) ---
-  /// Heap-allocated in setup(), like radio_ — constructed once, used by both the boot-time
-  /// excursion and any later button press. Never deleted/reconstructed at runtime.
-  Lr1121FirmwareUpdater *lr1121_firmware_updater_{nullptr};
-  bool lr1121_bootloader_version_known_{false};  ///< False until the boot-time excursion succeeds.
-  uint8_t lr1121_bootloader_chip_type_{0};       ///< `type` byte from the boot-time bootloader GetVersion.
-  uint16_t lr1121_bootloader_version_{0};        ///< Bootloader version from the boot-time excursion.
-  bool lr1121_flash_verdict_known_{false};       ///< False until cache_lr1121_flash_verdict_() has run.
-  FlashDecision lr1121_flash_verdict_{FlashDecision::NEEDS_CONFIRMATION};  ///< Cached verdict (see decisions header).
-  uint16_t lr1121_installed_fw_{0};  ///< Installed firmware version at the time the verdict was cached (0=unknown).
-  /// `device_type` byte from the same normal-mode GetVersion that produced lr1121_installed_fw_
-  /// (0=unknown, e.g. after a failed init()) -- kept alongside it so describe_lr1121_flash_verdict_()
-  /// can name which chip a REJECT_WRONG_CHIP verdict actually saw. See lr1121_flash_decision()'s
-  /// `device_type` parameter (layer 3) for why this is a distinct value from
-  /// lr1121_bootloader_chip_type_ above (layer 4, bootloader-mode).
-  uint8_t lr1121_installed_device_type_{0};
-  bool lr1121_flash_confirmation_armed_{false};  ///< True during the two-press confirmation window.
-#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
-  /// Set by the arming switch (IOHomeLr1121BootloaderRewriteSwitch); see
-  /// set_bootloader_rewrite_allowed()'s comment above for what this may and may not affect.
-  bool bootloader_rewrite_allowed_{false};
-#endif
-#endif
 };
 
 // ----------------------------------------------------------------------------

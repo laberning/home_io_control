@@ -98,13 +98,9 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::pairing_engine_;
   using IOHomeControlComponent::transmit_frame_;
   using IOHomeControlComponent::process_received_packet_;
-  using IOHomeControlComponent::key_extraction_ctx_;
-  using IOHomeControlComponent::generate_key_extraction_throwaway_id_;
-  using IOHomeControlComponent::arm_post_extraction_grace_;
+  using IOHomeControlComponent::key_extraction_;
   using IOHomeControlComponent::key_extraction_awaiting_reply_;
-  using IOHomeControlComponent::key_extraction_hold_deadline_ms_;
-  using IOHomeControlComponent::oneway_last_observed_class_;
-  using IOHomeControlComponent::record_oneway_observed_class_;
+  using IOHomeControlComponent::oneway_key_adoption_;
   using IOHomeControlComponent::update_device_status_;
   using IOHomeControlComponent::notify_device_update_;
   using IOHomeControlComponent::begin_status_poll_tracking_;
@@ -117,23 +113,12 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::first_1w_activity_ms_;
   using IOHomeControlComponent::defer_background_poll_;
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
-  using IOHomeControlComponent::lr1121_firmware_updater_;
-  using IOHomeControlComponent::lr1121_bootloader_version_known_;
-  using IOHomeControlComponent::lr1121_bootloader_chip_type_;
-  using IOHomeControlComponent::lr1121_bootloader_version_;
-  using IOHomeControlComponent::lr1121_flash_verdict_known_;
-  using IOHomeControlComponent::lr1121_flash_verdict_;
-  using IOHomeControlComponent::lr1121_installed_fw_;
-  using IOHomeControlComponent::lr1121_installed_device_type_;
-  using IOHomeControlComponent::lr1121_flash_confirmation_armed_;
-  using IOHomeControlComponent::describe_lr1121_flash_verdict_;
-  using IOHomeControlComponent::lr1121_firmware_update_debug_lines_;
+  // The LR1121 feature moved to the Lr1121FirmwareUpdateController collaborator (F5). Its state
+  // and describe_*/debug_lines are reached through comp.lr1121_firmware_update_.<x>; the hub keeps
+  // thin forwarders for the two setup()-called entry points, promoted here as before.
+  using IOHomeControlComponent::lr1121_firmware_update_;
   using IOHomeControlComponent::run_lr1121_boot_time_bootloader_read_;
   using IOHomeControlComponent::cache_lr1121_flash_verdict_;
-#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
-  using IOHomeControlComponent::bootloader_rewrite_allowed_;
-  using IOHomeControlComponent::describe_lr1121_bootloader_refusal_;
-#endif
 #endif
 };
 

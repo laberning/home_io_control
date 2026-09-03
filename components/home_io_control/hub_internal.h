@@ -296,7 +296,7 @@ inline std::map<std::string, std::string> build_sender_event_data(const OneWayFr
 ///
 /// The one deliberate place system-key bytes are formatted for display, shared by both
 /// key-recovery features so neither forks its own copy: 2W "Accept Foreign Pairing"
-/// (hub_key_extraction.cpp::log_key_extraction_result_()) and 1W controller-key adoption
+/// (key_extraction_responder.cpp::KeyExtractionResponder::log_result_()) and 1W controller-key adoption
 /// (build_oneway_adoption_report() below). See redaction.h for the masking rules this
 /// intentionally does not apply to — both callers are the deliberate exception, not a loosening
 /// of it.
@@ -374,7 +374,7 @@ inline const char *oneway_mac_status_name(OneWayMacStatus status) {
 /// Pure — takes already-decoded values, performs no I/O — so it is directly unit-testable
 /// without a live radio or a captured log line (ESP_LOG's host stub discards its arguments).
 /// This is the single intentional place `adopted.system_key` is formatted for display (via
-/// format_key_hex() above); the caller (hub_oneway_key_adoption.cpp) passes the returned text to
+/// format_key_hex() above); the caller (oneway_key_adoption.cpp) passes the returned text to
 /// one ESP_LOGW(...,"%s",...) call and nowhere else.
 ///
 /// `node_id` is deliberately never mentioned as something to fill in — a later step derives one
@@ -389,7 +389,7 @@ inline const char *oneway_mac_status_name(OneWayMacStatus status) {
 ///
 /// @param adopted Decoded controller identity from decode_1w_add_controller() (proto_codecs.h).
 /// @param observed_type_known True if this sender's other 1W traffic was observed while armed
-/// (see IOHomeControlComponent::record_oneway_observed_class_()); false prints a commented-out
+/// (see OnewayKeyAdoption::record_observed_class()); false prints a commented-out
 /// fallback pointing at the DEBUG log line that would reveal it instead.
 /// @param observed_type The observed target class; only meaningful when observed_type_known.
 /// @return Multi-line report text, ready to pass straight to a single ESP_LOGW(...,"%s",...) call.
@@ -448,7 +448,7 @@ inline std::string build_oneway_adoption_report(const OneWayAdoptedKey &adopted,
 ///
 /// Pure — takes already-decoded values, performs no I/O — so it is directly unit-testable without
 /// a live radio, mirroring build_oneway_adoption_report() above; the two features end up sharing
-/// report *structure* as well as format_key_hex(). The caller (hub_key_extraction.cpp) logs the
+/// report *structure* as well as format_key_hex(). The caller (key_extraction_responder.cpp) logs the
 /// result through log_multiline_result() and nowhere else — this is the single intentional place
 /// the recovered `system_key` is formatted for display, a deliberate exception to redaction.h's
 /// masking.

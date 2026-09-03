@@ -12,7 +12,7 @@
 /// takes the place node addressing has for 2W. See ADR 0027.
 ///
 /// A hub holds several, deliberately: adopting a foreign 1W network's key (see
-/// hub_oneway_key_adoption.cpp) produces an identity whose key is *not* the hub's own, and it
+/// oneway_key_adoption.cpp) produces an identity whose key is *not* the hub's own, and it
 /// must coexist with identities on the hub's own network rather than replace them.
 ///
 /// @note Ownership. These identities belong to the `OneWayTransmitter` collaborator

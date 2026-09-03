@@ -204,7 +204,7 @@ class ManagementActions {
   /// reintroduce the different failure mode a 3-channel-burst transmit caused elsewhere: firing
   /// three long-preamble transmits back-to-back with no listening in between blew through the
   /// tight per-try response wait windows and broke exchanges in both directions (see
-  /// `IOHomeControlComponent::broadcast_key_extraction_reply_()`'s doc comment).
+  /// `KeyExtractionResponder::broadcast_reply_()`'s doc comment).
   ///
   /// This still blocks the caller for the full three-window duration (roughly
   /// `3 × pairing_discovery_wait_ms`, ~6 s at the 2000 ms default) and therefore trips ESPHome's

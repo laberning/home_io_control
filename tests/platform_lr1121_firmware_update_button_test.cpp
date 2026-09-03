@@ -27,15 +27,15 @@ TEST(PlatformLr1121FirmwareUpdateButton, PressDispatchesToHubTrigger) {
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
 
   IOHomeLr1121FirmwareUpdateButton button;
   button.set_parent(&hub);
   button.press();
 
-  EXPECT_TRUE(hub.lr1121_flash_confirmation_armed_)
+  EXPECT_TRUE(hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_)
       << "pressing the button should have reached trigger_lr1121_firmware_update() and armed the "
          "confirmation window";
   EXPECT_TRUE(spi.transactions().empty()) << "a first (unconfirmed) press must not touch the chip";

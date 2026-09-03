@@ -421,13 +421,13 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
 
   // === Key-extraction responder ("Accept Foreign Pairing") ===
   // Runs before the exchange-internal drop below: a hub-issued 0x3C challenging our own 0x37 is
-  // addressed to us and is ours to answer (hub_key_extraction.cpp). Self-gated on armed + our
+  // addressed to us and is ours to answer (key_extraction_responder.cpp). Self-gated on armed + our
   // throwaway ID, so the disarmed path (and every command other than 0x28/0x2C/0x31/0x32/0x36/0x3C)
-  // is bit-for-bit unchanged by this ordering — try_handle_key_extraction_frame_() returns false
-  // immediately whenever it doesn't apply, and this reorder can only affect frames where BOTH this
-  // call and the is_exchange_internal_command() check below would otherwise fire, i.e. only 0x3C/
-  // 0x3D (that predicate's entire domain, hub_decisions.h).
-  if (this->try_handle_key_extraction_frame_(frame))
+  // is bit-for-bit unchanged by this ordering — try_handle_frame() returns false immediately
+  // whenever it doesn't apply, and this reorder can only affect frames where BOTH this call and
+  // the is_exchange_internal_command() check below would otherwise fire, i.e. only 0x3C/0x3D (that
+  // predicate's entire domain, hub_decisions.h).
+  if (this->key_extraction_.try_handle_frame(frame))
     return;
 
   // Exchange-internal frames (0x3C challenge request, 0x3D challenge response) belonging to
@@ -455,14 +455,14 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     // command byte and are told apart only by the decoded intent, which is part of the key.
     const OneWayFrameInfo info = decode_1w_frame(frame);
 
-    // Opt-in, receive-only 1W key adoption (hub_oneway_key_adoption.cpp). Both calls sit after
+    // Opt-in, receive-only 1W key adoption (oneway_key_adoption.cpp). Both calls sit after
     // the parse and before the dedup check so an add-controller broadcast is seen even when its
     // repeats would collapse into one logical press. Both self-gate on armed, so the disarmed
     // path is unchanged; they observe the frame rather than consuming it, and execution always
     // continues into the normal logging path below. Order matters only in that the class
     // observation must be recorded before an adoption can consume it.
-    this->record_oneway_observed_class_(info);
-    this->try_adopt_oneway_key_(frame);
+    this->oneway_key_adoption_.record_observed_class(info);
+    this->oneway_key_adoption_.try_adopt(frame);
 
     // 1W remotes repeat each command 4× at 40ms intervals across channels, and a held button keeps
     // resending. Collapse that into one logical press per remote+command+intent.

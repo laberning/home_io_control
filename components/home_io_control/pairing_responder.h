@@ -13,8 +13,9 @@
 /// This header holds only the pure state-transition decisions (no radio I/O, no timers), matching
 /// hub_decisions.h's split, so it is directly host-testable. The impure orchestration — arming,
 /// throwaway node-ID generation, transmitting replies, the auto-off timer, and the security log
-/// block — lives on IOHomeControlComponent (hub_key_extraction.cpp), which calls into this header
-/// from the 0x28/0x2C/0x31/0x32 branches in process_received_packet_() (hub_status.cpp).
+/// block — lives in the `KeyExtractionResponder` collaborator (`key_extraction_responder.h`/`.cpp`),
+/// which calls into this header from the 0x28/0x2C/0x31/0x32 branches in process_received_packet_()
+/// (hub_status.cpp).
 
 #include "proto_device_model.h"
 #include "proto_sizes.h"
@@ -89,8 +90,8 @@ struct ResponderContext {
 /// by manually disarming and re-arming the switch.
 ///
 /// The hub-identity check is what @p hub_node_id is for: CMD_DISCOVER_REQ is a broadcast handled
-/// before the throwaway-ID destination filter (try_handle_key_extraction_frame_(),
-/// hub_key_extraction.cpp), so without it *any* hub in radio range — not necessarily the one this
+/// before the throwaway-ID destination filter (KeyExtractionResponder::try_handle_frame(),
+/// key_extraction_responder.cpp), so without it *any* hub in radio range — not necessarily the one this
 /// responder is actually doing business with — could knock a live post-extraction
 /// address-verification round (0x36→0x37→0x3C→0x3D with the real hub) back to
 /// SENT_DISCOVER_RESP merely by broadcasting its own unrelated 0x28. Restricting the restart to the

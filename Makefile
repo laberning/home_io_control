@@ -227,7 +227,7 @@ INCLUDES := -Icomponents/home_io_control \
 # the associated unit tests only exercise a reduced slice of the recovered feature.
 # IOHOME_LR1121_FIRMWARE_UPDATE is normally only set when a YAML config has a
 # lr1121_firmware_update: block, but host tests need it unconditionally: without it,
-# COMPONENT_SRCS's wildcard picks up radio_lr1121_firmware_updater.cpp and hub_lr1121_firmware_update.cpp
+# COMPONENT_SRCS's wildcard picks up radio_lr1121_firmware_updater.cpp and lr1121_firmware_update_controller.cpp
 # and compiles each to an empty TU, so their tests would have nothing to link against.
 # IOHOME_LR1121_BOOTLOADER_UPDATE is the same story one level down: normally only set when a
 # `bootloader:` sub-block is configured, but the 0x81xx primitives and the three-stage

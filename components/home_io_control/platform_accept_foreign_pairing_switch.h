@@ -10,11 +10,11 @@
 /// dynamically from `home_io_control.accept_foreign_pairing: true` (see `__init__.py`'s
 /// `_create_accept_foreign_pairing_switch()`), the same way `tuning: {ui_controls: true}`
 /// dynamically creates its number/select entities, and bound directly to the hub instance being
-/// built (`set_parent()` called with that same object). See hub_key_extraction.cpp for what
+/// built (`set_parent()` called with that same object). See key_extraction_responder.cpp for what
 /// arming actually does.
 ///
 /// @note Hardware-confirmed on real RF hardware, but not yet against a third-party hub — see
-/// hub_key_extraction.cpp.
+/// key_extraction_responder.cpp.
 
 #include "esphome/components/switch/switch.h"
 #include "esphome/core/component.h"

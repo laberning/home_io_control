@@ -14,7 +14,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | # | Decision | In short |
 |---|---|---|
 | [0001](0001-layered-protocol-radio-hub-architecture.md) | Layered protocol / radio / hub architecture | Three layers, one composition root; the protocol never names a chip |
-| [0004](0004-hub-collaborator-decomposition.md) | Hub split into collaborators | Seven single-purpose objects instead of one large controller class |
+| [0004](0004-hub-collaborator-decomposition.md) | Hub split into collaborators | Ten single-purpose objects (eleven with the compile-gated LR1121 controller) instead of one large controller class |
 | [0005](0005-pure-decision-logic-separated-from-io.md) | Pure decisions separated from I/O | Frame classification is side-effect-free and host-testable |
 
 ### Radio

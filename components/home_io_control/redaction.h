@@ -39,7 +39,7 @@ namespace home_io_control {
 /// nothing secret: the IV derives only from the sender's node address, which is plaintext in the
 /// same frame's header. So publishing those bytes is equivalent to publishing the key, and they
 /// are masked for the same reason 0x32 is. The one deliberate exception is the adoption report in
-/// hub_oneway_key_adoption.cpp, which formats the *decoded* key directly rather than going
+/// oneway_key_adoption.cpp, which formats the *decoded* key directly rather than going
 /// through any frame-rendering path.
 /// @param cmd Frame command byte.
 /// @return true if the payload of a frame with this command must be masked.
