@@ -1,3 +1,4 @@
+#include "oneway_controller.h"
 #include "proto_codecs.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
@@ -9,8 +10,10 @@
 #include "redaction.h"
 #include "test_helpers.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -51,6 +54,12 @@ const uint8_t PUBLISHED_STOP_SRC[NODE_ID_SIZE] = {0x38, 0x57, 0x62};
 /// presses of this project's own remote, node 9D6085, captured on an SX1276. Same note as above:
 /// only the shared node address is transcribed.
 const uint8_t SOMFY_REMOTE_SRC[NODE_ID_SIZE] = {0x9D, 0x60, 0x85};
+
+/// tests/corpus/captures/oneway/velux_kli313_oneway_stop.yaml — a Velux KLI 313 remote's STOP
+/// press (issue #17), node DA2C93, captured on an SX1276. The one real VELUX 1W EXECUTE this
+/// project holds: ACEI 0x61 (level 3), broadcast to 00 00 3F. Same note as above — only the node
+/// address is transcribed; the rest is read from the corpus.
+const uint8_t VELUX_KLI313_SRC[NODE_ID_SIZE] = {0xDA, 0x2C, 0x93};
 
 /// tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml — the published
 /// CMD 0x30 known-answer example (Velocet/iown-homecontrol docs/linklayer.md). Only the inputs a
@@ -221,6 +230,80 @@ TEST(OneWayCommands, StopReproducesTheRemotesStopPress) {
   ASSERT_EQ(serialize_execute(frame, wire, sizeof(wire)), EXECUTE_FRAME_LEN);
   EXPECT_EQ(0, memcmp(wire, stop_press.prefix, EXECUTE_PREFIX_LEN))
       << "a STOP press from node 9D6085 at sequence 5994 has exactly these bytes";
+}
+
+TEST(OneWayCommands, VeluxProfileStopReproducesTheKli313RemotesFrame) {
+  // The one real VELUX 1W EXECUTE this project has captured (issue #17): a KLI 313 remote's STOP,
+  // ACEI 0x61 (level 3) where Somfy's remotes send 0x43, broadcast to 00 00 3F instead of the
+  // typed class. Building it through the manufacturer=velux wire profile (ADR 0031) -- acei 0x61,
+  // broadcast_all -- must reproduce every byte through the sequence. The corpus key is unknown, so
+  // the MAC and the (absent) CRC are not pinned here; the Somfy vectors above pin the MAC path.
+  CapturedExecute velux_stop;
+  ASSERT_NO_FATAL_FAILURE(load_captured_execute("velux_kli313_oneway_stop", velux_stop));
+
+  IoFrame frame{};
+  ASSERT_TRUE(create_1w_execute_command(frame, VELUX_KLI313_SRC, DeviceType::AWNING, CoverCommand::STOP,
+                                        velux_stop.sequence, test::TEST_SYSTEM_KEY, ONEWAY_EXECUTE_ACEI_VELUX,
+                                        /*broadcast_all=*/true))
+      << "building a VELUX-profile 1W STOP should succeed";
+
+  uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
+  ASSERT_EQ(serialize_execute(frame, wire, sizeof(wire)), EXECUTE_FRAME_LEN);
+  EXPECT_EQ(0, memcmp(wire, velux_stop.prefix, EXECUTE_PREFIX_LEN))
+      << "a VELUX KLI 313 STOP press has ACEI 0x61, main D2 00, dst 00 00 3F -- regardless of the "
+         "io_device_type passed to the builder, which broadcast_all overrides";
+}
+
+// ========================================================================================
+// 1W wire profile (ADR 0031): the acei / broadcast_all builder args
+// ========================================================================================
+
+TEST(OneWayCommands, BuilderDefaultsAreUnchangedAndCustomAceiStillSigns) {
+  uint8_t key[AES_KEY_SIZE];
+  memset(key, 0x11, AES_KEY_SIZE);
+
+  // Default call (no acei / broadcast_all args) == today's frame, byte for byte.
+  IoFrame dflt{};
+  ASSERT_TRUE(create_1w_execute_command(dflt, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 5, key));
+  EXPECT_EQ(dflt.data[1], ONEWAY_EXECUTE_ACEI) << "payload[1] defaults to the Somfy-shaped ACEI";
+  const uint8_t typed_awning[NODE_ID_SIZE] = {0x00, 0x00, 0xFF};
+  EXPECT_EQ(0, memcmp(dflt.dst, typed_awning, NODE_ID_SIZE)) << "default dst is still the typed class";
+
+  // Custom ACEI: lands at payload[1], and the MAC is over the assembled span so it verifies.
+  IoFrame velux{};
+  ASSERT_TRUE(create_1w_execute_command(velux, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 5, key, 0x61));
+  EXPECT_EQ(velux.data[1], 0x61);
+  const uint8_t span[7] = {CMD_EXECUTE, ORIGINATOR_USER_REMOTE, 0x61, POS_STOP, 0x00, 0x00, 0x00};
+  uint8_t expected_mac[HMAC_SIZE] = {0};
+  ASSERT_TRUE(crypto::create_1w_hmac(span, sizeof(span), 5, key, expected_mac));
+  EXPECT_EQ(0, memcmp(&velux.data[8], expected_mac, HMAC_SIZE)) << "the MAC covers the actual ACEI byte on the wire";
+}
+
+// ========================================================================================
+// 1W enrollment class sweep (ADR 0032)
+// ========================================================================================
+
+TEST(OneWayCommands, VeluxEnrollmentClassListMatchesTheRealKli310DiscoverySweep) {
+  // VELUX_KLI_ENROLLMENT_CLASSES is derived from a real KLI 310 PROG capture (issue #74). This
+  // pins the *set* against captured bytes: the KLI 310 sweeps its 0x2E alt-discovery across the
+  // same three typed-broadcast classes it enrolls a 0x30 to (the 0x30 half's own bytes are
+  // redacted by our logger, so the 0x2E sweep is the on-wire evidence for the class set). Order is
+  // not asserted -- reordering the constant is semantically harmless.
+  const auto *capture = corpus_test::capture_by_id("velux_kli310_discovery_alt_sweep");
+  ASSERT_NE(capture, nullptr) << "corpus capture renamed?";
+  ASSERT_EQ(capture->frame_count, VELUX_KLI_ENROLLMENT_CLASSES.size());
+
+  std::vector<DeviceType> captured;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const auto &cf = capture->frames[i];
+    ASSERT_GE(cf.len, static_cast<uint8_t>(5));
+    const uint8_t dst[NODE_ID_SIZE] = {cf.bytes[2], cf.bytes[3], cf.bytes[4]};
+    captured.push_back(broadcast_target_type(dst));
+  }
+  std::vector<DeviceType> expected(VELUX_KLI_ENROLLMENT_CLASSES.begin(), VELUX_KLI_ENROLLMENT_CLASSES.end());
+  std::sort(captured.begin(), captured.end());
+  std::sort(expected.begin(), expected.end());
+  EXPECT_EQ(captured, expected) << "the captured KLI 310 class set does not match VELUX_KLI_ENROLLMENT_CLASSES";
 }
 
 // ========================================================================================

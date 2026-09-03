@@ -986,6 +986,11 @@ class IOHomeControlComponent : public Component,
   /// @return Newly allocated RadioDriver, or nullptr if pin validation or allocation failed.
   RadioDriver *select_and_construct_radio_(const char **chip_name_out);
 
+  /// @brief Emit the 1W controller identities to the config dump — node, class, and the resolved
+  /// ACEI / broadcast (ADR 0031). Factored out of dump_config() to keep its cognitive complexity
+  /// under the clang-tidy threshold.
+  void dump_oneway_controllers_config_() const;
+
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   // --- LR1121 firmware update (hub_lr1121_firmware_update.cpp) ---
   /// @brief Boot-time bootloader-version excursion.

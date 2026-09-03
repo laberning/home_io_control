@@ -411,17 +411,7 @@ void IOHomeControlComponent::dump_config() {
     });
   }
 
-  if (!this->oneway_controllers().empty()) {
-    ESP_LOGCONFIG(detail::TAG, "  1W Controllers: %zu", this->oneway_controllers().all().size());
-    for (const auto &identity : this->oneway_controllers().all()) {
-      // A derived address is reproducible from the YAML, but nothing in the YAML shows it — so
-      // print it, and mark it derived, or a user debugging a collision has nowhere to look.
-      // Keys are never printed here (ADR 0011); only addresses and classes.
-      ESP_LOGCONFIG(detail::TAG, "    - %s: node %s%s, class 0x%02X", identity.id.c_str(),
-                    node_id_to_string(identity.node_id).c_str(), identity.node_id_derived ? " (derived)" : "",
-                    static_cast<unsigned>(identity.io_device_type));
-    }
-  }
+  this->dump_oneway_controllers_config_();
 
   if (this->radio_ != nullptr)
     this->radio_->dump_debug();
@@ -429,6 +419,40 @@ void IOHomeControlComponent::dump_config() {
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   this->dump_lr1121_firmware_update_debug_();
 #endif
+}
+
+void IOHomeControlComponent::dump_oneway_controllers_config_() const {
+  if (this->oneway_controllers().empty())
+    return;
+  ESP_LOGCONFIG(detail::TAG, "  1W Controllers: %zu", this->oneway_controllers().all().size());
+  for (const auto &identity : this->oneway_controllers().all()) {
+    // A derived address is reproducible from the YAML, but nothing in the YAML shows it — so
+    // print it, and mark it derived, or a user debugging a collision has nowhere to look. Keys
+    // are never printed here (ADR 0011); only addresses and classes. The resolved ACEI and
+    // destination let a user eyeball this against a capture of their real remote (ADR 0031).
+    const OneWayWireProfile profile = resolve_oneway_wire_profile(identity.manufacturer);
+    ESP_LOGCONFIG(
+        detail::TAG, "    - %s: node %s%s, class 0x%02X, acei 0x%02X%s, broadcast %s%s", identity.id.c_str(),
+        node_id_to_string(identity.node_id).c_str(), identity.node_id_derived ? " (derived)" : "",
+        static_cast<unsigned>(identity.io_device_type), static_cast<unsigned>(effective_execute_acei(identity)),
+        has_execute_acei_override(identity) ? " (override)" : "", identity.execute_broadcast_all ? "all" : "typed",
+        profile.profile_is_a_guess ? " [no vendor profile — Somfy-shaped]" : "");
+
+    // The VELUX enrollment gesture ignores io_device_type and sweeps a fixed class set instead —
+    // the most surprising resolved value on the identity, so print it (ADR 0032).
+    if (profile.enroll_gesture == EnrollGesture::VELUX_KLI) {
+      std::string classes;
+      char byte_hex[3];
+      for (const DeviceType c : effective_enrollment_classes(identity)) {
+        if (c == DeviceType::UNKNOWN)
+          continue;
+        snprintf(byte_hex, sizeof(byte_hex), "%02X", static_cast<unsigned>(c));
+        classes += classes.empty() ? "0x" : " 0x";
+        classes += byte_hex;
+      }
+      ESP_LOGCONFIG(detail::TAG, "        enroll: VELUX KLI gesture, 0x30 sweep -> %s", classes.c_str());
+    }
+  }
 }
 
 }  // namespace home_io_control

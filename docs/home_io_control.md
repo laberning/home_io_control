@@ -1132,9 +1132,29 @@ home_io_control:
 | `system_key` | no | Network key for this identity. **Defaults to the hub's own** — every new identity works fine with the default. Only set this to a recovered key when reusing an existing, already-registered identity (see "Recovering a 1W Controller Key"). |
 | `initial_sequence` | no | Seeds the rolling counter. The day-one remedy for a desynced device — see troubleshooting. |
 | `commands` | no | Which buttons to generate: `open`, `close`, `stop`, `vent`, `favorite`. `stop` is pinned by a published reference vector; `vent` matches the reference remote's source but is unconfirmed by any capture; `favorite` is extrapolated with no reference support and is directly contradicted by this project's own capture of a real My/favorite button press, which encodes it a different way entirely — see `create_1w_execute_command()` in proto_commands.h. Treat `favorite` as untested. |
-| `manufacturer` | conditional | The manufacturer ID byte an enrollment frame carries on air — a named value such as `somfy`, or a raw integer; see the "Named manufacturers" table under Device Type and Capability Notes below for the full list. **Required whenever `enrollment: true` is set** — the build fails otherwise, rather than silently broadcasting `0`. Find the value from a "Recovering a 1W Controller Key" report for this network, or the device's own documentation. |
+| `manufacturer` | conditional | The manufacturer ID byte an enrollment frame carries on air — a named value such as `somfy`, or a raw integer; see the "Named manufacturers" table under Device Type and Capability Notes below for the full list. **Required whenever `enrollment: true` is set** — the build fails otherwise, rather than silently broadcasting `0`. Also selects the **1W wire profile** (see "Matching your remote's vendor" below): `velux` sends `CMD_EXECUTE` frames with a different priority byte than `somfy`. Find the value from a "Recovering a 1W Controller Key" report for this network, or the device's own documentation. |
+| `execute_broadcast` | no | `typed` (default) addresses your `io_device_type` class; `all` addresses the all-devices broadcast, which is what a handheld cover remote of either vendor sends for open/close/stop. Set `all` to mimic a real remote. |
+| `execute_acei` | no | Raw override of the priority byte (payload[1]) in a 1W `CMD_EXECUTE` frame, e.g. `0x61`. Must be `1`–`0xFF` — `0x00` is rejected, since `0` is the sentinel for "not overridden". Normally left unset — it is derived from `manufacturer`. Use it only for a vendor this project has no profile for. |
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
 | `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), but a real Somfy Izymo has separately been shown to accept the MAC-bearing form too. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. |
+| `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of `io_device_type` names (max 3). Unset → the profile default `[roller_shutter, awning, dual_shutter]` — the exact set a real KLI PROG press sweeps. Set it (e.g. `[awning]`) to narrow the sweep once you know which class your actuator listens on. **Ignored by the Somfy gesture**, which always uses `io_device_type`. See "Enrolling this hub as a controller" below. |
+
+### Matching your remote's vendor
+
+A 1W `CMD_EXECUTE` frame (open/close/stop) differs between vendors in exactly one byte: the
+priority/ACEI byte at payload position 1. **Somfy remotes send `0x43`; VELUX KLI-class remotes
+send `0x61`.** The hub picks this from `manufacturer:` — `somfy` (or omitted) gives the historical
+`0x43`; `velux` gives `0x61`. Any other vendor falls back to `0x43`, since this project has only
+verified the two; if that vendor was set explicitly (not defaulted) on an identity that actually
+transmits — one with `commands:` or `enrollment: true` — the build also logs a warning.
+
+To mimic a handheld remote, also set `execute_broadcast: all` — real remotes broadcast open/close/
+stop to every device, not to one class. The boot log prints the resolved `acei` and `broadcast`
+for each identity; frame-log a press of your real remote and compare `cmd 0x00 payload[1]` and the
+destination address to confirm.
+
+The VELUX profile is verified against KLI-class exterior-shading remotes only (awnings, screens,
+roller shutters). A VELUX window-opener or KLR-class remote may differ — use `execute_acei:` if so.
 
 There is no 1W `force_open` button. The only wire byte this project ever associated with a
 "force open" label, `0x64`, decodes to an ordinary numeric position (50%) when tested against real
@@ -1180,6 +1200,36 @@ nearby would be taught too.
 
 The `0x30` half's MAC trailer is controlled by `enrollment_with_mac:` (default `false`, no MAC at
 all) — see the option table above if enrollment doesn't take with the default shape.
+
+#### VELUX (`manufacturer: velux`) uses a different gesture
+
+A real VELUX KLI 310/311/312/313 PROG press does not enroll the way a Somfy Smoove does, so with
+`manufacturer: velux` the Enroll button emits the KLI gesture instead (ADR 0032):
+
+1. `0x39` clear to the all-devices address (not the identity's typed class).
+2. `0x30` add-controller **swept across `roller_shutter`, `awning`, `dual_shutter`** under one
+   sequence — never `screen` / `blind` / `venetian_blind`, which no VELUX remote pairs on. The
+   actuator filters by its own class; only the matching frame registers the hub. Narrow the sweep
+   with `enrollment_classes:` once you know which class yours listens on.
+3. A STOP then a DOWN command to the all-devices address — the KLI manual's "then press STOP then
+   DOWN within 3 seconds" registration completion.
+
+So for a VELUX exterior-shading device, set `io_device_type:` to whatever the device actually is
+(it drives the control-frame destination), and leave `enrollment_classes:` unset unless you need
+to narrow the sweep — the enroll gesture ignores `io_device_type` and uses the three-class list.
+The Enroll button blocks for up to ~6 seconds while it sends all six bursts.
+
+> **⚠️ Pressing Enroll physically moves your covers.** Step 3 is a real STOP then a real DOWN
+> broadcast to *every* 1W-enrolled cover in range that holds the key — they will close. That is
+> the KLI registration gesture, not a side effect to fix, but it is worth knowing before you press
+> the button.
+
+> **⚠️ VELUX 1W enrollment is unconfirmed.** No hub has been shown to 1W-enroll on any VELUX
+> actuator (issue #74). The frame shapes are reconstructed from a real KLI 310 capture and
+> `samr037/iohc-flipper`; the STOP+DOWN step in particular is not confirmed against a VELUX
+> capture. Two likely blockers: the actuator's own 2-second PROG window must be open at the moment
+> the `0x30` sweep transmits (hold PROG on the actuator, then press Enroll); and the sweep +
+> STOP + DOWN may not fit the manual's own 3-second window at this radio cadence (ADR 0032).
 
 **A hub cannot enroll into a device nobody has walked up to.** The receiver's physical PROG hold is
 the real safety interlock here, stronger than any software confirmation could be — it is why this
@@ -1562,16 +1612,22 @@ A device type not in this table can still be declared as a raw hex ID, in either
 The `manufacturer` key on a 1W `oneway_controllers:` identity (see "Sending 1W Commands" above)
 accepts these named values, the IO-Homecontrol alliance's own manufacturer IDs:
 
-| Name | Hex ID | Name | Hex ID |
-|---|---|---|---|
-| `velux` | `0x01` | `window_master` | `0x07` |
-| `somfy` | `0x02` | `renson` | `0x08` |
-| `honeywell` | `0x03` | `ciat` | `0x09` |
-| `hormann` | `0x04` | `secuyou` | `0x0A` |
-| `assa_abloy` | `0x05` | `overkiz` | `0x0B` |
-| `niko` | `0x06` | `atlantic_group` | `0x0C` |
+| Name | Hex ID | 1W profile | Name | Hex ID | 1W profile |
+|---|---|---|---|---|---|
+| `velux` | `0x01` | ✅ | `window_master` | `0x07` | — |
+| `somfy` | `0x02` | ✅ | `renson` | `0x08` | — |
+| `honeywell` | `0x03` | — | `ciat` | `0x09` | — |
+| `hormann` | `0x04` | — | `secuyou` | `0x0A` | — |
+| `assa_abloy` | `0x05` | — | `overkiz` | `0x0B` | — |
+| `niko` | `0x06` | — | `atlantic_group` | `0x0C` | — |
 
 A manufacturer not in this table can still be declared as a raw hex ID, e.g. `manufacturer: 0x0D`.
+
+**1W profile** marks the two vendors this project has a verified 1W `CMD_EXECUTE` wire profile
+for (the priority byte — `somfy` `0x43`, `velux` `0x61`; see "Matching your remote's vendor"
+above). Any other value — named or raw — transmits with the `somfy`-shaped byte and, if it is an
+explicitly-set manufacturer on a transmitting identity, logs a build-time warning. Use
+`execute_acei:` to pin the byte yourself for an unprofiled vendor.
 
 ## Linked Remotes
 

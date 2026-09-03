@@ -4,10 +4,13 @@
 #include "proto_commands.h"
 #include "proto_crypto.h"
 
+#include "corpus_generated.h"
+#include "corpus_test_helpers.h"
 #include "test_helpers.h"
 
 #include <esphome/core/preferences.h>
 
+#include <array>
 #include <cstring>
 #include <vector>
 
@@ -26,7 +29,8 @@ namespace {
 const uint8_t OWN_NET_NODE[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
 const uint8_t ADOPTED_NET_NODE[NODE_ID_SIZE] = {0x44, 0x55, 0x66};
 
-/// Captures the frames a burst puts on air.
+/// Captures the frames a burst puts on air. `transmit_result` is what `fn()` reports back to the
+/// transmitter — set it false to simulate a radio that never accepts a copy.
 class BurstRecorder {
  public:
   OneWayTransmitFn fn() {
@@ -34,9 +38,11 @@ class BurstRecorder {
       (void) freq;
       (void) preamble;
       this->frames.push_back(frame);
-      return true;
+      return this->transmit_result;
     };
   }
+
+  bool transmit_result{true};
 
   /// Sequences seen, one entry per transmitted frame.
   [[nodiscard]] std::vector<uint16_t> sequences() const {
@@ -334,6 +340,184 @@ TEST_F(OneWaySendCommandTest, EnrollmentWithMacConfiguredTrueAddsTheTrailer) {
   EXPECT_EQ(add_frame.cmd, CMD_ONEWAY_ADD_CONTROLLER);
 }
 
+// ============================================================================
+// VELUX enrollment gesture (ADR 0032): 0x39 -> class sweep -> STOP + DOWN
+// ============================================================================
+
+namespace {
+constexpr uint8_t ALL_DEVICES_DST[NODE_ID_SIZE] = {0x00, 0x00, 0x3F};
+constexpr uint8_t ROLLER_SHUTTER_DST[NODE_ID_SIZE] = {0x00, 0x00, 0xBF};
+constexpr uint8_t AWNING_DST[NODE_ID_SIZE] = {0x00, 0x00, 0xFF};
+constexpr uint8_t DUAL_SHUTTER_DST[NODE_ID_SIZE] = {0x00, 0x03, 0x7F};
+
+OneWayControllerIdentity make_velux_identity(uint16_t initial_sequence) {
+  OneWayControllerIdentity identity = make_identity("velux", OWN_NET_NODE, DeviceType::SCREEN, 0x22, initial_sequence);
+  identity.manufacturer = MANUFACTURER_VELUX;
+  return identity;
+}
+
+uint16_t execute_seq(const IoFrame &f) { return static_cast<uint16_t>((f.data[6] << 8) | f.data[7]); }
+uint16_t add_seq(const IoFrame &f) { return static_cast<uint16_t>((f.data[18] << 8) | f.data[19]); }
+uint16_t remove_seq(const IoFrame &f) { return static_cast<uint16_t>((f.data[1] << 8) | f.data[2]); }
+}  // namespace
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentSweepsThreeClassesThenStopsAndCloses) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_velux_identity(10));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("velux"));
+
+  // 0x39 + (0x30 x3 sweep) + STOP + DOWN = 6 logical bursts.
+  ASSERT_EQ(recorder.frames.size(), 6u * ONEWAY_BURST_REPEATS);
+  const auto &f = recorder.frames;
+
+  // 0x39 clear -> all-devices, not the identity's typed SCREEN class.
+  EXPECT_EQ(f[0].cmd, CMD_ONEWAY_REMOVE);
+  EXPECT_EQ(0, memcmp(f[0].dst, ALL_DEVICES_DST, NODE_ID_SIZE)) << "VELUX broadcasts its 0x39, unlike Somfy";
+
+  // The 0x30 sweep: roller_shutter, awning, dual_shutter -- never SCREEN -- all under one sequence.
+  EXPECT_EQ(f[1 * ONEWAY_BURST_REPEATS].cmd, CMD_ONEWAY_ADD_CONTROLLER);
+  EXPECT_EQ(0, memcmp(f[1 * ONEWAY_BURST_REPEATS].dst, ROLLER_SHUTTER_DST, NODE_ID_SIZE));
+  EXPECT_EQ(0, memcmp(f[2 * ONEWAY_BURST_REPEATS].dst, AWNING_DST, NODE_ID_SIZE));
+  EXPECT_EQ(0, memcmp(f[3 * ONEWAY_BURST_REPEATS].dst, DUAL_SHUTTER_DST, NODE_ID_SIZE));
+  EXPECT_FALSE(f[1 * ONEWAY_BURST_REPEATS].has_mac) << "no-MAC 0x30 form, matching real VELUX (#74)";
+
+  // STOP then DOWN -> all-devices, VELUX ACEI (0x61), main0 POS_STOP then 0xC8 (fully closed).
+  const auto &stop = f[4 * ONEWAY_BURST_REPEATS];
+  const auto &down = f[5 * ONEWAY_BURST_REPEATS];
+  EXPECT_EQ(stop.cmd, CMD_EXECUTE);
+  EXPECT_EQ(0, memcmp(stop.dst, ALL_DEVICES_DST, NODE_ID_SIZE));
+  EXPECT_EQ(stop.data[1], 0x61) << "STOP follow-up carries the VELUX ACEI";
+  EXPECT_EQ(stop.data[2], POS_STOP);
+  EXPECT_EQ(down.cmd, CMD_EXECUTE);
+  EXPECT_EQ(0, memcmp(down.dst, ALL_DEVICES_DST, NODE_ID_SIZE));
+  EXPECT_EQ(down.data[1], 0x61);
+  EXPECT_EQ(down.data[2], 0xC8) << "DOWN = position 100, wire value 0xC8";
+}
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentConsumesFourSequencesOneEachExceptTheSharedSweep) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_velux_identity(10));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("velux"));
+  const auto &f = recorder.frames;
+
+  EXPECT_EQ(remove_seq(f[0]), 10) << "0x39 gets the seed";
+  EXPECT_EQ(add_seq(f[1 * ONEWAY_BURST_REPEATS]), 11) << "the whole 0x30 sweep shares one sequence";
+  EXPECT_EQ(add_seq(f[2 * ONEWAY_BURST_REPEATS]), 11);
+  EXPECT_EQ(add_seq(f[3 * ONEWAY_BURST_REPEATS]), 11);
+  EXPECT_EQ(execute_seq(f[4 * ONEWAY_BURST_REPEATS]), 12) << "STOP is the next sequence after the sweep";
+  EXPECT_EQ(execute_seq(f[5 * ONEWAY_BURST_REPEATS]), 13) << "DOWN the one after that";
+}
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentClassesOverrideNarrowsTheSweep) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  OneWayControllerIdentity identity = make_velux_identity(1);
+  identity.enrollment_classes = {DeviceType::AWNING, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
+  transmitter.add_identity(identity);
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("velux"));
+
+  // 0x39 + one 0x30 (awning only) + STOP + DOWN = 4 bursts.
+  ASSERT_EQ(recorder.frames.size(), 4u * ONEWAY_BURST_REPEATS);
+  EXPECT_EQ(recorder.frames[ONEWAY_BURST_REPEATS].cmd, CMD_ONEWAY_ADD_CONTROLLER);
+  EXPECT_EQ(0, memcmp(recorder.frames[ONEWAY_BURST_REPEATS].dst, AWNING_DST, NODE_ID_SIZE));
+  EXPECT_EQ(recorder.frames[2 * ONEWAY_BURST_REPEATS].cmd, CMD_EXECUTE) << "STOP follows the (single-class) sweep";
+}
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentReportsLabelEachLeg) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_velux_identity(1));
+  transmitter.setup();
+
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
+  ASSERT_TRUE(transmitter.send_enrollment("velux"));
+
+  ASSERT_EQ(reports.size(), 4u) << "0x39, the sweep (one report), STOP, DOWN";
+  EXPECT_EQ(reports[0].intent, "UNENROLL");
+  EXPECT_EQ(reports[1].intent, "ENROLL");
+  EXPECT_EQ(reports[1].target_type, DeviceType::SCREEN) << "the sweep report names the identity's own class";
+  EXPECT_EQ(reports[2].intent, "ENROLL STOP");
+  EXPECT_EQ(reports[3].intent, "ENROLL DOWN");
+}
+
+TEST_F(OneWaySendCommandTest, SomfyManufacturerStillUsesTheUnchangedTwoFrameGesture) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  OneWayControllerIdentity identity = make_identity("somfy", OWN_NET_NODE, DeviceType::AWNING, 0x11, 5);
+  identity.manufacturer = MANUFACTURER_SOMFY;
+  transmitter.add_identity(identity);
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("somfy"));
+
+  // Exactly the pre-ADR-0032 shape: 0x39 then 0x30, both to the identity's typed class.
+  ASSERT_EQ(recorder.frames.size(), 2u * ONEWAY_BURST_REPEATS);
+  EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_REMOVE);
+  EXPECT_EQ(recorder.frames[ONEWAY_BURST_REPEATS].cmd, CMD_ONEWAY_ADD_CONTROLLER);
+  const uint8_t awning_typed[NODE_ID_SIZE] = {0x00, 0x00, 0xFF};
+  EXPECT_EQ(0, memcmp(recorder.frames[0].dst, awning_typed, NODE_ID_SIZE)) << "Somfy 0x39 stays typed, not broadcast";
+  EXPECT_EQ(0, memcmp(recorder.frames[ONEWAY_BURST_REPEATS].dst, awning_typed, NODE_ID_SIZE));
+}
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentReproducesTheSyntheticGoldenGesture) {
+  // Byte-for-byte against tests/corpus/captures/enrollment/synthetic_enrollment_velux_kli_prog_sweep.yaml
+  // (key: corpus, src AA BB CC, seqs 1/2/2/2/3/4). Pins ctrl0/ctrl1, every destination, man_id,
+  // the no-MAC 0x30 form, the shared sweep sequence, the ACEI, and all four 1W MACs in one test --
+  // the strongest check available for a path with no hardware confirmation.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  OneWayControllerIdentity identity{};
+  identity.id = "golden";
+  const uint8_t src[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  memcpy(identity.node_id, src, NODE_ID_SIZE);
+  memcpy(identity.system_key, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  identity.manufacturer = MANUFACTURER_VELUX;
+  identity.io_device_type = DeviceType::AWNING;  // irrelevant: sweep uses the profile list, STOP/DOWN broadcast
+  identity.initial_sequence = 1;
+  transmitter.add_identity(identity);
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_enrollment("golden"));
+
+  const auto *cap = corpus_test::capture_by_id("synthetic_enrollment_velux_kli_prog_sweep");
+  ASSERT_NE(cap, nullptr);
+  ASSERT_EQ(cap->frame_count, 6u);
+  ASSERT_EQ(recorder.frames.size(), 6u * ONEWAY_BURST_REPEATS);
+  for (uint8_t i = 0; i < 6; i++) {
+    uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
+    const uint8_t len = serialize(recorder.frames[i * ONEWAY_BURST_REPEATS], wire, sizeof(wire));
+    ASSERT_EQ(len, cap->frames[i].len) << "burst " << static_cast<int>(i) << " length";
+    EXPECT_EQ(0, memcmp(wire, cap->frames[i].bytes, len))
+        << "burst " << static_cast<int>(i) << " does not reproduce the golden capture";
+  }
+}
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentSkipsStopAndDownWhenTheSweepTransmittedNothing) {
+  // A failed sweep must NOT be followed by a real DOWN broadcast to every 1W device on the network.
+  BurstRecorder recorder;
+  recorder.transmit_result = false;  // the radio never accepts a copy
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_velux_identity(1));
+  transmitter.setup();
+
+  EXPECT_FALSE(transmitter.send_enrollment("velux"));
+
+  // 0x39 prelude + the 3-class 0x30 sweep were attempted; STOP and DOWN were not.
+  EXPECT_EQ(recorder.frames.size(), 4u * ONEWAY_BURST_REPEATS);
+  for (const auto &f : recorder.frames)
+    EXPECT_NE(f.cmd, CMD_EXECUTE) << "no STOP/DOWN EXECUTE frame should have been built after a dead sweep";
+}
+
 TEST_F(OneWaySendCommandTest, UnenrollmentBuildsARemoveControllerFrame) {
   BurstRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn());
@@ -352,9 +536,15 @@ TEST_F(OneWaySendCommandTest, AnUnknownIdentityEnrollsAndUnenrollsNothing) {
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11));
   transmitter.setup();
 
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
   EXPECT_FALSE(transmitter.send_enrollment("typo"));
   EXPECT_FALSE(transmitter.send_unenrollment("typo"));
   EXPECT_TRUE(recorder.frames.empty());
+  // The dispatcher resolves the identity once up front, so an unknown handle produces exactly one
+  // failure report per call -- not one per would-be leg of the gesture.
+  EXPECT_EQ(reports.size(), 2u);
 }
 
 TEST_F(OneWaySendCommandTest, ReportsCarryExplicitEnrollUnenrollLabels) {
@@ -396,4 +586,89 @@ TEST_F(OneWaySendCommandTest, PositionsAreEncodedAsTheBuilderWould) {
   ASSERT_TRUE(create_1w_execute_position(expected, OWN_NET_NODE, DeviceType::AWNING, 25, 1, key));
   EXPECT_EQ(0, memcmp(recorder.frames[0].data, expected.data, expected.data_len))
       << "send_position() must add nothing to what the builder produces";
+}
+
+// ============================================================================
+// 1W wire profile (ADR 0031): manufacturer: -> CMD_EXECUTE ACEI; execute_broadcast: all -> dst.
+// ============================================================================
+
+TEST_F(OneWaySendCommandTest, VeluxIdentityEmitsLevel3Acei) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  OneWayControllerIdentity id = make_identity("velux", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1);
+  id.manufacturer = MANUFACTURER_VELUX;
+  transmitter.add_identity(id);
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_command("velux", CoverCommand::STOP));
+  EXPECT_EQ(recorder.frames[0].data[1], 0x61) << "a VELUX identity's EXECUTE carries ACEI 0x61";
+}
+
+TEST_F(OneWaySendCommandTest, IdentityWithoutManufacturerStillEmitsTheSomfyAcei) {
+  // The back-compat promise: an identity that never set manufacturer: is byte-for-byte what it
+  // was before ADR 0031.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  transmitter.add_identity(make_identity("plain", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_command("plain", CoverCommand::STOP));
+  EXPECT_EQ(recorder.frames[0].data[1], 0x43);
+}
+
+TEST_F(OneWaySendCommandTest, ExecuteAceiOverrideBeatsTheProfile) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  OneWayControllerIdentity id = make_identity("odd", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1);
+  id.manufacturer = MANUFACTURER_VELUX;
+  id.execute_acei = 0x55;
+  transmitter.add_identity(id);
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_command("odd", CoverCommand::STOP));
+  EXPECT_EQ(recorder.frames[0].data[1], 0x55) << "execute_acei: overrides the manufacturer profile";
+}
+
+TEST_F(OneWaySendCommandTest, ExecuteBroadcastAllTargetsAllDevicesRegardlessOfClass) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  OneWayControllerIdentity id = make_identity("screen", OWN_NET_NODE, DeviceType::SCREEN, 0x11, 1);
+  id.manufacturer = MANUFACTURER_VELUX;
+  id.execute_broadcast_all = true;
+  transmitter.add_identity(id);
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_command("screen", CoverCommand::STOP));
+
+  const uint8_t all_devices[NODE_ID_SIZE] = {0x00, 0x00, 0x3F};
+  EXPECT_EQ(0, memcmp(recorder.frames[0].dst, all_devices, NODE_ID_SIZE))
+      << "execute_broadcast: all -> 00 00 3F even though io_device_type is SCREEN (0x0B)";
+
+  // The frame is still well-formed and self-consistent (MAC over the same assembled payload).
+  IoFrame expected{};
+  uint8_t key[AES_KEY_SIZE];
+  memset(key, 0x11, AES_KEY_SIZE);
+  ASSERT_TRUE(create_1w_execute_command(expected, OWN_NET_NODE, DeviceType::SCREEN, CoverCommand::STOP, 1, key, 0x61,
+                                        /*broadcast_all=*/true));
+  EXPECT_EQ(0, memcmp(recorder.frames[0].data, expected.data, expected.data_len));
+}
+
+TEST_F(OneWaySendCommandTest, ExecuteBroadcastAllDoesNotDegradeTheReportToUnknown) {
+  // With `execute_broadcast: all` the wire dst decodes to DeviceType::UNKNOWN. The report must
+  // still name the identity's class, or the "Last 1W Command" sensor and the TX log read
+  // "STOP -> unknown".
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn());
+  OneWayControllerIdentity id = make_identity("screen", OWN_NET_NODE, DeviceType::SCREEN, 0x11, 1);
+  id.execute_broadcast_all = true;
+  transmitter.add_identity(id);
+  transmitter.setup();
+
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &report) { reports.push_back(report); });
+
+  ASSERT_TRUE(transmitter.send_command("screen", CoverCommand::STOP));
+  ASSERT_EQ(reports.size(), 1u);
+  EXPECT_EQ(reports[0].target_type, DeviceType::SCREEN) << "the identity's class, not the frame's decoded UNKNOWN";
+  EXPECT_EQ(reports[0].intent, "STOP") << "intent still decodes from the built frame";
 }

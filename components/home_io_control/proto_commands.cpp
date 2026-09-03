@@ -147,14 +147,10 @@ inline std::array<uint8_t, EXECUTE_PAYLOAD_SIZE> make_position_payload(uint8_t a
 /// 6-byte "special" payload form, which 1W uses even for numeric positions (unlike 2W's 8-byte
 /// create_execute_position() layout).
 constexpr uint8_t ONEWAY_EXECUTE_PARAMS_SIZE = 6;
-/// ACEI byte for 1W execute frames — level=2 (user_high), not EXECUTE_ACEI's level=3
-/// (user_default). EXECUTE_ACEI's own doc comment above pins level=3 to a real captured 2W hub;
-/// the 0x43/user_high alternative it mentions is what the published 1W reference vector
-/// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) actually carries, so
-/// 1W gets its own constant rather than sharing the 2W one.
-/// Composition: (ACEI_LEVEL_USER_HIGH << 5) | (0 << 3) | (1 << 1) | 1 = 0x43.
-constexpr uint8_t ONEWAY_EXECUTE_ACEI =
-    (ACEI_LEVEL_USER_HIGH << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
+// ONEWAY_EXECUTE_ACEI (the Somfy-shaped default) and ONEWAY_EXECUTE_ACEI_VELUX live in
+// proto_constants.h so oneway_controller.h's resolve_oneway_wire_profile() can name them without
+// the protocol layer depending on the controller layer. build_1w_execute() takes the ACEI as a
+// parameter now, defaulting to ONEWAY_EXECUTE_ACEI.
 /// Rolling sequence width; big-endian on the wire, and never part of the signed span.
 constexpr uint8_t ONEWAY_SEQUENCE_SIZE = 2;
 /// 1W execute MAC span: the command byte followed by all ONEWAY_EXECUTE_PARAMS_SIZE parameter
@@ -199,9 +195,9 @@ void init_1w_broadcast_frame(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Device
 }
 
 bool build_1w_execute(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t main0, uint8_t main1,
-                      uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
-  uint8_t payload[ONEWAY_EXECUTE_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, ONEWAY_EXECUTE_ACEI, main0, main1,
-                                                  ONEWAY_EXECUTE_FP1, ONEWAY_EXECUTE_FP2};
+                      uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE], uint8_t acei, bool broadcast_all) {
+  uint8_t payload[ONEWAY_EXECUTE_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, acei, main0, main1, ONEWAY_EXECUTE_FP1,
+                                                  ONEWAY_EXECUTE_FP2};
 
   // The span is the command byte followed by exactly the parameter bytes that go on air, so it
   // is copied out of `payload` rather than restated — a restatement could drift from the wire
@@ -220,7 +216,10 @@ bool build_1w_execute(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType ta
   payload[ONEWAY_EXECUTE_SEQUENCE_OFFSET] = static_cast<uint8_t>(sequence >> BITS_PER_BYTE);
   payload[ONEWAY_EXECUTE_SEQUENCE_OFFSET + 1] = static_cast<uint8_t>(sequence);
 
-  init_1w_broadcast_frame(f, src, target_type);
+  // A handheld cover remote of either vendor broadcasts open/close/stop to the all-devices
+  // address; only a class-bound identity uses the typed one. encode_broadcast_address(UNKNOWN)
+  // is already `00 00 3F` (only DeviceType 0 yields it) — do not add a second address path.
+  init_1w_broadcast_frame(f, src, broadcast_all ? DeviceType::UNKNOWN : target_type);
 
   return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
 }
@@ -342,11 +341,12 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// Build a 1W position execute frame (CMD 0x00) targeting a device class. See proto_commands.h
 /// for the full contract.
 bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t position,
-                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
+                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE], uint8_t acei,
+                                bool broadcast_all) {
   if (position > POSITION_PERCENT_MAX)
     return false;
   return build_1w_execute(f, src, target_type, static_cast<uint8_t>(POSITION_WIRE_SCALE * position), 0x00, sequence,
-                          controller_key);
+                          controller_key, acei, broadcast_all);
 }
 
 /// Build a 1W named-command execute frame (CMD 0x00) targeting a device class. See
@@ -356,7 +356,8 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// proto_constants.h. Passing CoverCommand::FORCE_OPEN here falls through to `default` and
 /// returns false, matching 2W's create_execute_command().
 bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, CoverCommand cmd,
-                               uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
+                               uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE], uint8_t acei,
+                               bool broadcast_all) {
   uint8_t main0 = 0;
   uint8_t main1 = 0;
   switch (cmd) {
@@ -373,7 +374,7 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
     default:
       return false;
   }
-  return build_1w_execute(f, src, target_type, main0, main1, sequence, controller_key);
+  return build_1w_execute(f, src, target_type, main0, main1, sequence, controller_key, acei, broadcast_all);
 }
 
 /// Build a 1W add-controller frame (CMD 0x30). See proto_commands.h for the full contract,

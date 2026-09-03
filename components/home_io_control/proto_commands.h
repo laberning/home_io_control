@@ -171,10 +171,16 @@ bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// @param controller_key 16-byte key held by the transmitting controller identity: the hub's own
 ///        `system_key` for its own network, or a foreign key adopted via CMD 0x30 (Phase 3A "key
 ///        adoption") when transmitting as an adopted identity.
+/// @param acei ACEI byte to place at payload[1] — `ONEWAY_EXECUTE_ACEI` (Somfy-shaped) by
+///        default, `ONEWAY_EXECUTE_ACEI_VELUX` for a VELUX identity. Resolved per identity by
+///        oneway_controller.h's effective_execute_acei(); this builder just writes it.
+/// @param broadcast_all When true, address the all-devices broadcast `00 00 3F` instead of the
+///        typed `target_type` class — what a handheld cover remote does (`execute_broadcast: all`).
 /// @return true on success; false if `position > 100` or if crypto::create_1w_hmac() fails — no
 ///         partially-populated frame is left behind on failure.
 bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t position,
-                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]);
+                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE],
+                                uint8_t acei = ONEWAY_EXECUTE_ACEI, bool broadcast_all = false);
 
 /// @brief Build a 1W named-command execute frame (CMD 0x00) targeting a device class.
 ///
@@ -236,10 +242,14 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// @param controller_key 16-byte key held by the transmitting controller identity: the hub's own
 ///        `system_key` for its own network, or a foreign key adopted via CMD 0x30 (Phase 3A "key
 ///        adoption") when transmitting as an adopted identity.
+/// @param acei ACEI byte for payload[1] — see create_1w_execute_position().
+/// @param broadcast_all Address `00 00 3F` instead of the typed class — see
+///        create_1w_execute_position().
 /// @return true on success; false if `cmd` is CoverCommand::FORCE_OPEN (no 1W encoding exists) or
 ///         if crypto::create_1w_hmac() fails.
 bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, CoverCommand cmd,
-                               uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]);
+                               uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE],
+                               uint8_t acei = ONEWAY_EXECUTE_ACEI, bool broadcast_all = false);
 
 // ============================================================================
 // 1W Enrollment (CMD 0x30 add-controller / CMD 0x39 remove-controller)

@@ -77,6 +77,11 @@ CONF_MANUFACTURER = "manufacturer"
 CONF_IO_DEVICE_TYPE = "io_device_type"
 CONF_INITIAL_SEQUENCE = "initial_sequence"
 CONF_COMMANDS = "commands"
+# Per-identity 1W wire overrides (ADR 0031). execute_acei: overrides the manufacturer-derived
+# ACEI byte for CMD_EXECUTE; execute_broadcast: all|typed picks the all-devices (00 00 3F) vs
+# typed-class destination — a handheld-remote-vs-class-bound axis, not a vendor axis.
+CONF_EXECUTE_ACEI = "execute_acei"
+CONF_EXECUTE_BROADCAST = "execute_broadcast"
 # The build flag for this identity's "Enroll 1W Controller" button. Presence/absence is the whole
 # gate -- adding or removing this line and reflashing is the enrollment feature's entire
 # lifecycle, same shape as accept_foreign_pairing/recover_oneway_key.
@@ -85,6 +90,10 @@ CONF_ENROLLMENT = "enrollment"
 # enrollment: true -- see ONEWAY_CONTROLLER_SCHEMA's own comment and create_1w_add_controller()'s
 # @warning (proto_commands.h) for why real hardware disagrees on this byte.
 CONF_ENROLLMENT_WITH_MAC = "enrollment_with_mac"
+# Override for the device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
+# profile's list (velux: {roller_shutter, awning, dual_shutter}). Ignored by the somfy gesture.
+# See resolve_oneway_wire_profile() / effective_enrollment_classes() (oneway_controller.h), ADR 0032.
+CONF_ENROLLMENT_CLASSES = "enrollment_classes"
 # Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"
@@ -409,6 +418,14 @@ MANUFACTURER_OPTIONS = {
     "atlantic_group": 0x0C,
 }
 
+# Manufacturer bytes for which oneway_controller.h's resolve_oneway_wire_profile() has a real 1W
+# wire profile. Keep this set in sync with that C++ switch — two values, and there is no automated
+# check (scripts/check-yaml-emitters.py compares key names, not table contents).
+_ONEWAY_WIRE_PROFILE_MANUFACTURERS = {
+    MANUFACTURER_OPTIONS["somfy"],
+    MANUFACTURER_OPTIONS["velux"],
+}
+
 
 def _resolve_named_or_raw_token(token, options, max_value=0xFF):
     """Resolve a lowercase, stripped token (a name from `options`, or a raw int/hex string) to
@@ -521,6 +538,22 @@ def validate_system_key(value):
 # build_oneway_adoption_report() (hub_internal.h) hand-emits for paste-and-reflash (ADR 0018).
 # `make yaml-emitter-sync` (scripts/check-yaml-emitters.py) catches drift between the two
 # statically.
+def _no_duplicate_enrollment_classes(value):
+    """Reject a repeated class in `enrollment_classes:` -- each just retransmits the same 0x30."""
+    seen = set()
+    for entry in value:
+        if entry in seen:
+            name = next(
+                (n for n, v in DEVICE_TYPE_OPTIONS.items() if v == entry), hex(entry)
+            )
+            raise cv.Invalid(
+                f"enrollment_classes has '{name}' more than once; each entry adds a burst to the "
+                "enrollment gesture, so a repeat only wastes ~1 second of it"
+            )
+        seen.add(entry)
+    return value
+
+
 ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
     {
         cv.Required(CONF_ID): cv.string_strict,
@@ -558,6 +591,30 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # @warning (proto_commands.h). Untested manufacturers (e.g. Velux) may require one shape
         # or the other; this exists so trying the other one needs a YAML edit, not a code change.
         cv.Optional(CONF_ENROLLMENT_WITH_MAC, default=False): cv.boolean,
+        # The device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
+        # profile default ({roller_shutter, awning, dual_shutter} for velux). Set it to narrow the
+        # sweep, e.g. [awning], once you know which class your actuator listens on. Ignored by the
+        # somfy gesture (which always uses io_device_type). Max 3 -- the C++ side is a fixed array.
+        # `unknown` (0x00) is rejected: it is the C++ "not overridden" sentinel
+        # (effective_enrollment_classes()), so [unknown] would silently expand back to the full
+        # three-class sweep -- the opposite of narrowing it. Duplicates are rejected too: each just
+        # retransmits the same frame and costs ~1s of the blocking gesture for nothing.
+        cv.Optional(CONF_ENROLLMENT_CLASSES): cv.All(
+            cv.ensure_list(cv.All(validate_device_type, cv.int_range(min=1, max=0xFF))),
+            cv.Length(min=1, max=3),
+            _no_duplicate_enrollment_classes,
+        ),
+        # Override the manufacturer-derived ACEI byte for this identity's 1W CMD_EXECUTE frames.
+        # min=1 on purpose: 0 is the C++ "not overridden" sentinel (OneWayControllerIdentity::
+        # execute_acei), so accepting execute_acei: 0 would be a silent no-op instead of an error.
+        # cv.hex_int allows 0x61-style spelling; the range check runs after.
+        cv.Optional(CONF_EXECUTE_ACEI): cv.All(cv.hex_int, cv.int_range(min=1, max=0xFF)),
+        # "all" -> address the all-devices broadcast 00 00 3F for CMD_EXECUTE (what a handheld
+        # cover remote of either vendor does); "typed" (default) -> the per-class address from
+        # io_device_type (current behaviour). Not a vendor axis -- see ADR 0031.
+        cv.Optional(CONF_EXECUTE_BROADCAST, default="typed"): cv.one_of(
+            "typed", "all", lower=True
+        ),
     }
 )
 
@@ -594,6 +651,20 @@ def _hex_byte_array(hex_string):
     return f"{{{values}}}"
 
 
+def _enrollment_classes_initialiser(identity):
+    """Render `enrollment_classes:` as a 3-element std::array<DeviceType,3> brace-initialiser.
+
+    Unset, or fewer than 3, is padded with UNKNOWN (0x00) -- the sentinel effective_enrollment_classes()
+    (oneway_controller.h) reads as "not overridden here" / "skip this slot".
+    """
+    padded = (list(identity.get(CONF_ENROLLMENT_CLASSES, [])) + [0, 0, 0])[:3]
+    entries = ", ".join(
+        f"static_cast<esphome::home_io_control::DeviceType>(0x{value:02X})"
+        for value in padded
+    )
+    return f"{{{entries}}}"
+
+
 def oneway_controller_expression(identity, hub_node_id):
     """Generate the C++ OneWayControllerIdentity initialiser for one configured identity.
 
@@ -612,6 +683,10 @@ def oneway_controller_expression(identity, hub_node_id):
             f".initial_sequence = 0x{identity[CONF_INITIAL_SEQUENCE]:04X}",
             f".node_id_derived = {'true' if derived else 'false'}",
             f".enrollment_with_mac = {'true' if identity[CONF_ENROLLMENT_WITH_MAC] else 'false'}",
+            f".execute_acei = 0x{identity.get(CONF_EXECUTE_ACEI, 0):02X}",
+            f".execute_broadcast_all = "
+            f"{'true' if identity[CONF_EXECUTE_BROADCAST] == 'all' else 'false'}",
+            f".enrollment_classes = {_enrollment_classes_initialiser(identity)}",
         ]
     )
     if derived:
@@ -705,8 +780,74 @@ def _validate_oneway_controllers(config):
                 "set. Find the value from a key-adoption report for this network (the 'Recover "
                 "1W Controller Key' switch prints it), or from the device's own documentation."
             )
+        # Record whether the user set manufacturer: explicitly, before it is defaulted to 0. The
+        # 1W wire-profile warning below only fires for an *explicit* unprofiled vendor -- an
+        # omitted manufacturer is the common back-compat case and maps silently to Somfy.
+        manufacturer_explicit = CONF_MANUFACTURER in identity
         if CONF_MANUFACTURER not in identity:
             identity[CONF_MANUFACTURER] = 0
+
+        # manufacturer: now also drives the 1W CMD_EXECUTE ACEI byte (ADR 0031). We only have a
+        # verified wire profile for Somfy and Velux; any other explicitly-named vendor falls back
+        # to the Somfy-shaped default, which is a guess. Warn -- but not with cv.Invalid, since an
+        # unprofiled vendor is a legal config that still transmits -- and only for an identity that
+        # can actually emit an EXECUTE (has commands: or enrollment:); an inert identity's wire
+        # shape does not matter yet.
+        identity_can_transmit = bool(identity[CONF_COMMANDS]) or identity[CONF_ENROLLMENT]
+        if (
+            manufacturer_explicit
+            and identity[CONF_MANUFACTURER] not in _ONEWAY_WIRE_PROFILE_MANUFACTURERS
+            and identity_can_transmit
+        ):
+            _LOGGER.warning(
+                "home_io_control: oneway_controllers '%s' has manufacturer 0x%02X, which has no "
+                "1W wire profile -- using the Somfy-shaped defaults (ACEI 0x43). Set execute_acei: "
+                "explicitly if that is wrong for your device.",
+                identity_id,
+                identity[CONF_MANUFACTURER],
+            )
+
+        # A VELUX enrollment 0x30 sweep goes to {roller_shutter, awning, dual_shutter} and never
+        # screen/blind/venetian_blind -- no VELUX remote pairs on those classes (issue #74 capture,
+        # analysis/velux_vs_somfy_1w_frame_differences.md). If this identity is a screen/blind that
+        # will enroll and hasn't narrowed the sweep itself, say so: enrollment ignores io_device_type.
+        if (
+            identity[CONF_MANUFACTURER] == MANUFACTURER_OPTIONS["velux"]
+            and identity[CONF_ENROLLMENT]
+            and CONF_ENROLLMENT_CLASSES not in identity
+            and identity[CONF_IO_DEVICE_TYPE]
+            in (
+                DEVICE_TYPE_OPTIONS["screen"],
+                DEVICE_TYPE_OPTIONS["blind"],
+                DEVICE_TYPE_OPTIONS["venetian_blind"],
+            )
+        ):
+            _LOGGER.warning(
+                "home_io_control: oneway_controllers '%s' is a VELUX %s with enrollment: true. The "
+                "enrollment 0x30 sweep will target roller_shutter/awning/dual_shutter, NOT this "
+                "io_device_type -- no VELUX remote pairs on screen/blind. Set enrollment_classes: "
+                "explicitly (e.g. [awning]) if you know which class your actuator listens on.",
+                identity_id,
+                next(
+                    name
+                    for name, value in DEVICE_TYPE_OPTIONS.items()
+                    if value == identity[CONF_IO_DEVICE_TYPE]
+                ),
+            )
+
+        # enrollment_classes: only feeds the VELUX enrollment gesture. On a somfy/unprofiled
+        # identity, or one with no enroll button at all, it is silently inert -- flag it, the same
+        # way the screen/blind case above is flagged.
+        if CONF_ENROLLMENT_CLASSES in identity and (
+            identity[CONF_MANUFACTURER] != MANUFACTURER_OPTIONS["velux"]
+            or not identity[CONF_ENROLLMENT]
+        ):
+            _LOGGER.warning(
+                "home_io_control: oneway_controllers '%s' sets enrollment_classes: but it only "
+                "affects the VELUX enrollment gesture (needs manufacturer: velux AND "
+                "enrollment: true) -- it is ignored here.",
+                identity_id,
+            )
 
         # Entity IDs are declared here, at validation time, not in to_code(): an ID created late
         # is silently dropped at runtime (ADR 0009). The `<identity_id>_<command>` shape is a

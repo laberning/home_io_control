@@ -513,6 +513,29 @@ static constexpr uint8_t ACEI_LEVEL_AUTO_DEFAULT = 7;       ///< Default automat
 /// @return Null-terminated string such as "user_default" or "protection_sensor".
 const char *acei_level_name(uint8_t level);
 
+/// @brief ACEI byte for a 1W CMD_EXECUTE frame — the Somfy-shaped default.
+///
+/// Level 2 (user_high), extended-info bit set. The 2W EXECUTE_ACEI (proto_commands.cpp) pins
+/// level 3 to a real captured 2W hub; this level-2 value is what the published 1W reference
+/// vector (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) and every
+/// Somfy 1W remote frame in the corpus (7+ frames across 3 nodes: 9D6085, 485B37, 7B8240) carry.
+/// Lives here (not proto_commands.cpp) so oneway_controller.h's resolve_oneway_wire_profile() can
+/// name it without the protocol layer depending on the controller layer (AGENTS.md layering 1).
+/// Composition: (ACEI_LEVEL_USER_HIGH << 5) | (1 << 1) | 1 = 0x43.
+static constexpr uint8_t ONEWAY_EXECUTE_ACEI =
+    (ACEI_LEVEL_USER_HIGH << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
+
+/// @brief ACEI byte for a 1W CMD_EXECUTE frame from a VELUX KLI-class remote.
+///
+/// Level 3 (user_default), extended-info bits clear. This is also iown-homecontrol's generic
+/// `ACEI_DEFAULT`. **Confidence: n=1** — one corpus frame
+/// (tests/corpus/captures/oneway/velux_kli313_oneway_stop.yaml) plus samr037/iohc-flipper's
+/// README, which names cmd 0x00 payload[1] the "vendor byte" (`0x43` Somfy / `0x61` Velux).
+/// The `unidentified_1w_remote_*` frames also carry 0x61 but their manufacturer is unknown, so
+/// they can't corroborate the VELUX attribution. `execute_acei:` on the identity is the escape
+/// hatch. Composition: (ACEI_LEVEL_USER_DEFAULT << 5) | ACEI_VALID_BIT = 0x61.
+static constexpr uint8_t ONEWAY_EXECUTE_ACEI_VELUX = (ACEI_LEVEL_USER_DEFAULT << ACEI_LEVEL_SHIFT) | ACEI_VALID_BIT;
+
 // ============================================================================
 // Discovery Response Extended Fields
 // ============================================================================

@@ -15,6 +15,7 @@
 #include "proto_device_model.h"
 #include "proto_frame.h"
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -130,28 +131,39 @@ class OneWayTransmitter {
   ///         needs only one of them.
   bool send_burst(const IoFrame &frame);
 
-  /// @brief Register this identity as a controller on every device of its class currently in
-  /// association mode: `0x39` (remove, self-directed) immediately followed by `0x30` (add, no MAC
-  /// trailer) — the documented 1W pairing handshake.
+  /// @brief Register this identity as a controller on every device currently in association mode
+  /// (a physical PROG hold on the receiver, ADR 0026), using the gesture its manufacturer expects
+  /// (`resolve_oneway_wire_profile()`, ADR 0032).
   ///
-  /// **The `0x30` half's MAC trailer is configurable** via the identity's `enrollment_with_mac:`
-  /// (default `false`, i.e. no MAC at all — not "MAC inline", there is no inline form for this
-  /// command, see create_1w_add_controller()'s `@warning`, proto_commands.h). Most real hardware
-  /// captures this project holds carry no MAC, but a real Izymo has separately been shown to
-  /// accept the MAC-bearing form too (the published documentation vector's own shape) — untested
-  /// manufacturers may need either.
+  /// **`EnrollGesture::SOMFY`** (somfy / unset / any unprofiled vendor): `0x39` (remove,
+  /// self-directed) then `0x30` (add) — the documented 1W handshake
+  /// (`reference/iown-homecontrol/docs/linklayer.md:396`), both to the identity's own
+  /// `io_device_type`, one burst each, matched by a real Smoove capture landing the two 128 ms
+  /// apart (`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`).
+  /// Byte-for-byte the pre-ADR-0032 behaviour.
   ///
-  /// **Sends `0x39` then `0x30`, back to back, one burst each** —
-  /// `reference/iown-homecontrol/docs/linklayer.md:396`'s "1W Discovery" sequence diagram, matched
-  /// by a real Smoove capture landing the two 128 ms apart within one gesture
-  /// (`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`; see also
-  /// `analysis/completed/oneway_1w_support_plan.md` Step 13). This `0x39` carries only this
-  /// identity's own `src` address — nothing on the wire lets it name a different controller — so
-  /// it can only clear this identity's own prior entry, never someone else's; ADR 0026's
-  /// additive-registration property is unaffected by sending it here.
+  /// **`EnrollGesture::VELUX_KLI`** (manufacturer velux): `0x39` to the all-devices address, then
+  /// a `0x30` burst to **each** class in `effective_enrollment_classes()` under one shared
+  /// sequence, then a STOP and a DOWN EXECUTE to the all-devices address at the VELUX ACEI — the
+  /// KLI-manual "press PAIR, then STOP then DOWN within 3 seconds" registration completion. Matches
+  /// the issue #74 KLI 310 capture and `samr037/iohc-flipper` `tx_runner.c`. The STOP+DOWN half is
+  /// unconfirmed against a VELUX capture
+  /// (`tests/corpus/captures/enrollment/synthetic_enrollment_velux_kli_prog_sweep.yaml`).
+  ///
+  /// **The `0x30`'s MAC trailer** is configurable via `enrollment_with_mac:` (default `false`, no
+  /// MAC — see create_1w_add_controller()'s `@warning`). Real VELUX (#74) and real Somfy captures
+  /// both use the no-MAC form; a real Izymo has separately accepted the MAC-bearing form too.
+  ///
+  /// **Blocks for the whole gesture** feeding the watchdog in the gaps — up to ~6 s for the VELUX
+  /// path (6 bursts: `0x39` + 3-class `0x30` sweep + STOP + DOWN, each ~1 s with `LONG_PREAMBLE` on
+  /// every copy). This is a user-initiated, once-per-device action, the same shape as the pairing
+  /// button (`pairing_discovery_wait_ms` → 5000); ADR 0032 records the exemption and the risk that
+  /// the sweep+follow-up may not fit the KLI manual's own 3-second window at this cadence.
   /// @param controller_id YAML handle of the controller identity to register.
-  /// @return true if the `0x30` half reached the radio (the credential that actually registers
-  ///         this identity). A failed `0x39` prelude only logs a warning and does not block it.
+  /// @return true if the credential frame(s) that actually register this identity reached the
+  ///         radio — the `0x30` (SOMFY) or the sweep (VELUX_KLI). The VELUX STOP+DOWN follow-up is
+  ///         skipped entirely if the sweep transmitted nothing; a failed `0x39` prelude, or a
+  ///         partial STOP/DOWN after a good sweep, only logs and does not flip this.
   bool send_enrollment(const std::string &controller_id);
 
   /// @brief Un-register this identity from every device of its class currently in association
@@ -179,6 +191,23 @@ class OneWayTransmitter {
   bool send_(const std::string &controller_id,
              const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
              const char *explicit_intent = "");
+
+  /// send_enrollment()'s two gestures, split so each stays simple and the SOMFY one is literally
+  /// the pre-ADR-0032 body. The dispatcher resolves the identity once and hands it down.
+  bool send_somfy_enrollment_(const OneWayControllerIdentity &identity);
+  bool send_velux_kli_enrollment_(const OneWayControllerIdentity &identity);
+
+  /// Reserve **one** sequence, then 0x30-enroll to each non-UNKNOWN class in `classes` under that
+  /// one sequence — the VELUX class sweep a real KLI remote sends (analysis
+  /// velux_vs_somfy_1w_frame_differences.md §6). One report for the whole sweep.
+  /// @return true if at least one class's burst reached the radio.
+  bool send_enroll_sweep_(const OneWayControllerIdentity &identity, const std::array<DeviceType, 3> &classes);
+
+  /// The one place a OneWayCommandReport is built and fired (no-op without a callback). Every
+  /// report — success, sweep, or failure — goes through here so a new field on the struct, or a
+  /// change to how a field is chosen, lands in exactly one spot.
+  void report_attempt_(const std::string &controller_id, const std::string &intent, DeviceType target_type,
+                       uint16_t sequence, bool sequence_reserved, bool transmitted);
 
   /// Emit a report for an attempt that never got as far as a frame.
   void report_failure_(const std::string &controller_id, uint16_t sequence, bool sequence_reserved);

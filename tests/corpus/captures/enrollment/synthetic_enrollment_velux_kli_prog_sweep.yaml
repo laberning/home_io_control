@@ -1,0 +1,84 @@
+id: synthetic_enrollment_velux_kli_prog_sweep
+description: >
+  The full 1W enrollment gesture a hub must emit to register itself with a Velux INTEGRA
+  exterior-shading actuator, as one six-frame reference. NOT a capture — every frame is
+  hand-assembled and all crypto is computed under the public corpus key
+  (protolib.crypt_1w_key / create_1w_hmac, tests/support/test_helpers.h::TEST_SYSTEM_KEY),
+  never a real key. It exists because the real thing cannot be captured: in issue #74 the
+  reporter's KLI 310 PROG gesture was recorded, but this project's own frame logger
+  (render_frame_hex_redacted, redaction.h::command_carries_key_material) masks the entire
+  payload of every 0x30 add-controller frame, so only 9 header bytes of each survived.
+
+  Provenance of each field:
+  - Structural (dst sweep 00 00 BF / 00 00 FF / 00 03 7F, dst 00 00 3F for 0x39, CTRL0 bytes
+    F1/FC/F6, the 29-byte no-MAC 0x30 form, man_id 0x01): from the real #74 KLI 310 capture,
+    decoded with this project's own broadcast_target_type(); the sweep classes match
+    velux_kli310_discovery_alt_sweep.yaml frame-for-frame, and man_id 0x01 also matches the
+    manufacturer byte in that session's "Recover 1W Controller Key" adoption block.
+  - The 0x39-clear-then-0x30-sweep-then-STOP-then-DOWN ordering and the STOP+DOWN follow-up:
+    from samr037/iohc-flipper iohc_flipper/src/state/tx_runner.c (send_pair_with_identity),
+    built from real KLI 313 "rings" captures, and the VELUX KLI 310/311/312/313 manual
+    ("press PAIR 1s, then STOP then DOWN within 3 seconds"). The STOP+DOWN half has NOT been
+    confirmed against a Velux capture — if Phase 2 hardware testing shows it wrong or
+    unnecessary, frames 5-6 get corrected (delete + re-add; hex is immutable).
+  - ACEI 0x61 (Velux level 3) on the EXECUTE frames: see
+    tests/corpus/captures/oneway/velux_kli313_oneway_stop.yaml.
+
+  One logical sequence per command (0x39 seq 1, the 0x30 sweep shares seq 2, STOP seq 3,
+  DOWN seq 4) — mirroring how OneWayTransmitter::send_() reserves one sequence per send call and
+  how iohc-flipper shares seq30 across the sweep. This is the golden reference the Phase 2
+  send_enrollment() Velux-path unit test diffs its builder output against; the retransmit
+  structure (4x/6x copies, LPM only on copy 1, 14/20/40 ms gaps) is a transmit-side concern and
+  is documented in the plan, not modelled here.
+source:
+  device: "synthetic hub 1W controller (node AABBCC), enrolling with a Velux INTEGRA exterior-shading actuator"
+  captured_with: synthetic
+  firmware: null
+  date: 2026-09-03
+  origin: synthetic-bootstrap
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    freq: 868950000
+    hex: "F1 00 00 00 3F AA BB CC 39 00 00 01 CE B4 03 12 C2 00"
+    crc: absent
+    note: "CMD_ONEWAY_REMOVE(0x39) 'clear self' -> 00 00 3F, data 0x00, seq 1, MAC over cmd+data"
+  - dir: tx
+    freq: 868950000
+    hex: "FC 00 00 00 BF AA BB CC 30 84 FF 65 DD 1A 21 CC 93 66 2E 42 27 67 39 1C 07 01 01 00 02"
+    crc: absent
+    note: >
+      CMD_ONEWAY_ADD_CONTROLLER(0x30) -> 00 00 BF (roller_shutter), 29-byte no-MAC form:
+      enc_key = crypt_1w_key(src, corpus key) (self-inverse -> unwraps to the corpus key),
+      man_id 0x01 (Velux), data 0x01, seq 2
+  - dir: tx
+    freq: 868950000
+    hex: "FC 00 00 00 FF AA BB CC 30 84 FF 65 DD 1A 21 CC 93 66 2E 42 27 67 39 1C 07 01 01 00 02"
+    crc: absent
+    note: "same 0x30, -> 00 00 FF (awning); same enc_key and seq as the rest of the sweep"
+  - dir: tx
+    freq: 868950000
+    hex: "FC 00 00 03 7F AA BB CC 30 84 FF 65 DD 1A 21 CC 93 66 2E 42 27 67 39 1C 07 01 01 00 02"
+    crc: absent
+    note: "same 0x30, -> 00 03 7F (dual_shutter); end of the class sweep"
+  - dir: tx
+    freq: 868950000
+    hex: "F6 00 00 00 3F AA BB CC 00 01 61 D2 00 00 00 00 03 EE 96 92 E8 EF 09"
+    crc: absent
+    note: >
+      CMD_EXECUTE(0x00) STOP (main0 0xD2) -> 00 00 3F, originator 0x01, ACEI 0x61, seq 3 —
+      first of the KLI-manual STOP+DOWN registration completion (iohc-flipper, unconfirmed on Velux)
+  - dir: tx
+    freq: 868950000
+    hex: "F6 00 00 00 3F AA BB CC 00 01 61 C8 00 00 00 00 04 5F 69 F7 F0 E4 0F"
+    crc: absent
+    note: "CMD_EXECUTE(0x00) DOWN (main0 0xC8) -> 00 00 3F, ACEI 0x61, seq 4 — completes the gesture"
+expect:
+  frames:
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}

@@ -1,0 +1,51 @@
+id: velux_kli310_discovery_alt_sweep
+description: >
+  A real Velux KLI 310 wall remote (node 5A9E00) sweeping the 1W alt-discovery command (0x2E)
+  across three typed-broadcast destinations in one ~1.2s burst: 00 00 BF, 00 00 FF, 00 03 7F —
+  our broadcast_target_type() decodes these as roller_shutter (2), awning (3), dual_shutter (13).
+  Captured on an SX1276 by the reporter's own hub in issue #74 while they operated the remote by
+  hand (no device in pairing mode); the same remote's key-copy PROG gesture then sends its 0x39
+  clear to 00 00 3F and its 0x30 add-controller to this same {BF, FF, 7F} set (those 0x30 frames
+  are redacted by this project's own frame logger, so only their headers survive — see
+  analysis notes and tests/corpus/captures/enrollment/synthetic_enrollment_velux_kli_prog_sweep.yaml
+  for a computed reconstruction of that half).
+
+  Why it is here: this is the only *captured* evidence that a Velux KLI remote addresses exactly
+  {roller_shutter, awning, dual_shutter} and nothing else when it announces or enrolls — it is
+  never seen targeting screen, blind, venetian_blind or window_opener. It extends
+  velux_kli313_discovery_alt_beacon.yaml (a single KLI 313 beacon) to the full three-class sweep
+  and pins that the class set a Velux enrollment must cover is these three.
+
+  Each frame is the first (LPM-marked, CTRL1=0x20) copy of its per-destination sub-burst except
+  the 00 03 7F one, captured as CTRL1=0x00; the remote used a distinct rolling sequence per
+  destination (0x0B57, 0x0B58, 0x0B59). MACs are present but not verifiable (key: unknown — a
+  community capture, the remote's 1W key was never shared).
+source:
+  device: "Velux KLI 310 universal wall remote (node 5A9E00), operated by hand near the reporter's hub"
+  captured_with: sx1276
+  firmware: "ESPHome 2026.7.4"
+  date: 2026-08-20
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/74"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "F1 20 00 00 BF 5A 9E 00 2E 00 0B 57 55 31 48 9A 2A CD"
+    crc: absent
+    note: "1W CMD_DISCOVER_ALT_REQ(0x2E), dst=00 00 BF -> roller_shutter (2), seq 0x0B57, LPM copy"
+  - dir: rx
+    freq: 868950000
+    hex: "F1 20 00 00 FF 5A 9E 00 2E 00 0B 58 87 37 0B FE 73 6C"
+    crc: absent
+    note: "same sweep, dst=00 00 FF -> awning (3), seq 0x0B58, LPM copy"
+  - dir: rx
+    freq: 868950000
+    hex: "F1 00 00 03 7F 5A 9E 00 2E 00 0B 59 27 1B 69 1E 50 0E"
+    crc: absent
+    note: "same sweep, dst=00 03 7F -> dual_shutter (13), seq 0x0B59"
+expect:
+  frames:
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}

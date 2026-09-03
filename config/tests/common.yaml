@@ -61,6 +61,18 @@ home_io_control:
     - id: awning_remote
       io_device_type: awning
       commands: [open, close, stop]
+    - id: velux_screen_remote
+      # ADR 0031: manufacturer: drives the CMD_EXECUTE ACEI byte; execute_broadcast: all mimics a
+      # handheld remote; execute_acei: is the raw override. ADR 0032: enrollment: true on a
+      # manufacturer: velux identity compiles the VELUX enroll gesture + button, and
+      # enrollment_classes: exercises the non-empty sweep-list initialiser.
+      manufacturer: velux
+      io_device_type: awning
+      execute_broadcast: all
+      execute_acei: 0x61
+      commands: [stop]
+      enrollment: true
+      enrollment_classes: [awning, roller_shutter]
     - id: adopted_neighbour_net
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF

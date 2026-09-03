@@ -31,7 +31,7 @@ SUBJECTS = frozenset({
     "somfy_awning", "somfy_connectivity_kit", "somfy_izymo_dimmer", "somfy_j406",
     "somfy_oximo40", "somfy_rs100", "somfy_smoove", "somfy_sunilus",
     "synthetic", "tilt_cover", "unidentified_1w_remote",
-    "velux_kig300", "velux_kli313", "velux_klr200", "velux_kux100", "velux_window",
+    "velux_kig300", "velux_kli310", "velux_kli313", "velux_klr200", "velux_kux100", "velux_window",
 })
 
 
