@@ -8,7 +8,7 @@
 /// (platform_accept_foreign_pairing_switch.h): same hub-level, non-device-bound shape, created
 /// dynamically from `home_io_control.recover_oneway_key: true` (see `__init__.py`'s
 /// `_create_recover_oneway_key_switch()`) rather than through a `switch:` platform entry, and
-/// bound directly to the hub instance being built. See hub_oneway_key_adoption.cpp for what
+/// bound directly to the hub instance being built. See oneway_key_adoption.cpp for what
 /// arming actually does.
 ///
 /// The two features are deliberately independent: 2W key extraction impersonates an unpaired

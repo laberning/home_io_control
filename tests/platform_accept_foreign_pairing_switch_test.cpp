@@ -27,7 +27,7 @@ TEST(PlatformAcceptForeignPairingSwitch, WriteStateTrueArmsHubAndPublishesOn) {
 
   sw.write_state(true);
 
-  EXPECT_EQ(hub.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE)
+  EXPECT_EQ(hub.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE)
       << "write_state(true) should arm the hub's key-extraction responder";
   EXPECT_TRUE(sw.get_state()) << "switch should publish on immediately";
 }
@@ -40,7 +40,7 @@ TEST(PlatformAcceptForeignPairingSwitch, WriteStateFalseDisarmsHubAndPublishesOf
   sw.write_state(true);
   sw.write_state(false);
 
-  EXPECT_EQ(hub.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
+  EXPECT_EQ(hub.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
       << "write_state(false) should disarm the hub's key-extraction responder";
   EXPECT_FALSE(sw.get_state());
 }
@@ -59,7 +59,7 @@ TEST(PlatformAcceptForeignPairingSwitch, AutoDisarmUpdatesDisplayedStateWithoutW
   // and the switch should follow via the armed-state callback, not a write_state() call.
   hub.last_timeout_callback_();
 
-  EXPECT_EQ(hub.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
+  EXPECT_EQ(hub.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
   EXPECT_FALSE(sw.get_state()) << "switch should publish off when the hub auto-disarms";
 }
 

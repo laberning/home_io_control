@@ -127,7 +127,7 @@ static constexpr uint8_t CMD_ADDRESS_REQ =
            ///< progress at all (a Velux KIG300 probing a Somfy dimmer in
            ///< tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml). Answered by the
            ///< key-extraction responder's create_address_resp_device_role()
-           ///< (handle_key_extraction_address_req_() in hub_key_extraction.cpp).
+           ///< (handle_address_req_() in key_extraction_responder.cpp).
 static constexpr uint8_t CMD_ADDRESS_RESP =
     0x37;  ///< Address assignment response: the device returns its own 3-byte backbone address,
            ///< byte-identical to the one it reported at data[2..4]
@@ -151,8 +151,8 @@ static constexpr uint8_t CMD_CHALLENGE_REQ =
            ///< the protocol is symmetric and controllers challenge devices too: in
            ///< tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml a KLR200 issues 0x3C against
            ///< the device's own CMD_ADDRESS_RESP. The key-extraction responder now answers exactly
-           ///< that inbound direction (handle_key_extraction_address_challenge_() in
-           ///< hub_key_extraction.cpp), so both directions are implemented, not just the outbound
+           ///< that inbound direction (KeyExtractionResponder::handle_address_challenge_() in
+           ///< key_extraction_responder.cpp), so both directions are implemented, not just the outbound
            ///< one.
 static constexpr uint8_t CMD_CHALLENGE_RESP =
     0x3D;  ///< HMAC proof answering a 0x3C. Whoever is challenged authenticates *its own*

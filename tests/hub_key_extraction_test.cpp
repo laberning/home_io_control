@@ -93,10 +93,10 @@ TEST(HubKeyExtraction, ArmSetsArmedIdleAndSchedulesAutoOffTimeout) {
 
   comp.set_key_extraction_armed(true);
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE);
   EXPECT_EQ(comp.last_timeout_name_, "key_extraction_auto_off");
   EXPECT_EQ(comp.last_timeout_ms_, 10u * 60u * 1000u) << "auto-off window should be 10 minutes";
-  EXPECT_TRUE(stored_node_id_is_valid(comp.key_extraction_ctx_.throwaway_id))
+  EXPECT_TRUE(stored_node_id_is_valid(comp.key_extraction_.key_extraction_ctx_.throwaway_id))
       << "throwaway ID should be a structurally valid node ID";
 }
 
@@ -114,7 +114,7 @@ TEST(HubKeyExtraction, ArmedStateCallbackFiresOnManualArmAndDisarm) {
   ASSERT_EQ(observed.size(), 2u);
   EXPECT_TRUE(observed[0]);
   EXPECT_FALSE(observed[1]);
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
 }
 
 TEST(HubKeyExtraction, DisarmWhenAlreadyDisarmedIsNoop) {
@@ -140,7 +140,7 @@ TEST(HubKeyExtraction, ThrowawayIdAvoidsRealNodeIdAndBroadcastAddresses) {
   test_rng::enqueue_bytes(valid_candidate, NODE_ID_SIZE);
 
   uint8_t out[NODE_ID_SIZE];
-  comp.generate_key_extraction_throwaway_id_(out);
+  comp.key_extraction_.generate_throwaway_id(out);
   test_rng::reset();
 
   EXPECT_EQ(0, memcmp(out, valid_candidate, NODE_ID_SIZE)) << "generator should skip the colliding candidate";
@@ -163,7 +163,7 @@ TEST(HubKeyExtraction, ThrowawayIdGenerationFallsBackWhenEveryCandidateCollides)
     test_rng::enqueue_bytes(OUR_NODE_ID, NODE_ID_SIZE);
 
   uint8_t out[NODE_ID_SIZE];
-  comp.generate_key_extraction_throwaway_id_(out);
+  comp.key_extraction_.generate_throwaway_id(out);
   test_rng::reset();
 
   EXPECT_EQ(0, memcmp(out, OUR_NODE_ID, NODE_ID_SIZE))
@@ -240,12 +240,12 @@ TEST(HubKeyExtraction, DiscoverConfirmAckStillUsesRadioResponsePreamble) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
 
   IoFrame discover_confirm{};
   init_frame(discover_confirm, true, true, false, false);
@@ -298,13 +298,13 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   // Hub broadcasts discovery.
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
   EXPECT_EQ(count_sent_cmd(radio, CMD_DISCOVER_RESP), 3) << "0x29 should be sent on all 3 channels";
 
   // Hub confirms the discovery directly to us; most hubs will not start the key exchange until
@@ -315,16 +315,16 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
   set_src(discover_confirm, FOREIGN_HUB_ID);
   ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
   comp.process_received_packet_(make_rx_packet(discover_confirm));
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CONFIRM_ACK);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CONFIRM_ACK);
   EXPECT_EQ(count_sent_cmd(radio, CMD_DISCOVER_CONFIRM_ACK), 3) << "0x2D should be sent on all 3 channels";
 
   // Hub sends key-init to our throwaway ID.
   IoFrame key_init{};
   create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
   comp.process_received_packet_(make_rx_packet(key_init));
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
   EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_REQ), 3) << "0x3C should be sent on all 3 channels";
-  EXPECT_EQ(0, memcmp(comp.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE));
+  EXPECT_EQ(0, memcmp(comp.key_extraction_.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE));
 
   // Hub sends the real key-transfer, encrypted the way create_key_transfer() does.
   IoFrame key_init_frame_for_iv{};
@@ -333,11 +333,11 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
                                                     0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
   ASSERT_TRUE(create_key_transfer(key_transfer, key_init_frame_for_iv, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                  comp.key_extraction_ctx_.challenge));
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
 
   EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should be sent on all 3 channels";
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "responder should stay armed (not disarm immediately) in case the hub follows up with an "
          "address request";
   EXPECT_EQ(comp.last_timeout_name_, "key_extraction_post_extract_grace")
@@ -345,7 +345,7 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
 
   ASSERT_TRUE(static_cast<bool>(comp.last_timeout_callback_));
   comp.last_timeout_callback_();
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
       << "the grace timer firing with no further hub progress should disarm";
 }
 
@@ -361,29 +361,29 @@ TEST(HubKeyExtraction, ExchangeWithoutDiscoverConfirmStillExtractsKey) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
 
   // No 0x2C at all — straight to key-init.
   IoFrame key_init{};
   create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
   comp.process_received_packet_(make_rx_packet(key_init));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
   EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_REQ), 3);
 
   IoFrame key_transfer{};
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
                                                     0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00};
   ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                  comp.key_extraction_ctx_.challenge));
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
 
   EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should still be sent on all 3 channels";
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "a hub that skips the discovery-confirm step must still complete the extraction";
 }
 
@@ -401,36 +401,36 @@ TEST(HubKeyExtraction, LateKeyTransferAfterHoldExpiryStillCompletesExtraction) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
 
   IoFrame key_init{};
   create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
   comp.process_received_packet_(make_rx_packet(key_init));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
 
   // Simulate the mid-attempt CH2 hold having expired -- e.g. a real hub that took longer than 5s to
   // send its key-transfer -- without anything having touched key_extraction_ctx_.state.
-  comp.key_extraction_hold_deadline_ms_ = 0;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = 0;
   ASSERT_FALSE(comp.key_extraction_awaiting_reply_()) << "precondition: the hold must actually be expired";
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE)
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE)
       << "precondition: letting the hold expire must not by itself reset state";
 
   IoFrame key_transfer{};
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
                                                     0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30};
   ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                  comp.key_extraction_ctx_.challenge));
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "a key-transfer arriving after the CH2 hold has expired must still complete the extraction";
   EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should still be sent on all 3 channels";
-  EXPECT_EQ(0, memcmp(comp.key_extraction_ctx_.recovered_key, foreign_system_key, AES_KEY_SIZE))
+  EXPECT_EQ(0, memcmp(comp.key_extraction_.key_extraction_ctx_.recovered_key, foreign_system_key, AES_KEY_SIZE))
       << "the recovered key should match what the late key-transfer actually carried";
 }
 
@@ -446,30 +446,30 @@ TEST(HubKeyExtraction, EachPreExtractionReplyAdvancesTheHoldDeadline) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
-  ASSERT_EQ(comp.key_extraction_hold_deadline_ms_, 0u) << "precondition: no hold armed yet";
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_hold_deadline_ms_, 0u) << "precondition: no hold armed yet";
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
-  EXPECT_GT(comp.key_extraction_hold_deadline_ms_, esphome::millis())
+  EXPECT_GT(comp.key_extraction_.key_extraction_hold_deadline_ms_, esphome::millis())
       << "the discovery reply (0x29) must arm the CH2 hold";
 
-  comp.key_extraction_hold_deadline_ms_ = 0;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = 0;
   IoFrame discover_confirm{};
   init_frame(discover_confirm, true, true, false, false);
   set_dst(discover_confirm, throwaway_id);
   set_src(discover_confirm, FOREIGN_HUB_ID);
   ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
   comp.process_received_packet_(make_rx_packet(discover_confirm));
-  EXPECT_GT(comp.key_extraction_hold_deadline_ms_, esphome::millis())
+  EXPECT_GT(comp.key_extraction_.key_extraction_hold_deadline_ms_, esphome::millis())
       << "the discovery-confirm ack (0x2D) must arm the CH2 hold";
 
-  comp.key_extraction_hold_deadline_ms_ = 0;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = 0;
   IoFrame key_init{};
   create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
   comp.process_received_packet_(make_rx_packet(key_init));
-  EXPECT_GT(comp.key_extraction_hold_deadline_ms_, esphome::millis())
+  EXPECT_GT(comp.key_extraction_.key_extraction_hold_deadline_ms_, esphome::millis())
       << "the challenge reply (0x3C) must arm the CH2 hold";
 }
 
@@ -514,7 +514,7 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
   test_rng::reset();
   test_rng::enqueue_bytes(expected_discover_resp.src, NODE_ID_SIZE);
   comp.set_key_extraction_armed(true);
-  ASSERT_EQ(memcmp(comp.key_extraction_ctx_.throwaway_id, expected_discover_resp.src, NODE_ID_SIZE), 0)
+  ASSERT_EQ(memcmp(comp.key_extraction_.key_extraction_ctx_.throwaway_id, expected_discover_resp.src, NODE_ID_SIZE), 0)
       << "RNG script did not land on the real session's throwaway ID -- check whether "
          "generate_key_extraction_throwaway_id_()'s retry/validity logic now consumes a different "
          "number of esp_random() draws";
@@ -573,7 +573,7 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
     }
     EXPECT_TRUE(found);
   }
-  EXPECT_EQ(memcmp(comp.key_extraction_ctx_.challenge, expected_challenge_req.data, HMAC_SIZE), 0);
+  EXPECT_EQ(memcmp(comp.key_extraction_.key_extraction_ctx_.challenge, expected_challenge_req.data, HMAC_SIZE), 0);
   radio.clear();
 
   // The capture's own 0x32 is withheld (see this test's doxygen above) -- close out the state
@@ -581,10 +581,11 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
   const uint8_t test_key[AES_KEY_SIZE] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
                                           0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30};
   IoFrame key_transfer{};
-  ASSERT_TRUE(create_key_transfer(key_transfer, hub_key_init, comp.key_extraction_ctx_.throwaway_id,
-                                  comp.key_extraction_ctx_.hub_node_id, test_key, comp.key_extraction_ctx_.challenge));
+  ASSERT_TRUE(create_key_transfer(key_transfer, hub_key_init, comp.key_extraction_.key_extraction_ctx_.throwaway_id,
+                                  comp.key_extraction_.key_extraction_ctx_.hub_node_id, test_key,
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
   EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3);
 }
 
@@ -600,7 +601,7 @@ TEST(HubKeyExtraction, SecondExtractionAttemptSucceedsWithoutRearmingAfterFirstS
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   auto run_extraction_cycle = [&]() {
     IoFrame discover{};
@@ -612,19 +613,19 @@ TEST(HubKeyExtraction, SecondExtractionAttemptSucceedsWithoutRearmingAfterFirstS
     IoFrame key_transfer{};
     const uint8_t foreign_system_key[AES_KEY_SIZE] = {0};
     ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                    comp.key_extraction_ctx_.challenge));
+                                    comp.key_extraction_.key_extraction_ctx_.challenge));
     comp.process_received_packet_(make_rx_packet(key_transfer));
   };
 
   run_extraction_cycle();
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
   radio.clear();
 
   // Still armed at this point (the grace window replaced the immediate disarm), no switch toggle
   // in between -- exactly the field scenario. The same hub starting a second attempt must be
   // answered, not silently dropped.
   run_extraction_cycle();
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "a second extraction attempt in the same arm cycle must succeed without a manual disarm/re-arm";
   EXPECT_GT(radio.get_send_count(), 0) << "the second attempt's discovery request must draw a reply";
 }
@@ -641,7 +642,7 @@ TEST(HubKeyExtraction, DiscoveryFromUnrelatedHubAfterExtractionIsIgnored) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
@@ -652,9 +653,9 @@ TEST(HubKeyExtraction, DiscoveryFromUnrelatedHubAfterExtractionIsIgnored) {
   IoFrame key_transfer{};
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0};
   ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                  comp.key_extraction_ctx_.challenge));
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
   radio.clear();
 
   constexpr uint8_t UNRELATED_HUB_ID[NODE_ID_SIZE] = {0x99, 0x98, 0x97};
@@ -662,7 +663,7 @@ TEST(HubKeyExtraction, DiscoveryFromUnrelatedHubAfterExtractionIsIgnored) {
   create_discover(unrelated_discover, UNRELATED_HUB_ID);
   comp.process_received_packet_(make_rx_packet(unrelated_discover));
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "an unrelated hub's stray 0x28 must not restart the attempt or disturb a live "
          "post-extraction round with the real hub";
   EXPECT_EQ(radio.get_send_count(), 0) << "an unrelated hub's 0x28 must not draw a reply either";
@@ -716,7 +717,7 @@ TEST(HubKeyExtraction, DiscoverConfirmToAnotherDeviceIsIgnored) {
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
   radio.clear();
-  const auto state_before = comp.key_extraction_ctx_.state;
+  const auto state_before = comp.key_extraction_.key_extraction_ctx_.state;
 
   const uint8_t other_device_id[NODE_ID_SIZE] = {0x58, 0x6E, 0x35};
   IoFrame discover_confirm{};
@@ -726,18 +727,19 @@ TEST(HubKeyExtraction, DiscoverConfirmToAnotherDeviceIsIgnored) {
   ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
   comp.process_received_packet_(make_rx_packet(discover_confirm));
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, state_before) << "responder state must be untouched";
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, state_before) << "responder state must be untouched";
   EXPECT_EQ(radio.get_send_count(), 0) << "responder must not answer a 0x2C addressed to another device";
 }
 
 /// The 0x36 twin of DiscoverConfirmToAnotherDeviceIsIgnored above: pins that the same dst guard
-/// (hub_key_extraction.cpp) covers the new CMD_ADDRESS_REQ branch too.
+/// (key_extraction_responder.cpp) covers the new CMD_ADDRESS_REQ branch too.
 TEST(HubKeyExtraction, AddressReqToAnotherDeviceIsIgnored) {
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::EXTRACTED;  // simulate a completed key exchange
+  comp.key_extraction_.key_extraction_ctx_.state =
+      pairing_responder::ResponderState::EXTRACTED;  // simulate a completed key exchange
   radio.clear();
 
   const uint8_t other_device_id[NODE_ID_SIZE] = {0x58, 0x6E, 0x35};
@@ -748,7 +750,7 @@ TEST(HubKeyExtraction, AddressReqToAnotherDeviceIsIgnored) {
   ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
   comp.process_received_packet_(make_rx_packet(address_req));
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "responder state must be untouched";
   EXPECT_EQ(radio.get_send_count(), 0) << "responder must not answer a 0x36 addressed to another device";
 }
@@ -762,10 +764,11 @@ TEST(HubKeyExtraction, AddressReqFromWrongHubIsIgnored) {
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::EXTRACTED;  // simulate a completed key exchange
-  memcpy(comp.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE);
+  comp.key_extraction_.key_extraction_ctx_.state =
+      pairing_responder::ResponderState::EXTRACTED;  // simulate a completed key exchange
+  memcpy(comp.key_extraction_.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
   radio.clear();
 
   const uint8_t attacker_id[NODE_ID_SIZE] = {0x58, 0x6E, 0x35};
@@ -776,7 +779,7 @@ TEST(HubKeyExtraction, AddressReqFromWrongHubIsIgnored) {
   ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
   comp.process_received_packet_(make_rx_packet(address_req));
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "responder state must be untouched";
   EXPECT_EQ(radio.get_send_count(), 0)
       << "responder must not answer a 0x36 from anyone but the hub it actually exchanged keys with";
@@ -789,10 +792,10 @@ TEST(HubKeyExtraction, AddressChallengeFromWrongHubIsIgnored) {
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_ADDRESS_RESP;
-  memcpy(comp.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE);
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_ADDRESS_RESP;
+  memcpy(comp.key_extraction_.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
   radio.clear();
 
   const uint8_t attacker_id[NODE_ID_SIZE] = {0x58, 0x6E, 0x35};
@@ -800,7 +803,7 @@ TEST(HubKeyExtraction, AddressChallengeFromWrongHubIsIgnored) {
   ASSERT_TRUE(create_challenge_req(address_challenge, throwaway_id, attacker_id, test::TEST_CHALLENGE));
   comp.process_received_packet_(make_rx_packet(address_challenge));
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP)
       << "responder state must be untouched";
   EXPECT_EQ(radio.get_send_count(), 0)
       << "responder must not answer a hub-issued 0x3C from anyone but the hub it actually exchanged keys with";
@@ -811,7 +814,7 @@ TEST(HubKeyExtraction, KeyInitToRealNodeIdIsNotHijackedByResponder) {
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  const auto state_before = comp.key_extraction_ctx_.state;
+  const auto state_before = comp.key_extraction_.key_extraction_ctx_.state;
 
   // A key-init addressed to our REAL node_id_ (not the throwaway ID) — e.g. another
   // controller's own pairing traffic overheard on the shared channel.
@@ -819,7 +822,7 @@ TEST(HubKeyExtraction, KeyInitToRealNodeIdIsNotHijackedByResponder) {
   create_key_init(key_init, FOREIGN_HUB_ID, OUR_NODE_ID);
   comp.process_received_packet_(make_rx_packet(key_init));
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, state_before) << "responder state must be untouched";
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, state_before) << "responder state must be untouched";
   EXPECT_EQ(radio.get_send_count(), 0) << "responder must not reply to a key-init addressed to our real node ID";
 }
 
@@ -832,12 +835,13 @@ TEST(HubKeyExtraction, RearmAfterExtractionStartsFreshAttempt) {
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::EXTRACTED;  // simulate a completed attempt
+  comp.key_extraction_.key_extraction_ctx_.state =
+      pairing_responder::ResponderState::EXTRACTED;  // simulate a completed attempt
 
   comp.set_key_extraction_armed(false);
   comp.set_key_extraction_armed(true);
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE);
 }
 
 /// Regression guard for the bug the state-set guard inside arm_post_extraction_grace_()'s callback
@@ -854,17 +858,18 @@ TEST(HubKeyExtraction, StaleGraceTimeoutDoesNotDisarmARearmedWindow) {
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::EXTRACTED;  // simulate a completed attempt
-  comp.arm_post_extraction_grace_();
+  comp.key_extraction_.key_extraction_ctx_.state =
+      pairing_responder::ResponderState::EXTRACTED;  // simulate a completed attempt
+  comp.key_extraction_.arm_post_extraction_grace();
   auto stale_grace_callback = comp.last_timeout_callback_;
 
   comp.set_key_extraction_armed(false);
   comp.set_key_extraction_armed(true);
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE);
 
   stale_grace_callback();
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE)
       << "a grace timer from the previous arm cycle must not disarm the new one";
 }
 
@@ -882,17 +887,18 @@ TEST(HubKeyExtraction, ManualDisarmDuringGraceWindowIsClean) {
       armed_false_count++;
   });
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::EXTRACTED;  // simulate a completed attempt
-  comp.arm_post_extraction_grace_();
+  comp.key_extraction_.key_extraction_ctx_.state =
+      pairing_responder::ResponderState::EXTRACTED;  // simulate a completed attempt
+  comp.key_extraction_.arm_post_extraction_grace();
   auto stale_grace_callback = comp.last_timeout_callback_;
 
   comp.set_key_extraction_armed(false);
   EXPECT_EQ(armed_false_count, 1);
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
 
   stale_grace_callback();
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
       << "a stale grace callback after a manual disarm must be a no-op";
   EXPECT_EQ(armed_false_count, 1) << "the armed-false callback must not fire a second time";
 }
@@ -912,7 +918,7 @@ TEST(HubKeyExtraction, AutoOffTimeoutCallbackDisarms) {
   auto timeout_cb = comp.last_timeout_callback_;
   timeout_cb();
 
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
 }
 
 // ========================================================================================
@@ -933,15 +939,15 @@ TEST(HubKeyExtraction, ChallengeReqReachesResponderBeforeExchangeInternalDrop) {
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_ADDRESS_RESP;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_ADDRESS_RESP;
   // Simulating a mid-flow state directly (rather than driving it through on_key_init()) skips the
   // step that would normally capture this -- set it explicitly so the src guard in
   // handle_key_extraction_address_challenge_() doesn't reject FOREIGN_HUB_ID below.
-  memcpy(comp.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE);
+  memcpy(comp.key_extraction_.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE);
 
   IoFrame challenge_req{};
-  ASSERT_TRUE(
-      create_challenge_req(challenge_req, comp.key_extraction_ctx_.throwaway_id, FOREIGN_HUB_ID, test::TEST_CHALLENGE));
+  ASSERT_TRUE(create_challenge_req(challenge_req, comp.key_extraction_.key_extraction_ctx_.throwaway_id, FOREIGN_HUB_ID,
+                                   test::TEST_CHALLENGE));
   comp.process_received_packet_(make_rx_packet(challenge_req));
 
   EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_RESP), 3)
@@ -963,7 +969,7 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
@@ -977,9 +983,9 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
                                                     0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
   ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                  comp.key_extraction_ctx_.challenge));
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
   radio.clear();
 
   // Hub verifies the address it was handed: CMD_ADDRESS_REQ (0x36).
@@ -990,14 +996,14 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
   ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
   comp.process_received_packet_(make_rx_packet(address_req));
   EXPECT_EQ(count_sent_cmd(radio, CMD_ADDRESS_RESP), 3) << "0x37 should be sent on all 3 channels";
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
 
   // Hub challenges the 0x37 it got back: CMD_CHALLENGE_REQ (0x3C), controller-issued this time.
   IoFrame address_challenge{};
   ASSERT_TRUE(create_challenge_req(address_challenge, throwaway_id, FOREIGN_HUB_ID, test::TEST_CHALLENGE));
   comp.process_received_packet_(make_rx_packet(address_challenge));
   EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_RESP), 3) << "0x3D should be sent on all 3 channels";
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP)
       << "must not disarm on the spot -- the grace timer does that";
 
   // The honest payload assertion (per corpus_crypto_test.cpp's doxygen): equal to
@@ -1012,7 +1018,7 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
   const uint8_t transcript_len = static_cast<uint8_t>(our_address_resp.data_len + 1);
   uint8_t expected_hmac[HMAC_SIZE] = {0};
   ASSERT_TRUE(crypto::create_hmac(transcript, transcript_len, test::TEST_CHALLENGE,
-                                  comp.key_extraction_ctx_.recovered_key, expected_hmac));
+                                  comp.key_extraction_.key_extraction_ctx_.recovered_key, expected_hmac));
 
   const auto &sent = radio.get_sent_data();
   bool found_3d = false;
@@ -1031,7 +1037,7 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
 
   ASSERT_TRUE(static_cast<bool>(comp.last_timeout_callback_));
   comp.last_timeout_callback_();
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
 }
 
 /// The literal real-world counterpart to the test above, and the reason it does *not* assert a
@@ -1065,18 +1071,18 @@ TEST(HubKeyExtraction, LiteralKlr200CaptureReplayThroughRealDispatchAnswersCorre
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::EXTRACTED;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::EXTRACTED;
   // Our own address and the hub's, exactly as this real session used them -- the captured 0x36's
   // dst/src pair, not a value this harness generated. test::TEST_SYSTEM_KEY is byte-identical to
   // this capture's `key: corpus` value (both trace to scripts/corpus/protolib.py's
   // CORPUS_SYSTEM_KEY), so it decrypts/authenticates exactly as the real session's key did.
-  memcpy(comp.key_extraction_ctx_.throwaway_id, address_req.dst, NODE_ID_SIZE);
-  memcpy(comp.key_extraction_ctx_.hub_node_id, address_req.src, NODE_ID_SIZE);
-  memcpy(comp.key_extraction_ctx_.recovered_key, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  memcpy(comp.key_extraction_.key_extraction_ctx_.throwaway_id, address_req.dst, NODE_ID_SIZE);
+  memcpy(comp.key_extraction_.key_extraction_ctx_.hub_node_id, address_req.src, NODE_ID_SIZE);
+  memcpy(comp.key_extraction_.key_extraction_ctx_.recovered_key, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
   radio.clear();
 
   comp.process_received_packet_(make_rx_packet(address_req));
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
   IoFrame our_address_resp{};
   bool have_our_address_resp = false;
   for (const auto &pkt : radio.get_sent_data()) {
@@ -1086,7 +1092,7 @@ TEST(HubKeyExtraction, LiteralKlr200CaptureReplayThroughRealDispatchAnswersCorre
     have_our_address_resp = true;
     our_address_resp = sent;
     ASSERT_EQ(sent.data_len, NODE_ID_SIZE);
-    EXPECT_EQ(memcmp(sent.data, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE), 0)
+    EXPECT_EQ(memcmp(sent.data, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE), 0)
         << "0x37 payload must be our own advertised node ID";
   }
   EXPECT_TRUE(have_our_address_resp);
@@ -1098,7 +1104,8 @@ TEST(HubKeyExtraction, LiteralKlr200CaptureReplayThroughRealDispatchAnswersCorre
   memcpy(transcript + 1, our_address_resp.data, our_address_resp.data_len);
   uint8_t expected_hmac[HMAC_SIZE] = {0};
   ASSERT_TRUE(crypto::create_hmac(transcript, static_cast<uint8_t>(our_address_resp.data_len + 1),
-                                  address_challenge.data, comp.key_extraction_ctx_.recovered_key, expected_hmac));
+                                  address_challenge.data, comp.key_extraction_.key_extraction_ctx_.recovered_key,
+                                  expected_hmac));
   bool found_0x3d = false;
   for (const auto &pkt : radio.get_sent_data()) {
     IoFrame sent{};
@@ -1121,7 +1128,7 @@ TEST(HubKeyExtraction, GraceWindowExpiresWithoutAddressRequest) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
@@ -1132,16 +1139,16 @@ TEST(HubKeyExtraction, GraceWindowExpiresWithoutAddressRequest) {
   IoFrame key_transfer{};
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0};
   ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                  comp.key_extraction_ctx_.challenge));
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
 
   EXPECT_EQ(comp.last_timeout_name_, "key_extraction_post_extract_grace");
   EXPECT_EQ(comp.last_timeout_ms_, 60000u) << "grace window should be one minute";
 
   ASSERT_TRUE(static_cast<bool>(comp.last_timeout_callback_));
   comp.last_timeout_callback_();
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
       << "a hub that never follows up with 0x36 should still disarm once the grace window elapses";
 }
 
@@ -1163,7 +1170,7 @@ TEST(HubKeyExtraction, AddressRequestExtendsGraceWindow) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
@@ -1174,9 +1181,9 @@ TEST(HubKeyExtraction, AddressRequestExtendsGraceWindow) {
   IoFrame key_transfer{};
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0};
   ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                  comp.key_extraction_ctx_.challenge));
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
 
   // Clear the grace timer's own prior registration so re-registration by the 0x36 handler below is
   // actually observable -- see the doxygen above.
@@ -1206,7 +1213,7 @@ TEST(HubKeyExtraction, AddressChallengeExtendsGraceWindow) {
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
   uint8_t throwaway_id[NODE_ID_SIZE];
-  memcpy(throwaway_id, comp.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
+  memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
@@ -1217,9 +1224,9 @@ TEST(HubKeyExtraction, AddressChallengeExtendsGraceWindow) {
   IoFrame key_transfer{};
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0};
   ASSERT_TRUE(create_key_transfer(key_transfer, key_init, throwaway_id, FOREIGN_HUB_ID, foreign_system_key,
-                                  comp.key_extraction_ctx_.challenge));
+                                  comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
 
   IoFrame address_req{};
   init_frame(address_req, true, true, false, false);
@@ -1227,7 +1234,7 @@ TEST(HubKeyExtraction, AddressChallengeExtendsGraceWindow) {
   set_src(address_req, FOREIGN_HUB_ID);
   ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
   comp.process_received_packet_(make_rx_packet(address_req));
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
 
   // Clear the grace timer's own prior registration (from the 0x36 above) so re-registration by the
   // 0x3C handler below is actually observable.

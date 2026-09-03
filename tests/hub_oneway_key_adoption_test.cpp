@@ -275,13 +275,14 @@ TEST(HubOneWayKeyAdoption, ObservedClassIsOnlyRecordedWhileArmed) {
   std::memcpy(info.src, SENDER_NODE, NODE_ID_SIZE);
   info.target_type = DeviceType::ROLLER_SHUTTER;
 
-  comp.record_oneway_observed_class_(info);
-  EXPECT_FALSE(comp.oneway_last_observed_class_.valid) << "a disarmed hub must not accumulate observations";
+  comp.oneway_key_adoption_.record_observed_class(info);
+  EXPECT_FALSE(comp.oneway_key_adoption_.last_observed_class().valid)
+      << "a disarmed hub must not accumulate observations";
 
   comp.set_oneway_key_adoption_armed(true);
-  comp.record_oneway_observed_class_(info);
-  EXPECT_TRUE(comp.oneway_last_observed_class_.valid);
-  EXPECT_EQ(comp.oneway_last_observed_class_.type, DeviceType::ROLLER_SHUTTER);
+  comp.oneway_key_adoption_.record_observed_class(info);
+  EXPECT_TRUE(comp.oneway_key_adoption_.last_observed_class().valid);
+  EXPECT_EQ(comp.oneway_key_adoption_.last_observed_class().type, DeviceType::ROLLER_SHUTTER);
 }
 
 TEST(HubOneWayKeyAdoption, UnknownClassDoesNotClobberAnEarlierObservation) {
@@ -293,17 +294,17 @@ TEST(HubOneWayKeyAdoption, UnknownClassDoesNotClobberAnEarlierObservation) {
   OneWayFrameInfo typed{};
   std::memcpy(typed.src, SENDER_NODE, NODE_ID_SIZE);
   typed.target_type = DeviceType::ROLLER_SHUTTER;
-  comp.record_oneway_observed_class_(typed);
+  comp.oneway_key_adoption_.record_observed_class(typed);
 
   // The add-controller frame itself broadcasts to "all", which decodes to UNKNOWN. It must not
   // erase the genuine class seen from the same sender moments earlier.
   OneWayFrameInfo untyped{};
   std::memcpy(untyped.src, SENDER_NODE, NODE_ID_SIZE);
   untyped.target_type = DeviceType::UNKNOWN;
-  comp.record_oneway_observed_class_(untyped);
+  comp.oneway_key_adoption_.record_observed_class(untyped);
 
-  EXPECT_TRUE(comp.oneway_last_observed_class_.valid);
-  EXPECT_EQ(comp.oneway_last_observed_class_.type, DeviceType::ROLLER_SHUTTER);
+  EXPECT_TRUE(comp.oneway_key_adoption_.last_observed_class().valid);
+  EXPECT_EQ(comp.oneway_key_adoption_.last_observed_class().type, DeviceType::ROLLER_SHUTTER);
 }
 
 TEST(HubOneWayKeyAdoption, ReArmingClearsAStaleObservation) {
@@ -315,11 +316,11 @@ TEST(HubOneWayKeyAdoption, ReArmingClearsAStaleObservation) {
   OneWayFrameInfo info{};
   std::memcpy(info.src, SENDER_NODE, NODE_ID_SIZE);
   info.target_type = DeviceType::ROLLER_SHUTTER;
-  comp.record_oneway_observed_class_(info);
-  ASSERT_TRUE(comp.oneway_last_observed_class_.valid);
+  comp.oneway_key_adoption_.record_observed_class(info);
+  ASSERT_TRUE(comp.oneway_key_adoption_.last_observed_class().valid);
 
   comp.set_oneway_key_adoption_armed(false);
   comp.set_oneway_key_adoption_armed(true);
-  EXPECT_FALSE(comp.oneway_last_observed_class_.valid)
+  EXPECT_FALSE(comp.oneway_key_adoption_.last_observed_class().valid)
       << "an observation from a previous window must never prefill the next one";
 }

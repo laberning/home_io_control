@@ -79,9 +79,9 @@ TEST(HubLr1121FirmwareUpdate, TriggerWhileBusyIsRefusedWithoutTouchingTheChip) {
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::PROCEED;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::PROCEED;
   hub.busy_ = true;
 
   hub.trigger_lr1121_firmware_update();
@@ -96,9 +96,9 @@ TEST(HubLr1121FirmwareUpdate, TriggerWithNullRadioAndHardRejectionDoesNotCrash) 
 
   TestableHubComponent hub;
   hub.radio_ = nullptr;  // simulates setup()'s init()-failure path (guard 0)
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
 
   hub.trigger_lr1121_firmware_update();  // must not crash
 
@@ -111,9 +111,9 @@ TEST(HubLr1121FirmwareUpdate, RejectWrongChipVerdictNeverEntersBootloaderMode) {
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
 
   hub.trigger_lr1121_firmware_update();
 
@@ -126,9 +126,9 @@ TEST(HubLr1121FirmwareUpdate, RejectBootloaderTooOldVerdictNeverEntersBootloader
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
 
   hub.trigger_lr1121_firmware_update();
 
@@ -137,9 +137,9 @@ TEST(HubLr1121FirmwareUpdate, RejectBootloaderTooOldVerdictNeverEntersBootloader
 
 TEST(HubLr1121FirmwareUpdate, AlreadyInstalledVerdictReportsNothingToDoNotAWarning) {
   TestableHubComponent hub;
-  hub.lr1121_flash_verdict_ = FlashDecision::ALREADY_INSTALLED;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::ALREADY_INSTALLED;
 
-  const std::string message = hub.describe_lr1121_flash_verdict_();
+  const std::string message = hub.lr1121_firmware_update_.describe_flash_verdict();
   EXPECT_NE(message.find("nothing to do"), std::string::npos) << message;
   EXPECT_EQ(message.find("not newer"), std::string::npos)
       << "a successful post-flash boot must not read like a warning: " << message;
@@ -151,14 +151,14 @@ TEST(HubLr1121FirmwareUpdate, NeedsConfirmationArmsWindowAndDoesNotFlashOnFirstP
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
 
   hub.trigger_lr1121_firmware_update();
 
   EXPECT_TRUE(spi.transactions().empty()) << "the first press must not touch the chip";
-  EXPECT_TRUE(hub.lr1121_flash_confirmation_armed_);
+  EXPECT_TRUE(hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_);
   // arm_lr1121_flash_confirmation_() uses App.scheduler's self-keyed set_timeout() overload (see
   // that method's comment), not Component::set_timeout() -- so the callback lands on the
   // scheduler stub, not hub.last_timeout_callback_.
@@ -167,7 +167,7 @@ TEST(HubLr1121FirmwareUpdate, NeedsConfirmationArmsWindowAndDoesNotFlashOnFirstP
 
   // Simulate the confirmation window expiring.
   esphome::App.scheduler.last_self_timeout_callback_();
-  EXPECT_FALSE(hub.lr1121_flash_confirmation_armed_);
+  EXPECT_FALSE(hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_);
 }
 
 // Regression guard for the rule that the confirmation auto-disarm must fire even when the hub
@@ -183,21 +183,22 @@ TEST(HubLr1121FirmwareUpdate, ConfirmationAutoDisarmUsesSelfKeyedSchedulerSoAFai
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
   hub.mark_failed();  // simulates setup()'s init()-failure path, same as guard 0's radio_==nullptr
 
   hub.trigger_lr1121_firmware_update();
 
-  EXPECT_TRUE(hub.lr1121_flash_confirmation_armed_);
+  EXPECT_TRUE(hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_);
   EXPECT_FALSE(static_cast<bool>(hub.last_timeout_callback_))
       << "must not use the Component-keyed set_timeout() overload, which a failed component would skip";
   ASSERT_TRUE(static_cast<bool>(esphome::App.scheduler.last_self_timeout_callback_));
   EXPECT_EQ(esphome::App.scheduler.last_self_timeout_self_, &hub);
 
   esphome::App.scheduler.last_self_timeout_callback_();
-  EXPECT_FALSE(hub.lr1121_flash_confirmation_armed_) << "the auto-disarm callback must still run on a failed hub";
+  EXPECT_FALSE(hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_)
+      << "the auto-disarm callback must still run on a failed hub";
 }
 
 TEST(HubLr1121FirmwareUpdate, ArmedSecondPressReachesTheFlashAttempt) {
@@ -209,18 +210,19 @@ TEST(HubLr1121FirmwareUpdate, ArmedSecondPressReachesTheFlashAttempt) {
   queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x00);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
-  hub.lr1121_bootloader_version_known_ = true;
-  hub.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
-  hub.lr1121_bootloader_version_ = 0x2100;
-  hub.lr1121_flash_confirmation_armed_ = true;  // simulates an already-armed first press
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ = 0x2100;
+  hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_ = true;  // simulates an already-armed first press
 
   hub.trigger_lr1121_firmware_update();
 
   EXPECT_GE(spi.find_opcode(LR1121_UPDATER_CMD_GET_VERSION), 0) << "an armed second press must enter bootloader mode";
-  EXPECT_FALSE(hub.lr1121_flash_confirmation_armed_) << "the window is consumed by the press that uses it";
+  EXPECT_FALSE(hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_)
+      << "the window is consumed by the press that uses it";
 }
 
 TEST(HubLr1121FirmwareUpdate, ProceedVerdictWithNullRadioRunsTheFullSequenceWithoutCrashing) {
@@ -233,12 +235,12 @@ TEST(HubLr1121FirmwareUpdate, ProceedVerdictWithNullRadioRunsTheFullSequenceWith
 
   TestableHubComponent hub;
   hub.radio_ = nullptr;  // exercises guard 0's "skip standby, still allow the attempt" path
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::PROCEED;
-  hub.lr1121_bootloader_version_known_ = true;
-  hub.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
-  hub.lr1121_bootloader_version_ = 0x2100;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::PROCEED;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ = 0x2100;
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();  // must not crash despite radio_ == nullptr
@@ -270,15 +272,15 @@ TEST(HubLr1121FirmwareUpdate, BootTimeExcursionAllocatesUpdaterAndCachesAnUnknow
   hub.set_busy_pin(&busy);
 
   hub.run_lr1121_boot_time_bootloader_read_();
-  ASSERT_NE(hub.lr1121_firmware_updater_, nullptr);
-  EXPECT_TRUE(hub.lr1121_bootloader_version_known_);
-  EXPECT_EQ(hub.lr1121_bootloader_version_, 0);
+  ASSERT_NE(hub.lr1121_firmware_update_.lr1121_firmware_updater_, nullptr);
+  EXPECT_TRUE(hub.lr1121_firmware_update_.lr1121_bootloader_version_known_);
+  EXPECT_EQ(hub.lr1121_firmware_update_.lr1121_bootloader_version_, 0);
 
   hub.cache_lr1121_flash_verdict_();
-  EXPECT_TRUE(hub.lr1121_flash_verdict_known_);
-  EXPECT_EQ(hub.lr1121_flash_verdict_, FlashDecision::NEEDS_CONFIRMATION);
+  EXPECT_TRUE(hub.lr1121_firmware_update_.lr1121_flash_verdict_known_);
+  EXPECT_EQ(hub.lr1121_firmware_update_.lr1121_flash_verdict_, FlashDecision::NEEDS_CONFIRMATION);
 
-  delete hub.lr1121_firmware_updater_;
+  delete hub.lr1121_firmware_update_.lr1121_firmware_updater_;
 }
 
 // THE REGRESSION GUARD FOR THE VERDICT-CACHING SEAM: cache_lr1121_flash_verdict_() used to pass the
@@ -303,18 +305,18 @@ TEST(HubLr1121FirmwareUpdate, CacheFlashVerdictProceedsForRealLr1121BytePattern)
   MockRadio radio;
   TestableHubComponent hub;
   hub.radio_ = &radio;
-  hub.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
   // Simulates a successful boot-time excursion (run_lr1121_boot_time_bootloader_read_()) having
   // already cached a genuine LR1121's bootloader identity.
-  hub.lr1121_bootloader_version_known_ = true;
-  hub.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
-  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2101;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2101;
 
   hub.cache_lr1121_flash_verdict_();
 
-  EXPECT_EQ(hub.lr1121_installed_device_type_, LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS);
-  EXPECT_EQ(hub.lr1121_installed_fw_, 0x0101);
-  EXPECT_EQ(hub.lr1121_flash_verdict_, FlashDecision::PROCEED);
+  EXPECT_EQ(hub.lr1121_firmware_update_.lr1121_installed_device_type_, LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS);
+  EXPECT_EQ(hub.lr1121_firmware_update_.lr1121_installed_fw_, 0x0101);
+  EXPECT_EQ(hub.lr1121_firmware_update_.lr1121_flash_verdict_, FlashDecision::PROCEED);
 }
 
 // Regression guard: the post-bootloader-entry sanity check used to compare the freshly-read
@@ -331,18 +333,19 @@ TEST(HubLr1121FirmwareUpdate, SanityCheckWithUnknownBootTimeBootloaderVersionPro
   queue_version_response(spi, LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS, 0x01, 0x03);  // post-flash verify read
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::PROCEED;
-  hub.lr1121_bootloader_version_known_ = false;  // boot-time excursion never completed
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::PROCEED;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = false;  // boot-time excursion never completed
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
 
   EXPECT_GE(spi.find_opcode(LR1121_UPDATER_CMD_ERASE_FLASH), 0)
       << "an unknown boot-time bootloader version must not block erasing";
-  EXPECT_TRUE(hub.lr1121_bootloader_version_known_) << "a successful sanity read should be adopted";
-  EXPECT_EQ(hub.lr1121_bootloader_version_, 0x2100);
+  EXPECT_TRUE(hub.lr1121_firmware_update_.lr1121_bootloader_version_known_)
+      << "a successful sanity read should be adopted";
+  EXPECT_EQ(hub.lr1121_firmware_update_.lr1121_bootloader_version_, 0x2100);
   EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1);
 }
 
@@ -361,10 +364,11 @@ TEST(HubLr1121FirmwareUpdate, UnknownBootTimeBootloaderVersionThatIdentifiesAnot
   queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x20, 0x00);  // type OK, but version 0x2000 (LR1120)
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::PROCEED;
-  hub.lr1121_bootloader_version_known_ = false;  // boot-time excursion never completed -- the "adopt" path
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::PROCEED;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ =
+      false;  // boot-time excursion never completed -- the "adopt" path
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
@@ -372,7 +376,8 @@ TEST(HubLr1121FirmwareUpdate, UnknownBootTimeBootloaderVersionThatIdentifiesAnot
   EXPECT_LT(spi.find_opcode(LR1121_UPDATER_CMD_ERASE_FLASH), 0)
       << "a bootloader version that identifies a different chip family must never be adopted, and must never reach "
          "EraseFlash";
-  EXPECT_FALSE(hub.lr1121_bootloader_version_known_) << "a rejected sanity read must not be adopted";
+  EXPECT_FALSE(hub.lr1121_firmware_update_.lr1121_bootloader_version_known_)
+      << "a rejected sanity read must not be adopted";
   EXPECT_EQ(esphome::App.safe_reboot_calls, reboots_before + 1)
       << "aborting after a successful bootloader entry must still reboot";
 }
@@ -383,11 +388,11 @@ TEST(HubLr1121FirmwareUpdate, UnknownBootTimeBootloaderVersionThatIdentifiesAnot
 // reaching the verdict line -- even though the verdict is cached independently of that excursion.
 TEST(HubLr1121FirmwareUpdate, DebugLinesIncludeVerdictWhenBootloaderVersionUnknown) {
   TestableHubComponent hub;
-  hub.lr1121_bootloader_version_known_ = false;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = false;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
 
-  const std::vector<std::string> lines = hub.lr1121_firmware_update_debug_lines_();
+  const std::vector<std::string> lines = hub.lr1121_firmware_update_.debug_lines();
 
   ASSERT_EQ(lines.size(), 2u) << "must include both the (unknown) bootloader line and the verdict line";
   EXPECT_NE(lines[0].find("could not be read at boot"), std::string::npos) << lines[0];
@@ -400,20 +405,20 @@ TEST(HubLr1121FirmwareUpdate, DescribeVerdictFormatsEveryOutcomeDistinctly) {
   // only at the one call site in trigger_lr1121_firmware_update() that actually arms a window
   // and is covered separately below.
   TestableHubComponent hub;
-  hub.lr1121_bootloader_version_ = 0x2100;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ = 0x2100;
 
-  hub.lr1121_flash_verdict_ = FlashDecision::PROCEED;
-  const std::string proceed = hub.describe_lr1121_flash_verdict_();
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::PROCEED;
+  const std::string proceed = hub.lr1121_firmware_update_.describe_flash_verdict();
   EXPECT_NE(proceed.find("ready to flash"), std::string::npos) << proceed;
 
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
-  const std::string wrong_chip = hub.describe_lr1121_flash_verdict_();
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
+  const std::string wrong_chip = hub.lr1121_firmware_update_.describe_flash_verdict();
   EXPECT_NE(wrong_chip.find("CANNOT PROCEED"), std::string::npos) << wrong_chip;
   EXPECT_NE(wrong_chip.find("0x2100"), std::string::npos)
       << "must name the bootloader version this chip has: " << wrong_chip;
 
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
-  const std::string too_old = hub.describe_lr1121_flash_verdict_();
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+  const std::string too_old = hub.lr1121_firmware_update_.describe_flash_verdict();
   EXPECT_NE(too_old.find("CANNOT PROCEED"), std::string::npos) << too_old;
   EXPECT_NE(too_old.find("needs bootloader"), std::string::npos)
       << "must state the required and current bootloader versions: " << too_old;
@@ -425,13 +430,13 @@ TEST(HubLr1121FirmwareUpdate, DescribeVerdictFormatsEveryOutcomeDistinctly) {
   EXPECT_EQ(too_old.find("bootloader:"), std::string::npos)
       << "must not tell the user to add a block that this build already has: " << too_old;
 
-  hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
-  const std::string needs_confirm = hub.describe_lr1121_flash_verdict_();
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
+  const std::string needs_confirm = hub.lr1121_firmware_update_.describe_flash_verdict();
   EXPECT_EQ(needs_confirm.find("press"), std::string::npos)
       << "describe_lr1121_flash_verdict_() must stay neutral about what is armed: " << needs_confirm;
 
-  hub.lr1121_flash_verdict_ = FlashDecision::ALREADY_INSTALLED;
-  const std::string already = hub.describe_lr1121_flash_verdict_();
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::ALREADY_INSTALLED;
+  const std::string already = hub.lr1121_firmware_update_.describe_flash_verdict();
   EXPECT_NE(already.find("nothing to do"), std::string::npos) << already;
 
   // Every message must be distinct -- a bug that made two verdicts share a formatter would be
@@ -449,12 +454,12 @@ TEST(HubLr1121FirmwareUpdate, DescribeVerdictFormatsEveryOutcomeDistinctly) {
 // byte did not match an LR1121.
 TEST(HubLr1121FirmwareUpdate, DescribeVerdictNamesNormalModeChipIdentityWhenLayer3Rejects) {
   TestableHubComponent hub;
-  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
-  hub.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
-  hub.lr1121_installed_device_type_ = 0x01;  // LR1110 device type
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
+  hub.lr1121_firmware_update_.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
+  hub.lr1121_firmware_update_.lr1121_installed_device_type_ = 0x01;  // LR1110 device type
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
 
-  const std::string message = hub.describe_lr1121_flash_verdict_();
+  const std::string message = hub.lr1121_firmware_update_.describe_flash_verdict();
   EXPECT_NE(message.find("CANNOT PROCEED"), std::string::npos) << message;
   EXPECT_NE(message.find("normal-mode chip identity byte"), std::string::npos) << message;
   EXPECT_NE(message.find("0x01"), std::string::npos) << "must name the device_type byte this chip has: " << message;
@@ -481,11 +486,12 @@ TEST(HubLr1121FirmwareUpdate, DescribeVerdictNamesNormalModeChipIdentityWhenLaye
 // values), which does not care whether the input is realistic.
 TEST(HubLr1121FirmwareUpdate, R7_DescribeVerdictRendersDowngradeMessageDistinctFromTooOldWording) {
   TestableHubComponent hub;
-  hub.lr1121_bootloader_version_ = 0x2102;  // synthetic: newer than the 0x2101 the compiled-in target requires
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ =
+      0x2102;  // synthetic: newer than the 0x2101 the compiled-in target requires
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
 
-  const std::string message = hub.describe_lr1121_flash_verdict_();
+  const std::string message = hub.lr1121_firmware_update_.describe_flash_verdict();
 
   EXPECT_NE(message.find("is newer than this firmware supports"), std::string::npos) << message;
   EXPECT_NE(message.find("no downgrade path"), std::string::npos) << message;
@@ -509,14 +515,14 @@ TEST(HubLr1121FirmwareUpdate, AlreadyInstalledArmsWithReFlashWordingNotProceedWo
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::ALREADY_INSTALLED;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::ALREADY_INSTALLED;
 
   hub.trigger_lr1121_firmware_update();
 
   EXPECT_TRUE(spi.transactions().empty()) << "arming must not touch the chip";
-  EXPECT_TRUE(hub.lr1121_flash_confirmation_armed_);
+  EXPECT_TRUE(hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_);
 }
 
 TEST(HubLr1121FirmwareUpdate, SanityMismatchAfterBootloaderEntryRebootsRatherThanErasing) {
@@ -528,12 +534,13 @@ TEST(HubLr1121FirmwareUpdate, SanityMismatchAfterBootloaderEntryRebootsRatherTha
   queue_version_response(spi, LR1121_UPDATER_BOOTLOADER_TYPE, 0x21, 0x01);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::PROCEED;
-  hub.lr1121_bootloader_version_known_ = true;
-  hub.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
-  hub.lr1121_bootloader_version_ = 0x2100;  // boot recorded 0x2100, but the sanity read above says 0x2101
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::PROCEED;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ =
+      0x2100;  // boot recorded 0x2100, but the sanity read above says 0x2101
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
@@ -556,9 +563,9 @@ TEST(HubLr1121FirmwareUpdate, EnterBootloaderConfirmationTimeoutStillReboots) {
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::PROCEED;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::PROCEED;
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
@@ -584,12 +591,12 @@ namespace {
 // Sets up a hub whose cached state matches R3/R4: chip at bootloader 0x2100 (equals the
 // configured loader's version), target 0x0104 needs 0x2101 -> AVAILABLE.
 void arrange_bootloader_upgrade_available(TestableHubComponent &hub, Lr1121FirmwareUpdater &updater) {
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
-  hub.lr1121_bootloader_version_known_ = true;
-  hub.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
-  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_bootloader_chip_type_ = LR1121_UPDATER_BOOTLOADER_TYPE;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
 }
 }  // namespace
 
@@ -600,7 +607,7 @@ TEST(HubLr1121FirmwareUpdate, R3_BootloaderUpgradeAvailableButSwitchOffRefusesWi
 
   TestableHubComponent hub;
   arrange_bootloader_upgrade_available(hub, updater);
-  hub.bootloader_rewrite_allowed_ = false;  // switch off
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = false;  // switch off
 
   hub.trigger_lr1121_firmware_update();
 
@@ -622,7 +629,7 @@ TEST(HubLr1121FirmwareUpdate, R4_BootloaderUpgradeAvailableAndSwitchOnRunsFullTh
 
   TestableHubComponent hub;
   arrange_bootloader_upgrade_available(hub, updater);
-  hub.bootloader_rewrite_allowed_ = true;  // switch on
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;  // switch on
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
@@ -676,11 +683,11 @@ TEST(HubLr1121FirmwareUpdate, R8_UnknownBootloaderRefusesEvenWithSwitchOn) {
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
-  hub.lr1121_bootloader_version_known_ = false;  // boot-time excursion never read a version
-  hub.bootloader_rewrite_allowed_ = true;        // switch on -- must not matter (rule 2)
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = false;  // boot-time excursion never read a version
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;        // switch on -- must not matter (rule 2)
 
   hub.trigger_lr1121_firmware_update();
 
@@ -721,7 +728,7 @@ TEST(HubLr1121FirmwareUpdate, Stage1bAbortsOnFirmwareMismatchAndNeverIssuesUpdat
 
   TestableHubComponent hub;
   arrange_bootloader_upgrade_available(hub, updater);
-  hub.bootloader_rewrite_allowed_ = true;
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
@@ -749,7 +756,7 @@ TEST(HubLr1121FirmwareUpdate, Stage1bAbortsWhenChipStayedInBootloaderDespiteMatc
 
   TestableHubComponent hub;
   arrange_bootloader_upgrade_available(hub, updater);
-  hub.bootloader_rewrite_allowed_ = true;
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
@@ -775,7 +782,7 @@ TEST(HubLr1121FirmwareUpdate, Stage2VerificationFailureAbortsBeforeStage3AndNeve
 
   TestableHubComponent hub;
   arrange_bootloader_upgrade_available(hub, updater);
-  hub.bootloader_rewrite_allowed_ = true;
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
@@ -804,7 +811,7 @@ TEST(HubLr1121FirmwareUpdate, Stage2UnexpectedPostRebootStateAbortsBeforeStage3)
 
   TestableHubComponent hub;
   arrange_bootloader_upgrade_available(hub, updater);
-  hub.bootloader_rewrite_allowed_ = true;
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();
@@ -821,10 +828,10 @@ TEST(HubLr1121FirmwareUpdate, SwitchOnHasNoEffectOnRejectWrongChipVerdict) {
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
-  hub.bootloader_rewrite_allowed_ = true;  // switch on -- must not matter
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_WRONG_CHIP;
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;  // switch on -- must not matter
 
   hub.trigger_lr1121_firmware_update();
 
@@ -839,15 +846,16 @@ TEST(HubLr1121FirmwareUpdate, SwitchOnDoesNotBypassTwoPressConfirmationForNeedsC
   Lr1121FirmwareUpdater updater(&spi, &rst, &busy);
 
   TestableHubComponent hub;
-  hub.lr1121_firmware_updater_ = &updater;
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
-  hub.bootloader_rewrite_allowed_ = true;  // switch on -- must not matter
+  hub.lr1121_firmware_update_.lr1121_firmware_updater_ = &updater;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::NEEDS_CONFIRMATION;
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;  // switch on -- must not matter
 
   hub.trigger_lr1121_firmware_update();
 
   EXPECT_TRUE(spi.transactions().empty()) << "first press must still not touch the chip";
-  EXPECT_TRUE(hub.lr1121_flash_confirmation_armed_) << "must still arm the ordinary two-press window";
+  EXPECT_TRUE(hub.lr1121_firmware_update_.lr1121_flash_confirmation_armed_)
+      << "must still arm the ordinary two-press window";
 }
 
 // Boot-time message: this prints on every boot, so it is deliberately short -- the switch is
@@ -855,12 +863,13 @@ TEST(HubLr1121FirmwareUpdate, SwitchOnDoesNotBypassTwoPressConfirmationForNeedsC
 // survive that trim is both versions and the fact that the rewrite cannot be undone.
 TEST(HubLr1121FirmwareUpdate, DebugLinesStateBothVersionsAndIrreversibilityWhenUpgradeIsAvailable) {
   TestableHubComponent hub;
-  hub.lr1121_bootloader_version_known_ = true;
-  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;  // matches LR1121_BOOTLOADER_LOADER_FW
-  hub.lr1121_flash_verdict_known_ = true;
-  hub.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ =
+      LR1121_BOOTLOADER_2100;  // matches LR1121_BOOTLOADER_LOADER_FW
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_known_ = true;
+  hub.lr1121_firmware_update_.lr1121_flash_verdict_ = FlashDecision::REJECT_BOOTLOADER_TOO_OLD;
 
-  const std::vector<std::string> lines = hub.lr1121_firmware_update_debug_lines_();
+  const std::vector<std::string> lines = hub.lr1121_firmware_update_.debug_lines();
 
   ASSERT_EQ(lines.size(), 3u);
   const std::string &message = lines[2];
@@ -881,9 +890,9 @@ TEST(HubLr1121FirmwareUpdate, SwitchOffRefusalLeadsWithOutcomeAndSaysWhatToDoNex
 
   TestableHubComponent hub;
   arrange_bootloader_upgrade_available(hub, updater);
-  hub.bootloader_rewrite_allowed_ = false;
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = false;
 
-  const std::string message = hub.describe_lr1121_bootloader_refusal_(BootloaderUpgradePath::AVAILABLE);
+  const std::string message = hub.lr1121_firmware_update_.describe_bootloader_refusal(BootloaderUpgradePath::AVAILABLE);
 
   EXPECT_EQ(message.find("nothing was done"), 0u + std::string("LR1121 firmware update: ").size())
       << "must lead with the outcome: " << message;
@@ -901,15 +910,17 @@ TEST(HubLr1121FirmwareUpdate, SwitchOffRefusalLeadsWithOutcomeAndSaysWhatToDoNex
 // they do not know (UNKNOWN_TARGET) or invert the direction (BOOTLOADER_NEWER).
 TEST(HubLr1121FirmwareUpdate, BlockedRefusalsLeadWithOutcomeAndStateTheRightReason) {
   TestableHubComponent hub;
-  hub.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
+  hub.lr1121_firmware_update_.lr1121_bootloader_version_ = LR1121_BOOTLOADER_2100;
 
-  const std::string unknown = hub.describe_lr1121_bootloader_refusal_(BootloaderUpgradePath::BLOCKED_UNKNOWN_TARGET);
+  const std::string unknown =
+      hub.lr1121_firmware_update_.describe_bootloader_refusal(BootloaderUpgradePath::BLOCKED_UNKNOWN_TARGET);
   EXPECT_NE(unknown.find("nothing was done"), std::string::npos) << unknown;
   EXPECT_NE(unknown.find("does not recognise"), std::string::npos) << unknown;
   EXPECT_EQ(unknown.find("press this button again"), std::string::npos)
       << "there is no user action that helps here, so do not suggest one: " << unknown;
 
-  const std::string newer = hub.describe_lr1121_bootloader_refusal_(BootloaderUpgradePath::BLOCKED_BOOTLOADER_NEWER);
+  const std::string newer =
+      hub.lr1121_firmware_update_.describe_bootloader_refusal(BootloaderUpgradePath::BLOCKED_BOOTLOADER_NEWER);
   EXPECT_NE(newer.find("nothing was done"), std::string::npos) << newer;
   EXPECT_NE(newer.find("already newer"), std::string::npos) << newer;
   EXPECT_NE(newer.find("no way back"), std::string::npos) << newer;
@@ -930,7 +941,7 @@ TEST(HubLr1121FirmwareUpdate, Stage1bRejectsAnyTypeOtherThanTheLoadersEvenWhenIt
 
   TestableHubComponent hub;
   arrange_bootloader_upgrade_available(hub, updater);
-  hub.bootloader_rewrite_allowed_ = true;
+  hub.lr1121_firmware_update_.bootloader_rewrite_allowed_ = true;
 
   const uint32_t reboots_before = esphome::App.safe_reboot_calls;
   hub.trigger_lr1121_firmware_update();

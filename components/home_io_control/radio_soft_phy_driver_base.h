@@ -218,11 +218,11 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @param p   The chip-independent field values (byte-denominated preamble, chip constants).
   /// @param out Buffer for exactly @ref GFSK_PACKET_PARAMS_LEN bytes.
   ///
-  /// Named without the trailing `_` the file's other protected helpers carry (the plan asked for
-  /// `build_gfsk_packet_params_`): it uses no instance state, so clang-tidy's
-  /// `readability-convert-member-functions-to-static` wants it `static`, and `.clang-tidy`'s
-  /// `ClassMethodCase = lower_case` then rejects a trailing `_` on a `static` method. Leaving it
-  /// `static` and dropping the underscore keeps clang-tidy quiet without a suppression.
+  /// Named without the trailing `_` the file's other protected helpers carry: it uses no instance
+  /// state, so clang-tidy's `readability-convert-member-functions-to-static` wants it `static`, and
+  /// `.clang-tidy`'s `ClassMethodCase = lower_case` then rejects a trailing `_` on a `static`
+  /// method. Leaving it `static` and dropping the underscore keeps clang-tidy quiet without a
+  /// suppression.
   static void build_gfsk_packet_params(const SoftPhyPacketParams &p, uint8_t out[GFSK_PACKET_PARAMS_LEN]);
 
   /// @brief Read the raw IRQ status word from the radio.

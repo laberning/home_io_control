@@ -129,7 +129,7 @@ home_io_control_ns = cg.esphome_ns.namespace("home_io_control")
 IOHomeControlComponent = home_io_control_ns.class_(
     "IOHomeControlComponent", cg.Component, spi.SPIDevice
 )
-# Hub-level "Recover System Key" switch (key extraction, hub_key_extraction.cpp /
+# Hub-level "Recover System Key" switch (key extraction, key_extraction_responder.cpp /
 # platform_accept_foreign_pairing_switch.h). Deliberately NOT exposed via a `switch:` platform
 # entry: earlier revisions dispatched on the presence/absence of `io_device_id` within switch.py,
 # which meant an ordinary device-bound switch missing `io_device_id` by mistake would silently
@@ -139,7 +139,7 @@ IOHomeControlComponent = home_io_control_ns.class_(
 IOHomeAcceptForeignPairingSwitch = home_io_control_ns.class_(
     "IOHomeAcceptForeignPairingSwitch", switch_component.Switch, cg.Component
 )
-# Hub-level "Recover 1W Controller Key" switch (key adoption, hub_oneway_key_adoption.cpp /
+# Hub-level "Recover 1W Controller Key" switch (key adoption, oneway_key_adoption.cpp /
 # platform_recover_oneway_key_switch.h). Same dynamically-created, hub-bound shape as the switch
 # above, and gated behind its own boolean for the same reason: there is no shared schema for a
 # device-bound switch to be confused under. Independent of accept_foreign_pairing — the two arm
@@ -147,7 +147,7 @@ IOHomeAcceptForeignPairingSwitch = home_io_control_ns.class_(
 IOHomeRecoverOneWayKeySwitch = home_io_control_ns.class_(
     "IOHomeRecoverOneWayKeySwitch", switch_component.Switch, cg.Component
 )
-# Hub-level "Flash LR1121 Radio Firmware" button (hub_lr1121_firmware_update.cpp /
+# Hub-level "Flash LR1121 Radio Firmware" button (lr1121_firmware_update_controller.cpp /
 # platform_lr1121_firmware_update_button.h). Same "created dynamically from a home_io_control:
 # sub-block, not a device-bound platform entry" shape as the switch above — there is no
 # `io_device_id` to bind this to, it targets the hub's own radio.
@@ -184,7 +184,7 @@ ONEWAY_COMMANDS = {
     "favorite": OneWayButtonAction.FAVORITE,
 }
 # Hub-level "Allow LR1121 Bootloader Rewrite (Irreversible)" arming switch
-# (hub_lr1121_firmware_update.cpp / platform_lr1121_bootloader_rewrite_switch.h). Same
+# (lr1121_firmware_update_controller.cpp / platform_lr1121_bootloader_rewrite_switch.h). Same
 # dynamically-created, hub-bound shape as the two entities above; created only when
 # lr1121_firmware_update.bootloader: is configured (see _create_lr1121_bootloader_update()).
 IOHomeLr1121BootloaderRewriteSwitch = home_io_control_ns.class_(

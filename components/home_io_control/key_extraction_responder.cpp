@@ -1,8 +1,13 @@
+#include "key_extraction_responder.h"
+
 #include "hub_internal.h"
 
+#include "device_registry.h"
 #include "pairing_responder.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
+#include "radio_interface.h"
+#include "tuning_config.h"
 
 #include <esp_random.h>
 
@@ -10,16 +15,16 @@
 #include <cstdio>
 #include <cstring>
 
-/// @file hub_key_extraction.cpp
-/// @brief "Recover System Key" (key extraction) — device-role responder hub wiring.
+/// @file key_extraction_responder.cpp
+/// @brief "Recover System Key" (key extraction) — device-role responder collaborator.
 /// @ingroup hioc_hub
 ///
 /// Owns the impure side of the key-extraction feature: arming/disarming, throwaway node-ID
 /// generation, the 10-minute auto-off timer, the post-extraction grace window, transmitting
 /// device-role replies, and the security-sensitive result log block. The pure state-transition
 /// decisions live in pairing_responder.h/.cpp; the six RX branches
-/// (0x28/0x2C/0x31/0x32/0x36/0x3C) dispatch through try_handle_key_extraction_frame_(), called
-/// from process_received_packet_() (hub_status.cpp).
+/// (0x28/0x2C/0x31/0x32/0x36/0x3C) dispatch through try_handle_frame(), called from
+/// process_received_packet_() (hub_status.cpp).
 ///
 /// @note Hardware-confirmed 2026-08-02: a full extraction (0x28 through 0x33) between two real
 /// boards — SX1276 running this responder, SX1262 running this project's own PairingEngine as
@@ -69,26 +74,27 @@ constexpr const char *KEY_EXTRACTION_TIMEOUT_NAME = "key_extraction_auto_off";
 constexpr uint32_t RANDOM_LOW_BYTE_MASK = 0xFF;  ///< Isolates one random byte from esp_random()'s 32-bit output.
 
 constexpr uint32_t KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS = 5000;  ///< 5 seconds.
-// Bounds the CH2 hold (hub_core.h's key_extraction_hold_deadline_ms_ / key_extraction_awaiting_
-// reply_()) for the 3 pre-extraction states (SENT_DISCOVER_RESP, SENT_CONFIRM_ACK, SENT_CHALLENGE),
-// none of which has a hold bound of its own otherwise -- CMD_DISCOVER_REQ is handled before the
-// throwaway-ID dst filter (try_handle_key_extraction_frame_()), so *any* 0x28 from any hub in range
-// that then goes silent would otherwise pin CH2 for the rest of the arm window.
+// Bounds the CH2 hold (key_extraction_responder.h's key_extraction_hold_deadline_ms_ /
+// awaiting_reply()) for the 3 pre-extraction states (SENT_DISCOVER_RESP, SENT_CONFIRM_ACK,
+// SENT_CHALLENGE), none of which has a hold bound of its own otherwise -- CMD_DISCOVER_REQ is
+// handled before the throwaway-ID dst filter (try_handle_frame()), so *any* 0x28 from any hub in
+// range that then goes silent would otherwise pin CH2 for the rest of the arm window.
 //
 // This is purely a radio-scheduling optimization, not a protocol-recovery deadline: expiry only
 // stops loop() from holding CH2 for this responder (see key_extraction_hold_deadline_ms_'s doc
-// comment in hub_core.h) -- it does NOT touch key_extraction_ctx_.state, so a real hub's frame
-// arriving even slightly late is still accepted by the pure guards in pairing_responder.cpp exactly
-// as if the hold were still active, just without the CH2-parking benefit for that one frame. That
-// makes the cost of sizing this too small merely "occasionally idle-hops away from CH2 a little
-// early," not "silently drops a live attempt" -- so 5s is sized generously rather than tightly: a
-// real hub that's still trying should have its very next frame land well inside this window --
-// comfortably above a single retry gap (EXCHANGE_RETRY_DELAY_MS=250ms) plus the request/response
-// windows either side of it (PAIRING_KEY_CHALLENGE_TIMEOUT_MS/PAIRING_KEY_CONFIRM_TIMEOUT_MS=500ms
-// each, pairing_engine.h) -- while staying "a few seconds", not minutes, sized against third-party
-// hub timing (the whole reason this feature exists), not this project's own controller role. Not
-// hardware-measured; deliberately generous rather than tight, matching
-// KEY_EXTRACTION_POST_EXTRACT_GRACE_MS's own reasoning below.
+// comment in key_extraction_responder.h) -- it does NOT touch key_extraction_ctx_.state, so a real
+// hub's frame arriving even slightly late is still accepted by the pure guards in
+// pairing_responder.cpp exactly as if the hold were still active, just without the CH2-parking
+// benefit for that one frame. That makes the cost of sizing this too small merely "occasionally
+// idle-hops away from CH2 a little early," not "silently drops a live attempt" -- so 5s is sized
+// generously rather than tightly: a real hub that's still trying should have its very next frame
+// land well inside this window -- comfortably above a single retry gap (EXCHANGE_RETRY_DELAY_MS=250ms)
+// plus the request/response windows either side of it
+// (PAIRING_KEY_CHALLENGE_TIMEOUT_MS/PAIRING_KEY_CONFIRM_TIMEOUT_MS=500ms each, pairing_engine.h) --
+// while staying "a few seconds", not minutes, sized against third-party hub timing (the whole
+// reason this feature exists), not this project's own controller role. Not hardware-measured;
+// deliberately generous rather than tight, matching KEY_EXTRACTION_POST_EXTRACT_GRACE_MS's own
+// reasoning below.
 
 constexpr uint32_t KEY_EXTRACTION_POST_EXTRACT_GRACE_MS = 60000;  ///< One minute.
 // TODO(hardware-verify): no timing data exists for the 0x33->0x36 gap on real hardware (the only
@@ -105,7 +111,17 @@ constexpr const char *KEY_EXTRACTION_GRACE_TIMER_NAME = "key_extraction_post_ext
 
 }  // namespace
 
-void IOHomeControlComponent::generate_key_extraction_throwaway_id_(uint8_t out[NODE_ID_SIZE]) {
+KeyExtractionResponder::KeyExtractionResponder(const uint8_t *node_id, RadioDriver **radio, const TuningConfig *tuning,
+                                               DeviceRegistry &registry, TransmitFrameFn transmit,
+                                               NamedTimeoutFn schedule_auto_off)
+    : node_id_(node_id),
+      radio_(radio),
+      tuning_(tuning),
+      registry_(registry),
+      transmit_(std::move(transmit)),
+      schedule_auto_off_(std::move(schedule_auto_off)) {}
+
+void KeyExtractionResponder::generate_throwaway_id(uint8_t out[NODE_ID_SIZE]) {
   for (uint8_t attempt = 0; attempt < KEY_EXTRACTION_ID_GEN_MAX_ATTEMPTS; attempt++) {
     for (uint8_t i = 0; i < NODE_ID_SIZE; i++)
       out[i] = static_cast<uint8_t>(esp_random() & RANDOM_LOW_BYTE_MASK);
@@ -125,19 +141,19 @@ void IOHomeControlComponent::generate_key_extraction_throwaway_id_(uint8_t out[N
   // the colliding real device also gets intercepted," not a crash or security issue.
 }
 
-void IOHomeControlComponent::set_key_extraction_armed(bool armed) {
+void KeyExtractionResponder::set_armed(bool armed) {
   if (!armed) {
     if (this->key_extraction_ctx_.state == pairing_responder::ResponderState::DISARMED)
       return;
     this->key_extraction_ctx_ = pairing_responder::ResponderContext{};
     ESP_LOGI(detail::TAG, "Key extraction: disarmed");
-    if (this->key_extraction_armed_callback_)
-      this->key_extraction_armed_callback_(false);
+    if (this->armed_callback_)
+      this->armed_callback_(false);
     return;
   }
 
   this->key_extraction_ctx_ = pairing_responder::ResponderContext{};
-  this->generate_key_extraction_throwaway_id_(this->key_extraction_ctx_.throwaway_id);
+  this->generate_throwaway_id(this->key_extraction_ctx_.throwaway_id);
   this->key_extraction_ctx_.advertised_type = KEY_EXTRACTION_ADVERTISED_TYPE;
   this->key_extraction_ctx_.advertised_subtype = KEY_EXTRACTION_ADVERTISED_SUBTYPE;
   this->key_extraction_ctx_.state = pairing_responder::ResponderState::ARMED_IDLE;
@@ -147,12 +163,12 @@ void IOHomeControlComponent::set_key_extraction_armed(bool armed) {
            "mode now.",
            node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
 
-  // This timer and arm_post_extraction_grace_()'s below share one idiom (named set_timeout(),
+  // This timer and arm_post_extraction_grace()'s below share one idiom (named set_timeout(),
   // guarded by a state check so a stale callback from a disarm-and-rearm inside the window can't
   // act on the wrong cycle, logging, then disarming) — two call sites, not enough to be worth
   // extracting into a shared helper at the cost of an extra layer of indirection between the
   // guard condition and what it's guarding.
-  this->set_timeout(KEY_EXTRACTION_TIMEOUT_NAME, KEY_EXTRACTION_AUTO_OFF_MS, [this]() {
+  this->schedule_auto_off_(KEY_EXTRACTION_TIMEOUT_NAME, KEY_EXTRACTION_AUTO_OFF_MS, [this]() {
     // Guards against a stale timeout firing after a manual disarm/re-arm already ran; this hub's
     // set_timeout() replaces any pending callback with the same name, but the check is cheap
     // insurance and documents the intent either way.
@@ -164,47 +180,47 @@ void IOHomeControlComponent::set_key_extraction_armed(bool armed) {
       ESP_LOGW(detail::TAG, "Key extraction: window expired while in progress (reached stage=%s). Disarming.",
                pairing_responder::responder_stage_name(this->key_extraction_ctx_.state));
     }
-    this->set_key_extraction_armed(false);
+    this->set_armed(false);
   });
 
-  if (this->key_extraction_armed_callback_)
-    this->key_extraction_armed_callback_(true);
+  if (this->armed_callback_)
+    this->armed_callback_(true);
 }
 
-bool IOHomeControlComponent::try_handle_key_extraction_frame_(const IoFrame &frame) {
+bool KeyExtractionResponder::try_handle_frame(const IoFrame &frame) {
   if (this->key_extraction_ctx_.state == pairing_responder::ResponderState::DISARMED)
     return false;
 
   if (frame.cmd == CMD_DISCOVER_REQ) {
-    this->handle_key_extraction_discover_(frame);
+    this->handle_discover_(frame);
     return true;
   }
   if (memcmp(frame.dst, this->key_extraction_ctx_.throwaway_id, NODE_ID_SIZE) != 0)
     return false;
   if (frame.cmd == CMD_DISCOVER_CONFIRM) {
-    this->handle_key_extraction_discover_confirm_(frame);
+    this->handle_discover_confirm_(frame);
     return true;
   }
   if (frame.cmd == CMD_KEY_INIT) {
-    this->handle_key_extraction_key_init_(frame);
+    this->handle_key_init_(frame);
     return true;
   }
   if (frame.cmd == CMD_KEY_TRANSFER) {
-    this->handle_key_extraction_key_transfer_(frame);
+    this->handle_key_transfer_(frame);
     return true;
   }
   if (frame.cmd == CMD_ADDRESS_REQ) {
-    this->handle_key_extraction_address_req_(frame);
+    this->handle_address_req_(frame);
     return true;
   }
   if (frame.cmd == CMD_CHALLENGE_REQ) {
-    this->handle_key_extraction_address_challenge_(frame);
+    this->handle_address_challenge_(frame);
     return true;
   }
   return false;
 }
 
-void IOHomeControlComponent::broadcast_key_extraction_reply_(const IoFrame &frame) {
+void KeyExtractionResponder::broadcast_reply_(const IoFrame &frame) {
   // Broadcast on all 3 channels like the CMD_STATUS_UPDATE_RESP ack in hub_status.cpp: we don't
   // know which channel the foreign hub is listening on after transmitting its own frame.
   //
@@ -236,13 +252,13 @@ void IOHomeControlComponent::broadcast_key_extraction_reply_(const IoFrame &fram
   // channels that listen actually scans) both go out before CH2 instead of straddling it, so
   // discovery reaches its useful channels sooner.
   const uint16_t preamble =
-      is_start(frame) ? this->tuning_.cold_broadcast_reply_preamble : this->radio_->response_preamble();
-  this->transmit_frame_(frame, FREQ_CH1, preamble);
-  this->transmit_frame_(frame, FREQ_CH3, preamble);
-  this->transmit_frame_(frame, FREQ_CH2, preamble);
+      is_start(frame) ? this->tuning_->cold_broadcast_reply_preamble : (*this->radio_)->response_preamble();
+  this->transmit_(frame, FREQ_CH1, preamble);
+  this->transmit_(frame, FREQ_CH3, preamble);
+  this->transmit_(frame, FREQ_CH2, preamble);
 }
 
-void IOHomeControlComponent::handle_key_extraction_discover_(const IoFrame &frame) {
+void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
   if (!pairing_responder::on_discover_request(this->key_extraction_ctx_, frame.src))
     return;
 
@@ -259,30 +275,30 @@ void IOHomeControlComponent::handle_key_extraction_discover_(const IoFrame &fram
     // from either holding CH2 unboundedly or clobbering a still-valid earlier deadline.
     return;
   }
-  this->broadcast_key_extraction_reply_(resp);
+  this->broadcast_reply_(resp);
   this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
   ESP_LOGI(detail::TAG, "Key extraction: replied to discovery from hub %s with throwaway ID %s",
            node_id_to_string(frame.src).c_str(), node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
 }
 
-void IOHomeControlComponent::handle_key_extraction_discover_confirm_(const IoFrame &frame) {
+void KeyExtractionResponder::handle_discover_confirm_(const IoFrame &frame) {
   if (!pairing_responder::on_discover_confirm(this->key_extraction_ctx_))
     return;
 
   IoFrame resp;
   if (!create_discover_confirm_ack(resp, this->key_extraction_ctx_.throwaway_id, frame.src)) {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build discovery-confirm ack");
-    // See handle_key_extraction_discover_()'s matching comment: leaving the hold deadline untouched
-    // on a builder failure is deliberate, not an oversight.
+    // See handle_discover_()'s matching comment: leaving the hold deadline untouched on a builder
+    // failure is deliberate, not an oversight.
     return;
   }
-  this->broadcast_key_extraction_reply_(resp);
+  this->broadcast_reply_(resp);
   this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
   ESP_LOGI(detail::TAG, "Key extraction: acknowledged discovery confirm from hub %s",
            node_id_to_string(frame.src).c_str());
 }
 
-void IOHomeControlComponent::handle_key_extraction_key_init_(const IoFrame &frame) {
+void KeyExtractionResponder::handle_key_init_(const IoFrame &frame) {
   uint8_t candidate_challenge[HMAC_SIZE];
   crypto::generate_challenge(candidate_challenge);
   if (!pairing_responder::on_key_init(this->key_extraction_ctx_, candidate_challenge, frame.src))
@@ -292,16 +308,16 @@ void IOHomeControlComponent::handle_key_extraction_key_init_(const IoFrame &fram
   if (!create_challenge_req_device_role(resp, frame.src, this->key_extraction_ctx_.throwaway_id,
                                         this->key_extraction_ctx_.challenge)) {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build challenge request");
-    // See handle_key_extraction_discover_()'s matching comment: leaving the hold deadline untouched
-    // on a builder failure is deliberate, not an oversight.
+    // See handle_discover_()'s matching comment: leaving the hold deadline untouched on a builder
+    // failure is deliberate, not an oversight.
     return;
   }
-  this->broadcast_key_extraction_reply_(resp);
+  this->broadcast_reply_(resp);
   this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
   ESP_LOGI(detail::TAG, "Key extraction: sent challenge to hub %s", node_id_to_string(frame.src).c_str());
 }
 
-void IOHomeControlComponent::handle_key_extraction_key_transfer_(const IoFrame &frame) {
+void KeyExtractionResponder::handle_key_transfer_(const IoFrame &frame) {
   if (frame.data_len < AES_KEY_SIZE) {
     ESP_LOGW(detail::TAG, "Key extraction: key-transfer payload too short (%u bytes)", frame.data_len);
     return;
@@ -311,14 +327,14 @@ void IOHomeControlComponent::handle_key_extraction_key_transfer_(const IoFrame &
 
   IoFrame resp;
   if (create_key_confirm(resp, this->key_extraction_ctx_.throwaway_id, frame.src)) {
-    this->broadcast_key_extraction_reply_(resp);
+    this->broadcast_reply_(resp);
   } else {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build key confirm");
   }
 
   // Log before the grace window can disarm us: disarm resets key_extraction_ctx_, which is where
   // the recovered key and the hub's real node ID live.
-  this->log_key_extraction_result_();
+  this->log_result_();
   ESP_LOGI(detail::TAG,
            "Key extraction: still listening for up to %" PRIu32
            " more seconds in case the hub verifies this device's address (CMD_ADDRESS_REQ/0x36) — leave the "
@@ -333,16 +349,16 @@ void IOHomeControlComponent::handle_key_extraction_key_transfer_(const IoFrame &
   // hub_node_id, so a different hub's traffic still cannot advance the state machine backwards. The
   // grace timer below disarms once no further progress is seen from the real hub, instead of doing
   // it at once.
-  this->arm_post_extraction_grace_();
+  this->arm_post_extraction_grace();
 }
 
-void IOHomeControlComponent::handle_key_extraction_address_req_(const IoFrame &frame) {
+void KeyExtractionResponder::handle_address_req_(const IoFrame &frame) {
   // Our throwaway ID is not a secret -- it went out in clear in our own 0x29/0x37 -- so the dst
-  // check in try_handle_key_extraction_frame_() alone doesn't establish this frame actually came
-  // from the hub we exchanged keys with. hub_node_id was captured from the 0x31 that started this
-  // attempt (pairing_responder::on_key_init()); anything else claiming our throwaway ID as dst is
-  // not that hub and gets no reply, closing an otherwise-unbounded loop an onlooker could drive to
-  // keep re-arming the grace window for as long as the arm cycle lasts.
+  // check in try_handle_frame() alone doesn't establish this frame actually came from the hub we
+  // exchanged keys with. hub_node_id was captured from the 0x31 that started this attempt
+  // (pairing_responder::on_key_init()); anything else claiming our throwaway ID as dst is not that
+  // hub and gets no reply, closing an otherwise-unbounded loop an onlooker could drive to keep
+  // re-arming the grace window for as long as the arm cycle lasts.
   if (memcmp(frame.src, this->key_extraction_ctx_.hub_node_id, NODE_ID_SIZE) != 0)
     return;
   if (!pairing_responder::on_address_req(this->key_extraction_ctx_))
@@ -352,19 +368,19 @@ void IOHomeControlComponent::handle_key_extraction_address_req_(const IoFrame &f
     ESP_LOGW(detail::TAG, "Key extraction: failed to build address response");
     return;
   }
-  this->broadcast_key_extraction_reply_(resp);
-  this->arm_post_extraction_grace_();  // Hub is still progressing — push the disarm back out.
+  this->broadcast_reply_(resp);
+  this->arm_post_extraction_grace();  // Hub is still progressing — push the disarm back out.
   ESP_LOGI(detail::TAG, "Key extraction: answered address request from hub %s", node_id_to_string(frame.src).c_str());
 }
 
-void IOHomeControlComponent::handle_key_extraction_address_challenge_(const IoFrame &frame) {
-  // Hub-identity guard, mirroring handle_key_extraction_address_req_()'s: only the hub we actually
-  // exchanged keys with may drive this round.
+void KeyExtractionResponder::handle_address_challenge_(const IoFrame &frame) {
+  // Hub-identity guard, mirroring handle_address_req_()'s: only the hub we actually exchanged keys
+  // with may drive this round.
   if (memcmp(frame.src, this->key_extraction_ctx_.hub_node_id, NODE_ID_SIZE) != 0)
     return;
-  // Length guard, mirroring handle_key_extraction_key_transfer_()'s: frame.data is passed straight
-  // into a `const uint8_t challenge[HMAC_SIZE]` parameter, so a short 0x3C would silently
-  // authenticate over stale bytes left in IoFrame::data from a previous parse.
+  // Length guard, mirroring handle_key_transfer_()'s: frame.data is passed straight into a
+  // `const uint8_t challenge[HMAC_SIZE]` parameter, so a short 0x3C would silently authenticate
+  // over stale bytes left in IoFrame::data from a previous parse.
   if (frame.data_len < HMAC_SIZE) {
     ESP_LOGW(detail::TAG, "Key extraction: address challenge payload too short (%u bytes)", frame.data_len);
     return;
@@ -385,14 +401,14 @@ void IOHomeControlComponent::handle_key_extraction_address_challenge_(const IoFr
     ESP_LOGW(detail::TAG, "Key extraction: failed to build address challenge response");
     return;
   }
-  this->broadcast_key_extraction_reply_(resp);
+  this->broadcast_reply_(resp);
   ESP_LOGI(detail::TAG, "Key extraction: answered address challenge from hub %s", node_id_to_string(frame.src).c_str());
   // Do NOT disarm here — re-arm the grace window instead and stay in SENT_ADDRESS_RESP so a
   // retried 0x3C is answered (on_address_challenge() deliberately never advances state).
-  this->arm_post_extraction_grace_();
+  this->arm_post_extraction_grace();
 }
 
-void IOHomeControlComponent::arm_post_extraction_grace_() {
+void KeyExtractionResponder::arm_post_extraction_grace() {
   // Same replace-on-reschedule idiom as KEY_EXTRACTION_TIMEOUT_NAME's 10-minute timer above —
   // every new sign of hub progress (0x36 received, 0x3D sent, and this same call at extraction
   // time) pushes the disarm back out, so a slow multi-retry hub isn't cut off mid-round. That
@@ -400,15 +416,16 @@ void IOHomeControlComponent::arm_post_extraction_grace_() {
   // whole arm cycle: no amount of grace-window re-arming can keep the responder listening past the
   // 10 minutes the switch entity documents.
   //
-  // Also pushes out key_extraction_hold_deadline_ms_ (hub_core.h) by the same window: the CH2 hold
-  // that field governs is not just for the 3 pre-extraction states KEY_EXTRACTION_MID_ATTEMPT_
-  // TIMEOUT_MS bounds -- EXTRACTED/SENT_ADDRESS_RESP are "awaiting reply" too (a hub may still send
-  // 0x36/0x3C to verify the address it was handed), and this grace window, not the 5s mid-attempt
-  // one, is what should bound the hold during that phase. Without this, the hold would (per
-  // key_extraction_hold_deadline_ms_'s default-past-if-unset behavior) never actually engage once
-  // the responder reaches EXTRACTED, silently losing the CH2-hold benefit for the very phase whose
-  // whole point is catching a hub's follow-up unicast frame.
-  this->set_timeout(KEY_EXTRACTION_GRACE_TIMER_NAME, KEY_EXTRACTION_POST_EXTRACT_GRACE_MS, [this]() {
+  // Also pushes out key_extraction_hold_deadline_ms_ (key_extraction_responder.h) by the same
+  // window: the CH2 hold that field governs is not just for the 3 pre-extraction states
+  // KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS bounds -- EXTRACTED/SENT_ADDRESS_RESP are "awaiting
+  // reply" too (a hub may still send 0x36/0x3C to verify the address it was handed), and this
+  // grace window, not the 5s mid-attempt one, is what should bound the hold during that phase.
+  // Without this, the hold would (per key_extraction_hold_deadline_ms_'s default-past-if-unset
+  // behavior) never actually engage once the responder reaches EXTRACTED, silently losing the
+  // CH2-hold benefit for the very phase whose whole point is catching a hub's follow-up unicast
+  // frame.
+  this->schedule_auto_off_(KEY_EXTRACTION_GRACE_TIMER_NAME, KEY_EXTRACTION_POST_EXTRACT_GRACE_MS, [this]() {
     // Only a still-running post-extraction cycle may be disarmed from here. Checking DISARMED
     // alone is NOT enough: a user who toggles the switch off and back on inside the grace window
     // leaves this callback pending against a brand-new, unrelated arm cycle (set_timeout() only
@@ -426,7 +443,7 @@ void IOHomeControlComponent::arm_post_extraction_grace_() {
       return;
     ESP_LOGI(detail::TAG, "Key extraction: post-extraction grace window elapsed (stage=%s). Disarming.",
              pairing_responder::responder_stage_name(state));
-    this->set_key_extraction_armed(false);
+    this->set_armed(false);
   });
   this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_POST_EXTRACT_GRACE_MS;
 }
@@ -440,7 +457,7 @@ void IOHomeControlComponent::arm_post_extraction_grace_() {
 // already ships marked experimental is not worth it for a second unverified vendor-hub
 // interaction. The key is still always printed (gating it on an equally-unverified secondary check
 // risks hiding a correct key), but the log below says so.
-void IOHomeControlComponent::log_key_extraction_result_() {
+void KeyExtractionResponder::log_result_() {
   // Deliberate, explicit exception to redaction.h's masking — see that file and README.md's
   // "Reporting Unsupported Devices" section, which already warns about pairing logs and the
   // shared TRANSFER_KEY in almost identical terms. Do NOT route this through the generic

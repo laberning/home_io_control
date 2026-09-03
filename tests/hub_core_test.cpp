@@ -433,8 +433,8 @@ TEST(HubCore, LoopRetunesToCh2WhileKeyExtractionAwaitingReply) {
   radio->change_frequency(FREQ_CH1);
   radio->clear();
 
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
-  comp.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
   ASSERT_TRUE(comp.key_extraction_awaiting_reply_());
 
   comp.loop();
@@ -454,7 +454,7 @@ TEST(HubCore, LoopDoesNotForceRetuneWhileKeyExtractionDisarmed) {
   radio->change_frequency(FREQ_CH1);
   radio->clear();
 
-  ASSERT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
   ASSERT_FALSE(comp.key_extraction_awaiting_reply_());
   // maybe_hop() is purely time-gated (HOP_TIME_US since its own last_hop_us_); the host's
   // micros() stub is a single free-running counter shared by the whole test binary, so by the
@@ -481,7 +481,7 @@ TEST(HubCore, LoopDoesNotForceRetuneWhileKeyExtractionArmedIdle) {
   radio->change_frequency(FREQ_CH1);
   radio->clear();
 
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::ARMED_IDLE;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::ARMED_IDLE;
   ASSERT_FALSE(comp.key_extraction_awaiting_reply_())
       << "ARMED_IDLE (no discovery request seen yet) must not itself trigger the CH2 hold -- see "
          "key_extraction_awaiting_reply_()'s doxygen for why that boundary is deliberate";
@@ -504,8 +504,8 @@ TEST(HubCore, LoopKeyExtractionHoldRespectsReceptionInProgressGuard) {
   radio->clear();
   radio->note_reception_from_test();  // Arms the idle-hop holdoff, as a real driver's RX path would.
 
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
-  comp.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
   ASSERT_TRUE(comp.key_extraction_awaiting_reply_());
 
   comp.loop();
@@ -528,17 +528,17 @@ TEST(HubCore, KeyExtractionHoldExpiresAfterInactivityWithoutTouchingState) {
   auto *radio = new MockRadio();
   comp.radio_ = radio;
 
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
-  comp.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
   ASSERT_TRUE(comp.key_extraction_awaiting_reply_());
 
   // The peer goes silent: no further 0x28/0x2C/0x31 progress pushes the deadline out again, so it
   // lapses on its own -- nothing calls back or fires when this happens, it is a plain timestamp
   // check consulted on demand.
-  comp.key_extraction_hold_deadline_ms_ = 0;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = 0;
 
   EXPECT_FALSE(comp.key_extraction_awaiting_reply_()) << "the hold must release once the deadline has passed";
-  EXPECT_EQ(comp.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE)
       << "a lapsed hold must NOT reset key_extraction_ctx_.state -- doing so would silently discard "
          "live protocol progress if the hub's real reply arrived just after expiry (see the "
          "end-to-end regression test in hub_key_extraction_test.cpp)";
@@ -563,8 +563,8 @@ TEST(HubCore, LoopDefersQueuedPollWhileKeyExtractionAwaitingReply) {
   comp.add_device("ABC123");
 
   ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
-  comp.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
   ASSERT_EQ(comp.last_1w_activity_ms_, 0u) << "precondition: this is not the 1W defer path";
 
   EXPECT_TRUE(comp.defer_background_poll_())
@@ -583,8 +583,8 @@ TEST(HubCore, LoopNeverDefersAUserCommandForKeyExtraction) {
   comp.add_device("ABC123");
 
   comp.op_queue_.enqueue_device_command("ABC123", CoverCommand::STOP);
-  comp.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
-  comp.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
 
   EXPECT_FALSE(comp.defer_background_poll_())
       << "only background polls yield for key extraction, same as the 1W rule -- a user command "

@@ -8,7 +8,7 @@
 /// `io_device_id` and isn't declared through a separate platform entry. It is created dynamically
 /// from the presence of `home_io_control.lr1121_firmware_update:` (see `__init__.py`'s
 /// `_create_lr1121_firmware_update()`), bound directly to the hub instance being built. See
-/// hub_lr1121_firmware_update.cpp for what a press actually does — every rejection path is a
+/// lr1121_firmware_update_controller.cpp for what a press actually does — every rejection path is a
 /// cached-verdict log, not a fresh bootloader entry. Once a press does proceed, ADR 0020's
 /// invariant applies: every exit after a bootloader excursion reboots the ESP32.
 
@@ -33,7 +33,7 @@ class IOHomeLr1121FirmwareUpdateButton : public button::Button, public Component
   void dump_config() override {}
 
  protected:
-  /// @brief When pressed, hand off to the hub — see hub_lr1121_firmware_update.cpp for the full
+  /// @brief When pressed, hand off to the hub — see lr1121_firmware_update_controller.cpp for the full
   /// guard/decision/flash sequence.
   void press_action() override { this->parent_->trigger_lr1121_firmware_update(); }
 };
