@@ -11,6 +11,7 @@
 #include "stubs/radio_test_common.h"
 
 #include <cstring>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -19,6 +20,7 @@ namespace {
 class TestableManagementComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::api_force_open_device_;
+  using IOHomeControlComponent::api_heating_control_;
   using IOHomeControlComponent::api_identify_device_;
   using IOHomeControlComponent::api_oneway_remove_controller_;
   using IOHomeControlComponent::api_oneway_set_position_;
@@ -417,7 +419,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersOnlySixServicesByDefault) {
+TEST(HubManagement, RegisterManagementActionsRegistersOnlySevenServicesByDefault) {
   // diagnostic_probes_enabled_ defaults to false (no set_diagnostic_probes_enabled() call), so
   // probe_device/probe_sweep must not appear in the action list at all -- this is what keeps a
   // default build's Home Assistant action list clean, not just what refuses at call time.
@@ -430,7 +432,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlySixServicesByDefault) 
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 6u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 7u);
   for (const auto &service : esphome::api::global_api_server->user_services_) {
     const auto name = service->encode_list_service_response().name.str();
     EXPECT_NE(name, "probe_device");
@@ -482,9 +484,21 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlySixServicesByDefault) 
   ASSERT_EQ(oneway_remove_controller_response.args.size(), 1u);
   EXPECT_EQ(oneway_remove_controller_response.args[0].name.str(), "controller_id");
   EXPECT_EQ(oneway_remove_controller_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto heating_control_response =
+      esphome::api::global_api_server->user_services_[6]->encode_list_service_response();
+  EXPECT_EQ(heating_control_response.name.str(), "heating_control");
+  EXPECT_EQ(heating_control_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(heating_control_response.args.size(), 3u);
+  EXPECT_EQ(heating_control_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(heating_control_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+  EXPECT_EQ(heating_control_response.args[1].name.str(), "function");
+  EXPECT_EQ(heating_control_response.args[1].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+  EXPECT_EQ(heating_control_response.args[2].name.str(), "value");
+  EXPECT_EQ(heating_control_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllEightServicesWhenDiagnosticProbesEnabled) {
+TEST(HubManagement, RegisterManagementActionsRegistersAllNineServicesWhenDiagnosticProbesEnabled) {
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -495,9 +509,9 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllEightServicesWhenDiagno
   component.set_diagnostic_probes_enabled(true);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 8u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 9u);
 
-  const auto probe_device_response = esphome::api::global_api_server->user_services_[6]->encode_list_service_response();
+  const auto probe_device_response = esphome::api::global_api_server->user_services_[7]->encode_list_service_response();
   EXPECT_EQ(probe_device_response.name.str(), "probe_device");
   EXPECT_EQ(probe_device_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_device_response.args.size(), 3u);
@@ -508,7 +522,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllEightServicesWhenDiagno
   EXPECT_EQ(probe_device_response.args[2].name.str(), "index");
   EXPECT_EQ(probe_device_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[7]->encode_list_service_response();
+  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[8]->encode_list_service_response();
   EXPECT_EQ(probe_sweep_response.name.str(), "probe_sweep");
   EXPECT_EQ(probe_sweep_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_sweep_response.args.size(), 4u);
@@ -516,6 +530,253 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllEightServicesWhenDiagno
   EXPECT_EQ(probe_sweep_response.args[1].name.str(), "probe");
   EXPECT_EQ(probe_sweep_response.args[2].name.str(), "first_index");
   EXPECT_EQ(probe_sweep_response.args[3].name.str(), "last_index");
+}
+
+// ========================================================================================
+// heating_control action (CMD_WRITE_PRIVATE 0x20)
+// ========================================================================================
+
+static IoFrame make_write_private_ack(const uint8_t dst[3]) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, dst);
+  set_src(frame, device_node_id);
+  set_cmd(frame, CMD_WRITE_PRIVATE_ACK, nullptr, 0);
+  return frame;
+}
+
+static void make_climate_device(TestableManagementComponent &component) {
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+}
+
+TEST(HubManagement, HeatingControlRejectsUnknownDevice) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  const auto result = component.heating_control("123456", "power_on", "");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device is not registered on this hub");
+}
+
+TEST(HubManagement, HeatingControlRejectsWhenHubNotInitialized) {
+  TestableManagementComponent component;
+  const auto result = component.heating_control("ABC123", "power_on", "");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "hub is not initialized");
+}
+
+TEST(HubManagement, HeatingControlRejectsInvalidDeviceId) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  const auto result = component.heating_control("12", "power_on", "");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
+}
+
+TEST(HubManagement, HeatingControlRejectsUnknownFunction) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  const auto result = component.heating_control("ABC123", "make_coffee", "");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "unknown heating function 'make_coffee'");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlRejectsOutOfRangeTemperature) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  const auto result = component.heating_control("ABC123", "set_temperature", "28.1");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "temperature must be between 7.0 and 28.0");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlRejectsNonNumericTemperature) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  const auto result = component.heating_control("ABC123", "set_temperature", "warm");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "temperature must be a number in degrees Celsius");
+}
+
+TEST(HubManagement, HeatingControlRejectsNonClimateDevice) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);  // ABC123 defaults to no type (UNKNOWN)
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::ROLLER_SHUTTER;
+  const auto result = component.heating_control("ABC123", "power_on", "");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device is not a climate device");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlRejectsNonFiniteTemperature) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  // strtof parses "nan" to a NaN that would pass both range comparisons; the parser must reject
+  // it with the "must be a number" message before it reaches the encoder.
+  const auto result = component.heating_control("ABC123", "set_temperature", "nan");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "temperature must be a number in degrees Celsius");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlRejectsInvalidMode) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  const auto result = component.heating_control("ABC123", "set_mode", "sideways");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "mode must be one of auto, manual, prog, off");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlRejectsInvalidPresence) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  const auto result = component.heating_control("ABC123", "set_presence", "maybe");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "presence must be 'on' or 'off'");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlRejectsInvalidWindow) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  const auto result = component.heating_control("ABC123", "set_window", "ajar");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "window must be 'open' or 'close'");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+// The function name and named values are case-folded and ASCII-trimmed before matching
+// (normalize_lower_argument): "SET_MODE" / " Manual " must resolve exactly like "set_mode" /
+// "manual" and send the MANUAL (0x01) mode byte.
+TEST(HubManagement, HeatingControlNormalizesCaseAndWhitespace) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
+
+  const auto result = component.heating_control("ABC123", "  SET_MODE  ", " Manual ");
+  EXPECT_TRUE(result.success);
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  const auto &tx = radio.get_sent_data().front();
+  ASSERT_GE(tx.size(), 14u);
+  EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE);
+  const std::vector<uint8_t> expected = {0x0C, 0x61, 0x01, 0x00, 0x01};
+  for (size_t i = 0; i < expected.size(); i++)
+    EXPECT_EQ(tx[9 + i], expected[i]) << "payload byte " << i;
+}
+
+// Each function's happy path: assert the exact bytes handed to the radio, byte-for-byte against
+// the Step 1 payload tables (reference/iohomecontrol/src/iohcCozyDevice2W.cpp).
+namespace {
+struct HeatingCase {
+  const char *function;
+  const char *value;
+  std::vector<uint8_t> payload;
+};
+}  // namespace
+
+TEST(HubManagement, HeatingControlHappyPathSendsExactBytesPerFunction) {
+  const std::vector<HeatingCase> cases = {
+      {"power_on", "", {0x0C, 0x60, 0x01, 0x2C}},                         // :105
+      {"set_temperature", "20.5", {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}},  // :125
+      {"set_mode", "manual", {0x0C, 0x61, 0x01, 0x00, 0x01}},             // :155/:159
+      {"set_presence", "on", {0x0C, 0x61, 0x01, 0x10, 0x01}},             // :195/:198
+      {"set_window", "open", {0x0C, 0x61, 0x01, 0x0E, 0x01}},             // :218/:221
+      {"midnight_sync", "", {0x0C, 0x60, 0x01, 0x30}},                    // :248
+  };
+
+  for (const auto &tc : cases) {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    make_climate_device(component);
+    radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
+
+    const auto result = component.heating_control("ABC123", tc.function, tc.value);
+    EXPECT_TRUE(result.success) << tc.function;
+    EXPECT_FALSE(result.verified) << tc.function << " has no readback";
+    EXPECT_EQ(result.message, std::string("heating ") + tc.function + " acknowledged by device");
+
+    ASSERT_EQ(radio.get_sent_data().size(), 1u) << tc.function;
+    const auto &tx = radio.get_sent_data().front();
+    ASSERT_GE(tx.size(), 9u + tc.payload.size()) << tc.function;
+    EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE) << tc.function;
+    for (size_t i = 0; i < tc.payload.size(); i++)
+      EXPECT_EQ(tx[9 + i], tc.payload[i]) << tc.function << " payload byte " << i;
+  }
+}
+
+TEST(HubManagement, HeatingControlReportsFailureWithoutAck) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  // No reply queued.
+  const auto result = component.heating_control("ABC123", "set_temperature", "21.0");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device did not acknowledge the set_temperature command");
+}
+
+TEST(HubManagement, HeatingControlSurfacesErrorResponseResultCode) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_LIMITATION_BY_WIND)));
+
+  const auto result = component.heating_control("ABC123", "set_temperature", "21.0");
+  EXPECT_FALSE(result.success);
+  EXPECT_TRUE(result.has_result_code);
+  EXPECT_EQ(result.result_code, RESULT_LIMITATION_BY_WIND);
+  EXPECT_EQ(result.message, std::string(command_result_name(RESULT_LIMITATION_BY_WIND)) + ": " +
+                                command_result_description(RESULT_LIMITATION_BY_WIND));
+}
+
+TEST(HubManagement, ApiHeatingControlPublishesManagementResultEvent) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
+
+  component.api_heating_control_("ABC123", "set_mode", "auto");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  const auto &event = api_server.events_.front();
+  EXPECT_EQ(event.event_type, "esphome.home_io_control_action_result");
+  EXPECT_EQ(event.data.at("action"), "heating_control");
+  EXPECT_EQ(event.data.at("device_id"), "ABC123");
+  EXPECT_EQ(event.data.at("success"), "true");
+  EXPECT_EQ(event.data.at("verified"), "false");
+  EXPECT_EQ(event.data.at("message"), "heating set_mode acknowledged by device");
 }
 
 TEST(HubManagement, ApiRenameDevicePublishesManagementResultEvent) {
@@ -566,7 +827,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 6u);
+  ASSERT_EQ(api_server.user_services_.size(), 7u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
@@ -879,7 +1140,7 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 6u);
+  ASSERT_EQ(api_server.user_services_.size(), 7u);
 
   const auto response = api_server.user_services_[3]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "scan_paired_devices");
@@ -947,7 +1208,7 @@ TEST(HubManagement, OneWaySetPositionActionIsRegisteredWithBothArguments) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 6u);
+  ASSERT_EQ(api_server.user_services_.size(), 7u);
 
   const auto response = api_server.user_services_[4]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "oneway_set_position");

@@ -110,6 +110,16 @@ bool device_supports_status_requests(DeviceType type);
 /// @return true for lock devices.
 bool device_supports_lock_control(DeviceType type);
 
+/// @brief Does this device type support 2W climate/heating control (CMD_WRITE_PRIVATE 0x20)?
+///
+/// The single capability gate for the heating send path and the climate entity: true exactly
+/// when device_capability_class(type) is DeviceCapabilityClass::CLIMATE
+/// (HEATING_TEMPERATURE_INTERFACE, EXTERIOR_HEATING, HEAT_PUMP). There is deliberately no
+/// per-device-type or per-vendor branch anywhere downstream — see the plan's DRY invariant.
+/// @param type Device type.
+/// @return true for climate-class devices.
+bool device_supports_climate_control(DeviceType type);
+
 /// @brief Does this device type support tilt (slat angle) control?
 /// @param type Device type.
 /// @return true for venetian blinds, blinds, external venetian blinds, louvre blinds.

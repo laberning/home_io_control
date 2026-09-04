@@ -1,0 +1,54 @@
+id: synthetic_exchange_heating_midnight_sync
+description: >
+  Synthetic authenticated CMD_WRITE_PRIVATE (0x20) heating exchange for the no-value / short
+  4-byte-payload path: midnight_sync -> 0x3C challenge -> 0x3D challenge-response ->
+  CMD_WRITE_PRIVATE_ACK (0x21) echo (END). The 0x20 payload {0C 60 01 30} is
+  encode_heating_payload(MIDNIGHT_SYNC, *) — byte layout from
+  reference/iohomecontrol/src/iohcCozyDevice2W.cpp:248. Complements
+  synthetic_exchange_heating_set_temp (the 6-byte-payload path). HMAC on the 0x3D frame is
+  computed under the public corpus key (tests/support/test_helpers.h :: TEST_SYSTEM_KEY), so this
+  fixture's crypto is safe to commit — see tests/corpus_bootstrap_dump_test.cpp
+  (DISABLED_PrintSyntheticFrames) for how these bytes were generated. No Atlantic / Thermor /
+  Sauter hardware exists in this project. The 0x21 ACK payload here (0C 60 01 30) is a placeholder
+  echo of the request, not a modelled register-read response — a real 0x0130 read answers with the
+  ~17-byte comfort/eco/auto setpoint block (see
+  reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md), so these bytes must not
+  later be mined as evidence of what a midnight_sync read returns.
+source:
+  device: "synthetic controller <-> synthetic climate device"
+  captured_with: synthetic
+  firmware: null
+  date: 2026-09-03
+  origin: synthetic-bootstrap
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    freq: 868950000
+    hex: "4C 00 44 55 66 11 22 33 20 0C 60 01 30 EB FE"
+    crc: present
+    note: "CMD_WRITE_PRIVATE, START: midnight time-sync (4-byte payload, no value)"
+  - dir: rx
+    freq: 868950000
+    hex: "0E 00 11 22 33 44 55 66 3C 01 23 45 67 89 AB 2E 19"
+    crc: present
+    note: "challenge request, challenge = 01 23 45 67 89 AB"
+  - dir: tx
+    freq: 868950000
+    hex: "0E 20 44 55 66 11 22 33 3D 69 C9 07 BE 68 FA A4 AA"
+    crc: present
+    note: "challenge response, HMAC under the corpus key"
+  - dir: rx
+    freq: 868950000
+    hex: "8C 00 11 22 33 44 55 66 21 0C 60 01 30 04 4C"
+    crc: present
+    note: "CMD_WRITE_PRIVATE_ACK, END: echoes the register write"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, hmac_valid: true}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w, classification: ACCEPT}

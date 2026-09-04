@@ -420,6 +420,76 @@ bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool l
   return this->set_device_position(device_id, locked ? BINARY_ENTITY_OFF_POSITION : BINARY_ENTITY_ON_POSITION);
 }
 
+bool IOHomeControlComponent::send_heating_command(const std::string &device_id, HeatingFunction fn, float value) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  // Capability gate: only via the predicate, never an inline device-type or vendor list.
+  if (!device_supports_climate_control(dev->type)) {
+    detail::log_rejected_operation(device_id, *dev, "heating command", "climate device");
+    return false;
+  }
+
+  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_heating_payload(fn, value, payload);
+  if (payload_len == 0) {
+    ESP_LOGW(detail::TAG, "Heating command %s for device %s rejected: value %.2f out of range",
+             heating_function_name(fn), device_id.c_str(), value);
+    return false;
+  }
+
+  IoFrame request;
+  if (!create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
+    ESP_LOGW(detail::TAG, "Heating command %s for device %s: failed to build frame", heating_function_name(fn),
+             device_id.c_str());
+    return false;
+  }
+
+  ESP_LOGI(detail::TAG, "Sending heating command %s to device %s", heating_function_name(fn), device_id.c_str());
+
+  IoFrame response;
+  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2);
+  const bool got_reply = outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
+  const bool acknowledged = got_reply && response.cmd == CMD_WRITE_PRIVATE_ACK;
+
+  // Feed the device-agnostic link-health / exchange-failure companion sensors either way, so a
+  // climate device is never silently invisible to the Last Contact / Exchange Failures
+  // diagnostics. A CMD_ERROR_RESP is still a reply — record its result code on the device so the
+  // "Last Result Code" diagnostic surfaces it, exactly as the cover path does.
+  // `dev` was resolved above via get_device(), which is registry_.get(); reuse it.
+  IoDevice &d = *dev;
+  if (outcome == ExchangeOutcome::FAILED) {
+    detail::record_exchange_timeout(d, this->exchange_engine_.get_debug().tries);
+  } else {
+    detail::update_link_health(d, this->radio_);
+    if (got_reply && response.cmd == CMD_ERROR_RESP && response.data_len > 0) {
+      detail::record_command_result(d, device_id, response.data[0], CMD_WRITE_PRIVATE, true);
+    } else if (acknowledged) {
+      detail::clear_command_result(d);
+    }
+  }
+  this->notify_device_update_(device_id);
+
+  if (!acknowledged) {
+    this->log_exchange_debug_(device_id.c_str());
+    ESP_LOGW(detail::TAG, "Heating command %s not acknowledged by device %s (no CMD_WRITE_PRIVATE_ACK)",
+             heating_function_name(fn), device_id.c_str());
+    return false;
+  }
+
+  // 0x60 functions (power_on, midnight_sync) are register reads: the 0x21 ACK carries the answer
+  // (per reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md — a paired-device
+  // list for 0x012C, the ~17-byte comfort/eco/auto setpoint block for 0x0130). Nothing decodes it
+  // into an entity, but logging it lets a field tester read back what the radiator reports — for
+  // instance whether its own setpoint block exceeds 25.5 C. Log-only: success is not gated on the
+  // echo, one transcribed capture is not enough to make a mismatch a hard failure.
+  char ack_payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
+  bytes_to_hex(response.data, response.data_len, ack_payload_hex, sizeof(ack_payload_hex));
+  ESP_LOGD(detail::TAG, "heating %s ACK payload: %s", heating_function_name(fn), ack_payload_hex);
+  return true;
+}
+
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {
   if (queue_guard_rejects(this, device_id, QUEUE_GUARD_COVER)) {
     // control() applies the optimistic prediction before calling this method, so a queue-time

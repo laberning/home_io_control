@@ -431,6 +431,28 @@ bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 /// @return true on success.
 bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
 
+/// @brief Build a generic CMD_WRITE_PRIVATE (0x20) frame carrying a caller-supplied payload.
+///
+/// The single builder behind every heating/climate function (power, setpoint, mode, presence,
+/// window, midnight time-sync). The payload is produced by encode_heating_payload() in
+/// proto_heating.h; this builder only frames it. Framing is fixed by the reference implementation's
+/// forgePacket() (reference/iohomecontrol/src/iohcCozyDevice2W.cpp:41-61 — StartFrame=1,
+/// EndFrame=0, Protocol=0) and cross-checked against the real Atlantic Thermor exchange capture
+/// tests/corpus/captures/exchange/atlantic_thermor_exchange_write_private_param.yaml (frame 1:
+/// start=true, end=false). The device answers with CMD_WRITE_PRIVATE_ACK (0x21) after an
+/// authenticated 0x3C/0x3D leg the exchange engine handles transparently.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER;
+///        the exchange layer then also uses the long wake-up preamble). Per-device, from the
+///        target's YAML `low_power:` class (ADR 0029) — not hardcoded.
+/// @param payload Payload bytes (from encode_heating_payload()).
+/// @param payload_len Payload length in bytes. Rejected if 0 or > FRAME_MAX_DATA_SIZE.
+/// @return true on success; false if payload_len is out of range or set_cmd() fails.
+bool create_write_private(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, const uint8_t *payload,
+                          size_t payload_len);
+
 /// Build an execute‑tilt command (0x00) for slat angle control.
 /// @param f IoFrame to populate.
 /// @param own Controller node ID.

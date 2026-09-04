@@ -42,6 +42,17 @@ TEST(DeviceProfile, LockControlSupportedForLocksOnly) {
   EXPECT_FALSE(device_supports_lock_control(DeviceType::LIGHT)) << "light should not report lock control";
 }
 
+TEST(DeviceProfile, ClimateControlSupportedForClimateClassOnly) {
+  EXPECT_TRUE(device_supports_climate_control(DeviceType::HEATING_TEMPERATURE_INTERFACE))
+      << "heating temperature interface should support climate control";
+  EXPECT_TRUE(device_supports_climate_control(DeviceType::EXTERIOR_HEATING))
+      << "exterior heating should support climate control";
+  EXPECT_TRUE(device_supports_climate_control(DeviceType::HEAT_PUMP)) << "heat pump should support climate control";
+  EXPECT_FALSE(device_supports_climate_control(DeviceType::AWNING)) << "cover should not report climate control";
+  EXPECT_FALSE(device_supports_climate_control(DeviceType::LIGHT)) << "light should not report climate control";
+  EXPECT_FALSE(device_supports_climate_control(DeviceType::UNKNOWN)) << "unknown should not report climate control";
+}
+
 TEST(DeviceProfile, StatusRequestsSupportedForControllableDevices) {
   EXPECT_TRUE(device_supports_status_requests(DeviceType::AWNING)) << "cover should support status requests";
   EXPECT_TRUE(device_supports_status_requests(DeviceType::LIGHT)) << "light should support status requests";

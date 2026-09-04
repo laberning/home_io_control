@@ -73,12 +73,19 @@ class DeviceBoundEntity {
   /// @param self The entity itself; used for set_timeout(), since DeviceBoundEntity is not a Component.
   /// @param inverted Initial inversion flag passed to add_device (covers compute it; others pass false).
   /// @param on_update The entity's device-update callback.
+  /// @param schedule_initial_poll True (the default) to schedule the delayed initial status
+  ///        request every position/binary/lock entity relies on. The climate entity passes false:
+  ///        heating devices have no status readback at all (CMD_WRITE_PRIVATE is write-only), so
+  ///        a status poll would only draw a "status request rejected" warning at boot.
   void register_device_binding_(Component *self, bool inverted,
-                                std::function<void(const std::string &, const IoDevice &)> on_update) {
+                                std::function<void(const std::string &, const IoDevice &)> on_update,
+                                bool schedule_initial_poll = true) {
     this->parent_->add_device(this->device_id_, DeviceConfig{this->device_type_, this->subtype_, inverted,
                                                              this->optimistic_state_, this->silent_, this->low_power_});
     this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
     this->parent_->register_device_callback(std::move(on_update));
+    if (!schedule_initial_poll)
+      return;
     // Schedule the delayed initial poll through the public scheduler: Component::set_timeout is
     // protected, and DeviceBoundEntity is a mixin, not a Component subclass, so it cannot call it
     // through `self`. App.scheduler.set_timeout is the public entry point set_timeout wraps.

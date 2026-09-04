@@ -140,3 +140,11 @@ switch:
   - platform: home_io_control
     name: "Test Switch"
     io_device_id: "FEEB20"
+
+climate:
+  # Experimental heating/climate platform (CMD_WRITE_PRIVATE 0x20). heating_temperature_interface
+  # is the one climate io_device_type selectable from YAML today.
+  - platform: home_io_control
+    name: "Test Heating"
+    io_device_id: "FEEB22"
+    io_device_type: "heating_temperature_interface"

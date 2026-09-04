@@ -310,6 +310,34 @@ class ManagementActions {
   ManagementActionResult probe_sweep(const std::string &device_id, const std::string &probe,
                                      const std::string &first_index, const std::string &last_index);
 
+  /// Native API callback: run a heating/climate function and publish the result as a HA event.
+  void api_heating_control(const std::string &device_id, const std::string &function, const std::string &value);
+
+  /// @brief Send one 2W heating/climate function (CMD_WRITE_PRIVATE 0x20) to a registered climate
+  /// device.
+  ///
+  /// A real user feature, but an unvalidated one — the protocol is derived from the iohomecontrol
+  /// project's Cozytouch support and has never been exercised against real Atlantic/Thermor/Sauter
+  /// hardware (see docs/home_io_control.md's experimental banner). It is NOT diagnostic-gated;
+  /// the guard is documentation, not `diagnostic_probes:`.
+  ///
+  /// `function` is one of `power_on` / `set_temperature` / `set_mode` / `set_presence` /
+  /// `set_window` / `midnight_sync`. `value` is parsed per function: a float in degrees Celsius
+  /// (7.0-28.0) for `set_temperature`, `auto|manual|prog|off` for `set_mode`, `on|off` for
+  /// `set_presence`, `open|close` for `set_window`, ignored for the other two. A malformed value
+  /// is reported, never coerced.
+  ///
+  /// Delegates to IOHomeControlComponent::send_heating_command() so the entity and the action
+  /// share exactly one transmit path (see that method). `verified` is always false: the `set_*`
+  /// functions are write-only — nothing decodes what the radiator did into an entity. (`power_on`
+  /// and `midnight_sync` are register reads; their ACK payload is logged at DEBUG but not decoded.)
+  /// @param device_id Target device ID (hex string, case-insensitive).
+  /// @param function Heating function name (see above).
+  /// @param value Function-specific value string (see above).
+  /// @return Structured result describing success and any validation/exchange failure.
+  ManagementActionResult heating_control(const std::string &device_id, const std::string &function,
+                                         const std::string &value);
+
   /// Publish a management result as one or more structured log lines (one call per line of
   /// `result.message`, see log_multiline_result() in the .cpp) and a Home Assistant event.
   void publish_result(const ManagementActionResult &result);

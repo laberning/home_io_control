@@ -46,7 +46,7 @@ from . import tuning as tuning_module
 _LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = ["api", "spi"]
-AUTO_LOAD = ["button", "cover", "light", "lock", "number", "select", "sensor", "switch", "text_sensor"]
+AUTO_LOAD = ["button", "climate", "cover", "light", "lock", "number", "select", "sensor", "switch", "text_sensor"]
 MULTI_CONF = False
 
 CONF_HOME_IO_CONTROL_ID = "home_io_control_id"

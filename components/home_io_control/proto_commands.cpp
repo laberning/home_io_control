@@ -502,6 +502,20 @@ bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
   return set_cmd(f, CMD_IDENTIFY, payload, sizeof(payload));
 }
 
+/// Build a generic CMD_WRITE_PRIVATE (0x20) frame around a caller-supplied payload — the one
+/// builder behind every heating/climate function. Framing per
+/// reference/iohomecontrol/src/iohcCozyDevice2W.cpp:41-61 (forgePacket: start=1, end=0) and the
+/// atlantic_thermor_exchange_write_private_param.yaml capture (frame 1: start, not end).
+bool create_write_private(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, const uint8_t *payload,
+                          size_t payload_len) {
+  if (payload == nullptr || payload_len == 0 || payload_len > FRAME_MAX_DATA_SIZE)
+    return false;
+  init_frame(f, /*is_2w=*/true, /*start=*/true, /*end=*/false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, CMD_WRITE_PRIVATE, payload, static_cast<uint8_t>(payload_len));
+}
+
 /// Build a tilt execute command (0x00) for devices that support slat angle control.
 bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t tilt_percent) {
   init_frame(f, true, true, false, low_power);
