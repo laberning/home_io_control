@@ -46,6 +46,7 @@ CONF_PAIRING_DISCOVERY_COMMANDS = "pairing_discovery_commands"
 CONF_PAIRING_DISCOVERY_DESTINATION = "pairing_discovery_destination"
 CONF_PAIRING_DISCOVERY_PAYLOAD = "pairing_discovery_payload"
 CONF_PAIRING_DISCOVERY_LOW_POWER = "pairing_discovery_low_power"
+CONF_PAIRING_DISCOVERY_PREAMBLE = "pairing_discovery_preamble"
 CONF_PAIRING_DISCOVERY_WAIT_MS = "pairing_discovery_wait_ms"
 CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS = "pairing_discovery_initial_dwell_ms"
 CONF_PAIRING_KEY_EXCHANGE_RETRIES = "pairing_key_exchange_retries"
@@ -118,7 +119,9 @@ DISCOVERY_COMMAND_OPTIONS = {
 # selectable options; the C++ dispatch (update_tuning_select) parses them back into the vector.
 DISCOVERY_COMMAND_PRESETS = [
     "0x28",  # default 2W discovery
-    "0x2E",  # alternate discovery (the most common thing to try for a stuck device)
+    "0x2E",  # alternate discovery — kept for completeness/experimentation, but broadcast 0x2E has
+             # never drawn a response from any device this project has real evidence for; see the
+             # CMD_DISCOVER_ALT_REQ doc comment in proto_constants.h. Not a recommended fix.
     "0x28,0x2E",  # both broadcasts
 ]
 
@@ -157,6 +160,7 @@ UI_NAMES = {
     CONF_PAIRING_DISCOVERY_DESTINATION: "Pairing Discovery Destination",
     CONF_PAIRING_DISCOVERY_PAYLOAD: "Pairing Discovery Payload",
     CONF_PAIRING_DISCOVERY_LOW_POWER: "Pairing Discovery Low Power",
+    CONF_PAIRING_DISCOVERY_PREAMBLE: "Pairing Discovery Preamble",
     CONF_PAIRING_DISCOVERY_WAIT_MS: "Pairing Discovery Wait",
     CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS: "Pairing Discovery Initial Dwell",
     CONF_PAIRING_KEY_EXCHANGE_RETRIES: "Pairing Key Exchange Retries",
@@ -197,6 +201,12 @@ _NUMBER_PARAMS = {
     # reference documents -- not 8: brand-new devices have been seen failing at 1/4/8 B
     # (docs/radio_diagnostics.md), so 8 is a proven-safe floor for the knob, not a sensible default.
     CONF_NORMAL_START_PREAMBLE: (8, 256, 1, "B"),
+    # Floor is 8 (SHORT_PREAMBLE), same reasoning as the response-preamble params above. Ceiling is
+    # the current default (LONG_PREAMBLE, 1024) rather than 256 like the other preamble knobs: this
+    # one exists specifically to let a stuck pairing attempt go *shorter* than the long wake-up
+    # burst (issue #27/#87's precedent), not to go longer than it — nothing calls for raising it
+    # further.
+    CONF_PAIRING_DISCOVERY_PREAMBLE: (8, 1024, 1, "B"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     # Ceilings are generous because the right value is a property of the target device, not of

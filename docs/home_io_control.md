@@ -900,7 +900,8 @@ lambda: |-
 
 - Press the device's PROG button first, then press "Discover & Pair" in Home Assistant within 2–3 seconds. The device's pairing window is time-limited.
 - The controller retries discovery up to 3 times per button press. If pairing fails on the first press, try again — the timing between PROG and Discover & Pair matters.
-- If a device in pairing mode does not respond to the default discovery command, use the `tuning:` block to experiment with alternate discovery commands and radio timings. See [Radio Diagnostics Tuning](radio_diagnostics.md).
+- If a device in pairing mode does not respond to the default discovery command, use the `tuning:` block to experiment with radio timings. See [Radio Diagnostics Tuning](radio_diagnostics.md) — but see the next tip first if the device already belongs to another hub.
+- **If the device is already paired to a real hub** (a Somfy TaHoma/Smoove/Connectivity Kit, a Velux KLF200/KLR200, etc.) and Discover & Pair gets no response even after a factory reset, discovery tuning is very unlikely to help: a device that already holds a hub's key has nothing left to discover with. Use the "Key Extraction (Accept Foreign Pairing)" section below against that hub instead — it recovers the same `node_id`/`system_key` without needing the device to ever leave its paired state. This has been the deciding factor in every field report so far where a "device never responds to discovery" turned out to already have a working hub (GitHub issues #27, #98, #103).
 
 ### Diagnosing a failed pairing attempt
 
@@ -921,33 +922,39 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=awning; attempts=1; lbt=0;
 | `attempts` | Number of discovery command retries sent. |
 | `lbt` | Listen-before-talk retries consumed across the whole attempt (channel-busy indicator). |
 | `dur_ms` | Attempt duration in milliseconds. |
-| `heard` | Total RX events seen, including ones rejected by the pairing classifiers. |
+| `heard` | Total RX events seen, including ones rejected by the pairing classifiers and a 1W gesture seeded from just before the window opened (see the advisor section below). |
 | `advice` | Comma-separated advisor codes (see below), or `none`. |
 
 This is intentionally a stable, parseable format (the `v1;` prefix is versioned) so it can be
 scripted against — e.g. an automation that alerts if `outcome` isn't `paired`.
 
 At the end of every attempt, the ESPHome log also gets a full human-readable summary (every
-TX/RX/RX_REJECT/LBT-defer/hop/phase event, in order) plus, when applicable, one or more
-**pairing advisor** WARN lines that turn overheard radio traffic into an actionable diagnosis:
+TX/RX/RX_REJECT/LBT-defer/phase event, in order, plus a total channel-hop count — hops aren't
+itemized individually, since a multi-second attempt at a short hop slice can produce far more of
+them than there is room to log usefully) plus, when applicable, one or more **pairing advisor**
+WARN lines that turn overheard radio traffic into an actionable diagnosis. The advisor also
+considers a 1W pairing gesture the hub overheard in the 15 seconds *before* "Discover & Pair" was
+pressed — a PROG press completed just ahead of the button press is not RF silence, and is reported
+as such (`1w_traffic`, not `rf_silent`):
 
 | Advice code | When it fires | What it means |
 |-------------|----------------|----------------|
-| `1w_traffic` | A 1W remote is seen performing 1W pairing (CTRL0 1W bit set, broadcast to `00003F`, with a 1W pairing command byte) to the same device you're trying to pair. | The motor is **not** in 2W learning mode — a PROG press on a 1W remote does not enable 2W discovery. This is the issue #27 case: perform a Double Power Cut on the motor to force 2W learning mode, then retry. |
+| `1w_traffic` | A 1W remote is seen performing 1W pairing (CTRL0 1W bit set, broadcast to `00003F`, with a 1W pairing command byte). Not necessarily *your* device — the broadcast doesn't identify a target, so this fires on any 1W pairing gesture in radio range. | The motor is **not** in 2W learning mode — a PROG press on a 1W remote does not enable 2W discovery. This is the issue #27 case: perform a Double Power Cut on the motor to force 2W learning mode, then retry. If DPC still doesn't get a 2W discovery response and the device already has a working hub, it's very likely already paired to that hub — see the "already paired to a real hub" tip above and use Key Extraction instead. |
 | `channel_busy` | Listen-before-talk retries were exhausted (reached the configured max) and the same source was heard repeatedly during the wait. | The channel is being flooded by a repeating beacon (usually a nearby remote or sensor); discovery transmissions were delayed. Try again, or tune `lbt_max_retries`/`lbt_rssi_threshold_dbm` — see [Radio Diagnostics Tuning](radio_diagnostics.md). |
 | `foreign_controller` | A discovery response (0x29) was seen addressed to a node ID that isn't this controller's. | Another controller (e.g. TaHoma) is pairing the same device right now. Wait for it to finish, or make sure you're the only controller with the device in pairing mode. |
 | `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Distinguishes "RF dead" (antenna, wiring, wrong channel/tuning) from "device just isn't in pairing mode" — check the antenna and radio tuning before re-pressing PROG. |
 
 ## Key Extraction (Accept Foreign Pairing)
 
-> **⚠️ Hardware-confirmed protocol, but not yet against a third-party hub.** A full extraction
+> **⚠️ Hardware-confirmed protocol, including against real third-party hubs.** A full extraction
 > (0x28 through 0x33) between two boards — one running this responder, the other running this
 > project's own pairing flow as the "hub" — recovered the hub's `node_id`/`system_key`
-> byte-for-byte on real RF hardware. That confirms the crypto, state machine, and radio wiring are
-> correct. It does **not** confirm compatibility with a genuine third-party hub (Somfy TaHoma/
-> Smoove, Velux KLF200, etc.) — the discovery-response field guesses and IV-derivation assumption
-> were reverse-engineered from this project's own encoder and a small number of captures, and a
-> real hub's exact requirements may differ.
+> byte-for-byte on real RF hardware, confirming the crypto, state machine, and radio wiring are
+> correct. It has since also completed successfully against genuine third-party hubs: a Velux
+> KLR200 (GitHub issue #80) and a Somfy TaHoma Switch (GitHub issue #27) have both extracted
+> first-try, no retries needed. That's still two hub families out of the whole IO-Homecontrol
+> ecosystem — a different hub's exact requirements may still differ, so treat any specific model
+> not listed here as unconfirmed until someone reports back.
 
 > **⚠️ Use only on a hub and network you own or are authorized to modify** — see the project
 > [Disclaimer](../README.md#disclaimer--license).
@@ -982,7 +989,12 @@ Extraction)" (not configurable).
 2. Turn the **"Recover System Key"** switch on in Home Assistant. The hub
    arms for **10 minutes** and logs the throwaway node ID it will advertise.
 3. Put your **existing** hub into its own "add device" / pairing mode, the same way you would to
-   pair a new shutter to it.
+   pair a new shutter to it. On a Somfy TaHoma/Connectivity Kit, the wizard's choice of control
+   point matters: picking a "Smoove"-type control point sends a real discovery broadcast
+   immediately, while picking "remote control" makes the hub sit and wait to *receive* a key
+   instead of transmitting a discovery — which this feature can't answer. If the switch stays
+   armed with nothing in the logs, try cancelling and re-adding the product with a different
+   control-point choice before assuming the extraction itself failed (GitHub issue #27).
 4. Watch the ESPHome logs. On success, within a few seconds you will see a clearly-delimited
    block containing your installation's real `node_id` and `system_key`, ready to paste into a new
    `home_io_control:` block. Some hubs (Velux KLR200 confirmed) don't stop there: after the key
@@ -1008,11 +1020,12 @@ Extraction)" (not configurable).
   `CMD_ADDRESS_RESP`/`CMD_CHALLENGE_REQ`/`CMD_CHALLENGE_RESP`) was implemented from a single
   third-party capture (a Velux KLR200 pairing session). The `CMD_ADDRESS_REQ`/`CMD_ADDRESS_RESP`
   half is now confirmed against a real Velux KLR200 — a real hub sent the
-  request and accepted this feature's response, registering the device on its display. The
-  `CMD_CHALLENGE_REQ`/`CMD_CHALLENGE_RESP` half that capture showed following it has not been
-  exercised against a real hub: that same real KLR200 run never sent a follow-up challenge, unlike
-  the capture. Whether that's because the challenge is conditional on something (device category,
-  hub firmware) or simply doesn't apply here is unconfirmed. That capture also shows the real device
+  request and accepted this feature's response, registering the device on its display. Whether the
+  `CMD_CHALLENGE_REQ`/`CMD_CHALLENGE_RESP` follow-up happens is hub-dependent, now confirmed both
+  ways on real hardware: that same real KLR200 run never sent it, but a Somfy TaHoma Switch
+  (GitHub issue #27) did send a `0x3C` challenge right after `0x37` and accepted this feature's
+  `0x3D` response. Whether the challenge is conditional on something (device category, hub
+  firmware) or is simply an optional step some hubs skip is unconfirmed. That capture also shows the real device
   reporting a persistent identity in its `CMD_ADDRESS_RESP` distinct from its own node/session
   address — a distinction the io-homecontrol wire format appears to track generally, not something
   specific to that one device. This feature's emulated device only ever has one identity to offer

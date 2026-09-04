@@ -140,6 +140,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   cfg.pairing_discovery_payload_enabled = true;
   cfg.pairing_discovery_payload = 0x00;
   cfg.pairing_discovery_low_power = true;
+  cfg.pairing_discovery_preamble = 64;
   cfg.lbt_max_retries = 1;
   cfg.lr1121_rx_bandwidth = LR1121RxBandwidth::BW_187_2_KHZ;
   cfg.lr1121_discovery_hop_slice_ms = 150;
@@ -157,6 +158,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   EXPECT_NE(snapshot.find("pairing_discovery_commands=[0x28,0x2E]"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_payload=0x00"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_low_power=true"), std::string::npos);
+  EXPECT_NE(snapshot.find("pairing_discovery_preamble=64"), std::string::npos);
   EXPECT_NE(snapshot.find("lbt_max_retries=1"), std::string::npos);
 }
 

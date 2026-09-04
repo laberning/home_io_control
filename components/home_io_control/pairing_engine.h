@@ -50,6 +50,14 @@ inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Di
 inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;             ///< Retry discovery TX up to this many times.
 inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
 inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for 0x33 key confirm after sending 0x32.
+/// How recent a RecentOneWayPairingSighting has to be, relative to discover_and_pair() starting,
+/// to still count as evidence for this attempt. Generous relative to the doc's "a few seconds"
+/// PROG-then-press guidance: real field reports (issue #27) show gaps up to ~4-7 s between the
+/// PROG gesture and pressing "Discover & Pair" in the app, so a tight window would reintroduce
+/// the same miss it's meant to fix. Not tied to ONEWAY_QUIET_PERIOD_MS (status_poll_policy.h,
+/// 700 ms) — that constant is about collapsing one remote's repeat burst, a different, much
+/// shorter timescale than "how long ago did the user press PROG."
+inline constexpr uint32_t PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS = 15000;
 ///@}
 
 /// Owns and drives all three phases of the IO-Homecontrol device pairing flow.
@@ -68,8 +76,11 @@ class PairingEngine {
   /// @param engine     Shared exchange engine for transmit/receive operations.
   /// @param registry   Device registry where paired devices are permanently registered.
   /// @param telemetry  Per-attempt telemetry recorder, owned by the hub.
+  /// @param recent_oneway_sighting Most recent 1W pairing-gesture sighting from the hub's normal
+  ///        passive RX path, owned by the hub; see RecentOneWayPairingSighting.
   PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, const uint8_t *system_key, const TuningConfig *tuning,
-                ExchangeEngine &engine, DeviceRegistry &registry, PairingTelemetry &telemetry);
+                ExchangeEngine &engine, DeviceRegistry &registry, PairingTelemetry &telemetry,
+                const RecentOneWayPairingSighting &recent_oneway_sighting);
 
   /// Non-copyable — stores double-pointer and references into hub member addresses.
   PairingEngine(const PairingEngine &) = delete;
@@ -157,6 +168,7 @@ class PairingEngine {
   ExchangeEngine &engine_;
   DeviceRegistry &registry_;
   PairingTelemetry &telemetry_;
+  const RecentOneWayPairingSighting &recent_oneway_sighting_;
 };
 
 }  // namespace home_io_control

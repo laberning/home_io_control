@@ -61,6 +61,19 @@ static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
 /// is a live tuning knob so a wrong guess costs a number change, not a rebuild.
 static constexpr uint16_t NORMAL_START_PREAMBLE = 32;
 
+/// Default for `TuningConfig::pairing_discovery_preamble` — the preamble on the pairing discovery
+/// broadcast (`CMD_DISCOVER_REQ`/`CMD_DISCOVER_ALT_REQ`, 0x28/0x2E). Defaults to `LONG_PREAMBLE`,
+/// unchanged from historical behavior: a factory-fresh device in learning mode is exactly the kind
+/// of duty-cycled receiver `LONG_PREAMBLE` exists to wake. But unlike every other directed start
+/// frame (see `NORMAL_START_PREAMBLE`'s history, issue #87 — some always-alive receivers never
+/// lock onto a preamble this long), the discovery broadcast can't be made power-class-aware the
+/// same way: discovery exists to learn a device before anything is known about it, so it still
+/// unconditionally pays `LONG_PREAMBLE`'s ~213 ms even against an always-listening target. Issue
+/// #27 (Somfy Sunea IO devices repeatedly failing to answer discovery) raised this as a plausible,
+/// unconfirmed contributor. Runtime-tunable via `pairing_discovery_preamble` so that hypothesis is
+/// testable without a rebuild — not yet hardware-confirmed as a fix for any specific device.
+static constexpr uint16_t PAIRING_DISCOVERY_PREAMBLE = LONG_PREAMBLE;
+
 /// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
 /// longer to stay on a channel once a frame is visibly incoming, so a hop doesn't cut it off
 /// mid-reception. Sized to a frame's air time, not to a hop slice, so it does not need to change
