@@ -10,6 +10,7 @@
 #include "stubs/radio_test_common.h"
 
 #include <cstring>
+#include <functional>
 
 using namespace esphome::home_io_control;
 
@@ -230,6 +231,148 @@ TEST(HubOperations, SetLockStateRejectsLightDevice) {
   dev->type = DeviceType::LIGHT;
 
   EXPECT_FALSE(comp.set_lock_state("ABC123", true)) << "non-lock devices should be rejected by lock entity gating";
+}
+
+// ========================================================================================
+// send_heating_command tests (CMD_WRITE_PRIVATE 0x20)
+// ========================================================================================
+
+static IoFrame build_write_private_ack(const uint8_t dst[3]) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  const uint8_t payload[] = {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00};
+  set_cmd(f, CMD_WRITE_PRIVATE_ACK, payload, sizeof(payload));
+  return f;
+}
+
+TEST(HubOperations, SendHeatingCommandAcceptsClimateDeviceAndSendsExactBytes) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+
+  IoFrame resp = build_write_private_ack(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
+
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  const auto &tx = radio.get_sent_data().front();
+  ASSERT_GE(tx.size(), 15u);
+  EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE) << "command byte should be CMD_WRITE_PRIVATE (0x20)";
+  // Payload begins at wire offset 9 — {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00} for 20.5 C.
+  EXPECT_EQ(tx[9], 0x0C);
+  EXPECT_EQ(tx[10], 0x61);
+  EXPECT_EQ(tx[11], 0x01);
+  EXPECT_EQ(tx[12], 0x03);
+  EXPECT_EQ(tx[13], 0xCD) << "20.5 C -> 205 -> 0xCD";
+  EXPECT_EQ(tx[14], 0x00) << "trailing literal constant";
+}
+
+TEST(HubOperations, SendHeatingCommandRejectsNonClimateDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);  // ROLLER_SHUTTER
+
+  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f))
+      << "cover devices must be rejected by the climate capability predicate";
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "a rejected heating command must not transmit";
+}
+
+TEST(HubOperations, SendHeatingCommandRejectsOutOfRangeTemperature) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+
+  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 28.1f));
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "an unencodable value must not transmit";
+}
+
+TEST(HubOperations, SendHeatingCommandFailsWithoutAnyReply) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+
+  // No reply queued -> exchange times out -> not acknowledged.
+  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0f));
+}
+
+// Run send_heating_command against a HEATING_TEMPERATURE_INTERFACE device with a single reply
+// frame (built from the hub node id by `build_reply`) queued as the device's answer.
+static bool run_heating_command_with_reply(const std::function<IoFrame(const uint8_t *)> &build_reply) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  EXPECT_NE(dev, nullptr);
+  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+
+  IoFrame resp = build_reply(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  return comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0f);
+}
+
+// power_on / midnight_sync are register reads: the 0x21 ACK carries a payload the hub logs at
+// DEBUG (bytes_to_hex) but does not decode. Exercise both an ACK with payload bytes and the
+// empty-payload ACK to prove the log path handles either without crashing and still returns true.
+TEST(HubOperations, SendHeatingCommandAcceptsReadAckWithPayload) {
+  EXPECT_TRUE(run_heating_command_with_reply([](const uint8_t *dst) {
+    IoFrame f{};
+    init_frame(f, true, false, true, false);
+    uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+    set_dst(f, dst);
+    set_src(f, device_node_id);
+    // Stand-in for a 0x0130 setpoint-block read answer (contents not decoded, only logged).
+    const uint8_t payload[] = {0x0C, 0x60, 0x01, 0x30, 0xC8, 0x00, 0x23, 0x00, 0x28, 0x00};
+    set_cmd(f, CMD_WRITE_PRIVATE_ACK, payload, sizeof(payload));
+    return f;
+  })) << "a CMD_WRITE_PRIVATE_ACK carrying a read payload is still an acknowledgement";
+}
+
+TEST(HubOperations, SendHeatingCommandAcceptsReadAckWithEmptyPayload) {
+  EXPECT_TRUE(run_heating_command_with_reply([](const uint8_t *dst) {
+    IoFrame f{};
+    init_frame(f, true, false, true, false);
+    uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+    set_dst(f, dst);
+    set_src(f, device_node_id);
+    set_cmd(f, CMD_WRITE_PRIVATE_ACK, nullptr, 0);
+    return f;
+  })) << "an empty-payload ACK must not trip the payload log path";
+}
+
+TEST(HubOperations, SendHeatingCommandFailsOnNonAckReply) {
+  // The acknowledged check is `response.cmd == CMD_WRITE_PRIVATE_ACK`; a reply with any other cmd
+  // must fail the command.
+  EXPECT_FALSE(run_heating_command_with_reply([](const uint8_t *dst) {
+    return build_error_response(dst, RESULT_LIMITATION_BY_WIND);
+  })) << "a CMD_ERROR_RESP reply must not count as an acknowledgement";
+  EXPECT_FALSE(run_heating_command_with_reply([](const uint8_t *dst) { return build_status_response(dst); }))
+      << "a CMD_PRIVATE_RESP reply must not count as an acknowledgement";
 }
 
 // ========================================================================================

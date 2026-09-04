@@ -1,0 +1,54 @@
+id: synthetic_exchange_heating_set_temp
+description: >
+  Synthetic authenticated CMD_WRITE_PRIVATE (0x20) heating exchange: set_temperature 20.5 C ->
+  0x3C challenge -> 0x3D challenge-response -> CMD_WRITE_PRIVATE_ACK (0x21) echo (END). Bootstrap
+  fixture for the CMD 0x20 heating codec (proto_heating.{h,cpp}) and the hub heating send path.
+  The 0x20 payload {0C 61 01 03 CD 00} is encode_heating_payload(SET_TEMPERATURE, 20.5) — byte
+  layout from reference/iohomecontrol/src/iohcCozyDevice2W.cpp:125-128, setpoint field a 16-bit
+  little-endian value in tenths of a degree per
+  reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md (low byte 0xCD = 205,
+  high byte 0x00) = 20.5 C. HMAC on the 0x3D frame is computed under the public corpus key
+  (tests/support/test_helpers.h :: TEST_SYSTEM_KEY), so this fixture's crypto is safe to commit —
+  see tests/corpus_bootstrap_dump_test.cpp (DISABLED_PrintSyntheticFrames) for how these bytes
+  were generated from real serialize()/crc_ccitt()/create_challenge_resp() output. No Atlantic /
+  Thermor / Sauter hardware exists in this project; the exchange *shape* is cross-checked against
+  the real-device capture
+  tests/corpus/captures/exchange/atlantic_thermor_exchange_write_private_param.yaml.
+source:
+  device: "synthetic controller <-> synthetic climate device"
+  captured_with: synthetic
+  firmware: null
+  date: 2026-09-03
+  origin: synthetic-bootstrap
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    freq: 868950000
+    hex: "4E 00 44 55 66 11 22 33 20 0C 61 01 03 CD 00 C8 9B"
+    crc: present
+    note: "CMD_WRITE_PRIVATE, START: set_temperature 20.5 C (byte 0xCD = 205)"
+  - dir: rx
+    freq: 868950000
+    hex: "0E 00 11 22 33 44 55 66 3C 01 23 45 67 89 AB 2E 19"
+    crc: present
+    note: "challenge request, challenge = 01 23 45 67 89 AB"
+  - dir: tx
+    freq: 868950000
+    hex: "0E 20 44 55 66 11 22 33 3D 53 DB 62 8A 6F 9A C0 DA"
+    crc: present
+    note: "challenge response, HMAC under the corpus key"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 11 22 33 44 55 66 21 0C 61 01 03 CD 00 00 67"
+    crc: present
+    note: "CMD_WRITE_PRIVATE_ACK, END: echoes the register write"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, hmac_valid: true}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w, classification: ACCEPT}

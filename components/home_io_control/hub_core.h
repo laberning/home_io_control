@@ -31,6 +31,7 @@
 #include "esphome/components/spi/spi.h"
 #include "proto_codecs.h"
 #include "proto_frame.h"
+#include "proto_heating.h"
 #include "radio_interface.h"
 #include "tuning_config.h"
 #include "hub_exchange.h"
@@ -540,6 +541,22 @@ class IOHomeControlComponent : public Component,
                                              const std::string &first_index, const std::string &last_index) {
     return this->management_actions_.probe_sweep(device_id, probe, first_index, last_index);
   }
+  /// @brief Run one 2W heating/climate function (CMD_WRITE_PRIVATE 0x20) against a registered
+  /// climate device — the `heating_control` hub action.
+  ///
+  /// Experimental: the protocol is derived from the iohomecontrol project's Cozytouch support and
+  /// has never been validated on real Atlantic/Thermor/Sauter hardware. `verified` is always
+  /// false: the `set_*` functions are write-only — nothing decodes what the radiator did into an
+  /// entity. (`power_on` and `midnight_sync` are register reads; their ACK payload is logged at
+  /// DEBUG but not decoded.) See ManagementActions::heating_control() for argument formats.
+  /// @param device_id Target device ID.
+  /// @param function Heating function name.
+  /// @param value Function-specific value string.
+  /// @return Structured result describing success and any validation/exchange failure.
+  virtual ManagementActionResult heating_control(const std::string &device_id, const std::string &function,
+                                                 const std::string &value) {
+    return this->management_actions_.heating_control(device_id, function, value);
+  }
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   virtual bool discover_and_pair();
@@ -566,6 +583,29 @@ class IOHomeControlComponent : public Component,
   /// @param locked Desired locked/unlocked state.
   /// @return true if device acknowledged.
   virtual bool set_lock_state(const std::string &device_id, bool locked);
+  /// @brief The single hub-side transmit path for 2W heating/climate control (CMD_WRITE_PRIVATE
+  /// 0x20). Both the `heating_control` hub action and the climate entity call this — there is
+  /// exactly one place that transmits heating frames and exactly one caller of
+  /// create_write_private().
+  ///
+  /// Flow: registry lookup -> device_supports_climate_control() gate (rejected via
+  /// detail::log_rejected_operation()) -> encode_heating_payload() -> create_write_private() (with
+  /// the device's `low_power` flag) -> a plain send_and_receive_(). Deliberately NOT routed
+  /// through execute_request_and_update_(): that helper is cover/position-shaped (status decode,
+  /// poll backoff), and a heater has no position and no status poll. A CMD_WRITE_PRIVATE_ACK
+  /// (0x21) reply is success; anything else (including CMD_ERROR_RESP) is failure. The exchange
+  /// still feeds the device-agnostic Last Contact / Exchange Failures link-health sensors.
+  ///
+  /// Write-only semantics: this only reports whether the device acknowledged the write. The `set_*`
+  /// functions decode nothing back into an entity, so callers publish "last commanded, never
+  /// confirmed" state on success and never at request time. `power_on` and `midnight_sync` are
+  /// register reads whose 0x21 ACK payload is logged at DEBUG (see the .cpp) but not decoded.
+  /// @param device_id Target device ID (hex string).
+  /// @param fn Heating function to send.
+  /// @param value Function-specific value (degrees C, a HeatingMode as float, 0/1, or ignored) —
+  ///        see encode_heating_payload().
+  /// @return true only if the device answered with CMD_WRITE_PRIVATE_ACK.
+  virtual bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value);
   /// @brief Queue an async position update; returns immediately, executed in loop().
   ///
   /// If a pending SET_TILT operation for the same device is already in the queue, the two are
@@ -921,6 +961,11 @@ class IOHomeControlComponent : public Component,
   void api_probe_sweep_(const std::string &device_id, const std::string &probe, const std::string &first_index,
                         const std::string &last_index) {
     this->management_actions_.api_probe_sweep(device_id, probe, first_index, last_index);
+  }
+  /// Native API callback: run a heating/climate function (CMD_WRITE_PRIVATE 0x20) against a
+  /// registered climate device.
+  void api_heating_control_(const std::string &device_id, const std::string &function, const std::string &value) {
+    this->management_actions_.api_heating_control(device_id, function, value);
   }
 
   // --- Frequency hopping ---

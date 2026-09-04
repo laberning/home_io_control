@@ -141,6 +141,61 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   set_src(identify_ack, test::DST_ID);
   ASSERT_TRUE(set_cmd(identify_ack, CMD_IDENTIFY, nullptr, 0));
   print_wire("synthetic_identify ack", identify_ack);
+
+  // --- synthetic_exchange_heating_set_temp: write-private(0x20) -> challenge -> resp -> ack(0x21) ---
+  // Payload is encode_heating_payload(SET_TEMPERATURE, 20.5) = {0x0C,0x61,0x01,0x03,0xCD,0x00}.
+  const uint8_t heat_temp_payload[] = {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00};
+  IoFrame heat_temp{};
+  ASSERT_TRUE(create_write_private(heat_temp, test::OWN_ID, test::DST_ID, /*low_power=*/false, heat_temp_payload,
+                                   sizeof(heat_temp_payload)));
+  print_wire("synthetic_exchange_heating_set_temp write_private", heat_temp);
+
+  IoFrame heat_temp_challenge{};
+  init_frame(heat_temp_challenge, /*is_2w=*/true, /*start=*/false, /*end=*/false, /*low_power=*/false);
+  set_dst(heat_temp_challenge, test::OWN_ID);
+  set_src(heat_temp_challenge, test::DST_ID);
+  ASSERT_TRUE(set_cmd(heat_temp_challenge, CMD_CHALLENGE_REQ, test::TEST_CHALLENGE, HMAC_SIZE));
+  print_wire("synthetic_exchange_heating_set_temp challenge", heat_temp_challenge);
+
+  IoFrame heat_temp_resp{};
+  ASSERT_TRUE(create_challenge_resp(heat_temp_resp, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE, heat_temp,
+                                    test::TEST_SYSTEM_KEY));
+  print_wire("synthetic_exchange_heating_set_temp challenge_resp", heat_temp_resp);
+
+  IoFrame heat_temp_ack{};
+  init_frame(heat_temp_ack, /*is_2w=*/true, /*start=*/false, /*end=*/true, /*low_power=*/false);
+  set_dst(heat_temp_ack, test::OWN_ID);
+  set_src(heat_temp_ack, test::DST_ID);
+  // CMD_WRITE_PRIVATE_ACK echoes the register write (see the Atlantic Thermor capture).
+  ASSERT_TRUE(set_cmd(heat_temp_ack, CMD_WRITE_PRIVATE_ACK, heat_temp_payload, sizeof(heat_temp_payload)));
+  print_wire("synthetic_exchange_heating_set_temp ack", heat_temp_ack);
+
+  // --- synthetic_exchange_heating_midnight_sync: the no-value / short-payload path ---
+  // Payload is encode_heating_payload(MIDNIGHT_SYNC, *) = {0x0C,0x60,0x01,0x30}.
+  const uint8_t heat_midnight_payload[] = {0x0C, 0x60, 0x01, 0x30};
+  IoFrame heat_midnight{};
+  ASSERT_TRUE(create_write_private(heat_midnight, test::OWN_ID, test::DST_ID, /*low_power=*/false,
+                                   heat_midnight_payload, sizeof(heat_midnight_payload)));
+  print_wire("synthetic_exchange_heating_midnight_sync write_private", heat_midnight);
+
+  IoFrame heat_midnight_challenge{};
+  init_frame(heat_midnight_challenge, /*is_2w=*/true, /*start=*/false, /*end=*/false, /*low_power=*/false);
+  set_dst(heat_midnight_challenge, test::OWN_ID);
+  set_src(heat_midnight_challenge, test::DST_ID);
+  ASSERT_TRUE(set_cmd(heat_midnight_challenge, CMD_CHALLENGE_REQ, test::TEST_CHALLENGE, HMAC_SIZE));
+  print_wire("synthetic_exchange_heating_midnight_sync challenge", heat_midnight_challenge);
+
+  IoFrame heat_midnight_resp{};
+  ASSERT_TRUE(create_challenge_resp(heat_midnight_resp, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE, heat_midnight,
+                                    test::TEST_SYSTEM_KEY));
+  print_wire("synthetic_exchange_heating_midnight_sync challenge_resp", heat_midnight_resp);
+
+  IoFrame heat_midnight_ack{};
+  init_frame(heat_midnight_ack, /*is_2w=*/true, /*start=*/false, /*end=*/true, /*low_power=*/false);
+  set_dst(heat_midnight_ack, test::OWN_ID);
+  set_src(heat_midnight_ack, test::DST_ID);
+  ASSERT_TRUE(set_cmd(heat_midnight_ack, CMD_WRITE_PRIVATE_ACK, heat_midnight_payload, sizeof(heat_midnight_payload)));
+  print_wire("synthetic_exchange_heating_midnight_sync ack", heat_midnight_ack);
 }
 
 /// Prints cross-language create_hmac() KAT vectors for scripts/corpus/tests/data/crypto_kat.yaml

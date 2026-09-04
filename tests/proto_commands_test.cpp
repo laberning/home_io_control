@@ -238,6 +238,48 @@ TEST(ProtoCommands, CreateIdentifyNormalPowerClearsLowPower) {
   EXPECT_EQ(frame.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=false must leave CTRL1_LOW_POWER clear";
 }
 
+TEST(ProtoCommands, CreateWritePrivate) {
+  IoFrame frame{};
+  const uint8_t payload[] = {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00};
+  ASSERT_TRUE(create_write_private(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true, payload, sizeof(payload)))
+      << "create_write_private should succeed";
+  EXPECT_EQ(frame.cmd, CMD_WRITE_PRIVATE) << "command should be CMD_WRITE_PRIVATE (0x20)";
+  EXPECT_EQ(frame.data_len, sizeof(payload)) << "payload length should pass through unchanged";
+  EXPECT_EQ(0, memcmp(frame.data, payload, sizeof(payload))) << "payload bytes should pass through unchanged";
+  // forgePacket() (iohcCozyDevice2W.cpp:49-50) sets StartFrame=1, EndFrame=0; the Atlantic Thermor
+  // capture's first frame matches (start:true, end:false).
+  EXPECT_TRUE(is_start(frame)) << "write-private should be a start frame";
+  EXPECT_FALSE(is_end(frame)) << "write-private should not be an end frame";
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=true must set CTRL1_LOW_POWER";
+}
+
+TEST(ProtoCommands, CreateWritePrivateNormalPowerClearsLowPower) {
+  IoFrame frame{};
+  const uint8_t payload[] = {0x0C, 0x60, 0x01, 0x2C};
+  ASSERT_TRUE(create_write_private(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false, payload, sizeof(payload)));
+  EXPECT_EQ(frame.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=false must leave CTRL1_LOW_POWER clear";
+}
+
+TEST(ProtoCommands, CreateWritePrivateRejectsEmptyPayload) {
+  IoFrame frame{};
+  const uint8_t byte = 0x0C;
+  EXPECT_FALSE(create_write_private(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false, &byte, 0))
+      << "zero-length payload must be rejected";
+}
+
+TEST(ProtoCommands, CreateWritePrivateRejectsNullPayload) {
+  IoFrame frame{};
+  EXPECT_FALSE(create_write_private(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false, nullptr, 4))
+      << "a null payload pointer must be rejected, not dereferenced";
+}
+
+TEST(ProtoCommands, CreateWritePrivateRejectsOversizePayload) {
+  IoFrame frame{};
+  uint8_t payload[FRAME_MAX_DATA_SIZE + 1] = {0};
+  EXPECT_FALSE(create_write_private(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false, payload, sizeof(payload)))
+      << "payload longer than FRAME_MAX_DATA_SIZE must be rejected";
+}
+
 TEST(ProtoCommands, CreateGetStatusTilt) {
   IoFrame frame{};
   ASSERT_TRUE(create_get_status_tilt(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true))

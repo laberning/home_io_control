@@ -24,6 +24,7 @@
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,9 +47,11 @@ constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_POSITION = "oneway_set_positi
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_REMOVE_CONTROLLER = "oneway_remove_controller";
 constexpr const char *MANAGEMENT_ACTION_PROBE_DEVICE = "probe_device";
 constexpr const char *MANAGEMENT_ACTION_PROBE_SWEEP = "probe_sweep";
+constexpr const char *MANAGEMENT_ACTION_HEATING_CONTROL = "heating_control";
 constexpr const char *MANAGEMENT_RESULT_EVENT = "esphome.home_io_control_action_result";
 constexpr size_t RESULT_CODE_BUFFER_SIZE = 5;
 constexpr size_t UNEXPECTED_RESPONSE_MESSAGE_BUFFER_SIZE = 64;
+constexpr size_t HEATING_RANGE_MESSAGE_BUFFER_SIZE = 64;
 
 // --- Diagnostic probe names (probe_device()/probe_sweep() `probe` argument) ---
 constexpr const char *PROBE_NAME_PRIVATE_FN = "private_fn";          ///< Q0: create_private_function().
@@ -394,6 +397,122 @@ static bool parse_probe_index(const std::string &text, uint8_t &out) {
   return true;
 }
 
+/// @brief Lowercase + ASCII-trim a native-API string argument.
+static std::string normalize_lower_argument(const std::string &value) {
+  std::string normalized = trim_ascii_whitespace(value);
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  return normalized;
+}
+
+/// @brief A `value` token that maps to a fixed float (used by set_mode / set_presence / set_window).
+struct HeatingNamedValue {
+  const char *token;
+  float value;
+};
+
+/// @brief Match `token` against `table`; on a hit set `out` and return true.
+static bool match_heating_named_value(const std::string &token, const HeatingNamedValue *table, size_t table_len,
+                                      float &out) {
+  for (size_t i = 0; i < table_len; i++) {
+    if (token == table[i].token) {
+      out = table[i].value;
+      return true;
+    }
+  }
+  return false;
+}
+
+/// @brief Parse `set_temperature`'s value into degrees Celsius, range-checked.
+static bool parse_heating_temperature(const std::string &value, float &value_out, std::string &error) {
+  const std::string text = trim_ascii_whitespace(value);
+  errno = 0;
+  char *end = nullptr;
+  const float parsed = std::strtof(text.c_str(), &end);
+  if (text.empty() || end != text.c_str() + text.size() || errno == ERANGE || !std::isfinite(parsed)) {
+    error = "temperature must be a number in degrees Celsius";
+    return false;
+  }
+  if (parsed < HEATING_TEMP_MIN_C || parsed > HEATING_TEMP_MAX_C) {
+    std::array<char, HEATING_RANGE_MESSAGE_BUFFER_SIZE> buffer{};
+    std::snprintf(buffer.data(), buffer.size(), "temperature must be between %.1f and %.1f",
+                  static_cast<double>(HEATING_TEMP_MIN_C), static_cast<double>(HEATING_TEMP_MAX_C));
+    error = buffer.data();
+    return false;
+  }
+  value_out = parsed;
+  return true;
+}
+
+/// @brief Parse the (`function`, `value`) argument pair of the `heating_control` action.
+///
+/// Every native-API argument is a string (ManagementServiceDescriptor hardcodes
+/// SERVICE_ARG_TYPE_STRING), so this turns the two strings into a HeatingFunction plus the float
+/// encode_heating_payload() expects: degrees C for `set_temperature`, a HeatingMode value for
+/// `set_mode`, 0/1 for `set_presence` / `set_window`, and an ignored 0 for `power_on` /
+/// `midnight_sync`. On any malformed input it fills `error` with a caller-facing message and
+/// returns false rather than coercing a value. Kept next to the action (not in proto_heating)
+/// because the climate entity receives typed enums from Home Assistant and needs no string
+/// parsing.
+/// @param function Function name argument.
+/// @param value Value argument.
+/// @param fn_out Parsed function on success.
+/// @param value_out Parsed value on success (0 for the value-less functions).
+/// @param error Caller-facing message on failure.
+/// @return true on a fully valid pair.
+static bool parse_heating_arguments(const std::string &function, const std::string &value, HeatingFunction &fn_out,
+                                    float &value_out, std::string &error) {
+  static constexpr HeatingNamedValue MODE_VALUES[] = {
+      {"auto", static_cast<float>(HeatingMode::AUTO)},
+      {"manual", static_cast<float>(HeatingMode::MANUAL)},
+      {"prog", static_cast<float>(HeatingMode::PROG)},
+      {"off", static_cast<float>(HeatingMode::OFF)},
+  };
+  static constexpr HeatingNamedValue PRESENCE_VALUES[] = {{"on", 1.0F}, {"off", 0.0F}};
+  static constexpr HeatingNamedValue WINDOW_VALUES[] = {{"open", 1.0F}, {"close", 0.0F}};
+
+  const std::string fn = normalize_lower_argument(function);
+  value_out = 0.0F;
+
+  if (fn == "power_on") {
+    fn_out = HeatingFunction::POWER_ON;
+    return true;
+  }
+  if (fn == "midnight_sync") {
+    fn_out = HeatingFunction::MIDNIGHT_SYNC;
+    return true;
+  }
+  if (fn == "set_temperature") {
+    fn_out = HeatingFunction::SET_TEMPERATURE;
+    return parse_heating_temperature(value, value_out, error);
+  }
+  if (fn == "set_mode") {
+    fn_out = HeatingFunction::SET_MODE;
+    if (match_heating_named_value(normalize_lower_argument(value), MODE_VALUES, std::size(MODE_VALUES), value_out))
+      return true;
+    error = "mode must be one of auto, manual, prog, off";
+    return false;
+  }
+  if (fn == "set_presence") {
+    fn_out = HeatingFunction::SET_PRESENCE;
+    if (match_heating_named_value(normalize_lower_argument(value), PRESENCE_VALUES, std::size(PRESENCE_VALUES),
+                                  value_out))
+      return true;
+    error = "presence must be 'on' or 'off'";
+    return false;
+  }
+  if (fn == "set_window") {
+    fn_out = HeatingFunction::SET_WINDOW;
+    if (match_heating_named_value(normalize_lower_argument(value), WINDOW_VALUES, std::size(WINDOW_VALUES), value_out))
+      return true;
+    error = "window must be 'open' or 'close'";
+    return false;
+  }
+
+  error = "unknown heating function '" + trim_ascii_whitespace(function) + "'";
+  return false;
+}
+
 // --- ManagementActions ---
 
 ManagementActions::ManagementActions(const uint8_t *node_id, const uint8_t *system_key, const TuningConfig *tuning,
@@ -453,6 +572,12 @@ void ManagementActions::register_actions() {
        {"controller_id"},
        false,
        [this](const api::ExecuteServiceRequest &r) { this->api_oneway_remove_controller(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_HEATING_CONTROL,
+       {"device_id", "function", "value"},
+       false,  // a real user feature, gated by documentation not by diagnostic_probes:
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_heating_control(r.args[0].string_.str(), r.args[1].string_.str(), r.args[2].string_.str());
+       }},
       {MANAGEMENT_ACTION_PROBE_DEVICE,
        {"device_id", "probe", "index"},
        true,
@@ -697,6 +822,59 @@ ManagementActionResult ManagementActions::force_open_device(const std::string &d
   result.message =
       "force open queued (elevated-priority open; wind/rain lock bypass unconfirmed; movement result arrives via "
       "cover state)";
+  return result;
+}
+
+void ManagementActions::api_heating_control(const std::string &device_id, const std::string &function,
+                                            const std::string &value) {
+  publish_result(heating_control(device_id, function, value));
+}
+
+ManagementActionResult ManagementActions::heating_control(const std::string &device_id, const std::string &function,
+                                                          const std::string &value) {
+  ManagementActionResult result;
+  auto *dev = resolve_device_(MANAGEMENT_ACTION_HEATING_CONTROL, device_id, result);
+  if (dev == nullptr)
+    return result;
+
+  HeatingFunction fn{};
+  float encoded_value = 0.0F;
+  std::string parse_error;
+  if (!parse_heating_arguments(function, value, fn, encoded_value, parse_error)) {
+    result.message = parse_error;
+    return result;
+  }
+
+  // Capability gate via the predicate only — no inline device-type or vendor list.
+  if (!device_supports_climate_control(dev->type)) {
+    result.message = "device is not a climate device";
+    return result;
+  }
+
+  // Snapshot any pre-existing CMD_ERROR_RESP code so a stale one (e.g. an old wind lockout from a
+  // different command) is not misattributed to this send.
+  const uint8_t prior_result_code = dev->last_result_code;
+  const uint32_t prior_result_at_ms = dev->last_result_at_ms;
+
+  // One shared transmit path (invariant): the climate entity calls the same method. A
+  // CMD_ERROR_RESP surfaced by this call is recorded on the device record by that path.
+  if (!hub_->send_heating_command(result.device_id, fn, encoded_value)) {
+    result.message = std::string("device did not acknowledge the ") + heating_function_name(fn) + " command";
+    if (const auto *updated = registry_.get(result.device_id);
+        updated != nullptr && updated->last_result_code != 0 &&
+        (updated->last_result_code != prior_result_code || updated->last_result_at_ms != prior_result_at_ms)) {
+      result.has_result_code = true;
+      result.result_code = updated->last_result_code;
+      result.message =
+          std::string(command_result_name(result.result_code)) + ": " + command_result_description(result.result_code);
+    }
+    return result;
+  }
+
+  result.success = true;
+  // verified stays false: the set_* functions decode nothing back into an entity (the two 0x60
+  // reads have their ACK payload logged at DEBUG only), so nothing can confirm the write.
+  result.message = std::string("heating ") + heating_function_name(fn) + " acknowledged by device";
   return result;
 }
 

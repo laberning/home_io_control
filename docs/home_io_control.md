@@ -189,7 +189,7 @@ Notes:
 
 ## Home Assistant Actions
 
-Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes five **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so they're only reachable via Developer Tools or an automation.
+Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes six **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so they're only reachable via Developer Tools or an automation.
 
 | Action | What it does | `verified` can be `true`? |
 |---|---|---|
@@ -198,6 +198,7 @@ Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML
 | `force_open_device` ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. Confirmed to move the device correctly; **not yet confirmed to actually override an active lock** — see the warning below. | No — the outcome is asynchronous |
 | `scan_paired_devices` | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. | No — nothing here is read back either |
 | `oneway_set_position` | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. See the "Sending 1W Commands" section. | No — 1W has no reply at all |
+| `heating_control` ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. See the "Heating / Climate (experimental)" section. | No — `set_*` are write-only; the `power_on` / `midnight_sync` reads are logged, not decoded |
 
 Two more actions, `probe_device` and `probe_sweep`, exist behind a separate opt-in
 (`diagnostic_probes: true`) for sending opcodes this project hasn't fully decoded yet — see
@@ -247,7 +248,7 @@ Every action fires the same Home Assistant event, `esphome.home_io_control_actio
 | `verified` | always | Whether a follow-up readback confirmed the result — see the table above for which actions can ever set this `true`. |
 | `message` | always | Human-readable outcome summary. For `scan_paired_devices` this is the full multi-line report (see below), not a one-line summary. |
 | `requested_name`, `applied_name` | `rename_device` only | Requested vs. verified device name. |
-| `result_code`, `result_code_name` | `rename_device`, `identify_device`, and `probe_device`, when the device replies `CMD_ERROR_RESP` | Decoded protocol result code. |
+| `result_code`, `result_code_name` | `rename_device`, `identify_device`, `probe_device`, and `heating_control`, when the device replies `CMD_ERROR_RESP` | Decoded protocol result code. |
 | `probe`, `index` | `probe_device` and `probe_sweep` only | Probe name and the requested index (or swept range). |
 | `response_cmd`, `response_cmd_name`, `response_hex` | `probe_device` only — a sweep's per-index replies are in `message` | The reply's command byte, decoded command name, and full raw wire hex. |
 
@@ -491,6 +492,101 @@ Notes:
 - Switches also automatically generate a `<Switch Name> Active Issue` diagnostic text sensor, enabled by default. See "Active Issue" below.
 - Switches also automatically generate three disabled-by-default `<Switch Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
 - All of the diagnostic sensors above follow the switch's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
+
+## Heating / Climate (experimental)
+
+> ⚠️ **Unvalidated on real hardware.** This support is transcribed from the
+> [rspaargaren/iohomecontrol](https://github.com/rspaargaren/iohomecontrol) project (a downstream
+> ESP32 project which builds on [Velocet/iown-homecontrol](https://github.com/Velocet/iown-homecontrol))
+> and its "Cozytouch" radiator support (Atlantic, Thermor, Sauter — primarily French-market
+> heating). That project's own README cautions that its modifications have focused on 1W and have
+> made "the 2W part of the code 'unstable'", so it should be treated cautiously as a base. The
+> maintainer here has none of these devices. Every payload byte is cited to
+> `reference/iohomecontrol/src/iohcCozyDevice2W.cpp`, but nothing here has been confirmed against a
+> real radiator. **If you own an Atlantic / Thermor / Sauter IO-homecontrol heater, please try it
+> and report what happens** on the
+> [issue tracker](https://github.com/laberning/home_io_control/issues) — success, silence, or a
+> wrong setpoint are all useful.
+>
+> It is also **unknown whether `set_temperature` requires a prior `power_on` or `set_mode manual`**.
+> This component deliberately does not synthesize either — each `heating_control` call sends exactly
+> one write. Field testers: please report whether a bare `set_temperature` takes effect.
+
+2W heating devices are driven with `CMD_WRITE_PRIVATE` (0x20). The `set_*` functions are
+**write-only** — nothing decodes what the radiator actually did back into an entity, and the hub
+only learns whether the device acknowledged the write. (`power_on` and `midnight_sync` are
+register *reads*; their ACK payload is logged at DEBUG but not decoded — see below.) State shown
+in Home Assistant is "last commanded, never confirmed".
+
+Supported device types: `heating_temperature_interface` (0x0E) is the one selectable from YAML
+today. `exterior_heating` (0x15) and `heat_pump` (0x16) also map to the climate capability class
+but are not yet YAML-selectable — open an issue if you have one.
+
+### Temperature range — 7.0–28.0 °C
+
+The wire format carries the setpoint as a **16-bit little-endian value in tenths of a degree**
+(`round(10 × °C)`), per the vendored Atlantic register map
+(`reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md`), whose `0x0130` block
+shows `18 01` = `0x0118` = 280 = 28.0 °C as a live setpoint. This component accepts 7.0–28.0 °C
+(28.0 is the ceiling Atlantic radiator manuals document) and **rejects** anything outside that
+range rather than clamping or truncating. The encoding above 25.5 °C is corroborated by the
+register map but **still unverified on real hardware** — the older `iohcCozyDevice2W.cpp`
+reference only ever writes the low byte, so it silently truncates 28 °C to 2.4 °C; this component
+does not reproduce that. If your radiator's own panel allows a different maximum, that is worth
+reporting.
+
+7.0–12.0 °C is the frost-protection (*hors-gel*) band on these radiators, not a comfort setpoint;
+the panel's own comfort range starts at 12 °C. The codec still accepts 7–12 °C so a
+frost-protection setpoint can be commanded directly.
+
+### `heating_control` action
+
+Takes `device_id`, `function`, and `value`. `verified` is always `false`.
+
+| `function` | `value` | Effect |
+|---|---|---|
+| `power_on` | *(ignored)* | Wake / retrieve paired devices. |
+| `set_temperature` | float °C, `7.0`–`28.0` | Setpoint. |
+| `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
+| `set_presence` | `on` \| `off` | Presence / absence. |
+| `set_window` | `open` \| `close` | Open-window / frost protection. |
+| `midnight_sync` | *(ignored)* | Reads register `0x0130` (the comfort/eco/auto setpoint block). Named "midnight" in the reference, but the payload is a `0x60` **read**, not a clock-set — the device's clock register is `0x010F` and this component never writes it. Provided for protocol exploration; the ACK payload is logged at DEBUG. |
+
+```yaml
+action: esphome.hioc_heltec_v2_heating_control
+data:
+  device_id: "FEEB22"
+  function: set_temperature
+  value: "20.5"
+```
+
+An unknown function, an out-of-range temperature, or a non-climate `device_id` is reported in the
+result event's `message` and nothing is transmitted. A `CMD_ERROR_RESP` from the device surfaces
+its decoded result code in `result_code` / `result_code_name`. For `power_on` and `midnight_sync`
+(which are register reads) the `0x21` ACK payload is written to the DEBUG log — a `midnight_sync`
+read returns the ~17-byte setpoint block, which can help settle the 25.5-vs-28 °C question on
+real hardware.
+
+### `climate:` entity
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Living Room Radiator"
+    io_device_id: "FEEB22"
+    io_device_type: "heating_temperature_interface"
+```
+
+- Modes: `off` → mode `off`, `heat` → mode `manual`, `auto` → mode `auto`.
+- Presets: `home` → presence on, `away` → presence off; the custom preset `Program` → mode `prog`.
+- Target-temperature range 7.0–28.0 °C at a 0.5 °C UI step (the wire carries 0.1 °C; 0.5 is a
+  UI-only choice).
+- No current temperature — nothing in the protocol reports a measured room temperature.
+- Entity state is published **only after a send succeeds** and is never confirmed. There is no
+  status poll for climate devices.
+- The usual companion diagnostic sensors (`Device Name`, `Active Issue`, `Last Contact`, `RSSI`,
+  `Exchange Failures`) are generated as for the other platforms — `Last Contact` and
+  `Active Issue` are the only feedback a write-only device can give.
 
 ## Button Platform
 
