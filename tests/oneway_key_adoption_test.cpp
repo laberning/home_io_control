@@ -42,11 +42,11 @@ void build_payload(const uint8_t enc_key[AES_KEY_SIZE], uint8_t manufacturer, ui
 // ============================================================================
 // Published vector, end to end (no hardware needed)
 // ============================================================================
-// reference/iown-homecontrol docs/linklayer.md (CC0-1.0), also captured verbatim as
+// The iown-homecontrol link-layer documentation (CC0-1.0), also captured verbatim as
 // tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml and pinned at the
 // frame layer by proto_frame_test.cpp's AddControllerMacTrailerRoundTrip. This is the load-bearing
-// test for the step: it proves the whole chain (frame model -> key unwrap -> MAC check) against a
-// source outside this codebase, not merely against a self-consistent round trip.
+// test for 1W key adoption: it proves the whole chain (frame model -> key unwrap -> MAC check)
+// against a source outside this codebase, not merely against a self-consistent round trip.
 
 TEST(OnewayKeyAdoption, PublishedVectorDecodesAndMacVerifies) {
   // Layout: ctrl0, ctrl1, dst[3], src[3], cmd, enc_key[16], man_id, data, sequence[2], mac[6].

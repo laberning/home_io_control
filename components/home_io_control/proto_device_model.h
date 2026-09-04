@@ -115,7 +115,7 @@ bool device_supports_lock_control(DeviceType type);
 /// The single capability gate for the heating send path and the climate entity: true exactly
 /// when device_capability_class(type) is DeviceCapabilityClass::CLIMATE
 /// (HEATING_TEMPERATURE_INTERFACE, EXTERIOR_HEATING, HEAT_PUMP). There is deliberately no
-/// per-device-type or per-vendor branch anywhere downstream — see the plan's DRY invariant.
+/// per-device-type or per-vendor branch anywhere downstream.
 /// @param type Device type.
 /// @return true for climate-class devices.
 bool device_supports_climate_control(DeviceType type);

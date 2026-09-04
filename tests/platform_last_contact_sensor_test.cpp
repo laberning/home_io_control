@@ -1,7 +1,7 @@
 /// @file platform_last_contact_sensor_test.cpp
 /// @brief Tests for the generated Last Contact diagnostic sensor.
 
-#include "platform_last_contact_sensor.h"
+#include "platform_companion_sensors.h"
 
 #include "hub_core.h"
 #include "hub_internal.h"

@@ -1,7 +1,7 @@
 /// @file platform_rssi_sensor_test.cpp
 /// @brief Tests for the generated RSSI diagnostic sensor.
 
-#include "platform_rssi_sensor.h"
+#include "platform_companion_sensors.h"
 
 #include "hub_core.h"
 #include "hub_internal.h"

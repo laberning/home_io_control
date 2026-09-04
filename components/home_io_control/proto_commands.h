@@ -198,8 +198,8 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// list.** STOP is the only one a real frame pins: the published IV vector
 /// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) is a documented
 /// worked example carrying main=0xD2. VENT is not captured anywhere in this project, but it does
-/// match the reference implementation's own 1W remote byte-for-byte — `RemoteButton::Vent` in
-/// reference/iohomecontrol/src/iohcRemote1W.cpp emits exactly main=0xD8/mod=0x03. FAVORITE has
+/// match the reference implementation's own 1W remote byte-for-byte — its `RemoteButton::Vent`
+/// emits exactly main=0xD8/mod=0x03. FAVORITE has
 /// neither kind of support: that same reference remote has no distinct favorite/My button at all
 /// (its RemoteButton set is Open/Close/Stop/Vent/ForceOpen/Position/Absolute/Pair/Add/Remove/
 /// Mode1-4 — no Favorite), so main=0xD8/mod=0x00 here is extrapolated purely by analogy with the
@@ -228,7 +228,7 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// through fp2, stopping before the sequence, which is not frame data and never enters the MAC.
 /// Pinned by the published IV vector at
 /// tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml and by the reference
-/// implementation's own span (`toAdd = 6 + 1`, `reference/iohomecontrol/src/iohcRemote1W.cpp`).
+/// implementation's own 1W-remote span (`toAdd = 6 + 1`).
 /// This span is command-specific and does not generalise: CMD 0x30's span is `cmd + enc_key`
 /// only — see crypto::create_1w_hmac()'s `@warning`.
 /// @param f IoFrame to populate.
@@ -302,7 +302,7 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 /// both shapes are safe to send.
 ///
 /// @warning Reference divergences, deliberately not followed:
-/// `reference/iown-homecontrol`'s `create_key_transfer_1w` derives the key-wrap
+/// the iown-homecontrol project's `create_key_transfer_1w` derives the key-wrap
 /// IV from the *destination* node, which contradicts the published frame this builder is pinned
 /// against (a broadcast destination carries no identity, so `src` is the only value that
 /// reproduces it); and its comment claims "key transfer carries no MAC", which the same published
@@ -436,8 +436,8 @@ bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 /// The single builder behind every heating/climate function (power, setpoint, mode, presence,
 /// window, midnight time-sync). The payload is produced by encode_heating_payload() in
 /// proto_heating.h; this builder only frames it. Framing is fixed by the reference implementation's
-/// forgePacket() (reference/iohomecontrol/src/iohcCozyDevice2W.cpp:41-61 — StartFrame=1,
-/// EndFrame=0, Protocol=0) and cross-checked against the real Atlantic Thermor exchange capture
+/// `forgePacket()` (StartFrame=1, EndFrame=0, Protocol=0) and cross-checked against the real
+/// Atlantic Thermor exchange capture
 /// tests/corpus/captures/exchange/atlantic_thermor_exchange_write_private_param.yaml (frame 1:
 /// start=true, end=false). The device answers with CMD_WRITE_PRIVATE_ACK (0x21) after an
 /// authenticated 0x3C/0x3D leg the exchange engine handles transparently.

@@ -528,7 +528,7 @@ class RawFrame:
 
     def crc_present(self) -> bool:
         """CRC-detection rule (verified against RX call sites, see module docstring below):
-        every on-air log line in analysis/issues/*.txt — both `io_capture` (tx_frame/parse_ok)
+        every on-air log line this parser ingests — both `io_capture` (tx_frame/parse_ok)
         and legacy `io_frame` (TX/RX) — logs bytes with CTRL0-implied length exactly, i.e.
         **without** the trailing 2-byte CRC. `log_component_capture()` (hub_internal.h) is
         called with the frame's own `buf/len` (post radio_sx1262.cpp's software CRC strip for
@@ -560,7 +560,7 @@ _IO_CAPTURE_NO_FRAME_RE = re.compile(
 
 # --- io_frame (legacy) — log_frame.h :: log_frame() ------------------------------------------
 # The `cmd=... flags` segment is optional: older firmware builds logged this tag without it
-# (observed in analysis/issues/23.txt: "TX [17 bytes] freq=868950000 preamble=1024: <hex>" with
+# (e.g. "TX [17 bytes] freq=868950000 preamble=1024: <hex>" with
 # no `cmd=` field at all), while newer builds always include it.
 _IO_FRAME_RE = re.compile(
     r"(?P<prefix>TX|RX)\s+\[(?P<len>\d+)\s+bytes\]\s+freq=(?P<freq>\d+)\s*"
@@ -580,7 +580,7 @@ _HEX_RUN_RE = re.compile(r"(?:\b[0-9A-Fa-f]{2}\b(?:\s+))" r"{" + str(FRAME_MIN_S
 
 def _io_capture_metadata_agrees(match: "re.Match") -> bool:
     """Cross-checks an `_IO_CAPTURE_WITH_FRAME_RE` match's cmd=/src=/dst=/len= fields against the
-    parsed `payload=` bytes (design §7 item 1): the structured tag logs both independently (the
+    parsed `payload=` bytes: the structured tag logs both independently (the
     real parser's decoded fields, and the raw wire bytes it decoded them from), so a mangled
     paste whose payload disagrees with its own logged cmd/src/dst is a corruption signal that
     CTRL0/CRC self-consistency alone would not catch — a self-consistent but wrongly-delimited
@@ -655,8 +655,8 @@ def parse_log_line(line: str) -> "RawFrame | None":
 def _same_physical_frame(a: RawFrame, b: RawFrame) -> bool:
     """True when two adjacently-extracted RawFrames are the *same* on-air event logged twice —
     every physical TX/RX in this codebase is logged once via `io_capture` (hub_internal.h) and
-    once via the legacy `io_frame` tag (log_frame.h), back-to-back within a few ms of each other
-    (see analysis/issues/27.txt). Same direction + identical bytes, adjacent in parse order, is
+    once via the legacy `io_frame` tag (log_frame.h), back-to-back within a few ms of each other.
+    Same direction + identical bytes, adjacent in parse order, is
     the signal; genuine retransmissions (e.g. three DISCOVER_REQ retries) are NOT adjacent to
     each other in this sense because caller code always logs the io_capture/io_frame pair
     together before the next real event.
@@ -680,7 +680,7 @@ def _same_physical_frame(a: RawFrame, b: RawFrame) -> bool:
 def _merge_frames(a: RawFrame, b: RawFrame) -> RawFrame:
     """Merge a same-physical-frame pair, keeping the best field from either side.
 
-    Observed firmware quirk (analysis/issues/27.txt, retried DISCOVER_REQ): the io_capture
+    Observed firmware quirk (a retried DISCOVER_REQ): the io_capture
     tx_frame log entry on a retry carries freq=0 ts=0 (no capture context available at that call
     site), while the io_frame entry for the exact same transmission carries the real freq. Take
     whichever side has a non-zero freq/t_ms; prefer `a` when both are informative.

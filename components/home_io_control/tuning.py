@@ -179,8 +179,8 @@ _NUMBER_PARAMS = {
     # that floor stays empirically checkable rather than assumed. See
     # SX1262_DISCOVERY_HOP_SLICE_MS in tuning_config.h for why the default itself is short.
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),
-    # LR1121 numeric ranges reuse the SX1262 bounds — same chip-family physical constraints
-    # (design doc §3.2: "seed every timing/tuning default from the validated SX1262 values").
+    # LR1121 numeric ranges reuse the SX1262 bounds — same chip-family physical constraints, and
+    # a validated SX1262 value encodes protocol-side reality more than a chip quirk.
     CONF_LR1121_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_LR1121_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),

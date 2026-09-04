@@ -1,4 +1,4 @@
-#include "platform_cover_favorite_button.h"
+#include "platform_cover_controls.h"
 
 #include "hub_core.h"
 
@@ -13,7 +13,7 @@ using namespace esphome::home_io_control;
 // ============================================================================
 // Covers the generated favorite-position button entity and its hub queueing behavior.
 
-class TestableIOHomeCoverFavoriteButton : public IOHomeCoverFavoriteButton {
+class TestableIOHomeCoverFavoriteButton : public IOHomeCoverCommandButton {
  public:
   void trigger_press() { this->press_action(); }
 };
@@ -64,6 +64,7 @@ TEST(PlatformCoverFavoriteButton, PressQueuesFavoritePosition) {
   TestableIOHomeCoverFavoriteButton button;
   button.set_parent(&hub);
   button.set_device_id("ABC123");
+  button.set_command(CoverCommand::FAVORITE);
 
   button.trigger_press();
 
@@ -82,6 +83,7 @@ TEST(PlatformCoverFavoriteButton, PressIsSafeWhenDeviceMissing) {
   TestableIOHomeCoverFavoriteButton button;
   button.set_parent(&hub);
   button.set_device_id("ABC123");
+  button.set_command(CoverCommand::FAVORITE);
 
   button.trigger_press();
 

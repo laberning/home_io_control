@@ -14,13 +14,13 @@ The corpus is `tests/corpus/captures/<phase>/<id>.yaml` with `filename == id` an
 needs to be given.
 
 Usage:
-  python3 scripts/corpus/ingest.py analysis/issues/27.txt \\
+  python3 scripts/corpus/ingest.py pasted_capture.txt \\
       --id somfy_awning_discovery_with_overheard_smoove_1w --device "Somfy Sunea IO motor" \\
       --captured-with sx1262 --origin github-issue \\
       --issue https://github.com/laberning/home_io_control/issues/27 --date 2026-07-06
 
 Read from stdin instead of a file with `-` as the input path — handy for piping a trimmed
-excerpt (`sed -n '10,40p' analysis/issues/27.txt | python3 scripts/corpus/ingest.py - ...`)
+excerpt (`sed -n '10,40p' pasted_capture.txt | python3 scripts/corpus/ingest.py - ...`)
 instead of hand-editing a scratch file.
 
 Re-key mode (--rekey) — run ONLY locally, by someone who has the real system
@@ -174,7 +174,7 @@ def build_yaml(args, frames, key_mode: str, node_map: "dict[str, str] | None") -
 
 
 # ==================================================================================================
-# --rekey pipeline (design doc §4.2)
+# --rekey pipeline
 # ==================================================================================================
 
 
@@ -346,8 +346,8 @@ def rekey_hmac_frames(frames, real_key: bytes, corpus_key: bytes) -> int:
 
 
 def rekey_key_transfer_frames(frames, real_key: bytes, corpus_key: bytes) -> int:
-    """Verify + rewrite every 0x32 key-transfer payload. This is the security-critical path
-    (design §4.3): a raw, un-re-keyed 0x32 payload leaks the real system key to anyone who can
+    """Verify + rewrite every 0x32 key-transfer payload. This is the security-critical path:
+    a raw, un-re-keyed 0x32 payload leaks the real system key to anyone who can
     decrypt it with the public TRANSFER_KEY, so this function either produces a payload that
     decrypts to the *corpus* key, or aborts before writing anything.
     """

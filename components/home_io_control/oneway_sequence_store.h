@@ -35,7 +35,7 @@ namespace home_io_control {
 // === Sequence-safety bounds ===
 
 /// How far ahead of its stored high-water mark a device will still accept a jump. 1000 is the
-/// window the reference receiver applies (`reference/iohomecontrol`), and it is the ceiling every
+/// window the iohomecontrol reference receiver applies, and it is the ceiling every
 /// forward skip in this file has to stay under: a jump past it fails exactly like a stale
 /// counter, and just as silently.
 static constexpr uint16_t ONEWAY_SEQUENCE_ACCEPTANCE_WINDOW = 1000;

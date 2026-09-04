@@ -8,10 +8,9 @@
 /// CMD_WRITE_PRIVATE (0x20) payloads. This module is pure: it does not touch a frame, a device
 /// record or the radio — proto_commands.h's create_write_private() frames the result.
 ///
-/// Byte-layout sources: reference/iohomecontrol/src/iohcCozyDevice2W.cpp — forgePacket() at lines
-/// 41-61 and the DeviceButton payload builders in cmd() at lines 84-266 — cross-checked against
-/// the vendored Atlantic register map
-/// reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md, which names the
+/// Byte-layout sources: the iohomecontrol reference implementation's Cozy 2W device code —
+/// `forgePacket()` and the DeviceButton payload builders in its `cmd()` — cross-checked against
+/// the iown-homecontrol project's Atlantic/Thermor register map, which names the
 /// opcodes ("Set 0c61 01xx" / "Get 0c60 01xx") and shows the setpoint registers as 16-bit
 /// little-endian tenths of a degree. Every payload byte below is cited. No hardware is available
 /// for this family; the experimental banner lives in docs/home_io_control.md.

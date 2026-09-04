@@ -1,5 +1,5 @@
 /// @file corpus_classification_test.cpp
-/// @brief Decision-layer expectations (design §6.4) — pure `decisions::` classifiers fed with
+/// @brief Decision-layer expectations — pure `decisions::` classifiers fed with
 /// captured frames in recorded order.
 ///
 /// Scope: captures with `expect.exchange` (`has_exchange`). The origin (first `tx` frame) is
@@ -130,8 +130,8 @@ TEST_P(CorpusClassification, FramesClassifyInRecordedOrder) {
       // same src (this controller), so the first tx frame's src doubles as that ID, the same way
       // the DIRECT/STATUS_POLL case above derives `origin` from it. classify_pairing_key_challenge()
       // additionally needs the discovered device's node ID, which the schema does not carry today
-      // (arrives with a real pairing capture's node_map in Step H2) — a classification expectation
-      // on a non-discovery frame in a pairing capture fails loudly rather than silently passing.
+      // — so a classification expectation on a non-discovery frame in a pairing capture fails
+      // loudly rather than silently passing.
       const corpus::CorpusFrame *origin_cf = nullptr;
       for (uint8_t i = 0; i < capture->frame_count; i++) {
         if (capture->frames[i].tx) {

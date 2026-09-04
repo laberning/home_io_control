@@ -110,8 +110,8 @@ void RadioLR1121::read_buffer_(uint8_t offset, uint8_t len, uint8_t *data) {
 }
 
 uint32_t RadioLR1121::read_irq_status_raw() {
-  // GetStatus returns Stat1, Stat2, then the 32-bit IRQ status word (design §3.2:
-  // "read IRQ status non-destructively via GetStatus") — cross-checked against RadioLib's
+  // GetStatus reads the IRQ status non-destructively: it returns Stat1, Stat2, then the 32-bit
+  // IRQ status word — cross-checked against RadioLib's
   // LRxxxx::getIrqStatus(): 6 bytes total [Stat1, Stat2, IRQ_b3..IRQ_b0]. read_command_
   // already consumes Stat1 into last_stat1_, so only 5 more bytes remain: Stat2 (resp[0],
   // unused) followed by the 4 IRQ bytes (resp[1..4]).
@@ -148,11 +148,10 @@ void RadioLR1121::set_rx_packet_params() {
 }
 
 void RadioLR1121::write_modulation_params_() {
-  // LR1121 GFSK modulation parameters for the IO-Homecontrol 868 MHz waveform, written as
-  // plain Hz/bps 32-bit values (design §1.2: "RF frequency / bitrate / fdev are plain Hz /
-  // bit/s 32-bit values" — no PLL-step math needed, unlike SX1262). Field order (bitrate,
-  // pulse shape, bandwidth, fdev) cross-checked against RadioLib/Semtech and confirmed on
-  // real hardware.
+  // LR1121 GFSK modulation parameters for the IO-Homecontrol 868 MHz waveform. RF frequency,
+  // bitrate and fdev are written as plain Hz / bit/s 32-bit values — no PLL-step math needed,
+  // unlike SX1262. Field order (bitrate, pulse shape, bandwidth, fdev) cross-checked against
+  // RadioLib/Semtech and confirmed on real hardware.
   uint32_t const bitrate_bps = 38400;
   uint32_t const fdev_hz = 19200;
   uint8_t mod_params[10] = {
@@ -169,7 +168,7 @@ void RadioLR1121::write_modulation_params_() {
   };
   this->write_command_(LR1121_CMD_SET_MODULATION_PARAMS, mod_params, sizeof(mod_params));
 
-  // GFSK workaround register trio (analysis §4.2) — RadioLib/Semtech apply this after every
+  // GFSK workaround register trio — RadioLib/Semtech apply this after every
   // modulation-params write, not just once at init, so it must re-run on every bandwidth retune.
   this->apply_gfsk_workaround_();
 }
@@ -209,7 +208,7 @@ void RadioLR1121::fill_capture_info(bool blocking_wait, uint32_t irq_status, uin
   this->last_capture_.rx_done = (irq_status & LR1121_IRQ_RX_DONE) != 0;
   this->last_capture_.crc_error = (irq_status & LR1121_IRQ_CRC_ERR) != 0;
   // RadioCaptureInfo::irq_status is uint16_t; map the 32-bit word down by taking bits [2..10]
-  // and shifting right by 2 (design §3.2 "IRQ-width note" — one documented place for this).
+  // and shifting right by 2. This is the one place that conversion happens.
   this->last_capture_.irq_status = static_cast<uint16_t>((irq_status >> 2) & 0x01FF);
   this->last_capture_.packet_status = pkt_status[3];
   this->last_capture_.rx_offset = rx_offset;
@@ -231,9 +230,8 @@ void RadioLR1121::get_rx_buffer_status(uint8_t &reported_len, uint8_t &rx_offset
 }
 
 void RadioLR1121::start_tx() {
-  // Tick base is 30.52us (32.768kHz RTC), so 0x03E800 is ~7.8s, not the ~4s the field was
-  // originally assumed to encode; the software 4000ms guard in the shared send_packet() is what
-  // actually bounds TX and is independent of this chip-level value.
+  // Tick base is 30.52us (32.768kHz RTC), so 0x03E800 is ~7.8s. TX is actually bounded by the
+  // software 4000ms guard in the shared send_packet(), independent of this chip-level value.
   uint8_t tx_timeout[3] = {0x03, 0xE8, 0x00};
   this->write_command_(LR1121_CMD_SET_TX, tx_timeout, sizeof(tx_timeout));
 }
@@ -299,22 +297,22 @@ void RadioLR1121::configure_radio_() {
   ESP_LOGI(TAG, "LR1121 detected: hw=0x%02X fw=%u.%u", version[0], version[2], version[3]);
 
   // 2. TCXO: map the YAML TCXO_VOLTAGE_OPTIONS code (1_6V=0x01 .. 3_3V=0x08, __init__.py) to the
-  //    LR1121's own 0x00-0x07 voltage code (design §0.5.3: "codes run 0x00-0x07 for 1.6-3.3V" —
-  //    one less than the YAML/SX1262 numbering, so a simple -1 mapping is exact if the two
-  //    tables are both linear 0.1V-ish steps in the same order; verify in Step 6).
+  //    LR1121's own voltage code, which runs 0x00-0x07 for 1.6-3.3V — one less than the
+  //    YAML/SX1262 numbering, so a simple -1 mapping is exact: both tables are linear 0.1V-ish
+  //    steps in the same order.
   auto const tcxo_code = static_cast<uint8_t>(this->tcxo_voltage_yaml_code_ - 1);
   uint8_t tcxo_params[4] = {tcxo_code, LR1121_TCXO_STARTUP_DELAY_TICKS_MSB, LR1121_TCXO_STARTUP_DELAY_TICKS_MID,
                             LR1121_TCXO_STARTUP_DELAY_TICKS_LSB};
   this->write_command_(LR1121_CMD_SET_TCXO_MODE, tcxo_params, sizeof(tcxo_params));
 
   // 3. Clear errors, then calibrate all blocks — order matters: calibration must run on the
-  //    TCXO clock, which was just configured (design §3.2 step 3).
+  //    TCXO clock, which was just configured.
   this->clear_errors_();
   uint8_t const cal_all = LR1121_CALIBRATE_ALL_BLOCKS;
   this->write_command_(LR1121_CMD_CALIBRATE, &cal_all, 1);
   delay(5);  // Wait for calibration to complete (same margin as SX1262).
 
-  // 3b. Banded image calibration (analysis §4.3) — Calibrate(0x3F) calibrates the IMG block at
+  // 3b. Banded image calibration — Calibrate(0x3F) calibrates the IMG block at
   //     the chip's default band, not ours; both reference drivers issue an explicit banded call.
   this->calibrate_image_();
 
@@ -370,11 +368,11 @@ void RadioLR1121::configure_radio_() {
   this->write_command_(LR1121_CMD_SET_PA_CONFIG, pa_config, sizeof(pa_config));
 
   // 11. TX params: power in dBm, clamped to the selected PA path's valid range (see step 10).
-  //     Ramp register is LR11x0-specific, not the SX126x encoding this used to assume: RadioLib's
+  //     The ramp register is LR11x0-specific, not the SX126x encoding. RadioLib's
   //     LR1120::setOutputPower() passes `roundRampTime(us) - 3` — the shared ramp-time enum
   //     starts with three LR2021-only fast steps (2/4/8us) that don't exist on the LR11x0, so its
   //     own register value for a given ramp time is 3 less than the shared table's index. 0x0C is
-  //     ~200us on this chip (the previous 0x04 was actually ~80us).
+  //     ~200us on this chip (0x04 would be ~80us).
   int8_t const min_power = use_hp_pa ? -9 : -17;
   int8_t const max_power = use_hp_pa ? 22 : 14;
   int8_t const power = std::max(min_power, std::min(max_power, (int8_t) this->tx_power_));
@@ -386,9 +384,8 @@ void RadioLR1121::configure_radio_() {
   this->write_command_(LR1121_CMD_SET_RX_TX_FALLBACK_MODE, &fallback_mode, 1);
 
   // 13. IRQ config: two 32-bit masks — first DIO's mask (routed to DIO9) + second DIO's mask
-  //     (unused, all zero). Cross-checked against RadioLib's LRxxxx::setDioIrqParams(irq1, irq2):
-  //     the command takes exactly these two fields, no separate "enable" field (design §Step 2
-  //     item 2: "mask 0 for the second IRQ output").
+  //     (unused, mask 0). Cross-checked against RadioLib's LRxxxx::setDioIrqParams(irq1, irq2):
+  //     the command takes exactly these two fields, no separate "enable" field.
   uint8_t irq_params[8] = {
       (uint8_t) (LR1121_IRQ_DIO_ENABLE_MASK >> 24),
       (uint8_t) (LR1121_IRQ_DIO_ENABLE_MASK >> 16),
@@ -420,7 +417,7 @@ void RadioLR1121::set_mode_standby() {
 }
 
 void RadioLR1121::set_mode_rx() {
-  // High-ACP workaround (analysis §4.1) — Semtech applies this unconditionally before every
+  // High-ACP workaround — Semtech applies this unconditionally before every
   // SetRx, so it lives here rather than only at init to cover every set_mode_rx() call site.
   this->apply_high_acp_workaround_();
   uint8_t rx_continuous[3] = {0xFF, 0xFF, 0xFF};  // 0xFFFFFF = continuous, same sentinel as SX1262.

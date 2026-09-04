@@ -1,7 +1,7 @@
 /// @file platform_device_name_text_sensor_test.cpp
 /// @brief Tests for the generated device-name diagnostic text sensor.
 
-#include "platform_device_name_text_sensor.h"
+#include "platform_companion_sensors.h"
 
 #include "hub_core.h"
 #include "hub_internal.h"

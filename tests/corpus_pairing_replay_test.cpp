@@ -1,5 +1,5 @@
 /// @file corpus_pairing_replay_test.cpp
-/// @brief Full-pairing replay through PairingEngine (design §6.5, golden-frame corpus Step H2) —
+/// @brief Full-pairing replay through PairingEngine —
 /// scripts the real `IOHomeControlComponent::discover_and_pair()` state machine with a capture's
 /// `rx` frames and asserts what it actually transmits, plus the resulting device registration.
 ///

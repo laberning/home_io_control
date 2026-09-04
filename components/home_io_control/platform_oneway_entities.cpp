@@ -1,8 +1,8 @@
-/// @file platform_oneway_last_command_text_sensor.cpp
-/// @brief Diagnostic text sensor reporting the last 1W command a controller identity transmitted.
+/// @file platform_oneway_entities.cpp
+/// @brief The per-identity 1W entities: command buttons, enrollment button, last-command sensor.
 /// @ingroup hioc_platforms
 
-#include "platform_oneway_last_command_text_sensor.h"
+#include "platform_oneway_entities.h"
 
 #include "esphome/core/log.h"
 
@@ -23,6 +23,17 @@ std::string format_oneway_command_report(const OneWayCommandReport &report) {
   if (!report.transmitted)
     summary += " (not sent)";
   return summary;
+}
+
+void IOHomeOneWayCommandButton::dump_config() {
+  ESP_LOGCONFIG("home_io_control.button", "IO-Homecontrol 1W Command Button");
+  ESP_LOGCONFIG("home_io_control.button", "  Controller: %s", this->controller_id_.c_str());
+  ESP_LOGCONFIG("home_io_control.button", "  Action: %s", oneway_button_action_name(this->action_));
+}
+
+void IOHomeOneWayEnrollButton::dump_config() {
+  ESP_LOGCONFIG("home_io_control.button", "IO-Homecontrol 1W Enroll Button");
+  ESP_LOGCONFIG("home_io_control.button", "  Controller: %s", this->controller_id_.c_str());
 }
 
 void IOHomeOneWayLastCommandTextSensor::setup() {

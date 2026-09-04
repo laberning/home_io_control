@@ -33,7 +33,7 @@ using namespace esphome::home_io_control;
 namespace {
 
 /// Captures that promise `key: corpus` and describe an authenticated command exchange —
-/// the only shape corpus_crypto_test.cpp knows how to replay today (design §6.2).
+/// the only shape corpus_crypto_test.cpp knows how to replay today.
 std::vector<const corpus::CorpusCapture *> authenticated_corpus_captures() {
   return corpus_test::captures_where([](const corpus::CorpusCapture *cap) {
     return cap->key == corpus::KeyMode::CORPUS && cap->has_exchange &&
@@ -129,7 +129,7 @@ TEST_P(CorpusCryptoReplay, AuthenticatedCommandHmacMatchesCapture) {
   }
 }
 
-/// Key-transfer (0x32) sub-test (design §6.2, Step H2): locates the (0x31 key-init, 0x3C
+/// Key-transfer (0x32) sub-test: locates the (0x31 key-init, 0x3C
 /// challenge, 0x32 key-transfer) triple in a pairing capture, exactly as
 /// create_key_transfer() (proto_commands.cpp) builds it — IV data is the key-init frame's
 /// single cmd byte, not a full transcript — and asserts crypto::crypt_key() recovers the corpus

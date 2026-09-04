@@ -169,12 +169,10 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @brief Wait until @ref busy_pin_ reads low, feeding the watchdog while polling.
   ///
   /// Shared verbatim between SX1262 and LR1121 — the two chips differ only in how long they're
-  /// willing to wait (`busy_timeout_ms_`) and, prior to this refactor, differed by accident in
-  /// whether a call short-circuits once the driver already latched `failed_`: LR1121 had the
-  /// guard (needed at its 3000 ms timeout — without it, every remaining `configure_radio_()` step
-  /// after the first failure would re-run the full timeout, turning one bad boot into tens of
-  /// seconds of hang), SX1262 didn't (harmless at its 10 ms timeout, but still the same bug
-  /// shape). Unified here means both chips get the guard now.
+  /// willing to wait (`busy_timeout_ms_`). A call short-circuits once the driver has latched
+  /// `failed_`: without that guard, every remaining `configure_radio_()` step after the first
+  /// failure would re-run the full timeout, turning one bad boot into tens of seconds of hang at
+  /// the LR1121's 3000 ms timeout (harmless but still pointless at the SX1262's 10 ms one).
   void wait_busy_();
   /// Set on a BUSY timeout or a chip-identity check failing; see @ref is_failed.
   bool failed_{false};

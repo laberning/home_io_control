@@ -479,8 +479,8 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
   }
 
   // 0x60 functions (power_on, midnight_sync) are register reads: the 0x21 ACK carries the answer
-  // (per reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md — a paired-device
-  // list for 0x012C, the ~17-byte comfort/eco/auto setpoint block for 0x0130). Nothing decodes it
+  // (per the iown-homecontrol project's Atlantic/Thermor register map — a paired-device list for
+  // 0x012C, the ~17-byte comfort/eco/auto setpoint block for 0x0130). Nothing decodes it
   // into an entity, but logging it lets a field tester read back what the radiator reports — for
   // instance whether its own setpoint block exceeds 25.5 C. Log-only: success is not gated on the
   // echo, one transcribed capture is not enough to make a mismatch a hard failure.

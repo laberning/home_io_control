@@ -248,12 +248,12 @@ How long a preamble the SX1276 puts in front of its *reply* frames (the key-tran
 authentication responses), giving the peer time to lock on after the hub transmits. Raise it
 if key exchange stalls right after discovery on an SX1276 board.
 
-*Observations:* the SX1276 originally reused the protocol's 8-byte short preamble here. A
-slightly longer `12` bytes was found on hardware to improve the peer's lock-on with no
-measurable timing cost, so that is now the default — actually longer than the SX1262's `8`
-(see the SX1262 section above: brand-new devices needed noticeably more than that on the SX1262,
-so don't read the SX1276's smaller number as evidence 12 is generous; it has simply never needed
-raising in testing here). Lengthen it further for a stubborn or marginal-range device.
+*Observations:* the default here is `12` bytes — longer than the protocol's 8-byte short
+preamble, which on hardware measurably improves the peer's lock-on at no timing cost. That is
+also longer than the SX1262's `8` (see the SX1262 section above: brand-new devices needed
+noticeably more than that on the SX1262, so don't read the SX1276's smaller number as evidence
+12 is generous; it has simply never needed raising in testing here). Lengthen it further for a
+stubborn or marginal-range device.
 
 #### `sx1276_discovery_hop_slice_ms` / `sx1262_discovery_hop_slice_ms`
 
@@ -479,7 +479,7 @@ is a general starting point, not a guarantee — different devices need differen
 
 After each step, record the tuning snapshot line and the outcome. When a combination works,
 paste that snapshot into your permanent `tuning:` block. If you find a combination that makes
-a previously-unsupported device work, it is worth sharing via an issue on the projects Github-Page
+an otherwise-unsupported device work, it is worth sharing via an issue on the project's GitHub page
 so the defaults can improve.
 
 ## Safety and compliance

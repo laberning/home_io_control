@@ -326,10 +326,10 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 ///
 /// Takes the target position explicitly rather than assuming 0, because "fully open" is not
 /// always wire-position 0: IoDevice::inverted devices (e.g. horizontal awnings) have open/close
-/// swapped, so their fully-open wire position is 100. An earlier version of this builder
-/// hardcoded 0; on a real inverted awning that targeted its already-*closed* resting position, a
-/// real-hardware-confirmed no-op rather than a lock bypass. The caller (execute_device_command_()
-/// in hub_operations.cpp) is responsible for resolving the correct value from the target IoDevice.
+/// swapped, so their fully-open wire position is 100. Hardcoding 0 here would, on a real inverted
+/// awning, target its already-*closed* resting position — a confirmed no-op rather than a lock
+/// bypass. The caller (execute_device_command_() in hub_operations.cpp) is responsible for
+/// resolving the correct value from the target IoDevice.
 bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t open_position) {
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
@@ -503,8 +503,8 @@ bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 }
 
 /// Build a generic CMD_WRITE_PRIVATE (0x20) frame around a caller-supplied payload — the one
-/// builder behind every heating/climate function. Framing per
-/// reference/iohomecontrol/src/iohcCozyDevice2W.cpp:41-61 (forgePacket: start=1, end=0) and the
+/// builder behind every heating/climate function. Framing per the iohomecontrol reference
+/// implementation's `forgePacket()` (start=1, end=0) and the
 /// atlantic_thermor_exchange_write_private_param.yaml capture (frame 1: start, not end).
 bool create_write_private(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, const uint8_t *payload,
                           size_t payload_len) {

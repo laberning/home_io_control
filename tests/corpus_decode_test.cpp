@@ -1,5 +1,5 @@
 /// @file corpus_decode_test.cpp
-/// @brief Codec-layer expectations (design §6.3) driven by golden-frame corpus captures.
+/// @brief Codec-layer expectations driven by golden-frame corpus captures.
 ///
 /// Every assertion here is optional per-capture: only fields present in a capture's `expect:`
 /// block are checked, so a keyless community capture that only verified a decoded intent still
@@ -30,8 +30,8 @@ namespace {
 // Mirrors PRIVATE_RESPONSE_TARGET_OFFSET / PRIVATE_RESPONSE_CURRENT_OFFSET /
 // STATUS_STOPPED_FLAGS_OFFSET in hub_status.cpp — those constants are file-local (anonymous
 // namespace), so the documented CMD_PRIVATE_RESP (0x04) byte layout is reproduced here rather
-// than extracted out of components/ (per AGENTS.md 0.5.1, this feature does not touch
-// components/). decode_position_report() itself IS a callable pure function
+// than extracted out of components/ — this test deliberately does not modify component code.
+// decode_position_report() itself IS a callable pure function
 // (proto_device_model.h) and is exercised for real, not reimplemented.
 constexpr uint8_t PRIVATE_RESP_STOPPED_FLAGS_OFFSET = 0;
 constexpr uint8_t PRIVATE_RESP_TARGET_OFFSET = 2;

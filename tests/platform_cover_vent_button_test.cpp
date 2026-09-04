@@ -1,4 +1,4 @@
-#include "platform_cover_vent_button.h"
+#include "platform_cover_controls.h"
 
 #include "hub_core.h"
 
@@ -13,7 +13,7 @@ using namespace esphome::home_io_control;
 // ============================================================================
 // Covers the generated ventilation-position button entity and its hub queueing behavior.
 
-class TestableIOHomeCoverVentButton : public IOHomeCoverVentButton {
+class TestableIOHomeCoverVentButton : public IOHomeCoverCommandButton {
  public:
   void trigger_press() { this->press_action(); }
 };
@@ -60,6 +60,7 @@ TEST(PlatformCoverVentButton, PressQueuesVentCommand) {
   TestableIOHomeCoverVentButton button;
   button.set_parent(&hub);
   button.set_device_id("ABC123");
+  button.set_command(CoverCommand::VENT);
 
   button.trigger_press();
 
@@ -77,6 +78,7 @@ TEST(PlatformCoverVentButton, PressIsSafeWhenDeviceMissing) {
   TestableIOHomeCoverVentButton button;
   button.set_parent(&hub);
   button.set_device_id("ABC123");
+  button.set_command(CoverCommand::VENT);
 
   button.trigger_press();
 
@@ -87,6 +89,7 @@ TEST(PlatformCoverVentButton, PressIsSafeWhenDeviceMissing) {
 TEST(PlatformCoverVentButton, PressIsSafeWhenParentNull) {
   TestableIOHomeCoverVentButton button;
   button.set_device_id("ABC123");
+  button.set_command(CoverCommand::VENT);
 
   // Should not crash
   button.trigger_press();

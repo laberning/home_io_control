@@ -204,7 +204,7 @@ TEST(ProtoFrame, SerializeRefusesTrailerOnNonTrailerCommand) {
 }
 
 TEST(ProtoFrame, AddControllerMacTrailerRoundTrip) {
-  // Published worked example (reference/iown-homecontrol's docs/linklayer.md, CC0-1.0), captured
+  // Published worked example (the iown-homecontrol link-layer documentation, CC0-1.0), captured
   // verbatim as tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml. 29
   // declared bytes (9 header + enc_key[16] + man_id[1] + data[1] + sequence[2] = 20 data bytes)
   // plus a genuine 6-byte MAC that does not fit inside CTRL0's 5-bit length field alongside the

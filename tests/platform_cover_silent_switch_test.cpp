@@ -1,4 +1,4 @@
-#include "platform_cover_silent_switch.h"
+#include "platform_cover_controls.h"
 
 #include "hub_core.h"
 

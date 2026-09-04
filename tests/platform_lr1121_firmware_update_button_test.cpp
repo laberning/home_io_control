@@ -1,4 +1,4 @@
-#include "platform_lr1121_firmware_update_button.h"
+#include "platform_lr1121_controls.h"
 #include "hub_core.h"
 #include "lr1121_firmware_decisions.h"
 #include "radio_lr1121_firmware_updater.h"

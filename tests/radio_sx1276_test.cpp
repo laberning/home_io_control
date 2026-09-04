@@ -201,8 +201,8 @@ TEST(RadioSX1276, InitProgramsValidatedConfiguration) {
   EXPECT_EQ(spi.get_reg(REG_BITRATE_MSB), 0x03);
   EXPECT_EQ(spi.get_reg(REG_BITRATE_LSB), 0x41);
 
-  // Deviation 19200 Hz: (19200 / 32e6) * 2^19 truncates to 314 (0x013A). AGENTS.md's "≈315" is
-  // an approximation of this truncated value — the code's byte is what's under test here.
+  // Deviation 19200 Hz: (19200 / 32e6) * 2^19 truncates to 314 (0x013A). A commonly-quoted "≈315"
+  // is an approximation of this truncated value — the code's byte is what's under test here.
   EXPECT_EQ(spi.get_reg(REG_FDEV_MSB), 0x01);
   EXPECT_EQ(spi.get_reg(REG_FDEV_LSB), 0x3A);
 

@@ -45,12 +45,13 @@ IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component
 IOHomeCoverSilentSwitch = home_io_control_ns.class_(
     "IOHomeCoverSilentSwitch", switch.Switch, cg.Component
 )
-IOHomeCoverFavoriteButton = home_io_control_ns.class_(
-    "IOHomeCoverFavoriteButton", button.Button, cg.Component
+# One C++ class backs both cover command companions; codegen sets which command each press
+# sends via set_command() (mirrors OneWayButtonAction in __init__.py). A device-bound `button:`
+# entry is deliberately never the source — see the IOHomeOneWayCommandButton comment there.
+IOHomeCoverCommandButton = home_io_control_ns.class_(
+    "IOHomeCoverCommandButton", button.Button, cg.Component
 )
-IOHomeCoverVentButton = home_io_control_ns.class_(
-    "IOHomeCoverVentButton", button.Button, cg.Component
-)
+CoverCommand = home_io_control_ns.enum("CoverCommand", is_class=True)
 
 # Device types that support 0-100% position control (maps to DeviceCapabilityClass::COVER in C++).
 # Used to decide whether a favorite-position button companion should be generated.
@@ -131,7 +132,7 @@ def _inject_companion_ids(config):
         config[CONF_FAVORITE_BUTTON_ID] = ID(
             f"{base}_favorite_button",
             is_declaration=True,
-            type=IOHomeCoverFavoriteButton,
+            type=IOHomeCoverCommandButton,
         )
 
     # Ventilation-position button — only for window-type device types.
@@ -139,7 +140,7 @@ def _inject_companion_ids(config):
         config[CONF_VENT_BUTTON_ID] = ID(
             f"{base}_vent_button",
             is_declaration=True,
-            type=IOHomeCoverVentButton,
+            type=IOHomeCoverCommandButton,
         )
 
     # Silent-operation toggle — only when the cover declares `silent:` at all. Declaring the key
@@ -218,6 +219,7 @@ async def to_code(config):
         await cg.register_component(favorite, favorite_config)
         cg.add(favorite.set_parent(parent))
         cg.add(favorite.set_device_id(config[CONF_IO_DEVICE_ID]))
+        cg.add(favorite.set_command(CoverCommand.FAVORITE))
 
     if CONF_VENT_BUTTON_ID in config:
         vent_config = inherit_esphome_device(
@@ -232,5 +234,6 @@ async def to_code(config):
         await cg.register_component(vent, vent_config)
         cg.add(vent.set_parent(parent))
         cg.add(vent.set_device_id(config[CONF_IO_DEVICE_ID]))
+        cg.add(vent.set_command(CoverCommand.VENT))
 
     await create_companion_sensors(config, parent)

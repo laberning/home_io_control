@@ -520,7 +520,7 @@ const char *acei_level_name(uint8_t level);
 /// vector (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) and every
 /// Somfy 1W remote frame in the corpus (7+ frames across 3 nodes: 9D6085, 485B37, 7B8240) carry.
 /// Lives here (not proto_commands.cpp) so oneway_controller.h's resolve_oneway_wire_profile() can
-/// name it without the protocol layer depending on the controller layer (AGENTS.md layering 1).
+/// name it without the protocol layer depending on the controller layer.
 /// Composition: (ACEI_LEVEL_USER_HIGH << 5) | (1 << 1) | 1 = 0x43.
 static constexpr uint8_t ONEWAY_EXECUTE_ACEI =
     (ACEI_LEVEL_USER_HIGH << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;

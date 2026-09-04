@@ -87,10 +87,10 @@ def validate_image_class(path, *, expect_loader):
 
     A blocklist of two known-bad patterns, not an allowlist requiring e.g. "transceiver" in the
     name -- an allowlist would break a user mirroring images under their own names. Semtech's own
-    tool refuses a loader image as an ordinary firmware target outright; this project had no
-    such guard, and a loader/modem source previously passed validation
-    and was routed through the two-press UNKNOWN_TARGET confirmation, leaving the radio running a
-    non-transceiver image after the flash -- SPI still answers, but there is no radio function.
+    tool refuses a loader image as an ordinary firmware target outright. Without this guard, a
+    loader/modem source would pass validation and be routed through the two-press UNKNOWN_TARGET
+    confirmation, leaving the radio running a non-transceiver image after the flash -- SPI still
+    answers, but there is no radio function.
     @param expect_loader True when validating the bootloader sub-block's `source:` (must BE a
            loader image); False for the ordinary transceiver `source:` (must NOT be one).
     @raises Lr1121FirmwareError on a filename/class mismatch.

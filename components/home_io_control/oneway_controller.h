@@ -85,8 +85,8 @@ enum class EnrollGesture : uint8_t { SOMFY, VELUX_KLI };
 
 /// @brief Vendor-divergent 1W wire settings for a controller identity.
 ///
-/// Phase 1 (ADR 0031) is the EXECUTE ACEI; Phase 2 (ADR 0032) adds the enrollment gesture and the
-/// class sweep — see analysis/oneway_vendor_wire_profile_plan.md.
+/// The EXECUTE ACEI is decided per ADR 0031; the enrollment gesture and the class sweep per
+/// ADR 0032.
 struct OneWayWireProfile {
   uint8_t execute_acei;          ///< payload[1] of a 1W CMD_EXECUTE (0x00) frame.
   bool profile_is_a_guess;       ///< true when `manufacturer` matched no known 1W wire profile.

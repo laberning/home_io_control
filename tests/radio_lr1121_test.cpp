@@ -149,7 +149,7 @@ TEST(RadioLR1121, TcxoCommandEncodesYamlVoltageCode) {
   const auto &tx = spi.transactions()[idx];
   ASSERT_EQ(tx.size(), 6u) << "opcode(2) + voltage code(1) + startup delay(3)";
   // YAML code 0x07 ("3_0V") maps to the LR1121's own 0x00-0x07 table via a -1 shift
-  // (design §0.5.3 / radio_lr1121.cpp configure_radio_ comment).
+  // (see radio_lr1121.cpp configure_radio_()).
   EXPECT_EQ(tx[2], TCXO_YAML_CODE_3_0V - 1) << "TCXO voltage code should be YAML code minus 1";
 }
 

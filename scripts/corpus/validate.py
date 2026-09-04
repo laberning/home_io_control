@@ -22,7 +22,7 @@ corpus key (protolib.CORPUS_SYSTEM_KEY, mirroring tests/support/test_helpers.h :
 TEST_SYSTEM_KEY). Independently of `key:`, ANY capture (any key mode) containing a 0x32
 key-transfer frame whose payload does not decrypt to the corpus key is a hard failure — this is
 the safety net that stops an un-re-keyed raw pairing capture (which would leak a real system
-key) from ever being committed, regardless of what its `key:` field claims (design §4.3).
+key) from ever being committed, regardless of what its `key:` field claims.
 
 The same two-tier treatment applies to 1W: a CMD_ONEWAY_ADD_CONTROLLER (0x30) frame's `enc_key`
 directly encodes recoverable key material (wrapped only under the public TRANSFER_KEY, same as

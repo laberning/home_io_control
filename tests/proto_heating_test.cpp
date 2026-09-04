@@ -1,9 +1,9 @@
 /// @file proto_heating_test.cpp
 /// @brief Byte-exact tests for the CMD_WRITE_PRIVATE (0x20) heating payload codec.
 ///
-/// Every expected payload is transcribed from reference/iohomecontrol/src/iohcCozyDevice2W.cpp
-/// and cited by line; the 16-bit little-endian setpoint encoding is from the vendored register
-/// map reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md.
+/// Every expected payload is transcribed from the iohomecontrol reference implementation's Cozy
+/// 2W device code; the 16-bit little-endian setpoint encoding is from the iown-homecontrol
+/// project's Atlantic/Thermor register map.
 
 #include "proto_heating.h"
 
