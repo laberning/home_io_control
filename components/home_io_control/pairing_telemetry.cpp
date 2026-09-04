@@ -62,8 +62,6 @@ const char *outcome_name(PairingOutcome outcome) {
       return "rx_reject";
     case PairingTelemetryEventKind::LBT_DEFER:
       return "lbt_defer";
-    case PairingTelemetryEventKind::HOP:
-      return "hop";
     case PairingTelemetryEventKind::PHASE:
     default:
       return "phase";
@@ -75,6 +73,7 @@ const char *outcome_name(PairingOutcome outcome) {
 void PairingTelemetry::begin() {
   this->event_count_ = 0;
   this->heard_count_ = 0;
+  this->hop_count_ = 0;
   this->truncated_ = false;
   this->start_ms_ = millis();
   this->end_ms_ = this->start_ms_;
@@ -138,7 +137,15 @@ void PairingTelemetry::record_lbt_defer(int16_t rssi) {
   this->record_(PairingTelemetryEventKind::LBT_DEFER, 0, nullptr, nullptr, rssi, this->lbt_retries_, false);
 }
 
-void PairingTelemetry::record_hop() { this->record_(PairingTelemetryEventKind::HOP, 0, nullptr, nullptr, 0, 0, false); }
+void PairingTelemetry::record_hop() {
+  if (this->hop_count_ < UINT32_MAX)
+    this->hop_count_++;
+}
+
+void PairingTelemetry::record_recent_one_way_sighting(const RecentOneWayPairingSighting &sighting) {
+  this->record_(PairingTelemetryEventKind::RX, sighting.cmd, sighting.src, sighting.dst, sighting.rssi, /*aux=*/1,
+                /*oneway=*/true);
+}
 
 void PairingTelemetry::set_phase(pairing::PairingState phase) {
   this->phase_ = phase;
@@ -165,13 +172,21 @@ void PairingTelemetry::increment_discovery_attempt() {
 uint32_t PairingTelemetry::duration_ms() const { return (this->ended_ ? this->end_ms_ : millis()) - this->start_ms_; }
 
 void PairingTelemetry::log_summary() const {
-  ESP_LOGI(
-      TAG, "Pairing attempt summary: outcome=%s phase=%s attempts=%u lbt=%u dur_ms=%" PRIu32 " heard=%u events=%u%s",
-      outcome_name(this->outcome_), pairing_stage_name(this->phase_), this->discovery_attempts_, this->lbt_retries_,
-      this->duration_ms(), this->heard_count_, this->event_count_, this->truncated_ ? " (truncated)" : "");
+  ESP_LOGI(TAG,
+           "Pairing attempt summary: outcome=%s phase=%s attempts=%u lbt=%u dur_ms=%" PRIu32 " heard=%u hops=%" PRIu32
+           " events=%u%s",
+           outcome_name(this->outcome_), pairing_stage_name(this->phase_), this->discovery_attempts_,
+           this->lbt_retries_, this->duration_ms(), this->heard_count_, this->hop_count_, this->event_count_,
+           this->truncated_ ? " (truncated)" : "");
   for (uint8_t i = 0; i < this->event_count_; i++) {
     const PairingTelemetryEvent &event = this->events_[i];
-    if (event.kind == PairingTelemetryEventKind::RX || event.kind == PairingTelemetryEventKind::RX_REJECT) {
+    if (event.kind == PairingTelemetryEventKind::RX && event.aux == 1) {
+      // A seeded pre-window sighting (record_recent_one_way_sighting()): millis_offset is a
+      // placeholder (recorded at the start of this attempt, not when the frame actually arrived),
+      // so label it instead of implying a live in-window capture.
+      ESP_LOGI(TAG, "  [pre-window] %s cmd=0x%02X src=%s rssi=%d", event_kind_name(event.kind), event.cmd,
+               node_id_to_string(event.src_node).c_str(), event.rssi);
+    } else if (event.kind == PairingTelemetryEventKind::RX || event.kind == PairingTelemetryEventKind::RX_REJECT) {
       ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s cmd=0x%02X src=%s rssi=%d", event.millis_offset,
                event_kind_name(event.kind), event.cmd, node_id_to_string(event.src_node).c_str(), event.rssi);
     } else if (event.kind == PairingTelemetryEventKind::TX) {

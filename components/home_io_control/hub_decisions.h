@@ -231,6 +231,26 @@ inline bool defer_background_poll_for_1w_activity(bool next_op_is_background, ui
   return (now - last_1w_activity_ms) < quiet_ms;
 }
 
+/// True if a frame's shape matches a 1W remote's pairing gesture (issue #27/#65): CTRL0 1W bit
+/// set, addressed to the 1W broadcast address (0x00003F), with one of the three command bytes
+/// observed in the field capture — 0x20 (WRITE_PRIVATE), 0x39 (1W remove), or 0x2E (alternate
+/// discovery, 1W-flagged). Shared between PairingAdvisor (classifying recorded telemetry events,
+/// pairing_advisor.cpp) and the hub's normal passive RX path (hub_status.cpp), which remembers a
+/// recent sighting so a PROG press completed just before "Discover & Pair" is pressed isn't
+/// invisible to the advisor purely because of when the discovery telemetry window happened to
+/// open — see PairingTelemetry::record_recent_one_way_sighting().
+///
+/// @param oneway CTRL0 1W-protocol bit.
+/// @param dst    Frame destination node ID.
+/// @param cmd    Frame command byte.
+inline bool is_one_way_pairing_gesture(bool oneway, const uint8_t dst[NODE_ID_SIZE], uint8_t cmd) {
+  if (!oneway)
+    return false;
+  if (std::memcmp(dst, BROADCAST_DISCOVER_ALT, NODE_ID_SIZE) != 0)
+    return false;
+  return cmd == CMD_WRITE_PRIVATE || cmd == CMD_ONEWAY_REMOVE || cmd == CMD_DISCOVER_ALT_REQ;
+}
+
 /// Whether a 1W frame arriving at `now` starts a new burst rather than extending the current one
 /// — true if no frame has been seen yet, or the gap since the last one reached `quiet_ms` (the
 /// previous burst already released any deferred poll). Callers use this to decide whether to

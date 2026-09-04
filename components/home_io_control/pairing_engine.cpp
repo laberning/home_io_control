@@ -51,14 +51,15 @@ void log_discovery_diagnostic(decisions::PairingDiscoveryDisposition disp) {
 
 PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, const uint8_t *system_key,
                              const TuningConfig *tuning, ExchangeEngine &engine, DeviceRegistry &registry,
-                             PairingTelemetry &telemetry)
+                             PairingTelemetry &telemetry, const RecentOneWayPairingSighting &recent_oneway_sighting)
     : radio_ptr_(radio_ptr),
       node_id_(node_id),
       system_key_(system_key),
       tuning_(tuning),
       engine_(engine),
       registry_(registry),
-      telemetry_(telemetry) {}
+      telemetry_(telemetry),
+      recent_oneway_sighting_(recent_oneway_sighting) {}
 
 // --- Low-level waiters ---
 
@@ -333,7 +334,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
                                     tuning_->pairing_discovery_payload_enabled, tuning_->pairing_discovery_payload,
                                     system_key_) ||
-          !engine_.transmit_frame(context.req, FREQ_CH2, LONG_PREAMBLE)) {
+          !engine_.transmit_frame(context.req, FREQ_CH2, tuning_->pairing_discovery_preamble)) {
         return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
       }
 
@@ -476,6 +477,16 @@ bool PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
 bool PairingEngine::discover_and_pair() {
   this->telemetry_.begin();
   this->engine_.set_pairing_telemetry(&this->telemetry_);
+
+  // Seed telemetry with a 1W pairing-gesture frame the hub overheard shortly before this call
+  // (issue #27/#65): without this, a PROG press completed a few seconds before "Discover & Pair"
+  // is pressed in the app is invisible to the advisor purely because the telemetry window opens
+  // here, even though the radio heard it just fine — the false rf_silent advice this produced was
+  // field-confirmed against a real trace (issue #27, miljaar).
+  if (this->recent_oneway_sighting_.seen_ms != 0 &&
+      (millis() - this->recent_oneway_sighting_.seen_ms) < PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS) {
+    this->telemetry_.record_recent_one_way_sighting(this->recent_oneway_sighting_);
+  }
 
   ESP_LOGI(TAG, "Starting device discovery...");
   ESP_LOGI(TAG, "%s", tuning_config_full_snapshot(*tuning_).c_str());

@@ -4,6 +4,7 @@
 
 #include "pairing_advisor.h"
 
+#include "hub_decisions.h"
 #include "proto_constants.h"
 #include "proto_timing.h"
 
@@ -23,23 +24,30 @@ bool is_rx_kind(PairingTelemetryEventKind kind) {
   return kind == PairingTelemetryEventKind::RX || kind == PairingTelemetryEventKind::RX_REJECT;
 }
 
-/// 1W pairing traffic (issue #27 case): CTRL0 1W bit set, addressed to the 1W broadcast address
-/// 0x00003F, with one of the three command bytes observed in the field capture — 0x20
-/// (WRITE_PRIVATE), 0x39 (1W remove), or 0x2E (alternate discovery, 1W-flagged).
-bool is_oneway_pairing_frame(const PairingTelemetryEvent &event) {
-  if (!event.oneway)
-    return false;
-  if (memcmp(event.dst_node, BROADCAST_DISCOVER_ALT, NODE_ID_SIZE) != 0)
-    return false;
-  return event.cmd == CMD_WRITE_PRIVATE || event.cmd == CMD_ONEWAY_REMOVE || event.cmd == CMD_DISCOVER_ALT_REQ;
+/// A seeded pre-window sighting (PairingTelemetry::record_recent_one_way_sighting()) rather than a
+/// live in-window capture — see PairingTelemetryEvent::aux's doc comment. Excluded from
+/// channel_busy specifically: that advice is about *live* channel contention during this attempt,
+/// and a sighting from up to PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS earlier carries no evidence
+/// about that. Still eligible for ONE_WAY_PAIRING_TRAFFIC, which is about the gesture itself.
+bool is_seeded_sighting(const PairingTelemetryEvent &event) {
+  return event.kind == PairingTelemetryEventKind::RX && event.aux == 1;
 }
 
-/// Count how many RX/RX_REJECT events share `src_node`.
+/// 1W pairing traffic (issue #27 case). Thin wrapper over the shared predicate (hub_decisions.h)
+/// so the hub's passive RX path can classify the same frame shape without duplicating it — see
+/// decisions::is_one_way_pairing_gesture()'s doc comment for the frame shape itself.
+bool is_oneway_pairing_frame(const PairingTelemetryEvent &event) {
+  return decisions::is_one_way_pairing_gesture(event.oneway, event.dst_node, event.cmd);
+}
+
+/// Count how many *live* RX/RX_REJECT events share `src_node` — excludes a seeded pre-window
+/// sighting, which is not evidence of live channel contention (see is_seeded_sighting()).
 uint8_t count_occurrences_of_source(const PairingTelemetryEvent *events, uint8_t event_count,
                                     const uint8_t src_node[NODE_ID_SIZE]) {
   uint8_t occurrences = 0;
   for (uint8_t i = 0; i < event_count; i++) {
-    if (is_rx_kind(events[i].kind) && memcmp(events[i].src_node, src_node, NODE_ID_SIZE) == 0)
+    if (is_rx_kind(events[i].kind) && !is_seeded_sighting(events[i]) &&
+        memcmp(events[i].src_node, src_node, NODE_ID_SIZE) == 0)
       occurrences++;
   }
   return occurrences;
@@ -65,7 +73,7 @@ void append_channel_busy_advice(const PairingTelemetry &telemetry, const Pairing
     return;
   for (uint8_t i = 0; i < event_count; i++) {
     const PairingTelemetryEvent &event = events[i];
-    if (!is_rx_kind(event.kind))
+    if (!is_rx_kind(event.kind) || is_seeded_sighting(event))
       continue;
     if (count_occurrences_of_source(events, event_count, event.src_node) < 2)
       continue;

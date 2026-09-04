@@ -118,9 +118,68 @@ TEST(PairingAdvisor, OneWayPairingTraffic_NotTriggeredWhen2WFlag) {
   EXPECT_EQ(count, 0u);
 }
 
+TEST(PairingAdvisor, OneWayPairingTraffic_RecentSightingAloneTriggersAdviceNotRfSilent) {
+  // Regression test for issue #27 (miljaar): a PROG press completed just before "Discover & Pair"
+  // is pressed produced heard=0/rf_silent even though the radio heard the gesture just fine, only
+  // moments before the telemetry window opened. PairingEngine::discover_and_pair() seeds telemetry
+  // with exactly this kind of pre-window sighting (record_recent_one_way_sighting()) — confirm the
+  // advisor treats that seeded event the same as a live one: ONE_WAY_PAIRING_TRAFFIC, not RF_SILENT,
+  // and heard_count() reflects it.
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  RecentOneWayPairingSighting sighting{};
+  memcpy(sighting.src, REMOTE_SRC, NODE_ID_SIZE);
+  memcpy(sighting.dst, BROADCAST_DISCOVER_ALT, NODE_ID_SIZE);
+  sighting.cmd = CMD_WRITE_PRIVATE;
+  sighting.rssi = -48;
+  sighting.seen_ms = 1;
+  telemetry.record_recent_one_way_sighting(sighting);
+  telemetry.record_hop();  // the live discovery window itself heard nothing new
+
+  PairingAdvice advice[PAIRING_ADVICE_MAX];
+  const uint8_t count = analyze_pairing_telemetry(telemetry, OWN_ID, advice);
+
+  ASSERT_EQ(count, 1u);
+  EXPECT_EQ(advice[0].code, PairingAdviceCode::ONE_WAY_PAIRING_TRAFFIC);
+  EXPECT_EQ(memcmp(advice[0].subject_node, REMOTE_SRC, NODE_ID_SIZE), 0);
+  EXPECT_EQ(advice[0].rssi, -48) << "the seeded event's real RSSI should carry through, not a fabricated 0";
+  EXPECT_EQ(telemetry.heard_count(), 1u);
+}
+
 // ============================================================================
 // CHANNEL_BUSY_LBT_DELAYED
 // ============================================================================
+
+TEST(PairingAdvisor, ChannelBusy_SeededSightingExcludedFromLiveContentionEvidence) {
+  // A seeded pre-window sighting must not be usable as evidence of *live* channel contention: it
+  // predates this attempt by up to PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS, so pairing it with
+  // one live occurrence of the same source to cross the ">= 2 occurrences" channel_busy threshold
+  // — and reporting the seeded event's RSSI as if it were a live beacon — would be fabricated
+  // evidence. Confirm the seeded event is excluded from both the occurrence count and from being
+  // selected as the advice's subject, even with LBT retries exhausted.
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  for (uint8_t i = 0; i < LBT_MAX_RETRIES; i++)
+    telemetry.record_lbt_defer(-50);
+  RecentOneWayPairingSighting sighting{};
+  memcpy(sighting.src, REMOTE_SRC, NODE_ID_SIZE);
+  memcpy(sighting.dst, BROADCAST_DISCOVER_ALT, NODE_ID_SIZE);
+  sighting.cmd = CMD_WRITE_PRIVATE;
+  sighting.rssi = -30;  // deliberately distinct from the live sighting's RSSI below
+  sighting.seen_ms = 1;
+  telemetry.record_recent_one_way_sighting(sighting);
+  // Exactly one *live* sighting of the same source — "repeating" requires two, and the seeded one
+  // must not count toward that.
+  IoFrame live = build_frame(false, REMOTE_SRC, BROADCAST_DISCOVER_ALT, CMD_DISCOVER_ALT_REQ);
+  telemetry.record_rx_reject(live, -49);
+
+  PairingAdvice advice[PAIRING_ADVICE_MAX];
+  const uint8_t count = analyze_pairing_telemetry(telemetry, OWN_ID, advice);
+
+  for (uint8_t i = 0; i < count; i++)
+    EXPECT_NE(advice[i].code, PairingAdviceCode::CHANNEL_BUSY_LBT_DELAYED)
+        << "a seeded sighting plus a single live one must not look like repeating live contention";
+}
 
 TEST(PairingAdvisor, ChannelBusy_RepeatingStrongBeaconWithExhaustedLbtRetries) {
   PairingTelemetry telemetry;

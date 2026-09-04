@@ -355,11 +355,17 @@ If a "who is still out there" roll-call over your *already-paired* devices is wh
 want, that is exactly what the `scan_paired_devices` hub action does — see
 `docs/home_io_control.md`'s "Home Assistant Actions" section.
 
-*Observations:* for the devices tested here, plain `0x28` to `0x00003B` is what works — the
-alternate `0x2E` drew no response from them (but they already answer `0x28`). Full-featured
-controllers are known to broadcast both commands throughout pairing, which is exactly why the
-combined preset exists: a device that ignores `0x28` may only be reachable via `0x2E`. In the
-Home Assistant UI the selector offers the combination (`0x28,0x2E`) as a preset.
+*Observations:* plain `0x28` to `0x00003B` is what works. Broadcast `0x2E` has drawn **no
+response on every device this project has real hardware evidence for** — a Somfy Izymo dimmer and
+a Velux KLR200/KUX100 pair both went unanswered (see the `CMD_DISCOVER_ALT_REQ` doc comment in
+`proto_constants.h`, and GitHub issue #27 where two independent reporters also tried it with no
+result). It only draws a response when *addressed* directly to an already-known node ID, which is
+no help for first-contact pairing where the node ID is exactly what you don't have yet. Real
+full-featured controllers (Tahoma) are seen broadcasting both `0x28` and `0x2E` during pairing,
+which is why the combined preset (`0x28,0x2E`) still exists in the Home Assistant selector — but
+on the evidence gathered so far, that's the controller hedging its bets, not `0x2E` actually
+reaching a device `0x28` couldn't. Don't reach for `0x2E` as a fix for a stuck device; see
+"A suggested tuning plan" below for what to try instead.
 
 #### `pairing_discovery_destination`
 
@@ -374,6 +380,37 @@ An optional single `0x00` payload byte, and the `LOW_POWER` frame flag.
 *Observations:* the alternate discovery path is conventionally sent *with* the `0x00` payload
 and `LOW_POWER` set, and some devices filter on them; they have no effect on the plain `0x28`
 path, so only enable them alongside `0x2E`.
+
+#### `pairing_discovery_preamble`
+
+The preamble length (in bytes) on the discovery broadcast itself (`0x28`/`0x2E`). Defaults to
+`1024` (`LONG_PREAMBLE`), unchanged from historical behavior — a factory-fresh device in learning
+mode is exactly the kind of duty-cycled receiver that wake-up burst exists for.
+
+*Observations:* issue #87 hardware-proved that some always-alive receivers never lock onto a
+preamble this long on *directed* commands, which is why every other directed start frame now
+derives its preamble from the target's power class instead of paying the full 1024 bytes
+unconditionally (see `normal_start_preamble` above). The discovery broadcast can't be made
+power-class-aware the same way — discovery exists to learn a device before anything is known about
+it — so it still always pays the ~213 ms cost. Issue #27 (Somfy Sunea IO devices repeatedly failing
+to answer discovery) raised this as a plausible, **unconfirmed** contributor. If a device is
+confirmed to be genuinely unpaired (not already claimed by another hub — see "A suggested tuning
+plan" below) and still doesn't answer `0x28` at any of the settings above, this is worth trying
+next:
+
+```yaml
+tuning:
+  ui_controls: true
+  pairing_discovery_preamble: 32   # NORMAL_START_PREAMBLE's value; try 8 (SHORT_PREAMBLE) too
+```
+
+Not yet hardware-confirmed as a fix for any specific device — report back either way if you try it.
+**Scope:** this only covers phase 1 (discovery, `0x28`/`0x2E`). If a shortened preamble gets you a
+discovery response but the attempt then stalls at key exchange (`outcome=key_exchange_failed`),
+that is very likely the *same* underlying limitation biting phase 2 — `CMD_KEY_INIT` (`0x31`) is
+still transmitted at a hardcoded `LONG_PREAMBLE`, and the best-effort `SetConfig1` in phase 3 is
+built `low_power=true`, which also resolves to `LONG_PREAMBLE`. Neither is tunable yet; this is a
+known, not-yet-closed gap (ADR 0029's Consequences section already flags phase 3 specifically).
 
 #### `pairing_discovery_wait_ms` / `pairing_discovery_initial_dwell_ms`
 
@@ -425,17 +462,20 @@ is a general starting point, not a guarantee — different devices need differen
    the *target device itself* transmits (by its own `src=` address) and to which `dst=` address —
    that address is your best clue for the following steps.
 
-2. **Try the alternate discovery command.** Devices that ignore `0x28` may respond to `0x2E`
-   on `0x00003F`:
-   ```yaml
-   tuning:
-     ui_controls: true
-     pairing_discovery_commands: ["0x2E"]
-     pairing_discovery_payload: "0x00"
-     pairing_discovery_low_power: true
-   ```
+2. **Check whether the device is already claimed by another hub.** This is the most common reason
+   a device stays silent even after a correct PROG gesture and a factory reset (Double Power
+   Cut) — a device that already holds a hub's key has nothing left to respond to a discovery with.
+   If you have (or can borrow) that hub — a Somfy TaHoma/Smoove/Connectivity Kit, a Velux
+   KLF200/KLR200, etc. — use `docs/home_io_control.md`'s "Key Extraction (Accept Foreign Pairing)"
+   section against it instead of continuing to tune discovery parameters against the device
+   directly (see also its Pairing Workflow tips). (Trying the alternate discovery command, `0x2E`,
+   used to be the recommendation here — it is not: broadcast `0x2E` has never drawn a response from
+   any device this project has real evidence for. See the `pairing_discovery_commands` Observations
+   above.)
 
-3. **Send both broadcasts.** Cover devices that only answer one of them:
+3. **If the device is genuinely factory-fresh** (never claimed by any hub) and still doesn't
+   respond, the combined preset sends both broadcasts in case a particular controller expects to
+   see `0x2E` alongside `0x28`, even though `0x2E` alone hasn't been observed to help:
    ```yaml
    pairing_discovery_commands: ["0x28", "0x2E"]
    ```
@@ -451,7 +491,14 @@ is a general starting point, not a guarantee — different devices need differen
    the *command* from the *address*, since a device may only answer on the specific address it is
    listening on — which is not always the command's conventional one.
 
-5. **If discovery is intermittent** (responses appear sometimes), widen the overall wait and
+5. **If the device is confirmed genuinely unpaired and still doesn't answer** any of the above,
+   try shortening the discovery broadcast's preamble — see `pairing_discovery_preamble` above.
+   Unconfirmed as a fix for any specific device; worth reporting back either way:
+   ```yaml
+   pairing_discovery_preamble: 32   # then 8
+   ```
+
+6. **If discovery is intermittent** (responses appear sometimes), widen the overall wait and
    initial dwell — but leave the hop slice alone or shorten it, not the other way around. Don't
    raise `sx1262_discovery_hop_slice_ms` here: the short default already reflects the measured
    optimum (see the section above), so widening it back toward a long dwell makes things worse,
@@ -461,7 +508,7 @@ is a general starting point, not a guarantee — different devices need differen
    pairing_discovery_initial_dwell_ms: 500
    ```
 
-6. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
+7. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
    after discovery), give the receiver more margin around the turnaround (SX1262 shown; on
    LR1121 boards use the `lr1121_*` equivalents instead):
    ```yaml
@@ -470,7 +517,7 @@ is a general starting point, not a guarantee — different devices need differen
    sx1262_response_preamble: 12     # then 16
    ```
 
-7. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but see the
+8. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but see the
    compliance note below:
    ```yaml
    lbt_max_retries: 1

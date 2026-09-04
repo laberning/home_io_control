@@ -2,6 +2,7 @@
 /// @brief Tests for PairingTelemetry and its wiring into a full mocked pairing attempt.
 
 #include "hub_core.h"
+#include "pairing_advisor.h"
 #include "pairing_telemetry.h"
 #include "proto_frame.h"
 
@@ -11,6 +12,7 @@
 #include <cstring>
 
 using namespace esphome::home_io_control;
+using namespace esphome::home_io_control::advisor;
 
 namespace {
 
@@ -21,6 +23,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
+  using IOHomeControlComponent::process_received_packet_;
 };
 
 RadioRxPacket frame_to_rx_packet(const IoFrame &frame, uint32_t freq_hz = FREQ_CH2) {
@@ -96,14 +99,17 @@ TEST(PairingTelemetry, BeginResetsAllState) {
   telemetry.set_phase(pairing::PairingState::WAIT_DISCOVER_RESPONSE);
   telemetry.increment_discovery_attempt();
   telemetry.record_lbt_defer(-40);
+  telemetry.record_hop();
   for (int i = 0; i < PAIRING_TELEMETRY_MAX_EVENTS + 1; i++)
     telemetry.record_tx(CMD_DISCOVER_REQ);
   ASSERT_TRUE(telemetry.truncated()) << "sanity: this attempt should have overflowed the event array";
+  ASSERT_EQ(telemetry.hop_count(), 1u) << "sanity: hop was recorded before begin() reset it";
 
   telemetry.begin();
 
   EXPECT_EQ(telemetry.event_count(), 0u);
   EXPECT_EQ(telemetry.heard_count(), 0u);
+  EXPECT_EQ(telemetry.hop_count(), 0u);
   EXPECT_FALSE(telemetry.truncated());
   EXPECT_EQ(telemetry.phase(), pairing::PairingState::IDLE);
   EXPECT_EQ(telemetry.outcome(), PairingOutcome::NONE);
@@ -145,9 +151,63 @@ TEST(PairingTelemetry, TxAndLbtDeferAndHopDoNotCountTowardHeard) {
   telemetry.record_lbt_defer(-30);
   telemetry.record_hop();
 
-  EXPECT_EQ(telemetry.event_count(), 3u);
+  // record_hop() deliberately does not add to the stored event array (see its doc comment) — only
+  // TX and LBT_DEFER are stored here, so event_count() is 2, not 3.
+  EXPECT_EQ(telemetry.event_count(), 2u);
+  EXPECT_EQ(telemetry.hop_count(), 1u);
   EXPECT_EQ(telemetry.heard_count(), 0u) << "only RX/RX_REJECT count as heard";
   EXPECT_EQ(telemetry.lbt_retries(), 1u);
+}
+
+TEST(PairingTelemetry, HopsDoNotConsumeEventStorage) {
+  // Regression test for issue #27: at a short hop slice, a multi-second discovery window produces
+  // far more hops than PAIRING_TELEMETRY_MAX_EVENTS. Before the fix, record_hop() stored each one
+  // in the fixed array, so a real RX arriving later in the same window could be silently dropped
+  // from the *stored* events (and PairingAdvisor's event-scanning passes — 1w_traffic/channel_busy/
+  // foreign_controller — could go blind) once hops alone filled it, even though heard_count() (a
+  // separate counter, incremented before the capacity check) kept counting it — so this specific
+  // bug affected the advisor's diagnosis, not rf_silent, which reads heard_count() directly. Assert
+  // the stored-event side no longer drops a real RX after many hops.
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  for (int i = 0; i < PAIRING_TELEMETRY_MAX_EVENTS * 4; i++)
+    telemetry.record_hop();
+  ASSERT_EQ(telemetry.hop_count(), static_cast<uint32_t>(PAIRING_TELEMETRY_MAX_EVENTS) * 4);
+  ASSERT_EQ(telemetry.event_count(), 0u) << "hops must not occupy the stored-event array";
+  ASSERT_FALSE(telemetry.truncated()) << "hops alone must never trip truncation";
+
+  const uint8_t src[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
+  telemetry.record_rx(build_rx_frame(CMD_DISCOVER_RESP, src), -50);
+
+  EXPECT_EQ(telemetry.event_count(), 1u) << "a real RX after many hops must still be stored";
+  EXPECT_EQ(telemetry.heard_count(), 1u);
+  EXPECT_FALSE(telemetry.truncated());
+}
+
+TEST(PairingTelemetry, RecentOneWaySightingIsRecordedAsRxEvent) {
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  const uint8_t src[NODE_ID_SIZE] = {0x2F, 0x9A, 0x98};
+  const uint8_t dst[NODE_ID_SIZE] = {0x00, 0x00, 0x3F};
+  RecentOneWayPairingSighting sighting{};
+  memcpy(sighting.src, src, NODE_ID_SIZE);
+  memcpy(sighting.dst, dst, NODE_ID_SIZE);
+  sighting.cmd = CMD_WRITE_PRIVATE;
+  sighting.rssi = -48;
+  sighting.seen_ms = 1;
+
+  telemetry.record_recent_one_way_sighting(sighting);
+
+  ASSERT_EQ(telemetry.event_count(), 1u);
+  EXPECT_EQ(telemetry.heard_count(), 1u) << "a recent sighting counts as heard, same as a live RX";
+  const PairingTelemetryEvent &event = telemetry.events()[0];
+  EXPECT_EQ(event.kind, PairingTelemetryEventKind::RX);
+  EXPECT_EQ(event.cmd, CMD_WRITE_PRIVATE);
+  EXPECT_TRUE(event.oneway);
+  EXPECT_EQ(event.aux, 1u) << "must be marked as a seeded pre-window sighting, not a live capture";
+  EXPECT_EQ(event.rssi, -48) << "the real RSSI must be preserved, not fabricated as 0";
+  EXPECT_EQ(memcmp(event.src_node, src, NODE_ID_SIZE), 0);
+  EXPECT_EQ(memcmp(event.dst_node, dst, NODE_ID_SIZE), 0);
 }
 
 TEST(PairingTelemetry, EventOverflowTruncatesStorageButHeardKeepsCountingAll) {
@@ -301,6 +361,96 @@ TEST(PairingTelemetry, DiscoveryTimeoutReportsNoResponseOutcome) {
   EXPECT_EQ(telemetry.outcome(), PairingOutcome::NO_RESPONSE);
   EXPECT_FALSE(telemetry.has_paired_device());
   EXPECT_NE(telemetry.result_sensor_string().find("outcome=no_response"), std::string::npos);
+}
+
+TEST(PairingTelemetry, RecentOneWaySightingSeedsDiscoveryTelemetryAndSuppressesRfSilent) {
+  // End-to-end regression test for issue #27 (miljaar): a 1W pairing gesture overheard shortly
+  // before discover_and_pair() is called must still show up as heard/1w_traffic, not rf_silent,
+  // even though nothing answers the discovery broadcast itself.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  const uint8_t remote_src[NODE_ID_SIZE] = {0x2F, 0x9A, 0x98};
+  IoFrame gesture{};
+  init_frame(gesture, /*is_2w=*/false, false, false, false);
+  set_dst(gesture, BROADCAST_DISCOVER_ALT);
+  set_src(gesture, remote_src);
+  set_cmd(gesture, CMD_WRITE_PRIVATE, nullptr, 0);
+  comp.process_received_packet_(frame_to_rx_packet(gesture));
+
+  // Nothing queued for the discovery attempt itself — it times out with NO_RESPONSE, same as
+  // DiscoveryTimeoutReportsNoResponseOutcome below, but the pre-window sighting should still
+  // register.
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  const PairingTelemetry &telemetry = comp.pairing_telemetry();
+  EXPECT_EQ(telemetry.outcome(), PairingOutcome::NO_RESPONSE);
+  EXPECT_GT(telemetry.heard_count(), 0u) << "the pre-window 1W gesture must count as heard";
+
+  PairingAdvice advice[PAIRING_ADVICE_MAX];
+  const uint8_t count = analyze_pairing_telemetry(telemetry, comp.node_id_, advice);
+  bool has_1w = false;
+  bool has_rf_silent = false;
+  for (uint8_t i = 0; i < count; i++) {
+    has_1w |= advice[i].code == PairingAdviceCode::ONE_WAY_PAIRING_TRAFFIC;
+    has_rf_silent |= advice[i].code == PairingAdviceCode::RF_SILENT;
+  }
+  EXPECT_TRUE(has_1w) << "the advisor should point at the 1W gesture, not RF silence";
+  EXPECT_FALSE(has_rf_silent);
+}
+
+TEST(PairingTelemetry, StaleOneWaySightingOutsideWindowIsIgnored) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  const uint8_t remote_src[NODE_ID_SIZE] = {0x2F, 0x9A, 0x98};
+  IoFrame gesture{};
+  init_frame(gesture, /*is_2w=*/false, false, false, false);
+  set_dst(gesture, BROADCAST_DISCOVER_ALT);
+  set_src(gesture, remote_src);
+  set_cmd(gesture, CMD_WRITE_PRIVATE, nullptr, 0);
+  comp.process_received_packet_(frame_to_rx_packet(gesture));
+
+  // Age the sighting past the window before pairing — it must not be seeded once stale.
+  test::burn_millis(PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS + 1);
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  const PairingTelemetry &telemetry = comp.pairing_telemetry();
+  EXPECT_EQ(telemetry.heard_count(), 0u) << "a sighting older than the window must not be seeded";
+}
+
+TEST(PairingTelemetry, OrdinaryOneWayTrafficDoesNotSeedDiscoveryTelemetry) {
+  // False-positive-direction counterpart to RecentOneWaySightingSeedsDiscoveryTelemetryAndSuppressesRfSilent:
+  // a 1W frame that does *not* match the pairing-gesture shape (decisions::is_one_way_pairing_gesture()
+  // — here, CMD_EXECUTE instead of one of the three gesture command bytes) must not be treated as
+  // "the motor is in 1W learning mode" evidence. Ordinary 1W remote traffic (someone operating a
+  // cover) is common and must not manufacture a false 1w_traffic diagnosis on every later pairing
+  // attempt within the window.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  const uint8_t remote_src[NODE_ID_SIZE] = {0x2F, 0x9A, 0x98};
+  IoFrame ordinary{};
+  init_frame(ordinary, /*is_2w=*/false, false, false, false);
+  set_dst(ordinary, BROADCAST_DISCOVER_ALT);
+  set_src(ordinary, remote_src);
+  set_cmd(ordinary, CMD_EXECUTE, nullptr, 0);
+  comp.process_received_packet_(frame_to_rx_packet(ordinary));
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  const PairingTelemetry &telemetry = comp.pairing_telemetry();
+  EXPECT_EQ(telemetry.heard_count(), 0u) << "a non-gesture 1W frame must not seed telemetry";
 }
 
 TEST(PairingTelemetry, TrafficWithNoValidDiscoveryResponseReportsInvalidResponseOutcome) {

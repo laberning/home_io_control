@@ -410,6 +410,16 @@ void IOHomeControlComponent::record_1w_activity_(uint32_t now) {
   this->last_1w_activity_ms_ = now;
 }
 
+void IOHomeControlComponent::record_oneway_pairing_gesture_(const IoFrame &frame, uint32_t now) {
+  if (!decisions::is_one_way_pairing_gesture((frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0, frame.dst, frame.cmd))
+    return;
+  memcpy(this->recent_oneway_pairing_sighting_.src, frame.src, NODE_ID_SIZE);
+  memcpy(this->recent_oneway_pairing_sighting_.dst, frame.dst, NODE_ID_SIZE);
+  this->recent_oneway_pairing_sighting_.cmd = frame.cmd;
+  this->recent_oneway_pairing_sighting_.rssi = this->radio_->get_last_capture().rssi_dbm;
+  this->recent_oneway_pairing_sighting_.seen_ms = now;
+}
+
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
   IoFrame frame;
   if (!parse(packet.data, packet.len, frame)) {
@@ -448,6 +458,10 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     // Any 1W frame means a remote is transmitting right now, duplicate or not — record it before
     // the dedup check so loop() keeps background polls off the radio for the rest of the burst.
     this->record_1w_activity_(now);
+    // Remember a pairing-gesture sighting the same way, before dedup, so a repeated gesture frame
+    // still refreshes the timestamp (issue #27/#65) — see record_oneway_pairing_gesture_()'s doc
+    // comment for why the discovery telemetry window alone isn't enough to catch this.
+    this->record_oneway_pairing_gesture_(frame, now);
 
     // Decode once and reuse for the dedup key, logging, and (when it carries a command intent) the
     // sender HA event, so a physical remote press (or sensor trigger) can drive automations directly.

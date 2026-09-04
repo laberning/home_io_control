@@ -17,7 +17,7 @@
 namespace esphome {
 namespace home_io_control {
 
-// === Numeric parameters (17) ===================================================
+// === Numeric parameters (19) ===================================================
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
@@ -63,6 +63,11 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](TuningConfig &t, float v) { t.exchange_response_wait_ms = static_cast<uint16_t>(v); }, false},
     {"exchange_total_budget_ms", [](const TuningConfig &t) { return static_cast<float>(t.exchange_total_budget_ms); },
      [](TuningConfig &t, float v) { t.exchange_total_budget_ms = static_cast<uint16_t>(v); }, false},
+    // false: read straight out of TuningConfig at TX time by PairingEngine::run_discovery_phase_(),
+    // the same as normal_start_preamble/cold_broadcast_reply_preamble above.
+    {"pairing_discovery_preamble",
+     [](const TuningConfig &t) { return static_cast<float>(t.pairing_discovery_preamble); },
+     [](TuningConfig &t, float v) { t.pairing_discovery_preamble = static_cast<uint16_t>(v); }, false},
     {"pairing_discovery_wait_ms", [](const TuningConfig &t) { return static_cast<float>(t.pairing_discovery_wait_ms); },
      [](TuningConfig &t, float v) { t.pairing_discovery_wait_ms = static_cast<uint16_t>(v); }, false},
     {"pairing_discovery_initial_dwell_ms",

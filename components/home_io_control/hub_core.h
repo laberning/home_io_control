@@ -94,7 +94,8 @@ class IOHomeControlComponent : public Component,
   /// through all collaborators without calling setup().
   IOHomeControlComponent()
       : exchange_engine_(&radio_, node_id_, system_key_, &tuning_),
-        pairing_engine_(&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_, pairing_telemetry_),
+        pairing_engine_(&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_, pairing_telemetry_,
+                        recent_oneway_pairing_sighting_),
         management_actions_(node_id_, system_key_, &tuning_, exchange_engine_, registry_, &initialized_, this),
         // Capturing `this` is safe here: the callback is only ever invoked from send_burst(),
         // long after construction. It injects the *ability* to transmit rather than a reference
@@ -747,6 +748,16 @@ class IOHomeControlComponent : public Component,
   /// devices it targets need the same settling time either way.
   /// @param now millis() at which this frame was seen or sent.
   void record_1w_activity_(uint32_t now);
+  /// If `frame` matches a 1W remote's pairing gesture (decisions::is_one_way_pairing_gesture()),
+  /// remember it (src/dst/cmd plus the radio's last-capture RSSI) in
+  /// recent_oneway_pairing_sighting_ so a fresh discover_and_pair() attempt can seed its telemetry
+  /// with it — see RecentOneWayPairingSighting's doc comment (issue #27/#65). A no-op for any
+  /// other frame. Called from process_received_packet_()'s 1W-frame path, unconditionally (before
+  /// the burst-dedup check, like record_1w_activity_()) so a repeated gesture frame still
+  /// refreshes the timestamp (and RSSI).
+  /// @param frame Parsed 1W frame (CTRL0 1W bit already confirmed set by the caller).
+  /// @param now millis() at which this frame was seen.
+  void record_oneway_pairing_gesture_(const IoFrame &frame, uint32_t now);
   /// Schedule a delayed status poll for a registered device using the Component timeout API.
   /// @param device_id ID of the device to poll.
   /// @param delay_ms Delay in milliseconds before polling.
@@ -1048,7 +1059,13 @@ class IOHomeControlComponent : public Component,
   bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
-  PairingTelemetry pairing_telemetry_;    ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.
+  PairingTelemetry pairing_telemetry_;  ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.
+  /// Most recent 1W pairing-gesture frame seen on the hub's normal passive RX path (e.g. a PROG
+  /// press's WRITE_PRIVATE/1W-remove/discover-alt broadcast), remembered so PairingEngine can seed
+  /// a fresh discover_and_pair() attempt's telemetry with it — see record_oneway_pairing_gesture_()
+  /// and RecentOneWayPairingSighting's doc comment (issue #27/#65). Declared before pairing_engine_,
+  /// which holds a reference to it, so member-init order matches the initializer list.
+  RecentOneWayPairingSighting recent_oneway_pairing_sighting_{};
   ExchangeEngine exchange_engine_;        ///< Owns all authenticated exchange and LBT/hop logic.
   PairingEngine pairing_engine_;          ///< Owns the three-phase device pairing flow.
   ManagementActions management_actions_;  ///< Owns rename, identify, force-open, scan_paired_devices, and other

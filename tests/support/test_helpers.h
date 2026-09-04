@@ -63,6 +63,14 @@ inline void burn_micros(uint32_t n) {
     (void) esphome::micros();
 }
 
+/// Burn `n` calls to esphome::millis(), same rationale as burn_micros() above but for the
+/// millisecond counter — needed to test a millis()-windowed decision (e.g.
+/// PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS) without an actual multi-second sleep.
+inline void burn_millis(uint32_t n) {
+  for (uint32_t i = 0; i < n; i++)
+    (void) esphome::millis();
+}
+
 /// PairingEngine subclass that promotes protected phase helpers to public.
 ///
 /// Used by the pairing test suite as a shadow member in TestableComponent so

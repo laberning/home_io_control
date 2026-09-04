@@ -60,6 +60,7 @@ TEST(TuningRegistry, NumberTableContainsExactlyExpectedParameters) {
       "normal_start_preamble",
       "lbt_max_retries",
       "lbt_rssi_threshold_dbm",
+      "pairing_discovery_preamble",
       "pairing_discovery_wait_ms",
       "pairing_discovery_initial_dwell_ms",
       "pairing_key_exchange_retries",
@@ -79,8 +80,8 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
   EXPECT_EQ(select_param_names(), expected) << "select table drifted from the expected inventory";
 }
 
-TEST(TuningRegistry, TotalParameterCountIsTwentyFive) {
-  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 25u);
+TEST(TuningRegistry, TotalParameterCountIsTwentySix) {
+  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 26u);
 }
 
 // ============================================================================
@@ -98,6 +99,23 @@ TEST(TuningRegistry, EveryNumberParameterRoundTrips) {
     comp.update_tuning_number(p->name, value);
     EXPECT_FLOAT_EQ(comp.get_tuning_number_value(p->name), value) << "parameter did not round-trip: " << p->name;
     value += 7.0F;
+  }
+}
+
+TEST(TuningRegistry, EveryNumberParameterAppearsInSnapshotWhenNonDefault) {
+  // Regression test: tuning_config_snapshot() is a hand-written if-chain, one line per field, that
+  // does not derive from this registry table — a new NUMBER_PARAMS entry can round-trip through
+  // update_/get_ (registry-driven, covered above) while staying invisible in the exact diagnostic
+  // log (`tuning_config_full_snapshot()`, logged at the start of every discover_and_pair() attempt)
+  // a user would paste into a bug report. Walks every registered number parameter, nudges it off
+  // its default by +1 (small enough not to overflow any field's storage type — uint8_t included —
+  // while still differing from any real default), and asserts the snapshot names it.
+  for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
+    TuningConfig cfg{};
+    p->set(cfg, p->get(cfg) + 1.0F);
+    const std::string snapshot = tuning_config_snapshot(cfg);
+    EXPECT_NE(snapshot.find(std::string(p->name) + "="), std::string::npos)
+        << p->name << " is missing from tuning_config_snapshot() despite being non-default";
   }
 }
 

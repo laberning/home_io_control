@@ -5,6 +5,7 @@
 #include "tuning_config.h"
 
 #include "proto_constants.h"
+#include "tuning_registry.h"
 
 #include <algorithm>
 #include <cctype>
@@ -227,36 +228,29 @@ std::string tuning_update_log_line(const std::string &name, const std::string &v
 std::string tuning_config_snapshot(const TuningConfig &cfg) {
   std::string result;
 
+  // The three RX-bandwidth fields are enums, not plain numbers, so they stay hand-written here
+  // rather than going through the numeric loop below (they're SELECT_PARAMS, not NUMBER_PARAMS,
+  // in tuning_registry.cpp).
   if (cfg.sx1262_rx_bandwidth != DEFAULTS.sx1262_rx_bandwidth)
     result += " sx1262_rx_bandwidth=" + sx1262_bandwidth_to_string(cfg.sx1262_rx_bandwidth);
-  if (cfg.sx1262_response_preamble != DEFAULTS.sx1262_response_preamble)
-    result += " sx1262_response_preamble=" + std::to_string(cfg.sx1262_response_preamble);
-  if (cfg.sx1262_post_tx_settle_us != DEFAULTS.sx1262_post_tx_settle_us)
-    result += " sx1262_post_tx_settle_us=" + std::to_string(cfg.sx1262_post_tx_settle_us);
   if (cfg.sx1276_rx_bandwidth != DEFAULTS.sx1276_rx_bandwidth)
     result += " sx1276_rx_bandwidth=" + sx1276_bandwidth_to_string(cfg.sx1276_rx_bandwidth);
-  if (cfg.sx1276_response_preamble != DEFAULTS.sx1276_response_preamble)
-    result += " sx1276_response_preamble=" + std::to_string(cfg.sx1276_response_preamble);
-  if (cfg.sx1276_discovery_hop_slice_ms != DEFAULTS.sx1276_discovery_hop_slice_ms)
-    result += " sx1276_discovery_hop_slice_ms=" + std::to_string(cfg.sx1276_discovery_hop_slice_ms);
-  if (cfg.sx1262_discovery_hop_slice_ms != DEFAULTS.sx1262_discovery_hop_slice_ms)
-    result += " sx1262_discovery_hop_slice_ms=" + std::to_string(cfg.sx1262_discovery_hop_slice_ms);
   if (cfg.lr1121_rx_bandwidth != DEFAULTS.lr1121_rx_bandwidth)
     result += " lr1121_rx_bandwidth=" + lr1121_bandwidth_to_string(cfg.lr1121_rx_bandwidth);
-  if (cfg.lr1121_response_preamble != DEFAULTS.lr1121_response_preamble)
-    result += " lr1121_response_preamble=" + std::to_string(cfg.lr1121_response_preamble);
-  if (cfg.lr1121_post_tx_settle_us != DEFAULTS.lr1121_post_tx_settle_us)
-    result += " lr1121_post_tx_settle_us=" + std::to_string(cfg.lr1121_post_tx_settle_us);
-  if (cfg.lr1121_discovery_hop_slice_ms != DEFAULTS.lr1121_discovery_hop_slice_ms)
-    result += " lr1121_discovery_hop_slice_ms=" + std::to_string(cfg.lr1121_discovery_hop_slice_ms);
-  if (cfg.cold_broadcast_reply_preamble != DEFAULTS.cold_broadcast_reply_preamble)
-    result += " cold_broadcast_reply_preamble=" + std::to_string(cfg.cold_broadcast_reply_preamble);
-  if (cfg.normal_start_preamble != DEFAULTS.normal_start_preamble)
-    result += " normal_start_preamble=" + std::to_string(cfg.normal_start_preamble);
-  if (cfg.lbt_max_retries != DEFAULTS.lbt_max_retries)
-    result += " lbt_max_retries=" + std::to_string(cfg.lbt_max_retries);
-  if (cfg.lbt_rssi_threshold_dbm != DEFAULTS.lbt_rssi_threshold_dbm)
-    result += " lbt_rssi_threshold_dbm=" + std::to_string(cfg.lbt_rssi_threshold_dbm);
+
+  // Every plain numeric field is driven off the same NUMBER_PARAMS table the HA `number` entities
+  // and `make tuning-sync` use (tuning_registry.cpp) — not a second, independently-maintained list
+  // of field names. A hand-written per-field if-chain here once let a real, shipped knob
+  // (`pairing_discovery_preamble`) go completely missing from this exact diagnostic line — the one
+  // `discover_and_pair()` logs at the start of every attempt specifically so a user's bug report
+  // records which knobs were actually in effect — while still working everywhere else (HA entity,
+  // YAML, `make tuning-sync`). Table-driven means a new numeric knob can't repeat that: it either
+  // has a NUMBER_PARAMS row (and is covered) or it doesn't (and can't be set from HA at all).
+  for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
+    const float current = p->get(cfg);
+    if (current != p->get(DEFAULTS))
+      result += " " + std::string(p->name) + "=" + std::to_string(static_cast<int64_t>(current));
+  }
 
   if (cfg.pairing_discovery_commands != DEFAULTS.pairing_discovery_commands)
     result += " pairing_discovery_commands=" + discovery_commands_to_string(cfg.pairing_discovery_commands);
@@ -274,12 +268,8 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
   }
   if (cfg.pairing_discovery_low_power != DEFAULTS.pairing_discovery_low_power)
     result += " pairing_discovery_low_power=" + std::string(cfg.pairing_discovery_low_power ? "true" : "false");
-  if (cfg.pairing_discovery_wait_ms != DEFAULTS.pairing_discovery_wait_ms)
-    result += " pairing_discovery_wait_ms=" + std::to_string(cfg.pairing_discovery_wait_ms);
-  if (cfg.pairing_discovery_initial_dwell_ms != DEFAULTS.pairing_discovery_initial_dwell_ms)
-    result += " pairing_discovery_initial_dwell_ms=" + std::to_string(cfg.pairing_discovery_initial_dwell_ms);
-  if (cfg.pairing_key_exchange_retries != DEFAULTS.pairing_key_exchange_retries)
-    result += " pairing_key_exchange_retries=" + std::to_string(cfg.pairing_key_exchange_retries);
+  // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms, and
+  // pairing_key_exchange_retries are plain NUMBER_PARAMS entries — covered by the loop above.
 
   return result;
 }

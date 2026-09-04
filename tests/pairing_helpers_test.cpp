@@ -37,12 +37,18 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
 
+  // Local recent-sighting slot for the shadow engine below — independent of the base class's own
+  // protected member of the same purpose, and left at its default (seen_ms == 0) so it never seeds
+  // telemetry unless a test explicitly sets it.
+  RecentOneWayPairingSighting recent_oneway_pairing_sighting_{};
+
   // Shadow the base pairing_engine_ with a TestablePairingEngine connected to the
   // same hub state via the same pointers. Tests that script individual phases use
   // this member; discover_and_pair() internally uses the base-class member (both
   // share the same radio/registry/node_id via shared pointers/references).
-  test::TestablePairingEngine pairing_engine_{&radio_,          node_id_,  system_key_,       &tuning_,
-                                              exchange_engine_, registry_, pairing_telemetry_};
+  test::TestablePairingEngine pairing_engine_{
+      &radio_,          node_id_,  system_key_,        &tuning_,
+      exchange_engine_, registry_, pairing_telemetry_, recent_oneway_pairing_sighting_};
 };
 
 // --- Frame builders ---------------------------------------------------------
