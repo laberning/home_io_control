@@ -2,8 +2,8 @@
 """Self-tests for the golden-frame corpus toolchain (protolib.py / ingest.py / validate.py).
 
 Stdlib `assert`-based, no pytest — mirrors scripts/check-tuning-sync.py's dependency-light
-style. Fixtures under scripts/corpus/tests/data/ are trimmed excerpts of the real
-analysis/issues/*.txt logs (plus one synthetic mangled paste exercising the fallback tier).
+style. Fixtures under scripts/corpus/tests/data/ are trimmed excerpts of real on-air logs
+(plus one synthetic mangled paste exercising the fallback tier).
 
 Run via `python3 scripts/corpus/tests/run_tests.py`; wired into `make corpus-validate`.
 Exits non-zero with a description of the first failure.
@@ -105,7 +105,7 @@ def test_io_frame_only_retry_not_merged() -> None:
 
 
 def test_merge_prefers_nonzero_freq_and_t_ms() -> None:
-    # Reproduces the observed firmware quirk (analysis/issues/27.txt): a retried DISCOVER_REQ's
+    # Reproduces the observed firmware quirk: a retried DISCOVER_REQ's
     # io_capture tx_frame entry logs freq=0/ts=0 (no capture context at that call site), while
     # the paired io_frame entry for the exact same transmission carries the real freq.
     a = protolib.RawFrame("tx", "C8 00 00 00 3B C0 FF EE 28", freq=0, t_ms=0, chip="sx1262", unverified=False)

@@ -34,7 +34,7 @@ constexpr const char *kPyFloorMsg = "Parsed too few entries from protolib.py's C
 }  // namespace
 
 TEST(OpcodeNameSync, CppConstantsAreNamedByCommandName) {
-  // Closes the hole noted in the plan: radio_sx1262_rx_test.cpp's NamedCommandsAreEitherKnown...
+  // Closes a coverage hole: radio_sx1262_rx_test.cpp's NamedCommandsAreEitherKnown...
   // iterates command_name()'s output, so it can never catch a CMD_* constant that was added to
   // proto_constants.h but never given a case in command_name()'s switch -- that opcode is simply
   // absent from its loop's working set. This test starts from the constants instead.
@@ -90,7 +90,7 @@ TEST(OpcodeNameSync, PythonCmdNamesMatchCppConstants) {
 }
 
 TEST(OpcodeNameSync, PythonRekeyConstantsMatchCpp) {
-  // protolib.py's bare module-level CMD_* constants (§1.3 of the plan this test implements) drive
+  // protolib.py's bare module-level CMD_* constants drive
   // which frames `ingest.py --rekey` rewrites — more load-bearing than CMD_NAMES, which only
   // decorates scaffold notes. Deliberately one-directional: the reverse (every C++ CMD_* must have
   // a bare Python constant) must NOT be asserted — that set is an intentional 7-of-50 subset

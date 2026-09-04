@@ -177,6 +177,17 @@ class DeviceBoundCompanion {
 /// are deliberately not migrated: they take the parent by constructor injection and keep
 /// hub_core.h out of their header via a forward declaration, which this mixin's include of
 /// hub_internal.h would defeat.
+///
+/// Why every one of these is created from the `home_io_control:` block (or a dedicated `button:`
+/// entry) and never from a device-bound `switch:`/`button:` platform entry: a user-declared
+/// device-bound entry would have to dispatch on the presence of a key (`io_device_id`,
+/// `commands:`, `enrollment:`, …) to decide what the entity *is*, so an entry that merely omitted
+/// `io_device_id` by mistake could be misread as one of these security-sensitive hub entities
+/// instead of failing validation. Creating them from the hub block removes that failure mode:
+/// there is no shared schema for a device-bound entity and a hub entity to be confused under.
+/// This is the shared reason behind all of them; each entity's own doc adds only what is
+/// specific to it (the ADR 0021 permission-vs-arming argument, the ADR 0026 physical-interlock
+/// argument, the "2W extraction and 1W adoption are deliberately independent" note, and so on).
 class HubBoundEntity {
  public:
   /// @brief Set the parent controller component.
@@ -185,6 +196,23 @@ class HubBoundEntity {
 
  protected:
   IOHomeControlComponent *parent_{nullptr};
+};
+
+/// @brief Mixin for the hub-level entities that additionally scope themselves to one
+/// `oneway_controllers:` identity: the 1W command buttons, the 1W enrollment button, and the
+/// per-identity "Last 1W Command" text sensor.
+/// @ingroup hioc_platforms
+///
+/// They act on the hub, not on a paired device, so they are HubBoundEntity plus this one handle.
+/// The identity is a `oneway_controllers:` block entry, not an address in the hub's device table.
+class OneWayControllerBound : public HubBoundEntity {
+ public:
+  /// @brief Set the controller identity this entity acts as / reports on.
+  /// @param id Handle from the `oneway_controllers:` block.
+  void set_controller_id(const std::string &id) { this->controller_id_ = id; }
+
+ protected:
+  std::string controller_id_;
 };
 
 }  // namespace home_io_control

@@ -1,7 +1,7 @@
 /// @file platform_exchange_failures_sensor_test.cpp
 /// @brief Tests for the generated Exchange Failures diagnostic sensor.
 
-#include "platform_exchange_failures_sensor.h"
+#include "platform_companion_sensors.h"
 
 #include "hub_core.h"
 #include "hub_internal.h"

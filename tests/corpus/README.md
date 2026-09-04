@@ -199,7 +199,7 @@ the bug).
 There is no exception, including for a capture that turns out to hold real key material after it
 was committed. That case is real — an `own-hardware` capture ingested without `--rekey` keeps HMACs
 computed under the maintainer's real key, and a committed HMAC is a permanent offline oracle for
-that key (`analysis/dual_use_security_plan.md` §2). **Delete it and re-record the scenario**; do
+that key. **Delete it and re-record the scenario**; do
 not rewrite it in place. Re-keying committed bytes would mean the corpus's central promise ("these
 are the bytes that were on the wire") holds only until someone decides otherwise, and a fixture
 whose provenance is "we edited it later" is worth less than a re-recorded one. If the re-record
@@ -300,7 +300,7 @@ the two implementations fails a gate on both sides.
    (`io_capture` structured, legacy `io_frame`) plus a liberal fallback for mangled pastes, and
    proposes mechanically-derivable `expect:` fields (cmd/start/end/protocol only):
    ```bash
-   python3 scripts/corpus/ingest.py analysis/issues/27.txt \
+   python3 scripts/corpus/ingest.py pasted_capture.txt \
        --id somfy_awning_discovery_with_overheard_smoove_1w --device "Somfy Sunea IO motor" \
        --captured-with sx1262 --origin github-issue \
        --issue https://github.com/laberning/home_io_control/issues/27 --date 2026-07-06

@@ -10,10 +10,9 @@
 #include <string>
 #include <vector>
 
-/// Shared plumbing for the corpus_*_test.cpp suites (design §6): every suite parses capture
+/// Shared plumbing for the corpus_*_test.cpp suites: every suite parses capture
 /// frames the same way and filters/instantiates the same CorpusCapture pointer arrays. Kept
-/// here once so a new suite (e.g. Step H2's pairing replay) starts from a single include
-/// instead of a sixth copy-paste.
+/// here once so a new suite starts from a single include instead of another copy-paste.
 namespace corpus_test {
 using namespace esphome::home_io_control;
 

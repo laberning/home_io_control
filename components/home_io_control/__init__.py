@@ -130,43 +130,39 @@ IOHomeControlComponent = home_io_control_ns.class_(
     "IOHomeControlComponent", cg.Component, spi.SPIDevice
 )
 # Hub-level "Recover System Key" switch (key extraction, key_extraction_responder.cpp /
-# platform_accept_foreign_pairing_switch.h). Deliberately NOT exposed via a `switch:` platform
-# entry: earlier revisions dispatched on the presence/absence of `io_device_id` within switch.py,
-# which meant an ordinary device-bound switch missing `io_device_id` by mistake would silently
-# become this security-sensitive switch instead of failing validation. Gating it behind this
-# boolean (created dynamically, like the `tuning:` UI controls) makes that class of mistake
-# structurally impossible: there is no shared schema for the two to be confused under.
+# platform_hub_controls.h). Deliberately NOT exposed via a `switch:` platform entry: earlier
+# revisions dispatched on the presence/absence of `io_device_id` within switch.py, which meant an
+# ordinary device-bound switch missing `io_device_id` by mistake would silently become this
+# security-sensitive switch instead of failing validation. Gating it behind this boolean (created
+# dynamically, like the `tuning:` UI controls) makes that class of mistake structurally
+# impossible: there is no shared schema for the two to be confused under.
 IOHomeAcceptForeignPairingSwitch = home_io_control_ns.class_(
     "IOHomeAcceptForeignPairingSwitch", switch_component.Switch, cg.Component
 )
 # Hub-level "Recover 1W Controller Key" switch (key adoption, oneway_key_adoption.cpp /
-# platform_recover_oneway_key_switch.h). Same dynamically-created, hub-bound shape as the switch
-# above, and gated behind its own boolean for the same reason: there is no shared schema for a
-# device-bound switch to be confused under. Independent of accept_foreign_pairing — the two arm
-# different listeners (2W pairing responder vs. 1W add-controller broadcast).
+# platform_hub_controls.h). Same dynamically-created, hub-bound shape and rationale as the switch
+# above. Independent of accept_foreign_pairing — the two arm different listeners (2W pairing
+# responder vs. 1W add-controller broadcast).
 IOHomeRecoverOneWayKeySwitch = home_io_control_ns.class_(
     "IOHomeRecoverOneWayKeySwitch", switch_component.Switch, cg.Component
 )
 # Hub-level "Flash LR1121 Radio Firmware" button (lr1121_firmware_update_controller.cpp /
-# platform_lr1121_firmware_update_button.h). Same "created dynamically from a home_io_control:
-# sub-block, not a device-bound platform entry" shape as the switch above — there is no
-# `io_device_id` to bind this to, it targets the hub's own radio.
+# platform_lr1121_controls.h). Same "created dynamically from a home_io_control: sub-block, not a
+# device-bound platform entry" shape as the switch above — there is no `io_device_id` to bind this
+# to, it targets the hub's own radio.
 IOHomeLr1121FirmwareUpdateButton = home_io_control_ns.class_(
     "IOHomeLr1121FirmwareUpdateButton", button_component.Button, cg.Component
 )
 # Generated 1W command buttons and their per-identity diagnostic sensor
-# (platform_oneway_command_button.h / platform_oneway_last_command_text_sensor.h). Created from
-# the `oneway_controllers:` block for the same reason as the entities above: a `button:` entry
-# that dispatched on the presence of a `commands:` key would let a mistyped key turn one kind of
-# button into another, which is precisely the failure the key-extraction switch was moved here to
-# avoid.
+# (platform_oneway_entities.h). Created from the `oneway_controllers:` block, never a `button:`
+# entry, for the same reason as the switch above.
 IOHomeOneWayCommandButton = home_io_control_ns.class_(
     "IOHomeOneWayCommandButton", button_component.Button, cg.Component
 )
 IOHomeOneWayLastCommandTextSensor = home_io_control_ns.class_(
     "IOHomeOneWayLastCommandTextSensor", text_sensor_component.TextSensor, cg.Component
 )
-# Generated 1W enrollment button (platform_oneway_enroll_button.h), one per identity with
+# Generated 1W enrollment button (platform_oneway_entities.h), one per identity with
 # `enrollment: true`. Same "created from the hub block, never a `button:` entry" reasoning as
 # IOHomeOneWayCommandButton above -- see that class's comment.
 IOHomeOneWayEnrollButton = home_io_control_ns.class_(
@@ -184,9 +180,9 @@ ONEWAY_COMMANDS = {
     "favorite": OneWayButtonAction.FAVORITE,
 }
 # Hub-level "Allow LR1121 Bootloader Rewrite (Irreversible)" arming switch
-# (lr1121_firmware_update_controller.cpp / platform_lr1121_bootloader_rewrite_switch.h). Same
-# dynamically-created, hub-bound shape as the two entities above; created only when
-# lr1121_firmware_update.bootloader: is configured (see _create_lr1121_bootloader_update()).
+# (lr1121_firmware_update_controller.cpp / platform_lr1121_controls.h). Same dynamically-created,
+# hub-bound shape as the two entities above; created only when lr1121_firmware_update.bootloader:
+# is configured (see _create_lr1121_bootloader_update()).
 IOHomeLr1121BootloaderRewriteSwitch = home_io_control_ns.class_(
     "IOHomeLr1121BootloaderRewriteSwitch", switch_component.Switch, cg.Component
 )
@@ -808,8 +804,8 @@ def _validate_oneway_controllers(config):
             )
 
         # A VELUX enrollment 0x30 sweep goes to {roller_shutter, awning, dual_shutter} and never
-        # screen/blind/venetian_blind -- no VELUX remote pairs on those classes (issue #74 capture,
-        # analysis/velux_vs_somfy_1w_frame_differences.md). If this identity is a screen/blind that
+        # screen/blind/venetian_blind -- no VELUX remote pairs on those classes (issue #74 capture).
+        # If this identity is a screen/blind that
         # will enroll and hasn't narrowed the sweep itself, say so: enrollment ignores io_device_type.
         if (
             identity[CONF_MANUFACTURER] == MANUFACTURER_OPTIONS["velux"]

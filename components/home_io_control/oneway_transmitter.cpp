@@ -122,11 +122,11 @@ bool OneWayTransmitter::send_enrollment(const std::string &controller_id) {
 }
 
 bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &identity) {
-  // The documented 1W pairing handshake (reference/iown-homecontrol/docs/linklayer.md:396, "1W
-  // Discovery") is `0x39` immediately followed by `0x30`, both from the same controller, back to
-  // back within one gesture -- a real Smoove capture landed them 128 ms apart, same burst (see
-  // tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml and
-  // analysis/completed/oneway_1w_support_plan.md Step 13). `0x39` here carries only this
+  // The documented 1W pairing handshake (the iown-homecontrol link-layer notes, "1W Discovery") is
+  // `0x39` immediately followed by `0x30`, both from the same controller, back to back within one
+  // gesture -- a real Smoove capture landed them 128 ms apart, same burst (see
+  // tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml).
+  // `0x39` here carries only this
   // identity's own `src` address, so on the wire it can only mean "clear my own prior entry
   // before I re-register" -- it cannot name or displace a different controller. Sending it right
   // before `0x30` clears a stale slot from an earlier enrollment attempt under this identity,
@@ -153,7 +153,7 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
 
 bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentity &identity) {
   // The gesture a real KLI 310/313 PROG press produces (issue #74 capture + samr037/iohc-flipper
-  // tx_runner.c + the KLI manual, see analysis/velux_vs_somfy_1w_frame_differences.md §6):
+  // tx_runner.c + the KLI manual):
   //   0x39 -> 00 00 3F  (clear self; VELUX broadcasts it, unlike Somfy's typed 0x39)
   //   0x30 -> each of {roller_shutter, awning, dual_shutter} under one sequence  (the class sweep)
   //   EXECUTE STOP, then EXECUTE DOWN, both -> 00 00 3F at the VELUX ACEI  (registration completion)

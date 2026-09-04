@@ -1,5 +1,5 @@
 /// @file corpus_exchange_replay_test.cpp
-/// @brief Full-exchange replay through ExchangeEngine (design §6.5) — the highest-fidelity
+/// @brief Full-exchange replay through ExchangeEngine — the highest-fidelity
 /// corpus test: scripts the real send_and_receive_() state machine with a capture's `rx`
 /// frames and asserts what it actually transmits.
 ///
@@ -9,7 +9,7 @@
 /// into the mock radio in capture order, including any frames that classify IGNORE_UNRELATED
 /// (ExchangeEngine's own wait loop skips those exactly as it would on real overheard traffic —
 /// see corpus_classification_test.cpp for the same state machine asserted independently).
-/// PAIRING captures are out of scope here (arrives with Step H2 and a dedicated pairing harness).
+/// PAIRING captures are out of scope here — they have their own harness (corpus_pairing_replay_test.cpp).
 ///
 /// Byte-exactness: for `key: corpus` captures the challenge comes from the capture itself and
 /// HMAC is a pure function of it, so every transmitted frame — including the computed 0x3D — is

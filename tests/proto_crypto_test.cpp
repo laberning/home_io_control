@@ -230,7 +230,7 @@ TEST(ProtoCrypto, RecoverSystemKeyFromTransferWrongIvDataFails) {
 // ========================================================================================
 // create_1w_hmac() / construct_iv_1w_sequence() — the 1W frame authenticator
 // ========================================================================================
-// Two independent published vectors from reference/iown-homecontrol's docs/linklayer.md
+// Two independent published vectors from the iown-homecontrol link-layer documentation
 // (CC0-1.0), captured as the reference_1w_* corpus vectors. They pin different
 // halves of the primitive: the add-controller vector pins the final MAC under a known key, and
 // the execute vector pins the IV construction itself (checksum bytes at 8-9, sequence at 10-11)
@@ -287,12 +287,12 @@ TEST(ProtoCrypto, Create1wHmacRejectsWrongSpan) {
 // ========================================================================================
 // crypt_1w_key() / construct_iv_1w_node() — the 1W add-controller key wrap
 // ========================================================================================
-// Published worked example from reference/iown-homecontrol's docs/linklayer.md (CC0-1.0),
+// Published worked example from the iown-homecontrol link-layer documentation (CC0-1.0),
 // also captured verbatim in tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml:
 // node ABCDEF, controller key 0102...1516, sequence 0x1234. Independent of this codebase, so a
 // match here is evidence crypt_1w_key()'s IV construction is correct, not merely self-consistent
 // — the same role the CryptKeyMatchesDocumentedIownHomecontrol* vectors play for the 2W sibling.
-// This is the primary, hardware-free KAT for Phase 3A Step 1.
+// This is the primary, hardware-free KAT for the 1W add-controller key wrap.
 
 TEST(ProtoCrypto, ConstructIv1wNodeMatchesPublishedVector) {
   const uint8_t node[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};

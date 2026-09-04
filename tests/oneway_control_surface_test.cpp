@@ -1,5 +1,5 @@
 #include "oneway_controller.h"
-#include "platform_oneway_last_command_text_sensor.h"
+#include "platform_oneway_entities.h"
 
 #include "test_helpers.h"
 

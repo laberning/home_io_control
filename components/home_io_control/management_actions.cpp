@@ -132,10 +132,9 @@ struct ProbeDescriptor {
 
 /// @brief The full set of probes probe_device()/probe_sweep() can dispatch to.
 ///
-/// Single source of truth for probe names, replacing what used to be an if/else-if chain with
-/// the "index must be..." error message written out once per branch. Adding, removing, or
-/// renaming a probe is a one-line change here rather than a change to both probe_device()'s
-/// dispatch and its error message. Deliberately has no "unknown4a" row -- see ADR 0024.
+/// Single source of truth for probe names. Adding, removing, or renaming a probe is a one-line
+/// change here rather than a change to both probe_device()'s dispatch and its "index must be..."
+/// error message. Deliberately has no "unknown4a" row -- see ADR 0024.
 constexpr ProbeDescriptor PROBE_TABLE[] = {
     {PROBE_NAME_PRIVATE_FN, true, build_probe_private_fn},
     {PROBE_NAME_PRIVATE_FN_SUB, true, build_probe_private_fn_sub},
@@ -224,10 +223,9 @@ struct ScanResponder {
 /// designated TX channel (see FREQ_CH2's doc comment) and therefore the most likely to catch a
 /// reply on the first attempt.
 ///
-/// This TX retry is not compensating for a receive-side bug: for a long time the larger loss
-/// was on the hub's own listen path (devices answered ~83% of attempts, the hub only received
-/// ~36% of those replies, from a blind channel rotation), which has since been fixed by having
-/// the listen extend its dwell on a detected preamble/sync instead of hopping mid-frame.
+/// This TX retry is a duty-cycle workaround, not a receive-side fix. The hub's listen path
+/// separately extends its dwell on a detected preamble/sync rather than hopping mid-frame, which
+/// is what keeps it from dropping replies it does hear.
 constexpr uint32_t SCAN_CHANNELS[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
 constexpr uint8_t SCAN_CHANNEL_COUNT = sizeof(SCAN_CHANNELS) / sizeof(SCAN_CHANNELS[0]);
 

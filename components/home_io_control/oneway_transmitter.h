@@ -136,11 +136,10 @@ class OneWayTransmitter {
   /// (`resolve_oneway_wire_profile()`, ADR 0032).
   ///
   /// **`EnrollGesture::SOMFY`** (somfy / unset / any unprofiled vendor): `0x39` (remove,
-  /// self-directed) then `0x30` (add) — the documented 1W handshake
-  /// (`reference/iown-homecontrol/docs/linklayer.md:396`), both to the identity's own
-  /// `io_device_type`, one burst each, matched by a real Smoove capture landing the two 128 ms
-  /// apart (`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`).
-  /// Byte-for-byte the pre-ADR-0032 behaviour.
+  /// self-directed) then `0x30` (add) — the documented 1W handshake (the iown-homecontrol
+  /// link-layer notes), both to the identity's own `io_device_type`, one burst each, matched by a
+  /// real Smoove capture landing the two 128 ms apart
+  /// (`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`).
   ///
   /// **`EnrollGesture::VELUX_KLI`** (manufacturer velux): `0x39` to the all-devices address, then
   /// a `0x30` burst to **each** class in `effective_enrollment_classes()` under one shared
@@ -192,14 +191,13 @@ class OneWayTransmitter {
              const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
              const char *explicit_intent = "");
 
-  /// send_enrollment()'s two gestures, split so each stays simple and the SOMFY one is literally
-  /// the pre-ADR-0032 body. The dispatcher resolves the identity once and hands it down.
+  /// send_enrollment()'s two gestures, split so each stays simple. The dispatcher resolves the
+  /// identity once and hands it down.
   bool send_somfy_enrollment_(const OneWayControllerIdentity &identity);
   bool send_velux_kli_enrollment_(const OneWayControllerIdentity &identity);
 
   /// Reserve **one** sequence, then 0x30-enroll to each non-UNKNOWN class in `classes` under that
-  /// one sequence — the VELUX class sweep a real KLI remote sends (analysis
-  /// velux_vs_somfy_1w_frame_differences.md §6). One report for the whole sweep.
+  /// one sequence — the VELUX class sweep a real KLI remote sends. One report for the whole sweep.
   /// @return true if at least one class's burst reached the radio.
   bool send_enroll_sweep_(const OneWayControllerIdentity &identity, const std::array<DeviceType, 3> &classes);
 

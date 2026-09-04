@@ -339,9 +339,8 @@ always empty (there is no single target); the full report above is the event's `
 **A single scan may still miss devices — run it again if one you expect is absent.** Paired
 devices duty-cycle across the three radio channels independently of the hub, so the hub retries
 the broadcast on all three IO-homecontrol channels (CH2, then CH1, then CH3), each with its own
-full `pairing_discovery_wait_ms` listen window, before returning the merged report. A past hub-side
-listening bug used to cause most misses; that has since been fixed, so a missed reply is now
-genuinely uncommon, but it is still possible for a device to be missed through all three attempts.
+full `pairing_discovery_wait_ms` listen window, before returning the merged report. A missed reply
+is uncommon, but it is still possible for a device to be missed through all three attempts.
 This makes a single scan take a while: three full-length windows plus transmit time, roughly `3 ×
 pairing_discovery_wait_ms` (~6 seconds at the 2000 ms default). It will also log an ESPHome
 "operation took a long time" warning on every run — a known, accepted tradeoff. That warning stops
@@ -501,8 +500,8 @@ Notes:
 > and its "Cozytouch" radiator support (Atlantic, Thermor, Sauter — primarily French-market
 > heating). That project's own README cautions that its modifications have focused on 1W and have
 > made "the 2W part of the code 'unstable'", so it should be treated cautiously as a base. The
-> maintainer here has none of these devices. Every payload byte is cited to
-> `reference/iohomecontrol/src/iohcCozyDevice2W.cpp`, but nothing here has been confirmed against a
+> maintainer here has none of these devices. Every payload byte is cited to that project's
+> `iohcCozyDevice2W.cpp`, but nothing here has been confirmed against a
 > real radiator. **If you own an Atlantic / Thermor / Sauter IO-homecontrol heater, please try it
 > and report what happens** on the
 > [issue tracker](https://github.com/laberning/home_io_control/issues) — success, silence, or a
@@ -525,15 +524,13 @@ but are not yet YAML-selectable — open an issue if you have one.
 ### Temperature range — 7.0–28.0 °C
 
 The wire format carries the setpoint as a **16-bit little-endian value in tenths of a degree**
-(`round(10 × °C)`), per the vendored Atlantic register map
-(`reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md`), whose `0x0130` block
-shows `18 01` = `0x0118` = 280 = 28.0 °C as a live setpoint. This component accepts 7.0–28.0 °C
-(28.0 is the ceiling Atlantic radiator manuals document) and **rejects** anything outside that
-range rather than clamping or truncating. The encoding above 25.5 °C is corroborated by the
-register map but **still unverified on real hardware** — the older `iohcCozyDevice2W.cpp`
-reference only ever writes the low byte, so it silently truncates 28 °C to 2.4 °C; this component
-does not reproduce that. If your radiator's own panel allows a different maximum, that is worth
-reporting.
+(`round(10 × °C)`), per the iown-homecontrol project's Atlantic/Thermor register map, whose
+`0x0130` block shows `18 01` = `0x0118` = 280 = 28.0 °C as a live setpoint. This component accepts
+7.0–28.0 °C (28.0 is the ceiling Atlantic radiator manuals document) and **rejects** anything
+outside that range rather than clamping or truncating. The encoding above 25.5 °C is corroborated
+by the register map but **still unverified on real hardware**. This component writes the full
+16-bit value; a naive low-byte-only write would silently truncate 28 °C to 2.4 °C. If your
+radiator's own panel allows a different maximum, that is worth reporting.
 
 7.0–12.0 °C is the frost-protection (*hors-gel*) band on these radiators, not a comfort setpoint;
 the panel's own comfort range starts at 12 °C. The codec still accepts 7–12 °C so a
@@ -852,14 +849,14 @@ inline pinout from the fenced block for your board earlier on this page.
 
 ## Diagnostics and Unknown Position
 
-- Warn-level logs now decode explicit `CMD_ERROR_RESP (0xFE)` replies instead of collapsing them into generic command failures. A refused command will look like `Device ABC123: command 0x00 returned limitation result=0xEB LIMITATION_BY_WIND (parameter was limited by a wind sensor)`.
+- Warn-level logs decode explicit `CMD_ERROR_RESP (0xFE)` replies rather than collapsing them into a generic command failure. A refused command looks like `Device ABC123: command 0x00 returned limitation result=0xEB LIMITATION_BY_WIND (parameter was limited by a wind sensor)`.
 - The component's internal protocol layer uses `212.0F` as an unknown-position sentinel (matching `POS_UNKNOWN (0xD4)`), but this value is **never** exposed through the ESPHome cover's `position` field. Cover entities start at `1.0` (fully open) and update to the real device position once the first status response arrives. Custom lambdas can therefore treat any value in [0.0, 1.0] as valid.
-- The OLED example configs in this repo render `--` plus `Unknown` when a cover position is out of range, which now only applies before the first status poll completes on a fresh boot.
-- A command to an unreachable or refusing device reverts the entity to its last reported position and an idle state, instead of leaving it animating mid-travel until you notice. This covers a silent timeout and an explicit refusal (`LIMITATION_BY_WIND` and the like) alike. A failed **stop** falls back to the device's last observed movement rather than claiming it stopped, and a failed **tilt** command withdraws its predicted slat angle and falls back to the last observed one. Only a device configured `optimistic_state: false` is unaffected, since it shows no assumed movement in the first place.
+- The OLED example configs in this repo render `--` plus `Unknown` when a cover position is out of range, which applies only before the first status poll completes on a fresh boot.
+- A command to an unreachable or refusing device reverts the entity to its last reported position and an idle state rather than leaving it animating mid-travel. This covers a silent timeout and an explicit refusal (`LIMITATION_BY_WIND` and the like) alike. A failed **stop** falls back to the device's last observed movement rather than claiming it stopped, and a failed **tilt** command withdraws its predicted slat angle and falls back to the last observed one. A device configured `optimistic_state: false` shows no assumed movement in the first place, so there is nothing to revert.
 
 ### Active Issue
 
-Every device-bound platform (cover, light, switch, lock) automatically generates a companion diagnostic text sensor named `<Entity Name> Active Issue`. Unlike the `Device Name` sensor, it is **enabled by default**, since it turns a silent "nothing happened" command into a self-explained one — for example, pressing "open" on an awning during high wind now shows `LIMITATION_BY_WIND` in Home Assistant instead of only a log line.
+Every device-bound platform (cover, light, switch, lock) automatically generates a companion diagnostic text sensor named `<Entity Name> Active Issue`. Unlike the `Device Name` sensor, it is **enabled by default**, since it turns a silent "nothing happened" command into a self-explained one — pressing "open" on an awning during high wind surfaces `LIMITATION_BY_WIND` in Home Assistant, not just in the log.
 
 This is not a per-operation result — it does not get set on every command, only while an actual issue is outstanding.
 
@@ -1028,8 +1025,8 @@ Extraction)" (not configurable).
   with SX1262 on both sides (as the *hub* and as the *responder*, the more demanding direction for
   this specific risk) — occasionally needing one automatic retry at the key-init or key-transfer
   step is expected and not a sign of failure. Also confirmed against a real third-party hub (a
-  Velux KLR200, GitHub issue #80), which previously stalled completely on this exact risk before the
-  fix; after it, the full extraction completed first-try with no retries needed. While an attempt is in progress (any state past the
+  Velux KLR200, GitHub issue #80): the full extraction completed first-try with no retries needed.
+  While an attempt is in progress (any state past the
   initial arm) the responder also holds the request channel instead of running its normal
   background channel scan — and defers its own background status polls, for the same reason a
   linked remote's press does — so it doesn't itself contribute to a missed reply by having hopped
@@ -1364,9 +1361,9 @@ you cannot compose against IDs you cannot predict. Entity names derive from the 
 ("Velux Windows Open").
 
 These are created from the `oneway_controllers:` block rather than declared as
-`button: - platform: home_io_control` entries, deliberately. A platform entry would have to decide
-what the button *is* from the presence of some key, which is how a device-bound switch that merely
-forgot its `io_device_id` once became the security-sensitive one instead of failing validation.
+`button: - platform: home_io_control` entries, deliberately. A platform entry would have to infer
+what the button *is* from which keys are present, so a device-bound entry that merely omitted its
+`io_device_id` could be misread as the security-sensitive 1W kind instead of failing validation.
 Creating these from the hub block makes that class of mistake structurally impossible.
 
 ### Continuous control: composing sliders from buttons

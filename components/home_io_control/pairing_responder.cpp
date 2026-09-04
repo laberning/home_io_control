@@ -44,8 +44,7 @@ bool on_discover_request(ResponderContext &ctx, const uint8_t hub_node_id[NODE_I
   // responder actually extracted a key from — 0x28 is a broadcast handled before the throwaway-ID
   // dst filter, so accepting it unconditionally here would let any unrelated hub's ordinary 0x28
   // traffic knock a live post-extraction address-verification round with the real hub back to
-  // SENT_DISCOVER_RESP. A different hub's 0x28 is silently ignored instead, exactly as it would
-  // have been before this widening.
+  // SENT_DISCOVER_RESP. A different hub's 0x28 is silently ignored instead.
   if (ctx.state == ResponderState::EXTRACTED || ctx.state == ResponderState::SENT_ADDRESS_RESP) {
     if (memcmp(hub_node_id, ctx.hub_node_id, NODE_ID_SIZE) != 0)
       return false;

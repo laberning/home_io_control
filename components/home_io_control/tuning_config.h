@@ -113,10 +113,9 @@ static constexpr uint16_t SX1262_POST_TX_SETTLE_US = 500;
 
 /// SX1276 preamble for response/continuation frames within an exchange.
 ///
-/// The SX1276 originally reused the protocol's 8-byte SHORT_PREAMBLE for reply frames. A
-/// slightly longer 12-byte preamble was found on real hardware to improve the peer device's
-/// lock-on without measurably affecting exchange timing, so 12 is the default. Runtime-tunable
-/// down to SHORT_PREAMBLE or up for a marginal-range install.
+/// Defaults to 12 bytes — longer than the protocol's 8-byte SHORT_PREAMBLE. On real hardware the
+/// extra length improves the peer device's lock-on without measurably affecting exchange timing.
+/// Runtime-tunable down to SHORT_PREAMBLE or up for a marginal-range install.
 static constexpr uint16_t SX1276_RESPONSE_PREAMBLE = 12;
 
 /// Per-channel dwell while SX1276 pairing discovery hops across channels.
@@ -141,10 +140,9 @@ static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 7;
 
 /// LR1121-specific preamble for response/continuation frames within an exchange.
 ///
-/// Seeded from the SX1262-validated default (design doc §3.2: "seed every timing/tuning
-/// default from the validated SX1262 values ... they encode protocol-side realities more
-/// than chip quirks"). Not yet independently validated on LR1121 hardware — see the
-/// implementation plan's Step 7 (loopback tuning), which folds a measured value back here.
+/// Seeded from the SX1262-validated default, on the principle that a validated timing value
+/// encodes protocol-side reality more than a chip quirk. Not yet independently validated on
+/// LR1121 hardware; a value measured by loopback tuning would fold back here.
 static constexpr uint16_t LR1121_RESPONSE_PREAMBLE = SX1262_RESPONSE_PREAMBLE;
 
 /// LR1121-specific post-TX settling delay before re-entering RX.

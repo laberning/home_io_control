@@ -690,7 +690,7 @@ TEST(HubManagement, HeatingControlNormalizesCaseAndWhitespace) {
 }
 
 // Each function's happy path: assert the exact bytes handed to the radio, byte-for-byte against
-// the Step 1 payload tables (reference/iohomecontrol/src/iohcCozyDevice2W.cpp).
+// the iohomecontrol reference implementation's Cozy 2W payload builders.
 namespace {
 struct HeatingCase {
   const char *function;

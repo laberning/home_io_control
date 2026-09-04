@@ -2,9 +2,9 @@
 /// @brief Pure codec for IO-Homecontrol 2W heating/climate functions (CMD_WRITE_PRIVATE 0x20).
 /// @ingroup hioc_protocol
 ///
-/// Byte layout cited throughout to reference/iohomecontrol/src/iohcCozyDevice2W.cpp; the
-/// direction/register bytes and the 16-bit little-endian tenths-of-a-degree setpoint encoding are
-/// from reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md.
+/// Byte layout cited throughout to the iohomecontrol reference implementation's Cozy 2W device
+/// code; the direction/register bytes and the 16-bit little-endian tenths-of-a-degree setpoint
+/// encoding are from the iown-homecontrol project's Atlantic/Thermor register map.
 
 #include "proto_heating.h"
 
@@ -26,9 +26,9 @@ constexpr size_t PAYLOAD_LEN_NO_VALUE = 4;
 constexpr size_t PAYLOAD_LEN_ONE_VALUE = 5;
 /// Payload length for SET_TEMPERATURE (a 16-bit little-endian tenths-of-a-degree setpoint).
 constexpr size_t PAYLOAD_LEN_TEMPERATURE = HEATING_PAYLOAD_MAX_SIZE;
-/// Wire scale: the setpoint is round(degrees * this), little-endian 16-bit
-/// (AtlanticThermor/README.md's 0x0103 / 0x0130 rows; iohcCozyDevice2W.cpp:127-128 does the
-/// multiply but only stores the low byte).
+/// Wire scale: the setpoint is round(degrees * this), little-endian 16-bit (the Atlantic/Thermor
+/// register map's 0x0103 / 0x0130 rows; the Cozy 2W reference code does the multiply but only
+/// stores the low byte).
 constexpr float DEGREES_TO_TENTHS = 10.0F;
 
 /// @brief How a function's value maps onto the payload's trailing bytes.
@@ -43,8 +43,7 @@ enum class HeatingValueKind : uint8_t {
 ///
 /// A payload is {HEATING_PAYLOAD_PREFIX, direction, HEATING_REGISTER_HIGH_BYTE, register_low,
 /// [value...]}. `direction` is 0x60 (get/read) or 0x61 (set/write) and `register_low` is the low
-/// byte of the 16-bit register number, per
-/// reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md ("Set 0c61 01xx" /
+/// byte of the 16-bit register number, per the Atlantic/Thermor register map ("Set 0c61 01xx" /
 /// "Get 0c60 01xx").
 struct HeatingFunctionDescriptor {
   HeatingFunction fn;     ///< Function this row describes.

@@ -10,7 +10,7 @@
 /// (`radio_soft_phy.h`) wholesale: software UART bit-encoding on TX, a UART-decode
 /// probe with CRC-CCITT validation on RX, fixed-length GFSK packets, software CRC.
 /// This is a re-plumbed RadioSX1262 with a different SPI command set, not a new
-/// bring-up from first principles (design doc §1.2). The IRQ-driven RX/TX orchestration
+/// bring-up from first principles. The IRQ-driven RX/TX orchestration
 /// this driver shares with RadioSX1262 lives in SoftPhyDriverBase (see
 /// radio_soft_phy_driver_base.h).
 ///
@@ -74,7 +74,7 @@ static constexpr uint16_t LR1121_CMD_SET_PA_CONFIG = 0x0215;            ///< cro
 // ============================================================================
 // LR1121 IRQ Bit Masks (32-bit word)
 // ============================================================================
-// Bit positions are cross-checked (design §1.2 chip comparison table).
+// Bit positions are cross-checked against RadioLib and the LR1121 datasheet.
 
 static constexpr uint32_t LR1121_IRQ_TX_DONE = 1UL << 2;
 static constexpr uint32_t LR1121_IRQ_RX_DONE = 1UL << 3;
@@ -92,9 +92,9 @@ static constexpr uint32_t LR1121_IRQ_TIMEOUT = 1UL << 10;
 static constexpr uint32_t LR1121_IRQ_ACTIVITY_MASK =
     LR1121_IRQ_TX_DONE | LR1121_IRQ_RX_DONE | LR1121_IRQ_SYNC_WORD_VALID | LR1121_IRQ_CRC_ERR | LR1121_IRQ_TIMEOUT;
 
-/// DIO-routed IRQ enable mask: TxDone|RxDone|PreambleDetected|SyncWordValid|Timeout
-/// (design implementation §Step 2, item 2 — deliberately excludes CrcErr from the DIO-routed
-/// set, unlike SX1262; CrcErr is still visible in the raw status word for capture diagnostics).
+/// DIO-routed IRQ enable mask: TxDone|RxDone|PreambleDetected|SyncWordValid|Timeout.
+/// Deliberately excludes CrcErr from the DIO-routed set, unlike SX1262; CrcErr is still visible
+/// in the raw status word for capture diagnostics.
 static constexpr uint32_t LR1121_IRQ_DIO_ENABLE_MASK = LR1121_IRQ_TX_DONE | LR1121_IRQ_RX_DONE |
                                                        LR1121_IRQ_PREAMBLE_DETECTED | LR1121_IRQ_SYNC_WORD_VALID |
                                                        LR1121_IRQ_TIMEOUT;
@@ -103,7 +103,7 @@ static constexpr uint32_t LR1121_IRQ_DIO_ENABLE_MASK = LR1121_IRQ_TX_DONE | LR11
 // LR1121 chip identity / GFSK / packet constants
 // ============================================================================
 
-static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked (design §1.2 "Identity" row)
+static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked against RadioLib and the datasheet
 
 /// Newest LR1121 transceiver firmware known at the time this file was last updated, per the
 /// version-numbered filenames and CHANGELOG.md at
@@ -137,7 +137,7 @@ static constexpr uint8_t LR1121_KNOWN_LATEST_FW_MINOR = 0x04;
          (fw_major == LR1121_KNOWN_LATEST_FW_MAJOR && fw_minor < LR1121_KNOWN_LATEST_FW_MINOR);
 }
 
-static constexpr uint8_t LR1121_PACKET_TYPE_GFSK = 0x01;          ///< cross-checked (design §3.2 step 5)
+static constexpr uint8_t LR1121_PACKET_TYPE_GFSK = 0x01;          ///< cross-checked against RadioLib
 static constexpr uint8_t LR1121_GFSK_CRC_OFF = 0x01;              ///< cross-checked (same encoding as SX126x)
 static constexpr uint8_t LR1121_GFSK_PACKET_FIXED_LENGTH = 0x00;  ///< cross-checked (same encoding as SX126x)
 /// Preamble detector length selector: 16 bits. Shares the SX126x GFSK preamble-detector enum
@@ -230,8 +230,8 @@ static constexpr uint32_t LR1121_BUSY_TIMEOUT_MS = 3000;
 /// LR1121 TCXO voltage on the T3-S3 board — 3.0V, confirmed on real hardware.
 static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_MSB = 0x00;
 static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_MID = 0x01;
-/// 0x140 ticks at 30.52us/tick (32.768kHz RTC) is ~9.8ms, not the ~5ms the SX1262-derived comment
-/// used to claim (that chip's tick base differs) — harmless either way (longer startup is safe).
+/// 0x140 ticks at 30.52us/tick (32.768kHz RTC) is ~9.8ms (the SX1262's tick base differs, so the
+/// same tick count means a different time there) — harmless either way, since a longer startup is safe.
 static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_LSB = 0x40;
 
 // ============================================================================
@@ -312,24 +312,24 @@ class RadioLR1121 : public SoftPhyDriverBase {
   void read_command_(uint16_t opcode, const uint8_t *params, uint8_t params_len, uint8_t *out, uint8_t out_len);
   /// Write into the LR1121 TX buffer (always from the chip's internal write pointer, which
   /// resets to the buffer base for a fresh WriteBuffer sequence — unlike SX1262 there is no
-  /// separate offset parameter here; see design §3.2 "SPI transport").
+  /// separate offset parameter here).
   void write_buffer_(const uint8_t *data, uint8_t len);
   /// Read from the LR1121 RX buffer at a given offset (as reported by GetRxBufferStatus).
   void read_buffer_(uint8_t offset, uint8_t len, uint8_t *data);
   /// Log a warning if the most recently observed Stat1 command-status byte indicates the
-  /// chip rejected the previous command (FAIL/PERR — see radio_lr1121.h §4.4).
+  /// chip rejected the previous command (a FAIL or PERR command-status code in Stat1).
   void log_command_status_(uint16_t opcode) const;
   /// WriteRegMemMask32: read-modify-write a 32-bit register through `mask`/`value`. Used by the
-  /// vendor errata workarounds below; opcode 0x010C (design analysis §4.1/§4.2).
+  /// vendor errata workarounds below; opcode 0x010C.
   void write_reg_mem_mask32_(uint32_t addr, uint32_t mask, uint32_t value);
-  /// Apply the Semtech high-ACP TX-quality erratum workaround (analysis §4.1). Must run before
+  /// Apply the Semtech high-ACP TX-quality erratum workaround. Must run before
   /// every SetRx/SetTx — called from set_mode_rx() and @ref before_tx_arm rather than once at
   /// init, mirroring Semtech's own call sites.
   void apply_high_acp_workaround_();
-  /// Apply the GFSK modulation workaround register trio (analysis §4.2). Called at the end of
+  /// Apply the GFSK modulation workaround register trio. Called at the end of
   /// write_modulation_params_() so it re-applies on every bandwidth retune too.
   void apply_gfsk_workaround_();
-  /// Issue a banded image calibration for the 868MHz operating range (analysis §4.3).
+  /// Issue a banded image calibration for the 868MHz operating range.
   void calibrate_image_();
 
   // --- Radio configuration ---
@@ -360,7 +360,7 @@ class RadioLR1121 : public SoftPhyDriverBase {
   /// @copydoc SoftPhyDriverBase::fill_capture_info
   ///
   /// Note: RadioCaptureInfo::irq_status is uint16_t; the 32-bit IRQ word is mapped down by
-  /// taking bits [2..10] and shifting right by 2 (design §3.2 "IRQ-width note").
+  /// taking bits [2..10] and shifting right by 2.
   void fill_capture_info(bool blocking_wait, uint32_t irq_status, uint8_t rx_offset, uint8_t reported_len,
                          const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) override;
 
@@ -415,7 +415,7 @@ class RadioLR1121 : public SoftPhyDriverBase {
   void start_tx() override;
   /// @copydoc SoftPhyDriverBase::before_tx_arm
   ///
-  /// High-ACP workaround (analysis §4.1) — Semtech applies this unconditionally before every
+  /// High-ACP workaround — Semtech applies this unconditionally before every
   /// SetTx, same as before every SetRx (see set_mode_rx()).
   void before_tx_arm() override { this->apply_high_acp_workaround_(); }
   /// @copydoc SoftPhyDriverBase::invalidate_stale_rx_content_after_tx

@@ -1,4 +1,4 @@
-#include "platform_accept_foreign_pairing_switch.h"
+#include "platform_hub_controls.h"
 #include "hub_core.h"
 #include "pairing_responder.h"
 
@@ -65,6 +65,66 @@ TEST(PlatformAcceptForeignPairingSwitch, AutoDisarmUpdatesDisplayedStateWithoutW
 
 TEST(PlatformAcceptForeignPairingSwitch, SetupWithNoParentDoesNotCrash) {
   TestableAcceptForeignPairingSwitch sw;
+  sw.setup();  // no parent set — should be a no-op, not a crash
+  SUCCEED();
+}
+
+// ============================================================================
+// PlatformRecoverOneWayKeySwitch test suite
+// ============================================================================
+// The 1W sibling. It shares HubArmingSwitch's body with the switch above, so what still needs
+// its own coverage is the binding: that this class's arm() / subscribe_armed() overrides reach
+// the 1W adoption listener and not the 2W key-extraction one.
+
+/// Exposes protected write_state(bool) for direct invocation in tests.
+class TestableRecoverOneWayKeySwitch : public IOHomeRecoverOneWayKeySwitch {
+ public:
+  using IOHomeRecoverOneWayKeySwitch::write_state;
+};
+
+TEST(PlatformRecoverOneWayKeySwitch, WriteStateTrueArmsOneWayAdoptionAndPublishesOn) {
+  TestableHubComponent hub;
+  TestableRecoverOneWayKeySwitch sw;
+  sw.set_parent(&hub);
+
+  sw.write_state(true);
+
+  EXPECT_TRUE(hub.oneway_key_adoption_armed()) << "write_state(true) should arm the 1W adoption listener";
+  EXPECT_EQ(hub.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
+      << "it must NOT arm the 2W key-extraction responder";
+  EXPECT_TRUE(sw.get_state()) << "switch should publish on immediately";
+}
+
+TEST(PlatformRecoverOneWayKeySwitch, WriteStateFalseDisarmsOneWayAdoptionAndPublishesOff) {
+  TestableHubComponent hub;
+  TestableRecoverOneWayKeySwitch sw;
+  sw.set_parent(&hub);
+
+  sw.write_state(true);
+  sw.write_state(false);
+
+  EXPECT_FALSE(hub.oneway_key_adoption_armed()) << "write_state(false) should disarm the 1W adoption listener";
+  EXPECT_FALSE(sw.get_state());
+}
+
+TEST(PlatformRecoverOneWayKeySwitch, AutoDisarmUpdatesDisplayedStateWithoutWriteState) {
+  TestableHubComponent hub;
+  TestableRecoverOneWayKeySwitch sw;
+  sw.set_parent(&hub);
+  sw.setup();  // registers the armed-state callback through HubArmingSwitch::setup()
+
+  sw.write_state(true);
+  ASSERT_TRUE(sw.get_state());
+  ASSERT_TRUE(static_cast<bool>(hub.last_timeout_callback_)) << "arming should schedule the auto-off timeout";
+
+  hub.last_timeout_callback_();  // auto-off window expires; the hub disarms itself
+
+  EXPECT_FALSE(hub.oneway_key_adoption_armed());
+  EXPECT_FALSE(sw.get_state()) << "switch should publish off when the hub auto-disarms";
+}
+
+TEST(PlatformRecoverOneWayKeySwitch, SetupWithNoParentDoesNotCrash) {
+  TestableRecoverOneWayKeySwitch sw;
   sw.setup();  // no parent set — should be a no-op, not a crash
   SUCCEED();
 }

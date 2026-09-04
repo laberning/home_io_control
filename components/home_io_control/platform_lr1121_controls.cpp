@@ -1,8 +1,13 @@
-/// @file platform_lr1121_bootloader_rewrite_switch.cpp
-/// @brief Hub-level "Allow LR1121 Bootloader Rewrite (Irreversible)" switch entity.
+/// @file platform_lr1121_controls.cpp
+/// @brief Hub-level LR1121 firmware-update entities: out-of-line bodies for the
+/// bootloader-rewrite arming switch. The flash button is header-inline; this translation unit
+/// pulls its class in (via the header), so clang-tidy analyzes the button too whenever it runs
+/// against a config that enables `lr1121_firmware_update:`
+/// (`scripts/run-clang-tidy.sh config/tests/test-esp32-lr1121-fwupdate.yaml`) — the default
+/// clang-tidy target sets neither define, so both classes expand to nothing there.
 /// @ingroup hioc_platforms
 
-#include "platform_lr1121_bootloader_rewrite_switch.h"
+#include "platform_lr1121_controls.h"
 
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
 

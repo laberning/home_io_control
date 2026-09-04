@@ -39,9 +39,9 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/conti
 /// broadcasting it across all 3 channels doesn't block the loop the way LONG_PREAMBLE does.
 ///
 /// Sized above the ~13.9 ms real-device discovery-reply preamble this project's own SX1262/LR1121
-/// discovery hop-slice tuning was measured against (analysis/radio_robustness_plan.md, issue #65
-/// SDR analysis) — that measurement is what "reliably caught by a hopping receiver" is calibrated
-/// to here. 80 bytes ≈ 16.7 ms at the protocol's 38400 bps line rate (soft_phy_air_time_us()),
+/// discovery hop-slice tuning was measured against (issue #65 SDR analysis) — that measurement is
+/// what "reliably caught by a hopping receiver" is calibrated to here. 80 bytes ≈ 16.7 ms at the
+/// protocol's 38400 bps line rate (soft_phy_air_time_us()),
 /// budgeted as a starting point, not yet hardware-validated for this exact chip/scenario
 /// combination. Runtime-tunable via `cold_broadcast_reply_preamble` for exactly that reason.
 static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
@@ -52,9 +52,9 @@ static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
 /// receivers never lock onto one that long; a normal start frame gets this shorter preamble
 /// instead, matching what a reference hub sends to an always-alive device.
 ///
-/// 32 bytes = 256 bits sits inside the preamble band the protocol reference documents (256 bits in
-/// `reference/iown-homecontrol/docs/radio.md:31`; 128 bits is the "Long PPDU" preamble in
-/// `reference/iown-homecontrol/docs/linklayer.md:133`), well above the ~12-byte response preamble a
+/// 32 bytes = 256 bits sits inside the preamble band the iown-homecontrol documentation describes
+/// (256 bits in its radio notes; 128 bits is the "Long PPDU" preamble in its link-layer notes),
+/// well above the ~12-byte response preamble a
 /// short-turnaround chip uses, ~6.7 ms of air time, and two orders of magnitude below the 1024-byte
 /// burst. 8 bytes is a proven lower bound against paired always-alive devices but nothing bounds
 /// where a start frame stops being heard, so 32 is the defensible middle — and `normal_start_preamble`
@@ -87,7 +87,7 @@ static constexpr int32_t RESPONSE_WAIT_MS = 500;  ///< Wait for response to non-
 /// genuinely fails to answer.
 ///
 /// 400 ms sits comfortably above every directly measured reply while keeping a failed exchange
-/// inside EXCHANGE_TOTAL_BUDGET_MS, so a dead device no longer blocks the ESPHome loop past its own
+/// inside EXCHANGE_TOTAL_BUDGET_MS, so a dead device does not block the ESPHome loop past its own
 /// warning threshold (ADR 0013). Raise `exchange_start_response_wait_ms` from YAML if a device ever
 /// genuinely answers late — but check `wait_ms` in the logs first, since a fast-or-never device is a
 /// turnaround problem that a longer window cannot fix.
@@ -131,8 +131,8 @@ static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 /// a TuningConfig field.
 ///
 /// Both values come from the reference implementation, which sets them on adjacent lines when it
-/// forges a 1W packet: `packet->repeat = 4` and `packet->repeatTime = 40` in
-/// reference/iohomecontrol/src/iohcRemote1W.cpp. The capture logs embedded in that same file show
+/// forges a 1W packet: `packet->repeat = 4` and `packet->repeatTime = 40` in its 1W remote. The
+/// capture logs embedded in that same source show
 /// consecutive copies of one burst arriving roughly 25 ms apart, which is not a contradiction:
 /// those are receive-side timestamps of a burst whose configured gap is 40 ms, so they measure
 /// something else. Do not "correct" 40 down to 25 on the strength of them.

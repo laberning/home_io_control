@@ -132,9 +132,9 @@ std::string lr1121_sanity_failure_reason(Lr1121SanityResult sanity, uint16_t san
 }
 
 /// @brief Log the post-flash version read-back. target_fw == 0 ("unknown", an explicitly
-/// supported config per Step 1 when a renamed image's filename carries no version) must not be
-/// compared numerically -- a successful flash of such an image used to log a spurious "post-flash
-/// version is X, expected unknown" warning about a mismatch that was never a real one.
+/// supported config when a renamed image's filename carries no version) must not be compared
+/// numerically -- doing so flags a "post-flash version is X, expected unknown" mismatch that is
+/// not real.
 void lr1121_log_post_flash_verify_result(uint16_t new_fw, uint16_t target_fw) {
   if (target_fw == 0) {
     ESP_LOGI(detail::TAG,
@@ -217,8 +217,8 @@ void lr1121_log_post_write_hash(Lr1121FirmwareUpdater &updater) {
 /// under IOHOME_LR1121_BOOTLOADER_UPDATE, run_bootloader_upgrade_sequence_()'s two writes
 /// so the erase/write/progress shape exists in exactly one place rather than being duplicated
 /// per stage.
-/// @return true if both erase and write succeeded; false leaves the region partially written, same
-///         as before this was factored out -- the caller decides what that means for recovery.
+/// @return true if both erase and write succeeded; false leaves the region partially written --
+///         the caller decides what that means for recovery.
 bool lr1121_erase_and_write_image_(Lr1121FirmwareUpdater &updater, const char *stage_label, const uint32_t *image,
                                    size_t word_count, uint32_t &erase_elapsed_ms, uint32_t &write_elapsed_ms) {
   ESP_LOGI(detail::TAG, "%s: erasing radio flash, this takes a few seconds...", stage_label);
@@ -333,8 +333,8 @@ void Lr1121FirmwareUpdateController::cache_flash_verdict() {
   uint16_t installed_fw = 0;
   if (*this->radio_ != nullptr && this->lr1121_firmware_updater_ != nullptr) {
     // Re-read via the updater's own transport rather than plumbing a getter through
-    // RadioDriver/RadioLR1121 for this one caller — radio_lr1121.h gains zero new surface area
-    // (Step 3/4's design). GetVersion is the same benign, side-effect-free read
+    // RadioDriver/RadioLR1121 for this one caller, so radio_lr1121.h gains zero new surface area.
+    // GetVersion is the same benign, side-effect-free read
     // RadioLR1121::dump_debug() already issues at arbitrary times without disrupting RX.
     uint8_t fw_major = 0, fw_minor = 0;
     // device_type/fw_major/fw_minor are left at their zero-initialized values above on a failed
@@ -393,8 +393,8 @@ std::string Lr1121FirmwareUpdateController::describe_flash_verdict() const {
       // Only meaningful advice when the feature isn't compiled in at all: a build with the
       // bootloader: sub-block already configured knows exactly which upgrade path applies (or
       // doesn't), and trigger()/debug_lines() already append their own path-specific suffix --
-      // appending this one unconditionally used to produce messages telling the user to add a
-      // block they had already added, or contradicting the path-specific suffix outright.
+      // appending this one unconditionally would tell the user to add a block they already added,
+      // or contradict the path-specific suffix outright.
       message += " -- add a bootloader: sub-block to lr1121_firmware_update: to enable the (irreversible) upgrade "
                  "path";
 #endif
@@ -413,10 +413,10 @@ std::string Lr1121FirmwareUpdateController::describe_flash_verdict() const {
   }
 }
 
-// The verdict line must still be included when the bootloader version is unknown -- this
-// used to early-return before it, so a failed boot-time excursion silently dropped the verdict
-// line too, even though the verdict is cached independently (cache_flash_verdict() runs in
-// setup() regardless of whether the boot-time excursion succeeded).
+// The verdict line must still be included when the bootloader version is unknown: the verdict is
+// cached independently (cache_flash_verdict() runs in setup() regardless of whether the boot-time
+// excursion succeeded), so an early return here on a failed boot-time excursion would drop a
+// verdict line that is actually available.
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
 std::string Lr1121FirmwareUpdateController::describe_bootloader_refusal(BootloaderUpgradePath path) const {
   // Deliberately NOT built by appending to describe_flash_verdict(): that function opens with
