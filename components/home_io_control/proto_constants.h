@@ -35,8 +35,18 @@ static constexpr uint8_t CMD_PRIVATE2 =
 static constexpr uint8_t CMD_PRIVATE2_RESP = 0x0D;  ///< Response to CMD_PRIVATE2. See CMD_PRIVATE2's comment.
 
 // Sensor and private register commands
-static constexpr uint8_t CMD_SET_SENSOR = 0x19;      ///< Inject sensor value into a device
-static constexpr uint8_t CMD_SET_SENSOR_ACK = 0x1A;  ///< Acknowledgment to CMD_SET_SENSOR
+static constexpr uint8_t CMD_SET_SENSOR =
+    0x19;  ///< Inject sensor value into a device. First real-world capture (issue #27, community,
+           ///< a real Somfy TaHoma Switch writing directly to a real Sunea io screen it already
+           ///< owned) is tests/corpus/captures/exchange/somfy_awning_exchange_set_sensor_sx1276.yaml
+           ///< — a single-byte payload, values 0x02 and then 0x04 seen ~212ms apart. Likely the
+           ///< mechanism a real hub uses to push a wind/rain/sun sensor reading into a device (the
+           ///< mirror image of reading a rain/limitation state back out, which issue #98 has been
+           ///< chasing separately) — not confirmed, and no CMD_SET_SENSOR_ACK was captured either,
+           ///< so the full round trip and payload semantics remain unknown. No builder or dispatch
+           ///< path exists anywhere in this codebase.
+static constexpr uint8_t CMD_SET_SENSOR_ACK = 0x1A;  ///< Acknowledgment to CMD_SET_SENSOR. Never
+                                                     ///< observed on the wire — see CMD_SET_SENSOR.
 
 // Device identification
 static constexpr uint8_t CMD_IDENTIFY = 0x1E;  ///< Device physical identification / jog — requires authentication
@@ -446,6 +456,14 @@ const char *manufacturer_name(uint8_t id);
 /// The originator byte is the first byte of the CMD_EXECUTE payload. It tells
 /// the actuator (and any eavesdropping controller) who initiated the movement.
 /// This is useful for understanding device-initiated status updates.
+///
+/// ORIGINATOR_WIND_SENSOR and ORIGINATOR_RAIN_SENSOR are both field-confirmed on real hardware —
+/// a single combined wind/rain protection station (issue #27, community capture) broadcasting
+/// both values minutes apart:
+/// tests/corpus/captures/oneway/wind_sensor_oneway_favorite_wind_originator_sx1276.yaml and
+/// tests/corpus/captures/oneway/wind_sensor_oneway_favorite_rain_originator_sx1276.yaml. The
+/// latter is this project's first real-hardware confirmation of ORIGINATOR_RAIN_SENSOR at all —
+/// every prior wind/rain-station capture used ORIGINATOR_WIND_SENSOR only.
 /// @{
 static constexpr uint8_t ORIGINATOR_LOCAL_USER = 0x00;        ///< User pressed a button on the actuator.
 static constexpr uint8_t ORIGINATOR_USER_REMOTE = 0x01;       ///< User sent command from a remote control.

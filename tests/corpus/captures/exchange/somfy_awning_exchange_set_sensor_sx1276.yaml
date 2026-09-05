@@ -1,0 +1,37 @@
+id: somfy_awning_exchange_set_sensor_sx1276
+description: >
+  First real-world capture of CMD_SET_SENSOR (0x19) this project has ever seen — a named-but-
+  never-observed opcode before this (proto_constants.h: "Inject sensor value into a device"; no
+  builder, no dispatch handler, no prior corpus entry of any kind). A real Somfy TaHoma Switch
+  (node 7B0490) sent this directly to a real Sunea io screen (node B18635) it already owns, part
+  of the same session as the wind_sensor_oneway_favorite_*_originator_sx1276.yaml captures
+  (the reporter's installation also has a combined wind/rain station). Only the request is
+  captured — the reporter's log did not include the intervening CMD_CHALLENGE_REQ (0x3C) the
+  device would send in response, nor any CMD_SET_SENSOR_ACK (0x1A), so this is a deliberately
+  partial capture: it records the command's existence and shape (single-byte payload, values 0x02
+  then 0x04 seen ~212ms apart across two more TX repeats not included here), not a full round
+  trip. Likely mechanism: the hub pushing a wind/rain/sun sensor reading into the device, the
+  mirror-image of what issue #98 (VELUX rain sensor) has been trying to read back out — this
+  doesn't answer that question, but is the first wire evidence the underlying mechanism exists at
+  all. Community capture from issue #27 (Skamba).
+source:
+  device: "Somfy Sunea io screen (node B18635), directed write from a real Somfy TaHoma Switch
+    (node 7B0490) that already owns it"
+  captured_with: sx1276
+  firmware: "ESPHome 2026.8.2 / home_io_control main, LilyGO T3 LoRa32 V1.6.1"
+  date: 2026-09-04
+  origin: github-issue
+  issue: https://github.com/laberning/home_io_control/issues/27
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 869850000
+    hex: "49 00 B1 86 35 7B 04 90 19 04"
+    crc: absent
+    note: "cmd=SET_SENSOR(0x19), 1-byte payload 0x04. Two earlier repeats of the same command
+      carrying payload 0x02 (on the other two channels, ~212ms before this one) are not included
+      here -- same shape, redundant to keep both."
+expect:
+  frames:
+    - {cmd: 0x19, start: true, end: false, protocol: 2w}
