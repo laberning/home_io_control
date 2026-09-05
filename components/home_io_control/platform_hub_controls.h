@@ -1,8 +1,8 @@
 #pragma once
 
 /// @file platform_hub_controls.h
-/// @brief Hub-level control entities: the discovery button, the two arming switches, and the
-/// pairing-result diagnostic text sensor.
+/// @brief Hub-level control entities: the discovery button, the scan-paired-devices button, the
+/// two arming switches, and the pairing-result diagnostic text sensor.
 /// @ingroup hioc_platforms
 ///
 /// These act on the hub as a whole and have no device to bind to (HubBoundEntity), and are
@@ -112,6 +112,34 @@ class IOHomeDiscoverButton : public button::Button, public Component, public Hub
  protected:
   /// @brief When button is pressed, queue a discovery/pair operation.
   void press_action() override { this->parent_->queue_discover_and_pair(); }
+};
+
+/// @brief Button entity that runs the `scan_paired_devices` roll-call when pressed.
+///
+/// The same operation as the native API action of that name, which is unchanged and still
+/// registered — this is an additional trigger path, not a replacement. It exists because the
+/// roll-call is the fastest bring-up route for the common case of a user who already holds a
+/// system key extracted from a hub that has paired all its devices: every device that trusts the
+/// key answers with a ready-to-paste YAML snippet, with no pairing handshake at all. Reaching that
+/// through Developer Tools was a speed bump on a one-shot step.
+///
+/// Output stays where the action puts it: the multi-line log and the
+/// `esphome.home_io_control_action_result` event. Deliberately no companion result sensor — unlike
+/// the pairing button's "Last Pairing Result", the roll-call report is a multi-device document,
+/// not a state.
+///
+/// Created only when `home_io_control.scan_paired_devices_button: true` (see `__init__.py`'s
+/// `_create_scan_paired_devices_button()`), unlike IOHomeDiscoverButton which is an unconditional
+/// `button:` platform entry — see the file header for why hub entities come from the hub block.
+/// @ingroup hioc_platforms
+class IOHomeScanPairedDevicesButton : public button::Button, public Component, public HubBoundEntity {
+ public:
+  void dump_config() override {}
+
+ protected:
+  /// @brief When pressed, run the roll-call — see
+  /// IOHomeControlComponent::trigger_scan_paired_devices() for the busy-guard rationale.
+  void press_action() override { this->parent_->trigger_scan_paired_devices(); }
 };
 
 /// @brief Diagnostic text sensor that publishes PairingTelemetry::result_sensor_string()

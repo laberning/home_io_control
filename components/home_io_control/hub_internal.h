@@ -19,6 +19,7 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -542,6 +543,20 @@ inline void record_exchange_timeout(IoDevice &dev, uint8_t tries) {
       static_cast<uint16_t>(std::min<uint32_t>(static_cast<uint32_t>(dev.exchange_attempt_count) + tries, UINT16_MAX));
 }
 
+/// @brief Offset of the last-command record within each status-bearing payload.
+///
+/// Both status-bearing frame types carry the same 4-byte record — three bytes of node ID for the
+/// controller that last commanded the device, then that command's Command Originator byte — and
+/// 0x71's whole payload is shifted +3 relative to 0x04's, exactly as its target/current position
+/// fields already are (PRIVATE_RESPONSE_TARGET_OFFSET vs STATUS_UPDATE_TARGET_OFFSET in
+/// hub_status.cpp). Confirmed on one device in one session across both frame types:
+/// tests/corpus/captures/statuspoll/somfy_rs100_statuspoll_kig300_sx1276.yaml, device E461E9,
+/// which names controller BE FE DB at 0x04 data[8..10] and 0x71 data[11..13] in the same capture —
+/// including in a 0x71 addressed to a *different* controller, which is what rules out "this is
+/// just the destination echoed back".
+inline constexpr uint8_t PRIVATE_RESPONSE_LAST_COMMAND_OFFSET = 8;
+inline constexpr uint8_t STATUS_UPDATE_LAST_COMMAND_OFFSET = 11;
+
 /// @brief Offset of the Command Originator byte in a CMD_STATUS_UPDATE (0x71) payload.
 ///
 /// Deliberately not offset 1: `data[1]` on a 0x71 is the status byte (0x60/0x61, bit 0 = current
@@ -549,6 +564,87 @@ inline void record_exchange_timeout(IoDevice &dev, uint8_t tries) {
 /// "unknown" on every frame this project has ever captured. Every captured 0x71 carries 0x01
 /// (ORIGINATOR_USER_REMOTE) here.
 inline constexpr uint8_t STATUS_UPDATE_ORIGINATOR_OFFSET = 14;
+static_assert(STATUS_UPDATE_LAST_COMMAND_OFFSET + NODE_ID_SIZE == STATUS_UPDATE_ORIGINATOR_OFFSET,
+              "the Command Originator byte is the fourth byte of the last-command record; if one "
+              "offset moves the other must move with it");
+
+/// @brief One decoded last-command record.
+struct LastCommandRecord {
+  uint8_t commander[NODE_ID_SIZE]{};  ///< Controller that last commanded the device.
+  uint8_t originator{0};              ///< That command's Command Originator (ORIGINATOR_*).
+  bool valid{false};                  ///< False when the payload was too short, or the record was unpopulated.
+};
+
+/// @brief Decode the last-command record at `base` from a status-bearing payload.
+///
+/// Pure rather than inlined into update_device_status_() so it is testable against corpus bytes
+/// directly. An all-zero commander is reported as invalid: 00 00 00 is not a node ID any observed
+/// controller uses, so a device that pads this field rather than implementing it publishes nothing
+/// instead of a fabricated address.
+/// @param frame A CMD_PRIVATE_RESP or CMD_STATUS_UPDATE frame.
+/// @param base PRIVATE_RESPONSE_LAST_COMMAND_OFFSET or STATUS_UPDATE_LAST_COMMAND_OFFSET.
+/// @return The decoded record, or `valid == false`.
+inline LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base) {
+  LastCommandRecord record;
+  if (frame.data_len < base + NODE_ID_SIZE + 1)
+    return record;
+  memcpy(record.commander, &frame.data[base], NODE_ID_SIZE);
+  if (record.commander[0] == 0 && record.commander[1] == 0 && record.commander[2] == 0)
+    return record;
+  record.originator = frame.data[base + NODE_ID_SIZE];
+  record.valid = true;
+  return record;
+}
+
+/// @brief Store a decoded record on the device, if it is valid.
+///
+/// A short or unpopulated payload leaves whatever was last learned in place rather than clearing
+/// it: the record is inherently last-writer-wins and only refreshes when something commands the
+/// device, so a stale value is the honest answer and a blanked one is not.
+inline void apply_last_command_record(IoDevice &dev, const LastCommandRecord &record) {
+  if (!record.valid)
+    return;
+  memcpy(dev.last_commander, record.commander, NODE_ID_SIZE);
+  dev.last_command_originator = record.originator;
+  dev.has_last_command = true;
+}
+
+/// @brief Render the "Last Commanded By" sensor string.
+///
+/// Always leads with the raw node ID — that is the diagnostic value, and the only thing a user can
+/// match against a remote they own. The qualifier is additive, never a substitute: a device naming
+/// its own ID is NOT reliably "the button on the motor" (the one non-shutter this project has data
+/// on, a mains gate, names its own ID with an undefined originator), so the cause belongs to the
+/// separate originator sensor, not to this one's wording.
+/// @param dev Device record to read.
+/// @param hub_node_id This hub's own 3-byte node ID.
+/// @return e.g. "3B74DC", "C0FFEE (this hub)", "2FE2D2 (this device)"; empty before the first record.
+inline std::string describe_last_commander(const IoDevice &dev, const uint8_t *hub_node_id) {
+  if (!dev.has_last_command)
+    return {};
+  std::string out = node_id_to_string(dev.last_commander);
+  if (memcmp(dev.last_commander, hub_node_id, NODE_ID_SIZE) == 0) {
+    out += " (this hub)";
+  } else if (memcmp(dev.last_commander, dev.node_id, NODE_ID_SIZE) == 0) {
+    out += " (this device)";
+  }
+  return out;
+}
+
+/// @brief Render the "Last Command Source" sensor string.
+///
+/// Uses the same "name(0xXX)" rendering as describe_status_update_originator(), so a byte with no
+/// ORIGINATOR_* case reads "unknown(0x0A)" rather than being silently dropped or mislabelled. The
+/// decode is field-validated for roller shutters (a clean 0x00/0x01 split, remote vs. motor
+/// button); gates, lights and multi-channel units are not validated and are expected to surface
+/// undecoded values here — which is the point of keeping the raw hex in the string.
+/// @param dev Device record to read.
+/// @return e.g. "user_remote(0x01)"; empty before the first record.
+inline std::string describe_last_command_source(const IoDevice &dev) {
+  if (!dev.has_last_command)
+    return {};
+  return format_name_and_hex(originator_name(dev.last_command_originator), dev.last_command_originator);
+}
 
 /// @brief Describe a 0x71 status update's Command Originator as "name(0xXX)".
 ///

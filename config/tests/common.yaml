@@ -55,6 +55,7 @@ home_io_control:
   system_key: 0123456789ABCDEF0123456789ABCDEF
   accept_foreign_pairing: true
   recover_oneway_key: true
+  scan_paired_devices_button: true
   # Two identities: one inheriting the hub system_key with a derived node_id, one with its own
   # key and an explicit address — the two shapes the schema has to support.
   oneway_controllers:

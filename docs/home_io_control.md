@@ -86,6 +86,7 @@ Configuration variables:
 - `exposed_senders` (Optional, default: empty list): List of 1W sender node IDs (6 hex characters each — remotes *or* sensors, see below) allowed to fire the `esphome.home_io_control_sender_event` event to Home Assistant. Empty by default — see the Sender Events section below for why this is opt-in and how it relates to `linked_remotes`.
 - `tuning` (Optional): Diagnostics block for pairing/radio parameters. See [Radio Diagnostics Tuning](radio_diagnostics.md).
 - `accept_foreign_pairing` (Optional, default: `false`): Adds a "Recover System Key" switch entity for pulling a device's system key from another controller. See the Key Extraction section below.
+- `scan_paired_devices_button` (Optional, default: `false`): Adds a "Scan Paired Devices" button entity — a one-tap trigger for the `scan_paired_devices` action. See "Button Platform" below.
 - `diagnostic_probes` (Optional, default: `false`): Enables the `probe_device`/`probe_sweep` actions for sending opcodes this project hasn't fully decoded yet. See [Diagnostic probes](radio_diagnostics.md#diagnostic-probes).
 
 Notes:
@@ -128,9 +129,9 @@ cover:
 ```
 
 - Declare each sub-device once under `esphome: devices:`, then reference its `id:` from any entity's `device_id:`.
-- Every companion entity a platform generates (favorite/ventilation buttons, the silent-operation switch, the device-name/active-issue/RSSI/last-contact/exchange-failures sensors — see each platform section below) automatically inherits the same sub-device as its parent entity.
+- Every companion entity a platform generates (favorite/ventilation buttons, the silent-operation switch, the device-name/active-issue/RSSI/last-contact/exchange-failures/last-commanded-by/last-command-source sensors — see each platform section below) automatically inherits the same sub-device as its parent entity.
 - **Naming caveat**: Home Assistant composes an entity's displayed name as `<device name> <entity name>`. Giving the sub-device and the entity the same name (e.g. both "Patio Awning") doubles up as "Patio Awning Patio Awning" — and every companion's own generated name (e.g. "... Favorite Position") gets that device-name prefix on top too. To show only the sub-device's name, give the entity `name: ""` (ESPHome's convention for "this entity is the device"), as in the example above — or the equivalent YAML literal `name: None`/`name: none`, which also selects this idiom but additionally requires `esphome: friendly_name:` to be set (matching ESPHome's own behavior everywhere else; `name: ""` needs no such setting). Either form requires an explicit `id:` as well: with an empty name there is nothing left to derive the companion entities' internal IDs from, so config validation fails with a clear error unless `id:` is given.
-- Hub-level entities that are not tied to a single cover/light/switch/lock — the key-extraction/1W-key-adoption arming switches, the LR1121 firmware/bootloader controls, tuning numbers and selects, and each 1W controller identity's command buttons — do not currently support `device_id:` and always appear on the hub's main ESPHome device. The pairing button itself is not one of these: see the Button Platform section below, its `device_id:` (and its companion sensor's) work like any other device-bound platform.
+- Hub-level entities that are not tied to a single cover/light/switch/lock — the key-extraction/1W-key-adoption arming switches, the LR1121 firmware/bootloader controls, tuning numbers and selects, the Scan Paired Devices button, and each 1W controller identity's command buttons — do not currently support `device_id:` and always appear on the hub's main ESPHome device. The Discover & Pair button itself is not one of these: see the Button Platform section below, its `device_id:` (and its companion sensor's) work like any other device-bound platform.
 
 ## Cover Platform
 
@@ -175,7 +176,7 @@ Notes:
 - Covers with `io_device_type` set to `window_opener` or `ventilation_point` also generate a companion button named `<Cover Name> Ventilation Position`. That button sends the protocol's ventilation command, which moves the actuator to a predefined partially-open position suitable for air exchange.
 - Covers also automatically generate a diagnostic text sensor named `<Cover Name> Device Name`. That entity is disabled by default to avoid clutter. When enabled, it queues a boot-time `GET_NAME` protocol request, caches the returned UTF-8 device name, and publishes it to Home Assistant.
 - Covers also automatically generate a diagnostic text sensor named `<Cover Name> Active Issue`. Unlike the device-name sensor, this one is **enabled by default** — see "Active Issue" below.
-- Covers also automatically generate three disabled-by-default `<Cover Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
+- Covers also automatically generate five disabled-by-default diagnostic sensors: `<Cover Name> RSSI` / `Last Contact` / `Exchange Failures` (see "Link Health" below) and `Last Commanded By` / `Last Command Source` (see "Last Command" below).
 - The favorite/ventilation buttons, the silent-operation switch (see below), and all of the diagnostic sensors above follow the cover's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 - Automatic favorite-button and ventilation-button generation is compile-time only. If `io_device_type` is omitted and learned later from radio traffic, the controller can still operate the cover normally, but it cannot add new ESPHome entities at runtime after boot.
 - Automatic device-name, active-issue, and link-health sensor generation is also compile-time only for the same reason.
@@ -189,14 +190,14 @@ Notes:
 
 ## Home Assistant Actions
 
-Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes six **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so they're only reachable via Developer Tools or an automation.
+Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control exposes six **hub-level actions** through ESPHome's native API. These are one-off/advanced operations that would clutter the entity UI if they were always-visible buttons, so most are only reachable via Developer Tools or an automation — `scan_paired_devices` is the exception, with an optional one-tap button (see "Button Platform" below).
 
 | Action | What it does | `verified` can be `true`? |
 |---|---|---|
 | `rename_device` | Renames a paired actuator and reads the name back to confirm the write. | Yes |
 | `identify_device` | Makes a device physically identify itself (brief jog/flash) so you can tell which physical motor a device ID belongs to. | No — no readback exists for a jog |
 | `force_open_device` ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. Confirmed to move the device correctly; **not yet confirmed to actually override an active lock** — see the warning below. | No — the outcome is asynchronous |
-| `scan_paired_devices` | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. | No — nothing here is read back either |
+| `scan_paired_devices` | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. Also reachable as a one-tap button via `scan_paired_devices_button: true`. | No — nothing here is read back either |
 | `oneway_set_position` | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. See the "Sending 1W Commands" section. | No — 1W has no reply at all |
 | `heating_control` ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. See the "Heating / Climate (experimental)" section. | No — `set_*` are write-only; the `power_on` / `midnight_sync` reads are logged, not decoded |
 
@@ -305,6 +306,10 @@ ready-to-paste YAML block, the same one a successful pairing prints.
 action: esphome.hioc_heltec_v2_scan_paired_devices
 ```
 
+The same operation is also available as a one-tap button — see "Button Platform" below —
+by setting `scan_paired_devices_button: true` in the `home_io_control:` block, so you don't have to
+reach for Developer Tools every time.
+
 A realistic report, one already-configured device and one that isn't:
 
 ```
@@ -356,6 +361,14 @@ yet and stays silent. See `docs/radio_diagnostics.md`'s `pairing_discovery_comma
 why 0x2A is deliberately excluded from the pairing discovery command list. Use the "Discover &
 Pair" button for pairing a new device; use `scan_paired_devices` to check in on devices you have
 already paired.
+
+**If you already hold a system key recovered from a hub that has paired its devices** (see
+"Key Extraction (Accept Foreign Pairing)" below), use `scan_paired_devices` — the action, or the
+button if you've set `scan_paired_devices_button: true` — instead of Discover & Pair. It performs
+no pairing handshake at all — it only roll-calls devices that already trust your key, and prints a
+ready-to-paste YAML block for every one you have no entity for yet. Field reports repeatedly find
+this faster and more reliable than discover-and-pair for that situation (GitHub issues #27, #98,
+#103) — see the "already paired to a real hub" tip in the "Pairing Workflow" section below.
 
 An unknown responder in the report is not, on its own, a sign of an intruder — it almost always
 means a device you paired earlier whose YAML entry never got saved (or got lost), not a foreign
@@ -419,7 +432,7 @@ Notes:
 - Known non-light device families will be rejected once the device type is known.
 - Lights automatically generate a diagnostic text sensor named `<Light Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 - Lights also automatically generate a `<Light Name> Active Issue` diagnostic text sensor, enabled by default. See "Active Issue" below.
-- Lights also automatically generate three disabled-by-default `<Light Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
+- Lights also automatically generate five disabled-by-default diagnostic sensors: `<Light Name> RSSI` / `Last Contact` / `Exchange Failures` (see "Link Health" below) and `Last Commanded By` / `Last Command Source` (see "Last Command" below).
 - All of the diagnostic sensors above follow the light's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 
 ## Lock Platform
@@ -456,7 +469,7 @@ Notes:
 - Known non-lock device families will be rejected once the device type is known.
 - Locks automatically generate a diagnostic text sensor named `<Lock Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 - Locks also automatically generate a `<Lock Name> Active Issue` diagnostic text sensor, enabled by default. See "Active Issue" below.
-- Locks also automatically generate three disabled-by-default `<Lock Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
+- Locks also automatically generate five disabled-by-default diagnostic sensors: `<Lock Name> RSSI` / `Last Contact` / `Exchange Failures` (see "Link Health" below) and `Last Commanded By` / `Last Command Source` (see "Last Command" below).
 - All of the diagnostic sensors above follow the lock's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 
 ## Switch Platform
@@ -489,7 +502,7 @@ Notes:
 - Known non-switch device families will be rejected once the device type is known.
 - Switches automatically generate a diagnostic text sensor named `<Switch Name> Device Name`. That entity is disabled by default and uses the same cached-name behavior and boot-time `GET_NAME` request flow as the cover platform.
 - Switches also automatically generate a `<Switch Name> Active Issue` diagnostic text sensor, enabled by default. See "Active Issue" below.
-- Switches also automatically generate three disabled-by-default `<Switch Name> RSSI` / `Last Contact` / `Exchange Failures` diagnostic sensors. See "Link Health" below.
+- Switches also automatically generate five disabled-by-default diagnostic sensors: `<Switch Name> RSSI` / `Last Contact` / `Exchange Failures` (see "Link Health" below) and `Last Commanded By` / `Last Command Source` (see "Last Command" below).
 - All of the diagnostic sensors above follow the switch's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
 
 ## Heating / Climate (experimental)
@@ -582,10 +595,12 @@ climate:
 - Entity state is published **only after a send succeeds** and is never confirmed. There is no
   status poll for climate devices.
 - The usual companion diagnostic sensors (`Device Name`, `Active Issue`, `Last Contact`, `RSSI`,
-  `Exchange Failures`) are generated as for the other platforms — `Last Contact` and
-  `Active Issue` are the only feedback a write-only device can give.
+  `Exchange Failures`, `Last Commanded By`, `Last Command Source`) are generated as for the other
+  platforms — `Last Contact` and `Active Issue` are the only feedback a write-only device can give.
 
 ## Button Platform
+
+### Discover & Pair
 
 Use the button platform to expose a Home Assistant button that starts discovery and pairing.
 
@@ -604,8 +619,40 @@ Notes:
 
 - The generated button defaults to the `config` entity category.
 - Pair devices one at a time.
-- This `button:` platform is only for the hub-level `Discover & Pair` action. Cover favorite buttons are generated automatically from eligible `cover:` entries and do not need a separate YAML block.
+- This `button:` platform is only for the hub-level `Discover & Pair` action. Cover favorite buttons are generated automatically from eligible `cover:` entries and do not need a separate YAML block. `Scan Paired Devices` (below) is a different button, enabled from the `home_io_control:` block instead of a `button:` entry.
 - The companion "Last Pairing Result" diagnostic sensor (see "Diagnosing a failed pairing attempt" below) follows the button's own `device_id:`, if one is set — see "Grouping Entities into Home Assistant Devices" above.
+
+### Scan Paired Devices
+
+Not a `button:` platform entry — enable it from the hub block instead:
+
+```yaml
+home_io_control:
+  # ... radio pins, node_id, system_key ...
+  scan_paired_devices_button: true
+```
+
+A one-tap trigger for the `scan_paired_devices` action (see "Home Assistant Actions" above): the
+button and the native API action run the exact same roll-call, and the action stays available
+either way — this is an additional trigger, not a replacement. It's the fastest bring-up route
+once you already hold a system key recovered from another hub (see "Key Extraction (Accept
+Foreign Pairing)" below): every device that trusts the key answers with a ready-to-paste YAML
+snippet, with no pairing handshake involved at all.
+
+Notes:
+
+- The generated button defaults to the `config` entity category.
+- No companion result sensor — output goes to the log and the `esphome.home_io_control_action_result`
+  event, exactly like the action (see "Result events" above).
+- The press blocks the ESPHome loop for the same ~6 seconds (at the default
+  `pairing_discovery_wait_ms`) as the action does, so the button shows as pending in Home Assistant
+  for that long and logs the same "operation took a long time" warning — see the
+  `scan_paired_devices` section above for why.
+- A press is ignored (not queued, not retried) if a radio exchange is already in flight — this can
+  only happen via an ESPHome automation that presses the button from inside another entity's
+  callback, since a normal tap in the Home Assistant UI never races the radio. It still fires the
+  usual result event with `success: false`, so an automation reacting to
+  `esphome.home_io_control_action_result` sees the rejection rather than nothing happening.
 
 ## Complete Examples
 
@@ -873,6 +920,45 @@ Every device-bound platform also automatically generates three per-device diagno
 - **`<Entity Name> Exchange Failures`** (count): a cumulative count of outbound exchanges to this device (position/tilt/status/name requests) that received no valid response at all. Zero is a meaningful, always-published value here — it does not mean "unknown" the way it would for RSSI or Last Contact. A rising count on an otherwise-working device points at a marginal RF link (weak signal, interference, distance) worth investigating with the RSSI sensor above.
 - RSSI and Exchange Failures update only when the hub actually processes a frame or exchange for that device — no background timers exist just to refresh them. Last Contact is the exception: it also republishes once a minute on its own heartbeat so it can count up while the device is quiet (see above).
 
+### Last Command
+
+Every device-bound platform also automatically generates two more `text_sensor:` companions, both
+**disabled by default** like the Link Health sensors above:
+
+- **`<Entity Name> Last Commanded By`**: the node ID of whatever last commanded the device,
+  read straight from bytes the device already includes in every status reply.
+- **`<Entity Name> Last Command Source`**: that command's originator, rendered `name(0xXX)` —
+  e.g. `user_remote(0x01)`.
+
+| Situation | `Last Commanded By` | `Last Command Source` |
+|---|---|---|
+| no record decoded yet | *(empty)* | *(empty)* |
+| foreign controller `3B74DC` | `3B74DC` | `user_remote(0x01)` |
+| this hub | `C0FFEE (this hub)` | `user_remote(0x01)` |
+| device names its own ID | `2FE2D2 (this device)` | `local_user(0x00)` |
+| gate, undefined originator | `586E35 (this device)` | `unknown(0x0A)` |
+
+**Free — no extra radio traffic, no probe.** These bytes arrive in every status poll today and
+were previously discarded; the sensors just read what is already there.
+
+**Honest limits:**
+
+- Last-writer-wins and inherently stale — it only refreshes when something actually commands the
+  device, so it can lag behind reality between commands.
+- A foreign controller's node ID has no friendly name unless you recognise it yourself; there is
+  no built-in ID-to-name mapping.
+- The originator decode is field-validated on roller shutters only, where it's a clean
+  remote-vs-motor-button split. Other device classes (a mains gate, so far) have shown originator
+  bytes with no defined name, which is exactly what `unknown(0xXX)` in the table above is for —
+  a deliberate, honest "we don't know" rather than a guess.
+- The record is **not** read from the immediate reply to a Home Assistant command — that reply's
+  payload layout is request-dependent, not self-describing. It updates on the settle poll a
+  second or two later instead.
+
+**Use cases:** "who moved my shutter" in a house with several remotes plus a hub; spotting a
+forgotten paired remote still commanding a device you don't recognise — see "Key Extraction
+(Accept Foreign Pairing)" below for the pairing-hygiene angle.
+
 Example custom-lambda pattern:
 
 ```yaml
@@ -1008,6 +1094,10 @@ Extraction)" (not configurable).
    pairing attempt was seen (or, if a partial attempt was seen, which phase it reached — useful
    for diagnosing a missed frame, see the note below).
 6. Copy the printed `node_id`/`system_key` into your new hub's YAML and reflash.
+7. Then call the `scan_paired_devices` action (see "Home Assistant Actions" above) — or press
+   **Scan Paired Devices** if you've set `scan_paired_devices_button: true`: every device that
+   already trusts the recovered key answers with a ready-to-paste YAML snippet, so you never have
+   to pair anything.
 
 ### Known limitations
 

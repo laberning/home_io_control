@@ -336,6 +336,13 @@ struct IoDevice {
                                 ///< real RESULT_UNKNOWN_STATUS_REPLY wire value, so that specific explicit reply is
                                 ///< indistinguishable here from "nothing recorded yet" — a known, accepted tradeoff.
   uint32_t last_result_at_ms{0};              ///< millis() timestamp of last_result_code, 0 when none recorded.
+  uint8_t last_commander[NODE_ID_SIZE]{};     ///< Node ID of the controller that last commanded this device, as
+                                              ///< reported verbatim by the device in its own status payload. All
+                                              ///< zeroes until a status reply carrying the record has been decoded
+                                              ///< (see detail::decode_last_command_record() in hub_internal.h).
+  uint8_t last_command_originator{0};         ///< That command's Command Originator byte (ORIGINATOR_* in
+                                              ///< proto_constants.h). Only meaningful when `has_last_command`.
+  bool has_last_command{false};               ///< True once a status reply carried a well-formed last-command record.
   uint32_t last_status{0};                    ///< millis() timestamp of last received status.
   int16_t last_rssi_dbm{RSSI_UNKNOWN_DBM};    ///< Most recent raw RSSI sample (dBm), or RSSI_UNKNOWN_DBM.
   int16_t rssi_ema_scaled{RSSI_UNKNOWN_DBM};  ///< Smoothed RSSI as fixed point in 1/RSSI_EMA_SCALE dBm — read

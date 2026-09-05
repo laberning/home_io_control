@@ -213,6 +213,14 @@ class IOHomeControlComponent : public Component,
   /// @return Current value formatted as its YAML option string, or empty for an unknown key.
   [[nodiscard]] std::string get_tuning_select_value(const std::string &name) const;
 
+  /// @brief Render a device's "last commanded by" string, resolving this hub's own node ID.
+  ///
+  /// Thin wrapper over detail::describe_last_commander(); exists because the hub's node ID is not
+  /// reachable from a companion entity and hub_internal.h cannot be included from this header.
+  /// @param dev Device record to read.
+  /// @return See detail::describe_last_commander().
+  [[nodiscard]] std::string describe_last_commander(const IoDevice &dev) const;
+
   /// Declare that a remote (identified by its node ID) controls a registered device.
   /// When activity from this remote is overheard, a status poll is scheduled for the device.
   /// This is needed for 1W remotes whose destination address differs from the device's 2W ID.
@@ -650,6 +658,22 @@ class IOHomeControlComponent : public Component,
   virtual void queue_request_device_name(const std::string &device_id);
   /// Queue a pairing operation; executed in loop() when radio idle.
   virtual void queue_discover_and_pair();
+  /// @brief Entry point for the "Scan Paired Devices" button: run the roll-call and publish its
+  /// report to the log and the Home Assistant result event, exactly as the native API action does.
+  ///
+  /// Deliberately not queued through OperationQueue, unlike queue_discover_and_pair(): the
+  /// roll-call has no priority, coalescing or dedup semantics to preserve, and it already runs
+  /// this way from the native API action. What it *is* guarded on is `busy_` — a button, unlike an
+  /// API action, is also reachable from an ESPHome automation, which can fire from inside a
+  /// blocking exchange (an entity callback -> on_value: -> button.press: chain) and would
+  /// otherwise re-enter ExchangeEngine mid-exchange. See ADR 0013 for why one blocking radio
+  /// operation at a time is the whole concurrency model. A press while `busy_` still fires the
+  /// log/event pair (a failed result), matching every other rejected management action rather
+  /// than going silent.
+  ///
+  /// Blocks the ESPHome loop for roughly 3 x `pairing_discovery_wait_ms` and will log the
+  /// "operation took a long time" warning, same as the action — see docs/home_io_control.md.
+  void trigger_scan_paired_devices();
   /// Async form of set_light_position() that keeps radio work serialized on the main loop.
   /// queue_set_light_state() is a thin binary-position wrapper around this.
   /// @param device_id Target device ID.

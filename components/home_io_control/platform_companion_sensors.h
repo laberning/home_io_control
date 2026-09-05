@@ -1,15 +1,16 @@
 #pragma once
 
 /// @file platform_companion_sensors.h
-/// @brief The five auto-generated per-device diagnostic companion sensors.
+/// @brief The seven auto-generated per-device diagnostic companion sensors.
 /// @ingroup hioc_platforms
 ///
-/// Every device-bound platform (cover, light, switch, lock) gets the same five read-only
+/// Every device-bound platform (cover, light, switch, lock) gets the same seven read-only
 /// companions generated alongside it by platform_common.py: smoothed RSSI, seconds since last
-/// contact, cumulative exchange-failure count, the stored device name, and the currently
-/// outstanding CMD_ERROR_RESP reason. They share the DeviceBoundCompanion binding (observe-only:
-/// no add_device(), no polling) and an all-but-identical setup()/dump_config() skeleton, so they
-/// live together here rather than in five near-duplicate file pairs.
+/// contact, cumulative exchange-failure count, the stored device name, the currently outstanding
+/// CMD_ERROR_RESP reason, and the last-command record's commander/originator. They share the
+/// DeviceBoundCompanion binding (observe-only: no add_device(), no polling) and an all-but-
+/// identical setup()/dump_config() skeleton, so they live together here rather than in seven
+/// near-duplicate file pairs.
 
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
@@ -126,6 +127,35 @@ class IOHomeActiveIssueTextSensor : public text_sensor::TextSensor, public Compo
 
   /// @brief Get setup priority so the parent hub is available first.
   /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+};
+
+/// @brief Diagnostic text sensor naming the controller that last commanded this device.
+///
+/// Read from bytes the device already includes in every status reply — no extra radio traffic and
+/// no probe. Last-writer-wins and inherently stale: it only changes when something actually
+/// commands the device, and a foreign controller's node ID has no name unless the user recognises
+/// it. Publishes an empty string until the first status reply carrying the record arrives.
+/// @ingroup hioc_platforms
+class IOHomeLastCommandedByTextSensor : public text_sensor::TextSensor, public Component, public DeviceBoundCompanion {
+ public:
+  void setup() override;
+  void dump_config() override;
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+};
+
+/// @brief Diagnostic text sensor naming what kind of source issued that last command.
+///
+/// The device's own Command Originator byte, rendered "name(0xXX)". Field-validated as a clean
+/// remote-vs-motor-button split on roller shutters only; other device classes may report values
+/// with no ORIGINATOR_* name, which surface as "unknown(0xXX)" rather than being dropped.
+/// @ingroup hioc_platforms
+class IOHomeLastCommandSourceTextSensor : public text_sensor::TextSensor,
+                                          public Component,
+                                          public DeviceBoundCompanion {
+ public:
+  void setup() override;
+  void dump_config() override;
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 };
 

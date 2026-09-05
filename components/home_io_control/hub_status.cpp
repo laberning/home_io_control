@@ -326,6 +326,14 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     // immediate reply to our own execute command is not necessarily trustworthy for them (see
     // apply_private_response_status()'s trust_position parameter).
     apply_private_response_status(id, dev, frame, this->poll_policy_, trust_position);
+    // The device names, in its own status payload, the controller that last commanded it. Skipped
+    // on an execute ack (trust_position == false): that reply's payload layout is request-derived
+    // rather than self-describing (see the offset comment at the top of this file), and our own
+    // ack is not a report of the *last* command anyway — the settle poll a few seconds later is.
+    if (trust_position) {
+      detail::apply_last_command_record(
+          dev, detail::decode_last_command_record(frame, detail::PRIVATE_RESPONSE_LAST_COMMAND_OFFSET));
+    }
     detail::clear_command_result(dev);
     detail::log_status_update(id, dev);
     this->notify_device_update_(id);
@@ -341,11 +349,19 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     // Status-update frames come from the device itself rather than from a direct controller poll.
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
     apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
+    detail::apply_last_command_record(
+        dev, detail::decode_last_command_record(frame, detail::STATUS_UPDATE_LAST_COMMAND_OFFSET));
     detail::clear_command_result(dev);
 
     // What caused the device to move (wind sensor, timer, a remote). Empty when the payload is
     // too short to carry the byte — a 11-14 byte 0x71 is still applied for its position fields,
-    // it just has no originator to report.
+    // it just has no originator to report. This reads the same data[14] byte the last-command
+    // record above just decoded, but through a separate, older, unguarded accessor kept for its
+    // own pinned test (StatusUpdateOriginatorIsAtOffset14AndDecodePathUndisturbed) — it can render
+    // a byte here that the "Last Command Source" sensor leaves empty, on the one payload shape
+    // that differs between them: an all-zero commander (which apply_last_command_record() above
+    // treats as "no record", see decode_last_command_record()'s doc comment) paired with a
+    // populated originator byte. No capture has shown that combination in practice.
     const std::string originator = detail::describe_status_update_originator(frame);
     if (!originator.empty())
       ESP_LOGD(detail::TAG, "Device %s: status update originator=%s", id.c_str(), originator.c_str());

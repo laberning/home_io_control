@@ -204,3 +204,161 @@ TEST(HubInternal, DescribeLearnedDeviceTypeMatchesYamlDeviceTypeNameSourceOfTrut
     }
   }
 }
+
+// ========================================================================================
+// Last-command record — decode_last_command_record() / apply_last_command_record() /
+// describe_last_commander() / describe_last_command_source()
+// ========================================================================================
+
+TEST(HubInternal, DecodeLastCommandRecordReadsPrivateResponseOffsets) {
+  IoFrame f{};
+  const uint8_t payload[14] = {0x05, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBE, 0xFE, 0xDB, 0x01, 0x00, 0x00};
+  std::memcpy(f.data, payload, sizeof(payload));
+  f.data_len = sizeof(payload);
+
+  const auto record = detail::decode_last_command_record(f, detail::PRIVATE_RESPONSE_LAST_COMMAND_OFFSET);
+
+  ASSERT_TRUE(record.valid);
+  EXPECT_EQ(std::memcmp(record.commander, "\xBE\xFE\xDB", 3), 0);
+  EXPECT_EQ(record.originator, 0x01);
+}
+
+TEST(HubInternal, DecodeLastCommandRecordReadsStatusUpdateOffsets) {
+  // Real capture bytes: tests/corpus/captures/statuspoll/somfy_rs100_statuspoll_kig300_sx1276.yaml
+  // frame 2 (0x71) — proves the +3 shift relative to 0x04, not a synthetic guess.
+  IoFrame f{};
+  const uint8_t payload[16] = {0x04, 0x60, 0x10, 0x0A, 0x0B, 0x00, 0x00, 0xAC,
+                               0x9E, 0x00, 0x0F, 0xBE, 0xFE, 0xDB, 0x01, 0x00};
+  std::memcpy(f.data, payload, sizeof(payload));
+  f.data_len = sizeof(payload);
+
+  const auto record = detail::decode_last_command_record(f, detail::STATUS_UPDATE_LAST_COMMAND_OFFSET);
+
+  ASSERT_TRUE(record.valid);
+  EXPECT_EQ(std::memcmp(record.commander, "\xBE\xFE\xDB", 3), 0);
+  EXPECT_EQ(record.originator, 0x01);
+}
+
+TEST(HubInternal, DecodeLastCommandRecordRejectsShortPrivateResponse) {
+  IoFrame f{};
+  const uint8_t payload[6] = {0x2C, 0x80, 0x00, 0x00, 0x00, 0x00};
+  std::memcpy(f.data, payload, sizeof(payload));
+  f.data_len = sizeof(payload);
+
+  EXPECT_FALSE(detail::decode_last_command_record(f, detail::PRIVATE_RESPONSE_LAST_COMMAND_OFFSET).valid);
+}
+
+TEST(HubInternal, DecodeLastCommandRecordRejectsShortStatusUpdate) {
+  // 14 bytes: one short of the 15 the record needs at base 11 (3-byte commander + 1-byte
+  // originator). A nonzero commander is set so this pins the length guard specifically, not the
+  // separate all-zero-commander guard (DecodeLastCommandRecordRejectsAllZeroCommander above).
+  IoFrame f{};
+  const uint8_t payload[14] = {0x04, 0x60, 0x10, 0x0A, 0x0B, 0x00, 0x00, 0xAC, 0x9E, 0x00, 0x0F, 0xBE, 0xFE, 0xDB};
+  std::memcpy(f.data, payload, sizeof(payload));
+  f.data_len = sizeof(payload);
+
+  EXPECT_FALSE(detail::decode_last_command_record(f, detail::STATUS_UPDATE_LAST_COMMAND_OFFSET).valid);
+}
+
+TEST(HubInternal, DecodeLastCommandRecordRejectsAllZeroCommander) {
+  IoFrame f{};
+  const uint8_t payload[14] = {0x05, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00};
+  std::memcpy(f.data, payload, sizeof(payload));
+  f.data_len = sizeof(payload);
+
+  EXPECT_FALSE(detail::decode_last_command_record(f, detail::PRIVATE_RESPONSE_LAST_COMMAND_OFFSET).valid)
+      << "00 00 00 is not a node ID any observed controller uses -- a device padding this field "
+         "must not publish a fabricated address";
+}
+
+TEST(HubInternal, ApplyLastCommandRecordKeepsPreviousOnInvalid) {
+  IoDevice dev{};
+  detail::LastCommandRecord valid{};
+  valid.commander[0] = 0x3B;
+  valid.commander[1] = 0x74;
+  valid.commander[2] = 0xDC;
+  valid.originator = 0x01;
+  valid.valid = true;
+  detail::apply_last_command_record(dev, valid);
+
+  detail::LastCommandRecord invalid{};  // valid == false by default
+  detail::apply_last_command_record(dev, invalid);
+
+  EXPECT_TRUE(dev.has_last_command);
+  EXPECT_EQ(std::memcmp(dev.last_commander, valid.commander, NODE_ID_SIZE), 0)
+      << "a short/unpopulated follow-up reply must not clear an already-learned record";
+  EXPECT_EQ(dev.last_command_originator, 0x01);
+}
+
+TEST(HubInternal, DescribeLastCommanderQualifiesThisHub) {
+  IoDevice dev{};
+  dev.node_id[0] = 0xAB;
+  dev.node_id[1] = 0xC1;
+  dev.node_id[2] = 0x23;
+  dev.last_commander[0] = 0xC0;
+  dev.last_commander[1] = 0xFF;
+  dev.last_commander[2] = 0xEE;
+  dev.has_last_command = true;
+  const uint8_t hub_id[NODE_ID_SIZE] = {0xC0, 0xFF, 0xEE};
+
+  EXPECT_EQ(detail::describe_last_commander(dev, hub_id), "C0FFEE (this hub)");
+}
+
+TEST(HubInternal, DescribeLastCommanderQualifiesTheDeviceItself) {
+  IoDevice dev{};
+  dev.node_id[0] = 0x58;
+  dev.node_id[1] = 0x6E;
+  dev.node_id[2] = 0x35;
+  dev.last_commander[0] = 0x58;
+  dev.last_commander[1] = 0x6E;
+  dev.last_commander[2] = 0x35;
+  dev.has_last_command = true;
+  const uint8_t hub_id[NODE_ID_SIZE] = {0xC0, 0xFF, 0xEE};
+
+  EXPECT_EQ(detail::describe_last_commander(dev, hub_id), "586E35 (this device)");
+}
+
+TEST(HubInternal, DescribeLastCommanderIsPlainForAForeignController) {
+  IoDevice dev{};
+  dev.node_id[0] = 0xAB;
+  dev.node_id[1] = 0xC1;
+  dev.node_id[2] = 0x23;
+  dev.last_commander[0] = 0x3B;
+  dev.last_commander[1] = 0x74;
+  dev.last_commander[2] = 0xDC;
+  dev.has_last_command = true;
+  const uint8_t hub_id[NODE_ID_SIZE] = {0xC0, 0xFF, 0xEE};
+
+  EXPECT_EQ(detail::describe_last_commander(dev, hub_id), "3B74DC");
+}
+
+TEST(HubInternal, DescribeLastCommanderIsEmptyBeforeAnyRecord) {
+  IoDevice dev{};  // has_last_command == false
+  const uint8_t hub_id[NODE_ID_SIZE] = {0xC0, 0xFF, 0xEE};
+
+  EXPECT_TRUE(detail::describe_last_commander(dev, hub_id).empty());
+}
+
+TEST(HubInternal, DescribeLastCommandSourceRendersNameAndHex) {
+  IoDevice dev{};
+  dev.has_last_command = true;
+  dev.last_command_originator = 0x01;  // ORIGINATOR_USER_REMOTE
+
+  EXPECT_EQ(detail::describe_last_command_source(dev), "user_remote(0x01)");
+}
+
+TEST(HubInternal, DescribeLastCommandSourceRendersUndecodedBytes) {
+  // 0x0A is a genuine gap in the ORIGINATOR_* table (a mains gate reported it) — must self-describe
+  // rather than being invented a name or silently dropped.
+  IoDevice dev{};
+  dev.has_last_command = true;
+  dev.last_command_originator = 0x0A;
+
+  EXPECT_EQ(detail::describe_last_command_source(dev), "unknown(0x0A)");
+}
+
+TEST(HubInternal, DescribeLastCommandSourceIsEmptyBeforeAnyRecord) {
+  IoDevice dev{};  // has_last_command == false
+
+  EXPECT_TRUE(detail::describe_last_command_source(dev).empty());
+}

@@ -27,13 +27,18 @@ frames:
     freq: 868950000
     hex: "58 00 A0 25 E1 E4 61 E9 71 04 60 10 0A 0B 00 00 AC 9E 00 0F BE FE DB 01 00"
     crc: absent
-    note: "cmd=STATUS_UPDATE(0x71)"
+    note: "cmd=STATUS_UPDATE(0x71); data[11..13]=BE FE DB / data[14]=01 is the last-commanding
+      controller (the Velux KIG300) and its Command Originator, decoded by
+      detail::decode_last_command_record() at STATUS_UPDATE_LAST_COMMAND_OFFSET=11 — the +3-shifted
+      counterpart of the 0x04 frame below, which is what pins hub_internal.h's offset split"
   - dir: rx
     t_ms: 7360
     freq: 868950000
     hex: "96 00 A0 25 E1 E4 61 E9 04 04 60 00 00 77 CE 00 0B BE FE DB 01 00 00"
     crc: absent
-    note: "cmd=PRIVATE_RESP(0x04)"
+    note: "cmd=PRIVATE_RESP(0x04); data[8..10]=BE FE DB / data[11]=01 is the same last-commanding
+      controller and originator as the 0x71 frame above, at the un-shifted
+      PRIVATE_RESPONSE_LAST_COMMAND_OFFSET=8 — decoded by detail::decode_last_command_record()"
   - dir: rx
     t_ms: 17351
     freq: 868950000
@@ -45,7 +50,10 @@ frames:
     freq: 868250000
     hex: "58 00 CA 0A 18 E4 61 E9 71 05 60 10 0A 0B 00 00 00 00 00 00 BE FE DB 01 00"
     crc: absent
-    note: "cmd=STATUS_UPDATE(0x71)"
+    note: "cmd=STATUS_UPDATE(0x71), addressed to CA0A18; data[11..13]=BE FE DB is still the
+      last-commanding controller (the KIG300) even though the frame's own destination differs —
+      rules out 'data[11..13] is just the destination echoed back', see
+      detail::decode_last_command_record()"
   - dir: rx
     t_ms: 19169
     freq: 868250000

@@ -67,6 +67,7 @@ CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_EXPOSED_SENDERS = "exposed_senders"
 CONF_ACCEPT_FOREIGN_PAIRING = "accept_foreign_pairing"
 CONF_RECOVER_ONEWAY_KEY = "recover_oneway_key"
+CONF_SCAN_PAIRED_DEVICES_BUTTON = "scan_paired_devices_button"
 CONF_ONEWAY_CONTROLLERS = "oneway_controllers"
 # Internal marker recording that an identity's node_id was derived rather than configured, so
 # validation errors and the boot log can say which it was.
@@ -120,6 +121,9 @@ CONF_RECOVER_ONEWAY_KEY_SWITCH_ID = "_recover_oneway_key_switch_id"
 # Internal config key for the "Flash LR1121 Radio Firmware" companion button ID (injected by
 # post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
 CONF_LR1121_FIRMWARE_UPDATE_BUTTON_ID = "_lr1121_firmware_update_button_id"
+# Internal config key for the "Scan Paired Devices" companion button ID (injected by
+# post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
+CONF_SCAN_PAIRED_DEVICES_BUTTON_ID = "_scan_paired_devices_button_id"
 # Internal config key for the "Allow LR1121 Bootloader Rewrite (Irreversible)" companion switch ID
 # (injected by post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above --
 # only present when lr1121_firmware_update.bootloader: is configured).
@@ -152,6 +156,13 @@ IOHomeRecoverOneWayKeySwitch = home_io_control_ns.class_(
 # to, it targets the hub's own radio.
 IOHomeLr1121FirmwareUpdateButton = home_io_control_ns.class_(
     "IOHomeLr1121FirmwareUpdateButton", button_component.Button, cg.Component
+)
+# Hub-level "Scan Paired Devices" button (management_actions.cpp / platform_hub_controls.h). An
+# additional trigger for the already-registered `scan_paired_devices` native API action, which is
+# unchanged. Same "created dynamically from the home_io_control: block" shape as the entities
+# above -- there is no `io_device_id` to bind a roll-call to.
+IOHomeScanPairedDevicesButton = home_io_control_ns.class_(
+    "IOHomeScanPairedDevicesButton", button_component.Button, cg.Component
 )
 # Generated 1W command buttons and their per-identity diagnostic sensor
 # (platform_oneway_entities.h). Created from the `oneway_controllers:` block, never a `button:`
@@ -188,30 +199,49 @@ IOHomeLr1121BootloaderRewriteSwitch = home_io_control_ns.class_(
 )
 
 
-def _inject_accept_foreign_pairing_switch_id(config):
-    if not config[CONF_ACCEPT_FOREIGN_PAIRING]:
+def _inject_hub_entity_id(config, *, flag_key, id_key, suffix, cls):
+    """Shared body for the hub-level entities gated by a bare boolean flag in the
+    `home_io_control:` block (accept_foreign_pairing, recover_oneway_key,
+    scan_paired_devices_button): declare the entity's ID during validation, under the
+    `{hub_id}_{suffix}` name, only when its flag is set. See companion_id_base() in
+    platform_common.py for why this must happen at validation time rather than in to_code().
+    """
+    if not config[flag_key]:
         return config
     parent_id = config[CONF_ID]
     base = parent_id.id if parent_id.id else "home_io_control"
-    config[CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID] = ID(
-        f"{base}_accept_foreign_pairing_switch",
-        is_declaration=True,
-        type=IOHomeAcceptForeignPairingSwitch,
-    )
+    config[id_key] = ID(f"{base}_{suffix}", is_declaration=True, type=cls)
     return config
+
+
+def _inject_accept_foreign_pairing_switch_id(config):
+    return _inject_hub_entity_id(
+        config,
+        flag_key=CONF_ACCEPT_FOREIGN_PAIRING,
+        id_key=CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID,
+        suffix="accept_foreign_pairing_switch",
+        cls=IOHomeAcceptForeignPairingSwitch,
+    )
 
 
 def _inject_recover_oneway_key_switch_id(config):
-    if not config[CONF_RECOVER_ONEWAY_KEY]:
-        return config
-    parent_id = config[CONF_ID]
-    base = parent_id.id if parent_id.id else "home_io_control"
-    config[CONF_RECOVER_ONEWAY_KEY_SWITCH_ID] = ID(
-        f"{base}_recover_oneway_key_switch",
-        is_declaration=True,
-        type=IOHomeRecoverOneWayKeySwitch,
+    return _inject_hub_entity_id(
+        config,
+        flag_key=CONF_RECOVER_ONEWAY_KEY,
+        id_key=CONF_RECOVER_ONEWAY_KEY_SWITCH_ID,
+        suffix="recover_oneway_key_switch",
+        cls=IOHomeRecoverOneWayKeySwitch,
     )
-    return config
+
+
+def _inject_scan_paired_devices_button_id(config):
+    return _inject_hub_entity_id(
+        config,
+        flag_key=CONF_SCAN_PAIRED_DEVICES_BUTTON,
+        id_key=CONF_SCAN_PAIRED_DEVICES_BUTTON_ID,
+        suffix="scan_paired_devices_button",
+        cls=IOHomeScanPairedDevicesButton,
+    )
 
 
 def validate_lr1121_firmware_source(value, *, expect_loader=False):
@@ -1042,6 +1072,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_ACCEPT_FOREIGN_PAIRING, default=False): cv.boolean,
             cv.Optional(CONF_RECOVER_ONEWAY_KEY, default=False): cv.boolean,
+            cv.Optional(CONF_SCAN_PAIRED_DEVICES_BUTTON, default=False): cv.boolean,
             cv.Optional(CONF_ONEWAY_CONTROLLERS, default=[]): cv.ensure_list(
                 ONEWAY_CONTROLLER_SCHEMA
             ),
@@ -1054,6 +1085,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(spi.spi_device_schema(True, 8e6, "mode0")),
     _inject_accept_foreign_pairing_switch_id,
     _inject_recover_oneway_key_switch_id,
+    _inject_scan_paired_devices_button_id,
     _validate_oneway_controllers,
     _validate_lr1121_firmware_update,
 )
@@ -1141,6 +1173,9 @@ async def to_code(config):
             id_key=CONF_RECOVER_ONEWAY_KEY_SWITCH_ID,
             name="Recover 1W Controller Key",
         )
+
+    if config[CONF_SCAN_PAIRED_DEVICES_BUTTON]:
+        await _create_scan_paired_devices_button(config, var)
 
     cg.add(var.set_diagnostic_probes_enabled(config[CONF_DIAGNOSTIC_PROBES]))
 
@@ -1244,6 +1279,29 @@ async def _create_hub_arming_switch(config, var, *, cls, id_key, name):
         }
     )
     entity = await switch_component.new_switch(entity_config)
+    await cg.register_component(entity, entity_config)
+    cg.add(entity.set_parent(var))
+
+
+async def _create_scan_paired_devices_button(config, var):
+    """Create the hub-level "Scan Paired Devices" button.
+
+    Same normalization as _create_hub_arming_switch() above: run a bare {id, name} dict through
+    button_schema()+COMPONENT_SCHEMA so it carries the entity/component defaults register_button()/
+    register_component() require. The `scan_paired_devices` native API action is registered
+    independently in C++ (ManagementActions::register_actions()) and is unaffected by this key --
+    the button is an extra trigger onto the same method, not a replacement.
+    """
+    entity_config = button_component.button_schema(
+        IOHomeScanPairedDevicesButton,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ).extend(cv.COMPONENT_SCHEMA)(
+        {
+            CONF_ID: config[CONF_SCAN_PAIRED_DEVICES_BUTTON_ID],
+            CONF_NAME: "Scan Paired Devices",
+        }
+    )
+    entity = await button_component.new_button(entity_config)
     await cg.register_component(entity, entity_config)
     cg.add(entity.set_parent(var))
 
