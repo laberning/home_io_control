@@ -654,10 +654,13 @@ TEST(HubOperations, RequestDeviceStatusTimeoutBackoffEscalatesDuringTrackedPolli
 }
 
 // A scheduler-owned status poll (StatusPollPolicy is tracking the device) caps its exchange at
-// SCHEDULED_POLL_MAX_TRIES: its failure is re-armed by the backoff ladder, so extra blocking
-// in-exchange tries only stall loop() while a device is unresponsive. A one-off poll, and every
-// user command, keep the full EXCHANGE_RETRY_COUNT. All three cases fail every transmit so the
-// send count is exactly the try count.
+// SCHEDULED_POLL_MAX_TRIES for most ladder slots: its failure is re-armed by the backoff ladder,
+// so extra blocking in-exchange tries only stall loop() while a device is unresponsive. The
+// exception is a middle band of the ladder (decisions::scheduled_poll_max_tries()), where the slot
+// right after a manoeuvre ends is the one chance to catch a duty-cycled receiver — see the tests
+// below this one. A one-off poll, and every user command, always keep the full
+// EXCHANGE_RETRY_COUNT. All cases here fail every transmit so the send count is exactly the try
+// count.
 TEST(HubOperations, TrackedStatusPollUsesASingleExchangeTry) {
   TestableComponent comp;
   MockRadio radio;
@@ -669,7 +672,77 @@ TEST(HubOperations, TrackedStatusPollUsesASingleExchangeTry) {
 
   EXPECT_FALSE(comp.request_device_status("ABC123"));
   EXPECT_EQ(radio.get_send_count(), 1)
-      << "a scheduler-owned poll transmits once; the 5/15/30 s backoff ladder is its retry mechanism";
+      << "the *first* slot (no recorded failures yet, i.e. the settle poll) transmits once; the "
+         "5/15/30 s backoff ladder is its retry mechanism";
+}
+
+TEST(HubOperations, TrackedStatusPollRegainsRetriesAfterTheFirstMissedSlot) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/false, esphome::millis());
+  ASSERT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+
+  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
+      << "the slot just after the first missed poll is the recovery-defining one — it must get the "
+         "full retry budget back";
+}
+
+TEST(HubOperations, TrackedStatusPollDropsBackToOneTryOnceTheDeviceLooksDead) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  for (int i = 0; i < 4; ++i)
+    comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/false, esphome::millis());
+  ASSERT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 4u);
+
+  radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_send_count(), 1)
+      << "four consecutive misses means unreachable, not merely duty-cycled — back to a single try";
+}
+
+TEST(HubOperations, TrackedStatusPollWithAnAuthShapedStreakStaysSingleTry) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/true, esphome::millis());
+  ASSERT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 1u);
+  ASSERT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u);
+
+  radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_send_count(), 1)
+      << "a device that answered with a 0x3C challenge is already awake; retries cannot buy a "
+         "wake-up, and the naive status_poll_failures-only gate would wrongly grant this the band";
+}
+
+TEST(HubOperations, GraceBandReopensAfterASuccessfulReply) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  for (int i = 0; i < 4; ++i)
+    comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/false, esphome::millis());
+  comp.poll_policy_.clear_failure_streaks("ABC123");
+  comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/false, esphome::millis());
+  ASSERT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+
+  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
+      << "a device that replied resets the streak; its next miss is worth the same grace as a fresh one";
 }
 
 TEST(HubOperations, OneShotStatusPollKeepsTheFullRetryBudget) {

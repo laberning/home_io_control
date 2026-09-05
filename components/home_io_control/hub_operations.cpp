@@ -1,5 +1,6 @@
 #include "hub_internal.h"
 
+#include "hub_decisions.h"
 #include "proto_commands.h"
 
 #include <algorithm>
@@ -352,12 +353,16 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   if (!request_ok)
     return false;
   // A poll the scheduler owns (StatusPollPolicy is tracking this device) is re-armed by the backoff
-  // ladder on failure, so the ladder is its retry mechanism; extra blocking in-exchange tries would
-  // only stall loop() while a device is unresponsive. A one-off poll with nothing behind it keeps
-  // the full retry budget. See SCHEDULED_POLL_MAX_TRIES.
+  // ladder on failure, so the ladder is its retry mechanism and most slots need only one try. The
+  // exception is the middle of the ladder, where the slot that lands just after a manoeuvre ends is
+  // the one chance to catch a duty-cycled receiver — see decisions::scheduled_poll_max_tries(). A
+  // one-off poll with no ladder behind it keeps the full retry budget.
   const bool scheduler_managed = this->poll_policy_.is_tracking_active(device_id, millis());
   const uint32_t retry_after_fail_ms = scheduler_managed ? STATUS_RETRY_AFTER_FAIL_MS : 0;
-  const uint8_t max_tries = scheduler_managed ? SCHEDULED_POLL_MAX_TRIES : EXCHANGE_RETRY_COUNT;
+  const uint8_t max_tries =
+      scheduler_managed ? decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
+                                                              this->poll_policy_.get_auth_poll_failures(device_id))
+                        : EXCHANGE_RETRY_COUNT;
   return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
 }
 

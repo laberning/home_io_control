@@ -111,15 +111,39 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
 
-/// Exchange tries for a status poll the scheduler owns (StatusPollPolicy is tracking the device).
+/// Exchange tries for a status poll the scheduler owns — every status poll issued while
+/// StatusPollPolicy is tracking the device, which today is every status poll this component can
+/// produce (there is no user-facing "refresh status" button or action; if one is ever added, it
+/// must not take this branch).
 ///
 /// Such a poll's failure is re-armed by the backoff ladder (STATUS_RETRY_AFTER_FAIL_MS and its
 /// successors), so the ladder *is* its retry mechanism; stacking EXCHANGE_RETRY_COUNT blocking
 /// in-exchange tries on top of it buys no freshness and costs ~1.6 s of blocked loop() while a
-/// device is unresponsive (e.g. an actuator mid-manoeuvre). A poll with no ladder behind it keeps
-/// the full EXCHANGE_RETRY_COUNT. Trade-off: a missed post-command settle poll — also scheduler-
-/// owned — defers the Home Assistant position update to the ladder's next slot rather than ~1.5 s.
+/// device is unresponsive (e.g. an actuator mid-manoeuvre) — the settle poll fires seconds after a
+/// command, squarely inside the manoeuvre, so keeping it a single try is what lets a STOP a user
+/// presses mid-move dispatch promptly. A poll with no ladder behind it keeps the full
+/// EXCHANGE_RETRY_COUNT. See SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE below for the one place this
+/// trade-off is deliberately bought back.
 static constexpr uint8_t SCHEDULED_POLL_MAX_TRIES = 1;
+
+/// Ladder positions at which a scheduler-owned status poll gets the full EXCHANGE_RETRY_COUNT back.
+///
+/// The single try above is right at both ends of the backoff ladder and wrong in the middle. At the
+/// first slot after a command the device is still executing the manoeuvre: its silence is expected,
+/// retries cannot change that, and blocking loop() for the full retry product would delay a STOP
+/// the user presses mid-move. Once a device has missed several slots in a row it is unreachable
+/// rather than merely asleep, and retries are just as pointless. In between sits the slot where the
+/// manoeuvre has just ended and the device is awake again but duty-cycled — one 400 ms listen
+/// samples its receive window once; EXCHANGE_RETRY_COUNT tries sample it three times, ~870 ms apart,
+/// and a success there also clears the failure streak and ends the backoff.
+///
+/// Counted in consecutive silent failures already recorded when the poll is dispatched, so 0 is the
+/// post-command settle poll and 1..3 are the ~5 s / ~15 s / ~30 s ladder slots after it — roughly
+/// t+8 s to t+53 s, spanning every cover travel time this project has measured. An auth-shaped
+/// streak is excluded entirely: a device that answers with a 0x3C challenge is awake, so extra
+/// tries buy no wake-up, and an auth try is the most expensive shape the engine runs.
+static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE = 1;
+static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE = 3;
 
 /// Wall-clock ceiling on one whole exchange, retries included.
 ///
