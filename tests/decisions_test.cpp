@@ -266,6 +266,48 @@ TEST(Decisions, DeferReleasesAtTheCapEvenMidBurst) {
 }
 
 // ============================================================================
+// Scheduled-poll retry budget — scheduled_poll_max_tries()
+// ============================================================================
+
+TEST(Decisions, ScheduledPollTriesSettleSlotStaysSingleTry) {
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(/*status_poll_failures=*/0, /*auth_poll_failures=*/0),
+            SCHEDULED_POLL_MAX_TRIES)
+      << "the settle poll fires mid-manoeuvre; a STOP the user presses then must not queue behind it";
+}
+
+TEST(Decisions, ScheduledPollTriesGraceBandGetsTheFullBudget) {
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(1, 0), EXCHANGE_RETRY_COUNT);
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(2, 0), EXCHANGE_RETRY_COUNT);
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(3, 0), EXCHANGE_RETRY_COUNT)
+      << "these slots are the first real chances to catch a duty-cycled device once its manoeuvre "
+         "has ended";
+}
+
+TEST(Decisions, ScheduledPollTriesTailDropsBackToSingleTry) {
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(4, 0), SCHEDULED_POLL_MAX_TRIES);
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(UINT8_MAX, 0), SCHEDULED_POLL_MAX_TRIES)
+      << "several consecutive misses means unreachable, not asleep — retries buy nothing there";
+}
+
+TEST(Decisions, ScheduledPollTriesAuthStreakNeverGetsTheBand) {
+  // Regression test: a naive `status_poll_failures < N` gate passes every test above but fails this
+  // one, because on_exchange_failed() zeroes status_poll_failures whenever it counts an auth-shaped
+  // failure instead — so an awake, challenge-answering device would score full retries by mistake.
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 1), SCHEDULED_POLL_MAX_TRIES);
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 2), SCHEDULED_POLL_MAX_TRIES);
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, UINT8_MAX), SCHEDULED_POLL_MAX_TRIES)
+      << "a device answering with a 0x3C challenge is already awake; retries cannot buy a wake-up "
+         "and an auth try is the most expensive shape the engine runs";
+}
+
+TEST(Decisions, ScheduledPollTriesAuthWinsOverAStatusStreak) {
+  // Unreachable while on_exchange_failed() keeps the two counters mutually exclusive; pinned anyway
+  // so the predicate's precedence (auth checked first) stays correct if that exclusivity ever
+  // relaxes.
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(2, 1), SCHEDULED_POLL_MAX_TRIES);
+}
+
+// ============================================================================
 // Burst start-of-window detection — oneway_burst_started_fresh()
 // ============================================================================
 

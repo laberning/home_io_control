@@ -231,6 +231,28 @@ inline bool defer_background_poll_for_1w_activity(bool next_op_is_background, ui
   return (now - last_1w_activity_ms) < quiet_ms;
 }
 
+/// @brief Transmit-attempt budget for a scheduler-owned status poll, by backoff-ladder position.
+///
+/// See SCHEDULED_POLL_MAX_TRIES and SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE (proto_timing.h) for
+/// why the full budget belongs to a middle band of the ladder rather than to its start or its tail.
+///
+/// The two counters are mutually exclusive by construction — StatusPollPolicy::on_exchange_failed()
+/// zeroes one while incrementing the other — so an auth-shaped streak reads status_poll_failures
+/// as 0 and would otherwise fall into the band's own "fresh window" case. It is rejected first,
+/// deliberately, so the predicate stays correct even if that exclusivity is ever relaxed.
+///
+/// @param status_poll_failures Consecutive silent failures already recorded for this device.
+/// @param auth_poll_failures   Consecutive challenge-seen failures already recorded.
+/// @return EXCHANGE_RETRY_COUNT inside the band, SCHEDULED_POLL_MAX_TRIES everywhere else.
+inline uint8_t scheduled_poll_max_tries(uint8_t status_poll_failures, uint8_t auth_poll_failures) {
+  if (auth_poll_failures != 0)
+    return SCHEDULED_POLL_MAX_TRIES;
+  if (status_poll_failures < SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE ||
+      status_poll_failures > SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE)
+    return SCHEDULED_POLL_MAX_TRIES;
+  return EXCHANGE_RETRY_COUNT;
+}
+
 /// True if a frame's shape matches a 1W remote's pairing gesture (issue #27/#65): CTRL0 1W bit
 /// set, addressed to the 1W broadcast address (0x00003F), with one of the three command bytes
 /// observed in the field capture — 0x20 (WRITE_PRIVATE), 0x39 (1W remove), or 0x2E (alternate
