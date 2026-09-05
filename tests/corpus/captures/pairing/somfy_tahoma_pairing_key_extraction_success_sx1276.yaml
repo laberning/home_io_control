@@ -1,0 +1,83 @@
+id: somfy_tahoma_pairing_key_extraction_success_sx1276
+description: >
+  Community capture from issue #27 (Skamba), key extraction (accept_foreign_pairing) against a
+  real Somfy TaHoma Switch (node 7B0490) that already owned the device being cloned. Completed
+  first-try, no retries at any step: CMD_DISCOVER_REQ (0x28) -> CMD_DISCOVER_CONFIRM (0x2C) ->
+  CMD_KEY_INIT (0x31) -> CMD_KEY_TRANSFER (0x32, omitted -- see below, "SYSTEM KEY EXTRACTED") ->
+  CMD_ADDRESS_REQ (0x36) -> CMD_CHALLENGE_REQ (0x3C, omitted -- see below). Only the hub's own
+  frames are included (all `dir: rx` from our device-role responder's perspective) -- the
+  reporter's log captured what the real hub transmitted, not the bytes our own responder sent
+  back, so no `expect.frames` classification or response-frame assertions are made here; this
+  capture exists to pin the hub's own frame shapes and follow-through timing, not the full
+  bidirectional exchange.
+  This closes two previously-open questions on file: (1)
+  somfy_connectivity_kit_pairing_key_extraction_stall.yaml documents a different Somfy hub
+  sending 0x2C and never proceeding to 0x31 (issue #45 Finding 1) -- this capture is the first
+  evidence a Somfy hub *does* follow through once 0x2C is answered, so that stall was specific to
+  whatever was wrong there, not a general Somfy-brand trait. (2)
+  velux_klr200_pairing_key_extraction_success.yaml's own 0x37 note says no CMD_CHALLENGE_REQ
+  followed its 0x37 in the ~60s grace window, left as "open question, not yet understood" -- this
+  TaHoma's 0x3C followed its own 0x36 (an address request, not the 0x37 the KLR200 capture
+  describes -- this session's device-role responder apparently never got to send an 0x37 before
+  the hub's own 0x3C arrived, or the reporter's log excerpt did not capture it either way) 53ms
+  later. Taken together: whether the post-address-request challenge happens is hub-dependent, not
+  a bug on either side -- a KLR200 skipped it, this TaHoma Switch did it.
+  The reporter (Skamba) reports the discovery wizard's control-point choice mattered: the TaHoma
+  app's "remote control" control point never transmits a discovery at all (confirmed from a
+  separate, full clean log with zero 0x28 anywhere -- see issue #27 for detail), while "Smoove"
+  goes straight to searching, producing the 0x28 captured here.
+source:
+  device: "Somfy TaHoma Switch (node 7B0490) -- real third-party hub, community capture, driving
+    a Somfy Sunea io screen (node B18635) it already owned"
+  captured_with: sx1276
+  firmware: "ESPHome 2026.8.2 / home_io_control main, LilyGO T3 LoRa32 V1.6.1"
+  date: 2026-09-04
+  origin: github-issue
+  issue: https://github.com/laberning/home_io_control/issues/27
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    hex: "C8 00 00 00 3B 7B 04 90 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), broadcast to backbone group 00003B"
+  - dir: rx
+    t_ms: 1881
+    hex: "48 20 42 B0 D5 7B 04 90 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), addressed directly to the throwaway device id 42B0D5 our
+      responder replied with"
+  - dir: rx
+    t_ms: 6522
+    hex: "48 20 42 B0 D5 7B 04 90 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31) -- 4.6s after the 0x2C; the responder logged 'SYSTEM KEY EXTRACTED'
+      immediately after answering the CMD_KEY_TRANSFER (0x32) that followed this, per the
+      reporter's log"
+  # CMD_KEY_TRANSFER (0x32, rx, ctrl0=0x18/ctrl1=0x00) is omitted: its payload is masked by this
+  # project's own redaction (command_carries_key_material(), redaction.h) before the reporter's
+  # log is even written, so the payload bytes were never in the log to begin with -- same
+  # treatment as issue #45's and #80's corpus entries for the same frame kind (0x32 carries the
+  # system key; including a masked-payload frame here isn't possible without misrepresenting
+  # masked data as captured data).
+  - dir: rx
+    t_ms: 7293
+    hex: "48 24 42 B0 D5 7B 04 90 36"
+    crc: absent
+    note: "cmd=ADDRESS_REQ(0x36), ~771ms after the 0x32/key-confirm step, well inside the
+      post-extraction grace window"
+  # CMD_CHALLENGE_REQ (0x3C, rx, ctrl0=0x0E/ctrl1=0x00) is omitted for the same reason as 0x32
+  # above -- its 6-byte challenge payload is masked before the log is written. Its framing bytes
+  # were visible (0E 00, matching the shape create_challenge_req_device_role() expects to answer)
+  # and arrived 53ms after the 0x36 above.
+expect:
+  # No `exchange:` block: that block's classification test requires at least one `dir: tx` frame
+  # to supply our own controller node ID (see corpus_classification_test.cpp), and this capture
+  # has none -- only the hub's own transmissions were in the reporter's log, as noted above. The
+  # cmd/start/end/protocol shape below is still fully checked by the frame round-trip and decode
+  # tests independent of that.
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x36, start: true, end: false, protocol: 2w}

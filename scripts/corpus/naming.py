@@ -29,7 +29,7 @@ PHASES = ("exchange", "probe", "oneway", "statuspoll", "pairing", "discovery",
 SUBJECTS = frozenset({
     "atlantic_thermor", "multi_somfy", "reference_1w", "selfpair", "wind_sensor",
     "somfy_awning", "somfy_connectivity_kit", "somfy_izymo_dimmer", "somfy_j406",
-    "somfy_oximo40", "somfy_rs100", "somfy_smoove", "somfy_sunilus",
+    "somfy_oximo40", "somfy_rs100", "somfy_smoove", "somfy_sunilus", "somfy_tahoma",
     "synthetic", "tilt_cover", "unidentified_1w_remote",
     "velux_kig300", "velux_kli310", "velux_kli313", "velux_klr200", "velux_kux100", "velux_window",
 })

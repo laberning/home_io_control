@@ -1,0 +1,33 @@
+id: wind_sensor_oneway_favorite_wind_originator_sx1276
+description: >
+  Overheard 1W EXECUTE broadcast from the same combined wind/rain protection station as
+  wind_sensor_oneway_favorite_rain_originator_sx1276 (FAVORITE, originator=wind_sensor,
+  priority=protection_sensor), targeting all (00003F), captured minutes earlier in the same
+  session. originator=wind_sensor is already covered by wind_sensor_oneway_execute_sx1276.yaml and
+  its two siblings, but all three of those are intent=SECURED_TARGET — this is the first capture
+  of intent=FAVORITE from a protection sensor of any kind. Community capture from issue #27
+  (Skamba).
+source:
+  device: "Somfy combined wind/rain protection station (node 495DE8), part of a Sunea io
+    installation also including a TaHoma Switch and a Situo 1W remote"
+  captured_with: sx1276
+  firmware: "ESPHome 2026.8.2 / home_io_control main, LilyGO T3 LoRa32 V1.6.1"
+  date: 2026-09-04
+  origin: github-issue
+  issue: https://github.com/laberning/home_io_control/issues/27
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "FB 00 00 00 3F 49 5D E8 00 09 3B D8 0A 80 D8 06 00 F0 00 B3 6D AE C2 54 8C 27 BF D2"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), decoded live as FAVORITE originator=wind_sensor priority=protection_sensor"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: FAVORITE
+    originator: 0x09
+    acei: 1
+    target_type: 0

@@ -1023,9 +1023,14 @@ Extraction)" (not configurable).
   request and accepted this feature's response, registering the device on its display. Whether the
   `CMD_CHALLENGE_REQ`/`CMD_CHALLENGE_RESP` follow-up happens is hub-dependent, now confirmed both
   ways on real hardware: that same real KLR200 run never sent it, but a Somfy TaHoma Switch
-  (GitHub issue #27) did send a `0x3C` challenge right after `0x37` and accepted this feature's
-  `0x3D` response. Whether the challenge is conditional on something (device category, hub
-  firmware) or is simply an optional step some hubs skip is unconfirmed. That capture also shows the real device
+  (GitHub issue #27,
+  `tests/corpus/captures/pairing/somfy_tahoma_pairing_key_extraction_success_sx1276.yaml`) sent a
+  `0x3C` challenge 53ms after its own `0x36` request and accepted this feature's `0x3D` response
+  (the extraction completed and the device controlled normally afterward; the reporter's own log
+  only captured the hub's transmissions, not this feature's `0x37`/`0x3D` replies, so their exact
+  bytes/timing aren't independently pinned down — only that they were sent and accepted). Whether
+  the challenge is conditional on something (device category, hub firmware) or is simply an
+  optional step some hubs skip is unconfirmed. That capture also shows the real device
   reporting a persistent identity in its `CMD_ADDRESS_RESP` distinct from its own node/session
   address — a distinction the io-homecontrol wire format appears to track generally, not something
   specific to that one device. This feature's emulated device only ever has one identity to offer
