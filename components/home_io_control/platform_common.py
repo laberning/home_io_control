@@ -64,6 +64,9 @@ CONF_ACTIVE_ISSUE_SENSOR_ID = "_active_issue_sensor_id"
 CONF_RSSI_SENSOR_ID = "_rssi_sensor_id"
 CONF_LAST_CONTACT_SENSOR_ID = "_last_contact_sensor_id"
 CONF_EXCHANGE_FAILURES_SENSOR_ID = "_exchange_failures_sensor_id"
+# Internal config keys for the companion last-command sensor IDs (injected by post-validator).
+CONF_LAST_COMMANDED_BY_SENSOR_ID = "_last_commanded_by_sensor_id"
+CONF_LAST_COMMAND_SOURCE_SENSOR_ID = "_last_command_source_sensor_id"
 
 IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
     "IOHomeDeviceNameTextSensor", text_sensor.TextSensor, cg.Component
@@ -78,6 +81,12 @@ IOHomeLastContactSensor = home_io_control_ns.class_(
 IOHomeExchangeFailuresSensor = home_io_control_ns.class_(
     "IOHomeExchangeFailuresSensor", sensor.Sensor, cg.Component
 )
+IOHomeLastCommandedByTextSensor = home_io_control_ns.class_(
+    "IOHomeLastCommandedByTextSensor", text_sensor.TextSensor, cg.Component
+)
+IOHomeLastCommandSourceTextSensor = home_io_control_ns.class_(
+    "IOHomeLastCommandSourceTextSensor", text_sensor.TextSensor, cg.Component
+)
 
 
 # (config key, ID suffix, codegen class) for every auto-generated companion sensor.
@@ -87,6 +96,8 @@ _COMPANION_SENSOR_IDS = (
     (CONF_RSSI_SENSOR_ID, "rssi_sensor", IOHomeRssiSensor),
     (CONF_LAST_CONTACT_SENSOR_ID, "last_contact_sensor", IOHomeLastContactSensor),
     (CONF_EXCHANGE_FAILURES_SENSOR_ID, "exchange_failures_sensor", IOHomeExchangeFailuresSensor),
+    (CONF_LAST_COMMANDED_BY_SENSOR_ID, "last_commanded_by_sensor", IOHomeLastCommandedByTextSensor),
+    (CONF_LAST_COMMAND_SOURCE_SENSOR_ID, "last_command_source_sensor", IOHomeLastCommandSourceTextSensor),
 )
 
 
@@ -300,6 +311,9 @@ async def create_companion_sensors(config, parent):
       default (noise control). Last Contact publishes seconds since the last frame from the
       device (an age, not a Home Assistant timestamp) and keeps counting up between frames via
       its own heartbeat; see IOHomeLastContactSensor.
+    - Last Commanded By / Last Command Source: who/what last commanded the device, disabled by
+      default (noise control). Free — decoded from bytes already present in every status reply,
+      no extra radio traffic; see IOHomeLastCommandedByTextSensor.
     """
     await _create_companion_text_sensor(
         config,
@@ -347,4 +361,18 @@ async def create_companion_sensors(config, parent):
             CONF_STATE_CLASS: STATE_CLASS_TOTAL_INCREASING,
             CONF_ACCURACY_DECIMALS: 0,
         },
+    )
+    await _create_companion_text_sensor(
+        config,
+        parent,
+        config[CONF_LAST_COMMANDED_BY_SENSOR_ID],
+        _companion_sensor_name(config, "Last Commanded By"),
+        disabled_by_default=True,
+    )
+    await _create_companion_text_sensor(
+        config,
+        parent,
+        config[CONF_LAST_COMMAND_SOURCE_SENSOR_ID],
+        _companion_sensor_name(config, "Last Command Source"),
+        disabled_by_default=True,
     )

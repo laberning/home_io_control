@@ -33,7 +33,7 @@ frames:
     freq: 868950000
     hex: "96 00 C0 FF EE 30 E1 F2 04 04 00 C8 00 04 E8 00 23 C0 FF EE 01 00 00"
     crc: absent
-    note: "cmd=PRIVATE_RESP(0x04); trailing payload bytes 01 C0 FF EE 01 00 00 include the commanding controller's node ID echoed back plus an undeciphered field - not asserted in expect: below since it isn't decoded by any production function yet"
+    note: "cmd=PRIVATE_RESP(0x04); data[8..10]=C0 FF EE is the last-commanding controller's node ID (this hub, echoed back), data[11]=01 is that command's Command Originator (ORIGINATOR_USER_REMOTE) - decoded by detail::decode_last_command_record() (hub_internal.h) into dev.last_commander/last_command_originator; not asserted in expect: below since that block only covers position, not this pair"
 expect:
   exchange:
     kind: status_poll

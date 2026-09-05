@@ -1,5 +1,5 @@
 /// @file platform_companion_sensors.cpp
-/// @brief The five auto-generated per-device diagnostic companion sensors.
+/// @brief The seven auto-generated per-device diagnostic companion sensors.
 /// @ingroup hioc_platforms
 
 #include "platform_companion_sensors.h"
@@ -14,7 +14,7 @@ namespace home_io_control {
 
 // Each dump_config() keeps its own log tag as a `static` function-local constant: the ESPHome
 // LOG_SENSOR / LOG_TEXT_SENSOR macros expand to a bare `TAG` identifier, so one shared file-scope
-// constant could not carry five different values. Values are unchanged from the former per-sensor
+// constant could not carry seven different values. Values are unchanged from the former per-sensor
 // files. (`static` so the name resolves as a StaticConstant, i.e. UPPER_CASE, under clang-tidy's
 // identifier-naming check rather than as a lower_case local.)
 
@@ -100,6 +100,32 @@ void IOHomeActiveIssueTextSensor::setup() {
 void IOHomeActiveIssueTextSensor::dump_config() {
   static const char *const TAG = "home_io_control.active_issue";
   LOG_TEXT_SENSOR("", "IO-Homecontrol Active Issue", this);
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeLastCommandedByTextSensor::setup() {
+  // No parent_ == nullptr guard needed here (unlike IOHomeDeviceNameTextSensor, which dereferences
+  // parent_ a second time outside the binding, in a set_timeout lambda): register_companion_binding_()
+  // already no-ops on a null parent before this lambda is ever invoked, so parent_ is guaranteed
+  // non-null every time it runs.
+  this->register_companion_binding_(
+      [this](const IoDevice &dev) { this->publish_state(this->parent_->describe_last_commander(dev)); });
+}
+
+void IOHomeLastCommandedByTextSensor::dump_config() {
+  static const char *const TAG = "home_io_control.last_commanded_by";
+  LOG_TEXT_SENSOR("", "IO-Homecontrol Last Commanded By", this);
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeLastCommandSourceTextSensor::setup() {
+  this->register_companion_binding_(
+      [this](const IoDevice &dev) { this->publish_state(detail::describe_last_command_source(dev)); });
+}
+
+void IOHomeLastCommandSourceTextSensor::dump_config() {
+  static const char *const TAG = "home_io_control.last_command_source";
+  LOG_TEXT_SENSOR("", "IO-Homecontrol Last Command Source", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
 }
 

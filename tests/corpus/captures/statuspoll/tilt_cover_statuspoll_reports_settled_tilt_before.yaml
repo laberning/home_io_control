@@ -48,7 +48,7 @@ frames:
     freq: 868950000
     hex: "98 00 31 BA F7 51 C0 01 04 05 00 C8 00 C8 00 00 00 31 BA F7 01 20 C8 00 00"
     crc: absent
-    note: "cmd=PRIVATE_RESP(0x04), extended (16-byte) reply, END — data[0]=0x05 (STATUS_STOPPED set), data[2..3]=0xC800 target=100%, data[4..5]=0xC800 current=100%, data[8..10]=31BAF7 (our own controller ID, echoed), data[11]=0x01, data[12]=0x20 STATUS_TILT_SELECTOR, data[13..14]=0xC800 tilt raw -> decode_tilt_report(0xC800)=0%"
+    note: "cmd=PRIVATE_RESP(0x04), extended (16-byte) reply, END — data[0]=0x05 (STATUS_STOPPED set), data[2..3]=0xC800 target=100%, data[4..5]=0xC800 current=100%, data[8..10]=31BAF7 is the last-commanding controller (our own controller ID, echoed) and data[11]=0x01 its Command Originator (ORIGINATOR_USER_REMOTE), decoded by detail::decode_last_command_record() at PRIVATE_RESPONSE_LAST_COMMAND_OFFSET=8 — same slot as the rs100/awning fixtures' notes, this capture's point is instead data[12]=0x20 STATUS_TILT_SELECTOR, data[13..14]=0xC800 tilt raw -> decode_tilt_report(0xC800)=0%, proving the last-command decode does not collide with the extended-tilt block one selector value later"
 expect:
   exchange:
     kind: status_poll

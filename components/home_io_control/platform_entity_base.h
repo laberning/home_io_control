@@ -123,8 +123,9 @@ class DeviceBoundEntity {
 
 /// @brief Mixin holding the parent + device-id binding shared by per-device entities that are
 /// not full entity platforms: the auto-generated companion diagnostic sensors (device name,
-/// active issue, RSSI, last contact, exchange failures) and the per-device auxiliary control
-/// entities (cover favorite/vent buttons, cover silent switch).
+/// active issue, RSSI, last contact, exchange failures, last commanded by, last command source)
+/// and the per-device auxiliary control entities (cover favorite/vent buttons, cover silent
+/// switch).
 /// @ingroup hioc_platforms
 ///
 /// These differ from the main entity platforms (DeviceBoundEntity above) in that they do not own
@@ -170,8 +171,9 @@ class DeviceBoundCompanion {
 /// @brief Mixin for entities bound to the hub itself rather than to one device.
 /// @ingroup hioc_platforms
 ///
-/// The hub-level control entities (discover button, arming switches, firmware-update button,
-/// 1W command/enroll buttons, pairing-result and 1W-last-command text sensors) need only a parent
+/// The hub-level control entities (discover button, scan-paired-devices button, arming switches,
+/// firmware-update button, 1W command/enroll buttons, pairing-result and 1W-last-command text
+/// sensors) need only a parent
 /// pointer — they act on the hub as a whole and have no device to bind to. This holds that one
 /// setter and one member so each entity does not restate it. The tuning number/select entities
 /// are deliberately not migrated: they take the parent by constructor injection and keep

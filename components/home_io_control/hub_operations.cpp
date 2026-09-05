@@ -593,6 +593,25 @@ void IOHomeControlComponent::queue_request_device_name(const std::string &device
 /// front of the queue. Duplicate requests are suppressed.
 void IOHomeControlComponent::queue_discover_and_pair() { this->op_queue_.enqueue_discover_and_pair(); }
 
+std::string IOHomeControlComponent::describe_last_commander(const IoDevice &dev) const {
+  return detail::describe_last_commander(dev, this->node_id_);
+}
+
+void IOHomeControlComponent::trigger_scan_paired_devices() {
+  if (this->busy_) {
+    // Same event/log path a rejected API call gets (ManagementActions::resolve_device_() and
+    // friends) -- a busy press must not go silent, since it's the one press outcome the API
+    // action can never produce (an automation-triggered press is the only way to reach this
+    // guard at all, see the doc comment on the declaration).
+    ManagementActionResult result;
+    result.action = "scan_paired_devices";
+    result.message = "a radio exchange was already in progress; press the button again once it finishes";
+    this->management_actions_.publish_result(result);
+    return;
+  }
+  this->management_actions_.api_scan_paired_devices();
+}
+
 void IOHomeControlComponent::queue_set_light_position(const std::string &device_id, uint8_t position) {
   if (queue_guard_rejects(this, device_id, QUEUE_GUARD_LIGHT))
     return;
