@@ -21,15 +21,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from md_fences import strip_fenced_blocks
+
 REPO_ROOT = Path(__file__).parent.parent
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
-
-# Matches a fenced code block (``` or ~~~, three or more of either character) through to its
-# closing fence, so example YAML/bash containing '#' comments or markdown-looking links doesn't
-# get scanned as real headings/links. Mirrors the same closing-fence-reuses-the-opening-marker
-# assumption scripts/pygmentize-md-yaml.py's _FENCE_RE makes -- good enough for this repo's docs,
-# not a full CommonMark fence parser.
-_FENCE_STRIP_RE = re.compile(r"^(```+|~~~+)[^\n]*\n.*?^\1[^\n]*$", re.DOTALL | re.MULTILINE)
 
 # Relative-looking links that actually point at GitHub's own UI (a repo's
 # releases/issues page), not a file tracked in this repository.
@@ -76,7 +71,7 @@ def _heading_slugs(text: str) -> set[str]:
 def _slugs_for(path: Path) -> set[str]:
     """Heading slugs for a tracked markdown file, cached across the whole run."""
     if path not in _SLUG_CACHE:
-        _SLUG_CACHE[path] = _heading_slugs(_FENCE_STRIP_RE.sub("", path.read_text()))
+        _SLUG_CACHE[path] = _heading_slugs(strip_fenced_blocks(path.read_text()))
     return _SLUG_CACHE[path]
 
 
@@ -86,7 +81,7 @@ def main() -> int:
     tracked = set(doc_files)
 
     for md_file in doc_files:
-        text = _FENCE_STRIP_RE.sub("", md_file.read_text())
+        text = strip_fenced_blocks(md_file.read_text())
         slugs = _slugs_for(md_file)
         for link in LINK_RE.findall(text):
             if link.startswith(("http://", "https://", "mailto:")):

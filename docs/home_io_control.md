@@ -1,4 +1,5 @@
 # YAML Configuration
+<!-- doxygen-label: guide_setup -->
 
 This page documents the YAML configuration for the `home_io_control` external component and its ESPHome platforms.
 

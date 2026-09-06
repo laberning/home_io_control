@@ -1,4 +1,5 @@
 # Radio Diagnostics Tuning
+<!-- doxygen-label: guide_radio -->
 
 This project is still experimental. IO-Homecontrol covers a wide range of motors and
 actuators, and every model can behave slightly differently during pairing — different
