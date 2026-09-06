@@ -1,4 +1,5 @@
 # ADR 0021: Flash the LR1121 bootloader, behind an arming switch
+<!-- doxygen-label: adr0021 -->
 
 **Status:** Accepted, hardware-confirmed · **Recorded:** 2026-08 · **Supersedes:** [ADR 0020](0020-flash-lr1121-transceiver-firmware-not-the-bootloader.md)
 

@@ -1,4 +1,5 @@
 # ADR 0011: Key material is masked wherever frames are logged, unconditionally
+<!-- doxygen-label: adr0011 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

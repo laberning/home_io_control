@@ -1,4 +1,5 @@
 # ADR 0014: Host unit tests build against stubbed ESPHome headers
+<!-- doxygen-label: adr0014 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

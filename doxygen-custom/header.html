@@ -42,6 +42,11 @@
     DoxygenAwesomeInteractiveToc.init()
     DoxygenAwesomeTabs.init()
 </script>
+<!-- Mermaid: doxygen injects an "import mermaid from MERMAID_JS_URL; mermaid.initialize(...)"
+     module into every page regardless of this header. MERMAID_JS_URL points at mermaid-lazy.mjs,
+     a small shim that satisfies that call but only fetches the real ~3.5 MB bundle on pages
+     that actually carry a diagram. -->
+$mermaidjs
 $treeview
 $search
 $mathjax

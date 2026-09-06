@@ -52,3 +52,36 @@ div.fragment .c1 {       /* YAML inline comment (# …)          */
         margin-right: 22px;
     }
 }
+
+/* ================================================================
+ * Mermaid diagrams (rendered client-side by mermaid-lazy.mjs).
+ *
+ * Mermaid measures each label in a detached container that never sees
+ * "div.contents p { line-height: 27px }" and the other prose line-heights
+ * from doxygen-awesome, then sizes the node's <foreignObject> to that
+ * measurement. In the live page those rules DO match the label, so a
+ * wrapped (two-line) label renders taller than its box and the last line
+ * is clipped. Pin the label typography back to what Mermaid measured with
+ * and let a label overflow its foreignObject if it still doesn't fit.
+ * ================================================================ */
+
+.mermaid svg {
+    max-width: 100%;
+    height: auto;
+}
+
+div.contents .mermaid p,
+.mermaid .nodeLabel,
+.mermaid .edgeLabel,
+.mermaid .label,
+.mermaid foreignObject div,
+.mermaid foreignObject span,
+.mermaid foreignObject p {
+    line-height: normal;
+    margin: 0;
+}
+
+.mermaid foreignObject {
+    overflow: visible;
+}
+

@@ -1,4 +1,5 @@
 # ADR 0002: Direct SPI radio drivers instead of ESPHome's built-in radio components
+<!-- doxygen-label: adr0002 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

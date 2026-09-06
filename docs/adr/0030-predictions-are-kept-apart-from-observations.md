@@ -1,4 +1,5 @@
 # ADR 0030: A hub prediction is kept apart from a device observation
+<!-- doxygen-label: adr0030 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

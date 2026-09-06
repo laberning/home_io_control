@@ -7,18 +7,22 @@
 PROJECT_NAME           = "Home IO Control"
 PROJECT_BRIEF          = "ESPHome add-on for IO-Homecontrol devices"
 OUTPUT_DIRECTORY       = docs/doxygen
-# docs/adr/*.md is deliberately not listed here -- ADRs are standalone decision records, not part
-# of the generated API docs. Docs reference them by absolute github.com URL instead, so this
-# produces no warnings.
 INPUT                  = components/home_io_control/ \
                           build/docs/README.md \
                           build/docs/home_io_control.md \
                           build/docs/architecture_overview.md \
-                          build/docs/radio_diagnostics.md
+                          build/docs/radio_diagnostics.md \
+                          build/docs/adr/
 USE_MDFILE_AS_MAINPAGE = build/docs/README.md
 RECURSIVE              = YES
-FILE_PATTERNS          = *.h *.cpp *.py
+# *.md is needed for the build/docs/adr/ directory above -- the four prose docs are named
+# individually, but the ADRs are picked up by pattern.
+FILE_PATTERNS          = *.h *.cpp *.py *.md
 EXTENSION_MAPPING      = py=Python
+# build/docs/adr/README.md is a real page ({#adr_index}, staged from docs/adr/README.md), not
+# the "documentation of the adr/ directory" -- without this, doxygen would swallow it as a dir
+# doc and its {#label}/\subpage list would not take effect.
+IMPLICIT_DIR_DOCS      = NO
 
 # Heading anchors use GitHub's slug algorithm, so `[x](doc.md#some-heading)` resolves identically
 # on github.com, on the generated site, and in scripts/check-docs-links.py. Must stay in place
@@ -73,12 +77,16 @@ HTML_EXTRA_STYLESHEET   = build/doxygen-resources/doxygen-awesome.css \
                           doxygen-custom/custom.css
 
 # jquery.js: doxygen >= 1.17 stopped bundling it; doxygen-awesome-css v2.4.2 still needs it.
+# mermaid-lazy.mjs / mermaid.min.js: see the MERMAID_* notes below -- the shim is loaded on
+# every page, the ~3.5 MB bundle only where a diagram is.
 HTML_EXTRA_FILES        = build/doxygen-resources/doxygen-awesome-darkmode-toggle.js \
                           build/doxygen-resources/doxygen-awesome-fragment-copy-button.js \
                           build/doxygen-resources/doxygen-awesome-paragraph-link.js \
                           build/doxygen-resources/doxygen-awesome-interactive-toc.js \
                           build/doxygen-resources/doxygen-awesome-tabs.js \
-                          build/doxygen-resources/jquery.js
+                          build/doxygen-resources/jquery.js \
+                          build/doxygen-resources/mermaid.min.js \
+                          doxygen-custom/mermaid-lazy.mjs
 
 HTML_HEADER              = doxygen-custom/header.html
 
@@ -88,17 +96,13 @@ HTML_HEADER              = doxygen-custom/header.html
 # two copy buttons.
 HTML_COPY_CLIPBOARD      = NO
 
-# Mermaid rendering mode. CLI is chosen not because we run `mmdc` -- we do not -- but because it
-# is the one mode where doxygen injects no mermaid.js loader. None of the current INPUT docs
-# contain a ```mermaid fence (all 17 diagrams live in docs/adr/, which is not in INPUT), so
-# there is nothing to render and nothing to load. The alternative modes (AUTO / CLIENT_SIDE)
-# would pull a ~1 MB mermaid bundle onto every one of the ~600 generated pages regardless.
-#
-# When docs/adr/ enters INPUT, revisit this: the preferred direction is GitHub-style client-side
-# rendering, loaded only on the pages that actually contain a diagram (not doxygen's default of
-# every page). Adding a ```mermaid fence while this stays CLI fails the build (mmdc not found) --
-# an intentional guard, not a silent broken image.
-MERMAID_RENDER_MODE     = CLI
+# Mermaid: CLIENT_SIDE makes doxygen emit <pre class="mermaid"> for ```mermaid fences, plus a
+# per-page `import mermaid from '<MERMAID_JS_URL>'; mermaid.initialize(...)` block (it injects
+# this even when $mermaidjs is absent from the header). MERMAID_JS_URL points at our own shim,
+# mermaid-lazy.mjs: it absorbs the initialize() call everywhere and only fetches the real
+# ~3.5 MB mermaid.min.js on pages that actually contain a diagram. No CDN.
+MERMAID_RENDER_MODE     = CLIENT_SIDE
+MERMAID_JS_URL          = ./mermaid-lazy.mjs
 
 # Graphviz call graphs
 HAVE_DOT                = YES

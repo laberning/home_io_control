@@ -1,4 +1,5 @@
 # ADR 0009: Companion entity IDs are declared during schema validation
+<!-- doxygen-label: adr0009 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

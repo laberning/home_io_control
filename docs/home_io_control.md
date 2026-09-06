@@ -1678,7 +1678,7 @@ on releases that didn't exist when it was written.
 
 > **⚠️ This one is a one-way door.** A failed bootloader write has **no recovery path in this
 > project** — see the risk table above for why. Mains power only, and don't interrupt it. Read
-> [ADR 0021](https://github.com/laberning/home_io_control/blob/main/docs/adr/0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md)
+> [ADR 0021](adr/0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md)
 > before configuring this.
 
 **Why you might want to.** Semtech's advisory SEM-PSA-2026-001 lists three CVEs affecting the

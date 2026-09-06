@@ -1,4 +1,5 @@
 # ADR 0031: 1W vendor wire behaviour is driven by `manufacturer:`, and `execute_broadcast` is a remote-shape axis
+<!-- doxygen-label: adr0031 -->
 
 **Status:** Accepted · **Recorded:** 2026-09
 

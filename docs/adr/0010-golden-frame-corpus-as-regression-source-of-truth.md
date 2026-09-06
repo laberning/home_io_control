@@ -1,4 +1,5 @@
 # ADR 0010: Real captured frames are the regression-test source of truth
+<!-- doxygen-label: adr0010 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

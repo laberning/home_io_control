@@ -1,4 +1,5 @@
 # ADR 0019: What the protocol cannot report is declared, not guessed
+<!-- doxygen-label: adr0019 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

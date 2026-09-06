@@ -1,4 +1,5 @@
 # ADR 0015: Table-driven tuning registry, guarded by a cross-language sync gate
+<!-- doxygen-label: adr0015 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

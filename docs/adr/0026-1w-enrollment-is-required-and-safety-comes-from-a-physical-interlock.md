@@ -1,4 +1,5 @@
 # ADR 0026: 1W enrollment is required, and its safety comes from a physical interlock
+<!-- doxygen-label: adr0026 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

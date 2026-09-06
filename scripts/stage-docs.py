@@ -61,6 +61,7 @@ DOCS_OUT_DIR = REPO_ROOT / "build" / "docs"
 SOURCE_GLOBS = [
     "README.md",
     "docs/*.md",
+    "docs/adr/*.md",
 ]
 
 # The published GitHub Pages site (transform 4). Keep in sync with the README

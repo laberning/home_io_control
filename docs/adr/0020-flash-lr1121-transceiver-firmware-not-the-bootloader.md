@@ -1,4 +1,5 @@
 # ADR 0020: Flash LR1121 transceiver firmware, not the bootloader
+<!-- doxygen-label: adr0020 -->
 
 **Status:** Superseded by [ADR 0021](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md) · **Recorded:** 2026-08
 

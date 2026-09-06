@@ -1,4 +1,5 @@
 # ADR 0012: Key-extraction responder for recovering credentials from an owned installation
+<!-- doxygen-label: adr0012 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

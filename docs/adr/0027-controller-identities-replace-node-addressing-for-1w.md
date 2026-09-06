@@ -1,4 +1,5 @@
 # ADR 0027: Controller identities replace node addressing for 1W
+<!-- doxygen-label: adr0027 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

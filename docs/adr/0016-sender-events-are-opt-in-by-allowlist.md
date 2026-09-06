@@ -1,4 +1,5 @@
 # ADR 0016: Sender events are opt-in, by explicit allowlist
+<!-- doxygen-label: adr0016 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

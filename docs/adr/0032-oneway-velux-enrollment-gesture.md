@@ -1,4 +1,5 @@
 # ADR 0032: 1W enrollment follows the gesture the target's `manufacturer:` expects
+<!-- doxygen-label: adr0032 -->
 
 **Status:** Accepted · **Recorded:** 2026-09
 

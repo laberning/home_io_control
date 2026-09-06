@@ -1,4 +1,5 @@
 # ADR 0025: Monotonic counters are the one thing the hub persists
+<!-- doxygen-label: adr0025 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

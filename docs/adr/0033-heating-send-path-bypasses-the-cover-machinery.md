@@ -1,4 +1,5 @@
 # ADR 0033: The heating send path bypasses the cover status/optimistic machinery
+<!-- doxygen-label: adr0033 -->
 
 **Status:** Accepted · **Recorded:** 2026-09
 

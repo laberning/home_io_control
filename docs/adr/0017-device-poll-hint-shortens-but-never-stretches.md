@@ -1,4 +1,5 @@
 # ADR 0017: A device's settle hint may shorten the poll interval, never stretch it
+<!-- doxygen-label: adr0017 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

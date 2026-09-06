@@ -1,4 +1,5 @@
 # ADR 0024: Diagnostic probes are gated, paired-devices-only, and isolated from the status decoder
+<!-- doxygen-label: adr0024 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

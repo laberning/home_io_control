@@ -1,4 +1,5 @@
 # ADR 0007: Self-contained AES-128 implementation
+<!-- doxygen-label: adr0007 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

@@ -1,4 +1,5 @@
 # ADR 0023: `reference-material` as a fourth corpus origin, for real devices this project doesn't own
+<!-- doxygen-label: adr0023 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

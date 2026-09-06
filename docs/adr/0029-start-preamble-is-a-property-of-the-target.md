@@ -1,4 +1,5 @@
 # ADR 0029: The start preamble is a property of the target's power class, not of the frame's position
+<!-- doxygen-label: adr0029 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

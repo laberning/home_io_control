@@ -1,4 +1,5 @@
 # ADR 0006: Hub-level admin operations as native API actions, not permanent entities
+<!-- doxygen-label: adr0006 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

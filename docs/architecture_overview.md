@@ -15,8 +15,12 @@ This page gives a contributor-oriented map of the Home IO Control component and 
 
 The reasoning behind the architectural choices below — including options
 considered and their trade-offs — is recorded as individual Architecture
-Decision Records in [`docs/adr/`](https://github.com/laberning/home_io_control/tree/main/docs/adr).
-Start there for *why* something is built the way it is, not just *what* it is.
+Decision Records. Start there for *why* something is built the way it is, not
+just *what* it is.
+
+<!-- doxygen-subpages -->
+- [Architecture Decision Records](adr/README.md)
+<!-- /doxygen-subpages -->
 
 ## Layering Rules
 

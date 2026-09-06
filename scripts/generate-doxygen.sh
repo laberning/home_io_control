@@ -43,14 +43,17 @@ DOXYGEN_AWESOME_BASE_URL="https://raw.githubusercontent.com/jothepro/doxygen-awe
 JQUERY_VERSION="3.7.1"
 JQUERY_URL="https://code.jquery.com/jquery-${JQUERY_VERSION}.min.js"
 
-# Mermaid: not vendored. Doxyfile sets MERMAID_RENDER_MODE = CLI, and no current INPUT doc
-# contains a ```mermaid fence, so doxygen injects no mermaid.js at all (see the Doxyfile note).
+# Self-contained Mermaid browser bundle (the UMD build -- one file, unlike the code-split
+# dist/mermaid.esm.min.mjs). header.html loads it lazily, only on pages that contain a diagram;
+# vendored so the published site has no CDN dependency.
+MERMAID_VERSION="11.17.2"
+MERMAID_URL="https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.min.js"
 
 OUTPUT_DIR="docs/doxygen"
 
-# sha256 of every third-party web asset copied into the generated site. Two of these are
-# executable JS shipped to readers, so a silent upstream change must fail the build. Regenerate
-# with `sha256sum build/doxygen-resources/<file>` after a deliberate version bump.
+# sha256 of every third-party web asset copied into the generated site. Several are executable
+# JS shipped to readers, so a silent upstream change must fail the build. Regenerate with
+# `sha256sum build/doxygen-resources/<file>` after a deliberate version bump.
 RESOURCE_CHECKSUMS="
 doxygen-awesome.css                                5ec49e2dfd097f6b5384e3aae0476eab47748e311fc70e207925f8fcc37477b9
 doxygen-awesome-sidebar-only.css                   dc7ddd235375b71ecb0af920faa6b925ee9445ac617f3bc962b0b0db97da7b4f
@@ -61,6 +64,7 @@ doxygen-awesome-paragraph-link.js                  f9fe333b516cdc259a25475b0ca47
 doxygen-awesome-interactive-toc.js                 a7d6a4d59809b650afd011af6fc8805075aeb5e310940fb9583a42652fe87ba8
 doxygen-awesome-tabs.js                            805b4dd5371a0c602ae112deb698e84a5bed7af3d78ba76cde8022229a893542
 jquery.js                                          fc9a93dd241f6b045cbff0481cf4e1901becd0e12fb45166a8f17f95823f0b1a
+mermaid.min.js                                     581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8
 "
 
 # Portable sha256 (Linux coreutils vs macOS): print the hex digest of $1.
@@ -155,8 +159,9 @@ fi
 # name -> download URL for every file listed in RESOURCE_CHECKSUMS.
 resource_url() {
   case "$1" in
-    jquery.js) echo "$JQUERY_URL" ;;
-    *)         echo "$DOXYGEN_AWESOME_BASE_URL/$1" ;;
+    jquery.js)      echo "$JQUERY_URL" ;;
+    mermaid.min.js) echo "$MERMAID_URL" ;;
+    *)              echo "$DOXYGEN_AWESOME_BASE_URL/$1" ;;
   esac
 }
 

@@ -1,4 +1,5 @@
 # ADR 0001: Layered protocol / radio-driver / hub architecture
+<!-- doxygen-label: adr0001 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

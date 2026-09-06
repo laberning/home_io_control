@@ -1,4 +1,5 @@
 # ADR 0028: Channel policy is a property of the frame, not of the chip
+<!-- doxygen-label: adr0028 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

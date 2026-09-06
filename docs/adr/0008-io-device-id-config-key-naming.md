@@ -1,4 +1,5 @@
 # ADR 0008: `io_device_id`, not `device_id` — and an `io_` prefix for protocol keys
+<!-- doxygen-label: adr0008 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

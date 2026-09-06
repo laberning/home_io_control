@@ -1,4 +1,5 @@
 # ADR 0013: Radio work is blocking, on the ESPHome loop, with no FreeRTOS tasks
+<!-- doxygen-label: adr0013 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

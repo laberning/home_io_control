@@ -1,11 +1,12 @@
 # Architecture Decision Records
+<!-- doxygen-label: adr_index -->
 
 Each file here records one architectural decision: the problem it solved, the
 options weighed, what was chosen, and what that choice costs. They explain
 *why* the code looks the way it does — [`docs/architecture_overview.md`](../architecture_overview.md)
 describes *what* it looks like today.
 
-## Index
+## Records by theme
 
 Numbers are stable identifiers, not a reading order. Grouped by theme:
 
@@ -71,6 +72,47 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0010](0010-golden-frame-corpus-as-regression-source-of-truth.md) | Real captured frames as test truth | Committed YAML captures, generated fixtures, no hand-written byte guesses |
 | [0014](0014-host-tests-against-stubbed-esphome-headers.md) | Host tests on stubbed ESPHome headers | Plain `g++`, no ESPHome or hardware — with a stated fidelity cost |
 | [0023](0023-reference-material-as-a-corpus-origin.md) | `reference-material` corpus origin | Real devices this project doesn't own, sourced from published third-party material |
+
+
+## All records
+
+Every record, in number order (the tables above group them by theme).
+
+<!-- doxygen-subpages -->
+- [ADR 0001: Layered protocol / radio-driver / hub architecture](0001-layered-protocol-radio-hub-architecture.md)
+- [ADR 0002: Direct SPI radio drivers instead of ESPHome's built-in radio components](0002-direct-spi-radio-drivers.md)
+- [ADR 0003: Shared software PHY and IRQ orchestration base for SX1262/LR1121](0003-shared-software-phy-base-for-sx1262-lr1121.md)
+- [ADR 0004: Hub responsibilities split into single-purpose collaborators](0004-hub-collaborator-decomposition.md)
+- [ADR 0005: Pure decision logic kept separate from I/O](0005-pure-decision-logic-separated-from-io.md)
+- [ADR 0006: Hub-level admin operations as native API actions, not permanent entities](0006-management-actions-as-native-api-actions.md)
+- [ADR 0007: Self-contained AES-128 implementation](0007-self-contained-aes-implementation.md)
+- [ADR 0008: `io_device_id`, not `device_id` — and an `io_` prefix for protocol keys](0008-io-device-id-config-key-naming.md)
+- [ADR 0009: Companion entity IDs are declared during schema validation](0009-companion-entity-ids-declared-at-schema-time.md)
+- [ADR 0010: Real captured frames are the regression-test source of truth](0010-golden-frame-corpus-as-regression-source-of-truth.md)
+- [ADR 0011: Key material is masked wherever frames are logged, unconditionally](0011-key-material-redaction-in-logs.md)
+- [ADR 0012: Key-extraction responder for recovering credentials from an owned installation](0012-key-extraction-responder-for-owned-devices.md)
+- [ADR 0013: Radio work is blocking, on the ESPHome loop, with no FreeRTOS tasks](0013-blocking-exchange-on-the-esphome-loop.md)
+- [ADR 0014: Host unit tests build against stubbed ESPHome headers](0014-host-tests-against-stubbed-esphome-headers.md)
+- [ADR 0015: Table-driven tuning registry, guarded by a cross-language sync gate](0015-table-driven-tuning-registry-with-a-sync-gate.md)
+- [ADR 0016: Sender events are opt-in, by explicit allowlist](0016-sender-events-are-opt-in-by-allowlist.md)
+- [ADR 0017: A device's settle hint may shorten the poll interval, never stretch it](0017-device-poll-hint-shortens-but-never-stretches.md)
+- [ADR 0018: YAML is the source of truth; the hub persists no state of its own](0018-yaml-is-the-source-of-truth-hub-persists-nothing.md)
+- [ADR 0019: What the protocol cannot report is declared, not guessed](0019-declare-what-the-protocol-cannot-report.md)
+- [ADR 0020: Flash LR1121 transceiver firmware, not the bootloader](0020-flash-lr1121-transceiver-firmware-not-the-bootloader.md)
+- [ADR 0021: Flash the LR1121 bootloader, behind an arming switch](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md)
+- [ADR 0022: Unauthenticated status frames are never applied to device state](0022-unauthenticated-status-frames-are-never-applied.md)
+- [ADR 0023: `reference-material` as a fourth corpus origin, for real devices this project doesn't own](0023-reference-material-as-a-corpus-origin.md)
+- [ADR 0024: Diagnostic probes are gated, paired-devices-only, and isolated from the status decoder](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md)
+- [ADR 0025: Monotonic counters are the one thing the hub persists](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md)
+- [ADR 0026: 1W enrollment is required, and its safety comes from a physical interlock](0026-1w-enrollment-is-required-and-safety-comes-from-a-physical-interlock.md)
+- [ADR 0027: Controller identities replace node addressing for 1W](0027-controller-identities-replace-node-addressing-for-1w.md)
+- [ADR 0028: Channel policy is a property of the frame, not of the chip](0028-channel-policy-is-a-property-of-the-frame-not-of-the-chip.md)
+- [ADR 0029: The start preamble is a property of the target's power class, not of the frame's position](0029-start-preamble-is-a-property-of-the-target.md)
+- [ADR 0030: A hub prediction is kept apart from a device observation](0030-predictions-are-kept-apart-from-observations.md)
+- [ADR 0031: 1W vendor wire behaviour is driven by `manufacturer:`, and `execute_broadcast` is a remote-shape axis](0031-oneway-vendor-wire-behaviour-is-driven-by-manufacturer.md)
+- [ADR 0032: 1W enrollment follows the gesture the target's `manufacturer:` expects](0032-oneway-velux-enrollment-gesture.md)
+- [ADR 0033: The heating send path bypasses the cover status/optimistic machinery](0033-heating-send-path-bypasses-the-cover-machinery.md)
+<!-- /doxygen-subpages -->
 
 ## Writing a new one
 

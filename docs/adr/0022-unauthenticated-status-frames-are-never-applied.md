@@ -1,4 +1,5 @@
 # ADR 0022: Unauthenticated status frames are never applied to device state
+<!-- doxygen-label: adr0022 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

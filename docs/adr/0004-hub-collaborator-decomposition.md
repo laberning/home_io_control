@@ -1,4 +1,5 @@
 # ADR 0004: Hub responsibilities split into single-purpose collaborators
+<!-- doxygen-label: adr0004 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

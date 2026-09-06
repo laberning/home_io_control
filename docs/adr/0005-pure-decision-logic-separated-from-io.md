@@ -1,4 +1,5 @@
 # ADR 0005: Pure decision logic kept separate from I/O
+<!-- doxygen-label: adr0005 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

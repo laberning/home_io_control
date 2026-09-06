@@ -1,4 +1,5 @@
 # ADR 0018: YAML is the source of truth; the hub persists no state of its own
+<!-- doxygen-label: adr0018 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 

@@ -1,4 +1,5 @@
 # ADR 0003: Shared software PHY and IRQ orchestration base for SX1262/LR1121
+<!-- doxygen-label: adr0003 -->
 
 **Status:** Accepted · **Recorded:** 2026-08
 
