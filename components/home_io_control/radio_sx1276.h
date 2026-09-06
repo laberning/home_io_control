@@ -138,7 +138,7 @@ class RadioSX1276 : public RadioDriver {
   /// @brief Preamble for response/continuation frames (SX1276).
   ///
   /// Runtime-tunable; the default and its hardware rationale are documented at
-  /// @ref SX1276_RESPONSE_PREAMBLE.
+  /// `SX1276_RESPONSE_PREAMBLE`.
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
   /// @brief Apply SX1276 runtime tuning: RX bandwidth and response preamble.
   void apply_tuning(const TuningConfig &tuning) override {

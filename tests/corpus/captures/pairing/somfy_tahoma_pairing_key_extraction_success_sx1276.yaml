@@ -66,10 +66,10 @@ frames:
     crc: absent
     note: "cmd=ADDRESS_REQ(0x36), ~771ms after the 0x32/key-confirm step, well inside the
       post-extraction grace window"
-  # CMD_CHALLENGE_REQ (0x3C, rx, ctrl0=0x0E/ctrl1=0x00) is omitted for the same reason as 0x32
-  # above -- its 6-byte challenge payload is masked before the log is written. Its framing bytes
-  # were visible (0E 00, matching the shape create_challenge_req_device_role() expects to answer)
-  # and arrived 53ms after the 0x36 above.
+# CMD_CHALLENGE_REQ (0x3C, rx, ctrl0=0x0E/ctrl1=0x00) is omitted for the same reason as 0x32
+# above -- its 6-byte challenge payload is masked before the log is written. Its framing bytes
+# were visible (0E 00, matching the shape create_challenge_req_device_role() expects to answer)
+# and arrived 53ms after the 0x36 above.
 expect:
   # No `exchange:` block: that block's classification test requires at least one `dir: tx` frame
   # to supply our own controller node ID (see corpus_classification_test.cpp), and this capture

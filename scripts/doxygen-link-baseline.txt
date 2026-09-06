@@ -1,0 +1,9 @@
+# Known-broken links in the generated doxygen site, tolerated until they are fixed.
+# See scripts/check-doxygen-output-links.py for the format and the shrink-only rule.
+#
+# Line forms:  page.html -> href   (exact)  |  * -> href  (any page)
+#
+# Empty: the doxygen 1.18 upgrade resolved the 26 ../components/*.h source links,
+# MARKDOWN_ID_STYLE=GITHUB fixed the anchored cross-file links, and the ../config/*
+# links were rewritten to absolute URLs. Keep it empty -- a new entry means a new
+# broken link that should be fixed, not baselined.

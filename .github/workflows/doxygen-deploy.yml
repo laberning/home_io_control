@@ -26,6 +26,13 @@ jobs:
       - name: Generate Doxygen documentation
         run: make doxygen
 
+      # WARN_LOGFILE swallows doxygen warnings that would otherwise print here. Surface it on
+      # both success and failure. (Unsupported-config-tag warnings bypass the log and go to
+      # stderr, so `make doxygen`'s own output above must stay unredirected.)
+      - name: Show doxygen warnings
+        if: always()
+        run: test -s build/doxygen-warnings.log && cat build/doxygen-warnings.log || true
+
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:

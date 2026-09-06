@@ -88,7 +88,7 @@ static constexpr uint16_t SX1262_REG_TX_CLAMP_CONFIG = 0x08D8;
 /// shows up as a peer that intermittently fails to decode an otherwise strong frame.
 /// Counterpart to the already-applied TxClamp erratum (@ref SX1262_REG_TX_CLAMP_CONFIG).
 static constexpr uint16_t SX1262_REG_TX_MODULATION = 0x0889;
-/// Bit 2 of @ref SX1262_REG_TX_MODULATION — the (G)FSK-correct value is 1.
+/// Bit 2 of `SX1262_REG_TX_MODULATION` — the (G)FSK-correct value is 1.
 static constexpr uint8_t SX1262_TX_MODULATION_GFSK_BIT = 0x04;
 
 /// Data-buffer split programmed by configure_buffer_base(): TX packets build from 0x00, RX
@@ -145,7 +145,7 @@ class RadioSX1262 : public SoftPhyDriverBase {
   }
   /// @brief Per-channel dwell for a rotating listen (SX1262).
   ///
-  /// See @ref SX1262_DISCOVERY_HOP_SLICE_MS for why a short dwell is correct here despite SX1262's
+  /// See `SX1262_DISCOVERY_HOP_SLICE_MS` for why a short dwell is correct here despite SX1262's
   /// slower per-channel retune than the SX1276's FastHop. Governs discovery and the broadcast
   /// roll-call alike (see @ref RadioDriver::hop_dwell_ms). The value comes from the user-facing
   /// `sx1262_discovery_hop_slice_ms` tuning field.
@@ -287,7 +287,7 @@ class RadioSX1262 : public SoftPhyDriverBase {
   void start_tx() override;
   /// @copydoc SoftPhyDriverBase::before_tx_arm
   ///
-  /// TX modulation-quality erratum (@ref SX1262_REG_TX_MODULATION): the datasheet requires bit 2
+  /// TX modulation-quality erratum (`SX1262_REG_TX_MODULATION`): the datasheet requires bit 2
   /// be set for every (G)FSK transmission, so it is re-asserted before each SetTx rather than
   /// assumed to survive from init.
   void before_tx_arm() override { this->apply_tx_modulation_workaround_(); }

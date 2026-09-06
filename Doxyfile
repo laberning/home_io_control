@@ -1,4 +1,4 @@
-# Doxyfile 1.14 — Home IO Control
+# Doxyfile — Home IO Control  (doxygen version is pinned in scripts/generate-doxygen.sh, not here)
 # Run `make doxygen` to generate HTML docs.
 # YAML fenced code blocks in Markdown are pre-processed by scripts/pygmentize-md-yaml.py
 # (run before doxygen) to produce Pygments HTML with syntax highlighting.
@@ -7,10 +7,8 @@ PROJECT_NAME           = "Home IO Control"
 PROJECT_BRIEF          = "ESPHome add-on for IO-Homecontrol devices"
 OUTPUT_DIRECTORY       = docs/doxygen
 # docs/adr/*.md is deliberately not listed here -- ADRs are standalone decision records, not part
-# of the generated API docs. Markdown links from an INPUT file to an ADR (e.g. radio_diagnostics.md
-# -> adr/0013-...md, adr/0024-...md) therefore produce an expected "unable to resolve reference ...
-# for \ref command" warning; this is not a broken link, just doxygen's markdown preprocessor
-# reaching outside its own INPUT set.
+# of the generated API docs. Docs reference them by absolute github.com URL instead, so this
+# produces no warnings.
 INPUT                  = components/home_io_control/ \
                           build/docs/README.md \
                           build/docs/home_io_control.md \
@@ -20,6 +18,17 @@ USE_MDFILE_AS_MAINPAGE = build/docs/README.md
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.cpp *.py
 EXTENSION_MAPPING      = py=Python
+
+# Heading anchors use GitHub's slug algorithm, so `[x](doc.md#some-heading)` resolves identically
+# on github.com, on the generated site, and in scripts/check-docs-links.py. Must stay in place
+# before any doc file is moved -- it is what makes cross-document #anchor links survive a move.
+MARKDOWN_ID_STYLE      = GITHUB
+
+# `home_io_control` is both the C++ namespace and the ESPHome YAML key, and `esphome` is a
+# namespace too. Without this, every mention of the YAML key in the user guide autolinks to the
+# namespace reference page (57 occurrences in docs/home_io_control.md alone). Real class names
+# like ExchangeEngine still autolink.
+AUTOLINK_IGNORE_WORDS  = home_io_control esphome
 
 # Parse /// and /** */ comments (Javadoc style)
 JAVADOC_AUTOBRIEF      = YES
@@ -62,13 +71,33 @@ HTML_EXTRA_STYLESHEET   = build/doxygen-resources/doxygen-awesome.css \
                           build/doxygen-resources/doxygen-awesome-sidebar-only-darkmode-toggle.css \
                           doxygen-custom/custom.css
 
+# jquery.js: doxygen >= 1.17 stopped bundling it; doxygen-awesome-css v2.4.2 still needs it.
 HTML_EXTRA_FILES        = build/doxygen-resources/doxygen-awesome-darkmode-toggle.js \
                           build/doxygen-resources/doxygen-awesome-fragment-copy-button.js \
                           build/doxygen-resources/doxygen-awesome-paragraph-link.js \
                           build/doxygen-resources/doxygen-awesome-interactive-toc.js \
-                          build/doxygen-resources/doxygen-awesome-tabs.js
+                          build/doxygen-resources/doxygen-awesome-tabs.js \
+                          build/doxygen-resources/jquery.js
 
 HTML_HEADER              = doxygen-custom/header.html
+
+# doxygen >= 1.17 has a built-in fragment copy button (clipboard.js). doxygen-awesome-css v2.4.2
+# still ships its own (doxygen-awesome-fragment-copy-button.js, wired in header.html), which the
+# theme CSS is styled for -- keep that one and turn the native one off so fragments don't get
+# two copy buttons.
+HTML_COPY_CLIPBOARD      = NO
+
+# Mermaid rendering mode. CLI is chosen not because we run `mmdc` -- we do not -- but because it
+# is the one mode where doxygen injects no mermaid.js loader. None of the current INPUT docs
+# contain a ```mermaid fence (all 17 diagrams live in docs/adr/, which is not in INPUT), so
+# there is nothing to render and nothing to load. The alternative modes (AUTO / CLIENT_SIDE)
+# would pull a ~1 MB mermaid bundle onto every one of the ~600 generated pages regardless.
+#
+# When docs/adr/ enters INPUT, revisit this: the preferred direction is GitHub-style client-side
+# rendering, loaded only on the pages that actually contain a diagram (not doxygen's default of
+# every page). Adding a ```mermaid fence while this stays CLI fails the build (mmdc not found) --
+# an intentional guard, not a silent broken image.
+MERMAID_RENDER_MODE     = CLI
 
 # Graphviz call graphs
 HAVE_DOT                = YES
@@ -100,3 +129,11 @@ QUIET                   = YES
 WARNINGS                = YES
 WARN_IF_UNDOCUMENTED    = YES
 WARN_IF_DOC_ERROR       = YES
+
+# Documentation errors (bad \ref, unresolvable links) fail the build so a broken doc cannot ship.
+# EXTRACT_ALL = YES suppresses the undocumented-member warnings, so this fires on real doc errors
+# only. FAIL_ON_WARNINGS (not YES) completes the whole run first, then exits non-zero.
+WARN_AS_ERROR           = FAIL_ON_WARNINGS
+# Collect warnings in a file so CI can surface them; note unsupported-config-tag warnings still go
+# to stderr and bypass this log (see the "Show doxygen warnings" step keeps make output visible).
+WARN_LOGFILE            = build/doxygen-warnings.log

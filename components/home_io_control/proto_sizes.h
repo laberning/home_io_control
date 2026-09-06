@@ -37,7 +37,7 @@ static constexpr uint8_t FRAME_MIN_SIZE = 9;  ///< Minimum frame: CTRL0+CTRL1+DS
 /// declaration, so this literal cannot silently drift from the mask that actually defines it.
 static constexpr uint8_t FRAME_MAX_DECLARED_SIZE = 32;
 
-/// Historical name for @ref FRAME_MAX_DECLARED_SIZE, kept as an alias rather than a second
+/// Historical name for `FRAME_MAX_DECLARED_SIZE`, kept as an alias rather than a second
 /// literal so the two names can never disagree — most call sites (`set_cmd`, `serialize`,
 /// `parse`, every fixed-size frame buffer that only ever holds a declared-length frame) predate
 /// the trailer/wire distinction and still read most naturally as "the max frame size".
@@ -60,9 +60,9 @@ static constexpr uint8_t FRAME_CRC_SIZE = 2;
 static constexpr uint8_t FRAME_MAX_TRAILER_SIZE = HMAC_SIZE;
 
 /// Largest number of bytes a buffer must hold to receive or transmit any frame this project
-/// knows about, trailer and CRC included: @ref FRAME_MAX_DECLARED_SIZE (what CTRL0 can declare)
+/// knows about, trailer and CRC included: `FRAME_MAX_DECLARED_SIZE` (what CTRL0 can declare)
 /// + @ref FRAME_MAX_TRAILER_SIZE (the out-of-length MAC, when present) + @ref FRAME_CRC_SIZE.
-/// This is the *wire* bound — distinct from @ref FRAME_MAX_DECLARED_SIZE, which is the
+/// This is the *wire* bound — distinct from `FRAME_MAX_DECLARED_SIZE`, which is the
 /// *declared* bound `set_cmd()` still enforces. A buffer sized to the declared bound alone
 /// truncates a MAC-bearing frame; use this constant for any buffer that must survive one intact.
 static constexpr uint8_t FRAME_MAX_WIRE_SIZE = FRAME_MAX_DECLARED_SIZE + FRAME_MAX_TRAILER_SIZE + FRAME_CRC_SIZE;

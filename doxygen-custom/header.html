@@ -25,6 +25,11 @@
 <!--<link rel="icon" type="image/svg+xml" href="logo.drawio.svg"/>-->
 <script type="text/javascript" src="$relpath^jquery.js"></script>
 <script type="text/javascript" src="$relpath^dynsections.js"></script>
+<!-- doxygen >= 1.17 emits `codefold.init` in every page body; this custom header (older than
+     that) must load its script or the page throws a ReferenceError. HTML_COPY_CLIPBOARD is set
+     to NO in the Doxyfile so doxygen's own copy button (clipboard.js) does not double up with
+     doxygen-awesome-fragment-copy-button.js below. -->
+<script type="text/javascript" src="$relpath^codefolding.js"></script>
 <script type="text/javascript" src="$relpath^doxygen-awesome-darkmode-toggle.js"></script>
 <script type="text/javascript" src="$relpath^doxygen-awesome-fragment-copy-button.js"></script>
 <script type="text/javascript" src="$relpath^doxygen-awesome-paragraph-link.js"></script>

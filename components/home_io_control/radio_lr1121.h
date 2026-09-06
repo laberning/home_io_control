@@ -268,8 +268,8 @@ class RadioLR1121 : public SoftPhyDriverBase {
   }
   /// @brief Per-channel dwell for a rotating listen (LR1121).
   ///
-  /// See @ref LR1121_DISCOVERY_HOP_SLICE_MS for why this is measured independently rather than
-  /// inherited from SX1262, and @ref SX1262_DISCOVERY_HOP_SLICE_MS for the shared short-dwell
+  /// See `LR1121_DISCOVERY_HOP_SLICE_MS` for why this is measured independently rather than
+  /// inherited from SX1262, and `SX1262_DISCOVERY_HOP_SLICE_MS` for the shared short-dwell
   /// reasoning. Governs discovery and the broadcast roll-call alike (see
   /// @ref RadioDriver::hop_dwell_ms). The value comes from the user-facing
   /// `lr1121_discovery_hop_slice_ms` tuning field.
