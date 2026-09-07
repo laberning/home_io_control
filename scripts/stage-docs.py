@@ -281,8 +281,15 @@ def main() -> None:
     # source cannot leave a stale copy behind for doxygen to pick up.
     shutil.rmtree(DOCS_OUT_DIR, ignore_errors=True)
 
+    written: dict[Path, Path] = {}
     for src in sources:
         dst = _dest_path(src)
+        # _dest_path strips a leading "docs/", so README.md and a future
+        # docs/README.md would both map to build/docs/README.md -- and the
+        # first (the mainpage) would be silently overwritten. Fail instead.
+        if dst in written:
+            sys.exit(f"stage-docs: {_rel(src)} and {_rel(written[dst])} both stage to {_rel(dst)}")
+        written[dst] = src
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(stage(src), encoding="utf-8")
         print(f"  [staged] {_rel(src)} -> {_rel(dst)}")

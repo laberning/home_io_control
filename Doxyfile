@@ -63,6 +63,8 @@ GENERATE_TREEVIEW       = YES
 DISABLE_INDEX           = NO
 FULL_SIDEBAR            = NO
 HTML_DYNAMIC_SECTIONS   = YES
+# Only affects auto-generated [TOC] blocks, which no doc in this repo uses -- inert here, kept
+# at the default so the sidebar heading depth is not a surprise if a [TOC] is ever added.
 TOC_INCLUDE_HEADINGS    = 4
 
 # Source browser: show line-numbered source in docs
@@ -89,6 +91,11 @@ HTML_EXTRA_FILES        = build/doxygen-resources/doxygen-awesome-darkmode-toggl
                           doxygen-custom/mermaid-lazy.mjs
 
 HTML_HEADER              = doxygen-custom/header.html
+
+# Sidebar layout: Overview / Guides / Architecture / API Reference, with the raw doxygen
+# taxonomy (Namespaces, Structs, ...) hidden. Regenerate the template with `doxygen -l` and
+# re-apply the <navindex> edits on every doxygen upgrade.
+LAYOUT_FILE              = doxygen-custom/DoxygenLayout.xml
 
 # doxygen >= 1.17 has a built-in fragment copy button (clipboard.js). doxygen-awesome-css v2.4.2
 # still ships its own (doxygen-awesome-fragment-copy-button.js, wired in header.html), which the
