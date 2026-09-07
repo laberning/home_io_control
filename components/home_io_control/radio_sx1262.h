@@ -88,6 +88,8 @@ static constexpr uint16_t SX1262_REG_TX_CLAMP_CONFIG = 0x08D8;
 /// shows up as a peer that intermittently fails to decode an otherwise strong frame.
 /// Counterpart to the already-applied TxClamp erratum (@ref SX1262_REG_TX_CLAMP_CONFIG).
 static constexpr uint16_t SX1262_REG_TX_MODULATION = 0x0889;
+// Code span, not \ref: doxygen 1.18 can't resolve \ref to this in a whole-project build
+// (details in proto_sizes.h). Autolinking still links it.
 /// Bit 2 of `SX1262_REG_TX_MODULATION` — the (G)FSK-correct value is 1.
 static constexpr uint8_t SX1262_TX_MODULATION_GFSK_BIT = 0x04;
 

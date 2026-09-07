@@ -17,6 +17,12 @@ USE_MDFILE_AS_MAINPAGE = build/docs/README.md
 RECURSIVE              = YES
 # *.md is needed for the build/docs/adr/ directory above -- the four prose docs are named
 # individually, but the ADRs are picked up by pattern.
+#
+# Known artefact: doxygen 1.18 emits a stub "File Reference" page per Markdown input
+# (`*_8md.html`, empty body). LAYOUT_FILE hides them from the sidebar and
+# AUTOLINK_IGNORE_WORDS keeps prose from linking them, but they still appear in the file
+# search index. Accepted -- there is no doxygen option to suppress them without also
+# dropping the real `{#label}` pages.
 FILE_PATTERNS          = *.h *.cpp *.py *.md
 EXTENSION_MAPPING      = py=Python
 # build/docs/adr/README.md is a real page ({#adr_index}, staged from docs/adr/README.md), not
@@ -33,7 +39,17 @@ MARKDOWN_ID_STYLE      = GITHUB
 # namespace too. Without this, every mention of the YAML key in the user guide autolinks to the
 # namespace reference page (57 occurrences in docs/home_io_control.md alone). Real class names
 # like ExchangeEngine still autolink.
-AUTOLINK_IGNORE_WORDS  = home_io_control esphome
+#
+# The `*.md` entries: doxygen 1.18 emits a (stub) file page for every Markdown INPUT and
+# autolinks a bare filename to it -- including inside inline code spans -- so a prose mention of
+# "docs/home_io_control.md" would land on an empty `home__io__control_8md.html` whose title
+# leaks `build/docs/...`. The ignore word must be the exact token as it appears in prose, path
+# prefix included. scripts/check-doxygen-output-links.py fails the build if a new one slips in.
+AUTOLINK_IGNORE_WORDS  = home_io_control esphome \
+                        architecture_overview.md \
+                        docs/home_io_control.md \
+                        docs/radio_diagnostics.md \
+                        docs/adr/0013-blocking-exchange-on-the-esphome-loop.md
 
 # Parse /// and /** */ comments (Javadoc style)
 JAVADOC_AUTOBRIEF      = YES
@@ -92,9 +108,9 @@ HTML_EXTRA_FILES        = build/doxygen-resources/doxygen-awesome-darkmode-toggl
 
 HTML_HEADER              = doxygen-custom/header.html
 
-# Sidebar layout: Overview / Guides / Architecture / API Reference, with the raw doxygen
-# taxonomy (Namespaces, Structs, ...) hidden. Regenerate the template with `doxygen -l` and
-# re-apply the <navindex> edits on every doxygen upgrade.
+# Sidebar layout: Overview / Documentation / API Reference (three usergroup wrappers around the
+# built-in tabs), with the raw doxygen taxonomy (Namespaces, Structs, ...) hidden. Regenerate
+# the template with `doxygen -l` and re-apply the <navindex> edits on every doxygen upgrade.
 LAYOUT_FILE              = doxygen-custom/DoxygenLayout.xml
 
 # doxygen >= 1.17 has a built-in fragment copy button (clipboard.js). doxygen-awesome-css v2.4.2
@@ -132,8 +148,9 @@ HTML_COLORSTYLE_GAMMA   = 113
 # IDE integration: ctags-compatible tag file
 GENERATE_TAGFILE         = docs/doxygen/io-homecontrol.tag
 
-# Allow \if doxygen / \if NOT doxygen conditional blocks in markdown docs
-# When this tag matches, \if doxygen content is shown and \if NOT doxygen is hidden
+# Latent escape hatch only. `\if doxygen` twin blocks were evaluated and rejected in
+# docs/adr/0034 (they leave `\if`/`\endif` as literal text on github.com); the committed docs
+# use none. Kept set so the mechanism is available without a Doxyfile change if it is ever needed.
 ENABLED_SECTIONS         = doxygen
 
 # Quiet mode (suppress most progress output)

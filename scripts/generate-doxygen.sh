@@ -27,10 +27,10 @@ case "$(uname -s)-$(uname -m)" in
     DOXYGEN_SHA256="14fa81bdc34171edb5f1f02b1d60e74802f0439b77fa44e592565d517d72df90" ;;
   Darwin-arm64)
     DOXYGEN_URL="${DOXYGEN_BASE}/doxygen-${DOXYGEN_VERSION}-mac-arm.zip"
-    DOXYGEN_SHA256="" ;;
+    DOXYGEN_SHA256="31d1c74467a9f6f456b4e6a4eff0c03e93d1ffa92da5fdf2d53a2f14ebaabbd7" ;;
   Darwin-x86_64)
     DOXYGEN_URL="${DOXYGEN_BASE}/doxygen-${DOXYGEN_VERSION}-mac-intel.zip"
-    DOXYGEN_SHA256="" ;;
+    DOXYGEN_SHA256="8045d72f6f900fd430042339c1493d6eefcc85a7f990361fb57685682f16a2f9" ;;
   *)  echo "ERROR: unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
 

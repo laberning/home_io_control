@@ -37,6 +37,10 @@ static constexpr uint8_t FRAME_MIN_SIZE = 9;  ///< Minimum frame: CTRL0+CTRL1+DS
 /// declaration, so this literal cannot silently drift from the mask that actually defines it.
 static constexpr uint8_t FRAME_MAX_DECLARED_SIZE = 32;
 
+// `FRAME_MAX_DECLARED_SIZE` below (and a handful of chip constants in the radio headers) is a
+// plain code span, not \ref: doxygen 1.18 cannot resolve \ref to a namespace-scope constexpr in
+// a whole-project build (it resolves fine in isolation). Restoring \ref fails the build under
+// WARN_AS_ERROR — leave these as code spans; autolinking still picks them up.
 /// Historical name for `FRAME_MAX_DECLARED_SIZE`, kept as an alias rather than a second
 /// literal so the two names can never disagree — most call sites (`set_cmd`, `serialize`,
 /// `parse`, every fixed-size frame buffer that only ever holds a declared-length frame) predate

@@ -266,6 +266,8 @@ class RadioLR1121 : public SoftPhyDriverBase {
     this->set_response_preamble_(tuning.lr1121_response_preamble);
     this->set_post_tx_settle_us_(tuning.lr1121_post_tx_settle_us);
   }
+  // The chip constants below are code spans, not \ref: doxygen 1.18 can't resolve \ref to them
+  // in a whole-project build (details in proto_sizes.h). Autolinking still links them.
   /// @brief Per-channel dwell for a rotating listen (LR1121).
   ///
   /// See `LR1121_DISCOVERY_HOP_SLICE_MS` for why this is measured independently rather than

@@ -42,6 +42,13 @@ LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 # releases/issues page), not a file tracked in this repository.
 _GITHUB_UI_ALLOWLIST = {"../../releases", "../../issues", "../../pulls", "../../actions"}
 
+# An absolute link back into this same repo on github.com. The path is checkable:
+# blob/<ref>/<p> -> <p> must be a tracked file; tree/<ref>/<p> -> a tracked directory.
+# (Used where a relative link cannot resolve on the Pages site, e.g. config/**.)
+_GITHUB_SELF_RE = re.compile(
+    r"https://github\.com/laberning/home_io_control/(blob|tree)/[^/]+/([^)\s#?]+)"
+)
+
 # Per-file heading slugs, keyed by resolved path.
 _SLUG_CACHE: dict[Path, set[str]] = {}
 
@@ -73,6 +80,14 @@ def _tracked_markdown_files() -> list[Path]:
         cwd=REPO_ROOT, check=True, capture_output=True, text=True,
     ).stdout
     return sorted(REPO_ROOT / line for line in out.splitlines() if line)
+
+
+def _tracked_paths() -> set[str]:
+    """Every git-tracked path, repo-root-relative (POSIX)."""
+    out = subprocess.run(
+        ["git", "ls-files"], cwd=REPO_ROOT, check=True, capture_output=True, text=True,
+    ).stdout
+    return {line for line in out.splitlines() if line}
 
 
 def _is_gitignored(path: Path) -> bool:
@@ -133,12 +148,23 @@ def _reachable_by_doxygen(staged: Path, in_files: set[Path], in_dirs: set[Path])
 def check_crosslinks(errors: list[str]) -> int:
     doc_files = _tracked_markdown_files()
     tracked = set(doc_files)
+    tracked_paths = _tracked_paths()
 
     for md_file in doc_files:
         published = _is_published_path(md_file)
         text = strip_fenced_blocks(md_file.read_text())
         slugs = _slugs_for(md_file)
         for link in LINK_RE.findall(text):
+            gh = _GITHUB_SELF_RE.match(link)
+            if gh:
+                kind, path = gh.group(1), gh.group(2).rstrip("/")
+                if kind == "blob" and path not in tracked_paths:
+                    errors.append(f"{_rel(md_file)}: github blob link to '{path}', not a tracked file")
+                elif kind == "tree" and not any(
+                    p == path or p.startswith(path + "/") for p in tracked_paths
+                ):
+                    errors.append(f"{_rel(md_file)}: github tree link to '{path}', not a tracked directory")
+                continue
             if link.startswith(("http://", "https://", "mailto:")):
                 continue
             if link in _GITHUB_UI_ALLOWLIST:
@@ -226,20 +252,22 @@ def check_published_docs(errors: list[str]) -> None:
             if not target:
                 continue
             resolved = (src.parent / target).resolve()
-            if not resolved.exists() or resolved.is_dir():
-                continue  # existence handled by check_crosslinks; dirs -> github tree URL by hand
+            if not resolved.exists():
+                continue  # existence handled by check_crosslinks
             if _is_gitignored(resolved):
                 continue  # check C owns "shipped doc links git-excluded target"
+            in_cpp_tree = any(d == resolved or d in resolved.parents for d in _DOXYGEN_SOURCE_DIRS)
             ok = (
                 resolved in src_set                                   # another published doc
-                or any(d in resolved.parents for d in _DOXYGEN_SOURCE_DIRS)  # C++ tree, doxygen resolves it
+                or in_cpp_tree                                        # C++ tree, doxygen resolves it
                 or stage_docs._BOUNDARY_LINK_RE.search(f"]({link})")  # README docs/ -> build/docs/ rewrite
             )
             if not ok:
+                what = "directory" if resolved.is_dir() else "file"
                 errors.append(
-                    f"{_rel(src)}: relative link to '{target}' resolves for GitHub but not on "
-                    f"the generated site (not in doxygen INPUT, no staging rule) -- use an "
-                    f"absolute URL"
+                    f"{_rel(src)}: relative link to {what} '{target}' resolves for GitHub but "
+                    f"not on the generated site (not in doxygen INPUT, no staging rule) -- use "
+                    f"an absolute URL"
                 )
 
     # --- E. subpage-block integrity + every ADR parented once ----------------
@@ -270,7 +298,7 @@ def check_published_docs(errors: list[str]) -> None:
                         f"{_rel(src)}: subpages '{m.group(1)}', which has no doxygen-label"
                     )
                     continue
-                lbl = next(iter(child_labels))
+                lbl = sorted(child_labels)[0]  # check B errors on >1; sorted keeps the report stable
                 if lbl in subpaged:
                     errors.append(
                         f"'{m.group(1)}' (label '{lbl}') is subpaged by both "

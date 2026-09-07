@@ -50,7 +50,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from md_fences import sub_outside_fences
+from md_fences import strip_fenced_blocks, sub_outside_fences
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 REPO_ROOT = SCRIPT_DIR.parent
@@ -89,7 +89,7 @@ _SUBPAGES_BLOCK_RE = re.compile(
     re.DOTALL | re.M,
 )
 _BULLET_RE = re.compile(r"^\s*[-*]\s+\[[^\]]*\]\(([^)#]+\.md)(?:#[^)]*)?\)\s*$")
-_H1_RE = re.compile(r"^#\s+\S")
+_H1_LINE_RE = re.compile(r"^#[ \t]+\S[^\n]*$", re.M)
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +159,10 @@ def highlight_yaml(content: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _label_for(text: str, src: Path) -> str | None:
-    """The `doxygen-label` value declared in *text*, or None. Fails loudly on
-    a second, conflicting declaration."""
-    labels = _LABEL_RE.findall(text)
+    """The `doxygen-label` value declared in *text*, or None. Fails loudly on a
+    second, conflicting declaration. Markers inside fenced blocks are ignored, so
+    a doc can *show* the convention in a code example without declaring one."""
+    labels = _LABEL_RE.findall(strip_fenced_blocks(text))
     if not labels:
         return None
     if len(set(labels)) > 1:
@@ -173,16 +174,19 @@ def inject_label(content: str, src: Path) -> str:
     label = _label_for(content, src)
     if label is None:
         return content
-    lines = content.split("\n")
-    in_fence = False
-    for i, line in enumerate(lines):
-        if line.lstrip().startswith(("```", "~~~")):
-            in_fence = not in_fence
-            continue
-        if not in_fence and _H1_RE.match(line):
-            lines[i] = f"{line.rstrip()} {{#{label}}}"
-            return "\n".join(lines)
-    sys.exit(f"stage-docs: {_rel(src)} has a doxygen-label but no H1 to attach {{#{label}}} to")
+
+    tagged = [False]
+
+    def _tag_first_h1(m: re.Match) -> str:
+        if tagged[0]:
+            return m.group(0)
+        tagged[0] = True
+        return f"{m.group(0).rstrip()} {{#{label}}}"
+
+    result = sub_outside_fences(_H1_LINE_RE, _tag_first_h1, content)
+    if not tagged[0]:
+        sys.exit(f"stage-docs: {_rel(src)} has a doxygen-label but no H1 to attach {{#{label}}} to")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +216,8 @@ def generate_subpages(content: str, src: Path) -> str:
             out_lines.append(re.sub(r"\S.*", rf"\\subpage {child_label}", line, count=1))
         return "<!-- doxygen-subpages -->\n" + "\n".join(out_lines) + "\n<!-- /doxygen-subpages -->"
 
-    return _SUBPAGES_BLOCK_RE.sub(_one_block, content)
+    # sub_outside_fences: a subpages block shown inside a ```markdown example is left alone.
+    return sub_outside_fences(_SUBPAGES_BLOCK_RE, _one_block, content)
 
 
 # ---------------------------------------------------------------------------

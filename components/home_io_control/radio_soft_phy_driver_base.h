@@ -251,6 +251,8 @@ class SoftPhyDriverBase : public RadioDriver {
   /// activity would tear down RX mid-reception.
   [[nodiscard]] virtual uint32_t activity_irq_mask() const { return SOFT_PHY_ALL_IRQ_BITS; }
 
+  // `SOFT_PHY_RX_PROBE_PACKET_LEN` below is a code span, not \ref: doxygen 1.18 can't resolve
+  // \ref to it in a whole-project build (details in proto_sizes.h). Autolinking still links it.
   /// @brief Data-buffer offset an in-flight reception is being written to, or a negative value
   /// when this chip must not be read before RX_DONE.
   ///
