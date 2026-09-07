@@ -8,6 +8,8 @@
 
 An [ESPHome](https://esphome.io/) external component for controlling IO-Homecontrol 2W devices (two-way, with device feedback). Control shutters, blinds, awnings, openers, curtains, and other IO-Homecontrol devices directly from ESPHome and Home Assistant using an ESP32 board with an SX1276, SX1262, or LR1121 radio module.
 
+📖 **[Documentation site](https://laberning.github.io/home_io_control/)** — configuration guide, architecture overview, API reference, and the architecture decision records.
+
 > [!NOTE]
 > **Experimental Project — Use With Caution**
 > This project is in early development. You may encounter edge cases where certain features do not yet function as expected.
@@ -270,7 +272,11 @@ make clean-t3        # LR1121
 # Format all C++ source files
 make format
 
-# Generate API documentation (requires doxygen + graphviz)
+# Build the documentation site (requires graphviz; doxygen is auto-downloaded).
+# docs/*.md and docs/adr/*.md are plain GitHub-flavoured Markdown; the build
+# stages them into doxygen syntax (page labels, nested trees) — nothing
+# doxygen-specific is committed. See scripts/stage-docs.py. Published to
+# https://laberning.github.io/home_io_control/ on every push to main.
 make doxygen
 
 # Start ESPHome dashboard on port 6052

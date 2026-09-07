@@ -73,6 +73,12 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0014](0014-host-tests-against-stubbed-esphome-headers.md) | Host tests on stubbed ESPHome headers | Plain `g++`, no ESPHome or hardware — with a stated fidelity cost |
 | [0023](0023-reference-material-as-a-corpus-origin.md) | `reference-material` corpus origin | Real devices this project doesn't own, sourced from published third-party material |
 
+### Documentation
+
+| # | Decision | In short |
+|---|---|---|
+| [0034](0034-doxygen-syntax-generated-at-staging-time.md) | Doxygen syntax generated, not committed | `.md` files stay pure GitHub Markdown; `scripts/stage-docs.py` injects `{#label}` / `\subpage` / link rewrites into the build copy |
+
 
 ## All records
 
@@ -112,6 +118,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0031: 1W vendor wire behaviour is driven by `manufacturer:`, and `execute_broadcast` is a remote-shape axis](0031-oneway-vendor-wire-behaviour-is-driven-by-manufacturer.md)
 - [ADR 0032: 1W enrollment follows the gesture the target's `manufacturer:` expects](0032-oneway-velux-enrollment-gesture.md)
 - [ADR 0033: The heating send path bypasses the cover status/optimistic machinery](0033-heating-send-path-bypasses-the-cover-machinery.md)
+- [ADR 0034: Doxygen page syntax is generated at staging time, never committed](0034-doxygen-syntax-generated-at-staging-time.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

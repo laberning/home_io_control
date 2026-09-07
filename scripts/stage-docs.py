@@ -77,10 +77,16 @@ _GROUP_LINK_RE = re.compile(
     r"\[([^\]]+)\]\(" + re.escape(PAGES_BASE_URL) + r"group__([a-z0-9_]+)\.html\)"
 )
 
-_LABEL_RE = re.compile(r"<!--\s*doxygen-label:\s*([A-Za-z0-9_]+)\s*-->")
+# A label marker is a comment ON ITS OWN LINE. Anchoring to the full line keeps a
+# doc that *describes* the convention (an inline `<!-- doxygen-label: X -->` in
+# prose or a code span) from being mistaken for a real declaration.
+_LABEL_RE = re.compile(r"^[ \t]*<!--[ \t]*doxygen-label:[ \t]*([A-Za-z0-9_]+)[ \t]*-->[ \t]*$", re.M)
+# Opening and closing markers each on their own line (same reason as _LABEL_RE).
 _SUBPAGES_BLOCK_RE = re.compile(
-    r"<!--\s*doxygen-subpages\s*-->\n(.*?)\n<!--\s*/doxygen-subpages\s*-->",
-    re.DOTALL,
+    r"^[ \t]*<!--[ \t]*doxygen-subpages[ \t]*-->[ \t]*\n"
+    r"(.*?)"
+    r"\n[ \t]*<!--[ \t]*/doxygen-subpages[ \t]*-->[ \t]*$",
+    re.DOTALL | re.M,
 )
 _BULLET_RE = re.compile(r"^\s*[-*]\s+\[[^\]]*\]\(([^)#]+\.md)(?:#[^)]*)?\)\s*$")
 _H1_RE = re.compile(r"^#\s+\S")
