@@ -94,7 +94,8 @@ HTML_EXTRA_STYLESHEET   = build/doxygen-resources/doxygen-awesome.css \
                           build/doxygen-resources/doxygen-awesome-sidebar-only-darkmode-toggle.css \
                           doxygen-custom/custom.css
 
-# jquery.js: doxygen >= 1.17 stopped bundling it; doxygen-awesome-css v2.4.2 still needs it.
+# jquery-shim.js: doxygen dropped jQuery in 1.17; doxygen-awesome-css v2.4.2 still calls `$` in
+# three scripts, so we ship a ~1 KB vanilla stand-in instead of vendoring jQuery.
 # mermaid-lazy.mjs / mermaid.min.js: see the MERMAID_* notes below -- the shim is loaded on
 # every page, the ~3.5 MB bundle only where a diagram is.
 HTML_EXTRA_FILES        = build/doxygen-resources/doxygen-awesome-darkmode-toggle.js \
@@ -102,8 +103,8 @@ HTML_EXTRA_FILES        = build/doxygen-resources/doxygen-awesome-darkmode-toggl
                           build/doxygen-resources/doxygen-awesome-paragraph-link.js \
                           build/doxygen-resources/doxygen-awesome-interactive-toc.js \
                           build/doxygen-resources/doxygen-awesome-tabs.js \
-                          build/doxygen-resources/jquery.js \
                           build/doxygen-resources/mermaid.min.js \
+                          doxygen-custom/jquery-shim.js \
                           doxygen-custom/mermaid-lazy.mjs
 
 HTML_HEADER              = doxygen-custom/header.html

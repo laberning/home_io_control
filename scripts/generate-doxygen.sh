@@ -37,11 +37,9 @@ esac
 DOXYGEN_AWESOME_VERSION="v2.4.2"
 DOXYGEN_AWESOME_BASE_URL="https://raw.githubusercontent.com/jothepro/doxygen-awesome-css/$DOXYGEN_AWESOME_VERSION"
 
-# doxygen >= 1.17 no longer ships jQuery, but doxygen-awesome-css v2.4.2's darkmode-toggle,
-# paragraph-link and fragment-copy-button scripts still call $(...) -- vendor it so
-# doxygen-custom/header.html's <script src="jquery.js"> keeps resolving.
-JQUERY_VERSION="3.7.1"
-JQUERY_URL="https://code.jquery.com/jquery-${JQUERY_VERSION}.min.js"
+# doxygen >= 1.17 no longer ships jQuery. doxygen-awesome-css v2.4.2's darkmode-toggle,
+# paragraph-link and fragment-copy-button scripts still call $(...); doxygen-custom/jquery-shim.js
+# (a committed ~1 KB vanilla stand-in, in HTML_EXTRA_FILES) covers them -- no jQuery download.
 
 # Self-contained Mermaid browser bundle (the UMD build -- one file, unlike the code-split
 # dist/mermaid.esm.min.mjs). header.html loads it lazily, only on pages that contain a diagram;
@@ -63,7 +61,6 @@ doxygen-awesome-fragment-copy-button.js            009b4c9982c18bc68c63663212983
 doxygen-awesome-paragraph-link.js                  f9fe333b516cdc259a25475b0ca472e8e091fd7abf9020e54949c4677a7a427f
 doxygen-awesome-interactive-toc.js                 a7d6a4d59809b650afd011af6fc8805075aeb5e310940fb9583a42652fe87ba8
 doxygen-awesome-tabs.js                            805b4dd5371a0c602ae112deb698e84a5bed7af3d78ba76cde8022229a893542
-jquery.js                                          fc9a93dd241f6b045cbff0481cf4e1901becd0e12fb45166a8f17f95823f0b1a
 mermaid.min.js                                     581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8
 "
 
@@ -159,7 +156,6 @@ fi
 # name -> download URL for every file listed in RESOURCE_CHECKSUMS.
 resource_url() {
   case "$1" in
-    jquery.js)      echo "$JQUERY_URL" ;;
     mermaid.min.js) echo "$MERMAID_URL" ;;
     *)              echo "$DOXYGEN_AWESOME_BASE_URL/$1" ;;
   esac

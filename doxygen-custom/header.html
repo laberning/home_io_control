@@ -23,7 +23,9 @@
 <!--BEGIN !PROJECT_NAME--><title>$title</title><!--END !PROJECT_NAME-->
 <link href="$relpath^tabs.css" rel="stylesheet" type="text/css"/>
 <!--<link rel="icon" type="image/svg+xml" href="logo.drawio.svg"/>-->
-<script type="text/javascript" src="$relpath^jquery.js"></script>
+<!-- doxygen-awesome-css v2.4.2 still calls `$` in three of its scripts; jquery-shim.js is a
+     ~1 KB vanilla stand-in for the patterns it uses (see the file). Not jQuery. -->
+<script type="text/javascript" src="$relpath^jquery-shim.js"></script>
 <script type="text/javascript" src="$relpath^dynsections.js"></script>
 <!-- doxygen >= 1.17 emits `codefold.init` in every page body; this custom header (older than
      that) must load its script or the page throws a ReferenceError. HTML_COPY_CLIPBOARD is set
