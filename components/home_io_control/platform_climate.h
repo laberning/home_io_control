@@ -19,7 +19,7 @@
 ///
 /// @warning Unvalidated on hardware. The protocol is derived from the iohomecontrol project's
 ///          Cozytouch support (Atlantic / Thermor / Sauter radiators); no such device has ever
-///          been exercised. See docs/home_io_control.md's experimental banner.
+///          been exercised. See docs/configuration/climate.md's experimental banner.
 
 #include "esphome/components/climate/climate.h"
 #include "esphome/core/component.h"

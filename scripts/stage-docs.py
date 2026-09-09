@@ -58,10 +58,14 @@ DOCS_OUT_DIR = REPO_ROOT / "build" / "docs"
 
 # Source globs, relative to the repo root. Order does not matter: each file's
 # output path comes from its own path, and its URL comes from its label.
+# An explicit list, deliberately not `docs/**/*.md`: `docs/doxygen/` is generated output and
+# git-ignored, and a recursive glob would walk it. One line per directory, not per page.
 SOURCE_GLOBS = [
     "README.md",
     "docs/*.md",
     "docs/adr/*.md",
+    "docs/configuration/*.md",
+    "docs/devices/*.md",
 ]
 
 # The published GitHub Pages site (transform 4). Keep in sync with the README

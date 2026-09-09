@@ -732,8 +732,8 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 /// node/session address — does NOT equal that device's own node ID. Our emulated device only ever
 /// generates one identity per arm cycle, so it structurally cannot reproduce a real device's
 /// separate backbone value; whether any real hub requires the two to differ, or even inspects this
-/// field at all rather than treating it as informational, is unconfirmed. See docs/home_io_control.md's
-/// Key Extraction "Known limitations" for the field-facing version of this note.
+/// field at all rather than treating it as informational, is unconfirmed. See
+/// docs/key-extraction.md's "Known limitations" for the field-facing version of this note.
 /// Also unverified: the full CTRL1 framing. This builder's ctrl1 is 0x00 (see init_frame() call in
 /// the .cpp), but the KLR200 capture's 0x37 carries CTRL1_PRIORITY set. See the
 /// TODO(hardware-verify) on the .cpp definition for why that bit is not mirrored here.

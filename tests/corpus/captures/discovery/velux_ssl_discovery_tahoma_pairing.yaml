@@ -1,0 +1,121 @@
+id: velux_ssl_discovery_tahoma_pairing
+description: >
+  Community capture from issue #112 (@Koekoe): a Somfy TaHoma (node D63332) pairing a VELUX SSL
+  PK06 solar roller shutter (node FB7B08) while a VELUX KLI 313 wall switch (node A47B9A) holds
+  the system open. Passively overheard by the reporter's own Heltec WiFi LoRa 32 V3 (SX1262,
+  software PHY) — the hub is neither party. It is the corpus's first end-to-end sighting of a
+  foreign controller adding itself to an existing VELUX io system ("key copy"), and the first
+  real DISCOVER_RESP (0x29) from a VELUX roller-shutter actuator.
+
+  Sequence: the KLI 313 opens the system with a three-class DISCOVER_ALT_REQ (0x2E) sweep across
+  00 00 BF / 00 00 FF / 00 03 7F (roller_shutter / awning / dual_shutter — same set as
+  tests/corpus/captures/discovery/velux_kli310_discovery_alt_sweep.yaml and
+  tests/corpus/captures/discovery/velux_kli313_discovery_alt_beacon.yaml, from two other KLI
+  units). The TaHoma's opening 0x28 was on a channel the monitor was not parked on and is not in
+  the log; the shutter's 0x29 answer to it is the first captured 2W frame. Then
+  DISCOVER_CONFIRM (0x2C), a second DISCOVER_REQ (0x28) to the backbone group 00003B, and — after
+  a KEY_TRANSFER (0x32) plus a bidirectional CHALLENGE_REQ (0x3C) round that are OMITTED here
+  (0x32 and both 0x3C payloads are redacted by this project's own frame logger, exactly as the
+  0x30 enrollment frames are in velux_kli310_discovery_alt_sweep.yaml) — the post-pairing reads
+  GET_INFO1 (0x54) -> GET_INFO2_RESP (0x57), GET_NAME_RESP (0x51, name = "Shutter"), and an
+  unsolicited PRIVATE_RESP (0x04) status frame. Pairing succeeded (the TaHoma has since driven
+  the shutter); this file keeps the phase of its observable traffic, discovery.
+
+  Why it is here:
+  - The 0x29 payload is real VELUX actuator ground truth: manufacturer = 0x01 (MANUFACTURER_VELUX,
+    not the Somfy 0x02 our own key-extraction responder emits), flags byte = 0x1D, timestamp =
+    0xFF FF, backbone address = 00 00 00. Our responder hardcodes
+    KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD / _TIMESTAMP = 0x000E (proto_commands.cpp); 0x1D vs
+    0xDD agree on the low bits including the odd "RF support = no" bit
+    (DISCOVERY_FLAGS_RF_SUPPORT, proto_constants.h TODO(hardware-verify)) and differ only in the
+    top two ATT-class bits (00 here vs 11). A third real 0x29 after
+    tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml and issue #80's KLR200.
+  - Confirms a KLI 313 (a third A47B9A unit) sweeps exactly {roller_shutter, awning,
+    dual_shutter} and nothing else to open a system.
+  - First real VELUX 0x57 (near-empty: no ASCII model string, unlike the Somfy 0x57 in
+    tests/corpus/captures/exchange/somfy_awning_exchange_get_name_sx1276.yaml), 0x51, and a solar
+    roller-shutter 0x04 status frame.
+
+  MACs / key material: none present. The 0x32 / 0x3C / 0x3D frames that would carry them are not
+  in this capture, so key: unknown is honest (community capture, nothing to verify).
+source:
+  device: "VELUX SSL PK06 solar roller shutter (node FB7B08), paired by a Somfy TaHoma (node D63332); VELUX KLI 313 wall switch (node A47B9A) opening the system"
+  captured_with: sx1262
+  firmware: "ESPHome 2026.8.2"
+  date: 2026-09-08
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/112"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F1 20 00 00 BF A4 7B 9A 2E 00 06 A9 3B F2 31 30 7A DE"
+    crc: absent
+    note: "KLI 313 (A47B9A) 1W DISCOVER_ALT_REQ(0x2E), dst=00 00 BF -> roller_shutter (2), seq 0xA9, LPM copy (CTRL1=0x20). Opens the system for the TaHoma to join. Same air frame was also re-decoded once as CTRL1=0x00 (soft-PHY artifact); the LPM copy is shown, as in velux_kli310_discovery_alt_sweep.yaml"
+  - dir: rx
+    t_ms: 618
+    freq: 868950000
+    hex: "F1 00 00 00 FF A4 7B 9A 2E 00 06 AA 44 77 D4 83 E1 65"
+    crc: absent
+    note: "same sweep, dst=00 00 FF -> awning (3), seq 0xAA"
+  - dir: rx
+    t_ms: 1227
+    freq: 868950000
+    hex: "F1 00 00 03 7F A4 7B 9A 2E 00 06 AB 22 3E 22 90 A7 A6"
+    crc: absent
+    note: "same sweep, dst=00 03 7F -> dual_shutter (13), seq 0xAB"
+  - dir: rx
+    t_ms: 10235
+    freq: 868250000
+    hex: "D1 00 D6 33 32 FB 7B 08 29 00 80 00 00 00 01 1D FF FF"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29): the SSL PK06 (FB7B08) answers the TaHoma's (D63332) opening 0x28 (not captured — different channel). data[2..4]=00 00 00 backbone addr, data[5]=01 manufacturer (MANUFACTURER_VELUX), data[6]=1D flags, data[7..8]=FF FF timestamp. Came back on 868.25 MHz while the rest of the exchange ran on 868.95"
+  - dir: tx
+    t_ms: 10904
+    freq: 868950000
+    hex: "48 20 FB 7B 08 D6 33 32 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), TaHoma -> shutter, addressed directly now; CTRL1=0x20 (CTRL1_LOW_POWER)"
+  - dir: tx
+    t_ms: 10939
+    freq: 869850000
+    hex: "C8 00 00 00 3B D6 33 32 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), TaHoma -> backbone broadcast group 00003B (same group used in velux_kux100_pairing_full.yaml and the issue #45 key-extraction captures). A second discovery round; KEY_TRANSFER(0x32) and a bidirectional CHALLENGE_REQ(0x3C) round follow in the source log but are redacted by the frame logger and omitted here"
+  - dir: tx
+    t_ms: 18165
+    freq: 868950000
+    hex: "48 20 FB 7B 08 D6 33 32 54"
+    crc: absent
+    note: "cmd=GET_INFO1(0x54), TaHoma -> shutter, post-pairing metadata read; CTRL1=0x20"
+  - dir: rx
+    t_ms: 18812
+    freq: 868950000
+    hex: "98 00 D6 33 32 FB 7B 08 57 00 00 00 00 00 00 00 00 00 02 00 80 00 00 00 00"
+    crc: absent
+    note: "cmd=GET_INFO2_RESP(0x57) from the shutter — near-empty (no ASCII model/serial string, contrast the Somfy 0x57 in tests/corpus/captures/exchange/somfy_awning_exchange_get_name_sx1276.yaml); only data[9..11]=02 00 80 non-zero"
+  - dir: rx
+    t_ms: 23420
+    freq: 868950000
+    hex: "98 00 D6 33 32 FB 7B 08 51 00 53 68 75 74 74 65 72 00 00 00 00 00 00 00 00"
+    crc: absent
+    note: "cmd=GET_NAME_RESP(0x51) from the shutter, name = 53 68 75 74 74 65 72 = \"Shutter\""
+  - dir: rx
+    t_ms: 27391
+    freq: 868950000
+    hex: "96 00 D6 33 32 FB 7B 08 04 05 60 00 00 00 00 00 00 00 00 2B 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), unsolicited status frame from the solar roller shutter shortly after pairing; 14 data bytes (05 60 00 00 00 00 00 00 00 00 2B 00 00 00). The monitor logs it as unauthenticated_status_ignored — it holds no system key"
+expect:
+  frames:
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x54, start: true, end: false, protocol: 2w}
+    - {cmd: 0x57, start: false, end: true, protocol: 2w}
+    - {cmd: 0x51, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

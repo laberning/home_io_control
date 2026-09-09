@@ -13,7 +13,7 @@
 /// the iown-homecontrol project's Atlantic/Thermor register map, which names the
 /// opcodes ("Set 0c61 01xx" / "Get 0c60 01xx") and shows the setpoint registers as 16-bit
 /// little-endian tenths of a degree. Every payload byte below is cited. No hardware is available
-/// for this family; the experimental banner lives in docs/home_io_control.md.
+/// for this family; the experimental banner lives in docs/configuration/climate.md.
 
 #include <cstddef>
 #include <cstdint>
@@ -62,7 +62,7 @@ constexpr float HEATING_TEMP_MIN_C = 7.0F;
 /// little-endian value in tenths of a degree: its 0x0130 block carries `18 01` = 0x0118 = 280 =
 /// 28.0 C as a live setpoint. This codec writes both bytes and allows up to 28.0 C, the ceiling
 /// Atlantic radiator manuals document. The encoding above 25.5 C is corroborated by the vendored
-/// register map but still unverified on hardware — see docs/home_io_control.md.
+/// register map but still unverified on hardware — see docs/configuration/climate.md.
 constexpr float HEATING_TEMP_MAX_C = 28.0F;
 
 /// @brief Largest payload any function produces — SET_TEMPERATURE's 6-byte form

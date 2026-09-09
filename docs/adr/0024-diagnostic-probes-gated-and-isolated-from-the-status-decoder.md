@@ -141,7 +141,7 @@ ESPHome native-API action arguments are all required strings — there is no "le
 and it falls back to a sensible default" path for `first_index`/`last_index`. Every call must pass
 an explicit range, which satisfies the original intent (nothing wide happens implicitly) more
 strictly than a default would have. Field-observed starting ranges live in
-`docs/radio_diagnostics.md`'s per-probe "Start with" column instead.
+`docs/diagnostic-probes.md`'s per-probe "Start with" column instead.
 
 ## Consequences
 

@@ -280,8 +280,9 @@ the two implementations fails a gate on both sides.
 ## Contribution workflow
 
 1. Capture frames — own hardware, or a community-supplied log via `IOHOME_FRAME_LOG`/monitor
-   configs (see `docs/radio_diagnostics.md` and the README's
-   [Reporting Unsupported Devices](../../README.md#reporting-unsupported-devices) checklist).
+   configs (see `docs/configuration/tuning.md` and the
+   [Reporting unsupported devices](../../docs/contributing.md#reporting-unsupported-devices)
+   checklist).
    ⚠️ Never paste a raw pairing log (`0x31`/`0x32`/`0x33`) publicly — see "Key hygiene" above.
 
    **Getting the raw `0x32` bytes for `--rekey`:** a normal build cannot produce them — `0x32`

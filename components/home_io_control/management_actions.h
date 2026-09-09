@@ -232,7 +232,7 @@ class ManagementActions {
   /// reply.
   ///
   /// Protocol-research instrumentation for opcodes this codebase has not decoded — see
-  /// docs/radio_diagnostics.md and ADR 0024. Refuses unless
+  /// docs/diagnostic-probes.md and ADR 0024. Refuses unless
   /// this build was configured with `diagnostic_probes: true`
   /// (IOHomeControlComponent::diagnostic_probes_enabled()), and separately refuses while the
   /// target device is moving (`!effective_is_stopped(*dev)`) — an unknown frame into a
@@ -299,7 +299,7 @@ class ManagementActions {
   ///       order of a minute at default tuning and longer if `exchange_start_response_wait_ms`
   ///       is raised. Accepted deliberately for this maintainer-triggered, explicitly-opted-in
   ///       diagnostic (`diagnostic_probes: true`) rather than restructured into scheduled steps — see
-  ///       docs/radio_diagnostics.md's "Diagnostic probes" section, which states this to the
+  ///       docs/diagnostic-probes.md, which states this to the
   ///       user rather than leaving it to be discovered as a frozen dashboard.
   /// @param device_id Target device ID (hex string, case-insensitive).
   /// @param probe One of probe_device()'s probe names.
@@ -318,7 +318,7 @@ class ManagementActions {
   ///
   /// A real user feature, but an unvalidated one — the protocol is derived from the iohomecontrol
   /// project's Cozytouch support and has never been exercised against real Atlantic/Thermor/Sauter
-  /// hardware (see docs/home_io_control.md's experimental banner). It is NOT diagnostic-gated;
+  /// hardware (see docs/configuration/climate.md's experimental banner). It is NOT diagnostic-gated;
   /// the guard is documentation, not `diagnostic_probes:`.
   ///
   /// `function` is one of `power_on` / `set_temperature` / `set_mode` / `set_presence` /

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Cross-source sync check for board pinouts documented in README.md / docs/home_io_control.md
-against the single source of truth in ``config/boards/*.yaml``.
+"""Cross-source sync check for board pinouts documented in the published Markdown (``README.md``
+and ``docs/**``) against the single source of truth in ``config/boards/*.yaml``.
 
 Board pinouts are the one duplicated dataset in this repo that is factual and safety-relevant: a
 wrong ``clk_pin`` / ``cs_pin`` / ``dio1_pin`` does not fail a test, it produces a board that
@@ -21,10 +21,14 @@ Two kinds of markdown copy are checked:
   pinouts for boards this repo ships no package for (LilyGO T3-S3 SX1262/SX1276, T-Beam 1W, ...),
   and those must not be forced to match a shipped board. Resolving by ``radio_type`` alone cannot
   work: the README documents several correct boards per chip.
-* **The README hardware table rows** for the three boards this repo ships a package for
-  (see ``SHIPPED_TABLE_ROWS``). Those rows carry the full pin set inline in backticks and are the
-  most-read copy in the repo. The other table rows -- untested boards, "any other ESP32" -- are
-  skipped because there is no package to check them against.
+* **The hardware table rows** for the three boards this repo ships a package for (see
+  ``SHIPPED_TABLE_ROWS``), on whichever page ``BOARD_TABLE_DOC`` names. Those rows carry the full
+  pin set inline in backticks and are the most-read copy in the repo. The other table rows --
+  untested boards, "any other ESP32" -- are skipped because there is no package to check them
+  against.
+
+The set of files scanned comes from ``stage-docs.py``'s ``SOURCE_GLOBS``, so a marker is checked
+wherever it ends up and moving a doc never touches this script.
 
 Every pin/setting key a checked block or row names must match the resolved board file. Keys it
 does not name are not required.
@@ -33,12 +37,30 @@ Run via ``make board-pinout-sync``; it is part of the ``lint`` composite target.
 """
 
 import re
+import importlib.util
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BOARDS_DIR = REPO_ROOT / "config" / "boards"
-DOC_FILES = [REPO_ROOT / "README.md", REPO_ROOT / "docs" / "home_io_control.md"]
+
+# Which files ship is stage-docs.py's business, not this script's -- a marker must be checked
+# wherever it ends up, and no future doc move should touch this file. stage-docs.py is not
+# importable by name (hyphen), so load it by path, the same way check-docs-links.py does.
+# Deliberately not a `docs/**/*.md` glob: that would walk the generated, git-ignored docs/doxygen/.
+_spec = importlib.util.spec_from_file_location("stage_docs", Path(__file__).parent / "stage-docs.py")
+stage_docs = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(stage_docs)
+
+
+def doc_files() -> list[Path]:
+    return stage_docs._sources()
+
+
+# The shipped-board table with full pin sets inline in backticks lives on exactly one page. The
+# `<!-- board-pinout: -->` marker blocks are many and may live anywhere; this is the one thing
+# that is singular, so it is named rather than searched for.
+BOARD_TABLE_DOC = REPO_ROOT / "docs" / "hardware.md"
 
 # Keys this check compares. Pin keys resolve to an integer GPIO number; radio_type / tcxo_voltage
 # / variant are compared as strings.
@@ -203,7 +225,7 @@ def main() -> int:
 
     errors = []
     checked = 0
-    for doc in DOC_FILES:
+    for doc in doc_files():
         text = doc.read_text()
 
         for lineno, stem, block in iter_marked_yaml_blocks(text):
@@ -224,7 +246,7 @@ def main() -> int:
             checked += 1
             errors.extend(_compare(found, stem, boards, doc, lineno))
 
-        if doc.name == "README.md":
+        if doc == BOARD_TABLE_DOC:
             for lineno, stem, row in iter_shipped_table_rows(text):
                 found = _parse_row_pairs(row)
                 if "radio_type" not in found:

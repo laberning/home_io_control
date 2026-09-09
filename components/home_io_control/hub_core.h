@@ -528,7 +528,7 @@ class IOHomeControlComponent : public Component,
   /// Send a single diagnostic probe frame to a registered device and report the raw reply (see
   /// ManagementActions::probe_device() for the full contract, argument formats, and safety
   /// gating). Protocol-research instrumentation for opcodes this codebase has not decoded — see
-  /// docs/radio_diagnostics.md and ADR 0024.
+  /// docs/diagnostic-probes.md and ADR 0024.
   /// @param device_id Target device ID.
   /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2", or
   ///        "private2_short").
@@ -672,7 +672,7 @@ class IOHomeControlComponent : public Component,
   /// than going silent.
   ///
   /// Blocks the ESPHome loop for roughly 3 x `pairing_discovery_wait_ms` and will log the
-  /// "operation took a long time" warning, same as the action — see docs/home_io_control.md.
+  /// "operation took a long time" warning, same as the action — see docs/pairing.md.
   void trigger_scan_paired_devices();
   /// Async form of set_light_position() that keeps radio work serialized on the main loop.
   /// queue_set_light_state() is a thin binary-position wrapper around this.

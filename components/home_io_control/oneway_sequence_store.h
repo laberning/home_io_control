@@ -98,7 +98,7 @@ class OneWaySequenceStore {
   /// Unlike add_identity(), this *may* move the counter backwards, which is the whole point —
   /// re-seed from a sequence observed on air, or from a user's estimate, when a counter has
   /// desynced from the device. Today's documented remedy for a desynced counter is
-  /// `initial_sequence:` (docs/home_io_control.md troubleshooting), which goes through
+  /// `initial_sequence:` (docs/troubleshooting.md, "1W commands do nothing"), which goes through
   /// add_identity() at boot instead.
   /// @param node_id Identity's 3-byte source address.
   /// @param value Next sequence to hand out.

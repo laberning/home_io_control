@@ -57,8 +57,8 @@ one hardware-validated class-bound configuration with no failing test);
   did before. Pinned by `OneWaySendCommandTest.IdentityWithoutManufacturerStillEmitsTheSomfyAcei`.
 - **`ONEWAY_EXECUTE_ACEI` moved to `proto_constants.h`.** The resolver is
   controller-layer; the protocol layer (`proto_commands.cpp`) must not depend
-  on it (AGENTS.md layering rule 1). `proto_constants.h` already holds the
-  `ACEI_*` and `MANUFACTURER_*` constants both sides need.
+  on it. `proto_constants.h` already holds the `ACEI_*` and `MANUFACTURER_*`
+  constants both sides need.
 - **The profiled-vendor set is written twice** — the C++ `switch` and the
   Python `_ONEWAY_WIRE_PROFILE_MANUFACTURERS` — with no automated sync check
   (`check-yaml-emitters.py` compares key *names*, not table contents).
@@ -72,9 +72,9 @@ one hardware-validated class-bound configuration with no failing test);
   straight from `io_device_type`.) Pinned by
   `OneWaySendCommandTest.ExecuteBroadcastAllDoesNotDegradeTheReportToUnknown`.
 - **VELUX enrollment is not addressed here.** A VELUX KLI PROG gesture sweeps
-  `0x30` across three classes and adds a STOP+DOWN follow-up; that is Phase 2
-  of `analysis/oneway_vendor_wire_profile_plan.md`, gated on a real VELUX
-  device and on a full KLI-PROG capture. Phase 1 (this ADR) makes the *control*
+  `0x30` across three classes and adds a STOP+DOWN follow-up; that is a
+  separate change, gated on a real VELUX device and on a full KLI-PROG
+  capture. Phase 1 (this ADR) makes the *control*
   bytes right; it cannot make a device that has never registered the hub obey
   it.
 - **The VELUX ACEI rests on n=1.** `0x61` is also `iown-homecontrol`'s generic

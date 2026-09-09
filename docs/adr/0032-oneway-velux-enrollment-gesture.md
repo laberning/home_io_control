@@ -32,8 +32,6 @@ The `0x39` prelude itself is **not** vendor-specific — a real Somfy Smoove cap
 both send it, and `iohc-flipper` sends it for both vendors. An earlier plan draft to
 make it opt-in was wrong and is not adopted.
 
-Full analysis: `analysis/velux_vs_somfy_1w_frame_differences.md` §6.
-
 ## Decision
 
 `OneWayWireProfile` (`oneway_controller.h`, from ADR 0031) gains:
@@ -73,9 +71,9 @@ user-initiated, once-per-device action, the same shape as the pairing button, wh
 `pairing_discovery_wait_ms` already goes to 5000. Shrinking it (a short preamble on
 burst copies 2-4, what real remotes do) would change the on-air shape of *every* 1W
 transmit including the hardware-validated Somfy path — its own change, its own
-hardware gate (`analysis/oneway_vendor_wire_profile_plan.md` §8).
+hardware gate.
 
-### The 3-second window may not fit (plan §7.2 consequence 2)
+### The 3-second window may not fit
 
 The KLI manual specifies STOP then DOWN **within 3 seconds** — of what, the manual
 does not say, but the motor most plausibly opens that window when it receives the

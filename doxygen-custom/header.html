@@ -26,6 +26,10 @@
 <!-- doxygen-awesome-css v2.4.2 still calls `$` in three of its scripts; jquery-shim.js is a
      ~1 KB vanilla stand-in for the patterns it uses (see the file). Not jQuery. -->
 <script type="text/javascript" src="$relpath^jquery-shim.js"></script>
+<!-- Reveals #nav-tree as a drawer below 768px, where doxygen-awesome's sidebar-only
+     theme hides the sidebar and the generated top menu only offers "All Pages".
+     Self-contained; see the file for why it does not reuse #main-menu-state. -->
+<script type="text/javascript" src="$relpath^mobile-nav.js"></script>
 <script type="text/javascript" src="$relpath^dynsections.js"></script>
 <!-- doxygen >= 1.17 emits `codefold.init` in every page body; this custom header (older than
      that) must load its script or the page throws a ReferenceError. HTML_COPY_CLIPBOARD is set

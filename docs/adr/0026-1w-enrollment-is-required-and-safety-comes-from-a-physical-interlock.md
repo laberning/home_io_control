@@ -64,8 +64,8 @@ the whole gate, add-and-remove-and-reflash is the lifecycle" shape as `accept_fo
 and `recover_oneway_key`, and the docs say so: remove the line once you are done enrolling.
 
 **What the enroll button sends (revised 2026-08-21, hardware-confirmed 2026-08-21).** The
-documented 1W pairing handshake (`reference/iown-homecontrol/docs/linklayer.md:396`, "1W
-Discovery") is `0x39` immediately followed by `0x30`, both from the same controller, back to back
+documented 1W pairing handshake ("1W Discovery" in the published iown-homecontrol protocol
+notes) is `0x39` immediately followed by `0x30`, both from the same controller, back to back
 within one gesture — and this project's own
 `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml` shows a real
 Somfy Smoove remote doing exactly that against a real Izymo, 128 ms apart, same burst. This ADR

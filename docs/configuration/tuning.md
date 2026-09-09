@@ -1,11 +1,10 @@
-# Radio Diagnostics Tuning
+# Radio tuning
 <!-- doxygen-label: guide_radio -->
 
-This project is still experimental. IO-Homecontrol covers a wide range of motors and
-actuators, and every model can behave slightly differently during pairing — different
-discovery commands, timings, or radio settings. It is not possible to test against every
-device that exists in the field, so getting pairing to work reliably on a *specific* device
-sometimes needs a bit of per-device fine-tuning.
+IO-Homecontrol covers a wide range of motors and actuators, and every model can behave slightly
+differently during pairing — different discovery commands, timings, or radio settings. Nobody can
+test against every device in the field, so getting pairing to work reliably on a *specific* device
+sometimes needs per-device fine-tuning.
 
 The `tuning:` block exists for exactly that. It exposes the pairing and radio parameters that
 are normally fixed, so you can experiment on a stubborn device and find a working combination
@@ -168,8 +167,8 @@ GFSK receiver bandwidth on the SX1262. Change it when frames arrive but fail to 
 *Observations:* `58.6` kHz is the default — narrower rejects more out-of-band noise, and reception
 on this waveform improves as the filter narrows. It also brings the SX1262 into line with the
 SX1276's long-validated `41.7` kHz default on the identical waveform. A wide default would exist
-only to tolerate local-oscillator offset across the TX→RX turnaround, but that turnaround is now a
-measured ~390 µs plus a 500 µs settle, well within what the narrow filter tolerates.
+only to tolerate local-oscillator offset across the TX→RX turnaround, but that turnaround measures
+~390 µs plus a 500 µs settle, well within what the narrow filter tolerates.
 
 `39.0` and `46.9` bracket the SX1276's `41.7` — worth trying if `58.6` still shows decode failures.
 
@@ -213,7 +212,8 @@ keeping a failed exchange inside `exchange_total_budget_ms`. Raise it only for a
 confirmed genuinely answers late.
 
 Every millisecond here is loop-blocking time on a *failed* exchange only (a successful one returns
-as soon as the reply lands, see `docs/adr/0013-blocking-exchange-on-the-esphome-loop.md`), and a
+as soon as the reply lands, see
+[ADR 0013](../adr/0013-blocking-exchange-on-the-esphome-loop.md)), and a
 failure costs this window once per retry. Raise it for a stubborn device; lower it if slow failures
 are worse for you than missed commands.
 
@@ -225,7 +225,7 @@ may run, so a try only starts if there is still budget left for it.
 
 *Observations:* this exists to keep a failing command from blocking the ESPHome loop past its own
 "took a long time for an operation" warning threshold (2550 ms — see
-`docs/adr/0013-blocking-exchange-on-the-esphome-loop.md`). If you raise either response-wait
+[ADR 0013](../adr/0013-blocking-exchange-on-the-esphome-loop.md)). If you raise either response-wait
 parameter, raise this too, or later retries within the same command will silently be skipped once
 the budget runs out.
 
@@ -234,7 +234,7 @@ the budget runs out.
 GFSK receiver bandwidth on the SX1276, written to both the RX and AFC bandwidth registers.
 Change it when discovery or key-exchange replies fail to decode cleanly on an SX1276 board.
 
-*Observations:* the default `41.7` kHz is the long-standing fixed value — tighter than the
+*Observations:* the default `41.7` kHz is tighter than the
 ~77 kHz Carson-rule figure, chosen to maximise sensitivity by rejecting out-of-band noise, and
 validated against real devices. Unlike the SX1262, the SX1276 has a fast TX→RX turnaround and
 has worked reliably at this narrow default across the devices tested here, so this knob is
@@ -253,7 +253,7 @@ if key exchange stalls right after discovery on an SX1276 board.
 preamble, which on hardware measurably improves the peer's lock-on at no timing cost. That is
 also longer than the SX1262's `8` (see the SX1262 section above: brand-new devices needed
 noticeably more than that on the SX1262, so don't read the SX1276's smaller number as evidence
-12 is generous; it has simply never needed raising in testing here). Lengthen it further for a
+12 is generous; it has never needed raising in testing here). Lengthen it further for a
 stubborn or marginal-range device.
 
 #### `sx1276_discovery_hop_slice_ms` / `sx1262_discovery_hop_slice_ms`
@@ -289,10 +289,7 @@ separately and could in principle diverge.
 
 *Observations:* the defaults were seeded from SX1262's validated values and are confirmed
 working on real LR1121 hardware — authenticated open/close/stop exchanges complete reliably
-against a real awning at the stock settings. Two of `lr1121_rx_bandwidth`'s enum values
-(39.0/46.9 kHz) had the wrong register encoding when first borrowed directly from SX1262 and were
-corrected — the full, corrected option set is `39.0` / `46.9` / `58.6` / `78.2` / `117.3` /
-`156.2` / `187.2` kHz. The main variable that still matters in practice is RF link quality (RSSI)
+against a real awning at the stock settings. The main variable that still matters in practice is RF link quality (RSSI)
 rather than these timing/bandwidth knobs — weak signal shows up as intermittent frame loss on
 either leg of an exchange, which the existing per-command retry already absorbs.
 
@@ -307,13 +304,13 @@ hopping/scanning peer has to catch cold, rather than a peer already parked on a 
 The preamble in front of a directed *start* frame (`EXECUTE`, status poll, `GET_NAME`, rename,
 identify, probe) whose target is **not** declared `low_power:`. An always-listening receiver does
 not need the ~213 ms 1024-byte wake-up burst, and some receivers never lock onto one that long —
-so a normal start frame gets this shorter preamble, matching what a reference hub sends to an
+so a normal start frame gets this shorter preamble, matching what real hubs send to an
 always-alive device. A device declared `low_power: true` still gets `LONG_PREAMBLE` on its start
 frames, unchanged.
 
 Sized independently of `response_preamble()` (that knob is a per-chip TX→RX turnaround property;
-this is a cold-peer property). The `32`-byte default is 256 bits, inside the preamble band the
-protocol reference documents; drop it toward `8` only if a start frame is still not being heard
+this is a cold-peer property). The `32`-byte default is 256 bits, well inside the range real hubs
+use; drop it toward `8` only if a start frame is still not being heard
 and raise it toward `LONG_PREAMBLE` if a marginal always-alive link needs more. Because it is a
 live tuning knob, bisecting the right value needs no rebuild.
 
@@ -354,7 +351,7 @@ roll-call over your existing devices — a different question entirely from "who
 
 If a "who is still out there" roll-call over your *already-paired* devices is what you actually
 want, that is exactly what the `scan_paired_devices` hub action does — see
-`docs/home_io_control.md`'s "Home Assistant Actions" section.
+[Home Assistant actions](actions.md).
 
 *Observations:* plain `0x28` to `0x00003B` is what works. Broadcast `0x2E` has drawn **no
 response on every device this project has real hardware evidence for** — a Somfy Izymo dimmer and
@@ -366,7 +363,7 @@ full-featured controllers (Tahoma) are seen broadcasting both `0x28` and `0x2E` 
 which is why the combined preset (`0x28,0x2E`) still exists in the Home Assistant selector — but
 on the evidence gathered so far, that's the controller hedging its bets, not `0x2E` actually
 reaching a device `0x28` couldn't. Don't reach for `0x2E` as a fix for a stuck device; see
-"A suggested tuning plan" below for what to try instead.
+[A tuning plan](../troubleshooting.md#a-tuning-plan) for what to try instead.
 
 #### `pairing_discovery_destination`
 
@@ -385,18 +382,18 @@ path, so only enable them alongside `0x2E`.
 #### `pairing_discovery_preamble`
 
 The preamble length (in bytes) on the discovery broadcast itself (`0x28`/`0x2E`). Defaults to
-`1024` (`LONG_PREAMBLE`), unchanged from historical behavior — a factory-fresh device in learning
-mode is exactly the kind of duty-cycled receiver that wake-up burst exists for.
+`1024` (`LONG_PREAMBLE`): a factory-fresh device in learning mode is exactly the kind of
+duty-cycled receiver that wake-up burst exists for.
 
 *Observations:* issue #87 hardware-proved that some always-alive receivers never lock onto a
-preamble this long on *directed* commands, which is why every other directed start frame now
-derives its preamble from the target's power class instead of paying the full 1024 bytes
-unconditionally (see `normal_start_preamble` above). The discovery broadcast can't be made
+preamble this long on *directed* commands, which is why every other directed start frame
+derives its preamble from the target's power class (see `normal_start_preamble` above). The discovery broadcast can't be made
 power-class-aware the same way — discovery exists to learn a device before anything is known about
 it — so it still always pays the ~213 ms cost. Issue #27 (Somfy Sunea IO devices repeatedly failing
 to answer discovery) raised this as a plausible, **unconfirmed** contributor. If a device is
-confirmed to be genuinely unpaired (not already claimed by another hub — see "A suggested tuning
-plan" below) and still doesn't answer `0x28` at any of the settings above, this is worth trying
+confirmed to be genuinely unpaired (not already claimed by another hub — see
+[A tuning plan](../troubleshooting.md#a-tuning-plan)) and still doesn't answer `0x28` at any of
+the settings above, this is worth trying
 next:
 
 ```yaml
@@ -411,15 +408,15 @@ discovery response but the attempt then stalls at key exchange (`outcome=key_exc
 that is very likely the *same* underlying limitation biting phase 2 — `CMD_KEY_INIT` (`0x31`) is
 still transmitted at a hardcoded `LONG_PREAMBLE`, and the best-effort `SetConfig1` in phase 3 is
 built `low_power=true`, which also resolves to `LONG_PREAMBLE`. Neither is tunable yet; this is a
-known, not-yet-closed gap (ADR 0029's Consequences section already flags phase 3 specifically).
+known, not-yet-closed gap
+([ADR 0029](../adr/0029-start-preamble-is-a-property-of-the-target.md) flags phase 3 specifically).
 
 #### `pairing_discovery_wait_ms` / `pairing_discovery_initial_dwell_ms`
 
 How long to wait for a response after each discovery transmit, and an initial settle before the
 first transmit. `pairing_discovery_wait_ms` also sets the per-attempt listen window for the
-`scan_paired_devices` Home Assistant action (see `docs/home_io_control.md`'s "Home Assistant
-Actions" section); since that action makes three attempts, one per channel, its total runtime is
-roughly 3x this value.
+`scan_paired_devices` action (see [Scan Paired Devices](../pairing.md#scan-paired-devices)); since
+that action makes three attempts, one per channel, its total runtime is roughly 3x this value.
 
 *Observations:* the `300` ms initial dwell mirrors the conventional wait after a start frame.
 Lengthening the wait only helps when responses are *intermittent* — merely extending the dwell
@@ -437,98 +434,11 @@ occasional transient decode failures.
 
 ### Reading pairing results without the tuning UI
 
-Every `home_io_control` config with a `button:` entity gets a companion **"Last Pairing
-Result"** diagnostic text sensor that publishes a frozen, machine-readable summary after each
-pairing attempt (leading `v1;` is a version tag — any later format change bumps it):
-
-```
-v1; outcome=<paired|no_response|invalid_response|key_exchange_failed|config_failed>; phase=<...>; node=<XXXXXX|->; type=<...|->; attempts=<n>; lbt=<n>; dur_ms=<n>; heard=<n>; advice=<codes|none>
-```
-
-`lbt` (LBT retries consumed) and `advice` (see below) are the two fields most useful while
-tuning: a high `lbt` count with a `channel_busy` advice code means the channel — not the
-tuning parameters above — is the bottleneck. See `docs/home_io_control.md`'s "Diagnosing a
-failed pairing attempt" section for the full field reference and the pairing-window traffic
-advisor's advice codes (`1w_traffic`, `channel_busy`, `foreign_controller`, `rf_silent`).
-
-## A suggested tuning plan
-
-If a device that should be in pairing mode does not pair with the defaults, work through the
-following in order, changing one thing at a time and checking the logs after each step. This
-is a general starting point, not a guarantee — different devices need different combinations.
-
-1. **Baseline & identify the target.** Enable `ui_controls: true` and `DEBUG` logging, then press
-   *Discover & Pair*. Confirm the hub transmits (`io_capture … stage=tx_frame`) and watch whether
-   any discovery response (`0x29`) comes back. While the device is in pairing mode, note whether
-   the *target device itself* transmits (by its own `src=` address) and to which `dst=` address —
-   that address is your best clue for the following steps.
-
-2. **Check whether the device is already claimed by another hub.** This is the most common reason
-   a device stays silent even after a correct PROG gesture and a factory reset (Double Power
-   Cut) — a device that already holds a hub's key has nothing left to respond to a discovery with.
-   If you have (or can borrow) that hub — a Somfy TaHoma/Smoove/Connectivity Kit, a Velux
-   KLF200/KLR200, etc. — use `docs/home_io_control.md`'s "Key Extraction (Accept Foreign Pairing)"
-   section against it instead of continuing to tune discovery parameters against the device
-   directly (see also its Pairing Workflow tips). (Trying the alternate discovery command, `0x2E`,
-   used to be the recommendation here — it is not: broadcast `0x2E` has never drawn a response from
-   any device this project has real evidence for. See the `pairing_discovery_commands` Observations
-   above.)
-
-3. **If the device is genuinely factory-fresh** (never claimed by any hub) and still doesn't
-   respond, the combined preset sends both broadcasts in case a particular controller expects to
-   see `0x2E` alongside `0x28`, even though `0x2E` alone hasn't been observed to help:
-   ```yaml
-   pairing_discovery_commands: ["0x28", "0x2E"]
-   ```
-
-4. **Match the address the device is active on.** If the device announces itself on a particular
-   address (commonly `0x00003F`), force discovery to that exact address regardless of command,
-   using an explicit destination:
-   ```yaml
-   pairing_discovery_commands: ["0x28"]
-   pairing_discovery_destination: "0x00003F"
-   ```
-   …and try the reverse pairing of command and address too (`0x2E` to `0x00003B`). This decouples
-   the *command* from the *address*, since a device may only answer on the specific address it is
-   listening on — which is not always the command's conventional one.
-
-5. **If the device is confirmed genuinely unpaired and still doesn't answer** any of the above,
-   try shortening the discovery broadcast's preamble — see `pairing_discovery_preamble` above.
-   Unconfirmed as a fix for any specific device; worth reporting back either way:
-   ```yaml
-   pairing_discovery_preamble: 32   # then 8
-   ```
-
-6. **If discovery is intermittent** (responses appear sometimes), widen the overall wait and
-   initial dwell — but leave the hop slice alone or shorten it, not the other way around. Don't
-   raise `sx1262_discovery_hop_slice_ms` here: the short default already reflects the measured
-   optimum (see the section above), so widening it back toward a long dwell makes things worse,
-   not better:
-   ```yaml
-   pairing_discovery_wait_ms: 3000
-   pairing_discovery_initial_dwell_ms: 500
-   ```
-
-7. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
-   after discovery), give the receiver more margin around the turnaround (SX1262 shown; on
-   LR1121 boards use the `lr1121_*` equivalents instead):
-   ```yaml
-   sx1262_post_tx_settle_us: 750    # then 1000
-   sx1262_rx_bandwidth: 46.9        # then 39.0 — narrower, not wider; see the section above
-   sx1262_response_preamble: 12     # then 16
-   ```
-
-8. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but see the
-   compliance note below:
-   ```yaml
-   lbt_max_retries: 1
-   lbt_rssi_threshold_dbm: -80
-   ```
-
-After each step, record the tuning snapshot line and the outcome. When a combination works,
-paste that snapshot into your permanent `tuning:` block. If you find a combination that makes
-an otherwise-unsupported device work, it is worth sharing via an issue on the project's GitHub page
-so the defaults can improve.
+The **"Last Pairing Result"** sensor that comes with the Discover & Pair button summarises every
+attempt in one machine-readable line. Its `lbt` and `advice` fields are the two most useful while
+tuning: a high `lbt` count with a `channel_busy` advice code means the channel, not the parameters
+above, is the bottleneck. The full field reference and advice codes are in
+[Diagnosing a failed pairing attempt](../pairing.md#diagnosing-a-failed-pairing-attempt).
 
 ## Safety and compliance
 
@@ -537,163 +447,8 @@ threshold too high (e.g. `-45 dBm`) or the retry count too low can force transmi
 busy channel and may violate local regulations for the 868 MHz SRD band. Do not leave
 aggressive LBT values in a production configuration.
 
-## Diagnostic probes
+## See also
 
-> [!WARNING]
-> **Sends opcodes this project has not decoded — use with caution.** A probe's reply format is,
-> by definition, not yet understood. Sending one to a real device is normally low-risk (most of
-> these are read-shaped requests real hubs send routinely), but it is not risk-free: an unknown
-> command could have effects on the target device that this project cannot predict. Probes only
-> ever reach devices already paired to this hub (see below).
-> Prefer the field-observed starting values given below over inventing your own, and prefer
-> testing on a light/switch over a motor when you do widen — see "Widen carefully" below.
-
-`home_io_control.diagnostic_probes: true` enables two Home Assistant actions, `probe_device` and
-`probe_sweep`, for sending a handful of opcodes this project has observed on the wire but never
-fully decoded, and for reading back the raw, uninterpreted reply. This is protocol-research
-tooling for closing exactly that kind of open question on hardware you own — see ADR 0024 for the
-full reasoning behind how it's gated and isolated from the rest of this component.
-
-```yaml
-home_io_control:
-  node_id: "C0FFEE"
-  system_key: "..."
-  diagnostic_probes: true
-```
-
-**It only ever targets a device already paired to this hub.** `probe_device`/`probe_sweep`
-resolve their target the same way every other management action does — there is no path from this
-instrumentation to a device this hub has not already paired with and does not already hold a key
-for. Every probe additionally refuses while the target device's last known state is "moving" —
-an unknown frame is never sent into a device state machine that is already mid-transaction. This
-is the device's last reported movement state, not a check on anything in flight: it never applies
-to a light/switch, and it can be stale if the device was last moved from a physical remote the hub
-never saw.
-
-### Calling the actions
-
-Same node-scoped naming as every other action in this component — see
-[Home Assistant Actions](home_io_control.md#home-assistant-actions) for the full explanation of
-how `<node_name>` is derived from `esphome.name`. For a config with `name: hioc-heltec-v2`:
-
-```yaml
-action: esphome.hioc_heltec_v2_probe_device
-data:
-  device_id: "FEEB1E"
-  probe: "private2"
-  index: "0x09"
-```
-
-`probe_sweep` takes a range instead of a single `index`:
-
-```yaml
-action: esphome.hioc_heltec_v2_probe_sweep
-data:
-  device_id: "FEEB1E"
-  probe: "status_ext"
-  first_index: "0x00"
-  last_index: "0x01"
-```
-
-- `device_id` (required, both actions): the 6-hex-character IO-homecontrol device ID, same as
-  every other management action.
-- `probe` (required, both actions): which frame to send — see the table below.
-- `index` (`probe_device`) / `first_index` + `last_index` (`probe_sweep`): always plain strings —
-  `"6"` and `"0x06"` are both accepted; anything else is rejected with a clear error rather than
-  silently defaulting to `0`. `probe_sweep` is bounded to 16 indices per call, spaced a second
-  apart, and reports one line per index (answered / error-coded / silent / refused).
-- Every reply is reported as raw hex plus its command byte, deliberately uninterpreted: the point
-  of a probe is that the reply's meaning is not yet known. Every successful reply is also logged
-  at the `io_capture` DEBUG tag (the same structured logging every other received frame uses), so
-  with `logger: level: DEBUG` a captured reply pastes directly into `scripts/corpus/ingest.py`
-  with no reformatting — this does not require the `-DIOHOME_FRAME_LOG` build flag.
-
-### Available probes
-
-| `probe` | Sends | `index` selects | Start with | Evidence for the starting values |
-|---|---|---|---|---|
-| `private_fn` | `CMD_PRIVATE` (0x03) with a chosen function ID | The function ID | `0x06` or `0x09` | Not field-observed on our own wire — every `CMD_PRIVATE` frame captured here uses function ID `0x03`. `0x06`/`0x09` are known from production software elsewhere, where they are described as a battery read. On real hardware (17 solar devices + our own mains motors) they returned a stored/target **position**, not a battery value — `0x06` is always `00 00`; `0x09` tracked shutters closing. Not a battery probe. |
-| `private_fn_sub` | `CMD_PRIVATE` (0x03) at function ID `0x09`, with a chosen second payload byte | The second payload byte (`data[1]`) | `0x01` | **Not field-observed.** Every `CMD_PRIVATE` frame ever captured — by this project or by a real hub — has `0x00` in this byte, so nothing on air pins what it means. Reference material describes a two-field parameter address here, but the field-to-byte mapping is unknown: at least three encodings fit every observed payload equally well, because all of them have both fields zero. Treat any reply as uninterpreted. |
-| `status_ext` | Extended `CMD_PRIVATE` at selector `0x80` | The block/`N` value | `0x00` and `0x01` | Field-observed: real hubs send exactly these two values to real motors. |
-| `status_ext_fn6` | Extended `CMD_PRIVATE` at selector `0x80`, function ID `0x06` | The block/`N` value | `0x00`, then `0x80` | The 4-byte extended **shape** is field-observed: a real hub sends `03 80 00 00` and `03 80 01 00` to real motors (40 frames across two logs), and the `0x80` at `data[1]` is what makes the `0x04` reply carry its trailing extended block. The **function ID** `0x06` in that shape is *not* field-observed — no hub has ever been seen sending it. `probe_sweep` caps a run at 16 consecutive indices, so `0x80` is out of reach of a sweep starting at 0 — send it with `probe_device` (or sweep `0x80`–`0x8F` explicitly). |
-| `status_ext_fn9` | Extended `CMD_PRIVATE` at selector `0x80`, function ID `0x09` | The block/`N` value | `0x00`, then `0x01` | Same shape evidence as `status_ext_fn6`; the function ID `0x09` in this shape is not field-observed. On the ordinary 3-byte form, `0x09` returned a stored position on every device tested — not a battery value. |
-| `get_info1` | `CMD_GET_INFO1` (0x54), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | Field-observed: a real hub sends `0x54` on air. No `0x55` answer has ever been captured, so this probe may well draw an `0xFE` "opcode not supported" or nothing at all — that is itself a result worth recording. |
-| `get_info2` | `CMD_GET_INFO2` (0x56), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | The **request** has never been captured; it rests on the protocol's even=request / odd=answer pairing rule. The **answer** `0x57` is captured and carries a leading ASCII reference string followed by the packed type/subtype bytes this component already decodes. Reply strings are wire-observable and citable as-is; do not attempt to resolve one to a model name from any non-public source. |
-| `general_info3` | `CMD_GET_GENERAL_INFO3` (0x58), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | — |
-| `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte | `0x06`, then `0x05`, `0x09` | Field-observed: a real hub sends exactly these modifier bytes in the long form to real motors (e.g. request data `D4 00 80 D8 06 00`). Earlier revisions of this table suggested `0x00`/`0x03` — those were taken from this component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` constants, **not** from the wire, and never drew the extended block described below. |
-| `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | `0x03`, then `0x09` | Field-observed: a real hub sends the short form with these modifiers (e.g. request data `D8 03 00 00`). |
-
-**There is deliberately no probe for `0x4A`.** Its leading published interpretation is a
-destructive file-management operation, and no reference this project has consulted has ever
-transmitted it. See ADR 0024 for the reasoning.
-
-A `get_info2` reply (`0x57`) leads with printable ASCII: paste the raw hex into the corpus and
-read the string off it, but record only what the wire shows — do not resolve it to a model name
-from any non-public source.
-
-### What each probe and index has returned
-
-A running record of what these frames actually draw back — as much as is understood so far.
-
-| probe / index | what came back |
-|---|---|
-| `private_fn` fn `0x06` | `data[2..3]` = `00 00` on every device probed — two mains motors of ours plus 17 solar shutters via a field reporter. No content. |
-| `private_fn` fn `0x09` | `data[2..3]` = a stored position: `D8 0A` on the dimmer (`0xD8` == `POS_FAVORITE`), `58 22` on the awning; solar shutters in the field data tracked their real position as they closed. |
-| `status_ext` (fn `0x03`), index = block | Field-observed selector. Device-dependent framing (see `status_ext_fn9`). Blocks `0x00`/`0x01` are what real hubs send. |
-| `status_ext_fn9`, index = block | Reply framing is device-dependent: some devices answer `data[0]` = the `0x04`/`0x05` stopped-flag byte with an `0x80`-tagged block, others answer `data[0] = 0x2D` with no block. On the dimmer the `0x80` block **tail changes with the index** (`… 80 00 00 00` at `0x00` → `… 80 D8 06 00` at `0x01`) — first time one of our own probes drew a non-empty, index-selected block; content is position family (`D8 06`). The awning ignores the index. A Velux window kept `data[2..3]` = its live position and appended an index-selected `0x80` tail (`78 00` / `50 00` / `C8 00` at different blocks — position-family values, meaning undecoded). |
-| `status_ext_fn6`, index = block | `data[2..3]` zeroed, same as `private_fn` fn `0x06`. Walking past the last block the device implements draws `ERROR_RESP` result code `0x58`, now mapped as `INVALID_FUNCTION_INDEX` — seen cross-vendor (Somfy Sunea awning + dimmer at block `0x80`; a Velux window at block `0x0F` and every block `0x80`–`0x8F`). Not in any reference error table; treat purely as "that index does not exist on this device". |
-| `private_fn_sub` (fn `0x09`), index = `data[1]` | Byte-identical to the `private_fn` fn `0x09` reply on both mains devices — the non-zero second payload byte changed nothing. On a Velux window a non-zero `data[1]` flipped the reply's `data[0]` to `0x2D` and, at an irregular set of sub-indices, appended a `00 20` field — both undecoded. |
-| `get_info2` (`0x56`) | `0x57` reply: 10 printable ASCII bytes (`5143802A06`, `5071662B09`, `5165948A01`) — a Somfy-internal reference / sw-version code, **not** a public catalogue number. The next two bytes (`data[10..11]`) are the packed device type/subtype this component already decodes via `decode_packed_device_type()` — verified: dimmer → `LIGHT`, awning → `HORIZONTAL_AWNING`, Velux window → `WINDOW_OPENER`. `data[12..15]` undecoded. |
-| `get_info1` (`0x54`) | Not yet sent to a device by this project. No `0x55` answer has ever been captured from anything. |
-| `general_info3` (`0x58`) | Dimmer answered a real `0x59`; a Somfy awning and a Velux window both replied `ERROR_RESP` result `0x08` (`ERROR_DURING_EXECUTION`, "opcode not supported"). Device-dependent. |
-| `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices, and byte-identical between two window positions on a Velux window (a stored parameter, not a live reading) — its short form at modifier `0x03` read back the stored ventilation position (`BA 00`). See "Reading a `private2` reply" below. |
-
-**What the replies do and don't carry.** Across every probe and device tried so far — mains and
-solar, day and night — the only things recovered are position/target data and, via `status_ext` /
-`private_fn` `data[8..10]`, the last commanding node ID. No reply has carried a per-device
-sensor value (battery, charge, luminance, temperature). Out-of-range indices answer result code
-`0x58` (`INVALID_FUNCTION_INDEX` — self-derived from the cross-vendor pattern, no external
-source). The remaining non-position unknowns — `data[0] = 0x2D` framing, the `00 20`
-`private_fn_sub` field, `get_info2` `data[12..15]` — have no decode and no external source.
-
-### Reading a `private2` / `private2_short` reply
-
-The reply command byte is `CMD_PRIVATE2_RESP` (**0x0D**), not `0x04`. In every reply captured so
-far the two bytes right after the flags byte are `D4 00` — this is the **request's own leading
-payload bytes echoed back**, not a `POS_UNKNOWN` position reading. The per-device content, when
-there is any, rides in an optional `0x80`-tagged block after that echo:
-
-- Our `0x00` / `0x03` modifiers have only ever drawn the bare echo (`… D4 00 00 00`).
-- A real hub's `0x06` modifier draws the block: e.g. `1F3807` answers with `05 D4 00 80 C8 00 00`
-  where this component's probe at `0x00` gets `6D D4 00 00 00`.
-
-The block content observed to date is position-family (`C8 00 00`, `72 49 00`) and matches the
-`status_ext` last-command tail — it is **not** battery/charge telemetry, and it does not vary over
-a day/night cycle (checked on 17 solar devices). `0x0C` is not a live-telemetry read.
-
-### Widen carefully
-
-The starting values above are the safest available for each probe — for `status_ext` and
-`private2`/`private2_short` because a real hub sends exactly those bytes to real motors routinely;
-for `private_fn` because, absent an on-air observation of our own, production software using this
-exact command is the next-best evidence available. Widening beyond them is a separate, deliberate
-decision, not something to do by default — and when you do, prefer the dimmer/light over a motor: a
-wrong write-shaped result on a light is visible and trivially reversible, while a motor's stored
-configuration is not.
-
-`private_fn_sub`, `status_ext_fn6` and `status_ext_fn9` differ from `status_ext`/`private_fn` in
-that only their *shape*, not their *function ID* or *sub-index*, is field-observed — so they are one
-byte further from known-safe traffic than anything else in this table. The same "prefer the
-dimmer/light over a motor" advice applies, with more reason.
-
-### Expect a long block from `probe_sweep`
-
-A full-range sweep can block the ESPHome loop (API, other components, OTA) for on the order of a
-minute at default tuning, longer if a device never answers or if `exchange_start_response_wait_ms`
-has been raised — up to 16 indices, each up to 3 retries at the configured response-wait time,
-plus a spacing delay between indices. This is
-accepted deliberately for this maintainer-triggered, explicitly-opted-in diagnostic rather than
-restructured into scheduled steps — expect a warning about a long-blocking operation, and expect
-other Home Assistant traffic against this device to stall for the duration. `probe_device` (a
-single index) does not have this problem; reach for `probe_sweep` only when you actually need the
-range in one gesture.
+- [Diagnostic probes](../diagnostic-probes.md) — asking a device directly what it answers to
+- [A tuning plan](../troubleshooting.md#a-tuning-plan) — these parameters in the order to try them
+- [Pairing](../pairing.md) — what the discovery parameters above are tuning

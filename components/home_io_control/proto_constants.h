@@ -195,7 +195,7 @@ static constexpr uint8_t CMD_SET_NAME = 0x52;       ///< Set device name (authen
 static constexpr uint8_t CMD_SET_NAME_RESP = 0x53;  ///< Device-name write response
 static constexpr uint8_t CMD_GET_INFO1 =
     0x54;  ///< Request device general info 1. Sent by the `get_info1` diagnostic probe
-           ///< (docs/radio_diagnostics.md, ADR 0024); field-observed on air from a real hub.
+           ///< (docs/diagnostic-probes.md, ADR 0024); field-observed on air from a real hub.
 static constexpr uint8_t CMD_GET_INFO1_RESP = 0x55;  ///< Device general info 1 response. Still never captured on our
                                                      ///< wire or in any field log, and nothing decodes it — accepted by
                                                      ///< the soft-PHY only so a probe reply is not dropped as an

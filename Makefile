@@ -144,8 +144,8 @@ key-material-scan:
 yaml-emitter-sync:
 	@python3 scripts/check-yaml-emitters.py
 
-# Cross-source check: board pinouts documented in README.md / docs/home_io_control.md must match
-# the single source of truth in config/boards/*.yaml -- see scripts/check-board-pinouts.py.
+# Cross-source check: board pinouts documented in the published Markdown (README.md and docs/**)
+# must match the single source of truth in config/boards/*.yaml -- see scripts/check-board-pinouts.py.
 board-pinout-sync:
 	@echo "Checking board pinout sync (docs <-> config/boards/)..."
 	@python3 scripts/check-board-pinouts.py
@@ -162,6 +162,13 @@ docs-link-check:
 	@echo "Checking documentation cross-links and staging invariants..."
 	@python3 scripts/check-docs-links.py
 	@python3 scripts/check_docs_links_test.py
+
+# Prose gate for the two writing rules a link checker cannot see: naming git-excluded
+# working notes as the source of a fact, and narrating this repo's own history.
+# See scripts/check-docs-prose.py.
+docs-prose-check:
+	@echo "Checking documentation prose (provenance, history)..."
+	@python3 scripts/check-docs-prose.py
 
 # Wipes config/tests/.esphome/build/<env>/ for every config/tests/test-*.yaml config (the ones
 # make clang-tidy / firmware-test / check build against), plus config/tests/.esphome/storage/
@@ -336,7 +343,7 @@ doxygen:
 #   corpus-validate     -> corpus-validate
 #   docs-link-check     -> docs-link-check
 #   key-material-scan   -> key-material-scan
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync board-pinout-sync corpus-validate docs-link-check key-material-scan
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan
 test: unit-test unit-test-asan firmware-test
 check: lint test doxygen
 
@@ -350,6 +357,7 @@ test-unit: unit-test
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
 		docs-link-check \
+		docs-prose-check \
 		key-material-scan \
 		fuzz-frame \
 		firmware-test unit-test unit-test-asan host-run clean-host lint test check \

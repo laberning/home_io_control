@@ -128,9 +128,23 @@ def test_helpers() -> None:
     check(cdl._is_published_path(R / "docs/adr/0001-x.md"), "docs/** is published")
     check(not cdl._is_published_path(R / "tests/corpus/README.md"), "tests/ is not published")
 
-    files, dirs = cdl._doxygen_input()
-    check((R / "build/docs/README.md").resolve() in files, "Doxyfile INPUT file parsed")
-    check((R / "build/docs/adr").resolve() in dirs, "Doxyfile INPUT directory parsed")
+    # The real Doxyfile names the staging root as a directory and nothing else; the per-file form
+    # is still parsed (the mini-repo fixture below uses it), so both token shapes are exercised
+    # against a synthetic INPUT block rather than against whatever the real one happens to say.
+    _, dirs = cdl._doxygen_input()
+    check((R / "build/docs").resolve() in dirs, "Doxyfile INPUT staging root parsed")
+
+    with tempfile.TemporaryDirectory() as td:
+        dox = Path(td) / "Doxyfile"
+        dox.write_text("INPUT = components/ \\\n        build/docs/README.md \\\n        build/docs/adr/\n")
+        saved = cdl.DOXYFILE
+        try:
+            cdl.DOXYFILE = dox
+            files, dirs = cdl._doxygen_input()
+        finally:
+            cdl.DOXYFILE = saved
+    check((R / "build/docs/README.md").resolve() in files, "Doxyfile INPUT file token parsed")
+    check((R / "build/docs/adr").resolve() in dirs, "Doxyfile INPUT directory token parsed")
 
     m = cdl._GITHUB_SELF_RE.match(
         "https://github.com/laberning/home_io_control/blob/main/config/x.yaml"
@@ -149,7 +163,15 @@ def _mini_repo(root: Path) -> None:
     (root / "components" / "home_io_control").mkdir(parents=True)
     (root / "analysis").mkdir()
 
-    (root / "README.md").write_text("# R\n\n[guide](docs/guide.md)\n")
+    # The README is the mainpage and so the root of the tree: check E requires every *other*
+    # staged page to be named in exactly one subpages block, so it parents the two docs/ pages.
+    (root / "README.md").write_text(
+        "# R\n\n[guide](docs/guide.md)\n\n"
+        "<!-- doxygen-subpages -->\n"
+        "- [Guide](docs/guide.md)\n"
+        "- [Arch](docs/arch.md)\n"
+        "<!-- /doxygen-subpages -->\n"
+    )
     (root / "docs" / "guide.md").write_text("# Guide\n<!-- doxygen-label: guide -->\n")
     (root / "docs" / "arch.md").write_text(
         "# Arch\n<!-- doxygen-label: arch -->\n\n"
@@ -236,6 +258,30 @@ def test_each_violation_is_caught() -> None:
         "github blob link to missing path": lambda r: (r / "docs" / "guide.md").write_text(
             "# Guide\n<!-- doxygen-label: guide -->\n\n"
             "[x](https://github.com/laberning/home_io_control/blob/main/config/nope.yaml)\n"
+        ),
+        # check E, widened past ADRs: a staged page nobody subpages is unreachable in the tree.
+        "non-ADR page dropped from subpages block": lambda r: (r / "README.md").write_text(
+            "# R\n\n<!-- doxygen-subpages -->\n- [Arch](docs/arch.md)\n<!-- /doxygen-subpages -->\n"
+        ),
+        # check G: `## Notes` on two staged pages -> doxygen numbers the anchor site-wide.
+        "cross-page link to a duplicated heading": lambda r: (
+            (r / "docs" / "guide.md").write_text(
+                "# Guide\n<!-- doxygen-label: guide -->\n\n## Notes\n\n[a](arch.md#notes)\n"
+            ),
+            (r / "docs" / "arch.md").write_text(
+                "# Arch\n<!-- doxygen-label: arch -->\n\n## Notes\n\n"
+                "<!-- doxygen-subpages -->\n- [ADRs](adr/README.md)\n<!-- /doxygen-subpages -->\n"
+            ),
+        ),
+        # check G again: an in-page fragment is a global HTML id too, so it breaks the same way.
+        "in-page link to a duplicated heading": lambda r: (
+            (r / "docs" / "guide.md").write_text(
+                "# Guide\n<!-- doxygen-label: guide -->\n\n## Notes\n\n[a](#notes)\n"
+            ),
+            (r / "docs" / "arch.md").write_text(
+                "# Arch\n<!-- doxygen-label: arch -->\n\n## Notes\n\n"
+                "<!-- doxygen-subpages -->\n- [ADRs](adr/README.md)\n<!-- /doxygen-subpages -->\n"
+            ),
         ),
     }
     for name, mutate in cases.items():

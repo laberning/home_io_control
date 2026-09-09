@@ -26,7 +26,7 @@ description: >
   declared-length check, so both frames are dropped from the sequence entirely rather than force-fit.
   No CHALLENGE_REQ/CHALLENGE_RESP (0x3C/0x3D) address-challenge followed the 0x37 in this run,
   unlike the KLR200<->KUX100 capture above where one does -- open question, not yet understood (see
-  docs/home_io_control.md's Key Extraction "Known limitations").
+  docs/key-extraction.md's "Known limitations").
 source:
   device: "Velux KLR200 two-way control pad (node 810BAB) -- real third-party hub, community capture"
   captured_with: sx1262

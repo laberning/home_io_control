@@ -199,7 +199,7 @@ _NUMBER_PARAMS = {
     # value that leaves the peer's detector anything to lock on to. The default is 32
     # (NORMAL_START_PREAMBLE in proto_timing.h) -- 256 bits, inside the preamble band the protocol
     # reference documents -- not 8: brand-new devices have been seen failing at 1/4/8 B
-    # (docs/radio_diagnostics.md), so 8 is a proven-safe floor for the knob, not a sensible default.
+    # (docs/configuration/tuning.md), so 8 is a proven-safe floor for the knob, not a sensible default.
     CONF_NORMAL_START_PREAMBLE: (8, 256, 1, "B"),
     # Floor is 8 (SHORT_PREAMBLE), same reasoning as the response-preamble params above. Ceiling is
     # the current default (LONG_PREAMBLE, 1024) rather than 256 like the other preamble knobs: this

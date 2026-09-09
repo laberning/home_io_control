@@ -11,7 +11,8 @@ platform schemas respectively) by hand -- nothing else keeps the two in step, so
 rename or a newly-required key drifts silently until a user's paste fails to validate.
 
 Separately, DEVICE_TYPE_OPTIONS and MANUFACTURER_OPTIONS (__init__.py) are each hand-transcribed a
-second time as a markdown table in docs/home_io_control.md, for users picking a name. Nothing else
+second time as a markdown table in the published docs (see ``DOCS_MD`` below), for users picking a
+name -- the two headings in ``DOCS_TABLES`` are what locate them on that page. Nothing else
 keeps *that* copy honest either, and it is arguably the worst of the three places for one to drift:
 it is what a user actually copies, and a wrong byte here produces no error and no symptom -- 1W
 has no reply to reveal it, and 2W devices simply advertise whichever manufacturer they really are
@@ -44,7 +45,7 @@ PLATFORM_PY_FILES = [PLATFORM_COMMON_PY, COVER_PY, LIGHT_PY, SWITCH_PY, LOCK_PY]
 HUB_INTERNAL_H = COMPONENT_DIR / "hub_internal.h"
 PROTO_DEVICE_MODEL_CPP = COMPONENT_DIR / "proto_device_model.cpp"
 
-DOCS_MD = REPO_ROOT / "docs" / "home_io_control.md"
+DOCS_MD = REPO_ROOT / "docs" / "supported-devices.md"
 
 # esphome.const names used as bare schema-key arguments in the files above that are not local
 # `CONF_X = "..."` string constants (so _string_constants() below cannot resolve them from any
@@ -187,8 +188,8 @@ def _named_int_dict(path: Path, name: str) -> dict:
 # Docs side: markdown table extraction
 # =====================================================================================
 
-# A `| `name` | `0xNN` |` cell pair, as used by both "Named device types" and "Named
-# manufacturers" (docs/home_io_control.md) -- each table is two of these pairs per row.
+# A `| `name` | `0xNN` |` cell pair, as used by both the "Named device types" and "Named
+# manufacturers" tables on DOCS_MD -- each table is two of these pairs per row.
 _DOCS_TABLE_CELL_RE = re.compile(r"\|\s*`([a-z][a-z0-9_]*)`\s*\|\s*`(0x[0-9A-Fa-f]+)`\s*")
 
 

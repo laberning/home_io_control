@@ -117,7 +117,7 @@ static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked against 
 /// CVE-2025-14857/-14858/-14859 (see https://www.semtech.com/company/security/security-bulletins)
 /// on top of earlier feature/bugfix releases — not just a cosmetic version bump.
 ///
-/// Reachability caveat: this project's `lr1121_firmware_update:` feature (docs/home_io_control.md)
+/// Reachability caveat: this project's `lr1121_firmware_update:` feature (docs/lr1121-firmware.md)
 /// can flash any published image, but 0x0104 requires bootloader 0x2101. Reaching it from the
 /// common 0x2100 bootloader needs the separate, opt-in bootloader rewrite (ADR 0021) — an
 /// irreversible operation gated behind its own arming switch — so without that opted in, 0x0103

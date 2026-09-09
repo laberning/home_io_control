@@ -119,7 +119,11 @@ def _slugs_for(path: Path) -> set[str]:
 
 
 def _labels_in(path: Path) -> set[str]:
-    return set(stage_docs._LABEL_RE.findall(path.read_text(encoding="utf-8")))
+    # Fenced blocks are stripped for the same reason stage-docs.py's _label_for() strips them: a
+    # page that *documents* the convention shows a marker inside a ```markdown example, and that
+    # must not be mistaken for a real declaration. The two must agree on what counts, or a doc
+    # that stages cleanly still fails the check (or worse, the reverse).
+    return set(stage_docs._LABEL_RE.findall(strip_fenced_blocks(path.read_text(encoding="utf-8"))))
 
 
 def _doxygen_input() -> tuple[set[Path], set[Path]]:
@@ -223,7 +227,7 @@ def check_published_docs(errors: list[str]) -> None:
     # --- B. label presence + uniqueness ----------------------------------------
     label_owner: dict[str, Path] = {}
     for src in sources:
-        found = list(stage_docs._LABEL_RE.findall(src.read_text(encoding="utf-8")))
+        found = list(stage_docs._LABEL_RE.findall(strip_fenced_blocks(src.read_text(encoding="utf-8"))))
         if src != readme and not found:
             errors.append(
                 f"{_rel(src)}: no <!-- doxygen-label: NAME --> comment "
@@ -270,14 +274,10 @@ def check_published_docs(errors: list[str]) -> None:
                     f"an absolute URL"
                 )
 
-    # --- E. subpage-block integrity + every ADR parented once ----------------
-    adr_files = sorted(
-        p for p in sources
-        if p.parent.name == "adr" and re.match(r"\d{4}-", p.name)
-    )
+    # --- E. subpage-block integrity + every staged page parented exactly once -
     subpaged: dict[str, Path] = {}   # child label -> index file that lists it
     for src in sources:
-        blocks = stage_docs._SUBPAGES_BLOCK_RE.findall(src.read_text(encoding="utf-8"))
+        blocks = stage_docs._SUBPAGES_BLOCK_RE.findall(strip_fenced_blocks(src.read_text(encoding="utf-8")))
         for block in blocks:
             for line in block.splitlines():
                 m = stage_docs._BULLET_RE.match(line)
@@ -306,10 +306,16 @@ def check_published_docs(errors: list[str]) -> None:
                     )
                 else:
                     subpaged[lbl] = src
-    for adr in adr_files:
-        if not (_labels_in(adr) & subpaged.keys()):
+    # Every staged page needs exactly one parent, not just the ADRs: the sidebar tree is built
+    # from \subpage lines, so an unparented page is written, staged, and unreachable. Two
+    # exemptions -- README.md is the mainpage (the root of the tree) and docs/index.md is the root
+    # of the docs subtree, so neither is subpaged by anything.
+    for src in sources:
+        if src in (readme, DOCS_DIR / "index.md"):
+            continue
+        if not (_labels_in(src) & subpaged.keys()):
             errors.append(
-                f"{_rel(adr)}: not listed in any <!-- doxygen-subpages --> block "
+                f"{_rel(src)}: not listed in any <!-- doxygen-subpages --> block "
                 f"-- it will not appear in the sidebar tree"
             )
 
@@ -321,6 +327,46 @@ def check_published_docs(errors: list[str]) -> None:
             errors.append(
                 f"{_rel(md)}: has a ```mermaid fence but is not staged -- the diagram will not render"
             )
+
+    # --- G. no anchor link to a heading that repeats across staged pages -----
+    # MARKDOWN_ID_STYLE = GITHUB gives each heading GitHub's slug, but doxygen numbers *duplicates
+    # site-wide and ordinally*: with `## Context` on 34 ADRs, one page keeps `#context` and the
+    # rest get `#context-23`, `#context-28`, ... Which page wins depends on doxygen's processing
+    # order, not on anything in the source, so any link to a repeated slug is a coin flip.
+    #
+    # This applies to in-page `#fragment` links too -- the fragment is a global HTML id on the
+    # rendered page, not something resolved locally -- so both link shapes are checked. The
+    # post-build crawl cannot cover this: it strips `#fragment` before resolving each href.
+    slug_owners: dict[str, set[Path]] = {}
+    for src in sources:
+        for slug in _slugs_for(src):
+            slug_owners.setdefault(slug, set()).add(src)
+
+    for src in sources:
+        text = strip_fenced_blocks(src.read_text(encoding="utf-8"))
+        for link in LINK_RE.findall(text):
+            if link.startswith(("http://", "https://", "mailto:")):
+                continue
+            if link in _GITHUB_UI_ALLOWLIST:
+                continue
+            target, _, fragment = link.partition("#")
+            if not fragment:
+                continue
+            if target:
+                resolved = (src.parent / target).resolve()
+                if resolved not in src_set:
+                    continue  # not a staged page; doxygen never renders its anchors
+            else:
+                resolved = src
+            owners = slug_owners.get(fragment, set())
+            if len(owners) > 1:
+                where = "in-page link" if resolved == src else f"link to '{target}'"
+                errors.append(
+                    f"{_rel(src)}: {where} uses anchor '#{fragment}', but that heading appears "
+                    f"on {len(owners)} staged pages -- doxygen renumbers the anchor site-wide, so "
+                    f"this resolves on GitHub and lands nowhere on the site. Link the page, not "
+                    f"the heading (or make the heading unique)."
+                )
 
 
 # ---------------------------------------------------------------------------

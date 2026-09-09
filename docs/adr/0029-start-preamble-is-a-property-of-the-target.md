@@ -106,7 +106,7 @@ majority of integrated devices).
   middle, not a measured number: 8 bytes is a proven floor against paired
   always-alive devices but nothing bounds where a start frame stops being
   heard, and brand-new devices have failed at 1/4/8 bytes on the soft-PHY
-  chips (`docs/radio_diagnostics.md`). Shipping the number as a Home Assistant
+  chips (`docs/configuration/tuning.md`). Shipping the number as a Home Assistant
   `number` entity lets a reporter bisect it live instead of rebuilding. One
   knob governs both the directed always-alive start frame and the roll-call
   broadcast preamble, so a user who needs a longer broadcast preamble to reach

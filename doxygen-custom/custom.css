@@ -85,3 +85,126 @@ div.contents .mermaid p,
     overflow: visible;
 }
 
+
+/* ================================================================
+ * Navigation tree: always show the expand affordance
+ *
+ * doxygen-awesome hides the #nav-tree expand chevron at rest
+ * (--side-nav-arrow-opacity: 0) and only fades it in on row hover/focus,
+ * so on a fresh page there is no way to tell which items have children.
+ * These two variables are defined once in the theme's base html{} block
+ * (never in a media query or the dark-mode palette), so overriding them
+ * here shows the chevron on every expandable row, on desktop and in the
+ * mobile tree. Leaf rows are unaffected -- their .arrow is a blank spacer.
+ * ================================================================ */
+html {
+    --side-nav-arrow-opacity: 0.55;
+    --side-nav-arrow-hover-opacity: 1;
+}
+
+
+/* ================================================================
+ * Hide the #nav-tree sync toggle
+ *
+ * navtree.js renders a small chain icon at the bottom of the sidebar that
+ * flips between "tree follows the current page" and "tree stays pinned where
+ * you left it" (persisted in sessionStorage). It has no on-page effect, the
+ * glyph is cryptic, and it clutters the mobile drawer corner. The element
+ * stays in the DOM so navtree.js's adjustSyncIconPosition() keeps working.
+ * ================================================================ */
+#nav-sync {
+    display: none !important;
+}
+
+
+/* ================================================================
+ * Mobile navigation drawer (screens < 768px)
+ *
+ * doxygen-awesome's sidebar-only theme sets `#side-nav { display: none }`
+ * below 768px and hands navigation to the top menu bar. menu.js builds that
+ * bar from menudata.js, which is generated from the <navindex> in
+ * DoxygenLayout.xml and so only carries a single "All Pages" link -- the
+ * nested page hierarchy exists solely in #nav-tree. These rules render
+ * #nav-tree as a drawer behind the existing hamburger instead, so every
+ * documentation page is reachable on a phone.
+ *
+ * mobile-nav.js drives the `hioc-mobile-nav-open` class on <body> and detaches
+ * label.main-menu-btn from the theme's #main-menu-state checkbox; that file
+ * explains why the checkbox cannot be reused (menu.js re-runs navtree.js's
+ * initResizable() on its `change` event, and force-unchecks it on any
+ * window.innerWidth change). Nothing here depends on the checkbox.
+ *
+ * The panel is position:fixed on purpose. #side-nav is already out of flow
+ * (navtree.css gives it position:absolute) and no other element is hidden, so
+ * opening and closing the drawer changes no page geometry at all: no scroll
+ * anchoring, no scrollbar appearing or disappearing, no resize event -- none
+ * of the things that previously made the page jump or the menu re-close.
+ * #nav-tree keeps its own scroller so a long or deeply indented tree can never
+ * overflow the document either.
+ *
+ * navtree.js writes inline width/height onto #side-nav and #nav-tree from its
+ * desktop layout maths; the !important rules below override those.
+ * ================================================================ */
+@media screen and (max-width: 767px) {
+    /* menu.js injects Overview / Documentation / API Reference / All Pages
+       into #main-menu at runtime; the drawer replaces them. The search field
+       has already been moved out to #searchBoxPos1, which stays in #top and so
+       stays visible and usable above the open drawer. */
+    #main-menu {
+        display: none !important;
+    }
+
+    /* --hioc-mobile-nav-top is set by mobile-nav.js from #top's bottom edge,
+       so the drawer hangs directly below the header (which keeps the toggle
+       and the search field reachable while the drawer is open). */
+    body.hioc-mobile-nav-open #side-nav {
+        display: block;
+        position: fixed;
+        top: var(--hioc-mobile-nav-top, 0px);
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 98;                 /* over #doc-content, under #MSearchResultsWindow (9999) */
+        width: auto !important;
+        height: auto !important;
+        min-width: 0;
+        max-width: none;
+        padding: 0;                  /* navtree.css reserves 6px here for #splitbar */
+        overflow: hidden;
+        background: var(--side-nav-background);
+        border-right: 0;
+        border-top: 1px solid var(--separator-color);
+    }
+
+    body.hioc-mobile-nav-open #side-nav #nav-tree {
+        width: auto !important;
+        height: 100% !important;
+        max-height: none;
+        overflow: auto;
+        overscroll-behavior: contain; /* do not chain the tree's scroll to the page */
+        border-right: 0;
+        padding-bottom: var(--spacing-medium);
+    }
+
+    /* Column-resize grip is meaningless for the drawer. */
+    body.hioc-mobile-nav-open #side-nav .ui-resizable-handle {
+        display: none !important;
+    }
+
+    /* tabs.css morphs the hamburger into an X via
+       `#main-menu-state:checked ~ .main-menu-btn`; the checkbox is no longer
+       involved, so mirror those three rules onto our own class. */
+    body.hioc-mobile-nav-open .main-menu-btn .main-menu-btn-icon {
+        height: 0;
+    }
+
+    body.hioc-mobile-nav-open .main-menu-btn .main-menu-btn-icon::before {
+        top: 0;
+        transform: rotate(-45deg);
+    }
+
+    body.hioc-mobile-nav-open .main-menu-btn .main-menu-btn-icon::after {
+        top: 0;
+        transform: rotate(45deg);
+    }
+}

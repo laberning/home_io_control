@@ -8,15 +8,17 @@ PROJECT_NAME           = "Home IO Control"
 PROJECT_BRIEF          = "ESPHome add-on for IO-Homecontrol devices"
 OUTPUT_DIRECTORY       = docs/doxygen
 INPUT                  = components/home_io_control/ \
-                          build/docs/README.md \
-                          build/docs/home_io_control.md \
-                          build/docs/architecture_overview.md \
-                          build/docs/radio_diagnostics.md \
-                          build/docs/adr/
+                          build/docs/
 USE_MDFILE_AS_MAINPAGE = build/docs/README.md
 RECURSIVE              = YES
-# *.md is needed for the build/docs/adr/ directory above -- the four prose docs are named
-# individually, but the ADRs are picked up by pattern.
+# The whole staging root is INPUT, not a per-page list: scripts/stage-docs.py wipes build/docs/ on
+# every run, so nothing stale can be picked up, and adding a page costs no Doxyfile edit. *.md is
+# what makes RECURSIVE pick the staged pages up.
+#
+# Cost of the directory form: check A in scripts/check-docs-links.py can no longer prove "every
+# staged page is reachable from INPUT" (it is, vacuously). Check E covers the real risk instead --
+# it requires every staged page to be named in exactly one <!-- doxygen-subpages --> block, so a
+# page that is written but never parented fails the build.
 #
 # Known artefact: doxygen 1.18 emits a stub "File Reference" page per Markdown input
 # (`*_8md.html`, empty body). LAYOUT_FILE hides them from the sidebar and
@@ -48,7 +50,16 @@ MARKDOWN_ID_STYLE      = GITHUB
 AUTOLINK_IGNORE_WORDS  = home_io_control esphome \
                         architecture_overview.md \
                         docs/home_io_control.md \
-                        docs/radio_diagnostics.md \
+                        docs/configuration/tuning.md \
+                        docs/configuration/oneway-transmit.md \
+                        docs/configuration/climate.md \
+                        docs/configuration/cover.md \
+                        docs/diagnostic-probes.md \
+                        diagnostic-entities.md \
+                        docs/key-extraction.md \
+                        docs/lr1121-firmware.md \
+                        docs/pairing.md \
+                        docs/troubleshooting.md \
                         docs/adr/0013-blocking-exchange-on-the-esphome-loop.md
 
 # Parse /// and /** */ comments (Javadoc style)
@@ -105,7 +116,8 @@ HTML_EXTRA_FILES        = build/doxygen-resources/doxygen-awesome-darkmode-toggl
                           build/doxygen-resources/doxygen-awesome-tabs.js \
                           build/doxygen-resources/mermaid.min.js \
                           doxygen-custom/jquery-shim.js \
-                          doxygen-custom/mermaid-lazy.mjs
+                          doxygen-custom/mermaid-lazy.mjs \
+                          doxygen-custom/mobile-nav.js
 
 HTML_HEADER              = doxygen-custom/header.html
 

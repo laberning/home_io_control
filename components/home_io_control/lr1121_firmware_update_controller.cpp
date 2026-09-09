@@ -470,7 +470,7 @@ std::vector<std::string> Lr1121FirmwareUpdateController::debug_lines() const {
   if (upgrade_path == BootloaderUpgradePath::AVAILABLE) {
     // Deliberately short: this prints on every boot. The switch is discoverable in Home Assistant
     // and the full reasoning (why the rewrite exists, why there is no reason to rush it) lives in
-    // docs/home_io_control.md and ADR 0021 -- a config dump is the wrong place to repeat it. What
+    // docs/lr1121-firmware.md and ADR 0021 -- a config dump is the wrong place to repeat it. What
     // must survive the trim is the pair of versions and the fact that it cannot be undone.
     lines.push_back("LR1121 bootloader rewrite: AVAILABLE -- needs bootloader " +
                     format_hex16(lr1121_required_bootloader_for(LR1121_FIRMWARE_UPDATE_TARGET_VERSION)) +
