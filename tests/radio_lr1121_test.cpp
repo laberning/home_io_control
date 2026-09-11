@@ -31,8 +31,9 @@ class TestableRadioLR1121 : public test::TestableSoftPhy<RadioLR1121> {
 
 namespace {
 
-// TCXO_VOLTAGE_OPTIONS code for "3_0V" (components/home_io_control/__init__.py).
-constexpr uint8_t TCXO_YAML_CODE_3_0V = 0x07;
+// TCXO_VOLTAGE_OPTIONS code for "3_3V" (components/home_io_control/__init__.py) — the top of the
+// 0-based voltage enum, passed through to the chip's SetTcxoMode unmapped.
+constexpr uint8_t TCXO_YAML_CODE_3_3V = 0x07;
 
 // Queue a GetVersion response that reports a real LR1121 (device type 0x03) so init()
 // proceeds past the identity check. Response layout: [stat1, hw, device_type, fw_major,
@@ -65,7 +66,7 @@ uint8_t encode_frame_with_crc(const uint8_t *frame, uint8_t frame_len, uint8_t *
 TEST(RadioLR1121, GetVersionTransactionBytes) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
 
   // No response queued -> device type reads back as 0x00, init() must fail cleanly.
   bool ok = radio.init();
@@ -100,7 +101,7 @@ TEST(RadioLR1121, ReadIrqStatusRawParsesGetStatusResponse) {
 TEST(RadioLR1121, InitSucceedsOnCorrectDeviceType) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   bool ok = radio.init();
@@ -139,7 +140,7 @@ TEST(RadioLR1121, FirmwareNewerMajorIsNotOutdated) {
 TEST(RadioLR1121, TcxoCommandEncodesYamlVoltageCode) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   ASSERT_TRUE(radio.init());
@@ -148,9 +149,10 @@ TEST(RadioLR1121, TcxoCommandEncodesYamlVoltageCode) {
   ASSERT_GE(idx, 0) << "SetTcxoMode must be issued during init";
   const auto &tx = spi.transactions()[idx];
   ASSERT_EQ(tx.size(), 6u) << "opcode(2) + voltage code(1) + startup delay(3)";
-  // YAML code 0x07 ("3_0V") maps to the LR1121's own 0x00-0x07 table via a -1 shift
-  // (see radio_lr1121.cpp configure_radio_()).
-  EXPECT_EQ(tx[2], TCXO_YAML_CODE_3_0V - 1) << "TCXO voltage code should be YAML code minus 1";
+  // The YAML TCXO_VOLTAGE_OPTIONS enum is 0-based and identical to the LR1121's own SetTcxoMode
+  // voltage code (and the SX1262's), so it passes straight through with no mapping (see
+  // radio_lr1121.cpp configure_radio_()).
+  EXPECT_EQ(tx[2], TCXO_YAML_CODE_3_3V) << "TCXO voltage code must reach the chip unmapped";
 }
 
 TEST(RadioLR1121, PaConfigSelectsHpPathAndClampsPowerAboveLpRange) {
@@ -160,7 +162,7 @@ TEST(RadioLR1121, PaConfigSelectsHpPathAndClampsPowerAboveLpRange) {
   // output, so this must track tx_power_ rather than a fixed path.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   ASSERT_TRUE(radio.init());
@@ -185,7 +187,7 @@ TEST(RadioLR1121, PaConfigSelectsLpPathAndClampsPowerToLpRange) {
   // (paSel=0, regPaSupply=0/internal regulator).
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 10, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 10, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   ASSERT_TRUE(radio.init());
@@ -207,7 +209,7 @@ TEST(RadioLR1121, PaConfigClampsPowerAboveHpMaximum) {
   // guard the driver's own clamp independent of that) must be clamped, not passed through raw.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 22, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 22, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   ASSERT_TRUE(radio.init());
@@ -221,7 +223,7 @@ TEST(RadioLR1121, PaConfigClampsPowerAboveHpMaximum) {
 TEST(RadioLR1121, InitSequenceOrder) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   ASSERT_TRUE(radio.init());
@@ -248,7 +250,7 @@ TEST(RadioLR1121, InitAppliesImageCalibrationAfterCalibrate) {
   // CalibImage must follow it.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   ASSERT_TRUE(radio.init());
@@ -269,7 +271,7 @@ TEST(RadioLR1121, InitAppliesGfskWorkaroundAfterModulationParams) {
   // The GFSK workaround register trio must be written after every modulation-params write.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   ASSERT_TRUE(radio.init());
@@ -296,7 +298,7 @@ TEST(RadioLR1121, SetModeRxAppliesHighAcpWorkaroundFirst) {
   // The high-ACP TX-quality workaround must be written immediately before every SetRx.
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
 
   radio.set_mode_rx();
 
@@ -321,7 +323,7 @@ TEST(RadioLR1121, ChangeFrequencyWritesPlainHzBytes) {
   for (uint32_t freq : {FREQ_CH1, FREQ_CH2, FREQ_CH3}) {
     ScriptedSpi spi;
     MockPin rst, irq, busy(false);
-    TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_0V);
+    TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
 
     radio.change_frequency(freq);
     int idx = spi.find_opcode(LR1121_CMD_SET_RF_FREQUENCY);

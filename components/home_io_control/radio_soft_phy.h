@@ -49,6 +49,14 @@ bool is_known_io_command(uint8_t cmd);
 /// @brief Bits an on-air UART cell spends per protocol byte: start(1) + data(8) + stop(1).
 static constexpr uint8_t UART_CELL_BITS = 10;
 
+/// @brief Number of leading bit alignments the UART probe tries when locating a frame start.
+///
+/// The chip hands us raw bytes with no guaranteed cell alignment, so decode_uart_probe() sweeps
+/// starting positions 0..UART_PROBE_MAX_BIT_OFFSET-1. A recovered frame can therefore begin up to
+/// `UART_PROBE_MAX_BIT_OFFSET - 1` bits into the raw buffer — buffer-sizing asserts must budget
+/// for that slack on top of the frame's own packed length.
+static constexpr uint8_t UART_PROBE_MAX_BIT_OFFSET = 10;
+
 /// @brief Raw on-air bytes needed to carry a whole frame: `frame_len` protocol bytes plus the
 /// two trailing CRC bytes, each UART-packed into a 10-bit cell.
 ///

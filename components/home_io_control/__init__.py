@@ -388,15 +388,21 @@ RADIO_TYPE_OPTIONS = {
     "lr1121": "lr1121",
 }
 
+# 0-based voltage enum shared verbatim by the SX1262 SetDIO3AsTCXOCtrl and LR1121 SetTcxoMode
+# commands (0x00 = 1.6 V .. 0x07 = 3.3 V; Semtech SX1261/2 datasheet Table 13-35). Both drivers
+# pass the generated integer straight through to the chip. The YAML strings ("1_8V" etc.) are
+# unchanged, so this is not a user-visible config change. "NONE" (0xFF) is a sentinel for boards
+# with a bare crystal instead of a TCXO: the driver skips the DIO3/TCXO programming entirely.
 TCXO_VOLTAGE_OPTIONS = {
-    "1_6V": 0x01,
-    "1_7V": 0x02,
-    "1_8V": 0x03,
-    "2_2V": 0x04,
-    "2_4V": 0x05,
-    "2_7V": 0x06,
-    "3_0V": 0x07,
-    "3_3V": 0x08,
+    "1_6V": 0x00,
+    "1_7V": 0x01,
+    "1_8V": 0x02,
+    "2_2V": 0x03,
+    "2_4V": 0x04,
+    "2_7V": 0x05,
+    "3_0V": 0x06,
+    "3_3V": 0x07,
+    "NONE": 0xFF,
 }
 
 DEVICE_TYPE_OPTIONS = {

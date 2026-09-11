@@ -58,7 +58,7 @@ home_io_control:
 - `fem_en_pin` (Optional): Front-end module enable pin for boards with an external RF front-end.
 - `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end.
 - `fem_pa_pin` (Optional): Front-end module PA select pin for boards with an external RF front-end.
-- `tcxo_voltage` (Optional, default: `1_8V`): SX1262/LR1121 TCXO voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, and `3_3V`.
+- `tcxo_voltage` (Optional, default: `1_8V`): SX1262/LR1121 TCXO control voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, `3_3V`, and `none`. Use `none` only on a board that has a bare crystal instead of a TCXO — the driver then skips all TCXO programming and calibrates off the crystal.
 - `exposed_senders` (Optional, default: empty list): List of 1W sender node IDs (6 hex characters each — remotes *or* sensors) allowed to fire the `esphome.home_io_control_sender_event` event to Home Assistant. Empty by default — see [Why this is opt-in](remotes.md#why-this-is-opt-in), and
   [Linked remotes](remotes.md#linked-remotes) for how this differs from `linked_remotes`.
 - `tuning` (Optional): Diagnostics block for pairing/radio parameters. See [Radio tuning](tuning.md).

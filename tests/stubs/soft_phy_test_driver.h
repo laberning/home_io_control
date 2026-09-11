@@ -47,6 +47,10 @@ template<class Base> class TestableSoftPhy : public Base {
   /// this fixture's read_rx_packet() override never reaches the branch that would arm it.
   void note_reception_from_test() { this->note_reception_in_progress_(); }
 
+  /// Current wait_busy_() timeout — protected on SoftPhyDriverBase, surfaced here so a test can
+  /// assert the SX1262 TCXO bring-up widens it per rung and restores it afterwards.
+  [[nodiscard]] uint32_t busy_timeout_ms_for_test() const { return this->get_busy_timeout_ms_(); }
+
  protected:
   uint32_t read_irq_status_raw() override {
     if (irq_idx_ < irq_seq_.size())

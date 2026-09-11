@@ -22,11 +22,62 @@
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
+#include <cinttypes>
+#include <cstdio>
+
 namespace esphome {
 namespace home_io_control {
 
 static const char *const TAG = "home_io_control.sx1262";
 static const uint8_t SX1262_SYNC_WORD_PARAM_24_BITS = 0x18;
+
+namespace {
+
+/// One row of the GetDeviceErrors bit → name table used by sx1262_format_device_errors().
+struct Sx1262DeviceErrorBit {
+  uint16_t mask;
+  const char *name;
+};
+
+constexpr Sx1262DeviceErrorBit SX1262_DEVICE_ERROR_BITS[] = {
+    {SX1262_DEV_ERR_RC64K_CALIB, "RC64K_CALIB_ERR"}, {SX1262_DEV_ERR_RC13M_CALIB, "RC13M_CALIB_ERR"},
+    {SX1262_DEV_ERR_PLL_CALIB, "PLL_CALIB_ERR"},     {SX1262_DEV_ERR_ADC_CALIB, "ADC_CALIB_ERR"},
+    {SX1262_DEV_ERR_IMG_CALIB, "IMG_CALIB_ERR"},     {SX1262_DEV_ERR_XOSC_START, "XOSC_START_ERR"},
+    {SX1262_DEV_ERR_PLL_LOCK, "PLL_LOCK_ERR"},       {SX1262_DEV_ERR_PA_RAMP, "PA_RAMP_ERR"},
+};
+
+/// One tick of the SX1262 TCXO startup-delay field is 15.625 µs = 1000/64 µs, so
+/// ticks = ceil(delay_us * 64 / 1000). The field is 24-bit; the largest delay this driver ever
+/// asks for (50 ms) is 3200 ticks, well inside it.
+constexpr uint32_t sx1262_tcxo_startup_ticks(uint32_t delay_us) { return (delay_us * 64U + 999U) / 1000U; }
+
+}  // namespace
+
+void sx1262_format_device_errors(uint16_t errors, char *buf, size_t buf_size) {
+  if (buf == nullptr || buf_size == 0)
+    return;
+  buf[0] = '\0';
+  if (errors == 0) {
+    snprintf(buf, buf_size, "none");
+    return;
+  }
+
+  size_t pos = 0;
+  uint16_t named = 0;
+  for (const auto &bit : SX1262_DEVICE_ERROR_BITS) {
+    if ((errors & bit.mask) == 0)
+      continue;
+    named |= bit.mask;
+    const int n = snprintf(buf + pos, buf_size - pos, "%s%s", pos > 0 ? "|" : "", bit.name);
+    if (n <= 0 || static_cast<size_t>(n) >= buf_size - pos)
+      return;  // buffer full — leave what fit, already NUL-terminated by snprintf
+    pos += static_cast<size_t>(n);
+  }
+
+  const uint16_t unknown = errors & static_cast<uint16_t>(~named);
+  if (unknown != 0)
+    snprintf(buf + pos, buf_size - pos, "%sUNKNOWN_0x%04X", pos > 0 ? "|" : "", unknown);
+}
 
 // === SPI Communication (opcode-based) ===
 
@@ -299,7 +350,98 @@ void RadioSX1262::dump_debug() {
   ESP_LOGCONFIG(TAG, "    BUSY=%d DIO1=%d", this->busy_pin_->digital_read(), this->dio1_pin_->digital_read());
   ESP_LOGCONFIG(TAG, "    Sync word: %02X %02X %02X (expect 57 FD 99)", sync[0], sync[1], sync[2]);
   ESP_LOGCONFIG(TAG, "    IRQ status: 0x%04X", irq);
-  ESP_LOGCONFIG(TAG, "    Device errors: 0x%04X", errors);
+  char errbuf[SX1262_DEVICE_ERROR_STR_SIZE];
+  sx1262_format_device_errors(errors, errbuf, sizeof(errbuf));
+  ESP_LOGCONFIG(TAG, "    Device errors: 0x%04X (%s)", errors, errbuf);
+  if (this->tcxo_startup_attempts_ > 1) {
+    ESP_LOGCONFIG(TAG, "    TCXO startup: %u attempts, %" PRIu32 " ms final delay",
+                  static_cast<unsigned>(this->tcxo_startup_attempts_), this->tcxo_startup_delay_us_ / 1000);
+  }
+}
+
+void RadioSX1262::configure_tcxo_() {
+  // Strictly increasing startup-delay ladder. A slow TCXO that misses the first (nominal 5 ms)
+  // window often starts inside a longer one; each rung must actually be longer than the last, so
+  // a retry buys the oscillator real extra time.
+  static constexpr uint32_t TCXO_STARTUP_DELAYS_US[] = {5000, 10000, 50000};
+  // Margin over the programmed startup window for wait_busy_() to also cover CALIBRATE running on
+  // the fresh clock, in milliseconds.
+  static constexpr uint32_t TCXO_BUSY_MARGIN_MS = 25;
+
+  this->tcxo_startup_attempts_ = 0;
+  this->tcxo_startup_delay_us_ = 0;
+
+  // The chip holds BUSY through the whole programmed TCXO startup window (up to 50 ms on the last
+  // rung) plus calibration before it can latch XOSC_START_ERR. wait_busy_()'s normal
+  // SX1262_BUSY_TIMEOUT_MS (10 ms, sized for RC-oscillator timing) is far shorter than that, so a
+  // slow TCXO would trip a BUSY timeout, latch failed_, and brick the component in exactly the
+  // case this retry exists to rescue. Widen the budget for the bring-up and restore it after.
+  const uint32_t saved_busy_timeout_ms = this->get_busy_timeout_ms_();
+
+  uint16_t last_errors = 0;
+  for (const uint32_t delay_us : TCXO_STARTUP_DELAYS_US) {
+    this->set_busy_timeout_ms_((delay_us / 1000) + TCXO_BUSY_MARGIN_MS);
+
+    const uint32_t ticks = sx1262_tcxo_startup_ticks(delay_us);
+    uint8_t tcxo_params[4] = {this->tcxo_voltage_, static_cast<uint8_t>((ticks >> 16) & 0xFF),
+                              static_cast<uint8_t>((ticks >> 8) & 0xFF), static_cast<uint8_t>(ticks & 0xFF)};
+    this->write_opcode_(SX1262_SET_DIO3_AS_TCXO_CTRL, tcxo_params, sizeof(tcxo_params));
+
+    // Sleep out most of the startup window on the host before touching the chip again so
+    // wait_busy_() only has to absorb the remainder plus calibration.
+    delay((delay_us / 1000) + 2);
+
+    // XOSC_START_ERR / IMG_CALIB_ERR are the expected POR state with a TCXO fitted — clear the
+    // latch here so the post-CALIBRATE read below reflects only this attempt, which is what lets
+    // the early break work. Our LR1121 driver clears in the same spot for the same reason.
+    this->clear_device_errors_();
+
+    uint8_t const cal = 0x7F;  // calibrate all blocks
+    this->write_opcode_(SX1262_CALIBRATE, &cal, 1);
+    delay(5);  // wait for calibration to complete (same margin as the LR1121 driver); the widened
+               // busy_timeout_ absorbs any overrun on the next transaction's wait_busy_()
+
+    this->tcxo_startup_attempts_++;
+    this->tcxo_startup_delay_us_ = delay_us;
+
+    if (this->failed_)
+      break;  // a BUSY timeout already failed the chip — escalating further just reads garbage
+
+    last_errors = this->get_device_errors_();
+    if ((last_errors & SX1262_DEV_ERR_XOSC_START) == 0)
+      break;  // TCXO is running — stop escalating
+  }
+
+  // Restore the steady-state BUSY budget — but if the ladder had to escalate, keep a ceiling wide
+  // enough for the startup window that actually worked. configure_radio_() step 4 re-enters
+  // STDBY_XOSC immediately after this, which powers the TCXO again and holds BUSY for that same
+  // window, so step 5's wait_busy_() would otherwise time out and latch failed_ on a board the
+  // ladder just rescued. busy_timeout_ms_ is a ceiling, never a delay, so a permanently wider
+  // value costs a healthy board nothing; runtime never re-pays the startup wait (step 6b sets the
+  // XOSC standby fallback and set_mode_standby() uses STDBY_XOSC, so the chip never drops to RC).
+  if (this->tcxo_startup_attempts_ > 1) {
+    const uint32_t escalated = (this->tcxo_startup_delay_us_ / 1000) + TCXO_BUSY_MARGIN_MS;
+    this->set_busy_timeout_ms_(saved_busy_timeout_ms > escalated ? saved_busy_timeout_ms : escalated);
+  } else {
+    this->set_busy_timeout_ms_(saved_busy_timeout_ms);
+  }
+
+  // A BUSY timeout during the ladder already logged "BUSY timeout" and will fail init()
+  if (this->failed_)
+    return;
+
+  // Say nothing on the happy path (one attempt): the log stays identical to a single-shot bring-up.
+  if (this->tcxo_startup_attempts_ <= 1)
+    return;
+  if ((last_errors & SX1262_DEV_ERR_XOSC_START) != 0) {
+    ESP_LOGE(TAG,
+             "SX1262 TCXO never started after %u attempts (XOSC_START_ERR persists) — check "
+             "tcxo_voltage for this board and the TCXO part itself",
+             static_cast<unsigned>(this->tcxo_startup_attempts_));
+  } else {
+    ESP_LOGW(TAG, "SX1262 TCXO started after %u attempts (%" PRIu32 " ms startup delay)",
+             static_cast<unsigned>(this->tcxo_startup_attempts_), this->tcxo_startup_delay_us_ / 1000);
+  }
 }
 
 void RadioSX1262::configure_radio_() {
@@ -307,16 +449,21 @@ void RadioSX1262::configure_radio_() {
   uint8_t const stdby_rc = 0x00;
   this->write_opcode_(SX1262_SET_STANDBY, &stdby_rc, 1);
 
-  // 2. Configure TCXO via DIO3 — voltage + 5ms timeout (320 ticks at 15.625us/tick)
-  uint8_t tcxo_params[4] = {this->tcxo_voltage_, 0x00, 0x01, 0x40};
-  this->write_opcode_(SX1262_SET_DIO3_AS_TCXO_CTRL, tcxo_params, sizeof(tcxo_params));
+  // 2-3. Bring up the reference clock and calibrate. A board with a bare crystal (tcxo_voltage:
+  // none) has no DIO3-controlled TCXO: skip that programming and calibrate straight off the
+  // crystal. Otherwise configure the TCXO with a bounded XOSC-start retry (see configure_tcxo_()).
+  if (this->tcxo_voltage_ == TCXO_VOLTAGE_NONE) {
+    // Clear the expected POR device-error latch before calibrating, same as the TCXO path does
+    // per attempt, so the step-18 read below only ever reports a genuine post-init fault.
+    this->clear_device_errors_();
+    uint8_t const cal = 0x7F;
+    this->write_opcode_(SX1262_CALIBRATE, &cal, 1);
+    delay(5);  // Wait for calibration to complete
+  } else {
+    this->configure_tcxo_();
+  }
 
-  // 3. Calibrate all blocks
-  uint8_t const cal = 0x7F;
-  this->write_opcode_(SX1262_CALIBRATE, &cal, 1);
-  delay(5);  // Wait for calibration to complete
-
-  // 4. Standby on XOSC (TCXO now running)
+  // 4. Standby on XOSC (reference clock now running)
   uint8_t const stdby_xosc = 0x01;
   this->write_opcode_(SX1262_SET_STANDBY, &stdby_xosc, 1);
 
@@ -406,15 +553,19 @@ void RadioSX1262::configure_radio_() {
   // 17. Attach DIO1 interrupt
   this->dio1_pin_->attach_interrupt(&RadioSX1262::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
 
-  // 18. Clear any pending IRQs, and report the device-error word before clearing it. A chip that
-  // came up with XOSC_START_ERR (wrong tcxo_voltage for the board), PLL_LOCK_ERR or IMG_CALIB_ERR
-  // still initializes and still transmits — it just does so off-frequency or off-calibration,
-  // which on air looks like flaky exchanges at any range rather than an outright failure. Clearing
-  // it unseen threw away the one cheap piece of evidence for that.
+  // 18. Clear any pending IRQs, and report the device-error word before clearing it. Both the TCXO
+  // and bare-crystal paths in step 2-3 clear the expected POR flags (XOSC_START_ERR, IMG_CALIB_ERR
+  // with a TCXO fitted) before calibrating, so a non-zero word here is a genuine post-init fault —
+  // a PLL that would not lock, calibration that failed, or a TCXO that never started even after
+  // the retry ladder. Such a chip still initializes and still transmits, just off-frequency or
+  // off-calibration, so surfacing the decoded flags is the one cheap piece of evidence for it.
   this->clear_irq_status(0xFFFF);
   uint16_t const init_errors = this->get_device_errors_();
-  if (init_errors != 0)
-    ESP_LOGW(TAG, "SX1262 device errors after init: 0x%04X — check tcxo_voltage for this board", init_errors);
+  if (init_errors != 0) {
+    char errbuf[SX1262_DEVICE_ERROR_STR_SIZE];
+    sx1262_format_device_errors(init_errors, errbuf, sizeof(errbuf));
+    ESP_LOGW(TAG, "SX1262 device errors after init: 0x%04X (%s)", init_errors, errbuf);
+  }
   this->clear_device_errors_();
 
   // 19. Enter continuous receive

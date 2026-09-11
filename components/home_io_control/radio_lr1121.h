@@ -250,13 +250,13 @@ static constexpr uint8_t LR1121_TCXO_STARTUP_DELAY_TICKS_LSB = 0x40;
 class RadioLR1121 : public SoftPhyDriverBase {
  public:
   RadioLR1121(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *irq_pin, InternalGPIOPin *busy_pin,
-              uint8_t tx_power, uint8_t tcxo_voltage_yaml_code)
+              uint8_t tx_power, uint8_t tcxo_voltage_code)
       : SoftPhyDriverBase(rst_pin, busy_pin, LR1121_BUSY_TIMEOUT_MS, LR1121_RESPONSE_PREAMBLE,
                           LR1121_POST_TX_SETTLE_US),
         spi_(spi),
         irq_pin_(irq_pin),
         tx_power_(tx_power),
-        tcxo_voltage_yaml_code_(tcxo_voltage_yaml_code) {}
+        tcxo_voltage_code_(tcxo_voltage_code) {}
 
   /// @copydoc RadioDriver::init
   bool init() override;
@@ -438,8 +438,9 @@ class RadioLR1121 : public SoftPhyDriverBase {
   SpiAccess *spi_;
   InternalGPIOPin *irq_pin_;
   uint8_t tx_power_;
-  uint8_t tcxo_voltage_yaml_code_;  ///< Raw TCXO_VOLTAGE_OPTIONS code from YAML (1_6V=0x01 .. 3_3V=0x08).
-  uint8_t last_stat1_{0};           ///< Most recent Stat1 byte (diagnostics).
+  uint8_t tcxo_voltage_code_;  ///< TCXO_VOLTAGE_OPTIONS code from YAML (1_6V=0x00 .. 3_3V=0x07); the chip's
+                               ///< SetTcxoMode voltage code directly. TCXO_VOLTAGE_NONE means no TCXO (bare crystal).
+  uint8_t last_stat1_{0};      ///< Most recent Stat1 byte (diagnostics).
   LR1121RxBandwidth rx_bandwidth_{LR1121RxBandwidth::BW_117_3_KHZ};  ///< Runtime-tunable RX bandwidth.
 };
 

@@ -12,6 +12,7 @@ Indexed by what you see, not by which subsystem is responsible.
 | The cover shows no position, or a stale one | [Position is unknown or state is stale](#position-is-unknown-or-state-is-stale) |
 | `stop` does nothing while the device is moving | [Commands are ignored mid-motion](#commands-are-ignored-mid-motion) |
 | A 1W button press does nothing | [1W commands do nothing](#1w-commands-do-nothing) |
+| The boot log shows `XOSC_START_ERR` on an SX1262 board | [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot) |
 | Pairing works some of the time, or the link is unreliable | [A tuning plan](#a-tuning-plan) |
 
 ## The device is never found
@@ -195,6 +196,20 @@ After each step, record the tuning snapshot line and the outcome. When a combina
 paste that snapshot into your permanent `tuning:` block. If a combination makes an
 otherwise-unsupported device work, open an issue with it so the defaults can improve.
 
+
+## `XOSC_START_ERR` at boot
+
+The log shows `SX1262 device errors after init: ... (XOSC_START_ERR)` or
+`SX1262 TCXO started after N attempts` shortly after boot.
+
+The SX1262's TCXO is not coming up on the control voltage it is being given.
+
+- **Raise `tcxo_voltage` one step** from whatever your board config uses (e.g. `1_8V` → `2_2V`).
+  On the Heltec V3 the value lives in the board package, so set `tcxo_voltage:` explicitly in
+  your own `home_io_control:` block to override it. See [Hardware](hardware.md).
+- `SX1262 TCXO started after N attempts` (no error) means the retry ladder recovered it — the
+  radio is working, but the first startup window was marginal; raising `tcxo_voltage` one step
+  removes the retry.
 
 ## See also
 

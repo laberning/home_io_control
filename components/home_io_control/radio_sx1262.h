@@ -17,6 +17,8 @@
 #include "radio_soft_phy_driver_base.h"
 #include "esphome/core/hal.h"
 
+#include <cstddef>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -74,6 +76,35 @@ static constexpr uint16_t SX1262_IRQ_CRC_ERR = 0x0040;
 /// RX mid-reception. Same trap, same fix shape as @ref LR1121_IRQ_ACTIVITY_MASK.
 static constexpr uint16_t SX1262_IRQ_ACTIVITY_MASK =
     SX1262_IRQ_TX_DONE | SX1262_IRQ_RX_DONE | SX1262_IRQ_SYNC_WORD_VALID | SX1262_IRQ_CRC_ERR;
+
+// ============================================================================
+// SX1262 GetDeviceErrors bit masks
+// ============================================================================
+// The word returned by GetDeviceErrors (SX1262 datasheet §13.3.7, cross-checked against RadioLib's
+// RADIOLIB_SX126X_*_ERR). XOSC_START_ERR and IMG_CALIB_ERR are expected at a cold start with a
+// TCXO fitted and are simply cleared before calibration; the others are genuine faults.
+static constexpr uint16_t SX1262_DEV_ERR_RC64K_CALIB = 0x0001;  ///< 64 kHz RC oscillator calibration failed.
+static constexpr uint16_t SX1262_DEV_ERR_RC13M_CALIB = 0x0002;  ///< 13 MHz RC oscillator calibration failed.
+static constexpr uint16_t SX1262_DEV_ERR_PLL_CALIB = 0x0004;    ///< PLL calibration failed.
+static constexpr uint16_t SX1262_DEV_ERR_ADC_CALIB = 0x0008;    ///< ADC calibration failed.
+static constexpr uint16_t SX1262_DEV_ERR_IMG_CALIB = 0x0010;    ///< Image calibration failed.
+static constexpr uint16_t SX1262_DEV_ERR_XOSC_START = 0x0020;   ///< Crystal/TCXO failed to start.
+static constexpr uint16_t SX1262_DEV_ERR_PLL_LOCK = 0x0040;     ///< PLL failed to lock.
+static constexpr uint16_t SX1262_DEV_ERR_PA_RAMP = 0x0100;      ///< PA ramping failed (bit 0x0080 is unused).
+
+/// Buffer size that always fits sx1262_format_device_errors()'s longest possible output (all eight
+/// names, `|`-joined, plus an UNKNOWN_0x%04X tail).
+static constexpr size_t SX1262_DEVICE_ERROR_STR_SIZE = 160;
+
+/// @brief Expand a GetDeviceErrors word into a human-readable `NAME|NAME|...` string.
+/// @param errors Raw device-error bitmask from GetDeviceErrors.
+/// @param buf Caller-owned output buffer; always NUL-terminated on return.
+/// @param buf_size Size of @p buf. Use @ref SX1262_DEVICE_ERROR_STR_SIZE.
+///
+/// Writes `"none"` when @p errors is zero, and appends `UNKNOWN_0x%04X` for any set bit with no
+/// name in the table so an undocumented flag still shows up in the log.
+void sx1262_format_device_errors(uint16_t errors, char *buf, size_t buf_size);
+
 // Sync word register base address
 static constexpr uint16_t SX1262_REG_SYNC_WORD = 0x06C0;
 static constexpr uint16_t SX1262_REG_RX_GAIN = 0x08AC;
@@ -211,6 +242,20 @@ class RadioSX1262 : public SoftPhyDriverBase {
   // --- Radio configuration ---
   /// Full radio initialization (called from init()).
   void configure_radio_();
+  /// @brief Bring up the DIO3-controlled TCXO and calibrate, with a bounded XOSC-start retry.
+  ///
+  /// Runs up to three attempts on a strictly increasing startup-delay ladder (5/10/50 ms). Each
+  /// attempt issues SetDIO3AsTCXOCtrl, clears the device-error latch (XOSC_START_ERR /
+  /// IMG_CALIB_ERR are expected at a cold TCXO start), calibrates, then re-reads the errors and
+  /// stops as soon as XOSC_START_ERR is clear. Records the attempt count and last delay in
+  /// `tcxo_startup_attempts_` / `tcxo_startup_delay_us_`.
+  ///
+  /// wait_busy_()'s budget is widened to each rung's startup window (plus a calibration margin)
+  /// for the duration, and — if the ladder had to escalate — a ceiling wide enough for the
+  /// successful rung is kept for the rest of the session, because `configure_radio_()` step 4
+  /// re-enters STDBY_XOSC and re-pays that same startup window. Skipped entirely when
+  /// `tcxo_voltage: none` selects a bare crystal.
+  void configure_tcxo_();
   /// @copydoc SoftPhyDriverBase::set_frequency_register
   void set_frequency_register(uint32_t freq_hz) override;
   /// Configure packet parameters (preamble, payload length, CRC).
@@ -301,7 +346,10 @@ class RadioSX1262 : public SoftPhyDriverBase {
   InternalGPIOPin *vfem_pin_;
   InternalGPIOPin *fem_pa_pin_;
   uint8_t tx_power_;
-  uint8_t tcxo_voltage_;
+  uint8_t tcxo_voltage_;               ///< 0-based chip voltage code, or @ref TCXO_VOLTAGE_NONE for a bare crystal.
+  uint8_t tcxo_startup_attempts_{0};   ///< SetDIO3AsTCXOCtrl attempts the last bring-up took (0 = skipped/none).
+  uint32_t tcxo_startup_delay_us_{0};  ///< Startup delay of the last rung tried, in µs — the rung that started the
+                                       ///< TCXO on success, or the one reached before giving up.
   SX1262RxBandwidth rx_bandwidth_{SX1262RxBandwidth::BW_58_6_KHZ};  ///< Runtime-tunable RX bandwidth.
 };
 

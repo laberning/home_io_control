@@ -29,13 +29,15 @@
 namespace esphome {
 namespace home_io_control {
 
-/// Fixed raw-RX probe length: chosen from captures of 23-25 byte protocol frames after UART
-/// packing and CRC appending — the longest frame (25 bytes + 2 CRC) UART-packs to 34 raw bytes,
-/// so 48 bytes preserves complete traffic (with margin for leading noise before the frame start)
-/// without relying on either chip's variable-length engine. This is a protocol-frame-size
-/// property, not a chip quirk, so both drivers share one value — used here for the raw-probe
-/// threshold in @ref SoftPhyDriverBase::read_rx_packet and by each driver's own
-/// `set_rx_packet_params()` for the configured RX payload length.
+/// Fixed raw-RX probe length. Typical traffic is 23-25 byte protocol frames (34 raw bytes packed
+/// with CRC); the binding case is the largest frame the probe must still recover intact — a 1W CMD
+/// 0x30 add-controller with its out-of-length MAC trailer, which packs to 47 raw bytes and needs
+/// up to 9 more bits of headroom for the probe's leading bit-offset sweep. 48 bytes covers that
+/// (see the SOFT_PHY_MAX_WIRE_FRAME_RAW_BYTES static_assert below) without relying on either
+/// chip's variable-length engine. This is a protocol-frame-size property, not a chip quirk, so
+/// both drivers share one value — used here for the raw-probe threshold in @ref
+/// SoftPhyDriverBase::read_rx_packet and by each driver's own `set_rx_packet_params()` for the
+/// configured RX payload length.
 static constexpr uint8_t SOFT_PHY_RX_PROBE_PACKET_LEN = 48;
 
 /// Sentinel meaning "every IRQ bit counts as activity" — the default for @ref
@@ -106,6 +108,45 @@ static_assert(RX_HOP_HOLDOFF_US >= soft_phy_air_time_us(SOFT_PHY_RX_PROBE_PACKET
               "shorter bound lets the hop fire while the frame it is protecting is still on air, "
               "silently turning issue #81's gate back into the bug");
 
+/// Largest real IO-Homecontrol frame the fixed-length RX probe has to recover intact: a 1W CMD
+/// 0x30 "add controller". Its 9-byte header + 20-byte payload (wrapped key[16] + manufacturer[1] +
+/// data[1] + sequence[2]) = 29 declared bytes, and it carries a 6-byte authenticator as an
+/// out-of-length trailer *after* the declared length but still under the CRC — so the probe must
+/// hold 29 + 6 = 35 wire bytes. This is larger than any frame CTRL0's length field alone
+/// describes, which is why it, not FRAME_MAX_DECLARED_SIZE, is the binding case.
+static constexpr uint16_t SOFT_PHY_MAX_WIRE_FRAME_BYTES =
+    FRAME_MIN_SIZE + AES_KEY_SIZE + 1 /*manufacturer*/ + 1 /*data*/ + 2 /*sequence*/ + HMAC_SIZE;
+
+/// Raw on-air bytes that frame occupies once its 2-byte CRC is appended and the whole thing is
+/// UART-packed into 10-bit cells (start + 8 data + stop), rounded up to whole bytes — the same
+/// arithmetic as soft_phy_raw_bytes_for_frame(), spelled out here because that helper is not
+/// constexpr. Plus `UART_PROBE_MAX_BIT_OFFSET - 1` bits: the probe locates the frame start by
+/// sweeping leading alignments, so a recovered frame can begin that many bits into the raw buffer.
+/// 35 + 2 = 37 cells = 370 bits, + 9 slack bits = 379 → 48 raw bytes, exactly the probe length.
+static constexpr uint16_t SOFT_PHY_MAX_WIRE_FRAME_RAW_BYTES =
+    ((SOFT_PHY_MAX_WIRE_FRAME_BYTES + FRAME_CRC_SIZE) * UART_CELL_BITS + (UART_PROBE_MAX_BIT_OFFSET - 1) +
+     BITS_PER_BYTE - 1) /
+    BITS_PER_BYTE;
+
+static_assert(SOFT_PHY_MAX_WIRE_FRAME_RAW_BYTES <= SOFT_PHY_RX_PROBE_PACKET_LEN,
+              "the fixed-length RX probe must hold a UART-packed 1W 0x30 add-controller frame with "
+              "its out-of-length MAC trailer and CRC, at any of the probe's leading bit alignments "
+              "— a shorter probe clips the trailer (or CRC) off an enrollment frame mid-air and the "
+              "frame is silently dropped");
+
+static_assert(SOFT_PHY_RX_PROBE_PACKET_LEN <= RADIO_PACKET_BUFFER_SIZE,
+              "the RX probe is read into RadioRxPacket::raw / ::data, which are "
+              "RADIO_PACKET_BUFFER_SIZE bytes — if a growing frame format pushes the probe length "
+              "past the buffer (via the assert above), those reads overflow");
+
+// FRAME_MAX_WIRE_SIZE (proto_sizes.h) — a full 32-byte declared frame *plus* a trailer plus CRC —
+// packs to 50 raw bytes (52 with the bit-offset slack applied above), past this 48-byte probe. It
+// is unreachable only because no real frame combines a 32-byte declared length with an
+// out-of-length trailer: the trailer rides exclusively on CMD 0x30, whose declared length is fixed
+// at 29. If a second trailer-bearing command with a longer declared length is ever added,
+// SOFT_PHY_MAX_WIRE_FRAME_BYTES above must grow to match and this probe length will need to grow
+// with it.
+
 /// @brief Shared RX/TX driver flow for the software-PHY radios (SX1262, LR1121).
 /// @ingroup hioc_radio
 class SoftPhyDriverBase : public RadioDriver {
@@ -166,6 +207,14 @@ class SoftPhyDriverBase : public RadioDriver {
   void set_response_preamble_(uint16_t preamble) { this->response_preamble_ = preamble; }
   /// Set the delay between TX completion and re-entering RX.
   void set_post_tx_settle_us_(uint16_t delay_us) { this->post_tx_settle_us_ = delay_us; }
+  /// @brief Current @ref wait_busy_ timeout, in milliseconds.
+  [[nodiscard]] uint32_t get_busy_timeout_ms_() const { return this->busy_timeout_ms_; }
+  /// @brief Set the @ref wait_busy_ timeout, in milliseconds.
+  ///
+  /// Exposed so a concrete driver can widen it around a bring-up step that legitimately holds BUSY
+  /// far longer than the steady-state value (SX1262 TCXO startup runs up to 50 ms against a 10 ms
+  /// default) and then restore it. Pair every widen with a restore.
+  void set_busy_timeout_ms_(uint32_t timeout_ms) { this->busy_timeout_ms_ = timeout_ms; }
   /// @brief Wait until @ref busy_pin_ reads low, feeding the watchdog while polling.
   ///
   /// Shared verbatim between SX1262 and LR1121 — the two chips differ only in how long they're
