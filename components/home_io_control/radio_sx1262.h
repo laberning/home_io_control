@@ -151,13 +151,12 @@ static constexpr uint32_t SX1262_BUSY_TIMEOUT_MS = 10;
 /// IO‑Homecontrol protocol (the SX1262 lacks the SX1276's IoHomeOn mode).
 /// The IRQ-driven RX/TX orchestration is inherited from SoftPhyDriverBase; this class supplies
 /// the SPI transport and every SX1262-specific register/opcode encoding underneath it.
-/// @todo Confirm whether additional SX1262 board variants need board-specific FEM
-///       defaults beyond the currently documented Heltec V3/V4 assumptions.
 class RadioSX1262 : public SoftPhyDriverBase {
  public:
   RadioSX1262(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *dio1_pin, InternalGPIOPin *busy_pin,
               uint8_t tx_power, uint8_t tcxo_voltage, InternalGPIOPin *fem_en_pin = nullptr,
-              InternalGPIOPin *vfem_pin = nullptr, InternalGPIOPin *fem_pa_pin = nullptr)
+              InternalGPIOPin *vfem_pin = nullptr, InternalGPIOPin *fem_pa_pin = nullptr,
+              FemProfile fem_profile = FemProfile::NONE)
       : SoftPhyDriverBase(rst_pin, busy_pin, SX1262_BUSY_TIMEOUT_MS, SX1262_RESPONSE_PREAMBLE,
                           SX1262_POST_TX_SETTLE_US),
         spi_(spi),
@@ -165,6 +164,7 @@ class RadioSX1262 : public SoftPhyDriverBase {
         fem_en_pin_(fem_en_pin),
         vfem_pin_(vfem_pin),
         fem_pa_pin_(fem_pa_pin),
+        fem_profile_(fem_profile),
         tx_power_(tx_power),
         tcxo_voltage_(tcxo_voltage) {}
 
@@ -336,8 +336,36 @@ class RadioSX1262 : public SoftPhyDriverBase {
   ///
   /// TX modulation-quality erratum (`SX1262_REG_TX_MODULATION`): the datasheet requires bit 2
   /// be set for every (G)FSK transmission, so it is re-asserted before each SetTx rather than
-  /// assumed to survive from init.
-  void before_tx_arm() override { this->apply_tx_modulation_workaround_(); }
+  /// assumed to survive from init. Also drives the FEM mode pin to its TX-active level — see
+  /// @ref fem_set_tx_mode_.
+  void before_tx_arm() override {
+    this->apply_tx_modulation_workaround_();
+    this->fem_set_tx_mode_();
+  }
+
+  /// @brief The level `fem_pa_pin_` is driven to for the duration of a transmission, for the
+  /// current `fem_profile_`. `true` (HIGH) for GC1109/KCT8103L, whose shared truth table treats the
+  /// mode pin as CPS/CTX -- active HIGH selects the TX/full-PA path. `false` (LOW) for XY16P35,
+  /// whose "LNA Ctrl" pin is the receive-side enable: HIGH turns the LNA *on* (receive), LOW turns
+  /// it off (transmit or idle) -- the inverse sense, per LilyGO's own datasheet note (ADR 0035).
+  /// Never called for FemProfile::NONE (both callers guard on that first).
+  [[nodiscard]] bool fem_tx_active_level_() const;
+  /// @brief Drive the FEM mode pin to its transmit state (full PA), a no-op when no FEM profile
+  /// is configured.
+  ///
+  /// "Mode pin" is fem_pa_pin_ -- CPS on GC1109 (V4.2), CTX on KCT8103L (V4.3), the LNA-control pin
+  /// on XY16P35 (T-Beam 1W) -- see the shared truth table in
+  /// docs/adr/0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md. Called from
+  /// @ref before_tx_arm, right before SetTx.
+  void fem_set_tx_mode_();
+  /// @brief Drive the FEM mode pin to its receive state (LNA), a no-op when no FEM profile is
+  /// configured.
+  ///
+  /// Called from both @ref set_mode_rx and @ref set_mode_standby (not just the former) because a
+  /// TX timeout in SoftPhyDriverBase::send_packet() calls set_mode_standby() directly and never
+  /// reaches set_mode_rx() — without this hook there too, a timed-out TX would leave the mode pin
+  /// stranded in its TX-active state indefinitely (nothing else would ever drop it back).
+  void fem_set_rx_mode_();
 
  private:
   SpiAccess *spi_;
@@ -345,6 +373,7 @@ class RadioSX1262 : public SoftPhyDriverBase {
   InternalGPIOPin *fem_en_pin_;
   InternalGPIOPin *vfem_pin_;
   InternalGPIOPin *fem_pa_pin_;
+  FemProfile fem_profile_;
   uint8_t tx_power_;
   uint8_t tcxo_voltage_;               ///< 0-based chip voltage code, or @ref TCXO_VOLTAGE_NONE for a bare crystal.
   uint8_t tcxo_startup_attempts_{0};   ///< SetDIO3AsTCXOCtrl attempts the last bring-up took (0 = skipped/none).

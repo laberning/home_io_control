@@ -1,0 +1,54 @@
+# Compile test for `fem: xy16p35` (front-end module support, ADR 0035).
+#
+# Standalone rather than `<<: !include common.yaml`, same shape as test-esp32-sx1262-fem.yaml.
+# Covers xy16p35's different required-pin set (no fem_en_pin -- FEM_REQUIRED_PINS in
+# components/home_io_control/__init__.py omits it for this profile) and its inverted mode-pin
+# polarity in gated CI, independent of any board package. tcxo_voltage here is a schema-valid
+# placeholder for this compile test only -- the LilyGO T-Beam 1W SX1262's own control voltage is
+# still unresolved (not a documented value, not something this file needs) and its board package
+# does not exist in this tree yet.
+substitutions:
+  device_name: test_sx1262_fem_xy16p35
+
+esphome:
+  name: ${device_name}
+  merge_warnings: false
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-ssid"
+  password: "test12345"
+
+api:
+
+spi:
+  clk_pin: 13
+  mosi_pin: 11
+  miso_pin: 12
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+home_io_control:
+  cs_pin: 15
+  rst_pin:
+    number: 3
+    ignore_strapping_warning: true
+  dio1_pin: 1
+  busy_pin: 38
+  radio_type: sx1262
+  tcxo_voltage: 1_8V
+  fem: xy16p35
+  vfem_pin: 40
+  fem_pa_pin: 21
+  node_id: C0FFEE
+  system_key: 0123456789ABCDEF0123456789ABCDEF

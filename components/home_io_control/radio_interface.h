@@ -42,6 +42,31 @@ inline constexpr uint32_t RX_HOP_HOLDOFF_US = 12000;
 /// the plain crystal. Cannot collide with the real 0-based voltage codes (0x00-0x07).
 inline constexpr uint8_t TCXO_VOLTAGE_NONE = 0xFF;
 
+/// @brief Which RF front-end module (if any) sits between the SX1262 and the antenna.
+///
+/// Selects two things: which of vfem_pin/fem_en_pin/fem_pa_pin the SX1262 driver's config-time
+/// validation requires present (see FEM_REQUIRED_PINS, components/home_io_control/__init__.py),
+/// and which level fem_pa_pin is driven to for the duration of a transmission
+/// (fem_tx_active_level_(), radio_sx1262.cpp). It never supplies a GPIO number -- every board
+/// package spells its own pins out explicitly, the same as every other radio pin in this schema.
+/// GC1109 and KCT8103L share one control polarity and one code path with nothing distinguishing
+/// them but their TX-gain estimate; XY16P35's LNA-control pin is active-HIGH-on-*receive*
+/// (the inverse sense), the one place this enum's value actually changes what gets written to a
+/// pin, via a single polarity flip rather than a structural branch. `NONE` is the default: no
+/// FEM behaviour is applied, and a configured fem_pa_pin (if any) is simply strapped HIGH once at
+/// init and never touched again -- the shape every raw-pin config on a non-FEM board already
+/// used before this enum existed.
+enum class FemProfile : uint8_t {
+  NONE = 0,  ///< No FEM, or a board with the FEM pins wired but no behaviour profile set --
+             ///< see the NONE-specific note in fem_set_tx_mode_()'s doc comment.
+  GC1109,    ///< Heltec WiFi LoRa 32 V4.2 -- Geo-chip GC1109. Mode pin active-HIGH during TX.
+  KCT8103L,  ///< Heltec WiFi LoRa 32 V4.3 / V4 R8 -- Kangxi KCT8103L. Mode pin active-HIGH during TX.
+  XY16P35,   ///< LilyGO T-Beam 1W SX1262 (868 MHz). Names the RF module, not a bare FEM IC --
+             ///< no single chip inside it is independently identifiable as "the FEM chip" from
+             ///< anything published. Mode pin active-LOW during TX -- the one profile with
+             ///< inverted polarity; see fem_tx_active_level_().
+};
+
 /// Interface for SPI bus access.
 /// The ESPHome component implements this by delegating to its SPIDevice methods,
 /// allowing radio drivers to perform SPI transactions without depending on the

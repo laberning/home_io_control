@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstring>
 #include <gtest/gtest.h>
+#include <utility>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -38,6 +39,37 @@ uint8_t sx1262_encoded_frame_len(const uint8_t *frame, uint8_t frame_len) {
   frame_with_crc[frame_len + 1] = (crc >> 8) & 0xFF;
   uint8_t encoded[FRAME_MAX_WIRE_SIZE] = {0};
   return uart_encode_packet(frame_with_crc, static_cast<uint8_t>(frame_len + 2), encoded, sizeof(encoded));
+}
+
+// MockPin that records every digital_write() together with the number of SPI transactions issued
+// so far, so a FEM test can assert both the level written and its ordering against the SPI
+// stream. MockPin's own digital_write() is the ESPHome no-op base (tests/include/esphome/core/
+// gpio.h) — every other test in this file, and every test sharing radio_test_common.h, relies on
+// writes silently vanishing, so this override stays local to the FEM tests below rather than
+// going into the shared stub.
+class FemPin : public MockPin {
+ public:
+  explicit FemPin(const ScriptedSpi *spi) : spi_(spi) {}
+  void digital_write(bool value) override {
+    this->set_value(value);
+    writes_.push_back({value, spi_->transactions().size()});
+  }
+  /// {level written, number of SPI transactions issued before that write}, oldest first.
+  const std::vector<std::pair<bool, size_t>> &writes() const { return writes_; }
+
+ private:
+  const ScriptedSpi *spi_;
+  std::vector<std::pair<bool, size_t>> writes_;
+};
+
+// Index of the last recorded transaction whose opcode byte is `opcode`, or -1.
+int last_tx_with_opcode(const ScriptedSpi &spi, uint8_t opcode) {
+  const auto &txs = spi.transactions();
+  for (int i = static_cast<int>(txs.size()) - 1; i >= 0; i--) {
+    if (!txs[i].empty() && txs[i][0] == opcode)
+      return i;
+  }
+  return -1;
 }
 }  // namespace
 
@@ -660,4 +692,157 @@ TEST(RadioSX1262, InitWritesExpectedSyncWordRegister) {
   EXPECT_EQ(tx[3], 0x57);
   EXPECT_EQ(tx[4], 0xFD);
   EXPECT_EQ(tx[5], 0x99);
+}
+
+// ============================================================================
+// Front-end module (FEM) mode-pin control (ADR 0035)
+// ============================================================================
+//
+// "Mode pin" is fem_pa_pin_: CPS on GC1109 (V4.2), CTX on KCT8103L (V4.3), the LNA-control pin on
+// XY16P35 (T-Beam 1W). The rule is *not* the same for all three profiles: GC1109/KCT8103L share
+// one polarity (HIGH for the duration of a transmission, LOW at every other moment), XY16P35
+// inverts it. These tests parameterise over all three profiles, asserting each iteration's
+// expected level explicitly, rather than assuming a single shared polarity.
+// ============================================================================
+
+TEST(RadioSX1262Fem, NoneProfileKeepsLegacyStaticHighModePinBehaviour) {
+  // FemProfile::NONE (the default) must keep every configured FEM pin's *level* exactly as before:
+  // strap HIGH once at init and never touch fem_pa_pin_ again. This is what protects the general
+  // population it exists for: a bare SX1262 with no FEM, or any raw-pin config with no `fem:` set
+  // at all, from any behaviour change. The init *order* is not preserved byte-for-byte — it was
+  // corrected to vfem -> fem_en -> mode for every FEM config, this one included, per the
+  // GC1109/KCT8103L datasheets' power-on sequencing requirement (applied uniformly to every
+  // profile, since it is harmless where it isn't strictly needed) — so this test pins that too,
+  // rather than only the levels.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  FemPin fem_en(&spi), vfem(&spi), mode(&spi);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode);
+
+  ASSERT_TRUE(radio.init());
+  ASSERT_EQ(fem_en.writes().size(), 1u);
+  ASSERT_EQ(vfem.writes().size(), 1u);
+  ASSERT_EQ(mode.writes().size(), 1u);
+  EXPECT_TRUE(fem_en.writes()[0].first);
+  EXPECT_TRUE(vfem.writes()[0].first);
+  EXPECT_TRUE(mode.writes()[0].first) << "legacy raw-pin configs must still strap the mode pin HIGH once";
+  EXPECT_LE(vfem.writes()[0].second, fem_en.writes()[0].second) << "power-on sequencing: VFEM before CSD";
+  EXPECT_LE(fem_en.writes()[0].second, mode.writes()[0].second) << "power-on sequencing: CSD before the mode pin";
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  radio.send_packet(frame, sizeof(frame), cfg);  // times out waiting for TX_DONE; harmless here
+  radio.set_mode_rx();
+  radio.set_mode_standby();
+  radio.change_frequency(FREQ_CH3);
+
+  EXPECT_EQ(mode.writes().size(), 1u)
+      << "FemProfile::NONE must never touch the mode pin again after its single init()-time strap";
+}
+
+TEST(RadioSX1262Fem, ProfileSetDrivesModePinAcrossTheFullLifecycle) {
+  for (const FemProfile profile : {FemProfile::GC1109, FemProfile::KCT8103L, FemProfile::XY16P35}) {
+    const char *name = profile == FemProfile::GC1109     ? "gc1109"
+                       : profile == FemProfile::KCT8103L ? "kct8103l"
+                                                         : "xy16p35";
+    SCOPED_TRACE(name);
+    // GC1109/KCT8103L: HIGH is TX-active. XY16P35: LOW is TX-active (inverted "LNA Ctrl" sense).
+    const bool tx_active_level = profile != FemProfile::XY16P35;
+
+    ScriptedSpi spi;
+    MockPin rst, dio1, busy(false);
+    FemPin fem_en(&spi), vfem(&spi), mode(&spi);
+    TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, profile);
+
+    // --- init(): vfem -> fem_en -> mode, mode pin starts at its receive/idle level. ---
+    ASSERT_TRUE(radio.init());
+    ASSERT_EQ(vfem.writes().size(), 1u);
+    ASSERT_EQ(fem_en.writes().size(), 1u);
+    ASSERT_EQ(mode.writes().size(), 1u);
+    EXPECT_TRUE(vfem.writes()[0].first);
+    EXPECT_TRUE(fem_en.writes()[0].first);
+    EXPECT_EQ(mode.writes()[0].first, !tx_active_level)
+        << "a configured profile must start the mode pin at its receive/idle level";
+    EXPECT_LE(vfem.writes()[0].second, fem_en.writes()[0].second) << "power-on sequencing: VFEM before CSD";
+    EXPECT_LE(fem_en.writes()[0].second, mode.writes()[0].second) << "power-on sequencing: CSD before the mode pin";
+
+    // --- TX + timeout: before_tx_arm() drives the mode pin to its TX-active level immediately
+    // before SetTx. This host harness can never inject a TX_DONE IRQ, so send_packet() also
+    // always runs its timeout branch, which calls set_mode_standby() directly — never
+    // rearm_rx_after_tx_()/set_mode_rx(). One call therefore exercises both "TX drives the mode
+    // pin to its TX-active level" and "a TX timeout leaves it at the idle level again"
+    // (radio_soft_phy_driver_base.cpp's send_packet() timeout branches), the latter being exactly
+    // the case fem_set_rx_mode_() is hooked into set_mode_standby() for — without it a timed-out
+    // TX would strand a board in its TX-active FEM state indefinitely.
+    const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+    RadioTxConfig cfg;
+    cfg.freq_hz = FREQ_CH2;
+    cfg.preamble_len = SHORT_PREAMBLE;
+    EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg)) << "no TX_DONE IRQ is ever injected in this harness";
+
+    const int set_tx_idx = last_tx_with_opcode(spi, SX1262_SET_TX);
+    ASSERT_GE(set_tx_idx, 0);
+    // The most recent mode-pin write at or before SetTx's transaction index must be the
+    // before_tx_arm() TX-active transition — <= rather than == so this doesn't hard-code exactly
+    // which transaction start_tx() itself issues first, only that nothing after before_tx_arm()
+    // undoes it.
+    const auto tx_write = std::find_if(mode.writes().rbegin(), mode.writes().rend(),
+                                       [&](const auto &w) { return w.second <= static_cast<size_t>(set_tx_idx); });
+    ASSERT_NE(tx_write, mode.writes().rend()) << "before_tx_arm() must drive the mode pin before SetTx";
+    EXPECT_EQ(tx_write->first, tx_active_level) << "TX must drive the mode pin to its TX-active level";
+
+    bool workaround_seen = false;
+    for (const auto &wtx : spi.transactions()) {
+      if (wtx.size() == 4 && wtx[0] == SX1262_WRITE_REGISTER &&
+          wtx[1] == static_cast<uint8_t>(SX1262_REG_TX_MODULATION >> 8) &&
+          wtx[2] == static_cast<uint8_t>(SX1262_REG_TX_MODULATION)) {
+        workaround_seen = (wtx[3] & SX1262_TX_MODULATION_GFSK_BIT) != 0;
+        break;
+      }
+    }
+    EXPECT_TRUE(workaround_seen) << "the TX modulation-quality erratum workaround must still run";
+
+    EXPECT_EQ(mode.writes().back().first, !tx_active_level)
+        << "a TX timeout (set_mode_standby(), never rearm_rx_after_tx_()) must leave the mode pin at its idle level";
+
+    // --- RX: set_mode_rx() drives the mode pin to its idle level before SetRx. ---
+    const size_t writes_before_rx = mode.writes().size();
+    radio.set_mode_rx();
+    const int set_rx_idx = last_tx_with_opcode(spi, SX1262_SET_RX);
+    ASSERT_GE(set_rx_idx, 0);
+    ASSERT_EQ(mode.writes().size(), writes_before_rx + 1);
+    EXPECT_EQ(mode.writes().back().first, !tx_active_level)
+        << "set_mode_rx() must drive the mode pin to its idle level";
+    EXPECT_LE(mode.writes().back().second, static_cast<size_t>(set_rx_idx)) << "the mode pin must drop before SetRx";
+
+    // --- Standby: set_mode_standby() must also drive the mode pin to its idle level. ---
+    radio.set_mode_standby();
+    EXPECT_EQ(mode.writes().back().first, !tx_active_level)
+        << "set_mode_standby() must also drive the mode pin to its idle level";
+
+    // --- change_frequency(): still at its idle level at the end. ---
+    radio.change_frequency(FREQ_CH3);
+    EXPECT_EQ(mode.writes().back().first, !tx_active_level)
+        << "change_frequency() must leave the mode pin at its idle level";
+  }
+}
+
+TEST(RadioSX1262Fem, TxActiveLevelMatchesEachProfilesPolarity) {
+  // fem_tx_active_level_()'s three-way mapping, asserted directly rather than only observed
+  // through pin writes above -- the one place a future profile could get the polarity backwards
+  // with nothing else catching it before a bench.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  FemPin fem_en(&spi), vfem(&spi), mode(&spi);
+
+  TestableRadioSX1262 gc1109(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, FemProfile::GC1109);
+  EXPECT_TRUE(gc1109.fem_tx_active_level_for_test());
+
+  TestableRadioSX1262 kct8103l(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, FemProfile::KCT8103L);
+  EXPECT_TRUE(kct8103l.fem_tx_active_level_for_test());
+
+  TestableRadioSX1262 xy16p35(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, FemProfile::XY16P35);
+  EXPECT_FALSE(xy16p35.fem_tx_active_level_for_test());
 }

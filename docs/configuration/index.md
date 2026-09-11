@@ -55,9 +55,10 @@ home_io_control:
 - `tx_power` (Optional, default: `17`): Radio transmit power, `0` to `22`.
 - `pa_pin` (Optional, default: `BOOST`): SX1276 PA path. Valid values are `BOOST` and `RFO`.
 - `radio_type` (Required): The radio chip fitted to your board. Valid values are `sx1276`, `sx1262`, and `lr1121` — see [Hardware](../hardware.md).
-- `fem_en_pin` (Optional): Front-end module enable pin for boards with an external RF front-end.
-- `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end.
-- `fem_pa_pin` (Optional): Front-end module PA select pin for boards with an external RF front-end.
+- `fem_en_pin` (Optional): Front-end module enable pin (chip enable / CSD) for boards with an external RF front-end. Required by `fem: gc1109`/`fem: kct8103l`; not used by `fem: xy16p35` (that part has no such pin).
+- `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end. Required whenever `fem:` is set to a profile other than `none`.
+- `fem_pa_pin` (Optional): Front-end module mode-select pin for boards with an external RF front-end — CPS on a GC1109, CTX on a KCT8103L (active-HIGH during TX on both); the LNA-control pin on an XY16P35 (active-LOW during TX — the inverse sense). Required whenever `fem:` is set to a profile other than `none`. `fem:` never fills this pin in — set it explicitly, per your board package.
+- `fem` (Optional, default: `none`): Which RF front-end part is fitted — `none`, `gc1109` (Heltec WiFi LoRa 32 V4.2), `kct8103l` (V4.3 / V4 R8), or `xy16p35` (LilyGO T-Beam 1W SX1262). Requires `radio_type: sx1262`. Selects the driver's per-transmission switching behaviour and which of `vfem_pin`/`fem_en_pin`/`fem_pa_pin` your board must set — it never supplies a pin number itself; a missing required pin fails the build, naming which key is absent. See [Hardware](../hardware.md#front-end-module-fem-support).
 - `tcxo_voltage` (Optional, default: `1_8V`): SX1262/LR1121 TCXO control voltage. Valid values are `1_6V`, `1_7V`, `1_8V`, `2_2V`, `2_4V`, `2_7V`, `3_0V`, `3_3V`, and `none`. Use `none` only on a board that has a bare crystal instead of a TCXO — the driver then skips all TCXO programming and calibrates off the crystal.
 - `exposed_senders` (Optional, default: empty list): List of 1W sender node IDs (6 hex characters each — remotes *or* sensors) allowed to fire the `esphome.home_io_control_sender_event` event to Home Assistant. Empty by default — see [Why this is opt-in](remotes.md#why-this-is-opt-in), and
   [Linked remotes](remotes.md#linked-remotes) for how this differs from `linked_remotes`.
@@ -174,13 +175,17 @@ button automatically.
 
 ## Working configs in this repo
 
-These are compiled in CI on every commit, so they are always valid. For an SX1276 or LR1121 board,
-start from the matching one rather than adapting the example above by hand.
+`config/tests/test-*.yaml` compile in CI on every commit; the board-specific configs below are
+validated with `esphome config` by hand whenever they change, so they parse correctly but are not
+individually compiled in CI. For an SX1276 or LR1121 board, start from the matching one rather than
+adapting the example above by hand.
 
 | Config | Board and radio | What it contains |
 |---|---|---|
 | [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml) | Heltec LoRa32 V2, SX1276 | One awning cover, Discover & Pair, and an OLED status display |
 | [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml) | Heltec WiFi LoRa32 V3/V3.2, SX1262 | The same, with the V3 pinout and TCXO settings |
+| [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) | Heltec WiFi LoRa32 V4.2, SX1262 + GC1109 FEM | The same, with `fem: gc1109` and a conservative `tx_power` |
+| [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) | Heltec WiFi LoRa32 V4.3, SX1262 + KCT8103L FEM | The same, with `fem: kct8103l` and a conservative `tx_power` |
 | [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) | LilyGO T3-S3, LR1121 | The same, for the LR1121 |
 | [heltec-wifi-lora-32-v2-all-types.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2-all-types.yaml) | Heltec LoRa32 V2, SX1276 | Every supported platform — cover, light, lock, switch, button — with dummy device IDs ready to replace |
 | [heltec-wifi-lora-32-v3-monitor.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3-monitor.yaml) | Heltec WiFi LoRa32 V3/V3.2, SX1262 | A passive monitor: keeps the radio in RX, enables `IOHOME_FRAME_LOG`, creates no entities and no pairing button |
@@ -195,9 +200,10 @@ packages:
 
 The per-board pinouts live once in
 [config/boards/](https://github.com/laberning/home_io_control/tree/main/config/boards) —
-`heltec-v2.yaml`, `heltec-v3.yaml`, `t3s3.yaml`. To reuse one of the configs above, copy the whole
-`config/` directory (or at least the matching `config/boards/*.yaml` alongside the file you took),
-or replace the `packages:` line with the inline pin values from the worked example above.
+`heltec-v2.yaml`, `heltec-v3.yaml`, `heltec-v4-2.yaml`, `heltec-v4-3.yaml`, `t3s3.yaml`. To reuse
+one of the configs above, copy the whole `config/` directory (or at least the matching
+`config/boards/*.yaml` alongside the file you took), or replace the `packages:` line with the
+inline pin values from the worked example above.
 
 <!-- doxygen-subpages -->
 - [Covers](cover.md)

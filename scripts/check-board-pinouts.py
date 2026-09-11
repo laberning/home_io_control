@@ -62,8 +62,10 @@ def doc_files() -> list[Path]:
 # that is singular, so it is named rather than searched for.
 BOARD_TABLE_DOC = REPO_ROOT / "docs" / "hardware.md"
 
-# Keys this check compares. Pin keys resolve to an integer GPIO number; radio_type / tcxo_voltage
-# / variant are compared as strings.
+# Keys this check compares. PIN_KEYS resolve to a plain integer -- a GPIO number, or (tx_power) a
+# numeric setting that is just as safety-relevant on a FEM board, where it drives antenna-port
+# power rather than a bare SX1262's. STRING_KEYS (radio_type / tcxo_voltage / variant / fem) are
+# compared as strings.
 PIN_KEYS = {
     "clk_pin",
     "mosi_pin",
@@ -77,13 +79,19 @@ PIN_KEYS = {
     "fem_en_pin",
     "vfem_pin",
     "fem_pa_pin",
+    "tx_power",
 }
-STRING_KEYS = {"radio_type", "tcxo_voltage", "variant"}
+STRING_KEYS = {"radio_type", "tcxo_voltage", "variant", "fem"}
 ALL_KEYS = PIN_KEYS | STRING_KEYS
 
 # Names of the config/boards/ files (stems). A block marker or a shipped table row resolves to one
-# of these.
-SHIPPED_BOARDS = {"heltec-v2", "heltec-v3", "t3s3"}
+# of these. heltec-v4-2/heltec-v4-3 are checked only via <!-- board-pinout: --> marked blocks (see
+# docs/hardware.md's "Front-end module (FEM) support" section) -- no README table row (for any
+# board, not just these two) currently carries a backticked `radio_type:` cell, so
+# iter_shipped_table_rows()'s own `if "radio_type" not in found: continue` skips every row today;
+# the marked blocks are the mechanism that actually compares anything -- see that function's own
+# doc comment.
+SHIPPED_BOARDS = {"heltec-v2", "heltec-v3", "t3s3", "heltec-v4-2", "heltec-v4-3"}
 
 # README hardware-table rows for the three shipped boards, matched by a distinctive substring of
 # the row's board-name cell. Ordered most-specific first so "LilyGO T3-S3 LR1121" is not shadowed

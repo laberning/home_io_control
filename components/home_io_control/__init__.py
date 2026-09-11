@@ -63,6 +63,11 @@ CONF_RADIO_TYPE = "radio_type"
 CONF_FEM_EN_PIN = "fem_en_pin"
 CONF_VFEM_PIN = "vfem_pin"
 CONF_FEM_PA_PIN = "fem_pa_pin"
+# Which RF front-end part fem_pa_pin (and, for the parts that have one, fem_en_pin) is wired to
+# (ADR 0035) -- selects the driver's per-transmission switching behaviour and which pins that
+# behaviour requires; never supplies a pin number itself. See FEM_REQUIRED_PINS below. ("Part",
+# not "chip" -- see FEM_PROFILES' own comment below for why.)
+CONF_FEM = "fem"
 CONF_TCXO_VOLTAGE = "tcxo_voltage"
 CONF_EXPOSED_SENDERS = "exposed_senders"
 CONF_ACCEPT_FOREIGN_PAIRING = "accept_foreign_pairing"
@@ -404,6 +409,96 @@ TCXO_VOLTAGE_OPTIONS = {
     "3_3V": 0x07,
     "NONE": 0xFF,
 }
+
+# Which RF front-end part is fitted (ADR 0035). Part names, not board names -- board names
+# belong to config/boards/heltec-v4-*.yaml. "Part", not "chip": gc1109/kct8103l are each a single
+# bare FEM IC, but xy16p35 names an RF module with no single chip inside it independently
+# identifiable as "the FEM chip" from anything published -- see FEM_REQUIRED_PINS' own comment and
+# radio_interface.h's FemProfile doc block for the fuller explanation. Validated with cv.one_of
+# (not cv.enum) so config[CONF_FEM] stays a plain string usable in ordinary Python comparisons in
+# _validate_fem() below; the mapping to the generated C++ enum happens explicitly in to_code(),
+# same pattern as ONEWAY_COMMANDS.
+FemProfile = home_io_control_ns.enum("FemProfile", is_class=True)
+FEM_PROFILES = {
+    "none": FemProfile.NONE,
+    "gc1109": FemProfile.GC1109,      # Heltec WiFi LoRa 32 V4.2
+    "kct8103l": FemProfile.KCT8103L,  # Heltec WiFi LoRa 32 V4.3 / V4 R8
+    "xy16p35": FemProfile.XY16P35,    # LilyGO T-Beam 1W SX1262
+}
+
+# Config keys a `fem:` profile actually drives. Every profile requires vfem_pin (the FEM/module
+# power enable) and fem_pa_pin (the mode pin whose active-during-TX level is profile-dependent --
+# see FemProfile's own doc comment in radio_interface.h). fem_en_pin (CSD, a secondary chip-enable
+# some front-end parts expose) is required only where the part actually has one: GC1109 and
+# KCT8103L do, XY16P35 does not (LilyGO's own datasheet names only "LDO EN" and "LNA Ctrl" --
+# no third pin).
+# `fem:` never supplies the GPIO numbers themselves; those always come from the board's own
+# config/boards/*.yaml, exactly like every other radio pin in this schema.
+FEM_REQUIRED_PINS = {
+    "gc1109": (CONF_VFEM_PIN, CONF_FEM_EN_PIN, CONF_FEM_PA_PIN),
+    "kct8103l": (CONF_VFEM_PIN, CONF_FEM_EN_PIN, CONF_FEM_PA_PIN),
+    "xy16p35": (CONF_VFEM_PIN, CONF_FEM_PA_PIN),
+}
+
+# Highest tx_power setting whose estimated antenna-port power still stays at or under the
+# 868 MHz SRD ERP limit (+14 dBm); _validate_fem() warns on anything above it. Derived from the
+# same low-drive net-gain figures as SX1262_FEM_GAIN_*_DB in radio_sx1262.cpp (GC1109 ~+11 dB ->
+# 14 dBm at tx_power 3, 15 dBm at 4; KCT8103L ~+13 dB -> 14 dBm at tx_power 1, 15 dBm at 2;
+# XY16P35 ~+14 dB (measured; the PA's own nominal spec is +12dB) -> 14 dBm at tx_power 0, 15 dBm
+# at 1). Kept here by hand since Python and C++ share no header; the driver's own boot-time
+# ESP_LOGW carries the authoritative per-tx_power estimate and its uncertainty.
+FEM_TX_POWER_MAX_QUIET = {
+    "gc1109": 3,
+    "kct8103l": 1,
+    "xy16p35": 0,
+}
+
+
+def _validate_fem(config):
+    """Cross-key validation for `fem:` (ADR 0035): which front-end part's control behaviour the
+    SX1262 driver applies to fem_pa_pin (and, for the two parts that have one, fem_en_pin), never
+    which GPIO numbers to use for them -- those are always the board package's job, the same as
+    every other radio pin. Requires radio_type: sx1262 (the raw FEM pins are silently ignored on
+    every other chip -- select_and_construct_radio_() only ever hands them to RadioSX1262 -- so a
+    mismatched radio_type would configure hardware the driver never drives), and that every pin
+    this profile's behaviour needs is actually present, naming exactly which is missing rather
+    than leaving the driver to silently no-op on a null pin. Also warns when tx_power looks likely
+    to push this FEM's antenna-port power over a typical 868 MHz SRD limit -- radio_sx1262.cpp's
+    own init() logs the actual per-part estimate this warning can only gesture at without knowing
+    the front-end part's exact gain table here too.
+    """
+    profile = config[CONF_FEM]
+    if profile == "none":
+        return config
+
+    if config[CONF_RADIO_TYPE] != "sx1262":
+        raise cv.Invalid(
+            f"fem: {profile} requires radio_type: sx1262 -- the front-end module pins are only "
+            "wired to the SX1262 driver"
+        )
+
+    missing = [key for key in FEM_REQUIRED_PINS[profile] if key not in config]
+    if missing:
+        raise cv.Invalid(
+            f"fem: {profile} requires {', '.join(missing)} to be set -- see "
+            "docs/hardware.md#front-end-module-fem-support for what your board needs"
+        )
+
+    if config[CONF_TX_POWER] > FEM_TX_POWER_MAX_QUIET[profile]:
+        _LOGGER.warning(
+            "fem: %s together with tx_power: %d -- a front-end module turns tx_power into a "
+            "much larger antenna-port power than the bare SX1262 would radiate, and at this "
+            "setting the estimate is likely over a typical 868 MHz SRD ERP limit (+14 dBm). The "
+            "driver logs its own per-profile estimate (and its uncertainty) at boot -- check it, "
+            "and prefer tx_power: %d or lower (what this profile's own board package ships) "
+            "until you have measured the actual radiated power for your board",
+            profile,
+            config[CONF_TX_POWER],
+            FEM_TX_POWER_MAX_QUIET[profile],
+        )
+
+    return config
+
 
 DEVICE_TYPE_OPTIONS = {
     "unknown": 0x00,
@@ -1070,6 +1165,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FEM_EN_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_VFEM_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_FEM_PA_PIN): pins.internal_gpio_output_pin_schema,
+            cv.Optional(CONF_FEM, default="none"): cv.one_of(*FEM_PROFILES, lower=True),
             cv.Optional(CONF_TCXO_VOLTAGE, default="1_8V"): cv.enum(
                 TCXO_VOLTAGE_OPTIONS, upper=True
             ),
@@ -1094,6 +1190,7 @@ CONFIG_SCHEMA = cv.All(
     _inject_scan_paired_devices_button_id,
     _validate_oneway_controllers,
     _validate_lr1121_firmware_update,
+    _validate_fem,
 )
 
 
@@ -1141,6 +1238,8 @@ async def to_code(config):
     if CONF_FEM_PA_PIN in config:
         fem_pa_pin = await cg.gpio_pin_expression(config[CONF_FEM_PA_PIN])
         cg.add(var.set_fem_pa_pin(fem_pa_pin))
+
+    cg.add(var.set_fem_profile(FEM_PROFILES[config[CONF_FEM]]))
 
     cg.add(var.set_node_id(config[CONF_NODE_ID]))
     cg.add(var.set_system_key(config[CONF_SYSTEM_KEY]))

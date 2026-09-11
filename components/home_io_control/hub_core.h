@@ -186,6 +186,10 @@ class IOHomeControlComponent : public Component,
   void set_vfem_pin(InternalGPIOPin *pin) { this->vfem_pin_ = pin; }
   /// Set the FEM PA switch pin.
   void set_fem_pa_pin(InternalGPIOPin *pin) { this->fem_pa_pin_ = pin; }
+  /// Set which FEM part fem_pa_pin is wired to (`fem:` in YAML) — selects whether the SX1262
+  /// driver drives that pin per-transmission (GC1109/KCT8103L/XY16P35) or leaves it static-HIGH
+  /// (NONE, the legacy raw-pin behaviour).
+  void set_fem_profile(FemProfile profile) { this->fem_profile_ = profile; }
   /// Set the controller's node ID (hex string).
   void set_node_id(const std::string &id) { this->node_id_str_ = id; }
   /// Set the system key (hex string).
@@ -1051,13 +1055,14 @@ class IOHomeControlComponent : public Component,
 
   // --- Hardware pins (set by YAML codegen, passed to radio driver in setup) ---
   InternalGPIOPin *rst_pin_{nullptr};
-  InternalGPIOPin *dio0_pin_{nullptr};    ///< SX1276 DIO0 interrupt
-  InternalGPIOPin *dio4_pin_{nullptr};    ///< SX1276 DIO4 preamble detect (optional)
-  InternalGPIOPin *dio1_pin_{nullptr};    ///< SX1262 DIO1 interrupt; also carries the LR1121's DIO9 IRQ line
-  InternalGPIOPin *busy_pin_{nullptr};    ///< SX1262/LR1121 BUSY pin
-  InternalGPIOPin *fem_en_pin_{nullptr};  ///< Front-end module enable
-  InternalGPIOPin *vfem_pin_{nullptr};    ///< Front-end module power
-  InternalGPIOPin *fem_pa_pin_{nullptr};  ///< Front-end module PA switch
+  InternalGPIOPin *dio0_pin_{nullptr};        ///< SX1276 DIO0 interrupt
+  InternalGPIOPin *dio4_pin_{nullptr};        ///< SX1276 DIO4 preamble detect (optional)
+  InternalGPIOPin *dio1_pin_{nullptr};        ///< SX1262 DIO1 interrupt; also carries the LR1121's DIO9 IRQ line
+  InternalGPIOPin *busy_pin_{nullptr};        ///< SX1262/LR1121 BUSY pin
+  InternalGPIOPin *fem_en_pin_{nullptr};      ///< Front-end module enable
+  InternalGPIOPin *vfem_pin_{nullptr};        ///< Front-end module power
+  InternalGPIOPin *fem_pa_pin_{nullptr};      ///< Front-end module PA switch
+  FemProfile fem_profile_{FemProfile::NONE};  ///< Which FEM part fem_pa_pin_ belongs to, if any.
 
   // --- Configuration (from YAML) ---
   std::string node_id_str_;
