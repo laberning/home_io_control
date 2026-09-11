@@ -60,7 +60,8 @@ AUTOLINK_IGNORE_WORDS  = home_io_control esphome \
                         docs/lr1121-firmware.md \
                         docs/pairing.md \
                         docs/troubleshooting.md \
-                        docs/adr/0013-blocking-exchange-on-the-esphome-loop.md
+                        docs/adr/0013-blocking-exchange-on-the-esphome-loop.md \
+                        docs/adr/0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md
 
 # Parse /// and /** */ comments (Javadoc style)
 JAVADOC_AUTOBRIEF      = YES

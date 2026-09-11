@@ -51,6 +51,99 @@ constexpr Sx1262DeviceErrorBit SX1262_DEVICE_ERROR_BITS[] = {
 /// asks for (50 ms) is 3200 ticks, well inside it.
 constexpr uint32_t sx1262_tcxo_startup_ticks(uint32_t delay_us) { return (delay_us * 64U + 999U) / 1000U; }
 
+/// Net gain (TX-path pad + PA, in dB) of the GC1109/KCT8103L front-end chain (Heltec V4.2/V4.3),
+/// indexed by the SX1262 SetTxParams power setting (0..21 — the table doesn't extend to 22, the
+/// schema's max). Measured gain flattens at low drive and falls off from PA compression above
+/// ~14; see Meshtastic's `LoRaFEMInterface::powerConversion()`. XY16P35's own gain constant,
+/// below, is a single measured figure rather than a table of this shape — see its own doc comment.
+constexpr int8_t SX1262_FEM_GAIN_GC1109_DB[22] = {
+    11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10, 9, 9, 8, 7,
+};
+constexpr int8_t SX1262_FEM_GAIN_KCT8103L_DB[22] = {
+    13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 12, 12, 11, 11, 10, 9, 8, 7,
+};
+
+/// Net gain (dB) for the XY16P35 chain (LilyGO T-Beam 1W SX1262), as a single representative
+/// constant rather than a 22-entry table. LilyGO's own measured output-power figures: tx_power
+/// -9 -> 3 dBm, -6 -> 8.6 dBm, -5 -> 10 dBm, 0 -> 14 dBm, 5 -> 18 dBm (gain = measured - setting:
+/// 12/14.6/15/14/13 dB). +14 anchors on the tx_power:0 point this profile's board package ships;
+/// treat this as a rougher bound than the other two chips' 22-point tables -- five sparse
+/// measured points, not a real curve. LilyGO also publishes a flat +12dBm "Sub1G PA Gain" spec
+/// for the HM06S006P transistor inside this module -- that is the component's nominal rating, not
+/// the module's measured net gain; +14 is used because it is measured (not a datasheet nominal)
+/// and the more conservative of the two for the compliance warning below.
+constexpr int8_t SX1262_FEM_GAIN_XY16P35_DB = 14;
+
+constexpr size_t SX1262_FEM_GAIN_TABLE_LEN = 22;
+
+/// Net gain (dB) added to `tx_power` for the given profile's chain, at the given (already-
+/// clamped-into-table-domain) tx_power setting. GC1109/KCT8103L look up their 22-entry table;
+/// XY16P35 returns its single constant regardless of the index. Never called for
+/// FemProfile::NONE -- the only caller (sx1262_fem_estimated_antenna_dbm()) is itself only
+/// called when fem_profile_ != NONE.
+int8_t sx1262_fem_gain_db(FemProfile profile, uint8_t tx_power_idx) {
+  switch (profile) {
+    case FemProfile::GC1109:
+      return SX1262_FEM_GAIN_GC1109_DB[tx_power_idx];
+    case FemProfile::KCT8103L:
+      return SX1262_FEM_GAIN_KCT8103L_DB[tx_power_idx];
+    case FemProfile::XY16P35:
+      return SX1262_FEM_GAIN_XY16P35_DB;
+    case FemProfile::NONE:
+      return 0;  // unreached; listed so -Werror=switch catches a future profile that forgets this function.
+  }
+  return 0;  // unreachable; satisfies compilers that don't recognize the switch above as exhaustive.
+}
+
+/// Boot-log profile name and gain-estimate confidence caveat for the given profile. A `switch`
+/// that returns from every case (rather than assigning through a local) so the compiler can see
+/// every path is covered -- an assign-then-break shape here previously tripped both
+/// -Wmaybe-uninitialized (GCC can't prove FemProfile's underlying uint8_t is limited to the four
+/// named enumerators) and clang-tidy's dead-store check, for opposite reasons.
+const char *sx1262_fem_profile_name(FemProfile profile) {
+  switch (profile) {
+    case FemProfile::GC1109:
+      return "gc1109";
+    case FemProfile::KCT8103L:
+      return "kct8103l";
+    case FemProfile::XY16P35:
+      return "xy16p35";
+    case FemProfile::NONE:
+      return "none";  // unreached; this whole ESP_LOGW block is itself guarded on != NONE.
+  }
+  return "none";  // unreachable; satisfies compilers that don't recognize the switch above as exhaustive.
+}
+
+/// GC1109/KCT8103L's gain estimate rests on three low-drive sources that disagree by ~5-7 dB
+/// (SX1262_FEM_GAIN_GC1109_DB's own doc comment); XY16P35's rests on a single, sparser evidence
+/// base -- five of LilyGO's own measured points, not a real curve (SX1262_FEM_GAIN_XY16P35_DB's
+/// own doc comment) -- with no comparable numeric error bar published anywhere this project has
+/// access to. Rather than inventing one, XY16P35's boot-log caveat says plainly that this estimate
+/// is rougher than the other two profiles' equivalent line instead of quoting a number that would
+/// overstate how well-characterized it is.
+const char *sx1262_fem_confidence_caveat(FemProfile profile) {
+  switch (profile) {
+    case FemProfile::GC1109:
+    case FemProfile::KCT8103L:
+      return "+-5..7 dB, unmeasured";
+    case FemProfile::XY16P35:
+      return "vendor-measured but from five sparse points, not a real curve -- rougher than the other profiles' "
+             "estimate";
+    case FemProfile::NONE:
+      return "";  // unreached; this whole ESP_LOGW block is itself guarded on != NONE.
+  }
+  return "";  // unreachable; satisfies compilers that don't recognize the switch above as exhaustive.
+}
+
+/// Estimated antenna-port power (dBm) for `tx_power` through the named FEM profile's chain, from
+/// the gain tables/constant above. `tx_power` is clamped into the table's domain first — the same
+/// clamp init() applies before writing SetTxParams — so a caller need not re-derive it.
+int sx1262_fem_estimated_antenna_dbm(FemProfile profile, uint8_t tx_power) {
+  const uint8_t idx =
+      tx_power < SX1262_FEM_GAIN_TABLE_LEN ? tx_power : static_cast<uint8_t>(SX1262_FEM_GAIN_TABLE_LEN - 1);
+  return static_cast<int>(tx_power) + static_cast<int>(sx1262_fem_gain_db(profile, idx));
+}
+
 }  // namespace
 
 void sx1262_format_device_errors(uint16_t errors, char *buf, size_t buf_size) {
@@ -279,18 +372,29 @@ bool RadioSX1262::init() {
   this->dio1_pin_->setup();
   this->busy_pin_->setup();
 
-  // Front-end module pins (e.g., Heltec V4)
+  // Front-end module pins (e.g., Heltec V4). Order matters for every FEM
+  // config, legacy raw-pin included: the parts that have a secondary chip-enable pin (CSD --
+  // GC1109/KCT8103L; XY16P35 has none) require VBAT (here: VFEM) to be raised before any control
+  // pin is driven, so vfem_pin_ goes first with a brief settle delay, then fem_en_pin_, then the
+  // mode pin last.
+  if (this->vfem_pin_ != nullptr) {
+    this->vfem_pin_->setup();
+    this->vfem_pin_->digital_write(true);
+    delay(1);  // GC1109/KCT8103L power-on sequencing: VBAT must precede CSD/CPS/CTX
+  }
   if (this->fem_en_pin_ != nullptr) {
     this->fem_en_pin_->setup();
     this->fem_en_pin_->digital_write(true);
   }
-  if (this->vfem_pin_ != nullptr) {
-    this->vfem_pin_->setup();
-    this->vfem_pin_->digital_write(true);
-  }
   if (this->fem_pa_pin_ != nullptr) {
     this->fem_pa_pin_->setup();
-    this->fem_pa_pin_->digital_write(true);
+    if (this->fem_profile_ == FemProfile::NONE) {
+      // No FEM behaviour configured: strap HIGH once, never touched again.
+      this->fem_pa_pin_->digital_write(true);
+    } else {
+      // A configured profile starts the mode pin in its receive/idle level.
+      this->fem_set_rx_mode_();
+    }
   }
 
   // --- Hardware reset ---
@@ -302,6 +406,20 @@ bool RadioSX1262::init() {
   this->configure_radio_();
   if (this->failed_)
     return false;
+
+  if (this->fem_profile_ != FemProfile::NONE) {
+    // tx_power is clamped the same way configure_radio_() clamps it before SetTxParams — see
+    // sx1262_fem_estimated_antenna_dbm()'s own doc comment for why this is a rough bound, not a
+    // calibrated one.
+    const uint8_t clamped_tx_power = std::min<uint8_t>(this->tx_power_, 22);
+    const int estimated_dbm = sx1262_fem_estimated_antenna_dbm(this->fem_profile_, clamped_tx_power);
+    ESP_LOGW(TAG,
+             "FEM profile %s active: tx_power %u is amplified by the front-end module to an "
+             "estimated ~%d dBm at the antenna port (%s) — verify against your local 868 MHz "
+             "SRD/EIRP limit before relying on this for compliance",
+             sx1262_fem_profile_name(this->fem_profile_), clamped_tx_power, estimated_dbm,
+             sx1262_fem_confidence_caveat(this->fem_profile_));
+  }
 
   ESP_LOGI(TAG, "SX1262 initialized");
   return true;
@@ -568,7 +686,11 @@ void RadioSX1262::configure_radio_() {
   }
   this->clear_device_errors_();
 
-  // 19. Enter continuous receive
+  // 19. Enter continuous receive. Written inline rather than via set_mode_rx() — correct only
+  // because the FEM mode pin was already left in its RX level by the pin-setup block above (HIGH
+  // for a legacy FemProfile::NONE strap, its computed receive/idle level for a configured profile
+  // (see fem_set_rx_mode_())); a future refactor that reorders init() must not move this ahead of
+  // that block, or route through set_mode_rx() instead.
   uint8_t rx_continuous[3] = {0xFF, 0xFF, 0xFF};  // 0xFFFFFF = continuous
   this->write_opcode_(SX1262_SET_RX, rx_continuous, sizeof(rx_continuous));
 }
@@ -576,13 +698,31 @@ void RadioSX1262::configure_radio_() {
 // === Mode control ===
 
 void RadioSX1262::set_mode_standby() {
+  this->fem_set_rx_mode_();
   uint8_t const stdby = 0x01;  // STDBY_XOSC
   this->write_opcode_(SX1262_SET_STANDBY, &stdby, 1);
 }
 
 void RadioSX1262::set_mode_rx() {
+  this->fem_set_rx_mode_();
   uint8_t rx_continuous[3] = {0xFF, 0xFF, 0xFF};
   this->write_opcode_(SX1262_SET_RX, rx_continuous, sizeof(rx_continuous));
+}
+
+// === Front-end module mode control ===
+
+bool RadioSX1262::fem_tx_active_level_() const { return this->fem_profile_ != FemProfile::XY16P35; }
+
+void RadioSX1262::fem_set_tx_mode_() {
+  if (this->fem_profile_ == FemProfile::NONE || this->fem_pa_pin_ == nullptr)
+    return;
+  this->fem_pa_pin_->digital_write(this->fem_tx_active_level_());
+}
+
+void RadioSX1262::fem_set_rx_mode_() {
+  if (this->fem_profile_ == FemProfile::NONE || this->fem_pa_pin_ == nullptr)
+    return;
+  this->fem_pa_pin_->digital_write(!this->fem_tx_active_level_());
 }
 
 // === Frequency control ===

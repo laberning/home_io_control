@@ -51,6 +51,12 @@ template<class Base> class TestableSoftPhy : public Base {
   /// assert the SX1262 TCXO bring-up widens it per rung and restores it afterwards.
   [[nodiscard]] uint32_t busy_timeout_ms_for_test() const { return this->get_busy_timeout_ms_(); }
 
+  /// RadioSX1262::fem_tx_active_level_() is protected — surfaced here so a test can assert its
+  /// three-way polarity mapping directly. Only ever called from the SX1262 test file; lazy member
+  /// template instantiation means this stays harmless for TestableSoftPhy<RadioLR1121>, which has
+  /// no such method.
+  [[nodiscard]] bool fem_tx_active_level_for_test() const { return this->fem_tx_active_level_(); }
+
  protected:
   uint32_t read_irq_status_raw() override {
     if (irq_idx_ < irq_seq_.size())

@@ -1,0 +1,40 @@
+# Board pinout — Heltec WiFi LoRa 32 V4.3 (ESP32-S3 + Semtech SX1262 + KCT8103L front-end module).
+#
+# The single source of truth for this board's SPI bus and radio pin assignment. Consumed via
+# `packages:` by config/heltec-wifi-lora-32-v4-3.yaml. Same radio pinout as heltec-v3.yaml (the
+# SX1262 pins are unchanged between revisions) plus the three FEM pins. Spelled out explicitly
+# here (cross-checked against fem: kct8103l's required-pin set in __init__.py's FEM_REQUIRED_PINS)
+# rather than left implicit, so scripts/check-board-pinouts.py can cross-check them against the docs.
+#
+# Also covers the `heltec_v4_r8` variant, which is KCT8103L on the same GPIO 7/2/5 pin set.
+#
+# The FEM turns tx_power into a much larger antenna-port power than the bare SX1262 would radiate
+# (see docs/adr/0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md) — tx_power
+# stays low here on purpose. VERIFY the actual radiated power on a spectrum analyser before relying
+# on this for regulatory compliance; the driver logs its own estimate (and uncertainty) at boot.
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+spi:
+  clk_pin: 9
+  mosi_pin: 10
+  miso_pin: 11
+
+home_io_control:
+  cs_pin: 8
+  rst_pin: 12
+  dio1_pin: 14
+  busy_pin: 13
+  radio_type: sx1262
+  tcxo_voltage: 1_8V
+  fem: kct8103l
+  vfem_pin: 7
+  fem_en_pin: 2
+  fem_pa_pin: 5
+  # VERIFY before raising this: the driver logs its own antenna-port estimate (and its
+  # uncertainty) at boot -- see
+  # docs/adr/0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md.
+  tx_power: 1

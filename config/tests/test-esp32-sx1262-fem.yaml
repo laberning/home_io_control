@@ -1,0 +1,54 @@
+# Compile test for `fem: gc1109` (front-end module support, ADR 0035).
+#
+# Standalone rather than `<<: !include common.yaml` — every other test config uses SX1276 pins,
+# and this needs SX1262's busy_pin/dio1_pin instead, same shape as
+# test-esp32-lr1121-fwupdate.yaml. `fem:` never defaults a pin (FEM_REQUIRED_PINS in
+# components/home_io_control/__init__.py is validation-only), so every pin gc1109 needs is
+# supplied explicitly here — this is also the one compile test exercising the expanded
+# `number:`/`ignore_strapping_warning:` pin form end to end.
+substitutions:
+  device_name: test_sx1262_fem
+
+esphome:
+  name: ${device_name}
+  merge_warnings: false
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-ssid"
+  password: "test12345"
+
+api:
+
+spi:
+  clk_pin: 9
+  mosi_pin: 10
+  miso_pin: 11
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+home_io_control:
+  cs_pin: 8
+  rst_pin: 12
+  dio1_pin: 14
+  busy_pin: 13
+  radio_type: sx1262
+  tcxo_voltage: 1_8V
+  fem: gc1109
+  vfem_pin: 7
+  fem_en_pin: 2
+  fem_pa_pin:
+    number: 46
+    ignore_strapping_warning: true
+  node_id: C0FFEE
+  system_key: 0123456789ABCDEF0123456789ABCDEF
