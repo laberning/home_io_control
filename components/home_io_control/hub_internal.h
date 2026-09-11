@@ -496,10 +496,11 @@ inline void normalize_stopped_state(IoDevice &dev) {
 ///
 /// Called for every frame whose `src` is a registered device, regardless of command type or
 /// whether that command's own payload was well-formed — any such frame is real evidence the
-/// device is reachable and at this signal strength. The two call sites cover both ways such a
-/// frame arrives: update_device_status_() (inbound status path) and
-/// execute_request_and_update_()'s explicit-refusal branch (a CMD_ERROR_RESP reply to our own
-/// request, which returns before reaching the status path). Always stamps `last_seen_ms`; only
+/// device is reachable and at this signal strength. The call sites cover every way such a frame
+/// arrives: update_device_status_() (inbound status path), execute_request_and_update_()'s
+/// explicit-refusal branch (a CMD_ERROR_RESP reply to our own request, which returns before
+/// reaching the status path), and its failure branch when a 0x3C challenge was seen (the device
+/// transmitted, even though the exchange did not complete). Always stamps `last_seen_ms`; only
 /// touches the RSSI fields when `radio` is non-null and its last capture is valid (real drivers
 /// always populate a valid capture before a frame is handed off, but tests calling this path
 /// directly without a radio, or without exercising RX through it, must not crash or fabricate

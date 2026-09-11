@@ -60,7 +60,8 @@ namespace home_io_control {
 
 inline constexpr uint8_t DEFAULT_TX_POWER_DBM = 17;       ///< Default TX power used unless YAML overrides it.
 inline constexpr uint8_t DEFAULT_PA_PIN_PA_BOOST = 0x80;  ///< SX1276 PA_CONFIG selector for the PA_BOOST output path.
-inline constexpr uint8_t DEFAULT_TCXO_VOLTAGE_SETTING_1P8V = 0x03;  ///< SX1262 DIO3 setting value for a 1.8 V TCXO.
+inline constexpr uint8_t DEFAULT_TCXO_VOLTAGE_SETTING_1P8V = 0x02;  ///< 0-based TCXO voltage code for 1.8 V,
+                                                                    ///< passed verbatim to the SX1262/LR1121 chip.
 inline constexpr size_t POSITION_TEXT_BUFFER_SIZE = 16;  ///< Buffer for formatted position strings such as "100%".
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
@@ -195,7 +196,9 @@ class IOHomeControlComponent : public Component,
   void set_pa_pin(uint8_t pa_pin) { this->pa_pin_ = pa_pin; }
   /// Set radio type ("sx1276", "sx1262", or "lr1121"); required by the YAML schema.
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
-  /// Set TCXO voltage for SX1262/LR1121 (1.8V / 3.3V).
+  /// Set the SX1262/LR1121 TCXO control-voltage code (0-based, `TCXO_VOLTAGE_OPTIONS` in
+  /// `__init__.py`: `1_6V`=0x00 .. `3_3V`=0x07), or `TCXO_VOLTAGE_NONE` (0xFF) for a board with a
+  /// bare crystal and no DIO3-controlled TCXO.
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
 
   /// Apply the tuning configuration generated from YAML / UI entities.

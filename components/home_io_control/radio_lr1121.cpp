@@ -296,17 +296,20 @@ void RadioLR1121::configure_radio_() {
   }
   ESP_LOGI(TAG, "LR1121 detected: hw=0x%02X fw=%u.%u", version[0], version[2], version[3]);
 
-  // 2. TCXO: map the YAML TCXO_VOLTAGE_OPTIONS code (1_6V=0x01 .. 3_3V=0x08, __init__.py) to the
-  //    LR1121's own voltage code, which runs 0x00-0x07 for 1.6-3.3V — one less than the
-  //    YAML/SX1262 numbering, so a simple -1 mapping is exact: both tables are linear 0.1V-ish
-  //    steps in the same order.
-  auto const tcxo_code = static_cast<uint8_t>(this->tcxo_voltage_yaml_code_ - 1);
-  uint8_t tcxo_params[4] = {tcxo_code, LR1121_TCXO_STARTUP_DELAY_TICKS_MSB, LR1121_TCXO_STARTUP_DELAY_TICKS_MID,
-                            LR1121_TCXO_STARTUP_DELAY_TICKS_LSB};
-  this->write_command_(LR1121_CMD_SET_TCXO_MODE, tcxo_params, sizeof(tcxo_params));
+  // 2. TCXO: the YAML TCXO_VOLTAGE_OPTIONS code (1_6V=0x00 .. 3_3V=0x07, __init__.py) is already
+  //    the LR1121's own SetTcxoMode voltage code — the same 0-based enum the SX1262's
+  //    SetDIO3AsTCXOCtrl takes — so it goes straight through with no mapping. TCXO_VOLTAGE_NONE
+  //    marks a bare-crystal board: skip SetTcxoMode entirely and let calibration run on the
+  //    plain crystal.
+  if (this->tcxo_voltage_code_ != TCXO_VOLTAGE_NONE) {
+    uint8_t tcxo_params[4] = {this->tcxo_voltage_code_, LR1121_TCXO_STARTUP_DELAY_TICKS_MSB,
+                              LR1121_TCXO_STARTUP_DELAY_TICKS_MID, LR1121_TCXO_STARTUP_DELAY_TICKS_LSB};
+    this->write_command_(LR1121_CMD_SET_TCXO_MODE, tcxo_params, sizeof(tcxo_params));
+  }
 
   // 3. Clear errors, then calibrate all blocks — order matters: calibration must run on the
-  //    TCXO clock, which was just configured.
+  //    reference clock just configured above (the TCXO, or the bare crystal when SetTcxoMode was
+  //    skipped), and the clear wipes the expected POR error latch first.
   this->clear_errors_();
   uint8_t const cal_all = LR1121_CALIBRATE_ALL_BLOCKS;
   this->write_command_(LR1121_CMD_CALIBRATE, &cal_all, 1);

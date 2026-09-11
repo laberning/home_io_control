@@ -26,6 +26,9 @@ home_io_control:
   radio_type: sx1276
   node_id: C0FFEE
   system_key: 0123456789ABCDEF0123456789ABCDEF
+  # Exercises the tcxo_voltage: none schema/codegen path (the bare-crystal sentinel) — the value
+  # is inert for the sx1276 driver here, but this is the only config that validates the option.
+  tcxo_voltage: none
   tuning:
     ui_controls: true
     # Every tunable is set so that each `if CONF_x in config` branch in _apply_tuning_config

@@ -17,10 +17,8 @@
 namespace esphome {
 namespace home_io_control {
 
-/// Maximum bit offset to search for valid UART decode start position.
-/// The UART frame is 10 bits (start + 8 data). If the sync word is not aligned,
-/// we probe up to 10 bits offset to recover the correct framing.
-static const uint8_t UART_PROBE_MAX_BIT_OFFSET = 10;
+// UART_PROBE_MAX_BIT_OFFSET (the number of leading bit alignments the probe sweeps) is defined in
+// radio_soft_phy.h so the buffer-sizing static_asserts in radio_soft_phy_driver_base.h can see it.
 
 namespace {
 

@@ -858,6 +858,50 @@ TEST(HubOperations, RequestDeviceStatusUnconfirmedAcceptStillReturnsFalse) {
       << "a status poll ending SUCCESS_UNCONFIRMED must still be reported as a failure to the caller";
 }
 
+// A failed exchange in which the device sent a 0x3C challenge still stamps link health: the
+// challenge is a frame from the device, so it is reachable even though the exchange did not
+// complete. Without this, a device that challenges every attempt but never closes ages like a
+// dead one and any reachability verdict built on last_seen_ms would be wrong.
+TEST(HubOperations, SawChallengeFailureStampsLinkHealth) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_EQ(dev->last_seen_ms, 0u) << "no frame from this device yet";
+
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+  // Only the challenge is queued -- no final response on any try, so the poll fails.
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  ASSERT_TRUE(comp.exchange_engine_.get_debug().saw_challenge);
+  EXPECT_NE(dev->last_seen_ms, 0u)
+      << "a device that answered with a 0x3C challenge is reachable, even on a failed exchange";
+}
+
+// The complement: a genuinely silent failure (no challenge, no frame of any kind) must NOT stamp
+// last_seen_ms -- silence is not evidence of life.
+TEST(HubOperations, SilentFailureDoesNotStampLinkHealth) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123")) << "nothing queued -> silent timeout";
+  EXPECT_FALSE(comp.exchange_engine_.get_debug().saw_challenge);
+  EXPECT_EQ(dev->last_seen_ms, 0u) << "a silent failure is not a frame from the device";
+}
+
 TEST(HubOperations, SetDevicePositionArmsTrackedPollingWhenConfigured) {
   TestableComponent comp;
   MockRadio radio;

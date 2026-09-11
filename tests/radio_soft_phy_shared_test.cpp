@@ -33,9 +33,10 @@ using namespace esphome::home_io_control;
 
 namespace {
 
-// TCXO_VOLTAGE_OPTIONS code for "3_0V" (components/home_io_control/__init__.py). LR1121's
-// constructor takes the YAML code directly; SX1262 ignores this argument's exact value here.
-constexpr uint8_t kTcxoYamlCode3_0V = 0x07;
+// TCXO_VOLTAGE_OPTIONS code for "3_3V" (components/home_io_control/__init__.py). The enum is
+// 0-based and identical to the chip's own SetTcxoMode / SetDIO3AsTCXOCtrl voltage code; both
+// driver constructors take it directly. SX1262 ignores this argument's exact value here.
+constexpr uint8_t kTcxoYamlCode3_3V = 0x07;
 
 struct Sx1262Traits {
   using Driver = RadioSX1262;
@@ -75,7 +76,7 @@ struct Sx1262Traits {
 struct Lr1121Traits {
   using Driver = RadioLR1121;
   static constexpr uint8_t kTxPower = 0;
-  static constexpr uint8_t kTcxo = kTcxoYamlCode3_0V;
+  static constexpr uint8_t kTcxo = kTcxoYamlCode3_3V;
 
   static uint32_t rx_done() { return LR1121_IRQ_RX_DONE; }
   static uint32_t sync_valid() { return LR1121_IRQ_SYNC_WORD_VALID; }

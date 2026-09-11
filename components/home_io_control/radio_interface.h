@@ -37,6 +37,11 @@ inline constexpr uint8_t RADIO_PACKET_BUFFER_SIZE =
 /// truncated burst, a peer that gave up — cannot wedge channel hopping permanently.
 inline constexpr uint32_t RX_HOP_HOLDOFF_US = 12000;
 
+/// Sentinel `tcxo_voltage` code (YAML `none`) for a board with a bare crystal and no TCXO. The
+/// SX1262 and LR1121 drivers skip all DIO3/TCXO programming when they see it and calibrate off
+/// the plain crystal. Cannot collide with the real 0-based voltage codes (0x00-0x07).
+inline constexpr uint8_t TCXO_VOLTAGE_NONE = 0xFF;
+
 /// Interface for SPI bus access.
 /// The ESPHome component implements this by delegating to its SPIDevice methods,
 /// allowing radio drivers to perform SPI transactions without depending on the

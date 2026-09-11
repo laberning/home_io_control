@@ -21,8 +21,7 @@ mean:
 "Corpus captures" are golden-frame recordings in
 [tests/corpus/captures/](https://github.com/laberning/home_io_control/tree/main/tests/corpus/captures) —
 real RF frames, replayed by the test suite. A row backed by captures is the
-strongest kind of evidence here. Issue numbers refer to
-[GitHub issues](https://github.com/laberning/home_io_control/issues).
+strongest kind of evidence here.
 
 A device's absence is not a verdict. The protocol is the same across the alliance's members, so an
 unlisted cover-like actuator has a good chance of working with `io_device_type` set to the closest
@@ -39,15 +38,16 @@ match.
 | **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | Issue #65 |
 | **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | Issue #65; corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
 | **Izymo IO dimmer** | `light` | ✅ Confirmed, including dimming | Discover & Pair, including repeated reset-and-repair cycles | `dimmable: true` | 39 corpus captures; the `light:` platform's hardware validation |
-| **J406 IO shutter motor** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | Corpus `somfy_j406_discovery_1w_overheard` |
+| **J406 IO shutter motor** | `external_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: external_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard` |
 | **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | Issue #103, on a Heltec V3.2 / SX1262 |
 | **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction inversion is applied automatically for this family | Corpus `somfy_awning_discovery_spe_paired_rollcall` |
 | **Awning actuator (IO Vertical)** | `awning` | ✅ Confirmed for discovery | Discover & Pair | — | Corpus `somfy_awning_discovery_lab_response` |
-| **RS100 IO / RS100 Solar** | `awning` / `roller_shutter` | ⚠️ Partial — pairing needs a retried key exchange | Discover & Pair, retried | `low_power: true` | Issues #16, #45; 7 corpus captures including both a success and a key-transfer stall |
+| **RS100 IO / RS100 Solar** | `awning` / `roller_shutter` | ⚠️ Partial — pairing needs a retried key exchange | Discover & Pair, retried | `low_power: true` | 7 corpus captures including both a success and a key-transfer stall |
 | **Oximo 40 Solar tubular motor** | `roller_shutter` | 🔍 Traffic captured only | — | `low_power: true` | Corpus `somfy_oximo40_statuspoll_sx1262`, issue #45 |
 | **Sunea IO screen** | `screen` | 🔍 Traffic captured only | — | — | Corpus `somfy_awning_exchange_set_sensor_sx1276` — a directed write from a real TaHoma Switch |
 | **Tilt-capable blind/shutter** | tilt-capable cover | ✅ Confirmed for tilt control | — | — | 8 corpus captures |
 | **Combined wind/rain protection station** | sensor (1W) | ✅ Confirmed for listening | Overheard; no pairing involved | `exposed_senders:` / `linked_remotes:` | 2 corpus captures |
+| **Eolis 3D WireFree IO wind sensor** | sensor (1W) | 📣 Reported — listen-only | Overheard; no pairing involved | `exposed_senders:` / `linked_remotes:` | A standalone wind sensor, distinct from the combined station above; links directly to its awning motor. |
 
 `low_power: true` on the solar Somfy motors is a reasoned starting point rather than a confirmed
 setting: the option is meant for battery and solar actuators, and it is confirmed on VELUX hardware

@@ -95,7 +95,12 @@ command set.
 
 - **Heltec LoRa32 v2** (SX1276), **Heltec WiFi LoRa32 V3/V3.2** (SX1262) and **LilyGO T3-S3 LR1121**
   (LR1121) are the boards this project is developed on.
-- **Heltec V4** has not been validated yet and is not recommended (due to FEM).
+- **Heltec V4** has not been validated and is not recommended yet: it adds an RF
+  front-end module (FEM) that needs `vfem_pin` / `fem_en_pin` wired up, and its high-power TX path
+  differs between the V4.2 (GC1109) and V4.3 (KCT8103L) sub-revisions. Prefer the V3.
+- **V2 / V3 clones** (non-Heltec boards with the same silkscreen and pin map) are common and
+  generally work if the SPI and radio pins match the corresponding row above — treat them as
+  `Untested` until confirmed.
 
 ## See also
 

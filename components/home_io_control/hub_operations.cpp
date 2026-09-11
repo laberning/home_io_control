@@ -167,6 +167,13 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
     const auto &dbg = this->exchange_engine_.get_debug();
     if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
       detail::record_exchange_timeout(*dev, dbg.tries);
+      // A 0x3C challenge seen during the exchange is itself a frame from this device: the exchange
+      // still failed (our challenge-response or the device's final reply was lost), but the device
+      // demonstrably transmitted. Stamp link health the same way the explicit-refusal branch does,
+      // or a device that challenges every attempt yet never closes the exchange ages exactly like
+      // a powered-off one.
+      if (dbg.saw_challenge)
+        detail::update_link_health(*dev, this->radio_);
       this->notify_device_update_(device_id);
     }
     if (retry_after_fail_ms != 0)
