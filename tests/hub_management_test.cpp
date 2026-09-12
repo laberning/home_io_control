@@ -928,6 +928,29 @@ TEST(HubManagement, ScanPairedDevicesRetriesOnAllThreeChannels) {
         << "roll-call targets are addressed at the normal start preamble; repetition reaches a sleeper";
 }
 
+TEST(HubManagement, ScanPairedDevicesNeverSetsAckCapableEvenWhenTuningIsOn) {
+  // The roll-call's own create_discovery_request() call (management_actions.cpp) deliberately
+  // hardcodes ack_capable=false — issue #87's analysis already ruled out CTRL1_ACK as that
+  // roll-call's bug, and 0x2A targets already-enrolled devices, a different scenario from the
+  // never-enrolled case pairing_discovery_ack_capable exists to test. Pinning this in a test, not
+  // just a comment, so wiring the tunable in here later breaks CI instead of silently reversing
+  // the decision.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.tuning_.pairing_discovery_ack_capable = true;
+
+  const auto result = component.scan_paired_devices();
+  EXPECT_TRUE(result.success);
+
+  ASSERT_EQ(radio.get_sent_data().size(), 3u) << "one roll-call attempt per channel";
+  for (const auto &sent : radio.get_sent_data()) {
+    IoFrame frame{};
+    ASSERT_TRUE(parse(sent.data(), static_cast<uint8_t>(sent.size()), frame));
+    EXPECT_EQ(frame.ctrl1 & CTRL1_ACK, 0) << "roll-call must stay ack_capable=false regardless of the tunable";
+  }
+}
+
 TEST(HubManagement, ScanPairedDevicesKnownResponderReportedWithoutYamlSnippet) {
   TestableManagementComponent component;
   MockRadio radio;

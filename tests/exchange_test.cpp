@@ -1129,7 +1129,8 @@ RadioRxPacket to_rx_packet(const IoFrame &frame) {
 
 IoFrame build_spe_request(const uint8_t own[3]) {
   IoFrame f{};
-  create_discovery_request(f, own, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false, 0, test::TEST_SYSTEM_KEY);
+  create_discovery_request(f, own, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, /*low_power=*/false,
+                           /*ack_capable=*/false, /*payload_enabled=*/false, /*payload=*/0, test::TEST_SYSTEM_KEY);
   return f;
 }
 

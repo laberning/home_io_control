@@ -19,9 +19,13 @@ and hubs that make good key sources, and the wired bridges that do not currently
 
 ## Onboarding route that worked
 
-**Key extraction, essentially always.** VELUX installations almost all have a control pad or hub
-already, and that hub is what you extract from. Against a KLR 200 this succeeded end to end on the
-first attempt, including the address round.
+**Key extraction, essentially always — when there's a two-way hub.** VELUX installations almost
+all have a control pad or hub already, and that hub is what you extract from. Against a KLR 200
+this succeeded end to end on the first attempt, including the address round.
+
+For an installation with no hub at all — only a 1W wall switch or remote, or a device fresh out of
+the box — key extraction has nothing to extract from. See the SSL entry under Known quirks below
+for the best currently-known route in that case.
 
 Once you hold the key, press **Scan Paired Devices** rather than pairing each device. Every device
 that trusts the key answers with a ready-to-paste snippet.
@@ -64,6 +68,18 @@ moves the window to its predefined air-exchange opening rather than fully open.
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on
   `CMD_EXECUTE`. Set `manufacturer: velux` on any 1W identity aimed at these devices — see
   [Sending 1W commands](../configuration/oneway-transmit.md).
+- **An SSL solar roller shutter ships pre-paired, even if it has never met a hub.** Its included
+  KLI 313 wall switch comes pre-configured and the shutter pre-paired to it, per VELUX's own
+  datasheet. "Never connected to a hub" is not the same as "factory fresh" — a plain Discover &
+  Pair attempt finds nothing because the device already holds a 1W pairing, not because it is
+  unreachable.
+- **The SSL has a documented physical reset, but it's easy to miss.** Older SSL installation
+  manuals (VAS 453334-2013-08 and similar) describe a
+  hidden **P** button under the shutter's top-casing cover: set the nearby slider switch to **I**,
+  wait 10 seconds, then hold **P** until the shutter buzzes three times. This opens a **10-minute**
+  registration window and is re-armable — pressing P again after the window lapses opens a fresh
+  one. The manual only documents this as the path to re-pair the 1W wall switch; whether the same
+  window also admits a 2W Discover & Pair attempt is untested yet.
 
 ## Evidence
 

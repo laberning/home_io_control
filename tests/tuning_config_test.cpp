@@ -38,6 +38,7 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_TRUE(cfg.pairing_discovery_destination_auto);
   EXPECT_FALSE(cfg.pairing_discovery_payload_enabled);
   EXPECT_FALSE(cfg.pairing_discovery_low_power);
+  EXPECT_FALSE(cfg.pairing_discovery_ack_capable);
   EXPECT_EQ(cfg.pairing_discovery_wait_ms, 2000);
   EXPECT_EQ(cfg.pairing_discovery_initial_dwell_ms, 300);
   EXPECT_EQ(cfg.pairing_key_exchange_retries, 3);
@@ -140,6 +141,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   cfg.pairing_discovery_payload_enabled = true;
   cfg.pairing_discovery_payload = 0x00;
   cfg.pairing_discovery_low_power = true;
+  cfg.pairing_discovery_ack_capable = true;
   cfg.pairing_discovery_preamble = 64;
   cfg.lbt_max_retries = 1;
   cfg.lr1121_rx_bandwidth = LR1121RxBandwidth::BW_187_2_KHZ;
@@ -158,6 +160,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   EXPECT_NE(snapshot.find("pairing_discovery_commands=[0x28,0x2E]"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_payload=0x00"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_low_power=true"), std::string::npos);
+  EXPECT_NE(snapshot.find("pairing_discovery_ack_capable=true"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_preamble=64"), std::string::npos);
   EXPECT_NE(snapshot.find("lbt_max_retries=1"), std::string::npos);
 }

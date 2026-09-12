@@ -74,6 +74,7 @@ project controls.
 | **INTEGRA roof-window actuator** | `window_opener` | ✅ Confirmed | — | `io_device_type: window_opener`, which adds the Ventilation Position button | 3 corpus captures; issue #98 |
 | **Devices behind an extracted KLR200 key** | Mixed | ✅ Confirmed | Key extraction, then `scan_paired_devices` | **`low_power: true`** on the affected devices | Issue #87 — the roll-call drew no replies until the devices were declared `low_power: true` |
 | **MSU 100100 5070WL solar awning screen** | `screen` | ⚠️ Partial — open and close work, `stop` is ignored | — | — | Issue #95 — the screen will not complete a 2W handshake mid-motion, so `cover.stop` has nothing to talk to |
+| **SSL solar roller shutter** | `roller_shutter` | ❌ Unsupported so far — Discover & Pair finds nothing | — | — | Seems to ship pre-paired to its included KLI 313 wall switch, so it is never even fresh out of the box; the motor's own physical **P** button reset opens a 10-minute registration window but is untested against 2W discovery — see [VELUX INTEGRA](devices/velux-integra.md) |
 | **INTEGRA SOLAR blinds** | `blind` | 📣 Reported | — | `low_power: true` | Named as a canonical low-power case; no capture |
 | **KLI 313 remote** (driving an SML via KUX 110) | 1W remote | 🔍 Traffic captured only | — | — | 3 corpus captures; issue #95 |
 | **KLI 310 universal wall remote** | 1W remote | 🔍 Traffic captured only | — | — | Corpus `velux_kli310_discovery_alt_sweep` |

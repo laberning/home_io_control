@@ -10,6 +10,12 @@ component emulates an unpaired device so that hub pairs *to it* and hands over i
 It is also the answer when Discover & Pair finds nothing. A device that already holds a hub's key
 has nothing left to respond to a discovery with, so tuning discovery parameters cannot help.
 
+**This needs a hub that runs its own "add a device" wizard.** A 1W-only wall switch or remote — a
+VELUX KLI, a Somfy Smoove — never runs one, has no key-exchange role to answer, and is not a valid
+target for this feature. If the only control in the installation is one of those, this is not your
+route; see [Supported devices](supported-devices.md) for the hubs confirmed to work as an
+extraction source.
+
 > **⚠️ Use only on a hub and network you own or are authorized to modify** — see the project
 > [Disclaimer](../README.md#disclaimer--license).
 

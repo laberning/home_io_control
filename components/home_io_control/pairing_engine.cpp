@@ -332,8 +332,8 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       engine_.record_debug(pairing_stage_name(context.state), attempt, false);
       this->telemetry_.set_phase(context.state);
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
-                                    tuning_->pairing_discovery_payload_enabled, tuning_->pairing_discovery_payload,
-                                    system_key_) ||
+                                    tuning_->pairing_discovery_ack_capable, tuning_->pairing_discovery_payload_enabled,
+                                    tuning_->pairing_discovery_payload, system_key_) ||
           !engine_.transmit_frame(context.req, FREQ_CH2, tuning_->pairing_discovery_preamble)) {
         return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
       }

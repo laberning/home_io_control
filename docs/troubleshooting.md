@@ -33,10 +33,15 @@ What to try, in order:
    [Pairing](pairing.md#diagnosing-a-failed-pairing-attempt).
 2. **Check your timing.** Press the device's PROG button first, then Discover & Pair within two or
    three seconds. The device's pairing window is short.
-3. **Try a Double Power Cut** to force the motor into 2W learning mode, then retry.
-4. **If you own the hub that has it** — a Somfy TaHoma, Connexoon or Connectivity Kit, a VELUX
-   KLF200, KLR200 or KIG300 — use [key extraction](key-extraction.md). It is the route that works
-   for a claimed device.
+3. **Look up the device's own reset procedure and retry.** A Double Power Cut is the common first
+   step, but on its own it has only been confirmed to reopen the same 1W learning state, not 2W
+   discovery — check the device's manual for anything further. A VELUX SSL, for example, has a
+   physical **P** button that opens a 10-minute 2W registration window; see
+   [VELUX INTEGRA](devices/velux-integra.md).
+4. **If a two-way hub already controls it** — a Somfy TaHoma, Connexoon or Connectivity Kit, a
+   VELUX KLF200, KLR200 or KIG300 — use [key extraction](key-extraction.md). It is the route that
+   works for a claimed device. A 1W-only wall switch or remote does not qualify; see
+   [Key extraction](key-extraction.md) for why.
 5. **Only then, tune discovery.** [Radio tuning](configuration/tuning.md) covers the parameters,
    and [A tuning plan](#a-tuning-plan) below is the order to change them in.
 
@@ -163,7 +168,15 @@ is a general starting point, not a guarantee — different devices need differen
    pairing_discovery_preamble: 32   # then 8
    ```
 
-6. **If discovery is intermittent** (responses appear sometimes), widen the overall wait and
+6. **As a last resort, try the ACK-capable flag.** Real VELUX gateway discovery broadcasts have
+   been observed carrying `CTRL1_ACK` set. This is experimental and off by default for a reason
+   — read [`pairing_discovery_ack_capable`](configuration/tuning.md#pairing_discovery_ack_capable)
+   before enabling it, and turn it back off afterward regardless of outcome:
+   ```yaml
+   pairing_discovery_ack_capable: true
+   ```
+
+7. **If discovery is intermittent** (responses appear sometimes), widen the overall wait and
    initial dwell — but leave the hop slice alone or shorten it, not the other way around. Don't
    raise `sx1262_discovery_hop_slice_ms` here: the short default already reflects the measured
    optimum (see [the hop-slice parameters](configuration/tuning.md#sx1276_discovery_hop_slice_ms--sx1262_discovery_hop_slice_ms)),
@@ -174,7 +187,7 @@ is a general starting point, not a guarantee — different devices need differen
    pairing_discovery_initial_dwell_ms: 500
    ```
 
-7. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
+8. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
    after discovery), give the receiver more margin around the turnaround (SX1262 shown; on
    LR1121 boards use the `lr1121_*` equivalents instead). Narrowing the bandwidth rejects more
    noise — see [`sx1262_rx_bandwidth`](configuration/tuning.md#sx1262_rx_bandwidth):
@@ -184,7 +197,7 @@ is a general starting point, not a guarantee — different devices need differen
    sx1262_response_preamble: 12     # then 16
    ```
 
-8. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but read
+9. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but read
    [Safety and compliance](configuration/tuning.md#safety-and-compliance) before you leave a
    relaxed value in a permanent config:
    ```yaml

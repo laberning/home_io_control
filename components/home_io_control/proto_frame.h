@@ -54,7 +54,10 @@ static_assert(FRAME_MAX_DECLARED_SIZE == CTRL0_LENGTH_MASK + 1,
 /// power mode, and priority characteristics.
 /// - VERSION (bits [1:0]): protocol version number (usually 0 for current devices).
 /// - PRIORITY (bit 2): marks a high-priority frame (e.g., discovery, security commands).
-/// - ACK (bit 4): sender can handle 2W responses (set on all outbound 2W frames).
+/// - ACK (bit 4): sender can handle 2W responses. NOT set by default on any outbound frame — see
+///   init_frame() below for why. The one scoped exception is the discovery broadcast phase, gated
+///   by the experimental `pairing_discovery_ack_capable` tuning knob (tuning_config.h), off by
+///   default.
 /// - LOW_POWER (bit 5): device is battery/solar powered; may sleep and requires long preamble to
 ///   wake. Set from the target's per-device YAML `low_power` class (default false); drives both
 ///   this bit and the start-frame preamble (see proto_commands.h, exchange_engine.cpp).
@@ -103,7 +106,10 @@ struct IoFrame {
 ///
 /// Note: CTRL1_ACK is NOT automatically set on outbound frames. Some real-world
 /// devices reject frames with unexpected CTRL1 bits, causing total communication
-/// failure. The ACK constant is retained for inbound frame parsing and logging only.
+/// failure. The ACK constant is retained for inbound frame parsing and logging, and for one
+/// scoped, opt-in exception: create_discovery_request()'s `ack_capable` parameter (proto_commands.h)
+/// can set it on the discovery broadcast only, gated by the `pairing_discovery_ack_capable` tuning
+/// knob (default off, tuning_config.h).
 /// @param f Frame to initialize.
 /// @param is_2w True for 2‑way (default), false for 1‑way.
 /// @param start Set START flag (first frame in exchange).

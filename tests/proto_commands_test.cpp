@@ -389,26 +389,34 @@ TEST(ProtoCommands, CreateChallengeRespHmacSize) {
 
 TEST(ProtoCommands, CreateDiscoveryRequest_0x28_Defaults) {
   IoFrame frame{};
-  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_REQ, BROADCAST_DISCOVER, false, false, 0,
-                                       test::TEST_SYSTEM_KEY))
+  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_REQ, BROADCAST_DISCOVER, false, false, false,
+                                       0, test::TEST_SYSTEM_KEY))
       << "create_discovery_request should succeed for 0x28";
   EXPECT_EQ(frame.cmd, CMD_DISCOVER_REQ) << "command should be CMD_DISCOVER_REQ";
   EXPECT_EQ(frame.data_len, 0) << "0x28 should have no payload";
   EXPECT_TRUE(is_start(frame) && is_end(frame)) << "discovery should be start+end";
   EXPECT_FALSE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=false should be clear";
+  EXPECT_FALSE((frame.ctrl1 & CTRL1_ACK) != 0) << "ack_capable=false should be clear";
 }
 
 TEST(ProtoCommands, CreateDiscoveryRequest_0x28_LowPower) {
   IoFrame frame{};
-  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_REQ, BROADCAST_DISCOVER, true, false, 0,
+  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_REQ, BROADCAST_DISCOVER, true, false, false, 0,
                                        test::TEST_SYSTEM_KEY));
   EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=true should be set";
+}
+
+TEST(ProtoCommands, CreateDiscoveryRequest_0x28_AckCapable) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_REQ, BROADCAST_DISCOVER, false, true, false, 0,
+                                       test::TEST_SYSTEM_KEY));
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_ACK) != 0) << "ack_capable=true should be set";
 }
 
 TEST(ProtoCommands, CreateDiscoveryRequest_0x2E_NoPayload) {
   IoFrame frame{};
   ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_ALT_REQ, BROADCAST_DISCOVER_ALT, false, false,
-                                       0, test::TEST_SYSTEM_KEY))
+                                       false, 0, test::TEST_SYSTEM_KEY))
       << "create_discovery_request should succeed for 0x2E with no payload";
   EXPECT_EQ(frame.cmd, CMD_DISCOVER_ALT_REQ);
   EXPECT_EQ(frame.data_len, 0);
@@ -416,8 +424,8 @@ TEST(ProtoCommands, CreateDiscoveryRequest_0x2E_NoPayload) {
 
 TEST(ProtoCommands, CreateDiscoveryRequest_0x2E_WithPayload) {
   IoFrame frame{};
-  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_ALT_REQ, BROADCAST_DISCOVER_ALT, false, true,
-                                       0x00, test::TEST_SYSTEM_KEY))
+  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_ALT_REQ, BROADCAST_DISCOVER_ALT, false, false,
+                                       true, 0x00, test::TEST_SYSTEM_KEY))
       << "create_discovery_request should succeed for 0x2E with payload";
   EXPECT_EQ(frame.cmd, CMD_DISCOVER_ALT_REQ);
   EXPECT_EQ(frame.data_len, 1);
@@ -426,8 +434,8 @@ TEST(ProtoCommands, CreateDiscoveryRequest_0x2E_WithPayload) {
 
 TEST(ProtoCommands, CreateDiscoveryRequest_0x2A_PayloadSize) {
   IoFrame frame{};
-  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false, 0,
-                                       test::TEST_SYSTEM_KEY))
+  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false,
+                                       false, 0, test::TEST_SYSTEM_KEY))
       << "create_discovery_request should succeed for 0x2A";
   EXPECT_EQ(frame.cmd, CMD_DISCOVER_SPE_REQ);
   EXPECT_EQ(frame.data_len, 12) << "0x2A payload should be 6 random + 6 HMAC bytes";
@@ -440,8 +448,8 @@ TEST(ProtoCommands, CreateDiscoveryRequest_0x2A_HmacCoversCommandByteOnly) {
   // carried an HMAC no device could verify. Real-hardware ground truth for the rule lives in
   // CorpusCryptoSelfAuthenticated (corpus_crypto_test.cpp).
   IoFrame frame{};
-  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false, 0,
-                                       test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false,
+                                       false, 0, test::TEST_SYSTEM_KEY));
   ASSERT_EQ(frame.data_len, HMAC_SIZE * 2);
   const uint8_t *nonce = frame.data;
   const uint8_t *hmac = frame.data + HMAC_SIZE;
@@ -456,17 +464,38 @@ TEST(ProtoCommands, CreateDiscoveryRequest_0x2A_HmacCoversCommandByteOnly) {
       << "the pre-2026-08 [cmd, nonce] transcript must not come back";
 }
 
+TEST(ProtoCommands, CreateDiscoveryRequest_AckCapableCombinesWithEveryOtherFlag) {
+  // ack_capable ORs CTRL1_ACK in above the command switch (proto_commands.cpp), so it must apply
+  // uniformly regardless of which command/payload/low_power combination is requested alongside it
+  // — pinned here so the flag moving inside the switch in a future edit would break a test, not
+  // silently narrow to only the 0x28 case CreateDiscoveryRequest_0x28_AckCapable already covers.
+  IoFrame req_0x2e{};
+  ASSERT_TRUE(create_discovery_request(req_0x2e, test::OWN_ID, CMD_DISCOVER_ALT_REQ, BROADCAST_DISCOVER_ALT,
+                                       /*low_power=*/true, /*ack_capable=*/true, /*payload_enabled=*/true,
+                                       /*payload=*/0x00, test::TEST_SYSTEM_KEY));
+  EXPECT_TRUE((req_0x2e.ctrl1 & CTRL1_ACK) != 0) << "ack_capable must combine with low_power+payload on 0x2E";
+  EXPECT_TRUE((req_0x2e.ctrl1 & CTRL1_LOW_POWER) != 0);
+  EXPECT_EQ(req_0x2e.data_len, 1);
+
+  IoFrame req_0x2a{};
+  ASSERT_TRUE(create_discovery_request(req_0x2a, test::OWN_ID, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER,
+                                       /*low_power=*/false, /*ack_capable=*/true, /*payload_enabled=*/false,
+                                       /*payload=*/0, test::TEST_SYSTEM_KEY));
+  EXPECT_TRUE((req_0x2a.ctrl1 & CTRL1_ACK) != 0) << "ack_capable must apply to 0x2A too, not just 0x28/0x2E";
+  EXPECT_EQ(req_0x2a.data_len, HMAC_SIZE * 2) << "the HMAC payload shape must be unaffected by CTRL1";
+}
+
 TEST(ProtoCommands, CreateDiscoveryRequest_0x2A_RequiresSystemKey) {
   IoFrame frame{};
-  EXPECT_FALSE(
-      create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false, 0, nullptr))
+  EXPECT_FALSE(create_discovery_request(frame, test::OWN_ID, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, false, false,
+                                        false, 0, nullptr))
       << "0x2A should require a system key";
 }
 
 TEST(ProtoCommands, CreateDiscoveryRequest_UnsupportedCommand) {
   IoFrame frame{};
-  EXPECT_FALSE(
-      create_discovery_request(frame, test::OWN_ID, 0xFF, BROADCAST_DISCOVER, false, false, 0, test::TEST_SYSTEM_KEY))
+  EXPECT_FALSE(create_discovery_request(frame, test::OWN_ID, 0xFF, BROADCAST_DISCOVER, false, false, false, 0,
+                                        test::TEST_SYSTEM_KEY))
       << "unsupported command should fail";
 }
 

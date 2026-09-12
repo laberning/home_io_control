@@ -46,6 +46,7 @@ CONF_PAIRING_DISCOVERY_COMMANDS = "pairing_discovery_commands"
 CONF_PAIRING_DISCOVERY_DESTINATION = "pairing_discovery_destination"
 CONF_PAIRING_DISCOVERY_PAYLOAD = "pairing_discovery_payload"
 CONF_PAIRING_DISCOVERY_LOW_POWER = "pairing_discovery_low_power"
+CONF_PAIRING_DISCOVERY_ACK_CAPABLE = "pairing_discovery_ack_capable"
 CONF_PAIRING_DISCOVERY_PREAMBLE = "pairing_discovery_preamble"
 CONF_PAIRING_DISCOVERY_WAIT_MS = "pairing_discovery_wait_ms"
 CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS = "pairing_discovery_initial_dwell_ms"
@@ -160,6 +161,7 @@ UI_NAMES = {
     CONF_PAIRING_DISCOVERY_DESTINATION: "Pairing Discovery Destination",
     CONF_PAIRING_DISCOVERY_PAYLOAD: "Pairing Discovery Payload",
     CONF_PAIRING_DISCOVERY_LOW_POWER: "Pairing Discovery Low Power",
+    CONF_PAIRING_DISCOVERY_ACK_CAPABLE: "Pairing Discovery ACK Capable",
     CONF_PAIRING_DISCOVERY_PREAMBLE: "Pairing Discovery Preamble",
     CONF_PAIRING_DISCOVERY_WAIT_MS: "Pairing Discovery Wait",
     CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS: "Pairing Discovery Initial Dwell",
@@ -222,13 +224,27 @@ _NUMBER_PARAMS = {
     CONF_PAIRING_KEY_EXCHANGE_RETRIES: (1, 5, 1, ""),
 }
 
+# Plain boolean parameters: the C++ TuningConfig field name equals the YAML key, and every one is
+# a simple On/Off select — driving the schema, the select options, and the to_code() assignment
+# from one list each, the same way _NUMBER_PARAMS drives the numeric ones below.
+#
+# pairing_discovery_ack_capable is experimental: see the init_frame() doc in proto_frame.h for why
+# CTRL1_ACK must never become an unconditional default. This knob scopes it to the discovery
+# broadcast only, off by default.
+_BOOL_PARAMS = (CONF_PAIRING_DISCOVERY_LOW_POWER, CONF_PAIRING_DISCOVERY_ACK_CAPABLE)
+_BOOL_SELECT_OPTIONS = ["Off", "On"]
+
 # Select parameters: key -> ordered option list. Single source of truth for both the
 # companion-ID injection and the entity creation.
 _SELECT_OPTIONS = {
     CONF_PAIRING_DISCOVERY_COMMANDS: DISCOVERY_COMMAND_PRESETS,
     CONF_PAIRING_DISCOVERY_DESTINATION: DISCOVERY_DESTINATION_OPTIONS,
     CONF_PAIRING_DISCOVERY_PAYLOAD: PAIRING_DISCOVERY_PAYLOAD_OPTIONS,
-    CONF_PAIRING_DISCOVERY_LOW_POWER: ["Off", "On"],
+    # check-tuning-sync.py's AST scan only understands plain `CONF_*: value` entries in this dict
+    # (no `**` unpacking), so the two boolean rows stay written out individually here even though
+    # _BOOL_PARAMS drives the schema and to_code() loops below.
+    CONF_PAIRING_DISCOVERY_LOW_POWER: _BOOL_SELECT_OPTIONS,
+    CONF_PAIRING_DISCOVERY_ACK_CAPABLE: _BOOL_SELECT_OPTIONS,
     CONF_SX1262_RX_BANDWIDTH: list(SX1262_BANDWIDTH_OPTIONS),
     CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
     CONF_LR1121_RX_BANDWIDTH: list(LR1121_BANDWIDTH_OPTIONS),
@@ -304,7 +320,7 @@ TUNING_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_PAIRING_DISCOVERY_DESTINATION): _validate_discovery_destination,
         cv.Optional(CONF_PAIRING_DISCOVERY_PAYLOAD): _validate_discovery_payload,
-        cv.Optional(CONF_PAIRING_DISCOVERY_LOW_POWER): cv.boolean,
+        **{cv.Optional(key): cv.boolean for key in _BOOL_PARAMS},
         # Numeric parameters share their range with the number-entity bounds via _NUMBER_PARAMS.
         **{
             cv.Optional(key): cv.int_range(min=lo, max=hi)
@@ -423,12 +439,10 @@ def _apply_tuning_config(config, var):
             _assign(tuning, "pairing_discovery_payload_enabled", "true")
             _assign(tuning, "pairing_discovery_payload", f"0x{_parse_payload(payload):02X}")
 
-    if CONF_PAIRING_DISCOVERY_LOW_POWER in config:
-        _assign(
-            tuning,
-            "pairing_discovery_low_power",
-            _cpp_bool(config[CONF_PAIRING_DISCOVERY_LOW_POWER]),
-        )
+    # --- Plain boolean parameters: the C++ struct field name equals the YAML key. ---
+    for key in _BOOL_PARAMS:
+        if key in config:
+            _assign(tuning, key, _cpp_bool(config[key]))
 
     # --- Plain integer parameters: the C++ struct field name equals the YAML key. ---
     for key in _NUMBER_PARAMS:

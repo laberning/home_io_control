@@ -1033,8 +1033,15 @@ ManagementActionResult ManagementActions::scan_paired_devices() {
   bool truncated = false;
   for (uint8_t attempt = 0; attempt < SCAN_CHANNEL_COUNT; attempt++) {
     IoFrame request;
+    // ack_capable is deliberately hardcoded false here, not wired to the pairing_discovery_ack_capable
+    // tunable: analysis ruled out CTRL1_ACK as this roll-call's actual bug, and this scan
+    // targets already-enrolled devices, not the cold/never-enrolled case the tunable exists to test.
+    // Caveat: that ruling-out was reasoning by analogy (a real VELUX hub's own roll-call frame does
+    // carry CTRL1_ACK set, unlike ours), not a direct hardware retest of this exact roll-call against
+    // a real VELUX installation — the one that would have settled it was asked for but never
+    // reported back. Worth an actual retest before trusting this further.
     if (!create_discovery_request(request, node_id_, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, /*low_power=*/false,
-                                  /*payload_enabled=*/false, /*payload=*/0, system_key_)) {
+                                  /*ack_capable=*/false, /*payload_enabled=*/false, /*payload=*/0, system_key_)) {
       result.message = "failed to build roll-call request";
       return result;
     }

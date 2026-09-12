@@ -216,6 +216,9 @@ struct TuningConfig {
   uint8_t pairing_discovery_payload{0};           ///< Optional payload byte (used for 0x2E).
   bool pairing_discovery_payload_enabled{false};  ///< Whether the optional payload is enabled.
   bool pairing_discovery_low_power{false};        ///< Set LOW_POWER flag in discovery frames.
+  bool pairing_discovery_ack_capable{false};      ///< Set ACK (CTRL1_ACK) on the discovery broadcast only.
+                                                  ///< Experimental — see the init_frame() doc in
+                                                  ///< proto_frame.h; default off.
   uint16_t pairing_discovery_preamble{
       PAIRING_DISCOVERY_PREAMBLE};  ///< Preamble for the discovery broadcast (0x28/0x2E) start frame.
   uint16_t pairing_discovery_wait_ms{
