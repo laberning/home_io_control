@@ -34,32 +34,28 @@ with no hub holding its key.
 
 ## Discover & Pair
 
-The button platform adds a Home Assistant button that starts discovery and pairing:
+A flag in the `home_io_control:` block adds a Home Assistant button that starts discovery and
+pairing:
 
 ```yaml
-button:
-  - platform: home_io_control
-    name: "Discover & Pair"
+home_io_control:
+  # ...
+  discover_and_pair_button: true
 ```
-
-### Configuration variables:
-
-- `home_io_control_id` (Optional): Reference to the `home_io_control` hub to use.
-- All standard options from the ESPHome button schema also apply.
 
 ### Notes
 
-- The button defaults to the `config` entity category.
-- This `button:` platform exists only for Discover & Pair. Cover favorite buttons are generated
-  from eligible `cover:` entries, and Scan Paired Devices is enabled from the `home_io_control:`
-  block; neither needs a `button:` entry.
-- The companion "Last Pairing Result" sensor follows the button's own `device_id:`, if one is set.
+- Adds two entities: the "Discover & Pair" button (`config` entity category) and its companion
+  "Last Pairing Result" diagnostic sensor, the machine-readable outcome of the most recent
+  attempt.
+- Both live on the hub's own ESPHome device and, like every other hub-level entity (the arming
+  switches, Scan Paired Devices, tuning numbers/selects), take no `device_id:` of their own.
 
 ## The pairing workflow
 
 1. Choose a `node_id` (6 hex characters) and a `system_key` (32 hex characters) for the hub, and
    keep them stable across firmware updates.
-2. Flash a config with at least the `home_io_control:` hub and the `button:` entity above.
+2. Flash a config with at least the `home_io_control:` hub and `discover_and_pair_button: true`.
 3. Put exactly **one** device into pairing mode, usually a 2 second press of its PROG button. The
    pairing window is short, typically a few seconds.
 4. Press **Discover & Pair** in Home Assistant within that window.
@@ -84,8 +80,8 @@ to answer a discovery with, and no tuning changes that; key extraction does.
 
 ### Diagnosing a failed pairing attempt
 
-Every config with a `button:` entity gets a companion **"Last Pairing Result"** diagnostic text
-sensor, with no YAML needed. It updates after every attempt with a frozen, machine-readable
+`discover_and_pair_button: true` also creates a companion **"Last Pairing Result"** diagnostic text
+sensor alongside the button. It updates after every attempt with a frozen, machine-readable
 summary:
 
 ```

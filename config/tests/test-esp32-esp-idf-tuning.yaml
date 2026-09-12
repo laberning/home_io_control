@@ -56,3 +56,12 @@ home_io_control:
     pairing_discovery_initial_dwell_ms: 200
     pairing_key_exchange_retries: 5
   diagnostic_probes: true
+
+# Keeps the deprecated `button:` platform (button.py) compiled: its CONFIG_SCHEMA, its Phase-1
+# deprecation warning, its FINAL_VALIDATE_SCHEMA guard and its to_code(). This file is the only
+# test config that restates `home_io_control:` wholesale, so it is the only one without
+# `discover_and_pair_button: true` -- which is what keeps this entry from colliding with the
+# hub-created button of the same name (ESPHome refuses two button entities with one object id).
+button:
+  - platform: home_io_control
+    name: "Discover & Pair"

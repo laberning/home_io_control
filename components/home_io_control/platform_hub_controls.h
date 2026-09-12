@@ -6,11 +6,14 @@
 /// @ingroup hioc_platforms
 ///
 /// These act on the hub as a whole and have no device to bind to (HubBoundEntity), and are
-/// created from the `home_io_control:` block or a dedicated `button:` entry rather than a
-/// device-bound platform entry — for the shared reason, see HubBoundEntity in
-/// platform_entity_base.h. They are created dynamically the same way `tuning: {ui_controls: true}`
-/// creates its number/select entities, and `set_parent()` is called with the very hub instance
-/// being built.
+/// created from the `home_io_control:` block rather than a device-bound platform entry — for the
+/// shared reason, see HubBoundEntity in platform_entity_base.h. They are created dynamically the
+/// same way `tuning: {ui_controls: true}` creates its number/select entities, and `set_parent()`
+/// is called with the very hub instance being built.
+///
+/// IOHomeDiscoverButton and IOHomePairingResultTextSensor are also still instantiated by the
+/// deprecated `button:` platform (`button.py`) for the duration of its deprecation window — see
+/// that file's `_warn_deprecated_platform()`.
 
 #include <functional>
 #include <utility>
@@ -104,6 +107,10 @@ class IOHomeRecoverOneWayKeySwitch : public HubArmingSwitch {
 };
 
 /// @brief Button entity that triggers device discovery and pairing when pressed in Home Assistant.
+///
+/// Created when `home_io_control.discover_and_pair_button: true` (see `__init__.py`'s
+/// `_create_discover_and_pair_button()`). The deprecated `button: - platform: home_io_control`
+/// entry (`button.py`) still creates one too, for the duration of its deprecation window.
 /// @ingroup hioc_platforms
 class IOHomeDiscoverButton : public button::Button, public Component, public HubBoundEntity {
  public:
@@ -129,8 +136,8 @@ class IOHomeDiscoverButton : public button::Button, public Component, public Hub
 /// not a state.
 ///
 /// Created only when `home_io_control.scan_paired_devices_button: true` (see `__init__.py`'s
-/// `_create_scan_paired_devices_button()`), unlike IOHomeDiscoverButton which is an unconditional
-/// `button:` platform entry — see the file header for why hub entities come from the hub block.
+/// `_create_scan_paired_devices_button()`) — the same hub-block-flag shape IOHomeDiscoverButton
+/// now uses too; see the file header for why hub entities come from the hub block.
 /// @ingroup hioc_platforms
 class IOHomeScanPairedDevicesButton : public button::Button, public Component, public HubBoundEntity {
  public:

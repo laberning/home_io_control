@@ -162,6 +162,7 @@ home_io_control:
   exposed_senders:
     - !secret example_io_device_linked_remote_id
   accept_foreign_pairing: true
+  discover_and_pair_button: true
 
 cover:
   - platform: home_io_control
@@ -201,7 +202,3 @@ light:
     io_device_type: "light"
     io_subtype: 0
     dimmable: true
-
-button:
-  - platform: home_io_control
-    name: "Discover & Pair"

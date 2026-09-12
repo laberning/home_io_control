@@ -5,7 +5,7 @@ Things that are not required to get running, but make the result nicer to live w
 
 ## Grouping entities into Home Assistant devices
 
-The cover, light, switch, lock and button platforms accept ESPHome's own `device_id:` key. It
+The cover, light, switch and lock platforms accept ESPHome's own `device_id:` key. It
 groups an entity, and every companion entity it generates, under its own Home Assistant device
 instead of everything landing on the one physical ESPHome node. This is unrelated to
 `io_device_id:`, the device's radio address: `device_id:` is purely a Home Assistant grouping.
@@ -36,10 +36,10 @@ cover:
   requires `esphome: friendly_name:`.) An empty name needs an explicit `id:`, because there is
   nothing else to derive the companion entities' IDs from; config validation says so if you forget.
 - Hub-level entities — the key-extraction and 1W key recovery switches, the LR1121 firmware
-  controls, tuning numbers and selects, the Scan Paired Devices button and each 1W identity's
-  command buttons — do not take `device_id:` and always appear on the hub's own ESPHome device.
-  The Discover & Pair button is device-bound like any other platform entity, and its companion
-  sensor follows it — see [Discover & Pair](pairing.md#discover--pair).
+  controls, tuning numbers and selects, the Scan Paired Devices button, the Discover & Pair button
+  and its "Last Pairing Result" sensor (see [Discover & Pair](pairing.md#discover--pair)), and each
+  1W identity's command buttons — do not take `device_id:` and always appear on the hub's own
+  ESPHome device.
 
 ## Composing a slider from 1W buttons
 

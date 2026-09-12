@@ -88,16 +88,13 @@ home_io_control:
   node_id: "A1B2C3"                 # yours, from step 1
   system_key: !secret io_system_key # yours, from step 1
 
-  # Onboarding helpers. Each adds one Home Assistant entity that you need while setting
-  # up and will not touch again afterwards -- see "Tidying up" at the end of this page.
+  # Onboarding helpers. Each adds one or more Home Assistant entities that you need while
+  # setting up and will not touch again afterwards -- see "Tidying up" at the end of this page.
+  discover_and_pair_button: true    # "Discover & Pair" button, for Route A, plus its
+                                    # "Last Pairing Result" sensor
   accept_foreign_pairing: true      # "Recover System Key" switch, for Route B
   scan_paired_devices_button: true  # "Scan Paired Devices" button, lists devices that
                                     # already trust your key
-
-# The Discover & Pair button is not created automatically -- this block is what adds it.
-button:
-  - platform: home_io_control
-    name: "Discover & Pair"
 ```
 
 `logger:` at `DEBUG` matters here: every route below reads its result out of the log.
@@ -252,11 +249,11 @@ by what you are seeing rather than by subsystem, so start there and work from th
 
 ## Tidying up
 
-The three onboarding entities from step 2 have done their job once your devices are in the YAML.
-Drop `accept_foreign_pairing:` and `scan_paired_devices_button:`, and the `button:` block with
-them, then reflash.
+The three onboarding flags from step 2 have done their job once your devices are in the YAML. Drop
+`discover_and_pair_button:`, `accept_foreign_pairing:` and `scan_paired_devices_button:`, then
+reflash.
 
-None of them is dangerous to leave in place; this only spares you three controls you will never
+None of them is dangerous to leave in place; this only spares you the controls you will never
 press in normal operation.
 
 ## Next steps

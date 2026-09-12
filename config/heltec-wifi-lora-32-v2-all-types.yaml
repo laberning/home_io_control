@@ -34,6 +34,7 @@ home_io_control:
   id: home_io_hub
   node_id: !secret hub_node_id
   system_key: !secret hub_system_key
+  discover_and_pair_button: true
 
 cover:
   - platform: home_io_control
@@ -81,8 +82,3 @@ switch:
     io_device_id: "D0661E"
     io_device_type: "on_off_switch"
     io_subtype: 0
-
-button:
-  - platform: home_io_control
-    home_io_control_id: home_io_hub
-    name: "Discover & Pair"

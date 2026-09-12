@@ -66,6 +66,8 @@ home_io_control:
 - `accept_foreign_pairing` (Optional, default: `false`): Adds a "Recover System Key" switch entity for pulling a device's system key from another controller. See [Key extraction](../key-extraction.md).
 - `scan_paired_devices_button` (Optional, default: `false`): Adds a "Scan Paired Devices" button entity — a one-tap trigger for the `scan_paired_devices` action. See
   [Scan Paired Devices](../pairing.md#scan-paired-devices).
+- `discover_and_pair_button` (Optional, default: `false`): Adds a "Discover & Pair" button entity that starts discovery and pairing, plus its companion "Last Pairing Result" diagnostic sensor. See
+  [Discover & Pair](../pairing.md#discover--pair).
 - `diagnostic_probes` (Optional, default: `false`): Enables the `probe_device`/`probe_sweep` actions for sending opcodes this project hasn't fully decoded yet. See
   [Diagnostic probes](../diagnostic-probes.md#calling-the-actions).
 
@@ -155,6 +157,7 @@ home_io_control:
   tcxo_voltage: 1_8V
   node_id: "C0FFEE"
   system_key: "00112233445566778899AABBCCDDEEFF"
+  discover_and_pair_button: true
 
 cover:
   - platform: home_io_control
@@ -164,10 +167,6 @@ cover:
     io_device_type: "awning"
     io_subtype: 0
     invert_position: true
-
-button:
-  - platform: home_io_control
-    name: "Discover & Pair"
 ```
 
 With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position`
@@ -187,7 +186,7 @@ adapting the example above by hand.
 | [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) | Heltec WiFi LoRa32 V4.2, SX1262 + GC1109 FEM | The same, with `fem: gc1109` and a conservative `tx_power` |
 | [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) | Heltec WiFi LoRa32 V4.3, SX1262 + KCT8103L FEM | The same, with `fem: kct8103l` and a conservative `tx_power` |
 | [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) | LilyGO T3-S3, LR1121 | The same, for the LR1121 |
-| [heltec-wifi-lora-32-v2-all-types.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2-all-types.yaml) | Heltec LoRa32 V2, SX1276 | Every supported platform — cover, light, lock, switch, button — with dummy device IDs ready to replace |
+| [heltec-wifi-lora-32-v2-all-types.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2-all-types.yaml) | Heltec LoRa32 V2, SX1276 | Every supported device-bound platform — cover, light, lock, switch — with dummy device IDs ready to replace, plus `discover_and_pair_button: true` |
 | [heltec-wifi-lora-32-v3-monitor.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3-monitor.yaml) | Heltec WiFi LoRa32 V3/V3.2, SX1262 | A passive monitor: keeps the radio in RX, enables `IOHOME_FRAME_LOG`, creates no entities and no pairing button |
 
 **These files are not standalone.** Each pulls its board's SPI bus and radio pin assignment from a
