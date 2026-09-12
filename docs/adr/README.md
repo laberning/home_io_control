@@ -55,6 +55,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0019](0019-declare-what-the-protocol-cannot-report.md) | Declare, don't guess | Undetectable capabilities are YAML options, not inferences |
 | [0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) | Counters are the one exception to 0018 | 1W's rolling sequence cannot be re-derived, so it is persisted — and nothing else is |
 | [0027](0027-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
+| [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is deprecated, not deleted outright |
 
 ### Security
 
@@ -121,6 +122,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0033: The heating send path bypasses the cover status/optimistic machinery](0033-heating-send-path-bypasses-the-cover-machinery.md)
 - [ADR 0034: Doxygen page syntax is generated at staging time, never committed](0034-doxygen-syntax-generated-at-staging-time.md)
 - [ADR 0035: FEM support is a behaviour profile; boards always supply their own pins](0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md)
+- [ADR 0036: Hub-level entities come from `home_io_control:` flags, never a platform entry](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

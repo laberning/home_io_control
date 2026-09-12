@@ -305,11 +305,11 @@ Each name in `commands:` generates a button. Their **IDs follow `<identity_id>_<
 you cannot compose against IDs you cannot predict. Entity names derive from the same pair
 ("Velux Windows Open").
 
-These are created from the `oneway_controllers:` block rather than declared as
-`button: - platform: home_io_control` entries, deliberately. A platform entry would have to infer
-what the button *is* from which keys are present, so a device-bound entry that merely omitted its
-`io_device_id` could be misread as the security-sensitive 1W kind instead of failing validation.
-Creating these from the hub block makes that class of mistake structurally impossible.
+These are created from the `oneway_controllers:` block rather than declared as device-bound
+`button:` entries, deliberately. A platform entry would have to infer what the button *is* from
+which keys are present, so a device-bound entry that merely omitted its `io_device_id` could be
+misread as the security-sensitive 1W kind instead of failing validation. Creating these from the
+hub block makes that class of mistake structurally impossible.
 
 ## Continuous control
 

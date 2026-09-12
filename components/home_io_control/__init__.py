@@ -73,6 +73,7 @@ CONF_EXPOSED_SENDERS = "exposed_senders"
 CONF_ACCEPT_FOREIGN_PAIRING = "accept_foreign_pairing"
 CONF_RECOVER_ONEWAY_KEY = "recover_oneway_key"
 CONF_SCAN_PAIRED_DEVICES_BUTTON = "scan_paired_devices_button"
+CONF_DISCOVER_AND_PAIR_BUTTON = "discover_and_pair_button"
 CONF_ONEWAY_CONTROLLERS = "oneway_controllers"
 # Internal marker recording that an identity's node_id was derived rather than configured, so
 # validation errors and the boot log can say which it was.
@@ -129,6 +130,15 @@ CONF_LR1121_FIRMWARE_UPDATE_BUTTON_ID = "_lr1121_firmware_update_button_id"
 # Internal config key for the "Scan Paired Devices" companion button ID (injected by
 # post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
 CONF_SCAN_PAIRED_DEVICES_BUTTON_ID = "_scan_paired_devices_button_id"
+# Internal config key for the "Discover & Pair" button ID (injected by post-validator; same
+# rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
+CONF_DISCOVER_AND_PAIR_BUTTON_ID = "_discover_and_pair_button_id"
+# Internal config key for the "Last Pairing Result" companion sensor ID that ships with the button
+# above (injected by the same post-validator, gated on the same flag). Deliberately NOT shared
+# with button.py's identically-purposed CONF_PAIRING_RESULT_SENSOR_ID: during the deprecation
+# window (see button.py) both exist, keying different config dicts -- the hub block here, vs. a
+# legacy button: entry there.
+CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID = "_discover_and_pair_result_sensor_id"
 # Internal config key for the "Allow LR1121 Bootloader Rewrite (Irreversible)" companion switch ID
 # (injected by post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above --
 # only present when lr1121_firmware_update.bootloader: is configured).
@@ -169,6 +179,17 @@ IOHomeLr1121FirmwareUpdateButton = home_io_control_ns.class_(
 IOHomeScanPairedDevicesButton = home_io_control_ns.class_(
     "IOHomeScanPairedDevicesButton", button_component.Button, cg.Component
 )
+# Hub-level "Discover & Pair" button and its companion "Last Pairing Result" diagnostic sensor
+# (platform_hub_controls.h). Created from `home_io_control.discover_and_pair_button: true`, the
+# same shape as the entity above. Declared here (rather than in button.py, which historically owned
+# both) because the deprecated `button:` platform (button.py) also still instantiates them for the
+# duration of its deprecation window and imports both names from this module.
+IOHomeDiscoverButton = home_io_control_ns.class_(
+    "IOHomeDiscoverButton", button_component.Button, cg.Component
+)
+IOHomePairingResultTextSensor = home_io_control_ns.class_(
+    "IOHomePairingResultTextSensor", text_sensor_component.TextSensor, cg.Component
+)
 # Generated 1W command buttons and their per-identity diagnostic sensor
 # (platform_oneway_entities.h). Created from the `oneway_controllers:` block, never a `button:`
 # entry, for the same reason as the switch above.
@@ -207,9 +228,10 @@ IOHomeLr1121BootloaderRewriteSwitch = home_io_control_ns.class_(
 def _inject_hub_entity_id(config, *, flag_key, id_key, suffix, cls):
     """Shared body for the hub-level entities gated by a bare boolean flag in the
     `home_io_control:` block (accept_foreign_pairing, recover_oneway_key,
-    scan_paired_devices_button): declare the entity's ID during validation, under the
-    `{hub_id}_{suffix}` name, only when its flag is set. See companion_id_base() in
-    platform_common.py for why this must happen at validation time rather than in to_code().
+    scan_paired_devices_button, discover_and_pair_button): declare the entity's ID during
+    validation, under the `{hub_id}_{suffix}` name, only when its flag is set. See
+    companion_id_base() in platform_common.py for why this must happen at validation time rather
+    than in to_code().
     """
     if not config[flag_key]:
         return config
@@ -246,6 +268,30 @@ def _inject_scan_paired_devices_button_id(config):
         id_key=CONF_SCAN_PAIRED_DEVICES_BUTTON_ID,
         suffix="scan_paired_devices_button",
         cls=IOHomeScanPairedDevicesButton,
+    )
+
+
+def _inject_discover_and_pair_button_id(config):
+    return _inject_hub_entity_id(
+        config,
+        flag_key=CONF_DISCOVER_AND_PAIR_BUTTON,
+        id_key=CONF_DISCOVER_AND_PAIR_BUTTON_ID,
+        suffix="discover_and_pair_button",
+        cls=IOHomeDiscoverButton,
+    )
+
+
+def _inject_discover_and_pair_result_sensor_id(config):
+    """Second ID off the same flag: the button always ships with its "Last Pairing Result" sensor,
+    so both IDs are gated on CONF_DISCOVER_AND_PAIR_BUTTON. _inject_hub_entity_id() already no-ops
+    when the flag is false, so no extra guard is needed here.
+    """
+    return _inject_hub_entity_id(
+        config,
+        flag_key=CONF_DISCOVER_AND_PAIR_BUTTON,
+        id_key=CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID,
+        suffix="pairing_result_sensor",
+        cls=IOHomePairingResultTextSensor,
     )
 
 
@@ -1175,6 +1221,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ACCEPT_FOREIGN_PAIRING, default=False): cv.boolean,
             cv.Optional(CONF_RECOVER_ONEWAY_KEY, default=False): cv.boolean,
             cv.Optional(CONF_SCAN_PAIRED_DEVICES_BUTTON, default=False): cv.boolean,
+            cv.Optional(CONF_DISCOVER_AND_PAIR_BUTTON, default=False): cv.boolean,
             cv.Optional(CONF_ONEWAY_CONTROLLERS, default=[]): cv.ensure_list(
                 ONEWAY_CONTROLLER_SCHEMA
             ),
@@ -1188,6 +1235,8 @@ CONFIG_SCHEMA = cv.All(
     _inject_accept_foreign_pairing_switch_id,
     _inject_recover_oneway_key_switch_id,
     _inject_scan_paired_devices_button_id,
+    _inject_discover_and_pair_button_id,
+    _inject_discover_and_pair_result_sensor_id,
     _validate_oneway_controllers,
     _validate_lr1121_firmware_update,
     _validate_fem,
@@ -1281,6 +1330,9 @@ async def to_code(config):
 
     if config[CONF_SCAN_PAIRED_DEVICES_BUTTON]:
         await _create_scan_paired_devices_button(config, var)
+
+    if config[CONF_DISCOVER_AND_PAIR_BUTTON]:
+        await _create_discover_and_pair_button(config, var)
 
     cg.add(var.set_diagnostic_probes_enabled(config[CONF_DIAGNOSTIC_PROBES]))
 
@@ -1409,6 +1461,44 @@ async def _create_scan_paired_devices_button(config, var):
     entity = await button_component.new_button(entity_config)
     await cg.register_component(entity, entity_config)
     cg.add(entity.set_parent(var))
+
+
+async def _create_discover_and_pair_button(config, var):
+    """Create the hub-level "Discover & Pair" button and its "Last Pairing Result" sensor.
+
+    Same normalization as _create_scan_paired_devices_button() above. The two are always created
+    together: the sensor is the only place a pairing attempt's machine-readable outcome ever
+    appears, so a button without it would be a button whose result you cannot read.
+
+    inherit_esphome_device() is deliberately NOT called: the hub's own config has no `device_id:`
+    slot for these to inherit -- see that function's docstring. This is the one behaviour the
+    deprecated `button:` platform (button.py) had that this flag form cannot reproduce.
+    """
+    button_config = button_component.button_schema(
+        IOHomeDiscoverButton,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+    ).extend(cv.COMPONENT_SCHEMA)(
+        {
+            CONF_ID: config[CONF_DISCOVER_AND_PAIR_BUTTON_ID],
+            CONF_NAME: "Discover & Pair",
+        }
+    )
+    entity = await button_component.new_button(button_config)
+    await cg.register_component(entity, button_config)
+    cg.add(entity.set_parent(var))
+
+    sensor_config = text_sensor_component.text_sensor_schema(
+        IOHomePairingResultTextSensor,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ).extend(cv.COMPONENT_SCHEMA)(
+        {
+            CONF_ID: config[CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID],
+            CONF_NAME: "Last Pairing Result",
+        }
+    )
+    result_sensor = await text_sensor_component.new_text_sensor(sensor_config)
+    await cg.register_component(result_sensor, sensor_config)
+    cg.add(result_sensor.set_parent(var))
 
 
 def _cached_http_fetch(cache_dir):
