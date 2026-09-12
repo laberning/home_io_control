@@ -622,8 +622,12 @@ bool create_discover(IoFrame &f, const uint8_t *own) {
 /// broadcast be authenticated. This requires a valid system key; it will not work for a
 /// motor that has never been paired with this controller's key.
 bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, const uint8_t *dst, bool low_power,
-                              bool payload_enabled, uint8_t payload, const uint8_t *system_key) {
+                              bool ack_capable, bool payload_enabled, uint8_t payload, const uint8_t *system_key) {
   init_frame(f, true, true, true, low_power);
+  // CTRL1_ACK is deliberately not a parameter of init_frame() itself — see that function's doc for
+  // why it must never be set unconditionally. Scoped here to this discovery broadcast only.
+  if (ack_capable)
+    f.ctrl1 |= CTRL1_ACK;
   set_dst(f, dst);
   set_src(f, own);
 

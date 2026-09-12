@@ -78,11 +78,25 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](TuningConfig &t, float v) { t.pairing_key_exchange_retries = static_cast<uint8_t>(v); }, false},
 };
 
-// === Select parameters (7) =====================================================
+// Boolean select rows share one get/set shape (an On/Off toggle over a single TuningConfig
+// field). Template functions, not lambdas: a TuningSelectParam's get/set are plain function
+// pointers with no room for a per-row capture, and instantiating on the member pointer keeps
+// each row below a one-liner without duplicating the On/Off parse.
+template<bool TuningConfig::*Field> std::string bool_select_get(const TuningConfig &t) {
+  return t.*Field ? "On" : "Off";
+}
+template<bool TuningConfig::*Field> bool bool_select_set(TuningConfig &t, const std::string &v) {
+  if (v != "On" && v != "Off")
+    return false;
+  t.*Field = (v == "On");
+  return true;
+}
+
+// === Select parameters (8) =====================================================
 // The setters return false only when the option string is unparseable AND leaving the
-// value untouched is the intended behavior (currently just the bandwidth enum). The
-// destination/payload setters return false for unrecognized values so no radio re-apply
-// is triggered; that has no observable effect since neither applies to the radio.
+// value untouched is the intended behavior (currently the bandwidth enum and the boolean
+// rows). The destination/payload setters return false for unrecognized values so no radio
+// re-apply is triggered; that has no observable effect since neither applies to the radio.
 static constexpr TuningSelectParam SELECT_PARAMS[] = {
     {"sx1262_rx_bandwidth", [](const TuningConfig &t) { return sx1262_bandwidth_to_string(t.sx1262_rx_bandwidth); },
      [](TuningConfig &t, const std::string &v) -> bool {
@@ -173,13 +187,10 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        return false;
      },
      false},
-    {"pairing_discovery_low_power",
-     [](const TuningConfig &t) -> std::string { return t.pairing_discovery_low_power ? "On" : "Off"; },
-     [](TuningConfig &t, const std::string &v) -> bool {
-       t.pairing_discovery_low_power = (v == "On");
-       return true;
-     },
-     false},
+    {"pairing_discovery_low_power", bool_select_get<&TuningConfig::pairing_discovery_low_power>,
+     bool_select_set<&TuningConfig::pairing_discovery_low_power>, false},
+    {"pairing_discovery_ack_capable", bool_select_get<&TuningConfig::pairing_discovery_ack_capable>,
+     bool_select_set<&TuningConfig::pairing_discovery_ack_capable>, false},
 };
 
 const TuningNumberParam *find_tuning_number(const std::string &name) {

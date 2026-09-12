@@ -268,6 +268,8 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
   }
   if (cfg.pairing_discovery_low_power != DEFAULTS.pairing_discovery_low_power)
     result += " pairing_discovery_low_power=" + std::string(cfg.pairing_discovery_low_power ? "true" : "false");
+  if (cfg.pairing_discovery_ack_capable != DEFAULTS.pairing_discovery_ack_capable)
+    result += " pairing_discovery_ack_capable=" + std::string(cfg.pairing_discovery_ack_capable ? "true" : "false");
   // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms, and
   // pairing_key_exchange_retries are plain NUMBER_PARAMS entries — covered by the loop above.
 

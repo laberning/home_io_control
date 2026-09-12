@@ -150,6 +150,7 @@ your device may differ.
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` | Address the discovery frames are sent to. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
 | `pairing_discovery_low_power` | both | `false` | `true` / `false` | Sets the LOW_POWER flag in discovery frames. |
+| `pairing_discovery_ack_capable` | both | `false` | `true` / `false` | Sets the ACK (CTRL1_ACK) flag on the discovery broadcast only. Experimental — see note below. |
 | `pairing_discovery_wait_ms` | both | `2000` | 500–5000 ms | How long to wait for a response after each discovery TX. Also the per-attempt listen window for each of the three roll-call attempts the `scan_paired_devices` action makes. |
 | `pairing_discovery_initial_dwell_ms` | both | `300` | 0–500 ms | Settle delay before the first discovery TX. |
 | `pairing_key_exchange_retries` | both | `3` | 1–5 | Retries for the authenticated key-exchange phase. |
@@ -378,6 +379,20 @@ An optional single `0x00` payload byte, and the `LOW_POWER` frame flag.
 *Observations:* the alternate discovery path is conventionally sent *with* the `0x00` payload
 and `LOW_POWER` set, and some devices filter on them; they have no effect on the plain `0x28`
 path, so only enable them alongside `0x2E`.
+
+#### `pairing_discovery_ack_capable`
+
+Sets `CTRL1_ACK` ("sender can handle 2W responses") on the discovery broadcast (`0x28`/`0x2E`) only
+— not on any other frame in the pairing handshake, and not on the `scan_paired_devices` roll-call
+(`0x2A`), which is a separate, unrelated request path.
+
+*Do not enable this by default.* Setting this bit unconditionally on all outbound frames  —
+real Somfy awning devices went silent (no error, no reply, just dropped the frame) when they saw
+an unexpected `CTRL1` bit. This option exists purely as a diagnostic: real VELUX gateway broadcasts
+have been observed carrying this bit set, so it is worth testing in isolation against a motor that
+otherwise never answers `0x28` during its own learn window (e.g. a solar-powered VELUX SSL that
+has never been paired to any hub). Turn it on, retry Discover & Pair, capture a verbose log, then
+turn it back off regardless of outcome.
 
 #### `pairing_discovery_preamble`
 

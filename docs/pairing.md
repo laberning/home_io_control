@@ -8,22 +8,26 @@ time than anything else on this page.
 
 ```mermaid
 flowchart TD
-    A[Do you have a working<br/>IO-Homecontrol hub today?<br/>TaHoma, KLF200, KLR200,<br/>Connexoon, KIG300…] -->|Yes| B[Use key extraction]
+    A[Do you have a working<br/>two-way IO-Homecontrol hub today?<br/>TaHoma, KLF200, KLR200,<br/>Connexoon, KIG300… — not just<br/>a 1W wall switch or remote] -->|Yes| B[Use key extraction]
     A -->|No| C[Is the device brand new,<br/>or factory reset?]
     C -->|Yes| D[Use Discover &amp; Pair]
-    C -->|No, it was paired<br/>to a hub I no longer have| E[Try a Double Power Cut<br/>+ device specific button<br/>combination to force<br/>2W learning mode]
+    C -->|No, it was paired<br/>to a hub I no longer have,<br/>or shipped pre-paired to<br/>its own 1W remote/switch| E[Look up the device's own<br/>reset procedure — a Double<br/>Power Cut is the common<br/>first step, but confirm the<br/>device-specific button<br/>sequence in its manual too]
     E --> F{Does Discover &amp; Pair<br/>find it now?}
     F -->|Yes| D
-    F -->|No| G[The device still holds<br/>the old hub's key.<br/>Look up the right reset<br/>procedure in the device manual]
+    F -->|No| G[The reset likely only reopened<br/>1W learning, not 2W discovery.<br/>Look up the device's specific<br/>2W-reset gesture if one is<br/>documented]
     B --> H[Then press Scan Paired Devices<br/>to list everything on the key]
     D --> I[Copy the YAML snippet<br/>from the log]
     G --> F
 ```
 
-**Key extraction is the route whenever you already own a hub.** It recovers the same
-`node_id`/`system_key` your devices already trust, so nothing leaves its paired state and every
-device on that installation appears at once. Most field reports of a device that "never responds
-to discovery" have been resolved this way. See [Key extraction](key-extraction.md).
+**Key extraction is the route whenever you already own a two-way hub** — one that runs its own
+"add a device" wizard, such as a TaHoma, Connexoon, Connectivity Kit, KLF200, KLR200 or KIG300. It
+recovers the same `node_id`/`system_key` your devices already trust, so nothing leaves its paired
+state and every device on that installation appears at once. Most field reports of a device that
+"never responds to discovery" have been resolved this way. A 1W-only wall switch or remote (a
+VELUX KLI, a Somfy Smoove) does not run that wizard and has nothing key extraction can recover from
+it — see [Supported devices](supported-devices.md) for which controls qualify. See
+[Key extraction](key-extraction.md).
 
 **Discover & Pair** is the route for a device that is genuinely unclaimed: new, or factory reset,
 with no hub holding its key.
@@ -110,7 +114,7 @@ RF silence, and is reported as `1w_traffic`.
 
 | Advice code | When it fires | What it means |
 |-------------|----------------|----------------|
-| `1w_traffic` | A 1W remote was seen performing 1W pairing (a broadcast to `00003F` with a 1W pairing command byte). The broadcast does not identify a target, so this fires on any 1W pairing gesture in range. | The motor is **not** in 2W learning mode; a PROG press on a 1W remote does not enable 2W discovery. Do a Double Power Cut on the motor to force 2W learning mode, then retry (issue #27). If that still draws nothing and the device has a working hub, it is almost certainly paired to that hub: use [key extraction](key-extraction.md). |
+| `1w_traffic` | A 1W remote was seen performing 1W pairing (a broadcast to `00003F` with a 1W pairing command byte). The broadcast does not identify a target, so this fires on any 1W pairing gesture in range. | The motor is **not** in 2W learning mode; a PROG press on a 1W remote does not enable 2W discovery. A Double Power Cut alone has only been confirmed to reopen that same 1W state, not a 2W one — look up the device's own manufacturer-documented reset instead. A VELUX SSL, for example, has a physical **P** button that opens a 10-minute 2W registration window (see [VELUX INTEGRA](devices/velux-integra.md)); other product families document their own gesture in their manual. If a **two-way** hub already controls the device (a TaHoma, KLF200, KLR200, KIG300, and similar — not a 1W wall switch or remote), it is almost certainly paired to that hub instead: use [key extraction](key-extraction.md). |
 | `channel_busy` | Listen-before-talk retries were exhausted and the same source was heard repeatedly during the wait. | A repeating beacon (usually a nearby remote or sensor) is flooding the channel and delaying discovery transmissions. Try again, or tune `lbt_max_retries`/`lbt_rssi_threshold_dbm` — see [Radio tuning](configuration/tuning.md). |
 | `foreign_controller` | A discovery response (0x29) was seen addressed to a node ID that is not this hub's. | Another controller (a TaHoma, say) is pairing the same device right now. Wait for it to finish, or make sure yours is the only controller with the device in pairing mode. |
 | `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Separates "RF dead" (antenna, wiring, wrong tuning) from "device is not in pairing mode". Check the antenna and radio tuning before pressing PROG again. |

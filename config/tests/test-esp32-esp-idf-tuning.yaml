@@ -51,6 +51,7 @@ home_io_control:
     pairing_discovery_destination: "0x00003F"
     pairing_discovery_payload: "0x00"
     pairing_discovery_low_power: true
+    pairing_discovery_ack_capable: true
     pairing_discovery_wait_ms: 3000
     pairing_discovery_initial_dwell_ms: 200
     pairing_key_exchange_retries: 5
