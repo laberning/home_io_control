@@ -195,7 +195,7 @@ bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentit
 
   // STOP then DOWN, per the KLI manual's "press PAIR, then STOP then DOWN" registration-completion
   // step (the manual's own timing window is not established as a hard requirement here -- see ADR
-  // 0032's amendment). Broadcast, the identity's effective ACEI, one sequence each. A partial miss
+  // 0032). Broadcast, the identity's effective ACEI, one sequence each. A partial miss
   // here only warns -- the sweep above is what registers us.
   const uint8_t acei = effective_execute_acei(identity);
   const bool stopped = this->send_(

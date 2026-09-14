@@ -170,13 +170,21 @@ inline PairingKeyChallengeDisposition classify_pairing_key_challenge(const IoFra
 /// CMD_EXECUTE and differ only in `main0`, so a command-only key silently discards a stop that
 /// follows a move within the window — losing the sender event, the optimistic-target clear, and
 /// the immediate poll that a stop is supposed to trigger.
+///
+/// For a frame with no decoded intent the destination is part of the key as well. A VELUX KLI's
+/// GEAR press sends its `0x2E` to several device classes a few hundred ms apart, and the classes it
+/// names are the ones a new controller has to enroll on; keying on src+cmd alone would log only the
+/// first of them.
+/// Intent-bearing frames keep ignoring the destination: they fire sender events and optimistic
+/// state, where one press must stay one press.
 struct OneWayDedupState {
-  std::string src_id;      ///< Source node ID of the last processed frame; empty before the first.
-  uint8_t cmd{0};          ///< Command byte.
-  bool has_intent{false};  ///< Whether main0/main1 were decoded (execute / activate-mode only).
-  uint8_t main0{0};        ///< First main byte — what distinguishes a move from a stop.
-  uint8_t main1{0};        ///< Second main byte.
-  uint32_t timestamp{0};   ///< millis() when the frame was processed.
+  std::string src_id;           ///< Source node ID of the last processed frame; empty before the first.
+  uint8_t cmd{0};               ///< Command byte.
+  bool has_intent{false};       ///< Whether main0/main1 were decoded (execute / activate-mode only).
+  uint8_t main0{0};             ///< First main byte — what distinguishes a move from a stop.
+  uint8_t main1{0};             ///< Second main byte.
+  uint32_t timestamp{0};        ///< millis() when the frame was processed.
+  uint8_t dst[NODE_ID_SIZE]{};  ///< Destination address; compared only when `has_intent` is false.
 };
 
 /// Decide whether an incoming 1W frame repeats the previous one inside the burst window.
@@ -190,6 +198,8 @@ inline bool is_duplicate_1w_frame(const OneWayDedupState &last, const OneWayDedu
   if (last.src_id != incoming.src_id || last.cmd != incoming.cmd || last.has_intent != incoming.has_intent)
     return false;
   if (incoming.has_intent && (last.main0 != incoming.main0 || last.main1 != incoming.main1))
+    return false;
+  if (!incoming.has_intent && std::memcmp(last.dst, incoming.dst, NODE_ID_SIZE) != 0)
     return false;
   // Unsigned arithmetic makes this correct across the millis() wrap.
   return (incoming.timestamp - last.timestamp) < window_ms;

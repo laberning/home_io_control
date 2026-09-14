@@ -1030,10 +1030,11 @@ def _validate_oneway_controllers(config):
                 identity_id,
             )
 
-        # A VELUX enrollment 0x30 sweep goes to {roller_shutter, awning, dual_shutter} and never
-        # screen/blind/venetian_blind -- no VELUX remote pairs on those classes (issue #74 capture).
-        # If this identity is a screen/blind that
-        # will enroll and hasn't narrowed the sweep itself, say so: enrollment ignores io_device_type.
+        # The velux profile's default 0x30 sweep is the exterior-shading set a KLI 310/313 uses
+        # ({roller_shutter, awning, dual_shutter}). An interior-blind remote (KLI 312) sweeps
+        # blind/venetian_blind instead, so a screen/blind identity that enrolls with the default
+        # sweep almost certainly misses the actuator. Enrollment ignores io_device_type,
+        # so point the user at enrollment_classes: and at the KLI's own 0x2E lines that name the classes.
         if (
             identity[CONF_MANUFACTURER] == MANUFACTURER_OPTIONS["velux"]
             and identity[CONF_ENROLLMENT]
@@ -1046,10 +1047,13 @@ def _validate_oneway_controllers(config):
             )
         ):
             _LOGGER.warning(
-                "home_io_control: oneway_controllers '%s' is a VELUX %s with enrollment: true. The "
-                "enrollment 0x30 sweep will target roller_shutter/awning/dual_shutter, NOT this "
-                "io_device_type -- no VELUX remote pairs on screen/blind. Set enrollment_classes: "
-                "explicitly (e.g. [awning]) if you know which class your actuator listens on.",
+                "home_io_control: oneway_controllers '%s' is a VELUX %s with enrollment: true, but "
+                "enrollment_classes: is unset, so the enrollment 0x30 sweep uses the exterior-shading "
+                "default roller_shutter/awning/dual_shutter and ignores io_device_type. This device may "
+                "enroll on other classes: set enrollment_classes: (a KLI 312 interior blind uses "
+                "[blind, venetian_blind]). To find yours, press GEAR on the existing remote and use "
+                "the classes named in its 'rx 1W remote ... (0x2E)' DEBUG log lines -- see 'Finding "
+                "your enrollment classes' in the 1W transmit docs.",
                 identity_id,
                 next(
                     name

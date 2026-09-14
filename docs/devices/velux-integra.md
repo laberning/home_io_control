@@ -2,7 +2,7 @@
 <!-- doxygen-label: dev_velux_integra -->
 
 One landing page for the VELUX side of the ecosystem: the roof-window actuators, the control pads
-and hubs that make good key sources, and the wired bridges that do not currently work.
+and hubs that make good key sources, the wired bridges, and the products controlled over 1W.
 
 ## What works
 
@@ -15,7 +15,8 @@ and hubs that make good key sources, and the wired bridges that do not currently
 | MSU 100100 solar awning screen | ⚠️ Partial — open and close work, `stop` is ignored |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
 | SML shutter via KUX 110 | ❌ Nothing answers discovery |
-| KUX 110 / KUX 100 1W enrollment | ❌ Enrollment transmits, the device never reacts |
+| KUX 110, 1W enrollment + control | ✅ Confirmed — GEAR on the KLI, then Enroll, `low_power: false` |
+| Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |
 
 ## Onboarding route that worked
 
@@ -24,8 +25,11 @@ all have a control pad or hub already, and that hub is what you extract from. Ag
 this succeeded end to end on the first attempt, including the address round.
 
 For an installation with no hub at all — only a 1W wall switch or remote, or a device fresh out of
-the box — key extraction has nothing to extract from. See the SSL entry under Known quirks below
-for the best currently-known route in that case.
+the box — key extraction has nothing to extract from. If a KLI remote already drives the product,
+try **1W enrollment**, the route confirmed on a KUX 110 and on KLI 312 interior blinds: press GEAR
+on that remote until the product jogs, then press the hub's Enroll button. It gives open/close/stop without status (see
+[Sending 1W commands](../configuration/oneway-transmit.md)). For 2W on such an installation, see
+the SSL entry under Known quirks below.
 
 Once you hold the key, press **Scan Paired Devices** rather than pairing each device. Every device
 that trusts the key answers with a ready-to-paste snippet.
@@ -64,13 +68,16 @@ moves the window to its predefined air-exchange opening rather than fully open.
   it: that means the registered YAML and the device's self-reported power class disagree.
 - **The MSU solar awning screen ignores `stop` mid-motion.** It will not complete a 2W handshake
   while it is travelling, so there is nothing for the stop command to talk to. Open and close both
-  work. Reported in issue #95; there is no hub-side fix, and the 1W route needs enrollment that
-  does not currently take on this family.
-- **1W enrollment into the KUX bridges does not work yet.** The hub transmits the gesture and the
-  device never reacts. All three typed classes the VELUX gesture sweeps (`roller_shutter`,
-  `awning`, `dual_shutter`) have been tried. The current lead is the identity's radio preamble: set
-  `low_power: false` on a 1W identity aimed at a mains-powered VELUX receiver like a KUX 110 and
-  retry (see [Sending 1W commands](../configuration/oneway-transmit.md)). Reported in issue #74.
+  work. Reported in issue #95; there is no 2W fix. A 1W identity could send the stop instead, but
+  1W enrollment has not been retried on this screen since it was confirmed on other VELUX products
+  (`low_power: true` for a solar receiver; read the enrollment classes from its remote's `0x2E`).
+- **1W enrollment is a GEAR press on the existing KLI, not a button on the product.** Press GEAR
+  (the cog) on the KLI that already drives the product for about 1 second; the product jogs, then
+  press Enroll on the hub. The enrollment classes must match the remote: the default fits a KLI
+  310/313 (exterior shading, e.g. a KUX 110), while a KLI 312 interior blind needs
+  `enrollment_classes: [blind, venetian_blind]`. The remote's own `0x2E` log lines after GEAR name
+  the classes. Confirmed in issue #74 (see
+  [Sending 1W commands](../configuration/oneway-transmit.md)).
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on
   `CMD_EXECUTE`. Set `manufacturer: velux` on any 1W identity aimed at these devices — see
   [Sending 1W commands](../configuration/oneway-transmit.md).
@@ -94,7 +101,7 @@ replies, from issue #98), 1 for the successful KLR 200 key extraction (node `810
 4 for the KIG 300 hub (node `BEFEDB`), 3 for KLR200 ↔ KUX100 bridge traffic, and 3 for the KLI 310
 and KLI 313 remotes.
 
-Field reports: #74 (KUX enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
+Field reports: #74 (KUX 110 and KLI 312 blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
 screen stop), #98 (INTEGRA probes).
 
 ## See also

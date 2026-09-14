@@ -156,8 +156,8 @@ class OneWayTransmitter {
   /// gaps alone are 3 * ONEWAY_BURST_INTERVAL_MS = ~120 ms of pure delay; how much airtime the
   /// four copies themselves add depends on `power_class`: `LEGACY_LONG` puts `LONG_PREAMBLE` on
   /// every copy, ≈1.0–1.2 s per burst total (measured on SX1276, issue #74's logs: ~1.2 s);
-  /// `ALWAYS_ALIVE` puts the live `normal_start_preamble` on every copy, estimated at roughly
-  /// 150–250 ms total (not yet measured on air); `LOW_POWER` sits between the two (one long copy,
+  /// `ALWAYS_ALIVE` puts the live `normal_start_preamble` on every copy, ≈200 ms per burst
+  /// (measured on SX1276, issue #74); `LOW_POWER` sits between the two (one long copy,
   /// three normal). Per ADR 0013 all radio work happens on the ESPHome loop and the operation
   /// queue is the concurrency model; an authenticated 2W exchange already blocks far longer than
   /// this. Scheduling the repeats through a timeout would add a second concurrency model and would
@@ -184,9 +184,10 @@ class OneWayTransmitter {
   /// **`EnrollGesture::VELUX_KLI`** (manufacturer velux): `0x39` to the all-devices address, then
   /// a `0x30` burst to **each** class in `effective_enrollment_classes()` under one shared
   /// sequence, then a STOP and a DOWN EXECUTE to the all-devices address at the VELUX ACEI — the
-  /// KLI-manual "press PAIR, then STOP then DOWN within 3 seconds" registration completion. Matches
-  /// the issue #74 KLI 310 capture and `samr037/iohc-flipper` `tx_runner.c`. The STOP+DOWN half is
-  /// unconfirmed against a VELUX capture
+  /// KLI manual's STOP-then-DOWN registration completion. Matches the issue #74 KLI 310 capture
+  /// and has enrolled a KUX 110 and KLI 312 interior blinds on
+  /// real hardware (the closing DOWN is the visible success signal). The STOP+DOWN frames themselves
+  /// are not matched against a VELUX capture
   /// (`tests/corpus/captures/enrollment/synthetic_enrollment_velux_kli_prog_sweep.yaml`).
   ///
   /// **The `0x30`'s MAC trailer** is configurable via `enrollment_with_mac:` (default `false`, no
@@ -196,8 +197,8 @@ class OneWayTransmitter {
   /// **Blocks for the whole gesture** feeding the watchdog in the gaps. The VELUX path is 6 bursts
   /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN); with the identity's power class unset (legacy),
   /// each burst carries `LONG_PREAMBLE` on every copy, ≈6–7 s total (SX1276 logs in issue #74
-  /// measured ~7.4 s, ~10.6 s with `enrollment_with_mac: true`); estimated well under 2 s with
-  /// `low_power: false` (ADR 0038), not yet measured on air. This is a user-initiated,
+  /// measured ~7.4 s, ~10.6 s with `enrollment_with_mac: true`); ~1.2 s with `low_power: false`
+  /// (ADR 0038, measured on SX1276 in issue #74). This is a user-initiated,
   /// once-per-device action, the same shape as the pairing button (`pairing_discovery_wait_ms` →
   /// 5000).
   /// @param controller_id YAML handle of the controller identity to register.

@@ -34,12 +34,12 @@ match.
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
 | **Sunea IO awning motor** | `awning` | ✅ Confirmed | Discover & Pair | `io_device_type: awning` | 31 corpus captures, across all three radios |
-| **Sunea IO 70/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | Issue #65 |
-| **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | Issue #65 |
-| **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | Issue #65; corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
+| **Sunea IO 70/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
+| **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
+| **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
 | **Izymo IO dimmer** | `light` | ✅ Confirmed, including dimming | Discover & Pair, including repeated reset-and-repair cycles | `dimmable: true` | 39 corpus captures; the `light:` platform's hardware validation |
 | **J406 IO shutter motor** | `external_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: external_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard` |
-| **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | Issue #103, on a Heltec V3.2 / SX1262 |
+| **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | on a Heltec V3.2 / SX1262 |
 | **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction inversion is applied automatically for this family | Corpus `somfy_awning_discovery_spe_paired_rollcall` |
 | **Awning actuator (IO Vertical)** | `awning` | ✅ Confirmed for discovery | Discover & Pair | — | Corpus `somfy_awning_discovery_lab_response` |
 | **RS100 IO / RS100 Solar** | `awning` / `roller_shutter` | ⚠️ Partial — pairing needs a retried key exchange | Discover & Pair, retried | `low_power: true` | 7 corpus captures including both a success and a key-transfer stall |
@@ -61,7 +61,7 @@ project controls.
 | Device | Role | Status | Evidence |
 |---|---|---|---|
 | **Smoove IO wall switch** | 1W remote | ✅ Confirmed for listening, and for re-pairing a reset Izymo | 8 corpus captures |
-| **TaHoma Switch** | Third-party hub | ✅ Confirmed as a key-extraction source | Corpus `somfy_tahoma_pairing_key_extraction_success_sx1276`; issue #27 |
+| **TaHoma Switch** | Third-party hub | ✅ Confirmed as a key-extraction source | Corpus `somfy_tahoma_pairing_key_extraction_success_sx1276` |
 | **Connectivity Kit** | Third-party hub | ⚠️ Partial — extraction stalled | Corpus `somfy_connectivity_kit_pairing_key_extraction_stall` |
 | **Smoove IO remote** | 1W remote | ✅ Confirmed for listening | Corpus `somfy_smoove_enrollment_monitor_sx1276`; issue #27 |
 
@@ -69,19 +69,21 @@ project controls.
 
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
-| **KLR 200 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | Issue #80 — succeeded end to end on the first attempt, including the address round; corpus `velux_klr200_pairing_key_extraction_success` |
+| **KLR 200 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | succeeded end to end on the first attempt, including the address round; corpus `velux_klr200_pairing_key_extraction_success` |
 | **KIG 300 hub** | Third-party hub | ⚠️ Partial — one extraction succeeded, one stalled | Key extraction | `accept_foreign_pairing: true` | 4 corpus captures |
 | **INTEGRA roof-window actuator** | `window_opener` | ✅ Confirmed | — | `io_device_type: window_opener`, which adds the Ventilation Position button | 3 corpus captures; issue #98 |
 | **Devices behind an extracted KLR200 key** | Mixed | ✅ Confirmed | Key extraction, then `scan_paired_devices` | **`low_power: true`** on the affected devices | `scan_paired_devices` runs a low-power pass built to reach sleeping devices without any YAML declaration; `low_power: true` is still needed for directed commands once they are registered |
-| **MSU 100100 5070WL solar awning screen** | `screen` | ⚠️ Partial — open and close work, `stop` is ignored | — | — | Issue #95 — the screen will not complete a 2W handshake mid-motion, so `cover.stop` has nothing to talk to |
+| **MSU 100100 5070WL solar awning screen** | `screen` | ⚠️ Partial — open and close work, `stop` is ignored | — | — | the screen will not complete a 2W handshake mid-motion, so `cover.stop` has nothing to talk to |
 | **SSL solar roller shutter** | `roller_shutter` | ❌ Unsupported so far — Discover & Pair finds nothing | — | — | Seems to ship pre-paired to its included KLI 313 wall switch, so it is never even fresh out of the box; the motor's own physical **P** button reset opens a 10-minute registration window but is untested against 2W discovery — see [VELUX INTEGRA](devices/velux-integra.md) |
 | **INTEGRA SOLAR blinds** | `blind` | 📣 Reported | — | `low_power: true` | Named as a canonical low-power case; no capture |
-| **KLI 313 remote** (driving an SML via KUX 110) | 1W remote | 🔍 Traffic captured only | — | — | 3 corpus captures; issue #95 |
+| **KLI 313 remote** (driving an SML via KUX 110) | 1W remote | 🔍 Traffic captured only | — | — | 3 corpus captures |
 | **KLI 310 universal wall remote** | 1W remote | 🔍 Traffic captured only | — | — | Corpus `velux_kli310_discovery_alt_sweep` |
+| **KLI 312 interior-blind remote** | 1W remote | 🔍 Traffic reported only | — | — | GEAR `0x2E` goes to `blind` and `venetian_blind`; no corpus capture |
 | **KUX 100 / PK03 / PK04 wired bridge** | Bridge | 🔍 Traffic captured only | — | — | 3 corpus captures of KLR200 ↔ KUX100 traffic |
 | **KLF 200** | Third-party hub | 📣 Reported as a key source | — | — | Named in several issue threads; no capture |
 | **SML shutter via KUX 110** | `roller_shutter` | ❌ Unsupported — nothing answers discovery | — | — | Issue #17 |
-| **KUX 110 / KUX 100 wired bridge, 1W enrollment** | — | ❌ Unsupported — enrollment transmits, the device never reacts | All three swept classes tried (`roller_shutter`, `awning`, `dual_shutter`) | `oneway_controllers:` with `enrollment: true` | Issue #74. Current lead: set `low_power: false` on the identity (mains-powered receiver) and retest — see [Sending 1W commands](configuration/oneway-transmit.md). |
+| **KUX 110 wired bridge** | Bridge, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1276) | 1W enrollment: GEAR on the existing KLI 310, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `low_power: false` | see [Sending 1W commands](configuration/oneway-transmit.md) |
+| **Interior blinds behind a KLI 312** | `venetian_blind`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1262) | 1W enrollment: GEAR on the existing KLI 312, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |  |
 
 ### Other vendors
 

@@ -10,27 +10,35 @@ ADR 0031 made the 1W *control* frames (`CMD_EXECUTE`) vendor-correct via
 `CMD_ONEWAY_REMOVE` 0x39) were still shaped entirely from Somfy: `send_enrollment()`
 sent one `0x39` then one `0x30`, both to the identity's own `io_device_type`.
 
-A real VELUX KLI 310/311/312/313 PROG press does something structurally different.
-Reconstructed from two independent sources — the issue #74 capture of a real KLI 310
-gesture (decoded with this project's own `broadcast_target_type()`) and
+A real VELUX KLI 310/311/312/313 registration gesture does something structurally
+different. Reconstructed from two independent sources — the issue #74 capture of a
+real KLI 310 gesture (decoded with this project's own `broadcast_target_type()`) and
 `samr037/iohc-flipper`'s `tx_runner.c` (`send_pair_with_identity`, built from real
 KLI 313 "rings" captures), cross-checked against the KLI manual:
 
 1. **`0x39` clear** goes to the all-devices broadcast `00 00 3F`, not a typed class.
-2. **`0x30` add-controller is swept** across exactly three typed classes —
-   `roller_shutter` (`00 00 BF`), `awning` (`00 00 FF`), `dual_shutter` (`00 03 7F`)
-   — under **one shared rolling sequence**. A KLI remote never enrolls to
-   `screen` / `blind` / `venetian_blind`; the receiver filters by its own class and
-   only the matching frame registers the controller.
+2. **`0x30` add-controller is swept** across several typed classes under **one shared
+   rolling sequence**. The receiver presumably filters by its own class, so only the
+   matching frame registers the controller. The class set depends on the remote. A KLI 310/313
+   (exterior shading) sweeps `roller_shutter` (`00 00 BF`), `awning` (`00 00 FF`) and
+   `dual_shutter` (`00 03 7F`). A KLI 312 driving interior blinds names `blind`
+   (`00 02 BF`) and `venetian_blind` (`00 00 7F`) in its `0x2E` instead, and a sweep
+   over those registers.
 3. **A STOP then a DOWN `CMD_EXECUTE`** follow the sweep, to `00 00 3F` at the VELUX
-   ACEI — the KLI manual's "press PAIR, then STOP then DOWN within 3 seconds"
-   registration completion. The motor opens the 3-second window when it receives
-   the `0x30`.
+   ACEI — the KLI manual's STOP-then-DOWN registration completion.
+
+The receiver side is **GEAR (the cog button), pressed for about 1 second on an
+already-registered VELUX control**. The product jogs briefly as a "ready" signal, and
+that control sends a `0x2E` burst to a set of device classes. In both confirmed
+enrollments (below), sweeping exactly those classes registered the hub.
+The manual's "STOP then DOWN within 3 seconds" wording belongs to the from-scratch
+registration flow that starts with P on the product itself, not to this add-a-control
+flow. The window after GEAR is much longer: an enrollment 31 seconds after the `0x2E`
+succeeded.
 
 The `0x39` prelude itself is **not** vendor-specific — a real Somfy Smoove capture
 (`somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`) and the KLI 310
-both send it, and `iohc-flipper` sends it for both vendors. An earlier plan draft to
-make it opt-in was wrong and is not adopted.
+both send it, and `iohc-flipper` sends it for both vendors, so it is not opt-in.
 
 ## Decision
 
@@ -41,14 +49,17 @@ make it opt-in was wrong and is not adopted.
   (`{roller_shutter, awning, dual_shutter}` for VELUX; all-`UNKNOWN` for SOMFY).
 
 `resolve_oneway_wire_profile()` maps manufacturer `velux` → `VELUX_KLI` + that list;
-`somfy` / unset / any unprofiled vendor → `SOMFY` + empty. A per-identity
-`enrollment_classes:` YAML key overrides the profile list (via
-`effective_enrollment_classes()`), for a user who has narrowed which class their
-actuator listens on.
+`somfy` / unset / any unprofiled vendor → `SOMFY` + empty. The exterior-shading set is
+the profile default because it is the one captured from a real KLI gesture. A
+per-identity `enrollment_classes:` YAML key overrides it (via
+`effective_enrollment_classes()`). That is how an interior-blind identity gets
+`[blind, venetian_blind]`. The classes to set are the ones the existing remote's `0x2E`
+burst targets after a GEAR press, visible in the DEBUG `rx 1W remote … targets …` log
+lines (which keep one line per destination for intent-less frames).
 
 `send_enrollment()` dispatches on `enroll_gesture`:
 
-- **`SOMFY`** (`send_somfy_enrollment_()`): byte-for-byte the pre-ADR-0032 behaviour
+- **`SOMFY`** (`send_somfy_enrollment_()`): byte-for-byte the historical behaviour
   — `0x39` then `0x30`, both to `io_device_type`, `enrollment_with_mac` honoured.
 - **`VELUX_KLI`** (`send_velux_kli_enrollment_()`): `0x39` → `00 00 3F`; then
   `send_enroll_sweep_()` reserves one sequence and bursts a `0x30` to each
@@ -59,75 +70,49 @@ actuator listens on.
 
 The schema warns when a `manufacturer: velux` + `enrollment: true` identity has an
 `io_device_type` of `screen` / `blind` / `venetian_blind` and no
-`enrollment_classes:` override — the sweep will ignore that `io_device_type`.
+`enrollment_classes:` override. The default sweep ignores that `io_device_type` and
+targets the exterior-shading classes, which such a device is unlikely to listen on.
+The warning names the KLI 312 set and the `0x2E` lines as the fix.
 
 ### Blocking time
 
-> See the [Amendment](#amendment-2026-09) below — this section's cadence is superseded for any
-> identity that sets `low_power:` (ADR 0038).
+The VELUX gesture is 6 bursts (`0x39` + a 3-class `0x30` sweep + STOP + DOWN), and it
+blocks `loop()` for the whole gesture, feeding the watchdog in the gaps. How long
+depends on the identity's `low_power:` power class (ADR 0038):
 
-The VELUX gesture is 6 bursts (`0x39` + a 3-class `0x30` sweep + STOP + DOWN), each
-~1 s on air with `LONG_PREAMBLE` on every copy — so it blocks `loop()` for ~6 s,
-feeding the watchdog in the gaps. This is ~2.3× ESPHome's 2550 ms loop-warning
-threshold (ADR 0013). **The exemption is taken knowingly**: 1W enrollment is a
+- **Unset** (`LONG_PREAMBLE` on every copy): ~1.2 s per burst, ~7.4 s total measured on
+  SX1276, ~10.6 s with `enrollment_with_mac: true`. That is well over ESPHome's 2550 ms
+  loop-warning threshold (ADR 0013).
+- **`false`** (short `normal_start_preamble` on every copy): ~200 ms per burst, ~1.2 s
+  total measured on SX1276, under the threshold.
+- **`true`** (one long copy, three short) sits in between.
+
+**The exemption for the long shapes is taken knowingly**: 1W enrollment is a
 user-initiated, once-per-device action, the same shape as the pairing button, whose
-`pairing_discovery_wait_ms` already goes to 5000. Shrinking it (a short preamble on
-burst copies 2-4, what real remotes do) would change the on-air shape of *every* 1W
-transmit including the hardware-validated Somfy path — its own change, its own
-hardware gate.
-
-### The 3-second window may not fit
-
-> See the [Amendment](#amendment-2026-09) below — this section's central claim is unsupported.
-
-The KLI manual specifies STOP then DOWN **within 3 seconds** — of what, the manual
-does not say, but the motor most plausibly opens that window when it receives the
-`0x30`. Three `0x30` bursts alone are ~2.9 s at the `LONG_PREAMBLE`-on-every-copy
-cadence, so the STOP lands ~4 s and the DOWN ~5 s after the *first* `0x30` —
-plausibly outside the window the follow-up exists to hit. This is the strongest
-reason the shipped gesture may be structurally unable to complete a VELUX
-enrollment, and it is not resolvable from the desk: the short-preamble follow-up
-above would cut a burst to ~230 ms and largely remove the problem, and the issue
-#74 "capture a real KLI PROG gesture in full" ask is the only artefact whose
-inter-frame timing settles it. Shipped as-is on the judgement that getting the
-*frame shapes* right is the prerequisite either way.
+`pairing_discovery_wait_ms` already goes to 5000. Gesture duration is an airtime
+concern, not an established cause of a failed enrollment, given the long window
+after GEAR.
 
 ## Consequences
 
-- A `manufacturer: velux` enroll button now emits the KLI gesture. Whether a VELUX
-  actuator actually registers from it is **unconfirmed** — no project has shown a
-  hub can 1W-enroll on VELUX at all (#74's KUX 110 never reacted, most likely
-  because its own PROG window was not held open at `0x30` TX time, ADR 0026 — a
-  physical gesture, not a frame-shape problem). The STOP+DOWN half in particular is
-  single-sourced (`iohc-flipper`) and not confirmed against a VELUX capture.
+- A `manufacturer: velux` enroll button emits the KLI gesture, and it has registered
+  the hub as a controller on real VELUX hardware (issue #74): a mains-powered KUX 110
+  on SX1276 with `low_power: false` and the default sweep, and KLI 312 interior blinds
+  on SX1262 with `low_power: true` and `enrollment_classes: [blind, venetian_blind]`.
+  The identity's commands worked afterwards in both cases, and on the blinds the
+  closing DOWN at the end of the gesture was reported as the visible success signal.
+- The per-remote class set is established for two remote families only. A KLI 311
+  window remote, or any other VELUX product, may use yet another set; the `0x2E` lines
+  are the way to find it rather than a table in this project.
+- Which single class of a sweep a given actuator registers on is not known. Both
+  confirmed enrollments swept a set.
+- The STOP+DOWN frames are single-sourced (`iohc-flipper`) and not byte-matched
+  against a VELUX capture, even though the gesture as a whole works.
 - The Somfy enrollment path is untouched — same code, moved into a named method.
 - `synthetic_enrollment_velux_kli_prog_sweep.yaml` is the golden reference for the
-  VELUX gesture's wire shape; its STOP+DOWN frames may be corrected once a real
-  VELUX enrollment is captured (hex is immutable, so that means delete + re-add).
+  exterior-shading VELUX gesture's wire shape; its STOP+DOWN frames may be corrected
+  once a real VELUX enrollment is captured (hex is immutable, so that means delete +
+  re-add).
 - The profiled-vendor set is now written in three places (the C++ `switch`, the
   Python `_ONEWAY_WIRE_PROFILE_MANUFACTURERS`, and the schema warning) with no
   automated sync check — cross-referenced in comments, same treatment as ADR 0031.
-
-## Amendment (2026-09)
-
-Status stays Accepted; the text above is unchanged. This amendment corrects two claims and updates
-the blocking-time figures now that ADR 0038 makes the 1W preamble a per-identity choice.
-
-- **The 3-second window is unsupported.** The KLI manual's STOP-then-DOWN-within-3-seconds step
-  belongs to the *from-scratch* registration flow that starts by pressing P on the product itself,
-  not to the "add a control to an already-registered product via GEAR" flow this gesture targets.
-  Documented VELUX registration windows for related procedures run to minutes, not seconds. Gesture
-  slowness is an airtime concern to keep in mind, not an established cause of a failed enrollment.
-- **The "its own PROG window" explanation is outdated.** VELUX opens registration for an
-  add-a-control gesture via a ~1 second GEAR press on an already-registered control, not a PROG
-  hold on the KUX 110 itself; the product jogs briefly as a "ready" signal, not an acknowledgement.
-  The leading hypothesis for failure is now the long radio preamble every 1W copy carried
-  (ADR 0038), not an unheld association-mode window.
-- **The STOP+DOWN follow-up and a `00 00 3F`-addressed `0x30` remain single-sourced and
-  unconfirmed.** Nothing new has settled either question.
-- **Blocking time, updated for ADR 0038.** With the identity's `low_power: false`, the gesture's six
-  bursts each carry the short, tunable `normal_start_preamble` on every copy and are estimated to
-  complete well under 2 seconds total — a projection from the preamble length, not yet measured on
-  air. With `low_power:` left unset (the default, unchanged), the gesture keeps its original,
-  measured shape: SX1276 logs measured it at ~7.4 seconds, and ~10.6 seconds with
-  `enrollment_with_mac: true`.

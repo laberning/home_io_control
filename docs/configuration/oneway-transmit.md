@@ -71,8 +71,8 @@ home_io_control:
 | `execute_acei` | no | Raw override of the priority byte (payload[1]) in a 1W `CMD_EXECUTE` frame, e.g. `0x61`. Must be `1`–`0xFF` — `0x00` is rejected, since `0` is the sentinel for "not overridden". Normally left unset — it is derived from `manufacturer`. Use it only for a vendor this project has no profile for. |
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
 | `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), but a real Somfy Izymo has separately been shown to accept the MAC-bearing form too. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. |
-| `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of `io_device_type` names (max 3). Unset → the profile default `[roller_shutter, awning, dual_shutter]` — the exact set a real KLI PROG press sweeps. Set it (e.g. `[awning]`) to narrow the sweep once you know which class your actuator listens on. **Ignored by the Somfy gesture**, which always uses `io_device_type`. See "Enrolling this hub as a controller" below. |
-| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). **Tri-state, and unset is not the same as `false`** — unlike the device-platform `low_power` key. Unset (the default) keeps every copy on the long, ~213 ms wake-up preamble — the long-standing default shape. `false` sends every copy at the short, live `normal_start_preamble` tuning value instead — try this first for a mains-powered VELUX receiver (e.g. a KUX 110). `true` sends a long wake-up copy first, then short repeats — for a solar or battery receiver. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. |
+| `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of `io_device_type` names (max 3). Unset → the profile default `[roller_shutter, awning, dual_shutter]`, the exterior-shading set a KLI 310/313 uses. **Interior blinds need it set**: a KLI 312 uses `[blind, venetian_blind]`. To find the classes for your product, see "Finding your enrollment classes" below. **Ignored by the Somfy gesture**, which always uses `io_device_type`. See "Enrolling this hub as a controller" below. |
+| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). **Tri-state, and unset is not the same as `false`** — unlike the device-platform `low_power` key. Unset (the default) keeps every copy on the long, ~213 ms wake-up preamble — the long-standing default shape. `false` sends every copy at the short, live `normal_start_preamble` tuning value instead — for a mains-powered receiver (confirmed on a VELUX KUX 110). `true` sends a long wake-up copy first, then short repeats — for a solar or battery receiver (it has also enrolled VELUX interior blinds). Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. |
 
 ## Matching your remote's vendor
 
@@ -88,8 +88,9 @@ stop to every device, not to one class. The boot log prints the resolved `acei` 
 for each identity; frame-log a press of your real remote and compare `cmd 0x00 payload[1]` and the
 destination address to confirm.
 
-The VELUX profile is verified against KLI-class exterior-shading remotes only (awnings, screens,
-roller shutters). A VELUX window-opener or KLR-class remote may differ — use `execute_acei:` if so.
+The VELUX profile is verified against KLI-class remotes for exterior shading (awnings, screens,
+roller shutters, a KUX 110) and interior blinds (KLI 312). A VELUX window-opener or KLR-class remote
+may differ — use `execute_acei:` if so.
 
 There is no 1W `force_open` button, because no 1W frame is known to carry that meaning: the byte
 sometimes labelled "force open", `0x64`, moves a real device to an ordinary 50% position when sent
@@ -139,40 +140,65 @@ all) — see the option table above if enrollment doesn't take with the default 
 
 ### VELUX (`manufacturer: velux`) uses a different gesture
 
-A real VELUX KLI 310/311/312/313 PROG press does not enroll the way a Somfy Smoove does, so with
-`manufacturer: velux` the Enroll button emits the KLI gesture instead
+A real VELUX KLI remote does not enroll the way a Somfy Smoove does, so with `manufacturer: velux`
+the Enroll button emits the KLI gesture instead
 ([ADR 0032](../adr/0032-oneway-velux-enrollment-gesture.md)):
 
 1. `0x39` clear to the all-devices address (not the identity's typed class).
-2. `0x30` add-controller **swept across `roller_shutter`, `awning`, `dual_shutter`** under one
-   sequence — never `screen` / `blind` / `venetian_blind`, which no VELUX remote pairs on. The
-   actuator filters by its own class; only the matching frame registers the hub. Narrow the sweep
-   with `enrollment_classes:` once you know which class yours listens on.
+2. `0x30` add-controller **swept across the identity's enrollment classes** under one sequence. The
+   actuator presumably filters by its own class, so only the matching frame registers the hub. The default is the
+   exterior-shading set `roller_shutter`, `awning`, `dual_shutter`. Interior blinds use other
+   classes — set `enrollment_classes:`, see below.
 3. A STOP then a DOWN command to the all-devices address — the KLI manual's "then press STOP then
    DOWN" registration-completion step.
 
 The receiver side of this gesture is **GEAR (the cog button), pressed for about 1 second, on an
-already-registered VELUX control** (e.g. a KLI 310). The product you are enrolling runs briefly
-back and forth to show it is ready, then press Enroll on the hub within about 10 seconds. If that
-control drives several products, assume every product that jogs will register the hub too —
-unconfirmed, but the gesture is additive, the same as Somfy's.
+already-registered VELUX control** (e.g. the KLI that already drives the product). The product you
+are enrolling runs briefly back and forth to show it is ready, then press Enroll on the hub. About
+10 seconds is a safe target; a gap of about 30 seconds has also worked. If that control drives
+several products, assume every product that jogs will register the hub too — unconfirmed, but the
+gesture is additive, the same as Somfy's.
 
-So for a VELUX exterior-shading device, set `io_device_type:` to whatever the device actually is
-(it drives the control-frame destination), and leave `enrollment_classes:` unset unless you need
-to narrow the sweep — the enroll gesture ignores `io_device_type` and uses the three-class list.
-The Enroll button blocks for about 6–7 seconds (measured) while it sends all six bursts, and an
-estimated well under 2 seconds with `low_power: false` (not yet measured on air) — the current lead
-for a mains-powered VELUX receiver (see the `low_power` row above and
-[ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)):
+Set `io_device_type:` to whatever the device actually is (it drives the control-frame destination).
+The enroll gesture ignores `io_device_type` and uses the enrollment classes. With `low_power: false`
+the Enroll button blocks for about 1.2 seconds; with `low_power:` unset, about 7 seconds (both
+measured on SX1276).
 
 ```yaml
 oneway_controllers:
-  - id: velux_awning
-    io_device_type: awning
+  # Exterior shading behind a KLI 310/313, mains-powered (e.g. via a KUX 110)
+  - id: velux_shutter
+    io_device_type: roller_shutter
     manufacturer: velux
+    execute_broadcast: all
     enrollment: true
-    low_power: false      # try this first for a mains-powered VELUX receiver
+    low_power: false
+    commands: [open, close, stop]
+  # Interior blind behind a KLI 312
+  - id: velux_blind
+    io_device_type: venetian_blind
+    manufacturer: velux
+    execute_broadcast: all
+    enrollment: true
+    enrollment_classes: [blind, venetian_blind]
+    low_power: true
+    commands: [open, close, stop]
 ```
+
+#### Finding your enrollment classes
+
+The existing remote tells you. Enable DEBUG logging, press GEAR on it, and look for its `0x2E`
+lines:
+
+```
+rx 1W remote 084374 targets blind: DISCOVER_ALT_REQ(0x2E) ...
+rx 1W remote 084374 targets venetian_blind: DISCOVER_ALT_REQ(0x2E) ...
+```
+
+Set `enrollment_classes:` to the classes those lines target (here `[blind, venetian_blind]`). If
+they are `roller_shutter`, `awning` and `dual_shutter`, the default already fits and you can leave
+the key unset. The build warns when a `screen`, `blind` or `venetian_blind` identity enrolls with
+the default classes, because that combination is unlikely to fit.
 
 > **⚠️ Pressing Enroll can physically move a cover.** Step 3 is a real STOP then a real DOWN
 > broadcast, but a 1W receiver only acts on frames from a controller already in its own table — the
@@ -182,12 +208,13 @@ oneway_controllers:
 > registered. This is the KLI registration gesture, not a side effect to fix, but it is worth
 > knowing before you press the button.
 
-> **⚠️ VELUX 1W enrollment is unconfirmed.** No hub has been shown to 1W-enroll on any VELUX
-> actuator (issue #74). The frame shapes are reconstructed from a real KLI 310 capture; the
-> STOP+DOWN step in particular is not confirmed against a VELUX capture. The leading hypothesis for
-> why it hasn't worked yet is the long radio preamble the gesture carries on every copy when
-> `low_power:` is left unset (the default, [ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md))
-> — set `low_power: false` and retry before assuming the frame shapes themselves are wrong.
+> **VELUX 1W enrollment is confirmed** on a mains-powered KUX 110 (SX1276, `low_power: false`,
+> default classes) and on KLI 312 interior blinds (SX1262, `low_power: true`,
+> `enrollment_classes: [blind, venetian_blind]`), both in issue #74. If it doesn't take, check the
+> enrollment classes first, then that GEAR made the product jog before you pressed Enroll. Also set
+> `low_power:` explicitly (`false` for a mains-powered receiver, `true` for a solar or battery one):
+> leaving it unset has not been shown to work on VELUX. The STOP+DOWN frames are reconstructed
+> rather than byte-matched against a VELUX capture.
 
 **A hub cannot enroll into a device nobody has walked up to.** The receiver-side physical gesture is
 the real safety interlock here, stronger than any software confirmation could be — it is why this

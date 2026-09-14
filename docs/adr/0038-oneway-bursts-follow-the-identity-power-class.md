@@ -14,9 +14,9 @@ ADR 0029 proved on hardware, for 2W, that this exact preamble stops an always-al
 VELUX receiver from taking a directed frame at all — not the `CTRL1_LOW_POWER` flag, the preamble
 length itself. It introduced a per-device `low_power:` key: `false` (the default) sends a directed
 start frame at the shorter, runtime-tunable `normal_start_preamble`; `true` keeps `LONG_PREAMBLE`
-and sets the flag. 1W never received the same treatment, and issue #74 (a mains-powered VELUX
-KUX 110) has never 1W-enrolled — this ADR is the test build for the hypothesis that the same
-mechanism is the blocker.
+and sets the flag. 1W never received the same treatment. In issue #74 a mains-powered VELUX KUX 110
+did not 1W-enroll with the long preamble on every copy, which makes the same mechanism a plausible
+blocker for 1W too.
 
 Two more data points shape the decision:
 
@@ -87,14 +87,19 @@ the identity's `low_power:` YAML key, which is **tri-state** here — unlike the
 - **`low_power: true` enrollment frames keep a wake copy on every burst of the gesture**, even
   though a real KLI's own pairing gesture is entirely short and flag-less. This is the conservative
   choice (matches what a real KLI's GEAR/EXECUTE bursts do, and what another open-source 1W
-  transmitter does for its wake-up copy) but is unvalidated against a real VELUX enrollment either
-  way.
+  transmitter does for its wake-up copy). It has enrolled VELUX interior blinds (KLI 312) on SX1262
+  in issue #74.
 - **One tuning value, `normal_start_preamble`, now also governs 1W bursts.** A user who needs a
   longer value for a marginal 2W link and a shorter one for 1W has no way to have both; this was
   already true of the 2W directed start frame and the broadcast roll-call (ADR 0029), so 1W joining
   them is consistent, not a new limitation.
-- **The VELUX benefit this ADR exists to test is unconfirmed until run on hardware.** This is a
-  test build: it makes the hypothesis testable, it does not prove it.
+- **Both non-legacy classes work on VELUX hardware; the cause of the legacy failure is not
+  isolated.** In issue #74, `false` enrolled and controls a mains KUX 110 on SX1276 (the whole
+  enrollment gesture takes ~1.2 s instead of ~7.4 s), and `true` enrolled interior blinds on SX1262.
+  The KUX 110 success also changed the user's registration procedure and the gesture's duration at
+  the same time, so it does not by itself prove the all-long preamble was what blocked the earlier
+  attempt. Whether the unset default should change for VELUX identities waits on a
+  commands-only A/B on an already-enrolled identity.
 
 See also ADR 0029 (the 2W precedent this mirrors) and ADR 0032 (the VELUX enrollment gesture this
-now also governs; its own "Blocking time" section is amended alongside this ADR).
+now also governs, including its blocking time).

@@ -118,7 +118,8 @@ struct OneWayControllerIdentity {
   bool execute_broadcast_all{false};
   /// Override for the device classes a VELUX enrollment `0x30` sweep targets (`enrollment_classes:`).
   /// All-`UNKNOWN` (the default) means "not set — use the manufacturer profile's list"
-  /// (`resolve_oneway_wire_profile()`). `UNKNOWN` entries are skipped when the sweep runs, so a
+  /// (`resolve_oneway_wire_profile()`), which only fits exterior shading; a KLI 312 interior blind
+  /// needs `{BLIND, VENETIAN_BLIND}` here. `UNKNOWN` entries are skipped when the sweep runs, so a
   /// one- or two-class override is expressed by leaving the rest `UNKNOWN`. Ignored by the Somfy
   /// enrollment gesture, which always uses `io_device_type`. See ADR 0032.
   std::array<DeviceType, 3> enrollment_classes{DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
@@ -143,8 +144,9 @@ struct OneWayControllerIdentity {
 /// SOMFY: one `0x30` add-controller burst to the identity's own `io_device_type` (the shape this
 /// project has hardware-validated). VELUX_KLI: a `0x39` clear to the all-devices address, then a
 /// `0x30` burst to **each** class in `OneWayWireProfile::enrollment_classes`, then a STOP+DOWN
-/// EXECUTE follow-up — the gesture a real KLI 310/313 PROG press produces (issue #74 capture +
-/// `samr037/iohc-flipper` `tx_runner.c` + the KLI manual). See ADR 0032.
+/// EXECUTE follow-up — the gesture a real KLI remote produces (issue #74 capture +
+/// the KLI manual), confirmed on a KUX 110 and on KLI 312
+/// interior blinds. See ADR 0032.
 enum class EnrollGesture : uint8_t { SOMFY, VELUX_KLI };
 
 /// @brief Vendor-divergent 1W wire settings for a controller identity.
@@ -160,9 +162,11 @@ struct OneWayWireProfile {
   std::array<DeviceType, 3> enrollment_classes;
 };
 
-/// The three device classes a real VELUX KLI PROG gesture sweeps its `0x30` across — roller
-/// shutter, awning, dual shutter — and never any other (issue #74 capture, decoded with
+/// The default `0x30` sweep for `manufacturer: velux`: the exterior-shading classes a KLI 310/313
+/// names — roller shutter, awning, dual shutter (issue #74 capture, decoded with
 /// `broadcast_target_type()`; matches `samr037/iohc-flipper`'s `PAIR_DST_{WINDOW,SHUTTER,OTHER}`).
+/// Not universal: a KLI 312 interior blind uses blind + venetian blind, so those identities set
+/// `enrollment_classes:` from the classes their remote's own `0x2E` names.
 static constexpr std::array<DeviceType, 3> VELUX_KLI_ENROLLMENT_CLASSES{DeviceType::ROLLER_SHUTTER, DeviceType::AWNING,
                                                                         DeviceType::DUAL_SHUTTER};
 

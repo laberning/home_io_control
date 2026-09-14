@@ -495,8 +495,10 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     this->oneway_key_adoption_.try_adopt(frame);
 
     // 1W remotes repeat each command 4× at 40ms intervals across channels, and a held button keeps
-    // resending. Collapse that into one logical press per remote+command+intent.
-    const decisions::OneWayDedupState incoming{src_id, frame.cmd, info.has_intent, info.main0, info.main1, now};
+    // resending. Collapse that into one logical press per remote+command+intent (plus destination for
+    // intent-less frames, so each class of a multi-class sweep is kept).
+    decisions::OneWayDedupState incoming{src_id, frame.cmd, info.has_intent, info.main0, info.main1, now};
+    memcpy(incoming.dst, frame.dst, NODE_ID_SIZE);
     if (decisions::is_duplicate_1w_frame(this->last_1w_logged_, incoming, detail::ONEWAY_DEDUP_WINDOW_MS))
       return;
     this->last_1w_logged_ = incoming;

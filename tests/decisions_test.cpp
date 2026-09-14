@@ -142,9 +142,15 @@ TEST(Decisions, PairingKeyChallengeIgnoreWrongNodes) {
 namespace {
 
 decisions::OneWayDedupState dedup_state(const char *src, uint8_t cmd, bool has_intent, uint8_t main0,
-                                        uint32_t timestamp) {
-  return decisions::OneWayDedupState{src, cmd, has_intent, main0, 0x00, timestamp};
+                                        uint32_t timestamp, const uint8_t dst[NODE_ID_SIZE] = BROADCAST_DISCOVER_ALT) {
+  decisions::OneWayDedupState state{src, cmd, has_intent, main0, 0x00, timestamp};
+  memcpy(state.dst, dst, NODE_ID_SIZE);
+  return state;
 }
+
+constexpr uint8_t ROLLER_SHUTTER_CLASS[NODE_ID_SIZE] = {0x00, 0x00, 0xBF};
+constexpr uint8_t AWNING_CLASS[NODE_ID_SIZE] = {0x00, 0x00, 0xFF};
+constexpr uint8_t VENETIAN_BLIND_CLASS[NODE_ID_SIZE] = {0x00, 0x00, 0x7F};
 
 constexpr uint32_t DEDUP_WINDOW_MS = 2000;
 
@@ -199,7 +205,27 @@ TEST(Decisions, OneWayDedupIgnoresIntentBytesWhenNoIntentWasDecoded) {
   const auto repeat = dedup_state("AABBCC", CMD_WRITE_PRIVATE, false, 0x99, 1040);
 
   EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, repeat, DEDUP_WINDOW_MS))
-      << "intent-less commands dedup on src+cmd alone";
+      << "intent-less commands dedup on src+cmd+dst, never on the meaningless intent bytes";
+}
+
+TEST(Decisions, OneWayDedupKeepsEachClassOfAnIntentLessSweep) {
+  // A VELUX KLI GEAR press sends 0x2E to roller_shutter (00 00 BF) then awning (00 00 FF) ~600 ms
+  // apart (issue #74). Each class it names is one a new controller must enroll on, so each is logged.
+  const auto first_class = dedup_state("5A9E00", CMD_DISCOVER_ALT_REQ, false, 0x00, 1000, ROLLER_SHUTTER_CLASS);
+  const auto second_class = dedup_state("5A9E00", CMD_DISCOVER_ALT_REQ, false, 0x00, 1600, AWNING_CLASS);
+
+  EXPECT_FALSE(decisions::is_duplicate_1w_frame(first_class, second_class, DEDUP_WINDOW_MS))
+      << "an intent-less frame to a different destination is not a repeat";
+}
+
+TEST(Decisions, OneWayDedupIgnoresDestinationForAnIntentBearingPress) {
+  // Sender events and optimistic state hang off intent-bearing frames: one press must stay one
+  // press even if a remote sends the same intent to more than one address.
+  const auto to_all = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1000, BROADCAST_DISCOVER_ALT);
+  const auto to_class = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1040, VENETIAN_BLIND_CLASS);
+
+  EXPECT_TRUE(decisions::is_duplicate_1w_frame(to_all, to_class, DEDUP_WINDOW_MS))
+      << "the destination must not split one intent-bearing press into two";
 }
 
 TEST(Decisions, OneWayDedupSurvivesMillisWrap) {
