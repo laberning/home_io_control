@@ -172,7 +172,7 @@ inline PairingKeyChallengeDisposition classify_pairing_key_challenge(const IoFra
 /// the immediate poll that a stop is supposed to trigger.
 ///
 /// For a frame with no decoded intent the destination is part of the key as well. A VELUX KLI's
-/// GEAR press sends its `0x2E` to several device classes a few hundred ms apart, and the classes it
+/// Gear press sends its `0x2E` to several device classes a few hundred ms apart, and the classes it
 /// names are the ones a new controller has to enroll on; keying on src+cmd alone would log only the
 /// first of them.
 /// Intent-bearing frames keep ignoring the destination: they fire sender events and optimistic

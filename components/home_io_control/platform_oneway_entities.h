@@ -63,9 +63,9 @@ class IOHomeOneWayCommandButton : public button::Button, public Component, publi
 ///
 /// A press sends the gesture its manufacturer expects (OneWayTransmitter::send_enrollment(), ADR
 /// 0032). The receiver's half of enrollment is a physical gesture on the receiver side — a
-/// multi-second PROG hold on the actuator (Somfy), or a ~1 s GEAR press on an already-registered
-/// control (VELUX); that physical requirement is the real interlock against a stray or unintended
-/// enrollment, not a software arming switch — see ADR 0026.
+/// multi-second PROG hold on the actuator (Somfy), or a ~1 s Gear press on an already-registered
+/// control followed by the product's ready sequence (VELUX); that physical requirement is the real interlock against a
+/// stray or unintended enrollment, not a software arming switch — see ADR 0026.
 /// @ingroup hioc_platforms
 class IOHomeOneWayEnrollButton : public button::Button, public Component, public OneWayControllerBound {
  public:

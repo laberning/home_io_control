@@ -78,12 +78,12 @@ project controls.
 | **INTEGRA SOLAR blinds** | `blind` | 📣 Reported | — | `low_power: true` | Named as a canonical low-power case; no capture |
 | **KLI 313 remote** (driving an SML via KUX 110) | 1W remote | 🔍 Traffic captured only | — | — | 3 corpus captures |
 | **KLI 310 universal wall remote** | 1W remote | 🔍 Traffic captured only | — | — | Corpus `velux_kli310_discovery_alt_sweep` |
-| **KLI 312 interior-blind remote** | 1W remote | 🔍 Traffic reported only | — | — | GEAR `0x2E` goes to `blind` and `venetian_blind`; no corpus capture |
+| **KLI 312 interior-blind remote** | 1W remote | 🔍 Traffic reported only | — | — | Gear `0x2E` goes to `blind` and `venetian_blind`; no corpus capture |
 | **KUX 100 / PK03 / PK04 wired bridge** | Bridge | 🔍 Traffic captured only | — | — | 3 corpus captures of KLR200 ↔ KUX100 traffic |
 | **KLF 200** | Third-party hub | 📣 Reported as a key source | — | — | Named in several issue threads; no capture |
 | **SML shutter via KUX 110** | `roller_shutter` | ❌ Unsupported — nothing answers discovery | — | — | Issue #17 |
-| **KUX 110 wired bridge** | Bridge, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1276) | 1W enrollment: GEAR on the existing KLI 310, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `low_power: false` | see [Sending 1W commands](configuration/oneway-transmit.md) |
-| **Interior blinds behind a KLI 312** | `venetian_blind`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1262) | 1W enrollment: GEAR on the existing KLI 312, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |  |
+| **KUX 110 wired bridge** | Bridge, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1276) | 1W enrollment: Gear on the existing KLI 310, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `low_power: false` | see [Sending 1W commands](configuration/oneway-transmit.md) |
+| **Interior blinds behind a KLI 312** | `venetian_blind`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1262) | 1W enrollment: Gear on the existing KLI 312, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |  |
 
 ### Other vendors
 

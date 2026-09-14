@@ -27,14 +27,19 @@ KLI 313 "rings" captures), cross-checked against the KLI manual:
 3. **A STOP then a DOWN `CMD_EXECUTE`** follow the sweep, to `00 00 3F` at the VELUX
    ACEI — the KLI manual's STOP-then-DOWN registration completion.
 
-The receiver side is **GEAR (the cog button), pressed for about 1 second on an
-already-registered VELUX control**. The product jogs briefly as a "ready" signal, and
-that control sends a `0x2E` burst to a set of device classes. In both confirmed
-enrollments (below), sweeping exactly those classes registered the hub.
-The manual's "STOP then DOWN within 3 seconds" wording belongs to the from-scratch
-registration flow that starts with P on the product itself, not to this add-a-control
-flow. The window after GEAR is much longer: an enrollment 31 seconds after the `0x2E`
-succeeded.
+The receiver side is **the Gear button ("open for registration"), pressed for about
+1 second on an already-registered VELUX control**. In the KLI manual's add-a-control
+procedure, Gear on the existing control is followed by the **Pair** button ("register")
+on the new control, which is the role this gesture plays: the frames above are what a
+KLI's Pair press sends. (Gear then Pair on the *same* switch deletes all its products
+instead.) The existing control's Gear press sends a `0x2E` burst
+to a set of device classes, and the product runs a "ready" sequence. On a shutter this
+takes around half a minute: it travels to about 10% closed, jogs several times, then
+returns to its starting position. In both confirmed enrollments (below), sweeping
+exactly those classes after the ready sequence registered the hub. How long the
+product stays open for registration after the sequence is not measured. The manual's
+"STOP then DOWN within 3 seconds" wording belongs to the from-scratch registration
+flow that starts with P on the product itself, not to this add-a-control flow.
 
 The `0x39` prelude itself is **not** vendor-specific — a real Somfy Smoove capture
 (`somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`) and the KLI 310
@@ -54,7 +59,7 @@ the profile default because it is the one captured from a real KLI gesture. A
 per-identity `enrollment_classes:` YAML key overrides it (via
 `effective_enrollment_classes()`). That is how an interior-blind identity gets
 `[blind, venetian_blind]`. The classes to set are the ones the existing remote's `0x2E`
-burst targets after a GEAR press, visible in the DEBUG `rx 1W remote … targets …` log
+burst targets after a Gear press, visible in the DEBUG `rx 1W remote … targets …` log
 lines (which keep one line per destination for intent-less frames).
 
 `send_enrollment()` dispatches on `enroll_gesture`:
@@ -91,7 +96,7 @@ depends on the identity's `low_power:` power class (ADR 0038):
 user-initiated, once-per-device action, the same shape as the pairing button, whose
 `pairing_discovery_wait_ms` already goes to 5000. Gesture duration is an airtime
 concern, not an established cause of a failed enrollment, given the long window
-after GEAR.
+after Gear.
 
 ## Consequences
 
@@ -101,6 +106,8 @@ after GEAR.
   on SX1262 with `low_power: true` and `enrollment_classes: [blind, venetian_blind]`.
   The identity's commands worked afterwards in both cases, and on the blinds the
   closing DOWN at the end of the gesture was reported as the visible success signal.
+  That signal is invisible when the cover is already fully closed, which is where the
+  KUX 110's shutter sat once its ready sequence had returned it.
 - The per-remote class set is established for two remote families only. A KLI 311
   window remote, or any other VELUX product, may use yet another set; the `0x2E` lines
   are the way to find it rather than a table in this project.

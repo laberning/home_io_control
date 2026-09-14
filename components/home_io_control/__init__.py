@@ -1051,7 +1051,7 @@ def _validate_oneway_controllers(config):
                 "enrollment_classes: is unset, so the enrollment 0x30 sweep uses the exterior-shading "
                 "default roller_shutter/awning/dual_shutter and ignores io_device_type. This device may "
                 "enroll on other classes: set enrollment_classes: (a KLI 312 interior blind uses "
-                "[blind, venetian_blind]). To find yours, press GEAR on the existing remote and use "
+                "[blind, venetian_blind]). To find yours, press Gear on the existing remote and use "
                 "the classes named in its 'rx 1W remote ... (0x2E)' DEBUG log lines -- see 'Finding "
                 "your enrollment classes' in the 1W transmit docs.",
                 identity_id,

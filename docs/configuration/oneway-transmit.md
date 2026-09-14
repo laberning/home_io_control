@@ -152,10 +152,15 @@ the Enroll button emits the KLI gesture instead
 3. A STOP then a DOWN command to the all-devices address — the KLI manual's "then press STOP then
    DOWN" registration-completion step.
 
-The receiver side of this gesture is **GEAR (the cog button), pressed for about 1 second, on an
-already-registered VELUX control** (e.g. the KLI that already drives the product). The product you
-are enrolling runs briefly back and forth to show it is ready, then press Enroll on the hub. About
-10 seconds is a safe target; a gap of about 30 seconds has also worked. If that control drives
+The receiver side of this gesture is **the Gear button ("open for registration"), pressed for
+about 1 second, on an already-registered VELUX control** (e.g. the KLI that already drives the
+product). A KLI also has a **Pair** button ("register"); that one belongs to the *new* control, and
+the hub's Enroll button takes its place. Don't press Pair on the existing control after Gear:
+Gear followed by Pair deletes all products from that wall switch.
+The product you are enrolling then runs a ready sequence, which on a shutter can take half a minute:
+it may first travel to about 10% closed, jog back and forth several times, and then return to where
+it started. **Wait until that sequence has finished, then press Enroll on the hub right away** — how
+long the product stays open for registration after that is not measured. If that control drives
 several products, assume every product that jogs will register the hub too — unconfirmed, but the
 gesture is additive, the same as Somfy's.
 
@@ -187,7 +192,7 @@ oneway_controllers:
 
 #### Finding your enrollment classes
 
-The existing remote tells you. Enable DEBUG logging, press GEAR on it, and look for its `0x2E`
+The existing remote tells you. Enable DEBUG logging, press Gear on it, and look for its `0x2E`
 lines:
 
 ```
@@ -205,13 +210,16 @@ the default classes, because that combination is unlikely to fit.
 > hub transmits under this identity's own address, never a remote's — so only a product that holds
 > this identity as a registered controller reacts, including one that has *just* registered it via
 > the sweep in step 2. That closing movement is the success signal: if nothing moves, nothing
-> registered. This is the KLI registration gesture, not a side effect to fix, but it is worth
-> knowing before you press the button.
+> registered — **unless the cover is already fully closed**, in which case the DOWN has nothing
+> visible to do. The ready sequence returns the product to where it started, so start from a partly
+> open position, or check with Open afterwards. This is the KLI registration gesture, not a side
+> effect to fix, but it is worth knowing before you press the button.
 
 > **VELUX 1W enrollment is confirmed** on a mains-powered KUX 110 (SX1276, `low_power: false`,
 > default classes) and on KLI 312 interior blinds (SX1262, `low_power: true`,
 > `enrollment_classes: [blind, venetian_blind]`), both in issue #74. If it doesn't take, check the
-> enrollment classes first, then that GEAR made the product jog before you pressed Enroll. Also set
+> enrollment classes first, then that Gear made the product run its ready sequence and you pressed
+> Enroll once it had finished. Also set
 > `low_power:` explicitly (`false` for a mains-powered receiver, `true` for a solar or battery one):
 > leaving it unset has not been shown to work on VELUX. The STOP+DOWN frames are reconstructed
 > rather than byte-matched against a VELUX capture.
@@ -238,7 +246,7 @@ cannot remove a different remote's registration — the same property that makes
 > effect on real hardware — the hub keeps controlling the device afterwards regardless. The most
 > likely explanation, by analogy with enrollment itself, is that a device only acts on `0x39`
 > while its receiver is in the same physical association-mode gesture enrollment needs (a PROG hold
-> for Somfy, GEAR for VELUX). Treat "un-enroll" as the documented design intent, not a confirmed
+> for Somfy, Gear for VELUX). Treat "un-enroll" as the documented design intent, not a confirmed
 > rollback, until this is retested with that gesture.
 
 **When you are done enrolling**, remove `enrollment: true` from the identity and reflash. A build

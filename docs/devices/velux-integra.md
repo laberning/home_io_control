@@ -15,7 +15,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | MSU 100100 solar awning screen | ⚠️ Partial — open and close work, `stop` is ignored |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
 | SML shutter via KUX 110 | ❌ Nothing answers discovery |
-| KUX 110, 1W enrollment + control | ✅ Confirmed — GEAR on the KLI, then Enroll, `low_power: false` |
+| KUX 110, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false` |
 | Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |
 
 ## Onboarding route that worked
@@ -26,8 +26,9 @@ this succeeded end to end on the first attempt, including the address round.
 
 For an installation with no hub at all — only a 1W wall switch or remote, or a device fresh out of
 the box — key extraction has nothing to extract from. If a KLI remote already drives the product,
-try **1W enrollment**, the route confirmed on a KUX 110 and on KLI 312 interior blinds: press GEAR
-on that remote until the product jogs, then press the hub's Enroll button. It gives open/close/stop without status (see
+try **1W enrollment**, the route confirmed on a KUX 110 and on KLI 312 interior blinds: press the
+Gear button on that remote, wait for the product's ready sequence to finish, then press the hub's
+Enroll button. It gives open/close/stop without status (see
 [Sending 1W commands](../configuration/oneway-transmit.md)). For 2W on such an installation, see
 the SSL entry under Known quirks below.
 
@@ -71,11 +72,16 @@ moves the window to its predefined air-exchange opening rather than fully open.
   work. Reported in issue #95; there is no 2W fix. A 1W identity could send the stop instead, but
   1W enrollment has not been retried on this screen since it was confirmed on other VELUX products
   (`low_power: true` for a solar receiver; read the enrollment classes from its remote's `0x2E`).
-- **1W enrollment is a GEAR press on the existing KLI, not a button on the product.** Press GEAR
-  (the cog) on the KLI that already drives the product for about 1 second; the product jogs, then
-  press Enroll on the hub. The enrollment classes must match the remote: the default fits a KLI
+- **1W enrollment is a Gear press on the existing KLI, not a button on the product.** Press the
+  Gear button ("open for registration") on the KLI that already drives the product for about
+  1 second. Not the Pair button: that one is for a *new* control, which the hub's Enroll button
+  stands in for, and Gear followed by Pair on the same switch deletes all its products. The
+  product then runs a ready sequence that can take half a minute on a shutter (travel to about 10%
+  closed, several jogs, back to the start); once it has finished, press Enroll on the hub. If the
+  cover ends up fully closed, the closing step at the end of Enroll shows no movement, so check with
+  Open afterwards. The enrollment classes must match the remote: the default fits a KLI
   310/313 (exterior shading, e.g. a KUX 110), while a KLI 312 interior blind needs
-  `enrollment_classes: [blind, venetian_blind]`. The remote's own `0x2E` log lines after GEAR name
+  `enrollment_classes: [blind, venetian_blind]`. The remote's own `0x2E` log lines after Gear name
   the classes. Confirmed in issue #74 (see
   [Sending 1W commands](../configuration/oneway-transmit.md)).
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on

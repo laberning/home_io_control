@@ -172,7 +172,8 @@ class OneWayTransmitter {
 
   /// @brief Register this identity as a controller on every device currently in association mode
   /// (the receiver's own association-mode gesture, ADR 0026: a multi-second PROG hold on a Somfy
-  /// actuator, or a ~1 s GEAR press on an already-registered VELUX control), using the gesture its
+  /// actuator, or a ~1 s Gear press on an already-registered VELUX control followed by the
+  /// product's own ready sequence), using the gesture its
   /// manufacturer expects (`resolve_oneway_wire_profile()`, ADR 0032).
   ///
   /// **`EnrollGesture::SOMFY`** (somfy / unset / any unprofiled vendor): `0x39` (remove,
@@ -186,7 +187,8 @@ class OneWayTransmitter {
   /// sequence, then a STOP and a DOWN EXECUTE to the all-devices address at the VELUX ACEI — the
   /// KLI manual's STOP-then-DOWN registration completion. Matches the issue #74 KLI 310 capture
   /// and has enrolled a KUX 110 and KLI 312 interior blinds on
-  /// real hardware (the closing DOWN is the visible success signal). The STOP+DOWN frames themselves
+  /// real hardware (the closing DOWN is the visible success signal, unless the cover already sits
+  /// fully closed). The STOP+DOWN frames themselves
   /// are not matched against a VELUX capture
   /// (`tests/corpus/captures/enrollment/synthetic_enrollment_velux_kli_prog_sweep.yaml`).
   ///
