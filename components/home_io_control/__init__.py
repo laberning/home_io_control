@@ -101,6 +101,12 @@ CONF_ENROLLMENT_WITH_MAC = "enrollment_with_mac"
 # profile's list (velux: {roller_shutter, awning, dual_shutter}). Ignored by the somfy gesture.
 # See resolve_oneway_wire_profile() / effective_enrollment_classes() (oneway_controller.h), ADR 0032.
 CONF_ENROLLMENT_CLASSES = "enrollment_classes"
+# Same YAML key as platform_common.py's per-device 2W low_power (ADR 0029), tri-state here: unset
+# keeps every 1W burst in the legacy shape (LONG_PREAMBLE on every copy, CTRL1 0x00); `false`/`true`
+# opt an identity into the ADR 0038 shapes instead. One definition, shared: platform_common.py
+# imports this constant rather than keeping its own copy. See ONEWAY_CONTROLLER_SCHEMA's own
+# comment on this key for the full tri-state semantics, and ADR 0038.
+CONF_LOW_POWER = "low_power"
 # Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"
@@ -763,6 +769,9 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # (the published documentation vector's own shape) -- see create_1w_add_controller()'s
         # @warning (proto_commands.h). Untested manufacturers (e.g. Velux) may require one shape
         # or the other; this exists so trying the other one needs a YAML edit, not a code change.
+        # No VELUX capture this project holds carries the MAC trailer, and on sx1276 a MAC-bearing
+        # 0x30 has been measured to take about twice as long per burst -- see
+        # _validate_oneway_controllers()'s warning below.
         cv.Optional(CONF_ENROLLMENT_WITH_MAC, default=False): cv.boolean,
         # The device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
         # profile default ({roller_shutter, awning, dual_shutter} for velux). Set it to narrow the
@@ -788,6 +797,15 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         cv.Optional(CONF_EXECUTE_BROADCAST, default="typed"): cv.one_of(
             "typed", "all", lower=True
         ),
+        # Tri-state, unlike the per-device 2W low_power (ADR 0029): no default here, because unset
+        # and false mean different things for a 1W identity. Unset = every burst keeps the
+        # legacy shape (LONG_PREAMBLE on every copy, CTRL1 0x00) -- byte- and
+        # timing-identical to the hardware-validated Somfy path. false = every copy uses the live
+        # `normal_start_preamble` tuning value instead, CTRL1 0x00 -- the ADR 0029 shape, for a
+        # mains-powered receiver. true = copy 1 gets LONG_PREAMBLE + CTRL1_LOW_POWER, copies 2-4 the
+        # normal preamble -- a wake-up copy for a solar/battery receiver. Applies to every 1W TX of
+        # the identity: commands, positions, both enrollment gestures, un-enrollment. See ADR 0038.
+        cv.Optional(CONF_LOW_POWER): cv.boolean,
     }
 )
 
@@ -838,6 +856,21 @@ def _enrollment_classes_initialiser(identity):
     return f"{{{entries}}}"
 
 
+def _power_class_expression(identity):
+    """Map `low_power:` to the C++ OneWayPowerClass enumerator it emits.
+
+    Tri-state: unset -> LEGACY_LONG (the legacy default), `false` -> ALWAYS_ALIVE, `true` ->
+    LOW_POWER. See ADR 0038 and ONEWAY_CONTROLLER_SCHEMA's own comment on CONF_LOW_POWER.
+    """
+    if CONF_LOW_POWER not in identity:
+        name = "LEGACY_LONG"
+    elif identity[CONF_LOW_POWER]:
+        name = "LOW_POWER"
+    else:
+        name = "ALWAYS_ALIVE"
+    return f"esphome::home_io_control::OneWayPowerClass::{name}"
+
+
 def oneway_controller_expression(identity, hub_node_id):
     """Generate the C++ OneWayControllerIdentity initialiser for one configured identity.
 
@@ -860,6 +893,7 @@ def oneway_controller_expression(identity, hub_node_id):
             f".execute_broadcast_all = "
             f"{'true' if identity[CONF_EXECUTE_BROADCAST] == 'all' else 'false'}",
             f".enrollment_classes = {_enrollment_classes_initialiser(identity)}",
+            f".power_class = {_power_class_expression(identity)}",
         ]
     )
     if derived:
@@ -978,6 +1012,22 @@ def _validate_oneway_controllers(config):
                 "explicitly if that is wrong for your device.",
                 identity_id,
                 identity[CONF_MANUFACTURER],
+            )
+
+        # enrollment_with_mac: true on sx1276 has been measured to roughly double the 0x30 burst's
+        # airtime, and no VELUX capture this project holds carries the MAC at all -- warn, don't
+        # reject: it is still a legal config, and other radios/vendors are unaffected.
+        if (
+            identity[CONF_ENROLLMENT]
+            and identity[CONF_ENROLLMENT_WITH_MAC]
+            and config[CONF_RADIO_TYPE] == "sx1276"
+        ):
+            _LOGGER.warning(
+                "home_io_control: oneway_controllers '%s' has enrollment_with_mac: true on "
+                "radio_type: sx1276, where the MAC-bearing 0x30 has been measured to take about "
+                "twice as long per burst. No VELUX capture carries this MAC either. Consider "
+                "leaving it false unless your hardware specifically needs the MAC-bearing form.",
+                identity_id,
             )
 
         # A VELUX enrollment 0x30 sweep goes to {roller_shutter, awning, dual_shutter} and never

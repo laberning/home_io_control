@@ -169,22 +169,21 @@ constexpr uint8_t ONEWAY_EXECUTE_PAYLOAD_SIZE = ONEWAY_EXECUTE_MAC_OFFSET + HMAC
 constexpr uint8_t ONEWAY_EXECUTE_FP1 = 0x00;
 constexpr uint8_t ONEWAY_EXECUTE_FP2 = 0x00;
 
-/// @brief Shared assembly for both 1W execute builders: header, MAC span/HMAC, and the 14-byte
-/// payload. create_1w_execute_position() and create_1w_execute_command() differ only in how they
-/// derive `main0`/`main1`; every other byte on the wire is identical, so this is the one place
-/// that wiring lives — a second copy would risk drifting from the published IV vector this
-/// span is pinned against.
+/// Shared frame-header setup for every 1W broadcast builder (build_1w_execute(),
+/// create_1w_add_controller(), create_1w_remove_controller()): all three address a device-class
+/// broadcast rather than an individual node, and none set LOW_POWER here.
 ///
-/// ctrl1 is deliberately left at 0 (LOW_POWER / CTRL1_LOW_POWER NOT set), unlike every 2W builder
-/// in this file. The reference `forgePacket` sets it, but five independently captured real 1W
-/// frames all disagree: this project's own Somfy awning remote
+/// ctrl1 is deliberately left at 0 (LOW_POWER / CTRL1_LOW_POWER NOT set) by every builder in this
+/// file, unlike every 2W builder. The reference `forgePacket` sets it, but five independently
+/// captured real 1W frames all disagree: this project's own Somfy awning remote
 /// (tests/corpus/captures/oneway/somfy_smoove_oneway_{open,close,stop}_sx1276.yaml), an
 /// unidentified 1W remote (tests/corpus/captures/oneway/unidentified_1w_remote_oneway_execute.yaml), and
 /// the published vector (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml)
 /// all carry ctrl1=0x00. Followed the captures over the reference source on this point.
-/// Shared frame-header setup for every 1W broadcast builder (build_1w_execute(),
-/// create_1w_add_controller(), create_1w_remove_controller()): all three address a device-class
-/// broadcast rather than an individual node, and none set LOW_POWER.
+///
+/// `OneWayTransmitter::send_burst()` (ADR 0038) is what may later put CTRL1_LOW_POWER on the wire
+/// for a `low_power: true` identity — on copy 1 of the burst only, never here: this builder layer
+/// stays chip- and burst-agnostic and always hands back a plain ctrl1=0 frame.
 void init_1w_broadcast_frame(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type) {
   init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
 
@@ -194,6 +193,12 @@ void init_1w_broadcast_frame(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Device
   set_src(f, src);
 }
 
+/// @brief Shared assembly for both 1W execute builders: header, MAC span/HMAC, and the 14-byte
+/// payload. create_1w_execute_position() and create_1w_execute_command() differ only in how they
+/// derive `main0`/`main1`; every other byte on the wire is identical, so this is the one place
+/// that wiring lives — a second copy would risk drifting from the published IV vector this
+/// span is pinned against. See init_1w_broadcast_frame() above for why ctrl1 always comes out 0
+/// here.
 bool build_1w_execute(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t main0, uint8_t main1,
                       uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE], uint8_t acei, bool broadcast_all) {
   uint8_t payload[ONEWAY_EXECUTE_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, acei, main0, main1, ONEWAY_EXECUTE_FP1,

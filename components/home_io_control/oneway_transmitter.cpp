@@ -21,6 +21,21 @@ constexpr const char *const TAG = "home_io_control.oneway_tx";
 
 }  // namespace
 
+uint16_t oneway_copy_preamble_bytes(OneWayCopyShape shape, uint16_t normal_start_preamble) {
+  return shape.preamble == OneWayPreamble::WAKE ? LONG_PREAMBLE : normal_start_preamble;
+}
+
+std::string format_oneway_preamble_list(OneWayPowerClass power_class, uint16_t normal_start_preamble) {
+  std::string out;
+  for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
+    const OneWayCopyShape shape = oneway_burst_copy_shape(power_class, copy);
+    if (copy > 0)
+      out += '/';
+    out += std::to_string(oneway_copy_preamble_bytes(shape, normal_start_preamble));
+  }
+  return out;
+}
+
 void OneWayTransmitter::setup() {
   for (const auto &identity : this->identities_.all())
     this->sequences_.add_identity(identity.node_id, identity.initial_sequence);
@@ -53,7 +68,7 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
     return false;
   }
 
-  const bool transmitted = this->send_burst(frame);
+  const bool transmitted = this->send_burst(frame, identity->power_class);
 
   // 0x30/0x39 carry no intent decode_1w_frame() can read (it only understands
   // CMD_EXECUTE/CMD_ACTIVATE_MODE payloads) -- send_enrollment() etc. pass the label directly
@@ -67,7 +82,8 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
   }
   // Always the identity's own class, never the frame's decoded destination: with
   // `execute_broadcast: all` the wire dst is `00 00 3F` -> DeviceType::UNKNOWN, which would render
-  // "unknown" in the TX log and the sensor. The literal destination is already in the frame log.
+  // "unknown" in the sensor (the sensor has no distinct "all" case the way the frame log does via
+  // oneway_target_label()). The literal destination is already in the frame log.
   this->report_attempt_(controller_id, intent, identity->io_device_type, sequence, /*sequence_reserved=*/true,
                         transmitted);
   return transmitted;
@@ -177,9 +193,10 @@ bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentit
     return false;
   }
 
-  // STOP then DOWN, per the KLI manual's "then STOP then DOWN within 3 seconds". Broadcast, the
-  // identity's effective ACEI, one sequence each. A partial miss here only warns -- the sweep
-  // above is what registers us.
+  // STOP then DOWN, per the KLI manual's "press PAIR, then STOP then DOWN" registration-completion
+  // step (the manual's own timing window is not established as a hard requirement here -- see ADR
+  // 0032's amendment). Broadcast, the identity's effective ACEI, one sequence each. A partial miss
+  // here only warns -- the sweep above is what registers us.
   const uint8_t acei = effective_execute_acei(identity);
   const bool stopped = this->send_(
       identity.id,
@@ -223,7 +240,7 @@ bool OneWayTransmitter::send_enroll_sweep_(const OneWayControllerIdentity &ident
                identity.id.c_str());
       continue;
     }
-    if (this->send_burst(frame))
+    if (this->send_burst(frame, identity.power_class))
       any_transmitted = true;
   }
 
@@ -242,29 +259,49 @@ bool OneWayTransmitter::send_unenrollment(const std::string &controller_id) {
       "UNENROLL");
 }
 
-bool OneWayTransmitter::send_burst(const IoFrame &frame) {
+bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_class) {
   // Logged once for the whole burst rather than once per copy: four log lines per button press
   // would suggest four commands, which is exactly the misreading the shared sequence exists to
   // prevent. Only frame-header facts are logged — never payload bytes — so this stays safe even
   // for the commands redaction.h flags as carrying key material.
   const OneWayFrameInfo info = decode_1w_frame(frame);
+  // Same vocabulary as the RX line (hub_internal.h's log_1w_remote_frame()): "all" for the
+  // all-devices broadcast, else the target class's bare name -- one decision, made once, by
+  // oneway_target_label() (proto_codecs.h), so the two paths cannot render the same address
+  // differently.
+  const char *target = oneway_target_label(info);
+  // Built from the same oneway_burst_copy_shape() the transmit loop below calls, so this can never
+  // claim a preamble shape the burst does not actually send.
+  const std::string preambles = format_oneway_preamble_list(power_class, this->tuning_->normal_start_preamble);
   if (info.has_intent) {
-    ESP_LOGI(TAG, "1W tx: from %s to class %s intent %s (%ux)", node_id_to_string(frame.src).c_str(),
-             device_type_name(info.target_type), info.intent, ONEWAY_BURST_REPEATS);
+    ESP_LOGI(TAG, "1W tx: from %s to %s intent %s (%ux, preamble %s)", node_id_to_string(frame.src).c_str(), target,
+             info.intent, ONEWAY_BURST_REPEATS, preambles.c_str());
   } else {
-    ESP_LOGI(TAG, "1W tx: from %s to class %s cmd 0x%02X (%ux)", node_id_to_string(frame.src).c_str(),
-             device_type_name(info.target_type), frame.cmd, ONEWAY_BURST_REPEATS);
+    ESP_LOGI(TAG, "1W tx: from %s to %s cmd 0x%02X (%ux, preamble %s)", node_id_to_string(frame.src).c_str(), target,
+             frame.cmd, ONEWAY_BURST_REPEATS, preambles.c_str());
   }
 
   uint8_t sent = 0;
-  for (uint8_t repeat = 0; repeat < ONEWAY_BURST_REPEATS; repeat++) {
-    if (repeat > 0) {
+  for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
+    if (copy > 0) {
       // The gap is part of the protocol, so it is taken before the copy rather than after the
       // last one — a trailing delay would hold the loop for nothing.
       App.feed_wdt();
       delay(ONEWAY_BURST_INTERVAL_MS);
     }
-    if (this->transmit_(frame, FREQ_CH2, LONG_PREAMBLE)) {
+    // The transmitter owns CTRL1's low-power bit and the preamble, per copy -- the frame builders
+    // always hand back ctrl1=0 (proto_commands.cpp), and this clears the bit unconditionally on a
+    // NORMAL-shaped copy too, whatever the builder produced. Everything else about the copy
+    // (cmd/data/sequence/MAC) stays exactly what the caller built, per send_burst()'s own contract.
+    const OneWayCopyShape shape = oneway_burst_copy_shape(power_class, copy);
+    IoFrame copy_frame = frame;
+    if (shape.low_power_flag) {
+      copy_frame.ctrl1 |= CTRL1_LOW_POWER;
+    } else {
+      copy_frame.ctrl1 &= static_cast<uint8_t>(~CTRL1_LOW_POWER);
+    }
+    const uint16_t preamble = oneway_copy_preamble_bytes(shape, this->tuning_->normal_start_preamble);
+    if (this->transmit_(copy_frame, FREQ_CH2, preamble)) {
       sent++;
     }
   }

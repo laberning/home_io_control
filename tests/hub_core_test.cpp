@@ -292,6 +292,43 @@ TEST(HubCore, LBT_JustBelowThreshold_TransmitsImmediately) {
 }
 
 // ============================================================================
+// 1W transmitter wiring: the hub passes its own, live TuningConfig (ADR 0038)
+// ============================================================================
+
+TEST(HubCore, OneWaySendReadsTheHubsLiveTuningForAnAlwaysAliveIdentity) {
+  // oneway_transmitter_'s constructor takes `&tuning_` (hub_core.h); this proves the wiring
+  // actually reaches the radio, not just that it compiles. LEGACY_LONG wouldn't touch the tuning
+  // value at all (every copy is LONG_PREAMBLE), so ALWAYS_ALIVE is the class that can tell the
+  // hub's tuning apart from some other value.
+  LBTTestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  radio.set_rssi_default(-100);  // channel clear -- no LBT retries to complicate the tx count
+
+  TuningConfig tuning{};
+  tuning.normal_start_preamble = 77;
+  comp.set_tuning_config(tuning);
+
+  OneWayControllerIdentity identity{};
+  identity.id = "awning";
+  const uint8_t node_id[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
+  memcpy(identity.node_id, node_id, NODE_ID_SIZE);
+  memset(identity.system_key, 0x11, AES_KEY_SIZE);
+  identity.io_device_type = DeviceType::AWNING;
+  identity.power_class = OneWayPowerClass::ALWAYS_ALIVE;
+  comp.oneway_transmitter().add_identity(identity);
+  comp.oneway_transmitter().setup();
+
+  ASSERT_TRUE(comp.oneway_transmitter().send_command("awning", CoverCommand::STOP));
+
+  const auto &tx_configs = radio.get_tx_configs();
+  ASSERT_EQ(tx_configs.size(), ONEWAY_BURST_REPEATS);
+  for (const auto &tx_config : tx_configs)
+    EXPECT_EQ(tx_config.preamble_len, 77) << "the hub's own live TuningConfig, not a default or a copy";
+}
+
+// ============================================================================
 // Exchange-internal filtering tests (Issue #3)
 // ============================================================================
 

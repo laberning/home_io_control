@@ -178,14 +178,16 @@ static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 /// copies to land, so a wider spacing costs nothing and leaves more room on a shared band.
 ///
 /// The resulting burst duration — see ONEWAY_BURST_INTERVAL_MS's own comment and send_burst()'s
-/// doxygen (oneway_transmitter.h) for the two numbers this decomposes into — is what
+/// doxygen (oneway_transmitter.h) for what it decomposes into per power class — is what
 /// ONEWAY_QUIET_PERIOD_MS (status_poll_policy.h) is sized against when it holds background polls
 /// back during 1W activity.
 static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;  ///< Copies of each 1W command sent per press.
-/// Gap between those copies. Three gaps between four copies is 3 * 40 = 120 ms of pure *delay*;
-/// adding each of the four copies' own airtime brings the wall-clock burst closer to ~160 ms.
-/// send_burst()'s doxygen (oneway_transmitter.h) states both — they are not competing claims about
-/// the same number, just two different things measured on the same burst.
+/// Gap between those copies. Three gaps between four copies is 3 * 40 = 120 ms of pure *delay*,
+/// fixed regardless of the identity's power class. What that adds up to on the wire depends on
+/// each copy's own airtime, which is a per-identity, per-copy choice (`OneWayPowerClass`,
+/// oneway_controller.h; ADR 0038): a burst with the long preamble on every copy runs well over a
+/// second, one with the short preamble on every copy a few hundred ms. send_burst()'s doxygen
+/// (oneway_transmitter.h) has both real shapes.
 static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;
 
 /// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.

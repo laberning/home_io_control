@@ -143,7 +143,7 @@ your device may differ.
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
-| `normal_start_preamble` | both | `32` | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices still get `LONG_PREAMBLE`. |
+| `normal_start_preamble` | both | `32` | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices still get `LONG_PREAMBLE`. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -308,6 +308,10 @@ not need the ~213 ms 1024-byte wake-up burst, and some receivers never lock onto
 so a normal start frame gets this shorter preamble, matching what real hubs send to an
 always-alive device. A device declared `low_power: true` still gets `LONG_PREAMBLE` on its start
 frames, unchanged.
+
+The same value governs a 1W identity's non-wake-up copies once its own `low_power:` is set to
+`false` or `true` — see [Sending 1W commands](oneway-transmit.md). Left unset, an identity keeps
+`LONG_PREAMBLE` on every copy regardless of this setting.
 
 Sized independently of `response_preamble()` (that knob is a per-chip TX→RX turnaround property;
 this is a cold-peer property). The `32`-byte default is 256 bits, well inside the range real hubs

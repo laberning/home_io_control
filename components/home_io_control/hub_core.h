@@ -100,10 +100,12 @@ class IOHomeControlComponent : public Component,
         management_actions_(node_id_, system_key_, &tuning_, exchange_engine_, registry_, &initialized_, this),
         // Capturing `this` is safe here: the callback is only ever invoked from send_burst(),
         // long after construction. It injects the *ability* to transmit rather than a reference
-        // to whichever collaborator currently owns the radio.
-        oneway_transmitter_([this](const IoFrame &frame, uint32_t freq, uint16_t preamble) {
-          return this->transmit_frame_(frame, freq, preamble);
-        }),
+        // to whichever collaborator currently owns the radio. `&tuning_` is read per burst
+        // (never cached), same pattern as exchange_engine_ above, so a live change to
+        // `normal_start_preamble` takes effect on the next 1W command without a reboot.
+        oneway_transmitter_([this](const IoFrame &frame, uint32_t freq,
+                                   uint16_t preamble) { return this->transmit_frame_(frame, freq, preamble); },
+                            &tuning_),
         // set_timeout() is protected on the real ESPHome Component (only public in the host stub),
         // so a lambda defined here — with protected access — is the one legitimate caller. See
         // oneway_key_adoption.h's NamedTimeoutFn.

@@ -3,6 +3,7 @@
 #include "proto_codecs.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
+#include "tuning_config.h"
 
 #include "corpus_generated.h"
 #include "corpus_test_helpers.h"
@@ -12,6 +13,7 @@
 
 #include <array>
 #include <cstring>
+#include <functional>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -30,14 +32,16 @@ const uint8_t OWN_NET_NODE[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
 const uint8_t ADOPTED_NET_NODE[NODE_ID_SIZE] = {0x44, 0x55, 0x66};
 
 /// Captures the frames a burst puts on air. `transmit_result` is what `fn()` reports back to the
-/// transmitter — set it false to simulate a radio that never accepts a copy.
+/// transmitter — set it false to simulate a radio that never accepts a copy. Records the preamble
+/// requested for each copy alongside its frame (ctrl1 -- including CTRL1_LOW_POWER -- is already on
+/// the frame itself, so no separate field is needed for that).
 class BurstRecorder {
  public:
   OneWayTransmitFn fn() {
     return [this](const IoFrame &frame, uint32_t freq, uint16_t preamble) {
       (void) freq;
-      (void) preamble;
       this->frames.push_back(frame);
+      this->preambles.push_back(preamble);
       return this->transmit_result;
     };
   }
@@ -54,6 +58,7 @@ class BurstRecorder {
   }
 
   std::vector<IoFrame> frames;
+  std::vector<uint16_t> preambles;
 };
 
 OneWayControllerIdentity make_identity(const std::string &id, const uint8_t node_id[NODE_ID_SIZE], DeviceType type,
@@ -67,10 +72,14 @@ OneWayControllerIdentity make_identity(const std::string &id, const uint8_t node
   return identity;
 }
 
+/// Shared fixture: one default-constructed TuningConfig, so every test below constructs an
+/// OneWayTransmitter with `&this->tuning_` instead of thirty inline copies.
 class OneWaySendCommandTest : public ::testing::Test {
  protected:
   void SetUp() override { esphome::test_preferences::wipe(); }
   void TearDown() override { esphome::test_preferences::wipe(); }
+
+  TuningConfig tuning_{};
 };
 
 }  // namespace
@@ -79,7 +88,7 @@ TEST_F(OneWaySendCommandTest, OneCommandConsumesExactlyOneSequence) {
   // The rule the whole burst design rests on: a device treats one sequence as one command, so
   // four copies bearing four sequences would be four commands, three of them rejected as replays.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 500));
   transmitter.setup();
 
@@ -93,7 +102,7 @@ TEST_F(OneWaySendCommandTest, OneCommandConsumesExactlyOneSequence) {
 
 TEST_F(OneWaySendCommandTest, ConsecutiveCommandsNeverReuseASequence) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 500));
   transmitter.setup();
 
@@ -111,7 +120,7 @@ TEST_F(OneWaySendCommandTest, ConsecutiveCommandsNeverReuseASequence) {
 
 TEST_F(OneWaySendCommandTest, InterleavedIdentitiesKeepSeparateSequences) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("own", OWN_NET_NODE, DeviceType::AWNING, 0x11, 100));
   transmitter.add_identity(make_identity("adopted", ADOPTED_NET_NODE, DeviceType::ROLLER_SHUTTER, 0x22, 900));
   transmitter.setup();
@@ -131,7 +140,7 @@ TEST_F(OneWaySendCommandTest, EachIdentitySignsWithItsOwnKey) {
   // The reason per-identity keys exist: an adopted foreign network's key has to coexist with the
   // hub's own. If the transmitter used one key for both, adoption would achieve nothing.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("own", OWN_NET_NODE, DeviceType::AWNING, 0x11, 7));
   transmitter.add_identity(make_identity("adopted", ADOPTED_NET_NODE, DeviceType::AWNING, 0x22, 7));
   transmitter.setup();
@@ -156,7 +165,7 @@ TEST_F(OneWaySendCommandTest, EachIdentitySignsWithItsOwnKey) {
 
 TEST_F(OneWaySendCommandTest, CommandsAddressTheIdentitysDeviceClass) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("light", OWN_NET_NODE, DeviceType::LIGHT, 0x11));
   transmitter.setup();
 
@@ -170,7 +179,7 @@ TEST_F(OneWaySendCommandTest, CommandsAddressTheIdentitysDeviceClass) {
 
 TEST_F(OneWaySendCommandTest, AnUnknownIdentityTransmitsNothing) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11));
   transmitter.setup();
 
@@ -183,7 +192,7 @@ TEST_F(OneWaySendCommandTest, AnIdentityRegisteredWithoutSetupTransmitsNothing) 
   // setup() is what opens the counters. Without it there is no reserved sequence, and a frame
   // signed with an unreserved one is exactly the replay risk the store exists to prevent.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11));
 
   EXPECT_FALSE(transmitter.send_command("awning", CoverCommand::STOP));
@@ -193,7 +202,7 @@ TEST_F(OneWaySendCommandTest, AnIdentityRegisteredWithoutSetupTransmitsNothing) 
 TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
   BurstRecorder recorder;
   {
-    OneWayTransmitter transmitter(recorder.fn());
+    OneWayTransmitter transmitter(recorder.fn(), &tuning_);
     transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 300));
     transmitter.setup();
     ASSERT_TRUE(transmitter.send_command("awning", CoverCommand::STOP));
@@ -202,7 +211,7 @@ TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
   esphome::test_preferences::simulate_reboot();
 
   BurstRecorder after_reboot;
-  OneWayTransmitter rebooted(after_reboot.fn());
+  OneWayTransmitter rebooted(after_reboot.fn(), &tuning_);
   rebooted.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 300));
   rebooted.setup();
   ASSERT_TRUE(rebooted.send_command("awning", CoverCommand::STOP));
@@ -223,7 +232,7 @@ TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
 
 TEST_F(OneWaySendCommandTest, EnrollmentConsumesTwoSequencesOneEach) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 500));
   transmitter.setup();
 
@@ -247,7 +256,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentConsumesTwoSequencesOneEach) {
 
 TEST_F(OneWaySendCommandTest, EnrollmentAndUnenrollmentShareTheCommandSequenceCounter) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 500));
   transmitter.setup();
 
@@ -273,7 +282,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailerOnTheAddHalf) {
   // the published documentation vector create_1w_add_controller() defaults to. The enroll button
   // is the one caller that transmits to real hardware, so it must not use that default.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -288,7 +297,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsRemoveThenAddBackToBack) {
   // The documented 1W pairing handshake (linklayer.md:396, "1W Discovery"): 0x39 then 0x30, both
   // from the same identity, one burst each, no gap beyond the bursts' own airtime.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -303,7 +312,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsRemoveThenAddBackToBack) {
 
 TEST_F(OneWaySendCommandTest, EnrollmentMatchesTheBuildersDirectly) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 7));
   transmitter.setup();
 
@@ -327,7 +336,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentWithMacConfiguredTrueAddsTheTrailer) {
   // enrollment_with_mac: true -- the YAML escape hatch for hardware that needs the MAC-bearing
   // 0x30 shape (the published documentation vector's own shape) instead of the no-MAC default.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   OneWayControllerIdentity identity = make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 3);
   identity.enrollment_with_mac = true;
   transmitter.add_identity(identity);
@@ -363,7 +372,7 @@ uint16_t remove_seq(const IoFrame &f) { return static_cast<uint16_t>((f.data[1] 
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentSweepsThreeClassesThenStopsAndCloses) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_velux_identity(10));
   transmitter.setup();
 
@@ -399,7 +408,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentSweepsThreeClassesThenStopsAndClose
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentConsumesFourSequencesOneEachExceptTheSharedSweep) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_velux_identity(10));
   transmitter.setup();
 
@@ -416,7 +425,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentConsumesFourSequencesOneEachExceptT
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentClassesOverrideNarrowsTheSweep) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   OneWayControllerIdentity identity = make_velux_identity(1);
   identity.enrollment_classes = {DeviceType::AWNING, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
   transmitter.add_identity(identity);
@@ -433,7 +442,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentClassesOverrideNarrowsTheSweep) {
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentReportsLabelEachLeg) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_velux_identity(1));
   transmitter.setup();
 
@@ -452,7 +461,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentReportsLabelEachLeg) {
 
 TEST_F(OneWaySendCommandTest, SomfyManufacturerStillUsesTheUnchangedTwoFrameGesture) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   OneWayControllerIdentity identity = make_identity("somfy", OWN_NET_NODE, DeviceType::AWNING, 0x11, 5);
   identity.manufacturer = MANUFACTURER_SOMFY;
   transmitter.add_identity(identity);
@@ -475,7 +484,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentReproducesTheSyntheticGoldenGesture
   // the no-MAC 0x30 form, the shared sweep sequence, the ACEI, and all four 1W MACs in one test --
   // the strongest check available for a path with no hardware confirmation.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   OneWayControllerIdentity identity{};
   identity.id = "golden";
   const uint8_t src[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
@@ -506,7 +515,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentSkipsStopAndDownWhenTheSweepTransmi
   // A failed sweep must NOT be followed by a real DOWN broadcast to every 1W device on the network.
   BurstRecorder recorder;
   recorder.transmit_result = false;  // the radio never accepts a copy
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_velux_identity(1));
   transmitter.setup();
 
@@ -520,7 +529,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentSkipsStopAndDownWhenTheSweepTransmi
 
 TEST_F(OneWaySendCommandTest, UnenrollmentBuildsARemoveControllerFrame) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 9));
   transmitter.setup();
 
@@ -532,7 +541,7 @@ TEST_F(OneWaySendCommandTest, UnenrollmentBuildsARemoveControllerFrame) {
 
 TEST_F(OneWaySendCommandTest, AnUnknownIdentityEnrollsAndUnenrollsNothing) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11));
   transmitter.setup();
 
@@ -552,7 +561,7 @@ TEST_F(OneWaySendCommandTest, ReportsCarryExplicitEnrollUnenrollLabels) {
   // CMD_EXECUTE/CMD_ACTIVATE_MODE), so without an explicit label the "Last 1W Command" sensor
   // would show a blank intent for the one feature whose whole diagnostic story is that sensor.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -574,7 +583,7 @@ TEST_F(OneWaySendCommandTest, ReportsCarryExplicitEnrollUnenrollLabels) {
 
 TEST_F(OneWaySendCommandTest, PositionsAreEncodedAsTheBuilderWould) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -594,7 +603,7 @@ TEST_F(OneWaySendCommandTest, PositionsAreEncodedAsTheBuilderWould) {
 
 TEST_F(OneWaySendCommandTest, VeluxIdentityEmitsLevel3Acei) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   OneWayControllerIdentity id = make_identity("velux", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1);
   id.manufacturer = MANUFACTURER_VELUX;
   transmitter.add_identity(id);
@@ -608,7 +617,7 @@ TEST_F(OneWaySendCommandTest, IdentityWithoutManufacturerStillEmitsTheSomfyAcei)
   // The back-compat promise: an identity that never set manufacturer: is byte-for-byte what it
   // was before ADR 0031.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   transmitter.add_identity(make_identity("plain", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -618,7 +627,7 @@ TEST_F(OneWaySendCommandTest, IdentityWithoutManufacturerStillEmitsTheSomfyAcei)
 
 TEST_F(OneWaySendCommandTest, ExecuteAceiOverrideBeatsTheProfile) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   OneWayControllerIdentity id = make_identity("odd", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1);
   id.manufacturer = MANUFACTURER_VELUX;
   id.execute_acei = 0x55;
@@ -631,7 +640,7 @@ TEST_F(OneWaySendCommandTest, ExecuteAceiOverrideBeatsTheProfile) {
 
 TEST_F(OneWaySendCommandTest, ExecuteBroadcastAllTargetsAllDevicesRegardlessOfClass) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   OneWayControllerIdentity id = make_identity("screen", OWN_NET_NODE, DeviceType::SCREEN, 0x11, 1);
   id.manufacturer = MANUFACTURER_VELUX;
   id.execute_broadcast_all = true;
@@ -658,7 +667,7 @@ TEST_F(OneWaySendCommandTest, ExecuteBroadcastAllDoesNotDegradeTheReportToUnknow
   // still name the identity's class, or the "Last 1W Command" sensor and the TX log read
   // "STOP -> unknown".
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn());
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
   OneWayControllerIdentity id = make_identity("screen", OWN_NET_NODE, DeviceType::SCREEN, 0x11, 1);
   id.execute_broadcast_all = true;
   transmitter.add_identity(id);
@@ -671,4 +680,83 @@ TEST_F(OneWaySendCommandTest, ExecuteBroadcastAllDoesNotDegradeTheReportToUnknow
   ASSERT_EQ(reports.size(), 1u);
   EXPECT_EQ(reports[0].target_type, DeviceType::SCREEN) << "the identity's class, not the frame's decoded UNKNOWN";
   EXPECT_EQ(reports[0].intent, "STOP") << "intent still decodes from the built frame";
+}
+
+// ============================================================================
+// Per-identity power class (ADR 0038): every 1W TX of the identity honours it.
+// ============================================================================
+
+namespace {
+
+/// Asserts every burst in `frames`/`preambles` (grouped into ONEWAY_BURST_REPEATS-sized runs)
+/// carries the preamble and CTRL1_LOW_POWER shape `power_class` implies, via the same
+/// oneway_copy_preamble_bytes() send_burst() itself resolves each copy through. One helper reused
+/// by every entry point below, so a call site that forgot to thread the identity's power class
+/// through to send_burst() shows up as a failure here instead of only in oneway_transmitter_test.cpp.
+void expect_bursts_match_power_class(const std::vector<IoFrame> &frames, const std::vector<uint16_t> &preambles,
+                                     OneWayPowerClass power_class, uint16_t normal_start_preamble) {
+  ASSERT_EQ(frames.size(), preambles.size());
+  ASSERT_GT(frames.size(), 0u);
+  ASSERT_EQ(frames.size() % ONEWAY_BURST_REPEATS, 0u) << "every burst is a fixed-size run of copies";
+  for (size_t burst = 0; burst < frames.size() / ONEWAY_BURST_REPEATS; burst++) {
+    for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
+      const size_t i = burst * ONEWAY_BURST_REPEATS + copy;
+      const OneWayCopyShape shape = oneway_burst_copy_shape(power_class, copy);
+      EXPECT_EQ(preambles[i], oneway_copy_preamble_bytes(shape, normal_start_preamble))
+          << "burst " << burst << " copy " << static_cast<int>(copy);
+      EXPECT_EQ((frames[i].ctrl1 & CTRL1_LOW_POWER) != 0, shape.low_power_flag)
+          << "burst " << burst << " copy " << static_cast<int>(copy);
+    }
+  }
+}
+
+/// One entry point this feature exposes, and how to drive it generically for the table-driven
+/// test below.
+struct PowerClassEntryPoint {
+  std::string name;                                                      ///< Row label for SCOPED_TRACE.
+  std::function<void(OneWayControllerIdentity &)> configure_identity;    ///< Vendor/manufacturer setup, if any.
+  std::function<bool(OneWayTransmitter &, const std::string &)> action;  ///< The call under test.
+  size_t expected_burst_count;  ///< Logical bursts the action must produce, in ONEWAY_BURST_REPEATS units.
+};
+
+}  // namespace
+
+TEST_F(OneWaySendCommandTest, EveryEntryPointHonoursTheIdentitysPowerClassOnEveryBurst) {
+  // I1 (unset must be byte- and timing-identical to today) is pinned here too, not only in
+  // oneway_transmitter_test.cpp: LEGACY_LONG is in the loop alongside the two opted-in classes.
+  tuning_.normal_start_preamble = 32;
+
+  const std::vector<PowerClassEntryPoint> entry_points = {
+      {"send_command", [](OneWayControllerIdentity &) {},
+       [](OneWayTransmitter &t, const std::string &id) { return t.send_command(id, CoverCommand::STOP); }, 1},
+      {"send_position", [](OneWayControllerIdentity &) {},
+       [](OneWayTransmitter &t, const std::string &id) { return t.send_position(id, 50); }, 1},
+      {"send_unenrollment", [](OneWayControllerIdentity &) {},
+       [](OneWayTransmitter &t, const std::string &id) { return t.send_unenrollment(id); }, 1},
+      {"Somfy enrollment (0x39 prelude + 0x30 add)",
+       [](OneWayControllerIdentity &id) { id.manufacturer = MANUFACTURER_SOMFY; },
+       [](OneWayTransmitter &t, const std::string &id) { return t.send_enrollment(id); }, 2},
+      {"VELUX enrollment (0x39 + 3-class sweep + STOP + DOWN)",
+       [](OneWayControllerIdentity &id) { id.manufacturer = MANUFACTURER_VELUX; },
+       [](OneWayTransmitter &t, const std::string &id) { return t.send_enrollment(id); }, 6},
+  };
+
+  for (const auto &entry : entry_points) {
+    for (const OneWayPowerClass power_class :
+         {OneWayPowerClass::LEGACY_LONG, OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
+      SCOPED_TRACE(entry.name + " / " + oneway_power_class_name(power_class));
+
+      BurstRecorder recorder;
+      OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+      OneWayControllerIdentity id = make_identity("id", OWN_NET_NODE, DeviceType::AWNING, 0x11, 1);
+      id.power_class = power_class;
+      entry.configure_identity(id);
+      transmitter.add_identity(id);
+      transmitter.setup();
+
+      ASSERT_TRUE(entry.action(transmitter, "id"));
+      ASSERT_EQ(recorder.frames.size(), entry.expected_burst_count * ONEWAY_BURST_REPEATS);
+      expect_bursts_match_power_class(recorder.frames, recorder.preambles, power_class, 32);
+    }
+  }
 }

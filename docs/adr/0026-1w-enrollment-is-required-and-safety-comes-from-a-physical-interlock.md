@@ -32,7 +32,7 @@ Enrollment is two-sided, and only one side is something the hub can ever emit:
 
 | Half | Who does it | What it is |
 |---|---|---|
-| Receiver enters association mode | **a person, physically** | a multi-second hold on the actuator's own PROG button, confirmed by the actuator's own indicator |
+| Receiver enters association mode | **a person, physically** | a physical gesture on the receiver side, confirmed by the actuator's own indicator: a multi-second hold on the actuator's own PROG button (Somfy), or a ~1 second GEAR press on an already-registered control (VELUX) |
 | Controller offers its credential | **the hub** | one short `0x39` burst, immediately followed by one short `0x30` burst — the documented pairing handshake, see "What the enroll button sends" below |
 
 A device that is not in association mode does not accept a `0x30` at all. So a hub sitting on
@@ -55,8 +55,8 @@ be added for safety's sake.
 ADR 0021's arming switch exists for a different risk shape: an *irreversible* bootloader write,
 where one more entity is a fair price for the write's own sake. Borrowing that pattern here would
 add friction without adding safety, since the thing that actually makes a stray enrollment
-attempt harmless — nobody holding the PROG button, and nothing being displaced even if someone
-is — is already present with or without a switch.
+attempt harmless — nobody performing that physical gesture on the receiver, and nothing being
+displaced even if someone is — is already present with or without a switch.
 
 **What the build flag (`enrollment: true`) is for instead:** not safety against a stray press,
 but against the capability sitting in a permanently-running build. It is the same "presence is

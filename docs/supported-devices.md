@@ -81,7 +81,7 @@ project controls.
 | **KUX 100 / PK03 / PK04 wired bridge** | Bridge | 🔍 Traffic captured only | — | — | 3 corpus captures of KLR200 ↔ KUX100 traffic |
 | **KLF 200** | Third-party hub | 📣 Reported as a key source | — | — | Named in several issue threads; no capture |
 | **SML shutter via KUX 110** | `roller_shutter` | ❌ Unsupported — nothing answers discovery | — | — | Issue #17 |
-| **KUX 110 / KUX 100 wired bridge, 1W enrollment** | — | ❌ Unsupported — enrollment transmits, the device never reacts | Tried with the `roller_shutter` and `dual_shutter` classes | `oneway_controllers:` with `enrollment: true` | Issue #74. The `awning` class has not been tried yet. |
+| **KUX 110 / KUX 100 wired bridge, 1W enrollment** | — | ❌ Unsupported — enrollment transmits, the device never reacts | All three swept classes tried (`roller_shutter`, `awning`, `dual_shutter`) | `oneway_controllers:` with `enrollment: true` | Issue #74. Current lead: set `low_power: false` on the identity (mains-powered receiver) and retest — see [Sending 1W commands](configuration/oneway-transmit.md). |
 
 ### Other vendors
 

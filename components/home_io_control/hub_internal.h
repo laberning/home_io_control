@@ -194,8 +194,9 @@ inline void log_1w_remote_frame(const OneWayFrameInfo &info, const std::vector<s
   const std::string src_id = node_id_to_string(info.src);
 
   // Resolve the broadcast target label: "all" for BROADCAST_ALL, otherwise the device type name.
-  const char *target_label =
-      (info.address_class == AddressClass::BROADCAST_ALL) ? "all" : device_type_name(info.target_type);
+  // Shared with the TX path (OneWayTransmitter::send_burst()) via oneway_target_label() so the two
+  // cannot render the same address differently.
+  const char *target_label = oneway_target_label(info);
 
   // Build optional suffix showing linked devices.
   std::string suffix;

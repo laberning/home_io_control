@@ -37,6 +37,7 @@ from . import (
     home_io_control_ns,
     IOHomeControlComponent,
     CONF_HOME_IO_CONTROL_ID,
+    CONF_LOW_POWER,
     device_type_expression,
     inherit_esphome_device,
     validate_device_id,
@@ -54,7 +55,6 @@ CONF_LINKED_REMOTES = "linked_remotes"
 CONF_DEVICE_TYPE = "io_device_type"
 CONF_SUBTYPE = "io_subtype"
 CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
-CONF_LOW_POWER = "low_power"
 
 # Internal config key for the companion device-name sensor ID (injected by post-validator).
 CONF_DEVICE_NAME_SENSOR_ID = "_device_name_sensor_id"

@@ -72,6 +72,7 @@ home_io_control:
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
 | `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), but a real Somfy Izymo has separately been shown to accept the MAC-bearing form too. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. |
 | `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of `io_device_type` names (max 3). Unset → the profile default `[roller_shutter, awning, dual_shutter]` — the exact set a real KLI PROG press sweeps. Set it (e.g. `[awning]`) to narrow the sweep once you know which class your actuator listens on. **Ignored by the Somfy gesture**, which always uses `io_device_type`. See "Enrolling this hub as a controller" below. |
+| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). **Tri-state, and unset is not the same as `false`** — unlike the device-platform `low_power` key. Unset (the default) keeps every copy on the long, ~213 ms wake-up preamble — the long-standing default shape. `false` sends every copy at the short, live `normal_start_preamble` tuning value instead — try this first for a mains-powered VELUX receiver (e.g. a KUX 110). `true` sends a long wake-up copy first, then short repeats — for a solar or battery receiver. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. |
 
 ## Matching your remote's vendor
 
@@ -110,17 +111,18 @@ reflashing is the feature's entire lifecycle. Setting it creates one more entity
 each with its own key — enrolling this hub alongside an already-registered remote leaves that
 remote working exactly as before; the device answers commands from either.
 
-**The gesture is two-sided, and only one half is a button press.**
+**The gesture is two-sided, and only one half is a button press.** What the receiver-side half looks
+like depends on your device's manufacturer — Somfy and VELUX differ, see below.
 
 | Half | Who does it | What it is |
 |---|---|---|
-| Receiver enters association mode | **you, physically** | **2 second** hold on the actuator's PROG button, confirmed by its own indicator |
+| Receiver enters association mode | **you, physically** | a physical gesture on the receiver, confirmed by its own indicator — for **Somfy**, a **2 second** hold on the actuator's PROG button; **VELUX** uses a different gesture, see below |
 | Controller offers its credential | **the hub** | one **short** press of the "Enroll 1W Controller" entity |
 
-Get the order and the durations right: 2 seconds on the receiver, *then* one press on the hub — not
-the other way around, and not a long hold on the hub's entity (there is nothing to hold; a press is
-a press). Getting the two halves' timing backwards is the most common failure mode here, not a
-protocol problem.
+For Somfy, get the order and the durations right: 2 seconds on the receiver, *then* one press on the
+hub — not the other way around, and not a long hold on the hub's entity (there is nothing to hold; a
+press is a press). Getting the two halves' timing backwards is the most common failure mode here,
+not a protocol problem.
 
 The press sends two bursts back to back — `0x39` (self-directed; carries only this identity's own
 address, so it can only ever clear its own prior entry, never a different controller's),
@@ -147,27 +149,47 @@ A real VELUX KLI 310/311/312/313 PROG press does not enroll the way a Somfy Smoo
    actuator filters by its own class; only the matching frame registers the hub. Narrow the sweep
    with `enrollment_classes:` once you know which class yours listens on.
 3. A STOP then a DOWN command to the all-devices address — the KLI manual's "then press STOP then
-   DOWN within 3 seconds" registration completion.
+   DOWN" registration-completion step.
+
+The receiver side of this gesture is **GEAR (the cog button), pressed for about 1 second, on an
+already-registered VELUX control** (e.g. a KLI 310). The product you are enrolling runs briefly
+back and forth to show it is ready, then press Enroll on the hub within about 10 seconds. If that
+control drives several products, assume every product that jogs will register the hub too —
+unconfirmed, but the gesture is additive, the same as Somfy's.
 
 So for a VELUX exterior-shading device, set `io_device_type:` to whatever the device actually is
 (it drives the control-frame destination), and leave `enrollment_classes:` unset unless you need
 to narrow the sweep — the enroll gesture ignores `io_device_type` and uses the three-class list.
-The Enroll button blocks for up to ~6 seconds while it sends all six bursts.
+The Enroll button blocks for about 6–7 seconds (measured) while it sends all six bursts, and an
+estimated well under 2 seconds with `low_power: false` (not yet measured on air) — the current lead
+for a mains-powered VELUX receiver (see the `low_power` row above and
+[ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)):
 
-> **⚠️ Pressing Enroll physically moves your covers.** Step 3 is a real STOP then a real DOWN
-> broadcast to *every* 1W-enrolled cover in range that holds the key — they will close. That is
-> the KLI registration gesture, not a side effect to fix, but it is worth knowing before you press
-> the button.
+```yaml
+oneway_controllers:
+  - id: velux_awning
+    io_device_type: awning
+    manufacturer: velux
+    enrollment: true
+    low_power: false      # try this first for a mains-powered VELUX receiver
+```
+
+> **⚠️ Pressing Enroll can physically move a cover.** Step 3 is a real STOP then a real DOWN
+> broadcast, but a 1W receiver only acts on frames from a controller already in its own table — the
+> hub transmits under this identity's own address, never a remote's — so only a product that holds
+> this identity as a registered controller reacts, including one that has *just* registered it via
+> the sweep in step 2. That closing movement is the success signal: if nothing moves, nothing
+> registered. This is the KLI registration gesture, not a side effect to fix, but it is worth
+> knowing before you press the button.
 
 > **⚠️ VELUX 1W enrollment is unconfirmed.** No hub has been shown to 1W-enroll on any VELUX
 > actuator (issue #74). The frame shapes are reconstructed from a real KLI 310 capture; the
-> STOP+DOWN step in particular is not confirmed against a VELUX capture. Two likely blockers: the
-> actuator's own 2-second PROG window must be open at the moment the `0x30` sweep transmits (hold
-> PROG on the actuator, then press Enroll), and the sweep plus STOP plus DOWN may not fit the
-> manual's own 3-second window at this radio cadence
-> ([ADR 0032](../adr/0032-oneway-velux-enrollment-gesture.md)).
+> STOP+DOWN step in particular is not confirmed against a VELUX capture. The leading hypothesis for
+> why it hasn't worked yet is the long radio preamble the gesture carries on every copy when
+> `low_power:` is left unset (the default, [ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md))
+> — set `low_power: false` and retry before assuming the frame shapes themselves are wrong.
 
-**A hub cannot enroll into a device nobody has walked up to.** The receiver's physical PROG hold is
+**A hub cannot enroll into a device nobody has walked up to.** The receiver-side physical gesture is
 the real safety interlock here, stronger than any software confirmation could be — it is why this
 feature has no separate arming switch the way the (irreversible) LR1121 bootloader rewrite does.
 
@@ -188,9 +210,9 @@ cannot remove a different remote's registration — the same property that makes
 > **⚠️ Un-enrollment is unconfirmed on real hardware.** This action has not been shown to have any
 > effect on real hardware — the hub keeps controlling the device afterwards regardless. The most
 > likely explanation, by analogy with enrollment itself, is that a device only acts on `0x39`
-> while its receiver is in the same **2 second PROG association mode** enrollment needs. Treat
-> "un-enroll" as the documented design intent, not a confirmed rollback, until this is retested
-> with that gesture.
+> while its receiver is in the same physical association-mode gesture enrollment needs (a PROG hold
+> for Somfy, GEAR for VELUX). Treat "un-enroll" as the documented design intent, not a confirmed
+> rollback, until this is retested with that gesture.
 
 **When you are done enrolling**, remove `enrollment: true` from the identity and reflash. A build
 that can put a device into someone else's controller table should not be the build that runs

@@ -193,3 +193,46 @@ TEST(OneWayController, EffectiveEnrollmentClassesPrefersTheOverride) {
   id.enrollment_classes = {DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
   EXPECT_EQ(effective_enrollment_classes(id)[0], DeviceType::ROLLER_SHUTTER) << "all-UNKNOWN is the 'not set' sentinel";
 }
+
+// ============================================================================
+// Per-identity power class (ADR 0038): oneway_burst_copy_shape() / oneway_power_class_name()
+// ============================================================================
+
+TEST(OneWayController, DefaultIdentityIsLegacyLong) {
+  const OneWayControllerIdentity id{};
+  EXPECT_EQ(id.power_class, OneWayPowerClass::LEGACY_LONG) << "an identity with no low_power: set keeps today's shape";
+}
+
+TEST(OneWayController, LegacyLongIsWakeOnEveryCopy) {
+  for (uint8_t copy = 0; copy < 4; copy++) {
+    const OneWayCopyShape shape = oneway_burst_copy_shape(OneWayPowerClass::LEGACY_LONG, copy);
+    EXPECT_EQ(shape.preamble, OneWayPreamble::WAKE) << "copy " << static_cast<int>(copy);
+    EXPECT_FALSE(shape.low_power_flag) << "copy " << static_cast<int>(copy) << " -- unset never sets CTRL1_LOW_POWER";
+  }
+}
+
+TEST(OneWayController, AlwaysAliveIsNormalOnEveryCopy) {
+  for (uint8_t copy = 0; copy < 4; copy++) {
+    const OneWayCopyShape shape = oneway_burst_copy_shape(OneWayPowerClass::ALWAYS_ALIVE, copy);
+    EXPECT_EQ(shape.preamble, OneWayPreamble::NORMAL) << "copy " << static_cast<int>(copy);
+    EXPECT_FALSE(shape.low_power_flag) << "copy " << static_cast<int>(copy);
+  }
+}
+
+TEST(OneWayController, LowPowerWakesOnlyOnCopyZero) {
+  const OneWayCopyShape first = oneway_burst_copy_shape(OneWayPowerClass::LOW_POWER, 0);
+  EXPECT_EQ(first.preamble, OneWayPreamble::WAKE);
+  EXPECT_TRUE(first.low_power_flag);
+
+  for (uint8_t copy = 1; copy < 4; copy++) {
+    const OneWayCopyShape shape = oneway_burst_copy_shape(OneWayPowerClass::LOW_POWER, copy);
+    EXPECT_EQ(shape.preamble, OneWayPreamble::NORMAL) << "copy " << static_cast<int>(copy);
+    EXPECT_FALSE(shape.low_power_flag) << "copy " << static_cast<int>(copy);
+  }
+}
+
+TEST(OneWayController, PowerClassNamesEveryValue) {
+  EXPECT_STREQ(oneway_power_class_name(OneWayPowerClass::LEGACY_LONG), "legacy long");
+  EXPECT_STREQ(oneway_power_class_name(OneWayPowerClass::ALWAYS_ALIVE), "always-alive");
+  EXPECT_STREQ(oneway_power_class_name(OneWayPowerClass::LOW_POWER), "low-power");
+}

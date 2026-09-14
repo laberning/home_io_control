@@ -75,6 +75,9 @@ home_io_control:
       commands: [stop]
       enrollment: true
       enrollment_classes: [awning, roller_shutter]
+      # ADR 0038: low_power: false exercises the ALWAYS_ALIVE codegen branch (ONEWAY_CONTROLLER_SCHEMA
+      # tri-state; low_power: false is the test-build lead for a mains-powered VELUX receiver).
+      low_power: false
     - id: adopted_neighbour_net
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF
@@ -93,6 +96,9 @@ home_io_control:
       # Exercises the enrollment_with_mac: true schema/codegen path — the default (false) is
       # already covered by awning_remote above having no enrollment: true at all.
       enrollment_with_mac: true
+      # ADR 0038: low_power: true exercises the LOW_POWER codegen branch -- the wake-up-copy shape
+      # for a solar/battery receiver. awning_remote (unset) already covers the LEGACY_LONG default.
+      low_power: true
 
 # At least one entity of each type is needed to ensure all platform code compiles
 cover:

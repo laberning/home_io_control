@@ -32,6 +32,66 @@
 namespace esphome {
 namespace home_io_control {
 
+/// @brief Which preamble/CTRL1 shape a 1W identity's bursts use (`low_power:` on the identity).
+///
+/// **Tri-state, unlike the per-device 2W `low_power` key (ADR 0029), which is a plain bool
+/// defaulting to `false`.** Here, *unset* is its own state and is not equivalent to `false`: it
+/// keeps every 1W transmit byte- and timing-identical to the hardware-validated Somfy path.
+/// `false` opts an identity into the ADR 0029 shape (short preamble, no wake flag); `true` adds a
+/// wake-up copy for a duty-cycled receiver. See ADR 0038 for why unset survives as a knowingly
+/// non-conforming default rather than being folded into `false`.
+enum class OneWayPowerClass : uint8_t {
+  LEGACY_LONG,   ///< `low_power:` unset: LONG_PREAMBLE on every copy, CTRL1 0x00 everywhere.
+  ALWAYS_ALIVE,  ///< `low_power: false`: normal start preamble on every copy, CTRL1 0x00.
+  LOW_POWER,     ///< `low_power: true`: copy 1 LONG_PREAMBLE + CTRL1_LOW_POWER, repeats normal.
+};
+
+/// @brief Human-readable name for a OneWayPowerClass, as it appears in the boot log.
+/// @param power_class Power class to name.
+/// @return Null-terminated name such as "always-alive".
+const char *oneway_power_class_name(OneWayPowerClass power_class);
+
+/// @brief Which wake-up shape one copy of a 1W burst gets.
+enum class OneWayPreamble : uint8_t {
+  WAKE,    ///< The long wake-up preamble (`LONG_PREAMBLE`), paired with `CTRL1_LOW_POWER` set.
+  NORMAL,  ///< The runtime-tunable `normal_start_preamble`, CTRL1's low-power bit clear.
+};
+
+/// @brief The preamble and CTRL1 shape one copy of a 1W burst gets.
+///
+/// Chip-neutral by design: this header names bytes, not chips, and does not know about
+/// `TuningConfig` — resolving `OneWayPreamble::NORMAL` to an actual byte count is
+/// `OneWayTransmitter`'s job (oneway_transmitter.h), the one place in the controller layer that
+/// holds a `TuningConfig *`.
+struct OneWayCopyShape {
+  OneWayPreamble preamble;  ///< Which preamble this copy transmits with.
+  bool low_power_flag;      ///< Whether this copy sets `CTRL1_LOW_POWER`.
+};
+
+/// @brief Resolve which preamble/CTRL1 shape one copy of a burst gets, from the identity's power
+/// class and the copy's position in the burst.
+///
+/// Pure: no radio, no tuning, testable on its own. Implements the table in ADR 0038 — `LEGACY_LONG`
+/// and `ALWAYS_ALIVE` are uniform across every copy; only `LOW_POWER` varies by position, putting
+/// the wake-up shape on copy 0 alone — what a real remote's GEAR/EXECUTE burst does, and the
+/// mirror of how `ExchangeEngine` (ADR 0029) already picks a 2W start frame's preamble from the
+/// target's own low-power declaration.
+/// @param power_class The identity's configured power class.
+/// @param copy_index 0-based position of this copy within the burst.
+/// @return The preamble and CTRL1 shape for that copy.
+inline OneWayCopyShape oneway_burst_copy_shape(OneWayPowerClass power_class, uint8_t copy_index) {
+  switch (power_class) {
+    case OneWayPowerClass::ALWAYS_ALIVE:
+      return {OneWayPreamble::NORMAL, /*low_power_flag=*/false};
+    case OneWayPowerClass::LOW_POWER:
+      return copy_index == 0 ? OneWayCopyShape{OneWayPreamble::WAKE, /*low_power_flag=*/true}
+                             : OneWayCopyShape{OneWayPreamble::NORMAL, /*low_power_flag=*/false};
+    case OneWayPowerClass::LEGACY_LONG:
+    default:
+      return {OneWayPreamble::WAKE, /*low_power_flag=*/false};
+  }
+}
+
 /// @brief One configured 1W controller identity.
 ///
 /// Fixed-size key and address material; the only heap is the `id` handle, which mirrors how
@@ -62,6 +122,10 @@ struct OneWayControllerIdentity {
   /// one- or two-class override is expressed by leaving the rest `UNKNOWN`. Ignored by the Somfy
   /// enrollment gesture, which always uses `io_device_type`. See ADR 0032.
   std::array<DeviceType, 3> enrollment_classes{DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
+  /// Preamble/CTRL1 shape every burst this identity sends uses (`low_power:`). Applies to every
+  /// 1W TX of the identity -- commands, positions, enrollment (both gestures), un-enrollment. Last
+  /// field: codegen emits a designated initialiser in declaration order. See ADR 0038.
+  OneWayPowerClass power_class{OneWayPowerClass::LEGACY_LONG};
 
   /// @brief Enrollment / typed-class destination address for this identity.
   ///

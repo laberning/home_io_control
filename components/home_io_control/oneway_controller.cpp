@@ -7,6 +7,18 @@
 namespace esphome {
 namespace home_io_control {
 
+const char *oneway_power_class_name(OneWayPowerClass power_class) {
+  switch (power_class) {
+    case OneWayPowerClass::ALWAYS_ALIVE:
+      return "always-alive";
+    case OneWayPowerClass::LOW_POWER:
+      return "low-power";
+    case OneWayPowerClass::LEGACY_LONG:
+    default:
+      return "legacy long";
+  }
+}
+
 const char *oneway_button_action_name(OneWayButtonAction action) {
   switch (action) {
     case OneWayButtonAction::OPEN:

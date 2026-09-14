@@ -61,10 +61,11 @@ class IOHomeOneWayCommandButton : public button::Button, public Component, publi
 
 /// @brief Button entity that registers a configured controller identity as a 1W controller.
 ///
-/// A press sends `0x39` then `0x30`, back to back (OneWayTransmitter::send_enrollment()) — the
-/// documented 1W pairing handshake. The receiver's half of enrollment is a physical 2s PROG hold
-/// on the actuator itself; that physical requirement is the real interlock against a stray or
-/// unintended enrollment, not a software arming switch — see ADR 0026.
+/// A press sends the gesture its manufacturer expects (OneWayTransmitter::send_enrollment(), ADR
+/// 0032). The receiver's half of enrollment is a physical gesture on the receiver side — a
+/// multi-second PROG hold on the actuator (Somfy), or a ~1 s GEAR press on an already-registered
+/// control (VELUX); that physical requirement is the real interlock against a stray or unintended
+/// enrollment, not a software arming switch — see ADR 0026.
 /// @ingroup hioc_platforms
 class IOHomeOneWayEnrollButton : public button::Button, public Component, public OneWayControllerBound {
  public:

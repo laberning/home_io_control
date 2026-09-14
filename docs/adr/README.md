@@ -123,6 +123,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0034: Doxygen page syntax is generated at staging time, never committed](0034-doxygen-syntax-generated-at-staging-time.md)
 - [ADR 0035: FEM support is a behaviour profile; boards always supply their own pins](0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md)
 - [ADR 0036: Hub-level entities come from `home_io_control:` flags, never a platform entry](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md)
+- [ADR 0038: 1W bursts follow the identity's power class, not a hard-coded preamble](0038-oneway-bursts-follow-the-identity-power-class.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

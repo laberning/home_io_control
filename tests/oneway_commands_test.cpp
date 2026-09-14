@@ -463,6 +463,27 @@ TEST(OneWayCommands, PositionsDecodeBackToTheSamePercentage) {
   }
 }
 
+// ============================================================================
+// oneway_target_label() -- shared TX/RX destination label (proto_codecs.h)
+// ============================================================================
+
+TEST(OneWayCommands, TargetLabelNamesATypedDestination) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 1,
+                                        test::TEST_SYSTEM_KEY));
+  const OneWayFrameInfo info = decode_1w_frame(frame);
+  EXPECT_STREQ(oneway_target_label(info), "awning");
+}
+
+TEST(OneWayCommands, TargetLabelIsAllForTheAllDevicesBroadcast) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 1,
+                                        test::TEST_SYSTEM_KEY, ONEWAY_EXECUTE_ACEI, /*broadcast_all=*/true));
+  const OneWayFrameInfo info = decode_1w_frame(frame);
+  EXPECT_STREQ(oneway_target_label(info), "all")
+      << "the all-devices broadcast decodes to DeviceType::UNKNOWN; the label must not render that name";
+}
+
 TEST(OneWayCommands, ForceOpenHasNoOneWayEncoding) {
   // 0x64 outbound was hardware-tested as "move to 50%" (see POS_FORCE_OPEN in
   // proto_constants.h), not a lock bypass. A 1W FORCE_OPEN button would therefore have been a

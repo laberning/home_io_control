@@ -193,6 +193,16 @@ struct OneWayFrameInfo {
 /// @return Populated OneWayFrameInfo.
 OneWayFrameInfo decode_1w_frame(const IoFrame &frame);
 
+/// @brief The destination label a decoded 1W frame renders as in a log line.
+///
+/// Shared by the RX path (hub_internal.h's `log_1w_remote_frame()`) and the TX path
+/// (`OneWayTransmitter::send_burst()`) so the two cannot drift into naming the same address
+/// differently. The all-devices broadcast decodes to the sentinel `DeviceType::UNKNOWN`, whose
+/// bare `device_type_name()` would render as `unknown`; this special-cases it to `all` instead.
+/// @param info Already-decoded frame info (see decode_1w_frame()).
+/// @return `"all"` for the all-devices broadcast, else the target class's name.
+const char *oneway_target_label(const OneWayFrameInfo &info);
+
 // ============================================================================
 // Discovery Response Decode
 // ============================================================================

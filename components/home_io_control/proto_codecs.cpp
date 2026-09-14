@@ -351,6 +351,10 @@ OneWayFrameInfo decode_1w_frame(const IoFrame &frame) {
   return info;
 }
 
+const char *oneway_target_label(const OneWayFrameInfo &info) {
+  return info.address_class == AddressClass::BROADCAST_ALL ? "all" : device_type_name(info.target_type);
+}
+
 DiscoveryResponseInfo decode_discovery_response(const IoFrame &frame, IoDevice &device, std::string &device_id) {
   DiscoveryResponseInfo info{};
 

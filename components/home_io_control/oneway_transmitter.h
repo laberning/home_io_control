@@ -14,6 +14,7 @@
 #include "oneway_sequence_store.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
+#include "tuning_config.h"
 
 #include <array>
 #include <cstdint>
@@ -52,12 +53,41 @@ struct OneWayCommandReport {
 /// @brief Invoked once per attempted 1W command, successful or not.
 using OneWayCommandReportFn = std::function<void(const OneWayCommandReport &report)>;
 
+/// @brief Resolve one copy's shape (oneway_burst_copy_shape()) to the actual preamble byte count.
+///
+/// The one place `OneWayPreamble::WAKE` -> `LONG_PREAMBLE` / `OneWayPreamble::NORMAL` ->
+/// `normal_start_preamble` is written — send_burst(), format_oneway_preamble_list(), and this
+/// header's tests all go through it, so the burst, the TX log line describing it, and anything
+/// asserting on it can never resolve the mapping three different ways.
+/// @param shape A copy's shape, from oneway_burst_copy_shape().
+/// @param normal_start_preamble Live tuning value a `NORMAL`-shaped copy resolves to.
+/// @return The preamble length in bytes this copy transmits with.
+/// @ingroup hioc_hub
+uint16_t oneway_copy_preamble_bytes(OneWayCopyShape shape, uint16_t normal_start_preamble);
+
+/// @brief Render the preamble bytes each copy of a burst will use, e.g. `"1024/32/32/32"`.
+///
+/// Built from oneway_burst_copy_shape() and oneway_copy_preamble_bytes() — the exact functions
+/// send_burst() itself calls per copy — so the TX log line can never disagree with what actually
+/// went on air. Pure and free-standing so it is unit-testable: the host ESP_LOG stub discards its
+/// arguments, so a formatter buried in the log call could not be asserted on at all.
+/// @param power_class The identity's power class.
+/// @param normal_start_preamble Live tuning value a `NORMAL`-shaped copy resolves to.
+/// @return Slash-separated preamble byte counts, one per copy, in burst order.
+/// @ingroup hioc_hub
+std::string format_oneway_preamble_list(OneWayPowerClass power_class, uint16_t normal_start_preamble);
+
 /// @brief Sends 1W commands as the repeated bursts real remotes send.
 /// @ingroup hioc_hub
 class OneWayTransmitter {
  public:
   /// @param transmit How to put a frame on air; must stay valid for this object's lifetime.
-  explicit OneWayTransmitter(OneWayTransmitFn transmit) : transmit_(std::move(transmit)) {}
+  /// @param tuning Hub's live TuningConfig; must outlive this object. Read per burst (never
+  ///        cached) so a live change to `normal_start_preamble` (the Home Assistant number entity)
+  ///        takes effect on the next command without a reboot -- the same pattern `ExchangeEngine`
+  ///        already uses for the identical field.
+  OneWayTransmitter(OneWayTransmitFn transmit, const TuningConfig *tuning)
+      : transmit_(std::move(transmit)), tuning_(tuning) {}
 
   // === Controller identities ===
 
@@ -107,33 +137,43 @@ class OneWayTransmitter {
 
   /// @brief Transmit one already-built, already-signed 1W frame as a burst.
   ///
-  /// Sends the frame ONEWAY_BURST_REPEATS times, ONEWAY_BURST_INTERVAL_MS apart, on FREQ_CH2 with
-  /// LONG_PREAMBLE — the cadence real remotes use (proto_timing.h).
+  /// Sends the frame ONEWAY_BURST_REPEATS times, ONEWAY_BURST_INTERVAL_MS apart, on FREQ_CH2.
+  /// `power_class` decides each copy's preamble and CTRL1 via oneway_burst_copy_shape() (ADR 0038);
+  /// a required parameter, never defaulted — a default here would silently reintroduce a
+  /// hard-coded preamble at a new call site, exactly the mistake ADR 0029 records.
   ///
-  /// **It retransmits identical bytes.** The sequence and the MAC were fixed by the caller before
-  /// this was called, and all copies must carry them unchanged: a device treats one sequence as
-  /// one command, so four copies bearing four sequences are four commands, of which it will
-  /// accept one and reject three as replays. This function therefore never rebuilds a frame,
-  /// never touches a sequence counter, and takes the frame by const reference so it cannot.
+  /// **It retransmits identical bytes, except CTRL1 and the preamble.** The sequence and the MAC
+  /// were fixed by the caller before this was called, and every copy carries them unchanged: a
+  /// device treats one sequence as one command, so four copies bearing four sequences are four
+  /// commands, of which it will accept one and reject three as replays. This function therefore
+  /// never rebuilds the frame's cmd/data/sequence/MAC and never touches a sequence counter — it
+  /// only sets or clears `CTRL1_LOW_POWER` per copy (clearing it too, whatever the builder
+  /// produced: the transmitter owns this bit unconditionally) and picks that copy's preamble. This
+  /// is safe because the 1W MAC span covers only cmd+data (never CTRL1) and the CRC is computed
+  /// per transmission by the driver, so neither authenticates or depends on CTRL1.
   ///
   /// **It blocks for the whole burst**, feeding the watchdog in the gaps. The three inter-copy
-  /// gaps alone are 3 * ONEWAY_BURST_INTERVAL_MS = ~120 ms of pure delay; add each of the four
-  /// copies' own airtime and the wall-clock total this function blocks for is closer to ~160 ms
-  /// (proto_timing.h's ONEWAY_BURST_INTERVAL_MS comment has the same two numbers). Per ADR 0013
-  /// all radio work happens on the ESPHome loop and the operation queue is the concurrency model;
-  /// an authenticated 2W exchange already blocks far longer than this. Scheduling the repeats
-  /// through a timeout would add a second concurrency model and would let a queued 2W exchange
-  /// interleave between copies of one command.
+  /// gaps alone are 3 * ONEWAY_BURST_INTERVAL_MS = ~120 ms of pure delay; how much airtime the
+  /// four copies themselves add depends on `power_class`: `LEGACY_LONG` puts `LONG_PREAMBLE` on
+  /// every copy, ≈1.0–1.2 s per burst total (measured on SX1276, issue #74's logs: ~1.2 s);
+  /// `ALWAYS_ALIVE` puts the live `normal_start_preamble` on every copy, estimated at roughly
+  /// 150–250 ms total (not yet measured on air); `LOW_POWER` sits between the two (one long copy,
+  /// three normal). Per ADR 0013 all radio work happens on the ESPHome loop and the operation
+  /// queue is the concurrency model; an authenticated 2W exchange already blocks far longer than
+  /// this. Scheduling the repeats through a timeout would add a second concurrency model and would
+  /// let a queued 2W exchange interleave between copies of one command.
   /// @param frame Signed 1W frame to send.
+  /// @param power_class Which preamble/CTRL1 shape each copy gets (ADR 0038).
   /// @return true if at least one copy reached the radio. Partial success is still reported as
   ///         success because it is genuinely what the caller wants to know — with no reply frame,
   ///         "some copies went out" is the most any layer here can ever establish, and a device
   ///         needs only one of them.
-  bool send_burst(const IoFrame &frame);
+  bool send_burst(const IoFrame &frame, OneWayPowerClass power_class);
 
   /// @brief Register this identity as a controller on every device currently in association mode
-  /// (a physical PROG hold on the receiver, ADR 0026), using the gesture its manufacturer expects
-  /// (`resolve_oneway_wire_profile()`, ADR 0032).
+  /// (the receiver's own association-mode gesture, ADR 0026: a multi-second PROG hold on a Somfy
+  /// actuator, or a ~1 s GEAR press on an already-registered VELUX control), using the gesture its
+  /// manufacturer expects (`resolve_oneway_wire_profile()`, ADR 0032).
   ///
   /// **`EnrollGesture::SOMFY`** (somfy / unset / any unprofiled vendor): `0x39` (remove,
   /// self-directed) then `0x30` (add) — the documented 1W handshake (the iown-homecontrol
@@ -153,11 +193,13 @@ class OneWayTransmitter {
   /// MAC — see create_1w_add_controller()'s `@warning`). Real VELUX (#74) and real Somfy captures
   /// both use the no-MAC form; a real Izymo has separately accepted the MAC-bearing form too.
   ///
-  /// **Blocks for the whole gesture** feeding the watchdog in the gaps — up to ~6 s for the VELUX
-  /// path (6 bursts: `0x39` + 3-class `0x30` sweep + STOP + DOWN, each ~1 s with `LONG_PREAMBLE` on
-  /// every copy). This is a user-initiated, once-per-device action, the same shape as the pairing
-  /// button (`pairing_discovery_wait_ms` → 5000); ADR 0032 records the exemption and the risk that
-  /// the sweep+follow-up may not fit the KLI manual's own 3-second window at this cadence.
+  /// **Blocks for the whole gesture** feeding the watchdog in the gaps. The VELUX path is 6 bursts
+  /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN); with the identity's power class unset (legacy),
+  /// each burst carries `LONG_PREAMBLE` on every copy, ≈6–7 s total (SX1276 logs in issue #74
+  /// measured ~7.4 s, ~10.6 s with `enrollment_with_mac: true`); estimated well under 2 s with
+  /// `low_power: false` (ADR 0038), not yet measured on air. This is a user-initiated,
+  /// once-per-device action, the same shape as the pairing button (`pairing_discovery_wait_ms` →
+  /// 5000).
   /// @param controller_id YAML handle of the controller identity to register.
   /// @return true if the credential frame(s) that actually register this identity reached the
   ///         radio — the `0x30` (SOMFY) or the sweep (VELUX_KLI). The VELUX STOP+DOWN follow-up is
@@ -214,6 +256,7 @@ class OneWayTransmitter {
   OneWayCommandReportFn report_;
   OneWayControllerRegistry identities_;
   OneWaySequenceStore sequences_;
+  const TuningConfig *tuning_;  ///< Hub's live TuningConfig; read per burst, never cached.
 };
 
 }  // namespace home_io_control

@@ -63,8 +63,10 @@ moves the window to its predefined air-exchange opening rather than fully open.
   work. Reported in issue #95; there is no hub-side fix, and the 1W route needs enrollment that
   does not currently take on this family.
 - **1W enrollment into the KUX bridges does not work yet.** The hub transmits the gesture and the
-  device never reacts. Tried with the `roller_shutter` and `dual_shutter` classes; the `awning`
-  class has not been tried. Reported in issue #74.
+  device never reacts. All three typed classes the VELUX gesture sweeps (`roller_shutter`,
+  `awning`, `dual_shutter`) have been tried. The current lead is the identity's radio preamble: set
+  `low_power: false` on a 1W identity aimed at a mains-powered VELUX receiver like a KUX 110 and
+  retry (see [Sending 1W commands](../configuration/oneway-transmit.md)). Reported in issue #74.
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on
   `CMD_EXECUTE`. Set `manufacturer: velux` on any 1W identity aimed at these devices — see
   [Sending 1W commands](../configuration/oneway-transmit.md).

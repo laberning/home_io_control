@@ -63,6 +63,9 @@ The schema warns when a `manufacturer: velux` + `enrollment: true` identity has 
 
 ### Blocking time
 
+> See the [Amendment](#amendment-2026-09) below — this section's cadence is superseded for any
+> identity that sets `low_power:` (ADR 0038).
+
 The VELUX gesture is 6 bursts (`0x39` + a 3-class `0x30` sweep + STOP + DOWN), each
 ~1 s on air with `LONG_PREAMBLE` on every copy — so it blocks `loop()` for ~6 s,
 feeding the watchdog in the gaps. This is ~2.3× ESPHome's 2550 ms loop-warning
@@ -74,6 +77,8 @@ transmit including the hardware-validated Somfy path — its own change, its own
 hardware gate.
 
 ### The 3-second window may not fit
+
+> See the [Amendment](#amendment-2026-09) below — this section's central claim is unsupported.
 
 The KLI manual specifies STOP then DOWN **within 3 seconds** — of what, the manual
 does not say, but the motor most plausibly opens that window when it receives the
@@ -102,3 +107,27 @@ inter-frame timing settles it. Shipped as-is on the judgement that getting the
 - The profiled-vendor set is now written in three places (the C++ `switch`, the
   Python `_ONEWAY_WIRE_PROFILE_MANUFACTURERS`, and the schema warning) with no
   automated sync check — cross-referenced in comments, same treatment as ADR 0031.
+
+## Amendment (2026-09)
+
+Status stays Accepted; the text above is unchanged. This amendment corrects two claims and updates
+the blocking-time figures now that ADR 0038 makes the 1W preamble a per-identity choice.
+
+- **The 3-second window is unsupported.** The KLI manual's STOP-then-DOWN-within-3-seconds step
+  belongs to the *from-scratch* registration flow that starts by pressing P on the product itself,
+  not to the "add a control to an already-registered product via GEAR" flow this gesture targets.
+  Documented VELUX registration windows for related procedures run to minutes, not seconds. Gesture
+  slowness is an airtime concern to keep in mind, not an established cause of a failed enrollment.
+- **The "its own PROG window" explanation is outdated.** VELUX opens registration for an
+  add-a-control gesture via a ~1 second GEAR press on an already-registered control, not a PROG
+  hold on the KUX 110 itself; the product jogs briefly as a "ready" signal, not an acknowledgement.
+  The leading hypothesis for failure is now the long radio preamble every 1W copy carried
+  (ADR 0038), not an unheld association-mode window.
+- **The STOP+DOWN follow-up and a `00 00 3F`-addressed `0x30` remain single-sourced and
+  unconfirmed.** Nothing new has settled either question.
+- **Blocking time, updated for ADR 0038.** With the identity's `low_power: false`, the gesture's six
+  bursts each carry the short, tunable `normal_start_preamble` on every copy and are estimated to
+  complete well under 2 seconds total — a projection from the preamble length, not yet measured on
+  air. With `low_power:` left unset (the default, unchanged), the gesture keeps its original,
+  measured shape: SX1276 logs measured it at ~7.4 seconds, and ~10.6 seconds with
+  `enrollment_with_mac: true`.
