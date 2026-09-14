@@ -185,6 +185,51 @@ TEST(TuningConfig, PayloadStringFormatting) {
   EXPECT_EQ(discovery_payload_to_string(true, 0x00), "0x00");
 }
 
+TEST(TuningConfig, ScanPowerClassesDefaultsToBoth) {
+  TuningConfig cfg{};
+  EXPECT_EQ(cfg.scan_power_classes, ScanPowerClasses::BOTH);
+}
+
+TEST(TuningConfig, ScanPowerClassesStringRoundTrip) {
+  EXPECT_EQ(scan_power_classes_to_string(ScanPowerClasses::BOTH), "both");
+  EXPECT_EQ(scan_power_classes_to_string(ScanPowerClasses::ALWAYS_ALIVE), "always_alive");
+  EXPECT_EQ(scan_power_classes_to_string(ScanPowerClasses::LOW_POWER), "low_power");
+
+  EXPECT_EQ(scan_power_classes_from_string("both"), ScanPowerClasses::BOTH);
+  EXPECT_EQ(scan_power_classes_from_string("always_alive"), ScanPowerClasses::ALWAYS_ALIVE);
+  EXPECT_EQ(scan_power_classes_from_string("low_power"), ScanPowerClasses::LOW_POWER);
+  EXPECT_FALSE(scan_power_classes_from_string("nonsense").has_value());
+}
+
+TEST(TuningConfig, ScanPowerClassesIncludeTruthTable) {
+  constexpr uint8_t UNKNOWN_POWER_SAVE_MODE_A = 0xFE;
+  constexpr uint8_t UNKNOWN_POWER_SAVE_MODE_B = 0xFF;
+
+  EXPECT_TRUE(scan_power_classes_include(ScanPowerClasses::BOTH, POWER_SAVE_ALWAYS_ALIVE));
+  EXPECT_TRUE(scan_power_classes_include(ScanPowerClasses::BOTH, POWER_SAVE_LOW_POWER));
+  EXPECT_FALSE(scan_power_classes_include(ScanPowerClasses::BOTH, UNKNOWN_POWER_SAVE_MODE_A));
+  EXPECT_FALSE(scan_power_classes_include(ScanPowerClasses::BOTH, UNKNOWN_POWER_SAVE_MODE_B));
+
+  EXPECT_TRUE(scan_power_classes_include(ScanPowerClasses::ALWAYS_ALIVE, POWER_SAVE_ALWAYS_ALIVE));
+  EXPECT_FALSE(scan_power_classes_include(ScanPowerClasses::ALWAYS_ALIVE, POWER_SAVE_LOW_POWER));
+  EXPECT_FALSE(scan_power_classes_include(ScanPowerClasses::ALWAYS_ALIVE, UNKNOWN_POWER_SAVE_MODE_A));
+  EXPECT_FALSE(scan_power_classes_include(ScanPowerClasses::ALWAYS_ALIVE, UNKNOWN_POWER_SAVE_MODE_B));
+
+  EXPECT_FALSE(scan_power_classes_include(ScanPowerClasses::LOW_POWER, POWER_SAVE_ALWAYS_ALIVE));
+  EXPECT_TRUE(scan_power_classes_include(ScanPowerClasses::LOW_POWER, POWER_SAVE_LOW_POWER));
+  EXPECT_FALSE(scan_power_classes_include(ScanPowerClasses::LOW_POWER, UNKNOWN_POWER_SAVE_MODE_A));
+  EXPECT_FALSE(scan_power_classes_include(ScanPowerClasses::LOW_POWER, UNKNOWN_POWER_SAVE_MODE_B));
+}
+
+TEST(TuningConfig, ScanPowerClassesSnapshotOnlyWhenNonDefault) {
+  TuningConfig default_cfg{};
+  EXPECT_EQ(tuning_config_snapshot(default_cfg).find("scan_power_classes"), std::string::npos);
+
+  TuningConfig cfg{};
+  cfg.scan_power_classes = ScanPowerClasses::LOW_POWER;
+  EXPECT_NE(tuning_config_snapshot(cfg).find("scan_power_classes=low_power"), std::string::npos);
+}
+
 TEST(TuningConfig, UpdateLogLineFormat) {
   EXPECT_EQ(tuning_update_log_line("sx1262_post_tx_settle_us", "750"),
             "Tuning updated via HA: sx1262_post_tx_settle_us=750");

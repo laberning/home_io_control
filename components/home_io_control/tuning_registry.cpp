@@ -92,7 +92,7 @@ template<bool TuningConfig::*Field> bool bool_select_set(TuningConfig &t, const 
   return true;
 }
 
-// === Select parameters (8) =====================================================
+// === Select parameters (9) =====================================================
 // The setters return false only when the option string is unparseable AND leaving the
 // value untouched is the intended behavior (currently the bandwidth enum and the boolean
 // rows). The destination/payload setters return false for unrecognized values so no radio
@@ -191,6 +191,15 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
      bool_select_set<&TuningConfig::pairing_discovery_low_power>, false},
     {"pairing_discovery_ack_capable", bool_select_get<&TuningConfig::pairing_discovery_ack_capable>,
      bool_select_set<&TuningConfig::pairing_discovery_ack_capable>, false},
+    {"scan_power_classes", [](const TuningConfig &t) { return scan_power_classes_to_string(t.scan_power_classes); },
+     [](TuningConfig &t, const std::string &v) -> bool {
+       auto selection = scan_power_classes_from_string(v);
+       if (!selection.has_value())
+         return false;
+       t.scan_power_classes = selection.value();
+       return true;
+     },
+     false},
 };
 
 const TuningNumberParam *find_tuning_number(const std::string &name) {

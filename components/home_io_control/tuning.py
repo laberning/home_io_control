@@ -51,6 +51,7 @@ CONF_PAIRING_DISCOVERY_PREAMBLE = "pairing_discovery_preamble"
 CONF_PAIRING_DISCOVERY_WAIT_MS = "pairing_discovery_wait_ms"
 CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS = "pairing_discovery_initial_dwell_ms"
 CONF_PAIRING_KEY_EXCHANGE_RETRIES = "pairing_key_exchange_retries"
+CONF_SCAN_POWER_CLASSES = "scan_power_classes"
 
 # C++ type references
 TuningConfig = home_io_control_ns.class_("TuningConfig")
@@ -68,6 +69,7 @@ SX1262RxBandwidth = home_io_control_ns.enum("SX1262RxBandwidth", is_class=True)
 SX1276RxBandwidth = home_io_control_ns.enum("SX1276RxBandwidth", is_class=True)
 LR1121RxBandwidth = home_io_control_ns.enum("LR1121RxBandwidth", is_class=True)
 DiscoveryCommand = home_io_control_ns.enum("DiscoveryCommand", is_class=True)
+ScanPowerClasses = home_io_control_ns.enum("ScanPowerClasses", is_class=True)
 
 # Map each YAML option string to its C++ enum value. Options are bare kHz numbers (the "kHz"
 # unit lives in the entity name) for uniformity with the numeric parameters.
@@ -130,6 +132,17 @@ DISCOVERY_DESTINATION_OPTIONS = ["auto", "0x00003B", "0x00003F"]
 
 PAIRING_DISCOVERY_PAYLOAD_OPTIONS = ["none", "0x00"]
 
+# Which power classes scan_paired_devices() calls. Option strings mirror the roll-call report's
+# power_save= values so the two share one vocabulary; the C++ side of these exact strings is
+# scan_power_classes_to_string() / power_save_mode_name() (tuning_config.h / proto_constants.h),
+# pinned against each other by tuning_registry_test.cpp — there is no build-time gate comparing
+# the Python and C++ strings directly.
+SCAN_POWER_CLASSES_OPTIONS = {
+    "both": ScanPowerClasses.BOTH,
+    "always_alive": ScanPowerClasses.ALWAYS_ALIVE,
+    "low_power": ScanPowerClasses.LOW_POWER,
+}
+
 def _id_key(param_key):
     """Config-dict key under which a parameter's injected companion entity ID is stored."""
     return f"_{param_key}_id"
@@ -166,6 +179,7 @@ UI_NAMES = {
     CONF_PAIRING_DISCOVERY_WAIT_MS: "Pairing Discovery Wait",
     CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS: "Pairing Discovery Initial Dwell",
     CONF_PAIRING_KEY_EXCHANGE_RETRIES: "Pairing Key Exchange Retries",
+    CONF_SCAN_POWER_CLASSES: "Pairing Scan Power Classes",
 }
 
 # Numeric parameters: key -> (min, max, step, unit). Single source of truth for both the
@@ -248,6 +262,7 @@ _SELECT_OPTIONS = {
     CONF_SX1262_RX_BANDWIDTH: list(SX1262_BANDWIDTH_OPTIONS),
     CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
     CONF_LR1121_RX_BANDWIDTH: list(LR1121_BANDWIDTH_OPTIONS),
+    CONF_SCAN_POWER_CLASSES: list(SCAN_POWER_CLASSES_OPTIONS),
 }
 
 
@@ -289,6 +304,9 @@ _validate_discovery_destination = _one_of_string(
 _validate_discovery_payload = _one_of_string(
     CONF_PAIRING_DISCOVERY_PAYLOAD, PAIRING_DISCOVERY_PAYLOAD_OPTIONS
 )
+_validate_scan_power_classes = _one_of_string(
+    CONF_SCAN_POWER_CLASSES, SCAN_POWER_CLASSES_OPTIONS
+)
 
 
 def _parse_destination_to_bytes(value):
@@ -320,6 +338,7 @@ TUNING_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_PAIRING_DISCOVERY_DESTINATION): _validate_discovery_destination,
         cv.Optional(CONF_PAIRING_DISCOVERY_PAYLOAD): _validate_discovery_payload,
+        cv.Optional(CONF_SCAN_POWER_CLASSES): _validate_scan_power_classes,
         **{cv.Optional(key): cv.boolean for key in _BOOL_PARAMS},
         # Numeric parameters share their range with the number-entity bounds via _NUMBER_PARAMS.
         **{
@@ -405,6 +424,13 @@ def _apply_tuning_config(config, var):
             tuning,
             "lr1121_rx_bandwidth",
             LR1121_BANDWIDTH_OPTIONS[config[CONF_LR1121_RX_BANDWIDTH]],
+        )
+
+    if CONF_SCAN_POWER_CLASSES in config:
+        _assign(
+            tuning,
+            "scan_power_classes",
+            SCAN_POWER_CLASSES_OPTIONS[config[CONF_SCAN_POWER_CLASSES]],
         )
 
     # Ordered discovery commands. Clear the struct default before appending so a

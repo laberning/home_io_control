@@ -106,10 +106,12 @@ struct IoFrame {
 ///
 /// Note: CTRL1_ACK is NOT automatically set on outbound frames. Some real-world
 /// devices reject frames with unexpected CTRL1 bits, causing total communication
-/// failure. The ACK constant is retained for inbound frame parsing and logging, and for one
-/// scoped, opt-in exception: create_discovery_request()'s `ack_capable` parameter (proto_commands.h)
-/// can set it on the discovery broadcast only, gated by the `pairing_discovery_ack_capable` tuning
-/// knob (default off, tuning_config.h).
+/// failure. The ACK constant is retained for inbound frame parsing and logging, and for two
+/// scoped exceptions: create_discovery_request()'s `ack_capable` parameter (proto_commands.h) can
+/// set it on the discovery broadcast, opt-in and gated by the `pairing_discovery_ack_capable`
+/// tuning knob (default off, tuning_config.h); and the SPE roll-call's low-power frame shape
+/// (`CTRL1 = LOW_POWER | ACK`) sets it unconditionally, matching the header a real VELUX hub uses
+/// for its own roll-call.
 /// @param f Frame to initialize.
 /// @param is_2w True for 2‑way (default), false for 1‑way.
 /// @param start Set START flag (first frame in exchange).

@@ -1,0 +1,98 @@
+id: velux_klr300_pairing_key_extraction_success
+description: >
+  Community capture: this project's
+  key-extraction responder, on a tester's SX1276 board, recovering the system key from a real
+  VELUX KLR300 two-way control pad (node E2D1FF) while the KLR300 runs its own "search for new
+  products". First KLR300 in the corpus; same flow as
+  tests/corpus/captures/pairing/velux_klr200_pairing_key_extraction_success.yaml, first try, and
+  the responder logged SYSTEM KEY EXTRACTED and answered the follow-up address round.
+
+  Only frames the board *received* are here. The tester's log carried io_capture lines for
+  inbound frames only, so the responder's own transmissions — DISCOVER_RESP (0x29, throwaway id
+  7F6B0F), DISCOVER_CONFIRM_ACK (0x2D), CHALLENGE_REQ (0x3C), KEY_CONFIRM (0x33), ADDRESS_RESP
+  (0x37) — are known only from the responder's INFO log lines, not as wire bytes, and are not
+  reconstructed. KEY_TRANSFER (0x32, ctrl0/ctrl1 18 00, rx ~53 ms after 0x31) is omitted because
+  this project's own redaction masks its payload before the log line is written (same treatment
+  as the KLR200 capture). With no tx frame there is no origin for the pairing replay/classification
+  tests, so this capture deliberately carries no expect.exchange block.
+
+  Why it is here — the KLR300's per-phase CTRL1 choice, visible byte-for-byte:
+  - DISCOVER_ALT_REQ (0x2E) broadcast to 00003F, payload 00: CTRL1 = 0x20 (LOW_POWER only).
+  - DISCOVER_REQ (0x28) broadcast to 00003B: CTRL1 = 0x10 (ACK only), matching the KLR200 and KIG300
+    0x28 frames already in the corpus.
+  - Every directed frame to the throwaway (0x2C, 0x31, 0x36): CTRL1 LOW_POWER set (0x36 also
+    PRIORITY, 0x24). The responder's 0x29 advertises flags 0xDD (power-save = low_power), so the
+    hub appears to mirror the target's advertised power class.
+  Our own discovery tunables (pairing_discovery_low_power / pairing_discovery_ack_capable) apply one
+  CTRL1 choice to every discovery command, so they cannot reproduce this 0x2E/0x28 split.
+  The KLR300's roll-call and existing-node verification that ran between 0x31 and the final 0x36
+  are in tests/corpus/captures/discovery/velux_klr300_discovery_rollcall_node_verification.yaml.
+  As with the KLR200, no CHALLENGE_REQ (0x3C) address challenge followed the responder's 0x37 —
+  whereas the KLR300 did issue one after each real device's 0x37 in that sibling capture.
+source:
+  device: "VELUX KLR300 two-way control pad (node E2D1FF) -- real third-party hub, community capture; responder = this project on an SX1276 board"
+  captured_with: sx1276
+  firmware: "main at or after 9398a7d (dated from log line numbers)"
+  date: 2026-09-12
+  origin: github-issue
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "C9 20 00 00 3F E2 D1 FF 2E 00"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_REQ(0x2E) broadcast to 00003F, payload 00. CTRL0=0xC9 (start+end), CTRL1=0x20 (LOW_POWER only). First frame of the KLR300's product search"
+  - dir: rx
+    t_ms: 1031
+    freq: 868950000
+    hex: "C9 20 00 00 3F E2 D1 FF 2E 00"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_REQ(0x2E), identical repeat ~1 s later"
+  - dir: rx
+    t_ms: 1572
+    freq: 868950000
+    hex: "C8 10 00 00 3B E2 D1 FF 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28) broadcast to 00003B. CTRL1=0x10 (ACK only, no LOW_POWER) -- differs from the 0x2E above. The responder answered this one with its 0x29 (throwaway id 7F6B0F; tx not logged)"
+  - dir: rx
+    t_ms: 3329
+    freq: 868950000
+    hex: "48 20 7F 6B 0F E2 D1 FF 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C) directed to throwaway 7F6B0F, CTRL1=0x20 (LOW_POWER). Responder acknowledged with 0x2D (tx not logged)"
+  - dir: rx
+    t_ms: 3393
+    freq: 868950000
+    hex: "C8 10 00 00 3B E2 D1 FF 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), the KLR300's search keeps broadcasting after confirming the first responder"
+  - dir: rx
+    t_ms: 5924
+    freq: 868950000
+    hex: "C8 10 00 00 3B E2 D1 FF 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28), third broadcast, ~2.5 s after the second"
+  - dir: rx
+    t_ms: 11423
+    freq: 868950000
+    hex: "48 20 7F 6B 0F E2 D1 FF 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31) directed to 7F6B0F, CTRL1=0x20. Responder sent its CHALLENGE_REQ (0x3C, tx not logged); the KLR300's KEY_TRANSFER (0x32) followed at ~+54 ms and is omitted (payload redacted at log time). Responder then logged SYSTEM KEY EXTRACTED"
+  - dir: rx
+    t_ms: 25759
+    freq: 868950000
+    hex: "48 24 7F 6B 0F E2 D1 FF 36"
+    crc: absent
+    note: "cmd=ADDRESS_REQ(0x36) directed to 7F6B0F, CTRL1=0x24 (LOW_POWER + PRIORITY), sent after the KLR300 had verified its three existing nodes (sibling discovery capture). Responder answered with ADDRESS_RESP (0x37, tx not logged); no 0x3C address challenge followed within the 60 s grace window"
+expect:
+  frames:
+    - {cmd: 0x2E, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x36, start: true, end: false, protocol: 2w}

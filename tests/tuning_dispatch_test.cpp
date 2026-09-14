@@ -181,6 +181,19 @@ TEST(TuningDispatch, SelectAckCapable) {
   EXPECT_FALSE(comp.tuning_.pairing_discovery_ack_capable);
 }
 
+TEST(TuningDispatch, SelectScanPowerClasses) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+
+  comp.update_tuning_select("scan_power_classes", "low_power");
+  EXPECT_EQ(comp.tuning_.scan_power_classes, ScanPowerClasses::LOW_POWER);
+
+  // An unparseable option string leaves the field untouched rather than resetting it.
+  comp.update_tuning_select("scan_power_classes", "bogus");
+  EXPECT_EQ(comp.tuning_.scan_power_classes, ScanPowerClasses::LOW_POWER);
+}
+
 // ============================================================================
 // Initial-state seeding (get_*_value), used to publish HA entity boot values
 // ============================================================================
@@ -218,6 +231,7 @@ TEST(TuningDispatch, GetSelectValueMatchesOptionStrings) {
   EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_payload"), "none");
   EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_low_power"), "Off");
   EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_ack_capable"), "Off");
+  EXPECT_EQ(comp.get_tuning_select_value("scan_power_classes"), "both");
 
   // Round-trip: a value set via update_ is reported back as the same option string.
   comp.update_tuning_select("sx1262_rx_bandwidth", "156.2");

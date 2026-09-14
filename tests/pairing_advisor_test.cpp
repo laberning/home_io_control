@@ -400,8 +400,22 @@ TEST(PairingAdvisor, OneWayPairingMessageIsActionableAndIncludesSrcNode) {
 
   const std::string message = pairing_advice_message(advice);
   EXPECT_NE(message.find("1W"), std::string::npos);
-  EXPECT_NE(message.find("Double Power Cut"), std::string::npos);
+  EXPECT_NE(message.find("key extraction"), std::string::npos);
+  EXPECT_NE(message.find("first jog"), std::string::npos);
   EXPECT_NE(message.find(node_id_to_string(REMOTE_SRC)), std::string::npos);
+  // The fixed render buffer must hold the whole message: a truncated one loses its last sentence.
+  const std::string tail = "not a pairing gesture.";
+  ASSERT_GE(message.size(), tail.size());
+  EXPECT_EQ(message.compare(message.size() - tail.size(), tail.size(), tail), 0);
+}
+
+TEST(PairingAdvisor, RfSilentMessageSeparatesQuietChannelFromDeadRadio) {
+  PairingAdvice advice{};
+  advice.code = PairingAdviceCode::RF_SILENT;
+
+  const std::string message = pairing_advice_message(advice);
+  EXPECT_NE(message.find("did not answer"), std::string::npos);
+  EXPECT_NE(message.find("antenna"), std::string::npos);
 }
 
 TEST(PairingAdvisor, NoneAdviceMessageIsEmpty) {

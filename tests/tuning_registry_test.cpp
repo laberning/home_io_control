@@ -75,13 +75,13 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
   const std::set<std::string> expected = {
       "sx1262_rx_bandwidth",         "sx1276_rx_bandwidth",           "lr1121_rx_bandwidth",
       "pairing_discovery_commands",  "pairing_discovery_destination", "pairing_discovery_payload",
-      "pairing_discovery_low_power", "pairing_discovery_ack_capable",
+      "pairing_discovery_low_power", "pairing_discovery_ack_capable", "scan_power_classes",
   };
   EXPECT_EQ(select_param_names(), expected) << "select table drifted from the expected inventory";
 }
 
-TEST(TuningRegistry, TotalParameterCountIsTwentySeven) {
-  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 27u);
+TEST(TuningRegistry, TotalParameterCountIsTwentyEight) {
+  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 28u);
 }
 
 // ============================================================================
@@ -147,6 +147,7 @@ TEST(TuningRegistry, EverySelectOptionRoundTrips) {
       {"pairing_discovery_payload", {"none", "0x00"}},
       {"pairing_discovery_low_power", {"Off", "On"}},
       {"pairing_discovery_ack_capable", {"Off", "On"}},
+      {"scan_power_classes", {"both", "always_alive", "low_power"}},
   };
 
   const std::set<std::string> bandwidth_params = {"sx1262_rx_bandwidth", "sx1276_rx_bandwidth", "lr1121_rx_bandwidth"};

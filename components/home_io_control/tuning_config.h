@@ -69,6 +69,19 @@ enum class LR1121RxBandwidth : uint8_t {
   BW_187_2_KHZ = 0x12,  ///< 187.2 kHz — widest selectable option.
 };
 
+/// @brief Which power classes scan_paired_devices() calls.
+///
+/// The roll-call calls both classes by default; this narrows it for bisecting an installation
+/// in the field (does a device answer the low-power call but not the always-alive one, or vice
+/// versa?) or for restoring the shorter single-pass scan on an install with no solar/battery
+/// devices. Values mirror `power_save_mode_name()` (proto_constants.h) so the report, this
+/// tunable, and a responder's own self-reported power-save byte share one vocabulary.
+enum class ScanPowerClasses : uint8_t {
+  BOTH,          ///< Low-power pass, then always-alive pass (default).
+  ALWAYS_ALIVE,  ///< Always-alive pass only: the single-shape roll-call, ~6 s.
+  LOW_POWER,     ///< Low-power pass only.
+};
+
 /// @brief Discovery request command codes.
 enum class DiscoveryCommand : uint8_t {
   DISCOVER = 0x28,      ///< Standard broadcast discovery request (to 0x00003B).
@@ -227,6 +240,8 @@ struct TuningConfig {
       PAIRING_DISCOVERY_INITIAL_DWELL_MS};  ///< Initial dwell on CH2 before discovery hopping begins.
   uint8_t pairing_key_exchange_retries{
       PAIRING_KEY_EXCHANGE_RETRIES};  ///< Retries for the authenticated key exchange phase.
+  ScanPowerClasses scan_power_classes{
+      ScanPowerClasses::BOTH};  ///< Power classes the scan_paired_devices roll-call calls.
 
   // --- Internal state ---
   bool active{false};  ///< True when the YAML `tuning:` block is present.
@@ -395,6 +410,33 @@ std::string discovery_commands_to_string(const std::vector<DiscoveryCommand> &co
 /// @param commands Ordered list of discovery commands.
 /// @return Comma-separated list such as "0x28,0x2E" (empty string when the list is empty).
 std::string discovery_commands_to_csv(const std::vector<DiscoveryCommand> &commands);
+
+/// @brief Format a ScanPowerClasses value for YAML/logs.
+///
+/// `BOTH` is its own literal; the two single-class values return
+/// `power_save_mode_name(POWER_SAVE_ALWAYS_ALIVE)` / `power_save_mode_name(POWER_SAVE_LOW_POWER)`
+/// so the roll-call report and this tunable share one vocabulary rather than a second spelling.
+/// @param value Selection to format.
+/// @return "both", "always_alive", or "low_power".
+std::string scan_power_classes_to_string(ScanPowerClasses value);
+
+/// @brief Parse a scan_power_classes string into the enum.
+///
+/// Exact, case-sensitive match against the same three strings scan_power_classes_to_string()
+/// produces.
+/// @param value String to parse.
+/// @return The matching selection, or std::nullopt on invalid input.
+std::optional<ScanPowerClasses> scan_power_classes_from_string(const std::string &value);
+
+/// @brief Whether `selection` calls the roll-call pass for `power_save_mode`.
+///
+/// Pure predicate, used both by the sweep loop (which pass to skip) and by the report (which
+/// class to name in the selection NOTE) — one source of truth for "does this selection include
+/// that class" instead of two.
+/// @param selection Current `scan_power_classes` tuning value.
+/// @param power_save_mode POWER_SAVE_ALWAYS_ALIVE or POWER_SAVE_LOW_POWER.
+/// @return true if `selection` calls that class; false for an unrecognized power_save_mode.
+bool scan_power_classes_include(ScanPowerClasses selection, uint8_t power_save_mode);
 
 }  // namespace home_io_control
 }  // namespace esphome

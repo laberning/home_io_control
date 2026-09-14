@@ -1,0 +1,175 @@
+id: velux_klr300_discovery_rollcall_node_verification
+description: >
+  Community capture: a real VELUX
+  KLR300 two-way control pad (node E2D1FF) re-verifying the three nodes already enrolled on it,
+  immediately after handing its system key to this project's key-extraction responder. Received
+  by the tester's SX1276 board while the responder held CH2. The key exchange itself is in
+  tests/corpus/captures/pairing/velux_klr300_pairing_key_extraction_success.yaml; this file is the
+  traffic between that exchange's 0x32 and its final 0x36.
+
+  Sequence: DISCOVER_SPE_REQ (0x2A) roll-call → 0x2B from 155D81 and 562292 (E50470's 0x2B not
+  heard) → per node a directed DISCOVER_ALT_REQ (0x2E, payload 02) + authentication → per node
+  DISCOVER_CONFIRM (0x2C) → four more 0x2A broadcasts ~1.8 s apart, each with a fresh 6-byte
+  challenge → per node ADDRESS_REQ (0x36) + CHALLENGE_REQ (0x3C) → 0x37 from 155D81.
+  OMITTED: every 0x3C / 0x3D (four heard: KLR300 0x3D to 562292 and E50470, 155D81's 0x3C, KLR300
+  0x3C after the 0x36 to 562292 and E50470). Their payloads are masked by this project's own
+  redaction before the log line is written, so they can't satisfy the declared-length check.
+  Several device-side frames (562292's and E50470's 0x3C/0x2F/0x37, E50470's 0x2B) were never
+  received at all; the KLR300 is heard cleanly, the devices only partially.
+
+  Why it is here:
+  - First real VELUX low-power 0x2B replies. Both decode through the standard 9-byte
+    DISCOVERY_RESP layout: type 00 80 = roller_shutter subtype 0, backbone 00 00 00 (like the
+    VELUX SSL 0x29 in tests/corpus/captures/discovery/velux_ssl_discovery_tahoma_pairing.yaml, and
+    unlike Somfy, which repeats its own node id there), manufacturer 0x01 (VELUX), timestamp FF FF.
+    Multi Information Byte 0x8D / 0xCD: ATT class 2 / 3, power-save bits 01 = POWER_SAVE_LOW_POWER.
+  - The KLR300's roll-call is CTRL1 = 0x30 (ACK + LOW_POWER). At capture time, this project's
+    scan_paired_devices roll-call sent CTRL1 = 0x00, so it got the normal start preamble, not
+    LONG_PREAMBLE. The same tester's scan with the extracted key then found 0 devices. Evidence
+    that a sleeping VELUX device needs the low-power roll-call form — not a proven cause.
+  - Both 0x2B replies arrived on 868.95 MHz, the channel the 0x2A itself was received on. The
+    receiver was held on CH2, so replies on other channels would be invisible; still, this is the
+    first real-VELUX sighting against the "broadcast replies don't return on the request channel"
+    premise of ListenPolicy::ROTATE_SKIPPING_REQUEST.
+  - Directed frames to the (low-power) nodes all carry CTRL1 LOW_POWER; 0x36 adds PRIORITY (0x24);
+    the device's 0x37 carries PRIORITY alone (0x04).
+
+  key: unknown — community capture; the 0x2A HMACs are under the installation's real key, which
+  nobody involved in this corpus holds, so there is nothing to verify or re-key.
+source:
+  device: "VELUX KLR300 two-way control pad (node E2D1FF) with enrolled nodes 155D81 and 562292 (VELUX low-power roller shutters, per their 0x2B) and E50470 (type unknown)"
+  captured_with: sx1276
+  firmware: "main at or after 9398a7d (dated from log line numbers)"
+  date: 2026-09-12
+  origin: github-issue
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "D4 30 00 00 3B E2 D1 FF 2A 6C 6D 78 DF 54 A9 50 E1 7A 20 28 2C"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_REQ(0x2A) broadcast to 00003B, CTRL1=0x30 (ACK + LOW_POWER). Payload = 6-byte challenge + 6-byte HMAC over the command byte. ~0.5 s after the KLR300's 0x32 to the extraction responder"
+  - dir: rx
+    t_ms: 183
+    freq: 868950000
+    hex: "D1 00 E2 D1 FF 15 5D 81 2B 00 80 00 00 00 01 8D FF FF"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from 155D81, +183 ms, same channel as the 0x2A. type/subtype 00 80 = roller_shutter/0; backbone 00 00 00; manufacturer 0x01 (VELUX); MIB 0x8D = ATT class 2 (20 s), power-save LOW_POWER; timestamp FF FF"
+  - dir: rx
+    t_ms: 798
+    freq: 868950000
+    hex: "D1 00 E2 D1 FF 56 22 92 2B 00 80 00 00 00 01 CD FF FF"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from 562292, +798 ms, same channel. roller_shutter/0, VELUX; MIB 0xCD = ATT class 3 (40 s), power-save LOW_POWER"
+  - dir: rx
+    t_ms: 1764
+    freq: 868950000
+    hex: "49 20 56 22 92 E2 D1 FF 2E 02"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_REQ(0x2E) directed to 562292, payload 02, CTRL0=0x49 (start), CTRL1=0x20. Followed ~24 ms later by a KLR300 0x3D to 562292 (omitted; 562292's own 0x3C not heard)"
+  - dir: rx
+    t_ms: 2303
+    freq: 868950000
+    hex: "49 20 E5 04 70 E2 D1 FF 2E 02"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_REQ(0x2E) directed to E50470 -- a third enrolled node whose 0x2B was not heard. Followed by a KLR300 0x3D to E50470 (omitted)"
+  - dir: rx
+    t_ms: 2858
+    freq: 868950000
+    hex: "49 20 15 5D 81 E2 D1 FF 2E 02"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_REQ(0x2E) directed to 155D81. 155D81 then challenged it (0x3C at +23 ms, omitted); the KLR300's 0x3D answer was not heard"
+  - dir: rx
+    t_ms: 2900
+    freq: 868950000
+    hex: "89 00 E2 D1 FF 15 5D 81 2F 02"
+    crc: absent
+    note: "cmd=DISCOVER_ALT_RESP(0x2F) from 155D81, payload 02 (echoes the request), CTRL0=0x89 (end only -- closes the challenged exchange)"
+  - dir: rx
+    t_ms: 3419
+    freq: 868950000
+    hex: "48 20 56 22 92 E2 D1 FF 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C) directed to 562292, CTRL1=0x20"
+  - dir: rx
+    t_ms: 3937
+    freq: 868950000
+    hex: "48 20 E5 04 70 E2 D1 FF 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C) directed to E50470"
+  - dir: rx
+    t_ms: 4472
+    freq: 868950000
+    hex: "48 20 15 5D 81 E2 D1 FF 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C) directed to 155D81"
+  - dir: rx
+    t_ms: 5008
+    freq: 868950000
+    hex: "D4 30 00 00 3B E2 D1 FF 2A F7 BC B2 EB C4 CA DF 38 F6 3E D2 29"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_REQ(0x2A), second roll-call, fresh challenge; no 0x2B heard"
+  - dir: rx
+    t_ms: 6776
+    freq: 868950000
+    hex: "D4 30 00 00 3B E2 D1 FF 2A E7 72 BB 15 B7 89 F0 5E 96 58 41 3C"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_REQ(0x2A), third roll-call, +1768 ms"
+  - dir: rx
+    t_ms: 8542
+    freq: 868950000
+    hex: "D4 30 00 00 3B E2 D1 FF 2A 46 FC 0C C2 18 AD CD BB 91 74 19 F9"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_REQ(0x2A), fourth roll-call, +1766 ms"
+  - dir: rx
+    t_ms: 10309
+    freq: 868950000
+    hex: "D4 30 00 00 3B E2 D1 FF 2A A7 6C E3 44 2A 53 51 9E 58 68 67 A3"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_REQ(0x2A), fifth roll-call, +1767 ms -- a steady ~1.77 s cadence"
+  - dir: rx
+    t_ms: 12075
+    freq: 868950000
+    hex: "48 24 56 22 92 E2 D1 FF 36"
+    crc: absent
+    note: "cmd=ADDRESS_REQ(0x36) directed to 562292, CTRL1=0x24 (LOW_POWER + PRIORITY). KLR300 0x3C to 562292 ~23 ms later (omitted) implies 562292's 0x37 went out but was not heard"
+  - dir: rx
+    t_ms: 12613
+    freq: 868950000
+    hex: "48 24 E5 04 70 E2 D1 FF 36"
+    crc: absent
+    note: "cmd=ADDRESS_REQ(0x36) directed to E50470; KLR300 0x3C followed (omitted), E50470's 0x37 not heard"
+  - dir: rx
+    t_ms: 13168
+    freq: 868950000
+    hex: "48 24 15 5D 81 E2 D1 FF 36"
+    crc: absent
+    note: "cmd=ADDRESS_REQ(0x36) directed to 155D81"
+  - dir: rx
+    t_ms: 13191
+    freq: 868950000
+    hex: "0B 04 E2 D1 FF 15 5D 81 37 00 00 00"
+    crc: absent
+    note: "cmd=ADDRESS_RESP(0x37) from 155D81, +23 ms, payload 00 00 00 (= the zero backbone address its 0x2B reported; our responder echoes its own throwaway id here instead). CTRL0=0x0B (neither start nor end), CTRL1=0x04 (PRIORITY). The KLR300's follow-up 0x3C was not heard"
+expect:
+  frames:
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2B, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2B, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2E, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2E, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2E, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2F, start: false, end: true, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x36, start: true, end: false, protocol: 2w}
+    - {cmd: 0x36, start: true, end: false, protocol: 2w}
+    - {cmd: 0x36, start: true, end: false, protocol: 2w}
+    - {cmd: 0x37, start: false, end: false, protocol: 2w}

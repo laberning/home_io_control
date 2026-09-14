@@ -212,14 +212,15 @@ struct ScanResponder {
   bool metadata_complete;     ///< Whether type/subtype were present in the payload.
 };
 
-/// @brief Channels scan_paired_devices() transmits its roll-call request on, one attempt each.
+/// @brief Channels scan_paired_devices() transmits its roll-call request on, one attempt per
+/// channel, per pass (see @ref ROLL_CALL_PASSES).
 ///
 /// A single broadcast on one fixed channel only reaches a paired device that happens to be
 /// awake and listening on that exact channel at that exact instant — real hardware testing
 /// found paired devices duty-cycle across all three channels independently of the hub, so a
 /// one-shot broadcast on CH2 alone misses whichever devices are elsewhere in their cycle right
 /// then. Retrying the same request on the other two channels gives every device up to three
-/// chances to be listening when the hub transmits. CH2 first since it is the protocol's
+/// chances per pass to be listening when the hub transmits. CH2 first since it is the protocol's
 /// designated TX channel (see FREQ_CH2's doc comment) and therefore the most likely to catch a
 /// reply on the first attempt.
 ///
@@ -228,6 +229,54 @@ struct ScanResponder {
 /// is what keeps it from dropping replies it does hear.
 constexpr uint32_t SCAN_CHANNELS[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
 constexpr uint8_t SCAN_CHANNEL_COUNT = sizeof(SCAN_CHANNELS) / sizeof(SCAN_CHANNELS[0]);
+
+/// @brief One roll-call frame shape, and how to listen for its replies.
+///
+/// `low_power` for the frame builder is derived from `power_save_mode` (`== POWER_SAVE_LOW_POWER`)
+/// rather than stored separately, and the pass name used in logs is
+/// `power_save_mode_name(power_save_mode)` — one vocabulary, shared with the responder's own
+/// self-reported power-save byte, instead of a second spelling table.
+struct RollCallPass {
+  uint8_t power_save_mode;     ///< POWER_SAVE_LOW_POWER or POWER_SAVE_ALWAYS_ALIVE: the class this pass calls.
+  bool ack_capable;            ///< Set CTRL1_ACK on the 0x2A.
+  ListenPolicy listen_policy;  ///< Channel policy for this pass's reply windows.
+};
+
+/// @brief The roll-call's two fixed frame shapes, low-power first.
+///
+/// Low-power pass first: a sleeper that answers late is still collected by the later
+/// always-alive windows (collect_broadcast_responses() accepts any 0x2B addressed to us,
+/// regardless of which pass is currently running); in the opposite order a late low-power reply
+/// would fall off the end of the scan with nothing left to catch it.
+///
+/// Low-power pass, `CTRL1 = 0x30` (LOW_POWER | ACK): the exact header a real VELUX KLR300 uses
+/// for its own roll-call, whose low-power shutters answered it. Setting CTRL1_LOW_POWER selects
+/// LONG_PREAMBLE through the shared start-preamble rule (request_preamble_for_()) — no preamble is
+/// picked here. `ROTATE_ALL_CHANNELS`: those VELUX low-power replies were observed landing on the
+/// request channel, which a skipping listen would miss entirely.
+///
+/// Always-alive pass, `CTRL1 = 0x00` at `normal_start_preamble`: an always-alive VELUX
+/// installation ignores a 1024-byte start preamble and answers the 32-byte one; Somfy roll-call
+/// replies land on the request channel about 1 in 149 times, so `ROTATE_SKIPPING_REQUEST` keeps
+/// the window on the channels replies actually use.
+///
+/// Both shapes are fixed, named constants: `pairing_discovery_ack_capable` belongs to Discover &
+/// Pair and does not influence the roll-call either way.
+constexpr RollCallPass ROLL_CALL_PASSES[] = {
+    {POWER_SAVE_LOW_POWER, /*ack_capable=*/true, ListenPolicy::ROTATE_ALL_CHANNELS},
+    {POWER_SAVE_ALWAYS_ALIVE, /*ack_capable=*/false, ListenPolicy::ROTATE_SKIPPING_REQUEST},
+};
+
+/// A broadcast has no pinned conversation to hold a channel for, so HOLD_REQUEST_CHANNEL can
+/// never be a valid roll-call listen policy — checked at compile time rather than at every call
+/// site.
+constexpr bool no_roll_call_pass_holds_request_channel() {
+  return std::ranges::all_of(ROLL_CALL_PASSES, [](const RollCallPass &pass) {
+    return pass.listen_policy != ListenPolicy::HOLD_REQUEST_CHANNEL;
+  });
+}
+static_assert(no_roll_call_pass_holds_request_channel(),
+              "a broadcast roll-call pass has no pinned conversation to hold the request channel for");
 
 }  // namespace
 
@@ -933,29 +982,51 @@ void ManagementActions::api_oneway_remove_controller(const std::string &controll
 
 /// @brief Format one roll-call responder's report line(s).
 ///
-/// Known responders get a single summary line; unknown responders get the same summary line
-/// plus a lead-in sentence and a ready-to-paste YAML block (or, if the decoded type has no
-/// ESPHome platform, an explanatory line instead of a blank) — the same "paste this in" framing
-/// a successful pairing prints.
+/// Known responders get a single summary line, plus an indented `hint:` line when their
+/// self-reported power-save class disagrees with the registered device's YAML `low_power`
+/// property (the responder must carry extended metadata for the comparison to be possible at
+/// all). Unknown responders get the same summary line plus a lead-in sentence and a
+/// ready-to-paste YAML block (or, if the decoded type has no ESPHome platform, an explanatory
+/// line instead of a blank) — the same "paste this in" framing a successful pairing prints.
 /// @param responder Decoded responder record.
 /// @param device_id Hex device ID string for this responder, rebuilt from `responder.src`.
-/// @param known True if this device is already registered on this hub.
-static std::string format_scan_reply_line(const ScanResponder &responder, const std::string &device_id, bool known) {
+/// @param registered The matching registry entry, or nullptr if this responder is not known.
+static std::string format_scan_reply_line(const ScanResponder &responder, const std::string &device_id,
+                                          const IoDevice *registered) {
+  const bool known = registered != nullptr;
   std::string line = "  " + device_id + ": " + device_type_name(responder.type) +
                      " subtype=" + std::to_string(responder.subtype) + " rssi=" + std::to_string(responder.rssi_dbm) +
                      "dBm";
+  uint8_t power_save = 0;
   if (responder.has_extended) {
     uint8_t const att = discovery_att_class(responder.flags);
-    uint8_t const power_save = discovery_power_save_mode(responder.flags);
+    power_save = discovery_power_save_mode(responder.flags);
     line += std::string(" manufacturer=") + manufacturer_name(responder.manufacturer) +
             " turnaround=" + att_class_name(att) + " power_save=" + power_save_mode_name(power_save);
   }
   line += known ? " [known]\n" : " [unknown]\n";
 
-  if (known)
+  if (known) {
+    // Advice only: this never touches the registry or the device's runtime low_power property
+    // (an explicit YAML override stays authoritative). A responder without extended metadata has
+    // nothing to compare, so it gets no hint either way. A power_save value outside the two known
+    // classes (2 or 3) is not evidence of either class, so it gets no hint either — only an exact
+    // match against one of the two known classes triggers advice.
+    if (responder.has_extended) {
+      if (power_save == POWER_SAVE_LOW_POWER && !registered->low_power) {
+        line += "    hint: reports power_save=" + std::string(power_save_mode_name(power_save)) +
+                " but its YAML has no low_power: true; add it or directed commands may miss it while it "
+                "sleeps\n";
+      } else if (power_save == POWER_SAVE_ALWAYS_ALIVE && registered->low_power) {
+        line += "    hint: reports power_save=" + std::string(power_save_mode_name(power_save)) +
+                " but its YAML sets low_power: true; remove it, the " + std::to_string(LONG_PREAMBLE) +
+                "-byte wake-up preamble can stop an always-alive receiver answering\n";
+      }
+    }
     return line;
+  }
 
-  const bool low_power = responder.has_extended && discovery_power_save_mode(responder.flags) == POWER_SAVE_LOW_POWER;
+  const bool low_power = responder.has_extended && power_save == POWER_SAVE_LOW_POWER;
   const std::string snippet = build_device_yaml_snippet(responder.type, responder.subtype, device_id,
                                                         responder.metadata_complete, responder.inverted, low_power);
   if (!snippet.empty())
@@ -975,7 +1046,7 @@ enum class ScanAddResult : uint8_t {
 /// @brief Record a responder unless its address is already present.
 ///
 /// Deduplication is by node ID across the whole scan, so a device that answers several of the
-/// three attempts — or twice inside one attempt — still yields one entry. The duplicate check
+/// six attempts — or twice inside one attempt — still yields one entry. The duplicate check
 /// runs before the capacity check so that repeat replies from already-recorded devices never
 /// look like overflow once the array is full.
 /// @param responders Accumulated array, appended to in place.
@@ -983,15 +1054,22 @@ enum class ScanAddResult : uint8_t {
 /// @param capacity Maximum entries `responders` can hold.
 /// @param frame Reply frame to decode and store.
 /// @param rssi_dbm RSSI of that reply.
+/// @param entry Out: the newly recorded entry (ADDED), the already-recorded entry with the same
+///        `src` (DUPLICATE), or nullptr (FULL) — lets a caller read back the stored
+///        manufacturer/flags without decoding the frame a second time.
 /// @return Which of the three outcomes occurred.
 static ScanAddResult add_scan_responder(ScanResponder *responders, uint8_t &count, uint8_t capacity,
-                                        const IoFrame &frame, int16_t rssi_dbm) {
+                                        const IoFrame &frame, int16_t rssi_dbm, const ScanResponder *&entry) {
   for (uint8_t i = 0; i < count; i++) {
-    if (memcmp(responders[i].src, frame.src, NODE_ID_SIZE) == 0)
+    if (memcmp(responders[i].src, frame.src, NODE_ID_SIZE) == 0) {
+      entry = &responders[i];
       return ScanAddResult::DUPLICATE;
+    }
   }
-  if (count >= capacity)
+  if (count >= capacity) {
+    entry = nullptr;
     return ScanAddResult::FULL;
+  }
 
   // decode_discovery_response() also produces the hex device-ID string, which is deliberately
   // discarded here and rebuilt from `src` when the report is formatted. Keeping it would mean a
@@ -1001,17 +1079,165 @@ static ScanAddResult add_scan_responder(ScanResponder *responders, uint8_t &coun
   std::string unused_device_id;
   const DiscoveryResponseInfo info = decode_discovery_response(frame, device, unused_device_id);
 
-  ScanResponder &entry = responders[count++];
-  memcpy(entry.src, frame.src, NODE_ID_SIZE);
-  entry.type = device.type;
-  entry.subtype = device.subtype;
-  entry.inverted = device.inverted;
-  entry.rssi_dbm = rssi_dbm;
-  entry.manufacturer = info.manufacturer;
-  entry.flags = info.flags;
-  entry.has_extended = info.has_extended;
-  entry.metadata_complete = info.metadata_complete;
+  ScanResponder &new_entry = responders[count++];
+  memcpy(new_entry.src, frame.src, NODE_ID_SIZE);
+  new_entry.type = device.type;
+  new_entry.subtype = device.subtype;
+  new_entry.inverted = device.inverted;
+  new_entry.rssi_dbm = rssi_dbm;
+  new_entry.manufacturer = info.manufacturer;
+  new_entry.flags = info.flags;
+  new_entry.has_extended = info.has_extended;
+  new_entry.metadata_complete = info.metadata_complete;
+  entry = &new_entry;
   return ScanAddResult::ADDED;
+}
+
+/// @brief Accumulated state for one scan_paired_devices() call, threaded through every attempt.
+struct ScanState {
+  ScanResponder responders[SCAN_MAX_REPLIES];
+  uint8_t count{0};
+  bool truncated{false};
+};
+
+/// @brief How many of ROLL_CALL_PASSES `selection` actually calls.
+static uint8_t count_enabled_passes(ScanPowerClasses selection) {
+  uint8_t count = 0;
+  for (const RollCallPass &pass : ROLL_CALL_PASSES) {
+    if (scan_power_classes_include(selection, pass.power_save_mode))
+      count++;
+  }
+  return count;
+}
+
+/// @brief Per-attempt facts a roll-call reply's DEBUG line needs, kept in one small struct so the
+/// reply lambda's capture list stays a couple of pointers rather than growing one field at a time.
+struct RollCallAttemptContext {
+  const RollCallPass *pass;
+  uint8_t attempt;      ///< Global attempt number (1-based, across all passes).
+  uint32_t tx_freq_hz;  ///< Channel this attempt transmitted the request on.
+};
+
+/// @brief Record one accepted roll-call reply into the scan state, and log it.
+///
+/// Reads back `add_scan_responder()`'s out-parameter rather than decoding the frame a second time
+/// to learn the responder's self-reported power-save class. RSSI in the log line is this reply's
+/// own `info.rssi_dbm`, not the value stored on first sighting, so a later, stronger or weaker
+/// reception of an already-known responder is still visible. Duplicates are logged too — a repeat
+/// still answers "which pass heard this device".
+static void record_roll_call_reply(ScanState &state, const RollCallAttemptContext &ctx, const IoFrame &frame,
+                                   const ExchangeEngine::BroadcastReplyInfo &info) {
+  const ScanResponder *entry = nullptr;
+  if (add_scan_responder(state.responders, state.count, SCAN_MAX_REPLIES, frame, info.rssi_dbm, entry) ==
+      ScanAddResult::FULL) {
+    state.truncated = true;
+  }
+
+  const char *power_save = (entry != nullptr && entry->has_extended)
+                               ? power_save_mode_name(discovery_power_save_mode(entry->flags))
+                               : "unknown";
+  ESP_LOGD(detail::TAG,
+           "Roll-call reply src=%s pass=%s attempt=%u tx=%" PRIu32 " rx=%" PRIu32 " +%" PRIu32
+           "ms rssi=%d power_save=%s",
+           node_id_to_string(frame.src).c_str(), power_save_mode_name(ctx.pass->power_save_mode), ctx.attempt,
+           ctx.tx_freq_hz, info.rx_freq_hz, info.after_tx_ms, info.rssi_dbm, power_save);
+}
+
+/// @brief Outcome of run_roll_call_attempt(), so the sweep loop can surface a build failure the
+/// same way scan_paired_devices() always has.
+enum class RollCallAttemptResult : uint8_t {
+  OK,            ///< Request built and transmitted (with or without replies).
+  BUILD_FAILED,  ///< create_discovery_request() failed; the caller should abort the whole scan.
+};
+
+/// @brief Transmit one roll-call attempt and collect its replies into `state`.
+///
+/// Builds a fresh request every call (create_discovery_request() draws a new random nonce each
+/// time) rather than replaying one frame across attempts, and logs one attempt-summary DEBUG line
+/// after collection closes. The pass determines the frame shape (CTRL1, and therefore preamble via
+/// request_preamble_for_()'s rule) and the listen policy; this function does not choose either.
+static RollCallAttemptResult run_roll_call_attempt(ExchangeEngine &engine, const uint8_t *node_id,
+                                                   const uint8_t *system_key, const TuningConfig &tuning,
+                                                   const RollCallPass &pass, uint32_t tx_freq_hz, uint8_t attempt,
+                                                   uint8_t total_attempts, ScanState &state) {
+  IoFrame request;
+  const bool low_power = pass.power_save_mode == POWER_SAVE_LOW_POWER;
+  if (!create_discovery_request(request, node_id, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, low_power, pass.ack_capable,
+                                /*payload_enabled=*/false, /*payload=*/0, system_key)) {
+    return RollCallAttemptResult::BUILD_FAILED;
+  }
+
+  const uint8_t before = state.count;
+  RollCallAttemptContext ctx{&pass, attempt, tx_freq_hz};
+  const uint8_t heard = engine.collect_broadcast_responses(
+      request, tx_freq_hz, CMD_DISCOVER_SPE_RESP, tuning.pairing_discovery_wait_ms,
+      [&state, &ctx](const IoFrame &frame, const ExchangeEngine::BroadcastReplyInfo &info) {
+        record_roll_call_reply(state, ctx, frame, info);
+      },
+      pass.listen_policy);
+
+  // Diagnostic only (not part of the user-facing report). Reporting heard and new separately is
+  // what makes it useful: "heard 3, 0 new" means devices are answering every attempt (so the
+  // extra channels are redundant here). ctrl1 is read back from the built frame rather than
+  // re-derived from the pass, so this line can never disagree with what was actually transmitted.
+  const uint8_t new_count = state.count - before;
+  ESP_LOGD(detail::TAG,
+           "Roll-call attempt %u/%u (pass=%s, ctrl1=0x%02X, tx %" PRIu32 " Hz, %u ms window): %u repl%s heard, %u new",
+           attempt, total_attempts, power_save_mode_name(pass.power_save_mode), request.ctrl1, tx_freq_hz,
+           tuning.pairing_discovery_wait_ms, heard, heard == 1 ? "y" : "ies", new_count);
+  return RollCallAttemptResult::OK;
+}
+
+/// @brief Build the final report: known/unknown grouping, header, the selection NOTE, and the
+/// truncation NOTE.
+static std::string build_scan_report(const ScanState &state, DeviceRegistry &registry, ScanPowerClasses selection) {
+  // Grouped into known-first, unknown-second rather than interleaved in arrival order: the two
+  // groups need very different follow-up (nothing to do vs. paste a YAML block), so burying an
+  // unknown responder between two known ones makes it easy to miss.
+  std::string known_body;
+  std::string unknown_body;
+  uint8_t unknown_count = 0;
+  for (uint8_t i = 0; i < state.count; i++) {
+    const std::string device_id = node_id_to_string(state.responders[i].src);
+    const IoDevice *registered = registry.get(device_id);
+    if (registered != nullptr) {
+      known_body += format_scan_reply_line(state.responders[i], device_id, registered);
+    } else {
+      unknown_count++;
+      unknown_body += format_scan_reply_line(state.responders[i], device_id, nullptr);
+    }
+  }
+
+  std::string body;
+  if (!known_body.empty())
+    body += "Known:\n" + known_body;
+  if (!unknown_body.empty())
+    body += "Unknown:\n" + unknown_body;
+
+  std::string message = "Roll-call: " + std::to_string(state.count) + " device" + (state.count == 1 ? "" : "s") +
+                        " detected (" + std::to_string(state.count - unknown_count) + " known, " +
+                        std::to_string(unknown_count) + " unknown)\n";
+  // A non-default selection must say so in the report itself, not just the log: a user who left
+  // this tunable on always_alive must not read a missing solar/battery device as "gone". Derived
+  // from ROLL_CALL_PASSES rather than a switch/literal, so a third power class would not need a
+  // second place taught about it.
+  if (selection != ScanPowerClasses::BOTH) {
+    for (const RollCallPass &pass : ROLL_CALL_PASSES) {
+      if (scan_power_classes_include(selection, pass.power_save_mode))
+        continue;
+      message += "NOTE: scan_power_classes=" + scan_power_classes_to_string(selection) + ": " +
+                 power_save_mode_name(pass.power_save_mode) + " devices were not called.\n";
+    }
+  }
+  // Surfaced in the report itself, not only the log: a scan that silently listed a subset would
+  // look like devices had gone missing.
+  if (state.truncated) {
+    message += "NOTE: more than " + std::to_string(SCAN_MAX_REPLIES) +
+               " devices answered; the list below is truncated. Re-run to see whether other devices "
+               "appear, and raise SCAN_MAX_REPLIES if this install really is larger.\n";
+  }
+  message += body;
+  return message;
 }
 
 ManagementActionResult ManagementActions::scan_paired_devices() {
@@ -1022,85 +1248,31 @@ ManagementActionResult ManagementActions::scan_paired_devices() {
     return result;
   }
 
-  // One attempt per channel (see SCAN_CHANNELS), deduplicating responders across attempts — a
-  // device that is awake and replies to more than one attempt must still only appear once in the
-  // report. Each attempt gets a fresh request (create_discovery_request() draws a new random
-  // nonce every call) rather than replaying the same frame three times. Every channel is always
-  // tried, even once the array is full: stopping early would silently skip channels, which is
-  // exactly the single-channel behaviour the three attempts exist to avoid.
-  ScanResponder responders[SCAN_MAX_REPLIES];
-  uint8_t count = 0;
-  bool truncated = false;
-  for (uint8_t attempt = 0; attempt < SCAN_CHANNEL_COUNT; attempt++) {
-    IoFrame request;
-    // ack_capable is deliberately hardcoded false here, not wired to the pairing_discovery_ack_capable
-    // tunable: analysis ruled out CTRL1_ACK as this roll-call's actual bug, and this scan
-    // targets already-enrolled devices, not the cold/never-enrolled case the tunable exists to test.
-    // Caveat: that ruling-out was reasoning by analogy (a real VELUX hub's own roll-call frame does
-    // carry CTRL1_ACK set, unlike ours), not a direct hardware retest of this exact roll-call against
-    // a real VELUX installation — the one that would have settled it was asked for but never
-    // reported back. Worth an actual retest before trusting this further.
-    if (!create_discovery_request(request, node_id_, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, /*low_power=*/false,
-                                  /*ack_capable=*/false, /*payload_enabled=*/false, /*payload=*/0, system_key_)) {
-      result.message = "failed to build roll-call request";
-      return result;
-    }
-
-    const uint8_t before = count;
-    const uint8_t heard = engine_.collect_broadcast_responses(
-        request, SCAN_CHANNELS[attempt], CMD_DISCOVER_SPE_RESP, tuning_->pairing_discovery_wait_ms,
-        [&responders, &count, &truncated](const IoFrame &frame, int16_t rssi_dbm) {
-          if (add_scan_responder(responders, count, SCAN_MAX_REPLIES, frame, rssi_dbm) == ScanAddResult::FULL) {
-            truncated = true;
-          }
-        });
-    // Diagnostic only (not part of the user-facing report). Reporting heard and new separately is
-    // what makes it useful: "heard 3, 0 new" means devices are answering every attempt (so the
-    // extra channels are redundant here). The Hz below is the TX channel for this attempt only —
-    // collect_broadcast_responses() listens with ROTATE_SKIPPING_REQUEST (see SCAN_CHANNELS' doc
-    // comment), so replies are never received on it. "heard 0" therefore says nothing about that
-    // channel specifically; it means neither of the *other* two channels caught a reply in this
-    // attempt's window.
-    const uint8_t new_count = count - before;
-    ESP_LOGD(detail::TAG, "Roll-call attempt %u/%u (tx %" PRIu32 " Hz, %u ms window): %u repl%s heard, %u new",
-             attempt + 1, SCAN_CHANNEL_COUNT, SCAN_CHANNELS[attempt], tuning_->pairing_discovery_wait_ms, heard,
-             heard == 1 ? "y" : "ies", new_count);
-  }
-
-  // Grouped into known-first, unknown-second rather than interleaved in arrival order: the two
-  // groups need very different follow-up (nothing to do vs. paste a YAML block), so burying an
-  // unknown responder between two known ones makes it easy to miss.
-  std::string known_body;
-  std::string unknown_body;
-  uint8_t unknown_count = 0;
-  for (uint8_t i = 0; i < count; i++) {
-    const std::string device_id = node_id_to_string(responders[i].src);
-    const bool known = registry_.get(device_id) != nullptr;
-    if (known) {
-      known_body += format_scan_reply_line(responders[i], device_id, known);
-    } else {
-      unknown_count++;
-      unknown_body += format_scan_reply_line(responders[i], device_id, known);
+  // Outer loop over passes (low-power first, see ROLL_CALL_PASSES), skipping any pass the
+  // scan_power_classes tunable excludes; inner loop over SCAN_CHANNELS. Attempt numbers are
+  // global and 1-based across the passes actually run, matching the "n/N" log line and the
+  // per-reply `attempt=` field. Every attempt always runs, even once the array is full: stopping
+  // early would silently skip channels/passes, which is exactly the single-channel behaviour the
+  // repeated attempts exist to avoid.
+  const ScanPowerClasses selection = tuning_->scan_power_classes;
+  const uint8_t total_attempts = count_enabled_passes(selection) * SCAN_CHANNEL_COUNT;
+  ScanState state{};
+  uint8_t attempt = 0;
+  for (const RollCallPass &pass : ROLL_CALL_PASSES) {
+    if (!scan_power_classes_include(selection, pass.power_save_mode))
+      continue;
+    for (const uint32_t tx_freq_hz : SCAN_CHANNELS) {
+      attempt++;
+      if (run_roll_call_attempt(engine_, node_id_, system_key_, *tuning_, pass, tx_freq_hz, attempt, total_attempts,
+                                state) == RollCallAttemptResult::BUILD_FAILED) {
+        result.message = "failed to build roll-call request";
+        return result;
+      }
     }
   }
-
-  std::string body;
-  if (!known_body.empty())
-    body += "Known:\n" + known_body;
-  if (!unknown_body.empty())
-    body += "Unknown:\n" + unknown_body;
 
   result.success = true;
-  result.message = "Roll-call: " + std::to_string(count) + " device" + (count == 1 ? "" : "s") + " detected (" +
-                   std::to_string(count - unknown_count) + " known, " + std::to_string(unknown_count) + " unknown)\n";
-  // Surfaced in the report itself, not only the log: a scan that silently listed a subset would
-  // look like devices had gone missing.
-  if (truncated) {
-    result.message += "NOTE: more than " + std::to_string(SCAN_MAX_REPLIES) +
-                      " devices answered; the list below is truncated. Re-run to see whether other devices "
-                      "appear, and raise SCAN_MAX_REPLIES if this install really is larger.\n";
-  }
-  result.message += body;
+  result.message = build_scan_report(state, registry_, selection);
   return result;
 }
 

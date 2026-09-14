@@ -9,15 +9,14 @@ time than anything else on this page.
 ```mermaid
 flowchart TD
     A[Do you have a working<br/>two-way IO-Homecontrol hub today?<br/>TaHoma, KLF200, KLR200,<br/>Connexoon, KIG300… — not just<br/>a 1W wall switch or remote] -->|Yes| B[Use key extraction]
-    A -->|No| C[Is the device brand new,<br/>or factory reset?]
-    C -->|Yes| D[Use Discover &amp; Pair]
-    C -->|No, it was paired<br/>to a hub I no longer have,<br/>or shipped pre-paired to<br/>its own 1W remote/switch| E[Look up the device's own<br/>reset procedure — a Double<br/>Power Cut is the common<br/>first step, but confirm the<br/>device-specific button<br/>sequence in its manual too]
-    E --> F{Does Discover &amp; Pair<br/>find it now?}
-    F -->|Yes| D
-    F -->|No| G[The reset likely only reopened<br/>1W learning, not 2W discovery.<br/>Look up the device's specific<br/>2W-reset gesture if one is<br/>documented]
+    A -->|No| C[Has a two-way hub ever<br/>controlled the device?]
+    C -->|No — it is new, or only ever<br/>driven by 1W remotes<br/>or wall switches| D[Use Discover &amp; Pair]
+    C -->|Yes, a hub I<br/>no longer have| E[Factory reset it as its<br/>manual describes, then<br/>register its local remote<br/>again, if it has one]
+    E --> D
+    D --> F{Does it answer?}
+    F -->|Yes| I[Copy the YAML snippet<br/>from the log]
+    F -->|No| G[See The device is<br/>never found in<br/>Troubleshooting]
     B --> H[Then press Scan Paired Devices<br/>to list everything on the key]
-    D --> I[Copy the YAML snippet<br/>from the log]
-    G --> F
 ```
 
 **Key extraction is the route whenever you already own a two-way hub** — one that runs its own
@@ -56,14 +55,24 @@ home_io_control:
 1. Choose a `node_id` (6 hex characters) and a `system_key` (32 hex characters) for the hub, and
    keep them stable across firmware updates.
 2. Flash a config with at least the `home_io_control:` hub and `discover_and_pair_button: true`.
-3. Put exactly **one** device into pairing mode, usually a 2 second press of its PROG button. The
-   pairing window is short, typically a few seconds.
-4. Press **Discover & Pair** in Home Assistant within that window.
+3. Put exactly **one** device into pairing mode. The gesture depends on the device; its page under
+   [Supported devices](supported-devices.md) or its own manual has the details.
+   - **A device with a reachable PROG button of its own:** usually a 2 second press of that button.
+   - **A device whose button is out of reach**, such as a motor inside a tube or a pergola, or a
+     receiver with no button: hold PROG on a remote **already registered to that device** for about
+     2 seconds, and **let go at the first jog** (or blink). Holding on longer can remove the remote.
+     Straight after a power cut, it can factory reset the device.
+   - If one remote drives several devices, power the others down first. A single PROG press puts
+     every device registered to that remote into pairing mode at once.
+4. Press **Discover & Pair** in Home Assistant straight away. Some devices close their pairing
+   window after a few seconds.
 5. Watch the ESPHome log. On success it prints a ready-to-paste YAML snippet with `io_device_id`,
    `io_device_type` and `io_subtype`; otherwise a follow-up message says why no snippet could be
    generated.
 6. Add those three values to the matching `cover:`, `light:`, `lock:` or `switch:` entry in your
-   YAML. If the log printed a raw numeric type such as `0x11`, keep that exact value.
+   YAML. If the log printed a raw numeric type such as `0x11`, keep that exact value. Don't add
+   device entries with made-up IDs such as `000000` ahead of pairing. The hub polls every device
+   in the YAML, so a placeholder only produces failed exchanges in the log.
 7. Reflash. The entity appears in Home Assistant and the hub starts polling the device for status.
 8. If the log says the type is unsupported or the discovery metadata was incomplete, follow its
    guidance and open a GitHub issue with the raw type/subtype, the device model and the pairing
@@ -110,10 +119,10 @@ RF silence, and is reported as `1w_traffic`.
 
 | Advice code | When it fires | What it means |
 |-------------|----------------|----------------|
-| `1w_traffic` | A 1W remote was seen performing 1W pairing (a broadcast to `00003F` with a 1W pairing command byte). The broadcast does not identify a target, so this fires on any 1W pairing gesture in range. | The motor is **not** in 2W learning mode; a PROG press on a 1W remote does not enable 2W discovery. A Double Power Cut alone has only been confirmed to reopen that same 1W state, not a 2W one — look up the device's own manufacturer-documented reset instead. A VELUX SSL, for example, has a physical **P** button that opens a 10-minute 2W registration window (see [VELUX INTEGRA](devices/velux-integra.md)); other product families document their own gesture in their manual. If a **two-way** hub already controls the device (a TaHoma, KLF200, KLR200, KIG300, and similar — not a 1W wall switch or remote), it is almost certainly paired to that hub instead: use [key extraction](key-extraction.md). |
+| `1w_traffic` | A 1W remote was seen performing 1W pairing (a broadcast to `00003F` with a 1W pairing command byte). The broadcast does not identify a target, so this fires on any 1W pairing gesture in range. | A remote's PROG gesture was heard, and no device answered. That shows a gesture happened, **not** what state the device is in: the same frames have come just before a successful pairing, too. Check in order. **1.** If a **two-way** hub already controls the device (a TaHoma, KLF200, KLR200, KIG300, and similar; not a 1W wall switch or remote), it is almost certainly paired to that hub: use [key extraction](key-extraction.md). **2.** Was the PROG press on a remote *already registered to this device*, released at the first jog? A longer hold can remove the remote, or reset the device straight after a power cut. **3.** Was this the only device in pairing mode? One remote often drives several devices. **4.** A Double Power Cut or factory reset is not a pairing gesture on its own. Afterwards a device with a local remote expects that remote to be registered again, as its manual describes, so do that first, then repeat 2. Some families document a separate gesture: a VELUX SSL has a physical **P** button that opens a 10-minute 2W registration window (see [VELUX INTEGRA](devices/velux-integra.md)). |
 | `channel_busy` | Listen-before-talk retries were exhausted and the same source was heard repeatedly during the wait. | A repeating beacon (usually a nearby remote or sensor) is flooding the channel and delaying discovery transmissions. Try again, or tune `lbt_max_retries`/`lbt_rssi_threshold_dbm` — see [Radio tuning](configuration/tuning.md). |
 | `foreign_controller` | A discovery response (0x29) was seen addressed to a node ID that is not this hub's. | Another controller (a TaHoma, say) is pairing the same device right now. Wait for it to finish, or make sure yours is the only controller with the device in pairing mode. |
-| `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Separates "RF dead" (antenna, wiring, wrong tuning) from "device is not in pairing mode". Check the antenna and radio tuning before pressing PROG again. |
+| `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Either the radio is not receiving (antenna, wiring, wrong tuning), or the channel was simply quiet for those few seconds. Look at the rest of the log first. If it shows other IO-Homecontrol frames being received (your remotes, a neighbour's devices), the radio works, and this reads as "the device did not answer". Only if nothing is ever received, check the antenna and radio tuning before pressing PROG again. |
 
 ## Scan Paired Devices
 
@@ -164,10 +173,16 @@ Unknown:
 
 ### What to expect
 
-- **A scan takes about 6 seconds** and blocks the ESPHome loop for that long. Paired devices
-  duty-cycle across the three radio channels on their own schedule, so the hub broadcasts on each
-  channel in turn, each with a full `pairing_discovery_wait_ms` listen window, then merges the
-  replies. The "operation took a long time" warning ESPHome logs on every run is expected.
+- **A scan takes about 13 seconds** and blocks the ESPHome loop for that long. Sleeping
+  solar/battery devices need a long wake-up call that a mains-powered device ignores, so the hub
+  calls each power class in turn on all three radio channels: a low-power pass first (a long
+  wake-up preamble), then the always-alive pass (a short preamble) — six broadcasts total, each
+  with a full `pairing_discovery_wait_ms` listen window. The "operation took a long time" warning
+  ESPHome logs on every run is expected.
+- **An installation with no solar or battery devices can skip the low-power pass.** Set
+  [`scan_power_classes: always_alive`](configuration/tuning.md#scan_power_classes) to restore the
+  original ~6 second, single-pass scan. The same tunable also isolates one class when bisecting a
+  mixed installation in the field.
 - **A device can still be missed. Press again if one you expect is absent.** A scan has no side
   effects, so repeating it costs nothing.
 - **Hearing nothing is a valid result.** The result event's `success` is `true` whenever the
@@ -179,10 +194,17 @@ Unknown:
 - **An unknown responder is almost never an intruder.** It usually means a device you paired
   earlier whose YAML entry was never saved. The reply proves only that the device once received
   your system key.
+- **A known device can get a `hint:` line** when its self-reported power-save class disagrees with
+  its registered `low_power:` YAML property — for example, a device that answers the low-power pass
+  but has no `low_power: true` in its YAML. Follow the hint's suggestion; it only ever proposes a
+  YAML edit, never changes the registry itself.
 - **It cannot pair a new device.** A device in learning mode holds no key yet and stays silent to a
   roll-call. Use Discover & Pair for that, and the scan to check on devices you already have.
   [`pairing_discovery_commands`](configuration/tuning.md#pairing_discovery_commands) explains why
   0x2A is deliberately not a discovery option.
+- **A scan puts roughly 0.7 seconds of traffic on air**, dominated by the low-power pass's long
+  wake-up preambles. It is a manually triggered action — do not call it from a tight automation
+  loop.
 
 ### Notes on the Scan Paired Devices button
 

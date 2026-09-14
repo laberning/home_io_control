@@ -69,10 +69,10 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
 /// NO_RESPONSE (no packets at all) and INVALID (packets seen but none valid).
 ///
 /// Frequency hopping: hops between the 2 non-request IO-homecontrol channels after each slice —
-/// the request always goes out on FREQ_CH2 (see run_discovery_phase_()), and a broadcast reply
+/// the request always goes out on FREQ_CH2 (see run_discovery_phase_()), and a discovery reply
 /// essentially never lands back on that channel (see ListenPolicy's own doc comment for why), so
-/// dwelling there is wasted listening time. Same policy as collect_broadcast_responses() uses for
-/// its own broadcast wait (spec.request_freq below). The slice length comes from
+/// dwelling there is wasted listening time. Same policy as collect_broadcast_responses()'s
+/// default. The slice length comes from
 /// RadioDriver::hop_dwell_ms() (spec.dwell_ms left at 0, so listen() asks the driver). When
 /// preamble or sync detection fires, the dwell extends by PREAMBLE_LINGER_DWELL_MS so the
 /// incoming frame can complete without interruption.

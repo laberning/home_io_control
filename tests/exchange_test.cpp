@@ -1134,17 +1134,22 @@ IoFrame build_spe_request(const uint8_t own[3]) {
   return f;
 }
 
-/// Records every callback delivery so tests can assert on count, addresses, and RSSI.
-/// collect_broadcast_responses() neither stores nor deduplicates replies, so this is also what
-/// proves it hands over duplicates rather than filtering them.
+/// Records every callback delivery so tests can assert on count, addresses, RSSI, receive
+/// channel, and post-transmit latency. collect_broadcast_responses() neither stores nor
+/// deduplicates replies, so this is also what proves it hands over duplicates rather than
+/// filtering them.
 struct CollectedReplies {
   std::vector<IoFrame> frames;
   std::vector<int16_t> rssi_dbm;
+  std::vector<uint32_t> rx_freq_hz;
+  std::vector<uint32_t> after_tx_ms;
 
   ExchangeEngine::BroadcastReplyHandler handler() {
-    return [this](const IoFrame &frame, int16_t rssi) {
+    return [this](const IoFrame &frame, const ExchangeEngine::BroadcastReplyInfo &info) {
       this->frames.push_back(frame);
-      this->rssi_dbm.push_back(rssi);
+      this->rssi_dbm.push_back(info.rssi_dbm);
+      this->rx_freq_hz.push_back(info.rx_freq_hz);
+      this->after_tx_ms.push_back(info.after_tx_ms);
     };
   }
 };
@@ -1334,8 +1339,11 @@ TEST(Exchange, CollectBroadcastResponses_TransmitFailureReturnsZero) {
 }
 
 // ============================================================================
-// Roll-call channel policy: a reply is never sent back on the request channel (1 of 149
-// measured), so the listen rotation must skip it entirely.
+// Roll-call channel policy: collect_broadcast_responses()'s default policy
+// (ROTATE_SKIPPING_REQUEST) leaves the request channel before its first listen, because a Somfy
+// always-alive reply is seen there only 1 of 149 times. The two tests below call without the new
+// `policy` argument, so they pin that default rather than a fixed universal behaviour — a caller
+// that passes ROTATE_ALL_CHANNELS instead (see below) gets the opposite.
 // ============================================================================
 
 TEST(Exchange, CollectBroadcastResponses_LeavesRequestChannelImmediately) {
@@ -1394,6 +1402,77 @@ TEST(Exchange, CollectBroadcastResponses_NeverListensOnRequestChannel) {
     EXPECT_TRUE(saw_both_others) << "request_freq=" << request_freq
                                  << ": both non-request channels should appear over several hops";
   }
+}
+
+// Real VELUX low-power roll-call replies have been observed landing on the request channel, so a
+// caller whose responders may do that passes ROTATE_ALL_CHANNELS instead of relying on the
+// skipping default.
+TEST(Exchange, CollectBroadcastResponses_RotateAllListensOnTheRequestChannel) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // A reply on the very first wait_for_packet() call: only reachable if the first listen stays on
+  // the request channel instead of hopping away from it first.
+  RadioRxPacket reply_pkt = to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID));
+  reply_pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(reply_pkt);
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count =
+      engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP, tuning.pairing_discovery_wait_ms,
+                                         collected.handler(), ListenPolicy::ROTATE_ALL_CHANNELS);
+
+  EXPECT_EQ(count, 1u) << "ROTATE_ALL_CHANNELS must catch a reply on the request channel";
+  ASSERT_FALSE(radio.call_log().empty());
+  EXPECT_EQ(radio.call_log().front(), MockRadio::CallKind::kWait)
+      << "ROTATE_ALL_CHANNELS starts listening immediately, unlike the skipping default";
+  EXPECT_NE(std::find(radio.freq_history().begin(), radio.freq_history().end(), FREQ_CH2), radio.freq_history().end())
+      << "the request frequency must still appear in the rotation";
+}
+
+TEST(Exchange, CollectBroadcastResponses_ReportsReceiveChannel) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // Transmit on CH2, but the queued reply reports arriving on CH1.
+  RadioRxPacket reply_pkt = to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID));
+  reply_pkt.freq_hz = FREQ_CH1;
+  radio.queue_rx(reply_pkt);
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  ASSERT_EQ(count, 1u);
+  ASSERT_EQ(collected.rx_freq_hz.size(), 1u);
+  EXPECT_EQ(collected.rx_freq_hz[0], FREQ_CH1) << "the reply's own receive channel must be reported, not the TX one";
+}
+
+TEST(Exchange, CollectBroadcastResponses_ReportsLatencyAfterTransmit) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // One silent slice, then a reply: host millis() advances one tick per call, so after_tx_ms must
+  // be strictly positive by the time the reply is delivered.
+  radio.queue_rx_silence(1);
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  uint8_t count = engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                                     tuning.pairing_discovery_wait_ms, collected.handler());
+
+  ASSERT_EQ(count, 1u);
+  ASSERT_EQ(collected.after_tx_ms.size(), 1u);
+  EXPECT_GT(collected.after_tx_ms[0], 0u) << "latency must be measured from the transmit completing, not read as 0";
 }
 
 // Pins a property no existing test asserts directly: staying put after a reception is

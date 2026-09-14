@@ -119,10 +119,13 @@ your device may differ.
 > **Background — channels & hopping.** The protocol uses three 868 MHz channels
 > (≈868.25 / 868.95 / 869.85 MHz). A unicast reply comes back on the channel the request went
 > out on, so those waits hold still — pairing's key-challenge/key-confirm waits and every
-> command's wait for its first and final response alike; a broadcast roll-call reply does not, so
-> that wait covers the channels a reply can actually use instead, and lingers on any channel where
-> it detects an incoming preamble. Several parameters below tune that wait — but if a device is
-> never heard at all, the cause is usually the command/address, not the timing.
+> command's wait for its first and final response alike. A broadcast roll-call reply is different,
+> and which channels its wait covers depends on the pass: the `scan_paired_devices` always-alive
+> pass skips the request channel (replies there are rare for that population), while its low-power
+> pass listens on all three, including the request channel, because low-power replies have been
+> observed landing there. Either way the wait lingers on any channel where it detects an incoming
+> preamble. Several parameters below tune that wait — but if a device is never heard at all, the
+> cause is usually the command/address, not the timing.
 
 ### Quick reference
 
@@ -151,9 +154,10 @@ your device may differ.
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
 | `pairing_discovery_low_power` | both | `false` | `true` / `false` | Sets the LOW_POWER flag in discovery frames. |
 | `pairing_discovery_ack_capable` | both | `false` | `true` / `false` | Sets the ACK (CTRL1_ACK) flag on the discovery broadcast only. Experimental — see note below. |
-| `pairing_discovery_wait_ms` | both | `2000` | 500–5000 ms | How long to wait for a response after each discovery TX. Also the per-attempt listen window for each of the three roll-call attempts the `scan_paired_devices` action makes. |
+| `pairing_discovery_wait_ms` | both | `2000` | 500–5000 ms | How long to wait for a response after each discovery TX. Also the per-attempt listen window for each of the `scan_paired_devices` roll-call's attempts (up to six: three per power class). |
 | `pairing_discovery_initial_dwell_ms` | both | `300` | 0–500 ms | Settle delay before the first discovery TX. |
 | `pairing_key_exchange_retries` | both | `3` | 1–5 | Retries for the authenticated key-exchange phase. |
+| `scan_power_classes` | both | `both` | `both` / `always_alive` / `low_power` | Which device power classes the `scan_paired_devices` roll-call calls. |
 
 `ui_controls` itself is a feature toggle (default `false`) that exposes these as entities; it is
 not a tunable.
@@ -387,8 +391,10 @@ path, so only enable them alongside `0x2E`.
 #### `pairing_discovery_ack_capable`
 
 Sets `CTRL1_ACK` ("sender can handle 2W responses") on the discovery broadcast (`0x28`/`0x2E`) only
-— not on any other frame in the pairing handshake, and not on the `scan_paired_devices` roll-call
-(`0x2A`), which is a separate, unrelated request path.
+— not on any other frame in the pairing handshake. It has no effect on the `scan_paired_devices`
+roll-call (`0x2A`) either, which is a separate, unrelated request path with its own fixed frame
+shapes: the roll-call's low-power pass sets `CTRL1_ACK` itself, unconditionally, as part of that
+pass's frame — see [`scan_power_classes`](#scan_power_classes).
 
 *Do not enable this by default.* Setting this bit unconditionally on all outbound frames  —
 real Somfy awning devices went silent (no error, no reply, just dropped the frame) when they saw
@@ -434,8 +440,10 @@ known, not-yet-closed gap
 
 How long to wait for a response after each discovery transmit, and an initial settle before the
 first transmit. `pairing_discovery_wait_ms` also sets the per-attempt listen window for the
-`scan_paired_devices` action (see [Scan Paired Devices](../pairing.md#scan-paired-devices)); since
-that action makes three attempts, one per channel, its total runtime is roughly 3x this value.
+`scan_paired_devices` action (see [Scan Paired Devices](../pairing.md#scan-paired-devices)); at the
+default `scan_power_classes: both` that action makes six attempts (three channels, times two power
+classes), so its total runtime is roughly 6x this value — 3x with
+[`scan_power_classes`](#scan_power_classes) narrowed to one class.
 
 *Observations:* the `300` ms initial dwell mirrors the conventional wait after a start frame.
 Lengthening the wait only helps when responses are *intermittent* — merely extending the dwell
@@ -450,6 +458,25 @@ device may acknowledge the challenge yet never confirm the key. That is usually 
 preamble/turnaround problem, so if extra retries alone don't help, address
 `sx1262_response_preamble` and `sx1262_post_tx_settle_us` first. Retries mainly guard against
 occasional transient decode failures.
+
+#### `scan_power_classes`
+
+Which device power classes the `scan_paired_devices` roll-call calls (see
+[Scan Paired Devices](../pairing.md#scan-paired-devices)):
+
+- **`both`** (default): a low-power pass (long wake-up preamble, all three channels) followed by
+  the always-alive pass (short preamble, the two channels not used for that transmit) — six
+  attempts total, roughly 13 seconds.
+- **`always_alive`**: only the always-alive pass — three attempts, the ~6 s single-pass scan. Use
+  this on an installation with no solar or battery devices; the report only gains one extra
+  `NOTE:` line naming the excluded class.
+- **`low_power`**: only the low-power pass — three attempts, roughly 6 seconds. Use this to test in
+  isolation whether a sleeping device answers the low-power call at all, without the always-alive
+  pass's replies muddying the result.
+
+Bisecting a mixed installation in the field is the main reason to touch this: run `low_power` alone
+to confirm which devices only answer the wake-up call, then `always_alive` alone to confirm the
+rest still answer without it.
 
 ### Reading pairing results without the tuning UI
 

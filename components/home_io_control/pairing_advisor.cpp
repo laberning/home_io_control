@@ -17,8 +17,9 @@ namespace advisor {
 
 namespace {
 
-/// Buffer size for the rendered advice message.
-constexpr size_t ADVICE_MESSAGE_BUFFER_SIZE = 224;
+/// Buffer size for the rendered advice message. Sized for the longest message plus its node ID,
+/// and kept well under ESPHome's 512-byte log line so the WARN line isn't truncated on hardware.
+constexpr size_t ADVICE_MESSAGE_BUFFER_SIZE = 320;
 
 bool is_rx_kind(PairingTelemetryEventKind kind) {
   return kind == PairingTelemetryEventKind::RX || kind == PairingTelemetryEventKind::RX_REJECT;
@@ -147,9 +148,10 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
   switch (advice.code) {
     case PairingAdviceCode::ONE_WAY_PAIRING_TRAFFIC:
       snprintf(buf, sizeof(buf),
-               "A 1W remote (src %s) is performing 1W pairing. The motor is NOT in 2W learning mode - a PROG "
-               "press on a 1W remote does not enable 2W discovery. Use the Double Power Cut procedure to force "
-               "2W learning mode.",
+               "A 1W remote (src %s) made a PROG gesture, but no device answered. If a 2W hub already "
+               "controls the device, use key extraction. Otherwise hold PROG ~2 s on a remote registered to "
+               "it, release at the first jog, keep only that device in pairing mode, and retry. A reset "
+               "alone is not a pairing gesture.",
                node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::CHANNEL_BUSY_LBT_DELAYED:
@@ -162,8 +164,9 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
                node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::RF_SILENT:
-      return "Nothing heard on any channel during the whole discovery window - check the antenna/RF path before "
-             "assuming the device isn't in pairing mode.";
+      return "Nothing heard on any channel during the whole discovery window. If this log shows other "
+             "IO-Homecontrol frames being received, the radio works and the device did not answer; otherwise "
+             "check the antenna/RF path.";
     case PairingAdviceCode::NONE:
     default:
       return "";

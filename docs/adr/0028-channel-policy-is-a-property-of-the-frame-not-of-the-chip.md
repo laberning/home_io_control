@@ -13,8 +13,11 @@ Every blocking wait in this project — six of them, across `ExchangeEngine` and
   three dimmer pairing captures across three chips (4–41 ms turnaround), every `0x3C` challenge,
   both field-logged `0xFE` error replies (20 ms), and 12 of 12 hardware pairing trials across two
   chips. Zero of these ever arrived on a different channel than the request.
-- **A reply to a broadcast** does not come back on the request channel. Measured on the
-  broadcast roll-call: 1 reply of 149, against the ~1 in 3 an even split would give.
+- **A reply to a broadcast** is not pinned to the request channel, and where it lands depends on
+  who answers. Always-alive devices answering the roll-call almost never reply on the request
+  channel: 1 reply of 149, against the ~1 in 3 an even split would give. Low-power VELUX devices
+  answering a low-power roll-call have been observed replying on exactly that channel
+  ([ADR 0037](0037-the-roll-call-sweeps-both-power-classes.md)).
 
 Before this refactor, that distinction was expressed six different ways, in six separately
 evolved wait loops, and two of the six drivers had independently rediscovered it and encoded it
@@ -42,12 +45,16 @@ listening. Three named policies, each used by exactly the loops whose reply shap
 | Policy | Behaviour | Used by |
 |---|---|---|
 | `HOLD_REQUEST_CHANNEL` | Never retunes, never dwells; one `wait_for_packet()` call spans the whole remaining window. | `wait_for_key_challenge_()`, `wait_for_key_confirm_()` (pairing); `wait_for_first_response_()`, `wait_for_final_response_()` (every command exchange) |
-| `ROTATE_ALL_CHANNELS` | CH1→CH2→CH3→CH1, hopping after every empty dwell or ignored frame. | `wait_for_discovery_response_()` (pairing discovery) |
-| `ROTATE_SKIPPING_REQUEST` | The two channels that are not the request channel; stays put after a reception instead of hopping. | `collect_broadcast_responses()` (the broadcast roll-call) |
+| `ROTATE_ALL_CHANNELS` | CH1→CH2→CH3→CH1, starting on the request channel. | `collect_broadcast_responses()` for the roll-call's low-power pass |
+| `ROTATE_SKIPPING_REQUEST` | The two channels that are not the request channel, leaving it before the first dwell. | `wait_for_discovery_response_()` (pairing discovery); `collect_broadcast_responses()` for the roll-call's always-alive pass |
 
 All three share one primitive, `ExchangeEngine::listen()`, parameterised by a `ListenSpec`. The
 policy is chosen once, at the call site, by the caller stating which kind of reply it is waiting
-for — never by asking the driver.
+for — never by asking the driver. The roll-call is two frames with two reply populations, so it
+states two policies, one per pass. Whether a rotating listen hops away after an ignored frame, or
+stays put after a reception, is a separate `ListenSpec` setting of each loop: discovery hops on,
+because its window is full of unrelated traffic, while the roll-call stays where responders
+already are.
 
 A consequence worth stating plainly: **a holding listen needs no dwell at all.** Slicing exists
 so a rotating loop gets a chance to hop between channels and so a long silent wait keeps feeding
@@ -61,8 +68,9 @@ wait does not need one.
 What survives as the one remaining chip-specific wait-timing knob is `RadioDriver::hop_dwell_ms()`
 (renamed from `discovery_hop_slice_ms()`): the dwell a *rotating* listen spends per channel before
 moving on. That is a chip question — how long must this radio sit on a channel after retuning
-before it can hear anything at all — and it now answers it for both rotating listens, discovery
-and the roll-call alike, through the same user-facing tuning field each driver already exposed.
+before it can hear anything at all — and it now answers it for every rotating listen, discovery
+and both roll-call passes alike, through the same user-facing tuning field each driver already
+exposed.
 
 The per-chip spread is large (5 ms on SX1276, 200 ms on SX1262 and LR1121) because retuning costs
 wildly different amounts on the two families, which is visible in the drivers themselves. The
@@ -103,7 +111,7 @@ would spend most of the window re-arming the receiver instead of listening with 
   was modelled on do it.
 - **The escape hatch stays, unused.** `ListenSpec::dwell_ms` still exists as a per-loop override
   for the day a loop has a *measured* reason to dwell differently from the others on every chip —
-  a difference that is per-chip *and* per-loop, not just per-chip. Both rotating call sites leave
+  a difference that is per-chip *and* per-loop, not just per-chip. Every rotating call site leaves
   it at 0 today. Deleting the field instead of keeping it unused would push the next loop-specific
   timing difference back into the drivers, which is the exact mistake this ADR records and closes.
 - **The explicit cost:** a device that replies to a unicast request on a channel other than the
@@ -116,3 +124,8 @@ would spend most of the window re-arming the receiver instead of listening with 
   that answers "how long should I wait" instead of "how fast can I retune" is now recognisable on
   sight as the same mistake `SX1262_EXCHANGE_RESPONSE_WAIT_SLICE_MS` and
   `LR1121_EXCHANGE_RESPONSE_WAIT_SLICE_MS` were — two drivers found it independently once already.
+- **A new broadcast frame states its own policy.** Where a broadcast's replies land is a property
+  of the population that answers it, so each broadcast frame picks the policy its responders
+  need, as the roll-call's two passes do
+  ([ADR 0037](0037-the-roll-call-sweeps-both-power-classes.md)). It never inherits another
+  frame's policy, and never asks the chip.

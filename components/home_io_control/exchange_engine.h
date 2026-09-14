@@ -104,10 +104,21 @@ class ExchangeEngine {
   /// @return true if HMAC verified; false on timeout or mismatch.
   bool authenticate_request(const IoFrame &request, uint32_t freq);
 
+  /// @brief Per-reply facts collect_broadcast_responses() hands its caller alongside the frame.
+  ///
+  /// The engine owns the TX-complete instant and the received packet; the caller cannot
+  /// reconstruct either on its own (its own `millis()` taken before the call would include the
+  /// transmit itself — up to ~213 ms for a LONG_PREAMBLE start frame — and skew latency figures).
+  struct BroadcastReplyInfo {
+    int16_t rssi_dbm{0};      ///< RSSI of this reply (from the radio's last capture).
+    uint32_t rx_freq_hz{0};   ///< Channel the reply was received on (RadioRxPacket::freq_hz).
+    uint32_t after_tx_ms{0};  ///< Milliseconds from the request's transmit completing to this reply's delivery.
+  };
+
   /// @brief Invoked for each matching broadcast reply, as it arrives.
-  /// @param frame    Parsed reply frame (responder's address is `frame.src`).
-  /// @param rssi_dbm RSSI of this reply.
-  using BroadcastReplyHandler = std::function<void(const IoFrame &frame, int16_t rssi_dbm)>;
+  /// @param frame Parsed reply frame (responder's address is `frame.src`).
+  /// @param info  RSSI, receive channel, and post-transmit latency for this reply.
+  using BroadcastReplyHandler = std::function<void(const IoFrame &frame, const BroadcastReplyInfo &info)>;
 
   /// Transmit `request` once and hand every matching broadcast reply to `on_reply` within
   /// `window_ms`.
@@ -117,12 +128,16 @@ class ExchangeEngine {
   /// informational only (see the caller's protocol notes). Every candidate packet is parsed
   /// and checked against `expected_cmd` and `node_id_` (as the frame's destination); anything
   /// that fails `parse()`, carries a different `cmd`, or is not addressed to us is ignored
-  /// without ending collection. The receiver leaves the request channel before the first
-  /// listen and alternates between the other two for the rest of the window — unlike
-  /// wait_for_first_response_(), which holds the request channel for the whole wait — because a
-  /// broadcast reply does not come back on the channel that asked for it (1 of 149 measured),
-  /// while a unicast reply does. Replies on the request channel are therefore not caught by this
-  /// loop.
+  /// without ending collection.
+  ///
+  /// `policy` selects which channels the listen covers, defaulting to
+  /// `ListenPolicy::ROTATE_SKIPPING_REQUEST` (measured: 1 of 149 Somfy always-alive roll-call
+  /// replies landed on the request channel — leaving it before the first listen costs almost
+  /// nothing). Pass `ListenPolicy::ROTATE_ALL_CHANNELS` for a roll-call whose responders can
+  /// reply on the request channel (real VELUX low-power `0x2B`s were observed there).
+  /// `ListenPolicy::HOLD_REQUEST_CHANNEL` is not a valid broadcast policy — a broadcast has no
+  /// pinned conversation to hold — and callers must not pass it; there is no runtime check for
+  /// this because the only non-default caller fixes its policy at compile time.
   ///
   /// This method stores nothing and imposes no capacity: it neither buffers replies nor
   /// deduplicates them, so the same responder answering twice within one window invokes
@@ -142,9 +157,12 @@ class ExchangeEngine {
   ///                      the handler must be cheap and must not block. Keep captures to a few
   ///                      pointers: small callables avoid std::function's heap fallback on the
   ///                      implementations this project builds against.
+  /// @param policy        Which channels to listen on; see above. Defaults to
+  ///                      `ListenPolicy::ROTATE_SKIPPING_REQUEST`.
   /// @return Number of matching replies handed to `on_reply` (duplicates included).
   uint8_t collect_broadcast_responses(const IoFrame &request, uint32_t freq, uint8_t expected_cmd, uint32_t window_ms,
-                                      const BroadcastReplyHandler &on_reply);
+                                      const BroadcastReplyHandler &on_reply,
+                                      ListenPolicy policy = ListenPolicy::ROTATE_SKIPPING_REQUEST);
 
   /// @brief The one listen primitive every radio wait loop in this project is built on.
   ///
@@ -190,7 +208,8 @@ class ExchangeEngine {
   /// @brief Advance the receiver one step along the protocol's channel rotation
   ///   (CH1→CH2→CH3→CH1).
   /// @param skip_freq Channel to pass over, or 0 to rotate through all three. Used by the
-  ///   broadcast roll-call, whose replies never come back on the channel that asked.
+  ///   always-alive roll-call pass (and discovery), whose replies almost never come back on the
+  ///   channel that asked; the low-power roll-call pass rotates through all three instead.
   void hop_frequency(uint32_t skip_freq = 0);
 
   /// Hop only if the minimum dwell has elapsed and no frame is currently arriving on this
@@ -310,8 +329,9 @@ class ExchangeEngine {
   /// Preamble length for an outbound request frame. A non-start frame keeps the chip's short
   /// response preamble. A start frame gets `LONG_PREAMBLE` only when it carries `CTRL1_LOW_POWER`
   /// (its target is a duty-cycled receiver that must be woken); every other start frame gets the
-  /// runtime-tunable `normal_start_preamble`. The bit and the preamble therefore always agree,
-  /// because both derive from the target's per-device `low_power` property.
+  /// runtime-tunable `normal_start_preamble`. The bit and the preamble therefore always agree.
+  /// For a directed frame, the target's per-device `low_power` property sets the bit; for the
+  /// roll-call broadcast, the pass being sent sets it (see `ManagementActions::scan_paired_devices()`).
   [[nodiscard]] uint16_t request_preamble_for_(const IoFrame &request) const;
 
   /// Block until the first response arrives or the wait window expires.

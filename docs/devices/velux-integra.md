@@ -54,10 +54,14 @@ moves the window to its predefined air-exchange opening rather than fully open.
 
 ## Known quirks
 
-- **`low_power: true` is usually required.** VELUX actuators are frequently solar or battery
-  powered and sleep between commands. Without this the hub addresses them with the wrong preamble.
-  In issue #87 a roll-call after a successful key extraction drew no replies at all until the
-  devices were declared `low_power: true`.
+- **`low_power: true` is usually required for directed commands.** VELUX actuators are frequently
+  solar or battery powered and sleep between commands. Without this the hub addresses them with the
+  wrong preamble. `scan_paired_devices` does not consult this property — its low-power pass is
+  built specifically to reach a sleeping device and pre-fills `low_power: true` in the
+  ready-to-paste snippet when it hears one — but a *directed* command (open/close/stop, status
+  polls) still needs the property set to reach the device once it is registered. If a known
+  device's scan result shows a `hint:` line, follow
+  it: that means the registered YAML and the device's self-reported power class disagree.
 - **The MSU solar awning screen ignores `stop` mid-motion.** It will not complete a 2W handshake
   while it is travelling, so there is nothing for the stop command to talk to. Open and close both
   work. Reported in issue #95; there is no hub-side fix, and the 1W route needs enrollment that

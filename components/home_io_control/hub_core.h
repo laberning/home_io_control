@@ -680,7 +680,8 @@ class IOHomeControlComponent : public Component,
   /// log/event pair (a failed result), matching every other rejected management action rather
   /// than going silent.
   ///
-  /// Blocks the ESPHome loop for roughly 3 x `pairing_discovery_wait_ms` and will log the
+  /// Blocks the ESPHome loop for up to roughly 6 × `pairing_discovery_wait_ms` (both power-class
+  /// passes, three channels each; fewer if `scan_power_classes` narrows the sweep) and will log the
   /// "operation took a long time" warning, same as the action — see docs/pairing.md.
   void trigger_scan_paired_devices();
   /// Async form of set_light_position() that keeps radio work serialized on the main loop.

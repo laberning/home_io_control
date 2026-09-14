@@ -40,7 +40,7 @@ void setup_component(TestableHubComponent &component, MockRadio &radio) {
 
 }  // namespace
 
-TEST(PlatformScanPairedDevicesButton, PressRunsTheRollCallOnAllThreeChannels) {
+TEST(PlatformScanPairedDevicesButton, PressRunsTheDualPassRollCall) {
   TestableHubComponent hub;
   MockRadio radio;
   setup_component(hub, radio);
@@ -49,13 +49,16 @@ TEST(PlatformScanPairedDevicesButton, PressRunsTheRollCallOnAllThreeChannels) {
   button.set_parent(&hub);
   button.press();
 
-  // Proves the press reached api_scan_paired_devices() -> scan_paired_devices(), which retries
-  // the roll-call on all three channels — mirrors
-  // HubManagement.ScanPairedDevicesRetriesOnAllThreeChannels in hub_management_test.cpp.
-  ASSERT_EQ(radio.get_tx_configs().size(), 3u) << "one roll-call attempt per channel";
+  // Proves the press reached api_scan_paired_devices() -> scan_paired_devices(), which sweeps
+  // both power-class passes on all three channels — mirrors
+  // HubManagement.ScanPairedDevicesSweepsBothPowerClasses in hub_management_test.cpp.
+  ASSERT_EQ(radio.get_tx_configs().size(), 6u) << "one roll-call attempt per channel, per pass";
   EXPECT_EQ(radio.get_tx_configs()[0].freq_hz, FREQ_CH2);
   EXPECT_EQ(radio.get_tx_configs()[1].freq_hz, FREQ_CH1);
   EXPECT_EQ(radio.get_tx_configs()[2].freq_hz, FREQ_CH3);
+  EXPECT_EQ(radio.get_tx_configs()[3].freq_hz, FREQ_CH2);
+  EXPECT_EQ(radio.get_tx_configs()[4].freq_hz, FREQ_CH1);
+  EXPECT_EQ(radio.get_tx_configs()[5].freq_hz, FREQ_CH3);
 }
 
 TEST(PlatformScanPairedDevicesButton, PressWhileBusyIsIgnoredButStillPublishesAFailedResult) {

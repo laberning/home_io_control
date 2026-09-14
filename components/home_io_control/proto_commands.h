@@ -534,16 +534,20 @@ bool create_private2_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, ui
 ///
 /// Supports the command codes 0x28 (DISCOVER_REQ), 0x2A (DISCOVER_SPE_REQ), and
 /// 0x2E (DISCOVER_ALT_REQ, alternate discovery). For 0x2A the payload is a 6-byte random nonce
-/// followed by a 6-byte HMAC computed over [cmd + nonce] using the supplied system key.
+/// followed by a 6-byte HMAC computed over the command byte alone, using the nonce as the
+/// challenge and the supplied system key.
 ///
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param command Discovery command code (0x28, 0x2A, or 0x2E).
 /// @param dst Destination node ID (broadcast or explicit).
 /// @param low_power True to set the LOW_POWER flag in CTRL1.
-/// @param ack_capable True to set the ACK flag (CTRL1_ACK) in CTRL1 for this discovery broadcast
-///        only. Experimental — see the init_frame() doc in proto_frame.h for why this must never
-///        become an unconditional default.
+/// @param ack_capable True to set the ACK flag (CTRL1_ACK) in CTRL1 for this one broadcast. Each
+///        caller decides per frame: the `pairing_discovery_ack_capable` tuning knob gates it for
+///        Discover & Pair's discovery broadcast (experimental, default off — see the init_frame()
+///        doc in proto_frame.h for why CTRL1_ACK must never become an unconditional default), and
+///        the SPE roll-call's low-power frame shape (`CTRL1 = LOW_POWER | ACK`) always passes
+///        true.
 /// @param payload_enabled True when the optional payload byte is enabled.
 /// @param payload Optional payload byte (only used when command requires a payload).
 /// @param system_key 16-byte system key; only used for 0x2A HMAC computation.

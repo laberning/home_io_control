@@ -75,7 +75,8 @@ class ManagementActions {
   ///                     authenticate through ExchangeEngine's challenge-response.
   /// @param tuning       Runtime tuning config, owned by the hub. Only scan_paired_devices()
   ///                     uses this — it reuses `pairing_discovery_wait_ms` as the listen window
-  ///                     for each of its own per-channel attempts.
+  ///                     for each of its own per-channel attempts, and reads `scan_power_classes`
+  ///                     to decide which passes to run.
   /// @param engine       Shared exchange engine for radio transactions.
   /// @param registry     Device registry for device lookups.
   /// @param initialized  Pointer to the hub's initialized flag.
@@ -194,34 +195,47 @@ class ManagementActions {
   /// miss between known ones. At most `SCAN_MAX_REPLIES` distinct responders are reported; if
   /// more answer, the report says so explicitly rather than quietly listing a subset.
   ///
-  /// Transmits the request once per channel (CH2, then CH1, then CH3), each with its own full
-  /// `pairing_discovery_wait_ms` listen window, merging distinct responders across attempts — a
-  /// paired device only hears the broadcast if it happens to be awake on the channel the hub
-  /// transmits on at that instant, and real hardware testing found that single-channel
-  /// duty-cycling paired devices are not reliably caught by a one-shot broadcast. A responder
-  /// that answers more than one attempt still appears exactly once. Each attempt is a single
-  /// transmit followed by its own window, never back-to-back transmits, so it does not
-  /// reintroduce the different failure mode a 3-channel-burst transmit caused elsewhere: firing
-  /// three long-preamble transmits back-to-back with no listening in between blew through the
-  /// tight per-try response wait windows and broke exchanges in both directions (see
+  /// Sweeps two passes, low-power first, then always-alive — six attempts total (three channels
+  /// per pass): CH2/CH1/CH3 with `CTRL1 = LOW_POWER | ACK` and `LONG_PREAMBLE` (the header a real
+  /// VELUX KLR300 uses for its own roll-call, whose low-power shutters answered it), then
+  /// CH2/CH1/CH3 with `CTRL1 = 0x00` and the tunable `normal_start_preamble`. Low-power first so a sleeper that answers
+  /// late is still collected by the later always-alive windows; in the opposite order a late
+  /// low-power reply would fall off the end of the scan. The low-power pass listens on all three
+  /// channels including the one it transmitted on (real VELUX low-power replies have been
+  /// observed landing there); the always-alive pass listens only on the two it did not transmit
+  /// on (a Somfy always-alive reply lands on the request channel about 1 in 149 times). The
+  /// `scan_power_classes` tuning select (default `both`) narrows this to one pass, for bisecting
+  /// an installation in the field or restoring the shorter single-pass scan on an install with no
+  /// solar/battery devices. Each attempt gets its own full `pairing_discovery_wait_ms` listen
+  /// window, merging distinct responders across all six attempts — a paired device only hears the
+  /// broadcast if it happens to be awake on the channel the hub transmits on at that instant, and
+  /// real hardware testing found that single-channel duty-cycling paired devices are not reliably
+  /// caught by a one-shot broadcast. A responder that answers more than one attempt still appears
+  /// exactly once. Each attempt is a single transmit followed by its own window, never
+  /// back-to-back transmits, so it does not reintroduce the different failure mode a
+  /// multi-channel-burst transmit caused elsewhere: firing several long-preamble transmits
+  /// back-to-back with no listening in between blew through the tight per-try response wait
+  /// windows and broke exchanges in both directions (see
   /// `KeyExtractionResponder::broadcast_reply_()`'s doc comment).
   ///
-  /// This still blocks the caller for the full three-window duration (roughly
-  /// `3 × pairing_discovery_wait_ms`, ~6 s at the 2000 ms default) and therefore trips ESPHome's
-  /// "operation took a long time" warning on *every* invocation. That warning uses a per-component
-  /// ratchet (`Component::should_warn_of_blocking()`): it starts at 50 ms and, each time it fires,
-  /// raises its own threshold to the observed duration plus a margin — but the threshold is stored
-  /// in centiseconds in a `uint8_t`, so it saturates at **2550 ms**. Anything that blocks longer
-  /// than that can never ratchet out of warning range.
+  /// This still blocks the caller for the full six-window duration (roughly
+  /// `6 × pairing_discovery_wait_ms` plus three ~213 ms LONG_PREAMBLE transmits, ~12.7 s at the
+  /// 2000 ms default) and therefore trips ESPHome's "operation took a long time" warning on
+  /// *every* invocation. That warning uses a per-component ratchet
+  /// (`Component::should_warn_of_blocking()`): it starts at 50 ms and, each time it fires, raises
+  /// its own threshold to the observed duration plus a margin — but the threshold is stored in
+  /// centiseconds in a `uint8_t`, so it saturates at **2550 ms**. Anything that blocks longer than
+  /// that can never ratchet out of warning range; doubling the scan adds no new warning class,
+  /// since the single-pass scan was already permanently past the cap.
   ///
   /// Accepting that is a deliberate tradeoff (confirmed on real hardware 2026-08-10). A shorter
-  /// fixed window (500 ms/attempt, ~2.4 s total) was tried: it would have gone quiet after one
-  /// warning, since 2.4 s sits under the 2550 ms cap — but it also caused real, correctly-decoded
-  /// replies from registered devices to arrive after the window had already closed, where the
-  /// passive path drops them (`hub_status.cpp`'s `unhandled_cmd` catch-all). Losing devices from
-  /// the report is worse than a recurring log line, so the long window won. Getting both would
-  /// require restructuring this action to run across multiple scheduled `loop()` ticks so no single
-  /// blocking unit approaches 2550 ms — not done here.
+  /// fixed window — 500 ms per attempt, ~2.4 s for a three-attempt sweep (a single-pass total
+  /// under the 2550 ms cap) — was tried: it would have gone quiet after one warning, but it also
+  /// caused real, correctly-decoded replies from registered devices to arrive after the window
+  /// had already closed, where the passive path drops them (`hub_status.cpp`'s `unhandled_cmd`
+  /// catch-all). Losing devices from the report is worse than a recurring log line, so the long
+  /// window won. Getting both would require restructuring this action to run across multiple
+  /// scheduled `loop()` ticks so no single blocking unit approaches 2550 ms — not done here.
   /// @return Structured result whose `message` is the full report.
   ManagementActionResult scan_paired_devices();
 

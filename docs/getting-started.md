@@ -129,10 +129,12 @@ this way; a hub does.
 
 For a device that is new, factory reset, or has only ever been driven by wall remotes.
 
-1. Put the device into pairing mode, usually a 2 second press of the motor's own PROG button.
-   On some devices the PROG button on a paired wall remote does the same. If the motor has no
-   reachable button, a Double Power Cut normally forces it into learning mode; check its manual
-   for the exact sequence.
+1. Put the device into pairing mode, usually a 2 second press of the device's own PROG button. If
+   that button is out of reach, hold PROG on a remote already registered to the device for about 2
+   seconds, and let go at the first jog. Keep only this one device in pairing mode: power down
+   anything else the same remote drives. A Double Power Cut is a reset step, not a pairing
+   gesture. After one, register the device's local remote again, if it has one, as its manual
+   describes, then use the remote gesture.
 2. Press **Discover & Pair** in Home Assistant within a few seconds of that.
 3. Read the log. On success it prints a ready-to-paste block with the device's `io_device_id`,
    `io_device_type` and `io_subtype`.
@@ -165,8 +167,9 @@ Try this first: nothing gets reset, and every device stays paired exactly as it 
    ready-to-paste block.
 
 **If a device you expected is missing from the scan, press the button again.** Paired devices
-duty-cycle across the three radio channels on their own schedule, so the hub sweeps all three on
-every scan and one can still be missed. A repeat press has no side effects.
+duty-cycle across the three radio channels on their own schedule, so the hub sweeps all three,
+once per power class, on every scan — and one can still be missed. A repeat press has no side
+effects.
 
 **If a device never turns up, you can still write its entity by hand.** All you need is its
 `io_device_id`. Turn on frame logging:
@@ -193,7 +196,8 @@ what the device actually is.
 
 This works, but it drops the device from your existing hub, and you repeat it for every device.
 The reset is usually a Double Power Cut plus a device-specific sequence of button presses; check
-the device's manual for the exact gesture.
+the device's manual for the exact gesture. A Somfy device, for one, comes out of a reset waiting for
+its local remote, so register that again before starting Route A.
 
 ## 4. Add your devices to the YAML
 

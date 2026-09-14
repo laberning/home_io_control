@@ -6,8 +6,9 @@
 ///
 /// PairingAdvisor is a pure, stateless consumer of a completed PairingTelemetry attempt: it
 /// never touches the radio or the pairing state machine, only inspects the events already
-/// recorded. It exists to convert the most common field failures (issue #27: a 1W remote
-/// mistaken for 2W learning mode; a busy channel; a foreign controller mid-pairing; dead RF)
+/// recorded. It exists to convert the most common field failures (a 1W remote's PROG gesture
+/// overheard while no device answers, issues #27/#121; a busy channel; a foreign controller
+/// mid-pairing; dead RF)
 /// from a hex-dump exercise into a self-explaining WARN line.
 
 #include "pairing_telemetry.h"
@@ -23,7 +24,9 @@ namespace advisor {
 /// @brief Actionable diagnosis derived from a completed pairing attempt's telemetry.
 enum class PairingAdviceCode : uint8_t {
   NONE,                        ///< Nothing actionable to report.
-  ONE_WAY_PAIRING_TRAFFIC,     ///< A 1W remote is pairing to the target — not 2W learning mode.
+  ONE_WAY_PAIRING_TRAFFIC,     ///< A 1W remote's PROG gesture was overheard. Proves a gesture happened,
+                               ///< not the device's state: the same frames also precede successful
+                               ///< pairings (issue #19).
   CHANNEL_BUSY_LBT_DELAYED,    ///< LBT retries were consumed while a source kept repeating; the
                                ///< reported subject_node is a best-effort correlation (LBT's
                                ///< carrier-sense doesn't parse frames, so the actual jammer may

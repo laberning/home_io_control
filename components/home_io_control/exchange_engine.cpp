@@ -471,23 +471,26 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
 // ============================================================================
 
 uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint32_t freq, uint8_t expected_cmd,
-                                                    uint32_t window_ms, const BroadcastReplyHandler &on_reply) {
+                                                    uint32_t window_ms, const BroadcastReplyHandler &on_reply,
+                                                    ListenPolicy policy) {
   this->reset_debug(request.cmd);
 
   if (!this->transmit_frame(request, freq, this->request_preamble_for_(request))) {
     this->record_debug("broadcast_tx_failed", 1, false);
     return 0;
   }
+  const uint32_t tx_done_ms = millis();
 
   RadioDriver *radio = *this->radio_ptr_;
   uint8_t count = 0;
 
   ListenSpec spec;
   spec.window_ms = window_ms;
-  // A roll-call reply almost never returns on the channel that asked for it (see ListenPolicy's
-  // own doc comment for why), so dwelling there is wasted listening time: with three channels
-  // split evenly across the window, one of them going unused for replies costs a third of it.
-  spec.policy = ListenPolicy::ROTATE_SKIPPING_REQUEST;
+  // policy is the caller's choice: ROTATE_SKIPPING_REQUEST (the default) leaves the request
+  // channel unattended because so few replies land there for that caller's population; a caller
+  // whose replies do land there passes ROTATE_ALL_CHANNELS instead. request_freq is set
+  // unconditionally — harmless for ROTATE_ALL_CHANNELS, which never reads it.
+  spec.policy = policy;
   spec.request_freq = freq;
   // dwell_ms is left at 0: no measured reason to dwell differently from discovery, so listen()
   // asks the driver via hop_dwell_ms() instead of hardcoding a value here.
@@ -500,11 +503,15 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
 
   RadioRxPacket packet{};
   IoFrame frame{};
-  this->listen(spec, packet, frame, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
+  this->listen(spec, packet, frame, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
     if (parsed == nullptr || parsed->cmd != expected_cmd || memcmp(parsed->dst, this->node_id_, NODE_ID_SIZE) != 0)
       return ReplyDisposition::IGNORE;
 
-    on_reply(*parsed, radio->get_last_capture().rssi_dbm);
+    BroadcastReplyInfo info{};
+    info.rssi_dbm = radio->get_last_capture().rssi_dbm;
+    info.rx_freq_hz = pkt.freq_hz;
+    info.after_tx_ms = millis() - tx_done_ms;
+    on_reply(*parsed, info);
     if (count < UINT8_MAX)
       ++count;
     // Collection always runs to the deadline: a roll-call has no single "the" reply, so nothing
@@ -584,13 +591,14 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
   const uint32_t deadline = millis() + spec.window_ms;
   const bool rotating = spec.policy != ListenPolicy::HOLD_REQUEST_CHANNEL;
   const uint32_t skip = spec.policy == ListenPolicy::ROTATE_SKIPPING_REQUEST ? spec.request_freq : 0;
-  // 0 means "ask the driver": neither rotating call site in this project has a measured reason to
+  // 0 means "ask the driver": no rotating call site in this project has a measured reason to
   // dwell differently from the chip's own retune-cost answer (RadioDriver::hop_dwell_ms()), so
-  // both leave spec.dwell_ms at 0 and share one chip-specific knob instead of inventing a second.
+  // all of them leave spec.dwell_ms at 0 and share one chip-specific knob instead of inventing a
+  // second.
   const uint32_t dwell = resolve_dwell_ms(spec, rotating, radio, *this->tuning_);
 
-  // A broadcast reply almost never returns on the requesting channel (see ListenPolicy's own doc
-  // comment for why), so a skipping listen leaves that channel before its first dwell rather than
+  // A skipping listen's replies almost never return on the requesting channel (see ListenPolicy's
+  // own doc comment for why), so it leaves that channel before its first dwell rather than
   // spending one there.
   if (spec.policy == ListenPolicy::ROTATE_SKIPPING_REQUEST)
     this->listen_hop_(skip, spec);

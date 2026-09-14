@@ -23,12 +23,12 @@ static constexpr uint32_t FREQ_CH2 = 868950000;  ///< Channel 2: 868.95 MHz (1W 
 static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W only)
 
 /// Preamble is a sequence of 0xAA bytes that precedes every frame.
-/// A directed start frame to a **low-power** target (`CTRL1_LOW_POWER` set) uses the long preamble
-/// (1024 bytes = 8192 bits) as a wake-up burst for its duty-cycled receiver; every other start
-/// frame uses the runtime-tunable `normal_start_preamble`, which an always-listening receiver
-/// detects fine. Subsequent frames in the same exchange use a short preamble (8 bytes) since both
-/// sides are already on the same channel. The exchange engine derives all of this from the frame
-/// (exchange_engine.cpp).
+/// Any start frame carrying `CTRL1_LOW_POWER` — a directed frame to a low-power target, or the
+/// SPE roll-call's low-power frame shape — uses the long preamble (1024 bytes = 8192 bits) as a
+/// wake-up burst for a duty-cycled receiver; every other start frame uses the runtime-tunable
+/// `normal_start_preamble`, which an always-listening receiver detects fine. Subsequent frames in
+/// the same exchange use a short preamble (8 bytes) since both sides are already on the same
+/// channel. The exchange engine derives all of this from the frame (exchange_engine.cpp).
 static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: wake-up burst for a low-power start frame
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
 

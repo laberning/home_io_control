@@ -28,8 +28,9 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0020](0020-flash-lr1121-transceiver-firmware-not-the-bootloader.md) | Flash LR1121 firmware, not the bootloader | *Superseded by 0021.* Stage the riskier operation for later; keep every failed flash recoverable now |
 | [0021](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md) | Flash the bootloader, behind an arming switch | Reach the CVE-fixing `0x0104`; gate the one unrecoverable write behind visible armed state and a build-time recovery image |
 | [0028](0028-channel-policy-is-a-property-of-the-frame-not-of-the-chip.md) | Channel policy is a property of the frame | One shared listen primitive, three named policies picked by reply shape — not by chip |
-| [0029](0029-start-preamble-is-a-property-of-the-target.md) | Start preamble is a property of the target's power class | `LONG_PREAMBLE` iff `CTRL1_LOW_POWER`, iff the per-device `low_power` YAML property (default false) — not iff the frame is a start frame |
+| [0029](0029-start-preamble-is-a-property-of-the-target.md) | Start preamble is a property of the target's power class | `LONG_PREAMBLE` iff `CTRL1_LOW_POWER`, iff the per-device `low_power` YAML property (default false) — not iff the frame is a start frame (roll-call: ADR 0037) |
 | [0035](0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md) | FEM support is a behaviour profile; boards always supply pins | `fem:` selects front-end switching behaviour only; every board package spells out every pin its profile needs, no implicit defaulting |
+| [0037](0037-the-roll-call-sweeps-both-power-classes.md) | The roll-call sweeps both power classes | A low-power pass (CTRL1=0x30, long preamble, all channels) then the unchanged always-alive pass; scan_power_classes narrows it |
 
 ### Behavior
 
@@ -123,6 +124,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0034: Doxygen page syntax is generated at staging time, never committed](0034-doxygen-syntax-generated-at-staging-time.md)
 - [ADR 0035: FEM support is a behaviour profile; boards always supply their own pins](0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md)
 - [ADR 0036: Hub-level entities come from `home_io_control:` flags, never a platform entry](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md)
+- [ADR 0037: The roll-call sweeps both power classes](0037-the-roll-call-sweeps-both-power-classes.md)
 - [ADR 0038: 1W bursts follow the identity's power class, not a hard-coded preamble](0038-oneway-bursts-follow-the-identity-power-class.md)
 <!-- /doxygen-subpages -->
 

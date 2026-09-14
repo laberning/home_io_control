@@ -28,15 +28,19 @@ been the real cause in every field report so far where a device "never responds"
 What to try, in order:
 
 1. **Check the advisor codes** in the "Last Pairing Result" sensor, and the WARN lines in the log.
-   `1w_traffic` means the motor is not in 2W learning mode. `rf_silent` means nothing at all was
-   heard, which points at the antenna or the pins rather than at the device. See
+   `1w_traffic` means a remote's PROG gesture was heard and no device answered. It says nothing
+   about the device's state on its own; the advisor table lists what to check. `rf_silent` means
+   nothing was heard during the attempt. It points at the antenna or the pins only if the rest of
+   the log shows no IO-Homecontrol traffic at all. See
    [Pairing](pairing.md#diagnosing-a-failed-pairing-attempt).
-2. **Check your timing.** Press the device's PROG button first, then Discover & Pair within two or
-   three seconds. The device's pairing window is short.
-3. **Look up the device's own reset procedure and retry.** A Double Power Cut is the common first
-   step, but on its own it has only been confirmed to reopen the same 1W learning state, not 2W
-   discovery — check the device's manual for anything further. A VELUX SSL, for example, has a
-   physical **P** button that opens a 10-minute 2W registration window; see
+2. **Check the gesture, and that only one device is listening.** Put the device into pairing mode
+   first, then press Discover & Pair straight away. For a device without a reachable button of its
+   own, hold PROG on a remote already registered to it and let go at the first jog. If that remote
+   also drives other devices, power them down first.
+3. **Don't treat a reset as a pairing gesture.** A Double Power Cut or factory reset only returns
+   the device to its first-time setup. If it has a local remote, register that again as the manual
+   describes, then repeat step 2. Some families document a separate gesture: a VELUX SSL has a physical **P**
+   button that opens a 10-minute 2W registration window; see
    [VELUX INTEGRA](devices/velux-integra.md).
 4. **If a two-way hub already controls it** — a Somfy TaHoma, Connexoon or Connectivity Kit, a
    VELUX KLF200, KLR200 or KIG300 — use [key extraction](key-extraction.md). It is the route that
@@ -54,8 +58,9 @@ Pairing reported `paired`, the entity exists, and commands do nothing.
   the command and declined it — that is a device-side lockout, not a bug here.
 - **Check `low_power:`.** If this is a solar or battery actuator and `low_power: true` is not set,
   the hub addresses it with the wrong preamble and the device may never wake to hear the command.
-  This was the cause in issue #87. Pairing and Scan Paired Devices pre-fill the correct value in
-  the snippet they print.
+  Pairing and Scan Paired Devices pre-fill the correct value in the snippet they print; if the
+  device is already registered, a scan's `hint:` line calls out a mismatch between its YAML and its
+  self-reported power class.
 - **Check the device type.** A command aimed at the wrong capability class is rejected. Compare
   `io_device_type` against what the pairing log reported.
 - **Enable `<Name> RSSI` and `<Name> Exchange Failures`.** A poor RSSI with a climbing failure

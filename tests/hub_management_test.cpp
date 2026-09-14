@@ -7,6 +7,8 @@
 
 #include "esphome/components/api/custom_api_device.h"
 
+#include "corpus_generated.h"
+#include "corpus_test_helpers.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
@@ -900,14 +902,15 @@ TEST(HubManagement, ScanPairedDevicesReportsTruncationWhenMoreDevicesAnswerThanF
       << "the count must reflect what was actually kept";
   EXPECT_NE(result.message.find("truncated"), std::string::npos)
       << "the report itself must disclose the truncation, not just the log";
-  EXPECT_EQ(radio.get_tx_configs().size(), 3u)
-      << "a full array must not cut the scan short: skipping the remaining channels would reduce a "
-         "large install to whichever devices happened to answer on CH2";
+  EXPECT_EQ(radio.get_tx_configs().size(), 6u)
+      << "a full array must not cut the scan short: skipping the remaining channels/passes would "
+         "reduce a large install to whichever devices happened to answer first";
 }
 
-TEST(HubManagement, ScanPairedDevicesRetriesOnAllThreeChannels) {
+TEST(HubManagement, ScanPairedDevicesSweepsBothPowerClasses) {
   // A paired device only hears the roll-call if it happens to be awake on the channel the hub
-  // transmits on, so the hub must give every channel a chance rather than transmitting once.
+  // transmits on, so the hub must give every channel a chance — twice, once per power class,
+  // low-power pass first — rather than transmitting once.
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
@@ -915,39 +918,181 @@ TEST(HubManagement, ScanPairedDevicesRetriesOnAllThreeChannels) {
   const auto result = component.scan_paired_devices();
   EXPECT_TRUE(result.success);
 
-  ASSERT_EQ(radio.get_tx_configs().size(), 3u) << "one roll-call attempt per channel";
-  EXPECT_EQ(radio.get_tx_configs()[0].freq_hz, FREQ_CH2) << "CH2 first: the protocol's designated TX channel";
-  EXPECT_EQ(radio.get_tx_configs()[1].freq_hz, FREQ_CH1);
-  EXPECT_EQ(radio.get_tx_configs()[2].freq_hz, FREQ_CH3);
-  // The roll-call 0x2A is built low_power=false, so it goes out at the normal start preamble, not
-  // the 1024-byte wake-up burst. A genuinely sleeping device is reached by repetition — the
-  // three-channel sweep here, and the reference hub's constant background 0x2A traffic — not by
-  // preamble length. Deliberate, reviewed reversal of the previous assumption.
-  for (const auto &tx_config : radio.get_tx_configs())
-    EXPECT_EQ(tx_config.preamble_len, component.tuning_.normal_start_preamble)
-        << "roll-call targets are addressed at the normal start preamble; repetition reaches a sleeper";
+  ASSERT_EQ(radio.get_sent_data().size(), 6u) << "two passes, three channels each";
+  ASSERT_EQ(radio.get_tx_configs().size(), 6u);
+
+  // Attempts 1-3: low-power pass, CTRL1 = LOW_POWER | ACK, LONG_PREAMBLE.
+  const uint32_t expected_freq[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3, FREQ_CH2, FREQ_CH1, FREQ_CH3};
+  for (uint8_t i = 0; i < 3; i++) {
+    IoFrame frame{};
+    ASSERT_TRUE(parse(radio.get_sent_data()[i].data(), static_cast<uint8_t>(radio.get_sent_data()[i].size()), frame));
+    EXPECT_EQ(frame.ctrl1, static_cast<uint8_t>(CTRL1_LOW_POWER | CTRL1_ACK))
+        << "attempt " << (i + 1) << ": low-power pass must set LOW_POWER and ACK";
+    EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, LONG_PREAMBLE)
+        << "attempt " << (i + 1) << ": LOW_POWER selects LONG_PREAMBLE via request_preamble_for_()'s rule";
+  }
+  // Attempts 4-6: always-alive pass, CTRL1 = 0x00, normal_start_preamble.
+  for (uint8_t i = 3; i < 6; i++) {
+    IoFrame frame{};
+    ASSERT_TRUE(parse(radio.get_sent_data()[i].data(), static_cast<uint8_t>(radio.get_sent_data()[i].size()), frame));
+    EXPECT_EQ(frame.ctrl1, 0) << "attempt " << (i + 1) << ": always-alive pass sets neither LOW_POWER nor ACK";
+    EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, component.tuning_.normal_start_preamble) << "attempt " << (i + 1);
+  }
 }
 
-TEST(HubManagement, ScanPairedDevicesNeverSetsAckCapableEvenWhenTuningIsOn) {
-  // The roll-call's own create_discovery_request() call (management_actions.cpp) deliberately
-  // hardcodes ack_capable=false — issue #87's analysis already ruled out CTRL1_ACK as that
-  // roll-call's bug, and 0x2A targets already-enrolled devices, a different scenario from the
-  // never-enrolled case pairing_discovery_ack_capable exists to test. Pinning this in a test, not
-  // just a comment, so wiring the tunable in here later breaks CI instead of silently reversing
-  // the decision.
+TEST(HubManagement, ScanPairedDevicesAckTunableChangesNeitherPass) {
+  // Both roll-call frame shapes are fixed, named constants (ROLL_CALL_PASSES in
+  // management_actions.cpp): the low-power pass always sets ACK as part of its own header (it
+  // matches a real VELUX hub's roll-call), and the always-alive pass never does.
+  // pairing_discovery_ack_capable belongs to Discover & Pair and must not change either.
+  auto sent_ctrl1_sequence = [](bool ack_capable_tuning) {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.tuning_.pairing_discovery_ack_capable = ack_capable_tuning;
+
+    const auto result = component.scan_paired_devices();
+    EXPECT_TRUE(result.success);
+
+    std::vector<uint8_t> ctrl1_bytes;
+    for (const auto &sent : radio.get_sent_data()) {
+      IoFrame frame{};
+      EXPECT_TRUE(parse(sent.data(), static_cast<uint8_t>(sent.size()), frame));
+      ctrl1_bytes.push_back(frame.ctrl1);
+    }
+    return ctrl1_bytes;
+  };
+
+  const std::vector<uint8_t> expected = {0x30, 0x30, 0x30, 0x00, 0x00, 0x00};
+  EXPECT_EQ(sent_ctrl1_sequence(/*ack_capable_tuning=*/false), expected);
+  EXPECT_EQ(sent_ctrl1_sequence(/*ack_capable_tuning=*/true), expected)
+      << "the tunable must not add ACK to either pass";
+}
+
+// The always-alive pass must be byte-identical to a plain CMD_DISCOVER_SPE_REQ broadcast built
+// with low_power=false, ack_capable=false — same frame shape, same preamble, same channels.
+TEST(HubManagement, ScanPairedDevicesAlwaysAlivePassIsByteIdenticalToTheSingleShapeRollCall) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
-  component.tuning_.pairing_discovery_ack_capable = true;
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  ASSERT_EQ(radio.get_sent_data().size(), 6u);
+  ASSERT_EQ(radio.get_tx_configs().size(), 6u);
+
+  const uint32_t expected_freq[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
+  for (uint8_t i = 0; i < 3; i++) {
+    const uint8_t attempt = i + 3;  // attempts 4-6
+    IoFrame reference{};
+    // create_discovery_request() draws a fresh random nonce/HMAC every call, so only the frame's
+    // shape (not the 12 payload bytes) can be compared against a freshly built reference frame.
+    ASSERT_TRUE(create_discovery_request(reference, component.node_id_, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER,
+                                         /*low_power=*/false, /*ack_capable=*/false, /*payload_enabled=*/false,
+                                         /*payload=*/0, component.system_key_));
+
+    IoFrame actual{};
+    ASSERT_TRUE(parse(radio.get_sent_data()[attempt].data(),
+                      static_cast<uint8_t>(radio.get_sent_data()[attempt].size()), actual));
+    EXPECT_EQ(actual.ctrl0, reference.ctrl0) << "attempt " << (attempt + 1);
+    EXPECT_EQ(actual.ctrl1, reference.ctrl1) << "attempt " << (attempt + 1);
+    EXPECT_EQ(memcmp(actual.dst, reference.dst, NODE_ID_SIZE), 0) << "attempt " << (attempt + 1);
+    EXPECT_EQ(memcmp(actual.src, reference.src, NODE_ID_SIZE), 0) << "attempt " << (attempt + 1);
+    EXPECT_EQ(actual.cmd, reference.cmd) << "attempt " << (attempt + 1);
+    EXPECT_EQ(actual.data_len, reference.data_len) << "attempt " << (attempt + 1);
+
+    EXPECT_EQ(radio.get_tx_configs()[attempt].preamble_len, component.tuning_.normal_start_preamble)
+        << "attempt " << (attempt + 1);
+    EXPECT_EQ(radio.get_tx_configs()[attempt].freq_hz, expected_freq[i]) << "attempt " << (attempt + 1);
+  }
+}
+
+namespace {
+
+/// Test-local MockRadio subclass shared by the tests below that need to tell which of the scan's
+/// six attempts a given piece of radio activity belongs to. The base class's own queues/logs are
+/// private, so this subclass never records waits itself: it records, in its own `tx_boundaries_`,
+/// the call_log() index at which each send_packet() occurs (so a test can slice the log per
+/// attempt) and gates queued replies by send count (so a test can place a reply under a specific
+/// attempt) — then always delegates to MockRadio for the actual call-log/freq-history/rx
+/// bookkeeping.
+class ScanSweepTestRadio : public MockRadio {
+ public:
+  /// Deliver `packet` on the first wait_for_packet() call once at least `min_send_count`
+  /// transmits have gone out — i.e. "no earlier than attempt `min_send_count`".
+  void queue_rx_after(int min_send_count, const RadioRxPacket &packet) { pending_.push_back({min_send_count, packet}); }
+
+  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
+    tx_boundaries_.push_back(call_log().size());
+    return MockRadio::send_packet(data, len, tx_config);
+  }
+
+  bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override {
+    if (!pending_.empty() && pending_.front().first <= get_send_count()) {
+      queue_rx(pending_.front().second);
+      pending_.pop_front();
+    }
+    return MockRadio::wait_for_packet(packet, timeout_ms);
+  }
+
+  /// call_log() index at which each attempt's listen window begins, one entry per send_packet().
+  const std::vector<size_t> &tx_boundaries() const { return tx_boundaries_; }
+
+  /// Entries still waiting for their `min_send_count` threshold. A test asserts this is 0 after
+  /// the scan to prove a gated reply was actually released into the radio, not silently dropped
+  /// because the scan ended before its threshold was reached.
+  size_t pending_count() const { return pending_.size(); }
+
+ private:
+  std::deque<std::pair<int, RadioRxPacket>> pending_;
+  std::vector<size_t> tx_boundaries_;
+};
+
+}  // namespace
+
+TEST(HubManagement, ScanPairedDevicesEachPassUsesItsListenPolicy) {
+  // The low-power pass listens with ROTATE_ALL_CHANNELS (starts listening on the TX channel
+  // immediately — the first listen-side call_log() entry in its window is a wait, not a hop, and
+  // it may later hop back onto its own TX channel); the always-alive pass listens with
+  // ROTATE_SKIPPING_REQUEST (hops off the TX channel before its first listen, and never hops back
+  // onto it for the rest of the window). Swapping the two policies in ROLL_CALL_PASSES must fail
+  // this test.
+  TestableManagementComponent component;
+  ScanSweepTestRadio radio;
+  setup_component(component, radio);
 
   const auto result = component.scan_paired_devices();
   EXPECT_TRUE(result.success);
 
-  ASSERT_EQ(radio.get_sent_data().size(), 3u) << "one roll-call attempt per channel";
-  for (const auto &sent : radio.get_sent_data()) {
-    IoFrame frame{};
-    ASSERT_TRUE(parse(sent.data(), static_cast<uint8_t>(sent.size()), frame));
-    EXPECT_EQ(frame.ctrl1 & CTRL1_ACK, 0) << "roll-call must stay ack_capable=false regardless of the tunable";
+  ASSERT_EQ(radio.tx_boundaries().size(), 6u) << "one send_packet() per attempt";
+  const auto &call_log = radio.call_log();
+  const auto &freq_history = radio.freq_history();
+  const uint32_t tx_freq_per_attempt[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3, FREQ_CH2, FREQ_CH1, FREQ_CH3};
+
+  size_t freq_index = 0;  // freq_history() only records hops, in the same order call_log() does.
+  for (uint8_t attempt = 0; attempt < 6; attempt++) {
+    const size_t slice_start = radio.tx_boundaries()[attempt];
+    const size_t slice_end = attempt + 1 < 6 ? radio.tx_boundaries()[attempt + 1] : call_log.size();
+    ASSERT_LT(slice_start, slice_end) << "attempt " << (attempt + 1) << " must listen at least once";
+
+    const bool is_low_power_pass = attempt < 3;
+    EXPECT_EQ(call_log[slice_start], is_low_power_pass ? MockRadio::CallKind::kWait : MockRadio::CallKind::kHop)
+        << "attempt " << (attempt + 1)
+        << (is_low_power_pass ? ": ROTATE_ALL_CHANNELS must listen on the TX channel before any hop"
+                              : ": ROTATE_SKIPPING_REQUEST must hop off the TX channel before its first listen");
+
+    for (size_t i = slice_start; i < slice_end; i++) {
+      if (call_log[i] != MockRadio::CallKind::kHop)
+        continue;
+      ASSERT_LT(freq_index, freq_history.size());
+      if (!is_low_power_pass) {
+        EXPECT_NE(freq_history[freq_index], tx_freq_per_attempt[attempt])
+            << "attempt " << (attempt + 1) << ": always-alive pass must never hop back onto its own TX channel";
+      }
+      freq_index++;
+    }
   }
 }
 
@@ -972,6 +1117,136 @@ TEST(HubManagement, ScanPairedDevicesKnownResponderReportedWithoutYamlSnippet) {
   EXPECT_EQ(result.message.find("io_device_id"), std::string::npos) << "a known responder must not get a YAML snippet";
 }
 
+TEST(HubManagement, ScanPairedDevicesKnownDeviceReportingLowPowerWithoutYamlFlagGetsHint) {
+  // A hand-added known device that self-reports low-power but whose YAML never set
+  // low_power: true.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  DeviceConfig cfg;
+  cfg.type = DeviceType::HORIZONTAL_AWNING;
+  cfg.low_power = false;
+  component.add_device("30E1F2", cfg);
+
+  // Multi Information Byte data[6]=0xCD -> power_save = 1 = POWER_SAVE_LOW_POWER.
+  const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2, 0x02, 0xCD, 0xFC, 0x03};
+  const uint8_t src[3] = {0x30, 0xE1, 0xF2};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("hint: reports power_save=low_power but its YAML has no low_power: true"),
+            std::string::npos);
+}
+
+TEST(HubManagement, ScanPairedDevicesKnownDeviceReportingAlwaysAliveWithYamlLowPowerGetsHint) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  DeviceConfig cfg;
+  cfg.type = DeviceType::HORIZONTAL_AWNING;
+  cfg.low_power = true;
+  component.add_device("30E1F2", cfg);
+
+  // Multi Information Byte data[6]=0xCC -> power_save = 0 = POWER_SAVE_ALWAYS_ALIVE.
+  const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src[3] = {0x30, 0xE1, 0xF2};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("hint: reports power_save=always_alive but its YAML sets low_power: true"),
+            std::string::npos);
+}
+
+TEST(HubManagement, ScanPairedDevicesKnownDeviceMatchingPowerClassGetsNoHint) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  DeviceConfig cfg;
+  cfg.type = DeviceType::HORIZONTAL_AWNING;
+  cfg.low_power = true;
+  component.add_device("30E1F2", cfg);
+
+  // Multi Information Byte data[6]=0xCD -> power_save = 1 = POWER_SAVE_LOW_POWER, matching YAML.
+  const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2, 0x02, 0xCD, 0xFC, 0x03};
+  const uint8_t src[3] = {0x30, 0xE1, 0xF2};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_EQ(result.message.find("hint:"), std::string::npos) << "a matching power class must not get a hint";
+}
+
+TEST(HubManagement, ScanPairedDevicesKnownDeviceMatchingAlwaysAliveGetsNoHint) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  DeviceConfig cfg;
+  cfg.type = DeviceType::HORIZONTAL_AWNING;
+  cfg.low_power = false;
+  component.add_device("30E1F2", cfg);
+
+  // Multi Information Byte data[6]=0xCC -> power_save = 0 = POWER_SAVE_ALWAYS_ALIVE, matching YAML.
+  const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src[3] = {0x30, 0xE1, 0xF2};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_EQ(result.message.find("hint:"), std::string::npos) << "a matching power class must not get a hint";
+}
+
+TEST(HubManagement, ScanPairedDevicesKnownDeviceWithoutExtendedMetadataGetsNoHint) {
+  // A short reply with no extended metadata has no self-reported power class to compare against
+  // the registry, so it must never manufacture a hint.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  DeviceConfig cfg;
+  cfg.type = DeviceType::HORIZONTAL_AWNING;
+  cfg.low_power = true;
+  component.add_device("30E1F2", cfg);
+
+  const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2};  // no extended metadata bytes
+  const uint8_t src[3] = {0x30, 0xE1, 0xF2};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_EQ(result.message.find("hint:"), std::string::npos)
+      << "a responder without extended metadata has nothing to compare and must not get a hint";
+}
+
+TEST(HubManagement, ScanPairedDevicesUnknownPowerSaveValueGetsNoHint) {
+  // power_save is a 2-bit field; only 0 (ALWAYS_ALIVE) and 1 (LOW_POWER) are known classes. A
+  // reserved value (2 or 3) is not evidence of either class and must not produce a hint, even
+  // against a YAML low_power: true device.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  DeviceConfig cfg;
+  cfg.type = DeviceType::HORIZONTAL_AWNING;
+  cfg.low_power = true;
+  component.add_device("30E1F2", cfg);
+
+  // Multi Information Byte data[6]=0xCE -> power_save = 0xCE & 0x03 = 2 (reserved/unknown).
+  const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2, 0x02, 0xCE, 0xFC, 0x03};
+  const uint8_t src[3] = {0x30, 0xE1, 0xF2};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_EQ(result.message.find("hint:"), std::string::npos)
+      << "an unrecognized power_save value must not be treated as evidence of either class";
+}
+
 TEST(HubManagement, ScanPairedDevicesUnknownResponderGetsYamlSnippet) {
   TestableManagementComponent component;
   MockRadio radio;
@@ -991,6 +1266,8 @@ TEST(HubManagement, ScanPairedDevicesUnknownResponderGetsYamlSnippet) {
   EXPECT_NE(result.message.find("io_subtype: 0"), std::string::npos);
   EXPECT_EQ(result.message.find("low_power"), std::string::npos)
       << "Multi Information Byte data[6]=0xCC decodes to power_save=0 (ALWAYS_ALIVE), so no low_power line";
+  EXPECT_EQ(result.message.find("hint:"), std::string::npos)
+      << "an unknown responder has no registry entry to hint about";
   EXPECT_EQ(component.get_device("415CE4"), nullptr) << "an unknown responder must not be auto-registered";
 }
 
@@ -1090,6 +1367,154 @@ TEST(HubManagement, ScanPairedDevicesMixedKnownAndUnknownBothClassified) {
   EXPECT_LT(known_header_pos, unknown_header_pos) << "known section must come before the unknown section";
   EXPECT_LT(known_header_pos, result.message.find("30E1F2")) << "30E1F2 must be listed under Known:";
   EXPECT_LT(unknown_header_pos, result.message.find("415CE4")) << "415CE4 must be listed under Unknown:";
+}
+
+TEST(HubManagement, ScanPairedDevicesSameSourceInBothPassesReportedOnce) {
+  // A device that answers both the low-power and the always-alive pass (e.g. it happens to be
+  // awake for both broadcasts) must still be reported once — dedup by src spans the whole scan,
+  // not just one pass.
+  TestableManagementComponent component;
+  ScanSweepTestRadio radio;
+  setup_component(component, radio);
+
+  const uint8_t payload[] = {0x01, 0x80, 0x41, 0x5C, 0xE4, 0x02, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE4};
+  const auto packet = frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload)));
+  radio.queue_rx_after(1, packet);  // no earlier than attempt 1 (low-power pass)
+  radio.queue_rx_after(4, packet);  // no earlier than attempt 4 (always-alive pass)
+
+  const auto result = component.scan_paired_devices();
+  EXPECT_TRUE(result.success);
+  ASSERT_EQ(radio.pending_count(), 0u) << "both gated replies must have been released into the radio during the scan";
+  EXPECT_NE(result.message.find("1 device detected"), std::string::npos)
+      << "the same source answering in both passes must not double-count";
+
+  size_t occurrences = 0;
+  for (size_t pos = result.message.find("415CE4:"); pos != std::string::npos;
+       pos = result.message.find("415CE4:", pos + 1)) {
+    occurrences++;
+  }
+  EXPECT_EQ(occurrences, 1u) << "a device answering both passes must produce exactly one summary line";
+}
+
+TEST(HubManagement, ScanPairedDevicesLateLowPowerReplyInNormalPassStillGetsLowPowerSnippet) {
+  // Low-power pass first: a sleeper that only answers once the always-alive windows are already
+  // running is still collected and still correctly classified from its own self-reported Multi
+  // Information Byte, regardless of which pass's window caught it.
+  TestableManagementComponent component;
+  ScanSweepTestRadio radio;
+  setup_component(component, radio);
+
+  // MIB 0xCD -> power_save = 0xCD & 0x03 = 1 = POWER_SAVE_LOW_POWER.
+  const uint8_t payload[] = {0x01, 0x80, 0x41, 0x5C, 0xE4, 0x02, 0xCD, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE4};
+  radio.queue_rx_after(4, frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  ASSERT_EQ(radio.pending_count(), 0u) << "the gated reply must have been released into the radio during the scan";
+  EXPECT_NE(result.message.find("io_device_id: \"415CE4\""), std::string::npos);
+  EXPECT_NE(result.message.find("low_power: true"), std::string::npos)
+      << "a reply caught only by the always-alive pass must still report its own self-described power class";
+}
+
+TEST(HubManagement, ScanPairedDevicesLowPowerPassHeaderMatchesTheKlr300RollCall) {
+  // Corpus-grounded: our low-power pass's frame shape must match a real VELUX KLR300's own
+  // roll-call, not just a comment's claim that it does.
+  const auto *capture = corpus_test::capture_by_id("velux_klr300_discovery_rollcall_node_verification");
+  ASSERT_NE(capture, nullptr) << "corpus capture renamed?";
+
+  const corpus::CorpusFrame *rollcall_cf = nullptr;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    // Every frame in this capture is dir: rx (it is entirely the KLR300's own traffic, heard by
+    // the tester's board), so filtering on cmd alone is enough.
+    if (capture->frames[i].has_cmd && capture->frames[i].cmd == CMD_DISCOVER_SPE_REQ) {
+      rollcall_cf = &capture->frames[i];
+      break;
+    }
+  }
+  ASSERT_NE(rollcall_cf, nullptr) << "no CMD_DISCOVER_SPE_REQ frame in the capture";
+  const IoFrame expected = corpus_test::parse_capture_frame(*rollcall_cf);
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.scan_paired_devices();
+  EXPECT_TRUE(result.success);
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  IoFrame actual{};
+  const auto &sent = radio.get_sent_data()[0];  // attempt 1: low-power pass, CH2
+  ASSERT_TRUE(parse(sent.data(), static_cast<uint8_t>(sent.size()), actual));
+
+  // Nonce/HMAC bytes differ per call (fresh challenge every transmit), so only the frame's shape
+  // is compared.
+  EXPECT_EQ(actual.ctrl0, expected.ctrl0) << "same length/flags as the captured KLR300 roll-call";
+  EXPECT_EQ(actual.ctrl1, expected.ctrl1) << "CTRL1 must be LOW_POWER|ACK (0x30), the KLR300's own header";
+  EXPECT_EQ(memcmp(actual.dst, expected.dst, NODE_ID_SIZE), 0);
+  EXPECT_EQ(actual.cmd, expected.cmd);
+  EXPECT_EQ(actual.data_len, expected.data_len) << "same nonce+HMAC payload length";
+}
+
+TEST(HubManagement, ScanPairedDevicesAlwaysAliveOnlySendsTheSingleShapeRollCall) {
+  // scan_power_classes=always_alive runs only the always-alive pass: three attempts,
+  // CTRL1=0x00, normal_start_preamble, and the report names the excluded class.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.tuning_.scan_power_classes = ScanPowerClasses::ALWAYS_ALIVE;
+
+  const auto result = component.scan_paired_devices();
+  EXPECT_TRUE(result.success);
+
+  ASSERT_EQ(radio.get_sent_data().size(), 3u) << "only the always-alive pass runs";
+  ASSERT_EQ(radio.get_tx_configs().size(), 3u);
+  const uint32_t expected_freq[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
+  for (uint8_t i = 0; i < 3; i++) {
+    IoFrame frame{};
+    ASSERT_TRUE(parse(radio.get_sent_data()[i].data(), static_cast<uint8_t>(radio.get_sent_data()[i].size()), frame));
+    EXPECT_EQ(frame.ctrl1, 0) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, component.tuning_.normal_start_preamble) << "attempt " << (i + 1);
+  }
+  EXPECT_NE(result.message.find("NOTE: scan_power_classes=always_alive: low_power devices were not called."),
+            std::string::npos);
+}
+
+TEST(HubManagement, ScanPairedDevicesLowPowerOnlySendsOnlyTheLowPowerPass) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.tuning_.scan_power_classes = ScanPowerClasses::LOW_POWER;
+
+  const auto result = component.scan_paired_devices();
+  EXPECT_TRUE(result.success);
+
+  ASSERT_EQ(radio.get_sent_data().size(), 3u) << "only the low-power pass runs";
+  ASSERT_EQ(radio.get_tx_configs().size(), 3u);
+  const uint32_t expected_freq[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
+  for (uint8_t i = 0; i < 3; i++) {
+    IoFrame frame{};
+    ASSERT_TRUE(parse(radio.get_sent_data()[i].data(), static_cast<uint8_t>(radio.get_sent_data()[i].size()), frame));
+    EXPECT_EQ(frame.ctrl1, static_cast<uint8_t>(CTRL1_LOW_POWER | CTRL1_ACK)) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, LONG_PREAMBLE) << "attempt " << (i + 1);
+  }
+  EXPECT_NE(result.message.find("NOTE: scan_power_classes=low_power: always_alive devices were not called."),
+            std::string::npos);
+}
+
+TEST(HubManagement, ScanPairedDevicesBothOmitsTheSelectionNote) {
+  // Search for "scan_power_classes=", not "NOTE" — the truncation NOTE shares that word.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.scan_paired_devices();
+  EXPECT_TRUE(result.success);
+  EXPECT_EQ(result.message.find("scan_power_classes="), std::string::npos)
+      << "the default selection must not add a selection NOTE line";
 }
 
 TEST(HubManagement, ScanPairedDevicesDedupsSameSourceThroughActionLayer) {

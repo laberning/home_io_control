@@ -80,6 +80,10 @@ majority of integrated devices).
   at `normal_start_preamble`. A broadcast has no per-device class to consult; a
   reference hub solves broadcast reachability by constant repetition, not
   preamble length.
+  *Superseded by [ADR 0037](0037-the-roll-call-sweeps-both-power-classes.md):
+  the roll-call now sends a low-power pass (CTRL1=0x30, LONG_PREAMBLE) before
+  this normal pass; a reference hub was observed setting LOW_POWER on its own
+  roll-call.*
 - Pairing and roll-call decode the device's self-reported `POWER_SAVE` class
   and pre-fill `low_power: true` into the ready-to-paste YAML snippet when it
   is set. That is the override mechanism (ADR 0019's "learned default,
@@ -108,8 +112,8 @@ majority of integrated devices).
   heard, and brand-new devices have failed at 1/4/8 bytes on the soft-PHY
   chips (`docs/configuration/tuning.md`). Shipping the number as a Home Assistant
   `number` entity lets a reporter bisect it live instead of rebuilding. One
-  knob governs both the directed always-alive start frame and the roll-call
-  broadcast preamble, so a user who needs a longer broadcast preamble to reach
+  knob governs both the directed always-alive start frame and the roll-call's
+  always-alive-pass preamble (see ADR 0037), so a user who needs a longer broadcast preamble to reach
   a sleeping device cannot lengthen it without also lengthening every directed
   frame — a follow-up candidate if roll-call reliability regresses.
 - **Pairing is out of scope and carries the same latent problem.** The

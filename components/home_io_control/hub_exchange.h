@@ -97,15 +97,19 @@ struct InboundAuthContext {
 /// pinned to the channel the request went out on, so its reply always lands there too and there is
 /// nothing to hop for. A broadcast has no single recipient, though — every device that answers is
 /// continuing its own independent channel-hopping rather than joining a pinned conversation, so the
-/// channel it happens to be on when it replies is effectively decoupled from whichever channel
-/// carried the request. In practice a broadcast reply essentially never lands back on the
-/// requesting channel, so dwelling there wastes part of the listen window. Shared by
-/// @ref ExchangeEngine::listen() and, prospectively, any other caller that waits for a radio reply
-/// — hence living beside the primitive rather than folded into one loop's local logic.
+/// channel it happens to be on when it replies is largely decoupled from whichever channel carried
+/// the request. Whether "largely" still means "skip the request channel" depends on the replying
+/// population: Somfy always-alive roll-call replies land on the request channel about 1 in 149
+/// times (skipping it costs almost nothing), while real VELUX low-power roll-call replies have
+/// been observed landing there. Shared by @ref ExchangeEngine::listen() and, prospectively, any
+/// other caller that waits for a radio reply — hence living beside the primitive rather than
+/// folded into one loop's local logic.
 enum class ListenPolicy : uint8_t {
   HOLD_REQUEST_CHANNEL,     ///< Never retunes, never slices. Unicast replies.
-  ROTATE_ALL_CHANNELS,      ///< CH1->CH2->CH3->CH1. Broadcast whose reply channel is unknown.
-  ROTATE_SKIPPING_REQUEST,  ///< The two channels that are not the request channel. Roll-call.
+  ROTATE_ALL_CHANNELS,      ///< CH1->CH2->CH3->CH1. Broadcast whose replies may use any channel, including the
+                            ///< request channel (the low-power roll-call pass).
+  ROTATE_SKIPPING_REQUEST,  ///< The two channels that are not the request channel. Discovery and the
+                            ///< always-alive roll-call pass.
 };
 
 /// @brief What the caller wants done with the frame a listen just received.
@@ -147,12 +151,12 @@ struct ListenSpec {
   /// ListenPolicy::HOLD_REQUEST_CHANNEL. **0 (the default) means "ask the driver"** —
   /// `listen()` falls back to `radio->hop_dwell_ms(tuning)`, the chip's own answer to "how long
   /// must this radio sit on a channel before it can hear anything at all". Every ROTATE_* call
-  /// site today leaves this at 0: discovery and the broadcast roll-call have no measured reason to
-  /// dwell differently from each other. A non-zero value is reserved for the rare case where one
-  /// listen *does* have a measured reason to dwell differently from the others on every chip — a
-  /// difference that is per-chip and per-loop, not just per-chip, is the only thing that justifies
-  /// it; that measurement doesn't exist for any call site today. Not a tuning knob either way: a
-  /// constant at the call site, never user-configurable.
+  /// site today leaves this at 0: discovery and the broadcast roll-call's two passes have no
+  /// measured reason to dwell differently from each other. A non-zero value is reserved for the
+  /// rare case where one listen *does* have a measured reason to dwell differently from the
+  /// others on every chip — a difference that is per-chip and per-loop, not just per-chip, is the
+  /// only thing that justifies it; that measurement doesn't exist for any call site today. Not a
+  /// tuning knob either way: a constant at the call site, never user-configurable.
   uint32_t dwell_ms{0};
   /// Hop after a frame the handler ignored. Only discovery sets this true (the default): a
   /// broadcast discovery window is full of unrelated traffic and the reply channel is unknown, so

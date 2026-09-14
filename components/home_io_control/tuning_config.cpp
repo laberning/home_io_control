@@ -221,6 +221,40 @@ std::string discovery_payload_to_string(bool payload_enabled, uint8_t payload) {
   return std::string(buf);
 }
 
+std::string scan_power_classes_to_string(ScanPowerClasses value) {
+  switch (value) {
+    case ScanPowerClasses::BOTH:
+      return "both";
+    case ScanPowerClasses::ALWAYS_ALIVE:
+      return power_save_mode_name(POWER_SAVE_ALWAYS_ALIVE);
+    case ScanPowerClasses::LOW_POWER:
+      return power_save_mode_name(POWER_SAVE_LOW_POWER);
+  }
+  return "both";
+}
+
+std::optional<ScanPowerClasses> scan_power_classes_from_string(const std::string &value) {
+  if (value == scan_power_classes_to_string(ScanPowerClasses::BOTH))
+    return ScanPowerClasses::BOTH;
+  if (value == scan_power_classes_to_string(ScanPowerClasses::ALWAYS_ALIVE))
+    return ScanPowerClasses::ALWAYS_ALIVE;
+  if (value == scan_power_classes_to_string(ScanPowerClasses::LOW_POWER))
+    return ScanPowerClasses::LOW_POWER;
+  return std::nullopt;
+}
+
+bool scan_power_classes_include(ScanPowerClasses selection, uint8_t power_save_mode) {
+  switch (selection) {
+    case ScanPowerClasses::BOTH:
+      return power_save_mode == POWER_SAVE_ALWAYS_ALIVE || power_save_mode == POWER_SAVE_LOW_POWER;
+    case ScanPowerClasses::ALWAYS_ALIVE:
+      return power_save_mode == POWER_SAVE_ALWAYS_ALIVE;
+    case ScanPowerClasses::LOW_POWER:
+      return power_save_mode == POWER_SAVE_LOW_POWER;
+  }
+  return false;
+}
+
 std::string tuning_update_log_line(const std::string &name, const std::string &value) {
   return "Tuning updated via HA: " + name + "=" + value;
 }
@@ -270,6 +304,10 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
     result += " pairing_discovery_low_power=" + std::string(cfg.pairing_discovery_low_power ? "true" : "false");
   if (cfg.pairing_discovery_ack_capable != DEFAULTS.pairing_discovery_ack_capable)
     result += " pairing_discovery_ack_capable=" + std::string(cfg.pairing_discovery_ack_capable ? "true" : "false");
+  // scan_power_classes is an enum, not a plain number, so it stays hand-written here like the
+  // three RX-bandwidth fields above (it's a SELECT_PARAMS row, not a NUMBER_PARAMS one).
+  if (cfg.scan_power_classes != DEFAULTS.scan_power_classes)
+    result += " scan_power_classes=" + scan_power_classes_to_string(cfg.scan_power_classes);
   // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms, and
   // pairing_key_exchange_retries are plain NUMBER_PARAMS entries — covered by the loop above.
 
