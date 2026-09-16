@@ -10,7 +10,7 @@ description: >
   Sequence: the KLI 313 opens the system with a three-class DISCOVER_ALT_REQ (0x2E) sweep across
   00 00 BF / 00 00 FF / 00 03 7F (roller_shutter / awning / dual_shutter — same set as
   tests/corpus/captures/discovery/velux_kli310_discovery_alt_sweep.yaml and
-  tests/corpus/captures/discovery/velux_kli313_discovery_alt_beacon.yaml, from two other KLI
+  tests/corpus/captures/discovery/velux_kli313_discovery_alt_sweep.yaml, from two other KLI
   units). The TaHoma's opening 0x28 was on a channel the monitor was not parked on and is not in
   the log; the shutter's 0x29 answer to it is the first captured 2W frame. Then
   DISCOVER_CONFIRM (0x2C), a second DISCOVER_REQ (0x28) to the backbone group 00003B, and — after

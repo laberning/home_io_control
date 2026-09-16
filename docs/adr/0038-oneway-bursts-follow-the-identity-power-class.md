@@ -14,8 +14,8 @@ ADR 0029 proved on hardware, for 2W, that this exact preamble stops an always-al
 VELUX receiver from taking a directed frame at all — not the `CTRL1_LOW_POWER` flag, the preamble
 length itself. It introduced a per-device `low_power:` key: `false` (the default) sends a directed
 start frame at the shorter, runtime-tunable `normal_start_preamble`; `true` keeps `LONG_PREAMBLE`
-and sets the flag. 1W never received the same treatment. In issue #74 a mains-powered VELUX KUX 110
-did not 1W-enroll with the long preamble on every copy, which makes the same mechanism a plausible
+and sets the flag. 1W never received the same treatment. In issue #74 a mains-fed VELUX SML roller shutter
+(powered through a KUX 110) did not 1W-enroll with the long preamble on every copy, which makes the same mechanism a plausible
 blocker for 1W too.
 
 Two more data points shape the decision:
@@ -94,9 +94,9 @@ the identity's `low_power:` YAML key, which is **tri-state** here — unlike the
   already true of the 2W directed start frame and the broadcast roll-call (ADR 0029), so 1W joining
   them is consistent, not a new limitation.
 - **Both non-legacy classes work on VELUX hardware; the cause of the legacy failure is not
-  isolated.** In issue #74, `false` enrolled and controls a mains KUX 110 on SX1276 (the whole
+  isolated.** In issue #74, `false` enrolled and controls a mains-fed SML roller shutter on SX1276 (the whole
   enrollment gesture takes ~1.2 s instead of ~7.4 s), and `true` enrolled interior blinds on SX1262.
-  The KUX 110 success also changed the user's registration procedure and the gesture's duration at
+  The SML success also changed the user's registration procedure and the gesture's duration at
   the same time, so it does not by itself prove the all-long preamble was what blocked the earlier
   attempt. Whether the unset default should change for VELUX identities waits on a
   commands-only A/B on an already-enrolled identity.

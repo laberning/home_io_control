@@ -1,20 +1,22 @@
 id: velux_kli310_discovery_alt_sweep
 description: >
-  A real Velux KLI 310 wall remote (node 5A9E00) sweeping the 1W alt-discovery command (0x2E)
-  across three typed-broadcast destinations in one ~1.2s burst: 00 00 BF, 00 00 FF, 00 03 7F —
+  A real Velux KLI 310 wall remote (node 5A9E00) sending its 1W "open for registration" sweep
+  (0x2E, the Gear button) across three typed-broadcast destinations in one ~1.2s burst: 00 00 BF, 00 00 FF, 00 03 7F —
   our broadcast_target_type() decodes these as roller_shutter (2), awning (3), dual_shutter (13).
-  Captured on an SX1276 by the reporter's own hub in issue #74 while they operated the remote by
-  hand (no device in pairing mode); the same remote's key-copy PROG gesture then sends its 0x39
-  clear to 00 00 3F and its 0x30 add-controller to this same {BF, FF, 7F} set (those 0x30 frames
+  Captured on an SX1276 by the reporter's own hub in issue #74 as they put their shutter into
+  registration mode from the remote. The same remote's Pair button ("register" a new control)
+  sends a 0x39 clear to 00 00 3F and a 0x30 add-controller to this same {BF, FF, 7F} set (those 0x30 frames
   are redacted by this project's own frame logger, so only their headers survive — see
   analysis notes and tests/corpus/captures/enrollment/synthetic_enrollment_velux_kli_prog_sweep.yaml
   for a computed reconstruction of that half).
 
-  Why it is here: this is the only *captured* evidence that a Velux KLI remote addresses exactly
-  {roller_shutter, awning, dual_shutter} and nothing else when it announces or enrolls — it is
-  never seen targeting screen, blind, venetian_blind or window_opener. It extends
-  velux_kli313_discovery_alt_beacon.yaml (a single KLI 313 beacon) to the full three-class sweep
-  and pins that the class set a Velux enrollment must cover is these three.
+  Why it is here: it is the captured evidence that an exterior-shading KLI remote (KLI 310/313)
+  addresses exactly {roller_shutter, awning, dual_shutter} when it opens products for
+  registration or registers itself — the class set the velux profile's default enrollment sweep
+  covers. Other KLI families use other classes (a KLI 312 for interior blinds sweeps blind and
+  venetian_blind), which is why the sweep is configurable. It extends
+  velux_kli313_discovery_alt_sweep.yaml (a partially received KLI 313 sweep) to the full
+  three-class sweep.
 
   Each frame is the first (LPM-marked, CTRL1=0x20) copy of its per-destination sub-burst except
   the 00 03 7F one, captured as CTRL1=0x00; the remote used a distinct rolling sequence per

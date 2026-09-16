@@ -186,7 +186,7 @@ class OneWayTransmitter {
   /// a `0x30` burst to **each** class in `effective_enrollment_classes()` under one shared
   /// sequence, then a STOP and a DOWN EXECUTE to the all-devices address at the VELUX ACEI — the
   /// KLI manual's STOP-then-DOWN registration completion. Matches the issue #74 KLI 310 capture
-  /// and has enrolled a KUX 110 and KLI 312 interior blinds on
+  /// and has enrolled a VELUX SML roller shutter and KLI 312 interior blinds on
   /// real hardware (the closing DOWN is the visible success signal, unless the cover already sits
   /// fully closed). The STOP+DOWN frames themselves
   /// are not matched against a VELUX capture

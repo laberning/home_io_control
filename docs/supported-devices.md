@@ -76,13 +76,12 @@ project controls.
 | **MSU 100100 5070WL solar awning screen** | `screen` | ⚠️ Partial — open and close work, `stop` is ignored | — | — | the screen will not complete a 2W handshake mid-motion, so `cover.stop` has nothing to talk to |
 | **SSL solar roller shutter** | `roller_shutter` | ❌ Unsupported so far — Discover & Pair finds nothing | — | — | Seems to ship pre-paired to its included KLI 313 wall switch, so it is never even fresh out of the box; the motor's own physical **P** button reset opens a 10-minute registration window but is untested against 2W discovery — see [VELUX INTEGRA](devices/velux-integra.md) |
 | **INTEGRA SOLAR blinds** | `blind` | 📣 Reported | — | `low_power: true` | Named as a canonical low-power case; no capture |
-| **KLI 313 remote** (driving an SML via KUX 110) | 1W remote | 🔍 Traffic captured only | — | — | 3 corpus captures |
+| **KLI 313 remote** (ships with the SML roller shutter) | 1W remote | 🔍 Traffic captured only | — | — | 3 corpus captures |
 | **KLI 310 universal wall remote** | 1W remote | 🔍 Traffic captured only | — | — | Corpus `velux_kli310_discovery_alt_sweep` |
 | **KLI 312 interior-blind remote** | 1W remote | 🔍 Traffic reported only | — | — | Gear `0x2E` goes to `blind` and `venetian_blind`; no corpus capture |
 | **KUX 100 / PK03 / PK04 wired bridge** | Bridge | 🔍 Traffic captured only | — | — | 3 corpus captures of KLR200 ↔ KUX100 traffic |
 | **KLF 200** | Third-party hub | 📣 Reported as a key source | — | — | Named in several issue threads; no capture |
-| **SML shutter via KUX 110** | `roller_shutter` | ❌ Unsupported — nothing answers discovery | — | — | Issue #17 |
-| **KUX 110 wired bridge** | Bridge, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1276) | 1W enrollment: Gear on the existing KLI 310, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `low_power: false` | see [Sending 1W commands](configuration/oneway-transmit.md) |
+| **SML electric roller shutter** | `roller_shutter`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1276) | 1W enrollment: Gear on the existing KLI 310, then Enroll. Two-way Discover & Pair finds nothing (issue #17) | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `low_power: false` | Mains-fed, e.g. through a KUX 110 power supply, which has no radio role; see [Sending 1W commands](configuration/oneway-transmit.md) |
 | **Interior blinds behind a KLI 312** | `venetian_blind`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1262) | 1W enrollment: Gear on the existing KLI 312, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |  |
 
 ### Other vendors

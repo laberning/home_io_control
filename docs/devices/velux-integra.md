@@ -14,8 +14,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | Devices behind an extracted key | ✅ Confirmed, with `low_power: true` |
 | MSU 100100 solar awning screen | ⚠️ Partial — open and close work, `stop` is ignored |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
-| SML shutter via KUX 110 | ❌ Nothing answers discovery |
-| KUX 110, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false` |
+| SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false`. Two-way Discover & Pair finds nothing |
 | Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |
 
 ## Onboarding route that worked
@@ -26,7 +25,7 @@ this succeeded end to end on the first attempt, including the address round.
 
 For an installation with no hub at all — only a 1W wall switch or remote, or a device fresh out of
 the box — key extraction has nothing to extract from. If a KLI remote already drives the product,
-try **1W enrollment**, the route confirmed on a KUX 110 and on KLI 312 interior blinds: press the
+try **1W enrollment**, the route confirmed on an SML roller shutter and on KLI 312 interior blinds: press the
 Gear button on that remote, wait for the product's ready sequence to finish, then press the hub's
 Enroll button. It gives open/close/stop without status (see
 [Sending 1W commands](../configuration/oneway-transmit.md)). For 2W on such an installation, see
@@ -80,10 +79,20 @@ moves the window to its predefined air-exchange opening rather than fully open.
   closed, several jogs, back to the start); once it has finished, press Enroll on the hub. If the
   cover ends up fully closed, the closing step at the end of Enroll shows no movement, so check with
   Open afterwards. The enrollment classes must match the remote: the default fits a KLI
-  310/313 (exterior shading, e.g. a KUX 110), while a KLI 312 interior blind needs
+  310/313 (exterior shading, e.g. an SML roller shutter), while a KLI 312 interior blind needs
   `enrollment_classes: [blind, venetian_blind]`. The remote's own `0x2E` log lines after Gear name
   the classes. Confirmed in issue #74 (see
   [Sending 1W commands](../configuration/oneway-transmit.md)).
+- **The KUX 110 is a power supply, not a radio bridge.** It feeds 24 V DC to a mains-powered product
+  such as an SML roller shutter; the io-homecontrol receiver is in the product's own motor, and each
+  KLI pairs with each product directly. An SML can equally be powered from an electric roof window
+  with no KUX at all. If several products share one supply, a reset that works by interrupting
+  power resets every product connected to it — including their pairings with the hub.
+  Disconnect the others first if only one should be reset.
+- **One Gear press can open several products at once.** Gear opens registration on every product
+  that KLI drives, and each of them then registers whatever control is enrolled next. For one Home
+  Assistant cover per product, enroll one identity per product and press Gear on a control that
+  drives only that product.
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on
   `CMD_EXECUTE`. Set `manufacturer: velux` on any 1W identity aimed at these devices — see
   [Sending 1W commands](../configuration/oneway-transmit.md).
@@ -107,7 +116,7 @@ replies, from issue #98), 1 for the successful KLR 200 key extraction (node `810
 4 for the KIG 300 hub (node `BEFEDB`), 3 for KLR200 ↔ KUX100 bridge traffic, and 3 for the KLI 310
 and KLI 313 remotes.
 
-Field reports: #74 (KUX 110 and KLI 312 blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
+Field reports: #17 (SML discovery), #74 (SML roller shutter and KLI 312 blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
 screen stop), #98 (INTEGRA probes).
 
 ## See also

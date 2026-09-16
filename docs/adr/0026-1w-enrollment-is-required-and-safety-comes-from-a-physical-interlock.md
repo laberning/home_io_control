@@ -124,7 +124,7 @@ undo it afterward.
   Treat "enrollment is reversible" as design intent, not a demonstrated fact, until this is
   retested and confirmed.
 - **Both enrollment failures traced to real users in the same week (2026-08-21: an external
-  tester's Velux KUX 110 report, and this project's own Izymo retest) turned out to share one
+  tester's Velux SML roller shutter report, and this project's own Izymo retest) turned out to share one
   root cause: a device-class mismatch in `oneway_controllers`' `io_device_type`, not the
   enrollment handshake.** Once the class was corrected, the Izymo enrolled with either `0x30`
   alone or `0x39` then `0x30`. Sending `0x39` first is not what fixed this class of failure and is

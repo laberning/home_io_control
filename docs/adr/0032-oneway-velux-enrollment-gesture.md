@@ -101,13 +101,13 @@ after Gear.
 ## Consequences
 
 - A `manufacturer: velux` enroll button emits the KLI gesture, and it has registered
-  the hub as a controller on real VELUX hardware (issue #74): a mains-powered KUX 110
-  on SX1276 with `low_power: false` and the default sweep, and KLI 312 interior blinds
+  the hub as a controller on real VELUX hardware (issue #74): a VELUX SML roller shutter
+  (mains-fed through a KUX 110 power supply) on SX1276 with `low_power: false` and the default sweep, and KLI 312 interior blinds
   on SX1262 with `low_power: true` and `enrollment_classes: [blind, venetian_blind]`.
   The identity's commands worked afterwards in both cases, and on the blinds the
   closing DOWN at the end of the gesture was reported as the visible success signal.
   That signal is invisible when the cover is already fully closed, which is where the
-  KUX 110's shutter sat once its ready sequence had returned it.
+  SML shutter sat once its ready sequence had returned it.
 - The per-remote class set is established for two remote families only. A KLI 311
   window remote, or any other VELUX product, may use yet another set; the `0x2E` lines
   are the way to find it rather than a table in this project.

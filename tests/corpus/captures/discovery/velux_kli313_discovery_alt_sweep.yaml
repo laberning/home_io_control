@@ -1,0 +1,44 @@
+id: velux_kli313_discovery_alt_sweep
+description: >
+  Partially received 1W "open for registration" sweeps (0x2E) from a Velux KLI 313 remote. A
+  press of the KLI's Gear button sends 0x2E to each class it drives, putting every product
+  registered to that remote into registration mode so a new control can be added. Captured in an
+  installation where the KLI 313 drives a Velux SML roof window shutter powered by a KUX110 power
+  supply; the source (DA2C93) is the *remote*, not the shutter — 0x2E is controller-side (compare
+  the KLR200 in velux_kux100_discovery_alt_addressed_challenge_response.yaml), and the same
+  address also emits the controller-side EXECUTE in velux_kli313_oneway_stop.yaml.
+
+  The first two frames are one sweep with its awning (00 00 FF) copy not received: seq 0x0550 to
+  roller_shutter, then 0x0552 to dual_shutter. The third frame (seq 0x0553, roller_shutter again,
+  ~146s later) is the first copy of a second sweep. The full three-class sweep is in
+  velux_kli310_discovery_alt_sweep.yaml. Verifies 1W frame parsing across two different
+  typed-broadcast destinations.
+source:
+  device: "Velux KLI 313 remote (driving a Velux SML shutter, powered by a KUX110 power supply)"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-07-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/17"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "F1 00 00 00 BF DA 2C 93 2E 00 05 50 51 8E D6 D8 16 0A"
+    crc: absent
+    note: "1W CMD_DISCOVER_ALT_REQ(0x2E) open-for-registration sweep, dst=00 00 BF -> roller_shutter (2), seq 0x0550"
+  - dir: rx
+    freq: 868950000
+    hex: "F1 00 00 03 7F DA 2C 93 2E 00 05 52 DC 58 9E 0C 08 68"
+    crc: absent
+    note: "same sweep, dst=00 03 7F -> dual_shutter (13), seq 0x0552 (awning copy 0x0551 not received)"
+  - dir: rx
+    freq: 868950000
+    hex: "F1 00 00 00 BF DA 2C 93 2E 00 05 53 26 56 5D DC AA DC"
+    crc: absent
+    note: "second sweep ~146s later, dst=00 00 BF -> roller_shutter (2), seq 0x0553"
+expect:
+  frames:
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x2E, start: true, end: true, protocol: 1w}

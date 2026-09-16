@@ -145,7 +145,7 @@ struct OneWayControllerIdentity {
 /// project has hardware-validated). VELUX_KLI: a `0x39` clear to the all-devices address, then a
 /// `0x30` burst to **each** class in `OneWayWireProfile::enrollment_classes`, then a STOP+DOWN
 /// EXECUTE follow-up — the gesture a real KLI remote produces (issue #74 capture +
-/// the KLI manual), confirmed on a KUX 110 and on KLI 312
+/// the KLI manual), confirmed on a VELUX SML roller shutter and on KLI 312
 /// interior blinds. See ADR 0032.
 enum class EnrollGesture : uint8_t { SOMFY, VELUX_KLI };
 
