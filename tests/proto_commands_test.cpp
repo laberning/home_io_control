@@ -72,6 +72,57 @@ TEST(ProtoCommands, CreateDiscoverConfirmAck) {
       << "discovery-confirm ack is device-originated, not low-power targeted";
 }
 
+// Byte-exact against two real captures: TaHoma -> VELUX SSL (low-power target) and this
+// project's own key-extraction responder answering a real KIG300 (always-alive target). Node IDs
+// below are transcribed from those captures, not test::OWN_ID/DST_ID, so the comparison is against
+// a real frame, not a self-consistent guess.
+TEST(ProtoCommands, CreateDiscoverConfirmMatchesRealCaptureFraming) {
+  // tests/corpus/captures/discovery/velux_ssl_discovery_tahoma_pairing.yaml: TaHoma (D63332) ->
+  // VELUX SSL PK06 (FB7B08), low-power target, no ACK requested: "48 20 FB 7B 08 D6 33 32 2C".
+  const uint8_t tahoma[NODE_ID_SIZE] = {0xD6, 0x33, 0x32};
+  const uint8_t ssl[NODE_ID_SIZE] = {0xFB, 0x7B, 0x08};
+  IoFrame low_power_no_ack{};
+  ASSERT_TRUE(create_discover_confirm(low_power_no_ack, tahoma, ssl, /*low_power=*/true, /*ack=*/false))
+      << "create_discover_confirm should succeed";
+  uint8_t raw[FRAME_MAX_SIZE];
+  uint8_t len = serialize(low_power_no_ack, raw, sizeof(raw));
+  const uint8_t expected_low_power_no_ack[] = {0x48, 0x20, 0xFB, 0x7B, 0x08, 0xD6, 0x33, 0x32, 0x2C};
+  ASSERT_EQ(len, sizeof(expected_low_power_no_ack));
+  EXPECT_EQ(0, memcmp(raw, expected_low_power_no_ack, len))
+      << "low_power=true, ack=false must reproduce the TaHoma->SSL capture byte-for-byte";
+
+  // tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml: a real VELUX
+  // KIG300 hub (BEFEDB) -> this project's own key-extraction responder, emulating a throwaway
+  // device identity (53F26E), always-alive target, ACK set: "48 10 53 F2 6E BE FE DB 2C". The
+  // builder is controller-role, so `own`/`dst` here play the KIG300's/the device's roles even
+  // though our code was on the *device* side of that particular capture.
+  const uint8_t kig300[NODE_ID_SIZE] = {0xBE, 0xFE, 0xDB};
+  const uint8_t throwaway_device[NODE_ID_SIZE] = {0x53, 0xF2, 0x6E};
+  IoFrame always_alive_ack{};
+  ASSERT_TRUE(create_discover_confirm(always_alive_ack, kig300, throwaway_device, /*low_power=*/false, /*ack=*/true));
+  len = serialize(always_alive_ack, raw, sizeof(raw));
+  const uint8_t expected_always_alive_ack[] = {0x48, 0x10, 0x53, 0xF2, 0x6E, 0xBE, 0xFE, 0xDB, 0x2C};
+  ASSERT_EQ(len, sizeof(expected_always_alive_ack));
+  EXPECT_EQ(0, memcmp(raw, expected_always_alive_ack, len))
+      << "low_power=false, ack=true must reproduce the KIG300 capture byte-for-byte";
+
+  // Same endpoints, ack=false: the default `send` shape for an always-alive target. No corpus hub
+  // sends it (a Somfy Izymo dimmer does answer it), so these bytes are pinned without a capture.
+  IoFrame always_alive_no_ack{};
+  ASSERT_TRUE(
+      create_discover_confirm(always_alive_no_ack, kig300, throwaway_device, /*low_power=*/false, /*ack=*/false));
+  len = serialize(always_alive_no_ack, raw, sizeof(raw));
+  const uint8_t expected_always_alive_no_ack[] = {0x48, 0x00, 0x53, 0xF2, 0x6E, 0xBE, 0xFE, 0xDB, 0x2C};
+  ASSERT_EQ(len, sizeof(expected_always_alive_no_ack));
+  EXPECT_EQ(0, memcmp(raw, expected_always_alive_no_ack, len)) << "low_power=false, ack=false must give CTRL1=0x00";
+
+  // The builder is literal: it does not suppress ACK for a low-power target. That policy (the
+  // engine never actually requests this combination) lives in the caller, not here.
+  IoFrame low_power_ack{};
+  ASSERT_TRUE(create_discover_confirm(low_power_ack, tahoma, ssl, /*low_power=*/true, /*ack=*/true));
+  EXPECT_EQ(low_power_ack.ctrl1, 0x30) << "low_power=true, ack=true should still combine both bits (0x20|0x10)";
+}
+
 TEST(ProtoCommands, CreateChallengeReqUsesTheFramingObservedOnAir) {
   IoFrame device_role{};
   ASSERT_TRUE(create_challenge_req_device_role(device_role, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE))

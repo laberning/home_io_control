@@ -6,9 +6,14 @@
 ///
 /// PairingEngine encapsulates all three phases of the IO-Homecontrol pairing flow:
 ///
-/// Phase 1 — Discovery (0x28 → 0x29):
+/// Phase 1 — Discovery (0x28 → 0x29 → 0x2C → 0x2D):
 ///   Controller broadcasts a discovery packet. A device in pairing mode responds
-///   with its node ID and type/subtype metadata.
+///   with its node ID and type/subtype metadata. The controller then sends a discover-confirm
+///   (0x2C) directly to that device and, when tuning allows, waits up to
+///   `PAIRING_DISCOVER_CONFIRM_TRIES` × `PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS` for its 0x2D —
+///   every real controller in this project's corpus does this before proceeding; see
+///   `pairing_discover_confirm` (tuning_config.h) for the mode knob and `run_discover_confirm_step_()`
+///   for why the step never fails a pairing attempt.
 ///
 /// Phase 2 — Authenticated Key Exchange (0x31 → 0x3C → 0x32 → 0x33):
 ///   The controller sends CMD_KEY_INIT (0x31). The device challenges with 0x3C.
@@ -50,6 +55,8 @@ inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Di
 inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;             ///< Retry discovery TX up to this many times.
 inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
 inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for 0x33 key confirm after sending 0x32.
+inline constexpr uint8_t PAIRING_DISCOVER_CONFIRM_TRIES = 3;       ///< Max tries for the discover-confirm (0x2C) step.
+inline constexpr uint32_t PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS = 1500;  ///< Wait window per discover-confirm try.
 /// How recent a RecentOneWayPairingSighting has to be, relative to discover_and_pair() starting,
 /// to still count as evidence for this attempt. Generous relative to the doc's "a few seconds"
 /// PROG-then-press guidance: real field reports (issue #27) show gaps up to ~4-7 s between the
@@ -104,6 +111,21 @@ class PairingEngine {
   /// @return ACCEPT on success; NO_RESPONSE or INVALID otherwise.
   decisions::PairingDiscoveryDisposition run_discovery_phase_(pairing::PairingContext &context);
 
+  /// @brief Discover-confirm step (0x2C → 0x2D): sent directly to the just-discovered device,
+  /// once per discover_and_pair() attempt, between discovery and the key-exchange retry loop.
+  ///
+  /// Every real controller in this project's corpus sends 0x2C here. The step **never fails a
+  /// pairing attempt**: a refusal, timeout, or `skip` tuning mode all still let the caller proceed
+  /// to `run_key_exchange_phase_()` — only the result and log line differ. Applies the
+  /// `pairing_key_init_delay_ms` pause afterward for every outcome except `SKIPPED` (see
+  /// `tuning_config.h`'s `pairing_discover_confirm`/`pairing_key_init_delay_ms` doc for the modes
+  /// and defaults).
+  /// @param context Pairing context populated by run_discovery_phase_(); `context.req`/`context.rx`
+  ///        are reused as scratch space for the 0x2C/0x2D exchange, same as the other phases.
+  /// @return What the step actually observed — see @ref pairing::DiscoverConfirmResult. Not stored
+  ///         in `context`: nothing downstream reads it.
+  pairing::DiscoverConfirmResult run_discover_confirm_step_(pairing::PairingContext &context);
+
   /// Phase 2: authenticated key exchange (0x31 → 0x3C → 0x32 → 0x33).
   /// @param context Pairing context populated by run_discovery_phase_().
   /// @return true if key exchange completes; false on any failure.
@@ -134,7 +156,29 @@ class PairingEngine {
   bool wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet, IoFrame &challenge_frame,
                                const uint8_t device_node_id[NODE_ID_SIZE]);
 
+  /// Wait for one discover-confirm (0x2C) try's answer: a matching 0x2D, a matching
+  /// CMD_ERROR_RESP, or nothing recognisable before the window closes.
+  ///
+  /// Listen policy alternates by try: `discover_confirm_try_rotates(try_index)` selects
+  /// `ListenPolicy::ROTATE_ALL_CHANNELS` for the one try that hedges against an off-channel 0x2D,
+  /// and `ListenPolicy::HOLD_REQUEST_CHANNEL` (matching every other unicast pairing wait) for the
+  /// rest — see that decision's doc for why only one try rotates.
+  /// @param try_index 1-based try number, used only to pick the listen policy.
+  /// @param context   Pairing context; `context.req` is the 0x2C just transmitted, `context.rx`/
+  ///        `context.packet` receive the candidate reply.
+  /// @return ACK or ERROR for a matching reply; IGNORE only once the window closes with nothing
+  ///         recognised — an unrelated frame arriving mid-window does not end the try, it keeps
+  ///         listening.
+  decisions::PairingDiscoverConfirmDisposition wait_for_discover_confirm_ack_(uint8_t try_index,
+                                                                              pairing::PairingContext &context);
+
   /// Transmit the 0x32 key transfer and wait for the 0x33 key confirm with retry.
+  ///
+  /// A device that challenges the key transfer (slow-turnaround chips answering with a fresh 0x3C
+  /// instead of confirming directly) is handled inline via `listen_for_key_confirm_()` and
+  /// `ExchangeEngine::answer_challenge()` — see their docs. An explicit refusal (REFUSE: a wrong
+  /// reply shape, or CMD_ERROR_RESP) must not spend the remaining retries; a challenge is not a
+  /// refusal, so it does not return false either — the try only ends without confirming.
   bool wait_for_key_confirm_(pairing::PairingContext &context);
 
   /// Build CMD_KEY_TRANSFER against the current challenge and wait for the 0x33 confirm; see
@@ -145,6 +189,20 @@ class PairingEngine {
   bool transfer_key_and_wait_confirm_(pairing::PairingContext &context);
 
  private:
+  /// One `ListenPolicy::HOLD_REQUEST_CHANNEL` listen for the key-transfer confirm wait, called up
+  /// to twice per try in `wait_for_key_confirm_()` — once for the initial reply, once more (a
+  /// fresh window) after answering a device challenge — so the listen spec, logging, and telemetry
+  /// have exactly one owner instead of two copies of the same lambda.
+  /// @param context     Pairing context; `context.req` is the outbound 0x32 (the challenge-response
+  ///        transcript), `context.resp` receives the candidate reply.
+  /// @param try_number  1-based try number, for the timeout log line only.
+  /// @param after_challenge True if this is the second, post-challenge listen within the try
+  ///        (labelled in the timeout log line so it isn't mistaken for the first).
+  /// @return CONFIRM/CHALLENGE/REFUSE for a matching reply; IGNORE on a timeout. A frame from the
+  ///         wrong endpoints does not end the listen — it is ignored and the wait continues.
+  decisions::PairingKeyConfirmDisposition listen_for_key_confirm_(pairing::PairingContext &context, uint8_t try_number,
+                                                                  bool after_challenge);
+
   /// Convenience accessor returning the current radio driver (dereferences double pointer).
   [[nodiscard]] RadioDriver *radio_() const { return *radio_ptr_; }
 

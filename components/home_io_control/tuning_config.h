@@ -82,6 +82,32 @@ enum class ScanPowerClasses : uint8_t {
   LOW_POWER,     ///< Low-power pass only.
 };
 
+/// @brief Whether and how PairingEngine sends CMD_DISCOVER_CONFIRM (0x2C) to a freshly-discovered
+/// device before proceeding to the key exchange (0x31).
+///
+/// Every real controller in this project's corpus sends 0x2C between the device's 0x29 and its
+/// own 0x31. An enum, not a bool reusing `pairing_discovery_ack_capable`: that knob's contract is
+/// scoped to the discovery broadcast only (see its own doc), and `skip`/`send`/`send_with_ack`
+/// avoid `on`/`off`, which YAML 1.1 would otherwise turn into booleans. The step never fails a
+/// pairing attempt in any mode — see PairingEngine::run_discover_confirm_step_()'s doc.
+enum class DiscoverConfirmMode : uint8_t {
+  SKIP,           ///< Kill switch: sends no 0x2C and applies no post-step pause.
+  SEND,           ///< Default. Sends 0x2C with CTRL1_ACK clear either way — `0x00` to an
+                  ///< always-alive target, `0x20` (CTRL1_LOW_POWER only) to a low-power one. It is
+                  ///< CTRL1_LOW_POWER, not CTRL1_ACK, that follows the target's power class — see
+                  ///< create_discover_confirm()'s `ack` param doc and
+                  ///< PairingEngine::run_discover_confirm_step_() for where that split lives.
+                  ///< Hardware-validated on a Somfy Izymo dimmer (always-alive): it answers the
+                  ///< `0x00` shape with 0x2D within ~25 ms.
+  SEND_WITH_ACK,  ///< Like SEND, but also sets CTRL1_ACK for an always-alive target (`0x10`) — the
+                  ///< shape every corpus hub (VELUX KLR200/KIG300, Somfy Connectivity Kit) uses
+                  ///< there. A low-power target still gets `0x20`, identical to SEND. Not the
+                  ///< default: the Somfy Izymo dimmer never answers the `0x10` shape with 0x2D
+                  ///< (pairing still completes, after the full no-answer wait). Kept for an
+                  ///< always-alive device from a hub ecosystem that sends this shape and does not
+                  ///< answer SEND's.
+};
+
 /// @brief Discovery request command codes.
 enum class DiscoveryCommand : uint8_t {
   DISCOVER = 0x28,      ///< Standard broadcast discovery request (to 0x00003B).
@@ -242,6 +268,10 @@ struct TuningConfig {
       PAIRING_KEY_EXCHANGE_RETRIES};  ///< Retries for the authenticated key exchange phase.
   ScanPowerClasses scan_power_classes{
       ScanPowerClasses::BOTH};  ///< Power classes the scan_paired_devices roll-call calls.
+  DiscoverConfirmMode pairing_discover_confirm{
+      DiscoverConfirmMode::SEND};  ///< Whether/how to send CMD_DISCOVER_CONFIRM (0x2C) during pairing.
+  uint16_t pairing_key_init_delay_ms{
+      PAIRING_KEY_INIT_DELAY_MS};  ///< Pause after the discover-confirm step, before CMD_KEY_INIT (0x31).
 
   // --- Internal state ---
   bool active{false};  ///< True when the YAML `tuning:` block is present.
@@ -437,6 +467,19 @@ std::optional<ScanPowerClasses> scan_power_classes_from_string(const std::string
 /// @param power_save_mode POWER_SAVE_ALWAYS_ALIVE or POWER_SAVE_LOW_POWER.
 /// @return true if `selection` calls that class; false for an unrecognized power_save_mode.
 bool scan_power_classes_include(ScanPowerClasses selection, uint8_t power_save_mode);
+
+/// @brief Format a DiscoverConfirmMode value for YAML/logs.
+/// @param value Selection to format.
+/// @return "skip", "send", or "send_with_ack".
+std::string discover_confirm_mode_to_string(DiscoverConfirmMode value);
+
+/// @brief Parse a `pairing_discover_confirm` string into the enum.
+///
+/// Exact, case-sensitive match against the same three strings discover_confirm_mode_to_string()
+/// produces.
+/// @param value String to parse.
+/// @return The matching mode, or std::nullopt on invalid input.
+std::optional<DiscoverConfirmMode> discover_confirm_mode_from_string(const std::string &value);
 
 }  // namespace home_io_control
 }  // namespace esphome

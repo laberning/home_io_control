@@ -205,6 +205,36 @@ class ExchangeEngine {
   /// @return true if the radio accepted the packet; false otherwise.
   bool transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble);
 
+  /// Preamble length for an outbound request frame. A non-start frame keeps the chip's short
+  /// response preamble. A start frame gets `LONG_PREAMBLE` only when it carries `CTRL1_LOW_POWER`
+  /// (its target is a duty-cycled receiver that must be woken); every other start frame gets the
+  /// runtime-tunable `normal_start_preamble`. The bit and the preamble therefore always agree.
+  /// For a directed frame, the target's per-device `low_power` property sets the bit; for the
+  /// roll-call broadcast, the pass being sent sets it (see `ManagementActions::scan_paired_devices()`).
+  ///
+  /// Public so any caller building its own start frame outside `send_and_receive()` — pairing's
+  /// discover-confirm step (0x2C) is one such caller — follows the same ADR 0029 rule instead of
+  /// re-implementing it next to a second copy.
+  /// @param request Frame the preamble is being chosen for.
+  /// @return Preamble length in bytes.
+  [[nodiscard]] uint16_t request_preamble_for(const IoFrame &request) const;
+
+  /// Send a 0x3D challenge response over `request`'s transcript, proving knowledge of the system
+  /// key to whoever sent `challenge`.
+  ///
+  /// The one place that builds and sends a 0x3D, so the 0x3D transcript rule (HMAC over the
+  /// challenged frame's cmd + data, create_challenge_resp()) and the response_preamble() choice
+  /// have exactly one owner, shared by the normal inbound-challenge path
+  /// (`handle_authentication_()`) and pairing's own post-0x32 challenge wait
+  /// (`PairingEngine::wait_for_key_confirm_()`). Does not touch `challenge_round_trips` —
+  /// callers that want it counted (handle_authentication_()) increment it themselves; the pairing
+  /// path deliberately does not, per that counter's own "no pairing path" doc.
+  /// @param request   The frame whose cmd+data the challenger wants proof of (the transcript).
+  /// @param challenge The inbound 0x3C carrying the challenge bytes in `challenge.data`.
+  /// @param freq      RF channel frequency (Hz) to transmit the 0x3D on.
+  /// @return true if the 0x3D was built and transmitted; false on a build or transmit failure.
+  bool answer_challenge(const IoFrame &request, const IoFrame &challenge, uint32_t freq);
+
   /// @brief Advance the receiver one step along the protocol's channel rotation
   ///   (CH1→CH2→CH3→CH1).
   /// @param skip_freq Channel to pass over, or 0 to rotate through all three. Used by the
@@ -325,14 +355,6 @@ class ExchangeEngine {
   /// Transmit one request attempt and update context state on failure.
   bool transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
                          exchange::OutboundExchangeContext &ctx);
-
-  /// Preamble length for an outbound request frame. A non-start frame keeps the chip's short
-  /// response preamble. A start frame gets `LONG_PREAMBLE` only when it carries `CTRL1_LOW_POWER`
-  /// (its target is a duty-cycled receiver that must be woken); every other start frame gets the
-  /// runtime-tunable `normal_start_preamble`. The bit and the preamble therefore always agree.
-  /// For a directed frame, the target's per-device `low_power` property sets the bit; for the
-  /// roll-call broadcast, the pass being sent sets it (see `ManagementActions::scan_paired_devices()`).
-  [[nodiscard]] uint16_t request_preamble_for_(const IoFrame &request) const;
 
   /// Block until the first response arrives or the wait window expires.
   decisions::ExchangeFirstResponseDisposition wait_for_first_response_(const IoFrame &request,

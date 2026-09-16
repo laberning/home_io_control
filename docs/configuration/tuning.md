@@ -158,6 +158,8 @@ your device may differ.
 | `pairing_discovery_initial_dwell_ms` | both | `300` | 0–500 ms | Settle delay before the first discovery TX. |
 | `pairing_key_exchange_retries` | both | `3` | 1–5 | Retries for the authenticated key-exchange phase. |
 | `scan_power_classes` | both | `both` | `both` / `always_alive` / `low_power` | Which device power classes the `scan_paired_devices` roll-call calls. |
+| `pairing_discover_confirm` | both | `send` | `skip` / `send` / `send_with_ack` | Whether/how to send `DISCOVER_CONFIRM` (0x2C) to a freshly-discovered device before the key exchange. |
+| `pairing_key_init_delay_ms` | both | `300` | 0–10000 ms | Pause after the discover-confirm step (ACKed, refused, or silent) and before `KEY_INIT` (0x31). |
 
 `ui_controls` itself is a feature toggle (default `false`) that exposes these as entities; it is
 not a tunable.
@@ -477,6 +479,46 @@ Which device power classes the `scan_paired_devices` roll-call calls (see
 Bisecting a mixed installation in the field is the main reason to touch this: run `low_power` alone
 to confirm which devices only answer the wake-up call, then `always_alive` alone to confirm the
 rest still answer without it.
+
+#### `pairing_discover_confirm`
+
+Whether — and how — the hub sends `CMD_DISCOVER_CONFIRM` (0x2C) directly to a freshly-discovered
+device before proceeding to the key exchange (0x31). Every real controller this project has
+captured sends this frame between the device's discovery response (0x29) and its own key-init
+(0x31).
+
+- **`send`** (default): sends 0x2C with `CTRL1_ACK` ("sender can handle 2W responses") clear in
+  both cases — `0x00` to an always-alive target, `0x20` (`CTRL1_LOW_POWER` only) to a low-power
+  one, matching every corpus hub's own shape for a low-power target. Setting `CTRL1_ACK`
+  unconditionally has silenced real Somfy awnings before (see `pairing_discovery_ack_capable`
+  above), so it stays off for an always-alive target here too, even though no captured hub sends
+  that shape. Hardware-confirmed: a Somfy Izymo dimmer answers `send`'s 0x2C within ~25 ms. A
+  short pause (`pairing_key_init_delay_ms`) follows the step before 0x31 is sent, whether or not
+  the device answered.
+- **`send_with_ack`**: like `send`, but sets `CTRL1_ACK` for an always-alive target too (`0x10`) —
+  the shape captured VELUX hubs (KLR200, KIG300) and a Somfy Connectivity Kit use. A low-power
+  target still gets `0x20`, identical to `send`. The Somfy Izymo dimmer never answers this shape
+  (pairing still completes, after the full ~4.8 s no-answer wait), so don't use it for Somfy
+  devices. It is only worth trying for an always-alive device (typically mains-powered VELUX) that
+  answers discovery but never sends a 0x2D with `send`, and whose key exchange then fails.
+- **`skip`**: kill switch. Sends no 0x2C and applies no pause. Use this if the step ever appears
+  to cause a pairing regression.
+
+The step never fails a pairing attempt in any mode: a refusal, silence, or wrong reply is logged
+and pairing proceeds to the key exchange regardless. Cost: about +0.3 s (the pause) plus the
+device's own reply latency when a 0x2D comes back on the first try; with no answer at all, up to
+roughly 4.8 s for an always-alive target and 5.4 s for a low-power one (three 1.5 s tries, the
+longer figure from the low-power target's wake-up preamble), pause included.
+
+#### `pairing_key_init_delay_ms`
+
+A pause after the discover-confirm step and before `CMD_KEY_INIT` (0x31), applied regardless of
+whether the device answered, refused, or stayed silent — for one simple rule instead of a
+per-outcome one. Real controllers leave several seconds here, and they appear to spend that time
+re-broadcasting 0x28 to look for more devices on the same channel, which this project's
+single-device discovery phase has no equivalent of. `300` ms keeps pairing fast; a Somfy Izymo
+dimmer pairs with both `300` and `5000`. Raise it only for a device that answers the 0x2C but
+stays silent to the key exchange. Has no effect when `pairing_discover_confirm` is `skip`.
 
 ### Reading pairing results without the tuning UI
 

@@ -46,6 +46,26 @@ enum class PairingKeyChallengeDisposition : uint8_t {
   ACCEPT,  ///< Valid 0x3C challenge from target device.
 };
 
+/// @brief Disposition for a candidate reply to a discovery-confirm request (0x2C).
+enum class PairingDiscoverConfirmDisposition : uint8_t {
+  IGNORE,  ///< Not from/to the expected endpoints, or a frame the step does not act on (e.g. a
+           ///< repeated 0x29) — keep waiting.
+  ACK,     ///< CMD_DISCOVER_CONFIRM_ACK (0x2D) from the device — it wants to proceed.
+  ERROR,   ///< CMD_ERROR_RESP from the device — an explicit, named refusal.
+};
+
+/// @brief Disposition for a candidate reply to the key-transfer (0x32) confirm wait — the
+/// slow-turnaround path's expanded classification of @ref PairingKeyChallengeDisposition's device
+/// challenge to also cover a direct confirm or an explicit refusal.
+enum class PairingKeyConfirmDisposition : uint8_t {
+  IGNORE,     ///< Not from/to the expected endpoints — keep waiting.
+  CONFIRM,    ///< CMD_KEY_CONFIRM (0x33) — the device accepted the key.
+  CHALLENGE,  ///< A fresh CMD_CHALLENGE_REQ (0x3C) — the device may challenge the key transfer
+              ///< before confirming it; answered via ExchangeEngine::answer_challenge().
+  REFUSE,     ///< Anything else (including CMD_ERROR_RESP) — an explicit or implicit refusal;
+              ///< ends the whole wait, not just the current try.
+};
+
 // == Passive RX filtering ==
 
 /// Returns true for commands that are internal to an exchange handshake and carry
@@ -159,6 +179,63 @@ inline PairingKeyChallengeDisposition classify_pairing_key_challenge(const IoFra
              ? PairingKeyChallengeDisposition::ACCEPT
              : PairingKeyChallengeDisposition::IGNORE;
 }
+
+/// Decide how to handle a candidate reply to a discovery-confirm request (0x2C) during pairing.
+///
+/// A non-matching or unrecognised frame is IGNORE, keeping the listen open rather than ending it:
+/// the discover-confirm step never fails a pairing attempt (see run_discover_confirm_step_()'s
+/// doc) — this classification only decides whether to keep listening or stop early.
+///
+/// @param candidate      Parsed IoFrame.
+/// @param device_id      Node ID of the device being paired (expected sender).
+/// @param controller_id  Node ID of this controller (expected destination).
+/// @return ACK for a matching 0x2D, ERROR for a matching CMD_ERROR_RESP, IGNORE otherwise.
+inline PairingDiscoverConfirmDisposition classify_pairing_discover_confirm_reply(
+    const IoFrame &candidate, const uint8_t device_id[NODE_ID_SIZE], const uint8_t controller_id[NODE_ID_SIZE]) {
+  if (!frame_matches_nodes(candidate, device_id, controller_id))
+    return PairingDiscoverConfirmDisposition::IGNORE;
+  if (candidate.cmd == CMD_DISCOVER_CONFIRM_ACK)
+    return PairingDiscoverConfirmDisposition::ACK;
+  if (candidate.cmd == CMD_ERROR_RESP)
+    return PairingDiscoverConfirmDisposition::ERROR;
+  // E.g. a repeated CMD_DISCOVER_RESP (0x29) from a device that missed our 0x2C and is still
+  // announcing itself — not an answer to this step, but not a foreign frame either.
+  return PairingDiscoverConfirmDisposition::IGNORE;
+}
+
+/// Decide how to handle a candidate reply to the key-transfer (0x32) confirm wait
+/// (wait_for_key_confirm_(), slow-turnaround chips only).
+///
+/// @param request   The outbound CMD_KEY_TRANSFER (0x32) this reply answers.
+/// @param candidate Parsed IoFrame from the device.
+/// @return CONFIRM/CHALLENGE/REFUSE for a matching frame of that shape; IGNORE for a frame from
+///         the wrong endpoints.
+inline PairingKeyConfirmDisposition classify_pairing_key_confirm_reply(const IoFrame &request,
+                                                                       const IoFrame &candidate) {
+  if (!frame_matches_exchange_endpoints(request, candidate))
+    return PairingKeyConfirmDisposition::IGNORE;
+  if (candidate.cmd == CMD_KEY_CONFIRM)
+    return PairingKeyConfirmDisposition::CONFIRM;
+  if (classify_pairing_key_challenge(candidate, request.dst, request.src) == PairingKeyChallengeDisposition::ACCEPT)
+    return PairingKeyConfirmDisposition::CHALLENGE;
+  return PairingKeyConfirmDisposition::REFUSE;
+}
+
+/// @brief Whether discover-confirm try `try_index` (1-based) should rotate channels rather than
+/// hold the request channel.
+///
+/// Tries 1 and 3 hold: a 0x2D is a unicast reply to a unicast 0x2C, and every other unicast
+/// pairing wait in this project holds the request channel on that same expectation (see
+/// listen_for_key_confirm_()'s own reasoning), and every 0x2D a Somfy Izymo dimmer sent came back on
+/// the request channel. But the one real VELUX-system sample on record (from a hopping monitor, a
+/// weak source) logged a 0x2D on a *different* channel than its own 0x2C, so the middle try hedges
+/// by rotating instead, until a VELUX device's reply channel is measured.
+/// See ADR 0039 for why this is not simply one fixed policy for every try, unlike every other
+/// listen in this project (ADR 0028).
+/// @param try_index 1-based try number (1..PAIRING_DISCOVER_CONFIRM_TRIES).
+/// @return true if this try should use ListenPolicy::ROTATE_ALL_CHANNELS; false for
+///         ListenPolicy::HOLD_REQUEST_CHANNEL.
+[[nodiscard]] inline bool discover_confirm_try_rotates(uint8_t try_index) { return try_index == 2; }
 
 // == One-way (1W) remote frame handling ==
 

@@ -45,6 +45,19 @@ void log_discovery_diagnostic(decisions::PairingDiscoveryDisposition disp) {
   }
 }
 
+/// Block for `ms`, feeding the watchdog between chunks of at most 1000 ms each — a single
+/// multi-second delay() would trip the loop-task watchdog, and `pairing_key_init_delay_ms` allows
+/// up to 10000. Used only by the discover-confirm step's post-step pause: every other wait in this
+/// file is short enough (a few hundred ms) that App.feed_wdt() inside the retry loop is enough.
+void delay_feeding_wdt(uint32_t ms) {
+  while (ms > 0) {
+    App.feed_wdt();
+    const uint32_t chunk = ms < 1000 ? ms : 1000;
+    delay(chunk);
+    ms -= chunk;
+  }
+}
+
 }  // namespace
 
 // --- Constructor ---
@@ -118,7 +131,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
 /// Uses `ExchangeEngine::listen()` with `ListenPolicy::HOLD_REQUEST_CHANNEL`: this is a unicast
 /// reply to a unicast request (the 0x31 key-init), and every measured unicast pairing reply came
 /// back on the request channel, so there is nothing here to hop for — same reasoning as
-/// `wait_for_key_confirm_()`. This loop runs on all three chips (it is called before the
+/// `listen_for_key_confirm_()`. This loop runs on all three chips (it is called before the
 /// `has_fast_tx_rx_turnaround()` branch in `run_key_exchange_phase_()`), unlike the dedicated
 /// confirm wait, which only slow-turnaround radios reach.
 bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &packet, IoFrame &challenge_frame,
@@ -154,15 +167,116 @@ bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &
   return false;
 }
 
+/// Wait for one discover-confirm (0x2C) try's answer.
+///
+/// Listen policy alternates per try (`decisions::discover_confirm_try_rotates()`): the one
+/// rotating try hedges against a 0x2D landing off the request channel — Somfy answers on the
+/// request channel, VELUX is unmeasured — while the rest hold, matching every other unicast
+/// pairing wait in this file (a 0x2D is a unicast reply to a unicast 0x2C). Only parsed frames are
+/// recorded to telemetry, same as the other pairing waits.
+decisions::PairingDiscoverConfirmDisposition PairingEngine::wait_for_discover_confirm_ack_(
+    uint8_t try_index, pairing::PairingContext &context) {
+  ListenSpec spec;
+  spec.window_ms = PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS;
+  if (decisions::discover_confirm_try_rotates(try_index)) {
+    spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+    // Same shape as the discovery listen's rotating spec: a short rotating dwell needs the
+    // preamble/sync linger guard so an incoming reply is not cut off mid-retune.
+    spec.linger_on_preamble = true;
+    spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
+    spec.on_hop = [this]() { this->telemetry_.record_hop(); };
+  } else {
+    spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+  }
+
+  auto disposition = decisions::PairingDiscoverConfirmDisposition::IGNORE;
+  auto outcome =
+      engine_.listen(spec, context.packet, context.rx, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
+        if (parsed == nullptr)
+          return ReplyDisposition::IGNORE;
+        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+        disposition = decisions::classify_pairing_discover_confirm_reply(*parsed, context.device.node_id, node_id_);
+        if (disposition == decisions::PairingDiscoverConfirmDisposition::IGNORE) {
+          this->telemetry_.record_rx_reject(*parsed, rssi);
+          return ReplyDisposition::IGNORE;
+        }
+        this->telemetry_.record_rx(*parsed, rssi);
+        return ReplyDisposition::ACCEPT;
+      });
+
+  if (outcome != ListenOutcome::ACCEPTED)
+    return decisions::PairingDiscoverConfirmDisposition::IGNORE;  // Timeout: no reply this try.
+  return disposition;
+}
+
+/// One HOLD_REQUEST_CHANNEL listen for the key-transfer confirm wait — see the header doc for why
+/// this is a shared helper rather than an inline lambda repeated at each of its two call sites.
+///
+/// Deliberately holds the request channel rather than hopping: a key confirm is a unicast reply to
+/// a unicast request, and every measured unicast pairing reply — the 0x33 in the corpus pairing
+/// captures on all three chips, every 0x3C, field-logged 0xFE error replies — came back on the
+/// channel the request went out on. Only replies to *broadcasts* are measured off the request
+/// channel, so there is nothing here to hop for, and hopping loses any device that answers later
+/// than one slice (real devices answer some requests at 246+ ms). HOLD also does not slice the
+/// wait: slicing exists so a hopping loop gets a chance to hop between dwells, and to keep the
+/// watchdog fed during a long silent wait; neither applies here, and wait_for_packet() already
+/// feeds the watchdog internally while it blocks.
+decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(pairing::PairingContext &context,
+                                                                               uint8_t try_number,
+                                                                               bool after_challenge) {
+  ListenSpec spec;
+  spec.window_ms = PAIRING_KEY_CONFIRM_TIMEOUT_MS;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+
+  bool saw_any = false;
+  auto disposition = decisions::PairingKeyConfirmDisposition::IGNORE;
+  auto outcome =
+      engine_.listen(spec, context.packet, context.resp, [&](const IoFrame *parsed, const RadioRxPacket &packet) {
+        saw_any = true;
+        ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
+        if (parsed == nullptr) {
+          ESP_LOGD(TAG, "Key confirm wait: parse failed");
+          return ReplyDisposition::IGNORE;
+        }
+        ESP_LOGD(TAG, "Key confirm wait: parsed cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X", parsed->cmd,
+                 parsed->src[0], parsed->src[1], parsed->src[2], parsed->dst[0], parsed->dst[1], parsed->dst[2]);
+        disposition = decisions::classify_pairing_key_confirm_reply(context.req, *parsed);
+        if (disposition == decisions::PairingKeyConfirmDisposition::IGNORE)
+          return ReplyDisposition::IGNORE;
+
+        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+        if (disposition == decisions::PairingKeyConfirmDisposition::REFUSE) {
+          this->telemetry_.record_rx_reject(*parsed, rssi);
+          ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
+                   command_name(parsed->cmd), parsed->cmd);
+          if (parsed->cmd == CMD_ERROR_RESP && parsed->data_len > 0)
+            ESP_LOGW(TAG, "Key transfer: error code=0x%02X", parsed->data[0]);
+          return ReplyDisposition::ABORT;
+        }
+        // CONFIRM (0x33) or CHALLENGE (a well-formed 0x3C): both are legitimate answers, not
+        // rejections. No TX happens in this callback — a CHALLENGE is answered by the caller
+        // after this listen ends, per the header doc.
+        this->telemetry_.record_rx(*parsed, rssi);
+        return disposition == decisions::PairingKeyConfirmDisposition::CONFIRM ? ReplyDisposition::ACCEPT
+                                                                               : ReplyDisposition::ABORT;
+      });
+
+  if (outcome == ListenOutcome::TIMED_OUT) {
+    ESP_LOGI(TAG, "Try %u%s: no response for key transfer (0x32) within %" PRIu32 " ms (saw_any=%d)", try_number,
+             after_challenge ? " (post-challenge)" : "", PAIRING_KEY_CONFIRM_TIMEOUT_MS, saw_any);
+    return decisions::PairingKeyConfirmDisposition::IGNORE;
+  }
+  return disposition;
+}
+
 /// Transmit the 0x32 key transfer and wait for 0x33 key confirm (with retry).
 ///
 /// Only reached on slow-turnaround radios (`RadioDriver::has_fast_tx_rx_turnaround() == false`,
 /// i.e. SX1262/LR1121): fast-turnaround radios (SX1276) catch the 0x33 through the standard
 /// `ExchangeEngine::send_and_receive_()` / `wait_for_first_response_()` path instead and never
-/// call this function — see `run_key_exchange_phase_()`. Uses `ExchangeEngine::listen()` with
-/// `ListenPolicy::HOLD_REQUEST_CHANNEL` (does not hop, does not slice, see below) and the driver's
-/// response_preamble() (drivers whose TX waveform needs more lock-on margin return a longer
-/// preamble). Retries up to EXCHANGE_RETRY_COUNT times on timeout.
+/// call this function — see `run_key_exchange_phase_()`. Uses the driver's response_preamble()
+/// (drivers whose TX waveform needs more lock-on margin return a longer preamble). Retries up to
+/// EXCHANGE_RETRY_COUNT times on timeout.
 bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
     if (tries > 0) {
@@ -172,61 +286,25 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
     if (!engine_.transmit_frame(context.req, FREQ_CH2, radio_()->response_preamble()))
       continue;
 
-    // Deliberately holds the request channel rather than hopping: a key confirm is a unicast
-    // reply to a unicast request, and every measured unicast pairing reply — the 0x33 in the
-    // corpus pairing captures on all three chips, every 0x3C, field-logged 0xFE error replies —
-    // came back on the channel the request went out on. Only replies to *broadcasts* are measured
-    // off the request channel. So there is nothing here to hop for, and hopping loses any device
-    // that answers later than one slice (real devices answer some requests at 246+ ms). The
-    // challenge wait above holds still for the same reason; the broadcast roll-call is the
-    // opposite case and uses ListenPolicy::ROTATE_SKIPPING_REQUEST instead.
-    //
-    // HOLD also does not slice the wait: slicing exists so a hopping loop gets a chance to hop
-    // between dwells, and to keep the watchdog fed during a long silent wait. Neither applies
-    // here — there is nothing to hop for (above), and wait_for_packet() already feeds the
-    // watchdog internally while it waits. Waiting the full remaining window in one call means
-    // strictly fewer RX re-arm gaps than any slicing would, which matters most on exactly the
-    // radios that reach this loop: has_fast_tx_rx_turnaround() routes fast-turnaround chips
-    // (SX1276) through ExchangeEngine::wait_for_first_response_() instead, so only the
-    // slow-turnaround chips (SX1262, LR1121) — the ones where a re-arm is most expensive — ever
-    // wait here.
-    ListenSpec spec;
-    spec.window_ms = PAIRING_KEY_CONFIRM_TIMEOUT_MS;
-    spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+    const uint8_t try_number = tries + 1;
+    decisions::PairingKeyConfirmDisposition disposition = listen_for_key_confirm_(context, try_number, false);
+    if (disposition == decisions::PairingKeyConfirmDisposition::CHALLENGE) {
+      ESP_LOGI(TAG, "Key transfer: device challenged the key transfer, answering 0x3D");
+      // "Rest of the window" would leave almost nothing after a late challenge plus the 0x3D TX,
+      // so this is a fresh full window, same as ExchangeEngine::wait_for_final_response_() gets
+      // after handle_authentication_(). A failed 0x3D build/TX leaves `disposition` at CHALLENGE,
+      // which the checks below treat the same as a second challenge: this try ends without
+      // confirming, and the next try re-sends 0x32.
+      if (engine_.answer_challenge(context.req, context.resp, FREQ_CH2))
+        disposition = listen_for_key_confirm_(context, try_number, true);
+    }
 
-    bool saw_any = false;
-    auto outcome =
-        engine_.listen(spec, context.packet, context.resp, [&](const IoFrame *parsed, const RadioRxPacket &packet) {
-          saw_any = true;
-          ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
-          if (parsed == nullptr) {
-            ESP_LOGD(TAG, "Key confirm wait: parse failed");
-            return ReplyDisposition::IGNORE;
-          }
-          ESP_LOGD(TAG, "Key confirm wait: parsed cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X", parsed->cmd,
-                   parsed->src[0], parsed->src[1], parsed->src[2], parsed->dst[0], parsed->dst[1], parsed->dst[2]);
-          if (!decisions::frame_matches_exchange_endpoints(context.req, *parsed))
-            return ReplyDisposition::IGNORE;
-          const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
-          if (frame_is_key_confirm(*parsed)) {
-            this->telemetry_.record_rx(*parsed, rssi);
-            return ReplyDisposition::ACCEPT;
-          }
-          this->telemetry_.record_rx_reject(*parsed, rssi);
-          ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
-                   command_name(parsed->cmd), parsed->cmd);
-          if (parsed->cmd == CMD_ERROR_RESP && parsed->data_len > 0)
-            ESP_LOGW(TAG, "Key transfer: error code=0x%02X", parsed->data[0]);
-          return ReplyDisposition::ABORT;
-        });
-
-    if (outcome == ListenOutcome::ACCEPTED)
+    if (disposition == decisions::PairingKeyConfirmDisposition::CONFIRM)
       return true;
-    if (outcome == ListenOutcome::ABORTED)
-      return false;  // An explicit refusal must not spend the remaining retries.
-
-    ESP_LOGI(TAG, "Try %d ended: no response for key transfer (0x32) within %" PRIu32 " ms (saw_any=%d)", tries + 1,
-             PAIRING_KEY_CONFIRM_TIMEOUT_MS, saw_any);
+    if (disposition == decisions::PairingKeyConfirmDisposition::REFUSE)
+      return false;  // An explicit refusal must not spend the remaining retries; a challenge is
+                     // not a refusal, so neither branch above returns false for it.
+    // IGNORE (timeout) or a second CHALLENGE in the same try: spend the next try.
   }
   return false;
 }
@@ -361,6 +439,84 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
   }
   return saw_invalid ? decisions::PairingDiscoveryDisposition::INVALID
                      : decisions::PairingDiscoveryDisposition::NO_RESPONSE;
+}
+
+/// Discover-confirm step (0x2C → 0x2D): sent directly to the device discovery just found, once
+/// per discover_and_pair() attempt, before the key-exchange retry loop begins (so a retry of that
+/// loop never repeats this step).
+///
+/// Never fails a pairing attempt: `skip` mode, a timeout, and an explicit CMD_ERROR_RESP all still
+/// let discover_and_pair() proceed to run_key_exchange_phase_() — this function only decides how
+/// long that takes and what gets logged. CTRL1_ACK follows the *target's* power class, not the
+/// mode alone: a low-power target's 0x2C carries `CTRL1_LOW_POWER` only in both `send` and
+/// `send_with_ack` (every corpus hub's own shape for that class); only an always-alive target's
+/// ACK bit changes between the two modes (see create_discover_confirm()'s doxygen for the
+/// byte-shape cross-check against real captures).
+///
+/// `set_phase()` fires at most once per state for the whole step (not per try): the confirm step
+/// can spend up to PAIRING_DISCOVER_CONFIRM_TRIES transmits, and PAIRING_TELEMETRY_MAX_EVENTS is a
+/// fixed 32-event budget the pairing advisor scans — a per-try phase would spend events on exactly
+/// the failure paths it is meant to diagnose. record_debug() (not telemetry) still runs every try.
+pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing::PairingContext &context) {
+  if (tuning_->pairing_discover_confirm == DiscoverConfirmMode::SKIP)
+    return pairing::DiscoverConfirmResult::SKIPPED;
+
+  const bool ack =
+      tuning_->pairing_discover_confirm == DiscoverConfirmMode::SEND_WITH_ACK && !context.discovery_low_power;
+
+  context.state = pairing::PairingState::TX_DISCOVER_CONFIRM;
+  this->telemetry_.set_phase(context.state);
+
+  bool wait_phase_started = false;
+  pairing::DiscoverConfirmResult result = pairing::DiscoverConfirmResult::NO_REPLY;
+  for (uint8_t try_index = 1; try_index <= PAIRING_DISCOVER_CONFIRM_TRIES; try_index++) {
+    if (try_index > 1)
+      App.feed_wdt();  // No extra retry gap: the 1.5 s windows already space the retransmissions.
+
+    engine_.record_debug(pairing_stage_name(pairing::PairingState::TX_DISCOVER_CONFIRM), try_index, false);
+    if (!create_discover_confirm(context.req, node_id_, context.device.node_id, context.discovery_low_power, ack) ||
+        !engine_.transmit_frame(context.req, FREQ_CH2, engine_.request_preamble_for(context.req))) {
+      continue;  // A failed build/TX counts as a silent try, like wait_for_key_confirm_() does for 0x32.
+    }
+
+    context.state = pairing::PairingState::WAIT_DISCOVER_CONFIRM;
+    if (!wait_phase_started) {
+      this->telemetry_.set_phase(context.state);
+      wait_phase_started = true;
+    }
+    engine_.record_debug(pairing_stage_name(context.state), try_index, false);
+
+    const uint32_t wait_start_ms = millis();
+    const decisions::PairingDiscoverConfirmDisposition disposition = wait_for_discover_confirm_ack_(try_index, context);
+
+    if (disposition == decisions::PairingDiscoverConfirmDisposition::ACK) {
+      ESP_LOGI(TAG, "Discover confirm: 0x2D from %s on freq=%" PRIu32 " after %" PRIu32 " ms (try %u/%u)",
+               context.device_id.c_str(), context.packet.freq_hz, millis() - wait_start_ms, try_index,
+               PAIRING_DISCOVER_CONFIRM_TRIES);
+      result = pairing::DiscoverConfirmResult::ACKED;
+      break;
+    }
+    if (disposition == decisions::PairingDiscoverConfirmDisposition::ERROR) {
+      const uint8_t error_code = context.rx.data_len > 0 ? context.rx.data[0] : 0;
+      ESP_LOGW(TAG, "Discover confirm: device %s answered 0x2C with error 0x%02X, continuing with key exchange",
+               context.device_id.c_str(), error_code);
+      result = pairing::DiscoverConfirmResult::ERROR_REPLY;
+      break;
+    }
+    // IGNORE: timeout or an unrelated frame this try — spend the next try.
+  }
+
+  if (result == pairing::DiscoverConfirmResult::NO_REPLY) {
+    ESP_LOGI(TAG, "Discover confirm: no 0x2D from %s after %u tries, continuing with key exchange",
+             context.device_id.c_str(), PAIRING_DISCOVER_CONFIRM_TRIES);
+  }
+
+  // Applied for every result reaching here (i.e. every result except SKIPPED, which already
+  // returned above), including NO_REPLY — one simple rule instead of a per-outcome one.
+  if (tuning_->pairing_key_init_delay_ms > 0)
+    delay_feeding_wdt(tuning_->pairing_key_init_delay_ms);
+
+  return result;
 }
 
 /// Phase 2: authenticated key exchange (0x31 → 0x3C → 0x32 → 0x33).
@@ -502,6 +658,10 @@ bool PairingEngine::discover_and_pair() {
                                       : PairingOutcome::NO_RESPONSE);
     return false;
   }
+
+  // Discover-confirm (0x2C -> 0x2D): once per attempt, before the key-exchange retry loop below,
+  // so a retry of that loop never repeats it. Never fails the attempt — see the function's doc.
+  this->run_discover_confirm_step_(context);
 
   // Phase 2: Key exchange — retry up to the configured number of times.
   bool key_exchanged = false;

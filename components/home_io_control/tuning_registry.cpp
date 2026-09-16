@@ -17,7 +17,7 @@
 namespace esphome {
 namespace home_io_control {
 
-// === Numeric parameters (19) ===================================================
+// === Numeric parameters (20) ===================================================
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
@@ -76,6 +76,10 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
     {"pairing_key_exchange_retries",
      [](const TuningConfig &t) { return static_cast<float>(t.pairing_key_exchange_retries); },
      [](TuningConfig &t, float v) { t.pairing_key_exchange_retries = static_cast<uint8_t>(v); }, false},
+    // false: read straight out of TuningConfig by PairingEngine::run_discover_confirm_step_() at
+    // the point of the pause, the same as pairing_discovery_preamble/pairing_discovery_wait_ms above.
+    {"pairing_key_init_delay_ms", [](const TuningConfig &t) { return static_cast<float>(t.pairing_key_init_delay_ms); },
+     [](TuningConfig &t, float v) { t.pairing_key_init_delay_ms = static_cast<uint16_t>(v); }, false},
 };
 
 // Boolean select rows share one get/set shape (an On/Off toggle over a single TuningConfig
@@ -92,7 +96,7 @@ template<bool TuningConfig::*Field> bool bool_select_set(TuningConfig &t, const 
   return true;
 }
 
-// === Select parameters (9) =====================================================
+// === Select parameters (10) ====================================================
 // The setters return false only when the option string is unparseable AND leaving the
 // value untouched is the intended behavior (currently the bandwidth enum and the boolean
 // rows). The destination/payload setters return false for unrecognized values so no radio
@@ -197,6 +201,16 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        if (!selection.has_value())
          return false;
        t.scan_power_classes = selection.value();
+       return true;
+     },
+     false},
+    {"pairing_discover_confirm",
+     [](const TuningConfig &t) { return discover_confirm_mode_to_string(t.pairing_discover_confirm); },
+     [](TuningConfig &t, const std::string &v) -> bool {
+       auto mode = discover_confirm_mode_from_string(v);
+       if (!mode.has_value())
+         return false;
+       t.pairing_discover_confirm = mode.value();
        return true;
      },
      false},

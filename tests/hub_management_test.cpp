@@ -930,7 +930,7 @@ TEST(HubManagement, ScanPairedDevicesSweepsBothPowerClasses) {
         << "attempt " << (i + 1) << ": low-power pass must set LOW_POWER and ACK";
     EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
     EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, LONG_PREAMBLE)
-        << "attempt " << (i + 1) << ": LOW_POWER selects LONG_PREAMBLE via request_preamble_for_()'s rule";
+        << "attempt " << (i + 1) << ": LOW_POWER selects LONG_PREAMBLE via request_preamble_for()'s rule";
   }
   // Attempts 4-6: always-alive pass, CTRL1 = 0x00, normal_start_preamble.
   for (uint8_t i = 3; i < 6; i++) {

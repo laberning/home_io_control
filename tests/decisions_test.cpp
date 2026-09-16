@@ -133,6 +133,113 @@ TEST(Decisions, PairingKeyChallengeIgnoreWrongNodes) {
       << "wrong node pairing challenge should be ignored during pairing key wait";
 }
 
+// ========================================================================================
+// Pairing discover-confirm reply classification
+// ========================================================================================
+
+TEST(Decisions, PairingDiscoverConfirmAckAccepted) {
+  const IoFrame ack = make_frame(DST_ID, OWN_ID, CMD_DISCOVER_CONFIRM_ACK, 0);
+
+  EXPECT_EQ(decisions::classify_pairing_discover_confirm_reply(ack, DST_ID, OWN_ID),
+            decisions::PairingDiscoverConfirmDisposition::ACK)
+      << "matching 0x2D should be classified as ACK";
+}
+
+TEST(Decisions, PairingDiscoverConfirmIgnoresWrongSrc) {
+  const IoFrame foreign = make_frame(FOREIGN_ID, OWN_ID, CMD_DISCOVER_CONFIRM_ACK, 0);
+
+  EXPECT_EQ(decisions::classify_pairing_discover_confirm_reply(foreign, DST_ID, OWN_ID),
+            decisions::PairingDiscoverConfirmDisposition::IGNORE)
+      << "a 0x2D from a different node should be ignored";
+}
+
+TEST(Decisions, PairingDiscoverConfirmIgnoresWrongDst) {
+  const IoFrame wrong_dst = make_frame(DST_ID, FOREIGN_ID, CMD_DISCOVER_CONFIRM_ACK, 0);
+
+  EXPECT_EQ(decisions::classify_pairing_discover_confirm_reply(wrong_dst, DST_ID, OWN_ID),
+            decisions::PairingDiscoverConfirmDisposition::IGNORE)
+      << "a 0x2D addressed to someone else should be ignored";
+}
+
+TEST(Decisions, PairingDiscoverConfirmErrorReply) {
+  const IoFrame error = make_frame(DST_ID, OWN_ID, CMD_ERROR_RESP, 1);
+
+  EXPECT_EQ(decisions::classify_pairing_discover_confirm_reply(error, DST_ID, OWN_ID),
+            decisions::PairingDiscoverConfirmDisposition::ERROR)
+      << "a matching CMD_ERROR_RESP should be classified as ERROR";
+}
+
+TEST(Decisions, PairingDiscoverConfirmIgnoresUnrelatedCommands) {
+  const IoFrame repeated_discover_resp = make_frame(DST_ID, OWN_ID, CMD_DISCOVER_RESP, 2);
+  EXPECT_EQ(decisions::classify_pairing_discover_confirm_reply(repeated_discover_resp, DST_ID, OWN_ID),
+            decisions::PairingDiscoverConfirmDisposition::IGNORE)
+      << "a repeated 0x29 is not an answer to the discover-confirm step";
+
+  const IoFrame challenge = make_frame(DST_ID, OWN_ID, CMD_CHALLENGE_REQ, HMAC_SIZE);
+  EXPECT_EQ(decisions::classify_pairing_discover_confirm_reply(challenge, DST_ID, OWN_ID),
+            decisions::PairingDiscoverConfirmDisposition::IGNORE)
+      << "a 0x3C is not an answer to the discover-confirm step";
+}
+
+// ========================================================================================
+// Pairing key-confirm reply classification (slow-turnaround wait_for_key_confirm_() path)
+// ========================================================================================
+
+TEST(Decisions, PairingKeyConfirmConfirmAccepted) {
+  const IoFrame request = make_frame(OWN_ID, DST_ID, CMD_KEY_TRANSFER, 16);
+  const IoFrame confirm = make_frame(DST_ID, OWN_ID, CMD_KEY_CONFIRM, 0);
+
+  EXPECT_EQ(decisions::classify_pairing_key_confirm_reply(request, confirm),
+            decisions::PairingKeyConfirmDisposition::CONFIRM)
+      << "matching 0x33 should be classified as CONFIRM";
+}
+
+TEST(Decisions, PairingKeyConfirmChallengeFromFreshChallenge) {
+  const IoFrame request = make_frame(OWN_ID, DST_ID, CMD_KEY_TRANSFER, 16);
+  const IoFrame challenge = make_frame(DST_ID, OWN_ID, CMD_CHALLENGE_REQ, HMAC_SIZE);
+
+  EXPECT_EQ(decisions::classify_pairing_key_confirm_reply(request, challenge),
+            decisions::PairingKeyConfirmDisposition::CHALLENGE)
+      << "a well-formed 0x3C (6-byte challenge) should be classified as CHALLENGE";
+}
+
+TEST(Decisions, PairingKeyConfirmRefusesShortChallenge) {
+  const IoFrame request = make_frame(OWN_ID, DST_ID, CMD_KEY_TRANSFER, 16);
+  const IoFrame short_challenge = make_frame(DST_ID, OWN_ID, CMD_CHALLENGE_REQ, HMAC_SIZE - 1);
+
+  EXPECT_EQ(decisions::classify_pairing_key_confirm_reply(request, short_challenge),
+            decisions::PairingKeyConfirmDisposition::REFUSE)
+      << "a malformed 0x3C does not satisfy classify_pairing_key_challenge(), so it falls to REFUSE";
+}
+
+TEST(Decisions, PairingKeyConfirmRefusesErrorResponse) {
+  const IoFrame request = make_frame(OWN_ID, DST_ID, CMD_KEY_TRANSFER, 16);
+  const IoFrame error = make_frame(DST_ID, OWN_ID, CMD_ERROR_RESP, 1);
+
+  EXPECT_EQ(decisions::classify_pairing_key_confirm_reply(request, error),
+            decisions::PairingKeyConfirmDisposition::REFUSE)
+      << "CMD_ERROR_RESP should be classified as REFUSE, an explicit refusal";
+}
+
+TEST(Decisions, PairingKeyConfirmIgnoresForeignEndpoints) {
+  const IoFrame request = make_frame(OWN_ID, DST_ID, CMD_KEY_TRANSFER, 16);
+  const IoFrame foreign = make_frame(FOREIGN_ID, OWN_ID, CMD_KEY_CONFIRM, 0);
+
+  EXPECT_EQ(decisions::classify_pairing_key_confirm_reply(request, foreign),
+            decisions::PairingKeyConfirmDisposition::IGNORE)
+      << "a reply from a node other than the one we transferred the key to should be ignored";
+}
+
+// ========================================================================================
+// Discover-confirm try-rotation mapping
+// ========================================================================================
+
+TEST(Decisions, DiscoverConfirmTryRotationMapping) {
+  EXPECT_FALSE(decisions::discover_confirm_try_rotates(1)) << "try 1 should hold the request channel";
+  EXPECT_TRUE(decisions::discover_confirm_try_rotates(2)) << "try 2 should rotate all channels";
+  EXPECT_FALSE(decisions::discover_confirm_try_rotates(3)) << "try 3 should hold the request channel";
+}
+
 // ============================================================================
 // 1W burst suppression — is_duplicate_1w_frame()
 // ============================================================================

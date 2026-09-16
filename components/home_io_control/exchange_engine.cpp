@@ -262,7 +262,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   // above EXCHANGE_RETRY_COUNT (the budget check downstream assumes that ceiling).
   const uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
   this->debug_.max_tries = tries_allowed;
-  const uint16_t request_preamble = this->request_preamble_for_(request);
+  const uint16_t request_preamble = this->request_preamble_for(request);
   const uint32_t exchange_begin_ms = millis();
   bool accepted_without_reply = false;
 
@@ -340,7 +340,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
 // Outbound exchange step helpers
 // ============================================================================
 
-uint16_t ExchangeEngine::request_preamble_for_(const IoFrame &request) const {
+uint16_t ExchangeEngine::request_preamble_for(const IoFrame &request) const {
   // Gate on is_start() first: several device-role / continuation builders (key transfer,
   // status-update response) set CTRL1_LOW_POWER on a non-start frame, and those must keep the
   // short response preamble, not be lengthened.
@@ -404,13 +404,6 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   ctx.state = exchange::OutboundExchangeState::BUILD_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
 
-  IoFrame auth_resp;
-  if (!create_challenge_resp(auth_resp, request.dst, this->node_id_, ctx.rx.data, request, this->system_key_)) {
-    ctx.state = exchange::OutboundExchangeState::FAILED;
-    this->record_debug("auth_build_failed", ctx.try_index, true);
-    return false;
-  }
-
   // No challenge bytes here: the raw 0x3C payload plus the 0x3D response it provokes is a
   // known-plaintext/known-ciphertext pair under the system key (see redaction.h). The generic
   // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
@@ -419,13 +412,22 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
 
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
-  if (!this->transmit_frame(auth_resp, freq, (*this->radio_ptr_)->response_preamble())) {
+  // answer_challenge() covers both the 0x3D build and its transmit as one step, so a failure here
+  // does not distinguish which of the two failed.
+  if (!this->answer_challenge(request, ctx.rx, freq)) {
     ctx.state = exchange::OutboundExchangeState::FAILED;
-    this->record_debug("tx_auth_failed", ctx.try_index, true);
+    this->record_debug("auth_response_failed", ctx.try_index, true);
     return false;
   }
   this->counters_.challenge_round_trips++;
   return true;
+}
+
+bool ExchangeEngine::answer_challenge(const IoFrame &request, const IoFrame &challenge, uint32_t freq) {
+  IoFrame auth_resp;
+  if (!create_challenge_resp(auth_resp, request.dst, this->node_id_, challenge.data, request, this->system_key_))
+    return false;
+  return this->transmit_frame(auth_resp, freq, (*this->radio_ptr_)->response_preamble());
 }
 
 decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_response_(
@@ -475,7 +477,7 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
                                                     ListenPolicy policy) {
   this->reset_debug(request.cmd);
 
-  if (!this->transmit_frame(request, freq, this->request_preamble_for_(request))) {
+  if (!this->transmit_frame(request, freq, this->request_preamble_for(request))) {
     this->record_debug("broadcast_tx_failed", 1, false);
     return 0;
   }

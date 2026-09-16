@@ -209,5 +209,14 @@ static constexpr uint16_t PAIRING_DISCOVERY_WAIT_MS = 2000;  ///< Wait window af
 static constexpr uint16_t PAIRING_DISCOVERY_INITIAL_DWELL_MS = 300;  ///< Dwell on CH2 before discovery hopping begins.
 static constexpr uint8_t PAIRING_KEY_EXCHANGE_RETRIES = 3;  ///< Retries for the authenticated key-exchange phase.
 
+/// Default for `TuningConfig::pairing_key_init_delay_ms` — pause after the discover-confirm step
+/// (whether it was ACKed, refused, or silent) and before CMD_KEY_INIT (0x31). No capture
+/// precedent for 300 ms specifically: real hubs take several seconds longer here, and appear to
+/// spend that time re-broadcasting 0x28 to look for more devices, which this project's
+/// single-device discovery phase has no equivalent of. 300 ms is the short end: a Somfy Izymo
+/// dimmer pairs with both 300 ms and 5000 ms here, so the default keeps pairing fast, and
+/// `pairing_key_init_delay_ms` can lengthen it for a device that needs a later 0x31.
+static constexpr uint16_t PAIRING_KEY_INIT_DELAY_MS = 300;
+
 }  // namespace home_io_control
 }  // namespace esphome

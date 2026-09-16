@@ -36,6 +36,9 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
+  using IOHomeControlComponent::tuning_;
+  using IOHomeControlComponent::exchange_engine_;
+  using IOHomeControlComponent::pairing_telemetry_;
 
   // Local recent-sighting slot for the shadow engine below — independent of the base class's own
   // protected member of the same purpose, and left at its default (seen_ms == 0) so it never seeds
@@ -860,6 +863,13 @@ TEST(DiscoverAndPair, HappyPath_RegistersDevice) {
   radio.queue_rx(
       frame_to_rx_packet(build_discovery_response(device_bytes, comp.node_id_, DeviceType::ROLLER_SHUTTER, 1)));
 
+  // 1a. Discover-confirm ack (0x2D): device → controller. Default tuning (`send`) now transmits
+  // a 0x2C and waits for this before proceeding — without it queued here, the discover-confirm
+  // wait would swallow the queued 0x3C below as an unrelated frame.
+  IoFrame discover_confirm_ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(discover_confirm_ack, device_bytes, comp.node_id_));
+  radio.queue_rx(frame_to_rx_packet(discover_confirm_ack));
+
   // 2. Key challenge (0x3C): device → controller
   uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
   radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_bytes, comp.node_id_, challenge)));
@@ -999,6 +1009,103 @@ TEST(PairingHelpers, KeyConfirmWaitStillReturnsFalseOnErrorResponse) {
 }
 
 // ============================================================================
+// wait_for_key_confirm device-challenge handling (F2: slow-turnaround post-0x32 challenge)
+// ============================================================================
+
+TEST(PairingHelpers, KeyConfirmWaitAnswersDeviceChallengeThenAcceptsConfirm) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  pairing::PairingContext context = make_key_transfer_context(comp.node_id_, test::DST_ID);
+
+  uint8_t challenge[HMAC_SIZE] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(test::DST_ID, comp.node_id_, challenge)));
+  radio.queue_rx(frame_to_rx_packet(build_key_confirm(test::DST_ID, comp.node_id_)));
+
+  EXPECT_TRUE(comp.pairing_engine_.wait_for_key_confirm_(context))
+      << "a device challenge must be answered, not treated as a refusal";
+
+  ASSERT_EQ(radio.get_sent_data().size(), 2u) << "sends: 0x32 (key transfer), 0x3D (challenge response)";
+  EXPECT_EQ(radio.get_sent_data()[0][FRAME_CMD_OFFSET], CMD_KEY_TRANSFER);
+  EXPECT_EQ(radio.get_sent_data()[1][FRAME_CMD_OFFSET], CMD_CHALLENGE_RESP);
+
+  IoFrame expected_resp{};
+  ASSERT_TRUE(
+      create_challenge_resp(expected_resp, context.req.dst, comp.node_id_, challenge, context.req, comp.system_key_));
+  uint8_t expected_raw[64];
+  const uint8_t expected_len = serialize(expected_resp, expected_raw, sizeof(expected_raw));
+  ASSERT_EQ(radio.get_sent_data()[1].size(), expected_len);
+  EXPECT_EQ(0, memcmp(radio.get_sent_data()[1].data(), expected_raw, expected_len))
+      << "the 0x3D must equal create_challenge_resp() recomputed over the 0x32 with the system key";
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 2u);
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, radio.response_preamble())
+      << "the 0x3D must use the driver's response_preamble(), same as any other continuation frame";
+}
+
+TEST(PairingHelpers, KeyConfirmWaitSecondChallengeInSameTryEndsTheTry) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  pairing::PairingContext context = make_key_transfer_context(comp.node_id_, test::DST_ID);
+
+  uint8_t challenge1[HMAC_SIZE] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  uint8_t challenge2[HMAC_SIZE] = {0x66, 0x55, 0x44, 0x33, 0x22, 0x11};
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(test::DST_ID, comp.node_id_, challenge1)));
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(test::DST_ID, comp.node_id_, challenge2)));
+  radio.queue_rx(frame_to_rx_packet(build_key_confirm(test::DST_ID, comp.node_id_)));
+
+  EXPECT_TRUE(comp.pairing_engine_.wait_for_key_confirm_(context))
+      << "a second challenge in the same try must end that try, not the whole wait -- the next try "
+         "re-sends 0x32 and succeeds";
+
+  ASSERT_EQ(radio.get_sent_data().size(), 3u);
+  EXPECT_EQ(radio.get_sent_data()[0][FRAME_CMD_OFFSET], CMD_KEY_TRANSFER) << "try 1: 0x32";
+  EXPECT_EQ(radio.get_sent_data()[1][FRAME_CMD_OFFSET], CMD_CHALLENGE_RESP)
+      << "try 1: 0x3D answering the first challenge";
+  EXPECT_EQ(radio.get_sent_data()[2][FRAME_CMD_OFFSET], CMD_KEY_TRANSFER)
+      << "try 2: a fresh 0x32, not a second 0x3D for the second challenge";
+}
+
+TEST(PairingHelpers, KeyConfirmWaitRefusalAfterAnsweredChallengeReturnsFalse) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  pairing::PairingContext context = make_key_transfer_context(comp.node_id_, test::DST_ID);
+
+  uint8_t challenge[HMAC_SIZE] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(test::DST_ID, comp.node_id_, challenge)));
+
+  IoFrame error_resp{};
+  init_frame(error_resp, true, false, false, false);
+  set_dst(error_resp, comp.node_id_);
+  set_src(error_resp, test::DST_ID);
+  const uint8_t error_code[1] = {0x01};
+  set_cmd(error_resp, CMD_ERROR_RESP, error_code, 1);
+  radio.queue_rx(frame_to_rx_packet(error_resp));
+
+  EXPECT_FALSE(comp.pairing_engine_.wait_for_key_confirm_(context))
+      << "an explicit refusal in the post-challenge listen must still end the whole wait, not just the try";
+
+  ASSERT_EQ(radio.get_sent_data().size(), 2u)
+      << "sends: 0x32 (key transfer), 0x3D (challenge response) -- no further try after the refusal";
+  EXPECT_EQ(radio.get_sent_data()[0][FRAME_CMD_OFFSET], CMD_KEY_TRANSFER);
+  EXPECT_EQ(radio.get_sent_data()[1][FRAME_CMD_OFFSET], CMD_CHALLENGE_RESP);
+}
+
+// ============================================================================
 // Key-exchange confirm-wait strategy selection (RadioDriver::has_fast_tx_rx_turnaround)
 // ============================================================================
 
@@ -1127,4 +1234,345 @@ TEST(PairingHelpers, KeyExchangePhase_ReplaysKeyTransferAgainstFreshlyReissuedCh
   EXPECT_EQ(sent_command_bytes(radio), expected)
       << "a freshly re-issued challenge (0x3C) drawn by the key-init retry must trigger a replayed "
          "key-transfer against it, not be discarded as if the retry itself had simply failed";
+}
+
+// ============================================================================
+// Discover-confirm step (0x2C -> 0x2D)
+// ============================================================================
+
+TEST(PairingHelpers, DiscoverConfirm_AckOnFirstTry) {
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+
+  // Isolated call: one 0x2C, ACKed immediately.
+  {
+    TestableComponent comp;
+    comp.initialized_ = true;
+    MockRadio radio;
+    comp.radio_ = &radio;
+    memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+    pairing::PairingContext context;
+    memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+    IoFrame ack{};
+    ASSERT_TRUE(create_discover_confirm_ack(ack, device_bytes, comp.node_id_));
+    radio.queue_rx(frame_to_rx_packet(ack));
+
+    EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::ACKED);
+    EXPECT_EQ(radio.get_send_count(), 1) << "an ACK on the first try must not retry the discover-confirm";
+  }
+
+  // Full flow: 0x28, 0x2C, 0x31, ... in order, plus the default 300 ms post-step pause recorded.
+  {
+    TestableComponent comp;
+    comp.initialized_ = true;
+    MockRadio radio;
+    comp.radio_ = &radio;
+    memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+    memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+    esphome::test_hal::reset_delays();
+
+    radio.queue_rx(
+        frame_to_rx_packet(build_discovery_response(device_bytes, comp.node_id_, DeviceType::ROLLER_SHUTTER, 1)));
+    IoFrame ack{};
+    ASSERT_TRUE(create_discover_confirm_ack(ack, device_bytes, comp.node_id_));
+    radio.queue_rx(frame_to_rx_packet(ack));
+    uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+    radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_bytes, comp.node_id_, challenge)));
+    radio.queue_rx(frame_to_rx_packet(build_key_confirm(device_bytes, comp.node_id_)));
+
+    EXPECT_TRUE(comp.discover_and_pair());
+
+    const std::vector<uint8_t> expected_prefix = {CMD_DISCOVER_REQ, CMD_DISCOVER_CONFIRM, CMD_KEY_INIT};
+    const auto actual = sent_command_bytes(radio);
+    ASSERT_GE(actual.size(), expected_prefix.size());
+    EXPECT_EQ(std::vector<uint8_t>(actual.begin(), actual.begin() + expected_prefix.size()), expected_prefix)
+        << "0x28, 0x2C, 0x31 in order";
+
+    const auto &delays = esphome::test_hal::recorded_delays();
+    EXPECT_NE(std::find(delays.begin(), delays.end(), 300u), delays.end())
+        << "the default pairing_key_init_delay_ms (300) should have been applied after the step";
+  }
+}
+
+TEST(PairingHelpers, DiscoverConfirm_SilenceRetriesThenContinues) {
+  // The step's own NO_REPLY return is pinned directly by
+  // DiscoverConfirm_OnlyTheRotatingTryRetunes's fully-silent case below; this test is about what
+  // happens *around* that result — the step must exhaust its tries without ever failing the
+  // pairing attempt, and the frames queued behind the hold must survive to be used afterward.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+
+  radio.queue_rx(
+      frame_to_rx_packet(build_discovery_response(device_bytes, comp.node_id_, DeviceType::ROLLER_SHUTTER, 1)));
+  // Silent through every discover-confirm try (transmits #2-#4: three 0x2C), then answer once
+  // 0x31 (transmit #5) goes out. queue_rx_hold_until_sent() is required here: a fixed count of
+  // queue_rx_silence() entries can't stand in for "however many silent polls a 1500 ms window
+  // takes" on the host, and without the hold the discover-confirm wait would swallow the 0x3C/0x33
+  // below as unrelated frames instead of leaving them for the key-exchange phase.
+  radio.queue_rx_hold_until_sent(5);
+  uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_bytes, comp.node_id_, challenge)));
+  radio.queue_rx(frame_to_rx_packet(build_key_confirm(device_bytes, comp.node_id_)));
+
+  EXPECT_TRUE(comp.discover_and_pair()) << "the discover-confirm step must never fail the pairing attempt";
+
+  const std::vector<uint8_t> expected = {CMD_DISCOVER_REQ, CMD_DISCOVER_CONFIRM, CMD_DISCOVER_CONFIRM,
+                                         CMD_DISCOVER_CONFIRM, CMD_KEY_INIT};
+  const auto actual = sent_command_bytes(radio);
+  ASSERT_GE(actual.size(), expected.size());
+  EXPECT_EQ(std::vector<uint8_t>(actual.begin(), actual.begin() + expected.size()), expected)
+      << "0x28, three silent 0x2C tries, then 0x31 -- the step must exhaust its tries, not stall";
+}
+
+TEST(PairingHelpers, DiscoverConfirm_ErrorContinuesImmediately) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+  IoFrame error_resp{};
+  init_frame(error_resp, true, false, true, false);
+  set_dst(error_resp, comp.node_id_);
+  set_src(error_resp, device_bytes);
+  const uint8_t error_code[1] = {0x01};
+  set_cmd(error_resp, CMD_ERROR_RESP, error_code, 1);
+  radio.queue_rx(frame_to_rx_packet(error_resp));
+
+  EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::ERROR_REPLY);
+  EXPECT_EQ(radio.get_send_count(), 1) << "an explicit error must not spend the remaining discover-confirm retries";
+
+  // Key exchange proceeds immediately afterward, regardless of the discover-confirm outcome.
+  uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_bytes, comp.node_id_, challenge)));
+  radio.queue_rx(frame_to_rx_packet(build_key_confirm(device_bytes, comp.node_id_)));
+  EXPECT_TRUE(comp.pairing_engine_.run_key_exchange_phase_(context));
+  EXPECT_EQ(sent_command_bytes(radio), (std::vector<uint8_t>{CMD_DISCOVER_CONFIRM, CMD_KEY_INIT, CMD_KEY_TRANSFER}))
+      << "one 0x2C (the error), then key exchange proceeding normally (0x31, 0x32), with no further "
+         "discover-confirm retries in between";
+}
+
+TEST(PairingHelpers, DiscoverConfirm_IgnoresUnrelatedFrames) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+  // Other-src 0x2D: wrong sender, must be ignored rather than accepted as this device's answer.
+  IoFrame foreign_ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(foreign_ack, test::FOREIGN_ID, comp.node_id_));
+  radio.queue_rx(frame_to_rx_packet(foreign_ack));
+
+  // A repeated 0x29 from the right device: not an answer to this step, must also be ignored.
+  radio.queue_rx(
+      frame_to_rx_packet(build_discovery_response(device_bytes, comp.node_id_, DeviceType::ROLLER_SHUTTER, 1)));
+
+  // The real 0x2D.
+  IoFrame ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(ack, device_bytes, comp.node_id_));
+  radio.queue_rx(frame_to_rx_packet(ack));
+
+  EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::ACKED);
+  EXPECT_EQ(radio.get_send_count(), 1) << "all three rx frames should be consumed within the first try's window";
+}
+
+TEST(PairingHelpers, DiscoverConfirm_FramingFollowsPowerClassAndMode) {
+  struct Case {
+    DiscoverConfirmMode mode;
+    bool low_power;
+    uint8_t expected_ctrl1;
+    uint16_t expected_preamble;
+  };
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+  const Case cases[] = {
+      {DiscoverConfirmMode::SEND, false, 0x00, NORMAL_START_PREAMBLE},
+      {DiscoverConfirmMode::SEND, true, CTRL1_LOW_POWER, LONG_PREAMBLE},
+      {DiscoverConfirmMode::SEND_WITH_ACK, false, CTRL1_ACK, NORMAL_START_PREAMBLE},
+      {DiscoverConfirmMode::SEND_WITH_ACK, true, CTRL1_LOW_POWER, LONG_PREAMBLE},
+  };
+  for (const Case &c : cases) {
+    SCOPED_TRACE(::testing::Message() << "mode=" << static_cast<int>(c.mode) << " low_power=" << c.low_power);
+    TestableComponent comp;
+    comp.initialized_ = true;
+    MockRadio radio;
+    comp.radio_ = &radio;
+    memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+    comp.tuning_.pairing_discover_confirm = c.mode;
+
+    pairing::PairingContext context;
+    memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+    context.discovery_low_power = c.low_power;
+
+    IoFrame ack{};
+    ASSERT_TRUE(create_discover_confirm_ack(ack, device_bytes, comp.node_id_));
+    radio.queue_rx(frame_to_rx_packet(ack));
+
+    EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::ACKED);
+    ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+    ASSERT_FALSE(radio.get_sent_data().empty());
+    EXPECT_EQ(radio.get_sent_data()[0][1], c.expected_ctrl1) << "CTRL1 byte";
+    EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, c.expected_preamble) << "preamble";
+  }
+}
+
+TEST(PairingHelpers, DiscoverConfirm_OnlyTheRotatingTryRetunes) {
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+
+  {
+    TestableComponent comp;
+    comp.initialized_ = true;
+    MockRadio radio;
+    comp.radio_ = &radio;
+    memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+    pairing::PairingContext context;
+    memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+    IoFrame ack{};
+    ASSERT_TRUE(create_discover_confirm_ack(ack, device_bytes, comp.node_id_));
+    radio.queue_rx(frame_to_rx_packet(ack));
+
+    EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::ACKED);
+    EXPECT_TRUE(radio.freq_history().empty()) << "try 1 holds the request channel — an ACK there must not retune";
+  }
+  {
+    TestableComponent comp;
+    comp.initialized_ = true;
+    MockRadio radio;
+    comp.radio_ = &radio;
+    memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+    pairing::PairingContext context;
+    memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+    // Nothing queued: all three tries are silent, so try 2's rotating listen must retune at least
+    // once even though nothing was ever heard. The per-try hold/rotate mapping itself (which try
+    // is which) is pinned directly in decisions_test.cpp; this only checks the visible effect.
+    EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::NO_REPLY);
+    EXPECT_FALSE(radio.freq_history().empty()) << "try 2 rotates all channels even with nothing to hear";
+  }
+}
+
+TEST(PairingHelpers, DiscoverConfirm_SkipKeepsLegacySequence) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  comp.tuning_.pairing_discover_confirm = DiscoverConfirmMode::SKIP;
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+  esphome::test_hal::reset_delays();
+  EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::SKIPPED);
+  EXPECT_EQ(radio.get_send_count(), 0) << "skip must not transmit a 0x2C";
+  EXPECT_TRUE(esphome::test_hal::recorded_delays().empty())
+      << "skip must not apply the post-step pause either — no 0x2C means nothing to pause after";
+}
+
+TEST(PairingHelpers, DiscoverConfirm_SetsPhaseOncePerStateNotPerTry) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  // Wires ExchangeEngine::transmit_frame()'s TX-recording hook to the same PairingTelemetry
+  // object the shadow pairing_engine_ below shares with it, exactly as discover_and_pair() does
+  // for the real hub member -- record_tx() only fires when this is set.
+  comp.exchange_engine_.set_pairing_telemetry(&comp.pairing_telemetry_);
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+  // Nothing queued: all three discover-confirm tries are silent.
+  EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::NO_REPLY);
+
+  uint8_t tx_phase_count = 0;
+  uint8_t wait_phase_count = 0;
+  uint8_t tx_event_count = 0;
+  for (uint8_t i = 0; i < comp.pairing_telemetry_.event_count(); i++) {
+    const PairingTelemetryEvent &event = comp.pairing_telemetry_.events()[i];
+    if (event.kind == PairingTelemetryEventKind::TX) {
+      tx_event_count++;
+    } else if (event.kind == PairingTelemetryEventKind::PHASE) {
+      if (event.aux == static_cast<uint8_t>(pairing::PairingState::TX_DISCOVER_CONFIRM))
+        tx_phase_count++;
+      else if (event.aux == static_cast<uint8_t>(pairing::PairingState::WAIT_DISCOVER_CONFIRM))
+        wait_phase_count++;
+    }
+  }
+
+  EXPECT_EQ(tx_event_count, 3u) << "each of the three tries still transmits its own 0x2C";
+  EXPECT_EQ(tx_phase_count, 1u) << "TX_DISCOVER_CONFIRM must record a PHASE event once for the whole step, not per try";
+  EXPECT_EQ(wait_phase_count, 1u)
+      << "WAIT_DISCOVER_CONFIRM must record a PHASE event once for the whole step, not per try";
+}
+
+TEST(PairingHelpers, DiscoverConfirm_FailedFirstTransmitCountsAsASilentTry) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+  radio.queue_tx_result(false);  // try 1's 0x2C transmit fails outright.
+
+  EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::NO_REPLY);
+  EXPECT_EQ(radio.get_send_count(), PAIRING_DISCOVER_CONFIRM_TRIES)
+      << "a failed transmit is a silent try, not a skipped one -- all three tries still attempt a TX";
+
+  uint8_t wait_phase_count = 0;
+  for (uint8_t i = 0; i < comp.pairing_telemetry_.event_count(); i++) {
+    const PairingTelemetryEvent &event = comp.pairing_telemetry_.events()[i];
+    if (event.kind == PairingTelemetryEventKind::PHASE &&
+        event.aux == static_cast<uint8_t>(pairing::PairingState::WAIT_DISCOVER_CONFIRM))
+      wait_phase_count++;
+  }
+  EXPECT_EQ(wait_phase_count, 1u)
+      << "WAIT_DISCOVER_CONFIRM must still fire exactly once, even though try 1 never reached the listen";
+}
+
+TEST(PairingHelpers, DiscoverConfirm_DelayFeedingWdtChunksInThousandMsSteps) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  comp.tuning_.pairing_key_init_delay_ms = 2500;
+
+  const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, device_bytes, NODE_ID_SIZE);
+
+  IoFrame ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(ack, device_bytes, comp.node_id_));
+  radio.queue_rx(frame_to_rx_packet(ack));
+
+  esphome::test_hal::reset_delays();
+  EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::ACKED);
+
+  EXPECT_EQ(esphome::test_hal::recorded_delays(), (std::vector<uint32_t>{1000, 1000, 500}))
+      << "a 2500 ms pause should be chunked into feed-wdt steps of at most 1000 ms each";
 }

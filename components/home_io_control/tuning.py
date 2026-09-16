@@ -52,6 +52,8 @@ CONF_PAIRING_DISCOVERY_WAIT_MS = "pairing_discovery_wait_ms"
 CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS = "pairing_discovery_initial_dwell_ms"
 CONF_PAIRING_KEY_EXCHANGE_RETRIES = "pairing_key_exchange_retries"
 CONF_SCAN_POWER_CLASSES = "scan_power_classes"
+CONF_PAIRING_DISCOVER_CONFIRM = "pairing_discover_confirm"
+CONF_PAIRING_KEY_INIT_DELAY_MS = "pairing_key_init_delay_ms"
 
 # C++ type references
 TuningConfig = home_io_control_ns.class_("TuningConfig")
@@ -70,6 +72,7 @@ SX1276RxBandwidth = home_io_control_ns.enum("SX1276RxBandwidth", is_class=True)
 LR1121RxBandwidth = home_io_control_ns.enum("LR1121RxBandwidth", is_class=True)
 DiscoveryCommand = home_io_control_ns.enum("DiscoveryCommand", is_class=True)
 ScanPowerClasses = home_io_control_ns.enum("ScanPowerClasses", is_class=True)
+DiscoverConfirmMode = home_io_control_ns.enum("DiscoverConfirmMode", is_class=True)
 
 # Map each YAML option string to its C++ enum value. Options are bare kHz numbers (the "kHz"
 # unit lives in the entity name) for uniformity with the numeric parameters.
@@ -143,6 +146,18 @@ SCAN_POWER_CLASSES_OPTIONS = {
     "low_power": ScanPowerClasses.LOW_POWER,
 }
 
+# Whether/how PairingEngine sends CMD_DISCOVER_CONFIRM (0x2C) during pairing. Option strings
+# mirror discover_confirm_mode_to_string() (tuning_config.h), pinned against each other by
+# tuning_registry_test.cpp the same way SCAN_POWER_CLASSES_OPTIONS is — there is no build-time gate
+# comparing the Python and C++ strings directly. "skip"/"send"/"send_with_ack", not "on"/"off":
+# YAML 1.1 turns bare on/off into booleans.
+DISCOVER_CONFIRM_MODE_OPTIONS = {
+    "skip": DiscoverConfirmMode.SKIP,
+    "send": DiscoverConfirmMode.SEND,
+    "send_with_ack": DiscoverConfirmMode.SEND_WITH_ACK,
+}
+
+
 def _id_key(param_key):
     """Config-dict key under which a parameter's injected companion entity ID is stored."""
     return f"_{param_key}_id"
@@ -180,6 +195,8 @@ UI_NAMES = {
     CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS: "Pairing Discovery Initial Dwell",
     CONF_PAIRING_KEY_EXCHANGE_RETRIES: "Pairing Key Exchange Retries",
     CONF_SCAN_POWER_CLASSES: "Pairing Scan Power Classes",
+    CONF_PAIRING_DISCOVER_CONFIRM: "Pairing Discover Confirm",
+    CONF_PAIRING_KEY_INIT_DELAY_MS: "Pairing Key Init Delay",
 }
 
 # Numeric parameters: key -> (min, max, step, unit). Single source of truth for both the
@@ -236,6 +253,9 @@ _NUMBER_PARAMS = {
     CONF_PAIRING_DISCOVERY_WAIT_MS: (500, 5000, 50, "ms"),
     CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS: (0, 500, 10, "ms"),
     CONF_PAIRING_KEY_EXCHANGE_RETRIES: (1, 5, 1, ""),
+    # Ceiling covers KLR300's observed 0x2C -> 0x31 gap (~8.1 s) with headroom; step 100 matches
+    # the other pairing-phase millisecond knobs.
+    CONF_PAIRING_KEY_INIT_DELAY_MS: (0, 10000, 100, "ms"),
 }
 
 # Plain boolean parameters: the C++ TuningConfig field name equals the YAML key, and every one is
@@ -263,6 +283,7 @@ _SELECT_OPTIONS = {
     CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
     CONF_LR1121_RX_BANDWIDTH: list(LR1121_BANDWIDTH_OPTIONS),
     CONF_SCAN_POWER_CLASSES: list(SCAN_POWER_CLASSES_OPTIONS),
+    CONF_PAIRING_DISCOVER_CONFIRM: list(DISCOVER_CONFIRM_MODE_OPTIONS),
 }
 
 
@@ -307,6 +328,9 @@ _validate_discovery_payload = _one_of_string(
 _validate_scan_power_classes = _one_of_string(
     CONF_SCAN_POWER_CLASSES, SCAN_POWER_CLASSES_OPTIONS
 )
+_validate_discover_confirm_mode = _one_of_string(
+    CONF_PAIRING_DISCOVER_CONFIRM, DISCOVER_CONFIRM_MODE_OPTIONS
+)
 
 
 def _parse_destination_to_bytes(value):
@@ -339,6 +363,7 @@ TUNING_SCHEMA = cv.Schema(
         cv.Optional(CONF_PAIRING_DISCOVERY_DESTINATION): _validate_discovery_destination,
         cv.Optional(CONF_PAIRING_DISCOVERY_PAYLOAD): _validate_discovery_payload,
         cv.Optional(CONF_SCAN_POWER_CLASSES): _validate_scan_power_classes,
+        cv.Optional(CONF_PAIRING_DISCOVER_CONFIRM): _validate_discover_confirm_mode,
         **{cv.Optional(key): cv.boolean for key in _BOOL_PARAMS},
         # Numeric parameters share their range with the number-entity bounds via _NUMBER_PARAMS.
         **{
@@ -431,6 +456,13 @@ def _apply_tuning_config(config, var):
             tuning,
             "scan_power_classes",
             SCAN_POWER_CLASSES_OPTIONS[config[CONF_SCAN_POWER_CLASSES]],
+        )
+
+    if CONF_PAIRING_DISCOVER_CONFIRM in config:
+        _assign(
+            tuning,
+            "pairing_discover_confirm",
+            DISCOVER_CONFIRM_MODE_OPTIONS[config[CONF_PAIRING_DISCOVER_CONFIRM]],
         )
 
     # Ordered discovery commands. Clear the struct default before appending so a

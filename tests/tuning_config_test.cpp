@@ -230,6 +230,32 @@ TEST(TuningConfig, ScanPowerClassesSnapshotOnlyWhenNonDefault) {
   EXPECT_NE(tuning_config_snapshot(cfg).find("scan_power_classes=low_power"), std::string::npos);
 }
 
+TEST(TuningConfig, DiscoverConfirmModeDefaultsToSend) {
+  TuningConfig cfg{};
+  EXPECT_EQ(cfg.pairing_discover_confirm, DiscoverConfirmMode::SEND);
+  EXPECT_EQ(cfg.pairing_key_init_delay_ms, PAIRING_KEY_INIT_DELAY_MS);
+}
+
+TEST(TuningConfig, DiscoverConfirmModeStringRoundTrip) {
+  EXPECT_EQ(discover_confirm_mode_to_string(DiscoverConfirmMode::SKIP), "skip");
+  EXPECT_EQ(discover_confirm_mode_to_string(DiscoverConfirmMode::SEND), "send");
+  EXPECT_EQ(discover_confirm_mode_to_string(DiscoverConfirmMode::SEND_WITH_ACK), "send_with_ack");
+
+  EXPECT_EQ(discover_confirm_mode_from_string("skip"), DiscoverConfirmMode::SKIP);
+  EXPECT_EQ(discover_confirm_mode_from_string("send"), DiscoverConfirmMode::SEND);
+  EXPECT_EQ(discover_confirm_mode_from_string("send_with_ack"), DiscoverConfirmMode::SEND_WITH_ACK);
+  EXPECT_FALSE(discover_confirm_mode_from_string("nonsense").has_value());
+}
+
+TEST(TuningConfig, DiscoverConfirmModeSnapshotOnlyWhenNonDefault) {
+  TuningConfig default_cfg{};
+  EXPECT_EQ(tuning_config_snapshot(default_cfg).find("pairing_discover_confirm"), std::string::npos);
+
+  TuningConfig cfg{};
+  cfg.pairing_discover_confirm = DiscoverConfirmMode::SKIP;
+  EXPECT_NE(tuning_config_snapshot(cfg).find("pairing_discover_confirm=skip"), std::string::npos);
+}
+
 TEST(TuningConfig, UpdateLogLineFormat) {
   EXPECT_EQ(tuning_update_log_line("sx1262_post_tx_settle_us", "750"),
             "Tuning updated via HA: sx1262_post_tx_settle_us=750");

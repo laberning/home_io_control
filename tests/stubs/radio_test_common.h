@@ -60,6 +60,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// the first match) — this interleaved log can.
   enum class CallKind { kWait, kHop };
 
+  /// One rx_queue_ entry: either a packet, plain silence (both `std::nullopt` fields), or a
+  /// "hold until sent" marker (`hold_until_send_count` set) — see queue_rx_hold_until_sent().
+  struct RxQueueEntry {
+    std::optional<esphome::home_io_control::RadioRxPacket> packet;
+    std::optional<int> hold_until_send_count;
+  };
+
   // RadioDriver interface
   bool init() override { return true; }
   bool send_packet(const uint8_t *data, uint8_t len,
@@ -86,18 +93,29 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     call_log_.push_back(CallKind::kWait);
     if (emulate_capture_lifecycle_)
       this->clear_last_capture();
-    if (rx_queue_.empty()) {
-      return false;
+    // Loop rather than a single front() check: a "hold" entry (queue_rx_hold_until_sent()) that
+    // has just reached its threshold is consumed and falls through to whatever is queued next,
+    // in this same call, rather than costing the caller an extra silent wait_for_packet() round
+    // trip to discover it.
+    while (!rx_queue_.empty()) {
+      RxQueueEntry &front = rx_queue_.front();
+      if (front.hold_until_send_count.has_value()) {
+        if (send_count_ < *front.hold_until_send_count)
+          return false;  // Still holding: not consumed, stays at the front for the next call.
+        rx_queue_.pop_front();
+        continue;
+      }
+      std::optional<esphome::home_io_control::RadioRxPacket> entry = front.packet;
+      rx_queue_.pop_front();
+      if (!entry.has_value()) {
+        return false;  // Queued silence: a slice that times out with nothing received.
+      }
+      packet = *entry;
+      if (emulate_capture_lifecycle_)
+        this->populate_capture_base_(true, packet.freq_hz, -55, packet.data, packet.len, packet.data, packet.len);
+      return true;
     }
-    std::optional<esphome::home_io_control::RadioRxPacket> entry = rx_queue_.front();
-    rx_queue_.pop_front();
-    if (!entry.has_value()) {
-      return false;  // Queued silence: a slice that times out with nothing received.
-    }
-    packet = *entry;
-    if (emulate_capture_lifecycle_)
-      this->populate_capture_base_(true, packet.freq_hz, -55, packet.data, packet.len, packet.data, packet.len);
-    return true;
+    return false;
   }
   bool check_for_packet(esphome::home_io_control::RadioRxPacket &packet) override {
     (void) packet;
@@ -139,7 +157,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void dump_debug() override {}
 
   // Test helpers
-  void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) { rx_queue_.push_back(pkt); }
+  void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) { rx_queue_.push_back({pkt, std::nullopt}); }
   /// Queue `n` empty slices: wait_for_packet() returns false for each, exactly as if nothing had
   /// arrived, without needing to leave the whole queue empty (which a test can't do selectively
   /// mid-sequence). Lets a test express "several genuinely silent waits, then a reply" — distinct
@@ -148,8 +166,22 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// so has a different timing profile.
   void queue_rx_silence(uint8_t n = 1) {
     for (uint8_t i = 0; i < n; i++)
-      rx_queue_.push_back(std::nullopt);
+      rx_queue_.push_back({std::nullopt, std::nullopt});
   }
+  /// Queue genuine silence for as long as it takes: wait_for_packet() returns false, without
+  /// consuming this entry, until `get_send_count() >= send_count`; the call that finally meets the
+  /// threshold consumes it and falls through to whatever is queued next.
+  ///
+  /// A HOLD_REQUEST_CHANNEL listen spins on wait_for_packet() for its whole window, and the host
+  /// `millis()` stub advances by one per call rather than by real elapsed time, so a fixed count
+  /// of queue_rx_silence() entries can't stand in for "however many silent polls a 1500 ms window
+  /// takes" — and a HOLD listen that outlives its silence entries would otherwise swallow the next
+  /// queued frame (the real reply a later phase needs) as an ignored, unrelated packet. Keying the
+  /// hold on `send_count` instead of a call count lets a test express "silent through every
+  /// discover-confirm try, then answer once 0x31 goes out" without knowing how many
+  /// wait_for_packet() calls that silence will actually take.
+  /// @param send_count Number of transmitted frames (get_send_count()) to hold silent through.
+  void queue_rx_hold_until_sent(int send_count) { rx_queue_.push_back({std::nullopt, send_count}); }
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
@@ -195,7 +227,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
 
  private:
   std::deque<bool> tx_results_;
-  std::deque<std::optional<esphome::home_io_control::RadioRxPacket>> rx_queue_;
+  std::deque<RxQueueEntry> rx_queue_;
   std::deque<int16_t> rssi_queue_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
   std::vector<std::vector<uint8_t>> sent_data_;

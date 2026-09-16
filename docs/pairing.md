@@ -78,6 +78,14 @@ home_io_control:
    guidance and open a GitHub issue with the raw type/subtype, the device model and the pairing
    log.
 
+Between the device answering discovery and the key exchange starting, the hub sends a
+discover-confirm frame directly to that device and waits up to a few seconds for its
+acknowledgement — the same handshake every real controller in this project's corpus performs
+before proceeding. It never blocks pairing on its own: a refusal, a timeout, or nothing at all
+still lets the attempt continue. If a specific device seems to dislike this step,
+`pairing_discover_confirm: skip` in the `tuning:` block reverts to sending nothing there at all —
+see [Radio tuning](configuration/tuning.md).
+
 **Expect this to take a few goes.** The hub retries discovery three times per press, and it is
 still common to need two or three presses because the timing between PROG and the button matters.
 Press PROG again and repeat before you change any settings.

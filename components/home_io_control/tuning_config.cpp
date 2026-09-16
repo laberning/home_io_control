@@ -255,6 +255,28 @@ bool scan_power_classes_include(ScanPowerClasses selection, uint8_t power_save_m
   return false;
 }
 
+std::string discover_confirm_mode_to_string(DiscoverConfirmMode value) {
+  switch (value) {
+    case DiscoverConfirmMode::SKIP:
+      return "skip";
+    case DiscoverConfirmMode::SEND:
+      return "send";
+    case DiscoverConfirmMode::SEND_WITH_ACK:
+      return "send_with_ack";
+  }
+  return "send";
+}
+
+std::optional<DiscoverConfirmMode> discover_confirm_mode_from_string(const std::string &value) {
+  if (value == discover_confirm_mode_to_string(DiscoverConfirmMode::SKIP))
+    return DiscoverConfirmMode::SKIP;
+  if (value == discover_confirm_mode_to_string(DiscoverConfirmMode::SEND))
+    return DiscoverConfirmMode::SEND;
+  if (value == discover_confirm_mode_to_string(DiscoverConfirmMode::SEND_WITH_ACK))
+    return DiscoverConfirmMode::SEND_WITH_ACK;
+  return std::nullopt;
+}
+
 std::string tuning_update_log_line(const std::string &name, const std::string &value) {
   return "Tuning updated via HA: " + name + "=" + value;
 }
@@ -308,8 +330,13 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
   // three RX-bandwidth fields above (it's a SELECT_PARAMS row, not a NUMBER_PARAMS one).
   if (cfg.scan_power_classes != DEFAULTS.scan_power_classes)
     result += " scan_power_classes=" + scan_power_classes_to_string(cfg.scan_power_classes);
-  // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms, and
-  // pairing_key_exchange_retries are plain NUMBER_PARAMS entries — covered by the loop above.
+  // pairing_discover_confirm is an enum, not a plain number, so it stays hand-written here like
+  // the two SELECT_PARAMS rows above; pairing_key_init_delay_ms is a plain NUMBER_PARAMS entry.
+  if (cfg.pairing_discover_confirm != DEFAULTS.pairing_discover_confirm)
+    result += " pairing_discover_confirm=" + discover_confirm_mode_to_string(cfg.pairing_discover_confirm);
+  // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms,
+  // pairing_key_exchange_retries, and pairing_key_init_delay_ms are plain NUMBER_PARAMS entries —
+  // covered by the loop above.
 
   return result;
 }

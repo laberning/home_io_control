@@ -9,10 +9,13 @@
 /// which temporarily tracks a newly paired device in the controller's runtime
 /// registry and installs the system key on the device:
 ///
-/// Phase 1 — Discovery (broadcast 0x28 → device responds 0x29):
+/// Phase 1 — Discovery (broadcast 0x28 → device responds 0x29 → confirm 0x2C → ack 0x2D):
 ///   Controller broadcasts a discovery packet on the primary channel. A device in
 ///   pairing mode (PROG button pressed) responds with its node ID and type/subtype.
-///   The controller validates the response and extracts device metadata.
+///   The controller validates the response and extracts device metadata, then sends a
+///   discover-confirm (0x2C) directly to that device and — unless the `pairing_discover_confirm`
+///   tuning mode is `skip` — waits up to a few seconds for its 0x2D before proceeding. This step
+///   never fails the attempt; see PairingEngine::run_discover_confirm_step_().
 ///
 /// Phase 2 — Authenticated Key Exchange (0x31 → 0x3C → 0x32 → 0x33):
 ///   The controller sends CMD_KEY_INIT (0x31) to the device. The device challenges
@@ -46,6 +49,8 @@ enum class PairingState : uint8_t {
   IDLE,                    ///< No pairing in progress; idle state.
   TX_DISCOVER,             ///< Discovery broadcast (0x28) sent; awaiting device response.
   WAIT_DISCOVER_RESPONSE,  ///< Listening for discovery response (0x29) from a device in pairing mode.
+  TX_DISCOVER_CONFIRM,     ///< Discovery-confirm (0x2C) sent to the discovered device.
+  WAIT_DISCOVER_CONFIRM,   ///< Listening for the device's discovery-confirm ack (0x2D).
   TX_KEY_INIT,             ///< Key‑init (0x31) sent to the discovered device.
   WAIT_KEY_CHALLENGE,      ///< Waiting for challenge (0x3C) from device as part of key transfer.
   TX_KEY_TRANSFER,         ///< Key‑transfer (0x32) sent with encrypted system key.
@@ -69,6 +74,18 @@ struct PairingContext {
   bool discovery_low_power{false};          ///< True when discovery reported POWER_SAVE_LOW_POWER.
 };
 
+/// @brief What PairingEngine::run_discover_confirm_step_() actually observed.
+///
+/// Not stored in PairingContext — nothing downstream reads it, so it is returned directly to the
+/// caller, which logs the details (reply channel, try number, elapsed time) and otherwise ignores
+/// the result: the step never fails a pairing attempt (see run_discover_confirm_step_()'s doc).
+enum class DiscoverConfirmResult : uint8_t {
+  SKIPPED,      ///< `pairing_discover_confirm` tuning mode is `skip` — no 0x2C was sent.
+  ACKED,        ///< The device answered with CMD_DISCOVER_CONFIRM_ACK (0x2D).
+  ERROR_REPLY,  ///< The device answered with CMD_ERROR_RESP.
+  NO_REPLY,     ///< Every try was silent (or every transmit failed).
+};
+
 }  // namespace pairing
 
 /// @brief Get a short, log/telemetry-friendly name for a pairing state.
@@ -82,6 +99,10 @@ inline const char *pairing_stage_name(pairing::PairingState state) {
       return "tx_discover";
     case pairing::PairingState::WAIT_DISCOVER_RESPONSE:
       return "wait_discover_response";
+    case pairing::PairingState::TX_DISCOVER_CONFIRM:
+      return "tx_discover_confirm";
+    case pairing::PairingState::WAIT_DISCOVER_CONFIRM:
+      return "wait_discover_confirm";
     case pairing::PairingState::TX_KEY_INIT:
       return "tx_key_init";
     case pairing::PairingState::WAIT_KEY_CHALLENGE:

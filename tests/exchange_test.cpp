@@ -748,6 +748,47 @@ TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
       << "auth response on SX1262 should use SX1262_RESPONSE_PREAMBLE";
 }
 
+// answer_challenge() is the one place that builds and sends a 0x3D, shared by the normal
+// inbound-challenge path (handle_authentication_()) and pairing's post-0x32 challenge answer
+// (wait_for_key_confirm_(), pairing_engine.cpp), so both send the exact same shape. This test
+// drives it directly, bypassing send_and_receive_() entirely, to pin its own contract independent
+// of the outbound retry loop around it.
+TEST(Exchange, AnswerChallengeSendsExactly0x3DOverTheRequestTranscript) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  uint8_t chal_data[HMAC_SIZE] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+
+  ASSERT_TRUE(comp.exchange_engine_.answer_challenge(request, challenge, FREQ_CH2))
+      << "answer_challenge should build and transmit the 0x3D";
+
+  ASSERT_EQ(radio.get_sent_data().size(), 1u) << "answer_challenge should transmit exactly one frame";
+  IoFrame sent{};
+  const auto &raw = radio.get_sent_data()[0];
+  ASSERT_TRUE(parse(raw.data(), static_cast<uint8_t>(raw.size()), sent)) << "transmitted frame must parse cleanly";
+
+  IoFrame expected{};
+  ASSERT_TRUE(create_challenge_resp(expected, request.dst, comp.node_id_, chal_data, request, comp.system_key_))
+      << "reference create_challenge_resp() call should succeed";
+  uint8_t expected_raw[64];
+  const uint8_t expected_len = serialize(expected, expected_raw, sizeof(expected_raw));
+  ASSERT_EQ(raw.size(), expected_len) << "answer_challenge must send exactly create_challenge_resp()'s bytes";
+  EXPECT_EQ(0, memcmp(raw.data(), expected_raw, expected_len))
+      << "answer_challenge must send exactly create_challenge_resp()'s bytes";
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, SX1262_RESPONSE_PREAMBLE)
+      << "answer_challenge should use the driver's response_preamble(), like handle_authentication_() did";
+}
+
 // ============================================================================
 // Step 11a — pinning tests: verify exchange HMAC content, retry exhaustion,
 // unrelated-frame filtering during auth wait, and inbound authenticate_request_.

@@ -194,6 +194,22 @@ TEST(TuningDispatch, SelectScanPowerClasses) {
   EXPECT_EQ(comp.tuning_.scan_power_classes, ScanPowerClasses::LOW_POWER);
 }
 
+TEST(TuningDispatch, SelectPairingDiscoverConfirm) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+
+  comp.update_tuning_select("pairing_discover_confirm", "send_with_ack");
+  EXPECT_EQ(comp.tuning_.pairing_discover_confirm, DiscoverConfirmMode::SEND_WITH_ACK);
+
+  comp.update_tuning_select("pairing_discover_confirm", "skip");
+  EXPECT_EQ(comp.tuning_.pairing_discover_confirm, DiscoverConfirmMode::SKIP);
+
+  // An unparseable option string leaves the field untouched rather than resetting it.
+  comp.update_tuning_select("pairing_discover_confirm", "bogus");
+  EXPECT_EQ(comp.tuning_.pairing_discover_confirm, DiscoverConfirmMode::SKIP);
+}
+
 // ============================================================================
 // Initial-state seeding (get_*_value), used to publish HA entity boot values
 // ============================================================================
@@ -207,6 +223,7 @@ TEST(TuningDispatch, GetNumberValueReturnsDefaultsThenUpdates) {
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("sx1262_post_tx_settle_us"), SX1262_POST_TX_SETTLE_US);
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("sx1276_discovery_hop_slice_ms"), SX1276_DISCOVERY_HOP_SLICE_MS);
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("pairing_key_exchange_retries"), PAIRING_KEY_EXCHANGE_RETRIES);
+  EXPECT_FLOAT_EQ(comp.get_tuning_number_value("pairing_key_init_delay_ms"), PAIRING_KEY_INIT_DELAY_MS);
 
   comp.update_tuning_number("sx1262_post_tx_settle_us", 750);
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("sx1262_post_tx_settle_us"), 750);
@@ -232,6 +249,7 @@ TEST(TuningDispatch, GetSelectValueMatchesOptionStrings) {
   EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_low_power"), "Off");
   EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_ack_capable"), "Off");
   EXPECT_EQ(comp.get_tuning_select_value("scan_power_classes"), "both");
+  EXPECT_EQ(comp.get_tuning_select_value("pairing_discover_confirm"), "send");
 
   // Round-trip: a value set via update_ is reported back as the same option string.
   comp.update_tuning_select("sx1262_rx_bandwidth", "156.2");

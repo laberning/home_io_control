@@ -217,6 +217,12 @@ TEST(Redaction, FullPairingExchange_KeyTransferFrameNeverExposesSystemKey) {
 
   radio.queue_rx(frame_to_rx_packet(build_discovery_response(device_bytes, comp.node_id_)));
 
+  // Default tuning (`send`) transmits a discover-confirm (0x2C) and waits for this 0x2D before
+  // proceeding — without it queued here, that wait would swallow the queued 0x3C below.
+  IoFrame discover_confirm_ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(discover_confirm_ack, device_bytes, comp.node_id_));
+  radio.queue_rx(frame_to_rx_packet(discover_confirm_ack));
+
   uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
   radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_bytes, comp.node_id_, challenge)));
 
@@ -260,6 +266,11 @@ TEST(Redaction, PairingTelemetryResultStringNeverExposesSystemKey) {
 
   const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
   radio.queue_rx(frame_to_rx_packet(build_discovery_response(device_bytes, comp.node_id_)));
+  // Default tuning (`send`) transmits a discover-confirm (0x2C) and waits for this 0x2D before
+  // proceeding — without it queued here, that wait would swallow the queued 0x3C below.
+  IoFrame discover_confirm_ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(discover_confirm_ack, device_bytes, comp.node_id_));
+  radio.queue_rx(frame_to_rx_packet(discover_confirm_ack));
   uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
   radio.queue_rx(frame_to_rx_packet(build_key_challenge(device_bytes, comp.node_id_, challenge)));
   radio.queue_rx(frame_to_rx_packet(build_key_confirm(device_bytes, comp.node_id_)));

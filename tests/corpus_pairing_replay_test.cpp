@@ -33,6 +33,17 @@
 ///    Such a trailing run is excluded from the tx-count assertion (checked with a >=, not an
 ///    exact count) — everything up to and including the last *answered* exchange is still
 ///    asserted byte-exact.
+///
+/// 3. **A step-on discover-confirm (0x2C) replay needs its own 0x2D in the capture.** Each
+///    replayed capture sets `comp.tuning_.pairing_discover_confirm` to match what it actually
+///    shows: `SKIP` when the capture has no tx 0x2C at all (every capture replayed here), or
+///    `SEND`/`SEND_WITH_ACK` — chosen from the captured 0x2C's own CTRL1_ACK bit —
+///    when it does. Turning the step on without a queued 0x2D rx would make the engine's listen
+///    swallow the capture's next rx frame as an unrelated reply, and would also collapse the
+///    capture's three identical 0x2C retries into a single expected tx under this file's own
+///    retry-dedup (limitation 1) — neither of which the capture's frames are shaped for. No
+///    current capture hits this; a future capture that shows a real 0x2C needs a captured 0x2D to
+///    replay cleanly here, or must be excluded from this suite with this reason.
 
 #include "corpus_generated.h"
 #include "hub_core.h"
@@ -112,6 +123,20 @@ TEST_P(CorpusPairingReplay, EngineReproducesCapturedPairing) {
   comp.radio_ = radio.get();
   std::memcpy(comp.node_id_, expected_tx.front()->bytes + 5, NODE_ID_SIZE);  // origin tx SRC offset
   std::memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  // See limitation 3 above: SKIP for a capture with no tx 0x2C (every capture replayed today),
+  // else SEND/SEND_WITH_ACK matching the captured frame's own CTRL1_ACK bit.
+  comp.tuning_.pairing_discover_confirm = DiscoverConfirmMode::SKIP;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const corpus::CorpusFrame &cf = capture->frames[i];
+    if (!cf.tx || !cf.has_cmd || cf.cmd != CMD_DISCOVER_CONFIRM)
+      continue;
+    IoFrame parsed{};
+    ASSERT_TRUE(parse(cf.bytes, corpus_test::wire_len(cf), parsed)) << "captured 0x2C frame must parse";
+    comp.tuning_.pairing_discover_confirm =
+        (parsed.ctrl1 & CTRL1_ACK) != 0 ? DiscoverConfirmMode::SEND_WITH_ACK : DiscoverConfirmMode::SEND;
+    break;
+  }
 
   const corpus::CorpusFrame *discover_resp_cf = nullptr;
   for (const corpus::CorpusFrame *rx_cf : rx_frames) {

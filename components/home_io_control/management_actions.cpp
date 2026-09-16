@@ -251,7 +251,7 @@ struct RollCallPass {
 ///
 /// Low-power pass, `CTRL1 = 0x30` (LOW_POWER | ACK): the exact header a real VELUX KLR300 uses
 /// for its own roll-call, whose low-power shutters answered it. Setting CTRL1_LOW_POWER selects
-/// LONG_PREAMBLE through the shared start-preamble rule (request_preamble_for_()) — no preamble is
+/// LONG_PREAMBLE through the shared start-preamble rule (request_preamble_for()) — no preamble is
 /// picked here. `ROTATE_ALL_CHANNELS`: those VELUX low-power replies were observed landing on the
 /// request channel, which a skipping listen would miss entirely.
 ///
@@ -1155,7 +1155,7 @@ enum class RollCallAttemptResult : uint8_t {
 /// Builds a fresh request every call (create_discovery_request() draws a new random nonce each
 /// time) rather than replaying one frame across attempts, and logs one attempt-summary DEBUG line
 /// after collection closes. The pass determines the frame shape (CTRL1, and therefore preamble via
-/// request_preamble_for_()'s rule) and the listen policy; this function does not choose either.
+/// request_preamble_for()'s rule) and the listen policy; this function does not choose either.
 static RollCallAttemptResult run_roll_call_attempt(ExchangeEngine &engine, const uint8_t *node_id,
                                                    const uint8_t *system_key, const TuningConfig &tuning,
                                                    const RollCallPass &pass, uint32_t tx_freq_hz, uint8_t attempt,

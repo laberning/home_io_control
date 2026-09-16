@@ -717,6 +717,30 @@ bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   return create_device_terminal_ack(f, own, dst, CMD_KEY_CONFIRM);
 }
 
+/// Build a bare controller→device start frame: no payload, START set, END clear, LOW_POWER and
+/// ACK as the caller decides. Shared by create_discover_confirm() and create_key_init(), which are
+/// the same frame shape and differ only in command byte and in which CTRL1 bits they pass — the
+/// controller-side counterpart of create_device_terminal_ack() above.
+static bool create_controller_start_frame(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t cmd,
+                                          bool low_power, bool ack) {
+  init_frame(f, true, /*start=*/true, /*end=*/false, low_power);
+  // CTRL1_ACK is deliberately not a parameter of init_frame() itself — see that function's doc
+  // for why it must never be set unconditionally. Scoped to the frame each caller builds, same
+  // pattern as create_discovery_request()'s ack_capable.
+  if (ack)
+    f.ctrl1 |= CTRL1_ACK;
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, cmd);
+}
+
+/// Build a discovery-confirm request (0x2C) — controller side, sent directly to a
+/// freshly-discovered device before the key exchange. See proto_commands.h for the full contract
+/// and the real-capture cross-check.
+bool create_discover_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, bool ack) {
+  return create_controller_start_frame(f, own, dst, CMD_DISCOVER_CONFIRM, low_power, ack);
+}
+
 /// Build a discovery-confirm acknowledgement (0x2D) — device side, used only by the
 /// key-extraction responder. See proto_commands.h for the full contract.
 bool create_discover_confirm_ack(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
@@ -734,10 +758,9 @@ bool recover_system_key_from_transfer(const uint8_t transfer_payload[AES_KEY_SIZ
 
 /// Build a key-init request (0x31) to start the pairing key exchange with a discovered device.
 bool create_key_init(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  init_frame(f, true, true, false, true);
-  set_dst(f, dst);
-  set_src(f, own);
-  return set_cmd(f, CMD_KEY_INIT);
+  // low_power=true, no ACK: the pairing key-init keeps the fixed `48 20` shape it was
+  // hardware-validated at (ADR 0029's out-of-scope note).
+  return create_controller_start_frame(f, own, dst, CMD_KEY_INIT, /*low_power=*/true, /*ack=*/false);
 }
 
 /// Build a key-transfer frame (0x32) containing the system key encrypted with the transfer key.

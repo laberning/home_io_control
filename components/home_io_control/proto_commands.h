@@ -31,6 +31,10 @@
 ///     matching a reference hub's own traffic. The pairing and device‑role builders
 ///     (`create_key_init`, `create_key_transfer`, `create_set_config1`,
 ///     `create_status_update_resp`) keep a fixed value instead — see ADR 0029's out‑of‑scope note.
+///     `create_discover_confirm()` is the one pairing builder that does NOT keep a fixed value: its
+///     `low_power` follows the discovered device's own self-reported power-save class instead, the
+///     same per-device-property treatment as every non-pairing builder above — every real hub in
+///     this project's corpus mirrors that class exactly on its own 0x2C.
 ///   - The preamble follows the flag. For a start frame the exchange engine uses LONG_PREAMBLE
 ///     (1024 bytes) when CTRL1_LOW_POWER is set — the wake‑up burst for a sleeping receiver —
 ///     and the runtime‑tunable `normal_start_preamble` otherwise; follow‑up frames use the
@@ -609,12 +613,44 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
 /// @return true on success.
 bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 
+/// @brief Build a discovery-confirm request (0x2C) — sent by a controller directly to a
+/// freshly-discovered device, before proceeding to the key exchange (0x31).
+///
+/// Every real controller in this project's corpus sends 0x2C between the device's discovery
+/// response (0x29) and its own key-init (0x31): KLR200→KUX100
+/// (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml), TaHoma→VELUX SSL
+/// (tests/corpus/captures/discovery/velux_ssl_discovery_tahoma_pairing.yaml), and this project's
+/// own key-extraction responder answering KIG300/KLR200/KLR300/Somfy TaHoma/Somfy Connectivity
+/// Kit (tests/corpus/captures/pairing/velux_kig300_pairing_key_extraction_success.yaml and
+/// siblings). Every one of those real hubs sets CTRL1_ACK for an always-alive target (`48 10`) and
+/// clears it for a low-power one (`48 20`, CTRL1_LOW_POWER only, no ACK) — see the `ack` param doc
+/// for what this builder does with that split. Gated by the `pairing_discover_confirm` tuning knob
+/// (`DiscoverConfirmMode::SKIP`/`SEND`/`SEND_WITH_ACK`, tuning_config.h) — `skip` reproduces the
+/// sequence without this step: no 0x2C, no post-step pause.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst The freshly-discovered device's 3-byte node ID (from its 0x29's src).
+/// @param low_power Set CTRL1_LOW_POWER. See this header's "Low-power flag and preamble
+///        handling" note above: unlike most pairing builders, this one is NOT a fixed value —
+///        pass the device's own self-reported power-save class from discovery
+///        (`pairing::PairingContext::discovery_low_power`).
+/// @param ack Set CTRL1_ACK ("sender can handle 2W responses"). The builder is literal — it does
+///        not derive `ack` from `low_power` itself; that mirror rule belongs to the caller
+///        (`PairingEngine::run_discover_confirm_step_()`), which never asks for `ack` when
+///        `low_power` is true. Every corpus hub's own 0x2C sets CTRL1_ACK for an always-alive
+///        target (`48 10`) and clears it for a low-power one (`48 20`); this codebase's `send`
+///        default instead clears it for an always-alive target too (`48 00`, no corpus hub sends
+///        that shape, but a Somfy Izymo dimmer answers it with 0x2D and ignores `48 10`), and
+///        `send_with_ack` switches to the hub-observed `48 10`.
+/// @return true on success.
+bool create_discover_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, bool ack);
+
 /// @brief Build a discovery-confirm acknowledgement (0x2D) — the device's answer to a hub's
 /// CMD_DISCOVER_CONFIRM (0x2C), which a hub sends directly to a freshly-discovered device before
 /// it will proceed to the key exchange.
 ///
-/// Device-side only, like create_discover_resp()/create_key_confirm() above; this project's own
-/// controller role never sends 0x2C, so there is no counterpart builder for the other direction.
+/// Device-side only, like create_discover_resp()/create_key_confirm() above. Its controller-role
+/// counterpart is create_discover_confirm() just above.
 /// No payload and END set, matching real devices' 0x2D in
 /// tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml; for a second independent hub,
 /// tests/corpus/captures/pairing/somfy_connectivity_kit_pairing_key_extraction_stall.yaml, where
