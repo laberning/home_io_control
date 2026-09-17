@@ -39,7 +39,9 @@
 ///     (1024 bytes) when CTRL1_LOW_POWER is set — the wake‑up burst for a sleeping receiver —
 ///     and the runtime‑tunable `normal_start_preamble` otherwise; follow‑up frames use the
 ///     driver's response_preamble() (exchange_engine.cpp). The flag and the preamble can never
-///     disagree because both derive from the same per‑device property.
+///     disagree because both derive from the same per‑device property. One exception: pairing's
+///     directed start frames (0x2C, 0x31, 0x6F) never use a longer preamble than the discovery
+///     request the device just answered (PairingEngine::pairing_start_preamble_()).
 
 #include "proto_codecs.h"
 #include "proto_constants.h"

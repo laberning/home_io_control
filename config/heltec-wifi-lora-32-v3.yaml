@@ -42,6 +42,8 @@ home_io_control:
     - !secret example_io_device_linked_remote_id
   accept_foreign_pairing: true
   discover_and_pair_button: true
+  tuning:
+    pairing_discovery_preamble: 32
 
 cover:
   - platform: home_io_control

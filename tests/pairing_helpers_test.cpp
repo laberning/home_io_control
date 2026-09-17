@@ -1576,3 +1576,113 @@ TEST(PairingHelpers, DiscoverConfirm_DelayFeedingWdtChunksInThousandMsSteps) {
   EXPECT_EQ(esphome::test_hal::recorded_delays(), (std::vector<uint32_t>{1000, 1000, 500}))
       << "a 2500 ms pause should be chunked into feed-wdt steps of at most 1000 ms each";
 }
+
+// ============================================================================
+// Directed pairing start frames reuse the discovery preamble the device answered
+// ============================================================================
+
+namespace {
+
+/// Preamble of every transmitted frame carrying `cmd`, in transmit order.
+std::vector<uint16_t> tx_preambles_for(const MockRadio &radio, uint8_t cmd) {
+  std::vector<uint16_t> preambles;
+  const auto &sent = radio.get_sent_data();
+  for (size_t i = 0; i < sent.size(); i++) {
+    if (sent[i].size() > FRAME_CMD_OFFSET && sent[i][FRAME_CMD_OFFSET] == cmd)
+      preambles.push_back(radio.get_tx_configs()[i].preamble_len);
+  }
+  return preambles;
+}
+
+/// Queue a full, successful fast-turnaround pairing conversation with a device that reports itself
+/// low-power in its 0x29, so the power-class rule alone would pick LONG_PREAMBLE for its 0x2C.
+void queue_low_power_device_pairing(MockRadio &radio, const uint8_t hub[NODE_ID_SIZE],
+                                    const uint8_t device[NODE_ID_SIZE]) {
+  IoFrame discover_resp{};
+  ASSERT_TRUE(create_discover_resp(discover_resp, device, hub, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_VELUX));
+  radio.queue_rx(frame_to_rx_packet(discover_resp));
+  IoFrame confirm_ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(confirm_ack, device, hub));
+  radio.queue_rx(frame_to_rx_packet(confirm_ack));
+  uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(device, hub, challenge)));
+  radio.queue_rx(frame_to_rx_packet(build_key_confirm(device, hub)));
+}
+
+}  // namespace
+
+TEST(PairingHelpers, DirectedStartFramesKeepPowerClassPreambleAtDefaultDiscoveryPreamble) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  ASSERT_EQ(comp.tuning_.pairing_discovery_preamble, LONG_PREAMBLE);
+  queue_low_power_device_pairing(radio, comp.node_id_, test::DST_ID);
+
+  ASSERT_TRUE(comp.discover_and_pair());
+
+  EXPECT_EQ(tx_preambles_for(radio, CMD_DISCOVER_CONFIRM), (std::vector<uint16_t>{LONG_PREAMBLE}));
+  EXPECT_EQ(tx_preambles_for(radio, CMD_KEY_INIT), (std::vector<uint16_t>{LONG_PREAMBLE}));
+  const std::vector<uint16_t> config = tx_preambles_for(radio, CMD_SET_CONFIG1);
+  ASSERT_FALSE(config.empty());
+  for (uint16_t preamble : config)
+    EXPECT_EQ(preamble, LONG_PREAMBLE) << "default setups must transmit exactly what they did before";
+}
+
+TEST(PairingHelpers, DirectedStartFramesUseShorterDiscoveryPreamble) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  comp.tuning_.pairing_discovery_preamble = 32;
+  queue_low_power_device_pairing(radio, comp.node_id_, test::DST_ID);
+
+  ASSERT_TRUE(comp.discover_and_pair());
+
+  EXPECT_EQ(tx_preambles_for(radio, CMD_DISCOVER_REQ), (std::vector<uint16_t>{32}));
+  EXPECT_EQ(tx_preambles_for(radio, CMD_DISCOVER_CONFIRM), (std::vector<uint16_t>{32}))
+      << "the low-power target's 0x2C must not use a longer preamble than the discovery it answered";
+  EXPECT_EQ(tx_preambles_for(radio, CMD_KEY_INIT), (std::vector<uint16_t>{32}));
+  const std::vector<uint16_t> config = tx_preambles_for(radio, CMD_SET_CONFIG1);
+  ASSERT_FALSE(config.empty());
+  for (uint16_t preamble : config)
+    EXPECT_EQ(preamble, 32u) << "every 0x6F retry uses the shortened preamble";
+  EXPECT_EQ(tx_preambles_for(radio, CMD_KEY_TRANSFER), (std::vector<uint16_t>{radio.response_preamble()}))
+      << "continuation frames keep the driver's response preamble";
+
+  IoFrame first_confirm{};
+  for (const auto &raw : radio.get_sent_data()) {
+    if (raw.size() > FRAME_CMD_OFFSET && raw[FRAME_CMD_OFFSET] == CMD_DISCOVER_CONFIRM) {
+      ASSERT_TRUE(parse(raw.data(), static_cast<uint8_t>(raw.size()), first_confirm));
+      break;
+    }
+  }
+  EXPECT_EQ(first_confirm.ctrl1, CTRL1_LOW_POWER) << "only the preamble changes, not the frame bytes";
+}
+
+TEST(PairingHelpers, SlowTurnaroundKeyInitRetriggerUsesShorterDiscoveryPreamble) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  comp.tuning_.pairing_discovery_preamble = 32;
+
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, test::DST_ID, NODE_ID_SIZE);
+  uint8_t challenge[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  radio.queue_rx(frame_to_rx_packet(build_key_challenge(test::DST_ID, comp.node_id_, challenge)));
+  // Nothing more: the 0x33 is never heard, so the slow-turnaround loop re-sends the key-init.
+
+  EXPECT_FALSE(comp.pairing_engine_.run_key_exchange_phase_(context));
+
+  const std::vector<uint16_t> key_inits = tx_preambles_for(radio, CMD_KEY_INIT);
+  ASSERT_EQ(key_inits.size(), 3u) << "initial key-init plus two re-triggers";
+  for (uint16_t preamble : key_inits)
+    EXPECT_EQ(preamble, 32u);
+}

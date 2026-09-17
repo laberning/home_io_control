@@ -94,9 +94,14 @@ class ExchangeEngine {
   ///        [1, EXCHANGE_RETRY_COUNT]. Callers whose failure is already re-armed elsewhere (a
   ///        scheduler-owned status poll) pass SCHEDULED_POLL_MAX_TRIES so a dead device does not
   ///        block loop() for the full retry product.
+  /// @param request_preamble_override Preamble for the request frame in bytes, or 0 (the default) for
+  ///        request_preamble_for()'s rule. Only pairing passes a value: it sends its directed start
+  ///        frames with a preamble the device has just proven it hears (see
+  ///        PairingEngine::pairing_start_preamble_()). The 0x3D challenge response keeps the
+  ///        driver's response_preamble() either way.
   /// @return What the device actually told us — see @ref ExchangeOutcome.
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                   uint8_t max_tries = EXCHANGE_RETRY_COUNT);
+                                   uint8_t max_tries = EXCHANGE_RETRY_COUNT, uint16_t request_preamble_override = 0);
 
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).

@@ -888,9 +888,9 @@ bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *ds
 /// Build a set-config command (0x6F) to tell the device to automatically send status updates
 /// when controlled by any remote (not just us). Not all devices support this.
 bool create_set_config1(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  // low_power=true: this pairing phase-3 config write keeps the fixed long-preamble shape it was
+  // low_power=true: this pairing phase-3 config write keeps the fixed `4D 20` CTRL bytes it was
   // hardware-validated at; the per-device low_power rule deliberately does not reach pairing
-  // frames (ADR 0029).
+  // frames (ADR 0029). Its preamble is chosen by the pairing engine, not by this flag alone.
   init_frame(f, true, true, false, true);
   set_dst(f, dst);
   set_src(f, own);

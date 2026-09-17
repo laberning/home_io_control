@@ -18,6 +18,7 @@
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstring>
 
@@ -73,6 +74,10 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
       registry_(registry),
       telemetry_(telemetry),
       recent_oneway_sighting_(recent_oneway_sighting) {}
+
+uint16_t PairingEngine::pairing_start_preamble_(const IoFrame &frame) const {
+  return std::min(engine_.request_preamble_for(frame), tuning_->pairing_discovery_preamble);
+}
 
 // --- Low-level waiters ---
 
@@ -475,7 +480,7 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
 
     engine_.record_debug(pairing_stage_name(pairing::PairingState::TX_DISCOVER_CONFIRM), try_index, false);
     if (!create_discover_confirm(context.req, node_id_, context.device.node_id, context.discovery_low_power, ack) ||
-        !engine_.transmit_frame(context.req, FREQ_CH2, engine_.request_preamble_for(context.req))) {
+        !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble_(context.req))) {
       continue;  // A failed build/TX counts as a silent try, like wait_for_key_confirm_() does for 0x32.
     }
 
@@ -522,7 +527,7 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
 /// Phase 2: authenticated key exchange (0x31 → 0x3C → 0x32 → 0x33).
 ///
 /// Steps:
-///   1. Transmit CMD_KEY_INIT (0x31)
+///   1. Transmit CMD_KEY_INIT (0x31), preamble per pairing_start_preamble_()
 ///   2. Wait for device challenge (0x3C)
 ///   3. Transmit CMD_KEY_TRANSFER (0x32) with encrypted system key
 ///   4. Wait for CMD_KEY_CONFIRM (0x33)
@@ -556,7 +561,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   engine_.record_debug(pairing_stage_name(context.state), 1, false);
   this->telemetry_.set_phase(context.state);
   if (!create_key_init(context.key_init, node_id_, context.device.node_id) ||
-      !engine_.transmit_frame(context.key_init, FREQ_CH2, LONG_PREAMBLE)) {
+      !engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble_(context.key_init))) {
     return false;
   }
 
@@ -589,7 +594,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
       ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %d/2)", re + 1);
       App.feed_wdt();
       delay(EXCHANGE_RETRY_DELAY_MS);
-      if (!engine_.transmit_frame(context.key_init, FREQ_CH2, LONG_PREAMBLE))
+      if (!engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble_(context.key_init)))
         continue;
       if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
                                    context.device.node_id))
@@ -612,12 +617,14 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   return true;
 }
 
-/// Phase 3: send SetConfig1 (0x6F) to enable automatic status updates. Best-effort.
+/// Phase 3: send SetConfig1 (0x6F) to enable automatic status updates. Best-effort. Its preamble
+/// follows pairing_start_preamble_(), like the other directed pairing start frames.
 bool PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &context) {
   if (!create_set_config1(context.req, node_id_, context.device.node_id))
     return false;
   // Best-effort, and its reply is never read — an unconfirmed acceptance is a success here.
-  return engine_.send_and_receive(context.req, context.resp, FREQ_CH2) != ExchangeOutcome::FAILED;
+  return engine_.send_and_receive(context.req, context.resp, FREQ_CH2, EXCHANGE_RETRY_COUNT,
+                                  pairing_start_preamble_(context.req)) != ExchangeOutcome::FAILED;
 }
 
 // --- Orchestrator ---
@@ -657,6 +664,11 @@ bool PairingEngine::discover_and_pair() {
                                       ? PairingOutcome::INVALID_RESPONSE
                                       : PairingOutcome::NO_RESPONSE);
     return false;
+  }
+
+  if (tuning_->pairing_discovery_preamble < LONG_PREAMBLE) {
+    ESP_LOGI(TAG, "Pairing: directed frames to %s use the %u-byte discovery preamble it just answered",
+             context.device_id.c_str(), tuning_->pairing_discovery_preamble);
   }
 
   // Discover-confirm (0x2C -> 0x2D): once per attempt, before the key-exchange retry loop below,

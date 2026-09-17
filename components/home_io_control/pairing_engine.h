@@ -189,6 +189,20 @@ class PairingEngine {
   bool transfer_key_and_wait_confirm_(pairing::PairingContext &context);
 
  private:
+  /// Preamble for a directed pairing start frame (0x2C, 0x31, 0x6F) to the device discovery just
+  /// found: the shorter of ExchangeEngine::request_preamble_for()'s rule and the preamble the
+  /// discovery request went out with (`pairing_discovery_preamble`).
+  ///
+  /// The device answered a discovery request carrying that preamble moments ago, so it is
+  /// listening and demonstrably hears it; pairing follows within seconds. The long wake-up
+  /// preamble the rule would otherwise pick for a low-power target (and that 0x31/0x6F always
+  /// carry) is not just unnecessary then: some VELUX receivers never detect a frame behind a
+  /// 1024-byte preamble at all (ADR 0029). With the default discovery preamble (LONG_PREAMBLE)
+  /// the result equals the rule, so default setups transmit exactly what they did before.
+  /// @param frame The start frame about to be sent.
+  /// @return Preamble length in bytes.
+  [[nodiscard]] uint16_t pairing_start_preamble_(const IoFrame &frame) const;
+
   /// One `ListenPolicy::HOLD_REQUEST_CHANNEL` listen for the key-transfer confirm wait, called up
   /// to twice per try in `wait_for_key_confirm_()` — once for the initial reply, once more (a
   /// fresh window) after answering a device challenge — so the listen spec, logging, and telemetry

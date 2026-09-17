@@ -430,13 +430,15 @@ tuning:
 ```
 
 Not yet hardware-confirmed as a fix for any specific device — report back either way if you try it.
-**Scope:** this only covers phase 1 (discovery, `0x28`/`0x2E`). If a shortened preamble gets you a
-discovery response but the attempt then stalls at key exchange (`outcome=key_exchange_failed`),
-that is very likely the *same* underlying limitation biting phase 2 — `CMD_KEY_INIT` (`0x31`) is
-still transmitted at a hardcoded `LONG_PREAMBLE`, and the best-effort `SetConfig1` in phase 3 is
-built `low_power=true`, which also resolves to `LONG_PREAMBLE`. Neither is tunable yet; this is a
-known, not-yet-closed gap
-([ADR 0029](../adr/0029-start-preamble-is-a-property-of-the-target.md) flags phase 3 specifically).
+**It also shortens the rest of pairing.** The frames the hub then sends directly to the discovered
+device (discover-confirm `0x2C`, key-init `0x31`, and the phase-3 `SetConfig1` `0x6F`) never use a
+longer preamble than this setting. The device has just answered a discovery with this preamble, so
+it is listening and hears it, and some VELUX receivers ignore every frame behind the 1024-byte
+wake-up burst those frames would otherwise carry
+([ADR 0029](../adr/0029-start-preamble-is-a-property-of-the-target.md)). The log says so when it
+happens (`Pairing: directed frames to … use the 32-byte discovery preamble it just answered`). At
+the default `1024` nothing changes. Normal operation after pairing is not affected: it follows the
+device's own `low_power` setting.
 
 #### `pairing_discovery_wait_ms` / `pairing_discovery_initial_dwell_ms`
 

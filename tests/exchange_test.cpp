@@ -748,6 +748,35 @@ TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
       << "auth response on SX1262 should use SX1262_RESPONSE_PREAMBLE";
 }
 
+TEST(Exchange, SendAndReceive_RequestPreambleOverrideAppliesToRequestOnly) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadioSX1262 radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, /*low_power=*/true, 100);
+
+  uint8_t chal_data[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = serialize(challenge, raw_chal, sizeof(raw_chal));
+  memcpy(chal_pkt.data, raw_chal, chal_pkt.len);
+  radio.queue_rx(chal_pkt);
+
+  IoFrame response{};
+  comp.exchange_engine_.send_and_receive(request, response, FREQ_CH2, EXCHANGE_RETRY_COUNT, 32);
+
+  ASSERT_GE(radio.get_tx_configs().size(), 2u);
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, 32u)
+      << "the override replaces the rule's LONG_PREAMBLE for a low-power start frame";
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, SX1262_RESPONSE_PREAMBLE)
+      << "the 0x3D challenge response keeps the driver's response preamble";
+}
+
 // answer_challenge() is the one place that builds and sends a 0x3D, shared by the normal
 // inbound-challenge path (handle_authentication_()) and pairing's post-0x32 challenge answer
 // (wait_for_key_confirm_(), pairing_engine.cpp), so both send the exact same shape. This test

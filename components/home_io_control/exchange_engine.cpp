@@ -249,7 +249,7 @@ bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
 }  // namespace
 
 ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                                 uint8_t max_tries) {
+                                                 uint8_t max_tries, uint16_t request_preamble_override) {
   this->reset_debug(request.cmd);
   // Blank the radio's diagnostic capture at the start of the exchange. The radio only clears it
   // when it actually begins a listen, so an exchange that transmits and then hears nothing at all
@@ -262,7 +262,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   // above EXCHANGE_RETRY_COUNT (the budget check downstream assumes that ceiling).
   const uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
   this->debug_.max_tries = tries_allowed;
-  const uint16_t request_preamble = this->request_preamble_for(request);
+  const uint16_t request_preamble =
+      request_preamble_override != 0 ? request_preamble_override : this->request_preamble_for(request);
   const uint32_t exchange_begin_ms = millis();
   bool accepted_without_reply = false;
 
