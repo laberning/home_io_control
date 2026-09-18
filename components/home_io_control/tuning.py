@@ -262,7 +262,7 @@ _NUMBER_PARAMS = {
 # a simple On/Off select — driving the schema, the select options, and the to_code() assignment
 # from one list each, the same way _NUMBER_PARAMS drives the numeric ones below.
 #
-# pairing_discovery_ack_capable is experimental: see the init_frame() doc in proto_frame.h for why
+# pairing_discovery_ack_capable is opt-in: see the init_frame() doc in proto_frame.h for why
 # CTRL1_ACK must never become an unconditional default. This knob scopes it to the discovery
 # broadcast only, off by default.
 _BOOL_PARAMS = (CONF_PAIRING_DISCOVERY_LOW_POWER, CONF_PAIRING_DISCOVERY_ACK_CAPABLE)

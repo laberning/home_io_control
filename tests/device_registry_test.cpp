@@ -372,6 +372,88 @@ TEST(DeviceRegistry, RollbackOptimisticOnOptimisticDisabledDeviceReturnsFalse) {
   EXPECT_FALSE(reg.rollback_optimistic("ABC123"));
 }
 
+// A failed restorable STOP brings back the movement prediction it replaced: the device keeps
+// travelling, and one that reports nothing mid-travel has no observation that carries the direction.
+TEST(DeviceRegistry, RollbackOfRestorableStopRestoresReplacedMovement) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  ASSERT_TRUE(reg.apply_optimistic_target("ABC123", 100.0f));
+  ASSERT_TRUE(reg.apply_optimistic_stop("ABC123", /*restorable=*/true));
+  ASSERT_TRUE(reg.apply_optimistic_stop("ABC123", /*restorable=*/true))
+      << "a repeated STOP keeps the first one's stash";
+
+  EXPECT_TRUE(reg.rollback_optimistic("ABC123", /*failed_stop=*/true));
+
+  const IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::MOVING);
+  EXPECT_FLOAT_EQ(dev->optimistic.target, 100.0f);
+  EXPECT_FALSE(dev->optimistic.stop_replaced_movement) << "the stash is spent by the restore";
+  EXPECT_FALSE(effective_is_stopped(*dev));
+
+  EXPECT_TRUE(reg.rollback_optimistic("ABC123")) << "the restored movement belongs to the earlier command";
+  EXPECT_TRUE(dev->optimistic.empty()) << "a second rollback withdraws it like any other prediction";
+}
+
+// Every path that makes a rollback of the STOP impossible or meaningless drops the stash, so a later
+// unrelated rollback can never resurrect the old movement.
+TEST(DeviceRegistry, ReplacedMovementIsForgottenWhenNoLongerRestorable) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  // Not restorable: an overheard remote's STOP cannot fail from the hub's side.
+  reg.apply_optimistic_target("ABC123", 100.0f);
+  reg.apply_optimistic_stop("ABC123");
+  EXPECT_FALSE(dev->optimistic.stop_replaced_movement);
+
+  // Nothing to replace: a STOP with no movement prediction stashes nothing.
+  dev->optimistic.clear();
+  reg.apply_optimistic_stop("ABC123", /*restorable=*/true);
+  EXPECT_FALSE(dev->optimistic.stop_replaced_movement);
+
+  // Confirmed: the device accepted the STOP.
+  reg.apply_optimistic_target("ABC123", 100.0f);
+  reg.apply_optimistic_stop("ABC123", /*restorable=*/true);
+  ASSERT_TRUE(dev->optimistic.stop_replaced_movement);
+  reg.confirm_optimistic_stop("ABC123");
+  EXPECT_FALSE(dev->optimistic.stop_replaced_movement);
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::STOPPED) << "confirming keeps the stop prediction";
+
+  // Superseded by a new command's prediction.
+  reg.apply_optimistic_target("ABC123", 100.0f);
+  reg.apply_optimistic_stop("ABC123", /*restorable=*/true);
+  reg.apply_optimistic_target("ABC123", 20.0f);
+  EXPECT_FALSE(dev->optimistic.stop_replaced_movement);
+
+  // Superseded by an observation.
+  reg.apply_optimistic_stop("ABC123", /*restorable=*/true);
+  ASSERT_TRUE(dev->optimistic.stop_replaced_movement);
+  dev->optimistic.clear_position();
+  EXPECT_FALSE(dev->optimistic.stop_replaced_movement);
+  EXPECT_TRUE(dev->optimistic.empty());
+
+  reg.confirm_optimistic_stop("UNKNOWN1");  // no-op, must not crash
+}
+
+// A different command failing while a STOP is still queued (e.g. a tilt dispatched first) must not
+// resurrect the movement: that belongs to the STOP's own outcome. It withdraws everything, as any
+// failed command does.
+TEST(DeviceRegistry, NonStopFailureDoesNotRestoreMovementAStopReplaced) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  reg.apply_optimistic_target("ABC123", 100.0f);
+  reg.apply_optimistic_stop("ABC123", /*restorable=*/true);
+  reg.apply_optimistic_tilt("ABC123", 50.0f);
+
+  EXPECT_TRUE(reg.rollback_optimistic("ABC123"));
+
+  const IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->optimistic.empty()) << "no movement comes back, and the failed tilt's prediction is gone";
+}
+
 TEST(DeviceRegistry, RollbackOptimisticOnUnknownDeviceReturnsFalseWithoutCrashing) {
   DeviceRegistry reg;
   EXPECT_FALSE(reg.rollback_optimistic("UNKNOWN1"));

@@ -550,7 +550,7 @@ bool create_private2_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, ui
 /// @param low_power True to set the LOW_POWER flag in CTRL1.
 /// @param ack_capable True to set the ACK flag (CTRL1_ACK) in CTRL1 for this one broadcast. Each
 ///        caller decides per frame: the `pairing_discovery_ack_capable` tuning knob gates it for
-///        Discover & Pair's discovery broadcast (experimental, default off — see the init_frame()
+///        Discover & Pair's discovery broadcast (opt-in, default off — see the init_frame()
 ///        doc in proto_frame.h for why CTRL1_ACK must never become an unconditional default), and
 ///        the SPE roll-call's low-power frame shape (`CTRL1 = LOW_POWER | ACK`) always passes
 ///        true.

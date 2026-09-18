@@ -153,7 +153,7 @@ your device may differ.
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` | Address the discovery frames are sent to. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
 | `pairing_discovery_low_power` | both | `false` | `true` / `false` | Sets the LOW_POWER flag in discovery frames. |
-| `pairing_discovery_ack_capable` | both | `false` | `true` / `false` | Sets the ACK (CTRL1_ACK) flag on the discovery broadcast only. Experimental — see note below. |
+| `pairing_discovery_ack_capable` | both | `false` | `true` / `false` | Sets the ACK (CTRL1_ACK) flag on the discovery broadcast only. Off by default — see note below. |
 | `pairing_discovery_wait_ms` | both | `2000` | 500–5000 ms | How long to wait for a response after each discovery TX. Also the per-attempt listen window for each of the `scan_paired_devices` roll-call's attempts (up to six: three per power class). |
 | `pairing_discovery_initial_dwell_ms` | both | `300` | 0–500 ms | Settle delay before the first discovery TX. |
 | `pairing_key_exchange_retries` | both | `3` | 1–5 | Retries for the authenticated key-exchange phase. |
@@ -398,13 +398,12 @@ roll-call (`0x2A`) either, which is a separate, unrelated request path with its 
 shapes: the roll-call's low-power pass sets `CTRL1_ACK` itself, unconditionally, as part of that
 pass's frame — see [`scan_power_classes`](#scan_power_classes).
 
-*Do not enable this by default.* Setting this bit unconditionally on all outbound frames  —
-real Somfy awning devices went silent (no error, no reply, just dropped the frame) when they saw
-an unexpected `CTRL1` bit. This option exists purely as a diagnostic: real VELUX gateway broadcasts
-have been observed carrying this bit set, so it is worth testing in isolation against a motor that
-otherwise never answers `0x28` during its own learn window (e.g. a solar-powered VELUX SSL that
-has never been paired to any hub). Turn it on, retry Discover & Pair, capture a verbose log, then
-turn it back off regardless of outcome.
+*Off by default, and scoped to the discovery broadcast on purpose.* Setting `CTRL1_ACK` on every
+outbound frame silences real Somfy awnings: they drop a frame carrying an unexpected `CTRL1` bit,
+with no error and no reply. Real VELUX hubs send their discovery broadcast with this bit set, and it
+is part of the confirmed pairing setup for a VELUX SSL solar roller shutter (see
+[VELUX INTEGRA](../devices/velux-integra.md#ssl-solar-roller-shutter)). For other families, turn it
+on only to test a device that never answers `0x28`, and turn it back off if it doesn't help.
 
 #### `pairing_discovery_preamble`
 
@@ -412,16 +411,14 @@ The preamble length (in bytes) on the discovery broadcast itself (`0x28`/`0x2E`)
 `1024` (`LONG_PREAMBLE`): a factory-fresh device in learning mode is exactly the kind of
 duty-cycled receiver that wake-up burst exists for.
 
-*Observations:* issue #87 hardware-proved that some always-alive receivers never lock onto a
-preamble this long on *directed* commands, which is why every other directed start frame
-derives its preamble from the target's power class (see `normal_start_preamble` above). The discovery broadcast can't be made
-power-class-aware the same way — discovery exists to learn a device before anything is known about
-it — so it still always pays the ~213 ms cost. Issue #27 (Somfy Sunea IO devices repeatedly failing
-to answer discovery) raised this as a plausible, **unconfirmed** contributor. If a device is
-confirmed to be genuinely unpaired (not already claimed by another hub — see
-[A tuning plan](../troubleshooting.md#a-tuning-plan)) and still doesn't answer `0x28` at any of
-the settings above, this is worth trying
-next:
+Some receivers never lock onto a preamble this long while they are awake, which is why every
+directed start frame derives its preamble from the target's power class (see
+`normal_start_preamble` above). The discovery broadcast can't do that: discovery runs before
+anything is known about the device, so it uses this setting.
+
+**A VELUX SSL solar roller shutter needs `32`.** It answers nothing at `1024` and answers within
+~80 ms at `32`. Somfy devices answer either way. Try it for any genuinely unpaired device that
+doesn't answer `0x28` (see [A tuning plan](../troubleshooting.md#a-tuning-plan)):
 
 ```yaml
 tuning:
@@ -429,7 +426,6 @@ tuning:
   pairing_discovery_preamble: 32   # NORMAL_START_PREAMBLE's value; try 8 (SHORT_PREAMBLE) too
 ```
 
-Not yet hardware-confirmed as a fix for any specific device — report back either way if you try it.
 **It also shortens the rest of pairing.** The frames the hub then sends directly to the discovered
 device (discover-confirm `0x2C`, key-init `0x31`, and the phase-3 `SetConfig1` `0x6F`) never use a
 longer preamble than this setting. The device has just answered a discovery with this preamble, so

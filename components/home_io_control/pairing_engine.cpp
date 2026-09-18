@@ -617,14 +617,17 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   return true;
 }
 
-/// Phase 3: send SetConfig1 (0x6F) to enable automatic status updates. Best-effort. Its preamble
-/// follows pairing_start_preamble_(), like the other directed pairing start frames.
-bool PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &context) {
+/// Phase 3: send SetConfig1 (0x6F) once. Optional — see the header. Its preamble follows
+/// pairing_start_preamble_(), like the other directed pairing start frames.
+void PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &context) {
   if (!create_set_config1(context.req, node_id_, context.device.node_id))
-    return false;
-  // Best-effort, and its reply is never read — an unconfirmed acceptance is a success here.
-  return engine_.send_and_receive(context.req, context.resp, FREQ_CH2, EXCHANGE_RETRY_COUNT,
-                                  pairing_start_preamble_(context.req)) != ExchangeOutcome::FAILED;
+    return;
+  // Its reply is never read: an explicit refusal and silence are equally harmless here.
+  if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2, PAIRING_SET_CONFIG1_MAX_TRIES,
+                               pairing_start_preamble_(context.req)) == ExchangeOutcome::FAILED) {
+    ESP_LOGI(TAG, "Pairing: no reply from %s to the optional SetConfig1 (0x6F); the pairing is complete",
+             context.device_id.c_str());
+  }
 }
 
 // --- Orchestrator ---
@@ -633,7 +636,7 @@ bool PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
 ///
 /// Phase 1: run_discovery_phase_() finds a device in pairing mode.
 /// Phase 2: run_key_exchange_phase_() performs authenticated key establishment.
-/// Phase 3: finalize_pairing_configuration_() sends SetConfig1 (best-effort).
+/// Phase 3: finalize_pairing_configuration_() sends the optional SetConfig1 once.
 ///
 /// On success the device is added to the registry and a YAML snippet is printed to the log.
 /// The hub's thin wrapper manages the busy_ flag before and after this call.
@@ -693,10 +696,8 @@ bool PairingEngine::discover_and_pair() {
     return false;
   }
 
-  // Phase 3: Final configuration — best-effort SetConfig1. Pairing proceeds either way; the
-  // result only affects which outcome telemetry reports (PAIRED vs. CONFIG_FAILED).
-  const bool config_ok = finalize_pairing_configuration_(context);
-  const PairingOutcome outcome = config_ok ? PairingOutcome::PAIRED : PairingOutcome::CONFIG_FAILED;
+  // Phase 3: optional SetConfig1. The 0x33 above completed the pairing.
+  finalize_pairing_configuration_(context);
 
   context.state = pairing::PairingState::REGISTER_DEVICE;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
@@ -730,7 +731,7 @@ bool PairingEngine::discover_and_pair() {
     context.state = pairing::PairingState::COMPLETE;
     engine_.record_debug(pairing_stage_name(context.state), 1, true);
     this->telemetry_.set_phase(context.state);
-    this->finish_pairing_attempt_(outcome);
+    this->finish_pairing_attempt_(PairingOutcome::PAIRED);
     return true;
   }
 
@@ -746,7 +747,7 @@ bool PairingEngine::discover_and_pair() {
     context.state = pairing::PairingState::COMPLETE;
     engine_.record_debug(pairing_stage_name(context.state), 1, true);
     this->telemetry_.set_phase(context.state);
-    this->finish_pairing_attempt_(outcome);
+    this->finish_pairing_attempt_(PairingOutcome::PAIRED);
     return true;
   }
 
@@ -765,7 +766,7 @@ bool PairingEngine::discover_and_pair() {
   context.state = pairing::PairingState::COMPLETE;
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
   this->telemetry_.set_phase(context.state);
-  this->finish_pairing_attempt_(outcome);
+  this->finish_pairing_attempt_(PairingOutcome::PAIRED);
   return true;
 }
 

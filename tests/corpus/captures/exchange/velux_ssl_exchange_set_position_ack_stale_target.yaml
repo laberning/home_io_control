@@ -1,0 +1,42 @@
+id: velux_ssl_exchange_set_position_ack_stale_target
+description: >
+  A two-way set-position command (io 13 %, i.e. 87 % open in Home Assistant) to a VELUX SSL solar
+  roller shutter at rest, fully open (io 0 %), issue #114 (@michelpa), Heltec V3 / SX1262 hub
+  E3F1D3, device entry `low_power: true` (1024-byte preamble). Answered on the first try: the
+  motor challenged within ~10 ms, the hub answered the challenge, and the motor acknowledged. The
+  CHALLENGE_REQ (0x3C) and CHALLENGE_RESP (0x3D) are omitted because the frame logger masks their
+  payloads. In the acknowledgement, data[2..3] (the target field of a Somfy ack) echoes the
+  pre-command position, 0 %, not the commanded 13 %, and data[4..5] is zero. The same session's two
+  other acks show the pattern is not a constant payload: `2C 00 C8 00 00 00` for an open from
+  100 % and `2C 00 1A 00 00 00` for an open from 13 %. data[2..3] is the pre-command position each
+  time, and data[4..5] is always zero. A Somfy ack echoes pre-command values in both fields
+  (tests/corpus/captures/exchange/somfy_awning_exchange_ack_reports_stale_target_open.yaml), so
+  only the first field matches. The hub does not decode positions from an EXECUTE ack, so no
+  position is asserted here. The shutter's real position after the move comes from
+  tests/corpus/captures/statuspoll/velux_ssl_statuspoll_silent_while_moving.yaml. t_ms are from
+  the log line timestamps (EXECUTE at 11:16:27.998).
+source:
+  device: "VELUX SSL solar roller shutter (node 3943DA), paired two-way to this hub"
+  captured_with: sx1262
+  firmware: "main at 4dd91b1"
+  date: 2026-09-18
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/114"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "50 20 39 43 DA E3 F1 D3 00 01 63 1A 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), position 13 % (MP 0x1A00), originator 0x01, ACEI 0x63, START, CTRL1=0x20 LOW_POWER, 1024-byte preamble; answered by a 0x3C (masked, omitted), then the hub's 0x3D (masked, omitted)"
+  - dir: rx
+    t_ms: 278
+    freq: 868950000
+    hex: "8E 00 E3 F1 D3 39 43 DA 04 2C 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), EXECUTE ack, END. data = 2C flags (moving) | 00 | 00 00 pre-command position 0 %, not the commanded 13 % | 00 00 (always zero in this device's acks) — the hub keeps its own prediction of 13 %"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

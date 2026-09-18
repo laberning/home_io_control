@@ -1,0 +1,65 @@
+id: velux_ssl_pairing_key_exchange_setconfig_unanswered
+description: >
+  The tail of a successful two-way pairing between this project's hub (Heltec V3 / SX1262, node
+  E3F1D3) and a never-hub-paired VELUX SSL solar roller shutter, the motor type with an I/O switch
+  and a P button, issue #114 (@michelpa). The motor was reset and opened for pairing by setting the
+  switch to 0 for 10 s, back to I, then holding P for 10 s. Tuning: `pairing_discovery_preamble: 32`,
+  `pairing_discovery_destination: 0x00003F`, `pairing_discovery_ack_capable: true`. The posted log
+  starts at the key-exchange retry. The attempt summary (no bytes) shows the earlier part: 0x28 →
+  0x29 in 78 ms on the first discovery try, 0x2C → 0x2D in 14 ms, and a first 0x31 that drew
+  nothing in 756 ms. Captured here: the retried KEY_INIT (0x31, 32-byte preamble), which the motor
+  challenged within 16 ms. The CHALLENGE_REQ (0x3C) and KEY_TRANSFER (0x32) are omitted because the
+  frame logger masks their payloads. Then the motor's KEY_CONFIRM (0x33), then three phase-3
+  SET_CONFIG1 (0x6F) frames at 32 bytes, which drew nothing at all. The capturing build retried it
+  three times and reported outcome=config_failed; the shutter was paired and obeys commands
+  normally. The hub now sends 0x6F once and reports paired. No real VELUX
+  controller on record sends 0x6F after pairing (compare
+  tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml and
+  tests/corpus/captures/discovery/velux_ssl_discovery_tahoma_pairing.yaml). t_ms are from the log
+  line timestamps; 0x31 at 10:27:29.596.
+source:
+  device: "VELUX SSL solar roller shutter, I/O-switch + P-button motor, node BE2142, never hub-paired"
+  captured_with: sx1262
+  firmware: "main at 4dd91b1 (pairing reuses the discovery preamble)"
+  date: 2026-09-18
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/114"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "48 20 BE 21 42 E3 F1 D3 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), key-exchange retry 2/3, CTRL1=0x20 (LOW_POWER, mirroring the 0x29), 32-byte preamble; answered by a 0x3C at +16 ms (payload masked, omitted), then the hub's 0x32 (masked, omitted)"
+  - dir: rx
+    t_ms: 71
+    freq: 868950000
+    hex: "88 00 E3 F1 D3 BE 21 42 33"
+    crc: absent
+    note: "cmd=KEY_CONFIRM(0x33), END, 21 ms after the hub's 0x32; RSSI -64 dBm. The key exchange is complete here"
+  - dir: tx
+    t_ms: 80
+    freq: 868950000
+    hex: "4D 20 BE 21 42 E3 F1 D3 6F E0 10 0A 08 00"
+    crc: absent
+    note: "cmd=SET_CONFIG1(0x6F), best-effort phase-3 config, 32-byte preamble; no frame back within 400 ms"
+  - dir: tx
+    t_ms: 756
+    freq: 868950000
+    hex: "4D 20 BE 21 42 E3 F1 D3 6F E0 10 0A 08 00"
+    crc: absent
+    note: "cmd=SET_CONFIG1(0x6F), try 2; no frame back"
+  - dir: tx
+    t_ms: 1432
+    freq: 868950000
+    hex: "4D 20 BE 21 42 E3 F1 D3 6F E0 10 0A 08 00"
+    crc: absent
+    note: "cmd=SET_CONFIG1(0x6F), try 3; no frame back; the device is paired and later controllable"
+expect:
+  frames:
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x33, start: false, end: true, protocol: 2w}
+    - {cmd: 0x6F, start: true, end: false, protocol: 2w}
+    - {cmd: 0x6F, start: true, end: false, protocol: 2w}
+    - {cmd: 0x6F, start: true, end: false, protocol: 2w}

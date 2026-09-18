@@ -107,7 +107,7 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=awning; attempts=1; lbt=0;
 
 | Field | Meaning |
 |-------|---------|
-| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, or `config_failed` (key exchange succeeded but the best-effort SetConfig1 step failed; still counted as paired). |
+| `outcome` | `paired`, `no_response`, `invalid_response`, or `key_exchange_failed`. |
 | `phase` | The furthest stage the pairing state machine reached. |
 | `node` / `type` | The paired device's node ID and type, or `-` if nothing was paired. |
 | `attempts` | Number of discovery command retries sent. |

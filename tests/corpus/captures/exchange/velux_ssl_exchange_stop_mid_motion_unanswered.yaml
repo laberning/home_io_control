@@ -1,0 +1,48 @@
+id: velux_ssl_exchange_stop_mid_motion_unanswered
+description: >
+  A two-way STOP sent to a VELUX SSL solar roller shutter while it was closing, issue #114
+  (@michelpa), Heltec V3 / SX1262 hub E3F1D3, device entry `low_power: true` (1024-byte preamble,
+  CTRL1 0x20). Three tries drew no frame at all — no CHALLENGE_REQ, nothing on any channel
+  (stage=wait_first_timeout, saw_challenge=0). The shutter kept closing. The same shutter answers
+  the byte-identical command shape from rest within one to three tries (see
+  tests/corpus/captures/exchange/velux_ssl_exchange_set_position_ack_stale_target.yaml). The same silence
+  is on record for a VELUX MSU solar screen (issue #95), whose OEM remote's one-way STOP
+  (tests/corpus/captures/oneway/velux_kli313_oneway_stop.yaml) did stop it mid-travel. Two
+  explanations fit and this capture does not separate them. The motor may not transmit while it
+  moves. Or a moving (awake) motor may ignore the 1024-byte preamble, as this motor provably does
+  while awake in its registration window
+  (tests/corpus/captures/pairing/velux_ssl_pairing_directed_long_preamble_ignored.yaml), while
+  the OEM burst's repeat copies carry short preambles.
+  t_ms are from the log line timestamps (first try 10:48:11.318).
+source:
+  device: "VELUX SSL solar roller shutter (node 3943DA), paired two-way to this hub"
+  captured_with: sx1262
+  firmware: "main at 4dd91b1"
+  date: 2026-09-18
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/114"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 20 39 43 DA E3 F1 D3 00 01 63 D2 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) STOP (MP 0xD200), originator 0x01, ACEI 0x63, CTRL1=0x20 LOW_POWER, 1024-byte preamble, shutter moving; no frame back within 400 ms"
+  - dir: tx
+    t_ms: 883
+    freq: 868950000
+    hex: "4E 20 39 43 DA E3 F1 D3 00 01 63 D2 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) STOP, try 2; no frame back"
+  - dir: tx
+    t_ms: 1776
+    freq: 868950000
+    hex: "4E 20 39 43 DA E3 F1 D3 00 01 63 D2 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) STOP, try 3; no frame back — exchange failed, the shutter did not stop"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}

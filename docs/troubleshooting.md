@@ -39,9 +39,9 @@ What to try, in order:
    also drives other devices, power them down first.
 3. **Don't treat a reset as a pairing gesture.** A Double Power Cut or factory reset only returns
    the device to its first-time setup. If it has a local remote, register that again as the manual
-   describes, then repeat step 2. Some families document a separate gesture: a VELUX SSL has a physical **P**
-   button that opens a 10-minute 2W registration window; see
-   [VELUX INTEGRA](devices/velux-integra.md).
+   describes, then repeat step 2. The exception is a VELUX SSL solar roller shutter, which pairs
+   right after its motor-side reset; see
+   [VELUX INTEGRA](devices/velux-integra.md#ssl-solar-roller-shutter).
 4. **If a two-way hub already controls it** — a Somfy TaHoma, Connexoon or Connectivity Kit, a
    VELUX KLF200, KLR200 or KIG300 — use [key extraction](key-extraction.md). It is the route that
    works for a claimed device. A 1W-only wall switch or remote does not qualify; see
@@ -82,13 +82,15 @@ Pairing reported `paired`, the entity exists, and commands do nothing.
 
 `open` and `close` work, but `stop` does nothing while the device is travelling.
 
-Some devices will not complete a 2W handshake while they are moving. The hub has nothing to talk
-to, so the stop is never delivered. This is confirmed on a VELUX MSU solar awning screen in issue
-#95, where open and close both work and only `stop` fails.
+Some devices answer nothing the hub sends while their motor runs. A stop sent mid-travel never
+arrives, and status polls sent during the move go unanswered too, so the "Exchange Failures" count
+rises during every movement and the position updates only once the device has stopped. VELUX solar
+products behave this way: the MSU awning screen and the SSL roller shutter. Open, close and set
+position from rest work.
 
-There is no complete fix from the hub side for such a device. If the device also listens for a 1W
-remote, [sending a 1W STOP](configuration/oneway-transmit.md) is the route that reaches it,
-provided this hub is enrolled as a controller first.
+To stop such a device mid-travel, use its own 1W remote. The hub can send the same kind of stop
+from a 1W identity once that identity is enrolled in the device; see
+[Sending 1W commands](configuration/oneway-transmit.md).
 
 ## 1W commands do nothing
 
@@ -167,16 +169,16 @@ is a general starting point, not a guarantee — different devices need differen
 
 5. **If the device is confirmed genuinely unpaired and still doesn't answer** any of the above,
    try shortening the discovery broadcast's preamble — see
-   [`pairing_discovery_preamble`](configuration/tuning.md#pairing_discovery_preamble).
-   Unconfirmed as a fix for any specific device; worth reporting back either way:
+   [`pairing_discovery_preamble`](configuration/tuning.md#pairing_discovery_preamble). A VELUX SSL
+   solar roller shutter answers only at the short setting:
    ```yaml
    pairing_discovery_preamble: 32   # then 8
    ```
 
-6. **As a last resort, try the ACK-capable flag.** Real VELUX gateway discovery broadcasts have
-   been observed carrying `CTRL1_ACK` set. This is experimental and off by default for a reason
-   — read [`pairing_discovery_ack_capable`](configuration/tuning.md#pairing_discovery_ack_capable)
-   before enabling it, and turn it back off afterward regardless of outcome:
+6. **As a last resort, try the ACK-capable flag.** Real VELUX hubs send their discovery broadcast
+   with `CTRL1_ACK` set. It is off by default — read
+   [`pairing_discovery_ack_capable`](configuration/tuning.md#pairing_discovery_ack_capable) before
+   enabling it, and turn it back off if it doesn't help:
    ```yaml
    pairing_discovery_ack_capable: true
    ```

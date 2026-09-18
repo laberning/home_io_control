@@ -26,10 +26,10 @@
 ///    consecutive identical-content tx frames to a single expected transmission still asserts
 ///    real byte content — it just can't pin the real-world retry *count*, which was RF flakiness
 ///    on the day of capture, not protocol behavior worth freezing into a test.
-/// 2. **Trailing, wholly-unanswered tx.** SetConfig1 (0x6F) is sent best-effort at the end of
-///    pairing (finalize_pairing_configuration_()'s own doc: "the return value is informational
-///    only"); a capture where nothing answers it does not reliably record how many of
-///    EXCHANGE_RETRY_COUNT retries the real device actually saw before the operator moved on.
+/// 2. **Trailing, wholly-unanswered tx.** SetConfig1 (0x6F) is sent at the end of pairing and is
+///    optional (finalize_pairing_configuration_()'s own doc); a capture where nothing answers it
+///    may record more tries than today's PAIRING_SET_CONFIG1_MAX_TRIES, from a build that
+///    retried it.
 ///    Such a trailing run is excluded from the tx-count assertion (checked with a >=, not an
 ///    exact count) — everything up to and including the last *answered* exchange is still
 ///    asserted byte-exact.

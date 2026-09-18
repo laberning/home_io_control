@@ -131,13 +131,12 @@ class PairingEngine {
   /// @return true if key exchange completes; false on any failure.
   bool run_key_exchange_phase_(pairing::PairingContext &context);
 
-  /// Phase 3: send SetConfig1 (0x6F) to enable automatic status updates; best-effort.
-  /// Pairing always proceeds regardless of the outcome — the return value is informational
-  /// only, used to distinguish PairingOutcome::PAIRED from PairingOutcome::CONFIG_FAILED in
-  /// telemetry; it never causes discover_and_pair() to report failure.
+  /// Phase 3: send SetConfig1 (0x6F) once; optional. The key exchange's 0x33 already completed
+  /// the pairing, so neither the attempt's outcome nor its telemetry depends on this step: no
+  /// device on record accepts the frame (see PAIRING_SET_CONFIG1_MAX_TRIES). An unanswered try
+  /// is logged as harmless so the preceding "no first response" line isn't read as a failure.
   /// @param context Pairing context with device information from phases 1 and 2.
-  /// @return true if the SetConfig1 exchange completed; false if it was skipped or failed.
-  bool finalize_pairing_configuration_(pairing::PairingContext &context);
+  void finalize_pairing_configuration_(pairing::PairingContext &context);
 
   /// Wait for a discovery response (0x29) within timeout_ms with per-chip frequency hopping.
   /// @param timeout_ms     Maximum wait window.

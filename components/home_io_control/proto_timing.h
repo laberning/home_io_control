@@ -62,16 +62,14 @@ static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
 static constexpr uint16_t NORMAL_START_PREAMBLE = 32;
 
 /// Default for `TuningConfig::pairing_discovery_preamble` — the preamble on the pairing discovery
-/// broadcast (`CMD_DISCOVER_REQ`/`CMD_DISCOVER_ALT_REQ`, 0x28/0x2E). Defaults to `LONG_PREAMBLE`,
-/// unchanged from historical behavior: a factory-fresh device in learning mode is exactly the kind
-/// of duty-cycled receiver `LONG_PREAMBLE` exists to wake. But unlike every other directed start
-/// frame (see `NORMAL_START_PREAMBLE`'s history, issue #87 — some always-alive receivers never
-/// lock onto a preamble this long), the discovery broadcast can't be made power-class-aware the
-/// same way: discovery exists to learn a device before anything is known about it, so it still
-/// unconditionally pays `LONG_PREAMBLE`'s ~213 ms even against an always-listening target. Issue
-/// #27 (Somfy Sunea IO devices repeatedly failing to answer discovery) raised this as a plausible,
-/// unconfirmed contributor. Runtime-tunable via `pairing_discovery_preamble` so that hypothesis is
-/// testable without a rebuild — not yet hardware-confirmed as a fix for any specific device.
+/// broadcast (`CMD_DISCOVER_REQ`/`CMD_DISCOVER_ALT_REQ`, 0x28/0x2E). `LONG_PREAMBLE`, because a
+/// device in learning mode may be a duty-cycled receiver that needs the wake-up burst. Unlike a
+/// directed start frame (see `NORMAL_START_PREAMBLE`), the discovery broadcast can't follow the
+/// target's power class: discovery runs before anything is known about the device. Some awake
+/// receivers never lock onto a preamble this long — a VELUX SSL solar roller shutter answers
+/// discovery only at a short preamble — so the value is runtime-tunable via
+/// `pairing_discovery_preamble`, and pairing reuses the tuned value for the frames it then sends
+/// to the discovered device (`PairingEngine::pairing_start_preamble_()`).
 static constexpr uint16_t PAIRING_DISCOVERY_PREAMBLE = LONG_PREAMBLE;
 
 /// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
@@ -110,6 +108,12 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
     RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
+
+/// Tries for pairing's phase-3 SetConfig1 (0x6F). One: no device on record accepts it (a Somfy
+/// Izymo answers `FE 28`, a VELUX SSL solar roller shutter stays silent) and no real controller
+/// sends it, so a retry only adds 0.7–0.9 s of blocking and a frame of airtime to every pairing
+/// with a silent device. A challenged try still completes its 0x3C/0x3D round within the one try.
+static constexpr uint8_t PAIRING_SET_CONFIG1_MAX_TRIES = 1;
 
 /// Exchange tries for a status poll the scheduler owns — every status poll issued while
 /// StatusPollPolicy is tracking the device, which today is every status poll this component can

@@ -1,0 +1,63 @@
+id: somfy_izymo_dimmer_pairing_discover_confirm_ack_unanswered_sx1262
+description: >
+  The same Somfy Izymo dimmer as somfy_izymo_dimmer_pairing_discover_confirm_sx1262, with the
+  discover-confirm step in `send_with_ack` mode: the 0x2C carries CTRL1_ACK (`48 10`, the shape
+  every captured hub sends to always-alive devices). The dimmer never answered it — three tries,
+  1.5 s apart, no 0x2D and no other frame — while it answered `48 00` within 12–23 ms in every other
+  run. 0 of 6 tries across two runs; this is run E2-1. The step then continued to the key exchange,
+  which the dimmer accepted normally (0x3C/0x32/0x33 omitted: payloads masked by the frame logger), so
+  pairing still succeeded after the ~4.85 s no-answer wait. This is why `send`, not `send_with_ack`,
+  is the default (ADR 0039). Heltec V3 / SX1262 hub C0FFEE; t_ms are log line timestamps.
+source:
+  device: "Somfy Izymo dimmer (io light actuator)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-09-16
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B C0 FF EE 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28) to 00003B, default shape (CTRL1 0x00, 1024-byte preamble)"
+  - dir: rx
+    t_ms: 559
+    freq: 869850000
+    hex: "D1 00 C0 FF EE 87 B0 DB 29 01 80 87 B0 DB 02 DC 02 79"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), Somfy (0x02) light, flags DC (always-alive), answered on 869.85 MHz"
+  - dir: tx
+    t_ms: 568
+    freq: 868950000
+    hex: "48 10 87 B0 DB C0 FF EE 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), CTRL1=0x10 (ACK, `send_with_ack` mode), 32-byte preamble, CH2; no answer"
+  - dir: tx
+    t_ms: 2095
+    freq: 868950000
+    hex: "48 10 87 B0 DB C0 FF EE 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), CTRL1=0x10 (ACK, `send_with_ack` mode), 32-byte preamble, CH2; no answer"
+  - dir: tx
+    t_ms: 3621
+    freq: 868950000
+    hex: "48 10 87 B0 DB C0 FF EE 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), CTRL1=0x10 (ACK, `send_with_ack` mode), 32-byte preamble, CH2; no answer"
+  - dir: tx
+    t_ms: 5449
+    freq: 868950000
+    hex: "48 20 87 B0 DB C0 FF EE 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31) after the three unanswered tries + 300 ms pause; answered by a 0x3C (payload masked, omitted), pairing completed"
+expect:
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}

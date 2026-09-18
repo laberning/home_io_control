@@ -287,18 +287,31 @@ struct OptimisticState {
   float target{UNKNOWN_POSITION};  ///< Predicted main-position target, or UNKNOWN_POSITION.
   float tilt{UNKNOWN_POSITION};    ///< Predicted slat angle, or UNKNOWN_POSITION.
   Motion motion{Motion::NONE};     ///< Predicted movement state.
+  /// True while a pending STOP replaced a `Motion::MOVING` prediction that a failed STOP should
+  /// bring back (DeviceRegistry::rollback_optimistic()). A failed STOP means the device keeps
+  /// travelling, and a device that reports nothing mid-travel has no observation to fall back on
+  /// that still carries the direction. Only set alongside `Motion::STOPPED`.
+  bool stop_replaced_movement{false};
+  float stop_replaced_target{UNKNOWN_POSITION};  ///< The replaced `target`; meaningful only with the flag.
 
   /// @return true when nothing is predicted, so a rollback would be a no-op.
   [[nodiscard]] bool empty() const {
-    return target == UNKNOWN_POSITION && tilt == UNKNOWN_POSITION && motion == Motion::NONE;
+    return target == UNKNOWN_POSITION && tilt == UNKNOWN_POSITION && motion == Motion::NONE && !stop_replaced_movement;
   }
   /// Withdraw every prediction.
   void clear() { *this = {}; }
   /// Withdraw the position prediction; call when a decoded position observation supersedes it.
-  /// Clears `motion` with `target` because apply_optimistic_target() sets the two together.
+  /// Clears `motion` with `target` because apply_optimistic_target() sets the two together, and
+  /// the replaced movement with them: an observation outranks every guess about travel.
   void clear_position() {
     target = UNKNOWN_POSITION;
     motion = Motion::NONE;
+    forget_replaced_movement();
+  }
+  /// Drop the movement a STOP replaced, once nothing can roll the STOP back any more.
+  void forget_replaced_movement() {
+    stop_replaced_movement = false;
+    stop_replaced_target = UNKNOWN_POSITION;
   }
   /// Withdraw the tilt prediction; call when a decoded tilt observation supersedes it.
   void clear_tilt() { tilt = UNKNOWN_POSITION; }

@@ -77,11 +77,10 @@ struct RecentOneWayPairingSighting {
 /// @brief Final disposition of a pairing attempt, used by the result sensor string.
 enum class PairingOutcome : uint8_t {
   NONE,                 ///< No attempt has completed yet (initial state).
-  PAIRED,               ///< All three phases completed successfully.
+  PAIRED,               ///< The key exchange completed and the device is registered.
   NO_RESPONSE,          ///< No device responded to discovery.
   INVALID_RESPONSE,     ///< Discovery saw traffic but nothing valid.
   KEY_EXCHANGE_FAILED,  ///< Discovery succeeded but the key exchange did not complete.
-  CONFIG_FAILED,        ///< Key exchange succeeded but SetConfig1 failed (still counted as paired).
 };
 
 /// @brief Fixed-size per-attempt telemetry recorder for the pairing flow.
