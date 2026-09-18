@@ -95,17 +95,26 @@ bool DeviceRegistry::apply_optimistic_target(const std::string &device_id, float
   }
   it->second.optimistic.target = target_io_position;
   it->second.optimistic.motion = OptimisticState::Motion::MOVING;
+  it->second.optimistic.forget_replaced_movement();  // a new command supersedes any pending STOP's
   notify(device_id);
   return true;
 }
 
-bool DeviceRegistry::apply_optimistic_stop(const std::string &device_id) {
+bool DeviceRegistry::apply_optimistic_stop(const std::string &device_id, bool restorable) {
   auto it = devices_.find(device_id);
   if (it == devices_.end() || !it->second.optimistic_state)
     return false;
+  OptimisticState &optimistic = it->second.optimistic;
   ESP_LOGD(TAG, "Device %s: optimistic stop", device_id.c_str());
-  it->second.optimistic.target = UNKNOWN_POSITION;
-  it->second.optimistic.motion = OptimisticState::Motion::STOPPED;
+  if (!restorable) {
+    optimistic.forget_replaced_movement();
+  } else if (optimistic.motion == OptimisticState::Motion::MOVING) {
+    // A repeated STOP (motion already STOPPED) keeps the movement the first one replaced.
+    optimistic.stop_replaced_movement = true;
+    optimistic.stop_replaced_target = optimistic.target;
+  }
+  optimistic.target = UNKNOWN_POSITION;
+  optimistic.motion = OptimisticState::Motion::STOPPED;
   notify(device_id);
   return true;
 }
@@ -132,14 +141,30 @@ bool DeviceRegistry::apply_optimistic_tilt(const std::string &device_id, float t
   return true;
 }
 
-bool DeviceRegistry::rollback_optimistic(const std::string &device_id) {
+bool DeviceRegistry::rollback_optimistic(const std::string &device_id, bool failed_stop) {
   auto it = devices_.find(device_id);
   if (it == devices_.end() || it->second.optimistic.empty())
     return false;
-  ESP_LOGD(TAG, "Device %s: optimistic rollback (command failed)", device_id.c_str());
-  it->second.optimistic.clear();
+  OptimisticState &optimistic = it->second.optimistic;
+  if (failed_stop && optimistic.stop_replaced_movement) {
+    ESP_LOGD(TAG, "Device %s: optimistic rollback (stop failed, movement toward %.0f resumes)", device_id.c_str(),
+             optimistic.stop_replaced_target);
+    const float resumed_target = optimistic.stop_replaced_target;
+    optimistic.clear();
+    optimistic.target = resumed_target;
+    optimistic.motion = OptimisticState::Motion::MOVING;
+  } else {
+    ESP_LOGD(TAG, "Device %s: optimistic rollback (command failed)", device_id.c_str());
+    optimistic.clear();
+  }
   notify(device_id);
   return true;
+}
+
+void DeviceRegistry::confirm_optimistic_stop(const std::string &device_id) {
+  auto it = devices_.find(device_id);
+  if (it != devices_.end())
+    it->second.optimistic.forget_replaced_movement();
 }
 
 void DeviceRegistry::for_each_linked_remote(

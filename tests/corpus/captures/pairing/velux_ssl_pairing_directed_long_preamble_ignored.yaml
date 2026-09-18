@@ -1,0 +1,87 @@
+id: velux_ssl_pairing_directed_long_preamble_ignored
+description: >
+  A never-hub-paired VELUX SSL solar roller shutter (node B2D242) answering this project's own
+  discovery request, then ignoring every frame the hub sends to it directly. Issue #114 (@michelpa),
+  Heltec V3 / SX1262 hub E3F1D3, one Discover & Pair attempt out of four identical ones in the same
+  session. Discovery goes out with `pairing_discovery_preamble: 32`,
+  `pairing_discovery_destination: 0x00003F` and `pairing_discovery_ack_capable: true` (CTRL1 0x10)
+  and is answered within ~90 ms, off the request channel. The three DISCOVER_CONFIRM (0x2C) and three
+  KEY_INIT (0x31) frames that follow were transmitted with a 1024-byte preamble (the hub's rule for a
+  target that reports low-power) and drew no frame at all on any channel — not an error, silence.
+  The decisive variable is not visible in the bytes: this schema records no preamble length. The
+  byte-identical 0x2C/0x31 sent with a 32-byte preamble were answered and the pairing completed
+  (same issue, later the same day: node 7CDAD3, full sequence, no log excerpt posted), which is the
+  VELUX instance of the long-preamble failure ADR 0029 records for always-alive VELUX products.
+  The 0x29's last two bytes are a seconds counter: 0x01A1 = 417 here, and 443 / 459 / 471 in the
+  session's next three answers, exactly 1 Hz, i.e. seconds since the motor last started — not a
+  pairing-window timer. t_ms are from the log line timestamps.
+source:
+  device: "VELUX SSL solar roller shutter (node B2D242, never hub-paired)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-09-17
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/114"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 10 00 00 3F E3 F1 D3 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28) to 00003F, CTRL1=0x10 (ACK), preamble 32 bytes — the discovery shape this motor answers; the default (1024-byte preamble, CTRL1 0x00, dst 00003B) drew nothing from it in the same kind of pairing window"
+  - dir: rx
+    t_ms: 94
+    freq: 868250000
+    hex: "D1 00 E3 F1 D3 B2 D2 42 29 00 80 00 00 00 01 DD 01 A1"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), answered on 868.25 MHz (off the request channel), RSSI -72 dBm. data = 00 80 (roller shutter) | 00 00 00 backbone | 01 VELUX | DD flags (power_save = low-power) | 01 A1 seconds counter (417 s since the motor last started)"
+  - dir: tx
+    t_ms: 111
+    freq: 868950000
+    hex: "48 20 B2 D2 42 E3 F1 D3 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), CTRL1=0x20 (LOW_POWER, mirroring the 0x29), 1024-byte preamble; no 0x2D and no other frame on any channel"
+  - dir: tx
+    t_ms: 1841
+    freq: 868950000
+    hex: "48 20 B2 D2 42 E3 F1 D3 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), CTRL1=0x20 (LOW_POWER, mirroring the 0x29), 1024-byte preamble; no 0x2D and no other frame on any channel"
+  - dir: tx
+    t_ms: 3572
+    freq: 868950000
+    hex: "48 20 B2 D2 42 E3 F1 D3 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), CTRL1=0x20 (LOW_POWER, mirroring the 0x29), 1024-byte preamble; no 0x2D and no other frame on any channel"
+  - dir: tx
+    t_ms: 5602
+    freq: 868950000
+    hex: "48 20 B2 D2 42 E3 F1 D3 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), 1024-byte preamble; no 0x3C"
+  - dir: tx
+    t_ms: 6588
+    freq: 868950000
+    hex: "48 20 B2 D2 42 E3 F1 D3 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), 1024-byte preamble; no 0x3C"
+  - dir: tx
+    t_ms: 7572
+    freq: 868950000
+    hex: "48 20 B2 D2 42 E3 F1 D3 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), 1024-byte preamble; no 0x3C"
+expect:
+  exchange:
+    kind: pairing
+    outcome: timeout
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}

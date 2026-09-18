@@ -126,8 +126,11 @@ class DeviceRegistry {
   /// prediction: a bare withdrawal would fall back to an observed `is_stopped == false` and keep
   /// the HA cover animating. The prediction is superseded by the next decoded status.
   /// @param device_id Device to update.
+  /// @param restorable True for a STOP this hub is about to send: a movement prediction it
+  ///        replaces is kept so rollback_optimistic() can bring it back if the STOP fails. False
+  ///        for a stop that cannot fail from the hub's side (an overheard remote's STOP).
   /// @return true if the optimistic stop was applied.
-  bool apply_optimistic_stop(const std::string &device_id);
+  bool apply_optimistic_stop(const std::string &device_id, bool restorable = false);
 
   /// Set an optimistic slat angle ahead of a confirming poll, and notify.
   ///
@@ -154,9 +157,23 @@ class DeviceRegistry {
   /// `optimistic_state: false`, whose apply_* calls all no-op), so there is nothing to withdraw and
   /// no reason to republish. Never touches an observed field — the device did not move, so its last
   /// reported position remains correct and stays on display.
+  ///
+  /// A failed restorable STOP (apply_optimistic_stop()) is the exception: the device keeps doing
+  /// what it was doing, so the movement prediction the STOP replaced comes back, and every other
+  /// prediction is withdrawn as usual. Without that the entity would fall back to an observation
+  /// that, on a device reporting nothing mid-travel, reads "moving, target = position" and shows
+  /// as idle.
   /// @param device_id Device whose failed command's predictions should be withdrawn.
-  /// @return true if a prediction was withdrawn.
-  bool rollback_optimistic(const std::string &device_id);
+  /// @param failed_stop True when the failed command is a STOP. Only then does the replaced
+  ///        movement come back; any other failed command (e.g. a tilt run ahead of a still-queued
+  ///        STOP) withdraws everything.
+  /// @return true if a prediction was withdrawn or restored.
+  bool rollback_optimistic(const std::string &device_id, bool failed_stop = false);
+
+  /// Mark a device's STOP as delivered: a later rollback must not restore the movement it
+  /// replaced. Leaves every prediction in place. No-op for an unknown device.
+  /// @param device_id Device that accepted the STOP.
+  void confirm_optimistic_stop(const std::string &device_id);
 
   /// @return Number of registered devices.
   [[nodiscard]] size_t size() const { return devices_.size(); }

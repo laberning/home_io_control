@@ -1780,6 +1780,48 @@ TEST(HubOperations, SuccessUnconfirmedExecuteRetainsOptimisticPrediction) {
   EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::MOVING);
 }
 
+// A STOP that gets no answer (a device that ignores everything while it travels) must not leave the
+// entity idle: the movement prediction it replaced comes back, direction and target included.
+TEST(HubOperations, FailedStopRestoresTheMovementItReplaced) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 100.0f));
+  ASSERT_TRUE(comp.apply_optimistic_stop("ABC123"));
+
+  EXPECT_FALSE(comp.execute_device_command_("ABC123", CoverCommand::STOP)) << "no response -> the STOP fails";
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::MOVING);
+  EXPECT_FLOAT_EQ(effective_target(*dev), 100.0f);
+  EXPECT_FALSE(effective_is_stopped(*dev));
+}
+
+// An accepted STOP keeps its stop prediction and can no longer be rolled back into movement.
+TEST(HubOperations, AcceptedStopForgetsTheMovementItReplaced) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 100.0f));
+  ASSERT_TRUE(comp.apply_optimistic_stop("ABC123"));
+
+  // Queue only the challenge — the device authenticated the STOP, so it has it.
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::STOPPED);
+  EXPECT_FALSE(dev->optimistic.stop_replaced_movement);
+}
+
 // §7.16 — a failed tilt command withdraws the predicted angle; effective_tilt falls back to the
 // last observed one.
 TEST(HubOperations, FailedTiltCommandRollsBackOptimisticTilt) {

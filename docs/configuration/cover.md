@@ -70,8 +70,8 @@ sequential exchanges.
 - **A failed command reverts the entity.** If a device is unreachable or refuses a command — a
   silent timeout or an explicit `LIMITATION_BY_WIND` alike — the entity returns to the last
   position the device reported and an idle state rather than staying mid-travel. A failed stop
-  falls back to the last observed movement rather than claiming it stopped, and a failed tilt
-  withdraws its predicted slat angle. With `optimistic_state: false` there is no assumed movement
+  keeps showing the movement it tried to stop, toward the same target, rather than claiming the
+  cover stopped, and a failed tilt withdraws its predicted slat angle. With `optimistic_state: false` there is no assumed movement
   to revert. The refusal itself shows up in the `Active Issue` sensor — see
   [Diagnostic entities](../diagnostic-entities.md).
 

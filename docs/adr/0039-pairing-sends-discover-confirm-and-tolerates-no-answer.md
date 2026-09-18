@@ -139,8 +139,13 @@ configuration, all eight paired and the device was controllable afterwards:
 | `send_with_ack` | 0 of 6 tries | still paired, after the ~4.85 s no-answer wait |
 | `send` + 5000 ms pause | 2 of 3 tries, 12–23 ms, request channel | one try-1 miss, answered on try 2; late 0x31 accepted |
 
-The key exchange itself (0x31→0x3C→0x32→0x33) was identical in every configuration. Not yet
-validated on a VELUX device, which is what the step was added for.
+The key exchange itself (0x31→0x3C→0x32→0x33) was identical in every configuration.
+
+Field-validated on a VELUX SSL solar roller shutter (low-power, `48 20` shape) with an SX1262 hub,
+using `send` and a 32-byte `pairing_discovery_preamble`, which pairing reuses for 0x2C (ADR 0029).
+The 0x2D came back in 14 ms on the first try, and the device answered the 0x32 with a plain 0x33,
+with no second challenge. At the default 1024-byte preamble the same
+device ignored every 0x2C; that is the preamble, not this step.
 
 See also ADR 0028 (the per-try channel-policy convention try 2 deviates from) and ADR 0029 (the
 start-preamble rule this reuses rather than re-implementing).

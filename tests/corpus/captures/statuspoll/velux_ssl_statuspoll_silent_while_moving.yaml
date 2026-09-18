@@ -1,0 +1,83 @@
+id: velux_ssl_statuspoll_silent_while_moving
+description: >
+  The status polls after a two-way set-position command (io 13 %) to a VELUX SSL solar roller
+  shutter, issue #114 (@michelpa), Heltec V3 / SX1262 hub E3F1D3, device entry `low_power: true`
+  (1024-byte preamble). The command itself is
+  tests/corpus/captures/exchange/velux_ssl_exchange_set_position_ack_stale_target.yaml; the first
+  poll here goes out 3.3 s after it. The poll scheduler's settle poll (one try) and the next two
+  polls (three tries each, after 5 s and 15 s backoff) drew no frame at all while the shutter was
+  moving or had just stopped: seven unanswered 1024-byte frames, ~1.6 s of airtime on 868.95 MHz.
+  The third try of the third poll, 25 s after the first, was answered directly (no challenge) with
+  the stopped position: current = target = 13 %, last command from this hub (E3F1D3), originator
+  0x01. Same no-answer-while-moving behaviour as the STOP in
+  tests/corpus/captures/exchange/velux_ssl_exchange_stop_mid_motion_unanswered.yaml. t_ms are from
+  the log line timestamps (first poll 11:16:31.305).
+source:
+  device: "VELUX SSL solar roller shutter (node 3943DA), paired two-way to this hub"
+  captured_with: sx1262
+  firmware: "main at 4dd91b1"
+  date: 2026-09-18
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/114"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) status poll, settle poll (single try), CTRL1=0x20 LOW_POWER, 1024-byte preamble; no frame back within 400 ms"
+  - dir: tx
+    t_ms: 5666
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), first backoff poll (+5 s), try 1; no frame back"
+  - dir: tx
+    t_ms: 6550
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), try 2; no frame back"
+  - dir: tx
+    t_ms: 7434
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), try 3; no frame back"
+  - dir: tx
+    t_ms: 23083
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), second backoff poll (+15 s), try 1; no frame back"
+  - dir: tx
+    t_ms: 23969
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), try 2; no frame back"
+  - dir: tx
+    t_ms: 24850
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), try 3; answered 240 ms later without a challenge"
+  - dir: rx
+    t_ms: 25090
+    freq: 868950000
+    hex: "96 00 E3 F1 D3 39 43 DA 04 05 00 1A 00 1A 00 00 00 E3 F1 D3 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), END, unchallenged. data = 05 flags (stopped) | 00 | 1A 00 target 13 % | 1A 00 current 13 % | 00 00 | E3 F1 D3 last commanding node (this hub) | 01 originator user | 00 00"
+expect:
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+  device:
+    reported_position: 13

@@ -261,11 +261,13 @@ class IOHomeControlComponent : public Component,
   /// Predict that a device has stopped (e.g. on STOP), and notify.
   /// No-op when the device is unknown or has `optimistic_state == false`. See
   /// DeviceRegistry::apply_optimistic_stop() for why this records a prediction rather than a clear.
+  /// Restorable: if the STOP then fails, the movement prediction it replaced comes back.
   /// Virtual (like add_device/get_device) so platform unit tests can substitute a mock registry.
   /// @param device_id Target device ID.
   /// @return true if the optimistic stop was applied.
   virtual bool apply_optimistic_stop(const std::string &device_id) {
-    return this->registry_.apply_optimistic_stop(device_id);
+    // Restorable: this is the entity's own STOP, which the hub is about to send and which can fail.
+    return this->registry_.apply_optimistic_stop(device_id, /*restorable=*/true);
   }
 
   /// Set an optimistic slat angle ahead of a confirming status poll, and notify.

@@ -116,13 +116,15 @@ majority of integrated devices).
   always-alive-pass preamble (see ADR 0037), so a user who needs a longer broadcast preamble to reach
   a sleeping device cannot lengthen it without also lengthening every directed
   frame — a follow-up candidate if roll-call reliability regresses.
-- **Pairing is out of scope and carries the same latent problem.** The
-  pairing-phase-3 config frame (`create_set_config1`) is a directed 2W start
-  frame that still transmits at `LONG_PREAMBLE`, so a Velux always-alive
-  device probably cannot be *paired* by this codebase either, for the same
-  reason it could not be commanded before this change. Pairing frames are
-  separately hardware-validated at `LONG_PREAMBLE` and pairing was never
-  implicated in the issue, so this is a real follow-up, not this change.
+- **Pairing follows the same principle through the discovery preamble.** The
+  directed frames pairing sends to a just-discovered device (0x2C, 0x31 and
+  the phase-3 config frame 0x6F) never use a longer preamble than the
+  discovery request the device answered (`pairing_discovery_preamble`,
+  `PairingEngine::pairing_start_preamble_()`). At the default discovery
+  preamble that is this ADR's rule unchanged. At a short one it is what
+  makes a VELUX SSL solar roller shutter pairable: awake in its
+  registration window, it ignores those frames at `LONG_PREAMBLE` and
+  answers them at 32 bytes.
 - **The next "every directed frame is low-power" assumption has nowhere to
   hide.** `CTRL1_LOW_POWER` and the start preamble are now one derived pair
   keyed off a single per-device property; a builder that hardcodes the flag,

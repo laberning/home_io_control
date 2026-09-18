@@ -56,7 +56,7 @@ static_assert(FRAME_MAX_DECLARED_SIZE == CTRL0_LENGTH_MASK + 1,
 /// - PRIORITY (bit 2): marks a high-priority frame (e.g., discovery, security commands).
 /// - ACK (bit 4): sender can handle 2W responses. NOT set by default on any outbound frame — see
 ///   init_frame() below for why. Scoped exceptions: the discovery broadcast phase, gated by the
-///   experimental `pairing_discovery_ack_capable` tuning knob (tuning_config.h), off by default;
+///   opt-in `pairing_discovery_ack_capable` tuning knob (tuning_config.h), off by default;
 ///   and create_discover_confirm()'s `ack` parameter, gated by the `pairing_discover_confirm`
 ///   tuning knob (`send_with_ack`, off by default).
 /// - LOW_POWER (bit 5): device is battery/solar powered; may sleep and requires long preamble to

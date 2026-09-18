@@ -73,9 +73,8 @@ IoFrame build_rx_frame(uint8_t cmd, const uint8_t src[NODE_ID_SIZE]) {
   return f;
 }
 
-/// Response to the best-effort SetConfig1 (0x6F) sent in Phase 3 — queuing this makes the
-/// finalize step succeed too, so the attempt reports PairingOutcome::PAIRED rather than
-/// CONFIG_FAILED (both are valid "pairing succeeded" outcomes; tests want to see PAIRED).
+/// Response to the optional SetConfig1 (0x6F) sent in Phase 3 — queued so the finalize step's
+/// single try is answered and consumes nothing a later assertion depends on.
 IoFrame build_set_config1_resp(const uint8_t src[3], const uint8_t dst[3]) {
   IoFrame f{};
   init_frame(f, true, false, true, false);
@@ -481,7 +480,7 @@ TEST(PairingTelemetry, TrafficWithNoValidDiscoveryResponseReportsInvalidResponse
   EXPECT_NE(telemetry.result_sensor_string().find("outcome=invalid_response"), std::string::npos);
 }
 
-TEST(PairingTelemetry, MissingSetConfig1ResponseReportsConfigFailedOutcomeButStillPairs) {
+TEST(PairingTelemetry, MissingSetConfig1ResponseStillReportsPairedAndSendsItOnce) {
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
@@ -501,12 +500,20 @@ TEST(PairingTelemetry, MissingSetConfig1ResponseReportsConfigFailedOutcomeButSti
   radio.queue_rx(frame_to_rx_packet(build_key_confirm(device_bytes, comp.node_id_)));
   // No SetConfig1 response queued — finalize_pairing_configuration_() times out.
 
-  ASSERT_TRUE(comp.discover_and_pair()) << "key exchange succeeded, so pairing still reports success";
+  ASSERT_TRUE(comp.discover_and_pair()) << "key exchange succeeded, so pairing reports success";
 
   const PairingTelemetry &telemetry = comp.pairing_telemetry();
-  EXPECT_EQ(telemetry.outcome(), PairingOutcome::CONFIG_FAILED);
-  ASSERT_TRUE(telemetry.has_paired_device()) << "device is still registered even though config failed";
-  EXPECT_NE(telemetry.result_sensor_string().find("outcome=config_failed"), std::string::npos);
+  EXPECT_EQ(telemetry.outcome(), PairingOutcome::PAIRED) << "the optional 0x6F never decides the outcome";
+  ASSERT_TRUE(telemetry.has_paired_device());
+  EXPECT_NE(telemetry.result_sensor_string().find("outcome=paired"), std::string::npos);
+
+  size_t set_config1_sends = 0;
+  for (const auto &sent : radio.get_sent_data()) {
+    if (sent.size() > FRAME_CMD_OFFSET && sent[FRAME_CMD_OFFSET] == CMD_SET_CONFIG1)
+      set_config1_sends++;
+  }
+  EXPECT_EQ(set_config1_sends, static_cast<size_t>(PAIRING_SET_CONFIG1_MAX_TRIES))
+      << "a silent device gets one SetConfig1, not a retry ladder";
 }
 
 TEST(PairingTelemetry, KeyExchangeFailureReportsKeyExchangeFailedOutcome) {

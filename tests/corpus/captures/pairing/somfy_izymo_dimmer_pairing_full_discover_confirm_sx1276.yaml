@@ -1,0 +1,111 @@
+id: somfy_izymo_dimmer_pairing_full_discover_confirm_sx1276
+description: >
+  SX1276 sibling of somfy_izymo_dimmer_pairing_full_discover_confirm_sx1262: the same Somfy Izymo
+  dimmer paired end to end by this project's own PairingEngine with the discover-confirm step
+  (ADR 0039) at its default (`send`), default tuning, on a Heltec V2 / SX1276 hub C0FFEE. Covers the
+  fast-turnaround key-exchange path: the 0x32 goes out through ExchangeEngine::send_and_receive(),
+  which catches the 0x33 directly, where the SX1262 capture uses the dedicated confirm wait. The
+  sequence is otherwise the same: 0x2C `48 00` answered by 0x2D on the request channel (14 ms per
+  the engine), 0x31 → 0x3C → 0x32 → 0x33, then SET_CONFIG1 (0x6F) → 0x3C → 0x3D → ERROR_RESP 0x28.
+  Captured with a temporary -DIOHOME_UNSAFE_LOG_KEY_MATERIAL build and re-keyed at ingest
+  (ingest.py --rekey verified the captured 0x32 and 0x3D against the real key first). Default
+  preambles (0x28/0x31/0x6F 1024 bytes, 0x2C 32 bytes, continuation frames 12 bytes on this chip) —
+  not recorded by the schema. t_ms are log line timestamps, which lag the radio.
+source:
+  device: "Somfy Izymo dimmer (io light actuator)"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-09-18
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B C0 FF EE 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28) to 00003B, default shape, answered on the first attempt"
+  - dir: rx
+    t_ms: 1134
+    freq: 869850000
+    hex: "D1 00 C0 FF EE FA FB AD 29 01 80 FA FB AD 02 DC 03 64"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), device FAFBAD, Somfy (0x02) light, flags DC (always-alive), last two bytes 03 64 = 868 s since the device last started; answered on 869.85 MHz"
+  - dir: tx
+    t_ms: 1153
+    freq: 868950000
+    hex: "48 00 FA FB AD C0 FF EE 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), controller-role builder create_discover_confirm(), CTRL1=0x00 (default `send` mode, always-alive target)"
+  - dir: rx
+    t_ms: 1201
+    freq: 868950000
+    hex: "88 00 C0 FF EE FA FB AD 2D"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM_ACK(0x2D) `88 00`, END set, request channel; the engine then pauses pairing_key_init_delay_ms (300 ms) before the 0x31"
+  - dir: tx
+    t_ms: 1480
+    freq: 868950000
+    hex: "48 20 FA FB AD C0 FF EE 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), hub starts the key exchange with device FAFBAD"
+  - dir: rx
+    t_ms: 1773
+    freq: 868950000
+    hex: "0E 00 C0 FF EE FA FB AD 3C CC 66 EC 3E 9E FB"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), pairing challenge = CC 66 EC 3E 9E FB"
+  - dir: tx
+    t_ms: 1804
+    freq: 868950000
+    hex: "18 20 FA FB AD C0 FF EE 32 2E C6 1F 19 5F 21 B1 EE A8 3F E6 28 F4 B0 95 43"
+    crc: absent
+    note: "cmd=KEY_TRANSFER(0x32), system key encrypted under the challenge above; re-keyed under the public corpus key via ingest.py --rekey (never the real key). Sent through send_and_receive() on this fast-turnaround chip"
+  - dir: rx
+    t_ms: 1804
+    freq: 868950000
+    hex: "88 00 C0 FF EE FA FB AD 33"
+    crc: absent
+    note: "cmd=KEY_CONFIRM(0x33), caught by send_and_receive()'s first-response wait — pairing is complete at this point"
+  - dir: tx
+    t_ms: 1809
+    freq: 868950000
+    hex: "4D 20 FA FB AD C0 FF EE 6F E0 10 0A 08 00"
+    crc: absent
+    note: "cmd=SET_CONFIG1(0x6F), phase-3 config write, sent as an ordinary authenticated command"
+  - dir: rx
+    t_ms: 2109
+    freq: 868950000
+    hex: "0E 00 C0 FF EE FA FB AD 3C D3 60 7A 6D EC 7E"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C), device demands auth for SET_CONFIG1, challenge = D3 60 7A 6D EC 7E"
+  - dir: tx
+    t_ms: 2112
+    freq: 868950000
+    hex: "0E 20 FA FB AD C0 FF EE 3D FB E8 0A EC EC B1"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D), HMAC over the SET_CONFIG1 transcript; re-keyed under the public corpus key"
+  - dir: rx
+    t_ms: 2137
+    freq: 868950000
+    hex: "8A 00 C0 FF EE FA FB AD FE 28 28"
+    crc: absent
+    note: "cmd=ERROR_RESP(0xFE), result_code=0x28 (unmapped), the same answer every Izymo pairing gets for SET_CONFIG1; pairing itself had already completed with the 0x33"
+expect:
+  exchange:
+    kind: pairing
+    outcome: success
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x32, start: false, end: false, protocol: 2w}
+    - {cmd: 0x33, start: false, end: true, protocol: 2w}
+    - {cmd: 0x6F, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w}

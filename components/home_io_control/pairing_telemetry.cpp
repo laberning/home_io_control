@@ -41,8 +41,6 @@ const char *outcome_name(PairingOutcome outcome) {
       return "invalid_response";
     case PairingOutcome::KEY_EXCHANGE_FAILED:
       return "key_exchange_failed";
-    case PairingOutcome::CONFIG_FAILED:
-      return "config_failed";
     case PairingOutcome::NONE:
     default:
       return "none";
