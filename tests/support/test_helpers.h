@@ -52,23 +52,16 @@ inline IoFrame make_frame(const uint8_t src[3], const uint8_t dst[3], uint8_t cm
   return frame;
 }
 
-/// Burn `n` calls to esphome::micros() without caring about the return values.
-///
-/// The host stub's micros() (tests/include/esphome/core/hal.h) is a free-running counter that
-/// advances by one per *call*, not per unit of real time, so a test that needs a real deadline
-/// (e.g. HOP_TIME_US, RX_HOP_HOLDOFF_US) to elapse has to spend that many calls, not that many
-/// microseconds.
+/// Burn `n` calls to esphome::micros() without caring about the return values. Legacy-clock-mode
+/// only: micros() advances by one per *call* there, not per unit of real time, so a test that
+/// needs a real deadline (e.g. HOP_TIME_US, RX_HOP_HOLDOFF_US) to elapse has to spend that many
+/// calls, not that many microseconds. A test on a ManualClock (tests/include/esphome/core/hal.h)
+/// should use test_clock::advance_us()/advance_ms() instead, which are exact and O(1); this
+/// remains for the driver tests that must stay on the legacy clock (a busy-poll loop under a
+/// manual clock that never advances on its own would spin until the clock's own guard aborts it).
 inline void burn_micros(uint32_t n) {
   for (uint32_t i = 0; i < n; i++)
     (void) esphome::micros();
-}
-
-/// Burn `n` calls to esphome::millis(), same rationale as burn_micros() above but for the
-/// millisecond counter — needed to test a millis()-windowed decision (e.g.
-/// PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS) without an actual multi-second sleep.
-inline void burn_millis(uint32_t n) {
-  for (uint32_t i = 0; i < n; i++)
-    (void) esphome::millis();
 }
 
 /// PairingEngine subclass that promotes protected phase helpers to public.

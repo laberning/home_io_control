@@ -59,9 +59,9 @@ motor). The gesture depends on the motor:
 - **Motor with an I/O switch and a P button** (under the top-casing cover): set the switch to **0**
   for 10 seconds, back to **I**, then hold **P** for about 10 seconds until the shutter moves.
   Repeat the gesture if the window lapses.
-- **Switchless motor with a single button** ("4V" type): VELUX's reset is two short presses (it
-  buzzes on the second), wait 20 seconds, one short press (it vibrates), then hold the button until
-  the motor reacts. Pairing the hub after this gesture is not yet confirmed.
+- **Switchless motor with a single button** ("4V" type): hold the button for about 7 seconds until
+  the motor buzzes three times, wait a few seconds, then press it once briefly. The shutter moves
+  to confirm.
 
 **3. Pair.** Wait until the shutter has stopped moving, then press **Discover & Pair**. Repeat it if
 the first attempt finds nothing. The motor doesn't answer the optional settings frame at the end of
@@ -78,10 +78,11 @@ cover:
     low_power: true
 ```
 
-**4. Register the wall remote again.** The reset removed it. Short-press the motor's button, then
-press the remote's recessed registration button with a paperclip, then close the shutter fully with
-the remote. The remote and the hub then both work. Use a short press here (P on the I/O-switch
-motor): the 10-second hold resets the motor again and removes the hub as well.
+**4. Register the wall remote again.** The reset removed it. Short-press the motor's button (P on
+the I/O-switch motor; the switchless motor then moves three times, so wait until it stops). Then
+press the remote's recessed registration button with a paperclip, and close the shutter fully with
+the remote's down button. The remote and the hub then both work. Use a short press here: the long
+hold from step 2 resets the motor again and removes the hub as well.
 
 **In use:** open, close, set position and status work from rest. A command can take up to three
 tries to reach a sleeping motor. A `stop` sent while the shutter moves has no effect, and status

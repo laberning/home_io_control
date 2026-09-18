@@ -407,6 +407,7 @@ TEST(PairingTelemetry, RecentOneWaySightingSeedsDiscoveryTelemetryAndSuppressesR
 }
 
 TEST(PairingTelemetry, StaleOneWaySightingOutsideWindowIsIgnored) {
+  esphome::test_clock::ManualClock clock;
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
@@ -421,13 +422,42 @@ TEST(PairingTelemetry, StaleOneWaySightingOutsideWindowIsIgnored) {
   set_cmd(gesture, CMD_WRITE_PRIVATE, nullptr, 0);
   comp.process_received_packet_(frame_to_rx_packet(gesture));
 
-  // Age the sighting past the window before pairing — it must not be seeded once stale.
-  test::burn_millis(PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS + 1);
+  // pairing_engine.cpp checks `elapsed < WINDOW`, so elapsed == WINDOW is the boundary that
+  // actually distinguishes a correct `<` from an off-by-one `<=` -- WINDOW + 1 would still pass
+  // even under that bug, since it's not itself past WINDOW + 1.
+  esphome::test_clock::advance_ms(PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS);
 
   EXPECT_FALSE(comp.discover_and_pair());
 
   const PairingTelemetry &telemetry = comp.pairing_telemetry();
-  EXPECT_EQ(telemetry.heard_count(), 0u) << "a sighting older than the window must not be seeded";
+  EXPECT_EQ(telemetry.heard_count(), 0u) << "a sighting exactly at the window boundary must not be seeded";
+}
+
+TEST(PairingTelemetry, OneWaySightingJustInsideTheWindowStillSeeds) {
+  // Complementary boundary to StaleOneWaySightingOutsideWindowIsIgnored above -- WINDOW - 1 wasn't
+  // expressible with the old +1-per-call burn_millis(), which could only assert "enough calls have
+  // happened", not "one millisecond short of the window".
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  const uint8_t remote_src[NODE_ID_SIZE] = {0x2F, 0x9A, 0x98};
+  IoFrame gesture{};
+  init_frame(gesture, /*is_2w=*/false, false, false, false);
+  set_dst(gesture, BROADCAST_DISCOVER_ALT);
+  set_src(gesture, remote_src);
+  set_cmd(gesture, CMD_WRITE_PRIVATE, nullptr, 0);
+  comp.process_received_packet_(frame_to_rx_packet(gesture));
+
+  esphome::test_clock::advance_ms(PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS - 1);
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  const PairingTelemetry &telemetry = comp.pairing_telemetry();
+  EXPECT_GT(telemetry.heard_count(), 0u) << "a sighting one millisecond inside the window must still be seeded";
 }
 
 TEST(PairingTelemetry, OrdinaryOneWayTrafficDoesNotSeedDiscoveryTelemetry) {

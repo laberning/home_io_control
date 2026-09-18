@@ -221,10 +221,15 @@ void IOHomeControlComponent::begin_status_poll_tracking_(const std::string &devi
 }
 
 void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id, uint32_t delay_ms) {
-  // The timeout name is per-device so repeated remote traffic resets the pending poll instead of
-  // stacking multiple delayed callbacks for the same actuator.
-  const std::string timeout_name = "remote_poll_" + device_id;
-  this->set_timeout(timeout_name.c_str(), delay_ms,
+  // Keyed by the device's node address (decisions::remote_poll_timer_id()), not by a per-device
+  // name string: Component::set_timeout(const char*, ...) stores the caller's pointer rather than
+  // copying it, so a name built from `device_id` here would dangle the moment this function
+  // returned. The numeric id is still per-device, so repeated remote traffic resets the pending
+  // poll instead of stacking multiple delayed callbacks for the same actuator.
+  uint8_t node_id[NODE_ID_SIZE];
+  if (!hex_to_bytes(device_id, node_id, NODE_ID_SIZE))
+    return;  // malformed device_id: every caller passes one already validated by the registry
+  this->set_timeout(decisions::remote_poll_timer_id(node_id), delay_ms,
                     [this, device_id]() { this->queue_request_device_status(device_id); });
 }
 

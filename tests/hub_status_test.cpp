@@ -2,6 +2,7 @@
 #include "hub_internal.h"
 #include "radio_interface.h"
 #include "proto_frame.h"
+#include "esphome/core/application.h"
 #include "esphome/core/component.h"
 
 #include "test_helpers.h"
@@ -188,6 +189,8 @@ TEST(HubStatus, UnsolicitedStatusUpdateSupersedesPositionButNotTilt) {
 // ============================================================================
 
 TEST(HubStatus, RemoteActivity_TriggersDelayedPoll) {
+  esphome::test_clock::ManualClock clock;
+  const uint32_t t0 = esphome::test_clock::peek_ms();
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -209,12 +212,13 @@ TEST(HubStatus, RemoteActivity_TriggersDelayedPoll) {
 
   // Should schedule the standard remote-activity timeout for the device.
   EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
-  EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
-  ASSERT_TRUE(comp.last_timeout_callback_) << "callback should be set";
+  EXPECT_EQ(comp.last_timeout_id_, decisions::remote_poll_timer_id(dst)) << "timeout id should key the device";
 
-  // Invoke the callback — should queue a status request
-  comp.last_timeout_callback_();
-  ASSERT_EQ(comp.op_queue_.size(), 1u) << "callback should queue one operation";
+  // Drive the scheduler forward to the poll's deadline instead of hand-firing the callback — the
+  // timer must actually be pending in test_scheduler's registry, not just recorded on the compat field.
+  EXPECT_EQ(esphome::test_scheduler::run_until(t0 + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS), 1u)
+      << "the poll timer should fire once it comes due";
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "the fired timer should queue one operation";
   EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::REQUEST_STATUS);
   EXPECT_EQ(comp.op_queue_.front().device_id, "054E17");
 }
@@ -304,6 +308,8 @@ TEST(HubStatus, RemoteActivity_OwnEcho_NoTrigger) {
 }
 
 TEST(HubStatus, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
+  esphome::test_clock::ManualClock clock;
+  const uint32_t t0 = esphome::test_clock::peek_ms();
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -328,15 +334,65 @@ TEST(HubStatus, RemoteActivity_LinkedRemote_TriggersDelayedPoll) {
 
   // Should schedule the standard remote-activity timeout for the linked device.
   EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
-  EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos)
-      << "timeout name should contain linked device ID";
-  ASSERT_TRUE(comp.last_timeout_callback_) << "callback should be set";
+  const uint8_t linked_device[3] = {0x05, 0x4E, 0x17};
+  EXPECT_EQ(comp.last_timeout_id_, decisions::remote_poll_timer_id(linked_device))
+      << "timeout id should key the linked device";
 
-  // Invoke the callback — should queue a status request
-  comp.last_timeout_callback_();
-  ASSERT_EQ(comp.op_queue_.size(), 1u) << "callback should queue one operation";
+  EXPECT_EQ(esphome::test_scheduler::run_until(t0 + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS), 1u)
+      << "the poll timer should fire once it comes due";
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "the fired timer should queue one operation";
   EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::REQUEST_STATUS);
   EXPECT_EQ(comp.op_queue_.front().device_id, "054E17");
+}
+
+// Regression coverage for the WP1 registry itself, not reachable with the old "most-recent-call"
+// stub: two devices' remote-activity polls pending at once, where re-triggering one device only
+// pushes *its own* deadline back out and the other still fires on its original schedule.
+TEST(HubStatus, TwoDevicesRemotePollsArePendingIndependently) {
+  esphome::test_clock::ManualClock clock;
+  const uint32_t t0 = esphome::test_clock::peek_ms();
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.add_device("415684");  // second device, distinct from setup_rx_test_component()'s 054E17
+
+  IoFrame trigger_a{};
+  init_frame(trigger_a, true, true, false, false);
+  uint8_t remote[3] = {0x43, 0x44, 0xE3};
+  uint8_t device_a[3] = {0x05, 0x4E, 0x17};
+  set_src(trigger_a, remote);
+  set_dst(trigger_a, device_a);
+  uint8_t exec_data[3] = {0xC8, 0x00, 0x00};
+  set_cmd(trigger_a, CMD_EXECUTE, exec_data, sizeof(exec_data));
+  comp.process_received_packet_(make_rx_packet(trigger_a));
+
+  IoFrame trigger_b{};
+  init_frame(trigger_b, true, true, false, false);
+  uint8_t device_b[3] = {0x41, 0x56, 0x84};
+  set_src(trigger_b, remote);
+  set_dst(trigger_b, device_b);
+  set_cmd(trigger_b, CMD_EXECUTE, exec_data, sizeof(exec_data));
+  comp.process_received_packet_(make_rx_packet(trigger_b));
+
+  ASSERT_EQ(esphome::test_scheduler::pending_count(), 2u) << "both devices' polls must be pending at once";
+
+  // Re-trigger A only, partway through both windows — this must replace only A's pending item.
+  esphome::test_clock::advance_ms(REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS / 2);
+  comp.process_received_packet_(make_rx_packet(trigger_a));
+  ASSERT_EQ(esphome::test_scheduler::pending_count(), 2u) << "re-triggering must replace, not add, A's item";
+
+  // B's original deadline comes first: it must fire on time even though A was re-triggered.
+  EXPECT_EQ(esphome::test_scheduler::run_until(t0 + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS), 1u)
+      << "only B's original poll should be due yet";
+  ASSERT_EQ(comp.op_queue_.size(), 1u);
+  EXPECT_EQ(comp.op_queue_.front().device_id, "415684") << "B must fire on its original schedule, unaffected by A";
+
+  // A's pushed-out deadline is REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS after its re-trigger, i.e.
+  // 1.5x the original delay from t=0.
+  EXPECT_EQ(esphome::test_scheduler::run_until(t0 + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS * 3 / 2), 1u)
+      << "A's re-armed poll should now be due";
+  ASSERT_EQ(comp.op_queue_.size(), 2u);
+  EXPECT_EQ(comp.op_queue_.back().device_id, "054E17") << "A fires later, from when it was re-triggered";
 }
 
 TEST(HubStatus, LinkedRemotes_MultipleRemotesOneDevice) {
@@ -363,7 +419,8 @@ TEST(HubStatus, LinkedRemotes_MultipleRemotesOneDevice) {
   comp.process_received_packet_(pkt);
 
   EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "should schedule 2s timeout";
-  EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should contain device ID";
+  const uint8_t device[3] = {0x05, 0x4E, 0x17};
+  EXPECT_EQ(comp.last_timeout_id_, decisions::remote_poll_timer_id(device)) << "timeout id should key the device";
 }
 
 TEST(HubStatus, LinkedRemotes_OneRemoteMultipleDevices) {
@@ -1117,7 +1174,7 @@ TEST(HubStatus, OwnControllerStatusUpdateSchedulesPoll) {
 
   // Remote commanding our device → schedule 2s poll
   EXPECT_EQ(comp.last_timeout_ms_, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS) << "remote activity should schedule 2s poll";
-  EXPECT_NE(comp.last_timeout_name_.find("054E17"), std::string::npos) << "timeout name should reference our device";
+  EXPECT_EQ(comp.last_timeout_id_, decisions::remote_poll_timer_id(dst)) << "timeout id should reference our device";
 }
 
 TEST(HubStatus, StatusUpdateWithShortPayloadIgnored) {

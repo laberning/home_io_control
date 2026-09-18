@@ -3,7 +3,9 @@
 #include "radio_interface.h"
 #include "radio_sx1262.h"  // SX1262_RESPONSE_PREAMBLE for the SX1262 mock
 #include <esphome/core/gpio.h>
+#include <esphome/core/hal.h>
 
+#include <algorithm>
 #include <deque>
 #include <optional>
 #include <vector>
@@ -79,6 +81,9 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     tx_configs_.push_back(tx_config);
     sent_data_.push_back(std::vector<uint8_t>(data, data + len));
     send_count_++;
+    // peek_ms() has no side effect in either clock mode, so this is meaningful under ManualClock
+    // and harmless (if not meaningful) under the default legacy clock.
+    send_times_ms_.push_back(esphome::test_clock::peek_ms());
     // Real drivers retune the receiver to the TX frequency as a side effect of sending (e.g.
     // RadioSX1276::send_packet() calls change_frequency(); SoftPhyDriverBase::send_packet() calls
     // set_frequency_register(), which assigns current_freq_ the same way). Assigned directly here,
@@ -100,21 +105,26 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     while (!rx_queue_.empty()) {
       RxQueueEntry &front = rx_queue_.front();
       if (front.hold_until_send_count.has_value()) {
-        if (send_count_ < *front.hold_until_send_count)
+        if (send_count_ < *front.hold_until_send_count) {
+          this->advance_manual_ms_(std::max(timeout_ms, 1u));
           return false;  // Still holding: not consumed, stays at the front for the next call.
+        }
         rx_queue_.pop_front();
         continue;
       }
       std::optional<esphome::home_io_control::RadioRxPacket> entry = front.packet;
       rx_queue_.pop_front();
       if (!entry.has_value()) {
+        this->advance_manual_ms_(std::max(timeout_ms, 1u));
         return false;  // Queued silence: a slice that times out with nothing received.
       }
       packet = *entry;
       if (emulate_capture_lifecycle_)
         this->populate_capture_base_(true, packet.freq_hz, -55, packet.data, packet.len, packet.data, packet.len);
+      this->advance_manual_ms_(rx_latency_ms_);
       return true;
     }
+    this->advance_manual_ms_(std::max(timeout_ms, 1u));
     return false;
   }
   bool check_for_packet(esphome::home_io_control::RadioRxPacket &packet) override {
@@ -185,6 +195,16 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
+  /// Under a ManualClock, how far a delivered packet advances time past when it was requested —
+  /// modelling the air time / turnaround between a device starting its reply and this driver
+  /// handing it back. 0 (the default) delivers instantly, same as legacy mode always has.
+  void set_rx_latency_ms(uint32_t ms) { rx_latency_ms_ = ms; }
+  /// peek_ms() at each send_packet() call, in order — recorded in both clock modes (legacy values
+  /// are meaningless on their own, same as every other legacy timing field here, but harmless).
+  /// Lets a test assert retry cadence in real milliseconds instead of counting wait_timeouts().
+  /// TX air time itself is not modelled: send_packet() doesn't advance the clock, so two
+  /// consecutive sends with nothing queued in between record the same instant.
+  const std::vector<uint32_t> &send_times_ms() const { return send_times_ms_; }
   // Stage a valid get_last_capture() for tests exercising the link-health RSSI path. Real drivers
   // populate this via populate_capture_base_() inside wait_for_packet()/check_for_packet(); this
   // generic mock overrides both fully with queue-based logic and never calls it, so tests that
@@ -223,9 +243,22 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     freq_history_.clear();
     wait_timeouts_.clear();
     call_log_.clear();
+    send_times_ms_.clear();
   }
 
  private:
+  /// A ManualClock does nothing on its own between calls, so wait_for_packet() must move time
+  /// forward itself for every outcome or a bounded retry loop driven by this mock would spin
+  /// forever: `std::max(timeout_ms, 1u)` on an empty slice (real air time is at least the slice
+  /// waited out, and this guarantees progress even for a zero-length one), or set_rx_latency_ms()'s
+  /// configured turnaround on a delivered packet. A no-op under the default legacy clock. Mutates
+  /// global clock state, so deliberately not const despite every caller being in a const-looking
+  /// position.
+  void advance_manual_ms_(uint32_t ms) {
+    if (esphome::test_clock::is_manual())
+      esphome::test_clock::advance_ms(ms);
+  }
+
   std::deque<bool> tx_results_;
   std::deque<RxQueueEntry> rx_queue_;
   std::deque<int16_t> rssi_queue_;
@@ -236,6 +269,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   int send_count_;
   std::vector<uint32_t> wait_timeouts_;
   std::vector<uint32_t> freq_history_;
+  std::vector<uint32_t> send_times_ms_;
+  uint32_t rx_latency_ms_{0};
   bool emulate_capture_lifecycle_{false};
 };
 
