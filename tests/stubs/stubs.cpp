@@ -5,6 +5,31 @@
 
 namespace esphome {
 
+// Component::set_timeout/set_interval/cancel_*/~Component() are declared in component.h but
+// defined here rather than there: they forward to App.scheduler (application.h), and component.h
+// can't include application.h itself — application.h includes component.h for the Component type
+// its Scheduler stores, so that direction would be a cycle.
+
+Component::~Component() { test_scheduler::purge_owner(this); }
+
+void Component::set_timeout(const char *name, uint32_t timeout, std::function<void()> &&f) {
+  App.scheduler.set_timeout(this, name, timeout, std::move(f));
+}
+
+void Component::set_timeout(uint32_t id, uint32_t timeout, std::function<void()> &&f) {
+  App.scheduler.set_timeout(this, id, timeout, std::move(f));
+}
+
+void Component::set_interval(const char *name, uint32_t interval, std::function<void()> &&f) {
+  App.scheduler.set_interval(this, name, interval, std::move(f));
+}
+
+bool Component::cancel_timeout(const char *name) { return App.scheduler.cancel_timeout(this, name); }
+
+bool Component::cancel_timeout(uint32_t id) { return App.scheduler.cancel_timeout(this, id); }
+
+bool Component::cancel_interval(const char *name) { return App.scheduler.cancel_interval(this, name); }
+
 namespace test_preferences {
 
 std::map<uint32_t, std::vector<uint8_t>> &committed() {

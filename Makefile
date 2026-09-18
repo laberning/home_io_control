@@ -218,8 +218,10 @@ firmware-test-fwupdate:
 # All component source files needed for tests (protocol + platform + hub + radio drivers)
 COMPONENT_SRCS := $(wildcard components/home_io_control/*.cpp)
 
-# Test stubs (only global symbols — App, global_preferences, fnv1_hash)
-STUB_SRCS := tests/stubs/stubs.cpp
+# Test stubs (only global symbols — App, global_preferences, fnv1_hash) plus per-test isolation:
+# test_isolation.cpp resets test_scheduler's pending-timer registry and enforces the ManualClock
+# RAII rule between tests.
+STUB_SRCS := tests/stubs/stubs.cpp tests/support/test_isolation.cpp
 
 # All test files (*_test.cpp) in tests/ root
 TEST_SRCS := $(wildcard tests/*_test.cpp)

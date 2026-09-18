@@ -374,6 +374,28 @@ inline bool is_one_way_pairing_gesture(bool oneway, const uint8_t dst[NODE_ID_SI
   return last_1w_activity_ms == 0 || (now - last_1w_activity_ms) >= quiet_ms;
 }
 
+/// Namespace tag for `remote_poll_timer_id()` below: the node address occupies the low 24 bits,
+/// and this is OR-ed in above them. Nothing else uses `Component::set_timeout`'s numeric-id
+/// overload today, so the tag has no collision to avoid yet — it exists so the id space stays
+/// self-describing (which caller a given id belongs to) the day a second numeric-id timer is added.
+constexpr uint32_t REMOTE_POLL_TIMER_ID_TAG = 0x01000000;
+
+/// @brief Numeric `set_timeout()` id for a device's remote-activity poll timer (hub_status.cpp's
+/// `schedule_status_poll_()`).
+///
+/// Keyed by the device's node address rather than a name, because `Component::set_timeout(const
+/// char *name, ...)` stores the caller's *pointer*, not a copy of the string (its header documents
+/// this: static lifetime required, use the numeric-id overload for a dynamically-built name) — see
+/// `schedule_status_poll_()`'s own comment for why a per-device name can't satisfy that here. A
+/// node address is unique per device, so this id is collision-free by construction.
+///
+/// @param node_id 3-byte device node address.
+/// @return Numeric timer id, unique per device.
+inline uint32_t remote_poll_timer_id(const uint8_t node_id[NODE_ID_SIZE]) {
+  return REMOTE_POLL_TIMER_ID_TAG | (static_cast<uint32_t>(node_id[0]) << (2 * BITS_PER_BYTE)) |
+         (static_cast<uint32_t>(node_id[1]) << BITS_PER_BYTE) | static_cast<uint32_t>(node_id[2]);
+}
+
 }  // namespace decisions
 }  // namespace home_io_control
 }  // namespace esphome

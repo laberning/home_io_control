@@ -503,6 +503,10 @@ TEST(RadioSX1276, StaleSyncAddressMatchIsClearedByCyclingOutOfRx) {
   // hop's change_frequency() never clears it (FRF writes only), so a sync match with no frame
   // behind it must not wedge hopping off forever.
   //
+  // Deliberately legacy-mode (not ManualClock): set_mode_() below busy-polls millis() in a loop
+  // with no other exit condition (radio_sx1276.cpp), so under a clock that only moves when told to
+  // it would spin until test_clock's guard aborts the test. See hal.h's ManualClock doc comment.
+  //
   // Burn one micros() call before anything else touches the clock: the host stub's first call in
   // a process returns 0, which collides with sync_hold_since_us_'s own "not armed" sentinel and
   // would make reception_in_progress() read a genuinely expired holdoff as an unarmed one instead

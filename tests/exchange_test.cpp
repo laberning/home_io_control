@@ -1607,15 +1607,32 @@ TEST(Exchange, HopFrequencyWithoutSkipIsUnchanged) {
 // change_frequency()'s IRQ/DIO-latch clear (issue #81).
 // ============================================================================
 
-TEST(Exchange, MaybeHopHopsOnceTheDwellElapses) {
-  // Baseline: pins that the reception_in_progress() guard did not break the ordinary path.
+TEST(Exchange, MaybeHopDoesNotHopWhileTheDwellHasNotYetElapsed) {
+  // Boundary case for MaybeHopHopsOnceTheDwellElapses below: exchange_engine.cpp's maybe_hop()
+  // compares with <=, so exactly HOP_TIME_US elapsed must not be enough on its own.
+  esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
   TuningConfig tuning = make_broadcast_test_tuning();
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   engine.reset_hop_timestamp();
-  test::burn_micros(HOP_TIME_US + 2);
+  esphome::test_clock::advance_us(HOP_TIME_US);
+  engine.maybe_hop();
+
+  EXPECT_TRUE(radio.freq_history().empty()) << "exactly HOP_TIME_US elapsed must not be past the dwell yet";
+}
+
+TEST(Exchange, MaybeHopHopsOnceTheDwellElapses) {
+  // Baseline: pins that the reception_in_progress() guard did not break the ordinary path.
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  engine.reset_hop_timestamp();
+  esphome::test_clock::advance_us(HOP_TIME_US + 1);
   engine.maybe_hop();
 
   EXPECT_EQ(radio.freq_history().size(), 1u) << "the dwell elapsed and nothing was arriving, so the hop must fire";
@@ -1623,13 +1640,14 @@ TEST(Exchange, MaybeHopHopsOnceTheDwellElapses) {
 
 TEST(Exchange, MaybeHopDoesNotHopWhileAFrameIsArriving) {
   // The core assertion of the whole step: a reception in progress must outrank the dwell timer.
+  esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
   TuningConfig tuning = make_broadcast_test_tuning();
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   engine.reset_hop_timestamp();
-  test::burn_micros(HOP_TIME_US + 2);
+  esphome::test_clock::advance_us(HOP_TIME_US + 1);
   radio.note_reception_from_test();
   engine.maybe_hop();
 
@@ -1639,18 +1657,19 @@ TEST(Exchange, MaybeHopDoesNotHopWhileAFrameIsArriving) {
 TEST(Exchange, MaybeHopHopsAsSoonAsTheReceptionClears) {
   // Pins both that the holdoff expires on its own and that the deferred hop is not lost — it
   // happens on the very next call, not never.
+  esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
   TuningConfig tuning = make_broadcast_test_tuning();
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   engine.reset_hop_timestamp();
-  test::burn_micros(HOP_TIME_US + 2);
+  esphome::test_clock::advance_us(HOP_TIME_US + 1);
   radio.note_reception_from_test();
   engine.maybe_hop();
   ASSERT_TRUE(radio.freq_history().empty()) << "sanity: the first call must still have been suppressed";
 
-  test::burn_micros(RX_HOP_HOLDOFF_US + 2);
+  esphome::test_clock::advance_us(RX_HOP_HOLDOFF_US + 1);
   engine.maybe_hop();
 
   EXPECT_EQ(radio.freq_history().size(), 1u) << "the holdoff expired, so the deferred hop must now fire";
@@ -1664,19 +1683,20 @@ TEST(Exchange, DeferredHopDoesNotRestartTheDwellTimer) {
   // HOP_TIME_US on its own. Clearing the holdoff directly rather than waiting out its own timer
   // isolates the property: once the dwell has genuinely elapsed, a single further microsecond
   // must be enough to hop.
+  esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
   TuningConfig tuning = make_broadcast_test_tuning();
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   engine.reset_hop_timestamp();
-  test::burn_micros(HOP_TIME_US + 2);
+  esphome::test_clock::advance_us(HOP_TIME_US + 1);
   radio.note_reception_from_test();
   engine.maybe_hop();
   ASSERT_TRUE(radio.freq_history().empty()) << "sanity: the first call must still have been suppressed";
 
   radio.clear_reception_from_test();
-  test::burn_micros(1);
+  esphome::test_clock::advance_us(1);
   engine.maybe_hop();
 
   EXPECT_EQ(radio.freq_history().size(), 1u)
@@ -1699,7 +1719,9 @@ namespace {
 
 // The host clock stubs advance millis() one unit per call, and the engine reads it a couple of
 // times between stamping the deadline and slicing it, so the first slice lands a tick or two under
-// the configured window. Assert the window, not the exact tick.
+// the configured window. Assert the window, not the exact tick. Still needed for legacy-mode
+// callers (e.g. Listen_HoldNeverRetunesAndUsesTheWholeWindowAsOneTimeout below); a ManualClock
+// caller can assert the exact value instead -- see StartFrameBudgetsTheStartResponseWindow.
 void expect_window_near(uint32_t actual, uint32_t expected) {
   EXPECT_LE(actual, expected) << "slice must never exceed the configured window";
   EXPECT_GE(actual + 10u, expected) << "slice must be the configured window, not a different budget";
@@ -1708,6 +1730,7 @@ void expect_window_near(uint32_t actual, uint32_t expected) {
 }  // namespace
 
 TEST(Exchange, StartFrameBudgetsTheStartResponseWindow) {
+  esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
 
@@ -1724,10 +1747,11 @@ TEST(Exchange, StartFrameBudgetsTheStartResponseWindow) {
   engine.send_and_receive(request, response, FREQ_CH2);  // nothing queued → runs out its retries
 
   ASSERT_FALSE(radio.wait_timeouts().empty());
-  expect_window_near(radio.wait_timeouts().front(), 1750);
+  EXPECT_EQ(radio.wait_timeouts().front(), 1750u) << "the first slice must be exactly the configured window";
 }
 
 TEST(Exchange, ContinuationFrameBudgetsTheShorterResponseWindow) {
+  esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
 
@@ -1748,7 +1772,7 @@ TEST(Exchange, ContinuationFrameBudgetsTheShorterResponseWindow) {
   engine.send_and_receive(request, response, FREQ_CH2);
 
   ASSERT_FALSE(radio.wait_timeouts().empty());
-  expect_window_near(radio.wait_timeouts().front(), 250);
+  EXPECT_EQ(radio.wait_timeouts().front(), 250u) << "the first slice must be exactly the configured window";
 }
 
 TEST(Exchange, ResponseWindowDefaultsComeFromTheProtocolConstants) {
@@ -1771,14 +1795,16 @@ TEST(Exchange, ResponseWindowDefaultsComeFromTheProtocolConstants) {
 // ============================================================================
 
 TEST(Exchange, RetriesStopOnceTheTotalBudgetIsSpent) {
+  esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
-  // One try fits; a second would overrun. The host clock stubs advance millis() per call, so the
-  // budget is expressed relative to the window rather than in real milliseconds.
-  tuning.exchange_start_response_wait_ms = 400;
-  tuning.exchange_total_budget_ms = 200;
+  // Try 0's wait (250) plus the retry delay (250) already spends 500 of the 600 ms budget, so try
+  // 1 fits (started at 500 < 600) but try 2's budget check (started at 500 + 250 + 250 = 1000)
+  // does not -- exactly two tries, in real milliseconds rather than relative to the window.
+  tuning.exchange_start_response_wait_ms = 250;
+  tuning.exchange_total_budget_ms = 600;
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   IoFrame request{};
@@ -1786,17 +1812,18 @@ TEST(Exchange, RetriesStopOnceTheTotalBudgetIsSpent) {
   IoFrame response{};
   engine.send_and_receive(request, response, FREQ_CH2);  // nothing queued -> every try fails
 
-  EXPECT_EQ(radio.get_send_count(), 1) << "a second try must not start once the budget is spent";
+  EXPECT_EQ(radio.get_send_count(), 2) << "a third try must not start once the budget is spent";
   EXPECT_STREQ(engine.get_debug().stage, "retry_budget_exhausted");
 }
 
 TEST(Exchange, GenerousBudgetStillAllowsEveryRetry) {
+  esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
   tuning.exchange_start_response_wait_ms = 200;
-  tuning.exchange_total_budget_ms = 60000;  // far more than the stub clock can consume
+  tuning.exchange_total_budget_ms = 60000;  // far more than three tries plus their retry delays can spend
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   IoFrame request{};
@@ -1805,6 +1832,39 @@ TEST(Exchange, GenerousBudgetStillAllowsEveryRetry) {
   engine.send_and_receive(request, response, FREQ_CH2);
 
   EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "with budget to spare the retry count is unchanged";
+}
+
+TEST(Exchange, RetryCadenceMatchesTheRecordedWaitSliceForEachTryPlusTheFixedRetryDelay) {
+  // Computed from the recorded slices rather than a hardcoded expected gap, so a future change to
+  // RESPONSE_START_WAIT_MS or EXCHANGE_RETRY_DELAY_MS can't silently break this without the
+  // assertion catching it. Note the per-slice half of that gap is partly self-referential --
+  // MockRadio advances the manual clock by exactly wait_timeouts[i] on an empty slice, so that
+  // arithmetic isn't independently verified here. What this test does add: exactly one wait per
+  // try (not several smaller slices), and exactly one EXCHANGE_RETRY_DELAY_MS gap on top, with no
+  // extra time unaccounted for.
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;  // defaults: EXCHANGE_RETRY_COUNT tries, a total budget generous enough for all of them
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, true, 100);
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2);  // nothing queued -> every try fails
+
+  ASSERT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
+      << "sanity: every try must have run for this to be meaningful";
+  const auto &send_times = radio.send_times_ms();
+  const auto &wait_timeouts = radio.wait_timeouts();
+  ASSERT_EQ(send_times.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
+  ASSERT_EQ(wait_timeouts.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT))
+      << "HOLD_REQUEST_CHANNEL (wait_for_first_response_) issues exactly one wait per try";
+
+  for (size_t i = 0; i + 1 < send_times.size(); i++) {
+    EXPECT_EQ(send_times[i + 1] - send_times[i], wait_timeouts[i] + EXCHANGE_RETRY_DELAY_MS)
+        << "try " << i << "'s gap to the next send must be its own wait slice plus the fixed retry delay";
+  }
 }
 
 TEST(Exchange, ExecuteUsesUserDefaultAceiPriority) {
