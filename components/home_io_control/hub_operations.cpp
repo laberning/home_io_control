@@ -249,7 +249,17 @@ bool IOHomeControlComponent::run_execute_operation_(const std::string &device_id
   const bool accepted = this->try_execute_operation_(device_id, spec, accepts, rejection_profile, build);
   if (accepted && spec.settle_as_stop) {
     this->registry_.confirm_optimistic_stop(device_id);
-  } else if (!accepted) {
+    // The receiver was just told to stop, so whatever moving evidence it had is spent.
+    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr)
+      clear_moving_evidence(*dev);
+  } else if (accepted) {
+    // An accepted movement command means the receiver is travelling now, whether or not the reply
+    // carried a status to decode (ExchangeOutcome::SUCCESS_UNCONFIRMED has none). Stamped here,
+    // after the exchange, and not when the optimistic overlay is applied before it: see
+    // note_moving_evidence().
+    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr)
+      note_moving_evidence(*dev, millis());
+  } else {
     this->registry_.rollback_optimistic(device_id, /*failed_stop=*/spec.settle_as_stop);
   }
   return accepted;

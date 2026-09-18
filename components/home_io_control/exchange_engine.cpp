@@ -76,10 +76,12 @@ void ExchangeEngine::log_debug(const char *device_id) const {
   ESP_LOGW(TAG,
            "Exchange failed: device=%s cmd=%s(0x%02X) stage=%s tries=%u max_tries=%u saw_challenge=%u cap_valid=%u "
            "cap_rx_done=%u cap_crc_err=%u cap_freq=%" PRIu32
-           " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d",
+           " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d belief=%s "
+           "last_preamble=%u",
            device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.max_tries, d.saw_challenge,
            d.capture_valid, d.capture_rx_done, d.capture_crc_error, d.capture_freq_hz, d.capture_irq_status,
-           d.capture_packet_status, d.capture_reported_len, d.capture_frame_len, d.capture_rssi_dbm);
+           d.capture_packet_status, d.capture_reported_len, d.capture_frame_len, d.capture_rssi_dbm,
+           d.wake_belief_applied ? decisions::wake_belief_name(d.wake_belief) : "n/a", d.last_try_preamble);
 }
 
 // ============================================================================
@@ -240,6 +242,10 @@ void log_exchange_frame(const char *stage, int tries, const IoFrame &frame, uint
            frame.src[1], frame.src[2], frame.dst[0], frame.dst[1], frame.dst[2], len);
 }
 
+/// True for a start frame addressed to a duty-cycled receiver — the only frame that has a wake-up
+/// preamble to choose. One definition, shared by the fixed rule and the per-try wake belief.
+bool is_low_power_start(const IoFrame &request) { return is_start(request) && (request.ctrl1 & CTRL1_LOW_POWER) != 0; }
+
 /// Determine if a candidate frame is a valid final response for the request.
 bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
   return decisions::classify_exchange_final_response(request, candidate) ==
@@ -262,8 +268,15 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   // above EXCHANGE_RETRY_COUNT (the budget check downstream assumes that ceiling).
   const uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
   this->debug_.max_tries = tries_allowed;
-  const uint16_t request_preamble =
-      request_preamble_override != 0 ? request_preamble_override : this->request_preamble_for(request);
+  const PreamblePlan preamble_plan = this->plan_request_preamble_(request, request_preamble_override, tries_allowed);
+  if (preamble_plan.per_try) {
+    this->debug_.wake_belief_applied = true;
+    this->debug_.wake_belief = preamble_plan.belief;
+    if (preamble_plan.belief != decisions::WakeBelief::ASLEEP) {
+      ESP_LOGD(TAG, "Low-power target %s believed %s: short preamble first", node_id_to_string(request.dst).c_str(),
+               decisions::wake_belief_name(preamble_plan.belief));
+    }
+  }
   const uint32_t exchange_begin_ms = millis();
   bool accepted_without_reply = false;
 
@@ -291,6 +304,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       this->counters_.retransmits++;
     }
 
+    const uint16_t request_preamble = preamble_plan.for_try(context.try_index);
+    this->debug_.last_try_preamble = request_preamble;
     if (!this->transmit_request_(request, freq, request_preamble, context))
       continue;
 
@@ -342,12 +357,36 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
 // ============================================================================
 
 uint16_t ExchangeEngine::request_preamble_for(const IoFrame &request) const {
-  // Gate on is_start() first: several device-role / continuation builders (key transfer,
+  // Gate on the start flag first: several device-role / continuation builders (key transfer,
   // status-update response) set CTRL1_LOW_POWER on a non-start frame, and those must keep the
   // short response preamble, not be lengthened.
   if (!is_start(request))
     return (*this->radio_ptr_)->response_preamble();
-  return (request.ctrl1 & CTRL1_LOW_POWER) != 0 ? LONG_PREAMBLE : this->tuning_->normal_start_preamble;
+  return is_low_power_start(request) ? LONG_PREAMBLE : this->tuning_->normal_start_preamble;
+}
+
+ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFrame &request, uint16_t override_preamble,
+                                                                    uint8_t tries_allowed) const {
+  PreamblePlan plan;
+  plan.fixed = override_preamble != 0 ? override_preamble : this->request_preamble_for(request);
+  // Only a low-power *start* frame has a wake-up preamble to reorder; every other frame keeps its
+  // fixed one. The override is the caller's explicit choice (pairing), so it is never second-guessed.
+  // A belief only ever reorders tries: an exchange allowed a single try (a scheduler-owned status
+  // poll, whose backoff ladder is its retry) would be betting its whole outcome on the belief, and a
+  // wrong one — an awake-looking receiver that has since gone back to sleep — costs a failed poll and
+  // a backoff. It keeps the fixed wake-up preamble instead.
+  if (override_preamble != 0 || tries_allowed < 2 || !is_low_power_start(request) || !this->wake_evidence_provider_ ||
+      !this->tuning_->low_power_wake_belief)
+    return plan;
+
+  // A destination the hub has no record of has no evidence: treat it as asleep, the safe default.
+  decisions::WakeEvidence evidence{};
+  const bool known = this->wake_evidence_provider_(request.dst, evidence);
+  plan.per_try = true;
+  plan.short_preamble = this->tuning_->normal_start_preamble;
+  plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request))
+                      : decisions::WakeBelief::ASLEEP;
+  return plan;
 }
 
 bool ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,

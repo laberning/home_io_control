@@ -146,7 +146,8 @@ your device may differ.
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
-| `normal_start_preamble` | both | `32` | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices still get `LONG_PREAMBLE`. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `normal_start_preamble` | both | `32` | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -312,8 +313,8 @@ The preamble in front of a directed *start* frame (`EXECUTE`, status poll, `GET_
 identify, probe) whose target is **not** declared `low_power:`. An always-listening receiver does
 not need the ~213 ms 1024-byte wake-up burst, and some receivers never lock onto one that long —
 so a normal start frame gets this shorter preamble, matching what real hubs send to an
-always-alive device. A device declared `low_power: true` still gets `LONG_PREAMBLE` on its start
-frames, unchanged.
+always-alive device. A device declared `low_power: true` keeps `LONG_PREAMBLE` on its start frames
+unless it is believed awake — see [`low_power_wake_belief`](#low_power_wake_belief).
 
 The same value governs a 1W identity's non-wake-up copies once its own `low_power:` is set to
 `false` or `true` — see [Sending 1W commands](oneway-transmit.md). Left unset, an identity keeps
@@ -324,6 +325,29 @@ this is a cold-peer property). The `32`-byte default is 256 bits, well inside th
 use; drop it toward `8` only if a start frame is still not being heard
 and raise it toward `LONG_PREAMBLE` if a marginal always-alive link needs more. Because it is a
 live tuning knob, bisecting the right value needs no rebuild.
+
+#### `low_power_wake_belief`
+
+A diagnostic switch, on by default. If a device declared `low_power: true` got worse after
+updating, set this to `false` and report it.
+
+A duty-cycled receiver that is asleep needs the 1024-byte wake-up preamble. One that is awake — a
+VELUX solar roller shutter mid-travel, for example — ignores that long preamble and answers only the
+short one, so a `stop` or status poll sent to a moving shutter with the long preamble goes
+unanswered. With this on, the hub tracks per device whether it was recently moving or heard from,
+and orders the tries of each directed exchange accordingly:
+
+| Believed | Try 1 | Try 2 | Try 3 |
+|---|---|---|---|
+| awake (a `stop`, or a move the device accepted in the last 2 minutes that is not yet known to have ended) | short | wake-up | short |
+| maybe awake (heard from in the last 30 s) | short | wake-up | wake-up |
+| asleep | wake-up | wake-up | wake-up |
+
+"Short" is [`normal_start_preamble`](#normal_start_preamble). A wrong belief costs one try, not the
+exchange, because every plan still sends the wake-up preamble at least once. An exchange allowed only
+one try (most scheduled status polls) never uses these plans and keeps the wake-up preamble. Always-alive devices are
+unaffected, and the frame itself never changes between tries. Off restores the old behaviour: the
+wake-up preamble on every try to a `low_power:` device.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 
@@ -434,7 +458,7 @@ wake-up burst those frames would otherwise carry
 ([ADR 0029](../adr/0029-start-preamble-is-a-property-of-the-target.md)). The log says so when it
 happens (`Pairing: directed frames to … use the 32-byte discovery preamble it just answered`). At
 the default `1024` nothing changes. Normal operation after pairing is not affected: it follows the
-device's own `low_power` setting.
+device's own `low_power` setting and its wake belief (see [`low_power_wake_belief`](#low_power_wake_belief)).
 
 #### `pairing_discovery_wait_ms` / `pairing_discovery_initial_dwell_ms`
 

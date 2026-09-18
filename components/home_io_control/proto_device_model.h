@@ -366,6 +366,9 @@ struct IoDevice {
                                               ///< stable signal instead of stalling up to RSSI_EMA_SCALE−1 dBm
                                               ///< away. RSSI_UNKNOWN_DBM before the first sample.
   uint32_t last_seen_ms{0};  ///< millis() of the last frame received from this device (any command), 0 = never.
+  uint32_t last_moving_evidence_ms{
+      0};  ///< millis() of the last sign this device is travelling (see
+           ///< note_moving_evidence(), clear_moving_evidence()), 0 = never. Hub-side belief, not observation.
   uint16_t exchange_timeout_count{0};  ///< Cumulative count of outbound exchanges to this device with no valid
                                        ///< response (see detail::record_exchange_timeout() in hub_internal.h).
   uint16_t exchange_attempt_count{0};  ///< Cumulative attempts (`ExchangeEngine::DebugInfo::tries`, 1-based per
@@ -373,6 +376,29 @@ struct IoDevice {
                                        ///< ultimately successful exchange are not counted (deliberate scope limit).
   OptimisticState optimistic{};        ///< Hub-side predictions; see OptimisticState. Never observation.
 };
+
+/// @brief Record that a device is (believed to be) travelling right now.
+///
+/// With clear_moving_evidence(), one of the two writers of IoDevice::last_moving_evidence_ms.
+/// Called wherever the hub learns a receiver is moving *because of something that reached it*: a
+/// decoded status that says "not stopped", a movement command the device accepted, or an overheard
+/// linked-remote movement command. Deliberately NOT called for the hub's own optimistic prediction:
+/// that is applied before the command is even sent, so treating it as proof of movement would make a
+/// resting receiver look awake to the very command that starts it. A low-power receiver that is
+/// moving ignores the long wake-up preamble, so this stamp steers the exchange engine to the short
+/// one first (decisions::wake_belief()).
+/// @param dev    Device to stamp.
+/// @param now_ms Current millis(). Must be non-zero in practice; 0 would read as "never".
+inline void note_moving_evidence(IoDevice &dev, uint32_t now_ms) { dev.last_moving_evidence_ms = now_ms; }
+
+/// @brief Forget that a device was travelling: it was observed stopped, or was told to stop.
+///
+/// The counterpart of note_moving_evidence(). Without it a receiver that has demonstrably stopped
+/// would keep reading as "moving" for the rest of LOW_POWER_MAX_TRAVEL_MS, although it goes back to
+/// duty-cycling within seconds. Its last frame heard (`last_seen_ms`) still keeps it "maybe awake"
+/// for a while.
+/// @param dev Device to clear.
+inline void clear_moving_evidence(IoDevice &dev) { dev.last_moving_evidence_ms = 0; }
 
 /// @brief Convert an `rssi_ema_scaled` fixed-point value to whole dBm (round half away from zero).
 /// @param scaled Fixed-point EMA value in 1/RSSI_EMA_SCALE dBm units (not the sentinel).

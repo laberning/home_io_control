@@ -703,6 +703,9 @@ bool PairingEngine::discover_and_pair() {
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
   this->telemetry_.set_phase(context.state);
 
+  // The device just sent its 0x33, so it counts as heard from: its wake belief starts at "maybe
+  // awake" for the follow-up exchanges rather than "asleep" (same stamp update_link_health() sets).
+  context.device.last_seen_ms = millis();
   registry_.put(context.device_id, context.device);
   this->telemetry_.set_paired_device(context.device.node_id, context.device.type);
 

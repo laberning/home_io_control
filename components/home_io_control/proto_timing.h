@@ -109,6 +109,20 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
 
+/// How long evidence that a low-power receiver is moving keeps it believed awake enough to hear the
+/// short start preamble first. A moving VELUX solar receiver ignores the 1024-byte wake-up
+/// preamble but answers the short one, so a command, STOP or poll sent mid-travel must lead with
+/// the short one. Sized above the longest cover travel this project has measured; a first estimate
+/// that field logs will correct. Past it the receiver is presumed to have finished and fallen back
+/// asleep.
+static constexpr uint32_t LOW_POWER_MAX_TRAVEL_MS = 120000;
+
+/// How long any sign of life (a frame from the device, or moving evidence) keeps a low-power
+/// receiver believed "maybe awake": short preamble first, wake-up preamble as the fallback. Shorter
+/// than LOW_POWER_MAX_TRAVEL_MS because a receiver that is merely active, not moving, drops back to
+/// its duty cycle sooner. A first estimate that field logs will correct.
+static constexpr uint32_t LOW_POWER_AWAKE_HOLD_MS = 30000;
+
 /// Tries for pairing's phase-3 SetConfig1 (0x6F). One: no device on record accepts it (a Somfy
 /// Izymo answers `FE 28`, a VELUX SSL solar roller shutter stays silent) and no real controller
 /// sends it, so a retry only adds 0.7–0.9 s of blocking and a frame of airtime to every pairing

@@ -101,11 +101,13 @@ majority of integrated devices).
   offered. This is the accepted wrong-answer cost of the `false` default, and
   it is milder than its opposite — a `true` default made every always-alive
   device 100% silent, which is the bug this ADR closes.
-- **The `low_power == true` branch is unchanged and remains unvalidated
-  against any real hub's own traffic.** `LONG_PREAMBLE` + `CTRL1_LOW_POWER`
-  for a declared low-power target is exactly today's behaviour; there is no
-  capture of a reference hub commanding a battery/solar device, so we keep the
-  long preamble there on the documented-model argument, not on evidence.
+- **The `low_power == true` branch remains unvalidated against any real hub's
+  own traffic.** `LONG_PREAMBLE` + `CTRL1_LOW_POWER` for a declared low-power
+  target is the rule for a receiver believed asleep; there is no capture of a
+  reference hub commanding a battery/solar device, so we keep the long
+  preamble there on the documented-model argument, not on evidence. A receiver
+  believed awake leads with the short preamble instead — see
+  [ADR 0040](0040-low-power-start-preamble-follows-the-wake-belief.md).
 - **`normal_start_preamble` is a live tuning knob.** 32 bytes is a defensible
   middle, not a measured number: 8 bytes is a proven floor against paired
   always-alive devices but nothing bounds where a start frame stops being

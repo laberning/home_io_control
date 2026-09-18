@@ -504,6 +504,46 @@ TEST(HubStatus, StatusUpdateMovingFrameHandling) {
   EXPECT_FALSE(dev->is_stopped) << "device should be moving";
 }
 
+TEST(HubStatus, UnsolicitedMovingStatusUpdateStampsMovingEvidence) {
+  esphome::test_clock::ManualClock clock(7000);
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t moving[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, moving, sizeof(moving));
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(comp.get_device("054E17")->last_moving_evidence_ms, 7000u)
+      << "a decoded 'not stopped' status is evidence the receiver is travelling";
+}
+
+TEST(HubStatus, UnsolicitedStoppedStatusUpdateClearsMovingEvidence) {
+  esphome::test_clock::ManualClock clock(7000);
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+  note_moving_evidence(*comp.get_device("054E17"), esphome::millis());  // it was travelling
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t stopped[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, stopped, sizeof(stopped));
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(comp.get_device("054E17")->last_moving_evidence_ms, 0u) << "an observed stop spends the evidence";
+}
+
 TEST(HubStatus, GetInfo2RespUpdatesDeviceType) {
   TestableHubComponent comp;
   comp.add_device("054E17");

@@ -235,6 +235,9 @@ struct TuningConfig {
       NORMAL_START_PREAMBLE};                ///< Preamble for a directed start frame to a non-low-power target.
   uint8_t lbt_max_retries{LBT_MAX_RETRIES};  ///< LBT retries before forced TX.
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
+  bool low_power_wake_belief{true};  ///< Order a `low_power` device's start-frame tries by its wake belief (short
+                                     ///< preamble first when it is believed awake). False restores the fixed
+                                     ///< LONG_PREAMBLE on every try. A diagnostic off-switch, on by default.
 
   // --- Exchange response windows ---
   // How long the hub listens for a device's reply. Tunable because the right value is a property

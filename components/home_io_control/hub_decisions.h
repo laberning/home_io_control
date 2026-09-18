@@ -9,9 +9,11 @@
 /// side effects — suitable for unit testing without radio hardware.
 
 #include "proto_constants.h"
+#include "proto_device_model.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -338,6 +340,94 @@ inline uint8_t scheduled_poll_max_tries(uint8_t status_poll_failures, uint8_t au
       status_poll_failures > SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE)
     return SCHEDULED_POLL_MAX_TRIES;
   return EXCHANGE_RETRY_COUNT;
+}
+
+// == Low-power wake belief ==
+
+/// @brief How likely a low-power receiver is to be awake right now, judged from what this hub has
+/// seen of it. Orders the tries of a directed exchange: an awake receiver hears the short start
+/// preamble and ignores the long wake-up one, a sleeping one needs the long one.
+enum class WakeBelief : uint8_t {
+  ASLEEP,       ///< No recent sign of life — lead with the wake-up preamble.
+  MAYBE_AWAKE,  ///< Recently heard from — try the short preamble first, keep the wake-up as fallback.
+  AWAKE,        ///< Moving, or about to be stopped — the short preamble is the one it hears.
+};
+
+static_assert(LOW_POWER_AWAKE_HOLD_MS <= LOW_POWER_MAX_TRAVEL_MS,
+              "wake_belief() relies on moving evidence outliving the maybe-awake hold");
+
+/// @brief The per-device stamps wake_belief() reads. All are `millis()` values, 0 = never.
+struct WakeEvidence {
+  uint32_t last_moving_evidence_ms;  ///< Last sign the receiver is travelling (see note_moving_evidence(),
+                                     ///< clear_moving_evidence()).
+  uint32_t last_seen_ms;             ///< Last frame received from the receiver, any command.
+};
+
+/// The wake-belief inputs a device record carries.
+/// @param dev Device record to read.
+[[nodiscard]] inline WakeEvidence wake_evidence(const IoDevice &dev) {
+  return {dev.last_moving_evidence_ms, dev.last_seen_ms};
+}
+
+/// True for a CMD_EXECUTE whose main byte is POS_STOP. A STOP is only ever sent to a receiver that
+/// is (believed) moving, so it is treated as awake whatever the stamps say.
+/// @param request Outbound request frame.
+[[nodiscard]] inline bool is_stop_request(const IoFrame &request) {
+  return request.cmd == CMD_EXECUTE && request.data_len > EXECUTE_MAIN_BYTE_OFFSET &&
+         request.data[EXECUTE_MAIN_BYTE_OFFSET] == POS_STOP;
+}
+
+/// Judge how awake a low-power receiver is. `AWAKE` for a STOP request or while moving evidence is
+/// younger than LOW_POWER_MAX_TRAVEL_MS; otherwise `MAYBE_AWAKE` while the newest of moving evidence
+/// and last frame heard is younger than LOW_POWER_AWAKE_HOLD_MS; otherwise `ASLEEP`. A zero stamp
+/// means never and is never recent. Ages use unsigned subtraction, so `millis()` wrap-around is safe.
+/// @param evidence Stamps for the target device.
+/// @param now      Current millis().
+/// @param is_stop  True when the request being sent is a STOP (see is_stop_request()).
+[[nodiscard]] inline WakeBelief wake_belief(const WakeEvidence &evidence, uint32_t now, bool is_stop) {
+  const auto recent = [now](uint32_t stamp, uint32_t window_ms) { return stamp != 0 && (now - stamp) < window_ms; };
+  if (is_stop || recent(evidence.last_moving_evidence_ms, LOW_POWER_MAX_TRAVEL_MS))
+    return WakeBelief::AWAKE;
+  // Moving evidence needs no check here: any that is younger than the hold window already returned
+  // AWAKE above (the hold is the shorter window), and older evidence is not recent by either measure.
+  if (recent(evidence.last_seen_ms, LOW_POWER_AWAKE_HOLD_MS))
+    return WakeBelief::MAYBE_AWAKE;
+  return WakeBelief::ASLEEP;
+}
+
+/// Start-preamble length for one try of a directed exchange to a low-power receiver. The plans
+/// (short = `short_preamble`, LONG = LONG_PREAMBLE): AWAKE short/LONG/short, MAYBE_AWAKE
+/// short/LONG/LONG, ASLEEP LONG on every try — so an exchange allowed more than one try still tries
+/// the wake-up preamble at least once, and a wrong belief costs one try, not the exchange. The
+/// engine applies these plans only to an exchange allowed more than one try
+/// (ExchangeEngine::plan_request_preamble_()); a single-try exchange keeps the fixed rule.
+/// @param belief         See wake_belief().
+/// @param try_index      1-based try number, clamped to [1, EXCHANGE_RETRY_COUNT].
+/// @param short_preamble Preamble for a receiver known to be awake (`normal_start_preamble`).
+[[nodiscard]] inline uint16_t low_power_try_preamble(WakeBelief belief, uint8_t try_index, uint16_t short_preamble) {
+  const uint8_t try_1based = std::max<uint8_t>(1, std::min<uint8_t>(try_index, EXCHANGE_RETRY_COUNT));
+  switch (belief) {
+    case WakeBelief::AWAKE:
+      return try_1based == 2 ? LONG_PREAMBLE : short_preamble;
+    case WakeBelief::MAYBE_AWAKE:
+      return try_1based == 1 ? short_preamble : LONG_PREAMBLE;
+    case WakeBelief::ASLEEP:
+    default:
+      return LONG_PREAMBLE;
+  }
+}
+
+/// Lowercase name of a belief for log lines.
+[[nodiscard]] inline const char *wake_belief_name(WakeBelief belief) {
+  switch (belief) {
+    case WakeBelief::AWAKE:
+      return "awake";
+    case WakeBelief::MAYBE_AWAKE:
+      return "maybe_awake";
+    case WakeBelief::ASLEEP:
+    default:
+      return "asleep";
+  }
 }
 
 /// True if a frame's shape matches a 1W remote's pairing gesture (issue #27/#65): CTRL0 1W bit
