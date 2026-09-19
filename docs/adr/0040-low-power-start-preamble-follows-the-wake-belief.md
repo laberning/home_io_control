@@ -59,7 +59,7 @@ A command that failed stamps nothing. The other input, `last_seen_ms`, already e
 health and is stamped by every frame from a registered device; pairing now stamps it at
 registration too.
 
-**D2 — The belief orders the tries of a multi-try exchange; it never removes the wake-up preamble.** Per try, with
+**D2 — The belief orders the tries; a multi-try exchange never loses the wake-up preamble.** Per try, with
 short = `normal_start_preamble` and long = `LONG_PREAMBLE`:
 
 | Belief | Try 1 | Try 2 | Try 3 |
@@ -68,11 +68,15 @@ short = `normal_start_preamble` and long = `LONG_PREAMBLE`:
 | `MAYBE_AWAKE` | short | long | long |
 | `ASLEEP` | long | long | long |
 
-Every plan sends the wake-up preamble at least once, and the plans apply only to an exchange allowed
-more than one try. A scheduler-owned status poll is allowed one at most ladder slots (its backoff
-ladder is its retry); it keeps the fixed wake-up preamble, because a single try would stake the whole
-poll on the belief, and a wrong one — a receiver that looks awake but has finished a short move and
-gone back to sleep — costs a failed poll, an incremented failure streak and a backoff. The frame bytes never change between tries;
+Every plan sends the wake-up preamble at least once. A scheduler-owned status poll is allowed one
+try at most ladder slots (its backoff ladder is its retry), and that try follows the belief like
+try 1 of any other exchange. Its likeliest moment is the settle poll seconds after a command or a
+`stop`, when the receiver is travelling or has just answered — the state in which it ignores the
+wake-up preamble — so a fixed wake-up preamble there loses the poll and a backoff slot. A wrong
+belief on a single try costs that one poll; the ladder's next slot has three tries and includes the
+wake-up preamble. The settle poll after an accepted `stop` is allowed all three tries
+(`STOP_SETTLE_POLL_TRIES`): nothing is moving any more, and the user's reversal waits on its answer.
+The frame bytes never change between tries;
 only the transmitter's preamble length does. `ExchangeEngine::send_and_receive()` resolves the
 belief once per exchange (`plan_request_preamble_()`), so it is stable across the tries and the
 evidence is looked up once.
@@ -99,20 +103,25 @@ low-power device got worse after updating, set it to `false` and report.
   still governs `CTRL1_LOW_POWER` and whether a wake-up preamble exists in the plan at all, but
   which preamble leads is now a runtime belief. ADR 0029's `LONG_PREAMBLE` for a declared low-power
   target holds for a receiver believed asleep.
-- **An exchange never bets on one preamble.** A wrong belief costs one try (~0.4-0.9 s of listen
-  and retry gap), not the exchange, and no plan drops the wake-up preamble entirely: a single-try
-  exchange does not use a plan at all.
-- **`stop`, reversals and the middle of the poll ladder can now land mid-travel.** The first settle
-  poll (a single try, seconds after the command, inside the manoeuvre) and the far tail of the ladder
-  keep the wake-up preamble, exactly as before this ADR, so a moving receiver still misses that first
-  poll. The slots that get three tries (roughly t+8 s to t+53 s) lead with the short preamble.
+- **A multi-try exchange never bets on one preamble.** A wrong belief costs one try (~0.4-0.9 s of
+  listen and retry gap), not the exchange, and no plan drops the wake-up preamble entirely. A
+  single-try poll does bet on the belief's first choice; its backoff ladder is what recovers a wrong
+  one.
+- **`stop`, reversals and status polls can land mid-travel and right after a `stop`.** The settle
+  poll after a move leads with the short preamble, and the one after an accepted `stop` gets three
+  tries in maybe-awake order, so the cover's real position arrives about a second after the `stop`
+  instead of after a missed poll and a 5 s backoff. A single-try slot at the ladder's tail that
+  still falls inside `LOW_POWER_MAX_TRAVEL_MS` of the command also leads short; a receiver asleep
+  by then costs that slot, and the next one is past the window and uses the wake-up preamble.
 - **Airtime goes down for an awake receiver.** A short first try is ~200 ms shorter on the air
   than a long one (32 vs 1024 bytes at 38.4 kbit/s).
 - **The two windows are first estimates.** `LOW_POWER_MAX_TRAVEL_MS` (120 s) and
   `LOW_POWER_AWAKE_HOLD_MS` (30 s) are guesses field logs will correct; the exchange-failure log
-  line carries `belief=` (the belief, or why none applied: `off`, `single_try`, `not_low_power`,
-  `override`) and `last_preamble=` so that data exists, and the config dump at boot states whether
-  the switch is on.
+  line carries `belief=` (the belief, or why none applied: `off`, `not_low_power`, `override`,
+  `no_provider`) and `last_preamble=`, every try line — hit or miss — carries `preamble=` and
+  `age_ms=` (time since the device was last heard), and the config dump at boot states whether
+  the switch is on. Field logs therefore show which preamble reaches a receiver how long after it
+  last spoke, which is what the two windows are to be corrected from.
 - **Not done here.** The ASLEEP plan stays long/long/long; a `long/short/long` variant is a
   follow-up only if logs show a receiver that wakes and then ignores the long preamble. The
   discovery sequence for a not-yet-paired device is a separate decision.

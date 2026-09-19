@@ -144,6 +144,8 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
   this->begin_status_poll_tracking_(device_id, delay_ms);
   if (existing != 0 && existing < millis() + delay_ms)
     this->poll_policy_.set_next_update(device_id, existing);
+  if (for_stop)
+    this->poll_policy_.mark_stop_settle(device_id);
 }
 
 // Execute an authenticated request on the standard command channel and, on success, feed the
@@ -375,13 +377,15 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   // A poll the scheduler owns (StatusPollPolicy is tracking this device) is re-armed by the backoff
   // ladder on failure, so the ladder is its retry mechanism and most slots need only one try. The
   // exception is the middle of the ladder, where the slot that lands just after a manoeuvre ends is
-  // the one chance to catch a duty-cycled receiver — see decisions::scheduled_poll_max_tries(). A
-  // one-off poll with no ladder behind it keeps the full retry budget.
+  // the one chance to catch a duty-cycled receiver, and the poll confirming an accepted STOP — see
+  // decisions::scheduled_poll_max_tries(). A one-off poll with no ladder behind it keeps the full
+  // retry budget.
   const bool scheduler_managed = this->poll_policy_.is_tracking_active(device_id, millis());
   const uint32_t retry_after_fail_ms = scheduler_managed ? STATUS_RETRY_AFTER_FAIL_MS : 0;
   const uint8_t max_tries =
       scheduler_managed ? decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
-                                                              this->poll_policy_.get_auth_poll_failures(device_id))
+                                                              this->poll_policy_.get_auth_poll_failures(device_id),
+                                                              this->poll_policy_.take_stop_settle(device_id))
                         : EXCHANGE_RETRY_COUNT;
   return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
 }

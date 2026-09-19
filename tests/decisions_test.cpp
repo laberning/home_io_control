@@ -433,6 +433,14 @@ TEST(Decisions, ScheduledPollTriesAuthStreakNeverGetsTheBand) {
          "and an auth try is the most expensive shape the engine runs";
 }
 
+TEST(Decisions, ScheduledPollTriesAfterAStopGetTheFullBudget) {
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 0, /*settles_a_stop=*/true), STOP_SETTLE_POLL_TRIES);
+  EXPECT_EQ(STOP_SETTLE_POLL_TRIES, EXCHANGE_RETRY_COUNT)
+      << "nothing is moving after an accepted STOP, and the user's reversal waits on this poll";
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 1, /*settles_a_stop=*/true), STOP_SETTLE_POLL_TRIES)
+      << "the mark wins over a stale auth streak; the streak is only history of earlier polls";
+}
+
 TEST(Decisions, ScheduledPollTriesAuthWinsOverAStatusStreak) {
   // Unreachable while on_exchange_failed() keeps the two counters mutually exclusive; pinned anyway
   // so the predicate's precedence (auth checked first) stays correct if that exclusivity ever

@@ -262,6 +262,40 @@ TEST(SettleDelay, NoIntervalNoHintUsesDefault) {
       << "with no configured interval and no hint, the default settle delay applies";
 }
 
+// ============================================================================
+// Post-STOP settle poll mark
+// ============================================================================
+
+TEST(StatusPollPolicy, StopSettleMarkIsConsumedByTheFirstPoll) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", STOP_SETTLE_POLL_CAP_MS, T0);
+  policy.mark_stop_settle("DEV");
+  EXPECT_TRUE(policy.take_stop_settle("DEV"));
+  EXPECT_FALSE(policy.take_stop_settle("DEV")) << "only the first poll after the STOP gets the full budget";
+}
+
+TEST(StatusPollPolicy, StopSettleMarkIsDroppedByANewTrackingCycle) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", STOP_SETTLE_POLL_CAP_MS, T0);
+  policy.mark_stop_settle("DEV");
+  policy.begin_tracking("DEV", DEFAULT_SETTLE_POLL_DELAY_MS, T0 + 500);  // a newer move command
+  EXPECT_FALSE(policy.take_stop_settle("DEV"));
+}
+
+TEST(StatusPollPolicy, StopSettleMarkIsDroppedByClear) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", STOP_SETTLE_POLL_CAP_MS, T0);
+  policy.mark_stop_settle("DEV");
+  policy.clear("DEV");
+  EXPECT_FALSE(policy.take_stop_settle("DEV"));
+}
+
+TEST(StatusPollPolicy, StopSettleMarkNeedsATrackedDevice) {
+  StatusPollPolicy policy;
+  policy.mark_stop_settle("DEV");
+  EXPECT_FALSE(policy.take_stop_settle("DEV")) << "a STOP the hub is not tracking leaves no mark behind";
+}
+
 TEST(SettleDelay, ConfiguredIntervalOverridesDefault) {
   EXPECT_EQ(settle_delay_ms(30000, 0, false), 30000u) << "a configured interval replaces the default";
 }

@@ -2682,7 +2682,7 @@ TEST(WakeBelief, DebugSnapshotNamesWhyNoBeliefApplied) {
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::OVERRIDE);
 
   rig.send(low_power_position_request(), /*max_tries=*/1);
-  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::SINGLE_TRY);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::APPLIED) << "the try count is never a reason to skip";
 
   rig.tuning.low_power_wake_belief = false;
   rig.send(low_power_position_request());
@@ -2697,11 +2697,11 @@ TEST(WakeBelief, DebugSnapshotNamesWhyNoBeliefApplied) {
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::NO_PROVIDER);
 }
 
-TEST(WakeBelief, SwitchOffIsReportedEvenForASingleTryExchange) {
-  // Precedence: a switched-off belief is the more useful fact in a log than "single try".
+TEST(WakeBelief, SwitchOffKeepsASingleTryExchangeOnTheWakeUpPreamble) {
   WakeBeliefRig rig;
+  rig.moved_ago(1000);
   rig.tuning.low_power_wake_belief = false;
-  rig.send(low_power_position_request(), /*max_tries=*/1);
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LONG_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::SWITCHED_OFF);
 }
 
@@ -2711,7 +2711,6 @@ TEST(WakeBelief, SkipReasonLabelsAreDistinctAndReadable) {
   EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::OVERRIDE), "override");
   EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::SWITCHED_OFF), "off");
   EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::NO_PROVIDER), "no_provider");
-  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::SINGLE_TRY), "single_try");
   EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::APPLIED), "applied");
 }
 
@@ -2745,14 +2744,32 @@ TEST(WakeBelief, NonStartFrameKeepsTheResponsePreamble) {
   EXPECT_EQ(rig.provider_calls, 0);
 }
 
-TEST(WakeBelief, SingleTryExchangeKeepsTheWakeUpPreambleAndSkipsTheBelief) {
-  // A belief reorders tries; with only one there is nothing to reorder and a wrong belief would sink
-  // the whole exchange (an awake-looking receiver that has gone back to sleep after a short move).
+TEST(WakeBelief, SingleTryExchangeSendsTheBeliefsFirstTry) {
+  // A scheduler-owned poll is allowed one try at most ladder slots. Its likeliest moment is seconds
+  // after a command or STOP, when the receiver is travelling or has just answered and ignores the
+  // wake-up preamble, so it leads with the same preamble a multi-try exchange would.
   WakeBeliefRig rig;
   rig.moved_ago(1000);
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{rig.tuning.normal_start_preamble}));
+  EXPECT_EQ(rig.provider_calls, 1);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::APPLIED);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
+}
+
+TEST(WakeBelief, SingleTryExchangeToARecentlyHeardTargetLeadsShort) {
+  // The settle poll after an accepted STOP: moving evidence was cleared, the STOP's reply was heard
+  // a second ago — maybe awake, so the short preamble first.
+  WakeBeliefRig rig;
+  rig.heard_ago(1000);
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{rig.tuning.normal_start_preamble}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::MAYBE_AWAKE);
+}
+
+TEST(WakeBelief, SingleTryExchangeToASleepingTargetKeepsTheWakeUpPreamble) {
+  WakeBeliefRig rig;
+  rig.heard_ago(LOW_POWER_AWAKE_HOLD_MS + 1000);
   EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LONG_PREAMBLE}));
-  EXPECT_EQ(rig.provider_calls, 0);
-  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::SINGLE_TRY);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
 TEST(WakeBelief, TwoTryExchangeStillFollowsThePlan) {

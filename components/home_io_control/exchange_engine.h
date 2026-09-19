@@ -306,13 +306,12 @@ class ExchangeEngine {
     OVERRIDE,       ///< The caller forced a preamble (pairing's directed frames).
     SWITCHED_OFF,   ///< The `low_power_wake_belief` tuning switch is off.
     NO_PROVIDER,    ///< No evidence source installed (set_wake_evidence_provider()).
-    SINGLE_TRY,     ///< The exchange may make one try only (a scheduled status poll).
     APPLIED,        ///< The tries followed the belief in DebugInfo::wake_belief.
   };
 
   /// Log label for a WakeBeliefUse that is not APPLIED (an applied one logs the belief itself).
   /// @param use Value to name.
-  /// @return "not_low_power", "override", "off", "no_provider", "single_try" or "applied".
+  /// @return "not_low_power", "override", "off", "no_provider" or "applied".
   [[nodiscard]] static const char *wake_belief_use_name(WakeBeliefUse use);
 
   /// @brief Snapshot of the last exchange attempt for diagnostics.
@@ -428,6 +427,8 @@ class ExchangeEngine {
     WakeBeliefUse use{WakeBeliefUse::NOT_LOW_POWER};  ///< APPLIED: order the tries by `belief`.
     decisions::WakeBelief belief{decisions::WakeBelief::ASLEEP};  ///< Only read when APPLIED.
     uint16_t short_preamble{0};  ///< The awake receiver's preamble; only read when APPLIED.
+    uint32_t last_seen_ms{0};    ///< When the target was last heard (`millis()`), for the per-try `age=` log
+                                 ///< field; 0 = never, or the evidence was not looked up (belief not APPLIED).
 
     /// @param try_index 1-based try number.
     /// @return Preamble in bytes for that try.
@@ -439,15 +440,12 @@ class ExchangeEngine {
 
   /// Decide how `request`'s start preamble is chosen across this exchange's tries. An explicit
   /// override wins; a frame that is not a low-power start frame keeps request_preamble_for()'s rule;
-  /// a low-power start frame is ordered by the target's wake belief when the switch is on, a
-  /// provider is installed and the exchange is allowed more than one try (a single try keeps the
-  /// fixed rule: a belief reorders tries, it never stakes the whole exchange on one preamble).
-  /// Consults the provider at most once, so a belief is stable within an exchange.
+  /// a low-power start frame is ordered by the target's wake belief when the switch is on and a
+  /// provider is installed, whatever the exchange's try count. Consults the provider at most once,
+  /// so a belief is stable within an exchange.
   /// @param request           Frame being sent.
   /// @param override_preamble Caller-forced preamble in bytes, or 0 for none.
-  /// @param tries_allowed     Transmit attempts this exchange may make (already clamped).
-  [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble,
-                                                    uint8_t tries_allowed) const;
+  [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble) const;
 
   // --- Dependencies (back-references into the hub) -------------------------
 

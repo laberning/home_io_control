@@ -330,10 +330,18 @@ inline bool defer_background_poll_for_1w_activity(bool next_op_is_background, ui
 /// as 0 and would otherwise fall into the band's own "fresh window" case. It is rejected first,
 /// deliberately, so the predicate stays correct even if that exclusivity is ever relaxed.
 ///
+/// The settle poll after an accepted STOP (@p settles_a_stop) gets the full budget whatever the
+/// counters say: see STOP_SETTLE_POLL_TRIES (proto_timing.h).
+///
 /// @param status_poll_failures Consecutive silent failures already recorded for this device.
 /// @param auth_poll_failures   Consecutive challenge-seen failures already recorded.
-/// @return EXCHANGE_RETRY_COUNT inside the band, SCHEDULED_POLL_MAX_TRIES everywhere else.
-inline uint8_t scheduled_poll_max_tries(uint8_t status_poll_failures, uint8_t auth_poll_failures) {
+/// @param settles_a_stop       True for the first poll after an accepted STOP
+///                             (StatusPollPolicy::take_stop_settle()).
+/// @return EXCHANGE_RETRY_COUNT inside the band or after a STOP, SCHEDULED_POLL_MAX_TRIES everywhere else.
+inline uint8_t scheduled_poll_max_tries(uint8_t status_poll_failures, uint8_t auth_poll_failures,
+                                        bool settles_a_stop = false) {
+  if (settles_a_stop)
+    return STOP_SETTLE_POLL_TRIES;
   if (auth_poll_failures != 0)
     return SCHEDULED_POLL_MAX_TRIES;
   if (status_poll_failures < SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE ||
@@ -398,9 +406,9 @@ struct WakeEvidence {
 /// Start-preamble length for one try of a directed exchange to a low-power receiver. The plans
 /// (short = `short_preamble`, LONG = LONG_PREAMBLE): AWAKE short/LONG/short, MAYBE_AWAKE
 /// short/LONG/LONG, ASLEEP LONG on every try — so an exchange allowed more than one try still tries
-/// the wake-up preamble at least once, and a wrong belief costs one try, not the exchange. The
-/// engine applies these plans only to an exchange allowed more than one try
-/// (ExchangeEngine::plan_request_preamble_()); a single-try exchange keeps the fixed rule.
+/// the wake-up preamble at least once, and a wrong belief costs one try, not the exchange. A
+/// single-try exchange (most scheduler-owned status polls) sends only try 1's preamble; its backoff
+/// ladder, whose three-try slots include the wake-up preamble, covers a wrong belief there.
 /// @param belief         See wake_belief().
 /// @param try_index      1-based try number, clamped to [1, EXCHANGE_RETRY_COUNT].
 /// @param short_preamble Preamble for a receiver known to be awake (`normal_start_preamble`).

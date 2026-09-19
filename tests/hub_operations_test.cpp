@@ -2011,10 +2011,10 @@ TEST(HubOperations, StopToALowPowerDeviceAtRestLeadsWithTheShortPreamble) {
       << "a STOP goes to a receiver that is moving, whatever the stamps say";
 }
 
-TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryWithTheWakeUpPreamble) {
-  // The tracked settle poll gets one try (its backoff ladder is its retry). A single try never uses
-  // a wake belief: after a short move the receiver may already have gone back to sleep, and a wrong
-  // short-preamble bet would cost a failed poll and a backoff (ADR 0040 D2).
+TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryLeadingWithTheShortPreamble) {
+  // The tracked settle poll gets one try (its backoff ladder is its retry), and that try follows the
+  // wake belief: seconds after an accepted move the receiver is travelling, and a travelling VELUX
+  // solar receiver ignores the wake-up preamble (ADR 0040 D2).
   esphome::test_clock::ManualClock clock(50000);
   TestableComponent comp;
   MockRadio radio;
@@ -2031,7 +2031,63 @@ TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryWithTheWakeUpPreamb
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size() - before, 1u) << "scheduler-owned poll: a single try";
-  EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
+}
+
+TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryInMaybeAwakeOrder) {
+  // After an accepted STOP nothing moves and the user's reversal waits on this poll, so it gets the
+  // full budget instead of betting on one sample (STOP_SETTLE_POLL_TRIES). The STOP cleared the
+  // moving evidence and its reply was just heard: maybe awake — short, then the wake-up preamble.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  ASSERT_EQ(dev->last_moving_evidence_ms, 0u) << "precondition: an accepted STOP clears moving evidence";
+  ASSERT_NE(dev->last_seen_ms, 0u) << "precondition: the STOP's challenge was heard";
+  esphome::test_clock::advance_ms(STOP_SETTLE_POLL_CAP_MS);
+  const size_t before = radio.get_tx_configs().size();
+
+  comp.request_device_status("ABC123");
+
+  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(STOP_SETTLE_POLL_TRIES));
+  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
+}
+
+TEST(HubOperations, OnlyTheFirstPollAfterAStopGetsTheStopBudget) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  esphome::test_clock::advance_ms(STOP_SETTLE_POLL_CAP_MS);
+  comp.request_device_status("ABC123");  // the post-STOP poll, all tries miss
+  // Reset the streak so the ladder's own grace band cannot hand the next poll three tries either.
+  comp.poll_policy_.clear_failure_streaks("ABC123");
+  const size_t before = radio.get_tx_configs().size();
+
+  comp.request_device_status("ABC123");
+
+  EXPECT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(SCHEDULED_POLL_MAX_TRIES));
+}
+
+TEST(HubOperations, SettlePollAfterAFailedStopDoesNotGetTheStopBudget) {
+  // A STOP nobody answered has not stopped anything: the receiver may still be travelling, so the
+  // normal ladder applies (its first retry slot already gets the full budget).
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  ASSERT_FALSE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  EXPECT_FALSE(comp.poll_policy_.take_stop_settle("ABC123"));
 }
 
 TEST(HubOperations, LadderSlotWithFullRetriesLeadsWithTheShortPreambleWhileBelievedAwake) {

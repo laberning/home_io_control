@@ -355,9 +355,20 @@ and orders the tries of each directed exchange accordingly:
 | asleep | wake-up | wake-up | wake-up |
 
 "Short" is [`normal_start_preamble`](#normal_start_preamble). A wrong belief costs one try, not the
-exchange, because every plan still sends the wake-up preamble at least once. An exchange allowed only
-one try (most scheduled status polls) never uses these plans and keeps the wake-up preamble. Always-alive devices are
-unaffected, and the frame itself never changes between tries. Off restores the old behaviour: the
+exchange, because every plan still sends the wake-up preamble at least once. A status poll allowed only
+one try (most scheduled polls) sends the first try's preamble; if it misses, the next poll a few
+seconds later has three tries. The poll right after an accepted `stop` always gets all three.
+Always-alive devices are unaffected, and the frame itself never changes between tries.
+
+To see which preamble reaches a device how soon after it last answered, read the per-try log lines.
+Each carries `preamble=` (bytes) and `age_ms=` (time since the device was last heard; `n/a` when it
+never was, or the switch is off):
+
+```
+Try 1 ended: no first response for cmd=PRIVATE(0x03) within 400 ms preamble=32 age_ms=6712
+Try 3 answered: cmd=PRIVATE(0x03) wait_ms=231 preamble=1024 age_ms=8190
+Auth challenge try=1 wait_ms=26 req_cmd=0x00 req_len=6 preamble=32 age_ms=1034
+``` Off restores the old behaviour: the
 wake-up preamble on every try to a `low_power:` device.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
