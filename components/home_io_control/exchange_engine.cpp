@@ -81,7 +81,9 @@ void ExchangeEngine::log_debug(const char *device_id) const {
            device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.max_tries, d.saw_challenge,
            d.capture_valid, d.capture_rx_done, d.capture_crc_error, d.capture_freq_hz, d.capture_irq_status,
            d.capture_packet_status, d.capture_reported_len, d.capture_frame_len, d.capture_rssi_dbm,
-           d.wake_belief_applied ? decisions::wake_belief_name(d.wake_belief) : "n/a", d.last_try_preamble);
+           d.wake_belief_use == WakeBeliefUse::APPLIED ? decisions::wake_belief_name(d.wake_belief)
+                                                       : wake_belief_use_name(d.wake_belief_use),
+           d.last_try_preamble);
 }
 
 // ============================================================================
@@ -269,8 +271,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   const uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
   this->debug_.max_tries = tries_allowed;
   const PreamblePlan preamble_plan = this->plan_request_preamble_(request, request_preamble_override, tries_allowed);
-  if (preamble_plan.per_try) {
-    this->debug_.wake_belief_applied = true;
+  this->debug_.wake_belief_use = preamble_plan.use;
+  if (preamble_plan.use == WakeBeliefUse::APPLIED) {
     this->debug_.wake_belief = preamble_plan.belief;
     if (preamble_plan.belief != decisions::WakeBelief::ASLEEP) {
       ESP_LOGD(TAG, "Low-power target %s believed %s: short preamble first", node_id_to_string(request.dst).c_str(),
@@ -365,24 +367,54 @@ uint16_t ExchangeEngine::request_preamble_for(const IoFrame &request) const {
   return is_low_power_start(request) ? LONG_PREAMBLE : this->tuning_->normal_start_preamble;
 }
 
+const char *ExchangeEngine::wake_belief_use_name(WakeBeliefUse use) {
+  switch (use) {
+    case WakeBeliefUse::OVERRIDE:
+      return "override";
+    case WakeBeliefUse::SWITCHED_OFF:
+      return "off";
+    case WakeBeliefUse::NO_PROVIDER:
+      return "no_provider";
+    case WakeBeliefUse::SINGLE_TRY:
+      return "single_try";
+    case WakeBeliefUse::APPLIED:
+      return "applied";
+    case WakeBeliefUse::NOT_LOW_POWER:
+    default:
+      return "not_low_power";
+  }
+}
+
 ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFrame &request, uint16_t override_preamble,
                                                                     uint8_t tries_allowed) const {
   PreamblePlan plan;
   plan.fixed = override_preamble != 0 ? override_preamble : this->request_preamble_for(request);
-  // Only a low-power *start* frame has a wake-up preamble to reorder; every other frame keeps its
-  // fixed one. The override is the caller's explicit choice (pairing), so it is never second-guessed.
-  // A belief only ever reorders tries: an exchange allowed a single try (a scheduler-owned status
-  // poll, whose backoff ladder is its retry) would be betting its whole outcome on the belief, and a
-  // wrong one — an awake-looking receiver that has since gone back to sleep — costs a failed poll and
-  // a backoff. It keeps the fixed wake-up preamble instead.
-  if (override_preamble != 0 || tries_allowed < 2 || !is_low_power_start(request) || !this->wake_evidence_provider_ ||
-      !this->tuning_->low_power_wake_belief)
+  // Every reason not to apply the belief keeps the fixed preamble and is recorded, so the
+  // exchange-failure log names it. The override is the caller's explicit choice (pairing), so it
+  // is never second-guessed.
+  // Only a low-power *start* frame has a wake-up preamble to reorder. A belief only ever reorders
+  // tries: an exchange allowed a single try (a scheduler-owned status poll, whose backoff ladder is
+  // its retry) would be betting its whole outcome on the belief, and a wrong one — an awake-looking
+  // receiver that has since gone back to sleep — costs a failed poll and a backoff.
+  if (override_preamble != 0) {
+    plan.use = WakeBeliefUse::OVERRIDE;
+  } else if (!is_low_power_start(request)) {
+    plan.use = WakeBeliefUse::NOT_LOW_POWER;
+  } else if (!this->tuning_->low_power_wake_belief) {
+    plan.use = WakeBeliefUse::SWITCHED_OFF;
+  } else if (!this->wake_evidence_provider_) {
+    plan.use = WakeBeliefUse::NO_PROVIDER;
+  } else if (tries_allowed < 2) {
+    plan.use = WakeBeliefUse::SINGLE_TRY;
+  } else {
+    plan.use = WakeBeliefUse::APPLIED;
+  }
+  if (plan.use != WakeBeliefUse::APPLIED)
     return plan;
 
   // A destination the hub has no record of has no evidence: treat it as asleep, the safe default.
   decisions::WakeEvidence evidence{};
   const bool known = this->wake_evidence_provider_(request.dst, evidence);
-  plan.per_try = true;
   plan.short_preamble = this->tuning_->normal_start_preamble;
   plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request))
                       : decisions::WakeBelief::ASLEEP;

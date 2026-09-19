@@ -298,15 +298,33 @@ class ExchangeEngine {
   // Exchange debug snapshot
   // -------------------------------------------------------------------------
 
+  /// @brief Whether an exchange's start preamble followed the low-power wake belief, and if not,
+  /// why. Reported as the `belief=` field of the exchange-failure log line, so a posted log says
+  /// which of these applied instead of one ambiguous "not applied".
+  enum class WakeBeliefUse : uint8_t {
+    NOT_LOW_POWER,  ///< Not a low-power start frame: there is no wake-up preamble to reorder.
+    OVERRIDE,       ///< The caller forced a preamble (pairing's directed frames).
+    SWITCHED_OFF,   ///< The `low_power_wake_belief` tuning switch is off.
+    NO_PROVIDER,    ///< No evidence source installed (set_wake_evidence_provider()).
+    SINGLE_TRY,     ///< The exchange may make one try only (a scheduled status poll).
+    APPLIED,        ///< The tries followed the belief in DebugInfo::wake_belief.
+  };
+
+  /// Log label for a WakeBeliefUse that is not APPLIED (an applied one logs the belief itself).
+  /// @param use Value to name.
+  /// @return "not_low_power", "override", "off", "no_provider", "single_try" or "applied".
+  [[nodiscard]] static const char *wake_belief_use_name(WakeBeliefUse use);
+
   /// @brief Snapshot of the last exchange attempt for diagnostics.
   struct DebugInfo {
-    const char *stage{"idle"};                ///< Last recorded stage label.
-    uint8_t tries{0};                         ///< Retry count (1-based).
-    uint8_t max_tries{EXCHANGE_RETRY_COUNT};  ///< Attempt cap this exchange was budgeted for.
-    bool wake_belief_applied{false};  ///< True when the tries followed `wake_belief` (a low-power start frame with
-                                      ///< the switch on); false = the preamble was fixed.
+    const char *stage{"idle"};                                         ///< Last recorded stage label.
+    uint8_t tries{0};                                                  ///< Retry count (1-based).
+    uint8_t max_tries{EXCHANGE_RETRY_COUNT};                           ///< Attempt cap this exchange was budgeted for.
+    WakeBeliefUse wake_belief_use{WakeBeliefUse::NOT_LOW_POWER};       ///< Whether the tries followed `wake_belief`,
+                                                                       ///< and why not if they did not.
     decisions::WakeBelief wake_belief{decisions::WakeBelief::ASLEEP};  ///< Belief the tries followed; only
-                                                                       ///< meaningful when `wake_belief_applied`.
+                                                                       ///< meaningful when `wake_belief_use` is
+                                                                       ///< WakeBeliefUse::APPLIED.
     uint16_t last_try_preamble{0};     ///< Preamble (bytes) of the most recent request transmit attempt, 0 = none.
     uint8_t request_cmd{0};            ///< Command ID of the original request.
     bool saw_challenge{false};         ///< True if a 0x3C was seen during this exchange.
@@ -406,15 +424,16 @@ class ExchangeEngine {
   /// @brief How the request's start preamble is chosen across one exchange's tries. Resolved once
   /// per exchange by plan_request_preamble_(), then asked for each try.
   struct PreamblePlan {
-    uint16_t fixed{0};                                            ///< Every try, unless `per_try`.
-    bool per_try{false};                                          ///< True: order the tries by `belief`.
-    decisions::WakeBelief belief{decisions::WakeBelief::ASLEEP};  ///< Only read when `per_try`.
-    uint16_t short_preamble{0};  ///< The awake receiver's preamble; only read when `per_try`.
+    uint16_t fixed{0};                                ///< Every try, unless `use` is WakeBeliefUse::APPLIED.
+    WakeBeliefUse use{WakeBeliefUse::NOT_LOW_POWER};  ///< APPLIED: order the tries by `belief`.
+    decisions::WakeBelief belief{decisions::WakeBelief::ASLEEP};  ///< Only read when APPLIED.
+    uint16_t short_preamble{0};  ///< The awake receiver's preamble; only read when APPLIED.
 
     /// @param try_index 1-based try number.
     /// @return Preamble in bytes for that try.
     [[nodiscard]] uint16_t for_try(uint8_t try_index) const {
-      return per_try ? decisions::low_power_try_preamble(belief, try_index, short_preamble) : fixed;
+      return use == WakeBeliefUse::APPLIED ? decisions::low_power_try_preamble(belief, try_index, short_preamble)
+                                           : fixed;
     }
   };
 

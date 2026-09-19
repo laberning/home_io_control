@@ -110,7 +110,9 @@ low-power device got worse after updating, set it to `false` and report.
   than a long one (32 vs 1024 bytes at 38.4 kbit/s).
 - **The two windows are first estimates.** `LOW_POWER_MAX_TRAVEL_MS` (120 s) and
   `LOW_POWER_AWAKE_HOLD_MS` (30 s) are guesses field logs will correct; the exchange-failure log
-  line carries `belief=` and `last_preamble=` so that data exists.
+  line carries `belief=` (the belief, or why none applied: `off`, `single_try`, `not_low_power`,
+  `override`) and `last_preamble=` so that data exists, and the config dump at boot states whether
+  the switch is on.
 - **Not done here.** The ASLEEP plan stays long/long/long; a `long/short/long` variant is a
   follow-up only if logs show a receiver that wakes and then ignores the long preamble. The
   discovery sequence for a not-yet-paired device is a separate decision.

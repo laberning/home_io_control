@@ -402,6 +402,10 @@ void IOHomeControlComponent::dump_config() {
     LOG_PIN("  DIO4 Pin: ", this->dio4_pin_);
   if (this->busy_pin_ != nullptr)
     LOG_PIN("  BUSY Pin: ", this->busy_pin_);
+  // Stated on every boot/log connect, so a posted log shows whether low-power devices get the
+  // per-try preamble order (ADR 0040) without anyone having to share their tuning YAML.
+  ESP_LOGCONFIG(detail::TAG, "  Low-power wake belief: %s",
+                this->tuning_.low_power_wake_belief ? "on" : "off (tuning: low_power_wake_belief: false)");
   ESP_LOGCONFIG(detail::TAG, "  Devices: %zu", this->registry_.size());
   if (this->registry_.linked_remote_count() > 0) {
     ESP_LOGCONFIG(detail::TAG, "  Linked Remotes: %zu", this->registry_.linked_remote_count());

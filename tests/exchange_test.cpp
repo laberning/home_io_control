@@ -2668,24 +2668,51 @@ TEST(WakeBelief, ExplicitPreambleOverrideWinsOnEveryTry) {
   EXPECT_EQ(rig.provider_calls, 0) << "an override is the caller's choice and is never second-guessed";
 }
 
-TEST(WakeBelief, DebugSnapshotSaysWhenNoBeliefApplied) {
-  // The exchange-failure log line prints "belief=n/a" for these, so a fixed preamble cannot be
-  // mistaken for a genuine "asleep" sample when the timing constants are tuned from field logs.
+TEST(WakeBelief, DebugSnapshotNamesWhyNoBeliefApplied) {
+  // The exchange-failure log line prints this reason in its belief= field, so a posted log says
+  // whether the switch was off, the frame was not low-power, and so on — one "n/a" could not.
+  using Use = ExchangeEngine::WakeBeliefUse;
   WakeBeliefRig rig;
   rig.moved_ago(1000);
+
   rig.send(low_power_position_request(/*low_power=*/false));
-  EXPECT_FALSE(rig.engine.get_debug().wake_belief_applied) << "always-alive target";
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::NOT_LOW_POWER);
 
   rig.send(low_power_position_request(), EXCHANGE_RETRY_COUNT, /*override_preamble=*/48);
-  EXPECT_FALSE(rig.engine.get_debug().wake_belief_applied) << "explicit override";
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::OVERRIDE);
+
+  rig.send(low_power_position_request(), /*max_tries=*/1);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::SINGLE_TRY);
 
   rig.tuning.low_power_wake_belief = false;
   rig.send(low_power_position_request());
-  EXPECT_FALSE(rig.engine.get_debug().wake_belief_applied) << "switch off";
-
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::SWITCHED_OFF);
   rig.tuning.low_power_wake_belief = true;
+
   rig.send(low_power_position_request());
-  EXPECT_TRUE(rig.engine.get_debug().wake_belief_applied);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::APPLIED);
+
+  rig.engine.set_wake_evidence_provider({});
+  rig.send(low_power_position_request());
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::NO_PROVIDER);
+}
+
+TEST(WakeBelief, SwitchOffIsReportedEvenForASingleTryExchange) {
+  // Precedence: a switched-off belief is the more useful fact in a log than "single try".
+  WakeBeliefRig rig;
+  rig.tuning.low_power_wake_belief = false;
+  rig.send(low_power_position_request(), /*max_tries=*/1);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::SWITCHED_OFF);
+}
+
+TEST(WakeBelief, SkipReasonLabelsAreDistinctAndReadable) {
+  using Use = ExchangeEngine::WakeBeliefUse;
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::NOT_LOW_POWER), "not_low_power");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::OVERRIDE), "override");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::SWITCHED_OFF), "off");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::NO_PROVIDER), "no_provider");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::SINGLE_TRY), "single_try");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::APPLIED), "applied");
 }
 
 TEST(WakeBelief, AlwaysAliveTargetKeepsTheNormalStartPreambleOnEveryTry) {
@@ -2725,7 +2752,7 @@ TEST(WakeBelief, SingleTryExchangeKeepsTheWakeUpPreambleAndSkipsTheBelief) {
   rig.moved_ago(1000);
   EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LONG_PREAMBLE}));
   EXPECT_EQ(rig.provider_calls, 0);
-  EXPECT_FALSE(rig.engine.get_debug().wake_belief_applied);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::SINGLE_TRY);
 }
 
 TEST(WakeBelief, TwoTryExchangeStillFollowsThePlan) {
