@@ -26,25 +26,34 @@ namespace home_io_control {
 /// `RadioSX1262::set_rx_bandwidth()` — a regular (mantissa, exponent) grid, with the bandwidth
 /// roughly doubling per group.
 ///
+/// Semtech's sizing rule for GFSK is `BW_DSB >= bitrate + 2 * Fdev + carrier offset`, which is
+/// 76.8 kHz for the IO-Homecontrol waveform (38.4 kbps, 19.2 kHz deviation) before any offset.
+/// The SX1262 has no AFC in GFSK mode, so this filter alone has to absorb the peer's carrier
+/// offset. These values are not comparable to `SX1276RxBandwidth`, whose values are
+/// single-sideband.
+///
 /// Byte-for-byte identical to `LR1121RxBandwidth` below, since both chips share the same Semtech
 /// GFSK bandwidth grid; the `Sx1262AndLr1121BandwidthTablesAgree` test pins that. If these two
 /// tables ever need to diverge for a real chip difference, say why here.
 enum class SX1262RxBandwidth : uint8_t {
-  BW_39_0_KHZ = 0x1C,   ///< 39.0 kHz — narrowest; closest to the SX1276's validated 41.7 kHz.
+  BW_39_0_KHZ = 0x1C,   ///< 39.0 kHz — narrowest; half the 76.8 kHz sizing floor, for probing only.
   BW_46_9_KHZ = 0x14,   ///< 46.9 kHz — narrow.
   BW_58_6_KHZ = 0x0C,   ///< 58.6 kHz — default; the narrowest value validated on real hardware here.
-  BW_78_2_KHZ = 0x1B,   ///< 78.2 kHz — just above the ~77 kHz Carson figure for this waveform.
-  BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — the former default.
-  BW_156_2_KHZ = 0x1A,  ///< 156.2 kHz.
+  BW_78_2_KHZ = 0x1B,   ///< 78.2 kHz — just above the 76.8 kHz sizing floor.
+  BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — clears the sizing floor with ~20 kHz of offset margin.
+  BW_156_2_KHZ = 0x1A,  ///< 156.2 kHz — the value a Somfy LightVar_Wh_io dimmer needs.
   BW_187_2_KHZ = 0x12,  ///< 187.2 kHz — widest selectable option.
 };
 
 /// @brief Valid SX1276 RX bandwidth options (RegRxBw register bytes).
 ///
 /// The numeric values are the SX1276 RegRxBw encodings (RxBwMant in bits[4:3], RxBwExp in
-/// bits[2:0]) written verbatim to both REG_RX_BW and REG_AFC_BW. Double-sideband bandwidth =
-/// FXOSC / (RxBwMant * 2^(RxBwExp+2)) with FXOSC = 32 MHz. Narrower rejects more out-of-band
-/// noise (higher sensitivity); wider tolerates more LO frequency offset.
+/// bits[2:0]) written verbatim to both REG_RX_BW and REG_AFC_BW. Single-sideband bandwidth =
+/// FXOSC / (RxBwMant * 2^(RxBwExp+2)) with FXOSC = 32 MHz; the filter's total (double-sideband)
+/// width is twice that, so the 41.7 kHz default spans 83.4 kHz — just above the 76.8 kHz sizing
+/// floor for this waveform. The SX1276's AFC re-centres the receiver on each packet's carrier.
+/// Narrower rejects more out-of-band noise (higher sensitivity); wider tolerates more LO
+/// frequency offset.
 enum class SX1276RxBandwidth : uint8_t {
   BW_20_8_KHZ = 0x14,   ///< 20.8 kHz — narrowest; maximal noise rejection, least LO-offset tolerance.
   BW_41_7_KHZ = 0x13,   ///< 41.7 kHz — default (validated against real devices).
@@ -60,12 +69,12 @@ enum class SX1276RxBandwidth : uint8_t {
 /// future chip's table does. See `Sx1262AndLr1121BandwidthTablesAgree`, which pins the two tables
 /// together; if they ever need to differ for a real chip difference, say why here.
 enum class LR1121RxBandwidth : uint8_t {
-  BW_39_0_KHZ = 0x1C,   ///< 39.0 kHz — narrowest; close to SX1276's validated 41.7 kHz default.
+  BW_39_0_KHZ = 0x1C,   ///< 39.0 kHz — narrowest; half the 76.8 kHz sizing floor, for probing only.
   BW_46_9_KHZ = 0x14,   ///< 46.9 kHz — narrow.
   BW_58_6_KHZ = 0x0C,   ///< 58.6 kHz.
   BW_78_2_KHZ = 0x1B,   ///< 78.2 kHz.
   BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — default.
-  BW_156_2_KHZ = 0x1A,  ///< 156.2 kHz — wider tolerance for LO offset.
+  BW_156_2_KHZ = 0x1A,  ///< 156.2 kHz — wider tolerance for peer carrier offset.
   BW_187_2_KHZ = 0x12,  ///< 187.2 kHz — widest selectable option.
 };
 
@@ -210,11 +219,12 @@ struct TuningConfig {
   // --- Radio / physical layer ---
   /// SX1262 RX bandwidth selector.
   ///
-  /// 58.6 kHz: narrower rejects more noise, and reception improves as the filter narrows on this
-  /// waveform. Matches the SX1276's long-validated 41.7 kHz default on the identical waveform. A
-  /// wide default would exist only to tolerate local-oscillator offset across the TX->RX
-  /// turnaround, but that turnaround is now a measured ~390 us plus a 500 us settle, well within
-  /// what the narrow filter tolerates.
+  /// 58.6 kHz (double-sideband). This is below the 76.8 kHz sizing floor for this waveform (see
+  /// `SX1262RxBandwidth`), so it trims the edges of even an on-frequency signal; it is the
+  /// default because it made a real solar shutter (Somfy RS100) respond reliably where 117.3 kHz
+  /// did not. Because the SX1262 has no GFSK AFC, a peer whose carrier sits off nominal needs a
+  /// wider setting instead: a Somfy LightVar_Wh_io dimmer went from mostly missed to mostly
+  /// confirmed replies at 156.2 kHz. The setting is global, so the right value is a per-install trade-off.
   SX1262RxBandwidth sx1262_rx_bandwidth{SX1262RxBandwidth::BW_58_6_KHZ};
   uint16_t sx1262_response_preamble{SX1262_RESPONSE_PREAMBLE};            ///< SX1262 response preamble in bytes.
   uint16_t sx1262_post_tx_settle_us{SX1262_POST_TX_SETTLE_US};            ///< Delay after SX1262 TX before RX (µs).

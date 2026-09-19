@@ -131,17 +131,17 @@ your device may differ.
 
 | Parameter | Radio | Default | Range / options | What it does |
 |---|---|---|---|---|
-| `sx1262_rx_bandwidth` | SX1262 | `58.6` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; narrower rejects more noise. |
+| `sx1262_rx_bandwidth` | SX1262 | `58.6` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). Widen it when one device's replies are missed. |
 | `sx1262_response_preamble` | SX1262 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
-| `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth; wider tolerates LO offset, narrower rejects more noise. |
+| `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth (single-sideband, so `41.7` spans 83.4 kHz); wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
-| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth. Still `117.3` by default — untested on LR1121, but the SX1262 result below suggests trying narrower. |
+| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). `117.3` is validated on real LR1121 hardware. |
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
@@ -172,13 +172,23 @@ not a tunable.
 GFSK receiver bandwidth on the SX1262. Change it when frames arrive but fail to decode — the
 `did not parse as a frame` warnings in the log are a direct count of that.
 
-*Observations:* `58.6` kHz is the default — narrower rejects more out-of-band noise, and reception
-on this waveform improves as the filter narrows. It also brings the SX1262 into line with the
-SX1276's long-validated `41.7` kHz default on the identical waveform. A wide default would exist
-only to tolerate local-oscillator offset across the TX→RX turnaround, but that turnaround measures
-~390 µs plus a 500 µs settle, well within what the narrow filter tolerates.
+The values are double-sideband: the total width of the filter, centred on the hub's own
+frequency. Semtech sizes a GFSK filter as bitrate + 2 × deviation + carrier offset, which is
+76.8 kHz for this waveform before any offset. The SX1262 has no automatic frequency correction in
+this mode, so the filter alone has to absorb how far a device's transmitter sits from nominal.
 
-`39.0` and `46.9` bracket the SX1276's `41.7` — worth trying if `58.6` still shows decode failures.
+*Observations:* `58.6` kHz is the default. It is below the 76.8 kHz figure, so it trims the edges
+of even an on-frequency signal, but it made a Somfy RS100 solar shutter respond reliably where
+`117.3` did not. A device whose transmitter sits off nominal needs the opposite: a Somfy
+LightVar_Wh_io dimmer went from mostly missed replies to 9 of 11 commands confirmed at `156.2`,
+with `117.3` and `187.2` both worse in the same test
+([issue #119](https://github.com/laberning/home_io_control/issues/119)). The setting applies to
+every device, so pick the value your least cooperative device needs and check that the others
+still answer.
+
+If one device's replies are missed — `wait_first_timeout`, or a challenge that arrives without its
+final response — while other devices are fine, try `117.3` and `156.2`. `39.0` and `46.9` are
+well below the 76.8 kHz figure; use them only to probe a noisy install.
 
 #### `sx1262_response_preamble`
 
@@ -242,10 +252,11 @@ the budget runs out.
 GFSK receiver bandwidth on the SX1276, written to both the RX and AFC bandwidth registers.
 Change it when discovery or key-exchange replies fail to decode cleanly on an SX1276 board.
 
-*Observations:* the default `41.7` kHz is tighter than the
-~77 kHz Carson-rule figure, chosen to maximise sensitivity by rejecting out-of-band noise, and
-validated against real devices. Unlike the SX1262, the SX1276 has a fast TX→RX turnaround and
-has worked reliably at this narrow default across the devices tested here, so this knob is
+*Observations:* the values are single-sideband — half the filter's total width — so the default
+`41.7` kHz spans 83.4 kHz, just above the 76.8 kHz Semtech sizing figure for this waveform, and
+is validated against real devices. The SX1276 also re-centres on each packet's carrier
+automatically, which absorbs a device's frequency offset that the SX1262 cannot. It has worked
+reliably at this default across the devices tested here, so this knob is
 exposed for marginal-range or drifting installs rather than because a change was needed. Widen
 it (`62.5`/`83.3`/`125.0`) when a device's transmitter drifts more than the controller's radio,
 at the cost of admitting more noise; narrow to `20.8` for maximum noise rejection on a clean
@@ -290,8 +301,8 @@ governs the roll-call as well as discovery, same as its SX1262/SX1276 counterpar
 register-level reasoning (the LR1121's GFSK bandwidth encoding is register-identical to the
 SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop). Three of the four share
 SX1262's default values (`lr1121_response_preamble`, `lr1121_post_tx_settle_us`,
-`lr1121_discovery_hop_slice_ms`); `lr1121_rx_bandwidth` instead keeps its own wider default until
-a narrower one is validated on this chip. `lr1121_discovery_hop_slice_ms` is measured
+`lr1121_discovery_hop_slice_ms`); `lr1121_rx_bandwidth` instead keeps its own wider default,
+`117.3` kHz, which clears the 76.8 kHz sizing figure and is validated on this chip. `lr1121_discovery_hop_slice_ms` is measured
 independently on LR1121 rather than merely inherited, since the two chips are validated
 separately and could in principle diverge.
 
