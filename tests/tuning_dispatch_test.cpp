@@ -181,6 +181,22 @@ TEST(TuningDispatch, SelectAckCapable) {
   EXPECT_FALSE(comp.tuning_.pairing_discovery_ack_capable);
 }
 
+TEST(TuningDispatch, SelectLowPowerWakeBeliefDefaultsOnAndRoundTrips) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+
+  EXPECT_TRUE(comp.tuning_.low_power_wake_belief) << "the wake belief is on unless someone turns it off";
+  EXPECT_EQ(comp.get_tuning_select_value("low_power_wake_belief"), "On");
+
+  comp.update_tuning_select("low_power_wake_belief", "Off");
+  EXPECT_FALSE(comp.tuning_.low_power_wake_belief);
+  EXPECT_EQ(comp.get_tuning_select_value("low_power_wake_belief"), "Off");
+
+  comp.update_tuning_select("low_power_wake_belief", "On");
+  EXPECT_TRUE(comp.tuning_.low_power_wake_belief);
+}
+
 TEST(TuningDispatch, SelectScanPowerClasses) {
   TestableHubComponent comp;
   MockRadio radio;

@@ -39,6 +39,7 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_FALSE(cfg.pairing_discovery_payload_enabled);
   EXPECT_FALSE(cfg.pairing_discovery_low_power);
   EXPECT_FALSE(cfg.pairing_discovery_ack_capable);
+  EXPECT_TRUE(cfg.low_power_wake_belief);
   EXPECT_EQ(cfg.pairing_discovery_wait_ms, 2000);
   EXPECT_EQ(cfg.pairing_discovery_initial_dwell_ms, 300);
   EXPECT_EQ(cfg.pairing_key_exchange_retries, 3);
@@ -172,6 +173,14 @@ TEST(TuningConfig, SnapshotOmitsUnchangedDefaults) {
   EXPECT_NE(snapshot.find("sx1262_response_preamble=96"), std::string::npos);
   EXPECT_EQ(snapshot.find("sx1262_post_tx_settle_us"), std::string::npos);
   EXPECT_EQ(snapshot.find("lbt_max_retries"), std::string::npos);
+}
+
+TEST(TuningConfig, SnapshotReportsLowPowerWakeBeliefOnlyWhenOff) {
+  TuningConfig cfg{};
+  EXPECT_EQ(tuning_config_snapshot(cfg).find("low_power_wake_belief"), std::string::npos)
+      << "the default (on) is omitted like every other unchanged default";
+  cfg.low_power_wake_belief = false;
+  EXPECT_NE(tuning_config_snapshot(cfg).find("low_power_wake_belief=false"), std::string::npos);
 }
 
 TEST(TuningConfig, DestinationStringFormatting) {

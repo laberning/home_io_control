@@ -315,6 +315,10 @@ static constexpr uint8_t POS_STOP = 0xD2;      ///< Wire value: stop movement.
 static constexpr uint8_t POS_UNKNOWN = 0xD4;   ///< Wire value: position unknown / keep current.
 static constexpr uint8_t POS_FAVORITE = 0xD8;  ///< Wire value: move to favorite/"My" position.
 
+/// Offset of the main position/command byte in a CMD_EXECUTE payload — after the originator (first
+/// byte) and the ACEI (second byte). Holds a 0-100 position scale value or one of the POS_* codes.
+static constexpr uint8_t EXECUTE_MAIN_BYTE_OFFSET = 2;
+
 /// @brief Wire value for the secured target position command.
 ///
 /// Moves the actuator to its pre-programmed secured/safety position from the

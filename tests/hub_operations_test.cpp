@@ -1860,3 +1860,339 @@ TEST(HubOperations, QueueTimeGuardRejectionRollsBackOptimisticPrediction) {
   EXPECT_FALSE(comp.queue_device_command("ABC123", CoverCommand::STOP));
   EXPECT_TRUE(dev->optimistic.empty()) << "a rejected queued STOP withdraws the predicted stop";
 }
+
+// ============================================================================
+// Low-power wake belief — evidence stamps and hub -> engine wiring
+// ============================================================================
+// A low_power device's start-frame preamble follows its wake belief (decisions::wake_belief()):
+// the hub supplies the evidence (last_moving_evidence_ms / last_seen_ms), the engine picks the
+// preamble per try. These tests run on a manual clock so ages are exact.
+
+namespace {
+
+void queue_frame(MockRadio &radio, const IoFrame &frame) { radio.queue_rx(test::make_rx_packet(frame)); }
+
+/// Preamble of the transmit at `index` (0-based, in send order) — fails the test if there was none.
+uint16_t preamble_of_tx(const MockRadio &radio, size_t index) {
+  EXPECT_LT(index, radio.get_tx_configs().size()) << "expected a transmit #" << index;
+  return index < radio.get_tx_configs().size() ? radio.get_tx_configs()[index].preamble_len : 0;
+}
+
+}  // namespace
+
+// --- evidence: which paths stamp / clear last_moving_evidence_ms -------------------------------
+
+TEST(HubOperations, AcceptedMoveWithoutAckStampsMovingEvidenceEvenWithoutAnOptimisticOverlay) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->optimistic_state = false;  // no overlay: the accept itself is the only signal of a move
+  queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));  // authenticated, never closed
+
+  ASSERT_TRUE(comp.set_device_position("ABC123", 40)) << "an authenticated command is accepted";
+
+  EXPECT_NE(dev->last_moving_evidence_ms, 0u);
+}
+
+TEST(HubOperations, FailedMoveDoesNotStampMovingEvidence) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->optimistic_state = false;
+
+  ASSERT_FALSE(comp.set_device_position("ABC123", 40)) << "no reply at all: the command failed";
+
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a command the device never accepted proves nothing";
+}
+
+TEST(HubOperations, AcceptedStopClearsMovingEvidence) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());  // it was travelling
+  queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));
+
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a STOP ends a movement: it is neither evidence of one nor kept";
+}
+
+TEST(HubOperations, FailedStopKeepsMovingEvidence) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+
+  ASSERT_FALSE(comp.execute_device_command_("ABC123", CoverCommand::STOP)) << "no reply: the STOP failed";
+
+  EXPECT_NE(dev->last_moving_evidence_ms, 0u) << "the receiver was never told to stop, so it may still be moving";
+}
+
+TEST(HubOperations, StopAckThatReportsStoppedLeavesNoEvidenceDespiteStalePositions) {
+  // The ack to our own STOP is decoded with trust_position=false, so dev.target/position are stale
+  // values from an earlier poll that have not converged, and normalize_stopped_state() reads that as
+  // "still moving" (stamping evidence). The accepted STOP must still end with none, or a STOP that
+  // worked would leave the receiver looking like it is travelling for LOW_POWER_MAX_TRAVEL_MS.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->target = 100.0f;
+  dev->position = 30.0f;
+  note_moving_evidence(*dev, esphome::millis());
+  queue_frame(radio, build_status_response(comp.node_id_));  // STATUS_STOPPED set
+
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u);
+}
+
+TEST(HubOperations, DecodedStatusTracksMovingEvidence) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  queue_frame(radio, build_status_response(comp.node_id_));  // stopped
+  ASSERT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u);
+
+  queue_frame(radio, build_moving_status_response(comp.node_id_, /*delay_hint_seconds=*/5));
+  ASSERT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_NE(dev->last_moving_evidence_ms, 0u) << "a decoded 'not stopped' status is evidence of travel";
+
+  queue_frame(radio, build_status_response(comp.node_id_));  // it arrived and stopped
+  ASSERT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a decoded 'stopped' status spends the evidence";
+}
+
+// --- wiring: the belief the engine derives from the hub's evidence ----------------------------
+
+TEST(HubOperations, HaMoveToARestingLowPowerDeviceLeadsWithTheWakeUpPreamble) {
+  // IOHomeCover::control() applies the optimistic overlay *before* the command is dispatched. That
+  // prediction must not count as moving evidence, or a resting, duty-cycling receiver would be
+  // treated as awake by the very command that has to wake it.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 40.0f));
+
+  comp.set_device_position("ABC123", 40);
+
+  EXPECT_EQ(preamble_of_tx(radio, 0), LONG_PREAMBLE);
+}
+
+TEST(HubOperations, StopToALowPowerDeviceAtRestLeadsWithTheShortPreamble) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+
+  comp.execute_device_command_("ABC123", CoverCommand::STOP);
+
+  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble)
+      << "a STOP goes to a receiver that is moving, whatever the stamps say";
+}
+
+TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryLeadingWithTheShortPreamble) {
+  // The tracked settle poll gets one try (its backoff ladder is its retry), and that try follows the
+  // wake belief: seconds after an accepted move the receiver is travelling, and a travelling VELUX
+  // solar receiver ignores the wake-up preamble (ADR 0040 D2).
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));
+  ASSERT_TRUE(comp.set_device_position("ABC123", 40));
+  ASSERT_NE(dev->last_moving_evidence_ms, 0u) << "precondition: the belief would be AWAKE";
+  esphome::test_clock::advance_ms(3000);
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  const size_t before = radio.get_tx_configs().size();
+
+  comp.request_device_status("ABC123");
+
+  ASSERT_EQ(radio.get_tx_configs().size() - before, 1u) << "scheduler-owned poll: a single try";
+  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
+}
+
+TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryInMaybeAwakeOrder) {
+  // After an accepted STOP nothing moves and the user's reversal waits on this poll, so it gets the
+  // full budget instead of betting on one sample (STOP_SETTLE_POLL_TRIES). The STOP cleared the
+  // moving evidence and its reply was just heard: maybe awake — short, then the wake-up preamble.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  ASSERT_EQ(dev->last_moving_evidence_ms, 0u) << "precondition: an accepted STOP clears moving evidence";
+  ASSERT_NE(dev->last_seen_ms, 0u) << "precondition: the STOP's challenge was heard";
+  esphome::test_clock::advance_ms(STOP_SETTLE_POLL_CAP_MS);
+  const size_t before = radio.get_tx_configs().size();
+
+  comp.request_device_status("ABC123");
+
+  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(STOP_SETTLE_POLL_TRIES));
+  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
+}
+
+TEST(HubOperations, OnlyTheFirstPollAfterAStopGetsTheStopBudget) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  esphome::test_clock::advance_ms(STOP_SETTLE_POLL_CAP_MS);
+  comp.request_device_status("ABC123");  // the post-STOP poll, all tries miss
+  // Reset the streak so the ladder's own grace band cannot hand the next poll three tries either.
+  comp.poll_policy_.clear_failure_streaks("ABC123");
+  const size_t before = radio.get_tx_configs().size();
+
+  comp.request_device_status("ABC123");
+
+  EXPECT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(SCHEDULED_POLL_MAX_TRIES));
+}
+
+TEST(HubOperations, SettlePollAfterAFailedStopDoesNotGetTheStopBudget) {
+  // A STOP nobody answered has not stopped anything: the receiver may still be travelling, so the
+  // normal ladder applies (its first retry slot already gets the full budget).
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  ASSERT_FALSE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  EXPECT_FALSE(comp.poll_policy_.take_stop_settle("ABC123"));
+}
+
+TEST(HubOperations, LadderSlotWithFullRetriesLeadsWithTheShortPreambleWhileBelievedAwake) {
+  // The first slot after a missed settle poll gets the full retry budget, so the belief applies:
+  // short / wake-up / short for a receiver believed to be travelling.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/false, esphome::millis());
+  ASSERT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+
+  comp.request_device_status("ABC123");
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 3u);
+  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, 1), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, 2), comp.tuning_.normal_start_preamble);
+}
+
+TEST(HubOperations, MovingEvidenceExpiresAfterMaxTravel) {
+  esphome::test_clock::ManualClock clock(500000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+
+  esphome::test_clock::advance_ms(LOW_POWER_MAX_TRAVEL_MS - 1000);
+  comp.request_device_status("ABC123");
+  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble) << "still inside the travel window";
+
+  const size_t before = radio.get_tx_configs().size();
+  esphome::test_clock::advance_ms(2000);  // now past LOW_POWER_MAX_TRAVEL_MS since the move
+  comp.request_device_status("ABC123");
+  EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE)
+      << "no reply since the move and the window is over: the receiver is presumed asleep again";
+}
+
+TEST(HubOperations, RecentReplyHoldsTheShortPreambleForTheAwakeHoldWindowOnly) {
+  esphome::test_clock::ManualClock clock(500000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  queue_frame(radio, build_status_response(comp.node_id_));
+  ASSERT_TRUE(comp.request_device_status("ABC123")) << "a real reply: stamps last_seen_ms";
+  const size_t after_reply = radio.get_tx_configs().size();
+
+  esphome::test_clock::advance_ms(10000);
+  comp.request_device_status("ABC123");  // heard from 10 s ago
+  EXPECT_EQ(preamble_of_tx(radio, after_reply), comp.tuning_.normal_start_preamble);
+
+  const size_t before_late = radio.get_tx_configs().size();
+  esphome::test_clock::advance_ms(LOW_POWER_AWAKE_HOLD_MS + 1000);
+  comp.request_device_status("ABC123");  // more than the hold since the reply
+  EXPECT_EQ(preamble_of_tx(radio, before_late), LONG_PREAMBLE);
+}
+
+TEST(HubOperations, UnregisteredDestinationIsTreatedAsAsleep) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  const uint8_t stranger[NODE_ID_SIZE] = {0x12, 0x34, 0x56};
+  IoFrame request{};
+  ASSERT_TRUE(create_get_status(request, comp.node_id_, stranger, /*low_power=*/true));
+  IoFrame response{};
+
+  comp.exchange_engine_.send_and_receive(request, response, FREQ_CH2);
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 3u);
+  for (const auto &config : radio.get_tx_configs())
+    EXPECT_EQ(config.preamble_len, LONG_PREAMBLE) << "no record of this node, so nothing says it is awake";
+}
+
+TEST(HubOperations, AlwaysAliveDeviceKeepsTheNormalStartPreambleOnEveryTryDespiteEvidence) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/false);
+  note_moving_evidence(*comp.get_device("ABC123"), esphome::millis());
+
+  comp.request_device_status("ABC123");
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 3u);
+  for (const auto &config : radio.get_tx_configs())
+    EXPECT_EQ(config.preamble_len, comp.tuning_.normal_start_preamble);
+}
+
+TEST(HubOperations, WakeBeliefSwitchOffRestoresTheWakeUpPreambleForALowPowerDevice) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  comp.tuning_.low_power_wake_belief = false;
+  note_moving_evidence(*comp.get_device("ABC123"), esphome::millis());
+
+  comp.request_device_status("ABC123");
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 3u);
+  for (const auto &config : radio.get_tx_configs())
+    EXPECT_EQ(config.preamble_len, LONG_PREAMBLE);
+}

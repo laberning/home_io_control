@@ -6,6 +6,8 @@
 
 #include "device_registry.h"
 
+#include "esphome/core/hal.h"
+
 #include <gtest/gtest.h>
 
 #include <string>
@@ -251,6 +253,21 @@ TEST(DeviceRegistry, ApplyOptimisticTargetSetsOverlayAndLeavesObservationUntouch
   EXPECT_FALSE(effective_is_stopped(*dev));
   EXPECT_EQ(dev->target, UNKNOWN_POSITION) << "a prediction must not be written into the observed target";
   EXPECT_TRUE(dev->is_stopped) << "a prediction must not be written into the observed is_stopped";
+}
+
+// The hub's own prediction is NOT moving evidence: it is applied before the command is even sent
+// (IOHomeCover::control()), so stamping it would make a resting low-power receiver look awake to
+// the command that starts it (see note_moving_evidence()).
+TEST(DeviceRegistry, OptimisticPredictionsDoNotStampMovingEvidence) {
+  esphome::test_clock::ManualClock clock(5000);
+  DeviceRegistry reg;
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+
+  ASSERT_TRUE(reg.apply_optimistic_target("ABC123", 75.0f));
+  EXPECT_EQ(reg.get("ABC123")->last_moving_evidence_ms, 0u) << "a prediction is not evidence of movement";
+
+  ASSERT_TRUE(reg.apply_optimistic_stop("ABC123"));
+  EXPECT_EQ(reg.get("ABC123")->last_moving_evidence_ms, 0u);
 }
 
 // §7.2 — apply_optimistic_stop() predicts STOPPED without touching observations, and in

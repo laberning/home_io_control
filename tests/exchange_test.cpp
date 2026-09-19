@@ -2546,3 +2546,279 @@ TEST(Exchange, CountersResetZeroesEveryField) {
   EXPECT_EQ(c.challenge_round_trips, 0u);
   EXPECT_EQ(c.parse_failures, 0u);
 }
+
+// ============================================================================
+// Low-power wake belief: per-try request preamble in send_and_receive()
+// ============================================================================
+// A low-power START request orders its tries by the target's wake belief (see
+// decisions::low_power_try_preamble()). MockRadio has no queued reply unless a test adds one, so
+// every try transmits and the preamble of each is read back from get_tx_configs().
+
+namespace {
+
+/// Standalone engine on a manual clock with a scripted wake-evidence provider, so the belief is
+/// driven by explicit "N ms ago" stamps rather than by a hub.
+struct WakeBeliefRig {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr{&radio};
+  TuningConfig tuning{};
+  ExchangeEngine engine{&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning};
+  decisions::WakeEvidence evidence{};  // all zero = never moved, never heard from
+  bool evidence_known{true};
+  int provider_calls{0};
+
+  WakeBeliefRig() {
+    engine.set_wake_evidence_provider([this](const uint8_t *, decisions::WakeEvidence &out) {
+      provider_calls++;
+      out = evidence;
+      return evidence_known;
+    });
+  }
+
+  void moved_ago(uint32_t ms) { evidence.last_moving_evidence_ms = esphome::millis() - ms; }
+  void heard_ago(uint32_t ms) { evidence.last_seen_ms = esphome::millis() - ms; }
+
+  /// Run one exchange to a silent device and return the preamble of every transmit, in order.
+  std::vector<uint16_t> send(const IoFrame &request, uint8_t max_tries = EXCHANGE_RETRY_COUNT,
+                             uint16_t override_preamble = 0) {
+    IoFrame response{};
+    engine.send_and_receive(request, response, FREQ_CH2, max_tries, override_preamble);
+    std::vector<uint16_t> preambles;
+    for (const auto &config : radio.get_tx_configs())
+      preambles.push_back(config.preamble_len);
+    return preambles;
+  }
+};
+
+IoFrame low_power_position_request(bool low_power = true) {
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, low_power, 40);
+  return request;
+}
+
+IoFrame low_power_stop_request() {
+  IoFrame request{};
+  create_execute_command(request, test::OWN_ID, test::DST_ID, /*low_power=*/true, CoverCommand::STOP, false);
+  return request;
+}
+
+using Preambles = std::vector<uint16_t>;
+
+}  // namespace
+
+TEST(WakeBelief, NoProviderKeepsTheWakeUpPreambleOnEveryTry) {
+  WakeBeliefRig rig;
+  rig.engine.set_wake_evidence_provider({});
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+}
+
+TEST(WakeBelief, AwakeTargetGetsShortLongShort) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{short_preamble, LONG_PREAMBLE, short_preamble}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
+  EXPECT_EQ(rig.engine.get_debug().last_try_preamble, short_preamble);
+}
+
+TEST(WakeBelief, MaybeAwakeTargetGetsShortThenWakeUpTwice) {
+  WakeBeliefRig rig;
+  rig.heard_ago(10000);
+  EXPECT_EQ(rig.send(low_power_position_request()),
+            (Preambles{rig.tuning.normal_start_preamble, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::MAYBE_AWAKE);
+}
+
+TEST(WakeBelief, AsleepTargetGetsTheWakeUpPreambleOnEveryTry) {
+  WakeBeliefRig rig;
+  rig.heard_ago(LOW_POWER_AWAKE_HOLD_MS + 1000);  // heard from, but long enough ago
+  rig.moved_ago(LOW_POWER_MAX_TRAVEL_MS + 1000);
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
+}
+
+TEST(WakeBelief, StopIsAwakeEvenWithoutEvidence) {
+  WakeBeliefRig rig;
+  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
+  EXPECT_EQ(rig.send(low_power_stop_request()), (Preambles{short_preamble, LONG_PREAMBLE, short_preamble}));
+}
+
+TEST(WakeBelief, UnknownDestinationIsAsleep) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);  // would be AWAKE, but the provider says it has never heard of this node
+  rig.evidence_known = false;
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
+}
+
+TEST(WakeBelief, KillSwitchRestoresTheWakeUpPreambleOnEveryTry) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  rig.tuning.low_power_wake_belief = false;
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.provider_calls, 0) << "with the switch off the evidence is never even looked up";
+}
+
+TEST(WakeBelief, ExplicitPreambleOverrideWinsOnEveryTry) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  EXPECT_EQ(rig.send(low_power_position_request(), EXCHANGE_RETRY_COUNT, /*override_preamble=*/48),
+            (Preambles{48, 48, 48}));
+  EXPECT_EQ(rig.provider_calls, 0) << "an override is the caller's choice and is never second-guessed";
+}
+
+TEST(WakeBelief, DebugSnapshotNamesWhyNoBeliefApplied) {
+  // The exchange-failure log line prints this reason in its belief= field, so a posted log says
+  // whether the switch was off, the frame was not low-power, and so on — one "n/a" could not.
+  using Use = ExchangeEngine::WakeBeliefUse;
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+
+  rig.send(low_power_position_request(/*low_power=*/false));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::NOT_LOW_POWER);
+
+  rig.send(low_power_position_request(), EXCHANGE_RETRY_COUNT, /*override_preamble=*/48);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::OVERRIDE);
+
+  rig.send(low_power_position_request(), /*max_tries=*/1);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::APPLIED) << "the try count is never a reason to skip";
+
+  rig.tuning.low_power_wake_belief = false;
+  rig.send(low_power_position_request());
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::SWITCHED_OFF);
+  rig.tuning.low_power_wake_belief = true;
+
+  rig.send(low_power_position_request());
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::APPLIED);
+
+  rig.engine.set_wake_evidence_provider({});
+  rig.send(low_power_position_request());
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::NO_PROVIDER);
+}
+
+TEST(WakeBelief, SwitchOffKeepsASingleTryExchangeOnTheWakeUpPreamble) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  rig.tuning.low_power_wake_belief = false;
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LONG_PREAMBLE}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::SWITCHED_OFF);
+}
+
+TEST(WakeBelief, SkipReasonLabelsAreDistinctAndReadable) {
+  using Use = ExchangeEngine::WakeBeliefUse;
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::NOT_LOW_POWER), "not_low_power");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::OVERRIDE), "override");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::SWITCHED_OFF), "off");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::NO_PROVIDER), "no_provider");
+  EXPECT_STREQ(ExchangeEngine::wake_belief_use_name(Use::APPLIED), "applied");
+}
+
+TEST(WakeBelief, AlwaysAliveTargetKeepsTheNormalStartPreambleOnEveryTry) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
+  EXPECT_EQ(rig.send(low_power_position_request(/*low_power=*/false)),
+            (Preambles{short_preamble, short_preamble, short_preamble}));
+  EXPECT_EQ(rig.provider_calls, 0) << "only a low-power start frame has a wake-up preamble to reorder";
+}
+
+TEST(WakeBelief, NonStartFrameKeepsTheResponsePreamble) {
+  // Key-transfer-shaped frame: a non-start frame that still carries CTRL1_LOW_POWER.
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  IoFrame request{};
+  init_frame(request, true, false, false, /*low_power=*/true);
+  set_dst(request, test::DST_ID);
+  set_src(request, test::OWN_ID);
+  uint8_t payload[16] = {0};
+  set_cmd(request, CMD_KEY_TRANSFER, payload, sizeof(payload));
+  ASSERT_FALSE(is_start(request));
+  ASSERT_NE(request.ctrl1 & CTRL1_LOW_POWER, 0);
+
+  const Preambles preambles = rig.send(request);
+
+  ASSERT_FALSE(preambles.empty());
+  for (const uint16_t preamble : preambles)
+    EXPECT_EQ(preamble, SHORT_PREAMBLE) << "the driver's response preamble, never a wake belief";
+  EXPECT_EQ(rig.provider_calls, 0);
+}
+
+TEST(WakeBelief, SingleTryExchangeSendsTheBeliefsFirstTry) {
+  // A scheduler-owned poll is allowed one try at most ladder slots. Its likeliest moment is seconds
+  // after a command or STOP, when the receiver is travelling or has just answered and ignores the
+  // wake-up preamble, so it leads with the same preamble a multi-try exchange would.
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{rig.tuning.normal_start_preamble}));
+  EXPECT_EQ(rig.provider_calls, 1);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::APPLIED);
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
+}
+
+TEST(WakeBelief, SingleTryExchangeToARecentlyHeardTargetLeadsShort) {
+  // The settle poll after an accepted STOP: moving evidence was cleared, the STOP's reply was heard
+  // a second ago — maybe awake, so the short preamble first.
+  WakeBeliefRig rig;
+  rig.heard_ago(1000);
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{rig.tuning.normal_start_preamble}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::MAYBE_AWAKE);
+}
+
+TEST(WakeBelief, SingleTryExchangeToASleepingTargetKeepsTheWakeUpPreamble) {
+  WakeBeliefRig rig;
+  rig.heard_ago(LOW_POWER_AWAKE_HOLD_MS + 1000);
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LONG_PREAMBLE}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
+}
+
+TEST(WakeBelief, TwoTryExchangeStillFollowsThePlan) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/2),
+            (Preambles{rig.tuning.normal_start_preamble, LONG_PREAMBLE}));
+}
+
+TEST(WakeBelief, EvidenceIsLookedUpOncePerExchange) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  ASSERT_EQ(rig.send(low_power_position_request()).size(), 3u);
+  EXPECT_EQ(rig.provider_calls, 1) << "a belief is resolved once, not re-derived (and re-clocked) every try";
+}
+
+TEST(WakeBelief, OnlyTheClockChangesBetweenTries_FrameBytesAreIdentical) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  ASSERT_EQ(rig.send(low_power_position_request()).size(), 3u);
+  const auto &sent = rig.radio.get_sent_data();
+  ASSERT_EQ(sent.size(), 3u);
+  EXPECT_EQ(sent[0], sent[1]);
+  EXPECT_EQ(sent[0], sent[2]);
+}
+
+TEST(WakeBelief, ReplyOnTheWakeUpTryEndsTheExchange) {
+  // The belief was wrong (the target was not listening for the short preamble): try 2's wake-up
+  // preamble reaches it. The exchange succeeds after exactly two transmits.
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  rig.radio.queue_rx_hold_until_sent(2);
+  rig.radio.queue_rx(test::make_rx_packet(build_status_response(test::DST_ID, test::OWN_ID)));
+
+  IoFrame response{};
+  const ExchangeOutcome outcome =
+      rig.engine.send_and_receive(low_power_position_request(), response, FREQ_CH2, EXCHANGE_RETRY_COUNT);
+
+  EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  ASSERT_EQ(rig.radio.get_tx_configs().size(), 2u);
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].preamble_len, rig.tuning.normal_start_preamble);
+  EXPECT_EQ(rig.radio.get_tx_configs()[1].preamble_len, LONG_PREAMBLE);
+}
+
+TEST(WakeBelief, DiscoverConfirmStyleCallersStillGetTheAsleepRule) {
+  // request_preamble_for() is the single-shot rule (pairing's discover-confirm uses it directly):
+  // it never consults a belief, whatever the evidence says.
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  EXPECT_EQ(rig.engine.request_preamble_for(low_power_position_request()), LONG_PREAMBLE);
+  EXPECT_EQ(rig.provider_calls, 0);
+}

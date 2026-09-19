@@ -37,6 +37,7 @@ CONF_COLD_BROADCAST_REPLY_PREAMBLE = "cold_broadcast_reply_preamble"
 CONF_NORMAL_START_PREAMBLE = "normal_start_preamble"
 CONF_LBT_MAX_RETRIES = "lbt_max_retries"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
+CONF_LOW_POWER_WAKE_BELIEF = "low_power_wake_belief"
 CONF_EXCHANGE_START_RESPONSE_WAIT_MS = "exchange_start_response_wait_ms"
 CONF_EXCHANGE_RESPONSE_WAIT_MS = "exchange_response_wait_ms"
 CONF_EXCHANGE_TOTAL_BUDGET_MS = "exchange_total_budget_ms"
@@ -99,7 +100,8 @@ SX1276_BANDWIDTH_OPTIONS = {
 # Sx1262AndLr1121BandwidthTablesAgree test pins them together). They are kept as separate C++
 # enums, and separate option dicts here, only so each chip's option set can diverge if a real
 # chip difference ever demands it. The two narrowest options (39.0/46.9 kHz) are offered on
-# both chips, to get closer to SX1276's real-hardware-validated 41.7 kHz default.
+# both chips for probing below the SX1262 default; both sit well below the 76.8 kHz (DSB)
+# sizing floor for this waveform, so neither suits everyday use.
 LR1121_BANDWIDTH_OPTIONS = {
     "39.0": LR1121RxBandwidth.BW_39_0_KHZ,
     "46.9": LR1121RxBandwidth.BW_46_9_KHZ,
@@ -182,6 +184,7 @@ UI_NAMES = {
     CONF_NORMAL_START_PREAMBLE: "Radio Normal Start Preamble",
     CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
+    CONF_LOW_POWER_WAKE_BELIEF: "Radio Low Power Wake Belief",
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: "Exchange Start Response Wait",
     CONF_EXCHANGE_RESPONSE_WAIT_MS: "Exchange Response Wait",
     CONF_EXCHANGE_TOTAL_BUDGET_MS: "Exchange Total Budget",
@@ -265,7 +268,10 @@ _NUMBER_PARAMS = {
 # pairing_discovery_ack_capable is opt-in: see the init_frame() doc in proto_frame.h for why
 # CTRL1_ACK must never become an unconditional default. This knob scopes it to the discovery
 # broadcast only, off by default.
-_BOOL_PARAMS = (CONF_PAIRING_DISCOVERY_LOW_POWER, CONF_PAIRING_DISCOVERY_ACK_CAPABLE)
+#
+# low_power_wake_belief is the opposite: on by default, and a diagnostic off-switch. Setting it to
+# false restores the fixed long wake-up preamble on every try to a low_power device.
+_BOOL_PARAMS = (CONF_PAIRING_DISCOVERY_LOW_POWER, CONF_PAIRING_DISCOVERY_ACK_CAPABLE, CONF_LOW_POWER_WAKE_BELIEF)
 _BOOL_SELECT_OPTIONS = ["Off", "On"]
 
 # Select parameters: key -> ordered option list. Single source of truth for both the
@@ -275,13 +281,14 @@ _SELECT_OPTIONS = {
     CONF_PAIRING_DISCOVERY_DESTINATION: DISCOVERY_DESTINATION_OPTIONS,
     CONF_PAIRING_DISCOVERY_PAYLOAD: PAIRING_DISCOVERY_PAYLOAD_OPTIONS,
     # check-tuning-sync.py's AST scan only understands plain `CONF_*: value` entries in this dict
-    # (no `**` unpacking), so the two boolean rows stay written out individually here even though
+    # (no `**` unpacking), so the boolean rows stay written out individually here even though
     # _BOOL_PARAMS drives the schema and to_code() loops below.
     CONF_PAIRING_DISCOVERY_LOW_POWER: _BOOL_SELECT_OPTIONS,
     CONF_PAIRING_DISCOVERY_ACK_CAPABLE: _BOOL_SELECT_OPTIONS,
     CONF_SX1262_RX_BANDWIDTH: list(SX1262_BANDWIDTH_OPTIONS),
     CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
     CONF_LR1121_RX_BANDWIDTH: list(LR1121_BANDWIDTH_OPTIONS),
+    CONF_LOW_POWER_WAKE_BELIEF: _BOOL_SELECT_OPTIONS,
     CONF_SCAN_POWER_CLASSES: list(SCAN_POWER_CLASSES_OPTIONS),
     CONF_PAIRING_DISCOVER_CONFIRM: list(DISCOVER_CONFIRM_MODE_OPTIONS),
 }

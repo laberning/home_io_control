@@ -31,6 +31,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <utility>
 
 namespace esphome {
 namespace home_io_control {
@@ -98,7 +99,8 @@ class ExchangeEngine {
   ///        request_preamble_for()'s rule. Only pairing passes a value: it sends its directed start
   ///        frames with a preamble the device has just proven it hears (see
   ///        PairingEngine::pairing_start_preamble_()). The 0x3D challenge response keeps the
-  ///        driver's response_preamble() either way.
+  ///        driver's response_preamble() either way. An override also switches the low-power wake
+  ///        belief off for that exchange: the caller has already chosen the preamble.
   /// @return What the device actually told us — see @ref ExchangeOutcome.
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
                                    uint8_t max_tries = EXCHANGE_RETRY_COUNT, uint16_t request_preamble_override = 0);
@@ -213,9 +215,14 @@ class ExchangeEngine {
   /// Preamble length for an outbound request frame. A non-start frame keeps the chip's short
   /// response preamble. A start frame gets `LONG_PREAMBLE` only when it carries `CTRL1_LOW_POWER`
   /// (its target is a duty-cycled receiver that must be woken); every other start frame gets the
-  /// runtime-tunable `normal_start_preamble`. The bit and the preamble therefore always agree.
-  /// For a directed frame, the target's per-device `low_power` property sets the bit; for the
-  /// roll-call broadcast, the pass being sent sets it (see `ManagementActions::scan_paired_devices()`).
+  /// runtime-tunable `normal_start_preamble`. For a directed frame, the target's per-device
+  /// `low_power` property sets the bit; for the roll-call broadcast, the pass being sent sets it (see
+  /// `ManagementActions::scan_paired_devices()`).
+  ///
+  /// This is the asleep / always-alive rule. `send_and_receive()` may pick a shorter preamble per
+  /// try for a low-power target it believes awake (see set_wake_evidence_provider()), so the bit and
+  /// the preamble agree here but not necessarily on every try there; callers that send once, like
+  /// the discover-confirm step, always get the rule above.
   ///
   /// Public so any caller building its own start frame outside `send_and_receive()` — pairing's
   /// discover-confirm step (0x2C) is one such caller — follows the same ADR 0029 rule instead of
@@ -269,25 +276,66 @@ class ExchangeEngine {
   void set_pairing_telemetry(PairingTelemetry *telemetry) { this->pairing_telemetry_ = telemetry; }
 
   // -------------------------------------------------------------------------
+  // Low-power wake belief
+  // -------------------------------------------------------------------------
+
+  /// @brief Looks up the wake evidence for a destination node.
+  /// @param dst Destination node ID (NODE_ID_SIZE bytes) of the request being sent.
+  /// @param out Filled with that device's evidence when it is known.
+  /// @return false when the destination is not a registered device (no evidence to give).
+  using WakeEvidenceProvider = std::function<bool(const uint8_t *dst, decisions::WakeEvidence &out)>;
+
+  /// Install the evidence source for the wake belief. Installed once, when the hub is constructed. The provider only
+  /// looks evidence up; the engine turns it into a belief (decisions::wake_belief()) and applies the
+  /// `low_power_wake_belief` tuning switch itself, so the whole decision lives in one place. With no
+  /// provider installed every low-power exchange keeps `LONG_PREAMBLE` on every try.
+  /// @param provider Evidence lookup, or an empty function to detach.
+  void set_wake_evidence_provider(WakeEvidenceProvider provider) {
+    this->wake_evidence_provider_ = std::move(provider);
+  }
+
+  // -------------------------------------------------------------------------
   // Exchange debug snapshot
   // -------------------------------------------------------------------------
 
+  /// @brief Whether an exchange's start preamble followed the low-power wake belief, and if not,
+  /// why. Reported as the `belief=` field of the exchange-failure log line, so a posted log says
+  /// which of these applied instead of one ambiguous "not applied".
+  enum class WakeBeliefUse : uint8_t {
+    NOT_LOW_POWER,  ///< Not a low-power start frame: there is no wake-up preamble to reorder.
+    OVERRIDE,       ///< The caller forced a preamble (pairing's directed frames).
+    SWITCHED_OFF,   ///< The `low_power_wake_belief` tuning switch is off.
+    NO_PROVIDER,    ///< No evidence source installed (set_wake_evidence_provider()).
+    APPLIED,        ///< The tries followed the belief in DebugInfo::wake_belief.
+  };
+
+  /// Log label for a WakeBeliefUse that is not APPLIED (an applied one logs the belief itself).
+  /// @param use Value to name.
+  /// @return "not_low_power", "override", "off", "no_provider" or "applied".
+  [[nodiscard]] static const char *wake_belief_use_name(WakeBeliefUse use);
+
   /// @brief Snapshot of the last exchange attempt for diagnostics.
   struct DebugInfo {
-    const char *stage{"idle"};                ///< Last recorded stage label.
-    uint8_t tries{0};                         ///< Retry count (1-based).
-    uint8_t max_tries{EXCHANGE_RETRY_COUNT};  ///< Attempt cap this exchange was budgeted for.
-    uint8_t request_cmd{0};                   ///< Command ID of the original request.
-    bool saw_challenge{false};                ///< True if a 0x3C was seen during this exchange.
-    bool capture_valid{false};                ///< True if radio capture is meaningful.
-    bool capture_rx_done{false};              ///< True if RxDone IRQ fired.
-    bool capture_crc_error{false};            ///< True if CRC error flagged; see RadioCaptureInfo::crc_error.
-    uint32_t capture_freq_hz{0};              ///< RF frequency of the captured packet.
-    uint16_t capture_irq_status{0};           ///< Raw IRQ register value.
-    uint8_t capture_packet_status{0};         ///< Chip packet-status byte.
-    uint8_t capture_reported_len{0};          ///< Length reported by radio packet engine.
-    uint8_t capture_frame_len{0};             ///< Parsed protocol frame length.
-    int16_t capture_rssi_dbm{0};              ///< RSSI of the captured packet (dBm).
+    const char *stage{"idle"};                                         ///< Last recorded stage label.
+    uint8_t tries{0};                                                  ///< Retry count (1-based).
+    uint8_t max_tries{EXCHANGE_RETRY_COUNT};                           ///< Attempt cap this exchange was budgeted for.
+    WakeBeliefUse wake_belief_use{WakeBeliefUse::NOT_LOW_POWER};       ///< Whether the tries followed `wake_belief`,
+                                                                       ///< and why not if they did not.
+    decisions::WakeBelief wake_belief{decisions::WakeBelief::ASLEEP};  ///< Belief the tries followed; only
+                                                                       ///< meaningful when `wake_belief_use` is
+                                                                       ///< WakeBeliefUse::APPLIED.
+    uint16_t last_try_preamble{0};     ///< Preamble (bytes) of the most recent request transmit attempt, 0 = none.
+    uint8_t request_cmd{0};            ///< Command ID of the original request.
+    bool saw_challenge{false};         ///< True if a 0x3C was seen during this exchange.
+    bool capture_valid{false};         ///< True if radio capture is meaningful.
+    bool capture_rx_done{false};       ///< True if RxDone IRQ fired.
+    bool capture_crc_error{false};     ///< True if CRC error flagged; see RadioCaptureInfo::crc_error.
+    uint32_t capture_freq_hz{0};       ///< RF frequency of the captured packet.
+    uint16_t capture_irq_status{0};    ///< Raw IRQ register value.
+    uint8_t capture_packet_status{0};  ///< Chip packet-status byte.
+    uint8_t capture_reported_len{0};   ///< Length reported by radio packet engine.
+    uint8_t capture_frame_len{0};      ///< Parsed protocol frame length.
+    int16_t capture_rssi_dbm{0};       ///< RSSI of the captured packet (dBm).
   };
 
   /// Clear the debug snapshot and record the upcoming request command.
@@ -372,6 +420,33 @@ class ExchangeEngine {
   decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
 
+  /// @brief How the request's start preamble is chosen across one exchange's tries. Resolved once
+  /// per exchange by plan_request_preamble_(), then asked for each try.
+  struct PreamblePlan {
+    uint16_t fixed{0};                                ///< Every try, unless `use` is WakeBeliefUse::APPLIED.
+    WakeBeliefUse use{WakeBeliefUse::NOT_LOW_POWER};  ///< APPLIED: order the tries by `belief`.
+    decisions::WakeBelief belief{decisions::WakeBelief::ASLEEP};  ///< Only read when APPLIED.
+    uint16_t short_preamble{0};  ///< The awake receiver's preamble; only read when APPLIED.
+    uint32_t last_seen_ms{0};    ///< When the target was last heard (`millis()`), for the per-try `age=` log
+                                 ///< field; 0 = never, or the evidence was not looked up (belief not APPLIED).
+
+    /// @param try_index 1-based try number.
+    /// @return Preamble in bytes for that try.
+    [[nodiscard]] uint16_t for_try(uint8_t try_index) const {
+      return use == WakeBeliefUse::APPLIED ? decisions::low_power_try_preamble(belief, try_index, short_preamble)
+                                           : fixed;
+    }
+  };
+
+  /// Decide how `request`'s start preamble is chosen across this exchange's tries. An explicit
+  /// override wins; a frame that is not a low-power start frame keeps request_preamble_for()'s rule;
+  /// a low-power start frame is ordered by the target's wake belief when the switch is on and a
+  /// provider is installed, whatever the exchange's try count. Consults the provider at most once,
+  /// so a belief is stable within an exchange.
+  /// @param request           Frame being sent.
+  /// @param override_preamble Caller-forced preamble in bytes, or 0 for none.
+  [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble) const;
+
   // --- Dependencies (back-references into the hub) -------------------------
 
   RadioDriver **radio_ptr_;                       ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
@@ -379,6 +454,7 @@ class ExchangeEngine {
   const uint8_t *system_key_;                     ///< Hub's system_key_[AES_KEY_SIZE] array.
   const TuningConfig *tuning_;                    ///< Hub's live TuningConfig (read on every LBT check).
   PairingTelemetry *pairing_telemetry_{nullptr};  ///< Set only during a pairing attempt; see set_pairing_telemetry().
+  WakeEvidenceProvider wake_evidence_provider_;   ///< Wake-belief evidence lookup; see set_wake_evidence_provider().
 
   // --- Engine state --------------------------------------------------------
 

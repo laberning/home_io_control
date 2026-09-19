@@ -131,22 +131,23 @@ your device may differ.
 
 | Parameter | Radio | Default | Range / options | What it does |
 |---|---|---|---|---|
-| `sx1262_rx_bandwidth` | SX1262 | `58.6` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth; narrower rejects more noise. |
+| `sx1262_rx_bandwidth` | SX1262 | `58.6` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). Widen it when one device's replies are missed. |
 | `sx1262_response_preamble` | SX1262 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
-| `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth; wider tolerates LO offset, narrower rejects more noise. |
+| `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth (single-sideband, so `41.7` spans 83.4 kHz); wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
-| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth. Still `117.3` by default — untested on LR1121, but the SX1262 result below suggests trying narrower. |
+| `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). `117.3` is validated on real LR1121 hardware. |
 | `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
-| `normal_start_preamble` | both | `32` | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices still get `LONG_PREAMBLE`. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `normal_start_preamble` | both | `32` | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -171,13 +172,23 @@ not a tunable.
 GFSK receiver bandwidth on the SX1262. Change it when frames arrive but fail to decode — the
 `did not parse as a frame` warnings in the log are a direct count of that.
 
-*Observations:* `58.6` kHz is the default — narrower rejects more out-of-band noise, and reception
-on this waveform improves as the filter narrows. It also brings the SX1262 into line with the
-SX1276's long-validated `41.7` kHz default on the identical waveform. A wide default would exist
-only to tolerate local-oscillator offset across the TX→RX turnaround, but that turnaround measures
-~390 µs plus a 500 µs settle, well within what the narrow filter tolerates.
+The values are double-sideband: the total width of the filter, centred on the hub's own
+frequency. Semtech sizes a GFSK filter as bitrate + 2 × deviation + carrier offset, which is
+76.8 kHz for this waveform before any offset. The SX1262 has no automatic frequency correction in
+this mode, so the filter alone has to absorb how far a device's transmitter sits from nominal.
 
-`39.0` and `46.9` bracket the SX1276's `41.7` — worth trying if `58.6` still shows decode failures.
+*Observations:* `58.6` kHz is the default. It is below the 76.8 kHz figure, so it trims the edges
+of even an on-frequency signal, but it made a Somfy RS100 solar shutter respond reliably where
+`117.3` did not. A device whose transmitter sits off nominal needs the opposite: a Somfy
+LightVar_Wh_io dimmer went from mostly missed replies to 9 of 11 commands confirmed at `156.2`,
+with `117.3` and `187.2` both worse in the same test
+([issue #119](https://github.com/laberning/home_io_control/issues/119)). The setting applies to
+every device, so pick the value your least cooperative device needs and check that the others
+still answer.
+
+If one device's replies are missed — `wait_first_timeout`, or a challenge that arrives without its
+final response — while other devices are fine, try `117.3` and `156.2`. `39.0` and `46.9` are
+well below the 76.8 kHz figure; use them only to probe a noisy install.
 
 #### `sx1262_response_preamble`
 
@@ -241,10 +252,11 @@ the budget runs out.
 GFSK receiver bandwidth on the SX1276, written to both the RX and AFC bandwidth registers.
 Change it when discovery or key-exchange replies fail to decode cleanly on an SX1276 board.
 
-*Observations:* the default `41.7` kHz is tighter than the
-~77 kHz Carson-rule figure, chosen to maximise sensitivity by rejecting out-of-band noise, and
-validated against real devices. Unlike the SX1262, the SX1276 has a fast TX→RX turnaround and
-has worked reliably at this narrow default across the devices tested here, so this knob is
+*Observations:* the values are single-sideband — half the filter's total width — so the default
+`41.7` kHz spans 83.4 kHz, just above the 76.8 kHz Semtech sizing figure for this waveform, and
+is validated against real devices. The SX1276 also re-centres on each packet's carrier
+automatically, which absorbs a device's frequency offset that the SX1262 cannot. It has worked
+reliably at this default across the devices tested here, so this knob is
 exposed for marginal-range or drifting installs rather than because a change was needed. Widen
 it (`62.5`/`83.3`/`125.0`) when a device's transmitter drifts more than the controller's radio,
 at the cost of admitting more noise; narrow to `20.8` for maximum noise rejection on a clean
@@ -289,8 +301,8 @@ governs the roll-call as well as discovery, same as its SX1262/SX1276 counterpar
 register-level reasoning (the LR1121's GFSK bandwidth encoding is register-identical to the
 SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop). Three of the four share
 SX1262's default values (`lr1121_response_preamble`, `lr1121_post_tx_settle_us`,
-`lr1121_discovery_hop_slice_ms`); `lr1121_rx_bandwidth` instead keeps its own wider default until
-a narrower one is validated on this chip. `lr1121_discovery_hop_slice_ms` is measured
+`lr1121_discovery_hop_slice_ms`); `lr1121_rx_bandwidth` instead keeps its own wider default,
+`117.3` kHz, which clears the 76.8 kHz sizing figure and is validated on this chip. `lr1121_discovery_hop_slice_ms` is measured
 independently on LR1121 rather than merely inherited, since the two chips are validated
 separately and could in principle diverge.
 
@@ -312,8 +324,8 @@ The preamble in front of a directed *start* frame (`EXECUTE`, status poll, `GET_
 identify, probe) whose target is **not** declared `low_power:`. An always-listening receiver does
 not need the ~213 ms 1024-byte wake-up burst, and some receivers never lock onto one that long —
 so a normal start frame gets this shorter preamble, matching what real hubs send to an
-always-alive device. A device declared `low_power: true` still gets `LONG_PREAMBLE` on its start
-frames, unchanged.
+always-alive device. A device declared `low_power: true` keeps `LONG_PREAMBLE` on its start frames
+unless it is believed awake — see [`low_power_wake_belief`](#low_power_wake_belief).
 
 The same value governs a 1W identity's non-wake-up copies once its own `low_power:` is set to
 `false` or `true` — see [Sending 1W commands](oneway-transmit.md). Left unset, an identity keeps
@@ -324,6 +336,40 @@ this is a cold-peer property). The `32`-byte default is 256 bits, well inside th
 use; drop it toward `8` only if a start frame is still not being heard
 and raise it toward `LONG_PREAMBLE` if a marginal always-alive link needs more. Because it is a
 live tuning knob, bisecting the right value needs no rebuild.
+
+#### `low_power_wake_belief`
+
+A diagnostic switch, on by default. If a device declared `low_power: true` got worse after
+updating, set this to `false` and report it.
+
+A duty-cycled receiver that is asleep needs the 1024-byte wake-up preamble. One that is awake — a
+VELUX solar roller shutter mid-travel, for example — ignores that long preamble and answers only the
+short one, so a `stop` or status poll sent to a moving shutter with the long preamble goes
+unanswered. With this on, the hub tracks per device whether it was recently moving or heard from,
+and orders the tries of each directed exchange accordingly:
+
+| Believed | Try 1 | Try 2 | Try 3 |
+|---|---|---|---|
+| awake (a `stop`, or a move the device accepted in the last 2 minutes that is not yet known to have ended) | short | wake-up | short |
+| maybe awake (heard from in the last 30 s) | short | wake-up | wake-up |
+| asleep | wake-up | wake-up | wake-up |
+
+"Short" is [`normal_start_preamble`](#normal_start_preamble). A wrong belief costs one try, not the
+exchange, because every plan still sends the wake-up preamble at least once. A status poll allowed only
+one try (most scheduled polls) sends the first try's preamble; if it misses, the next poll a few
+seconds later has three tries. The poll right after an accepted `stop` always gets all three.
+Always-alive devices are unaffected, and the frame itself never changes between tries.
+
+To see which preamble reaches a device how soon after it last answered, read the per-try log lines.
+Each carries `preamble=` (bytes) and `age_ms=` (time since the device was last heard; `n/a` when it
+never was, or the switch is off):
+
+```
+Try 1 ended: no first response for cmd=PRIVATE(0x03) within 400 ms preamble=32 age_ms=6712
+Try 3 answered: cmd=PRIVATE(0x03) wait_ms=231 preamble=1024 age_ms=8190
+Auth challenge try=1 wait_ms=26 req_cmd=0x00 req_len=6 preamble=32 age_ms=1034
+``` Off restores the old behaviour: the
+wake-up preamble on every try to a `low_power:` device.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 
@@ -434,7 +480,7 @@ wake-up burst those frames would otherwise carry
 ([ADR 0029](../adr/0029-start-preamble-is-a-property-of-the-target.md)). The log says so when it
 happens (`Pairing: directed frames to … use the 32-byte discovery preamble it just answered`). At
 the default `1024` nothing changes. Normal operation after pairing is not affected: it follows the
-device's own `low_power` setting.
+device's own `low_power` setting and its wake belief (see [`low_power_wake_belief`](#low_power_wake_belief)).
 
 #### `pairing_discovery_wait_ms` / `pairing_discovery_initial_dwell_ms`
 

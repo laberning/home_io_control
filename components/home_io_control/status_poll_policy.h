@@ -91,6 +91,7 @@ struct PollTracking {
   uint32_t poll_deadline{0};  ///< Hard stop for bounded follow-up polling.
   uint8_t status_poll_failures{0};  ///< Consecutive background poll failures (silent — no reply).
   uint8_t auth_poll_failures{0};    ///< Consecutive background poll failures that saw a 0x3C challenge.
+  bool stop_settle{false};          ///< The next poll confirms an accepted STOP (see STOP_SETTLE_POLL_TRIES).
 };
 
 /// @brief Per-hub poll scheduling and failure-backoff policy.
@@ -128,6 +129,14 @@ class StatusPollPolicy {
   [[nodiscard]] uint8_t get_status_poll_failures(const std::string &device_id) const;
   [[nodiscard]] uint8_t get_auth_poll_failures(const std::string &device_id) const;
   [[nodiscard]] uint32_t get_poll_deadline(const std::string &device_id) const;
+
+  // --- Post-STOP settle poll ---
+  /// Mark the device's next poll as the one confirming an accepted STOP, so it gets
+  /// STOP_SETTLE_POLL_TRIES. Only a tracked device can be marked; begin_tracking() and clear()
+  /// drop the mark, so a newer command or remote activity never inherits it.
+  void mark_stop_settle(const std::string &device_id);
+  /// Consume the mark set by mark_stop_settle(): true once, for the first poll dispatched after it.
+  [[nodiscard]] bool take_stop_settle(const std::string &device_id);
 
   // --- Queries ---
   /// True when the device has an active bounded polling window (deadline set and not expired).
