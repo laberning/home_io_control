@@ -369,12 +369,21 @@ struct IoDevice {
   uint32_t last_moving_evidence_ms{
       0};  ///< millis() of the last sign this device is travelling (see
            ///< note_moving_evidence(), clear_moving_evidence()), 0 = never. Hub-side belief, not observation.
-  uint16_t exchange_timeout_count{0};  ///< Cumulative count of outbound exchanges to this device with no valid
-                                       ///< response (see detail::record_exchange_timeout() in hub_internal.h).
-  uint16_t exchange_attempt_count{0};  ///< Cumulative attempts (`ExchangeEngine::DebugInfo::tries`, 1-based per
-                                       ///< exchange) across those timed-out exchanges only — attempts within an
-                                       ///< ultimately successful exchange are not counted (deliberate scope limit).
-  OptimisticState optimistic{};        ///< Hub-side predictions; see OptimisticState. Never observation.
+  uint16_t exchange_timeout_count{0};      ///< Cumulative count of outbound exchanges to this device with no valid
+                                           ///< response (see detail::record_exchange_timeout() in hub_internal.h).
+  uint16_t exchange_attempt_count{0};      ///< Cumulative attempts (`ExchangeEngine::DebugInfo::tries`, 1-based per
+                                           ///< exchange) across those timed-out exchanges only — attempts within an
+                                           ///< ultimately successful exchange are not counted (deliberate scope limit).
+  uint16_t exchange_unconfirmed_count{0};  ///< Cumulative count of exchanges this device authenticated and then never
+                                           ///< closed: it answered with a 0x3C challenge, we answered that, and no
+                                           ///< final reply arrived. Counted separately from exchange_timeout_count
+                                           ///< because the two have different causes and different fixes — silence
+                                           ///< from the start means the device never heard us, while silence after a
+                                           ///< challenge means the reply was lost on the way back (or our challenge
+                                           ///< answer never landed). For a CMD_EXECUTE this outcome is treated as
+                                           ///< success and raises no failure count, so without this counter it is
+                                           ///< invisible in the diagnostics.
+  OptimisticState optimistic{};            ///< Hub-side predictions; see OptimisticState. Never observation.
 };
 
 /// @brief Record that a device is (believed to be) travelling right now.

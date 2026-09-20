@@ -99,9 +99,9 @@ the same set of keys. Platform-specific options are documented on each platform'
 
 ### Companion entities
 
-Every entity on these platforms generates seven companion diagnostic entities named after the
+Every entity on these platforms generates eight companion diagnostic entities named after the
 parent: Active Issue (enabled by default), Device Name, RSSI, Last Contact, Exchange Failures,
-Last Commanded By and Last Command Source.
+Unconfirmed Exchanges, Last Commanded By and Last Command Source.
 [Diagnostic entities](../diagnostic-entities.md) explains each one and when to enable it.
 
 ## Notes
@@ -184,7 +184,7 @@ adapting the example above by hand.
 | [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml) | Heltec LoRa32 V2, SX1276 | One awning cover, Discover & Pair, and an OLED status display |
 | [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml) | Heltec WiFi LoRa32 V3/V3.2, SX1262 | The same, with the V3 pinout and TCXO settings |
 | [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) | Heltec WiFi LoRa32 V4.2, SX1262 + GC1109 FEM | The same, with `fem: gc1109` and a conservative `tx_power` |
-| [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) | Heltec WiFi LoRa32 V4.3, SX1262 + KCT8103L FEM | The same, with `fem: kct8103l` and a conservative `tx_power` |
+| [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) | Heltec WiFi LoRa32 V4.3, SX1262 + KCT8103L FEM | The same, with `fem: kct8103l` and the low `tx_power` this board needs. A good starting point: the V4.3 is validated on real hardware and its front end hears further than a V3 — see [Hardware](../hardware.md#recommended-board) |
 | [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) | LilyGO T3-S3, LR1121 | The same, for the LR1121 |
 | [heltec-wifi-lora-32-v2-all-types.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2-all-types.yaml) | Heltec LoRa32 V2, SX1276 | Every supported device-bound platform — cover, light, lock, switch — with dummy device IDs ready to replace, plus `discover_and_pair_button: true` |
 | [heltec-wifi-lora-32-v3-monitor.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3-monitor.yaml) | Heltec WiFi LoRa32 V3/V3.2, SX1262 | A passive monitor: keeps the radio in RX, enables `IOHOME_FRAME_LOG`, creates no entities and no pairing button |

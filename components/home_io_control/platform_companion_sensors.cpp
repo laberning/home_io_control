@@ -1,5 +1,5 @@
 /// @file platform_companion_sensors.cpp
-/// @brief The seven auto-generated per-device diagnostic companion sensors.
+/// @brief The auto-generated per-device diagnostic companion sensors.
 /// @ingroup hioc_platforms
 
 #include "platform_companion_sensors.h"
@@ -14,7 +14,7 @@ namespace home_io_control {
 
 // Each dump_config() keeps its own log tag as a `static` function-local constant: the ESPHome
 // LOG_SENSOR / LOG_TEXT_SENSOR macros expand to a bare `TAG` identifier, so one shared file-scope
-// constant could not carry seven different values. Values are unchanged from the former per-sensor
+// constant could not carry a different value per sensor. Values are unchanged from the former per-sensor
 // files. (`static` so the name resolves as a StaticConstant, i.e. UPPER_CASE, under clang-tidy's
 // identifier-naming check rather than as a lower_case local.)
 
@@ -63,14 +63,20 @@ void IOHomeLastContactSensor::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
 }
 
-void IOHomeExchangeFailuresSensor::setup() {
+void IOHomeDeviceCounterSensor::setup() {
   this->register_companion_binding_(
-      [this](const IoDevice &dev) { this->publish_state(static_cast<float>(dev.exchange_timeout_count)); });
+      [this](const IoDevice &dev) { this->publish_state(static_cast<float>(this->counter_value(dev))); });
 }
 
 void IOHomeExchangeFailuresSensor::dump_config() {
   static const char *const TAG = "home_io_control.exchange_failures";
   LOG_SENSOR("", "IO-Homecontrol Exchange Failures", this);
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeUnconfirmedExchangesSensor::dump_config() {
+  static const char *const TAG = "home_io_control.unconfirmed_exchanges";
+  LOG_SENSOR("", "IO-Homecontrol Unconfirmed Exchanges", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
 }
 

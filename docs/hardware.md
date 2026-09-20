@@ -43,10 +43,24 @@ boards that do are called out under [Board notes](#board-notes).
 If you already own a different board from the table below, use it — nothing here is exclusive to
 the V3.
 
+**The Heltec WiFi LoRa 32 V4.3 is the other board to consider.** It is validated here against real
+IO-Homecontrol hardware, and its front-end module gives it noticeably better receive sensitivity
+than the V3 — a measured 25 dB of extra gain, which is what you want if the device you are
+controlling is far away or behind a wall. Start from
+[heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml),
+which brings in the board package for you.
+
+The V3 stays the recommendation for a first build for one reason: that same front-end module also
+amplifies transmission, so `tx_power` on a V4.3 means something different from `tx_power`
+everywhere else. Its board package ships `tx_power: 1` rather than the usual `17`, and raising it
+can put you over your region's 868 MHz limit. Leave it alone unless you have read
+[Front-end module (FEM) support](#front-end-module-fem-support) and can measure the result.
+
 ## All supported boards
 
 The table lists board mappings that are known to be plausible for this component. `Confirmed`
-means they were tested in this repo. `Untested` means the GPIO mapping was taken from vendor
+means they were tested in this repo. `Reported to work` means someone running the board says it
+works, but it has not been tested here. `Untested` means the GPIO mapping was taken from vendor
 documentation and still needs real IO-Homecontrol validation here. `Driver implemented, untested`
 means chip-driver code exists and compiles for the target but has never run against real silicon —
 treat every timing/register value as a starting point, not a validated default, until it clears
@@ -59,10 +73,10 @@ hardware bring-up.
 | LilyGO T3-S3 SX1262 | SX1262 | Untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 33`, `busy_pin: 34` | should have the same mapping on v1.2 and v1.3 |
 | LilyGO T3-S3 SX1276 | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio0_pin: 9` | |
 | LilyGO T3-S3 LR1121 | LR1121 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 36`, `busy_pin: 34` | same T3-S3 silkscreen/form factor, but a different radio chip. Use `tcxo_voltage: 3_0V`; `dio1_pin` carries the LR1121's DIO9 interrupt line. Matches [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) |
-| LilyGO LoRa32 V1.3 SX1276 | SX1276 | Untested | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | |
+| LilyGO LoRa32 V1.3 SX1276 | SX1276 | 📣 Reported to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | |
 | LilyGO T-Beam 1W SX1262 | SX1262 | Untested | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | Use `fem: xy16p35`, `vfem_pin: 40` ("LDO EN"), `fem_pa_pin: 21` ("LoRa Ctrl") — per LilyGO's own T-Beam 1W SX1262 docs and schematic; see [Front-end module (FEM) support](#front-end-module-fem-support) below. TCXO control voltage not yet confirmed; do not build from this row until a board package ships |
 | Heltec WiFi LoRa32 V4.2 | SX1262 | Untested | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: gc1109`; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) |
-| Heltec WiFi LoRa32 V4.3 | SX1262 | Untested | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: kct8103l`; also covers the `heltec_v4_r8` variant; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) |
+| Heltec WiFi LoRa32 V4.3 | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: kct8103l`; also covers the `heltec_v4_r8` variant; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) |
 | Any other ESP32 + SX1276/SX1262/LR1121 | Any | Untested | Board-specific | Board-specific | Use the chip pinout and set the appropriate `sx1276`, `sx1262`, or `lr1121` `radio_type` |
 
 GPIO5 (`clk_pin` on the classic-ESP32 boards above) and GPIO3 (`miso_pin` on the ESP32-S3 T3-S3
@@ -110,8 +124,17 @@ figures, a sparser but more directly-measured evidence base than the other two.
 and [heltec-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/heltec-v4-3.yaml)
 ship `tx_power: 1`, not the SX1262 default of `17` — raising it without a spectrum analyser risks
 exceeding your region's 868 MHz SRD limit. The driver logs its own estimate (and uncertainty) at
-boot, and the schema warns once `tx_power` would put the estimate over +14 dBm — above `3` on a
-GC1109, above `1` on a KCT8103L, above `0` on an XY16P35.
+boot and repeats it in the config dump that `esphome logs` requests on connect, so you can read it
+without catching the boot itself. The schema warns once `tx_power` would put the estimate over
++14 dBm — above `3` on a GC1109, above `1` on a KCT8103L, above `0` on an XY16P35.
+
+**Received signal strength:** each FEM's low-noise amplifier raises every RSSI reading the radio
+takes. The driver subtracts the amplifier's gain, so RSSI, the [Link Health](diagnostic-entities.md#link-health)
+sensor and the listen-before-talk check all read at the antenna, on the same scale as a board
+without a FEM. The gain is 25 dB for a KCT8103L (measured against a bare SX1262 board, about
+±4 dB), 15 dB for a GC1109 (quoted by Heltec, not measured here) and 0 dB for an XY16P35, whose
+gain is not published — on that board RSSI still includes the amplifier's gain, and idle-channel
+readings can look busier than they are. The config dump lists the gain and where it comes from.
 
 <!-- board-pinout: heltec-v4-2 -->
 ```yaml
@@ -157,8 +180,9 @@ home_io_control:
   tx_power: 1
 ```
 
-Neither Heltec V4 revision has been validated against real IO-Homecontrol hardware yet — see
-[Board notes](#board-notes).
+The V4.3 is validated against real IO-Homecontrol hardware; the V4.2 is not — see
+[Board notes](#board-notes). Keep `tx_power: 1` on both, whatever your radio range, and read
+[Radiated power](#front-end-module-fem-support) before raising it.
 
 ## Radio pin requirements
 
@@ -176,12 +200,15 @@ command set.
 
 ## Board notes
 
-- **Heltec LoRa32 v2** (SX1276), **Heltec WiFi LoRa32 V3/V3.2** (SX1262) and **LilyGO T3-S3 LR1121**
-  (LR1121) are the boards this project is developed on.
-- **Heltec V4** (V4.2/V4.3) has not been validated against real IO-Homecontrol hardware yet —
-  board packages exist (`fem: gc1109` / `fem: kct8103l`, see
-  [Front-end module (FEM) support](#front-end-module-fem-support) above) and the FEM switching
-  logic is code-complete, but no one has run one. Prefer the V3 until a field report lands.
+- **Heltec LoRa32 v2** (SX1276), **Heltec WiFi LoRa32 V3/V3.2** (SX1262), **Heltec WiFi LoRa32
+  V4.3** (SX1262 + KCT8103L FEM) and **LilyGO T3-S3 LR1121** (LR1121) are the boards this project
+  is developed on. The V4.3's FEM makes `tx_power` mean something different from every other board
+  here: keep the `tx_power: 1` its board package ships and read
+  [Front-end module (FEM) support](#front-end-module-fem-support) above before changing it.
+- **Heltec V4.2** (`fem: gc1109`) has not been run against real IO-Homecontrol hardware. Its FEM is
+  a different part, wired the other way round from the V4.3's, so the V4.3 result does not carry
+  over. The board package and the FEM switching logic are complete; prefer the V3 or the V4.3
+  until a field report lands.
 - **V2 / V3 clones** (non-Heltec boards with the same silkscreen and pin map) are common and
   generally work if the SPI and radio pins match the corresponding row above — treat them as
   `Untested` until confirmed.

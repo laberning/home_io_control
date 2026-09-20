@@ -92,6 +92,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::radio_failure_reason_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
   using IOHomeControlComponent::tuning_;

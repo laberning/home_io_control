@@ -14,6 +14,10 @@
 namespace esphome {
 namespace home_io_control {
 
+/// `pa_pin` value that routes the output through the PA_BOOST pin; any other value selects the RFO
+/// pin. Doubles as the PaSelect bit of REG_PA_CONFIG.
+static constexpr uint8_t SX1276_PA_SELECT_PA_BOOST = 0x80;
+
 // ============================================================================
 // SX1276 Register Addresses (subset needed for IO-Homecontrol)
 // Full register map: see Semtech SX1276 datasheet or sx1276Regs-Fsk.h
@@ -151,8 +155,6 @@ class RadioSX1276 : public RadioDriver {
   void set_mode_rx() override;
   /// @brief Switch radio into standby mode.
   void set_mode_standby() override;
-  /// @copydoc RadioDriver::is_failed
-  [[nodiscard]] bool is_failed() const override { return this->failed_; }
   /// @copydoc RadioDriver::chip_name
   [[nodiscard]] const char *chip_name() const override { return "sx1276"; }
   /// @brief Dump radio‑specific debug info to log.
@@ -214,12 +216,14 @@ class RadioSX1276 : public RadioDriver {
   /// DIO0 ISR — sets dio_fired flag. Runs in interrupt context.
   static void gpio_intr(RadioSX1276 *arg);
 
+  /// True when TX goes out through PA_BOOST rather than RFO; the PA config and the dump both key on it.
+  [[nodiscard]] bool uses_pa_boost_() const { return this->pa_pin_ == SX1276_PA_SELECT_PA_BOOST; }
+
   SpiAccess *spi_;
   InternalGPIOPin *dio0_pin_;
   InternalGPIOPin *dio4_pin_;
   uint8_t tx_power_;
   uint8_t pa_pin_;
-  bool failed_{false};
   SX1276RxBandwidth rx_bandwidth_{SX1276RxBandwidth::BW_41_7_KHZ};  ///< Runtime-tunable RX bandwidth.
   uint16_t response_preamble_{SX1276_RESPONSE_PREAMBLE};            ///< Runtime-tunable response preamble.
   uint32_t sync_hold_since_us_{0};  ///< First-sighting timestamp for reception_in_progress()'s un-stick bound.

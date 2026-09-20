@@ -89,8 +89,10 @@ void IOHomeControlComponent::setup() {
   const char *chip_name_for_log = nullptr;
   this->radio_ = this->select_and_construct_radio_(&chip_name_for_log);
   if (this->radio_ == nullptr) {
+    this->radio_failure_reason_ = "no driver for radio_type '" + this->radio_type_ +
+                                  "' (a required pin is missing, the type is unrecognized, or allocation failed)";
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — ESPHome's own LOG_STR() macro.
-    this->mark_failed(LOG_STR("Radio driver selection/allocation failed (see earlier log for details)"));
+    this->mark_failed(LOG_STR("Radio driver setup failed (see 'Radio setup failed' in the config dump)"));
     return;
   }
 
@@ -102,6 +104,10 @@ void IOHomeControlComponent::setup() {
 #endif
 
   if (!this->radio_->init()) {
+    // Read before the delete: failure_reason() is a member call on the driver.
+    const char *const driver_reason = this->radio_->failure_reason();
+    this->radio_failure_reason_ =
+        driver_reason != nullptr ? driver_reason : "driver init failed without a recorded cause";
     delete this->radio_;
     this->radio_ = nullptr;
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
@@ -111,7 +117,7 @@ void IOHomeControlComponent::setup() {
     this->cache_lr1121_flash_verdict_();
 #endif
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — ESPHome's own LOG_STR() macro.
-    this->mark_failed(LOG_STR("Radio hardware initialization failed (see earlier log for details)"));
+    this->mark_failed(LOG_STR("Radio hardware initialization failed (see 'Radio setup failed' in the config dump)"));
     return;
   }
 
@@ -393,6 +399,18 @@ void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "  Node ID: %s", this->node_id_str_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+  if (!this->radio_failure_reason_.empty())
+    ESP_LOGE(detail::TAG, "  Radio setup failed: %s", this->radio_failure_reason_.c_str());
+#ifdef IOHOME_UNSAFE_LOG_KEY_MATERIAL
+  // The setup() banner in short: a log client that connects after boot only receives this dump, and
+  // it is the reader who most needs the instruction to rebuild before sharing logs.
+  ESP_LOGE(detail::TAG, "  IOHOME_UNSAFE_LOG_KEY_MATERIAL IS ENABLED -- FRAME LOGS EXPOSE YOUR SYSTEM KEY");
+  ESP_LOGE(detail::TAG, "  Not safe to share logs from: rebuild without this flag as soon as you are done capturing.");
+#endif
+  if (this->tuning_.active) {
+    // Same snapshot setup() logs once at boot, for the same reason.
+    ESP_LOGCONFIG(detail::TAG, "  %s", tuning_config_full_snapshot(this->tuning_).c_str());
+  }
   LOG_PIN("  RST Pin: ", this->rst_pin_);
   if (this->dio0_pin_ != nullptr)
     LOG_PIN("  DIO0 Pin: ", this->dio0_pin_);
@@ -417,8 +435,16 @@ void IOHomeControlComponent::dump_config() {
 
   this->dump_oneway_controllers_config_();
 
-  if (this->radio_ != nullptr)
+  if (this->radio_ != nullptr) {
+    // A driver that latched a failure after setup (a runtime BUSY timeout) stays silent otherwise:
+    // it short-circuits every later command while the component itself is not marked failed.
+    if (this->radio_->is_failed()) {
+      const char *const reason = this->radio_->failure_reason();
+      ESP_LOGE(detail::TAG, "  Radio failed after setup: %s", reason != nullptr ? reason : "no recorded cause");
+    }
+    this->radio_->dump_front_end();
     this->radio_->dump_debug();
+  }
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   this->dump_lr1121_firmware_update_debug_();

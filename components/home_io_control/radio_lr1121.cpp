@@ -26,6 +26,24 @@ namespace home_io_control {
 
 static const char *const TAG = "home_io_control.lr1121";
 
+// === Device-error decoding ===
+
+namespace {
+
+/// GetErrors bit → name table used by lr1121_format_device_errors().
+constexpr DeviceErrorBit LR1121_DEVICE_ERROR_BITS[] = {
+    {LR1121_ERR_LF_RC_CALIB, "LF_RC_CALIB_ERR"},     {LR1121_ERR_HF_RC_CALIB, "HF_RC_CALIB_ERR"},
+    {LR1121_ERR_ADC_CALIB, "ADC_CALIB_ERR"},         {LR1121_ERR_PLL_CALIB, "PLL_CALIB_ERR"},
+    {LR1121_ERR_IMG_CALIB, "IMG_CALIB_ERR"},         {LR1121_ERR_HF_XOSC_START, "HF_XOSC_START_ERR"},
+    {LR1121_ERR_LF_XOSC_START, "LF_XOSC_START_ERR"}, {LR1121_ERR_PLL_LOCK, "PLL_LOCK_ERR"},
+};
+
+}  // namespace
+
+void lr1121_format_device_errors(uint16_t errors, char *buf, size_t buf_size) {
+  format_device_error_bits(errors, LR1121_DEVICE_ERROR_BITS, buf, buf_size);
+}
+
 // === SPI Communication (16-bit opcode, two-transaction) ===
 
 void RadioLR1121::write_command_(uint16_t opcode, const uint8_t *params, uint8_t len) {
@@ -203,8 +221,8 @@ void RadioLR1121::fill_capture_info(bool blocking_wait, uint32_t irq_status, uin
   uint8_t pkt_status[4] = {0};
   this->read_command_(LR1121_CMD_GET_PKT_STATUS, nullptr, 0, pkt_status, sizeof(pkt_status));
 
-  this->populate_capture_base_(blocking_wait, this->current_freq_, -(int16_t) pkt_status[0] / 2, raw, raw_len, frame,
-                               frame_len);
+  this->populate_capture_base_(blocking_wait, this->current_freq_, this->raw_rssi_to_dbm_(pkt_status[0]), raw, raw_len,
+                               frame, frame_len);
   this->last_capture_.rx_done = (irq_status & LR1121_IRQ_RX_DONE) != 0;
   this->last_capture_.crc_error = (irq_status & LR1121_IRQ_CRC_ERR) != 0;
   // RadioCaptureInfo::irq_status is uint16_t; map the 32-bit word down by taking bits [2..10]
@@ -269,6 +287,7 @@ void RadioLR1121::dump_debug() {
   uint16_t const errors = this->get_errors_();
 
   ESP_LOGCONFIG(TAG, "  LR1121 Diagnostic:");
+  ESP_LOGCONFIG(TAG, "    TCXO voltage: %s", tcxo_voltage_label(this->tcxo_voltage_code_));
   ESP_LOGCONFIG(TAG, "    Device type: 0x%02X (expect 0x%02X)", version[1], LR1121_DEVICE_TYPE);
   ESP_LOGCONFIG(TAG, "    HW version: 0x%02X, FW version: %u.%u", version[0], version[2], version[3]);
   if (lr1121_firmware_is_outdated(version[2], version[3])) {
@@ -279,8 +298,11 @@ void RadioLR1121::dump_debug() {
   }
   ESP_LOGCONFIG(TAG, "    BUSY=%d IRQ=%d", this->busy_pin_->digital_read(), this->irq_pin_->digital_read());
   ESP_LOGCONFIG(TAG, "    IRQ status: 0x%08" PRIX32, irq);
-  ESP_LOGCONFIG(TAG, "    Device errors: 0x%04X", errors);
+  char errbuf[DEVICE_ERROR_STR_SIZE];
+  lr1121_format_device_errors(errors, errbuf, sizeof(errbuf));
+  ESP_LOGCONFIG(TAG, "    Device errors: 0x%04X (%s)", errors, errbuf);
   ESP_LOGCONFIG(TAG, "    Last Stat1: 0x%02X", this->last_stat1_);
+  this->dump_init_device_errors_(TAG, lr1121_format_device_errors);
 }
 
 void RadioLR1121::configure_radio_() {
@@ -291,7 +313,7 @@ void RadioLR1121::configure_radio_() {
   this->read_command_(LR1121_CMD_GET_VERSION, nullptr, 0, version, sizeof(version));
   if (version[1] != LR1121_DEVICE_TYPE) {
     ESP_LOGE(TAG, "Unexpected device type 0x%02X (expected 0x%02X) — not an LR1121?", version[1], LR1121_DEVICE_TYPE);
-    this->failed_ = true;
+    this->fail_("chip does not identify as an LR1121 -- check radio_type, SPI wiring and the board");
     return;
   }
   ESP_LOGI(TAG, "LR1121 detected: hw=0x%02X fw=%u.%u", version[0], version[2], version[3]);
@@ -404,8 +426,11 @@ void RadioLR1121::configure_radio_() {
   // 14. Attach the DIO9 interrupt.
   this->irq_pin_->attach_interrupt(&RadioLR1121::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
 
-  // 15. Clear any pending IRQs / errors.
+  // 15. Clear any pending IRQs / errors — recording the error word first, since that is the only
+  //     trace of a calibration or TCXO fault from bring-up. A healthy chip leaves it zero (confirmed
+  //     on the T3-S3), so a non-zero word is a genuine fault and is warned about.
   this->clear_irq_status(0xFFFFFFFF);
+  this->record_init_device_errors_(TAG, "LR1121", this->get_errors_(), lr1121_format_device_errors);
   this->clear_errors_();
 
   // 16. Enter continuous receive.

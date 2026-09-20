@@ -81,3 +81,54 @@ TEST(PlatformExchangeFailuresSensor, DeviceUpdateForOtherDeviceIsIgnored) {
 
   EXPECT_FLOAT_EQ(sensor.state, 0.0f) << "updates for a different device id must not change this sensor's state";
 }
+
+// ============================================================================
+// Unconfirmed Exchanges — the companion counter for "challenged us, then went silent"
+// ============================================================================
+
+TEST(PlatformUnconfirmedExchangesSensor, SetupWithNoneRecordedPublishesZero) {
+  TestableExchangeFailuresHub hub;
+  hub.add_device("ABC123");
+
+  IOHomeUnconfirmedExchangesSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  EXPECT_FLOAT_EQ(sensor.state, 0.0f) << "zero is a meaningful value here and should publish immediately";
+}
+
+TEST(PlatformUnconfirmedExchangesSensor, PublishesItsOwnCounterNotTheFailureOne) {
+  // The two counters answer different questions — "the device never heard us" versus "it heard us
+  // and the reply was lost" — so reading the wrong field would make the new sensor useless.
+  TestableExchangeFailuresHub hub;
+  hub.add_device("ABC123");
+  auto *device = hub.get_device("ABC123");
+  ASSERT_NE(device, nullptr);
+  device->exchange_timeout_count = 7;
+  device->exchange_unconfirmed_count = 2;
+
+  IOHomeUnconfirmedExchangesSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  EXPECT_FLOAT_EQ(sensor.state, 2.0f);
+}
+
+TEST(PlatformUnconfirmedExchangesSensor, DeviceUpdatePublishesNewCount) {
+  TestableExchangeFailuresHub hub;
+  hub.add_device("ABC123");
+  auto *device = hub.get_device("ABC123");
+  ASSERT_NE(device, nullptr);
+
+  IOHomeUnconfirmedExchangesSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  detail::record_exchange_unconfirmed(*device);
+  hub.notify_device_update_("ABC123");
+
+  EXPECT_FLOAT_EQ(sensor.state, 1.0f);
+}

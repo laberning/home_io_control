@@ -72,19 +72,37 @@ void ExchangeEngine::record_debug(const char *stage, uint8_t tries, bool saw_cha
   this->debug_.capture_rssi_dbm = capture.rssi_dbm;
 }
 
+int render_exchange_debug(char *buf, size_t buf_size, const char *device_id, const ExchangeEngine::DebugInfo &d) {
+  return snprintf(buf, buf_size,
+                  "device=%s cmd=%s(0x%02X) stage=%s tries=%u max_tries=%u saw_challenge=%u cap_valid=%u "
+                  "cap_rx_done=%u cap_crc_err=%u cap_freq=%" PRIu32
+                  " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d belief=%s "
+                  "last_preamble=%u",
+                  device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.max_tries,
+                  // Rendered as 0/1: these are flags in a field list, not prose, and a caller greps them.
+                  static_cast<unsigned>(d.saw_challenge), static_cast<unsigned>(d.capture_valid),
+                  static_cast<unsigned>(d.capture_rx_done), static_cast<unsigned>(d.capture_crc_error),
+                  d.capture_freq_hz, d.capture_irq_status, d.capture_packet_status, d.capture_reported_len,
+                  d.capture_frame_len, d.capture_rssi_dbm,
+                  d.wake_belief_use == ExchangeEngine::WakeBeliefUse::APPLIED
+                      ? decisions::wake_belief_name(d.wake_belief)
+                      : ExchangeEngine::wake_belief_use_name(d.wake_belief_use),
+                  d.last_try_preamble);
+}
+
 void ExchangeEngine::log_debug(const char *device_id) const {
-  const auto &d = this->debug_;
-  ESP_LOGW(TAG,
-           "Exchange failed: device=%s cmd=%s(0x%02X) stage=%s tries=%u max_tries=%u saw_challenge=%u cap_valid=%u "
-           "cap_rx_done=%u cap_crc_err=%u cap_freq=%" PRIu32
-           " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d belief=%s "
-           "last_preamble=%u",
-           device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.max_tries, d.saw_challenge,
-           d.capture_valid, d.capture_rx_done, d.capture_crc_error, d.capture_freq_hz, d.capture_irq_status,
-           d.capture_packet_status, d.capture_reported_len, d.capture_frame_len, d.capture_rssi_dbm,
-           d.wake_belief_use == WakeBeliefUse::APPLIED ? decisions::wake_belief_name(d.wake_belief)
-                                                       : wake_belief_use_name(d.wake_belief_use),
-           d.last_try_preamble);
+  char fields[EXCHANGE_DEBUG_LINE_SIZE];
+  render_exchange_debug(fields, sizeof(fields), device_id, this->debug_);
+  ESP_LOGW(TAG, "Exchange failed: %s", fields);
+}
+
+void ExchangeEngine::log_debug_unconfirmed(const char *device_id) const {
+  char fields[EXCHANGE_DEBUG_LINE_SIZE];
+  render_exchange_debug(fields, sizeof(fields), device_id, this->debug_);
+  // "accepted" describes what the device did with the request, not what it did with our challenge
+  // answer — see the WAIT_FINAL_RESPONSE branch in send_and_receive() for why silence here has two
+  // possible causes. The capture fields are what tells them apart.
+  ESP_LOGI(TAG, "Exchange accepted without a closing reply: %s", fields);
 }
 
 // ============================================================================
@@ -356,10 +374,15 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     this->record_debug(outbound_stage_name(context.state), context.try_index, true);
     auto final_disp = this->wait_for_final_response_(request, context);
     if (final_disp != decisions::ExchangeFinalResponseDisposition::ACCEPT) {
-      // The device challenged us and accepted our answer, so it demonstrably received the request.
-      // Not every device closes the exchange with a synchronous reply (see ExchangeOutcome). A
-      // retry is safe only for a request with no side effect to repeat — CMD_EXECUTE is already
-      // acting on the first copy, so it stops here; everything else spends its full retry budget.
+      // The device challenged us, so it demonstrably received the request. It does not follow that
+      // it acted on it: a challenge says nothing about whether our 0x3D answer arrived and
+      // verified, and a device that never got that answer never executes. Silence here therefore
+      // has two causes that look identical from this side — our answer was lost, or the device
+      // replied and this side lost the reply — on top of the devices that simply never close an
+      // exchange with a synchronous reply (see ExchangeOutcome). log_debug_unconfirmed()'s capture
+      // fields are what separates them after the fact.
+      // A retry is safe only for a request with no side effect to repeat — CMD_EXECUTE may already
+      // be acting on the first copy, so it stops here; everything else spends its full retry budget.
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_auth_unconfirmed", context.try_index, true);
       accepted_without_reply = true;

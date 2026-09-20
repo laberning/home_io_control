@@ -12,7 +12,9 @@ Indexed by what you see, not by which subsystem is responsible.
 | The cover shows no position, or a stale one | [Position is unknown or state is stale](#position-is-unknown-or-state-is-stale) |
 | `stop` does nothing while the device is moving | [Commands are ignored mid-motion](#commands-are-ignored-mid-motion) |
 | A 1W button press does nothing | [1W commands do nothing](#1w-commands-do-nothing) |
-| The boot log shows `XOSC_START_ERR` on an SX1262 board | [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot) |
+| The log says `home_io_control is marked FAILED`, `Radio setup failed:` or `Radio failed after setup:` | [The radio does not start](#the-radio-does-not-start) |
+| The boot log shows `XOSC_START_ERR` on an SX1262 board, or `HF_XOSC_START_ERR` on an LR1121 board | [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot) |
+| The hub resets, or works differently on another USB port or cable | [Random resets or an unreliable link on USB power](#random-resets-or-an-unreliable-link-on-usb-power) |
 | Pairing works some of the time, or the link is unreliable | [A tuning plan](#a-tuning-plan) |
 
 ## The device is never found
@@ -36,7 +38,8 @@ What to try, in order:
 2. **Check the gesture, and that only one device is listening.** Put the device into pairing mode
    first, then press Discover & Pair straight away. For a device without a reachable button of its
    own, hold PROG on a remote already registered to it and let go at the first jog. If that remote
-   also drives other devices, power them down first.
+   also drives other devices, power them down first. Give each attempt one PROG press — pressing it
+   again while the device is still in pairing mode can close the window the first press opened.
 3. **Don't treat a reset as a pairing gesture.** A Double Power Cut or factory reset only returns
    the device to its first-time setup. If it has a local remote, register that again as the manual
    describes, then repeat step 2. The exception is a VELUX SSL solar roller shutter, which pairs
@@ -217,12 +220,39 @@ paste that snapshot into your permanent `tuning:` block. If a combination makes 
 otherwise-unsupported device work, open an issue with it so the defaults can improve.
 
 
+## The radio does not start
+
+No device responds, and the `IO-Homecontrol:` block of the log either ends with
+`home_io_control is marked FAILED: ...` or carries a `Radio setup failed:` or
+`Radio failed after setup:` line. All three are part of the config dump, so you see them even when
+you connected to the log after the boot.
+
+- **`Invalid node_id or system_key configuration`**: `node_id` must be 6 hex digits and `system_key`
+  32. Fix the two keys in your `home_io_control:` block.
+- **A `Radio setup failed:` line** names the cause. Use the table below.
+- **A `Radio failed after setup:` line** means the radio started, then stopped responding
+  (typically a BUSY timeout). The component is not marked failed in that case, but nothing the
+  radio does works any more. Use the same table, and reset the board.
+
+| Reason in the log | What to check |
+|---|---|
+| `SX1276 not found (version register is not 0x12)` | The SPI pins and the chip select in your board package, and that `radio_type` matches the chip on the board. See [Hardware](hardware.md). |
+| `chip does not identify as an LR1121` | The same checks for an LR1121 board; a board with a different chip under the same silkscreen fails here. |
+| `BUSY pin stayed high` | `busy_pin` and the SPI wiring. On an SX1262 or LR1121 board, also `tcxo_voltage`: a TCXO that never starts can hold BUSY high. See [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot). |
+| `SX1276 never reached the requested operating mode` or `SX1276 image calibration never completed` | The chip answers on SPI but does not finish start-up. Check the power supply, the reset pin and the SPI wiring. |
+| `no driver for radio_type '...'` | A pin the chip needs is missing from the `home_io_control:` block: `dio0_pin` for an SX1276, `busy_pin` and `dio1_pin` for an SX1262 or LR1121. |
+
+
 ## `XOSC_START_ERR` at boot
 
-The log shows `SX1262 device errors after init: ... (XOSC_START_ERR)` or
-`SX1262 TCXO started after N attempts` shortly after boot.
+The log shows `SX1262 device errors after init: ... (XOSC_START_ERR)`,
+`LR1121 device errors after init: ... (HF_XOSC_START_ERR)` or
+`SX1262 TCXO started after N attempts` shortly after boot. If you connected to the log after the
+boot, read the same facts from the config dump instead: the `SX1262 Diagnostic` block lists
+`TCXO voltage`, `TCXO startup: N attempts` and `Init device errors (cleared after init)`. An LR1121 board lists
+`HF_XOSC_START_ERR` in the same `Init device errors` line of its `LR1121 Diagnostic` block.
 
-The SX1262's TCXO is not coming up on the control voltage it is being given.
+The radio's TCXO is not coming up on the control voltage it is being given.
 
 - **Raise `tcxo_voltage` one step** from whatever your board config uses (e.g. `1_8V` → `2_2V`).
   On the Heltec V3 the value lives in the board package, so set `tcxo_voltage:` explicitly in
@@ -230,6 +260,48 @@ The SX1262's TCXO is not coming up on the control voltage it is being given.
 - `SX1262 TCXO started after N attempts` (no error) means the retry ladder recovered it — the
   radio is working, but the first startup window was marginal; raising `tcxo_voltage` one step
   removes the retry.
+
+## Random resets or an unreliable link on USB power
+
+Exchanges fail for no clear reason, the hub reboots in the middle of a command, or the same setup
+behaves differently after you move it to another USB port or cable. Rule out the power supply
+before you tune the radio: a board fed from a computer's USB port is a common cause, and it
+imitates a radio fault.
+
+Two separate things can go wrong there.
+
+**The voltage sags while the board transmits.** Wi-Fi bursts draw a couple of hundred milliamps on
+their own, and the radio's power amplifier adds roughly another hundred for as long as a frame is
+on air. A long or thin cable, a front-panel port, or an unpowered hub cannot deliver those bursts
+without the supply voltage dropping. The ESP32 then either resets, printing
+`Brownout detector was triggered` as it comes back, or transmits below the power you configured —
+which costs you range at the moment you need it.
+
+**A computer's 5 V rail is electrically noisy.** That noise follows the cable onto the board and
+raises the level the receiver hears as background, so weak replies that would otherwise decode no
+longer do. It looks like a receive problem: a device answers on a clean supply and appears silent
+on a PC cable, which is easy to mistake for a device or tuning fault.
+
+What to do:
+
+1. **Power the board from a mains USB adapter** rated 1 A or more, using a short, thick cable. Keep
+   the computer's port for flashing.
+2. **Read the log over the network** while you test — the ESPHome dashboard's log view, or
+   `esphome logs` against the device's host name — so the board can stay on the adapter. A problem
+   that disappears once the board is off the computer is a power problem, and no tuning change
+   will fix it.
+3. **Look for `Brownout detector was triggered`** in the log after a reset, and for a board that
+   reboots at the moment it first transmits. Both name the supply directly.
+4. **Lower `tx_power` by a few steps as a test.** A link that gets *more* reliable at lower
+   transmit power is telling you the supply cannot sustain the transmit burst. Put it back once
+   the supply is fixed. The key is described in [Configuration](configuration/index.md).
+5. **On an SX1262 board, check whether [`XOSC_START_ERR`](#xosc_start_err-at-boot) also appears.**
+   A marginal supply makes the TCXO's startup window marginal too, so the two often arrive
+   together.
+
+A powered USB hub, or a second supply for the board while a computer keeps only the data lines,
+also works. What matters is that the transmit bursts come from something that can deliver them,
+and that the board's 5 V does not come straight from a PC.
 
 ## See also
 

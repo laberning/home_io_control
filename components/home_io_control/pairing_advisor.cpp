@@ -18,8 +18,9 @@ namespace advisor {
 namespace {
 
 /// Buffer size for the rendered advice message. Sized for the longest message plus its node ID,
-/// and kept well under ESPHome's 512-byte log line so the WARN line isn't truncated on hardware.
-constexpr size_t ADVICE_MESSAGE_BUFFER_SIZE = 320;
+/// and kept under ESPHome's 512-byte log line so the WARN line isn't truncated on hardware — the
+/// longest message plus the "Pairing advisor: " prefix comes to ~400 bytes on the wire.
+constexpr size_t ADVICE_MESSAGE_BUFFER_SIZE = 416;
 
 bool is_rx_kind(PairingTelemetryEventKind kind) {
   return kind == PairingTelemetryEventKind::RX || kind == PairingTelemetryEventKind::RX_REJECT;
@@ -54,8 +55,15 @@ uint8_t count_occurrences_of_source(const PairingTelemetryEvent *events, uint8_t
   return occurrences;
 }
 
-void append_one_way_pairing_advice(const PairingTelemetryEvent *events, uint8_t event_count, PairingAdvice out[],
-                                   uint8_t &count) {
+void append_one_way_pairing_advice(const PairingTelemetry &telemetry, const PairingTelemetryEvent *events,
+                                   uint8_t event_count, PairingAdvice out[], uint8_t &count) {
+  // This advice's message tells the user no device answered their PROG gesture. On a successful
+  // pairing that is simply false, and a PROG press is the normal prelude to one — so the advice
+  // fired on most successes, warning about a failure that did not happen. The sibling advices are
+  // not gated: channel_busy stays true on a success, and foreign_controller matters *more* there
+  // (it is the case where the device that answered may not have been addressing us).
+  if (telemetry.outcome() == PairingOutcome::PAIRED)
+    return;
   for (uint8_t i = 0; i < event_count && count < PAIRING_ADVICE_MAX; i++) {
     const PairingTelemetryEvent &event = events[i];
     if (!is_rx_kind(event.kind) || !is_oneway_pairing_frame(event))
@@ -116,7 +124,7 @@ uint8_t analyze_pairing_telemetry(const PairingTelemetry &telemetry, const uint8
   const PairingTelemetryEvent *events = telemetry.events();
   const uint8_t event_count = telemetry.event_count();
 
-  append_one_way_pairing_advice(events, event_count, out, count);
+  append_one_way_pairing_advice(telemetry, events, event_count, out, count);
   append_channel_busy_advice(telemetry, events, event_count, out, count);
   append_foreign_controller_advice(own_node_id, events, event_count, out, count);
 
@@ -147,11 +155,16 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
   char buf[ADVICE_MESSAGE_BUFFER_SIZE];
   switch (advice.code) {
     case PairingAdviceCode::ONE_WAY_PAIRING_TRAFFIC:
+      // Deliberately no longer ends on "and retry", which reads as "press PROG again now": on a remote
+      // already registered to the device, a PROG press is also the add/remove toggle, so a second one
+      // can close the window the first opened. "Can", not "does" — this fits the field reports we have
+      // rather than being proven, and one press per attempt costs nothing either way.
       snprintf(buf, sizeof(buf),
                "A 1W remote (src %s) made a PROG gesture, but no device answered. If a 2W hub already "
                "controls the device, use key extraction. Otherwise hold PROG ~2 s on a remote registered to "
-               "it, release at the first jog, keep only that device in pairing mode, and retry. A reset "
-               "alone is not a pairing gesture.",
+               "it, release at the first jog, and keep only that device in pairing mode. Use one PROG press "
+               "per attempt - a second press can close the window the first one opened. A reset alone is "
+               "not a pairing gesture.",
                node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::CHANNEL_BUSY_LBT_DELAYED:

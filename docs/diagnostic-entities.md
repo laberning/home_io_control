@@ -1,7 +1,7 @@
 # Diagnostic entities
 <!-- doxygen-label: diagnostic_entities -->
 
-Every cover, light, lock, switch and climate entity comes with seven companion entities that report
+Every cover, light, lock, switch and climate entity comes with eight companion entities that report
 on the device behind it. They need no YAML: each is generated from the parent entity and named
 after it, so a cover called `Awning` gets `Awning Active Issue`, `Awning RSSI` and so on. If the
 parent has a `device_id:`, they group under the same Home Assistant device.
@@ -16,6 +16,7 @@ enable one from the device page in Home Assistant when you need it.
 | `<Name> RSSI` | Sensor (dBm) | No | Signal strength of the last frame from this device. |
 | `<Name> Last Contact` | Sensor (s) | No | Seconds since the last frame from this device — an age that keeps counting up, not a timestamp. |
 | `<Name> Exchange Failures` | Sensor | No | Running total of exchanges that got no valid reply. |
+| `<Name> Unconfirmed Exchanges` | Sensor | No | Running total of exchanges the device authenticated and then never closed. |
 | `<Name> Last Commanded By` | Text | No | Which controller last commanded the device. |
 | `<Name> Last Command Source` | Text | No | What kind of source that was. |
 
@@ -62,6 +63,9 @@ rather than everyday values, which is why they are disabled by default.
 - **RSSI** (dBm): a smoothed signal-strength reading (exponential moving average, 1/8 weight per
   sample), updated on every frame received from the device, whether a reply to the hub or
   unsolicited traffic. Unavailable until the first frame; a placeholder 0 dBm is never published.
+  It is measured at the antenna: a board with a front-end module has the amplifier's gain removed
+  (see [Hardware](hardware.md)), so readings from different boards are comparable to within a few
+  dB.
 - **Last Contact** (seconds): time since the last frame from the device. It is an age, not a
   timestamp: it resets to about 0 on every frame, including replies to the hub's own polls, and
   counts up while the device is quiet, republished once a minute so it keeps advancing in Home
@@ -71,10 +75,20 @@ rather than everyday values, which is why they are disabled by default.
   status and name requests) that received no valid response. Zero is a real, always-published
   value here. A rising count on an otherwise-working device points at a marginal link — weak
   signal, interference, distance — worth checking against RSSI.
+- **Unconfirmed Exchanges** (count): cumulative exchanges where the device answered with an
+  authentication challenge, the hub answered that, and the closing reply never came. Zero is a
+  real, always-published value here too.
 
-RSSI and Exchange Failures update only when the hub processes a frame or exchange for the device;
-there are no background timers to refresh them. Last Contact's once-a-minute heartbeat is the one
-exception.
+Read the last two together, because they separate two different faults. Exchange Failures rising
+on its own means the device is not hearing the hub. Unconfirmed Exchanges rising means it does
+hear the hub and the reply is getting lost on the way back — so reach for the receive-side
+settings rather than transmit power or placement. For a movement command the hub reports this
+outcome as success, since the device did accept the command, which makes this sensor the only
+place it shows up.
+
+RSSI, Exchange Failures and Unconfirmed Exchanges update only when the hub processes a frame or
+exchange for the device; there are no background timers to refresh them. Last Contact's
+once-a-minute heartbeat is the one exception.
 
 ## Last Command
 

@@ -164,6 +164,18 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   //     went unanswered, so it stays a failure and keeps the aggressive auth-shaped poll backoff
   //     that exists for precisely this shape of miss.
   const bool unconfirmed_counts_as_success = request.cmd == CMD_EXECUTE;
+
+  // Counted once, here, for every unconfirmed acceptance — deliberately above the split below,
+  // because the rule is about the outcome and not about how this request chooses to classify it.
+  // The two branches disagree on whether this is a failure; they must not disagree on whether it
+  // happened. It is the only record of the CMD_EXECUTE case, which reports success, and it is what
+  // separates "the device never heard us" from "it heard us and the reply was lost" in the branch
+  // that does count as a failure.
+  if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
+    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr)
+      detail::record_exchange_unconfirmed(*dev);
+  }
+
   if (outcome == ExchangeOutcome::FAILED ||
       (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED && !unconfirmed_counts_as_success)) {
     const auto &dbg = this->exchange_engine_.get_debug();
@@ -189,11 +201,18 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   }
 
   if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
-    // The device authenticated the request, so it has the command; it just does not close the
-    // exchange with a reply (see ExchangeOutcome). There is no frame to parse, and inventing a
-    // position from a request we only know was *accepted* would be worse than leaving the last
+    // The device challenged the request, so it received it; whether it also received our challenge
+    // answer — and therefore acted — is not observable from here (see the WAIT_FINAL_RESPONSE
+    // branch in ExchangeEngine::send_and_receive()). There is no frame to parse, and inventing a
+    // position from a request we only know was *challenged* would be worse than leaving the last
     // known state alone — the device's own asynchronous status update supplies the real one, and
     // that path authenticates now. Clear the failure streaks: this was not a failure.
+    //
+    // Log the snapshot anyway. This branch is the one exchange ending that prints nothing at all
+    // otherwise, so a device that routinely stops replying here leaves no trace to diagnose, and
+    // the capture fields (did the radio see anything during the final wait?) are exactly what
+    // separates a lost answer from a lost reply.
+    this->log_exchange_unconfirmed_debug_(device_id.c_str());
     if (retry_after_fail_ms != 0)
       this->poll_policy_.clear_failure_streaks(device_id);
     if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
@@ -488,6 +507,11 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
   // "Last Result Code" diagnostic surfaces it, exactly as the cover path does.
   // `dev` was resolved above via get_device(), which is registry_.get(); reuse it.
   IoDevice &d = *dev;
+  // Same rule as execute_request_and_update_(): an unconfirmed acceptance is counted wherever it
+  // happens, or a climate device that authenticates and then goes silent stays invisible in the
+  // very diagnostic built to surface that, while a cover doing the same thing is counted.
+  if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED)
+    detail::record_exchange_unconfirmed(d);
   if (outcome == ExchangeOutcome::FAILED) {
     detail::record_exchange_timeout(d, this->exchange_engine_.get_debug().tries);
   } else {

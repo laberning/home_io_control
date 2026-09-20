@@ -16,6 +16,7 @@
 #include "esphome/core/application.h"
 
 #include <cinttypes>
+#include <cstdio>
 
 namespace esphome {
 namespace home_io_control {
@@ -56,7 +57,7 @@ void SoftPhyDriverBase::wait_busy_() {
   while (this->busy_pin_->digital_read()) {
     if (millis() - start > this->busy_timeout_ms_) {
       ESP_LOGE(TAG, "BUSY timeout");
-      this->failed_ = true;
+      this->fail_("BUSY pin stayed high -- check busy_pin, the SPI wiring and tcxo_voltage");
       return;
     }
     App.feed_wdt();
@@ -567,7 +568,7 @@ void SoftPhyDriverBase::change_frequency(uint32_t freq_hz) {
 
 // === RSSI / sync / preamble ===
 
-int16_t SoftPhyDriverBase::read_rssi() { return -(int16_t) this->read_rssi_raw_byte() / 2; }
+int16_t SoftPhyDriverBase::read_rssi() { return this->raw_rssi_to_dbm_(this->read_rssi_raw_byte()); }
 
 bool SoftPhyDriverBase::is_sync_detected() { return (this->read_irq_status_raw() & this->sync_word_valid_bit()) != 0; }
 
@@ -577,6 +578,56 @@ bool SoftPhyDriverBase::is_preamble_detected() {
     return true;
   }
   return (this->read_irq_status_raw() & this->preamble_detected_bit()) != 0;
+}
+
+// === Device-error decoding ===
+
+void format_device_error_bits(uint16_t errors, const DeviceErrorBit *bits, size_t bit_count, char *buf,
+                              size_t buf_size) {
+  if (buf == nullptr || buf_size == 0)
+    return;
+  buf[0] = '\0';
+  if (errors == 0) {
+    snprintf(buf, buf_size, "none");
+    return;
+  }
+
+  size_t pos = 0;
+  uint16_t named = 0;
+  for (size_t i = 0; i < bit_count; i++) {
+    if ((errors & bits[i].mask) == 0)
+      continue;
+    named |= bits[i].mask;
+    const int n = snprintf(buf + pos, buf_size - pos, "%s%s", pos > 0 ? "|" : "", bits[i].name);
+    if (n <= 0 || static_cast<size_t>(n) >= buf_size - pos)
+      return;  // buffer full — leave what fit, already NUL-terminated by snprintf
+    pos += static_cast<size_t>(n);
+  }
+
+  const uint16_t unknown = errors & static_cast<uint16_t>(~named);
+  if (unknown != 0)
+    snprintf(buf + pos, buf_size - pos, "%sUNKNOWN_0x%04X", pos > 0 ? "|" : "", unknown);
+}
+
+void SoftPhyDriverBase::record_init_device_errors_(const char *tag, const char *chip_label, uint16_t errors,
+                                                   DeviceErrorFormatter format) {
+  this->init_device_errors_ = errors;
+  if (errors == 0)
+    return;
+  // The boot line reaches serial captures; dump_init_device_errors_() repeats it for API clients.
+  char errbuf[DEVICE_ERROR_STR_SIZE];
+  format(errors, errbuf, sizeof(errbuf));
+  ESP_LOGW(tag, "%s device errors after init: 0x%04X (%s)", chip_label, errors, errbuf);
+}
+
+void SoftPhyDriverBase::dump_init_device_errors_(const char *tag, DeviceErrorFormatter format) const {
+  if (this->init_device_errors_ == 0)
+    return;
+  // configure_radio_() clears the chip's register at its end, so a live "Device errors" line reads
+  // none even when bring-up hit a calibration, PLL or TCXO fault.
+  char errbuf[DEVICE_ERROR_STR_SIZE];
+  format(this->init_device_errors_, errbuf, sizeof(errbuf));
+  ESP_LOGCONFIG(tag, "    Init device errors (cleared after init): 0x%04X (%s)", this->init_device_errors_, errbuf);
 }
 
 }  // namespace home_io_control

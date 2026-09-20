@@ -64,12 +64,16 @@ uint32_t tcxo_startup_ticks(const std::vector<uint8_t> &tx) {
 // hand-counting every unrelated SPI byte into the flat response queue. `on_tcxo_write`, when set,
 // is invoked once per SetDIO3AsTCXOCtrl transaction; `on_error_read(n)` once per GetDeviceErrors
 // read with its 1-based index — hooks a test can use to snapshot driver state or arm a slow BUSY
-// pin at a precise point in init().
+// pin at a precise point in init(). `on_calibrate` fires once per Calibrate command (a fault found
+// while calibrating); with `clear_zeroes_errors` set, ClearDeviceErrors zeroes `errors`, modelling
+// the chip's error register so a test can tell "captured before the clear" from "captured after it".
 class DeviceErrorSpi : public ScriptedSpi {
  public:
   uint16_t errors{0};
   int reads_to_fault{0};
+  bool clear_zeroes_errors{false};
   std::function<void()> on_tcxo_write;
+  std::function<void()> on_calibrate;
   std::function<void(int)> on_error_read;
 
   void spi_enable() override {
@@ -86,6 +90,10 @@ class DeviceErrorSpi : public ScriptedSpi {
         txn_is_err_read_ = (err_reads_seen_++ < reads_to_fault);
       else if (data == esphome::home_io_control::SX1262_SET_DIO3_AS_TCXO_CTRL && on_tcxo_write)
         on_tcxo_write();
+      else if (data == esphome::home_io_control::SX1262_CLEAR_DEVICE_ERRORS && clear_zeroes_errors)
+        errors = 0;
+      else if (data == esphome::home_io_control::SX1262_CALIBRATE && on_calibrate)
+        on_calibrate();
       return recorded;
     }
     if (txn_is_err_read_ && idx == 2)
@@ -250,6 +258,22 @@ TEST(RadioSX1262Init, RetryLadderEscalatesWhenXoscStartErrPersists) {
   EXPECT_LT(ticks[1], ticks[2]);
 }
 
+TEST(RadioSX1262Init, KeepsInitDeviceErrorsForDumpAfterTheyAreCleared) {
+  // init() clears the chip's error register right after reading it, so dump_debug() can only
+  // report what init() kept. The double zeroes its register on ClearDeviceErrors and raises a PLL
+  // fault while calibrating (not an XOSC fault, so the TCXO retry ladder stops after one rung);
+  // capturing after the clear instead of before it would leave this at zero.
+  DeviceErrorSpi spi;
+  spi.clear_zeroes_errors = true;
+  spi.reads_to_fault = 100;
+  spi.on_calibrate = [&] { spi.errors = SX1262_DEV_ERR_PLL_LOCK; };
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
+
+  ASSERT_TRUE(radio.init());
+  EXPECT_EQ(radio.init_device_errors_for_test(), SX1262_DEV_ERR_PLL_LOCK);
+}
+
 TEST(RadioSX1262Init, RetryLadderStopsAsSoonAsXoscStartErrClears) {
   DeviceErrorSpi spi;
   spi.errors = SX1262_DEV_ERR_XOSC_START;
@@ -384,35 +408,63 @@ TEST(RadioSX1262Init, BareCrystalSkipsTcxoSetupButStillCalibrates) {
 }
 
 // ============================================================================
+// FEM antenna-port estimate (what the boot warning and the config dump report)
+// ============================================================================
+
+TEST(Sx1262FemEstimate, Kct8103lAtTheShippedBoardDefaultIsFourteenDbm) {
+  // heltec-v4-3.yaml ships tx_power: 1; this is the estimate its FEM warning prints at boot. It is the
+  // driver's own table lookup (gain uncertain by several dB), not a measurement.
+  const FemTxEstimate estimate = sx1262_fem_tx_estimate(FemProfile::KCT8103L, 1);
+  EXPECT_EQ(estimate.tx_power, 1);
+  EXPECT_EQ(estimate.antenna_dbm, 14);
+}
+
+TEST(Sx1262FemEstimate, ClampsTxPowerToSetTxParamsRangeBeforeLookup) {
+  for (FemProfile profile : {FemProfile::GC1109, FemProfile::KCT8103L, FemProfile::XY16P35}) {
+    const FemTxEstimate over = sx1262_fem_tx_estimate(profile, 255);
+    const FemTxEstimate top = sx1262_fem_tx_estimate(profile, 22);
+    EXPECT_EQ(over.tx_power, 22) << "the reported setting is what is actually programmed";
+    EXPECT_EQ(over.antenna_dbm, top.antenna_dbm);
+  }
+}
+
+TEST(Sx1262FemEstimate, EstimateGrowsWithTxPower) {
+  for (FemProfile profile : {FemProfile::GC1109, FemProfile::KCT8103L}) {
+    EXPECT_LT(sx1262_fem_tx_estimate(profile, 0).antenna_dbm, sx1262_fem_tx_estimate(profile, 10).antenna_dbm);
+    EXPECT_LT(sx1262_fem_tx_estimate(profile, 10).antenna_dbm, sx1262_fem_tx_estimate(profile, 21).antenna_dbm);
+  }
+}
+
+// ============================================================================
 // Item 4 — GetDeviceErrors bit → name decoder
 // ============================================================================
 
 TEST(Sx1262DeviceErrorDecoder, ZeroIsNone) {
-  char buf[SX1262_DEVICE_ERROR_STR_SIZE];
+  char buf[DEVICE_ERROR_STR_SIZE];
   sx1262_format_device_errors(0, buf, sizeof(buf));
   EXPECT_STREQ(buf, "none");
 }
 
 TEST(Sx1262DeviceErrorDecoder, SingleBitIsItsName) {
-  char buf[SX1262_DEVICE_ERROR_STR_SIZE];
+  char buf[DEVICE_ERROR_STR_SIZE];
   sx1262_format_device_errors(SX1262_DEV_ERR_XOSC_START, buf, sizeof(buf));
   EXPECT_STREQ(buf, "XOSC_START_ERR");
 }
 
 TEST(Sx1262DeviceErrorDecoder, MultipleBitsAreJoinedInTableOrder) {
-  char buf[SX1262_DEVICE_ERROR_STR_SIZE];
+  char buf[DEVICE_ERROR_STR_SIZE];
   sx1262_format_device_errors(SX1262_DEV_ERR_PLL_LOCK | SX1262_DEV_ERR_XOSC_START, buf, sizeof(buf));
   EXPECT_STREQ(buf, "XOSC_START_ERR|PLL_LOCK_ERR");
 }
 
 TEST(Sx1262DeviceErrorDecoder, UnmappedBitsShowAsUnknown) {
-  char buf[SX1262_DEVICE_ERROR_STR_SIZE];
+  char buf[DEVICE_ERROR_STR_SIZE];
   sx1262_format_device_errors(0x0080, buf, sizeof(buf));  // 0x0080 has no name in the datasheet
   EXPECT_STREQ(buf, "UNKNOWN_0x0080");
 }
 
 TEST(Sx1262DeviceErrorDecoder, KnownAndUnknownBitsCombine) {
-  char buf[SX1262_DEVICE_ERROR_STR_SIZE];
+  char buf[DEVICE_ERROR_STR_SIZE];
   sx1262_format_device_errors(SX1262_DEV_ERR_IMG_CALIB | 0x8000, buf, sizeof(buf));
   EXPECT_STREQ(buf, "IMG_CALIB_ERR|UNKNOWN_0x8000");
 }
@@ -421,7 +473,7 @@ TEST(Sx1262DeviceErrorDecoder, EveryNamedBitAppears) {
   const uint16_t all = SX1262_DEV_ERR_RC64K_CALIB | SX1262_DEV_ERR_RC13M_CALIB | SX1262_DEV_ERR_PLL_CALIB |
                        SX1262_DEV_ERR_ADC_CALIB | SX1262_DEV_ERR_IMG_CALIB | SX1262_DEV_ERR_XOSC_START |
                        SX1262_DEV_ERR_PLL_LOCK | SX1262_DEV_ERR_PA_RAMP;
-  char buf[SX1262_DEVICE_ERROR_STR_SIZE];
+  char buf[DEVICE_ERROR_STR_SIZE];
   sx1262_format_device_errors(all, buf, sizeof(buf));
   const std::string s = buf;
   for (const char *name : {"RC64K_CALIB_ERR", "RC13M_CALIB_ERR", "PLL_CALIB_ERR", "ADC_CALIB_ERR", "IMG_CALIB_ERR",

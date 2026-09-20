@@ -104,6 +104,114 @@ TEST(HubCore, SetDeviceStatusPollIntervalStoresValue) {
   delete comp.radio_;
 }
 
+// ========================================================================================
+// setup() failure reasons and dump_config() section order
+// ========================================================================================
+
+namespace {
+constexpr const char *VALID_NODE_ID = "C0FFEE";
+constexpr const char *VALID_SYSTEM_KEY = "00112233445566778899AABBCCDDEEFF";
+
+// A well-formed hub whose radio_type the caller picks; setup() then fails at the radio step.
+void configure_hub_for_setup(TestableHubComponent &comp, const char *radio_type) {
+  comp.set_node_id(VALID_NODE_ID);
+  comp.set_system_key(VALID_SYSTEM_KEY);
+  comp.set_radio_type(radio_type);
+}
+
+/// Records the order in which dump_config() asks the radio for its sections.
+class SectionRecordingRadio : public MockRadio {
+ public:
+  void dump_front_end() override { sections.push_back("front_end"); }
+  void dump_debug() override { sections.push_back("debug"); }
+  std::vector<std::string> sections;
+};
+}  // namespace
+
+TEST(HubCore, SetupNamesTheRadioTypeWhenNoDriverCanBeBuilt) {
+  TestableHubComponent comp;
+  configure_hub_for_setup(comp, "not_a_chip");
+
+  comp.setup();
+
+  EXPECT_TRUE(comp.is_failed());
+  EXPECT_EQ(comp.radio_, nullptr);
+  EXPECT_NE(comp.radio_failure_reason_.find("not_a_chip"), std::string::npos) << comp.radio_failure_reason_;
+}
+
+TEST(HubCore, SetupReportsAMissingRequiredPinAsNoDriver) {
+  TestableHubComponent comp;
+  configure_hub_for_setup(comp, "sx1276");  // no dio0_pin configured
+
+  comp.setup();
+
+  EXPECT_TRUE(comp.is_failed());
+  EXPECT_EQ(comp.radio_, nullptr);
+  EXPECT_NE(comp.radio_failure_reason_.find("sx1276"), std::string::npos) << comp.radio_failure_reason_;
+}
+
+TEST(HubCore, SetupKeepsTheDriversOwnReasonWhenInitFails) {
+  // The hub's SPI stub reads back zeros, so the SX1276 version check fails inside the real driver.
+  MockPin rst, dio0, dio4;
+  MockPin busy;  // only read by the LR1121 boot-time bootloader probe, which the host build always compiles in
+  TestableHubComponent comp;
+  configure_hub_for_setup(comp, "sx1276");
+  comp.set_rst_pin(&rst);
+  comp.set_dio0_pin(&dio0);
+  comp.set_dio4_pin(&dio4);
+  comp.set_busy_pin(&busy);
+
+  comp.setup();
+
+  EXPECT_TRUE(comp.is_failed());
+  EXPECT_EQ(comp.radio_, nullptr) << "a failed driver must be dropped";
+  EXPECT_NE(comp.radio_failure_reason_.find("SX1276 not found"), std::string::npos)
+      << "the reason must be copied out before the driver is deleted: " << comp.radio_failure_reason_;
+}
+
+TEST(HubCore, DumpConfigAsksTheRadioForFrontEndBeforeChipDiagnostics) {
+  TestableHubComponent comp;
+  auto *radio = new SectionRecordingRadio();
+  comp.radio_ = radio;
+
+  comp.dump_config();
+
+  ASSERT_EQ(radio->sections.size(), 2u);
+  EXPECT_EQ(radio->sections[0], "front_end") << "the board section comes before the chip's diagnostic block";
+  EXPECT_EQ(radio->sections[1], "debug");
+  delete comp.radio_;
+  comp.radio_ = nullptr;
+}
+
+TEST(HubCore, DumpConfigStillDumpsSectionsOfARadioThatFailedAfterSetup) {
+  // A radio that latched a runtime failure gets an extra error line, but its sections still print:
+  // the front-end and register state are exactly what someone diagnosing the failure needs.
+  class FailedRadio : public SectionRecordingRadio {
+   public:
+    [[nodiscard]] bool is_failed() const override { return true; }
+  };
+  TestableHubComponent comp;
+  auto *radio = new FailedRadio();
+  comp.radio_ = radio;
+
+  comp.dump_config();  // failure_reason() is null here: the "no recorded cause" branch
+
+  EXPECT_EQ(radio->sections.size(), 2u);
+  delete comp.radio_;
+  comp.radio_ = nullptr;
+}
+
+TEST(HubCore, DumpConfigSurvivesAFailedSetupWithNoRadio) {
+  TestableHubComponent comp;
+  configure_hub_for_setup(comp, "not_a_chip");
+  comp.setup();
+  ASSERT_EQ(comp.radio_, nullptr);
+
+  comp.dump_config();  // must not dereference the deleted/absent driver
+
+  EXPECT_FALSE(comp.radio_failure_reason_.empty());
+}
+
 TEST(HubCore, LoopQueuesSettlePollWithoutConfiguredInterval) {
   TestableHubComponent comp;
   comp.initialized_ = true;

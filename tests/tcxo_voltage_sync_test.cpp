@@ -10,7 +10,9 @@
 ///   - the voltage rungs are 0-based and contiguous, 1_6V..3_3V -> 0x00..0x07 in order;
 ///   - 1_8V == DEFAULT_TCXO_VOLTAGE_SETTING_1P8V == 0x02 (the schema default);
 ///   - NONE == TCXO_VOLTAGE_NONE (0xFF), the bare-crystal sentinel;
-///   - no non-sentinel code exceeds the chips' 3-bit field.
+///   - no non-sentinel code exceeds the chips' 3-bit field;
+///   - tcxo_voltage_label(), which the config dump prints, names every code the way its YAML key
+///     spells it (`2_2V` -> "2.2 V"), so the dump never shows a voltage the config did not ask for.
 
 #include "hub_core.h"
 #include "radio_interface.h"
@@ -72,4 +74,22 @@ TEST(TcxoVoltageSync, EveryVoltageCodeFitsThe3BitChipField) {
     EXPECT_LE(value, 0x07u) << "\"" << name << "\" = 0x" << std::hex << static_cast<int>(value)
                             << " is outside the SX1262/LR1121 tcxoVoltage field (0x00..0x07)";
   }
+}
+
+TEST(TcxoVoltageSync, ConfigDumpLabelsMatchTheYamlKeys) {
+  auto opts = parse_options();
+  for (const char *rung : kVoltageRungs) {
+    // "2_2V" -> "2.2 V": the key's underscore is the decimal point, its trailing V the unit.
+    std::string expected = rung;
+    expected.replace(expected.find('_'), 1, ".");
+    expected.insert(expected.size() - 1, " ");
+    ASSERT_TRUE(opts.count(rung)) << rung;
+    EXPECT_EQ(std::string(tcxo_voltage_label(opts[rung])), expected) << "code for \"" << rung << "\"";
+  }
+  EXPECT_EQ(std::string(tcxo_voltage_label(opts["NONE"])), "none (bare crystal)");
+}
+
+TEST(TcxoVoltageSync, ConfigDumpLabelIsUnknownOutsideTheTable) {
+  EXPECT_STREQ(tcxo_voltage_label(0x08), "unknown");
+  EXPECT_STREQ(tcxo_voltage_label(0x42), "unknown");
 }

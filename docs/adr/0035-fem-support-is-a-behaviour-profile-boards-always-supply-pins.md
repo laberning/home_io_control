@@ -129,6 +129,15 @@ limit (+14 dBm): `1` for both Heltec chips, `0` for XY16P35. The driver logs its
 antenna-port estimate (with that uncertainty attached) at boot, and the schema separately warns
 whenever a `fem:` profile is active and `tx_power` is set above that profile's own quiet ceiling.
 
+**RSSI is reported at the antenna.** The FEM's LNA raises every reading the SX1262 takes, so the
+driver subtracts a per-profile receive gain (`front_end_rx_gain_db()`) from both the live reading
+(listen-before-talk) and the per-packet reading (the RSSI sensors). Without it an idle channel on
+a KCT8103L board reads about 25 dB hotter than the same channel on a bare SX1262, well past the
+-90 dBm carrier-sense threshold, and every transmission waits out its full LBT retry budget. The
+gain is one figure per profile because the driver has no control over the LNA's gain: 25 dB for
+KCT8103L (measured, +/-4 dB), 15 dB for GC1109 (quoted, unmeasured), 0 dB for XY16P35 (no
+published figure, so its RSSI stays inflated by an unknown amount).
+
 `Vfem` and `Vext` are electrically unrelated on both Heltec V4.2 and V4.3 schematics — two
 independent LDOs off the same 5 V rail, with `Vext` (GPIO36) powering only the OLED and expansion
 header, never the FEM. No GPIO36 handling exists anywhere in this feature.
@@ -137,7 +146,7 @@ header, never the FEM. No GPIO36 handling exists anywhere in this feature.
 
 - Adding a fourth FEM profile is: one `FemProfile` enumerator, one entry each in
   `FEM_REQUIRED_PINS`/`FEM_PROFILES`/`FEM_TX_POWER_MAX_QUIET`, a `-Werror=switch`-enforced entry
-  in the TX-gain table dispatch, and — only if its control polarity genuinely differs from both
+  in the TX-gain table dispatch and one in the RX-gain dispatch (`sx1262_fem_rx_gain()`), and — only if its control polarity genuinely differs from both
   existing ones — one more branch in `fem_tx_active_level_()`. No existing board package needs to
   change, and no existing board package's behaviour changes.
 - Every FEM-equipped board package must spell out every pin its profile needs, in full, with no
