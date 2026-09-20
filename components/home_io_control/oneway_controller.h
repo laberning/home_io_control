@@ -26,22 +26,24 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace esphome {
 namespace home_io_control {
 
-/// @brief Which preamble/CTRL1 shape a 1W identity's bursts use (`low_power:` on the identity).
+/// @brief Which preamble/CTRL1 shape a 1W identity's bursts actually go out with.
 ///
-/// **Tri-state, unlike the per-device 2W `low_power` key (ADR 0029), which is a plain bool
-/// defaulting to `false`.** Here, *unset* is its own state and is not equivalent to `false`: it
-/// keeps every 1W transmit byte- and timing-identical to the hardware-validated Somfy path.
-/// `false` opts an identity into the ADR 0029 shape (short preamble, no wake flag); `true` adds a
-/// wake-up copy for a duty-cycled receiver. See ADR 0038 for why unset survives as a knowingly
-/// non-conforming default rather than being folded into `false`.
+/// Every enumerator is a real on-air shape, so a value of this type is always transmittable —
+/// "not configured" is *not* one of them. That state lives in
+/// `OneWayControllerIdentity::power_class_override`, an empty optional, and is resolved to one of
+/// these by effective_power_class() before any of it reaches the transmitter. Keeping the two
+/// apart is what lets oneway_burst_copy_shape() switch exhaustively with no unreachable case.
+///
+/// See ADR 0038 for the shapes and ADR 0041 for how an unset key resolves.
 enum class OneWayPowerClass : uint8_t {
-  LEGACY_LONG,   ///< `low_power:` unset: LONG_PREAMBLE on every copy, CTRL1 0x00 everywhere.
+  LEGACY_LONG,   ///< LONG_PREAMBLE on every copy, CTRL1 0x00 everywhere.
   ALWAYS_ALIVE,  ///< `low_power: false`: normal start preamble on every copy, CTRL1 0x00.
   LOW_POWER,     ///< `low_power: true`: copy 1 LONG_PREAMBLE + CTRL1_LOW_POWER, repeats normal.
 };
@@ -76,7 +78,7 @@ struct OneWayCopyShape {
 /// the wake-up shape on copy 0 alone — what a real remote's GEAR/EXECUTE burst does, and the
 /// mirror of how `ExchangeEngine` (ADR 0029) already picks a 2W start frame's preamble from the
 /// target's own low-power declaration.
-/// @param power_class The identity's configured power class.
+/// @param power_class The identity's resolved power class, from effective_power_class().
 /// @param copy_index 0-based position of this copy within the burst.
 /// @return The preamble and CTRL1 shape for that copy.
 inline OneWayCopyShape oneway_burst_copy_shape(OneWayPowerClass power_class, uint8_t copy_index) {
@@ -123,10 +125,14 @@ struct OneWayControllerIdentity {
   /// one- or two-class override is expressed by leaving the rest `UNKNOWN`. Ignored by the Somfy
   /// enrollment gesture, which always uses `io_device_type`. See ADR 0032.
   std::array<DeviceType, 3> enrollment_classes{DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
-  /// Preamble/CTRL1 shape every burst this identity sends uses (`low_power:`). Applies to every
-  /// 1W TX of the identity -- commands, positions, enrollment (both gestures), un-enrollment. Last
-  /// field: codegen emits a designated initialiser in declaration order. See ADR 0038.
-  OneWayPowerClass power_class{OneWayPowerClass::LEGACY_LONG};
+  /// `low_power:` exactly as configured, or **empty when the key is absent** — in which case the
+  /// shape comes from the manufacturer profile (ADR 0041). Never read this directly to transmit;
+  /// call effective_power_class(), which is the only place the two cases are collapsed.
+  ///
+  /// Whatever it resolves to applies to every 1W TX of the identity -- commands, positions,
+  /// enrollment (both gestures), un-enrollment. Last field: codegen emits a designated initialiser
+  /// in declaration order. See ADR 0038 for the shapes themselves.
+  std::optional<OneWayPowerClass> power_class_override;
 
   /// @brief Enrollment / typed-class destination address for this identity.
   ///
@@ -160,6 +166,12 @@ struct OneWayWireProfile {
   /// Device classes a VELUX_KLI `0x30` sweep targets, `UNKNOWN` entries skipped. All-`UNKNOWN` for
   /// SOMFY, whose `0x30` goes to the identity's own `io_device_type` instead.
   std::array<DeviceType, 3> enrollment_classes;
+  /// Burst shape for an identity that does not set `low_power:` at all. Per ADR 0041: VELUX gets
+  /// `ALWAYS_ALIVE`, because an awake VELUX receiver does not accept a frame behind the 1024-byte
+  /// preamble and 1W has no acknowledgement to reveal that. Every other manufacturer — and every
+  /// unrecognised one — keeps `LEGACY_LONG`, so a profile nobody has measured never silently
+  /// acquires a shape nobody tested for it.
+  OneWayPowerClass default_power_class;
 };
 
 /// The default `0x30` sweep for `manufacturer: velux`: the exterior-shading classes a KLI 310/313
@@ -184,12 +196,14 @@ inline OneWayWireProfile resolve_oneway_wire_profile(uint8_t manufacturer) {
   switch (manufacturer) {
     case MANUFACTURER_VELUX:
       return {ONEWAY_EXECUTE_ACEI_VELUX, /*profile_is_a_guess=*/false, EnrollGesture::VELUX_KLI,
-              VELUX_KLI_ENROLLMENT_CLASSES};
+              VELUX_KLI_ENROLLMENT_CLASSES, OneWayPowerClass::ALWAYS_ALIVE};
     case MANUFACTURER_SOMFY:
     case 0x00:
-      return {ONEWAY_EXECUTE_ACEI, /*profile_is_a_guess=*/false, EnrollGesture::SOMFY, none};
+      return {ONEWAY_EXECUTE_ACEI, /*profile_is_a_guess=*/false, EnrollGesture::SOMFY, none,
+              OneWayPowerClass::LEGACY_LONG};
     default:
-      return {ONEWAY_EXECUTE_ACEI, /*profile_is_a_guess=*/true, EnrollGesture::SOMFY, none};
+      return {ONEWAY_EXECUTE_ACEI, /*profile_is_a_guess=*/true, EnrollGesture::SOMFY, none,
+              OneWayPowerClass::LEGACY_LONG};
   }
 }
 
@@ -217,6 +231,24 @@ inline uint8_t effective_execute_acei(const OneWayControllerIdentity &identity) 
 /// @param identity The controller identity.
 /// @return true when `execute_acei:` was set (non-zero) and overrides the manufacturer profile default.
 inline bool has_execute_acei_override(const OneWayControllerIdentity &identity) { return identity.execute_acei != 0; }
+
+/// @brief The burst shape this identity actually transmits with.
+///
+/// The one place an absent `low_power:` is turned into a real shape, and therefore the only
+/// function the transmitter and the boot log may ask. An explicit `low_power:` always wins; with
+/// the key absent the manufacturer profile decides (ADR 0041).
+/// @param identity The controller identity.
+/// @return `power_class_override` when set, else the manufacturer profile's `default_power_class`.
+inline OneWayPowerClass effective_power_class(const OneWayControllerIdentity &identity) {
+  return identity.power_class_override.value_or(resolve_oneway_wire_profile(identity.manufacturer).default_power_class);
+}
+
+/// @brief Whether this identity's burst shape comes from an explicit `low_power:` rather than the profile.
+/// @param identity The controller identity.
+/// @return true when `low_power:` was set in YAML and overrides the manufacturer profile default.
+inline bool has_power_class_override(const OneWayControllerIdentity &identity) {
+  return identity.power_class_override.has_value();
+}
 
 // === Control surface ===
 

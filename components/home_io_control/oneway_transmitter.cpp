@@ -68,7 +68,7 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
     return false;
   }
 
-  const bool transmitted = this->send_burst(frame, identity->power_class);
+  const bool transmitted = this->send_burst(frame, effective_power_class(*identity));
 
   // 0x30/0x39 carry no intent decode_1w_frame() can read (it only understands
   // CMD_EXECUTE/CMD_ACTIVATE_MODE payloads) -- send_enrollment() etc. pass the label directly
@@ -240,7 +240,7 @@ bool OneWayTransmitter::send_enroll_sweep_(const OneWayControllerIdentity &ident
                identity.id.c_str());
       continue;
     }
-    if (this->send_burst(frame, identity.power_class))
+    if (this->send_burst(frame, effective_power_class(identity)))
       any_transmitted = true;
   }
 

@@ -457,16 +457,18 @@ void IOHomeControlComponent::dump_oneway_controllers_config_() const {
     // are never printed here (ADR 0011); only addresses and classes. The resolved ACEI and
     // destination let a user eyeball this against a capture of their real remote (ADR 0031).
     const OneWayWireProfile profile = resolve_oneway_wire_profile(identity.manufacturer);
-    // The power class is printed for every identity, unset (legacy) included, so a reporter's boot
-    // log always shows which shape their build is actually using (ADR 0038) rather than only the
-    // two opted-in cases.
+    // The power class is printed for every identity, including the ones that never set the key, so
+    // a reporter's boot log always shows which shape their build actually transmits (ADR 0038).
+    // Where it came from is printed too: an unset key resolves from the manufacturer profile
+    // (ADR 0041), so "always-alive" alone would not tell a VELUX user whether they chose it.
     ESP_LOGCONFIG(
-        detail::TAG, "    - %s: node %s%s, class 0x%02X, acei 0x%02X%s, broadcast %s%s, power %s", identity.id.c_str(),
-        node_id_to_string(identity.node_id).c_str(), identity.node_id_derived ? " (derived)" : "",
+        detail::TAG, "    - %s: node %s%s, class 0x%02X, acei 0x%02X%s, broadcast %s%s, power %s%s",
+        identity.id.c_str(), node_id_to_string(identity.node_id).c_str(), identity.node_id_derived ? " (derived)" : "",
         static_cast<unsigned>(identity.io_device_type), static_cast<unsigned>(effective_execute_acei(identity)),
         has_execute_acei_override(identity) ? " (override)" : "", identity.execute_broadcast_all ? "all" : "typed",
         profile.profile_is_a_guess ? " [no vendor profile — Somfy-shaped]" : "",
-        oneway_power_class_name(identity.power_class));
+        oneway_power_class_name(effective_power_class(identity)),
+        has_power_class_override(identity) ? "" : " (from profile)");
 
     // The VELUX enrollment gesture ignores io_device_type and sweeps a fixed class set instead —
     // the most surprising resolved value on the identity, so print it (ADR 0032).
