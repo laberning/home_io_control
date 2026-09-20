@@ -49,6 +49,10 @@ match.
 | **Combined wind/rain protection station** | sensor (1W) | ✅ Confirmed for listening | Overheard; no pairing involved | `exposed_senders:` / `linked_remotes:` | 2 corpus captures |
 | **Eolis 3D WireFree IO wind sensor** | sensor (1W) | 📣 Reported — listen-only | Overheard; no pairing involved | `exposed_senders:` / `linked_remotes:` | A standalone wind sensor, distinct from the combined station above; links directly to its awning motor. |
 
+Somfy motors are also sold under other brands. The two awnings this project was originally built
+for carry a "Heim & Haus" badge over a Somfy Sunea IO motor, so match your motor to a row by what
+is inside the tube rather than by the name on the awning.
+
 `low_power: true` on the solar Somfy motors is a reasoned starting point rather than a confirmed
 setting: the option is meant for battery and solar actuators, and it is confirmed on VELUX hardware
 through issue #87, but no RS100 or Oximo report has confirmed it yet.
@@ -64,14 +68,17 @@ project controls.
 | **TaHoma Switch** | Third-party hub | ✅ Confirmed as a key-extraction source | Corpus `somfy_tahoma_pairing_key_extraction_success_sx1276` |
 | **Connectivity Kit** | Third-party hub | ⚠️ Partial — extraction stalled | Corpus `somfy_connectivity_kit_pairing_key_extraction_stall` |
 | **Smoove IO remote** | 1W remote | ✅ Confirmed for listening | Corpus `somfy_smoove_enrollment_monitor_sx1276`; issue #27 |
+| **Situo 5 io Pure II** | 1W remote | ✅ Confirmed for listening | Its PROG hold and its EXECUTE frames both decode, and a Somfy awning paired from that gesture |
 
 ### VELUX
 
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
 | **KLR 200 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | succeeded end to end on the first attempt, including the address round; corpus `velux_klr200_pairing_key_extraction_success` |
+| **KLR 100 two-way control pad** | Third-party hub | 📣 Reported as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | Its "Register product" gesture opens the extraction window the same way the KLR 200's does; issue #87 |
 | **KIG 300 hub** | Third-party hub | ⚠️ Partial — one extraction succeeded, one stalled | Key extraction | `accept_foreign_pairing: true` | 4 corpus captures |
 | **INTEGRA roof-window actuator** | `window_opener` | ✅ Confirmed | — | `io_device_type: window_opener`, which adds the Ventilation Position button | 3 corpus captures; issue #98 |
+| **INTEGRA roller shutter, mains-wired** | `roller_shutter` | 📣 Reported | — | — | A 230 V installation — two window actuators and their shutters, driven alongside two KLR 200s; issue #57. Mains power is what separates this from the solar rows below |
 | **Devices behind an extracted KLR200 key** | Mixed | ✅ Confirmed | Key extraction, then `scan_paired_devices` | **`low_power: true`** on the affected devices | `scan_paired_devices` runs a low-power pass built to reach sleeping devices without any YAML declaration; `low_power: true` is still needed for directed commands once they are registered |
 | **MSU 100100 5070WL solar awning screen** | `screen` | ⚠️ Partial — open and close work; `stop` has no effect while it moves | — | `low_power: true` | Nothing the hub sends gets an answer while the motor runs; stop it mid-travel with its own remote — see [VELUX INTEGRA](devices/velux-integra.md) |
 | **SSL solar roller shutter** | `roller_shutter` | ⚠️ Partial — Discover & Pair, open, close, position and status; `stop` has no effect while it moves | Discover & Pair right after a motor-side reset | `pairing_discovery_preamble: 32` (required); `pairing_discovery_destination: "0x00003F"` and `pairing_discovery_ack_capable: true` complete the confirmed setup but are not known to be required; `low_power: true` on the device entry | The reset removes the wall remote, so register it again afterwards. Stop it mid-travel with that remote. Step-by-step: [VELUX INTEGRA](devices/velux-integra.md#ssl-solar-roller-shutter) |

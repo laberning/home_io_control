@@ -11,8 +11,10 @@
 /// The IRQ-driven RX/TX orchestration this driver shares with RadioLR1121 lives in
 /// SoftPhyDriverBase (see radio_soft_phy_driver_base.h) — this file has the SX1262-specific
 /// SPI transport and register/opcode encoding underneath it.
-/// @todo Validate Heltec V4-family boards on real hardware, especially the assumed
-///       front-end module enable pins and the required TCXO voltage selection.
+/// @todo Validate the Heltec V4.2 on real hardware, especially its assumed front-end module
+///       enable pins and TCXO voltage selection. The V4.3 is validated and does not settle this:
+///       its GC1109 is a different part from the V4.3's KCT8103L, and the two are wired the other
+///       way round (see ADR 0035).
 
 #include "radio_soft_phy_driver_base.h"
 #include "esphome/core/hal.h"

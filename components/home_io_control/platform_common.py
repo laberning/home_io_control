@@ -64,6 +64,7 @@ CONF_ACTIVE_ISSUE_SENSOR_ID = "_active_issue_sensor_id"
 CONF_RSSI_SENSOR_ID = "_rssi_sensor_id"
 CONF_LAST_CONTACT_SENSOR_ID = "_last_contact_sensor_id"
 CONF_EXCHANGE_FAILURES_SENSOR_ID = "_exchange_failures_sensor_id"
+CONF_UNCONFIRMED_EXCHANGES_SENSOR_ID = "_unconfirmed_exchanges_sensor_id"
 # Internal config keys for the companion last-command sensor IDs (injected by post-validator).
 CONF_LAST_COMMANDED_BY_SENSOR_ID = "_last_commanded_by_sensor_id"
 CONF_LAST_COMMAND_SOURCE_SENSOR_ID = "_last_command_source_sensor_id"
@@ -81,6 +82,9 @@ IOHomeLastContactSensor = home_io_control_ns.class_(
 IOHomeExchangeFailuresSensor = home_io_control_ns.class_(
     "IOHomeExchangeFailuresSensor", sensor.Sensor, cg.Component
 )
+IOHomeUnconfirmedExchangesSensor = home_io_control_ns.class_(
+    "IOHomeUnconfirmedExchangesSensor", sensor.Sensor, cg.Component
+)
 IOHomeLastCommandedByTextSensor = home_io_control_ns.class_(
     "IOHomeLastCommandedByTextSensor", text_sensor.TextSensor, cg.Component
 )
@@ -96,6 +100,11 @@ _COMPANION_SENSOR_IDS = (
     (CONF_RSSI_SENSOR_ID, "rssi_sensor", IOHomeRssiSensor),
     (CONF_LAST_CONTACT_SENSOR_ID, "last_contact_sensor", IOHomeLastContactSensor),
     (CONF_EXCHANGE_FAILURES_SENSOR_ID, "exchange_failures_sensor", IOHomeExchangeFailuresSensor),
+    (
+        CONF_UNCONFIRMED_EXCHANGES_SENSOR_ID,
+        "unconfirmed_exchanges_sensor",
+        IOHomeUnconfirmedExchangesSensor,
+    ),
     (CONF_LAST_COMMANDED_BY_SENSOR_ID, "last_commanded_by_sensor", IOHomeLastCommandedByTextSensor),
     (CONF_LAST_COMMAND_SOURCE_SENSOR_ID, "last_command_source_sensor", IOHomeLastCommandSourceTextSensor),
 )
@@ -265,10 +274,10 @@ async def _create_companion_text_sensor(config, parent, sensor_id, name, disable
 
 
 async def _create_link_health_sensor(config, parent, sensor_id, name, **sensor_kwargs):
-    """Shared body for the three auto-generated link-health `sensor:` companions.
+    """Shared body for the auto-generated link-health `sensor:` companions.
 
-    All three (RSSI, Last Contact, Exchange Failures) are numeric, diagnostic, and disabled by
-    default (noise control); only the name and sensor-specific schema keys
+    All of them (RSSI, Last Contact, Exchange Failures, Unconfirmed Exchanges) are numeric,
+    diagnostic, and disabled by default (noise control); only the name and sensor-specific schema keys
     (unit/device_class/state_class/accuracy_decimals) differ between them, so those are the
     only things each call in create_companion_sensors() supplies.
     """
@@ -357,6 +366,16 @@ async def create_companion_sensors(config, parent):
         parent,
         config[CONF_EXCHANGE_FAILURES_SENSOR_ID],
         _companion_sensor_name(config, "Exchange Failures"),
+        **{
+            CONF_STATE_CLASS: STATE_CLASS_TOTAL_INCREASING,
+            CONF_ACCURACY_DECIMALS: 0,
+        },
+    )
+    await _create_link_health_sensor(
+        config,
+        parent,
+        config[CONF_UNCONFIRMED_EXCHANGES_SENSOR_ID],
+        _companion_sensor_name(config, "Unconfirmed Exchanges"),
         **{
             CONF_STATE_CLASS: STATE_CLASS_TOTAL_INCREASING,
             CONF_ACCURACY_DECIMALS: 0,

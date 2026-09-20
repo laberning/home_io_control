@@ -141,8 +141,10 @@ For a device that is new, factory reset, or has only ever been driven by wall re
 
 **Expect this to take a few goes.** The device's pairing window is only a few seconds wide and the
 timing between the PROG press and the button press is genuinely fiddly — the hub makes three
-attempts per press, and it is still common to need two or three presses. Press PROG again and repeat
-before you change any settings. Pair one device at a time.
+attempts per press, and it is still common to need two or three presses. Repeat the whole sequence
+before you change any settings, and give each attempt one PROG press: pressing PROG again while the
+device is still in pairing mode can close the window the first press opened. Pair one device at a
+time.
 
 [Pairing](pairing.md) has the full walkthrough and a decision tree.
 

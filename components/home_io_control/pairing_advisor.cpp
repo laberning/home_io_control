@@ -18,8 +18,9 @@ namespace advisor {
 namespace {
 
 /// Buffer size for the rendered advice message. Sized for the longest message plus its node ID,
-/// and kept well under ESPHome's 512-byte log line so the WARN line isn't truncated on hardware.
-constexpr size_t ADVICE_MESSAGE_BUFFER_SIZE = 320;
+/// and kept under ESPHome's 512-byte log line so the WARN line isn't truncated on hardware — the
+/// longest message plus the "Pairing advisor: " prefix comes to ~400 bytes on the wire.
+constexpr size_t ADVICE_MESSAGE_BUFFER_SIZE = 416;
 
 bool is_rx_kind(PairingTelemetryEventKind kind) {
   return kind == PairingTelemetryEventKind::RX || kind == PairingTelemetryEventKind::RX_REJECT;
@@ -154,11 +155,16 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
   char buf[ADVICE_MESSAGE_BUFFER_SIZE];
   switch (advice.code) {
     case PairingAdviceCode::ONE_WAY_PAIRING_TRAFFIC:
+      // Deliberately no longer ends on "and retry", which reads as "press PROG again now": on a remote
+      // already registered to the device, a PROG press is also the add/remove toggle, so a second one
+      // can close the window the first opened. "Can", not "does" — this fits the field reports we have
+      // rather than being proven, and one press per attempt costs nothing either way.
       snprintf(buf, sizeof(buf),
                "A 1W remote (src %s) made a PROG gesture, but no device answered. If a 2W hub already "
                "controls the device, use key extraction. Otherwise hold PROG ~2 s on a remote registered to "
-               "it, release at the first jog, keep only that device in pairing mode, and retry. A reset "
-               "alone is not a pairing gesture.",
+               "it, release at the first jog, and keep only that device in pairing mode. Use one PROG press "
+               "per attempt - a second press can close the window the first one opened. A reset alone is "
+               "not a pairing gesture.",
                node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::CHANNEL_BUSY_LBT_DELAYED:

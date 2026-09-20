@@ -248,6 +248,33 @@ static IoFrame build_write_private_ack(const uint8_t dst[3]) {
   return f;
 }
 
+TEST(HubOperations, HeatingCommandAuthenticatedWithoutFinalResponseIsCountedToo) {
+  // A climate write is write-only: an unconfirmed acceptance reports success and records no
+  // failure, exactly as a movement command does. Without this the counter would be a cover-only
+  // diagnostic, and a climate device that authenticates then goes silent would look perfectly fine.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+
+  // Only the challenge — no closing reply.
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f);
+
+  EXPECT_EQ(dev->exchange_unconfirmed_count, 1u);
+  EXPECT_EQ(dev->exchange_timeout_count, 0u) << "an accepted write is not a timeout";
+}
+
 TEST(HubOperations, SendHeatingCommandAcceptsClimateDeviceAndSendsExactBytes) {
   TestableComponent comp;
   MockRadio radio;
@@ -1561,6 +1588,9 @@ TEST(HubOperations, CommandAuthenticatedWithoutFinalResponseCountsAsSuccess) {
   EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 0u)
       << "an accepted command must not be recorded as an auth-shaped failure";
   EXPECT_EQ(dev->exchange_timeout_count, 0u) << "nor as a timeout";
+  EXPECT_EQ(dev->exchange_unconfirmed_count, 1u)
+      << "but it must still be counted somewhere: reported as success and recorded nowhere, a device "
+         "that never closes an exchange would be invisible in the diagnostics";
 }
 
 TEST(HubOperations, StatusPollAuthenticatedWithoutFinalResponseStillFails) {
@@ -1586,6 +1616,10 @@ TEST(HubOperations, StatusPollAuthenticatedWithoutFinalResponseStillFails) {
 
   EXPECT_FALSE(comp.request_device_status("ABC123")) << "a poll that returned no payload has not succeeded";
   EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 1u) << "and it is the auth-shaped kind";
+  EXPECT_EQ(dev->exchange_timeout_count, 1u) << "it counts as a failure";
+  EXPECT_EQ(dev->exchange_unconfirmed_count, 1u)
+      << "and as an unconfirmed one, so this is distinguishable from a device that never answered at all — "
+         "the failure counter alone conflates the two";
 }
 
 TEST(HubOperations, SilentDeviceSendsTheSilentExecutePayload) {

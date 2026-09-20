@@ -43,8 +43,9 @@ climate:
 ## Companion entities
 
 The usual companion diagnostic sensors (`Device Name`, `Active Issue`, `Last Contact`, `RSSI`,
-`Exchange Failures`, `Last Commanded By`, `Last Command Source`) are generated as for the other
-platforms. `Last Contact` and `Active Issue` are the only feedback a write-only device can give.
+`Exchange Failures`, `Unconfirmed Exchanges`, `Last Commanded By`, `Last Command Source`) are
+generated as for the other platforms. `Last Contact` and `Active Issue` are the only feedback a
+write-only device can give.
 
 ## Temperature range — 7.0–28.0 °C
 
