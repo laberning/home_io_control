@@ -70,6 +70,7 @@ project controls.
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
 | **KLR 200 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | succeeded end to end on the first attempt, including the address round; corpus `velux_klr200_pairing_key_extraction_success` |
+| **KLR 100 two-way control pad** | Third-party hub | 📣 Reported as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | Its "Register product" gesture opens the extraction window the same way the KLR 200's does; issue #87 |
 | **KIG 300 hub** | Third-party hub | ⚠️ Partial — one extraction succeeded, one stalled | Key extraction | `accept_foreign_pairing: true` | 4 corpus captures |
 | **INTEGRA roof-window actuator** | `window_opener` | ✅ Confirmed | — | `io_device_type: window_opener`, which adds the Ventilation Position button | 3 corpus captures; issue #98 |
 | **Devices behind an extracted KLR200 key** | Mixed | ✅ Confirmed | Key extraction, then `scan_paired_devices` | **`low_power: true`** on the affected devices | `scan_paired_devices` runs a low-power pass built to reach sleeping devices without any YAML declaration; `low_power: true` is still needed for directed commands once they are registered |

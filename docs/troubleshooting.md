@@ -38,7 +38,8 @@ What to try, in order:
 2. **Check the gesture, and that only one device is listening.** Put the device into pairing mode
    first, then press Discover & Pair straight away. For a device without a reachable button of its
    own, hold PROG on a remote already registered to it and let go at the first jog. If that remote
-   also drives other devices, power them down first.
+   also drives other devices, power them down first. Give each attempt one PROG press — pressing it
+   again while the device is still in pairing mode can close the window the first press opened.
 3. **Don't treat a reset as a pairing gesture.** A Double Power Cut or factory reset only returns
    the device to its first-time setup. If it has a local remote, register that again as the manual
    describes, then repeat step 2. The exception is a VELUX SSL solar roller shutter, which pairs

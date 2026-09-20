@@ -435,6 +435,9 @@ TEST(PairingAdvisor, OneWayPairingMessageIsActionableAndIncludesSrcNode) {
   EXPECT_NE(message.find("1W"), std::string::npos);
   EXPECT_NE(message.find("key extraction"), std::string::npos);
   EXPECT_NE(message.find("first jog"), std::string::npos);
+  // One press per attempt: the advice used to end on "and retry", which reads as "press it again
+  // now" — and a second PROG press on an already-registered remote can close the pairing window.
+  EXPECT_NE(message.find("one PROG press"), std::string::npos);
   EXPECT_NE(message.find(node_id_to_string(REMOTE_SRC)), std::string::npos);
   // The fixed render buffer must hold the whole message: a truncated one loses its last sentence.
   const std::string tail = "not a pairing gesture.";

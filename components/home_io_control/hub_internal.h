@@ -552,6 +552,19 @@ inline void record_exchange_timeout(IoDevice &dev, uint8_t tries) {
       static_cast<uint16_t>(std::min<uint32_t>(static_cast<uint32_t>(dev.exchange_attempt_count) + tries, UINT16_MAX));
 }
 
+/// @brief Record that an outbound exchange ended accepted-but-unconfirmed: the device answered the
+/// request with a challenge, we answered that, and the closing reply never arrived.
+///
+/// Called for every `ExchangeOutcome::SUCCESS_UNCONFIRMED`, whichever way the caller then
+/// classifies it — a CMD_EXECUTE treats it as success and records no failure, so this counter is
+/// the only place that outcome is visible to the diagnostics at all. Saturates at UINT16_MAX
+/// instead of wrapping, like the counters above.
+/// @param dev Device the exchange was addressed to.
+inline void record_exchange_unconfirmed(IoDevice &dev) {
+  if (dev.exchange_unconfirmed_count < UINT16_MAX)
+    dev.exchange_unconfirmed_count++;
+}
+
 /// @brief Offset of the last-command record within each status-bearing payload.
 ///
 /// Both status-bearing frame types carry the same 4-byte record — three bytes of node ID for the

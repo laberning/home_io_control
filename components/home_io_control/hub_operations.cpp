@@ -162,6 +162,18 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   //     went unanswered, so it stays a failure and keeps the aggressive auth-shaped poll backoff
   //     that exists for precisely this shape of miss.
   const bool unconfirmed_counts_as_success = request.cmd == CMD_EXECUTE;
+
+  // Counted once, here, for every unconfirmed acceptance — deliberately above the split below,
+  // because the rule is about the outcome and not about how this request chooses to classify it.
+  // The two branches disagree on whether this is a failure; they must not disagree on whether it
+  // happened. It is the only record of the CMD_EXECUTE case, which reports success, and it is what
+  // separates "the device never heard us" from "it heard us and the reply was lost" in the branch
+  // that does count as a failure.
+  if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
+    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr)
+      detail::record_exchange_unconfirmed(*dev);
+  }
+
   if (outcome == ExchangeOutcome::FAILED ||
       (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED && !unconfirmed_counts_as_success)) {
     const auto &dbg = this->exchange_engine_.get_debug();
@@ -481,6 +493,11 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
   // "Last Result Code" diagnostic surfaces it, exactly as the cover path does.
   // `dev` was resolved above via get_device(), which is registry_.get(); reuse it.
   IoDevice &d = *dev;
+  // Same rule as execute_request_and_update_(): an unconfirmed acceptance is counted wherever it
+  // happens, or a climate device that authenticates and then goes silent stays invisible in the
+  // very diagnostic built to surface that, while a cover doing the same thing is counted.
+  if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED)
+    detail::record_exchange_unconfirmed(d);
   if (outcome == ExchangeOutcome::FAILED) {
     detail::record_exchange_timeout(d, this->exchange_engine_.get_debug().tries);
   } else {

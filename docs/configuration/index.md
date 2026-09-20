@@ -99,9 +99,9 @@ the same set of keys. Platform-specific options are documented on each platform'
 
 ### Companion entities
 
-Every entity on these platforms generates seven companion diagnostic entities named after the
+Every entity on these platforms generates eight companion diagnostic entities named after the
 parent: Active Issue (enabled by default), Device Name, RSSI, Last Contact, Exchange Failures,
-Last Commanded By and Last Command Source.
+Unconfirmed Exchanges, Last Commanded By and Last Command Source.
 [Diagnostic entities](../diagnostic-entities.md) explains each one and when to enable it.
 
 ## Notes
