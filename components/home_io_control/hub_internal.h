@@ -184,7 +184,7 @@ inline void log_frame_issue(IOHomeControlComponent *component, const char *direc
 
 /// @brief Log an already-decoded 1W remote frame at DEBUG level.
 ///
-/// Formats a concise DEBUG log line showing remote ID, target type, command intent, and
+/// Formats a concise DEBUG log line showing remote ID, destination class, command intent, and
 /// priority. When the remote is linked to devices, appends the linked device IDs. Takes the
 /// already-decoded OneWayFrameInfo so callers that also build a HA event (see
 /// build_sender_event_data()) decode the frame once, not twice.
@@ -196,6 +196,13 @@ inline void log_1w_remote_frame(const OneWayFrameInfo &info, const std::vector<s
   // Resolve the broadcast target label: "all" for BROADCAST_ALL, otherwise the device type name.
   // Shared with the TX path (OneWayTransmitter::send_burst()) via oneway_target_label() so the two
   // cannot render the same address differently.
+  //
+  // Rendered as `dst-class=`, never "targets X": this is the class encoded in the frame's
+  // destination, not a statement about the device the remote drives. A Somfy remote sends every
+  // press twice, once to the device-class broadcast and once to the all-devices broadcast,
+  // whatever the channel actually controls — so an awning channel logs a light-class frame. Worded
+  // as "targets light" it read as a claim about the device, and cost an issue reporter two rounds
+  // chasing a channel mix-up that never happened.
   const char *target_label = oneway_target_label(info);
 
   // Build optional suffix showing linked devices.
@@ -210,13 +217,13 @@ inline void log_1w_remote_frame(const OneWayFrameInfo &info, const std::vector<s
   }
 
   if (info.has_intent) {
-    ESP_LOGD(TAG, "rx 1W remote %s targets %s: %s(0x%02X) %s originator=%s priority=%s%s", src_id.c_str(), target_label,
-             command_name(info.cmd), info.cmd, info.intent, originator_name(info.originator),
+    ESP_LOGD(TAG, "rx 1W remote %s dst-class=%s: %s(0x%02X) %s originator=%s priority=%s%s", src_id.c_str(),
+             target_label, command_name(info.cmd), info.cmd, info.intent, originator_name(info.originator),
              acei_level_name(info.acei_level), suffix.c_str());
     return;
   }
 
-  ESP_LOGD(TAG, "rx 1W remote %s targets %s: %s(0x%02X) data_len=%u%s", src_id.c_str(), target_label,
+  ESP_LOGD(TAG, "rx 1W remote %s dst-class=%s: %s(0x%02X) data_len=%u%s", src_id.c_str(), target_label,
            command_name(info.cmd), info.cmd, info.data_len, suffix.c_str());
 }
 

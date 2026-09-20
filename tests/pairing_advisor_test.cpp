@@ -79,6 +79,39 @@ TEST(PairingAdvisor, OneWayPairingTraffic_Cmd0x2E_AlternateDiscovery1W) {
   EXPECT_EQ(advice[0].code, PairingAdviceCode::ONE_WAY_PAIRING_TRAFFIC);
 }
 
+TEST(PairingAdvisor, OneWayPairingTrafficStaysSilentWhenTheDeviceActuallyPaired) {
+  // The advice tells the user no device answered their PROG gesture. A PROG press is the normal
+  // prelude to a *successful* pairing too, so without this gate the hub warned about a failure
+  // that did not happen on most successes, and stamped advice=1w_traffic into the result sensor.
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  IoFrame f = build_frame(false, REMOTE_SRC, BROADCAST_DISCOVER_ALT, CMD_WRITE_PRIVATE);
+  telemetry.record_rx_reject(f, -48);
+  telemetry.set_outcome(PairingOutcome::PAIRED);
+
+  PairingAdvice advice[PAIRING_ADVICE_MAX];
+  const uint8_t count = analyze_pairing_telemetry(telemetry, OWN_ID, advice);
+
+  for (uint8_t i = 0; i < count; i++)
+    EXPECT_NE(advice[i].code, PairingAdviceCode::ONE_WAY_PAIRING_TRAFFIC);
+}
+
+TEST(PairingAdvisor, ForeignControllerAdviceSurvivesASuccessfulPairing) {
+  // The sibling advices are deliberately not gated on the outcome. This one matters *more* on a
+  // success: it is the case where the device that answered may not have been addressing us.
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  IoFrame f = build_frame(true, DEVICE_SRC, OTHER_CONTROLLER_ID, CMD_DISCOVER_RESP);
+  telemetry.record_rx_reject(f, -60);
+  telemetry.set_outcome(PairingOutcome::PAIRED);
+
+  PairingAdvice advice[PAIRING_ADVICE_MAX];
+  const uint8_t count = analyze_pairing_telemetry(telemetry, OWN_ID, advice);
+
+  ASSERT_EQ(count, 1u);
+  EXPECT_EQ(advice[0].code, PairingAdviceCode::FOREIGN_CONTROLLER_PAIRING);
+}
+
 TEST(PairingAdvisor, OneWayPairingTraffic_NotTriggeredWhenNotBroadcastDst) {
   PairingTelemetry telemetry;
   telemetry.begin();

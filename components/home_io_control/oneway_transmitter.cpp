@@ -268,7 +268,9 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
   // Same vocabulary as the RX line (hub_internal.h's log_1w_remote_frame()): "all" for the
   // all-devices broadcast, else the target class's bare name -- one decision, made once, by
   // oneway_target_label() (proto_codecs.h), so the two paths cannot render the same address
-  // differently.
+  // differently. "to <class>" is a fair claim here and only here: we choose the class we transmit
+  // to (enrollment_classes). The RX line says dst-class= instead, because a received class says
+  // nothing about what the sending remote drives.
   const char *target = oneway_target_label(info);
   // Built from the same oneway_burst_copy_shape() the transmit loop below calls, so this can never
   // claim a preamble shape the burst does not actually send.
