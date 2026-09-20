@@ -14,6 +14,7 @@
 #include "tuning_config.h"
 #include <atomic>
 #include <cstdint>
+#include <iterator>
 #include "esphome/core/hal.h"
 
 namespace esphome {
@@ -41,6 +42,19 @@ inline constexpr uint32_t RX_HOP_HOLDOFF_US = 12000;
 /// SX1262 and LR1121 drivers skip all DIO3/TCXO programming when they see it and calibrate off
 /// the plain crystal. Cannot collide with the real 0-based voltage codes (0x00-0x07).
 inline constexpr uint8_t TCXO_VOLTAGE_NONE = 0xFF;
+
+/// @brief Human-readable voltage for a `tcxo_voltage` code, for the config dump.
+/// @param code 0-based chip voltage code (0x00 = 1.6 V .. 0x07 = 3.3 V) or @ref TCXO_VOLTAGE_NONE.
+/// @return A static string; `"unknown"` for a code outside the table.
+///
+/// Mirrors TCXO_VOLTAGE_OPTIONS in `__init__.py`, the YAML-side source of truth for the codes.
+[[nodiscard]] inline const char *tcxo_voltage_label(uint8_t code) {
+  // Index = the 0-based chip voltage code.
+  static constexpr const char *LABELS[] = {"1.6 V", "1.7 V", "1.8 V", "2.2 V", "2.4 V", "2.7 V", "3.0 V", "3.3 V"};
+  if (code == TCXO_VOLTAGE_NONE)
+    return "none (bare crystal)";
+  return code < std::size(LABELS) ? LABELS[code] : "unknown";
+}
 
 /// @brief Which RF front-end module (if any) sits between the SX1262 and the antenna.
 ///
@@ -241,12 +255,25 @@ class RadioDriver {
   virtual void set_mode_standby() = 0;
 
   /// Returns true if the radio failed to initialize or encountered a fatal error.
-  /// @return true on failure.
-  [[nodiscard]] virtual bool is_failed() const = 0;
+  /// @return true once a driver has latched a failure with @ref fail_; the state is sticky.
+  [[nodiscard]] virtual bool is_failed() const { return this->failed_; }
 
   /// @brief Get a human‑readable chip name.
   /// @return Short lowercase identifier (e.g. "sx1276").
   [[nodiscard]] virtual const char *chip_name() const = 0;
+
+  /// @brief Short, human-readable reason the driver latched @ref is_failed, or `nullptr` if it has not.
+  ///
+  /// The first recorded reason wins, so it names the root cause rather than a later cascade (a dead
+  /// chip makes every later transaction fail too). Always a string literal: it outlives the driver,
+  /// which the hub deletes when init() fails. The hub prints it from dump_config, so it reaches log
+  /// clients that connect after boot and never saw the driver's own ESP_LOGE at the failure site.
+  [[nodiscard]] const char *failure_reason() const { return this->failure_reason_; }
+
+  /// Optional board front-end-module (external PA/LNA) summary emitted from dump_config, as its own
+  /// section ahead of dump_debug(). The front end belongs to the board rather than to the radio
+  /// chip, so it gets its own section instead of sharing the chip's diagnostic block.
+  virtual void dump_front_end() {}
 
   /// Optional chip-specific diagnostics emitted from dump_config.
   virtual void dump_debug() {}
@@ -377,9 +404,21 @@ class RadioDriver {
     }
   }
 
+  /// Latch the failed state and record why, so @ref is_failed and @ref failure_reason can never
+  /// disagree. Only the first reason sticks; see @ref failure_reason.
+  /// @param reason String literal (stored by pointer, not copied).
+  void fail_(const char *reason) {
+    if (this->failure_reason_ == nullptr)
+      this->failure_reason_ = reason;
+    this->failed_ = true;
+  }
+
   uint32_t current_freq_{FREQ_CH2};
   RadioCaptureInfo last_capture_{};
   InternalGPIOPin *rst_pin_{nullptr};
+
+  bool failed_{false};                   ///< Latched by @ref fail_; see @ref is_failed.
+  const char *failure_reason_{nullptr};  ///< First failure cause, see @ref failure_reason.
 
   bool rx_hold_armed_{false};     ///< Idle-hop holdoff latch — see reception_in_progress().
   uint32_t rx_hold_since_us_{0};  ///< micros() timestamp the holdoff was last (re-)armed at.

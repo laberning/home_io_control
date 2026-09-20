@@ -1073,6 +1073,9 @@ class IOHomeControlComponent : public Component,
   std::string node_id_str_;
   std::string system_key_str_;
   std::string radio_type_;  ///< "sx1276", "sx1262", or "lr1121"; required by the YAML schema.
+  /// Why setup() gave up on the radio, or empty. Printed by dump_config so log clients that connect
+  /// after boot see the cause, not only ESPHome's generic "marked FAILED" line.
+  std::string radio_failure_reason_;
   uint8_t node_id_[NODE_ID_SIZE]{};
   uint8_t system_key_[AES_KEY_SIZE]{};
   uint8_t tx_power_{DEFAULT_TX_POWER_DBM};

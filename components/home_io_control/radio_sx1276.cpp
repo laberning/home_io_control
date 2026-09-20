@@ -48,7 +48,7 @@ void RadioSX1276::set_mode_(uint8_t mode) {
       break;
     if (millis() - start > 50) {
       ESP_LOGE(TAG, "Radio mode change timeout");
-      this->failed_ = true;
+      this->fail_("SX1276 never reached the requested operating mode");
       return;
     }
     App.feed_wdt();
@@ -65,7 +65,7 @@ void RadioSX1276::run_image_cal_() {
   while ((this->read_register_(REG_IMAGE_CAL) & 0x20) != 0) {
     if (millis() - start > 20) {
       ESP_LOGE(TAG, "Image calibration timeout");
-      this->failed_ = true;
+      this->fail_("SX1276 image calibration never completed");
       return;
     }
     App.feed_wdt();
@@ -144,7 +144,7 @@ bool RadioSX1276::init() {
   // Version check — SX1276 should return 0x12
   if (this->read_register_(REG_VERSION) != 0x12) {
     ESP_LOGE(TAG, "SX1276 not found");
-    this->failed_ = true;
+    this->fail_("SX1276 not found (version register is not 0x12) -- check SPI wiring and radio_type");
     return false;
   }
 
@@ -219,10 +219,10 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_FDEV_LSB, fd & 0xFF);
 
   // PA config
-  if (this->pa_pin_ == 0x80) {
+  if (this->uses_pa_boost_()) {
     uint8_t p = std::max(this->tx_power_, (uint8_t) 2);
     p = std::min(p, (uint8_t) 17);
-    this->write_register_(REG_PA_CONFIG, 0x80 | (p - 2));
+    this->write_register_(REG_PA_CONFIG, SX1276_PA_SELECT_PA_BOOST | (p - 2));
   } else {
     this->write_register_(REG_PA_CONFIG, std::min(this->tx_power_, (uint8_t) 14));
   }
@@ -377,6 +377,7 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
 
 void RadioSX1276::dump_debug() {
   ESP_LOGCONFIG(TAG, "  SX1276 Diagnostic:");
+  ESP_LOGCONFIG(TAG, "    PA output: %s", this->uses_pa_boost_() ? "PA_BOOST" : "RFO");
   ESP_LOGCONFIG(TAG, "    Opmode=0x%02X irq1=0x%02X irq2=0x%02X freq=%" PRIu32, this->read_register_(REG_OP_MODE),
                 this->read_register_(REG_IRQ_FLAGS1), this->read_register_(REG_IRQ_FLAGS2), this->current_freq_);
 }

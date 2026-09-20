@@ -12,7 +12,8 @@ Indexed by what you see, not by which subsystem is responsible.
 | The cover shows no position, or a stale one | [Position is unknown or state is stale](#position-is-unknown-or-state-is-stale) |
 | `stop` does nothing while the device is moving | [Commands are ignored mid-motion](#commands-are-ignored-mid-motion) |
 | A 1W button press does nothing | [1W commands do nothing](#1w-commands-do-nothing) |
-| The boot log shows `XOSC_START_ERR` on an SX1262 board | [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot) |
+| The log says `home_io_control is marked FAILED`, `Radio setup failed:` or `Radio failed after setup:` | [The radio does not start](#the-radio-does-not-start) |
+| The boot log shows `XOSC_START_ERR` on an SX1262 board, or `HF_XOSC_START_ERR` on an LR1121 board | [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot) |
 | Pairing works some of the time, or the link is unreliable | [A tuning plan](#a-tuning-plan) |
 
 ## The device is never found
@@ -217,12 +218,39 @@ paste that snapshot into your permanent `tuning:` block. If a combination makes 
 otherwise-unsupported device work, open an issue with it so the defaults can improve.
 
 
+## The radio does not start
+
+No device responds, and the `IO-Homecontrol:` block of the log either ends with
+`home_io_control is marked FAILED: ...` or carries a `Radio setup failed:` or
+`Radio failed after setup:` line. All three are part of the config dump, so you see them even when
+you connected to the log after the boot.
+
+- **`Invalid node_id or system_key configuration`**: `node_id` must be 6 hex digits and `system_key`
+  32. Fix the two keys in your `home_io_control:` block.
+- **A `Radio setup failed:` line** names the cause. Use the table below.
+- **A `Radio failed after setup:` line** means the radio started, then stopped responding
+  (typically a BUSY timeout). The component is not marked failed in that case, but nothing the
+  radio does works any more. Use the same table, and reset the board.
+
+| Reason in the log | What to check |
+|---|---|
+| `SX1276 not found (version register is not 0x12)` | The SPI pins and the chip select in your board package, and that `radio_type` matches the chip on the board. See [Hardware](hardware.md). |
+| `chip does not identify as an LR1121` | The same checks for an LR1121 board; a board with a different chip under the same silkscreen fails here. |
+| `BUSY pin stayed high` | `busy_pin` and the SPI wiring. On an SX1262 or LR1121 board, also `tcxo_voltage`: a TCXO that never starts can hold BUSY high. See [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot). |
+| `SX1276 never reached the requested operating mode` or `SX1276 image calibration never completed` | The chip answers on SPI but does not finish start-up. Check the power supply, the reset pin and the SPI wiring. |
+| `no driver for radio_type '...'` | A pin the chip needs is missing from the `home_io_control:` block: `dio0_pin` for an SX1276, `busy_pin` and `dio1_pin` for an SX1262 or LR1121. |
+
+
 ## `XOSC_START_ERR` at boot
 
-The log shows `SX1262 device errors after init: ... (XOSC_START_ERR)` or
-`SX1262 TCXO started after N attempts` shortly after boot.
+The log shows `SX1262 device errors after init: ... (XOSC_START_ERR)`,
+`LR1121 device errors after init: ... (HF_XOSC_START_ERR)` or
+`SX1262 TCXO started after N attempts` shortly after boot. If you connected to the log after the
+boot, read the same facts from the config dump instead: the `SX1262 Diagnostic` block lists
+`TCXO voltage`, `TCXO startup: N attempts` and `Init device errors (cleared after init)`. An LR1121 board lists
+`HF_XOSC_START_ERR` in the same `Init device errors` line of its `LR1121 Diagnostic` block.
 
-The SX1262's TCXO is not coming up on the control voltage it is being given.
+The radio's TCXO is not coming up on the control voltage it is being given.
 
 - **Raise `tcxo_voltage` one step** from whatever your board config uses (e.g. `1_8V` → `2_2V`).
   On the Heltec V3 the value lives in the board package, so set `tcxo_voltage:` explicitly in

@@ -65,28 +65,37 @@ make compile
 # Compile the SX1262 validation config (Heltec V3)
 make compile-v3
 
+# Compile the Heltec V4 configs (SX1262 + front-end module); `v4` is the V4.3
+make compile-v4-2
+make compile-v4-3
+make compile-v4
+
 # Compile the LR1121 config (LilyGO T3-S3 LR1121 variant)
 make compile-t3
 
 # Compile and flash via USB
 make upload          # SX1276
 make upload-v3       # SX1262
+make upload-v4       # SX1262 + FEM (V4.3); also upload-v4-2, upload-v4-3
 make upload-t3       # LR1121
 
 # Compile, flash, and stream logs in one shot (alias for upload-*, since
 # `esphome run` already does all three)
 make run              # SX1276
 make run-v3           # SX1262
+make run-v4           # SX1262 + FEM (V4.3); also run-v4-2, run-v4-3
 make run-t3           # LR1121
 
 # Monitor serial output
 make logs            # SX1276
 make logs-v3         # SX1262
+make logs-v4         # SX1262 + FEM (V4.3); also logs-v4-2, logs-v4-3
 make logs-t3         # LR1121
 
 # Clean build artifacts
 make clean           # SX1276
 make clean-v3        # SX1262
+make clean-v4        # SX1262 + FEM (V4.3); also clean-v4-2, clean-v4-3
 make clean-t3        # LR1121
 
 # Format all C++ source files

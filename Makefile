@@ -43,10 +43,15 @@ endef
 # names (compile-v2, ...) that existed before the T3-S3 board was added; only the
 # recipe fragments above changed shape (full stem instead of a hardcoded prefix) to
 # make room for stems that don't share the "heltec-wifi-lora-32-" prefix.
+#
+# `v4` is an alias for `v4-3` (Heltec V4.3); `v4-2` and `v4-3` name each revision unambiguously.
 DEVICE_VARIANTS := heltec-wifi-lora-32-v2:v2 \
                     heltec-wifi-lora-32-v2-monitor:v2-monitor \
                     heltec-wifi-lora-32-v3:v3 \
                     heltec-wifi-lora-32-v3-monitor:v3-monitor \
+                    heltec-wifi-lora-32-v4-2:v4-2 \
+                    heltec-wifi-lora-32-v4-3:v4-3 \
+                    heltec-wifi-lora-32-v4-3:v4 \
                     t3s3-lr1121:t3 \
                     t3s3-lr1121-monitor:t3-monitor
 

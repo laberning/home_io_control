@@ -9,6 +9,7 @@
 #include "stubs/soft_phy_test_driver.h"
 
 #include <gtest/gtest.h>
+#include <string>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -72,6 +73,8 @@ TEST(RadioLR1121, GetVersionTransactionBytes) {
   bool ok = radio.init();
   EXPECT_FALSE(ok) << "init() must fail when the reported device type does not match LR1121";
   EXPECT_TRUE(radio.is_failed());
+  ASSERT_NE(radio.failure_reason(), nullptr) << "the hub prints this from dump_config, so it must be recorded";
+  EXPECT_NE(std::string(radio.failure_reason()).find("LR1121"), std::string::npos);
 
   // The very first transaction must be the GetVersion opcode (0x0101), no parameters.
   ASSERT_FALSE(spi.transactions().empty());
@@ -96,6 +99,114 @@ TEST(RadioLR1121, ReadIrqStatusRawParsesGetStatusResponse) {
                        (uint8_t) expected});
 
   EXPECT_EQ(radio.call_real_read_irq_status_raw(), expected);
+}
+
+// ScriptedSpi that models the chip's error register just enough to test init-time capture: a
+// Calibrate command raises `errors_after_calibrate` (a fault found while calibrating), ClearErrors
+// zeroes the register, and the GetErrors *response* transaction (the one after the opcode write)
+// reports whatever the register holds. Every other transaction is left to the base class's queue.
+class ErrorRegisterSpi : public ScriptedSpi {
+ public:
+  uint16_t errors_after_calibrate{0};
+
+  void spi_enable() override {
+    ScriptedSpi::spi_enable();
+    idx_ = 0;
+    first_ = 0;
+    responding_ = pending_response_;
+    pending_response_ = false;
+  }
+  // The command phase is spi_write() (MOSI only), so the opcode is spotted there.
+  void spi_write(uint8_t data) override {
+    ScriptedSpi::spi_write(data);
+    if (idx_ == 0) {
+      first_ = data;
+    } else if (idx_ == 1 && first_ == 0x01) {
+      switch (data) {
+        case 0x0D:  // GetErrors 0x010D
+          opcode_seen_ = true;
+          break;
+        case 0x0E:  // ClearErrors 0x010E
+          register_ = 0;
+          break;
+        case 0x0F:  // Calibrate 0x010F
+          register_ = errors_after_calibrate;
+          break;
+        default:
+          break;
+      }
+    }
+    idx_++;
+  }
+  uint8_t spi_read() override {
+    const uint8_t recorded = ScriptedSpi::spi_read();
+    const int i = idx_++;
+    if (!responding_)
+      return recorded;
+    if (i == 1)
+      return static_cast<uint8_t>(register_ >> 8);  // response layout: Stat1, MSB, LSB
+    return i == 2 ? static_cast<uint8_t>(register_ & 0xFF) : 0;
+  }
+  void spi_disable() override {
+    ScriptedSpi::spi_disable();
+    pending_response_ = opcode_seen_;
+    opcode_seen_ = false;
+  }
+
+ private:
+  uint16_t register_{0};
+  int idx_{0};
+  uint8_t first_{0};
+  bool opcode_seen_{false};
+  bool pending_response_{false};
+  bool responding_{false};
+};
+
+TEST(RadioLR1121, KeepsInitDeviceErrorsForDumpAfterTheyAreCleared) {
+  // configure_radio_() clears the chip's error register as its last step, so dump_debug() can only
+  // report what init() kept. The double zeroes its register on ClearErrors, so capturing after the
+  // clear (instead of before it) would leave this at zero.
+  ErrorRegisterSpi spi;
+  spi.errors_after_calibrate = LR1121_ERR_HF_XOSC_START | LR1121_ERR_PLL_LOCK;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
+  queue_valid_version_response(spi);
+
+  ASSERT_TRUE(radio.init());
+  EXPECT_EQ(radio.init_device_errors_for_test(), LR1121_ERR_HF_XOSC_START | LR1121_ERR_PLL_LOCK);
+}
+
+// ============================================================================
+// GetErrors bit → name decoder
+// ============================================================================
+
+TEST(RadioLR1121ErrorDecoder, ZeroIsNone) {
+  char buf[DEVICE_ERROR_STR_SIZE];
+  lr1121_format_device_errors(0, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "none");
+}
+
+TEST(RadioLR1121ErrorDecoder, MultipleBitsAreJoinedInTableOrder) {
+  char buf[DEVICE_ERROR_STR_SIZE];
+  lr1121_format_device_errors(LR1121_ERR_PLL_LOCK | LR1121_ERR_HF_XOSC_START, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "HF_XOSC_START_ERR|PLL_LOCK_ERR");
+}
+
+TEST(RadioLR1121ErrorDecoder, UnmappedBitsShowAsUnknown) {
+  char buf[DEVICE_ERROR_STR_SIZE];
+  lr1121_format_device_errors(LR1121_ERR_IMG_CALIB | 0x0100, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "IMG_CALIB_ERR|UNKNOWN_0x0100");
+}
+
+TEST(RadioLR1121ErrorDecoder, EveryNamedBitFitsTheDocumentedBuffer) {
+  const uint16_t all = LR1121_ERR_LF_RC_CALIB | LR1121_ERR_HF_RC_CALIB | LR1121_ERR_ADC_CALIB | LR1121_ERR_PLL_CALIB |
+                       LR1121_ERR_IMG_CALIB | LR1121_ERR_HF_XOSC_START | LR1121_ERR_LF_XOSC_START | LR1121_ERR_PLL_LOCK;
+  char buf[DEVICE_ERROR_STR_SIZE];
+  lr1121_format_device_errors(static_cast<uint16_t>(all | 0x8000), buf, sizeof(buf));
+  for (const char *name : {"LF_RC_CALIB_ERR", "HF_RC_CALIB_ERR", "ADC_CALIB_ERR", "PLL_CALIB_ERR", "IMG_CALIB_ERR",
+                           "HF_XOSC_START_ERR", "LF_XOSC_START_ERR", "PLL_LOCK_ERR", "UNKNOWN_0x8000"}) {
+    EXPECT_NE(std::string(buf).find(name), std::string::npos) << name << " missing from: " << buf;
+  }
 }
 
 TEST(RadioLR1121, InitSucceedsOnCorrectDeviceType) {

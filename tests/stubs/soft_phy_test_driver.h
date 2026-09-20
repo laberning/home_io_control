@@ -57,6 +57,15 @@ template<class Base> class TestableSoftPhy : public Base {
   /// no such method.
   [[nodiscard]] bool fem_tx_active_level_for_test() const { return this->fem_tx_active_level_(); }
 
+  /// Run the chip's per-packet capture (the code that reads the packet-tied RSSI) without the RX
+  /// state machine around it. The caller queues the chip's packet-status response first.
+  void fill_capture_for_test() { this->fill_capture_info(true, 0, 0, 0, nullptr, 0, nullptr, 0); }
+
+  /// The device-error word both software-PHY drivers capture at the end of `configure_radio_()`,
+  /// before clearing the chip's register — protected on SoftPhyDriverBase, surfaced here so a test
+  /// can assert what the config dump will report.
+  [[nodiscard]] uint16_t init_device_errors_for_test() const { return this->init_device_errors_; }
+
  protected:
   uint32_t read_irq_status_raw() override {
     if (irq_idx_ < irq_seq_.size())
