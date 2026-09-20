@@ -44,6 +44,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0030](0030-predictions-are-kept-apart-from-observations.md) | Predictions are kept apart from observations | An optimistic guess lives in its own overlay, withdrawn on failure and superseded per-axis by real data — never written into a reported field |
 | [0031](0031-oneway-vendor-wire-behaviour-is-driven-by-manufacturer.md) | 1W vendor wire behaviour is driven by `manufacturer:` | `manufacturer:` selects the 1W `CMD_EXECUTE` ACEI byte (`0x43` Somfy / `0x61` Velux); `execute_broadcast: typed\|all` is a separate handheld-vs-class-bound axis, not a vendor one |
 | [0032](0032-oneway-velux-enrollment-gesture.md) | 1W enrollment follows the gesture the target's `manufacturer:` expects | `velux` → `0x39` broadcast, a `0x30` sweep across `{roller_shutter, awning, dual_shutter}` under one sequence, then STOP+DOWN; `somfy` path unchanged; `enrollment_classes:` overrides the sweep list |
+| [0041](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md) | An unset 1W `low_power:` resolves from the manufacturer profile | `velux` → `ALWAYS_ALIVE` (an awake VELUX receiver rejects the 1024-byte preamble, and 1W has no ACK to reveal it); Somfy and unrecognised manufacturers stay `LEGACY_LONG`; an explicit key always wins |
 | [0033](0033-heating-send-path-bypasses-the-cover-machinery.md) | Heating send path bypasses the cover machinery | 2W heating does a plain send-and-receive — no status decode, no poll backoff, no ADR 0030 overlay (heating has no observation stream); state is publish-on-success only |
 
 ### Interfaces and naming
@@ -128,6 +129,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0037: The roll-call sweeps both power classes](0037-the-roll-call-sweeps-both-power-classes.md)
 - [ADR 0038: 1W bursts follow the identity's power class, not a hard-coded preamble](0038-oneway-bursts-follow-the-identity-power-class.md)
 - [ADR 0039: Pairing sends a discover-confirm (0x2C) and tolerates no answer](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md)
+- [ADR 0041: An unset 1W `low_power:` resolves from the manufacturer profile](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

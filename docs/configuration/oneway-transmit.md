@@ -72,7 +72,7 @@ home_io_control:
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
 | `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), but a real Somfy Izymo has separately been shown to accept the MAC-bearing form too. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. |
 | `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of `io_device_type` names (max 3). Unset → the profile default `[roller_shutter, awning, dual_shutter]`, the exterior-shading set a KLI 310/313 uses. **Interior blinds need it set**: a KLI 312 uses `[blind, venetian_blind]`. To find the classes for your product, see "Finding your enrollment classes" below. **Ignored by the Somfy gesture**, which always uses `io_device_type`. See "Enrolling this hub as a controller" below. |
-| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). **Tri-state, and unset is not the same as `false`** — unlike the device-platform `low_power` key. Unset (the default) keeps every copy on the long, ~213 ms wake-up preamble — the long-standing default shape. `false` sends every copy at the short, live `normal_start_preamble` tuning value instead — for a mains-powered receiver (confirmed on a VELUX SML roller shutter). `true` sends a long wake-up copy first, then short repeats — for a solar or battery receiver (it has also enrolled VELUX interior blinds). Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. |
+| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `normal_start_preamble` tuning value — for a mains-powered receiver. `true` sends one long ~213 ms wake-up copy first, then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble, every other vendor gets the long one on all four copies. Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. |
 
 ## Matching your remote's vendor
 
@@ -169,9 +169,9 @@ use one identity per product and make sure only that product runs its ready sequ
 a control that drives only that product.
 
 Set `io_device_type:` to whatever the device actually is (it drives the control-frame destination).
-The enroll gesture ignores `io_device_type` and uses the enrollment classes. With `low_power: false`
-the Enroll button blocks for about 1.2 seconds; with `low_power:` unset, about 7 seconds (both
-measured on SX1276).
+The enroll gesture ignores `io_device_type` and uses the enrollment classes. At the short preamble —
+which `manufacturer: velux` gives you by default — the Enroll button blocks for about 1.2 seconds;
+at the long one it takes about 7 seconds (both measured on SX1276).
 
 ```yaml
 oneway_controllers:
@@ -181,9 +181,9 @@ oneway_controllers:
     manufacturer: velux
     execute_broadcast: all
     enrollment: true
-    low_power: false
     commands: [open, close, stop]
-  # Interior blind behind a KLI 312
+  # Interior blind behind a KLI 312, solar-powered
+  # (low_power: true adds the wake-up copy a duty-cycled receiver needs)
   - id: velux_blind
     io_device_type: venetian_blind
     manufacturer: velux
@@ -223,10 +223,9 @@ the default classes, because that combination is unlikely to fit.
 > default classes) and on KLI 312 interior blinds (SX1262, `low_power: true`,
 > `enrollment_classes: [blind, venetian_blind]`), both in issue #74. If it doesn't take, check the
 > enrollment classes first, then that Gear made the product run its ready sequence and you pressed
-> Enroll once it had finished. Also set
-> `low_power:` explicitly (`false` for a mains-powered receiver, `true` for a solar or battery one):
-> leaving it unset has not been shown to work on VELUX. The STOP+DOWN frames are reconstructed
-> rather than byte-matched against a VELUX capture.
+> Enroll once it had finished. A solar or battery VELUX receiver wants `low_power: true`; a
+> mains-powered one needs nothing, since `manufacturer: velux` already gives it the short preamble.
+> The STOP+DOWN frames are reconstructed rather than byte-matched against a VELUX capture.
 
 **A hub cannot enroll into a device nobody has walked up to.** The receiver-side physical gesture is
 the real safety interlock here, stronger than any software confirmation could be — it is why this
