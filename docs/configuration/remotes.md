@@ -30,7 +30,7 @@ logger:
 4. Look for a log line like:
 
 ```
-[D][home_io_control] rx 1W remote 9D6085 targets all: EXECUTE(0x00) CLOSE originator=user_remote priority=user_high
+[D][home_io_control] rx 1W remote 9D6085 dst-class=all: EXECUTE(0x00) CLOSE originator=user_remote priority=user_high
 ```
 
 5. The 6-character hex ID after `1W remote` is your remote's node ID — in this example, `9D6085`.
@@ -103,7 +103,7 @@ Notes:
 | Field | Meaning |
 |-------|---------|
 | `1W remote XXXXXX` | The remote's 6-character node ID |
-| `targets all` / `targets awning` | The broadcast device-type class the remote addresses |
+| `dst-class=all` / `dst-class=awning` | The broadcast device-type class the frame is addressed to. Remotes often send the same press to a class and to `all`, so this does not tell you what the remote drives |
 | `EXECUTE(0x00) CLOSE` | The command: OPEN, CLOSE, STOP, FAVORITE, VENT, or a numeric position |
 | `originator=user_remote` | Who triggered the command (user, wind sensor, rain sensor, timer, etc.) |
 | `priority=user_high` | The ACEI priority level of the command |

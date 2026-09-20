@@ -8,7 +8,7 @@ description: >
   reference/sw-version code, not a public catalogue number), then the packed type/subtype bytes.
   Human-verified: data[10]=0x04, data[11]=0x00 -> (0x04<<2)|(0x00>>6) = 0x10 = HORIZONTAL_AWNING
   via decode_packed_device_type() (proto_device_model.cpp), matching this device's known identity
-  ("Patio Awning") and the "targets horizontal_awning" seen on 1W wind-sensor frames to it.
+  ("Patio Awning") and the horizontal_awning destination class seen on 1W wind-sensor frames to it.
 source:
   device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2), probed with CMD_GET_INFO2 (0x56)"
   captured_with: sx1262
