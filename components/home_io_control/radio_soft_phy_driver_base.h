@@ -24,6 +24,7 @@
 #include "radio_interface.h"
 #include "radio_soft_phy.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace esphome {
@@ -147,6 +148,42 @@ static_assert(SOFT_PHY_RX_PROBE_PACKET_LEN <= RADIO_PACKET_BUFFER_SIZE,
 // SOFT_PHY_MAX_WIRE_FRAME_BYTES above must grow to match and this probe length will need to grow
 // with it.
 
+// === Device-error decoding ===
+// Both chips report a 16-bit "device errors" word (SX1262 GetDeviceErrors, LR1121 GetErrors) whose
+// bit meanings differ; the decoding and the init-time capture below are shared, the tables are not.
+
+/// One named bit of a chip's device-error word.
+struct DeviceErrorBit {
+  uint16_t mask;     ///< The bit (or bits) of the error word this row names.
+  const char *name;  ///< Log name, e.g. `PLL_LOCK_ERR`.
+};
+
+/// Buffer size that always fits format_device_error_bits()'s longest output for either chip (every
+/// named bit, `|`-joined, plus an UNKNOWN_0x%04X tail).
+static constexpr size_t DEVICE_ERROR_STR_SIZE = 160;
+
+/// @brief Expand a device-error word into a human-readable `NAME|NAME|...` string.
+/// @param errors Raw device-error bitmask.
+/// @param bits The chip's bit → name table, in output order.
+/// @param bit_count Number of rows in @p bits.
+/// @param buf Caller-owned output buffer; always NUL-terminated on return.
+/// @param buf_size Size of @p buf. Use @ref DEVICE_ERROR_STR_SIZE.
+///
+/// Writes `"none"` when @p errors is zero, and appends `UNKNOWN_0x%04X` for any set bit with no
+/// name in the table so an undocumented flag still shows up in the log.
+void format_device_error_bits(uint16_t errors, const DeviceErrorBit *bits, size_t bit_count, char *buf,
+                              size_t buf_size);
+
+/// @copybrief format_device_error_bits
+/// @tparam N Row count of the chip's table, deduced from the array so no caller counts it by hand.
+template<size_t N>
+void format_device_error_bits(uint16_t errors, const DeviceErrorBit (&bits)[N], char *buf, size_t buf_size) {
+  format_device_error_bits(errors, bits, N, buf, buf_size);
+}
+
+/// A chip's own decoder, as passed to SoftPhyDriverBase::dump_init_device_errors_().
+using DeviceErrorFormatter = void (*)(uint16_t errors, char *buf, size_t buf_size);
+
 /// @brief Shared RX/TX driver flow for the software-PHY radios (SX1262, LR1121).
 /// @ingroup hioc_radio
 class SoftPhyDriverBase : public RadioDriver {
@@ -181,8 +218,9 @@ class SoftPhyDriverBase : public RadioDriver {
   void change_frequency(uint32_t freq_hz) override;
   /// @copydoc RadioDriver::read_rssi
   ///
-  /// Same formula on both chips (`-(int16_t) raw / 2`); only the opcode used to read the single
-  /// raw byte differs, via @ref read_rssi_raw_byte.
+  /// Same formula on both chips (`-(int16_t) raw / 2`, see @ref raw_rssi_to_dbm_); only the opcode
+  /// used to read the single raw byte differs, via @ref read_rssi_raw_byte. Antenna-referred: the
+  /// gain of an external receive front end is removed, see @ref front_end_rx_gain_db.
   int16_t read_rssi() override;
   /// @copydoc RadioDriver::is_sync_detected
   bool is_sync_detected() override;
@@ -194,12 +232,6 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @brief Preamble for response/continuation frames — shared storage, see the concrete
   /// drivers' constructors/tuning defaults for the chip-specific rationale and value.
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
-  /// @copydoc RadioDriver::is_failed
-  ///
-  /// Shared storage: both concrete drivers only ever set @ref failed_ from within their own
-  /// SPI/opcode helpers (a BUSY timeout, a device-identity mismatch, ...), so there is nothing
-  /// chip-specific left in the accessor itself.
-  [[nodiscard]] bool is_failed() const override { return this->failed_; }
 
  protected:
   // --- Tuning helpers shared by both drivers (values/defaults stay chip-specific) ---
@@ -223,8 +255,38 @@ class SoftPhyDriverBase : public RadioDriver {
   /// failure would re-run the full timeout, turning one bad boot into tens of seconds of hang at
   /// the LR1121's 3000 ms timeout (harmless but still pointless at the SX1262's 10 ms one).
   void wait_busy_();
-  /// Set on a BUSY timeout or a chip-identity check failing; see @ref is_failed.
-  bool failed_{false};
+  /// @brief Keep the device-error word read at the end of `configure_radio_()` and warn if it is
+  ///        non-zero.
+  /// @param tag Log tag of the calling driver.
+  /// @param chip_label Chip name for the warning, e.g. "SX1262".
+  /// @param errors The word read from the chip, before the caller clears its register.
+  /// @param format The calling chip's decoder for its device-error word.
+  void record_init_device_errors_(const char *tag, const char *chip_label, uint16_t errors,
+                                  DeviceErrorFormatter format);
+  /// @brief Gain (dB) of the board's external receive front end that the chip's RSSI includes.
+  ///
+  /// A low-noise amplifier ahead of the radio raises every RSSI reading by its gain, which makes an
+  /// idle channel look busy against a threshold defined at the antenna (listen-before-talk) and
+  /// makes signal levels incomparable between boards. Drivers whose board has such a front end
+  /// override this; @ref raw_rssi_to_dbm_ then reports antenna-referred values. Boards without one
+  /// keep the default of 0.
+  [[nodiscard]] virtual int8_t front_end_rx_gain_db() const { return 0; }
+  /// @brief Convert a chip's raw RSSI byte to an antenna-referred dBm reading.
+  /// @param raw Raw byte from the chip (`dBm = -raw / 2` at the radio's input, on both chips).
+  /// @return The reading with @ref front_end_rx_gain_db removed. Used for every RSSI this driver
+  ///         reports — live (@ref read_rssi) and per received packet — so they share one scale.
+  [[nodiscard]] int16_t raw_rssi_to_dbm_(uint8_t raw) const {
+    return static_cast<int16_t>(-static_cast<int16_t>(raw) / 2 - this->front_end_rx_gain_db());
+  }
+  /// @brief Log the init-time device errors under @p tag, or nothing when there were none.
+  /// @param tag Log tag of the calling driver, so the line stays inside its own dump section.
+  /// @param format The calling chip's decoder for its device-error word.
+  void dump_init_device_errors_(const char *tag, DeviceErrorFormatter format) const;
+  /// Device-error word a driver reads at the end of `configure_radio_()`, before it clears the
+  /// chip's register. The chip still initializes and transmits with some of these set (PLL lock,
+  /// calibration, TCXO start), so the config dump reports the captured value: a later read of the
+  /// register would only ever see the cleared state.
+  uint16_t init_device_errors_{0};
   /// BUSY line, read directly by both concrete drivers' own `dump_debug()` in addition to
   /// @ref wait_busy_, so this stays protected rather than folding entirely into the private
   /// wait-loop state below.

@@ -11,8 +11,10 @@
 ///
 /// Four public functions:
 ///  - parse_python_uint8_dict(path, dict_name): a top-level `NAME = { "key": 0xNN, ... }` dict
-///    (string-keyed, int-valued) -- used for MANUFACTURER_OPTIONS and DEVICE_TYPE_OPTIONS
-///    (device_type_sync_test.cpp, manufacturer_sync_test.cpp).
+///    (string-keyed, int-valued) -- used for MANUFACTURER_OPTIONS, DEVICE_TYPE_OPTIONS,
+///    TCXO_VOLTAGE_OPTIONS, FEM_TX_POWER_MAX_QUIET and PA_PIN_OPTIONS (device_type_sync_test.cpp,
+///    manufacturer_sync_test.cpp, tcxo_voltage_sync_test.cpp, fem_tx_power_sync_test.cpp,
+///    pa_pin_sync_test.cpp).
 ///  - parse_python_uint8_keyed_string_dict(path, dict_name): the mirror shape,
 ///    `NAME = { 0xNN: "value", ... }` (int-keyed, string-valued) -- used for CMD_NAMES
 ///    (opcode_name_sync_test.cpp).

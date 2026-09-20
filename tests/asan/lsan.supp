@@ -10,3 +10,12 @@
 # function rather than suppressed wholesale — see analysis/refactoring_p1_implementation.md
 # "Findings" section for the ASan/UBSan triage this came out of.
 leak:esphome::home_io_control::ManagementActions::register_actions
+#
+# Lr1121FirmwareUpdateController::run_boot_time_bootloader_read() allocates the LR1121 updater once
+# at setup() and keeps it for the life of the firmware (every later bootloader/firmware action
+# reuses it). Real firmware never exits, so nothing leaks operationally; the host test binary does
+# exit, so LeakSanitizer flags it in any test that runs a full setup() with a BUSY pin wired (the
+# host build always compiles the LR1121 feature in). Not freed in a destructor because the
+# controller's tests point the same member at stack-owned updaters. Narrowly scoped to that one
+# function, same as the register_actions() entry above.
+leak:esphome::home_io_control::Lr1121FirmwareUpdateController::run_boot_time_bootloader_read

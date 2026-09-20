@@ -329,7 +329,9 @@ live tuning knob, bisecting the right value needs no rebuild.
 
 Listen-Before-Talk: before transmitting, the hub checks the channel is quieter than the
 threshold, retrying up to *max_retries* times, then transmits anyway. Loosen them when
-transmissions are delayed on a channel that only *looks* busy.
+transmissions are delayed on a channel that only *looks* busy. The threshold applies to the signal
+level at the antenna: on a board with a front-end module the amplifier's gain is removed from the
+reading first (see [Hardware](../hardware.md)), so the same value means the same on every board.
 
 *Observations:* a device's own pairing-mode beacons made the channel read as busy (around
 -77 to -83 dBm), which tripped every LBT retry before each discovery transmit and slowed

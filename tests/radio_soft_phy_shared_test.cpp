@@ -11,6 +11,8 @@
 
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <cstring>
+#include <string>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -71,6 +73,10 @@ struct Sx1262Traits {
   // (read_opcode_); LR1121 clocks out Stat1 first (read_command_). The base-class formula under
   // test is the same either way — this trait only frames the chip's own wire read.
   static void queue_rssi_raw(ScriptedSpi &spi, uint8_t raw) { spi.queue_responses({0x00, 0x00, raw}); }
+  // GetPacketStatus response after opcode + NOP: [status, rssi_sync, rssi_avg].
+  static void queue_packet_rssi_sync(ScriptedSpi &spi, uint8_t raw) {
+    spi.queue_responses({0x00, 0x00, 0x00, raw, 0x00});
+  }
 };
 
 struct Lr1121Traits {
@@ -90,6 +96,10 @@ struct Lr1121Traits {
   static bool saw_cleared_irq(const ScriptedSpi &spi) { return spi.find_opcode(LR1121_CMD_CLEAR_IRQ) >= 0; }
 
   static void queue_rssi_raw(ScriptedSpi &spi, uint8_t raw) { spi.queue_responses({0x00, raw}); }
+  // GetPktStatus response after Stat1: [rssi_sync, rssi_avg, rx_len, status].
+  static void queue_packet_rssi_sync(ScriptedSpi &spi, uint8_t raw) {
+    spi.queue_responses({0x00, raw, 0x00, 0x00, 0x00});
+  }
 };
 
 using ChipTypes = ::testing::Types<Sx1262Traits, Lr1121Traits>;
@@ -289,6 +299,48 @@ TYPED_TEST(SoftPhyDriver, IsPreambleDetected_False) {
 // chip had before the hoist (see radio_soft_phy_driver_base.h's own doc comment).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// format_device_error_bits() — the decoder both chips' error words go through
+// ---------------------------------------------------------------------------
+
+TEST(DeviceErrorDecoder, TruncatesToTheBufferAndStaysNulTerminated) {
+  using namespace esphome::home_io_control;
+  const DeviceErrorBit bits[] = {{0x0001, "FIRST_ERR"}, {0x0002, "SECOND_ERR"}};
+  char buf[16];  // "FIRST_ERR|SECOND_ERR" needs 21 bytes
+  std::memset(buf, 'x', sizeof(buf));
+  format_device_error_bits(0x0003 | 0x8000, bits, 2, buf, sizeof(buf));
+  EXPECT_EQ(std::strlen(buf), sizeof(buf) - 1) << "the buffer is filled, never overrun";
+  EXPECT_EQ(std::string(buf).rfind("FIRST_ERR|SECON", 0), 0u) << buf;
+  EXPECT_EQ(std::string(buf).find("UNKNOWN"), std::string::npos) << "nothing is appended once the buffer is full";
+}
+
+TEST(DeviceErrorDecoder, IgnoresAnEmptyOrMissingBuffer) {
+  using namespace esphome::home_io_control;
+  const DeviceErrorBit bits[] = {{0x0001, "ONLY_ERR"}};
+  char untouched[4] = {'x', 'y', 'z', '\0'};
+  format_device_error_bits(0x0001, bits, 1, untouched, 0);
+  EXPECT_STREQ(untouched, "xyz") << "a zero-size buffer must not be written";
+  format_device_error_bits(0x0001, bits, 1, nullptr, 8);  // must not crash
+}
+
+TEST(DeviceErrorDecoder, TableOrderNotBitOrderDecidesOutput) {
+  using namespace esphome::home_io_control;
+  const DeviceErrorBit bits[] = {{0x0002, "HIGH_FIRST"}, {0x0001, "LOW_SECOND"}};
+  char buf[DEVICE_ERROR_STR_SIZE];
+  format_device_error_bits(0x0003, bits, 2, buf, sizeof(buf));
+  EXPECT_STREQ(buf, "HIGH_FIRST|LOW_SECOND");
+}
+
+TEST(DeviceErrorDecoder, EveryNamedBitOfBothChipsFitsTheSharedBuffer) {
+  using namespace esphome::home_io_control;
+  char buf[DEVICE_ERROR_STR_SIZE];
+  // All eight named bits of each chip plus an unnamed one — the worst case the buffer must hold.
+  sx1262_format_device_errors(0x01FF | 0x8000, buf, sizeof(buf));
+  EXPECT_NE(std::string(buf).find("UNKNOWN_"), std::string::npos) << "the UNKNOWN tail was cut off: " << buf;
+  lr1121_format_device_errors(0x00FF | 0x8000, buf, sizeof(buf));
+  EXPECT_NE(std::string(buf).find("UNKNOWN_0x8000"), std::string::npos) << "the UNKNOWN tail was cut off: " << buf;
+}
+
 TYPED_TEST(SoftPhyDriver, WaitBusyShortCircuitsAfterFailure) {
   MockSpi spi;
   MockPin rst, dio1, busy(true);  // BUSY held permanently high → a genuinely dead chip
@@ -297,6 +349,8 @@ TYPED_TEST(SoftPhyDriver, WaitBusyShortCircuitsAfterFailure) {
   const uint32_t feeds_before = esphome::App.feed_wdt_calls;
   radio.set_mode_standby();  // First BUSY wait times out and sets failed_.
   ASSERT_TRUE(radio.is_failed());
+  ASSERT_NE(radio.failure_reason(), nullptr);
+  const char *const first_reason = radio.failure_reason();
   EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
       << "the BUSY-pin wait is a distinct blocking path (SPI turnaround, not RX) and must feed too";
 
@@ -305,6 +359,7 @@ TYPED_TEST(SoftPhyDriver, WaitBusyShortCircuitsAfterFailure) {
   const uint32_t t_after = esphome::millis();
   EXPECT_LT(t_after - t_before, TypeParam::busy_short_circuit_slack())
       << "a failed driver must not re-run the BUSY timeout on every subsequent command";
+  EXPECT_EQ(radio.failure_reason(), first_reason);
 }
 
 // ---------------------------------------------------------------------------
@@ -596,6 +651,19 @@ TYPED_TEST(SoftPhyDriver, RealTwoPassReceiveArmsThenClearsHopHoldoff) {
   (void) radio.check_for_packet(packet);
   EXPECT_FALSE(radio.reception_in_progress())
       << "the real RX_DONE pass must clear the holdoff armed by the sync-only pass";
+}
+
+TYPED_TEST(SoftPhyDriver, PacketRssiUsesTheSameFormulaAsTheLiveReading) {
+  // A board without a front end must keep the plain -raw/2 dBm scale on both paths, so the
+  // antenna-referred conversion changes nothing for V3 / T3-style boards.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  TypeParam::queue_packet_rssi_sync(spi, 76);
+
+  radio.fill_capture_for_test();
+
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -38);
 }
 
 TYPED_TEST(SoftPhyDriver, ReadRssiAppliesFormula) {

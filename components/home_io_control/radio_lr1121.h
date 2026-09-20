@@ -28,6 +28,8 @@
 #include "radio_soft_phy_driver_base.h"
 #include "esphome/core/hal.h"
 
+#include <cstddef>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -104,6 +106,25 @@ static constexpr uint32_t LR1121_IRQ_DIO_ENABLE_MASK = LR1121_IRQ_TX_DONE | LR11
 // ============================================================================
 
 static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked against RadioLib and the datasheet
+
+// GetErrors bit masks — Semtech's SWTL001 `lr11xx_system_errors_e`. Bits 8+ are undocumented there.
+static constexpr uint16_t LR1121_ERR_LF_RC_CALIB = 0x0001;    ///< Low-frequency RC oscillator calibration failed.
+static constexpr uint16_t LR1121_ERR_HF_RC_CALIB = 0x0002;    ///< High-frequency RC oscillator calibration failed.
+static constexpr uint16_t LR1121_ERR_ADC_CALIB = 0x0004;      ///< ADC calibration failed.
+static constexpr uint16_t LR1121_ERR_PLL_CALIB = 0x0008;      ///< PLL calibration failed.
+static constexpr uint16_t LR1121_ERR_IMG_CALIB = 0x0010;      ///< Image calibration failed.
+static constexpr uint16_t LR1121_ERR_HF_XOSC_START = 0x0020;  ///< High-frequency crystal/TCXO failed to start.
+static constexpr uint16_t LR1121_ERR_LF_XOSC_START = 0x0040;  ///< Low-frequency crystal failed to start.
+static constexpr uint16_t LR1121_ERR_PLL_LOCK = 0x0080;       ///< PLL failed to lock.
+
+/// @brief Expand a GetErrors word into a human-readable `NAME|NAME|...` string.
+/// @param errors Raw GetErrors bitmask.
+/// @param buf Caller-owned output buffer; always NUL-terminated on return.
+/// @param buf_size Size of @p buf. Use @ref DEVICE_ERROR_STR_SIZE.
+///
+/// Writes `"none"` when @p errors is zero, and appends `UNKNOWN_0x%04X` for any set bit with no
+/// name in the table so an undocumented flag still shows up in the log.
+void lr1121_format_device_errors(uint16_t errors, char *buf, size_t buf_size);
 
 /// Newest LR1121 transceiver firmware known at the time this file was last updated, per the
 /// version-numbered filenames and CHANGELOG.md at
@@ -357,7 +378,7 @@ class RadioLR1121 : public SoftPhyDriverBase {
   /// @return Error bitmask (2-byte response, cross-checked against RadioLib).
   uint16_t get_errors_();
   /// @brief Clear device error flags. Called both during init (after TCXO configuration, before
-  ///        calibration) and at the end of configure_radio_() to discard init-time noise.
+  ///        calibration) and at the end of configure_radio_(), which records them first.
   void clear_errors_();
   /// @copydoc SoftPhyDriverBase::fill_capture_info
   ///

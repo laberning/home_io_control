@@ -23,7 +23,6 @@
 #include "esphome/core/application.h"
 
 #include <cinttypes>
-#include <cstdio>
 
 namespace esphome {
 namespace home_io_control {
@@ -33,13 +32,8 @@ static const uint8_t SX1262_SYNC_WORD_PARAM_24_BITS = 0x18;
 
 namespace {
 
-/// One row of the GetDeviceErrors bit → name table used by sx1262_format_device_errors().
-struct Sx1262DeviceErrorBit {
-  uint16_t mask;
-  const char *name;
-};
-
-constexpr Sx1262DeviceErrorBit SX1262_DEVICE_ERROR_BITS[] = {
+/// GetDeviceErrors bit → name table used by sx1262_format_device_errors().
+constexpr DeviceErrorBit SX1262_DEVICE_ERROR_BITS[] = {
     {SX1262_DEV_ERR_RC64K_CALIB, "RC64K_CALIB_ERR"}, {SX1262_DEV_ERR_RC13M_CALIB, "RC13M_CALIB_ERR"},
     {SX1262_DEV_ERR_PLL_CALIB, "PLL_CALIB_ERR"},     {SX1262_DEV_ERR_ADC_CALIB, "ADC_CALIB_ERR"},
     {SX1262_DEV_ERR_IMG_CALIB, "IMG_CALIB_ERR"},     {SX1262_DEV_ERR_XOSC_START, "XOSC_START_ERR"},
@@ -75,6 +69,29 @@ constexpr int8_t SX1262_FEM_GAIN_KCT8103L_DB[22] = {
 constexpr int8_t SX1262_FEM_GAIN_XY16P35_DB = 14;
 
 constexpr size_t SX1262_FEM_GAIN_TABLE_LEN = 22;
+
+/// Receive-side LNA gain each FEM adds to the SX1262's RSSI, removed so readings are
+/// antenna-referred (see RadioSX1262::front_end_rx_gain_db()). Unlike the TX tables above this is
+/// one figure per profile: the LNA has no gain setting the driver controls.
+///
+/// KCT8103L, 25 dB: measured. The same dimmer at 7 m, seen from a Heltec V4.3 and from a
+/// Heltec V3 (no front end) at the same spot, read -36.5 dBm against -61 dBm (+24.5 dB); an
+/// LR1121 board read -63 dBm, so the setup repeats within about 2-4 dB. That places the gain at
+/// 25 +/- 4 dB, matching the vendor's 28 dB RX LNA gain less a few dB of insertion loss.
+///
+/// GC1109, 15 dB: quoted, not measured here. Heltec's own V3-versus-V4 comparison at 868 MHz reads
+/// -94 dBm on the V4 against -109..-110 dBm on the V3 for the same link.
+///
+/// XY16P35, 0 dB: not characterised. The module has an LNA, but no RX gain is published for it,
+/// so its RSSI (and listen-before-talk) still include an unknown amount of gain.
+constexpr FemRxGain SX1262_FEM_RX_GAIN_KCT8103L = {25, "measured on a V4.3 against a V3, +/-4 dB"};
+constexpr FemRxGain SX1262_FEM_RX_GAIN_GC1109 = {15, "quoted by Heltec, not measured here"};
+constexpr FemRxGain SX1262_FEM_RX_GAIN_XY16P35 = {0, "not characterised: RSSI still includes the LNA gain"};
+constexpr FemRxGain SX1262_FEM_RX_GAIN_NONE = {0, "no front end"};
+
+/// Upper bound of SetTxParams' power setting; `tx_power` is clamped to it before both the register
+/// write and the FEM estimate lookup, so the estimate always describes what was actually programmed.
+constexpr uint8_t SX1262_MAX_TX_POWER_DBM = 22;
 
 /// Net gain (dB) added to `tx_power` for the given profile's chain, at the given (already-
 /// clamped-into-table-domain) tx_power setting. GC1109/KCT8103L look up their 22-entry table;
@@ -144,32 +161,32 @@ int sx1262_fem_estimated_antenna_dbm(FemProfile profile, uint8_t tx_power) {
   return static_cast<int>(tx_power) + static_cast<int>(sx1262_fem_gain_db(profile, idx));
 }
 
+constexpr const char *SX1262_FEM_COMPLIANCE_HINT =
+    "Verify against your local 868 MHz SRD/EIRP limit before relying on this for compliance";
+
 }  // namespace
 
+FemRxGain sx1262_fem_rx_gain(FemProfile profile) {
+  switch (profile) {
+    case FemProfile::GC1109:
+      return SX1262_FEM_RX_GAIN_GC1109;
+    case FemProfile::KCT8103L:
+      return SX1262_FEM_RX_GAIN_KCT8103L;
+    case FemProfile::XY16P35:
+      return SX1262_FEM_RX_GAIN_XY16P35;
+    case FemProfile::NONE:
+      return SX1262_FEM_RX_GAIN_NONE;
+  }
+  return SX1262_FEM_RX_GAIN_NONE;  // unreachable; satisfies compilers that don't see the switch as exhaustive.
+}
+
+FemTxEstimate sx1262_fem_tx_estimate(FemProfile profile, uint8_t tx_power) {
+  const uint8_t clamped = std::min<uint8_t>(tx_power, SX1262_MAX_TX_POWER_DBM);
+  return {clamped, sx1262_fem_estimated_antenna_dbm(profile, clamped)};
+}
+
 void sx1262_format_device_errors(uint16_t errors, char *buf, size_t buf_size) {
-  if (buf == nullptr || buf_size == 0)
-    return;
-  buf[0] = '\0';
-  if (errors == 0) {
-    snprintf(buf, buf_size, "none");
-    return;
-  }
-
-  size_t pos = 0;
-  uint16_t named = 0;
-  for (const auto &bit : SX1262_DEVICE_ERROR_BITS) {
-    if ((errors & bit.mask) == 0)
-      continue;
-    named |= bit.mask;
-    const int n = snprintf(buf + pos, buf_size - pos, "%s%s", pos > 0 ? "|" : "", bit.name);
-    if (n <= 0 || static_cast<size_t>(n) >= buf_size - pos)
-      return;  // buffer full — leave what fit, already NUL-terminated by snprintf
-    pos += static_cast<size_t>(n);
-  }
-
-  const uint16_t unknown = errors & static_cast<uint16_t>(~named);
-  if (unknown != 0)
-    snprintf(buf + pos, buf_size - pos, "%sUNKNOWN_0x%04X", pos > 0 ? "|" : "", unknown);
+  format_device_error_bits(errors, SX1262_DEVICE_ERROR_BITS, buf, buf_size);
 }
 
 // === SPI Communication (opcode-based) ===
@@ -323,8 +340,8 @@ void RadioSX1262::fill_capture_info(bool blocking_wait, uint32_t irq_status, uin
   uint8_t packet_status[3] = {0};
   this->read_opcode_(SX1262_GET_PACKET_STATUS, packet_status, sizeof(packet_status));
 
-  this->populate_capture_base_(blocking_wait, this->current_freq_, -(int16_t) packet_status[1] / 2, raw, raw_len, frame,
-                               frame_len);
+  this->populate_capture_base_(blocking_wait, this->current_freq_, this->raw_rssi_to_dbm_(packet_status[1]), raw,
+                               raw_len, frame, frame_len);
   this->last_capture_.rx_done = (irq_status & SX1262_IRQ_RX_DONE) != 0;
   this->last_capture_.crc_error = (irq_status & SX1262_IRQ_CRC_ERR) != 0;
   this->last_capture_.irq_status = static_cast<uint16_t>(irq_status);
@@ -408,17 +425,13 @@ bool RadioSX1262::init() {
     return false;
 
   if (this->fem_profile_ != FemProfile::NONE) {
-    // tx_power is clamped the same way configure_radio_() clamps it before SetTxParams — see
-    // sx1262_fem_estimated_antenna_dbm()'s own doc comment for why this is a rough bound, not a
-    // calibrated one.
-    const uint8_t clamped_tx_power = std::min<uint8_t>(this->tx_power_, 22);
-    const int estimated_dbm = sx1262_fem_estimated_antenna_dbm(this->fem_profile_, clamped_tx_power);
+    // The estimate is a rough bound, not a calibrated one — see sx1262_fem_tx_estimate().
+    const FemTxEstimate estimate = sx1262_fem_tx_estimate(this->fem_profile_, this->tx_power_);
     ESP_LOGW(TAG,
              "FEM profile %s active: tx_power %u is amplified by the front-end module to an "
-             "estimated ~%d dBm at the antenna port (%s) — verify against your local 868 MHz "
-             "SRD/EIRP limit before relying on this for compliance",
-             sx1262_fem_profile_name(this->fem_profile_), clamped_tx_power, estimated_dbm,
-             sx1262_fem_confidence_caveat(this->fem_profile_));
+             "estimated ~%d dBm at the antenna port (%s). %s",
+             sx1262_fem_profile_name(this->fem_profile_), estimate.tx_power, estimate.antenna_dbm,
+             sx1262_fem_confidence_caveat(this->fem_profile_), SX1262_FEM_COMPLIANCE_HINT);
   }
 
   ESP_LOGI(TAG, "SX1262 initialized");
@@ -464,17 +477,37 @@ void RadioSX1262::dump_debug() {
   uint16_t const errors = this->get_device_errors_();
 
   ESP_LOGCONFIG(TAG, "  SX1262 Diagnostic:");
+  ESP_LOGCONFIG(TAG, "    TCXO voltage: %s", tcxo_voltage_label(this->tcxo_voltage_));
   ESP_LOGCONFIG(TAG, "    Chip status: 0x%02X (mode=%s, cmd=%u)", chip_status, mode_str, cmd_status);
   ESP_LOGCONFIG(TAG, "    BUSY=%d DIO1=%d", this->busy_pin_->digital_read(), this->dio1_pin_->digital_read());
   ESP_LOGCONFIG(TAG, "    Sync word: %02X %02X %02X (expect 57 FD 99)", sync[0], sync[1], sync[2]);
   ESP_LOGCONFIG(TAG, "    IRQ status: 0x%04X", irq);
-  char errbuf[SX1262_DEVICE_ERROR_STR_SIZE];
+  char errbuf[DEVICE_ERROR_STR_SIZE];
   sx1262_format_device_errors(errors, errbuf, sizeof(errbuf));
   ESP_LOGCONFIG(TAG, "    Device errors: 0x%04X (%s)", errors, errbuf);
   if (this->tcxo_startup_attempts_ > 1) {
     ESP_LOGCONFIG(TAG, "    TCXO startup: %u attempts, %" PRIu32 " ms final delay",
                   static_cast<unsigned>(this->tcxo_startup_attempts_), this->tcxo_startup_delay_us_ / 1000);
   }
+  this->dump_init_device_errors_(TAG, sx1262_format_device_errors);
+}
+
+void RadioSX1262::dump_front_end() {
+  if (this->fem_profile_ == FemProfile::NONE)
+    return;
+  // init() warns about this once at boot, before the API connects, so most users never see that
+  // line; dump_config is replayed to every new log client, which makes this the copy they read.
+  const FemTxEstimate estimate = sx1262_fem_tx_estimate(this->fem_profile_, this->tx_power_);
+  ESP_LOGCONFIG(TAG, "  Front-end module (FEM):");
+  ESP_LOGCONFIG(TAG, "    Profile: %s", sx1262_fem_profile_name(this->fem_profile_));
+  LOG_PIN("    VFEM Pin: ", this->vfem_pin_);
+  LOG_PIN("    Enable Pin: ", this->fem_en_pin_);
+  LOG_PIN("    PA/Mode Pin: ", this->fem_pa_pin_);
+  ESP_LOGCONFIG(TAG, "    TX estimate: tx_power %u is amplified to ~%d dBm at the antenna port (%s)", estimate.tx_power,
+                estimate.antenna_dbm, sx1262_fem_confidence_caveat(this->fem_profile_));
+  ESP_LOGCONFIG(TAG, "    %s", SX1262_FEM_COMPLIANCE_HINT);
+  const FemRxGain rx_gain = sx1262_fem_rx_gain(this->fem_profile_);
+  ESP_LOGCONFIG(TAG, "    RX gain removed from RSSI: %d dB (%s)", static_cast<int>(rx_gain.db), rx_gain.basis);
 }
 
 void RadioSX1262::configure_tcxo_() {
@@ -647,7 +680,7 @@ void RadioSX1262::configure_radio_() {
   this->write_register_(SX1262_REG_TX_CLAMP_CONFIG, &tx_clamp, 1);
 
   // 15. TX params: power in dBm (SX1262 accepts -9 to +22 directly), ramp 200us (0x04)
-  int8_t const power = std::max((int8_t) -9, std::min((int8_t) 22, (int8_t) this->tx_power_));
+  int8_t const power = std::max((int8_t) -9, std::min((int8_t) SX1262_MAX_TX_POWER_DBM, (int8_t) this->tx_power_));
   uint8_t tx_params[2] = {(uint8_t) power, 0x04};
   this->write_opcode_(SX1262_SET_TX_PARAMS, tx_params, sizeof(tx_params));
 
@@ -678,12 +711,7 @@ void RadioSX1262::configure_radio_() {
   // the retry ladder. Such a chip still initializes and still transmits, just off-frequency or
   // off-calibration, so surfacing the decoded flags is the one cheap piece of evidence for it.
   this->clear_irq_status(0xFFFF);
-  uint16_t const init_errors = this->get_device_errors_();
-  if (init_errors != 0) {
-    char errbuf[SX1262_DEVICE_ERROR_STR_SIZE];
-    sx1262_format_device_errors(init_errors, errbuf, sizeof(errbuf));
-    ESP_LOGW(TAG, "SX1262 device errors after init: 0x%04X (%s)", init_errors, errbuf);
-  }
+  this->record_init_device_errors_(TAG, "SX1262", this->get_device_errors_(), sx1262_format_device_errors);
   this->clear_device_errors_();
 
   // 19. Enter continuous receive. Written inline rather than via set_mode_rx() — correct only

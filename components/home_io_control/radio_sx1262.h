@@ -92,14 +92,34 @@ static constexpr uint16_t SX1262_DEV_ERR_XOSC_START = 0x0020;   ///< Crystal/TCX
 static constexpr uint16_t SX1262_DEV_ERR_PLL_LOCK = 0x0040;     ///< PLL failed to lock.
 static constexpr uint16_t SX1262_DEV_ERR_PA_RAMP = 0x0100;      ///< PA ramping failed (bit 0x0080 is unused).
 
-/// Buffer size that always fits sx1262_format_device_errors()'s longest possible output (all eight
-/// names, `|`-joined, plus an UNKNOWN_0x%04X tail).
-static constexpr size_t SX1262_DEVICE_ERROR_STR_SIZE = 160;
+/// Receive-side gain of a FEM profile's LNA, in the SX1262's RSSI scale.
+struct FemRxGain {
+  int8_t db;          ///< Gain (dB) the RSSI includes and the driver removes; 0 when unknown or absent.
+  const char *basis;  ///< Where the figure comes from and how far to trust it, for the config dump.
+};
+
+/// @brief The receive gain to remove from RSSI for a FEM profile.
+/// @param profile Any profile; `FemProfile::NONE` has no front end and yields 0.
+FemRxGain sx1262_fem_rx_gain(FemProfile profile);
+
+/// Antenna-port power estimate for a configured `tx_power` through a FEM profile's chain.
+struct FemTxEstimate {
+  uint8_t tx_power;  ///< The `tx_power` actually programmed: the configured value clamped to SetTxParams' range.
+  int antenna_dbm;   ///< Estimated antenna-port power in dBm — a rough bound, not a calibrated figure.
+};
+
+/// @brief Estimate what a FEM profile radiates for a configured `tx_power`.
+/// @param profile A real FEM profile (not `FemProfile::NONE`, which has no gain table).
+/// @param tx_power Configured power setting; clamped like the value written to SetTxParams.
+///
+/// The gain tables behind it carry an uncertainty of about ±5–7 dB for the Heltec profiles; see
+/// docs/adr/0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md.
+FemTxEstimate sx1262_fem_tx_estimate(FemProfile profile, uint8_t tx_power);
 
 /// @brief Expand a GetDeviceErrors word into a human-readable `NAME|NAME|...` string.
 /// @param errors Raw device-error bitmask from GetDeviceErrors.
 /// @param buf Caller-owned output buffer; always NUL-terminated on return.
-/// @param buf_size Size of @p buf. Use @ref SX1262_DEVICE_ERROR_STR_SIZE.
+/// @param buf_size Size of @p buf. Use @ref DEVICE_ERROR_STR_SIZE.
 ///
 /// Writes `"none"` when @p errors is zero, and appends `UNKNOWN_0x%04X` for any set bit with no
 /// name in the table so an undocumented flag still shows up in the log.
@@ -197,6 +217,8 @@ class RadioSX1262 : public SoftPhyDriverBase {
   /// @copydoc RadioDriver::set_mode_standby
   void set_mode_standby() override;
   [[nodiscard]] const char *chip_name() const override { return "sx1262"; }
+  /// @brief Dump the FEM profile and its antenna-power estimate (nothing without a FEM).
+  void dump_front_end() override;
   /// @brief Dump SX1262‑specific debug info.
   void dump_debug() override;
 
@@ -283,6 +305,10 @@ class RadioSX1262 : public SoftPhyDriverBase {
   uint16_t get_device_errors_();
   /// @brief Clear device error flags.
   void clear_device_errors_();
+  /// @copydoc SoftPhyDriverBase::front_end_rx_gain_db
+  ///
+  /// The LNA gain of the configured FEM profile; see sx1262_fem_rx_gain().
+  [[nodiscard]] int8_t front_end_rx_gain_db() const override { return sx1262_fem_rx_gain(this->fem_profile_).db; }
   /// @copydoc SoftPhyDriverBase::configure_buffer_base
   ///
   /// SX1262's buffer base addresses (TX=0x00, RX=0x80) are re-asserted on every RX reset — LR1121

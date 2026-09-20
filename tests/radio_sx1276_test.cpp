@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <deque>
+#include <string>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -165,6 +166,8 @@ TEST(RadioSX1276, InitFailsOnWrongVersion) {
 
   EXPECT_FALSE(ok) << "init() must fail when REG_VERSION doesn't read back 0x12";
   EXPECT_TRUE(radio.is_failed());
+  ASSERT_NE(radio.failure_reason(), nullptr) << "the hub prints this from dump_config, so it must be recorded";
+  EXPECT_NE(std::string(radio.failure_reason()).find("not found"), std::string::npos);
   EXPECT_FALSE(spi.wrote_register(REG_PACKET_CONFIG1)) << "configure_radio_() must never run after a failed "
                                                           "version check";
 }
@@ -229,8 +232,28 @@ TEST(RadioSX1276, SetModeTimesOutWhenOpModeNeverReflectsTarget) {
   radio.set_mode_standby();
 
   EXPECT_TRUE(radio.is_failed()) << "a mode that never reads back as requested must fail the driver";
+  ASSERT_NE(radio.failure_reason(), nullptr);
+  EXPECT_NE(std::string(radio.failure_reason()).find("operating mode"), std::string::npos);
   EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
       << "the mode-change poll is a multi-millisecond blocking wait and must feed the watchdog on timeout";
+}
+
+TEST(RadioSX1276, FirstFailureReasonSurvivesALaterFailure) {
+  // set_mode_standby() times out first. init() then fails a second time on the version check; the
+  // reason must keep naming the root cause, not the later symptom.
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.stick_reg(REG_OP_MODE, MODE_SLEEP);
+  radio.set_mode_standby();
+  ASSERT_TRUE(radio.is_failed());
+  const char *const root_cause = radio.failure_reason();
+  ASSERT_NE(root_cause, nullptr);
+
+  EXPECT_FALSE(radio.init());  // version register reads back wrong: a second, different failure
+
+  EXPECT_EQ(radio.failure_reason(), root_cause);
+  EXPECT_NE(std::string(radio.failure_reason()).find("operating mode"), std::string::npos);
 }
 
 TEST(RadioSX1276, RunImageCalTimesOutWhenCalBitNeverClears) {
@@ -247,6 +270,8 @@ TEST(RadioSX1276, RunImageCalTimesOutWhenCalBitNeverClears) {
 
   EXPECT_FALSE(ok) << "init() must fail when image calibration never completes";
   EXPECT_TRUE(radio.is_failed());
+  ASSERT_NE(radio.failure_reason(), nullptr);
+  EXPECT_NE(std::string(radio.failure_reason()).find("calibration"), std::string::npos);
   EXPECT_GT(esphome::App.feed_wdt_calls, feeds_before)
       << "the image-calibration poll is a blocking wait and must feed the watchdog on timeout";
 }

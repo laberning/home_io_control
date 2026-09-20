@@ -110,8 +110,17 @@ figures, a sparser but more directly-measured evidence base than the other two.
 and [heltec-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/heltec-v4-3.yaml)
 ship `tx_power: 1`, not the SX1262 default of `17` — raising it without a spectrum analyser risks
 exceeding your region's 868 MHz SRD limit. The driver logs its own estimate (and uncertainty) at
-boot, and the schema warns once `tx_power` would put the estimate over +14 dBm — above `3` on a
-GC1109, above `1` on a KCT8103L, above `0` on an XY16P35.
+boot and repeats it in the config dump that `esphome logs` requests on connect, so you can read it
+without catching the boot itself. The schema warns once `tx_power` would put the estimate over
++14 dBm — above `3` on a GC1109, above `1` on a KCT8103L, above `0` on an XY16P35.
+
+**Received signal strength:** each FEM's low-noise amplifier raises every RSSI reading the radio
+takes. The driver subtracts the amplifier's gain, so RSSI, the [Link Health](diagnostic-entities.md#link-health)
+sensor and the listen-before-talk check all read at the antenna, on the same scale as a board
+without a FEM. The gain is 25 dB for a KCT8103L (measured against a bare SX1262 board, about
+±4 dB), 15 dB for a GC1109 (quoted by Heltec, not measured here) and 0 dB for an XY16P35, whose
+gain is not published — on that board RSSI still includes the amplifier's gain, and idle-channel
+readings can look busier than they are. The config dump lists the gain and where it comes from.
 
 <!-- board-pinout: heltec-v4-2 -->
 ```yaml

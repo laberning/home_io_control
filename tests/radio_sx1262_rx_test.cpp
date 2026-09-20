@@ -846,3 +846,76 @@ TEST(RadioSX1262Fem, TxActiveLevelMatchesEachProfilesPolarity) {
   TestableRadioSX1262 xy16p35(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, FemProfile::XY16P35);
   EXPECT_FALSE(xy16p35.fem_tx_active_level_for_test());
 }
+
+// ============================================================================
+// FEM receive gain: RSSI is reported at the antenna, not at the radio's input
+// ============================================================================
+
+namespace {
+struct FemRxGainCase {
+  FemProfile profile;
+  int gain_db;
+};
+// The figures are the documented per-profile gains (see SX1262_FEM_RX_GAIN_* in radio_sx1262.cpp).
+constexpr FemRxGainCase kFemRxGainCases[] = {
+    {FemProfile::NONE, 0},
+    {FemProfile::GC1109, 15},
+    {FemProfile::KCT8103L, 25},
+    {FemProfile::XY16P35, 0},
+};
+}  // namespace
+
+TEST(RadioSX1262FemRxGain, ProfileGainsAreTheDocumentedFigures) {
+  for (const auto &c : kFemRxGainCases)
+    EXPECT_EQ(sx1262_fem_rx_gain(c.profile).db, c.gain_db) << "profile " << static_cast<int>(c.profile);
+}
+
+TEST(RadioSX1262FemRxGain, EveryProfileStatesItsBasisForTheDump) {
+  for (const auto &c : kFemRxGainCases) {
+    ASSERT_NE(sx1262_fem_rx_gain(c.profile).basis, nullptr);
+    EXPECT_GT(std::string(sx1262_fem_rx_gain(c.profile).basis).size(), 0u);
+  }
+}
+
+TEST(RadioSX1262FemRxGain, LiveRssiHasTheFrontEndGainRemoved) {
+  for (const auto &c : kFemRxGainCases) {
+    ScriptedSpi spi;
+    MockPin rst, dio1, busy(false);
+    FemPin fem_en(&spi), vfem(&spi), mode(&spi);
+    TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, c.profile);
+    spi.queue_responses({0x00, 0x00, 100});  // GetRssiInst: raw 100 = -50 dBm at the radio's input
+
+    EXPECT_EQ(radio.read_rssi(), -50 - c.gain_db) << "profile " << static_cast<int>(c.profile);
+  }
+}
+
+TEST(RadioSX1262FemRxGain, PacketRssiHasTheFrontEndGainRemovedToo) {
+  // Live and per-packet readings must share one scale: the RSSI sensors use the packet value, LBT
+  // the live one, and a board's numbers are only comparable if both drop the same gain.
+  for (const auto &c : kFemRxGainCases) {
+    ScriptedSpi spi;
+    MockPin rst, dio1, busy(false);
+    FemPin fem_en(&spi), vfem(&spi), mode(&spi);
+    TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, c.profile);
+    spi.queue_responses({0x00, 0x00, 0x00, 76, 0x00});  // GetPacketStatus: rssi_sync raw 76 = -38 dBm
+
+    radio.fill_capture_for_test();
+
+    EXPECT_EQ(radio.get_last_capture().rssi_dbm, -38 - c.gain_db) << "profile " << static_cast<int>(c.profile);
+  }
+}
+
+TEST(RadioSX1262FemRxGain, KctReadingAtTheMeasuredBenchLevelMatchesAFrontEndlessBoard) {
+  // The measurement behind the KCT8103L figure: the same dimmer read about -36.5 dBm on a V4.3 and
+  // -61 dBm on a V3. After removing the gain the V4.3 lands within the +/-4 dB the figure claims.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  FemPin fem_en(&spi), vfem(&spi), mode(&spi);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, FemProfile::KCT8103L);
+  spi.queue_responses({0x00, 0x00, 0x00, 73, 0x00});  // raw 73 = -36 dBm (integer division truncates)
+
+  radio.fill_capture_for_test();
+
+  const int reading = radio.get_last_capture().rssi_dbm;
+  EXPECT_NEAR(reading, -61, 4) << "gain-corrected V4.3 reading should sit near the V3's -61 dBm";
+}
