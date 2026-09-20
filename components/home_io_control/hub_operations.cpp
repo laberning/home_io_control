@@ -187,11 +187,18 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   }
 
   if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
-    // The device authenticated the request, so it has the command; it just does not close the
-    // exchange with a reply (see ExchangeOutcome). There is no frame to parse, and inventing a
-    // position from a request we only know was *accepted* would be worse than leaving the last
+    // The device challenged the request, so it received it; whether it also received our challenge
+    // answer — and therefore acted — is not observable from here (see the WAIT_FINAL_RESPONSE
+    // branch in ExchangeEngine::send_and_receive()). There is no frame to parse, and inventing a
+    // position from a request we only know was *challenged* would be worse than leaving the last
     // known state alone — the device's own asynchronous status update supplies the real one, and
     // that path authenticates now. Clear the failure streaks: this was not a failure.
+    //
+    // Log the snapshot anyway. This branch is the one exchange ending that prints nothing at all
+    // otherwise, so a device that routinely stops replying here leaves no trace to diagnose, and
+    // the capture fields (did the radio see anything during the final wait?) are exactly what
+    // separates a lost answer from a lost reply.
+    this->log_exchange_unconfirmed_debug_(device_id.c_str());
     if (retry_after_fail_ms != 0)
       this->poll_policy_.clear_failure_streaks(device_id);
     if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {

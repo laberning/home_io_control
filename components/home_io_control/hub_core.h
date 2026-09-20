@@ -973,6 +973,11 @@ class IOHomeControlComponent : public Component,
   /// Log the last exchange debug snapshot (delegates to exchange_engine_).
   void log_exchange_debug_(const char *device_id) const { this->exchange_engine_.log_debug(device_id); }
 
+  /// Log the last exchange debug snapshot for an accepted-but-unconfirmed exchange, at INFO.
+  void log_exchange_unconfirmed_debug_(const char *device_id) const {
+    this->exchange_engine_.log_debug_unconfirmed(device_id);
+  }
+
   // --- Tuning ---
   /// Apply the current tuning configuration to the active radio driver.
   void apply_tuning_to_radio_();
