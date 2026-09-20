@@ -300,6 +300,17 @@ class ExchangeEngine {
   /// @param device_id Human-readable device identifier for the log line.
   void log_debug(const char *device_id) const;
 
+  /// Log the debug snapshot for an exchange that ended accepted-but-unconfirmed, at INFO.
+  ///
+  /// Same fields as log_debug(), different prefix and level: the device challenged us, so this is
+  /// not a failure and must not read like one. It is logged at all because the snapshot is the
+  /// only evidence of what happened after our challenge answer went out — whether the radio saw
+  /// nothing (our answer likely never arrived, and the device never acted) or received something
+  /// it could not use (the device answered and this side lost the reply). Without it the whole
+  /// path is silent, and a field report has no way to tell those apart.
+  /// @param device_id Human-readable device identifier for the log line.
+  void log_debug_unconfirmed(const char *device_id) const;
+
   /// Read-only access to the current debug snapshot.
   [[nodiscard]] const DebugInfo &get_debug() const { return debug_; }
 
@@ -386,6 +397,23 @@ class ExchangeEngine {
   DebugInfo debug_{};        ///< Snapshot updated throughout each exchange attempt.
   Counters counters_{};      ///< Free-running counters; see counters()/reset_counters().
 };
+
+/// Longest rendered exchange-debug field list, plus headroom for a long command name.
+static constexpr size_t EXCHANGE_DEBUG_LINE_SIZE = 256;
+
+/// @brief Render the structured field list shared by both exchange-debug log lines.
+///
+/// Split out of the log calls so the rendering is testable on host: the test log macros discard
+/// their arguments, so a formatter that writes into a caller's buffer is the only shape whose
+/// output a test can assert on.
+///
+/// @param buf       Destination buffer, EXCHANGE_DEBUG_LINE_SIZE is always enough.
+/// @param buf_size  Size of `buf`.
+/// @param device_id Human-readable device identifier.
+/// @param d         Snapshot to render.
+/// @return snprintf()'s return value: the length the full line would have, so a caller (or a
+///         test) can detect truncation by comparing it against `buf_size`.
+int render_exchange_debug(char *buf, size_t buf_size, const char *device_id, const ExchangeEngine::DebugInfo &d);
 
 }  // namespace home_io_control
 }  // namespace esphome

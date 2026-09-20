@@ -14,6 +14,7 @@ Indexed by what you see, not by which subsystem is responsible.
 | A 1W button press does nothing | [1W commands do nothing](#1w-commands-do-nothing) |
 | The log says `home_io_control is marked FAILED`, `Radio setup failed:` or `Radio failed after setup:` | [The radio does not start](#the-radio-does-not-start) |
 | The boot log shows `XOSC_START_ERR` on an SX1262 board, or `HF_XOSC_START_ERR` on an LR1121 board | [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot) |
+| The hub resets, or works differently on another USB port or cable | [Random resets or an unreliable link on USB power](#random-resets-or-an-unreliable-link-on-usb-power) |
 | Pairing works some of the time, or the link is unreliable | [A tuning plan](#a-tuning-plan) |
 
 ## The device is never found
@@ -258,6 +259,48 @@ The radio's TCXO is not coming up on the control voltage it is being given.
 - `SX1262 TCXO started after N attempts` (no error) means the retry ladder recovered it — the
   radio is working, but the first startup window was marginal; raising `tcxo_voltage` one step
   removes the retry.
+
+## Random resets or an unreliable link on USB power
+
+Exchanges fail for no clear reason, the hub reboots in the middle of a command, or the same setup
+behaves differently after you move it to another USB port or cable. Rule out the power supply
+before you tune the radio: a board fed from a computer's USB port is a common cause, and it
+imitates a radio fault.
+
+Two separate things can go wrong there.
+
+**The voltage sags while the board transmits.** Wi-Fi bursts draw a couple of hundred milliamps on
+their own, and the radio's power amplifier adds roughly another hundred for as long as a frame is
+on air. A long or thin cable, a front-panel port, or an unpowered hub cannot deliver those bursts
+without the supply voltage dropping. The ESP32 then either resets, printing
+`Brownout detector was triggered` as it comes back, or transmits below the power you configured —
+which costs you range at the moment you need it.
+
+**A computer's 5 V rail is electrically noisy.** That noise follows the cable onto the board and
+raises the level the receiver hears as background, so weak replies that would otherwise decode no
+longer do. It looks like a receive problem: a device answers on a clean supply and appears silent
+on a PC cable, which is easy to mistake for a device or tuning fault.
+
+What to do:
+
+1. **Power the board from a mains USB adapter** rated 1 A or more, using a short, thick cable. Keep
+   the computer's port for flashing.
+2. **Read the log over the network** while you test — the ESPHome dashboard's log view, or
+   `esphome logs` against the device's host name — so the board can stay on the adapter. A problem
+   that disappears once the board is off the computer is a power problem, and no tuning change
+   will fix it.
+3. **Look for `Brownout detector was triggered`** in the log after a reset, and for a board that
+   reboots at the moment it first transmits. Both name the supply directly.
+4. **Lower `tx_power` by a few steps as a test.** A link that gets *more* reliable at lower
+   transmit power is telling you the supply cannot sustain the transmit burst. Put it back once
+   the supply is fixed. The key is described in [Configuration](configuration/index.md).
+5. **On an SX1262 board, check whether [`XOSC_START_ERR`](#xosc_start_err-at-boot) also appears.**
+   A marginal supply makes the TCXO's startup window marginal too, so the two often arrive
+   together.
+
+A powered USB hub, or a second supply for the board while a computer keeps only the data lines,
+also works. What matters is that the transmit bursts come from something that can deliver them,
+and that the board's 5 V does not come straight from a PC.
 
 ## See also
 

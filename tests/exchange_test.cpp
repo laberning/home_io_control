@@ -388,16 +388,16 @@ TEST(Exchange, SendAndReceive_MissingFinalResponseIsUnconfirmedSuccessNotFailure
   IoFrame response{};
   const ExchangeOutcome outcome = comp.send_and_receive_(request, response, FREQ_CH2);
 
-  // A challenge we answered proves the device received and accepted the request, so this is not a
-  // failure — it is an acceptance we could not confirm. Some devices never close the exchange at
-  // all: a Somfy RS100's next transmission after our 0x3D was measured at 3.4-12 s, or never,
-  // against a 500 ms window, while a Somfy awning acks synchronously with 0x04. See
-  // ExchangeOutcome.
+  // A challenge we answered proves the device received the request, so this is not treated as a
+  // failure — it is an acceptance we could not confirm (a challenge says nothing about whether our
+  // 0x3D answer itself arrived). Some devices never close the exchange at all: a Somfy RS100's next
+  // transmission after our 0x3D was measured at 3.4-12 s, or never, against a 500 ms window, while
+  // a Somfy awning acks synchronously with 0x04. See ExchangeOutcome.
   EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_UNCONFIRMED)
       << "an authenticated request with no final response is accepted, not failed";
   EXPECT_EQ(response.cmd, 0) << "there was no response frame, so none should be handed back";
-  // The retry is the part that actively hurt: the command is already executing, so re-sending it
-  // twice more only reaches a device that has acted and now ignores duplicates.
+  // The retry is the part that actively hurt: the device may already be executing the command, so
+  // re-sending it twice more mostly reaches a device that has acted and now ignores duplicates.
   EXPECT_EQ(radio.get_send_count(), 2) << "expected exactly the request plus the auth response, with no retries";
 }
 
@@ -428,7 +428,7 @@ TEST(Exchange, SendAndReceive_ExecuteStopsAfterOneUnconfirmedAccept) {
   EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_UNCONFIRMED)
       << "CMD_EXECUTE authenticated without a final reply must still count as accepted";
   EXPECT_EQ(radio.get_send_count(), 2)
-      << "CMD_EXECUTE must not retry after an unconfirmed accept: the device is already acting on it";
+      << "CMD_EXECUTE must not retry after an unconfirmed accept: the device may already be acting on it";
 }
 
 TEST(Exchange, SendAndReceive_StatusPollRetriesAfterUnconfirmedAccept) {
@@ -1959,6 +1959,84 @@ TEST(Exchange, FailureReportDoesNotInheritThePreviousExchangesCapture) {
 // so a dead device does not block loop() for the full EXCHANGE_RETRY_COUNT product. Everything
 // else keeps the default.
 // ============================================================================
+
+TEST(Exchange, DebugLineRendersEveryFieldADiagnosisNeeds) {
+  // The failure line and the accepted-without-reply line share this renderer, so one test covers
+  // both. The fields are the whole point of the lines: a field report has to be able to tell
+  // "the radio saw nothing" from "it received something unusable" without the reporter re-running.
+  ExchangeEngine::DebugInfo d;
+  d.stage = "success_auth_unconfirmed";
+  d.tries = 2;
+  d.max_tries = 3;
+  d.request_cmd = CMD_EXECUTE;
+  d.saw_challenge = true;
+  d.capture_valid = true;
+  d.capture_rx_done = false;
+  d.capture_crc_error = true;
+  d.capture_freq_hz = FREQ_CH2;
+  d.capture_irq_status = 0x000C;
+  d.capture_packet_status = 0x20;
+  d.capture_reported_len = 34;
+  d.capture_frame_len = 23;
+  d.capture_rssi_dbm = -47;
+
+  char buf[EXCHANGE_DEBUG_LINE_SIZE];
+  const int written = render_exchange_debug(buf, sizeof(buf), "DA88B6", d);
+
+  ASSERT_GT(written, 0);
+  EXPECT_LT(static_cast<size_t>(written), sizeof(buf))
+      << "EXCHANGE_DEBUG_LINE_SIZE must hold the whole line: a truncated diagnostic loses exactly "
+         "the trailing capture fields it exists to carry";
+  const std::string line(buf);
+  EXPECT_NE(line.find("device=DA88B6"), std::string::npos);
+  EXPECT_NE(line.find("stage=success_auth_unconfirmed"), std::string::npos);
+  EXPECT_NE(line.find("tries=2 max_tries=3"), std::string::npos);
+  EXPECT_NE(line.find("saw_challenge=1"), std::string::npos);
+  EXPECT_NE(line.find("cap_valid=1 cap_rx_done=0 cap_crc_err=1"), std::string::npos)
+      << "the three capture flags are what separates a lost challenge answer from a lost reply";
+  EXPECT_NE(line.find("cap_irq=0x000C"), std::string::npos);
+  EXPECT_NE(line.find("cap_reported_len=34 cap_frame_len=23"), std::string::npos);
+  EXPECT_NE(line.find("cap_rssi=-47"), std::string::npos);
+}
+
+TEST(Exchange, UnconfirmedAcceptKeepsTheFinalWaitCaptureForTheLogLine) {
+  // An EXECUTE that draws a challenge and then silence ends as SUCCESS_UNCONFIRMED, which prints
+  // the accepted-without-reply line rather than a failure. That line is only worth printing if the
+  // snapshot behind it still describes the final wait, so assert the snapshot, which is what the
+  // host log macros cannot show.
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+
+  uint8_t chal_data[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  IoFrame challenge = build_challenge(test::DST_ID, comp.node_id_, chal_data);
+  uint8_t raw_chal[64];
+  const uint8_t len_chal = serialize(challenge, raw_chal, sizeof(raw_chal));
+  RadioRxPacket chal_pkt{};
+  chal_pkt.len = len_chal;
+  memcpy(chal_pkt.data, raw_chal, len_chal);
+  radio.queue_rx(chal_pkt);
+  // Nothing queued for the final wait.
+
+  IoFrame response{};
+  ASSERT_EQ(comp.send_and_receive_(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  const auto &d = comp.exchange_engine_.get_debug();
+  EXPECT_STREQ(d.stage, "success_auth_unconfirmed");
+  EXPECT_TRUE(d.saw_challenge) << "the challenge is the reason this counts as accepted at all";
+  EXPECT_EQ(d.request_cmd, CMD_EXECUTE);
+
+  char buf[EXCHANGE_DEBUG_LINE_SIZE];
+  const int written = render_exchange_debug(buf, sizeof(buf), "DEADBE", d);
+  EXPECT_LT(static_cast<size_t>(written), sizeof(buf));
+  EXPECT_NE(std::string(buf).find("stage=success_auth_unconfirmed"), std::string::npos);
+}
 
 TEST(Exchange, MaxTriesOfOneTransmitsExactlyOnce) {
   MockRadio radio;
