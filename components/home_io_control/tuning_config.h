@@ -206,6 +206,15 @@ static constexpr uint16_t LR1121_POST_TX_SETTLE_US = SX1262_POST_TX_SETTLE_US;
 /// its own literal rather than an alias.
 static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = 7;
 
+/// Default directed start preamble for drivers built on the shared software PHY (SX1262, LR1121).
+///
+/// 48 bytes rather than the protocol's documented 32. Measured: on a Somfy Izymo dimmer an SX1262
+/// answers 56/71 = 78.9% of first tries at 32 bytes and 60/60 at 48, 64, 128 and 256 — a step, not
+/// a ramp — while an SX1276 sending the same programmed 32 bytes answers 60/60. The deficit tracks
+/// the shared PHY rather than the chip, the link or the device, so the compensation belongs with
+/// the PHY. The cause of the shortfall is not identified; see ADR 0042.
+static constexpr uint16_t SOFT_PHY_START_PREAMBLE = 48;
+
 /// @brief All runtime tunable parameters for pairing and radio diagnostics.
 ///
 /// Values reset to their defaults on every boot. Each field initializes from a
@@ -242,8 +251,15 @@ struct TuningConfig {
   uint16_t cold_broadcast_reply_preamble{
       COLD_BROADCAST_REPLY_PREAMBLE};  ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
   uint16_t normal_start_preamble{
-      NORMAL_START_PREAMBLE};                ///< Preamble for a directed start frame to a non-low-power target.
-  uint8_t lbt_max_retries{LBT_MAX_RETRIES};  ///< LBT retries before forced TX.
+      NORMAL_START_PREAMBLE};  ///< Preamble for a directed start frame to a non-low-power target.
+                               ///< Resolved at setup from RadioDriver::default_start_preamble()
+                               ///< unless `normal_start_preamble_from_yaml` says the user set it.
+  /// True when `normal_start_preamble:` appeared in YAML. Codegen emits this alongside the value;
+  /// it exists so setup() can tell "the user chose 32" from "nobody chose anything", which decides
+  /// whether the driver's default applies (ADR 0042). Only read once, at setup — a later change
+  /// through the Home Assistant number simply sets the value.
+  bool normal_start_preamble_from_yaml{false};
+  uint8_t lbt_max_retries{LBT_MAX_RETRIES};                ///< LBT retries before forced TX.
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
   bool low_power_wake_belief{true};  ///< Order a `low_power` device's start-frame tries by its wake belief (short
                                      ///< preamble first when it is believed awake). False restores the fixed

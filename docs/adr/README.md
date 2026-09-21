@@ -27,6 +27,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0013](0013-blocking-exchange-on-the-esphome-loop.md) | Blocking radio work on the loop | No FreeRTOS tasks; the operation queue *is* the concurrency model |
 | [0020](0020-flash-lr1121-transceiver-firmware-not-the-bootloader.md) | Flash LR1121 firmware, not the bootloader | *Superseded by 0021.* Stage the riskier operation for later; keep every failed flash recoverable now |
 | [0021](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md) | Flash the bootloader, behind an arming switch | Reach the CVE-fixing `0x0104`; gate the one unrecoverable write behind visible armed state and a build-time recovery image |
+| [0042](0042-start-preamble-default-comes-from-the-radio-driver.md) | The start preamble's default comes from the radio driver | Measured: the software PHY (SX1262/LR1121) needs 48 bytes where the SX1276's register PHY is answered every time at the protocol's 32; an explicit `normal_start_preamble:` still wins, including downward |
 | [0028](0028-channel-policy-is-a-property-of-the-frame-not-of-the-chip.md) | Channel policy is a property of the frame | One shared listen primitive, three named policies picked by reply shape — not by chip |
 | [0029](0029-start-preamble-is-a-property-of-the-target.md) | Start preamble is a property of the target's power class (amended by 0040) | `LONG_PREAMBLE` iff `CTRL1_LOW_POWER`, iff the per-device `low_power` YAML property (default false) — not iff the frame is a start frame (roll-call: ADR 0037) |
 | [0035](0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md) | FEM support is a behaviour profile; boards always supply pins | `fem:` selects front-end switching behaviour only; every board package spells out every pin its profile needs, no implicit defaulting |
@@ -45,6 +46,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0030](0030-predictions-are-kept-apart-from-observations.md) | Predictions are kept apart from observations | An optimistic guess lives in its own overlay, withdrawn on failure and superseded per-axis by real data — never written into a reported field |
 | [0031](0031-oneway-vendor-wire-behaviour-is-driven-by-manufacturer.md) | 1W vendor wire behaviour is driven by `manufacturer:` | `manufacturer:` selects the 1W `CMD_EXECUTE` ACEI byte (`0x43` Somfy / `0x61` Velux); `execute_broadcast: typed\|all` is a separate handheld-vs-class-bound axis, not a vendor one |
 | [0032](0032-oneway-velux-enrollment-gesture.md) | 1W enrollment follows the gesture the target's `manufacturer:` expects | `velux` → `0x39` broadcast, a `0x30` sweep across `{roller_shutter, awning, dual_shutter}` under one sequence, then STOP+DOWN; `somfy` path unchanged; `enrollment_classes:` overrides the sweep list |
+| [0041](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md) | An unset 1W `low_power:` resolves from the manufacturer profile | `velux` → `ALWAYS_ALIVE` (an awake VELUX receiver rejects the 1024-byte preamble, and 1W has no ACK to reveal it); Somfy and unrecognised manufacturers stay `LEGACY_LONG`; an explicit key always wins |
 | [0033](0033-heating-send-path-bypasses-the-cover-machinery.md) | Heating send path bypasses the cover machinery | 2W heating does a plain send-and-receive — no status decode, no poll backoff, no ADR 0030 overlay (heating has no observation stream); state is publish-on-success only |
 
 ### Interfaces and naming
@@ -130,6 +132,8 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0038: 1W bursts follow the identity's power class, not a hard-coded preamble](0038-oneway-bursts-follow-the-identity-power-class.md)
 - [ADR 0039: Pairing sends a discover-confirm (0x2C) and tolerates no answer](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md)
 - [ADR 0040: A low-power device's start preamble follows its wake belief](0040-low-power-start-preamble-follows-the-wake-belief.md)
+- [ADR 0041: An unset 1W `low_power:` resolves from the manufacturer profile](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)
+- [ADR 0042: The directed start preamble's default comes from the radio driver](0042-start-preamble-default-comes-from-the-radio-driver.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

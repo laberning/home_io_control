@@ -75,9 +75,12 @@ home_io_control:
       commands: [stop]
       enrollment: true
       enrollment_classes: [awning, roller_shutter]
-      # ADR 0038: low_power: false exercises the ALWAYS_ALIVE codegen branch (ONEWAY_CONTROLLER_SCHEMA
-      # tri-state; low_power: false is the test-build lead for a mains-powered VELUX receiver).
-      low_power: false
+      # ADR 0041: low_power: is deliberately absent here, so this identity exercises the
+      # profile-resolution path -- codegen emits an empty optional and effective_power_class()
+      # turns it into ALWAYS_ALIVE because manufacturer: is velux. Setting it explicitly would
+      # bypass exactly the behaviour this manifest should be covering. The explicit branches are
+      # covered by adopted_neighbour_net (low_power: true) and, through the real transmitter, by
+      # oneway_send_command_test.cpp, which drives all three shapes.
     - id: adopted_neighbour_net
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF

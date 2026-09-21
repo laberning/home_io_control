@@ -514,6 +514,13 @@ def _apply_tuning_config(config, var):
         if key in config:
             _assign(tuning, key, config[key])
 
+    # Emitted under the same condition as the value above, and deliberately next to it: the flag
+    # tells setup() the user picked this value, so the radio driver's default must not replace it
+    # (ADR 0042). "The user chose 32" and "nobody chose anything" are indistinguishable from the
+    # value alone, which is why a second field exists at all.
+    if CONF_NORMAL_START_PREAMBLE in config:
+        _assign(tuning, "normal_start_preamble_from_yaml", "true")
+
     cg.add(var.set_tuning_config(tuning))
 
 

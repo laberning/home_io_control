@@ -193,3 +193,96 @@ TEST(TuningRegistry, UnknownNamesDoNotCrashAndReturnDefaults) {
   EXPECT_FLOAT_EQ(comp.get_tuning_number_value("does_not_exist"), 0.0F);
   EXPECT_EQ(comp.get_tuning_select_value("does_not_exist"), "");
 }
+
+// ============================================================================
+// Driver-supplied start preamble default (ADR 0042)
+// ============================================================================
+// How much preamble a directed start frame needs depends on what the driver actually puts on
+// air, so the default is the driver's to give. The constants are pinned here; the per-driver
+// values live in each driver's own test file next to its double, and the resolution itself is
+// exercised below against a MockRadio.
+
+TEST(TuningRegistry, SoftPhyDriversAskForMorePreambleThanTheProtocolDocuments) {
+  // Measured, not chosen: an SX1262 answers 56/71 = 78.9% of first tries at 32 bytes and 60/60 at
+  // 48, 64, 128 and 256, while an SX1276 sending the same programmed 32 answers 60/60. The
+  // per-driver values are pinned in each driver's own test file, where the doubles live.
+  EXPECT_GT(SOFT_PHY_START_PREAMBLE, NORMAL_START_PREAMBLE);
+  EXPECT_EQ(SOFT_PHY_START_PREAMBLE, 48);
+  EXPECT_EQ(NORMAL_START_PREAMBLE, 32) << "the protocol's documented preamble is 256 bits";
+}
+
+TEST(TuningRegistry, StartPreambleOverrideFlagDefaultsToUnset) {
+  // setup() must be able to tell "the user chose 32" from "nobody chose anything"; the value
+  // alone cannot express that, which is the whole reason the flag exists.
+  const TuningConfig fresh;
+  EXPECT_FALSE(fresh.normal_start_preamble_from_yaml);
+  EXPECT_EQ(fresh.normal_start_preamble, NORMAL_START_PREAMBLE);
+}
+
+// --- resolve_start_preamble_default_(): which value actually reaches the transmitter ---
+
+namespace {
+
+/// A radio whose only interesting property is the start preamble it asks for.
+class PreambleMockRadio : public MockRadio {
+ public:
+  explicit PreambleMockRadio(uint16_t preamble) : preamble_(preamble) {}
+  [[nodiscard]] uint16_t default_start_preamble() const override { return preamble_; }
+
+ private:
+  uint16_t preamble_;
+};
+
+/// Wire up just enough component for the resolver: it reads the radio and the tuning struct.
+void run_resolver(test::TestableHubComponent &comp, MockRadio &radio) {
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  comp.resolve_start_preamble_default_();
+}
+
+}  // namespace
+
+TEST(TuningRegistry, ResolverTakesTheDriverDefaultWhenYamlDidNotSetIt) {
+  test::TestableHubComponent comp;
+  PreambleMockRadio radio(SOFT_PHY_START_PREAMBLE);
+  run_resolver(comp, radio);
+  EXPECT_EQ(comp.tuning_.normal_start_preamble, SOFT_PHY_START_PREAMBLE);
+}
+
+TEST(TuningRegistry, ResolverLeavesAnExplicitYamlValueAlone) {
+  // The whole point of the flag: an explicit 32 on a soft-PHY board must survive, or a reporter
+  // can never bisect downward to reproduce the very problem this default compensates for.
+  test::TestableHubComponent comp;
+  comp.tuning_.normal_start_preamble = NORMAL_START_PREAMBLE;
+  comp.tuning_.normal_start_preamble_from_yaml = true;
+  PreambleMockRadio radio(SOFT_PHY_START_PREAMBLE);
+  run_resolver(comp, radio);
+  EXPECT_EQ(comp.tuning_.normal_start_preamble, NORMAL_START_PREAMBLE)
+      << "an explicit value must win over the driver default, including a shorter one";
+}
+
+TEST(TuningRegistry, ResolverHonoursAnExplicitValueLargerThanTheDriverDefaultToo) {
+  test::TestableHubComponent comp;
+  comp.tuning_.normal_start_preamble = 256;
+  comp.tuning_.normal_start_preamble_from_yaml = true;
+  PreambleMockRadio radio(SOFT_PHY_START_PREAMBLE);
+  run_resolver(comp, radio);
+  EXPECT_EQ(comp.tuning_.normal_start_preamble, 256);
+}
+
+TEST(TuningRegistry, ResolverIsANoOpWithoutARadio) {
+  // setup() bails out before this on a radio failure; the guard keeps the resolver safe anyway.
+  test::TestableHubComponent comp;
+  comp.radio_ = nullptr;
+  comp.resolve_start_preamble_default_();
+  EXPECT_EQ(comp.tuning_.normal_start_preamble, NORMAL_START_PREAMBLE);
+}
+
+TEST(TuningRegistry, ResolverIsIdempotent) {
+  // apply_tuning_to_radio_() can run again on a UI change; resolving twice must not drift.
+  test::TestableHubComponent comp;
+  PreambleMockRadio radio(SOFT_PHY_START_PREAMBLE);
+  run_resolver(comp, radio);
+  comp.resolve_start_preamble_default_();
+  EXPECT_EQ(comp.tuning_.normal_start_preamble, SOFT_PHY_START_PREAMBLE);
+}

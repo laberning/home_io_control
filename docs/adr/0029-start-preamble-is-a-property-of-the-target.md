@@ -19,16 +19,14 @@ Two things were wrong with keying that off frame position:
   always-alive device carries `CTRL1 = 0x00` and a short preamble, next to our
   byte-identical-payload `EXECUTE` carrying `CTRL1 = 0x20` and 1024 bytes.
 - **Some receivers actively fail on the long burst.** Against a real Velux
-  always-alive installation, every directed command timed out with the radio
-  reporting it never detected a reply preamble at all. A bisection on the
-  reporter's own hardware isolated the cause: clearing `CTRL1_LOW_POWER` while
-  keeping the 1024-byte preamble changed nothing; dropping the preamble to a
-  few bytes while *keeping* `CTRL1_LOW_POWER` set made every authenticated
-  exchange complete. The long preamble — not the flag — was the blocker.
-  Whether the receiver arms a bounded sync-search window that expires before
-  our sync word arrives, or reads 213 ms of carrier as a busy channel, the
-  emitted preamble is well-formed (Somfy always-alive devices lock onto the
-  identical frames in volume) and simply too long for that receiver class.
+  always-alive installation, every directed command timed out with
+  the radio reporting it never detected a reply preamble at all. A bisection on
+  the reporter's own hardware isolated the cause: clearing `CTRL1_LOW_POWER`
+  while keeping the 1024-byte preamble changed nothing; dropping the preamble to
+  a few bytes while *keeping* `CTRL1_LOW_POWER` set made every authenticated
+  exchange complete. The long preamble — not the flag — was the blocker. The
+  emitted preamble is well-formed, since Somfy always-alive devices lock onto
+  the identical frames in volume; it is simply too long for that receiver class.
 
 The protocol already carries the distinction: every device that answers a
 roll-call reports a `POWER_SAVE` class in its `0x2B` Multi Information Byte,

@@ -856,18 +856,21 @@ def _enrollment_classes_initialiser(identity):
     return f"{{{entries}}}"
 
 
-def _power_class_expression(identity):
-    """Map `low_power:` to the C++ OneWayPowerClass enumerator it emits.
+def _power_class_override_expression(identity):
+    """Map `low_power:` to the C++ `std::optional<OneWayPowerClass>` the identity stores.
 
-    Tri-state: unset -> LEGACY_LONG (the legacy default), `false` -> ALWAYS_ALIVE, `true` ->
-    LOW_POWER. See ADR 0038 and ONEWAY_CONTROLLER_SCHEMA's own comment on CONF_LOW_POWER.
+    Tri-state, and the three states are emitted as three distinct values rather than collapsed
+    here: unset -> `{}` (empty optional), `false` -> ALWAYS_ALIVE, `true` -> LOW_POWER.
+
+    An unset key deliberately does **not** pick a shape at codegen time. Resolving it needs the
+    manufacturer profile, which lives in C++ (`resolve_oneway_wire_profile()`), and splitting that
+    lookup across two languages is how the ACEI and enrollment-class defaults would drift from this
+    one. `effective_power_class()` is the single resolver. See ADR 0041, and ADR 0038 for the
+    shapes themselves.
     """
     if CONF_LOW_POWER not in identity:
-        name = "LEGACY_LONG"
-    elif identity[CONF_LOW_POWER]:
-        name = "LOW_POWER"
-    else:
-        name = "ALWAYS_ALIVE"
+        return "{}"
+    name = "LOW_POWER" if identity[CONF_LOW_POWER] else "ALWAYS_ALIVE"
     return f"esphome::home_io_control::OneWayPowerClass::{name}"
 
 
@@ -893,7 +896,7 @@ def oneway_controller_expression(identity, hub_node_id):
             f".execute_broadcast_all = "
             f"{'true' if identity[CONF_EXECUTE_BROADCAST] == 'all' else 'false'}",
             f".enrollment_classes = {_enrollment_classes_initialiser(identity)}",
-            f".power_class = {_power_class_expression(identity)}",
+            f".power_class_override = {_power_class_override_expression(identity)}",
         ]
     )
     if derived:

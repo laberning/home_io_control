@@ -128,6 +128,7 @@ void IOHomeControlComponent::setup() {
   this->initialized_ = true;
   this->register_management_actions_();
   this->exchange_engine_.reset_hop_timestamp();
+  this->resolve_start_preamble_default_();
   this->apply_tuning_to_radio_();
   if (this->tuning_.active) {
     std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
@@ -197,6 +198,20 @@ void IOHomeControlComponent::apply_tuning_to_radio_() {
   if (this->radio_ == nullptr)
     return;
   this->radio_->apply_tuning(this->tuning_);
+}
+
+/// @brief Take the directed start preamble from the driver when YAML did not choose one.
+///
+/// Runs once, after the radio exists and before the first transmit. How much preamble a start
+/// frame needs depends on what the driver actually puts on air, so the default is the driver's to
+/// give (ADR 0042); an explicit `normal_start_preamble:` always wins, including a shorter value.
+/// The resolved value is reported by dump_config(), not from here — see the note in its body.
+void IOHomeControlComponent::resolve_start_preamble_default_() {
+  if (this->radio_ == nullptr || this->tuning_.normal_start_preamble_from_yaml)
+    return;
+  // Silent here on purpose: dump_config() reports the resolved value, because that is the only
+  // output a log client attaching after boot receives.
+  this->tuning_.normal_start_preamble = this->radio_->default_start_preamble();
 }
 
 /// Update a numeric tuning parameter from a Home Assistant `number` entity.
@@ -399,6 +414,11 @@ void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "  Node ID: %s", this->node_id_str_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+  // Printed for every board, from the dump rather than from setup(): the value decides whether a
+  // directed start frame is heard at all, it is chip-dependent (ADR 0042), and a reporter's pasted
+  // log is usually captured after boot, where setup()'s output is already gone.
+  ESP_LOGCONFIG(detail::TAG, "  Start preamble: %u bytes (%s)", this->tuning_.normal_start_preamble,
+                this->tuning_.normal_start_preamble_from_yaml ? "set in YAML" : "from the radio driver");
   if (!this->radio_failure_reason_.empty())
     ESP_LOGE(detail::TAG, "  Radio setup failed: %s", this->radio_failure_reason_.c_str());
 #ifdef IOHOME_UNSAFE_LOG_KEY_MATERIAL
@@ -461,16 +481,18 @@ void IOHomeControlComponent::dump_oneway_controllers_config_() const {
     // are never printed here (ADR 0011); only addresses and classes. The resolved ACEI and
     // destination let a user eyeball this against a capture of their real remote (ADR 0031).
     const OneWayWireProfile profile = resolve_oneway_wire_profile(identity.manufacturer);
-    // The power class is printed for every identity, unset (legacy) included, so a reporter's boot
-    // log always shows which shape their build is actually using (ADR 0038) rather than only the
-    // two opted-in cases.
+    // The power class is printed for every identity, including the ones that never set the key, so
+    // a reporter's boot log always shows which shape their build actually transmits (ADR 0038).
+    // Where it came from is printed too: an unset key resolves from the manufacturer profile
+    // (ADR 0041), so "always-alive" alone would not tell a VELUX user whether they chose it.
     ESP_LOGCONFIG(
-        detail::TAG, "    - %s: node %s%s, class 0x%02X, acei 0x%02X%s, broadcast %s%s, power %s", identity.id.c_str(),
-        node_id_to_string(identity.node_id).c_str(), identity.node_id_derived ? " (derived)" : "",
+        detail::TAG, "    - %s: node %s%s, class 0x%02X, acei 0x%02X%s, broadcast %s%s, power %s%s",
+        identity.id.c_str(), node_id_to_string(identity.node_id).c_str(), identity.node_id_derived ? " (derived)" : "",
         static_cast<unsigned>(identity.io_device_type), static_cast<unsigned>(effective_execute_acei(identity)),
         has_execute_acei_override(identity) ? " (override)" : "", identity.execute_broadcast_all ? "all" : "typed",
         profile.profile_is_a_guess ? " [no vendor profile — Somfy-shaped]" : "",
-        oneway_power_class_name(identity.power_class));
+        oneway_power_class_name(effective_power_class(identity)),
+        has_power_class_override(identity) ? "" : " (from profile)");
 
     // The VELUX enrollment gesture ignores io_device_type and sweeps a fixed class set instead —
     // the most surprising resolved value on the identity, so print it (ADR 0032).
