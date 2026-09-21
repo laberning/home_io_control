@@ -128,6 +128,7 @@ void IOHomeControlComponent::setup() {
   this->initialized_ = true;
   this->register_management_actions_();
   this->exchange_engine_.reset_hop_timestamp();
+  this->resolve_start_preamble_default_();
   this->apply_tuning_to_radio_();
   if (this->tuning_.active) {
     std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
@@ -197,6 +198,20 @@ void IOHomeControlComponent::apply_tuning_to_radio_() {
   if (this->radio_ == nullptr)
     return;
   this->radio_->apply_tuning(this->tuning_);
+}
+
+/// @brief Take the directed start preamble from the driver when YAML did not choose one.
+///
+/// Runs once, after the radio exists and before the first transmit. How much preamble a start
+/// frame needs depends on what the driver actually puts on air, so the default is the driver's to
+/// give (ADR 0042); an explicit `normal_start_preamble:` always wins, including a shorter value.
+/// The resolved value is reported by dump_config(), not from here — see the note in its body.
+void IOHomeControlComponent::resolve_start_preamble_default_() {
+  if (this->radio_ == nullptr || this->tuning_.normal_start_preamble_from_yaml)
+    return;
+  // Silent here on purpose: dump_config() reports the resolved value, because that is the only
+  // output a log client attaching after boot receives.
+  this->tuning_.normal_start_preamble = this->radio_->default_start_preamble();
 }
 
 /// Update a numeric tuning parameter from a Home Assistant `number` entity.
@@ -399,6 +414,11 @@ void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "  Node ID: %s", this->node_id_str_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+  // Printed for every board, from the dump rather than from setup(): the value decides whether a
+  // directed start frame is heard at all, it is chip-dependent (ADR 0042), and a reporter's pasted
+  // log is usually captured after boot, where setup()'s output is already gone.
+  ESP_LOGCONFIG(detail::TAG, "  Start preamble: %u bytes (%s)", this->tuning_.normal_start_preamble,
+                this->tuning_.normal_start_preamble_from_yaml ? "set in YAML" : "from the radio driver");
   if (!this->radio_failure_reason_.empty())
     ESP_LOGE(detail::TAG, "  Radio setup failed: %s", this->radio_failure_reason_.c_str());
 #ifdef IOHOME_UNSAFE_LOG_KEY_MATERIAL

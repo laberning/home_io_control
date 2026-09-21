@@ -981,6 +981,8 @@ class IOHomeControlComponent : public Component,
   // --- Tuning ---
   /// Apply the current tuning configuration to the active radio driver.
   void apply_tuning_to_radio_();
+  /// @brief Resolve `normal_start_preamble` from the driver when YAML did not set it (ADR 0042).
+  void resolve_start_preamble_default_();
 
   // --- Management actions (thin wrappers delegating to management_actions_) ---
   /// Register hub-level Home Assistant actions; called from setup().
