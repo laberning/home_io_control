@@ -146,7 +146,7 @@ your device may differ.
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
-| `normal_start_preamble` | both | `32` | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices still get `LONG_PREAMBLE`. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices still get `LONG_PREAMBLE`. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -314,6 +314,16 @@ not need the ~213 ms 1024-byte wake-up burst, and some receivers never lock onto
 so a normal start frame gets this shorter preamble, matching what real hubs send to an
 always-alive device. A device declared `low_power: true` still gets `LONG_PREAMBLE` on its start
 frames, unchanged.
+
+**The default depends on your radio.** An SX1262 or LR1121 board starts at 48 bytes, an SX1276
+board at 32 ([ADR 0042](../adr/0042-start-preamble-default-comes-from-the-radio-driver.md)). The
+software PHY those two chips share puts less usable preamble on air than its programmed length
+suggests: measured against a Somfy dimmer, an SX1262 was answered on the first try 79% of the time
+at 32 bytes and every time at 48, while an SX1276 sending the same programmed 32 was answered every
+time. The config dump in your logs prints the value it resolved and whether it came from YAML or the radio.
+
+Setting this key yourself always wins, **including a value below the default** — useful if you are
+bisecting a reception problem and want to see where your own device stops answering.
 
 The same value governs a 1W identity's non-wake-up copies once its own `low_power:` is set to
 `false` or `true` — see [Sending 1W commands](oneway-transmit.md). Left unset, an identity keeps

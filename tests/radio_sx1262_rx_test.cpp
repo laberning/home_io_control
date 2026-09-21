@@ -919,3 +919,15 @@ TEST(RadioSX1262FemRxGain, KctReadingAtTheMeasuredBenchLevelMatchesAFrontEndless
   const int reading = radio.get_last_capture().rssi_dbm;
   EXPECT_NEAR(reading, -61, 4) << "gain-corrected V4.3 reading should sit near the V3's -61 dBm";
 }
+
+/// ADR 0042: the start-preamble default is the driver's to give, and the override lives on
+/// SoftPhyDriverBase rather than here — both soft-PHY chips measured the same, so letting them
+/// diverge per driver would be inventing a difference the evidence does not show.
+TEST(RadioSX1262, DefaultStartPreambleComesFromTheSharedSoftPhy) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  EXPECT_EQ(radio.default_start_preamble(), SOFT_PHY_START_PREAMBLE);
+  EXPECT_GT(radio.default_start_preamble(), NORMAL_START_PREAMBLE)
+      << "the soft PHY needs more than the protocol's documented preamble";
+}

@@ -209,6 +209,23 @@ class RadioDriver {
   /// @return Preamble length in bytes.
   [[nodiscard]] virtual uint16_t response_preamble() const { return SHORT_PREAMBLE; }
 
+  /// @brief Default preamble for a directed start frame, when the user has not set
+  /// `normal_start_preamble` in YAML.
+  ///
+  /// A start frame has to be found by a peer that is not yet listening to us, so it needs
+  /// enough preamble for that peer to lock. How much is enough is not purely a protocol
+  /// question: it also depends on what the driver's transmit path actually puts on air, which
+  /// is why this is a driver property rather than one constant. Drivers whose emitted preamble
+  /// gives the peer less usable synchronization than its programmed length suggests override
+  /// this with a longer value (see the override for the measurement behind it).
+  ///
+  /// The default is the protocol's documented preamble, 256 bits. An explicit
+  /// `normal_start_preamble:` always wins over this — including a shorter value, so a reporter
+  /// can still bisect downward in the field (ADR 0029).
+  ///
+  /// @return Preamble length in bytes.
+  [[nodiscard]] virtual uint16_t default_start_preamble() const { return NORMAL_START_PREAMBLE; }
+
   /// @brief Apply runtime tuning parameters to the driver.
   ///
   /// Each driver consumes only the fields it understands; the default is a no-op for

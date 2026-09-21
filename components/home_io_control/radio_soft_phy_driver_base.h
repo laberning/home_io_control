@@ -233,6 +233,16 @@ class SoftPhyDriverBase : public RadioDriver {
   /// drivers' constructors/tuning defaults for the chip-specific rationale and value.
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
 
+  /// @copydoc RadioDriver::default_start_preamble
+  ///
+  /// This PHY puts less usable preamble on air than its programmed length suggests, so it asks for
+  /// more than the protocol's documented value (`SOFT_PHY_START_PREAMBLE`, which carries the
+  /// measurement). The override belongs here rather than on each concrete driver because the
+  /// shared PHY is the level the effect follows: SX1262 and LR1121 measured the same as each other
+  /// and both differed from the register PHY, so a per-driver value would invent a difference the
+  /// evidence does not show. See ADR 0042.
+  [[nodiscard]] uint16_t default_start_preamble() const override { return SOFT_PHY_START_PREAMBLE; }
+
  protected:
   // --- Tuning helpers shared by both drivers (values/defaults stay chip-specific) ---
   /// Set the preamble length used for response/continuation frames within an exchange.

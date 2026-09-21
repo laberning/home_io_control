@@ -825,3 +825,15 @@ TEST(RadioLR1121, ApplyTuningRewritesModulationParamsBandwidth) {
   }
   EXPECT_EQ(found, 3) << "GFSK workaround trio must re-run immediately after every SetModulationParams";
 }
+
+/// ADR 0042: the start-preamble default is the driver's to give, and the override lives on
+/// SoftPhyDriverBase rather than here — both soft-PHY chips measured the same, so letting them
+/// diverge per driver would be inventing a difference the evidence does not show.
+TEST(RadioLR1121, DefaultStartPreambleComesFromTheSharedSoftPhy) {
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
+  EXPECT_EQ(radio.default_start_preamble(), SOFT_PHY_START_PREAMBLE);
+  EXPECT_GT(radio.default_start_preamble(), NORMAL_START_PREAMBLE)
+      << "the soft PHY needs more than the protocol's documented preamble";
+}
