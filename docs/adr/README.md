@@ -29,10 +29,11 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0021](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md) | Flash the bootloader, behind an arming switch | Reach the CVE-fixing `0x0104`; gate the one unrecoverable write behind visible armed state and a build-time recovery image |
 | [0042](0042-start-preamble-default-comes-from-the-radio-driver.md) | The start preamble's default comes from the radio driver | Measured: the software PHY (SX1262/LR1121) needs 48 bytes where the SX1276's register PHY is answered every time at the protocol's 32; an explicit `normal_start_preamble:` still wins, including downward |
 | [0028](0028-channel-policy-is-a-property-of-the-frame-not-of-the-chip.md) | Channel policy is a property of the frame | One shared listen primitive, three named policies picked by reply shape — not by chip |
-| [0029](0029-start-preamble-is-a-property-of-the-target.md) | Start preamble is a property of the target's power class | `LONG_PREAMBLE` iff `CTRL1_LOW_POWER`, iff the per-device `low_power` YAML property (default false) — not iff the frame is a start frame (roll-call: ADR 0037) |
+| [0029](0029-start-preamble-is-a-property-of-the-target.md) | Start preamble is a property of the target's power class (amended by 0040) | `LONG_PREAMBLE` iff `CTRL1_LOW_POWER`, iff the per-device `low_power` YAML property (default false) — not iff the frame is a start frame (roll-call: ADR 0037) |
 | [0035](0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md) | FEM support is a behaviour profile; boards always supply pins | `fem:` selects front-end switching behaviour only; every board package spells out every pin its profile needs, no implicit defaulting |
 | [0037](0037-the-roll-call-sweeps-both-power-classes.md) | The roll-call sweeps both power classes | A low-power pass (CTRL1=0x30, long preamble, all channels) then the unchanged always-alive pass; scan_power_classes narrows it |
 | [0039](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md) | Pairing sends a discover-confirm (0x2C) and tolerates no answer | Universal `pairing_discover_confirm` mode (`skip`/`send`/`send_with_ack`); the step never fails the attempt; try 2 alone rotates channels (deviates from ADR 0028) |
+| [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | Tries ordered by per-device evidence (short first when believed awake, wake-up preamble in every multi-try plan; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch |
 
 ### Behavior
 
@@ -130,6 +131,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0037: The roll-call sweeps both power classes](0037-the-roll-call-sweeps-both-power-classes.md)
 - [ADR 0038: 1W bursts follow the identity's power class, not a hard-coded preamble](0038-oneway-bursts-follow-the-identity-power-class.md)
 - [ADR 0039: Pairing sends a discover-confirm (0x2C) and tolerates no answer](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md)
+- [ADR 0040: A low-power device's start preamble follows its wake belief](0040-low-power-start-preamble-follows-the-wake-belief.md)
 - [ADR 0041: An unset 1W `low_power:` resolves from the manufacturer profile](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)
 - [ADR 0042: The directed start preamble's default comes from the radio driver](0042-start-preamble-default-comes-from-the-radio-driver.md)
 <!-- /doxygen-subpages -->

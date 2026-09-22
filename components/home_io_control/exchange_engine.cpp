@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstdio>
 #include <cstring>
 
 namespace esphome {
@@ -75,13 +76,18 @@ int render_exchange_debug(char *buf, size_t buf_size, const char *device_id, con
   return snprintf(buf, buf_size,
                   "device=%s cmd=%s(0x%02X) stage=%s tries=%u max_tries=%u saw_challenge=%u cap_valid=%u "
                   "cap_rx_done=%u cap_crc_err=%u cap_freq=%" PRIu32
-                  " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d",
+                  " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d belief=%s "
+                  "last_preamble=%u",
                   device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.max_tries,
                   // Rendered as 0/1: these are flags in a field list, not prose, and a caller greps them.
                   static_cast<unsigned>(d.saw_challenge), static_cast<unsigned>(d.capture_valid),
                   static_cast<unsigned>(d.capture_rx_done), static_cast<unsigned>(d.capture_crc_error),
                   d.capture_freq_hz, d.capture_irq_status, d.capture_packet_status, d.capture_reported_len,
-                  d.capture_frame_len, d.capture_rssi_dbm);
+                  d.capture_frame_len, d.capture_rssi_dbm,
+                  d.wake_belief_use == ExchangeEngine::WakeBeliefUse::APPLIED
+                      ? decisions::wake_belief_name(d.wake_belief)
+                      : ExchangeEngine::wake_belief_use_name(d.wake_belief_use),
+                  d.last_try_preamble);
 }
 
 void ExchangeEngine::log_debug(const char *device_id) const {
@@ -257,6 +263,27 @@ void log_exchange_frame(const char *stage, int tries, const IoFrame &frame, uint
            frame.src[1], frame.src[2], frame.dst[0], frame.dst[1], frame.dst[2], len);
 }
 
+/// Buffer for format_try_age(): "n/a", or a uint32_t's ten decimal digits, plus the terminator.
+constexpr size_t TRY_AGE_BUFFER_SIZE = 12;
+
+/// Render a try's `age_ms=` field: how long before this try the target was last heard, or "n/a"
+/// when there is no stamp (never heard, or the wake evidence was not looked up). Every try line
+/// carries it next to the try's preamble, so field logs show which preamble reaches a low-power
+/// receiver how long after it last spoke — the data the wake-belief windows are sized from. The
+/// stamp is read once, before the exchange, so a challenge heard on an earlier try of the same
+/// exchange does not reset it.
+void format_try_age(const exchange::OutboundExchangeContext &ctx, char (&buf)[TRY_AGE_BUFFER_SIZE]) {
+  if (ctx.target_last_seen_ms == 0) {
+    snprintf(buf, sizeof(buf), "n/a");
+    return;
+  }
+  snprintf(buf, sizeof(buf), "%" PRIu32, ctx.exchange_start_ms - ctx.target_last_seen_ms);
+}
+
+/// True for a start frame addressed to a duty-cycled receiver — the only frame that has a wake-up
+/// preamble to choose. One definition, shared by the fixed rule and the per-try wake belief.
+bool is_low_power_start(const IoFrame &request) { return is_start(request) && (request.ctrl1 & CTRL1_LOW_POWER) != 0; }
+
 /// Determine if a candidate frame is a valid final response for the request.
 bool is_valid_final_response(const IoFrame &candidate, const IoFrame &request) {
   return decisions::classify_exchange_final_response(request, candidate) ==
@@ -279,8 +306,15 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   // above EXCHANGE_RETRY_COUNT (the budget check downstream assumes that ceiling).
   const uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
   this->debug_.max_tries = tries_allowed;
-  const uint16_t request_preamble =
-      request_preamble_override != 0 ? request_preamble_override : this->request_preamble_for(request);
+  const PreamblePlan preamble_plan = this->plan_request_preamble_(request, request_preamble_override);
+  this->debug_.wake_belief_use = preamble_plan.use;
+  if (preamble_plan.use == WakeBeliefUse::APPLIED) {
+    this->debug_.wake_belief = preamble_plan.belief;
+    if (preamble_plan.belief != decisions::WakeBelief::ASLEEP) {
+      ESP_LOGD(TAG, "Low-power target %s believed %s: short preamble first", node_id_to_string(request.dst).c_str(),
+               decisions::wake_belief_name(preamble_plan.belief));
+    }
+  }
   const uint32_t exchange_begin_ms = millis();
   bool accepted_without_reply = false;
 
@@ -308,7 +342,10 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       this->counters_.retransmits++;
     }
 
-    if (!this->transmit_request_(request, freq, request_preamble, context))
+    context.request_preamble = preamble_plan.for_try(context.try_index);
+    context.target_last_seen_ms = preamble_plan.last_seen_ms;
+    this->debug_.last_try_preamble = context.request_preamble;
+    if (!this->transmit_request_(request, freq, context.request_preamble, context))
       continue;
 
     context.state = exchange::OutboundExchangeState::WAIT_FIRST_RESPONSE;
@@ -319,6 +356,13 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     if (first_disp == decisions::ExchangeFirstResponseDisposition::COMPLETE_DIRECT) {
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_direct", context.try_index, false);
+      // The hit counterpart of "Try N ended": an unauthenticated reply (a status poll's answer)
+      // prints no challenge line, so without this a log would only ever show which preambles missed.
+      char age[TRY_AGE_BUFFER_SIZE];
+      format_try_age(context, age);
+      ESP_LOGI(TAG, "Try %d answered: cmd=%s(0x%02X) wait_ms=%" PRIu32 " preamble=%u age_ms=%s", context.try_index,
+               command_name(request.cmd), request.cmd, context.first_response_ms - context.exchange_start_ms,
+               context.request_preamble, age);
       response = context.rx;
       return ExchangeOutcome::SUCCESS_WITH_RESPONSE;
     }
@@ -364,12 +408,64 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
 // ============================================================================
 
 uint16_t ExchangeEngine::request_preamble_for(const IoFrame &request) const {
-  // Gate on is_start() first: several device-role / continuation builders (key transfer,
+  // Gate on the start flag first: several device-role / continuation builders (key transfer,
   // status-update response) set CTRL1_LOW_POWER on a non-start frame, and those must keep the
   // short response preamble, not be lengthened.
   if (!is_start(request))
     return (*this->radio_ptr_)->response_preamble();
-  return (request.ctrl1 & CTRL1_LOW_POWER) != 0 ? LONG_PREAMBLE : this->tuning_->normal_start_preamble;
+  return is_low_power_start(request) ? LONG_PREAMBLE : this->tuning_->normal_start_preamble;
+}
+
+const char *ExchangeEngine::wake_belief_use_name(WakeBeliefUse use) {
+  switch (use) {
+    case WakeBeliefUse::OVERRIDE:
+      return "override";
+    case WakeBeliefUse::SWITCHED_OFF:
+      return "off";
+    case WakeBeliefUse::NO_PROVIDER:
+      return "no_provider";
+    case WakeBeliefUse::APPLIED:
+      return "applied";
+    case WakeBeliefUse::NOT_LOW_POWER:
+    default:
+      return "not_low_power";
+  }
+}
+
+ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFrame &request,
+                                                                    uint16_t override_preamble) const {
+  PreamblePlan plan;
+  plan.fixed = override_preamble != 0 ? override_preamble : this->request_preamble_for(request);
+  // Every reason not to apply the belief keeps the fixed preamble and is recorded, so the
+  // exchange-failure log names it. The override is the caller's explicit choice (pairing), so it
+  // is never second-guessed. Only a low-power *start* frame has a wake-up preamble to reorder.
+  // The try count is deliberately not a reason: a single-try exchange (most scheduler-owned status
+  // polls) follows the belief's first try like any other. Its likeliest moment is the settle poll
+  // seconds after a command or STOP, when the receiver is travelling or has just answered — the
+  // state in which a moving VELUX solar receiver ignores the wake-up preamble — so a fixed wake-up
+  // preamble there loses the poll and a backoff slot instead of guarding against anything.
+  if (override_preamble != 0) {
+    plan.use = WakeBeliefUse::OVERRIDE;
+  } else if (!is_low_power_start(request)) {
+    plan.use = WakeBeliefUse::NOT_LOW_POWER;
+  } else if (!this->tuning_->low_power_wake_belief) {
+    plan.use = WakeBeliefUse::SWITCHED_OFF;
+  } else if (!this->wake_evidence_provider_) {
+    plan.use = WakeBeliefUse::NO_PROVIDER;
+  } else {
+    plan.use = WakeBeliefUse::APPLIED;
+  }
+  if (plan.use != WakeBeliefUse::APPLIED)
+    return plan;
+
+  // A destination the hub has no record of has no evidence: treat it as asleep, the safe default.
+  decisions::WakeEvidence evidence{};
+  const bool known = this->wake_evidence_provider_(request.dst, evidence);
+  plan.short_preamble = this->tuning_->normal_start_preamble;
+  plan.last_seen_ms = known ? evidence.last_seen_ms : 0;
+  plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request))
+                      : decisions::WakeBelief::ASLEEP;
+  return plan;
 }
 
 bool ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
@@ -416,8 +512,10 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
 
   ctx.state = exchange::OutboundExchangeState::FAILED;
   this->record_debug("wait_first_timeout", ctx.try_index, false);
-  ESP_LOGI(TAG, "Try %d ended: no first response for cmd=%s(0x%02X) within %" PRIu32 " ms", ctx.try_index,
-           command_name(request.cmd), request.cmd, ctx.wait_ms);
+  char age[TRY_AGE_BUFFER_SIZE];
+  format_try_age(ctx, age);
+  ESP_LOGI(TAG, "Try %d ended: no first response for cmd=%s(0x%02X) within %" PRIu32 " ms preamble=%u age_ms=%s",
+           ctx.try_index, command_name(request.cmd), request.cmd, ctx.wait_ms, ctx.request_preamble, age);
   return decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED;
 }
 
@@ -430,8 +528,11 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   // No challenge bytes here: the raw 0x3C payload plus the 0x3D response it provokes is a
   // known-plaintext/known-ciphertext pair under the system key (see redaction.h). The generic
   // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
-  ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%" PRIu32 " req_cmd=0x%02X req_len=%u", ctx.try_index,
-           ctx.first_response_ms - ctx.exchange_start_ms, request.cmd, request.data_len);
+  char age[TRY_AGE_BUFFER_SIZE];
+  format_try_age(ctx, age);
+  ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%" PRIu32 " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s",
+           ctx.try_index, ctx.first_response_ms - ctx.exchange_start_ms, request.cmd, request.data_len,
+           ctx.request_preamble, age);
 
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);

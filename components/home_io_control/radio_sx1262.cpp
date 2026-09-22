@@ -293,10 +293,9 @@ void RadioSX1262::write_modulation_params_() {
   // BitRate = 32 * Fxosc / BR_reg → BR_reg = 32 * 32MHz / 38400 = 26667 = 0x00682B
   // Pulse shape: Gaussian BT=1.0 (0x0B) — reduces TX spectral occupation.
   // Bandwidth: the register byte is runtime-tunable via rx_bandwidth_ — see
-  // TuningConfig::sx1262_rx_bandwidth (tuning_config.h) for the current default (58.6 kHz). The
-  // narrower filter is safe because the measured TX->RX turnaround (~390 us plus a 500 us settle)
-  // is well inside what it tolerates, and reception improves as the filter narrows on this
-  // waveform — matching the SX1276's long-validated 41.7 kHz default on the identical waveform.
+  // TuningConfig::sx1262_rx_bandwidth (tuning_config.h) for the current default (58.6 kHz) and
+  // why. The value is double-sideband, and with no AFC in GFSK mode this filter alone has to
+  // absorb the peer's carrier offset.
   // Fdev = fdev_hz * 2^25 / 32e6 → 19200 * 2^25 / 32e6 = 20133 = 0x004EA5
   uint8_t mod_params[8] = {
       0x00,

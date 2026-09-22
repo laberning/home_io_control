@@ -22,6 +22,7 @@ void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t ini
   t.next_update = (initial_delay_ms == 0) ? 0 : (now + initial_delay_ms);
   t.status_poll_failures = 0;
   t.auth_poll_failures = 0;
+  t.stop_settle = false;
 }
 
 void StatusPollPolicy::clear(const std::string &device_id) {
@@ -33,6 +34,7 @@ void StatusPollPolicy::clear(const std::string &device_id) {
   t.poll_deadline = 0;
   t.status_poll_failures = 0;
   t.auth_poll_failures = 0;
+  t.stop_settle = false;
   // interval_ms is configuration — NOT cleared; remains set for future tracking cycles.
 }
 
@@ -92,6 +94,21 @@ void StatusPollPolicy::clear_failure_streaks(const std::string &device_id) {
     return;
   it->second.status_poll_failures = 0;
   it->second.auth_poll_failures = 0;
+}
+
+void StatusPollPolicy::mark_stop_settle(const std::string &device_id) {
+  auto it = tracking_.find(device_id);
+  if (it != tracking_.end())
+    it->second.stop_settle = true;
+}
+
+bool StatusPollPolicy::take_stop_settle(const std::string &device_id) {
+  auto it = tracking_.find(device_id);
+  if (it == tracking_.end())
+    return false;
+  const bool marked = it->second.stop_settle;
+  it->second.stop_settle = false;
+  return marked;
 }
 
 uint8_t StatusPollPolicy::get_status_poll_failures(const std::string &device_id) const {

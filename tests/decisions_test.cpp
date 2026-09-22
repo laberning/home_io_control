@@ -433,6 +433,14 @@ TEST(Decisions, ScheduledPollTriesAuthStreakNeverGetsTheBand) {
          "and an auth try is the most expensive shape the engine runs";
 }
 
+TEST(Decisions, ScheduledPollTriesAfterAStopGetTheFullBudget) {
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 0, /*settles_a_stop=*/true), STOP_SETTLE_POLL_TRIES);
+  EXPECT_EQ(STOP_SETTLE_POLL_TRIES, EXCHANGE_RETRY_COUNT)
+      << "nothing is moving after an accepted STOP, and the user's reversal waits on this poll";
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 1, /*settles_a_stop=*/true), STOP_SETTLE_POLL_TRIES)
+      << "the mark wins over a stale auth streak; the streak is only history of earlier polls";
+}
+
 TEST(Decisions, ScheduledPollTriesAuthWinsOverAStatusStreak) {
   // Unreachable while on_exchange_failed() keeps the two counters mutually exclusive; pinned anyway
   // so the predicate's precedence (auth checked first) stays correct if that exclusivity ever
@@ -456,4 +464,133 @@ TEST(Decisions, BurstStartsFreshAfterQuietGap) {
 TEST(Decisions, BurstContinuesWithinQuietGap) {
   EXPECT_FALSE(decisions::oneway_burst_started_fresh(/*last_1w_activity_ms=*/1000, /*now=*/1699, /*quiet_ms=*/700))
       << "a frame arriving just inside quiet_ms extends the current burst rather than starting a new one";
+}
+
+// ============================================================================
+// Low-power wake belief — is_stop_request(), wake_belief(), low_power_try_preamble()
+// ============================================================================
+
+namespace {
+
+constexpr uint32_t WAKE_NOW = 1'000'000;  // Far from 0 so "now - stamp" never underflows by accident.
+
+decisions::WakeEvidence evidence(uint32_t moving_ago_ms, uint32_t seen_ago_ms) {
+  // An age of 0 in these tests means "never", i.e. a zero stamp.
+  return {moving_ago_ms == 0 ? 0 : WAKE_NOW - moving_ago_ms, seen_ago_ms == 0 ? 0 : WAKE_NOW - seen_ago_ms};
+}
+
+}  // namespace
+
+TEST(Decisions, IsStopRequestTrueOnlyForAStopExecute) {
+  IoFrame stop{};
+  ASSERT_TRUE(create_execute_command(stop, OWN_ID, DST_ID, true, CoverCommand::STOP, false));
+  EXPECT_TRUE(decisions::is_stop_request(stop));
+
+  IoFrame position{};
+  ASSERT_TRUE(create_execute_position(position, OWN_ID, DST_ID, true, 40));
+  EXPECT_FALSE(decisions::is_stop_request(position));
+
+  IoFrame favorite{};
+  ASSERT_TRUE(create_execute_command(favorite, OWN_ID, DST_ID, true, CoverCommand::FAVORITE, false));
+  EXPECT_FALSE(decisions::is_stop_request(favorite)) << "only the STOP main byte counts";
+
+  IoFrame poll{};
+  ASSERT_TRUE(create_get_status(poll, OWN_ID, DST_ID, true));
+  EXPECT_FALSE(decisions::is_stop_request(poll));
+
+  IoFrame truncated = stop;
+  truncated.data_len = EXECUTE_MAIN_BYTE_OFFSET;  // main byte not part of the payload any more
+  EXPECT_FALSE(decisions::is_stop_request(truncated)) << "a short payload must not be read past its length";
+}
+
+TEST(Decisions, WakeBeliefIsAsleepWithoutEvidence) {
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 0), WAKE_NOW, false), decisions::WakeBelief::ASLEEP);
+}
+
+TEST(Decisions, WakeBeliefStopAloneIsAwake) {
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 0), WAKE_NOW, true), decisions::WakeBelief::AWAKE)
+      << "a STOP is only sent to a receiver that is moving, whatever the stamps say";
+}
+
+TEST(Decisions, WakeBeliefMovingEvidenceIsAwakeUntilMaxTravel) {
+  EXPECT_EQ(decisions::wake_belief(evidence(LOW_POWER_MAX_TRAVEL_MS - 1, 0), WAKE_NOW, false),
+            decisions::WakeBelief::AWAKE);
+  EXPECT_NE(decisions::wake_belief(evidence(LOW_POWER_MAX_TRAVEL_MS, 0), WAKE_NOW, false), decisions::WakeBelief::AWAKE)
+      << "moving evidence expires at exactly LOW_POWER_MAX_TRAVEL_MS";
+}
+
+TEST(Decisions, WakeBeliefExpiredMovingEvidenceIsAsleep) {
+  EXPECT_EQ(decisions::wake_belief(evidence(LOW_POWER_MAX_TRAVEL_MS, 0), WAKE_NOW, false),
+            decisions::WakeBelief::ASLEEP)
+      << "no frame from the device since the move: it has long since finished and gone back to sleep";
+}
+
+TEST(Decisions, WakeBeliefRecentFrameAloneIsMaybeAwake) {
+  EXPECT_EQ(decisions::wake_belief(evidence(0, LOW_POWER_AWAKE_HOLD_MS - 1), WAKE_NOW, false),
+            decisions::WakeBelief::MAYBE_AWAKE);
+  EXPECT_EQ(decisions::wake_belief(evidence(0, LOW_POWER_AWAKE_HOLD_MS), WAKE_NOW, false),
+            decisions::WakeBelief::ASLEEP)
+      << "the hold expires at exactly LOW_POWER_AWAKE_HOLD_MS";
+}
+
+TEST(Decisions, WakeBeliefStaleMovingEvidenceWithARecentFrameIsMaybeAwake) {
+  // The move ended long ago (evidence past MAX_TRAVEL) but the device spoke 5 s ago.
+  EXPECT_EQ(decisions::wake_belief(evidence(LOW_POWER_MAX_TRAVEL_MS + 1, 5000), WAKE_NOW, false),
+            decisions::WakeBelief::MAYBE_AWAKE);
+}
+
+TEST(Decisions, WakeBeliefAgeArithmeticSurvivesMillisWrap) {
+  // Stamp taken 1 s before millis() wraps; now is 1 s after the wrap: an age of 2 s.
+  const decisions::WakeEvidence wrapped{0xFFFFFFFFu - 999u, 0};
+  EXPECT_EQ(decisions::wake_belief(wrapped, 1000u, false), decisions::WakeBelief::AWAKE);
+}
+
+TEST(Decisions, WakeBeliefStampEqualToNowIsFresh) {
+  // Age 0 is a legitimately fresh stamp (taken this very millisecond), unlike a zero *stamp*.
+  EXPECT_EQ(decisions::wake_belief({WAKE_NOW, 0}, WAKE_NOW, false), decisions::WakeBelief::AWAKE);
+  EXPECT_EQ(decisions::wake_belief({0, WAKE_NOW}, WAKE_NOW, false), decisions::WakeBelief::MAYBE_AWAKE);
+}
+
+TEST(Decisions, WakeBeliefLastSeenAgeArithmeticSurvivesMillisWrap) {
+  const decisions::WakeEvidence wrapped{0, 0xFFFFFFFFu - 999u};
+  EXPECT_EQ(decisions::wake_belief(wrapped, 1000u, false), decisions::WakeBelief::MAYBE_AWAKE);
+}
+
+TEST(Decisions, LowPowerTryPreambleFollowsThePlanTable) {
+  constexpr uint16_t SHORT = 32;
+  struct Row {
+    decisions::WakeBelief belief;
+    uint16_t plan[EXCHANGE_RETRY_COUNT];
+  };
+  const Row rows[] = {
+      {decisions::WakeBelief::AWAKE, {SHORT, LONG_PREAMBLE, SHORT}},
+      {decisions::WakeBelief::MAYBE_AWAKE, {SHORT, LONG_PREAMBLE, LONG_PREAMBLE}},
+      {decisions::WakeBelief::ASLEEP, {LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}},
+  };
+  for (const Row &row : rows) {
+    for (uint8_t try_index = 1; try_index <= EXCHANGE_RETRY_COUNT; try_index++) {
+      EXPECT_EQ(decisions::low_power_try_preamble(row.belief, try_index, SHORT), row.plan[try_index - 1])
+          << decisions::wake_belief_name(row.belief) << " try " << static_cast<int>(try_index);
+    }
+  }
+}
+
+TEST(Decisions, LowPowerTryPreambleClampsTheTryIndex) {
+  constexpr uint16_t SHORT = 32;
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 0, SHORT), SHORT)
+      << "try 0 is treated as try 1";
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 4, SHORT), SHORT)
+      << "try 4 is treated as the last try (short again for AWAKE)";
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::MAYBE_AWAKE, 4, SHORT), LONG_PREAMBLE);
+}
+
+TEST(Decisions, LowPowerTryPreambleUsesTheTunedShortPreamble) {
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 1, 48), 48)
+      << "the short preamble is the caller's tuned value, not a fixed constant";
+}
+
+TEST(Decisions, WakeBeliefNamesAreDistinct) {
+  EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::ASLEEP), "asleep");
+  EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::MAYBE_AWAKE), "maybe_awake");
+  EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::AWAKE), "awake");
 }

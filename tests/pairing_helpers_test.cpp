@@ -918,8 +918,11 @@ TEST(DiscoverAndPair, HappyPath_RegistersDevice) {
   EXPECT_TRUE(comp.discover_and_pair()) << "full happy-path pairing flow should succeed";
 
   // Device must appear in the registry after successful pairing.
-  EXPECT_NE(comp.get_device(node_id_to_string(device_bytes)), nullptr)
-      << "paired device should be registered after discover_and_pair";
+  const IoDevice *paired = comp.get_device(node_id_to_string(device_bytes));
+  ASSERT_NE(paired, nullptr) << "paired device should be registered after discover_and_pair";
+  // It just sent its 0x33, so it counts as heard from: the follow-up exchanges start from a "maybe
+  // awake" wake belief instead of "asleep".
+  EXPECT_NE(paired->last_seen_ms, 0u) << "a freshly paired device must be stamped as seen";
 }
 
 // ============================================================================

@@ -7,12 +7,15 @@ description: >
   the byte-identical command shape from rest within one to three tries (see
   tests/corpus/captures/exchange/velux_ssl_exchange_set_position_ack_stale_target.yaml). The same silence
   is on record for a VELUX MSU solar screen (issue #95), whose OEM remote's one-way STOP
-  (tests/corpus/captures/oneway/velux_kli313_oneway_stop.yaml) did stop it mid-travel. Two
-  explanations fit and this capture does not separate them. The motor may not transmit while it
-  moves. Or a moving (awake) motor may ignore the 1024-byte preamble, as this motor provably does
-  while awake in its registration window
-  (tests/corpus/captures/pairing/velux_ssl_pairing_directed_long_preamble_ignored.yaml), while
-  the OEM burst's repeat copies carry short preambles.
+  (tests/corpus/captures/oneway/velux_kli313_oneway_stop.yaml) did stop it mid-travel.
+  Two explanations fit this capture on its own: the motor may not transmit while it moves, or a
+  moving (awake) motor may ignore the 1024-byte preamble, as this motor provably does while awake
+  in its registration window
+  (tests/corpus/captures/pairing/velux_ssl_pairing_directed_long_preamble_ignored.yaml), while the
+  OEM burst's repeat copies carry short preambles. The preamble is the one that holds:
+  tests/corpus/captures/exchange/velux_ssl_exchange_stop_mid_motion_short_preamble.yaml is this
+  same device answering the byte-identical STOP behind a 32-byte preamble while moving, and its
+  0x04 ack reports the motor itself as not stopped — so it does transmit during travel.
   t_ms are from the log line timestamps (first try 10:48:11.318).
 source:
   device: "VELUX SSL solar roller shutter (node 3943DA), paired two-way to this hub"

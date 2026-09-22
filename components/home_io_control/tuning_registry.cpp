@@ -130,6 +130,8 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        return true;
      },
      true},
+    {"low_power_wake_belief", bool_select_get<&TuningConfig::low_power_wake_belief>,
+     bool_select_set<&TuningConfig::low_power_wake_belief>, false},
     {"pairing_discovery_commands",
      [](const TuningConfig &t) { return discovery_commands_to_csv(t.pairing_discovery_commands); },
      [](TuningConfig &t, const std::string &v) -> bool {

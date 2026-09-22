@@ -323,6 +323,26 @@ TEST(OnewayRx, OptimisticState_OneWayPredictionSupersededByStatusObservation) {
   EXPECT_FLOAT_EQ(dev->position, 100.0f);
 }
 
+// An overheard linked-remote movement is real evidence the receiver is travelling — unlike the hub's
+// own prediction — and counts even where the optimistic overlay is switched off.
+TEST(OnewayRx, LinkedRemoteMoveStampsMovingEvidenceAndStopClearsIt) {
+  esphome::test_clock::ManualClock clock(9000);
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false});
+  comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
+  const auto *dev = comp.get_device("112233");
+  ASSERT_NE(dev, nullptr);
+
+  comp.process_received_packet_(make_rx_packet(make_1w_execute(0xC8, 0x00)));  // CLOSE
+  EXPECT_EQ(dev->last_moving_evidence_ms, 9000u);
+
+  esphome::test_clock::advance_ms(3000);
+  comp.process_received_packet_(make_rx_packet(make_1w_execute(POS_STOP, 0x00)));
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "an overheard STOP spends the moving evidence";
+}
+
 TEST(OnewayRx, OptimisticState_StopClearsTargetAndPollsImmediately) {
   RxTestableComponent comp;
   MockRadio radio;

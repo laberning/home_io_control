@@ -1,0 +1,50 @@
+id: velux_ssl_statuspoll_stop_settle_preamble_escalation
+description: >
+  The settle status poll a VELUX SSL solar roller shutter answered right after it was stopped,
+  issue #114 (@michelpa), Heltec V3 / SX1262 hub E3F1D3, device entry `low_power: true`
+  (CTRL1 0x20). The poll ran 1.1 s after the STOP that
+  tests/corpus/captures/exchange/velux_ssl_exchange_stop_mid_motion_short_preamble.yaml records.
+  Try 1 led with the 32-byte start preamble and drew nothing within the 400 ms window; try 2 sent
+  the byte-identical frame behind the 1024-byte wake-up preamble and was answered 495 ms later
+  with a real position. So the motor stopped answering the short preamble about a second after it
+  came to rest, having answered it twice while moving.
+  Two captures bound the same poll from the other side: the 1024-byte poll that drew silence
+  *during* travel (tests/corpus/captures/statuspoll/velux_ssl_statuspoll_silent_while_moving.yaml)
+  and this one, answered at 1024 bytes once travel ended.
+  What this does not show is a controlled preamble comparison at rest. A single 32-byte miss on
+  this hub's software PHY is an ordinary event on its own, so try 1 failing and try 2 succeeding
+  is a sequence, not an A/B — the frames are kept for the decode and the timing, not as evidence
+  about which preamble a resting motor needs.
+  t_ms are from the log line timestamps (first try at 08:45:01.498).
+source:
+  device: "VELUX SSL solar roller shutter (node 3943DA), paired two-way to this hub"
+  captured_with: sx1262
+  firmware: "preamble_wake_belief branch, at or after 8c682d1 (per-try preamble= / age_ms= logging and the three-try post-STOP settle poll are both present)"
+  date: 2026-09-21
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/114"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) position poll, function id 0x03, CTRL1=0x20 LOW_POWER, 32-byte preamble, motor at rest 1.1 s after the STOP; no frame back within 400 ms"
+  - dir: tx
+    t_ms: 677
+    freq: 868950000
+    hex: "4B 20 39 43 DA E3 F1 D3 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), try 2, byte-identical frame behind the 1024-byte wake-up preamble"
+  - dir: rx
+    t_ms: 919
+    freq: 868950000
+    hex: "96 00 E3 F1 D3 39 43 DA 04 05 00 45 DC 45 DC 00 00 E3 F1 D3 01 00 00"
+    crc: absent
+    note: "cmd=STATUS_RESP(0x04), answered 495 ms after try 2's frame went out; position and target both 0x45DC, movement state stopped; trailing E3 F1 D3 01 names this hub as the last commanding node"
+expect:
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

@@ -33,7 +33,8 @@ namespace home_io_control {
 /// CTRL0 encodes frame flags and the total frame length.
 /// Bits [4:0] = frame_length - 1 (so 0x08 means 9 bytes total).
 /// - START (bit 6): first frame in an exchange. Its TX preamble depends on CTRL1_LOW_POWER, not on
-///   START alone: a low-power target gets the 1024-byte wake-up burst, others a normal preamble.
+///   START alone: a low-power target gets the 1024-byte wake-up burst (unless it is believed awake,
+///   see ADR 0040), others a normal preamble.
 /// - END (bit 7): last frame in an exchange; set on responses and command completions.
 /// - 1W (bit 5): 1=OneWay protocol (no response expected), 0=TwoWay (response expected).
 /// For 2W operation, the controller sets START on initial command and device replies with END; subsequent frames in an

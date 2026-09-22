@@ -326,6 +326,9 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
       result += " " + std::string(p->name) + "=" + std::to_string(static_cast<int64_t>(current));
   }
 
+  if (cfg.low_power_wake_belief != DEFAULTS.low_power_wake_belief)
+    result += " low_power_wake_belief=" + std::string(cfg.low_power_wake_belief ? "true" : "false");
+
   if (cfg.pairing_discovery_commands != DEFAULTS.pairing_discovery_commands)
     result += " pairing_discovery_commands=" + discovery_commands_to_string(cfg.pairing_discovery_commands);
   // The default is auto; an explicit destination is the only non-default state worth emitting

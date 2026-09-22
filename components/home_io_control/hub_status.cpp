@@ -89,6 +89,18 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
   }
 }
 
+/// @brief Keep the wake belief's moving evidence in step with a status the device just reported.
+/// @param dev Device the status came from.
+/// @param moving True when the status says the device is travelling.
+/// @param now_ms When the status was received.
+void track_motion_evidence(IoDevice &dev, bool moving, uint32_t now_ms) {
+  if (moving) {
+    note_moving_evidence(dev, now_ms);
+  } else {
+    clear_moving_evidence(dev);
+  }
+}
+
 /// @brief Compute the delay before the next status poll for a private‑response device.
 /// @param dev Device record.
 /// @param frame The private response frame (may contain a coarse retry hint in byte 7).
@@ -147,6 +159,11 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   } else {
     detail::normalize_stopped_state(dev);
   }
+  // On the execute-ack path (trust_position == false) dev.target/position are stale, so the
+  // normalized is_stopped can read "moving" for a device that just reported stopped. That is
+  // harmless here: run_execute_operation_() settles the evidence once the command is accepted (a
+  // STOP clears it, a move stamps it), after this runs.
+  track_motion_evidence(dev, !dev.is_stopped, dev.last_status);
 
   if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
@@ -180,6 +197,7 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
   dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
   dev.last_status = millis();
   decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
+  track_motion_evidence(dev, !dev.is_stopped, dev.last_status);
 
   if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
@@ -273,14 +291,22 @@ bool IOHomeControlComponent::apply_optimistic_linked_state_(const OneWayFrameInf
   const std::optional<float> target = is_stop ? std::nullopt : oneway_intent_to_target(info.main0, info.main1);
 
   for (const auto &device_id : device_ids) {
-    const IoDevice *dev = this->registry_.get(device_id);
+    IoDevice *dev = this->registry_.get(device_id);
     if (dev != nullptr && info.target_type != DeviceType::UNKNOWN && dev->type != DeviceType::UNKNOWN &&
         dev->type != info.target_type) {
       continue;  // Type mismatch: still polled by schedule_device_polls_(), just not moved optimistically.
     }
+    // Evidence first: the overlay calls below notify entity callbacks, and `dev` is not touched after
+    // them.
     if (is_stop) {
+      if (dev != nullptr)
+        clear_moving_evidence(*dev);
       this->registry_.apply_optimistic_stop(device_id);
     } else if (target.has_value()) {
+      // Unlike our own commands, this movement was really started by a remote the device heard, so
+      // it is evidence of travel even where the optimistic overlay is disabled.
+      if (dev != nullptr)
+        note_moving_evidence(*dev, millis());
       this->registry_.apply_optimistic_target(device_id, *target);
     }
   }

@@ -75,12 +75,15 @@ enum class InboundAuthState : uint8_t {
 /// @brief Context carried across one outbound authenticated exchange.
 struct OutboundExchangeContext {
   OutboundExchangeState state{OutboundExchangeState::IDLE};  ///< Current state machine state.
-  uint8_t try_index{0};           ///< Current retry attempt (1‑based within EXCHANGE_RETRY_COUNT).
-  bool saw_challenge{false};      ///< True if a 0x3C challenge was received during this exchange.
-  uint32_t exchange_start_ms{0};  ///< Timestamp when the exchange attempt began (millis).
-  uint32_t wait_ms{0};            ///< Current timeout window for the active wait (ms).
-  uint32_t first_response_ms{0};  ///< Timestamp when the first valid response arrived (for RTT/timing).
-  IoFrame rx{};                   ///< Most recent candidate frame received during the exchange.
+  uint8_t try_index{0};             ///< Current retry attempt (1‑based within EXCHANGE_RETRY_COUNT).
+  bool saw_challenge{false};        ///< True if a 0x3C challenge was received during this exchange.
+  uint32_t exchange_start_ms{0};    ///< Timestamp when the exchange attempt began (millis).
+  uint32_t wait_ms{0};              ///< Current timeout window for the active wait (ms).
+  uint32_t first_response_ms{0};    ///< Timestamp when the first valid response arrived (for RTT/timing).
+  uint16_t request_preamble{0};     ///< Start preamble (bytes) this try's request went out with.
+  uint32_t target_last_seen_ms{0};  ///< When the target was last heard (millis), 0 = unknown; logged as
+                                    ///< the try's `age_ms=` so field logs can relate hits to wake state.
+  IoFrame rx{};                     ///< Most recent candidate frame received during the exchange.
 };
 
 /// @brief Context for a single inbound authentication (device‑initiated command).

@@ -109,6 +109,20 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
 
+/// How long evidence that a low-power receiver is moving keeps it believed awake enough to hear the
+/// short start preamble first. A moving VELUX solar receiver ignores the 1024-byte wake-up
+/// preamble but answers the short one, so a command, STOP or poll sent mid-travel must lead with
+/// the short one. Sized above the longest cover travel this project has measured; a first estimate
+/// that field logs will correct. Past it the receiver is presumed to have finished and fallen back
+/// asleep.
+static constexpr uint32_t LOW_POWER_MAX_TRAVEL_MS = 120000;
+
+/// How long any sign of life (a frame from the device, or moving evidence) keeps a low-power
+/// receiver believed "maybe awake": short preamble first, wake-up preamble as the fallback. Shorter
+/// than LOW_POWER_MAX_TRAVEL_MS because a receiver that is merely active, not moving, drops back to
+/// its duty cycle sooner. A first estimate that field logs will correct.
+static constexpr uint32_t LOW_POWER_AWAKE_HOLD_MS = 30000;
+
 /// Tries for pairing's phase-3 SetConfig1 (0x6F). One: no device on record accepts it (a Somfy
 /// Izymo answers `FE 28`, a VELUX SSL solar roller shutter stays silent) and no real controller
 /// sends it, so a retry only adds 0.7–0.9 s of blocking and a frame of airtime to every pairing
@@ -126,8 +140,8 @@ static constexpr uint8_t PAIRING_SET_CONFIG1_MAX_TRIES = 1;
 /// device is unresponsive (e.g. an actuator mid-manoeuvre) — the settle poll fires seconds after a
 /// command, squarely inside the manoeuvre, so keeping it a single try is what lets a STOP a user
 /// presses mid-move dispatch promptly. A poll with no ladder behind it keeps the full
-/// EXCHANGE_RETRY_COUNT. See SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE below for the one place this
-/// trade-off is deliberately bought back.
+/// EXCHANGE_RETRY_COUNT. SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE and STOP_SETTLE_POLL_TRIES below
+/// are the two places this trade-off is deliberately bought back.
 static constexpr uint8_t SCHEDULED_POLL_MAX_TRIES = 1;
 
 /// Ladder positions at which a scheduler-owned status poll gets the full EXCHANGE_RETRY_COUNT back.
@@ -148,6 +162,17 @@ static constexpr uint8_t SCHEDULED_POLL_MAX_TRIES = 1;
 /// tries buy no wake-up, and an auth try is the most expensive shape the engine runs.
 static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE = 1;
 static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE = 3;
+
+/// Exchange tries for the settle poll after an accepted STOP.
+///
+/// The single-try rule above protects a STOP pressed during a manoeuvre from a blocking poll. After
+/// an accepted STOP nothing is moving, and the user's next action — reversing the cover — waits on
+/// exactly this poll, because until it answers the entity still shows the last reported position.
+/// A single try bets that on one sample of a receiver whose state right after a STOP is uncertain
+/// (still running down, awake, or already back on its duty cycle); a miss costs the full
+/// STATUS_RETRY_AFTER_FAIL_MS backoff before the next look. The full budget samples it up to three
+/// times within one exchange (under EXCHANGE_TOTAL_BUDGET_MS), and blocks only when all of them miss.
+static constexpr uint8_t STOP_SETTLE_POLL_TRIES = EXCHANGE_RETRY_COUNT;
 
 /// Wall-clock ceiling on one whole exchange, retries included.
 ///
