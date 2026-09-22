@@ -134,6 +134,41 @@ TEST(PairingHelpers, WaitForDiscoveryResponse_TimeoutNoTraffic) {
       << "timeout with no radio traffic should yield NO_RESPONSE";
 }
 
+TEST(PairingHelpers, WaitForDiscoveryResponse_SkipsRequestChannelByDefault) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+
+  // Nothing ever arrives, so the wait spends the whole window hopping.
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+  comp.pairing_engine_.wait_for_discovery_response_(PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
+
+  const auto &hops = radio.freq_history();
+  ASSERT_FALSE(hops.empty()) << "a rotating listen must retune at least once";
+  EXPECT_EQ(std::count(hops.begin(), hops.end(), FREQ_CH2), 0)
+      << "the default skips the request channel: a broadcast's replies land there about 1 in 149 times";
+}
+
+TEST(PairingHelpers, WaitForDiscoveryResponse_ListenChannelsAllCoversRequestChannel) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  comp.tuning_.pairing_discovery_listen_channels = DiscoveryListenChannels::ALL;
+
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+  comp.pairing_engine_.wait_for_discovery_response_(PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame);
+
+  const auto &hops = radio.freq_history();
+  EXPECT_GT(std::count(hops.begin(), hops.end(), FREQ_CH2), 0)
+      << "`all` exists to cover the one channel the default never listens on";
+}
+
 TEST(PairingHelpers, WaitForDiscoveryResponse_InvalidFramesIgnoredThenAccept) {
   TestableComponent comp;
   comp.initialized_ = true;

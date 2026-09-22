@@ -117,6 +117,21 @@ enum class DiscoverConfirmMode : uint8_t {
                   ///< answer SEND's.
 };
 
+/// @brief Which channels PairingEngine's discovery wait listens on.
+///
+/// A broadcast's answers are not pinned to the channel the request went out on: every device that
+/// replies is continuing its own hopping rather than joining a pinned conversation (see
+/// @ref ListenPolicy). Somfy always-alive roll-call replies land back on the request channel about
+/// 1 in 149 times, so skipping it buys a third more dwell on the two channels that carry almost
+/// all of them — hence the default. `all` exists because that measurement covers responders we
+/// have already heard from: a device that answers discovery *only* on the request channel is
+/// indistinguishable, from our side, from one that never answers at all.
+enum class DiscoveryListenChannels : uint8_t {
+  SKIP_REQUEST,  ///< Default. The two channels that are not the request channel.
+  ALL,           ///< CH1->CH2->CH3, including the request channel. Costs a third of the dwell on
+                 ///< the other two; use it to rule out a responder that only answers on CH2.
+};
+
 /// @brief Discovery request command codes.
 enum class DiscoveryCommand : uint8_t {
   DISCOVER = 0x28,      ///< Standard broadcast discovery request (to 0x00003B).
@@ -299,6 +314,8 @@ struct TuningConfig {
       ScanPowerClasses::BOTH};  ///< Power classes the scan_paired_devices roll-call calls.
   DiscoverConfirmMode pairing_discover_confirm{
       DiscoverConfirmMode::SEND};  ///< Whether/how to send CMD_DISCOVER_CONFIRM (0x2C) during pairing.
+  DiscoveryListenChannels pairing_discovery_listen_channels{
+      DiscoveryListenChannels::SKIP_REQUEST};  ///< Channels the discovery response wait covers.
   uint16_t pairing_key_init_delay_ms{
       PAIRING_KEY_INIT_DELAY_MS};  ///< Pause after the discover-confirm step, before CMD_KEY_INIT (0x31).
 
@@ -509,6 +526,19 @@ std::string discover_confirm_mode_to_string(DiscoverConfirmMode value);
 /// @param value String to parse.
 /// @return The matching mode, or std::nullopt on invalid input.
 std::optional<DiscoverConfirmMode> discover_confirm_mode_from_string(const std::string &value);
+
+/// @brief Render a DiscoveryListenChannels as its YAML/select option string.
+/// @param value Selection to render.
+/// @return `"skip_request"` or `"all"`.
+std::string discovery_listen_channels_to_string(DiscoveryListenChannels value);
+
+/// @brief Parse a DiscoveryListenChannels from its YAML/select option string.
+///
+/// Exact, case-sensitive match against the same strings discovery_listen_channels_to_string()
+/// emits, so the two stay each other's inverse.
+/// @param value Option string to parse.
+/// @return The selection, or `std::nullopt` if `value` is not one of the options.
+std::optional<DiscoveryListenChannels> discovery_listen_channels_from_string(const std::string &value);
 
 }  // namespace home_io_control
 }  // namespace esphome

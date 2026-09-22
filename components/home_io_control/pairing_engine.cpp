@@ -99,7 +99,13 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
                                                                                    IoFrame &response_frame) {
   ListenSpec spec;
   spec.window_ms = timeout_ms;
-  spec.policy = ListenPolicy::ROTATE_SKIPPING_REQUEST;
+  // Skipping the request channel is the default because a broadcast's answers are almost never
+  // on it (ListenPolicy's own doc has the 1-in-149 measurement). `all` is the escape hatch for a
+  // device that has never answered at all: that measurement is drawn from responders we already
+  // hear, so it cannot speak for one whose replies we might be missing entirely.
+  spec.policy = tuning_->pairing_discovery_listen_channels == DiscoveryListenChannels::ALL
+                    ? ListenPolicy::ROTATE_ALL_CHANNELS
+                    : ListenPolicy::ROTATE_SKIPPING_REQUEST;
   spec.request_freq = FREQ_CH2;
   // dwell_ms left at 0: no measured reason to dwell differently from the roll-call, so listen()
   // asks the driver (radio_()->hop_dwell_ms(*tuning_)) the same way collect_broadcast_responses()

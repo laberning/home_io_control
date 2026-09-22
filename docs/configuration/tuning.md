@@ -151,7 +151,7 @@ your device may differ.
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
-| `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` | Address the discovery frames are sent to. |
+| `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` / `0x0001BB` / `0x0001BF` | Address the discovery frames are sent to. The last two are lighting-class addresses — see below. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
 | `pairing_discovery_low_power` | both | `false` | `true` / `false` | Sets the LOW_POWER flag in discovery frames. |
 | `pairing_discovery_ack_capable` | both | `false` | `true` / `false` | Sets the ACK (CTRL1_ACK) flag on the discovery broadcast only. Off by default — see note below. |
@@ -161,6 +161,7 @@ your device may differ.
 | `scan_power_classes` | both | `both` | `both` / `always_alive` / `low_power` | Which device power classes the `scan_paired_devices` roll-call calls. |
 | `pairing_discover_confirm` | both | `send` | `skip` / `send` / `send_with_ack` | Whether/how to send `DISCOVER_CONFIRM` (0x2C) to a freshly-discovered device before the key exchange. |
 | `pairing_key_init_delay_ms` | both | `300` | 0–10000 ms | Pause after the discover-confirm step (ACKed, refused, or silent) and before `KEY_INIT` (0x31). |
+| `pairing_discovery_listen_channels` | both | `skip_request` | `skip_request` / `all` | Which channels the wait for a discovery response covers. |
 
 `ui_controls` itself is a feature toggle (default `false`) that exposes these as entities; it is
 not a tunable.
@@ -440,6 +441,14 @@ The address the discovery frames are sent to. With `auto` each command uses its 
 address (above). An explicit `0x00003B` / `0x00003F` forces *every* configured command to that
 address — useful for deliberately sending `0x28` to the alternate address, or vice-versa.
 
+`0x0001BB` and `0x0001BF` are different in kind: they name the **lighting device class** rather
+than every device. An io broadcast address packs the device type into its high bits, so light
+(type 6) gives `0x0001BF` with the all-subtypes mask and `0x0001BB` with discovery's mask. Reach
+for one only when a light or dimmer never answers the ordinary class-less discovery, and expect
+nothing from it on any other device — a class-typed address is, by construction, ignored by
+everything outside that class. Report what happens either way; no light has yet been confirmed to
+answer one.
+
 #### `pairing_discovery_payload` / `pairing_discovery_low_power`
 
 An optional single `0x00` payload byte, and the `LOW_POWER` frame flag.
@@ -575,6 +584,20 @@ re-broadcasting 0x28 to look for more devices on the same channel, which this pr
 single-device discovery phase has no equivalent of. `300` ms keeps pairing fast; a Somfy Izymo
 dimmer pairs with both `300` and `5000`. Raise it only for a device that answers the 0x2C but
 stays silent to the key exchange. Has no effect when `pairing_discover_confirm` is `skip`.
+
+#### `pairing_discovery_listen_channels`
+
+Which of the three channels the hub listens on while waiting for a discovery response.
+
+A broadcast's answers are not pinned to the channel the request went out on: each device that
+answers keeps hopping on its own schedule, so the channel it happens to be on when it replies is
+largely independent of the one that carried the request. Somfy always-alive replies seem to never come back on
+the request channel, so the default `skip_request` spends the whole window
+on the two channels that carry nearly all of them — a third more dwell on each.
+
+Set `all` when a device never answers discovery at all. That measurement comes from devices we
+already hear, so it cannot speak for one whose replies we might be missing entirely; `all` costs a
+third of the dwell on the other two channels and removes the only blind spot the default has.
 
 ### Reading pairing results without the tuning UI
 

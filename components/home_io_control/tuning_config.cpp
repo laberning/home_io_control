@@ -277,6 +277,24 @@ std::optional<DiscoverConfirmMode> discover_confirm_mode_from_string(const std::
   return std::nullopt;
 }
 
+std::string discovery_listen_channels_to_string(DiscoveryListenChannels value) {
+  switch (value) {
+    case DiscoveryListenChannels::SKIP_REQUEST:
+      return "skip_request";
+    case DiscoveryListenChannels::ALL:
+      return "all";
+  }
+  return "skip_request";
+}
+
+std::optional<DiscoveryListenChannels> discovery_listen_channels_from_string(const std::string &value) {
+  if (value == discovery_listen_channels_to_string(DiscoveryListenChannels::SKIP_REQUEST))
+    return DiscoveryListenChannels::SKIP_REQUEST;
+  if (value == discovery_listen_channels_to_string(DiscoveryListenChannels::ALL))
+    return DiscoveryListenChannels::ALL;
+  return std::nullopt;
+}
+
 std::string tuning_update_log_line(const std::string &name, const std::string &value) {
   return "Tuning updated via HA: " + name + "=" + value;
 }
@@ -337,6 +355,11 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
   // the two SELECT_PARAMS rows above; pairing_key_init_delay_ms is a plain NUMBER_PARAMS entry.
   if (cfg.pairing_discover_confirm != DEFAULTS.pairing_discover_confirm)
     result += " pairing_discover_confirm=" + discover_confirm_mode_to_string(cfg.pairing_discover_confirm);
+  // pairing_discovery_listen_channels is an enum SELECT_PARAMS row, same as the two above.
+  if (cfg.pairing_discovery_listen_channels != DEFAULTS.pairing_discovery_listen_channels) {
+    result += " pairing_discovery_listen_channels=" +
+              discovery_listen_channels_to_string(cfg.pairing_discovery_listen_channels);
+  }
   // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms,
   // pairing_key_exchange_retries, and pairing_key_init_delay_ms are plain NUMBER_PARAMS entries —
   // covered by the loop above.

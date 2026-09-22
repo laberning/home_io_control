@@ -9,7 +9,8 @@
 
 #include "tuning_registry.h"
 
-#include "proto_codecs.h"  // ADDRESS_SUFFIX_DISCOVERY / ADDRESS_SUFFIX_BROADCAST
+#include "proto_codecs.h"        // ADDRESS_SUFFIX_DISCOVERY / ADDRESS_SUFFIX_BROADCAST
+#include "proto_device_model.h"  // DeviceType / DEVICE_SUBTYPE_MASK / encode_broadcast_address()
 
 #include <cstddef>
 #include <iterator>
@@ -173,6 +174,18 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
          t.pairing_discovery_destination = {0x00, 0x00, ADDRESS_SUFFIX_BROADCAST};
          return true;
        }
+       // Typed lighting-class broadcasts. encode_broadcast_address() builds the ADDRESS_SUFFIX_
+       // BROADCAST form; the discovery form differs only in that suffix, so it is re-masked rather
+       // than hand-written as literal bytes.
+       if (v == "0x0001BF" || v == "0x0001BB") {
+         uint8_t typed[NODE_ID_SIZE] = {0};
+         encode_broadcast_address(DeviceType::LIGHT, typed);
+         if (v == "0x0001BB")
+           typed[2] = static_cast<uint8_t>((typed[2] & ~DEVICE_SUBTYPE_MASK) | ADDRESS_SUFFIX_DISCOVERY);
+         t.pairing_discovery_destination_auto = false;
+         t.pairing_discovery_destination.assign(std::begin(typed), std::end(typed));
+         return true;
+       }
        return false;
      },
      false},
@@ -213,6 +226,16 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        if (!mode.has_value())
          return false;
        t.pairing_discover_confirm = mode.value();
+       return true;
+     },
+     false},
+    {"pairing_discovery_listen_channels",
+     [](const TuningConfig &t) { return discovery_listen_channels_to_string(t.pairing_discovery_listen_channels); },
+     [](TuningConfig &t, const std::string &v) -> bool {
+       auto channels = discovery_listen_channels_from_string(v);
+       if (!channels.has_value())
+         return false;
+       t.pairing_discovery_listen_channels = channels.value();
        return true;
      },
      false},
