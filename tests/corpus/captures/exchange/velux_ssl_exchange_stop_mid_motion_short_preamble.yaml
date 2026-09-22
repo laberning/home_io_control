@@ -1,0 +1,45 @@
+id: velux_ssl_exchange_stop_mid_motion_short_preamble
+description: >
+  A two-way STOP that reached a moving VELUX SSL solar roller shutter, issue #114 (@michelpa),
+  Heltec V3 / SX1262 hub E3F1D3, device entry `low_power: true` (CTRL1 0x20). The hub judged the
+  target awake and led with the 32-byte start preamble instead of the 1024-byte wake-up burst; the
+  motor answered with a CHALLENGE_REQ 42 ms later and the exchange completed, and the shutter
+  stopped.
+  This is the controlled counterpart of
+  tests/corpus/captures/exchange/velux_ssl_exchange_stop_mid_motion_unanswered.yaml: same device,
+  same hub, same chip, byte-identical EXECUTE frame, motor moving in both — only the start
+  preamble differs (1024 bytes there, 32 here). Together the pair separates the two explanations
+  that single capture could not: the motor does transmit while it moves, so what the 1024-byte
+  attempt ran into is the preamble, not a transmit-blackout during travel.
+  The 0x3C CHALLENGE_REQ and the hub's 0x3D response sat between the two frames below and are
+  omitted: their payloads are masked by this project's own redaction before the log is written,
+  and a masked payload cannot be represented here as captured data.
+  The 0x04 ack reports the device's own movement state as *not stopped* — the motor itself saying
+  it was travelling when it answered, which is what makes this a mid-motion result rather than an
+  inference from timing.
+  t_ms are from the log line timestamps (TX at 08:45:00.388).
+source:
+  device: "VELUX SSL solar roller shutter (node 3943DA), paired two-way to this hub"
+  captured_with: sx1262
+  firmware: "preamble_wake_belief branch, at or after 8c682d1 (per-try preamble= / age_ms= logging and the three-try post-STOP settle poll are both present)"
+  date: 2026-09-21
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/114"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 20 39 43 DA E3 F1 D3 00 01 63 D2 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) STOP (MP 0xD200), originator 0x01, ACEI 0x63, CTRL1=0x20 LOW_POWER, 32-byte preamble, shutter moving; CHALLENGE_REQ back after 42 ms"
+  - dir: rx
+    t_ms: 72
+    freq: 868950000
+    hex: "8E 00 E3 F1 D3 39 43 DA 04 04 00 45 DC 00 00"
+    crc: absent
+    note: "cmd=STATUS_RESP(0x04) closing the exchange after the omitted 0x3C/0x3D pair; position and target both report unknown, movement state not stopped — the motor was still travelling as it answered"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

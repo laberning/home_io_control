@@ -33,7 +33,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0035](0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md) | FEM support is a behaviour profile; boards always supply pins | `fem:` selects front-end switching behaviour only; every board package spells out every pin its profile needs, no implicit defaulting |
 | [0037](0037-the-roll-call-sweeps-both-power-classes.md) | The roll-call sweeps both power classes | A low-power pass (CTRL1=0x30, long preamble, all channels) then the unchanged always-alive pass; scan_power_classes narrows it |
 | [0039](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md) | Pairing sends a discover-confirm (0x2C) and tolerates no answer | Universal `pairing_discover_confirm` mode (`skip`/`send`/`send_with_ack`); the step never fails the attempt; try 2 alone rotates channels (deviates from ADR 0028) |
-| [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | *Proposed.* Tries ordered by per-device evidence (short first when believed awake, wake-up preamble in every multi-try plan; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch |
+| [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | Tries ordered by per-device evidence (short first when believed awake, wake-up preamble in every multi-try plan; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch |
 
 ### Behavior
 

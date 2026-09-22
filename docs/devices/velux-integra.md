@@ -13,7 +13,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | KIG 300 hub | ⚠️ Partial — one extraction succeeded, one stalled |
 | Devices behind an extracted key | ✅ Confirmed, with `low_power: true` |
 | MSU 100100 solar awning screen | ⚠️ Partial — open and close work; `stop` has no effect while it moves |
-| SSL solar roller shutter | ⚠️ Partial — Discover & Pair, open, close, position and status work; `stop` has no effect while it moves |
+| SSL solar roller shutter | ⚠️ Partial — Discover & Pair, open, close, position and status work; `stop` reaches it mid-travel, but not on every attempt |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
 | SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false`. Two-way Discover & Pair finds nothing |
 | Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |
@@ -85,9 +85,10 @@ the remote's down button. The remote and the hub then both work. Use a short pre
 hold from step 2 resets the motor again and removes the hub as well.
 
 **In use:** open, close, set position and status work from rest. A command can take up to three
-tries to reach a sleeping motor. A `stop` sent while the shutter moves has no effect, and status
-polls sent while it moves go unanswered; the position updates once the movement ends. Stop it
-mid-travel with the wall remote.
+tries to reach a sleeping motor. A `stop` sent while the shutter moves reaches it, and so do the
+status polls that follow, so the shutter halts and its real position arrives about a second later.
+It does not land on every attempt — press stop again if the shutter keeps moving, or use the wall
+remote.
 
 ## Working YAML
 
@@ -121,11 +122,14 @@ moves the window to its predefined air-exchange opening rather than fully open.
   polls) still needs the property set to reach the device once it is registered. If a known
   device's scan result shows a `hint:` line, follow
   it: that means the registered YAML and the device's self-reported power class disagree.
-- **A `stop` has no effect while a VELUX solar product moves.** Nothing the hub sends while the
-  motor runs gets an answer, stop and status polls alike, so the cover's position updates only once
-  the movement ends. Open, close and set position from rest work. This applies to the MSU solar
-  awning screen and the SSL solar roller shutter. The product's own wall remote does stop it
-  mid-travel.
+- **A moving VELUX solar product answers only the short start preamble.** It ignores the
+  1024-byte wake-up burst that reaches the same motor at rest, so the hub leads with the short
+  preamble whenever it has reason to believe the motor is awake — see
+  [`low_power_wake_belief`](../configuration/tuning.md#low_power_wake_belief). On the SSL solar
+  roller shutter that is what lets a `stop`, and the status polls after it, land mid-travel; it
+  does not land on every attempt, so press stop again if the shutter keeps moving. There is no
+  such result for the MSU solar awning screen, so expect a mid-travel `stop` to do nothing there
+  and use the product's own wall remote.
 - **1W enrollment is a Gear press on the existing KLI, not a button on the product.** Press the
   Gear button ("open for registration") on the KLI that already drives the product for about
   1 second. Not the Pair button: that one is for a *new* control, which the hub's Enroll button

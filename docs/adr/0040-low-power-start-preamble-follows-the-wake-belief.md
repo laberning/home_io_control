@@ -2,10 +2,11 @@
 
 <!-- doxygen-label: adr0040 -->
 
-**Status:** Proposed · **Recorded:** 2026-09
+**Status:** Accepted · **Recorded:** 2026-09
 
-Amends [ADR 0029](0029-start-preamble-is-a-property-of-the-target.md). Becomes Accepted once a
-real low-power receiver confirms mid-travel `stop` and status polls on hardware.
+Amends [ADR 0029](0029-start-preamble-is-a-property-of-the-target.md). Confirmed on a VELUX SSL
+solar roller shutter: a `stop` and the status poll after it both land while the motor is
+travelling, and the motor's own status report is what says it was moving.
 
 ## Context
 
@@ -75,9 +76,9 @@ try 1 of any other exchange. Its likeliest moment is the settle poll seconds aft
 wake-up preamble — so a fixed wake-up preamble there loses the poll and a backoff slot. A wrong
 belief on a single try costs that one poll; the ladder's next slot has three tries and includes the
 wake-up preamble. The settle poll after an accepted `stop` is allowed all three tries
-(`STOP_SETTLE_POLL_TRIES`): nothing is moving any more, and the user's reversal waits on its answer.
-The frame bytes never change between tries;
-only the transmitter's preamble length does. `ExchangeEngine::send_and_receive()` resolves the
+(`STOP_SETTLE_POLL_TRIES`) whatever the belief — that budget belongs to the poll, not to the belief,
+which only orders the tries inside it: nothing is moving any more, and the user's reversal waits on
+its answer. The frame bytes never change between tries; only the transmitter's preamble length does. `ExchangeEngine::send_and_receive()` resolves the
 belief once per exchange (`plan_request_preamble_()`), so it is stable across the tries and the
 evidence is looked up once.
 
@@ -109,8 +110,8 @@ low-power device got worse after updating, set it to `false` and report.
   one.
 - **`stop`, reversals and status polls can land mid-travel and right after a `stop`.** The settle
   poll after a move leads with the short preamble, and the one after an accepted `stop` gets three
-  tries in maybe-awake order, so the cover's real position arrives about a second after the `stop`
-  instead of after a missed poll and a 5 s backoff. A single-try slot at the ladder's tail that
+  tries, ordered by whichever belief applies, so the cover's real position arrives about a second
+  after the `stop` instead of after a missed poll and a 5 s backoff. A single-try slot at the ladder's tail that
   still falls inside `LOW_POWER_MAX_TRAVEL_MS` of the command also leads short; a receiver asleep
   by then costs that slot, and the next one is past the window and uses the wake-up preamble.
 - **Airtime goes down for an awake receiver.** A short first try is ~200 ms shorter on the air
