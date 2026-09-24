@@ -21,10 +21,10 @@ const char *command_name(uint8_t cmd) {
       return "PRIVATE2";
     case CMD_PRIVATE2_RESP:
       return "PRIVATE2_RESP";
-    case CMD_SET_SENSOR:
-      return "SET_SENSOR";
-    case CMD_SET_SENSOR_ACK:
-      return "SET_SENSOR_ACK";
+    case CMD_PRIORITY_LEVEL_REQ:
+      return "PRIORITY_LEVEL_REQ";
+    case CMD_PRIORITY_LEVEL_RESP:
+      return "PRIORITY_LEVEL_RESP";
     case CMD_IDENTIFY:
       return "IDENTIFY";
     case CMD_WRITE_PRIVATE:
@@ -57,10 +57,10 @@ const char *command_name(uint8_t cmd) {
       return "KEY_TRANSFER";
     case CMD_KEY_CONFIRM:
       return "KEY_CONFIRM";
-    case CMD_ADDRESS_REQ:
-      return "ADDRESS_REQ";
-    case CMD_ADDRESS_RESP:
-      return "ADDRESS_RESP";
+    case CMD_NODE_VERIFY_REQ:
+      return "NODE_VERIFY_REQ";
+    case CMD_NODE_VERIFY_RESP:
+      return "NODE_VERIFY_RESP";
     case CMD_LAUNCH_KEY_TRANSFER:
       return "LAUNCH_KEY_TRANSFER";
     case CMD_UNKNOWN4A_REQ:

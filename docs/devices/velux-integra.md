@@ -22,7 +22,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 
 **Key extraction, essentially always — when there's a two-way hub.** VELUX installations almost
 all have a control pad or hub already, and that hub is what you extract from. Against a KLR 200
-this succeeded end to end on the first attempt, including the address round.
+this succeeded end to end on the first attempt, including the node verification round that follows it.
 
 Once you hold the key, press **Scan Paired Devices** rather than pairing each device. Every device
 that trusts the key answers with a ready-to-paste snippet.

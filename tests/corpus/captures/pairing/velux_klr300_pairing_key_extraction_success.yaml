@@ -9,7 +9,7 @@ description: >
 
   Only frames the board *received* are here. The tester's log carried io_capture lines for
   inbound frames only, so the responder's own transmissions — DISCOVER_RESP (0x29, throwaway id
-  7F6B0F), DISCOVER_CONFIRM_ACK (0x2D), CHALLENGE_REQ (0x3C), KEY_CONFIRM (0x33), ADDRESS_RESP
+  7F6B0F), DISCOVER_CONFIRM_ACK (0x2D), CHALLENGE_REQ (0x3C), KEY_CONFIRM (0x33), NODE_VERIFY_RESP
   (0x37) — are known only from the responder's INFO log lines, not as wire bytes, and are not
   reconstructed. KEY_TRANSFER (0x32, ctrl0/ctrl1 18 00, rx ~53 ms after 0x31) is omitted because
   this project's own redaction masks its payload before the log line is written (same treatment
@@ -85,7 +85,7 @@ frames:
     freq: 868950000
     hex: "48 24 7F 6B 0F E2 D1 FF 36"
     crc: absent
-    note: "cmd=ADDRESS_REQ(0x36) directed to 7F6B0F, CTRL1=0x24 (LOW_POWER + PRIORITY), sent after the KLR300 had verified its three existing nodes (sibling discovery capture). Responder answered with ADDRESS_RESP (0x37, tx not logged); no 0x3C address challenge followed within the 60 s grace window"
+    note: "cmd=NODE_VERIFY_REQ(0x36) directed to 7F6B0F, CTRL1=0x24 (LOW_POWER + PRIORITY), sent after the KLR300 had verified its three existing nodes (sibling discovery capture). Responder answered with NODE_VERIFY_RESP (0x37, tx not logged); no 0x3C address challenge followed within the 60 s grace window"
 expect:
   frames:
     - {cmd: 0x2E, start: true, end: true, protocol: 2w}

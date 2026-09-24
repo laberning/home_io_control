@@ -126,7 +126,7 @@ class KeyExtractionResponder {
   /// handle_key_init_(), key_extraction_responder.cpp) push it out by
   /// KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS, and arm_post_extraction_grace() pushes it out by
   /// KEY_EXTRACTION_POST_EXTRACT_GRACE_MS so the hold also covers the (much longer)
-  /// post-extraction address-verification phase it governs.
+  /// post-extraction node-verification phase it governs.
   ///
   /// Deliberately independent of `key_extraction_ctx_.state`: the pure guards in
   /// pairing_responder.cpp decide whether an inbound frame is accepted by checking `state` alone,
@@ -146,15 +146,15 @@ class KeyExtractionResponder {
   void handle_key_init_(const IoFrame &frame);
   /// Handle an inbound CMD_KEY_TRANSFER (0x32) addressed to our throwaway node ID while armed.
   void handle_key_transfer_(const IoFrame &frame);
-  /// Handle an inbound CMD_ADDRESS_REQ (0x36) addressed to our throwaway node ID while armed.
+  /// Handle an inbound CMD_NODE_VERIFY_REQ (0x36) addressed to our throwaway node ID while armed.
   /// Some hubs (Velux KLR200) send this after completing the key exchange, to verify the backbone
-  /// address they were given — see pairing_responder::on_address_req().
-  void handle_address_req_(const IoFrame &frame);
+  /// address they were given — see pairing_responder::on_node_verify_req().
+  void handle_node_verify_req_(const IoFrame &frame);
   /// Handle an inbound CMD_CHALLENGE_REQ (0x3C) addressed to our throwaway node ID while armed and
-  /// in SENT_ADDRESS_RESP — the hub-issued challenge against our own CMD_ADDRESS_RESP, closing the
-  /// address-verification round a CMD_ADDRESS_REQ opened. See
-  /// pairing_responder::on_address_challenge().
-  void handle_address_challenge_(const IoFrame &frame);
+  /// in SENT_NODE_VERIFY_RESP — the hub-issued challenge against our own CMD_NODE_VERIFY_RESP, closing the
+  /// node-verification round a CMD_NODE_VERIFY_REQ opened. See
+  /// pairing_responder::on_node_verify_challenge().
+  void handle_node_verify_challenge_(const IoFrame &frame);
   /// Transmit a key-extraction reply frame on all 3 IO-homecontrol channels, using the radio
   /// driver's response_preamble() rather than a fixed SHORT_PREAMBLE/LONG_PREAMBLE constant —
   /// long enough that a channel-hopping receiver reliably lands on it, short enough that 3

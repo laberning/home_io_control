@@ -46,7 +46,7 @@ frames:
     freq: 869850000
     hex: "48 00 58 6E 37 CA 0A 18 36"
     crc: absent
-    note: "cmd=ADDRESS_REQ(0x36)"
+    note: "cmd=NODE_VERIFY_REQ(0x36)"
   - dir: rx
     t_ms: 578
     freq: 868250000

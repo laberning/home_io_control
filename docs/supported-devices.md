@@ -41,10 +41,12 @@ match.
 | **J406 IO shutter motor** | `external_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: external_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard` |
 | **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | on a Heltec V3.2 / SX1262 |
 | **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction inversion is applied automatically for this family | Corpus `somfy_awning_discovery_spe_paired_rollcall` |
+| **Pergola io motor** | `horizontal_awning` | ✅ Confirmed | Discover & Pair, after a single PROG hold on its Situo | — | Heltec V3 / SX1262, issue #121 |
+| **White LED Receiver io** (4-output LED dimmer) | `light` | ❌ Never answered discovery | — | — | Discover & Pair failed in every state and setting tried, including right after a factory reset, while a Pergola io paired first try on the same board. 1W remotes register and control it normally. Heltec V3 / SX1262, issue #121 |
 | **Awning actuator (IO Vertical)** | `awning` | ✅ Confirmed for discovery | Discover & Pair | — | Corpus `somfy_awning_discovery_lab_response` |
 | **RS100 IO / RS100 Solar** | `awning` / `roller_shutter` | ⚠️ Partial — pairing needs a retried key exchange | Discover & Pair, retried | `low_power: true` | 7 corpus captures including both a success and a key-transfer stall |
 | **Oximo 40 Solar tubular motor** | `roller_shutter` | 🔍 Traffic captured only | — | `low_power: true` | Corpus `somfy_oximo40_statuspoll_sx1262`, issue #45 |
-| **Sunea IO screen** | `screen` | 🔍 Traffic captured only | — | — | Corpus `somfy_awning_exchange_set_sensor_sx1276` — a directed write from a real TaHoma Switch |
+| **Sunea IO screen** | `screen` | 🔍 Traffic captured only | — | — | Corpus `somfy_awning_exchange_priority_level_sx1276` — a directed priority-level query from a real TaHoma Switch |
 | **Tilt-capable blind/shutter** | tilt-capable cover | ✅ Confirmed for tilt control | — | — | 8 corpus captures |
 | **Combined wind/rain protection station** | sensor (1W) | ✅ Confirmed for listening | Overheard; no pairing involved | `exposed_senders:` / `linked_remotes:` | 2 corpus captures |
 | **Eolis 3D WireFree IO wind sensor** | sensor (1W) | 📣 Reported — listen-only | Overheard; no pairing involved | `exposed_senders:` / `linked_remotes:` | A standalone wind sensor, distinct from the combined station above; links directly to its awning motor. |
@@ -74,7 +76,7 @@ project controls.
 
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
-| **KLR 200 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | succeeded end to end on the first attempt, including the address round; corpus `velux_klr200_pairing_key_extraction_success` |
+| **KLR 200 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | succeeded end to end on the first attempt, including the node verification round that follows it; corpus `velux_klr200_pairing_key_extraction_success` |
 | **KLR 100 two-way control pad** | Third-party hub | 📣 Reported as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | Its "Register product" gesture opens the extraction window the same way the KLR 200's does; issue #87 |
 | **KIG 300 hub** | Third-party hub | ⚠️ Partial — one extraction succeeded, one stalled | Key extraction | `accept_foreign_pairing: true` | 4 corpus captures |
 | **INTEGRA roof-window actuator** | `window_opener` | ✅ Confirmed | — | `io_device_type: window_opener`, which adds the Ventilation Position button | 3 corpus captures; issue #98 |

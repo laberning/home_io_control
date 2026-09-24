@@ -6,9 +6,9 @@ description: >
   fixes, completes the full cycle first-try with no retries at any step: CMD_DISCOVER_REQ (0x28) ->
   CMD_DISCOVER_RESP (0x29) -> CMD_DISCOVER_CONFIRM (0x2C) -> CMD_DISCOVER_CONFIRM_ACK (0x2D) ->
   CMD_KEY_INIT (0x31) -> CMD_CHALLENGE_REQ (0x3C, omitted -- see below) -> CMD_KEY_TRANSFER (0x32,
-  omitted -- see below) -> CMD_KEY_CONFIRM (0x33, "SYSTEM KEY EXTRACTED") -> CMD_ADDRESS_REQ (0x36)
-  -> CMD_ADDRESS_RESP (0x37). This is this project's first real-hardware confirmation of the
-  0x36/0x37 address-verification round (see tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml
+  omitted -- see below) -> CMD_KEY_CONFIRM (0x33, "SYSTEM KEY EXTRACTED") -> CMD_NODE_VERIFY_REQ (0x36)
+  -> CMD_NODE_VERIFY_RESP (0x37). This is this project's first real-hardware confirmation of the
+  0x36/0x37 node-verification round (see tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml
   for the only other real capture of that pair, a different, forum-sourced device) -- and the
   first-party one, since these 0x36/0x37 bytes are this responder's own code talking to a real hub,
   not a third-party device's.
@@ -64,15 +64,15 @@ frames:
   - dir: tx
     hex: "88 00 81 0B AB C4 33 3A 33"
     crc: absent
-    note: "cmd=KEY_CONFIRM(0x33), ctrl0=0x88 (end=true). Responder logs 'SYSTEM KEY EXTRACTED' and disarms after sending this -- grace-delayed, not immediate, in case the hub follows up with an address-verification round (this KLR200 does, unlike the KIG300 in issue #45)"
+    note: "cmd=KEY_CONFIRM(0x33), ctrl0=0x88 (end=true). Responder logs 'SYSTEM KEY EXTRACTED' and disarms after sending this -- grace-delayed, not immediate, in case the hub follows up with a node-verification round (this KLR200 does, unlike the KIG300 in issue #45)"
   - dir: rx
     hex: "48 24 C4 33 3A 81 0B AB 36"
     crc: absent
-    note: "cmd=ADDRESS_REQ(0x36), addressed directly to the throwaway id, ~within the post-extraction grace window. First real-hardware 0x36 this project has received against its own key-extraction responder (handle_key_extraction_address_req_()); the only other 0x36 evidence on file is the KLR200<->KUX100 capture above (a different device) and a KIG300 capability-probe burst against an already-paired Somfy dimmer (velux_kig300_probe_capability_burst.yaml)"
+    note: "cmd=NODE_VERIFY_REQ(0x36), addressed directly to the throwaway id, ~within the post-extraction grace window. First real-hardware 0x36 this project has received against its own key-extraction responder (handle_node_verify_req_()); the only other 0x36 evidence on file is the KLR200<->KUX100 capture above (a different device) and a KIG300 capability-probe burst against an already-paired Somfy dimmer (velux_kig300_probe_capability_burst.yaml)"
   - dir: tx
     hex: "0B 00 81 0B AB C4 33 3A 37 C4 33 3A"
     crc: absent
-    note: "cmd=ADDRESS_RESP(0x37), payload C4333A is the responder's own throwaway id, matching create_address_resp_device_role()'s convention of echoing the same backbone address advertised in 0x29. ctrl0=0x0B (start=false, end=false), ctrl1=0x00 (low_power=false) -- byte-for-byte the framing this project's address-verification plan predicted from the KUX100 capture alone, now confirmed against a real KLR200 accepting it (the reporter's product registered successfully on the hub's own display). No CMD_CHALLENGE_REQ (0x3C) followed this 0x37 anywhere in the ~60s grace window that followed -- unlike the KUX100 capture, where one does. Open question, not yet understood."
+    note: "cmd=NODE_VERIFY_RESP(0x37), payload C4333A is the responder's own throwaway id, matching create_node_verify_resp_device_role()'s convention of echoing the same backbone address advertised in 0x29. ctrl0=0x0B (start=false, end=false), ctrl1=0x00 (low_power=false) -- byte-for-byte the framing this project's node-verification plan predicted from the KUX100 capture alone, now confirmed against a real KLR200 accepting it (the reporter's product registered successfully on the hub's own display). No CMD_CHALLENGE_REQ (0x3C) followed this 0x37 anywhere in the ~60s grace window that followed -- unlike the KUX100 capture, where one does. Open question, not yet understood."
 expect:
   exchange:
     kind: pairing

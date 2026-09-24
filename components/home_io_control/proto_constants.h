@@ -34,19 +34,20 @@ static constexpr uint8_t CMD_PRIVATE2 =
            ///< pairs. Not handled by any dispatch path in this codebase.
 static constexpr uint8_t CMD_PRIVATE2_RESP = 0x0D;  ///< Response to CMD_PRIVATE2. See CMD_PRIVATE2's comment.
 
-// Sensor and private register commands
-static constexpr uint8_t CMD_SET_SENSOR =
-    0x19;  ///< Inject sensor value into a device. First real-world capture (issue #27, community,
-           ///< a real Somfy TaHoma Switch writing directly to a real Sunea io screen it already
-           ///< owned) is tests/corpus/captures/exchange/somfy_awning_exchange_set_sensor_sx1276.yaml
-           ///< — a single-byte payload, values 0x02 and then 0x04 seen ~212ms apart. Likely the
-           ///< mechanism a real hub uses to push a wind/rain/sun sensor reading into a device (the
-           ///< mirror image of reading a rain/limitation state back out, which issue #98 has been
-           ///< chasing separately) — not confirmed, and no CMD_SET_SENSOR_ACK was captured either,
-           ///< so the full round trip and payload semantics remain unknown. No builder or dispatch
-           ///< path exists anywhere in this codebase.
-static constexpr uint8_t CMD_SET_SENSOR_ACK = 0x1A;  ///< Acknowledgment to CMD_SET_SENSOR. Never
-                                                     ///< observed on the wire — see CMD_SET_SENSOR.
+// Priority-level and private register commands
+static constexpr uint8_t CMD_PRIORITY_LEVEL_REQ =
+    0x19;  ///< Priority-level (lock) query: a one-byte priority level in, the device's lock state
+           ///< for that level out (CMD_PRIORITY_LEVEL_RESP). io-homecontrol arbitrates control by
+           ///< priority level (0-7), and protective functions such as wind protection hold an
+           ///< actuator by locking it at a level. The only capture is
+           ///< tests/corpus/captures/exchange/somfy_awning_exchange_priority_level_sx1276.yaml
+           ///< (issue #27): a real Somfy TaHoma Switch sends 0x02 and then 0x04 to a Sunea io
+           ///< screen it owns, ~212 ms apart. That level-by-level walk fits a lock query and fits
+           ///< it better than the "inject sensor value" reading this opcode was once filed under.
+           ///< Still a working interpretation: no reply has been captured, so the payload
+           ///< semantics are unconfirmed. No builder or dispatch path exists in this codebase.
+static constexpr uint8_t CMD_PRIORITY_LEVEL_RESP = 0x1A;  ///< Reply to CMD_PRIORITY_LEVEL_REQ. Never
+                                                          ///< observed on the wire.
 
 // Device identification
 static constexpr uint8_t CMD_IDENTIFY = 0x1E;  ///< Device physical identification / jog — requires authentication
@@ -129,25 +130,28 @@ static constexpr uint8_t CMD_KEY_INIT = 0x31;      ///< Initiate key transfer to
 static constexpr uint8_t CMD_KEY_TRANSFER = 0x32;  ///< Send encrypted system key to device
 static constexpr uint8_t CMD_KEY_CONFIRM = 0x33;   ///< Device confirms key was received
 
-// Address and device-initiated key exchange
-static constexpr uint8_t CMD_ADDRESS_REQ =
-    0x36;  ///< "Report your address" request. Not pairing-specific: it's captured both closing a
-           ///< Velux KLR200 pairing (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml) and, on
-           ///< a completely different hub, sent to an already-paired device with no pairing in
-           ///< progress at all (a Velux KIG300 probing a Somfy dimmer in
-           ///< tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml). Answered by the
-           ///< key-extraction responder's create_address_resp_device_role()
-           ///< (handle_address_req_() in key_extraction_responder.cpp).
-static constexpr uint8_t CMD_ADDRESS_RESP =
-    0x37;  ///< Address assignment response: the device returns its own 3-byte backbone address,
+// Node verification and device-initiated key exchange
+static constexpr uint8_t CMD_NODE_VERIFY_REQ =
+    0x36;  ///< Node verification request: a controller checks that a node belongs to its system.
+           ///< The node answers with its address (CMD_NODE_VERIFY_RESP) and the controller then
+           ///< challenges that answer, so only a node holding the system key passes. It is what
+           ///< closes a key transfer (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml,
+           ///< a Velux KLR200) and what a controller sends to nodes it already knows, with no
+           ///< pairing in progress (a Velux KIG300 probing a Somfy dimmer in
+           ///< tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml; a KLR300
+           ///< checking each node after a roll-call in
+           ///< tests/corpus/captures/discovery/velux_klr300_discovery_rollcall_node_verification.yaml).
+           ///< Answered by the key-extraction responder's create_node_verify_resp_device_role()
+           ///< (handle_node_verify_req_() in key_extraction_responder.cpp).
+static constexpr uint8_t CMD_NODE_VERIFY_RESP =
+    0x37;  ///< Node verification response: the device returns its own 3-byte backbone address,
            ///< byte-identical to the one it reported at data[2..4]
            ///< (DISCOVERY_RESP_BACKBONE_OFFSET) of its CMD_DISCOVER_RESP earlier in the same
-           ///< session — an independent confirmation of that offset. The only capture of this
-           ///< command in the corpus is still
-           ///< tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml, where a Velux KLR200 closes
+           ///< session — an independent confirmation of that offset. In
+           ///< tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml a Velux KLR200 closes
            ///< pairing with 0x36 and then challenges the 0x37 it gets back (see
-           ///< CMD_CHALLENGE_REQ) — sent by create_address_resp_device_role()
-           ///< (proto_commands.h/.cpp), the key-extraction responder's answer to CMD_ADDRESS_REQ.
+           ///< CMD_CHALLENGE_REQ). Sent by create_node_verify_resp_device_role()
+           ///< (proto_commands.h/.cpp), the key-extraction responder's answer to CMD_NODE_VERIFY_REQ.
 static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
     0x38;  ///< Device-initiated ("pull") key transfer request: documented elsewhere as a command
            ///< ID plus a 6-byte challenge, nothing more — never observed in our corpus or in any
@@ -160,8 +164,8 @@ static constexpr uint8_t CMD_CHALLENGE_REQ =
     0x3C;  ///< 6-byte random challenge. Usually a device challenging a controller's command, but
            ///< the protocol is symmetric and controllers challenge devices too: in
            ///< tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml a KLR200 issues 0x3C against
-           ///< the device's own CMD_ADDRESS_RESP. The key-extraction responder now answers exactly
-           ///< that inbound direction (KeyExtractionResponder::handle_address_challenge_() in
+           ///< the device's own CMD_NODE_VERIFY_RESP. The key-extraction responder now answers exactly
+           ///< that inbound direction (KeyExtractionResponder::handle_node_verify_challenge_() in
            ///< key_extraction_responder.cpp), so both directions are implemented, not just the outbound
            ///< one.
 static constexpr uint8_t CMD_CHALLENGE_RESP =
@@ -569,7 +573,7 @@ static constexpr uint8_t ONEWAY_EXECUTE_ACEI_VELUX = (ACEI_LEVEL_USER_DEFAULT <<
 /// decode_packed_device_type()), and bytes 2–8 hold additional fields.
 /// @{
 static constexpr uint8_t DISCOVERY_RESP_BACKBONE_OFFSET = 2;      ///< Backbone address starts at data[2] (3 bytes);
-                                                                  ///< cross-confirmed by CMD_ADDRESS_RESP (0x37),
+                                                                  ///< cross-confirmed by CMD_NODE_VERIFY_RESP (0x37),
                                                                   ///< which returns the same 3 bytes for the same
                                                                   ///< device (see that constant's comment).
 static constexpr uint8_t DISCOVERY_RESP_MANUFACTURER_OFFSET = 5;  ///< Manufacturer ID at data[5].

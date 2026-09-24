@@ -94,8 +94,8 @@ CMD_NAMES = {
     0x04: "PRIVATE_RESP",
     0x0C: "PRIVATE2",
     0x0D: "PRIVATE2_RESP",
-    0x19: "SET_SENSOR",
-    0x1A: "SET_SENSOR_ACK",
+    0x19: "PRIORITY_LEVEL_REQ",
+    0x1A: "PRIORITY_LEVEL_RESP",
     0x1E: "IDENTIFY",
     0x20: "WRITE_PRIVATE",
     0x21: "WRITE_PRIVATE_ACK",
@@ -111,8 +111,8 @@ CMD_NAMES = {
     0x31: "KEY_INIT",
     0x32: "KEY_TRANSFER",
     0x33: "KEY_CONFIRM",
-    0x36: "ADDRESS_REQ",
-    0x37: "ADDRESS_RESP",
+    0x36: "NODE_VERIFY_REQ",
+    0x37: "NODE_VERIFY_RESP",
     0x38: "LAUNCH_KEY_TRANSFER",
     0x39: "ONEWAY_REMOVE",
     0x3C: "CHALLENGE_REQ",
@@ -378,7 +378,7 @@ def find_challenge_response_triples(frames):
     challenged (tx 0x3D — origin is the preceding tx command, e.g. 0x00 EXECUTE, challenged by
     an rx 0x3C), but the protocol is symmetric and the reverse occurs for real: in
     velux_kux100_pairing_full.yaml the *device* answers a controller-issued challenge
-    (rx 0x3D over its own preceding rx 0x37 ADDRESS_RESP), confirmed by recomputation against
+    (rx 0x3D over its own preceding rx 0x37 NODE_VERIFY_RESP), confirmed by recomputation against
     that installation's recovered key before the capture was re-keyed. Matching only tx 0x3D
     would leave those HMACs unrewritten by ingest.py --rekey and unchecked by validate.py's
     `key: corpus` enforcement.

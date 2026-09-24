@@ -338,8 +338,8 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
 
   EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should be sent on all 3 channels";
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
-      << "responder should stay armed (not disarm immediately) in case the hub follows up with an "
-         "address request";
+      << "responder should stay armed (not disarm immediately) in case the hub follows up with a "
+         "node verification request";
   EXPECT_EQ(comp.last_timeout_name_, "key_extraction_post_extract_grace")
       << "extraction should arm the post-extraction grace timer, not disarm on the spot";
 
@@ -354,7 +354,7 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
 /// reaching EXTRACTED here is that proof, since the responder only leaves SENT_CHALLENGE after
 /// emitting the recovered-key log block. It no longer disarms on the spot: see
 /// arm_post_extraction_grace_() for why the responder now stays armed for a grace window in case
-/// the hub follows up with an address request (0x36).
+/// the hub follows up with a node verification request (0x36).
 TEST(HubKeyExtraction, ExchangeWithoutDiscoverConfirmStillExtractsKey) {
   TestableHubComponent comp;
   MockRadio radio;
@@ -591,7 +591,7 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
 
 /// A second, independent extraction attempt from the same hub, in the same armed window, must
 /// succeed without a manual disarm/re-arm: on_discover_request() treats a fresh 0x28 from
-/// EXTRACTED/SENT_ADDRESS_RESP the same as ARMED_IDLE when it comes from the hub this responder
+/// EXTRACTED/SENT_NODE_VERIFY_RESP the same as ARMED_IDLE when it comes from the hub this responder
 /// actually extracted a key from (see that function's doxygen for why only the same hub qualifies).
 /// This test drives a full first extraction to EXTRACTED, then a full second one, both within the
 /// same arm cycle and with no manual re-arm.
@@ -634,7 +634,7 @@ TEST(HubKeyExtraction, SecondExtractionAttemptSucceedsWithoutRearmingAfterFirstS
 /// (pairing_responder_test.cpp), driven through the real dispatch path. A stray 0x28 from an
 /// unrelated hub after a successful extraction must not disturb the responder's state or draw a
 /// reply -- CMD_DISCOVER_REQ is a broadcast handled before the throwaway-ID dst filter, so any hub
-/// in range could otherwise knock a live post-extraction address-verification round with the real
+/// in range could otherwise knock a live post-extraction node-verification round with the real
 /// hub back to SENT_DISCOVER_RESP.
 TEST(HubKeyExtraction, DiscoveryFromUnrelatedHubAfterExtractionIsIgnored) {
   TestableHubComponent comp;
@@ -732,8 +732,8 @@ TEST(HubKeyExtraction, DiscoverConfirmToAnotherDeviceIsIgnored) {
 }
 
 /// The 0x36 twin of DiscoverConfirmToAnotherDeviceIsIgnored above: pins that the same dst guard
-/// (key_extraction_responder.cpp) covers the new CMD_ADDRESS_REQ branch too.
-TEST(HubKeyExtraction, AddressReqToAnotherDeviceIsIgnored) {
+/// (key_extraction_responder.cpp) covers the new CMD_NODE_VERIFY_REQ branch too.
+TEST(HubKeyExtraction, NodeVerifyReqToAnotherDeviceIsIgnored) {
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
@@ -743,12 +743,12 @@ TEST(HubKeyExtraction, AddressReqToAnotherDeviceIsIgnored) {
   radio.clear();
 
   const uint8_t other_device_id[NODE_ID_SIZE] = {0x58, 0x6E, 0x35};
-  IoFrame address_req{};
-  init_frame(address_req, true, true, false, false);
-  set_dst(address_req, other_device_id);
-  set_src(address_req, FOREIGN_HUB_ID);
-  ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
-  comp.process_received_packet_(make_rx_packet(address_req));
+  IoFrame node_verify_req{};
+  init_frame(node_verify_req, true, true, false, false);
+  set_dst(node_verify_req, other_device_id);
+  set_src(node_verify_req, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(node_verify_req, CMD_NODE_VERIFY_REQ));
+  comp.process_received_packet_(make_rx_packet(node_verify_req));
 
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "responder state must be untouched";
@@ -757,9 +757,9 @@ TEST(HubKeyExtraction, AddressReqToAnotherDeviceIsIgnored) {
 
 /// Our throwaway ID goes out in clear in our own 0x29/0x37, so the dst guard alone (exercised
 /// above) doesn't establish a 0x36 actually came from the hub we exchanged keys with. This pins the
-/// added src check in handle_key_extraction_address_req_(): a frame correctly addressed to our
+/// added src check in handle_node_verify_req_(): a frame correctly addressed to our
 /// throwaway ID but from anyone other than key_extraction_ctx_.hub_node_id must still be ignored.
-TEST(HubKeyExtraction, AddressReqFromWrongHubIsIgnored) {
+TEST(HubKeyExtraction, NodeVerifyReqFromWrongHubIsIgnored) {
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
@@ -772,12 +772,12 @@ TEST(HubKeyExtraction, AddressReqFromWrongHubIsIgnored) {
   radio.clear();
 
   const uint8_t attacker_id[NODE_ID_SIZE] = {0x58, 0x6E, 0x35};
-  IoFrame address_req{};
-  init_frame(address_req, true, true, false, false);
-  set_dst(address_req, throwaway_id);
-  set_src(address_req, attacker_id);
-  ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
-  comp.process_received_packet_(make_rx_packet(address_req));
+  IoFrame node_verify_req{};
+  init_frame(node_verify_req, true, true, false, false);
+  set_dst(node_verify_req, throwaway_id);
+  set_src(node_verify_req, attacker_id);
+  ASSERT_TRUE(set_cmd(node_verify_req, CMD_NODE_VERIFY_REQ));
+  comp.process_received_packet_(make_rx_packet(node_verify_req));
 
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "responder state must be untouched";
@@ -785,25 +785,25 @@ TEST(HubKeyExtraction, AddressReqFromWrongHubIsIgnored) {
       << "responder must not answer a 0x36 from anyone but the hub it actually exchanged keys with";
 }
 
-/// The 0x3C twin of AddressReqFromWrongHubIsIgnored above: pins the same src guard in
-/// handle_key_extraction_address_challenge_().
-TEST(HubKeyExtraction, AddressChallengeFromWrongHubIsIgnored) {
+/// The 0x3C twin of NodeVerifyReqFromWrongHubIsIgnored above: pins the same src guard in
+/// handle_node_verify_challenge_().
+TEST(HubKeyExtraction, NodeVerifyChallengeFromWrongHubIsIgnored) {
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_ADDRESS_RESP;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP;
   memcpy(comp.key_extraction_.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE);
   uint8_t throwaway_id[NODE_ID_SIZE];
   memcpy(throwaway_id, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE);
   radio.clear();
 
   const uint8_t attacker_id[NODE_ID_SIZE] = {0x58, 0x6E, 0x35};
-  IoFrame address_challenge{};
-  ASSERT_TRUE(create_challenge_req(address_challenge, throwaway_id, attacker_id, test::TEST_CHALLENGE));
-  comp.process_received_packet_(make_rx_packet(address_challenge));
+  IoFrame node_verify_challenge{};
+  ASSERT_TRUE(create_challenge_req(node_verify_challenge, throwaway_id, attacker_id, test::TEST_CHALLENGE));
+  comp.process_received_packet_(make_rx_packet(node_verify_challenge));
 
-  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP)
       << "responder state must be untouched";
   EXPECT_EQ(radio.get_send_count(), 0)
       << "responder must not answer a hub-issued 0x3C from anyone but the hub it actually exchanged keys with";
@@ -851,7 +851,7 @@ TEST(HubKeyExtraction, RearmAfterExtractionStartsFreshAttempt) {
 /// this constructible: capturing the callback before disarm/re-arm and firing it afterward
 /// exercises a stricter situation than production can produce (ESPHome's real named-timer
 /// replacement would have destroyed the stale callback the moment the new cycle reached
-/// EXTRACTED/SENT_ADDRESS_RESP) -- but the guard is written to be correct regardless, and this is
+/// EXTRACTED/SENT_NODE_VERIFY_RESP) -- but the guard is written to be correct regardless, and this is
 /// the strongest test the host harness can offer for it.
 TEST(HubKeyExtraction, StaleGraceTimeoutDoesNotDisarmARearmedWindow) {
   TestableHubComponent comp;
@@ -922,7 +922,7 @@ TEST(HubKeyExtraction, AutoOffTimeoutCallbackDisarms) {
 }
 
 // ========================================================================================
-// Address verification: 0x36 -> 0x37, hub-issued 0x3C -> 0x3D. Some hubs (Velux KLR200) run this
+// Node verification: 0x36 -> 0x37, hub-issued 0x3C -> 0x3D. Some hubs (Velux KLR200) run this
 // round after the key exchange to verify the backbone address they were handed; others (Velux
 // KIG300) never send it. Both must work through the real dispatch path in hub_status.cpp, not just
 // the pure pairing_responder.cpp guards.
@@ -939,10 +939,10 @@ TEST(HubKeyExtraction, ChallengeReqReachesResponderBeforeExchangeInternalDrop) {
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_ADDRESS_RESP;
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP;
   // Simulating a mid-flow state directly (rather than driving it through on_key_init()) skips the
   // step that would normally capture this -- set it explicitly so the src guard in
-  // handle_key_extraction_address_challenge_() doesn't reject FOREIGN_HUB_ID below.
+  // handle_node_verify_challenge_() doesn't reject FOREIGN_HUB_ID below.
   memcpy(comp.key_extraction_.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE);
 
   IoFrame challenge_req{};
@@ -951,11 +951,11 @@ TEST(HubKeyExtraction, ChallengeReqReachesResponderBeforeExchangeInternalDrop) {
   comp.process_received_packet_(make_rx_packet(challenge_req));
 
   EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_RESP), 3)
-      << "a hub-issued 0x3C addressed to our throwaway ID while SENT_ADDRESS_RESP must draw a 0x3D "
+      << "a hub-issued 0x3C addressed to our throwaway ID while SENT_NODE_VERIFY_RESP must draw a 0x3D "
          "-- if this is 0, the reorder in process_received_packet_() regressed";
 }
 
-/// The full KLR200 sequence this feature exists for: discovery through the address-verification
+/// The full KLR200 sequence this feature exists for: discovery through the node-verification
 /// round, driven through the real dispatch path with the project's own builders (not raw capture
 /// bytes -- the capture's own node IDs/key/challenge don't match this harness's generated
 /// throwaway ID or scripted key, so the frames are built the way the other full-exchange tests in
@@ -988,34 +988,34 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
   ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
   radio.clear();
 
-  // Hub verifies the address it was handed: CMD_ADDRESS_REQ (0x36).
-  IoFrame address_req{};
-  init_frame(address_req, true, true, false, false);
-  set_dst(address_req, throwaway_id);
-  set_src(address_req, FOREIGN_HUB_ID);
-  ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
-  comp.process_received_packet_(make_rx_packet(address_req));
-  EXPECT_EQ(count_sent_cmd(radio, CMD_ADDRESS_RESP), 3) << "0x37 should be sent on all 3 channels";
-  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
+  // Hub verifies the address it was handed: CMD_NODE_VERIFY_REQ (0x36).
+  IoFrame node_verify_req{};
+  init_frame(node_verify_req, true, true, false, false);
+  set_dst(node_verify_req, throwaway_id);
+  set_src(node_verify_req, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(node_verify_req, CMD_NODE_VERIFY_REQ));
+  comp.process_received_packet_(make_rx_packet(node_verify_req));
+  EXPECT_EQ(count_sent_cmd(radio, CMD_NODE_VERIFY_RESP), 3) << "0x37 should be sent on all 3 channels";
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP);
 
   // Hub challenges the 0x37 it got back: CMD_CHALLENGE_REQ (0x3C), controller-issued this time.
-  IoFrame address_challenge{};
-  ASSERT_TRUE(create_challenge_req(address_challenge, throwaway_id, FOREIGN_HUB_ID, test::TEST_CHALLENGE));
-  comp.process_received_packet_(make_rx_packet(address_challenge));
+  IoFrame node_verify_challenge{};
+  ASSERT_TRUE(create_challenge_req(node_verify_challenge, throwaway_id, FOREIGN_HUB_ID, test::TEST_CHALLENGE));
+  comp.process_received_packet_(make_rx_packet(node_verify_challenge));
   EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_RESP), 3) << "0x3D should be sent on all 3 channels";
-  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP)
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP)
       << "must not disarm on the spot -- the grace timer does that";
 
   // The honest payload assertion (per corpus_crypto_test.cpp's doxygen): equal to
   // create_hmac() over our own 0x37's [cmd, data...] using the hub's challenge and the key this
   // harness actually recovered -- not the KLR200 capture's literal bytes, which were produced
   // under a different node ID/key/challenge triple.
-  IoFrame our_address_resp{};
-  ASSERT_TRUE(create_address_resp_device_role(our_address_resp, throwaway_id, FOREIGN_HUB_ID));
+  IoFrame our_node_verify_resp{};
+  ASSERT_TRUE(create_node_verify_resp_device_role(our_node_verify_resp, throwaway_id, FOREIGN_HUB_ID));
   uint8_t transcript[HMAC_SIZE + 1] = {0};
-  transcript[0] = our_address_resp.cmd;
-  memcpy(transcript + 1, our_address_resp.data, our_address_resp.data_len);
-  const uint8_t transcript_len = static_cast<uint8_t>(our_address_resp.data_len + 1);
+  transcript[0] = our_node_verify_resp.cmd;
+  memcpy(transcript + 1, our_node_verify_resp.data, our_node_verify_resp.data_len);
+  const uint8_t transcript_len = static_cast<uint8_t>(our_node_verify_resp.data_len + 1);
   uint8_t expected_hmac[HMAC_SIZE] = {0};
   ASSERT_TRUE(crypto::create_hmac(transcript, transcript_len, test::TEST_CHALLENGE,
                                   comp.key_extraction_.key_extraction_ctx_.recovered_key, expected_hmac));
@@ -1047,7 +1047,7 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
 /// (`38 ED A1`, the address the whole rest of the session — including the 0x36 that provoked this
 /// 0x37 — addresses it by). tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml's own note says
 /// so explicitly: 0x37's payload is that device's separately-tracked "backbone" identity, not its
-/// node/session address. create_address_resp_device_role() reports our one and only identity for
+/// node/session address. create_node_verify_resp_device_role() reports our one and only identity for
 /// both (see its doxygen in proto_commands.h), which this capture's own bytes prove is not what at
 /// least one real device does — so this test checks what our builder can actually be held to: the
 /// dispatch path answers the literal captured 0x36 with our own real node ID, and the literal
@@ -1060,12 +1060,12 @@ TEST(HubKeyExtraction, LiteralKlr200CaptureReplayThroughRealDispatchAnswersCorre
   const corpus::CorpusCapture *cap = corpus_test::capture_by_id("velux_kux100_pairing_full");
   ASSERT_NE(cap, nullptr);
 
-  const IoFrame address_req = find_capture_frame(cap, /*tx=*/true, CMD_ADDRESS_REQ);
-  const IoFrame address_challenge = find_capture_frame(cap, /*tx=*/true, CMD_CHALLENGE_REQ);
+  const IoFrame node_verify_req = find_capture_frame(cap, /*tx=*/true, CMD_NODE_VERIFY_REQ);
+  const IoFrame node_verify_challenge = find_capture_frame(cap, /*tx=*/true, CMD_CHALLENGE_REQ);
   // Sanity checks on the capture itself, so a future edit that shrinks/grows either payload fails
   // here with a clear message instead of a confusing mismatch below.
-  ASSERT_EQ(find_capture_frame(cap, /*tx=*/false, CMD_ADDRESS_RESP).data_len, NODE_ID_SIZE);
-  ASSERT_EQ(address_challenge.data_len, HMAC_SIZE);
+  ASSERT_EQ(find_capture_frame(cap, /*tx=*/false, CMD_NODE_VERIFY_RESP).data_len, NODE_ID_SIZE);
+  ASSERT_EQ(node_verify_challenge.data_len, HMAC_SIZE);
 
   TestableHubComponent comp;
   MockRadio radio;
@@ -1076,35 +1076,35 @@ TEST(HubKeyExtraction, LiteralKlr200CaptureReplayThroughRealDispatchAnswersCorre
   // dst/src pair, not a value this harness generated. test::TEST_SYSTEM_KEY is byte-identical to
   // this capture's `key: corpus` value (both trace to scripts/corpus/protolib.py's
   // CORPUS_SYSTEM_KEY), so it decrypts/authenticates exactly as the real session's key did.
-  memcpy(comp.key_extraction_.key_extraction_ctx_.throwaway_id, address_req.dst, NODE_ID_SIZE);
-  memcpy(comp.key_extraction_.key_extraction_ctx_.hub_node_id, address_req.src, NODE_ID_SIZE);
+  memcpy(comp.key_extraction_.key_extraction_ctx_.throwaway_id, node_verify_req.dst, NODE_ID_SIZE);
+  memcpy(comp.key_extraction_.key_extraction_ctx_.hub_node_id, node_verify_req.src, NODE_ID_SIZE);
   memcpy(comp.key_extraction_.key_extraction_ctx_.recovered_key, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
   radio.clear();
 
-  comp.process_received_packet_(make_rx_packet(address_req));
-  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
-  IoFrame our_address_resp{};
-  bool have_our_address_resp = false;
+  comp.process_received_packet_(make_rx_packet(node_verify_req));
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP);
+  IoFrame our_node_verify_resp{};
+  bool have_our_node_verify_resp = false;
   for (const auto &pkt : radio.get_sent_data()) {
     IoFrame sent{};
-    if (!parse(pkt.data(), static_cast<uint8_t>(pkt.size()), sent) || sent.cmd != CMD_ADDRESS_RESP)
+    if (!parse(pkt.data(), static_cast<uint8_t>(pkt.size()), sent) || sent.cmd != CMD_NODE_VERIFY_RESP)
       continue;
-    have_our_address_resp = true;
-    our_address_resp = sent;
+    have_our_node_verify_resp = true;
+    our_node_verify_resp = sent;
     ASSERT_EQ(sent.data_len, NODE_ID_SIZE);
     EXPECT_EQ(memcmp(sent.data, comp.key_extraction_.key_extraction_ctx_.throwaway_id, NODE_ID_SIZE), 0)
         << "0x37 payload must be our own advertised node ID";
   }
-  EXPECT_TRUE(have_our_address_resp);
+  EXPECT_TRUE(have_our_node_verify_resp);
   radio.clear();
 
-  comp.process_received_packet_(make_rx_packet(address_challenge));
+  comp.process_received_packet_(make_rx_packet(node_verify_challenge));
   uint8_t transcript[HMAC_SIZE + 1] = {0};
-  transcript[0] = our_address_resp.cmd;
-  memcpy(transcript + 1, our_address_resp.data, our_address_resp.data_len);
+  transcript[0] = our_node_verify_resp.cmd;
+  memcpy(transcript + 1, our_node_verify_resp.data, our_node_verify_resp.data_len);
   uint8_t expected_hmac[HMAC_SIZE] = {0};
-  ASSERT_TRUE(crypto::create_hmac(transcript, static_cast<uint8_t>(our_address_resp.data_len + 1),
-                                  address_challenge.data, comp.key_extraction_.key_extraction_ctx_.recovered_key,
+  ASSERT_TRUE(crypto::create_hmac(transcript, static_cast<uint8_t>(our_node_verify_resp.data_len + 1),
+                                  node_verify_challenge.data, comp.key_extraction_.key_extraction_ctx_.recovered_key,
                                   expected_hmac));
   bool found_0x3d = false;
   for (const auto &pkt : radio.get_sent_data()) {
@@ -1122,7 +1122,7 @@ TEST(HubKeyExtraction, LiteralKlr200CaptureReplayThroughRealDispatchAnswersCorre
 
 /// Regression guard for the KIG300 family (issue #45): a hub that completes the key exchange and
 /// sends nothing further must still disarm, just after the grace window instead of immediately.
-TEST(HubKeyExtraction, GraceWindowExpiresWithoutAddressRequest) {
+TEST(HubKeyExtraction, GraceWindowExpiresWithoutNodeVerifyRequest) {
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
@@ -1161,10 +1161,10 @@ TEST(HubKeyExtraction, GraceWindowExpiresWithoutAddressRequest) {
 /// The stub's recorded last_timeout_name_/last_timeout_ms_ are reset immediately before the 0x36
 /// is fed in, not just asserted afterward: arm_post_extraction_grace_() already ran once during the
 /// key-transfer step above, so those fields already show the grace timer's name/duration *before*
-/// handle_key_extraction_address_req_() runs. Without the reset, this test would pass even if the
+/// handle_node_verify_req_() runs. Without the reset, this test would pass even if the
 /// 0x36 handler's arm_post_extraction_grace_() call were deleted entirely -- it did, verified by
 /// deliberately removing that call and confirming this test failed, then restoring it.
-TEST(HubKeyExtraction, AddressRequestExtendsGraceWindow) {
+TEST(HubKeyExtraction, NodeVerifyRequestExtendsGraceWindow) {
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
@@ -1190,24 +1190,24 @@ TEST(HubKeyExtraction, AddressRequestExtendsGraceWindow) {
   comp.last_timeout_name_.clear();
   comp.last_timeout_ms_ = 0;
 
-  IoFrame address_req{};
-  init_frame(address_req, true, true, false, false);
-  set_dst(address_req, throwaway_id);
-  set_src(address_req, FOREIGN_HUB_ID);
-  ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
-  comp.process_received_packet_(make_rx_packet(address_req));
+  IoFrame node_verify_req{};
+  init_frame(node_verify_req, true, true, false, false);
+  set_dst(node_verify_req, throwaway_id);
+  set_src(node_verify_req, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(node_verify_req, CMD_NODE_VERIFY_REQ));
+  comp.process_received_packet_(make_rx_packet(node_verify_req));
 
   EXPECT_EQ(comp.last_timeout_name_, "key_extraction_post_extract_grace")
       << "after the 0x36, the recorded timer should be the grace timer again";
   EXPECT_EQ(comp.last_timeout_ms_, 60000u);
 }
 
-/// Mirror of AddressRequestExtendsGraceWindow above for the other re-arm call site: a hub-issued
+/// Mirror of NodeVerifyRequestExtendsGraceWindow above for the other re-arm call site: a hub-issued
 /// 0x3C challenging our 0x37 is also a sign of progress and must push the disarm back out too. Same
 /// reset-before-stimulus technique, for the same reason -- arm_post_extraction_grace_() already ran
-/// once when SENT_ADDRESS_RESP was reached via the 0x36 above, so the stub's recorded fields already
+/// once when SENT_NODE_VERIFY_RESP was reached via the 0x36 above, so the stub's recorded fields already
 /// show the grace timer before the 0x3C handler runs.
-TEST(HubKeyExtraction, AddressChallengeExtendsGraceWindow) {
+TEST(HubKeyExtraction, NodeVerifyChallengeExtendsGraceWindow) {
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
@@ -1228,22 +1228,22 @@ TEST(HubKeyExtraction, AddressChallengeExtendsGraceWindow) {
   comp.process_received_packet_(make_rx_packet(key_transfer));
   ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
 
-  IoFrame address_req{};
-  init_frame(address_req, true, true, false, false);
-  set_dst(address_req, throwaway_id);
-  set_src(address_req, FOREIGN_HUB_ID);
-  ASSERT_TRUE(set_cmd(address_req, CMD_ADDRESS_REQ));
-  comp.process_received_packet_(make_rx_packet(address_req));
-  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_ADDRESS_RESP);
+  IoFrame node_verify_req{};
+  init_frame(node_verify_req, true, true, false, false);
+  set_dst(node_verify_req, throwaway_id);
+  set_src(node_verify_req, FOREIGN_HUB_ID);
+  ASSERT_TRUE(set_cmd(node_verify_req, CMD_NODE_VERIFY_REQ));
+  comp.process_received_packet_(make_rx_packet(node_verify_req));
+  ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP);
 
   // Clear the grace timer's own prior registration (from the 0x36 above) so re-registration by the
   // 0x3C handler below is actually observable.
   comp.last_timeout_name_.clear();
   comp.last_timeout_ms_ = 0;
 
-  IoFrame address_challenge{};
-  ASSERT_TRUE(create_challenge_req(address_challenge, throwaway_id, FOREIGN_HUB_ID, test::TEST_CHALLENGE));
-  comp.process_received_packet_(make_rx_packet(address_challenge));
+  IoFrame node_verify_challenge{};
+  ASSERT_TRUE(create_challenge_req(node_verify_challenge, throwaway_id, FOREIGN_HUB_ID, test::TEST_CHALLENGE));
+  comp.process_received_packet_(make_rx_packet(node_verify_challenge));
 
   EXPECT_EQ(comp.last_timeout_name_, "key_extraction_post_extract_grace")
       << "after the hub-issued 0x3C, the recorded timer should be the grace timer again";
