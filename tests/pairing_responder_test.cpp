@@ -12,13 +12,13 @@ using namespace esphome::home_io_control::pairing_responder;
 // ============================================================================
 // Pure state-machine transitions for the "Accept Foreign Pairing" (key-extraction) responder:
 // ARMED_IDLE -> SENT_DISCOVER_RESP -> SENT_CONFIRM_ACK -> SENT_CHALLENGE -> EXTRACTED ->
-// SENT_ADDRESS_RESP, including out-of-order frames, retries (missed-frame tolerance), the
+// SENT_NODE_VERIFY_RESP, including out-of-order frames, retries (missed-frame tolerance), the
 // SENT_CONFIRM_ACK bypass some hubs take, and the crypto integration through on_key_transfer().
 
 namespace {
 
 /// Used everywhere on_discover_request()'s hub_node_id parameter is irrelevant to the case under
-/// test (every state but EXTRACTED/SENT_ADDRESS_RESP accepts unconditionally — see its doxygen).
+/// test (every state but EXTRACTED/SENT_NODE_VERIFY_RESP accepts unconditionally — see its doxygen).
 constexpr uint8_t ARBITRARY_HUB_ID[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
 
 ResponderContext make_armed_ctx() {
@@ -182,36 +182,36 @@ TEST(PairingResponder, KeyInitAfterExtractedIsIgnored) {
   EXPECT_EQ(ctx.state, ResponderState::EXTRACTED);
 }
 
-/// SENT_ADDRESS_RESP twin of DiscoverRequestAfterExtractedStartsNewAttempt above: the new state
+/// SENT_NODE_VERIFY_RESP twin of DiscoverRequestAfterExtractedStartsNewAttempt above: the new state
 /// widens every existing on_*() guard's surface, so each must be re-pinned against it too.
-TEST(PairingResponder, DiscoverRequestAfterAddressRespStartsNewAttempt) {
+TEST(PairingResponder, DiscoverRequestAfterNodeVerifyRespStartsNewAttempt) {
   ResponderContext ctx = make_armed_ctx();
-  ctx.state = ResponderState::SENT_ADDRESS_RESP;
+  ctx.state = ResponderState::SENT_NODE_VERIFY_RESP;
   const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
   memcpy(ctx.hub_node_id, hub_id, NODE_ID_SIZE);
   EXPECT_TRUE(on_discover_request(ctx, hub_id))
-      << "a discovery request from the SAME hub after address verification must also start a new attempt";
+      << "a discovery request from the SAME hub after node verification must also start a new attempt";
   EXPECT_EQ(ctx.state, ResponderState::SENT_DISCOVER_RESP);
 }
 
-/// SENT_ADDRESS_RESP twin of KeyInitAfterExtractedIsIgnored above.
-TEST(PairingResponder, KeyInitAfterAddressRespIsIgnored) {
+/// SENT_NODE_VERIFY_RESP twin of KeyInitAfterExtractedIsIgnored above.
+TEST(PairingResponder, KeyInitAfterNodeVerifyRespIsIgnored) {
   ResponderContext ctx = make_armed_ctx();
-  ctx.state = ResponderState::SENT_ADDRESS_RESP;
+  ctx.state = ResponderState::SENT_NODE_VERIFY_RESP;
   const uint8_t hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
-  EXPECT_FALSE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id)) << "key-init after address verification must be ignored";
-  EXPECT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP);
+  EXPECT_FALSE(on_key_init(ctx, test::TEST_CHALLENGE, hub_id)) << "key-init after node verification must be ignored";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_NODE_VERIFY_RESP);
 }
 
 // ========================================================================================
 // A stray 0x28 from a DIFFERENT hub must not disrupt a live post-extraction
-// address-verification round with the real hub.
+// node-verification round with the real hub.
 // ========================================================================================
 
-/// EXTRACTED/SENT_ADDRESS_RESP only restart for the same hub_node_id that completed the original
+/// EXTRACTED/SENT_NODE_VERIFY_RESP only restart for the same hub_node_id that completed the original
 /// extraction (captured in ctx.hub_node_id by on_key_init()) -- a different hub's 0x28 must be
 /// silently ignored. CMD_DISCOVER_REQ is a broadcast handled before the throwaway-ID destination
-/// filter, so without this restriction any hub in range could knock a live address-verification
+/// filter, so without this restriction any hub in range could knock a live node-verification
 /// round back a phase.
 TEST(PairingResponder, DiscoverRequestFromDifferentHubAfterExtractedIsIgnored) {
   ResponderContext ctx = make_armed_ctx();
@@ -226,19 +226,19 @@ TEST(PairingResponder, DiscoverRequestFromDifferentHubAfterExtractedIsIgnored) {
   EXPECT_EQ(ctx.state, ResponderState::EXTRACTED) << "state must be unchanged";
 }
 
-/// SENT_ADDRESS_RESP twin of the test above -- the state where an address-verification round with
+/// SENT_NODE_VERIFY_RESP twin of the test above -- the state where a node-verification round with
 /// the real hub is actually in progress, the scenario this restriction exists to protect.
-TEST(PairingResponder, DiscoverRequestFromDifferentHubAfterAddressRespIsIgnored) {
+TEST(PairingResponder, DiscoverRequestFromDifferentHubAfterNodeVerifyRespIsIgnored) {
   ResponderContext ctx = make_armed_ctx();
-  ctx.state = ResponderState::SENT_ADDRESS_RESP;
+  ctx.state = ResponderState::SENT_NODE_VERIFY_RESP;
   const uint8_t real_hub_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
   const uint8_t other_hub_id[NODE_ID_SIZE] = {0x99, 0x98, 0x97};
   memcpy(ctx.hub_node_id, real_hub_id, NODE_ID_SIZE);
 
   EXPECT_FALSE(on_discover_request(ctx, other_hub_id))
-      << "a different hub's discovery request during a live address-verification round must be "
+      << "a different hub's discovery request during a live node-verification round must be "
          "ignored, not knock the responder back to SENT_DISCOVER_RESP";
-  EXPECT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP) << "state must be unchanged";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_NODE_VERIFY_RESP) << "state must be unchanged";
 }
 
 TEST(PairingResponder, KeyTransferWhileDisarmedIsIgnored) {
@@ -268,54 +268,56 @@ TEST(PairingResponder, KeyTransferWithBogusPayloadStillExtractsSomeKey) {
 }
 
 // ========================================================================================
-// Address verification (0x36 -> 0x37, hub-issued 0x3C -> 0x3D): the Velux KLR200 round some
+// Node verification (0x36 -> 0x37, hub-issued 0x3C -> 0x3D): the Velux KLR200 round some
 // hubs run after the key exchange to verify the backbone address they were handed.
 // ========================================================================================
 
-TEST(PairingResponder, AddressReqAcceptedAfterExtracted) {
+TEST(PairingResponder, NodeVerifyReqAcceptedAfterExtracted) {
   ResponderContext ctx = make_armed_ctx();
   ctx.state = ResponderState::EXTRACTED;
-  EXPECT_TRUE(on_address_req(ctx)) << "an address request after extraction should be accepted";
-  EXPECT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP);
+  EXPECT_TRUE(on_node_verify_req(ctx)) << "a node verification request after extraction should be accepted";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_NODE_VERIFY_RESP);
 }
 
-TEST(PairingResponder, AddressReqRetryResendsWithoutRegenerating) {
+TEST(PairingResponder, NodeVerifyReqRetryResendsWithoutRegenerating) {
   ResponderContext ctx = make_armed_ctx();
   ctx.state = ResponderState::EXTRACTED;
-  ASSERT_TRUE(on_address_req(ctx));
-  ASSERT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP);
+  ASSERT_TRUE(on_node_verify_req(ctx));
+  ASSERT_EQ(ctx.state, ResponderState::SENT_NODE_VERIFY_RESP);
 
   // Hub missed our first 0x37 and retries the 0x36.
-  EXPECT_TRUE(on_address_req(ctx)) << "an address-request retry while SENT_ADDRESS_RESP should still be accepted";
-  EXPECT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP) << "state should not regress or advance on a retry";
+  EXPECT_TRUE(on_node_verify_req(ctx))
+      << "a node-verification retry while SENT_NODE_VERIFY_RESP should still be accepted";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_NODE_VERIFY_RESP) << "state should not regress or advance on a retry";
 }
 
-TEST(PairingResponder, AddressReqBeforeExtractedIsIgnored) {
+TEST(PairingResponder, NodeVerifyReqBeforeExtractedIsIgnored) {
   ResponderContext ctx = make_armed_ctx();
   ctx.state = ResponderState::SENT_CHALLENGE;
-  EXPECT_FALSE(on_address_req(ctx)) << "an address request before the key exchange completes must be ignored";
+  EXPECT_FALSE(on_node_verify_req(ctx))
+      << "a node verification request before the key exchange completes must be ignored";
   EXPECT_EQ(ctx.state, ResponderState::SENT_CHALLENGE) << "state should be unchanged";
 }
 
-TEST(PairingResponder, AddressChallengeAcceptedAfterAddressReq) {
+TEST(PairingResponder, NodeVerifyChallengeAcceptedAfterNodeVerifyReq) {
   ResponderContext ctx = make_armed_ctx();
-  ctx.state = ResponderState::SENT_ADDRESS_RESP;
-  EXPECT_TRUE(on_address_challenge(ctx)) << "a hub-issued challenge after our 0x37 should be accepted";
-  EXPECT_EQ(ctx.state, ResponderState::SENT_ADDRESS_RESP)
+  ctx.state = ResponderState::SENT_NODE_VERIFY_RESP;
+  EXPECT_TRUE(on_node_verify_challenge(ctx)) << "a hub-issued challenge after our 0x37 should be accepted";
+  EXPECT_EQ(ctx.state, ResponderState::SENT_NODE_VERIFY_RESP)
       << "unlike every other on_*() here, this must NOT advance state -- it stays put so a retried "
          "0x3C is answered the same way";
 }
 
-TEST(PairingResponder, AddressChallengeBeforeAddressReqIsIgnored) {
+TEST(PairingResponder, NodeVerifyChallengeBeforeNodeVerifyReqIsIgnored) {
   ResponderContext ctx = make_armed_ctx();
   ctx.state = ResponderState::EXTRACTED;
-  EXPECT_FALSE(on_address_challenge(ctx)) << "a challenge before we've sent our 0x37 must be ignored";
+  EXPECT_FALSE(on_node_verify_challenge(ctx)) << "a challenge before we've sent our 0x37 must be ignored";
   EXPECT_EQ(ctx.state, ResponderState::EXTRACTED) << "state should be unchanged";
 }
 
-TEST(PairingResponder, AddressChallengeAfterDisarmIsIgnored) {
+TEST(PairingResponder, NodeVerifyChallengeAfterDisarmIsIgnored) {
   ResponderContext ctx;  // defaults to DISARMED
-  EXPECT_FALSE(on_address_challenge(ctx)) << "a challenge while disarmed must be ignored";
+  EXPECT_FALSE(on_node_verify_challenge(ctx)) << "a challenge while disarmed must be ignored";
   EXPECT_EQ(ctx.state, ResponderState::DISARMED);
 }
 
@@ -330,5 +332,5 @@ TEST(PairingResponder, StageNameCoversEveryState) {
   EXPECT_STREQ(responder_stage_name(ResponderState::SENT_CONFIRM_ACK), "sent_confirm_ack");
   EXPECT_STREQ(responder_stage_name(ResponderState::SENT_CHALLENGE), "sent_challenge");
   EXPECT_STREQ(responder_stage_name(ResponderState::EXTRACTED), "extracted");
-  EXPECT_STREQ(responder_stage_name(ResponderState::SENT_ADDRESS_RESP), "sent_address_resp");
+  EXPECT_STREQ(responder_stage_name(ResponderState::SENT_NODE_VERIFY_RESP), "sent_node_verify_resp");
 }

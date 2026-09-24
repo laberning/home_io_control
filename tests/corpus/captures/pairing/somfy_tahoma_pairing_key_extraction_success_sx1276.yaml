@@ -4,7 +4,7 @@ description: >
   real Somfy TaHoma Switch (node 7B0490) that already owned the device being cloned. Completed
   first-try, no retries at any step: CMD_DISCOVER_REQ (0x28) -> CMD_DISCOVER_CONFIRM (0x2C) ->
   CMD_KEY_INIT (0x31) -> CMD_KEY_TRANSFER (0x32, omitted -- see below, "SYSTEM KEY EXTRACTED") ->
-  CMD_ADDRESS_REQ (0x36) -> CMD_CHALLENGE_REQ (0x3C, omitted -- see below). Only the hub's own
+  CMD_NODE_VERIFY_REQ (0x36) -> CMD_CHALLENGE_REQ (0x3C, omitted -- see below). Only the hub's own
   frames are included (all `dir: rx` from our device-role responder's perspective) -- the
   reporter's log captured what the real hub transmitted, not the bytes our own responder sent
   back, so no `expect.frames` classification or response-frame assertions are made here; this
@@ -17,10 +17,10 @@ description: >
   whatever was wrong there, not a general Somfy-brand trait. (2)
   velux_klr200_pairing_key_extraction_success.yaml's own 0x37 note says no CMD_CHALLENGE_REQ
   followed its 0x37 in the ~60s grace window, left as "open question, not yet understood" -- this
-  TaHoma's 0x3C followed its own 0x36 (an address request, not the 0x37 the KLR200 capture
+  TaHoma's 0x3C followed its own 0x36 (a node verification request, not the 0x37 the KLR200 capture
   describes -- this session's device-role responder apparently never got to send an 0x37 before
   the hub's own 0x3C arrived, or the reporter's log excerpt did not capture it either way) 53ms
-  later. Taken together: whether the post-address-request challenge happens is hub-dependent, not
+  later. Taken together: whether the post-verification-request challenge happens is hub-dependent, not
   a bug on either side -- a KLR200 skipped it, this TaHoma Switch did it.
   The reporter (Skamba) reports the discovery wizard's control-point choice mattered: the TaHoma
   app's "remote control" control point never transmits a discovery at all (confirmed from a
@@ -64,7 +64,7 @@ frames:
     t_ms: 7293
     hex: "48 24 42 B0 D5 7B 04 90 36"
     crc: absent
-    note: "cmd=ADDRESS_REQ(0x36), ~771ms after the 0x32/key-confirm step, well inside the
+    note: "cmd=NODE_VERIFY_REQ(0x36), ~771ms after the 0x32/key-confirm step, well inside the
       post-extraction grace window"
 # CMD_CHALLENGE_REQ (0x3C, rx, ctrl0=0x0E/ctrl1=0x00) is omitted for the same reason as 0x32
 # above -- its 6-byte challenge payload is masked before the log is written. Its framing bytes

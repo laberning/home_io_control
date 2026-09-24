@@ -26,8 +26,8 @@ const char *responder_stage_name(ResponderState state) {
       return "sent_challenge";
     case ResponderState::EXTRACTED:
       return "extracted";
-    case ResponderState::SENT_ADDRESS_RESP:
-      return "sent_address_resp";
+    case ResponderState::SENT_NODE_VERIFY_RESP:
+      return "sent_node_verify_resp";
   }
   return "disarmed";
 }
@@ -37,15 +37,15 @@ bool on_discover_request(ResponderContext &ctx, const uint8_t hub_node_id[NODE_I
     ctx.state = ResponderState::SENT_DISCOVER_RESP;
     return true;
   }
-  // EXTRACTED/SENT_ADDRESS_RESP are a *completed* attempt, not an in-flight one — unlike
+  // EXTRACTED/SENT_NODE_VERIFY_RESP are a *completed* attempt, not an in-flight one — unlike
   // SENT_CONFIRM_ACK above, a fresh 0x28 arriving here cannot be the same hub's redundant
   // mid-exchange rebroadcast (the only documented real-hub case for staying silent; see the
   // doxygen), so it is treated like ARMED_IDLE: start a new attempt. But ONLY for the hub this
   // responder actually extracted a key from — 0x28 is a broadcast handled before the throwaway-ID
   // dst filter, so accepting it unconditionally here would let any unrelated hub's ordinary 0x28
-  // traffic knock a live post-extraction address-verification round with the real hub back to
+  // traffic knock a live post-extraction node-verification round with the real hub back to
   // SENT_DISCOVER_RESP. A different hub's 0x28 is silently ignored instead.
-  if (ctx.state == ResponderState::EXTRACTED || ctx.state == ResponderState::SENT_ADDRESS_RESP) {
+  if (ctx.state == ResponderState::EXTRACTED || ctx.state == ResponderState::SENT_NODE_VERIFY_RESP) {
     if (memcmp(hub_node_id, ctx.hub_node_id, NODE_ID_SIZE) != 0)
       return false;
     ctx.state = ResponderState::SENT_DISCOVER_RESP;
@@ -84,14 +84,16 @@ bool on_key_transfer(ResponderContext &ctx, const uint8_t transfer_payload[AES_K
   return true;
 }
 
-bool on_address_req(ResponderContext &ctx) {
-  if (ctx.state != ResponderState::EXTRACTED && ctx.state != ResponderState::SENT_ADDRESS_RESP)
+bool on_node_verify_req(ResponderContext &ctx) {
+  if (ctx.state != ResponderState::EXTRACTED && ctx.state != ResponderState::SENT_NODE_VERIFY_RESP)
     return false;
-  ctx.state = ResponderState::SENT_ADDRESS_RESP;
+  ctx.state = ResponderState::SENT_NODE_VERIFY_RESP;
   return true;
 }
 
-bool on_address_challenge(const ResponderContext &ctx) { return ctx.state == ResponderState::SENT_ADDRESS_RESP; }
+bool on_node_verify_challenge(const ResponderContext &ctx) {
+  return ctx.state == ResponderState::SENT_NODE_VERIFY_RESP;
+}
 
 }  // namespace pairing_responder
 }  // namespace home_io_control

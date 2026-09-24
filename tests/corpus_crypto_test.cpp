@@ -204,7 +204,7 @@ TEST_P(CorpusCryptoSelfAuthenticated, SelfAuthenticatedPayloadVerifiesUnderCorpu
     GTEST_SKIP() << "no self-authenticated frame in this capture";
 }
 
-/// Reproduces the KLR200 pairing capture's address-verification 0x3D literally, byte-for-byte,
+/// Reproduces the KLR200 pairing capture's node-verification 0x3D literally, byte-for-byte,
 /// under the corpus key -- the one claim in this feature's design that rests on hand-verified
 /// crypto rather than a general rule. Kept separate from HubKeyExtraction's end-to-end replay
 /// (tests/hub_key_extraction_test.cpp): that suite drives the real dispatch/handler code but with
@@ -216,36 +216,36 @@ TEST(CorpusCryptoKat, ChallengeRespDeviceRoleReproducesKlr200AddressProof) {
   const corpus::CorpusCapture *capture = corpus_test::capture_by_id("velux_kux100_pairing_full");
   ASSERT_NE(capture, nullptr) << "capture not found -- was it renamed?";
 
-  const corpus::CorpusFrame *address_resp_cf = nullptr;  // rx 0x37: our own preceding frame
-  const corpus::CorpusFrame *challenge_cf = nullptr;     // tx 0x3C: the controller's challenge on it
-  const corpus::CorpusFrame *response_cf = nullptr;      // rx 0x3D: the terminal address-proof
+  const corpus::CorpusFrame *node_verify_resp_cf = nullptr;  // rx 0x37: our own preceding frame
+  const corpus::CorpusFrame *challenge_cf = nullptr;         // tx 0x3C: the controller's challenge on it
+  const corpus::CorpusFrame *response_cf = nullptr;          // rx 0x3D: the terminal address-proof
   for (uint8_t i = 0; i < capture->frame_count; i++) {
     const corpus::CorpusFrame &cf = capture->frames[i];
     const IoFrame parsed = corpus_test::parse_capture_frame(cf);
-    if (address_resp_cf == nullptr && !cf.tx && parsed.cmd == CMD_ADDRESS_RESP) {
-      address_resp_cf = &cf;
+    if (node_verify_resp_cf == nullptr && !cf.tx && parsed.cmd == CMD_NODE_VERIFY_RESP) {
+      node_verify_resp_cf = &cf;
     } else if (challenge_cf == nullptr && cf.tx && parsed.cmd == CMD_CHALLENGE_REQ) {
       challenge_cf = &cf;
     } else if (response_cf == nullptr && !cf.tx && parsed.cmd == CMD_CHALLENGE_RESP) {
       response_cf = &cf;
     }
   }
-  ASSERT_NE(address_resp_cf, nullptr) << "capture must have a device-originated 0x37";
+  ASSERT_NE(node_verify_resp_cf, nullptr) << "capture must have a device-originated 0x37";
   ASSERT_NE(challenge_cf, nullptr) << "capture must have a controller-issued 0x3C";
   ASSERT_NE(response_cf, nullptr) << "capture must have the device's terminal 0x3D";
 
-  const IoFrame address_resp = corpus_test::parse_capture_frame(*address_resp_cf);
+  const IoFrame node_verify_resp = corpus_test::parse_capture_frame(*node_verify_resp_cf);
   const IoFrame challenge = corpus_test::parse_capture_frame(*challenge_cf);
   const IoFrame response = corpus_test::parse_capture_frame(*response_cf);
   ASSERT_EQ(challenge.data_len, HMAC_SIZE);
   ASSERT_EQ(response.data_len, HMAC_SIZE);
 
   IoFrame built{};
-  // address_resp (our own preceding 0x37) is device-originated: its src is our (device) address,
+  // node_verify_resp (our own preceding 0x37) is device-originated: its src is our (device) address,
   // its dst is the hub's -- create_challenge_resp_device_role()'s (dst, src) order is the other
-  // way around (dst=hub, src=us), matching create_address_resp_device_role()'s own convention.
-  ASSERT_TRUE(create_challenge_resp_device_role(built, /*dst=*/address_resp.dst, /*src=*/address_resp.src,
-                                                challenge.data, address_resp, test::TEST_SYSTEM_KEY));
+  // way around (dst=hub, src=us), matching create_node_verify_resp_device_role()'s own convention.
+  ASSERT_TRUE(create_challenge_resp_device_role(built, /*dst=*/node_verify_resp.dst, /*src=*/node_verify_resp.src,
+                                                challenge.data, node_verify_resp, test::TEST_SYSTEM_KEY));
   EXPECT_EQ(std::memcmp(built.data, response.data, HMAC_SIZE), 0)
       << "create_challenge_resp_device_role() does not reproduce the captured 0x3D bytes";
 }

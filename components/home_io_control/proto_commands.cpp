@@ -858,11 +858,11 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 /// working (issue #45's own captures), so this one bit's necessity is unproven rather than known
 /// missing. Not mirroring the request's PRIORITY bit until a second real capture settles it either
 /// way.
-bool create_address_resp_device_role(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
+bool create_node_verify_resp_device_role(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   init_frame(f, true, /*start=*/false, /*end=*/false, /*low_power=*/false);
   set_dst(f, dst);
   set_src(f, own);
-  return set_cmd(f, CMD_ADDRESS_RESP, own, NODE_ID_SIZE);
+  return set_cmd(f, CMD_NODE_VERIFY_RESP, own, NODE_ID_SIZE);
 }
 
 /// Build a device-role challenge response (0x3D) — device side, used only by the key-extraction

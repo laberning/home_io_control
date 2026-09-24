@@ -106,7 +106,7 @@ constexpr uint32_t KEY_EXTRACTION_POST_EXTRACT_GRACE_MS = 60000;  ///< One minut
 // to every hub except the one it's actually running a round with. It is still hard-capped by the
 // 10-minute auto-off timer above, and the only cost of overshooting is that the HA switch reports
 // "still listening" for longer. Undershooting, by contrast, silently drops a slow hub's
-// address-verification round — the exact failure this feature exists to fix. Not measured.
+// node-verification round — the exact failure this feature exists to fix. Not measured.
 constexpr const char *KEY_EXTRACTION_GRACE_TIMER_NAME = "key_extraction_post_extract_grace";
 
 }  // namespace
@@ -209,12 +209,12 @@ bool KeyExtractionResponder::try_handle_frame(const IoFrame &frame) {
     this->handle_key_transfer_(frame);
     return true;
   }
-  if (frame.cmd == CMD_ADDRESS_REQ) {
-    this->handle_address_req_(frame);
+  if (frame.cmd == CMD_NODE_VERIFY_REQ) {
+    this->handle_node_verify_req_(frame);
     return true;
   }
   if (frame.cmd == CMD_CHALLENGE_REQ) {
-    this->handle_address_challenge_(frame);
+    this->handle_node_verify_challenge_(frame);
     return true;
   }
   return false;
@@ -337,22 +337,22 @@ void KeyExtractionResponder::handle_key_transfer_(const IoFrame &frame) {
   this->log_result_();
   ESP_LOGI(detail::TAG,
            "Key extraction: still listening for up to %" PRIu32
-           " more seconds in case the hub verifies this device's address (CMD_ADDRESS_REQ/0x36) — leave the "
+           " more seconds in case the hub verifies this device (CMD_NODE_VERIFY_REQ/0x36) — leave the "
            "switch on until it turns off on its own.",
            KEY_EXTRACTION_POST_EXTRACT_GRACE_MS / 1000);
-  // Don't disarm immediately: some hubs (Velux KLR200) follow the key exchange with an address
-  // request (0x36) and a challenge (0x3C) verifying it, and disarming here would make the
+  // Don't disarm immediately: some hubs (Velux KLR200) follow the key exchange with a node
+  // verification request (0x36) and a challenge (0x3C) against our answer, and disarming here would make the
   // responder deaf to that round before it can happen. A *different* hub attempting to pair
   // mid-window still cannot succeed and produce a second, confusing log block — every pure guard in
   // pairing_responder.cpp except on_discover_request() unconditionally rejects EXTRACTED/
-  // SENT_ADDRESS_RESP, and on_discover_request() itself only accepts a fresh 0x28 from that same
+  // SENT_NODE_VERIFY_RESP, and on_discover_request() itself only accepts a fresh 0x28 from that same
   // hub_node_id, so a different hub's traffic still cannot advance the state machine backwards. The
   // grace timer below disarms once no further progress is seen from the real hub, instead of doing
   // it at once.
   this->arm_post_extraction_grace();
 }
 
-void KeyExtractionResponder::handle_address_req_(const IoFrame &frame) {
+void KeyExtractionResponder::handle_node_verify_req_(const IoFrame &frame) {
   // Our throwaway ID is not a secret -- it went out in clear in our own 0x29/0x37 -- so the dst
   // check in try_handle_frame() alone doesn't establish this frame actually came from the hub we
   // exchanged keys with. hub_node_id was captured from the 0x31 that started this attempt
@@ -361,20 +361,21 @@ void KeyExtractionResponder::handle_address_req_(const IoFrame &frame) {
   // re-arming the grace window for as long as the arm cycle lasts.
   if (memcmp(frame.src, this->key_extraction_ctx_.hub_node_id, NODE_ID_SIZE) != 0)
     return;
-  if (!pairing_responder::on_address_req(this->key_extraction_ctx_))
+  if (!pairing_responder::on_node_verify_req(this->key_extraction_ctx_))
     return;
   IoFrame resp;
-  if (!create_address_resp_device_role(resp, this->key_extraction_ctx_.throwaway_id, frame.src)) {
+  if (!create_node_verify_resp_device_role(resp, this->key_extraction_ctx_.throwaway_id, frame.src)) {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build address response");
     return;
   }
   this->broadcast_reply_(resp);
   this->arm_post_extraction_grace();  // Hub is still progressing — push the disarm back out.
-  ESP_LOGI(detail::TAG, "Key extraction: answered address request from hub %s", node_id_to_string(frame.src).c_str());
+  ESP_LOGI(detail::TAG, "Key extraction: answered node verification request from hub %s",
+           node_id_to_string(frame.src).c_str());
 }
 
-void KeyExtractionResponder::handle_address_challenge_(const IoFrame &frame) {
-  // Hub-identity guard, mirroring handle_address_req_()'s: only the hub we actually exchanged keys
+void KeyExtractionResponder::handle_node_verify_challenge_(const IoFrame &frame) {
+  // Hub-identity guard, mirroring handle_node_verify_req_()'s: only the hub we actually exchanged keys
   // with may drive this round.
   if (memcmp(frame.src, this->key_extraction_ctx_.hub_node_id, NODE_ID_SIZE) != 0)
     return;
@@ -385,26 +386,26 @@ void KeyExtractionResponder::handle_address_challenge_(const IoFrame &frame) {
     ESP_LOGW(detail::TAG, "Key extraction: address challenge payload too short (%u bytes)", frame.data_len);
     return;
   }
-  if (!pairing_responder::on_address_challenge(this->key_extraction_ctx_))
+  if (!pairing_responder::on_node_verify_challenge(this->key_extraction_ctx_))
     return;
   // Rebuild the 0x37 we last sent — deterministic from ctx, nothing stored across the two calls.
   // Only origin.cmd/origin.data/origin.data_len feed the transcript, so the dst passed here is
   // irrelevant to the HMAC; the real builder is used anyway so the transcript cannot drift if the
   // 0x37 payload ever changes.
-  IoFrame our_address_resp;
-  if (!create_address_resp_device_role(our_address_resp, /*own=*/this->key_extraction_ctx_.throwaway_id,
-                                       /*dst=*/frame.src))
+  IoFrame our_node_verify_resp;
+  if (!create_node_verify_resp_device_role(our_node_verify_resp, /*own=*/this->key_extraction_ctx_.throwaway_id,
+                                           /*dst=*/frame.src))
     return;
   IoFrame resp;
   if (!create_challenge_resp_device_role(resp, /*dst=*/frame.src, /*src=*/this->key_extraction_ctx_.throwaway_id,
-                                         frame.data, our_address_resp, this->key_extraction_ctx_.recovered_key)) {
+                                         frame.data, our_node_verify_resp, this->key_extraction_ctx_.recovered_key)) {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build address challenge response");
     return;
   }
   this->broadcast_reply_(resp);
   ESP_LOGI(detail::TAG, "Key extraction: answered address challenge from hub %s", node_id_to_string(frame.src).c_str());
-  // Do NOT disarm here — re-arm the grace window instead and stay in SENT_ADDRESS_RESP so a
-  // retried 0x3C is answered (on_address_challenge() deliberately never advances state).
+  // Do NOT disarm here — re-arm the grace window instead and stay in SENT_NODE_VERIFY_RESP so a
+  // retried 0x3C is answered (on_node_verify_challenge() deliberately never advances state).
   this->arm_post_extraction_grace();
 }
 
@@ -418,7 +419,7 @@ void KeyExtractionResponder::arm_post_extraction_grace() {
   //
   // Also pushes out key_extraction_hold_deadline_ms_ (key_extraction_responder.h) by the same
   // window: the CH2 hold that field governs is not just for the 3 pre-extraction states
-  // KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS bounds -- EXTRACTED/SENT_ADDRESS_RESP are "awaiting
+  // KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS bounds -- EXTRACTED/SENT_NODE_VERIFY_RESP are "awaiting
   // reply" too (a hub may still send 0x36/0x3C to verify the address it was handed), and this
   // grace window, not the 5s mid-attempt one, is what should bound the hold during that phase.
   // Without this, the hold would (per key_extraction_hold_deadline_ms_'s default-past-if-unset
@@ -439,7 +440,7 @@ void KeyExtractionResponder::arm_post_extraction_grace() {
     // is one this guard rejects.
     const auto state = this->key_extraction_ctx_.state;
     if (state != pairing_responder::ResponderState::EXTRACTED &&
-        state != pairing_responder::ResponderState::SENT_ADDRESS_RESP)
+        state != pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP)
       return;
     ESP_LOGI(detail::TAG, "Key extraction: post-extraction grace window elapsed (stage=%s). Disarming.",
              pairing_responder::responder_stage_name(state));

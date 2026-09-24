@@ -10,7 +10,7 @@ description: >
   Sequence: DISCOVER_SPE_REQ (0x2A) roll-call → 0x2B from 155D81 and 562292 (E50470's 0x2B not
   heard) → per node a directed DISCOVER_ALT_REQ (0x2E, payload 02) + authentication → per node
   DISCOVER_CONFIRM (0x2C) → four more 0x2A broadcasts ~1.8 s apart, each with a fresh 6-byte
-  challenge → per node ADDRESS_REQ (0x36) + CHALLENGE_REQ (0x3C) → 0x37 from 155D81.
+  challenge → per node NODE_VERIFY_REQ (0x36) + CHALLENGE_REQ (0x3C) → 0x37 from 155D81.
   OMITTED: every 0x3C / 0x3D (four heard: KLR300 0x3D to 562292 and E50470, 155D81's 0x3C, KLR300
   0x3C after the 0x36 to 562292 and E50470). Their payloads are masked by this project's own
   redaction before the log line is written, so they can't satisfy the declared-length check.
@@ -134,25 +134,25 @@ frames:
     freq: 868950000
     hex: "48 24 56 22 92 E2 D1 FF 36"
     crc: absent
-    note: "cmd=ADDRESS_REQ(0x36) directed to 562292, CTRL1=0x24 (LOW_POWER + PRIORITY). KLR300 0x3C to 562292 ~23 ms later (omitted) implies 562292's 0x37 went out but was not heard"
+    note: "cmd=NODE_VERIFY_REQ(0x36) directed to 562292, CTRL1=0x24 (LOW_POWER + PRIORITY). KLR300 0x3C to 562292 ~23 ms later (omitted) implies 562292's 0x37 went out but was not heard"
   - dir: rx
     t_ms: 12613
     freq: 868950000
     hex: "48 24 E5 04 70 E2 D1 FF 36"
     crc: absent
-    note: "cmd=ADDRESS_REQ(0x36) directed to E50470; KLR300 0x3C followed (omitted), E50470's 0x37 not heard"
+    note: "cmd=NODE_VERIFY_REQ(0x36) directed to E50470; KLR300 0x3C followed (omitted), E50470's 0x37 not heard"
   - dir: rx
     t_ms: 13168
     freq: 868950000
     hex: "48 24 15 5D 81 E2 D1 FF 36"
     crc: absent
-    note: "cmd=ADDRESS_REQ(0x36) directed to 155D81"
+    note: "cmd=NODE_VERIFY_REQ(0x36) directed to 155D81"
   - dir: rx
     t_ms: 13191
     freq: 868950000
     hex: "0B 04 E2 D1 FF 15 5D 81 37 00 00 00"
     crc: absent
-    note: "cmd=ADDRESS_RESP(0x37) from 155D81, +23 ms, payload 00 00 00 (= the zero backbone address its 0x2B reported; our responder echoes its own throwaway id here instead). CTRL0=0x0B (neither start nor end), CTRL1=0x04 (PRIORITY). The KLR300's follow-up 0x3C was not heard"
+    note: "cmd=NODE_VERIFY_RESP(0x37) from 155D81, +23 ms, payload 00 00 00 (= the zero backbone address its 0x2B reported; our responder echoes its own throwaway id here instead). CTRL0=0x0B (neither start nor end), CTRL1=0x04 (PRIORITY). The KLR300's follow-up 0x3C was not heard"
 expect:
   frames:
     - {cmd: 0x2A, start: true, end: true, protocol: 2w}

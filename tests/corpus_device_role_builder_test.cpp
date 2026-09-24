@@ -205,41 +205,41 @@ TEST(CorpusDeviceRoleBuilders, DiscoverRespMatchesRealDevices) {
   expect_matches_real_devices(CMD_DISCOVER_RESP, built);
 }
 
-/// Our answer to a hub's CMD_ADDRESS_REQ (0x36). The KLR200 pairing capture is the only corpus
+/// Our answer to a hub's CMD_NODE_VERIFY_REQ (0x36). The KLR200 pairing capture is the only corpus
 /// evidence for this command in either direction, so this is a single-capture pin by necessity,
 /// not a choice -- expect_matches_real_devices() still applies unmodified because there's exactly
 /// one capture to sweep.
-TEST(CorpusDeviceRoleBuilders, AddressRespDeviceRoleMatchesRealDevices) {
+TEST(CorpusDeviceRoleBuilders, NodeVerifyRespDeviceRoleMatchesRealDevices) {
   IoFrame built{};
-  ASSERT_TRUE(create_address_resp_device_role(built, test::OWN_ID, test::DST_ID));
-  expect_matches_real_devices(CMD_ADDRESS_RESP, built);
+  ASSERT_TRUE(create_node_verify_resp_device_role(built, test::OWN_ID, test::DST_ID));
+  expect_matches_real_devices(CMD_NODE_VERIFY_RESP, built);
 }
 
 /// The KLR200 capture shows our 0x37 payload as byte-identical to our own earlier 0x29's backbone
 /// address (data[DISCOVERY_RESP_BACKBONE_OFFSET..+3), tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml
 /// lines 47 and 87) -- both report the same throwaway node ID we advertised. create_discover_resp() and
-/// create_address_resp_device_role() are two independent call sites for that same `own` value, so nothing stops a
+/// create_node_verify_resp_device_role() are two independent call sites for that same `own` value, so nothing stops a
 /// future edit from swapping an argument at either one without any other test noticing: the framing-bits pin above
 /// covers CTRL0/CTRL1 only, not payload content.
-TEST(CorpusDeviceRoleBuilders, AddressRespPayloadMatchesOwnDiscoverRespBackboneAddress) {
+TEST(CorpusDeviceRoleBuilders, NodeVerifyRespPayloadMatchesOwnDiscoverRespBackboneAddress) {
   IoFrame discover_resp{};
   ASSERT_TRUE(create_discover_resp(discover_resp, test::OWN_ID, test::DST_ID, DeviceType::ROLLER_SHUTTER, 0,
                                    MANUFACTURER_SOMFY));
-  IoFrame address_resp{};
-  ASSERT_TRUE(create_address_resp_device_role(address_resp, test::OWN_ID, test::DST_ID));
+  IoFrame node_verify_resp{};
+  ASSERT_TRUE(create_node_verify_resp_device_role(node_verify_resp, test::OWN_ID, test::DST_ID));
 
-  ASSERT_EQ(address_resp.data_len, NODE_ID_SIZE);
-  EXPECT_EQ(0, memcmp(address_resp.data, discover_resp.data + DISCOVERY_RESP_BACKBONE_OFFSET, NODE_ID_SIZE))
+  ASSERT_EQ(node_verify_resp.data_len, NODE_ID_SIZE);
+  EXPECT_EQ(0, memcmp(node_verify_resp.data, discover_resp.data + DISCOVERY_RESP_BACKBONE_OFFSET, NODE_ID_SIZE))
       << "0x37 payload must equal our own 0x29's backbone address, the cross-check the KLR200 capture documents";
 }
 
 /// Our answer to a hub-issued CMD_CHALLENGE_REQ (0x3C) challenging our own 0x37 -- the terminal
-/// 0x3D that closes the address-verification round. Scoped to the one capture that shows this
+/// 0x3D that closes the node-verification round. Scoped to the one capture that shows this
 /// specific shape (END set): see expect_matches_real_device_capture()'s doxygen for why the
 /// all-captures assertion can't be used for this command.
 TEST(CorpusDeviceRoleBuilders, ChallengeRespDeviceRoleMatchesKlr200AddressVerification) {
   IoFrame origin{};
-  ASSERT_TRUE(create_address_resp_device_role(origin, test::OWN_ID, test::DST_ID));
+  ASSERT_TRUE(create_node_verify_resp_device_role(origin, test::OWN_ID, test::DST_ID));
   IoFrame built{};
   ASSERT_TRUE(create_challenge_resp_device_role(built, test::DST_ID, test::OWN_ID, test::TEST_CHALLENGE, origin,
                                                 test::TEST_SYSTEM_KEY));

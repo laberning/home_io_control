@@ -4,7 +4,7 @@ description: >
   (CMD_DISCOVER_REQ 0x28 -> CMD_DISCOVER_RESP 0x29 -> CMD_DISCOVER_CONFIRM 0x2C ->
   CMD_DISCOVER_CONFIRM_ACK 0x2D), key transfer (CMD_KEY_INIT 0x31 -> CMD_CHALLENGE_REQ 0x3C ->
   CMD_KEY_TRANSFER 0x32 -> CMD_KEY_CONFIRM 0x33), a broadcast CMD_DISCOVER_SPE_REQ (0x2A), and a
-  closing CMD_ADDRESS_REQ/RESP (0x36/0x37) pair the KLR200 makes the device authenticate. A
+  closing CMD_NODE_VERIFY_REQ/RESP (0x36/0x37) pair the KLR200 makes the device authenticate. A
   device family this corpus otherwise has no coverage of.
   Two things this capture is the corpus's only evidence for. First, the *device* answers a
   controller-issued challenge here (0x3C tx, 0x3D rx) rather than the other way round, showing
@@ -82,11 +82,11 @@ frames:
   - dir: tx
     hex: "48 14 38 ED A1 43 8D 43 36 B7 72"
     crc: present
-    note: "cmd=ADDRESS_REQ(0x36), addressed to the device, START; CTRL1=0x14"
+    note: "cmd=NODE_VERIFY_REQ(0x36), addressed to the device, START; CTRL1=0x14"
   - dir: rx
     hex: "0B 0C 43 8D 43 38 ED A1 37 B6 2B BB AA B9"
     crc: present
-    note: "cmd=ADDRESS_RESP(0x37), data = B6 2B BB — byte-identical to the backbone address this same device reported at data[2..4] of its 0x29 above (DISCOVERY_RESP_BACKBONE_OFFSET, proto_constants.h); CTRL1=0x0C"
+    note: "cmd=NODE_VERIFY_RESP(0x37), data = B6 2B BB — byte-identical to the backbone address this same device reported at data[2..4] of its 0x29 above (DISCOVERY_RESP_BACKBONE_OFFSET, proto_constants.h); CTRL1=0x0C"
   - dir: tx
     hex: "0E 10 38 ED A1 43 8D 43 3C 64 45 E0 81 DC 93 31 26"
     crc: present

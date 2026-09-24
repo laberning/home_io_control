@@ -767,12 +767,12 @@ bool create_challenge_req_device_role(IoFrame &f, const uint8_t *dst, const uint
 bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE],
                            const IoFrame &origin, const uint8_t *key);
 
-/// @brief Build an address response (0x37) — device side, answering a hub's CMD_ADDRESS_REQ
+/// @brief Build a node verification response (0x37) — device side, answering a hub's CMD_NODE_VERIFY_REQ
 /// (0x36).
 ///
 /// Payload is our own advertised node ID — the only identity this emulated device has to offer —
 /// the same value create_discover_resp() reports at DISCOVERY_RESP_BACKBONE_OFFSET.
-/// CorpusDeviceRoleBuilders.AddressRespPayloadMatchesOwnDiscoverRespBackboneAddress
+/// CorpusDeviceRoleBuilders.NodeVerifyRespPayloadMatchesOwnDiscoverRespBackboneAddress
 /// (tests/corpus_device_role_builder_test.cpp) pins that these two builders agree with *each
 /// other*, not that this matches a real device's own backbone value: the one real capture of this
 /// exchange (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml) shows a genuine device whose 0x37
@@ -789,16 +789,16 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 /// is no analogous controller-role code that receives a 0x37 to keep in sync with.
 /// @param f IoFrame to populate.
 /// @param own Our advertised (throwaway) node ID — used as both src and the payload.
-/// @param dst Destination node ID (the hub that sent the address request, from its 0x36's src).
+/// @param dst Destination node ID (the hub that sent the node verification request, from its 0x36's src).
 /// @return true on success.
-bool create_address_resp_device_role(IoFrame &f, const uint8_t *own, const uint8_t *dst);
+bool create_node_verify_resp_device_role(IoFrame &f, const uint8_t *own, const uint8_t *dst);
 
 /// @brief Build a challenge response (0x3D) in the *device* direction — used only by the
 /// key-extraction responder to answer a hub-issued CMD_CHALLENGE_REQ (0x3C) challenging our own
-/// CMD_ADDRESS_RESP (0x37).
+/// CMD_NODE_VERIFY_RESP (0x37).
 ///
 /// Same transcript rule as create_challenge_resp() above (the challenged party HMACs its own
-/// preceding frame's cmd+data), but END is set: this 0x3D closes the address-verification round the
+/// preceding frame's cmd+data), but END is set: this 0x3D closes the node-verification round the
 /// hub opened with 0x36 (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml's `8E 08 …`, END
 /// set). LOW_POWER is clear because CTRL1_LOW_POWER describes a controller-originated frame's
 /// *target*, not the sender — irrelevant here, since this is a device-role frame sent to a
@@ -813,7 +813,7 @@ bool create_address_resp_device_role(IoFrame &f, const uint8_t *own, const uint8
 /// @param dst The hub's node ID (from the inbound 0x3C's src).
 /// @param src Our advertised (throwaway) node ID.
 /// @param challenge 6-byte challenge from the hub's 0x3C.
-/// @param origin Our own preceding CMD_ADDRESS_RESP (0x37) frame — its cmd+data is the transcript.
+/// @param origin Our own preceding CMD_NODE_VERIFY_RESP (0x37) frame — its cmd+data is the transcript.
 /// @param key System key (16 bytes).
 /// @return true on success.
 bool create_challenge_resp_device_role(IoFrame &f, const uint8_t *dst, const uint8_t *src,

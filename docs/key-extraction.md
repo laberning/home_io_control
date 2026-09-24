@@ -52,8 +52,8 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
 4. Watch the ESPHome log. Within a few seconds of the hub's discovery you get a clearly delimited
    block with your installation's real `node_id` and `system_key`.
 5. Leave the switch alone until it turns itself off. Some hubs (the VELUX KLR200, confirmed) follow
-   the key exchange with a verification round for the address they handed out, so the switch keeps
-   listening for up to one more minute after the key is printed. A hub that sends nothing further
+   the key exchange with a node verification round, which checks that the new device holds the key.
+   The switch therefore keeps listening for up to one more minute after the key is printed. A hub that sends nothing further
    leaves that minute unused.
 6. If nothing happens within 10 minutes, the switch turns itself off and the log says whether any
    pairing attempt was seen at all and, if a partial one was, which phase it reached.
