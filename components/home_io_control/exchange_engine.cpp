@@ -782,7 +782,7 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq)
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return false;
   }
-  if (!this->transmit_frame(context.challenge, freq, SHORT_PREAMBLE)) {
+  if (!this->transmit_frame(context.challenge, freq, radio->response_preamble())) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return false;

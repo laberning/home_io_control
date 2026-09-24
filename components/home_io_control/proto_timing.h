@@ -26,11 +26,13 @@ static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W 
 /// Any start frame carrying `CTRL1_LOW_POWER` — a directed frame to a low-power target, or the
 /// SPE roll-call's low-power frame shape — uses the long preamble (1024 bytes = 8192 bits) as a
 /// wake-up burst for a duty-cycled receiver; every other start frame uses the runtime-tunable
-/// `normal_start_preamble`, which an always-listening receiver detects fine. Subsequent frames in
-/// the same exchange use a short preamble (8 bytes) since both sides are already on the same
-/// channel. The exchange engine derives all of this from the frame (exchange_engine.cpp).
+/// `normal_start_preamble`, which an always-listening receiver detects fine. Every continuation
+/// frame (a reply, our challenge or challenge answer, a status-update ACK) uses the radio driver's
+/// `response_preamble()`, since both sides are already on the same channel; SHORT_PREAMBLE is that
+/// value's protocol default and the tuning floor. The exchange engine derives all of this from the
+/// frame (exchange_engine.cpp).
 static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: wake-up burst for a low-power start frame
-static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< 8 bytes for response/continuation frames
+static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol default and floor for continuation frames
 
 /// Default for `TuningConfig::cold_broadcast_reply_preamble` — preamble for a *broadcast* reply to
 /// a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
