@@ -79,6 +79,7 @@ class TestableComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::send_and_receive_;
   using IOHomeControlComponent::authenticate_request_;
+  using IOHomeControlComponent::process_received_packet_;
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::node_id_;
@@ -1160,6 +1161,69 @@ TEST(Exchange, AuthenticateRequest_InvalidHmacRejected) {
   bool ok = comp.authenticate_request_(status_update, FREQ_CH2);
 
   EXPECT_FALSE(ok) << "authenticate_request_ with wrong HMAC must return false";
+}
+
+// --- Inbound continuation frames follow the driver's response preamble ------
+
+namespace {
+/// A challenge-answering radio whose driver asks for a response preamble distinct from
+/// SHORT_PREAMBLE, so a test can tell "follows the driver" apart from "hard-coded protocol floor".
+class LongResponsePreambleMockRadio : public RespondOnChallengeMockRadio {
+ public:
+  static constexpr uint16_t RESPONSE_PREAMBLE = 12;
+  uint16_t response_preamble() const override { return RESPONSE_PREAMBLE; }
+};
+static_assert(LongResponsePreambleMockRadio::RESPONSE_PREAMBLE != SHORT_PREAMBLE,
+              "the test value must differ from the protocol floor to prove anything");
+}  // namespace
+
+TEST(Exchange, AuthenticateRequest_ChallengeUsesDriverResponsePreamble) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  LongResponsePreambleMockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame status_update = build_status_update_from_device(test::DST_ID, comp.node_id_);
+  radio.arm(status_update, test::TEST_SYSTEM_KEY, /*valid=*/true);
+
+  ASSERT_TRUE(comp.authenticate_request_(status_update, FREQ_CH2));
+
+  ASSERT_GE(radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LongResponsePreambleMockRadio::RESPONSE_PREAMBLE)
+      << "our inbound 0x3C is a continuation frame and must use the driver's response preamble";
+}
+
+TEST(Exchange, StatusUpdateAckUsesDriverResponsePreambleOnAllChannels) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  LongResponsePreambleMockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame status_update = build_status_update_from_device(test::DST_ID, comp.node_id_);
+  radio.arm(status_update, test::TEST_SYSTEM_KEY, /*valid=*/true);
+
+  uint8_t raw[RADIO_PACKET_BUFFER_SIZE];
+  RadioRxPacket pkt{};
+  pkt.len = serialize(status_update, raw, sizeof(raw));
+  ASSERT_GT(pkt.len, 0);
+  memcpy(pkt.data, raw, pkt.len);
+  pkt.freq_hz = FREQ_CH2;
+  comp.process_received_packet_(pkt);
+
+  // 0x3C challenge, then the 0x72 ACK once per channel.
+  const auto &tx = radio.get_tx_configs();
+  ASSERT_EQ(tx.size(), 4u) << "expected the challenge plus three ACK copies";
+  for (size_t i = 0; i < tx.size(); ++i) {
+    EXPECT_EQ(tx[i].preamble_len, LongResponsePreambleMockRadio::RESPONSE_PREAMBLE)
+        << "tx #" << i << " is a continuation frame and must use the driver's response preamble";
+  }
+  EXPECT_EQ(tx[1].freq_hz, FREQ_CH1);
+  EXPECT_EQ(tx[2].freq_hz, FREQ_CH2);
+  EXPECT_EQ(tx[3].freq_hz, FREQ_CH3);
 }
 
 // ============================================================================

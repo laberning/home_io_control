@@ -555,9 +555,10 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
       // Device-originated updates may arrive while the sender and receiver are not aligned on the
       // same hop channel anymore. Broadcasting the ACK across all three IO-homecontrol channels
       // matched the behavior of real controllers and made updates reliable in practice.
-      this->transmit_frame_(resp, FREQ_CH1, SHORT_PREAMBLE);
-      this->transmit_frame_(resp, FREQ_CH2, SHORT_PREAMBLE);
-      this->transmit_frame_(resp, FREQ_CH3, SHORT_PREAMBLE);
+      const uint16_t ack_preamble = this->radio_->response_preamble();
+      this->transmit_frame_(resp, FREQ_CH1, ack_preamble);
+      this->transmit_frame_(resp, FREQ_CH2, ack_preamble);
+      this->transmit_frame_(resp, FREQ_CH3, ack_preamble);
       this->update_device_status_(frame);
     } else {
       detail::log_frame_issue(this, "rx", "auth_failed", frame, packet.len);
