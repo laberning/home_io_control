@@ -14,6 +14,7 @@
 #include "proto_frame.h"
 
 #include <cstdint>
+#include <string>
 
 namespace esphome {
 namespace home_io_control {
@@ -78,6 +79,38 @@ class OnewayKeyAdoption {
   std::function<void(bool)> armed_callback_;
   ObservedClass observed_class_{};
 };
+
+namespace detail {
+
+/// @brief Build the full 1W controller-key-adoption report: MAC-verification status, the
+/// own-address transmission rationale, and the ready-to-paste `oneway_controllers:` YAML block.
+///
+/// Pure — takes already-decoded values, performs no I/O — so it is directly unit-testable
+/// without a live radio or a captured log line (ESP_LOG's host stub discards its arguments).
+/// This is the single intentional place `adopted.system_key` is formatted for display (via
+/// format_key_hex(), log_helpers.h); the caller (OnewayKeyAdoption::try_adopt()) logs the returned
+/// text through log_multiline_result() and nowhere else.
+///
+/// `node_id` is deliberately never mentioned as something to fill in — a later step derives one
+/// from the hub's own node ID, and the report says so rather than asking the user to invent a
+/// 3-byte address. The report also explains that the hub always transmits under its own address:
+/// impersonating the sender would hijack that remote's rolling sequence counter and break it.
+///
+/// The emitted keys must track `ONEWAY_CONTROLLER_SCHEMA` (`__init__.py`) by hand — a newly
+/// required schema key needs a matching line here too. `make yaml-emitter-sync`
+/// (scripts/check-yaml-emitters.py) catches drift between the two statically; it does not tell
+/// you what to add here.
+///
+/// @param adopted Decoded controller identity from decode_1w_add_controller() (proto_codecs.h).
+/// @param observed_type_known True if this sender's other 1W traffic was observed while armed
+/// (see OnewayKeyAdoption::record_observed_class()); false prints a commented-out
+/// fallback pointing at the DEBUG log line that would reveal it instead.
+/// @param observed_type The observed target class; only meaningful when observed_type_known.
+/// @return Multi-line report text, ready to pass to log_multiline_result().
+std::string build_oneway_adoption_report(const OneWayAdoptedKey &adopted, bool observed_type_known,
+                                         DeviceType observed_type);
+
+}  // namespace detail
 
 }  // namespace home_io_control
 }  // namespace esphome

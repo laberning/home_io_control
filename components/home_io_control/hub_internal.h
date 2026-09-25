@@ -1,23 +1,23 @@
 #pragma once
 
 /// @file hub_internal.h
-/// @brief Internal helpers shared by the hub implementation .cpp files.
+/// @brief Helpers shared only by the hub's own implementation files (`hub_*.cpp`).
 /// @ingroup hioc_hub
 ///
-/// This header is intentionally private to the component implementation. It keeps
-/// small cross-file helpers in one place while leaving hub_core.h focused on the
+/// Collaborators and entities include log_helpers.h / entity_helpers.h instead; `make
+/// include-graph` enforces this. Keeping these helpers here leaves hub_core.h focused on the
 /// public component shape and the member-function declarations.
 
 #include "hub_core.h"
+#include "entity_helpers.h"
 #include "log_frame.h"
+#include "log_helpers.h"
+#include "proto_codecs.h"
 
 #include "esphome/core/log.h"
 
 #include <algorithm>
 #include <array>
-#include <cctype>
-#include <cinttypes>
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -32,29 +32,11 @@ namespace detail {
 // Shared constants
 // ============================================================================
 
-inline constexpr const char *TAG = "home_io_control";  ///< Shared log tag for hub-level messages.
 /// Suppress a repeated 1W log/poll for the same remote *and the same intent* within this window.
 /// Wide on purpose: it collapses both the 4×/40ms reliability burst and a held button into one
 /// logical press. A *different* intent from the same remote (a stop after a move) is not a
 /// duplicate and passes through immediately — see decisions::is_duplicate_1w_frame().
 inline constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS = 2000;
-inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
-    50.0F;  ///< Shared 0-100 cutoff: values below this mean binary "on".
-
-// ============================================================================
-// Percent conversion helpers
-// ============================================================================
-
-/// @brief Convert a 0.0-1.0 HA fraction (position, tilt, or brightness) to a 0-100 IO percent.
-///
-/// Rounds rather than truncates: HA quantizes call values to 0-255 before they ever reach us, so
-/// its "50%" is 128/255=0.50196, not exactly 0.5 — a truncating cast compounds that quantization
-/// into a consistent ~1% bias, caught on real hardware in both platform_cover.cpp (position and
-/// tilt) and platform_light.cpp (brightness). Callers apply their own invert/complement logic
-/// (e.g. `1.0F - fraction`) before calling this; it only owns the rounding.
-/// @param fraction Value in [0.0, 1.0].
-/// @return Rounded 0-100 percent.
-inline uint8_t round_percent(float fraction) { return static_cast<uint8_t>(std::lround(fraction * 100.0F)); }
 
 // ============================================================================
 // Capability and entity-profile helpers
@@ -125,33 +107,6 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
            device_id.c_str(), device_type_name(dev.type), static_cast<uint8_t>(dev.type),
            device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
-}
-
-/// @brief Log a frame at the "io_capture" tag with structured fields.
-/// Used for protocol‑level debugging (phases: component, tx, rx, parse_ok/parse_fail).
-/// @param radio Radio driver instance (provides chip name and capture).
-/// @param stage String label for the current phase.
-/// @param buf Raw bytes being logged.
-/// @param len Length of buf.
-/// @param frame Optional parsed IoFrame for decoded fields (cmd, src, dst).
-inline void log_component_capture(const RadioDriver *radio, const char *stage, const uint8_t *buf, uint8_t len,
-                                  const IoFrame *frame = nullptr) {
-  const RadioCaptureInfo &capture = radio->get_last_capture();
-  char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
-  // Masks the 0x32 key-transfer payload exactly like log_frame() (log_frame.h) — this path is
-  // separate from log_frame() and runs on every received frame, including a passively overheard
-  // pairing exchange between two other devices, so it must carry the same redaction guarantee.
-  render_frame_hex_redacted(buf, len, payload_hex, sizeof(payload_hex));
-  if (frame != nullptr) {
-    ESP_LOGD("io_capture",
-             "chip=%s phase=component stage=%s freq=%" PRIu32 " ts=%" PRIu32
-             " len=%u cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X payload=%s",
-             radio->chip_name(), stage, capture.freq_hz, capture.timestamp_ms, len, frame->cmd, frame->src[0],
-             frame->src[1], frame->src[2], frame->dst[0], frame->dst[1], frame->dst[2], payload_hex);
-    return;
-  }
-  ESP_LOGD("io_capture", "chip=%s phase=component stage=%s freq=%" PRIu32 " ts=%" PRIu32 " len=%u payload=%s",
-           radio->chip_name(), stage, capture.freq_hz, capture.timestamp_ms, len, payload_hex);
 }
 
 /// @brief Log a frame‑level issue (unregistered endpoints, unsupported commands).
@@ -247,16 +202,6 @@ inline bool is_exposed_sender(const std::vector<std::string> &exposed_senders, c
   return std::find(exposed_senders.begin(), exposed_senders.end(), sender_id) != exposed_senders.end();
 }
 
-/// Buffer size for format_name_and_hex(): longest command name plus "(0xXX)" and a margin.
-inline constexpr size_t NAME_AND_HEX_BUFFER_SIZE = 40;
-
-/// @brief Format a name/value pair as "name(0xXX)", e.g. "execute(0x00)".
-inline std::string format_name_and_hex(const char *name, uint8_t value) {
-  std::array<char, NAME_AND_HEX_BUFFER_SIZE> buffer{};
-  std::snprintf(buffer.data(), buffer.size(), "%s(0x%02X)", name, value);
-  return std::string(buffer.data());
-}
-
 /// Buffer size for describe_learned_device_type()'s hex fallback: "io_device_type: 0xXX" plus margin.
 inline constexpr size_t LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE = 24;
 
@@ -295,188 +240,6 @@ inline std::map<std::string, std::string> build_sender_event_data(const OneWayFr
       {"acei_level", acei_level_name(info.acei_level)},
       {"linked", linked ? "true" : "false"},
   };
-}
-
-// ============================================================================
-// Key-material display formatting
-// ============================================================================
-
-/// @brief Format a 16-byte key as an uppercase, unseparated hex string for display.
-///
-/// The one deliberate place system-key bytes are formatted for display, shared by both
-/// key-recovery features so neither forks its own copy: 2W "Accept Foreign Pairing"
-/// (key_extraction_responder.cpp::KeyExtractionResponder::log_result_()) and 1W controller-key adoption
-/// (build_oneway_adoption_report() below). See redaction.h for the masking rules this
-/// intentionally does not apply to — both callers are the deliberate exception, not a loosening
-/// of it.
-/// @param key Pointer to AES_KEY_SIZE key bytes.
-/// @return Uppercase hex string, e.g. "0102030405060708090A0B0C0D0E0F10".
-inline std::string format_key_hex(const uint8_t key[AES_KEY_SIZE]) {
-  std::string out;
-  out.reserve(AES_KEY_SIZE * 2);
-  char byte_buf[3];
-  for (uint8_t i = 0; i < AES_KEY_SIZE; i++) {
-    snprintf(byte_buf, sizeof(byte_buf), "%02X", key[i]);
-    out += byte_buf;
-  }
-  return out;
-}
-
-/// @brief Log `prefix` followed by `message`, one line per log call rather than one call for the
-/// whole (possibly multi-line) string.
-///
-/// ESPHome formats each log call into a fixed 512-byte buffer (`ESPHOME_LOGGER_TX_BUFFER_SIZE`,
-/// esphome/core/defines.h) and silently truncates anything longer; a multi-line report (a YAML
-/// snippet plus explanatory prose) routinely exceeds that and truncates mid-line if logged as a
-/// single call — confirmed on real hardware for both call sites this function serves:
-/// `scan_paired_devices()`'s report (a multi-device report cut off mid-snippet) and 1W
-/// controller-key adoption's report (the recovered `system_key` line itself never made it into
-/// the log at all). Splitting by line keeps every individual call's payload small regardless of
-/// how long the full message is. Shared rather than duplicated a third time — a second private
-/// copy is exactly how the 1W path ended up with the bug this fixes.
-/// @param tag        Log tag.
-/// @param is_warning True to log at WARN, false for INFO.
-/// @param prefix     Prepended to the message's first line only (e.g. "Management action X: ").
-/// @param message    Message to log; may contain embedded `\n` line breaks.
-inline void log_multiline_result(const char *tag, bool is_warning, const std::string &prefix,
-                                 const std::string &message) {
-  size_t start = 0;
-  bool first = true;
-  while (true) {
-    const size_t end = message.find('\n', start);
-    const std::string line = (end == std::string::npos) ? message.substr(start) : message.substr(start, end - start);
-    const std::string out = first ? prefix + line : line;
-    if (is_warning) {
-      ESP_LOGW(tag, "%s", out.c_str());
-    } else {
-      ESP_LOGI(tag, "%s", out.c_str());
-    }
-    first = false;
-    if (end == std::string::npos || end + 1 >= message.size())
-      break;
-    start = end + 1;
-  }
-}
-
-// ============================================================================
-// 1W controller-key adoption reporting
-// ============================================================================
-
-/// @brief Human-readable name for a decoded 0x30's MAC-verification outcome.
-/// @param status Outcome from decode_1w_add_controller() (see OneWayAdoptedKey::mac_status).
-/// @return Short uppercase-style label used in both the summary log line and the report below.
-inline const char *oneway_mac_status_name(OneWayMacStatus status) {
-  switch (status) {
-    case OneWayMacStatus::VERIFIED:
-      return "VERIFIED";
-    case OneWayMacStatus::FAILED:
-      return "FAILED";
-    case OneWayMacStatus::NOT_PRESENT:
-    default:
-      return "not present";
-  }
-}
-
-/// @brief Build the full 1W controller-key-adoption report: MAC-verification status, the
-/// own-address transmission rationale, and the ready-to-paste `oneway_controllers:` YAML block.
-///
-/// Pure — takes already-decoded values, performs no I/O — so it is directly unit-testable
-/// without a live radio or a captured log line (ESP_LOG's host stub discards its arguments).
-/// This is the single intentional place `adopted.system_key` is formatted for display (via
-/// format_key_hex() above); the caller (oneway_key_adoption.cpp) passes the returned text to
-/// one ESP_LOGW(...,"%s",...) call and nowhere else.
-///
-/// `node_id` is deliberately never mentioned as something to fill in — a later step derives one
-/// from the hub's own node ID, and the report says so rather than asking the user to invent a
-/// 3-byte address. The report also explains that the hub always transmits under its own address:
-/// impersonating the sender would hijack that remote's rolling sequence counter and break it.
-///
-/// The emitted keys must track `ONEWAY_CONTROLLER_SCHEMA` (`__init__.py`) by hand — a newly
-/// required schema key needs a matching line here too. `make yaml-emitter-sync`
-/// (scripts/check-yaml-emitters.py) catches drift between the two statically; it does not tell
-/// you what to add here.
-///
-/// @param adopted Decoded controller identity from decode_1w_add_controller() (proto_codecs.h).
-/// @param observed_type_known True if this sender's other 1W traffic was observed while armed
-/// (see OnewayKeyAdoption::record_observed_class()); false prints a commented-out
-/// fallback pointing at the DEBUG log line that would reveal it instead.
-/// @param observed_type The observed target class; only meaningful when observed_type_known.
-/// @return Multi-line report text, ready to pass straight to a single ESP_LOGW(...,"%s",...) call.
-inline std::string build_oneway_adoption_report(const OneWayAdoptedKey &adopted, bool observed_type_known,
-                                                DeviceType observed_type) {
-  std::string sender_hex_lower = node_id_to_string(adopted.sender_node);
-  std::transform(sender_hex_lower.begin(), sender_hex_lower.end(), sender_hex_lower.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  const std::string key_hex = format_key_hex(adopted.system_key);
-
-  std::string mac_line;
-  switch (adopted.mac_status) {
-    case OneWayMacStatus::VERIFIED:
-      mac_line = "MAC VERIFIED: this frame's MAC checked out under the recovered key -- the strongest evidence "
-                 "available on the spot that it is correct.";
-      break;
-    case OneWayMacStatus::FAILED:
-      mac_line = "MAC FAILED: this frame's MAC did NOT check out under the recovered key -- it is probably wrong. "
-                 "Re-arm and repeat the key-copy gesture closer to the hub.";
-      break;
-    case OneWayMacStatus::NOT_PRESENT:
-    default:
-      mac_line = "MAC not present: this frame carried no MAC trailer to verify against -- treat this key as "
-                 "unconfirmed until tested.";
-      break;
-  }
-
-  // Fits "    manufacturer: 0xNN" plus its terminator with room to spare.
-  constexpr size_t manufacturer_line_size = 32;
-  char manufacturer_line[manufacturer_line_size];
-  snprintf(manufacturer_line, sizeof(manufacturer_line), "    manufacturer: 0x%02X",
-           static_cast<unsigned>(adopted.manufacturer));
-
-  std::string type_lines;
-  if (observed_type_known) {
-    type_lines = "    io_device_type: " + format_device_type_for_yaml(observed_type) +
-                 "      # observed from this sender's traffic; verify\n";
-  } else {
-    type_lines = "    # io_device_type: unknown -- no other 1W traffic was observed from this sender while armed;\n"
-                 "    #   check the DEBUG \"rx 1W remote ...\" log line once you see this sender transmit again.\n";
-  }
-
-  return mac_line +
-         "\nThe hub always transmits under its own node_id, never the sender's -- copying the sender's address "
-         "would hijack its rolling sequence counter and break its existing remote.\n"
-         "Copy the block below into your hub's YAML.\n"
-         "oneway_controllers:\n"
-         "  # node_id omitted -> derived from your hub node_id; see the boot log\n"
-         "  - id: adopted_" +
-         sender_hex_lower + "\n" + "    system_key: \"" + key_hex + "\"\n" + manufacturer_line + "\n" + type_lines +
-         "    commands: [open, close, stop]";
-}
-
-/// @brief Build the ready-to-paste 2W system-key-extraction report: `node_id:`/`system_key:` as a
-/// `home_io_control:` YAML block.
-///
-/// Pure — takes already-decoded values, performs no I/O — so it is directly unit-testable without
-/// a live radio, mirroring build_oneway_adoption_report() above; the two features end up sharing
-/// report *structure* as well as format_key_hex(). The caller (key_extraction_responder.cpp) logs the
-/// result through log_multiline_result() and nowhere else — this is the single intentional place
-/// the recovered `system_key` is formatted for display, a deliberate exception to redaction.h's
-/// masking.
-///
-/// The emitted keys must track the hub's own `CONFIG_SCHEMA` (`__init__.py`) by hand. `make
-/// yaml-emitter-sync` (scripts/check-yaml-emitters.py) catches drift between the two by
-/// cross-referencing this function's emitted key names against that schema statically.
-/// @param node_id Recovered hub node_id, 3 bytes.
-/// @param key Recovered system key, 16 bytes.
-/// @return Multi-line report text, ready to pass to log_multiline_result().
-inline std::string build_key_extraction_report(const uint8_t node_id[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
-  return "SYSTEM KEY EXTRACTED -- DO NOT SHARE YOUR SYSTEM KEY\n"
-         "Anyone with this key and node_id can control every device on this installation.\n"
-         "This exchange has not been independently confirmed against your specific hub -- test\n"
-         "this key (e.g. by controlling a device with it) before relying on it.\n"
-         "Copy the block below into a new hub's YAML.\n"
-         "home_io_control:\n"
-         "  node_id: \"" +
-         node_id_to_string(node_id) + "\"\n" + "  system_key: \"" + format_key_hex(key) + "\"";
 }
 
 // ============================================================================
@@ -573,59 +336,6 @@ inline void record_exchange_outcome(IoDevice &dev, uint8_t request_cmd, Exchange
     dev.confirms_execute = true;
 }
 
-/// @brief Offset of the last-command record within each status-bearing payload.
-///
-/// Both status-bearing frame types carry the same 4-byte record — three bytes of node ID for the
-/// controller that last commanded the device, then that command's Command Originator byte — and
-/// 0x71's whole payload is shifted +3 relative to 0x04's, exactly as its target/current position
-/// fields already are (PRIVATE_RESPONSE_TARGET_OFFSET vs STATUS_UPDATE_TARGET_OFFSET in
-/// hub_status.cpp). Confirmed on one device in one session across both frame types:
-/// tests/corpus/captures/statuspoll/somfy_rs100_statuspoll_kig300_sx1276.yaml, device E461E9,
-/// which names controller BE FE DB at 0x04 data[8..10] and 0x71 data[11..13] in the same capture —
-/// including in a 0x71 addressed to a *different* controller, which is what rules out "this is
-/// just the destination echoed back".
-inline constexpr uint8_t PRIVATE_RESPONSE_LAST_COMMAND_OFFSET = 8;
-inline constexpr uint8_t STATUS_UPDATE_LAST_COMMAND_OFFSET = 11;
-
-/// @brief Offset of the Command Originator byte in a CMD_STATUS_UPDATE (0x71) payload.
-///
-/// Deliberately not offset 1: `data[1]` on a 0x71 is the status byte (0x60/0x61, bit 0 = current
-/// position unknown), which matches no ORIGINATOR_* value, so reading it as an originator rendered
-/// "unknown" on every frame this project has ever captured. Every captured 0x71 carries 0x01
-/// (ORIGINATOR_USER_REMOTE) here.
-inline constexpr uint8_t STATUS_UPDATE_ORIGINATOR_OFFSET = 14;
-static_assert(STATUS_UPDATE_LAST_COMMAND_OFFSET + NODE_ID_SIZE == STATUS_UPDATE_ORIGINATOR_OFFSET,
-              "the Command Originator byte is the fourth byte of the last-command record; if one "
-              "offset moves the other must move with it");
-
-/// @brief One decoded last-command record.
-struct LastCommandRecord {
-  uint8_t commander[NODE_ID_SIZE]{};  ///< Controller that last commanded the device.
-  uint8_t originator{0};              ///< That command's Command Originator (ORIGINATOR_*).
-  bool valid{false};                  ///< False when the payload was too short, or the record was unpopulated.
-};
-
-/// @brief Decode the last-command record at `base` from a status-bearing payload.
-///
-/// Pure rather than inlined into update_device_status_() so it is testable against corpus bytes
-/// directly. An all-zero commander is reported as invalid: 00 00 00 is not a node ID any observed
-/// controller uses, so a device that pads this field rather than implementing it publishes nothing
-/// instead of a fabricated address.
-/// @param frame A CMD_PRIVATE_RESP or CMD_STATUS_UPDATE frame.
-/// @param base PRIVATE_RESPONSE_LAST_COMMAND_OFFSET or STATUS_UPDATE_LAST_COMMAND_OFFSET.
-/// @return The decoded record, or `valid == false`.
-inline LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base) {
-  LastCommandRecord record;
-  if (frame.data_len < base + NODE_ID_SIZE + 1)
-    return record;
-  memcpy(record.commander, &frame.data[base], NODE_ID_SIZE);
-  if (record.commander[0] == 0 && record.commander[1] == 0 && record.commander[2] == 0)
-    return record;
-  record.originator = frame.data[base + NODE_ID_SIZE];
-  record.valid = true;
-  return record;
-}
-
 /// @brief Store a decoded record on the device, if it is valid.
 ///
 /// A short or unpopulated payload leaves whatever was last learned in place rather than clearing
@@ -639,43 +349,6 @@ inline void apply_last_command_record(IoDevice &dev, const LastCommandRecord &re
   dev.has_last_command = true;
 }
 
-/// @brief Render the "Last Commanded By" sensor string.
-///
-/// Always leads with the raw node ID — that is the diagnostic value, and the only thing a user can
-/// match against a remote they own. The qualifier is additive, never a substitute: a device naming
-/// its own ID is NOT reliably "the button on the motor" (the one non-shutter this project has data
-/// on, a mains gate, names its own ID with an undefined originator), so the cause belongs to the
-/// separate originator sensor, not to this one's wording.
-/// @param dev Device record to read.
-/// @param hub_node_id This hub's own 3-byte node ID.
-/// @return e.g. "3B74DC", "C0FFEE (this hub)", "2FE2D2 (this device)"; empty before the first record.
-inline std::string describe_last_commander(const IoDevice &dev, const uint8_t *hub_node_id) {
-  if (!dev.has_last_command)
-    return {};
-  std::string out = node_id_to_string(dev.last_commander);
-  if (memcmp(dev.last_commander, hub_node_id, NODE_ID_SIZE) == 0) {
-    out += " (this hub)";
-  } else if (memcmp(dev.last_commander, dev.node_id, NODE_ID_SIZE) == 0) {
-    out += " (this device)";
-  }
-  return out;
-}
-
-/// @brief Render the "Last Command Source" sensor string.
-///
-/// Uses the same "name(0xXX)" rendering as describe_status_update_originator(), so a byte with no
-/// ORIGINATOR_* case reads "unknown(0x0A)" rather than being silently dropped or mislabelled. The
-/// decode is field-validated for roller shutters (a clean 0x00/0x01 split, remote vs. motor
-/// button); gates, lights and multi-channel units are not validated and are expected to surface
-/// undecoded values here — which is the point of keeping the raw hex in the string.
-/// @param dev Device record to read.
-/// @return e.g. "user_remote(0x01)"; empty before the first record.
-inline std::string describe_last_command_source(const IoDevice &dev) {
-  if (!dev.has_last_command)
-    return {};
-  return format_name_and_hex(originator_name(dev.last_command_originator), dev.last_command_originator);
-}
-
 /// @brief Describe a 0x71 status update's Command Originator as "name(0xXX)".
 ///
 /// Pure rather than inlined into the log line it feeds, so the offset is testable: ESP_LOG* is a
@@ -687,8 +360,7 @@ inline std::string describe_last_command_source(const IoDevice &dev) {
 inline std::string describe_status_update_originator(const IoFrame &frame) {
   if (frame.data_len <= STATUS_UPDATE_ORIGINATOR_OFFSET)
     return {};
-  const uint8_t originator = frame.data[STATUS_UPDATE_ORIGINATOR_OFFSET];
-  return format_name_and_hex(originator_name(originator), originator);
+  return format_originator(frame.data[STATUS_UPDATE_ORIGINATOR_OFFSET]);
 }
 
 /// @brief Describe the hub's live optimistic predictions where they disagree with the observation.

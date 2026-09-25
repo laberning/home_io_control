@@ -3,9 +3,9 @@
 the two named-option tables' documented copies.
 
 Three C++ functions build a YAML snippet as a plain string, for a user to copy into their own
-config: build_oneway_adoption_report() and build_key_extraction_report() (both
-components/home_io_control/hub_internal.h) and build_device_yaml_snippet()
-(components/home_io_control/proto_device_model.cpp). Each one's emitted key names must track a
+config: build_oneway_adoption_report() (components/home_io_control/oneway_key_adoption.cpp),
+build_key_extraction_report() (components/home_io_control/key_extraction_responder.cpp) and
+build_device_yaml_snippet() (components/home_io_control/proto_device_model.cpp). Each one's emitted key names must track a
 Python schema (ONEWAY_CONTROLLER_SCHEMA, the hub's own CONFIG_SCHEMA, and the four device-bound
 platform schemas respectively) by hand -- nothing else keeps the two in step, so a schema key
 rename or a newly-required key drifts silently until a user's paste fails to validate.
@@ -42,7 +42,8 @@ SWITCH_PY = COMPONENT_DIR / "switch.py"
 LOCK_PY = COMPONENT_DIR / "lock.py"
 PLATFORM_PY_FILES = [PLATFORM_COMMON_PY, COVER_PY, LIGHT_PY, SWITCH_PY, LOCK_PY]
 
-HUB_INTERNAL_H = COMPONENT_DIR / "hub_internal.h"
+ONEWAY_KEY_ADOPTION_CPP = COMPONENT_DIR / "oneway_key_adoption.cpp"
+KEY_EXTRACTION_RESPONDER_CPP = COMPONENT_DIR / "key_extraction_responder.cpp"
 PROTO_DEVICE_MODEL_CPP = COMPONENT_DIR / "proto_device_model.cpp"
 
 DOCS_MD = REPO_ROOT / "docs" / "supported-devices.md"
@@ -271,9 +272,9 @@ def _extract_function_body(source: str, func_name: str, path: Path) -> str:
     over/under-match, which fails loudly (missing/garbled keys) rather than silently, an
     acceptable trade for staying dependency-light like check-tuning-sync.py.
     """
-    # Anchored on the return type, not just the bare name: several of these functions are also
-    # mentioned by name in doxygen prose elsewhere in the same file (e.g. "see
-    # build_oneway_adoption_report() above"), and a bare-name search finds whichever comes first
+    # Anchored on the return type, not just the bare name: these functions are also mentioned by
+    # name in comments elsewhere in the same file (e.g. "see build_oneway_adoption_report()'s
+    # caller"), and a bare-name search finds whichever comes first
     # in the file, definition or not -- silently brace-matching from the wrong `{` entirely.
     match = re.search(r"std::string\s+" + re.escape(func_name) + r"\s*\(", source)
     if not match:
@@ -342,7 +343,7 @@ class Emitter:
 EMITTERS = [
     Emitter(
         "build_oneway_adoption_report -> ONEWAY_CONTROLLER_SCHEMA",
-        HUB_INTERNAL_H,
+        ONEWAY_KEY_ADOPTION_CPP,
         "build_oneway_adoption_report",
         oneway_controller_schema_keys,
         skip_keys={"oneway_controllers"},  # the block's own wrapping key, not a schema field
@@ -350,7 +351,7 @@ EMITTERS = [
     ),
     Emitter(
         "build_key_extraction_report -> hub CONFIG_SCHEMA",
-        HUB_INTERNAL_H,
+        KEY_EXTRACTION_RESPONDER_CPP,
         "build_key_extraction_report",
         hub_config_schema_keys,
         skip_keys={"home_io_control"},  # the block's own wrapping key, not a schema field

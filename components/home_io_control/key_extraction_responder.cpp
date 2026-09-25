@@ -1,6 +1,6 @@
 #include "key_extraction_responder.h"
 
-#include "hub_internal.h"
+#include "log_helpers.h"
 
 #include "device_registry.h"
 #include "pairing_responder.h"
@@ -14,6 +14,7 @@
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 /// @file key_extraction_responder.cpp
 /// @brief "Recover System Key" (key extraction) — device-role responder collaborator.
@@ -110,6 +111,21 @@ constexpr uint32_t KEY_EXTRACTION_POST_EXTRACT_GRACE_MS = 60000;  ///< One minut
 constexpr const char *KEY_EXTRACTION_GRACE_TIMER_NAME = "key_extraction_post_extract_grace";
 
 }  // namespace
+
+namespace detail {
+
+std::string build_key_extraction_report(const uint8_t node_id[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
+  return "SYSTEM KEY EXTRACTED -- DO NOT SHARE YOUR SYSTEM KEY\n"
+         "Anyone with this key and node_id can control every device on this installation.\n"
+         "This exchange has not been independently confirmed against your specific hub -- test\n"
+         "this key (e.g. by controlling a device with it) before relying on it.\n"
+         "Copy the block below into a new hub's YAML.\n"
+         "home_io_control:\n"
+         "  node_id: \"" +
+         node_id_to_string(node_id) + "\"\n" + "  system_key: \"" + format_key_hex(key) + "\"";
+}
+
+}  // namespace detail
 
 KeyExtractionResponder::KeyExtractionResponder(const uint8_t *node_id, RadioDriver **radio, const TuningConfig *tuning,
                                                DeviceRegistry &registry, TransmitFrameFn transmit,
@@ -466,7 +482,7 @@ void KeyExtractionResponder::log_result_() {
   //
   // Logged line-by-line via log_multiline_result(), not as one ESP_LOGW("%s", ...) call: a single
   // call silently truncates at ESPHome's 512-byte log buffer -- see that function's doxygen
-  // (hub_internal.h) for the root cause, and build_oneway_adoption_report()'s caller for the
+  // (log_helpers.h) for the root cause, and build_oneway_adoption_report()'s caller for the
   // identical reasoning on the 1W path.
   ESP_LOGW(detail::TAG, "========================================");
   detail::log_multiline_result(detail::TAG, /*is_warning=*/true, /*prefix=*/"",

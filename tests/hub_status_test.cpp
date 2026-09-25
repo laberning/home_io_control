@@ -795,10 +795,10 @@ TEST(HubStatus, StatusUpdateMinimumLengthFrameStillApplied) {
 
 // ============================================================================
 // Last-command record — decoded by update_device_status_() into dev.last_commander /
-// last_command_originator / has_last_command (detail::decode_last_command_record(),
-// hub_internal.h). Byte-exact against real captures, not synthetic frames, for the fields that
+// last_command_originator / has_last_command (decode_last_command_record(),
+// proto_codecs.h). Byte-exact against real captures, not synthetic frames, for the fields that
 // matter most: the +3 offset shift between 0x04 and 0x71 was the source plan's own bug (see
-// hub_internal.h's PRIVATE_RESPONSE_LAST_COMMAND_OFFSET/STATUS_UPDATE_LAST_COMMAND_OFFSET doc).
+// proto_codecs.h's PRIVATE_RESPONSE_LAST_COMMAND_OFFSET/STATUS_UPDATE_LAST_COMMAND_OFFSET doc).
 // ============================================================================
 
 TEST(HubStatus, PrivateResponseRecordsLastCommander) {

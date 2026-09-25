@@ -714,7 +714,7 @@ def validate_system_key(value):
 # oneway_controller.h.
 #
 # A newly-required key here also needs a matching field in the `oneway_controllers:` block
-# build_oneway_adoption_report() (hub_internal.h) hand-emits for paste-and-reflash (ADR 0018).
+# build_oneway_adoption_report() (oneway_key_adoption.cpp) hand-emits for paste-and-reflash (ADR 0018).
 # `make yaml-emitter-sync` (scripts/check-yaml-emitters.py) catches drift between the two
 # statically.
 def _no_duplicate_enrollment_classes(value):

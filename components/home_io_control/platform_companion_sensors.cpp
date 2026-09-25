@@ -4,7 +4,7 @@
 
 #include "platform_companion_sensors.h"
 
-#include "hub_internal.h"
+#include "entity_helpers.h"
 #include "proto_constants.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"

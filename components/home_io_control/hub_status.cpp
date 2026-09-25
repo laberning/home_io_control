@@ -362,8 +362,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     // rather than self-describing (see the offset comment at the top of this file), and our own
     // ack is not a report of the *last* command anyway — the settle poll a few seconds later is.
     if (trust_position) {
-      detail::apply_last_command_record(
-          dev, detail::decode_last_command_record(frame, detail::PRIVATE_RESPONSE_LAST_COMMAND_OFFSET));
+      detail::apply_last_command_record(dev, decode_last_command_record(frame, PRIVATE_RESPONSE_LAST_COMMAND_OFFSET));
     }
     detail::clear_command_result(dev);
     detail::log_status_update(id, dev);
@@ -380,8 +379,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     // Status-update frames come from the device itself rather than from a direct controller poll.
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
     apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
-    detail::apply_last_command_record(
-        dev, detail::decode_last_command_record(frame, detail::STATUS_UPDATE_LAST_COMMAND_OFFSET));
+    detail::apply_last_command_record(dev, decode_last_command_record(frame, STATUS_UPDATE_LAST_COMMAND_OFFSET));
     detail::clear_command_result(dev);
 
     // What caused the device to move (wind sensor, timer, a remote). Empty when the payload is

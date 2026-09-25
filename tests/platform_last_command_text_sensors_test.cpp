@@ -5,7 +5,6 @@
 #include "platform_companion_sensors.h"
 
 #include "hub_core.h"
-#include "hub_internal.h"
 #include "proto_constants.h"
 #include "test_helpers.h"
 

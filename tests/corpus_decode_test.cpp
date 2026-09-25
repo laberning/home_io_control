@@ -171,18 +171,10 @@ TEST_P(CorpusDecode, ExpectationsMatchDecodedFrames) {
 INSTANTIATE_TEST_SUITE_P(CorpusDecode, CorpusDecode, ::testing::ValuesIn(corpus_test::all_captures()),
                          corpus_test::capture_name_generator);
 
-namespace {
-
-// Mirrors detail::STATUS_UPDATE_ORIGINATOR_OFFSET (hub_internal.h). Reproduced rather than
-// included: this is a codec-layer file that deliberately pulls in only the proto_* headers, and
-// the constant is what the corpus evidence below is about, not a value borrowed from production.
-// hub_status_test.cpp covers the production call site (detail::describe_status_update_originator);
-// what this test adds is the corpus-wide evidence for the offset — data[14] names a real
-// originator on every captured 0x71, data[1] never does.
-constexpr uint8_t STATUS_UPDATE_ORIGINATOR_OFFSET = 14;
-
-}  // namespace
-
+// STATUS_UPDATE_ORIGINATOR_OFFSET is the codec constant (proto_codecs.h). hub_status_test.cpp
+// covers the production call site (detail::describe_status_update_originator); what this test adds
+// is the corpus-wide evidence for the offset — data[14] names a real originator on every captured
+// 0x71, data[1] never does.
 TEST(CorpusStatusUpdateOriginator, OriginatorLivesAtOffset14NotOffset1) {
   int frames_seen = 0;
   for (const corpus::CorpusCapture *capture :

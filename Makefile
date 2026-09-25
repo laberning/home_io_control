@@ -149,6 +149,14 @@ key-material-scan:
 yaml-emitter-sync:
 	@python3 scripts/check-yaml-emitters.py
 
+# Layering check: include direction between the component's layers (collaborators and entities
+# never include hub_internal.h; only listed files reach hub_core.h; protocol and radio files include
+# only their own layer) -- see scripts/check-include-graph.py.
+include-graph:
+	@echo "Checking include-graph layering..."
+	@python3 scripts/check-include-graph.py
+	@python3 scripts/check_include_graph_test.py
+
 # Cross-source check: board pinouts documented in the published Markdown (README.md and docs/**)
 # must match the single source of truth in config/boards/*.yaml -- see scripts/check-board-pinouts.py.
 board-pinout-sync:
@@ -346,11 +354,12 @@ doxygen:
 #   clang-tidy          -> tidy
 #   tuning-sync         -> tuning-sync
 #   yaml-emitter-sync   -> yaml-emitter-sync
+#   include-graph       -> include-graph
 #   board-pinout-sync   -> board-pinout-sync
 #   corpus-validate     -> corpus-validate
 #   docs-link-check     -> docs-link-check
 #   key-material-scan   -> key-material-scan
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan
 test: unit-test unit-test-asan firmware-test
 check: lint test doxygen
 
@@ -364,6 +373,7 @@ test-unit: unit-test
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
 		docs-link-check \
+		include-graph \
 		docs-prose-check \
 		key-material-scan \
 		fuzz-frame \
