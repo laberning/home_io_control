@@ -132,7 +132,7 @@ class IOHomeControlComponent : public Component,
 #endif
   {
     // The hub only supplies what it knows about a target; the engine draws its own decisions from
-    // it (today the wake belief, gated by the `low_power_wake_belief` switch). Installed here
+    // it (the wake belief and the re-send of an unconfirmed movement command). Installed here
     // rather than in setup() so a component that never runs setup() (the host tests) is wired
     // exactly like production.
     this->exchange_engine_.set_target_evidence_provider([this](const uint8_t *dst, decisions::TargetEvidence &out) {

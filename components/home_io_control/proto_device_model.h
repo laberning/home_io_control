@@ -383,7 +383,11 @@ struct IoDevice {
                                            ///< answer never landed). For a CMD_EXECUTE this outcome is treated as
                                            ///< success and raises no failure count, so without this counter it is
                                            ///< invisible in the diagnostics.
-  OptimisticState optimistic{};            ///< Hub-side predictions; see OptimisticState. Never observation.
+  bool confirms_execute{false};  ///< True once this device has answered a CMD_EXECUTE with a reply that closed the
+                                 ///< exchange (a status, or an error). Learned at runtime and never stored: it
+                                 ///< separates a device whose missing reply is an anomaly from one that never sends
+                                 ///< one (see decisions::retry_after_unconfirmed_accept_is_safe()).
+  OptimisticState optimistic{};  ///< Hub-side predictions; see OptimisticState. Never observation.
 };
 
 /// @brief Record that a device is (believed to be) travelling right now.

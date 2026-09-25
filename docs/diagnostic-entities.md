@@ -83,11 +83,19 @@ Read the last two together, because they separate two different faults. Exchange
 on its own means the device is not hearing the hub. Unconfirmed Exchanges rising means the device
 hears the hub's request, and then either the hub's answer to its challenge or the device's closing
 reply gets lost. The two cases need different fixes, and a movement command that ends this way may
-not have been carried out. For a movement command the hub still counts this outcome as
-success, which makes this sensor the only place it shows up.
+not have been carried out. If the device has answered a movement command with a closing reply
+before, the hub sends that command once more, a little over a second later. Favourite and ventilation are
+never repeated, because a second one can undo the first. If the repeat goes unanswered too, the hub
+still counts the command as delivered. That makes this sensor the only place it shows up. If the
+repeat is answered, the command ends confirmed and this sensor does not count it. The log line
+starting `Try N accepted without a closing reply` is then the only record of the lost first reply.
 
-To tell the two cases apart, look at the `Exchange accepted without a closing reply:` log line.
-Its `final_rx_ignored` and `final_rx_failed` fields count what the radio received while waiting for
+Some devices never send the closing reply and report their new state a few seconds later instead.
+For them this counter rises with every movement command, and that is normal.
+
+To tell the two cases apart, look at the `Exchange accepted without a closing reply:` log line, or
+at the `Try N accepted without a closing reply` line of a repeated command. Their
+`final_rx_ignored` and `final_rx_failed` fields count what the radio received while waiting for
 the closing reply. A value above zero means something came back and was lost on the hub's side, so
 reach for the receive-side settings. Zeros over many of these lines mean nothing came back: either
 the device never got the hub's answer, or it chose not to reply. Watch whether the device actually

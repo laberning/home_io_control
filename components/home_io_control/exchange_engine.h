@@ -55,6 +55,9 @@ namespace home_io_control {
 /// SUCCESS_UNCONFIRMED exists so that silence after a real authentication is not treated the same
 /// as a request the device may never have heard at all: the two need different retry rules (see
 /// decisions::retry_after_unconfirmed_accept_is_safe()) and different reporting to the caller.
+/// Silence is not always harmless, though: a device that got the request may still have missed our
+/// challenge answer and not acted, which is why a CMD_EXECUTE to a device that normally confirms is
+/// sent once more before this outcome is returned.
 enum class ExchangeOutcome : uint8_t {
   FAILED,                 ///< No usable reply; the device may never have heard the request.
   SUCCESS_WITH_RESPONSE,  ///< Device replied; the caller's `response` frame is populated.
@@ -63,7 +66,9 @@ enum class ExchangeOutcome : uint8_t {
                           ///< need payload (key exchange) must treat this as failure; callers that
                           ///< only need "the command landed" should treat it as success. For every
                           ///< command but CMD_EXECUTE, this outcome is only returned after the full
-                          ///< retry budget is spent — see retry_after_unconfirmed_accept_is_safe().
+                          ///< retry budget is spent; a CMD_EXECUTE gets at most one re-send, and only
+                          ///< to a device that normally confirms — see
+                          ///< retry_after_unconfirmed_accept_is_safe().
 };
 
 class ExchangeEngine {
@@ -286,8 +291,9 @@ class ExchangeEngine {
   using TargetEvidenceProvider = std::function<bool(const uint8_t *dst, decisions::TargetEvidence &out)>;
 
   /// Install the source of per-target evidence. Installed once, when the hub is constructed. The
-  /// provider only looks evidence up; every decision drawn from it stays in the engine — today the
-  /// wake belief (decisions::wake_belief(), gated by the `low_power_wake_belief` tuning switch), so
+  /// provider only looks evidence up; every decision drawn from it stays in the engine — the wake
+  /// belief (decisions::wake_belief(), gated by the `low_power_wake_belief` tuning switch) and the
+  /// re-send of an unconfirmed CMD_EXECUTE (decisions::retry_after_unconfirmed_accept_is_safe()), so
   /// each decision lives in one place. With no provider installed every low-power exchange keeps
   /// `LONG_PREAMBLE` on every try.
   /// @param provider Evidence lookup, or an empty function to detach.
@@ -438,6 +444,21 @@ class ExchangeEngine {
   /// Block until the final authenticated response arrives or the window expires.
   decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
+
+  /// Decide how many more tries follow a try that ended accepted without a closing reply. When
+  /// that repeats a CMD_EXECUTE, log it and wait out the part of UNCONFIRMED_EXECUTE_RESEND_DELAY_MS
+  /// that the loop's own retry gap does not cover. For a CMD_EXECUTE, looks the target up through the
+  /// evidence provider; then applies decisions::retry_after_unconfirmed_accept_is_safe().
+  /// @param request           Outbound request frame.
+  /// @param unconfirmed_tries Tries of this exchange so far that ended that way (1-based).
+  /// @param try_index         The try that just ended, for the log line.
+  /// @param elapsed_ms        Time since the exchange began; a re-send that could not start inside
+  ///                          the exchange budget is not attempted.
+  /// @return 0 to end the exchange now; UNCONFIRMED_EXECUTE_MAX_RESENDS for a CMD_EXECUTE that is
+  ///         re-sent, which also caps the ordinary failure retries after it; EXCHANGE_RETRY_COUNT
+  ///         (no cap beyond the exchange's own) for any other request.
+  uint8_t tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
+                                   uint32_t elapsed_ms);
 
   /// Add one final-reply wait's ListenStats to the debug snapshot's `final_*` fields.
   /// @param stats What that wait heard without accepting it.

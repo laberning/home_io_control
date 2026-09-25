@@ -48,6 +48,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0032](0032-oneway-velux-enrollment-gesture.md) | 1W enrollment follows the gesture the target's `manufacturer:` expects | `velux` → `0x39` broadcast, a `0x30` sweep across `{roller_shutter, awning, dual_shutter}` under one sequence, then STOP+DOWN; `somfy` path unchanged; `enrollment_classes:` overrides the sweep list |
 | [0041](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md) | An unset 1W `low_power:` resolves from the manufacturer profile | `velux` → `ALWAYS_ALIVE` (an awake VELUX receiver rejects the 1024-byte preamble, and 1W has no ACK to reveal it); Somfy and unrecognised manufacturers stay `LEGACY_LONG`; an explicit key always wins |
 | [0033](0033-heating-send-path-bypasses-the-cover-machinery.md) | Heating send path bypasses the cover machinery | 2W heating does a plain send-and-receive — no status decode, no poll backoff, no ADR 0030 overlay (heating has no observation stream); state is publish-on-success only |
+| [0043](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md) | An unconfirmed movement command is re-sent once to a device that normally confirms | Learned in RAM from the first EXECUTE the device closes with a reply; favourite/vent never re-sent; at most one re-send inside the exchange budget; no device list, nothing stored |
 
 ### Interfaces and naming
 
@@ -134,6 +135,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0040: A low-power device's start preamble follows its wake belief](0040-low-power-start-preamble-follows-the-wake-belief.md)
 - [ADR 0041: An unset 1W `low_power:` resolves from the manufacturer profile](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)
 - [ADR 0042: The directed start preamble's default comes from the radio driver](0042-start-preamble-default-comes-from-the-radio-driver.md)
+- [ADR 0043: An unconfirmed movement command is re-sent once to a device that normally confirms](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

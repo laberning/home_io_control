@@ -291,7 +291,7 @@ void format_try_age(const exchange::OutboundExchangeContext &ctx, char (&buf)[TR
     snprintf(buf, sizeof(buf), "n/a");
     return;
   }
-  snprintf(buf, sizeof(buf), "%" PRIu32, ctx.exchange_start_ms - ctx.target_last_seen_ms);
+  snprintf(buf, sizeof(buf), "%" PRIu32, ctx.try_start_ms - ctx.target_last_seen_ms);
 }
 
 /// True for a start frame addressed to a duty-cycled receiver — the only frame that has a wake-up
@@ -318,7 +318,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   (*this->radio_ptr_)->clear_last_capture();
   // Clamp once: never below 1 (a caller passing 0 must not silently transmit nothing) and never
   // above EXCHANGE_RETRY_COUNT (the budget check downstream assumes that ceiling).
-  const uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
+  uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
   this->debug_.max_tries = tries_allowed;
   const PreamblePlan preamble_plan = this->plan_request_preamble_(request, request_preamble_override);
   this->debug_.wake_belief_use = preamble_plan.use;
@@ -330,12 +330,11 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     }
   }
   const uint32_t exchange_begin_ms = millis();
-  bool accepted_without_reply = false;
+  uint8_t unconfirmed_tries = 0;  // tries that ended challenged but never closed
 
   for (uint8_t tries = 0; tries < tries_allowed; tries++) {
     exchange::OutboundExchangeContext context;
     context.try_index = tries + 1;
-    context.exchange_start_ms = millis();
     context.wait_ms =
         is_start(request) ? this->tuning_->exchange_start_response_wait_ms : this->tuning_->exchange_response_wait_ms;
     context.state = exchange::OutboundExchangeState::TX_REQUEST;
@@ -356,6 +355,9 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       this->counters_.retransmits++;
     }
 
+    // Stamped after the retry gap, so a try's wait_ms and age_ms measure from its own transmit and
+    // not from the end of the previous try.
+    context.try_start_ms = millis();
     context.request_preamble = preamble_plan.for_try(context.try_index);
     context.target_last_seen_ms = preamble_plan.last_seen_ms;
     this->debug_.last_try_preamble = context.request_preamble;
@@ -375,7 +377,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       char age[TRY_AGE_BUFFER_SIZE];
       format_try_age(context, age);
       ESP_LOGI(TAG, "Try %d answered: cmd=%s(0x%02X) wait_ms=%" PRIu32 " preamble=%u age_ms=%s", context.try_index,
-               command_name(request.cmd), request.cmd, context.first_response_ms - context.exchange_start_ms,
+               command_name(request.cmd), request.cmd, context.first_response_ms - context.try_start_ms,
                context.request_preamble, age);
       response = context.rx;
       return ExchangeOutcome::SUCCESS_WITH_RESPONSE;
@@ -396,13 +398,17 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       // exchange with a synchronous reply (see ExchangeOutcome). log_debug_unconfirmed()'s final_rx_*
       // fields are what separates them after the fact: a reception during the final wait means a
       // reply came back and was lost on this side.
-      // A retry is safe only for a request with no side effect to repeat — CMD_EXECUTE may already
-      // be acting on the first copy, so it stops here; everything else spends its full retry budget.
+      // How many more tries to spend is tries_after_unconfirmed_(): a CMD_EXECUTE may already be
+      // acting on this copy, so it is repeated only where that is harmless and the silence is an
+      // anomaly, and then only once; everything else keeps its full retry budget.
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_auth_unconfirmed", context.try_index, true);
-      accepted_without_reply = true;
-      if (!decisions::retry_after_unconfirmed_accept_is_safe(request.cmd))
+      unconfirmed_tries++;
+      const uint8_t further_tries =
+          this->tries_after_unconfirmed_(request, unconfirmed_tries, context.try_index, millis() - exchange_begin_ms);
+      if (further_tries == 0)
         return ExchangeOutcome::SUCCESS_UNCONFIRMED;
+      tries_allowed = std::min<uint8_t>(tries_allowed, tries + 1 + further_tries);
       continue;
     }
 
@@ -415,7 +421,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   // An exchange that authenticated on some try but never got a reply is not the same as one the
   // device never answered at all: callers that only need "the request landed" can act on it, and
   // callers that need the payload still cannot.
-  return accepted_without_reply ? ExchangeOutcome::SUCCESS_UNCONFIRMED : ExchangeOutcome::FAILED;
+  return unconfirmed_tries > 0 ? ExchangeOutcome::SUCCESS_UNCONFIRMED : ExchangeOutcome::FAILED;
 }
 
 // ============================================================================
@@ -546,8 +552,8 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   char age[TRY_AGE_BUFFER_SIZE];
   format_try_age(ctx, age);
   ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%" PRIu32 " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s",
-           ctx.try_index, ctx.first_response_ms - ctx.exchange_start_ms, request.cmd, request.data_len,
-           ctx.request_preamble, age);
+           ctx.try_index, ctx.first_response_ms - ctx.try_start_ms, request.cmd, request.data_len, ctx.request_preamble,
+           age);
 
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
@@ -567,6 +573,36 @@ bool ExchangeEngine::answer_challenge(const IoFrame &request, const IoFrame &cha
   if (!create_challenge_resp(auth_resp, request.dst, this->node_id_, challenge.data, request, this->system_key_))
     return false;
   return this->transmit_frame(auth_resp, freq, (*this->radio_ptr_)->response_preamble());
+}
+
+uint8_t ExchangeEngine::tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
+                                                 uint32_t elapsed_ms) {
+  // Only an EXECUTE's answer depends on the target, so only an EXECUTE pays for the lookup. A
+  // destination the hub has no record of has never confirmed anything.
+  decisions::TargetEvidence evidence{};
+  if (request.cmd == CMD_EXECUTE && this->target_evidence_provider_)
+    this->target_evidence_provider_(request.dst, evidence);
+  if (!decisions::retry_after_unconfirmed_accept_is_safe(request, evidence.confirms_execute, unconfirmed_tries))
+    return 0;
+  if (request.cmd != CMD_EXECUTE)
+    return EXCHANGE_RETRY_COUNT;  // no cap of its own: the exchange's retry count and budget bound it
+  // A re-send that could not start inside the exchange budget is not worth waiting for.
+  if (elapsed_ms + UNCONFIRMED_EXECUTE_RESEND_DELAY_MS >= this->tuning_->exchange_total_budget_ms)
+    return 0;
+  // The re-send may well succeed, and then no exchange-failure or unconfirmed line is printed at
+  // all, so this is the one record that the first copy's reply went missing.
+  ESP_LOGI(TAG,
+           "Try %u accepted without a closing reply for cmd=%s(0x%02X): re-sending, the device normally "
+           "confirms (final_rx_ignored=%u final_rx_failed=%u)",
+           try_index, command_name(request.cmd), request.cmd, this->debug_.final_rx_ignored,
+           this->debug_.final_rx_failed);
+  // Stretch the ordinary retry gap the loop is about to wait to the longer re-send gap, so a device
+  // still busy acting on the first copy has finished before the re-send reaches it.
+  App.feed_wdt();
+  delay(UNCONFIRMED_EXECUTE_RESEND_DELAY_MS - EXCHANGE_RETRY_DELAY_MS);
+  // The re-send is the only further copy of a CMD_EXECUTE: if it goes unanswered altogether, the
+  // ordinary failure retry must not add a third one to a device that already has the command.
+  return UNCONFIRMED_EXECUTE_MAX_RESENDS;
 }
 
 decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_response_(

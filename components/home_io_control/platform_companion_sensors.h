@@ -123,13 +123,13 @@ class IOHomeExchangeFailuresSensor : public IOHomeDeviceCounterSensor {
 };
 
 /// @brief Diagnostic sensor that publishes a device's cumulative count of exchanges it
-/// authenticated and then never closed — see detail::record_exchange_unconfirmed() in
+/// authenticated and then never closed — see detail::record_exchange_outcome() in
 /// hub_internal.h.
 ///
 /// Read it against Exchange Failures: that counter rising alone means the device is not hearing
-/// the hub, while this one rising means it hears the hub and the reply is lost on the way back.
-/// For a movement command this outcome is reported as success, so this sensor is the only place
-/// it shows up.
+/// the hub, while this one rising means it hears the hub's request and then either the hub's
+/// challenge answer or the device's closing reply is lost. For a movement command this outcome is
+/// reported as success, so this sensor is the only place it shows up.
 ///
 /// Zero is meaningful here (none yet), so this publishes on setup unconditionally.
 /// @ingroup hioc_platforms

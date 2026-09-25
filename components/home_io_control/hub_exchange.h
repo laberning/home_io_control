@@ -77,7 +77,7 @@ struct OutboundExchangeContext {
   OutboundExchangeState state{OutboundExchangeState::IDLE};  ///< Current state machine state.
   uint8_t try_index{0};             ///< Current retry attempt (1‑based within EXCHANGE_RETRY_COUNT).
   bool saw_challenge{false};        ///< True if a 0x3C challenge was received during this exchange.
-  uint32_t exchange_start_ms{0};    ///< Timestamp when the exchange attempt began (millis).
+  uint32_t try_start_ms{0};         ///< millis() when this try's request transmit began, after any retry gap.
   uint32_t wait_ms{0};              ///< Current timeout window for the active wait (ms).
   uint32_t first_response_ms{0};    ///< Timestamp when the first valid response arrived (for RTT/timing).
   uint16_t request_preamble{0};     ///< Start preamble (bytes) this try's request went out with.
