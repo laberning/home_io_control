@@ -3,7 +3,7 @@
 /// @ingroup hioc_platforms
 
 #include "platform_light.h"
-#include "hub_internal.h"
+#include "entity_helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -46,7 +46,7 @@ void IOHomeLight::write_state(light::LightState *state) {
     // behavior, if any, and gamma-correcting on top of that would be wrong regardless of curve.
     state->current_values.as_brightness(&brightness);
     // Convert HA brightness (0.0-1.0) to IO position (0-100) via detail::round_percent()
-    // (hub_internal.h — rounds rather than truncates, see its doc comment): this device family's
+    // (entity_helpers.h — rounds rather than truncates, see its doc comment): this device family's
     // convention is 0=full brightness, 100=off — the same inverted mapping platform_cover.cpp
     // uses for non-inverted covers (HA 1.0 open -> IO 0), confirmed on real dimmable hardware.
     auto const io_pos = detail::round_percent(1.0F - brightness);

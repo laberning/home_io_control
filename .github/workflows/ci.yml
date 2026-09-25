@@ -39,6 +39,12 @@ jobs:
       - uses: actions/checkout@v7
       - run: make yaml-emitter-sync
 
+  include-graph:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: make include-graph
+
   board-pinout-sync:
     runs-on: ubuntu-24.04
     steps:

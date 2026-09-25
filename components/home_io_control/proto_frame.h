@@ -193,6 +193,19 @@ bool hex_to_bytes(const std::string &hex, uint8_t *out, uint8_t len);
 /// @param id 3‑byte node ID.
 /// @return Hex string (e.g., "123ABC").
 std::string node_id_to_string(const uint8_t id[NODE_ID_SIZE]);
+/// @brief Check whether a node ID is usable as an address: not all-zero and not all-0xFF, the two
+/// patterns blank storage and unset fields produce.
+/// @param id 3‑byte node ID buffer.
+/// @return true if the ID is non-zero and non-0xFF.
+inline bool stored_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
+  bool all_zero = true;
+  bool all_ff = true;
+  for (uint8_t i = 0; i < NODE_ID_SIZE; i++) {
+    all_zero = all_zero && id[i] == 0;
+    all_ff = all_ff && id[i] == UINT8_MAX;
+  }
+  return !all_zero && !all_ff;
+}
 
 // ============================================================================
 // CRC

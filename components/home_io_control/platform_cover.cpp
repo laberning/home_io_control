@@ -3,7 +3,7 @@
 /// @ingroup hioc_platforms
 
 #include "platform_cover.h"
-#include "hub_internal.h"
+#include "entity_helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -87,7 +87,7 @@ void IOHomeCover::control(const cover::CoverCall &call) {
   ///       cover.set_cover_position_and_tilt action, this branch would be exercised directly from
   ///       a single CoverCall. The queue coalescing in queue_set_device_position/tilt remains a
   ///       useful optimization for the two-separate-calls path regardless.
-  // Position/tilt fraction -> IO percent uses detail::round_percent() (hub_internal.h) — rounds
+  // Position/tilt fraction -> IO percent uses detail::round_percent() (entity_helpers.h) — rounds
   // rather than truncates, since HA quantizes call values to 0-255 before they reach us (its
   // "50%" is 128/255=0.502, not exactly 0.5) and a truncating cast would compound that into a
   // consistent ~1% bias (caught on hardware; see PlatformCover.ControlRoundsQuantizedPosition-

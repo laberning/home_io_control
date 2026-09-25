@@ -353,7 +353,7 @@ class ManagementActions {
                                          const std::string &value);
 
   /// Publish a management result as one or more structured log lines (one call per line of
-  /// `result.message`, see log_multiline_result() in the .cpp) and a Home Assistant event.
+  /// `result.message`, see log_multiline_result() in log_helpers.h) and a Home Assistant event.
   void publish_result(const ManagementActionResult &result);
 
  private:

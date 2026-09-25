@@ -30,6 +30,7 @@ These invariants keep the layers independent; changes should preserve them:
 2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `hop_dwell_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only.
 3. Chip-specific constants live either in the driver header (`radio_sx1276.h` / `radio_sx1262.h` / `radio_lr1121.h`) or, when they are user-tunable defaults, next to their `TuningConfig` fields in `tuning_config.h`.
 4. The composition root is `hub_core.cpp` `setup()`: it is the only place that names concrete driver classes, selecting one by the required `radio_type` YAML field.
+5. Include direction is enforced. Collaborators and entities never include the hub's private `hub_internal.h`; only the hub itself and a listed set of files reach `hub_core.h`; protocol and radio files include only their own layer (and, for radio, the protocol layer). `make include-graph` checks this.
 
 ## Request Flow
 
@@ -83,6 +84,8 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Pairing traffic advisor: [pairing_advisor.h](../components/home_io_control/pairing_advisor.h)
 - Key-material redaction helpers: [redaction.h](../components/home_io_control/redaction.h)
 - Pure frame-classification helpers: [hub_decisions.h](../components/home_io_control/hub_decisions.h)
+- Hub log/format helpers: [log_helpers.h](../components/home_io_control/log_helpers.h)
+- Hub/entity shared conversions: [entity_helpers.h](../components/home_io_control/entity_helpers.h)
 - Device registry: [device_registry.h](../components/home_io_control/device_registry.h)
 - Operation queue: [operation_queue.h](../components/home_io_control/operation_queue.h)
 - Status poll policy: [status_poll_policy.h](../components/home_io_control/status_poll_policy.h)

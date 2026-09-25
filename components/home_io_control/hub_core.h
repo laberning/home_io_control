@@ -235,8 +235,8 @@ class IOHomeControlComponent : public Component,
 
   /// @brief Render a device's "last commanded by" string, resolving this hub's own node ID.
   ///
-  /// Thin wrapper over detail::describe_last_commander(); exists because the hub's node ID is not
-  /// reachable from a companion entity and hub_internal.h cannot be included from this header.
+  /// Thin wrapper over detail::describe_last_commander() (entity_helpers.h); exists because the
+  /// hub's node ID is not reachable from a companion entity.
   /// @param dev Device record to read.
   /// @return See detail::describe_last_commander().
   [[nodiscard]] std::string describe_last_commander(const IoDevice &dev) const;
@@ -1171,19 +1171,6 @@ class IOHomeControlComponent : public Component,
 // ----------------------------------------------------------------------------
 // Test-visible helpers (inline for host unit tests)
 // ----------------------------------------------------------------------------
-
-/// Check if a stored node ID is valid (not all-zero, not all-0xFF).
-/// @param id 3‑byte node ID buffer.
-/// @return true if the ID is non-zero and non-0xFF.
-inline bool stored_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
-  bool all_zero = true;
-  bool all_ff = true;
-  for (uint8_t i = 0; i < NODE_ID_SIZE; i++) {
-    all_zero = all_zero && id[i] == 0;
-    all_ff = all_ff && id[i] == UINT8_MAX;
-  }
-  return !all_zero && !all_ff;
-}
 
 /// Format a position float as a human‑readable string (e.g. "50%", "unknown").
 /// @param pos Position value (0–100 or UNKNOWN_POSITION).

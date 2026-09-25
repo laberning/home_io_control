@@ -1,8 +1,9 @@
 // IOHOME_LR1121_FIRMWARE_UPDATE is only visible after something pulls in esphome/core/defines.h
-// (via hub_internal.h -> hub_core.h -> esphome/core/hal.h) — these #includes must run before the
-// #ifdef check below, not after (see radio_lr1121_firmware_updater.h for the fuller explanation).
+// (via this file's own header, which includes esphome/core/hal.h ahead of its own #ifdef) — these
+// #includes must run before the #ifdef check below, not after (see radio_lr1121_firmware_updater.h
+// for the fuller explanation).
 #include "lr1121_firmware_update_controller.h"
-#include "hub_internal.h"
+#include "log_helpers.h"
 #include "lr1121_firmware_decisions.h"
 #include "radio_lr1121_firmware_updater.h"
 

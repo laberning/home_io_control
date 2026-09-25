@@ -530,7 +530,7 @@ class RawFrame:
         """CRC-detection rule (verified against RX call sites, see module docstring below):
         every on-air log line this parser ingests — both `io_capture` (tx_frame/parse_ok)
         and legacy `io_frame` (TX/RX) — logs bytes with CTRL0-implied length exactly, i.e.
-        **without** the trailing 2-byte CRC. `log_component_capture()` (hub_internal.h) is
+        **without** the trailing 2-byte CRC. `log_component_capture()` (log_helpers.h) is
         called with the frame's own `buf/len` (post radio_sx1262.cpp's software CRC strip for
         RX; pre-hardware-CRC-append for TX), and `log_frame()` (log_frame.h, used for the
         legacy `io_frame` tag) receives the same already-stripped bytes. So `crc_present()` is
@@ -545,7 +545,7 @@ class RawFrame:
         return len(raw) == implied + 2
 
 
-# --- io_capture (structured) — hub_internal.h :: log_component_capture() --------------------
+# --- io_capture (structured) — log_helpers.h :: log_component_capture() --------------------
 # With a decoded frame (cmd/src/dst present — tx_frame always has one; parse_ok always has one):
 _IO_CAPTURE_WITH_FRAME_RE = re.compile(
     r"chip=(?P<chip>\S+)\s+phase=component\s+stage=(?P<stage>\S+)\s+freq=(?P<freq>\d+)\s+ts=(?P<ts>\d+)\s+"
@@ -654,7 +654,7 @@ def parse_log_line(line: str) -> "RawFrame | None":
 
 def _same_physical_frame(a: RawFrame, b: RawFrame) -> bool:
     """True when two adjacently-extracted RawFrames are the *same* on-air event logged twice —
-    every physical TX/RX in this codebase is logged once via `io_capture` (hub_internal.h) and
+    every physical TX/RX in this codebase is logged once via `io_capture` (log_helpers.h) and
     once via the legacy `io_frame` tag (log_frame.h), back-to-back within a few ms of each other.
     Same direction + identical bytes, adjacent in parse order, is
     the signal; genuine retransmissions (e.g. three DISCOVER_REQ retries) are NOT adjacent to

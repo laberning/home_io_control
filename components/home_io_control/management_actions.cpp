@@ -10,7 +10,8 @@
 
 #include "management_actions.h"
 
-#include "hub_internal.h"  // brings in hub_core.h + all internal helpers + logging
+#include "hub_core.h"
+#include "log_helpers.h"
 #include "proto_commands.h"
 
 #include "esphome/core/application.h"
@@ -1351,7 +1352,7 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
   render_frame_hex_redacted(raw, raw_len, hex, sizeof(hex));
 
   // Log through the same "io_capture" structured tag every other received frame uses
-  // (log_component_capture(), hub_internal.h) rather than relying on IOHOME_FRAME_LOG -- that
+  // (log_component_capture(), log_helpers.h) rather than relying on IOHOME_FRAME_LOG -- that
   // build flag is opt-in (only set in the loopback/monitor configs under config/), and the
   // always-on receive path (process_received_packet_(), gated on !busy_) never sees a probe
   // reply at all, since the reply is consumed here, inside a blocking send_and_receive() call,

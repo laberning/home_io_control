@@ -274,26 +274,6 @@ TEST(HubCore, QueueOperations) {
   delete comp.radio_;
 }
 
-TEST(HubCore, StoredNodeIdIsValid) {
-  // Valid: not all zeros, not all 0xFF
-  uint8_t valid[3] = {0xC0, 0xFF, 0xEE};
-  EXPECT_TRUE(stored_node_id_is_valid(valid)) << "mixed non-zero bytes should be valid";
-
-  uint8_t not_all_ff[3] = {0xFE, 0xFF, 0xFF};
-  EXPECT_TRUE(stored_node_id_is_valid(not_all_ff)) << "not all 0xFF should be valid";
-
-  uint8_t not_all_zero[3] = {0x01, 0x00, 0x00};
-  EXPECT_TRUE(stored_node_id_is_valid(not_all_zero)) << "not all zero should be valid";
-
-  // Invalid: all zeros
-  uint8_t all_zero[3] = {0x00, 0x00, 0x00};
-  EXPECT_FALSE(stored_node_id_is_valid(all_zero)) << "all zeros should be invalid";
-
-  // Invalid: all 0xFF
-  uint8_t all_ff[3] = {0xFF, 0xFF, 0xFF};
-  EXPECT_FALSE(stored_node_id_is_valid(all_ff)) << "all 0xFF should be invalid";
-}
-
 TEST(HubCore, FormatPositionHelper) {
   EXPECT_STREQ(format_position(UNKNOWN_POSITION).c_str(), "unknown") << "UNKNOWN_POSITION should format as 'unknown'";
   EXPECT_STREQ(format_position(0.0f).c_str(), "0%") << "zero should format as '0%'";

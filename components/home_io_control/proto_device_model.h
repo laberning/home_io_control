@@ -352,7 +352,7 @@ struct IoDevice {
   uint8_t last_commander[NODE_ID_SIZE]{};     ///< Node ID of the controller that last commanded this device, as
                                               ///< reported verbatim by the device in its own status payload. All
                                               ///< zeroes until a status reply carrying the record has been decoded
-                                              ///< (see detail::decode_last_command_record() in hub_internal.h).
+                                              ///< (see decode_last_command_record() in proto_codecs.h).
   uint8_t last_command_originator{0};         ///< That command's Command Originator byte (ORIGINATOR_* in
                                               ///< proto_constants.h). Only meaningful when `has_last_command`.
   bool has_last_command{false};               ///< True once a status reply carried a well-formed last-command record.
