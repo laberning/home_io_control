@@ -336,6 +336,13 @@ class ExchangeEngine {
     uint8_t capture_reported_len{0};   ///< Length reported by radio packet engine.
     uint8_t capture_frame_len{0};      ///< Parsed protocol frame length.
     int16_t capture_rssi_dbm{0};       ///< RSSI of the captured packet (dBm).
+    // What the final-reply waits of this exchange heard, counted per event (see ListenStats). The
+    // capture fields above keep the *first* informative reception, which in an authenticated
+    // exchange is the device's challenge, so they cannot describe the wait for the final reply.
+    uint8_t final_waits{0};       ///< Final-reply waits run (one per try that got as far as our 0x3D).
+    uint8_t final_rx_ignored{0};  ///< Frames received during those waits and not accepted as the reply.
+    uint8_t final_rx_failed{0};   ///< Receptions started during those waits that could not be decoded.
+    uint16_t final_rx_irq{0};     ///< Radio IRQ status at the most recent of those failed receptions.
   };
 
   /// Clear the debug snapshot and record the upcoming request command.
@@ -431,6 +438,10 @@ class ExchangeEngine {
   decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
 
+  /// Add one final-reply wait's ListenStats to the debug snapshot's `final_*` fields.
+  /// @param stats What that wait heard without accepting it.
+  void note_final_wait_(const ListenStats &stats);
+
   /// @brief How the request's start preamble is chosen across one exchange's tries. Resolved once
   /// per exchange by plan_request_preamble_(), then asked for each try.
   struct PreamblePlan {
@@ -474,8 +485,10 @@ class ExchangeEngine {
   Counters counters_{};      ///< Free-running counters; see counters()/reset_counters().
 };
 
-/// Longest rendered exchange-debug field list, plus headroom for a long command name.
-static constexpr size_t EXCHANGE_DEBUG_LINE_SIZE = 320;
+/// Longest rendered exchange-debug field list, plus headroom for a long command name. Stays well
+/// under ESP-IDF's 512-byte log line together with the longest message prefix, so the trailing
+/// fields are never cut off on hardware.
+static constexpr size_t EXCHANGE_DEBUG_LINE_SIZE = 384;
 
 /// @brief Render the structured field list shared by both exchange-debug log lines.
 ///

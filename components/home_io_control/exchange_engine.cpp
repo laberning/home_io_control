@@ -44,6 +44,18 @@ void ExchangeEngine::reset_debug(uint8_t request_cmd) {
   this->debug_.request_cmd = request_cmd;
 }
 
+void ExchangeEngine::note_final_wait_(const ListenStats &stats) {
+  DebugInfo &d = this->debug_;
+  const auto add = [](uint8_t &total, uint8_t n) {
+    total = static_cast<uint8_t>(std::min<unsigned>(total + n, UINT8_MAX));
+  };
+  add(d.final_waits, 1);
+  add(d.final_rx_ignored, stats.frames_ignored);
+  add(d.final_rx_failed, stats.failed_receptions);
+  if (stats.failed_receptions != 0)
+    d.final_rx_irq = stats.last_failed_irq;
+}
+
 void ExchangeEngine::record_debug(const char *stage, uint8_t tries, bool saw_challenge) {
   this->debug_.stage = stage;
   this->debug_.tries = tries;
@@ -77,7 +89,7 @@ int render_exchange_debug(char *buf, size_t buf_size, const char *device_id, con
                   "device=%s cmd=%s(0x%02X) stage=%s tries=%u max_tries=%u saw_challenge=%u cap_valid=%u "
                   "cap_rx_done=%u cap_crc_err=%u cap_freq=%" PRIu32
                   " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d belief=%s "
-                  "last_preamble=%u",
+                  "last_preamble=%u final_waits=%u final_rx_ignored=%u final_rx_failed=%u final_rx_irq=0x%04X",
                   device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.max_tries,
                   // Rendered as 0/1: these are flags in a field list, not prose, and a caller greps them.
                   static_cast<unsigned>(d.saw_challenge), static_cast<unsigned>(d.capture_valid),
@@ -87,7 +99,7 @@ int render_exchange_debug(char *buf, size_t buf_size, const char *device_id, con
                   d.wake_belief_use == ExchangeEngine::WakeBeliefUse::APPLIED
                       ? decisions::wake_belief_name(d.wake_belief)
                       : ExchangeEngine::wake_belief_use_name(d.wake_belief_use),
-                  d.last_try_preamble);
+                  d.last_try_preamble, d.final_waits, d.final_rx_ignored, d.final_rx_failed, d.final_rx_irq);
 }
 
 void ExchangeEngine::log_debug(const char *device_id) const {
@@ -101,7 +113,9 @@ void ExchangeEngine::log_debug_unconfirmed(const char *device_id) const {
   render_exchange_debug(fields, sizeof(fields), device_id, this->debug_);
   // "accepted" describes what the device did with the request, not what it did with our challenge
   // answer — see the WAIT_FINAL_RESPONSE branch in send_and_receive() for why silence here has two
-  // possible causes. The capture fields are what tells them apart.
+  // possible causes. The final_rx_* fields are what tells them apart: a reception during the final
+  // wait means something came back and was lost here. The cap_* fields cannot, because they keep
+  // the first informative reception, which is the device's challenge.
   ESP_LOGI(TAG, "Exchange accepted without a closing reply: %s", fields);
 }
 
@@ -379,8 +393,9 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       // verified, and a device that never got that answer never executes. Silence here therefore
       // has two causes that look identical from this side — our answer was lost, or the device
       // replied and this side lost the reply — on top of the devices that simply never close an
-      // exchange with a synchronous reply (see ExchangeOutcome). log_debug_unconfirmed()'s capture
-      // fields are what separates them after the fact.
+      // exchange with a synchronous reply (see ExchangeOutcome). log_debug_unconfirmed()'s final_rx_*
+      // fields are what separates them after the fact: a reception during the final wait means a
+      // reply came back and was lost on this side.
       // A retry is safe only for a request with no side effect to repeat — CMD_EXECUTE may already
       // be acting on the first copy, so it stops here; everything else spends its full retry budget.
       context.state = exchange::OutboundExchangeState::SUCCESS;
@@ -567,6 +582,9 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
   // the channel for the whole wait is strictly correct and needs no dwell.
   spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
 
+  ListenStats stats;
+  spec.stats = &stats;
+
   RadioRxPacket packet{};
   auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
     if (parsed == nullptr) {
@@ -582,6 +600,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
     return ReplyDisposition::IGNORE;
   });
 
+  this->note_final_wait_(stats);
   if (outcome == ListenOutcome::ACCEPTED)
     return decisions::ExchangeFinalResponseDisposition::ACCEPT;
 
@@ -663,12 +682,19 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
 
 namespace {
 
+/// Count one event in a ListenStats field without wrapping past 255.
+void count_saturating(uint8_t &counter) {
+  if (counter < UINT8_MAX)
+    counter++;
+}
+
 /// Parse one received packet, hand it to `on_frame`, and translate an ACCEPT/ABORT disposition
-/// into `outcome`. Factored out of listen()'s two reception sites purely to keep that function's
-/// cognitive complexity under the clang-tidy threshold — no behavior beyond the parse/dispatch.
+/// into `outcome`; a frame the handler ignores is counted in `stats` when the caller asked for
+/// counts. Factored out of listen()'s two reception sites to keep that function's cognitive
+/// complexity under the clang-tidy threshold.
 /// @return true if the listen should stop (ACCEPT or ABORT was returned); false to keep waiting.
 bool dispatch_received_packet(const ReplyHandler &on_frame, const RadioRxPacket &packet, IoFrame &frame,
-                              ListenOutcome &outcome) {
+                              ListenOutcome &outcome, ListenStats *stats) {
   const bool parsed = parse(packet.data, packet.len, frame);
   switch (on_frame(parsed ? &frame : nullptr, packet)) {
     case ReplyDisposition::ACCEPT:
@@ -678,9 +704,20 @@ bool dispatch_received_packet(const ReplyHandler &on_frame, const RadioRxPacket 
       outcome = ListenOutcome::ABORTED;
       return true;
     case ReplyDisposition::IGNORE:
-      return false;
+      break;
   }
+  if (stats != nullptr)
+    count_saturating(stats->frames_ignored);
   return false;
+}
+
+/// Record a holding listen's failed reception. Called at the moment it happens, because the re-arm
+/// that follows clears the radio capture that describes it.
+void count_failed_reception(ListenStats *stats, const RadioDriver *radio) {
+  if (stats == nullptr)
+    return;
+  count_saturating(stats->failed_receptions);
+  stats->last_failed_irq = radio->get_last_capture().irq_status;
 }
 
 /// A frame is arriving: hopping now would cut it off mid-reception. Both halves are live on every
@@ -738,7 +775,7 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
 
     if (radio->wait_for_packet(packet, slice)) {
       ListenOutcome outcome = ListenOutcome::TIMED_OUT;
-      if (dispatch_received_packet(on_frame, packet, frame, outcome))
+      if (dispatch_received_packet(on_frame, packet, frame, outcome, spec.stats))
         return outcome;
       // The roll-call leaves this false because a reception proves responders are on this
       // channel (see the field doc in hub_exchange.h); discovery is the only listen that hops
@@ -751,8 +788,10 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
 
     if ((int32_t) (deadline - millis()) <= 0)
       break;
-    if (!rotating)
-      continue;  // HOLD: an early false is a failed reception, not a timeout.
+    if (!rotating) {
+      count_failed_reception(spec.stats, radio);  // HOLD: an early false is a failed reception, not a timeout.
+      continue;
+    }
     if (!preamble_or_sync_incoming(radio, spec)) {
       this->listen_hop_(skip, spec);
       continue;
@@ -761,7 +800,7 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
     // air time instead of hopping — a short extension wait, not another full per-channel dwell.
     const uint32_t ext = std::min((uint32_t) (deadline - millis()), spec.linger_dwell_ms);
     ListenOutcome outcome = ListenOutcome::TIMED_OUT;
-    if (radio->wait_for_packet(packet, ext) && dispatch_received_packet(on_frame, packet, frame, outcome))
+    if (radio->wait_for_packet(packet, ext) && dispatch_received_packet(on_frame, packet, frame, outcome, spec.stats))
       return outcome;
   }
   return ListenOutcome::TIMED_OUT;

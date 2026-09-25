@@ -80,11 +80,19 @@ rather than everyday values, which is why they are disabled by default.
   real, always-published value here too.
 
 Read the last two together, because they separate two different faults. Exchange Failures rising
-on its own means the device is not hearing the hub. Unconfirmed Exchanges rising means it does
-hear the hub and the reply is getting lost on the way back — so reach for the receive-side
-settings rather than transmit power or placement. For a movement command the hub reports this
-outcome as success, since the device did accept the command, which makes this sensor the only
-place it shows up.
+on its own means the device is not hearing the hub. Unconfirmed Exchanges rising means the device
+hears the hub's request, and then either the hub's answer to its challenge or the device's closing
+reply gets lost. The two cases need different fixes, and a movement command that ends this way may
+not have been carried out. For a movement command the hub still counts this outcome as
+success, which makes this sensor the only place it shows up.
+
+To tell the two cases apart, look at the `Exchange accepted without a closing reply:` log line.
+Its `final_rx_ignored` and `final_rx_failed` fields count what the radio received while waiting for
+the closing reply. A value above zero means something came back and was lost on the hub's side, so
+reach for the receive-side settings. Zeros over many of these lines mean nothing came back: either
+the device never got the hub's answer, or it chose not to reply. Watch whether the device actually
+carried out those commands. The `cap_*` fields on the same line describe the device's challenge,
+not the wait for the closing reply.
 
 RSSI, Exchange Failures and Unconfirmed Exchanges update only when the hub processes a frame or
 exchange for the device; there are no background timers to refresh them. Last Contact's

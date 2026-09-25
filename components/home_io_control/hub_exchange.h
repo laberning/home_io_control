@@ -142,6 +142,21 @@ enum class ListenOutcome : uint8_t {
 /// implementations this project builds against.
 using ReplyHandler = std::function<ReplyDisposition(const IoFrame *parsed, const RadioRxPacket &packet)>;
 
+/// @brief What a listen heard without accepting it — filled by @ref ExchangeEngine::listen() when
+/// a caller passes one in ListenSpec::stats.
+///
+/// A listen that ends empty-handed has two very different stories behind it: nothing reached the
+/// radio at all, or something did and was lost or rejected on this side. The radio capture cannot
+/// tell them apart after the fact, because every re-arm inside a holding listen clears it; these
+/// counters are taken at the moment each event happens instead. Counts saturate at 255.
+struct ListenStats {
+  uint8_t frames_ignored{0};     ///< Frames the radio delivered that the handler did not accept (wrong
+                                 ///< exchange, unrelated traffic, unparsable).
+  uint8_t failed_receptions{0};  ///< Receptions the radio started but could not deliver: a holding
+                                 ///< listen's early return before its deadline (CRC or length failure).
+  uint16_t last_failed_irq{0};   ///< Radio IRQ status captured at the most recent failed reception.
+};
+
 /// @brief How one listen window is to be spent — everything @ref ExchangeEngine::listen() needs;
 /// everything else is the handler's business.
 struct ListenSpec {
@@ -180,6 +195,10 @@ struct ListenSpec {
   /// Called on every hop, for callers that count hops in their own telemetry (pairing does; the
   /// exchange loops do not). Empty by default, in which case no callback fires.
   std::function<void()> on_hop;
+  /// Where to count what this listen heard without accepting it; null (the default) counts
+  /// nothing. The final-reply wait of an authenticated exchange is the one caller today: its
+  /// counts are what separates a device that never replied from a reply this side lost.
+  ListenStats *stats{nullptr};
 };
 
 }  // namespace home_io_control

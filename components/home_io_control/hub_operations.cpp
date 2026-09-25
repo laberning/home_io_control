@@ -210,8 +210,9 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
     //
     // Log the snapshot anyway. This branch is the one exchange ending that prints nothing at all
     // otherwise, so a device that routinely stops replying here leaves no trace to diagnose, and
-    // the capture fields (did the radio see anything during the final wait?) are exactly what
-    // separates a lost answer from a lost reply.
+    // its final_rx_* fields (did the radio receive anything during the final wait?) are what
+    // separates a lost answer from a lost reply. Its cap_* fields describe the device's challenge,
+    // not that wait.
     this->log_exchange_unconfirmed_debug_(device_id.c_str());
     if (retry_after_fail_ms != 0)
       this->poll_policy_.clear_failure_streaks(device_id);

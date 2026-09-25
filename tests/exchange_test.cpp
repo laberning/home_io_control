@@ -2043,6 +2043,10 @@ TEST(Exchange, DebugLineRendersEveryFieldADiagnosisNeeds) {
   d.capture_reported_len = 34;
   d.capture_frame_len = 23;
   d.capture_rssi_dbm = -47;
+  d.final_waits = 3;
+  d.final_rx_ignored = 2;
+  d.final_rx_failed = 1;
+  d.final_rx_irq = 0x0084;
 
   char buf[EXCHANGE_DEBUG_LINE_SIZE];
   const int written = render_exchange_debug(buf, sizeof(buf), "DA88B6", d);
@@ -2061,6 +2065,100 @@ TEST(Exchange, DebugLineRendersEveryFieldADiagnosisNeeds) {
   EXPECT_NE(line.find("cap_irq=0x000C"), std::string::npos);
   EXPECT_NE(line.find("cap_reported_len=34 cap_frame_len=23"), std::string::npos);
   EXPECT_NE(line.find("cap_rssi=-47"), std::string::npos);
+  EXPECT_NE(line.find("final_waits=3 final_rx_ignored=2 final_rx_failed=1 final_rx_irq=0x0084"), std::string::npos)
+      << "the final_rx_* fields are what separates a reply lost on this side from one never sent";
+}
+
+// --- Final-wait reception counters -------------------------------------------
+// The cap_* fields keep the first informative reception, which in an authenticated exchange is the
+// device's challenge, and every re-arm inside the final wait clears the capture. So what the final
+// wait heard is counted per event instead. A ManualClock makes a silent wait expire at its deadline
+// the way a real radio's does; under the legacy +1 ms clock every empty-queue return would look
+// like an early failed reception.
+
+namespace {
+/// Queue a valid 0x3C challenge from the device to the hub.
+void queue_device_challenge(MockRadio &radio) {
+  const uint8_t chal_data[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  IoFrame challenge = build_challenge(test::DST_ID, test::OWN_ID, chal_data);
+  uint8_t raw[64];
+  RadioRxPacket pkt{};
+  pkt.len = serialize(challenge, raw, sizeof(raw));
+  memcpy(pkt.data, raw, pkt.len);
+  radio.queue_rx(pkt);
+}
+}  // namespace
+
+TEST(Exchange, FinalWaitCountsFailedAndIgnoredReceptions) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  radio.set_emulate_capture_lifecycle(true);  // real drivers clear and refill the capture per wait
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, false, 100);
+
+  queue_device_challenge(radio);
+  // During the final wait: one reception that fails to decode, one frame from another device.
+  radio.queue_rx_failed_reception(0x0084);
+  const uint8_t other_device[3] = {0x11, 0x22, 0x33};
+  IoFrame unrelated = build_status_response(other_device, test::OWN_ID);
+  uint8_t raw[64];
+  RadioRxPacket unrelated_pkt{};
+  unrelated_pkt.len = serialize(unrelated, raw, sizeof(raw));
+  memcpy(unrelated_pkt.data, raw, unrelated_pkt.len);
+  radio.queue_rx(unrelated_pkt);
+
+  IoFrame response{};
+  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  const auto &d = engine.get_debug();
+  EXPECT_EQ(d.final_waits, 1u);
+  EXPECT_EQ(d.final_rx_failed, 1u) << "the failed reception must be counted before the re-arm clears it";
+  EXPECT_EQ(d.final_rx_irq, 0x0084u);
+  EXPECT_EQ(d.final_rx_ignored, 1u) << "the other device's frame arrived during the wait and was not the reply";
+  EXPECT_EQ(d.capture_frame_len, 15u) << "cap_* still describes the challenge, which is why final_rx_* exists";
+}
+
+TEST(Exchange, SilentFinalWaitCountsNothing) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, false, 100);
+  queue_device_challenge(radio);  // then nothing: the device never closes the exchange
+
+  IoFrame response{};
+  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  const auto &d = engine.get_debug();
+  EXPECT_EQ(d.final_waits, 1u);
+  EXPECT_EQ(d.final_rx_failed, 0u) << "a wait that simply expires is silence, not a failed reception";
+  EXPECT_EQ(d.final_rx_ignored, 0u);
+}
+
+TEST(Exchange, FirstResponseWaitDoesNotFeedTheFinalCounters) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  radio.queue_rx_failed_reception(0x0084);  // lands in the first-response wait; nothing answers
+
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2, /*max_tries=*/1);
+
+  const auto &d = engine.get_debug();
+  EXPECT_EQ(d.final_waits, 0u) << "no challenge, so no final wait ever ran";
+  EXPECT_EQ(d.final_rx_failed, 0u);
 }
 
 TEST(Exchange, UnconfirmedAcceptKeepsTheFinalWaitCaptureForTheLogLine) {
