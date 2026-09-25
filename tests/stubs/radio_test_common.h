@@ -182,7 +182,9 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void dump_debug() override {}
 
   // Test helpers
-  void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) { rx_queue_.push_back({pkt, std::nullopt}); }
+  void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) {
+    rx_queue_.push_back({pkt, std::nullopt, std::nullopt});
+  }
   /// Queue `n` empty slices: wait_for_packet() returns false for each, exactly as if nothing had
   /// arrived, without needing to leave the whole queue empty (which a test can't do selectively
   /// mid-sequence). Lets a test express "several genuinely silent waits, then a reply" — distinct
@@ -191,7 +193,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// so has a different timing profile.
   void queue_rx_silence(uint8_t n = 1) {
     for (uint8_t i = 0; i < n; i++)
-      rx_queue_.push_back({std::nullopt, std::nullopt});
+      rx_queue_.push_back({std::nullopt, std::nullopt, std::nullopt});
   }
   /// Queue genuine silence for as long as it takes: wait_for_packet() returns false, without
   /// consuming this entry, until `get_send_count() >= send_count`; the call that finally meets the
@@ -206,7 +208,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// discover-confirm try, then answer once 0x31 goes out" without knowing how many
   /// wait_for_packet() calls that silence will actually take.
   /// @param send_count Number of transmitted frames (get_send_count()) to hold silent through.
-  void queue_rx_hold_until_sent(int send_count) { rx_queue_.push_back({std::nullopt, send_count}); }
+  void queue_rx_hold_until_sent(int send_count) { rx_queue_.push_back({std::nullopt, send_count, std::nullopt}); }
   /// Queue one failed reception: wait_for_packet() returns false after 1 ms (not after its
   /// timeout) with a valid capture carrying @p irq and the CRC-error flag. Only meaningful under a
   /// ManualClock, where a genuinely silent wait instead advances time by its whole timeout.

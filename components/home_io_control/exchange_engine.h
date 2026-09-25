@@ -220,7 +220,7 @@ class ExchangeEngine {
   /// `ManagementActions::scan_paired_devices()`).
   ///
   /// This is the asleep / always-alive rule. `send_and_receive()` may pick a shorter preamble per
-  /// try for a low-power target it believes awake (see set_wake_evidence_provider()), so the bit and
+  /// try for a low-power target it believes awake (see set_target_evidence_provider()), so the bit and
   /// the preamble agree here but not necessarily on every try there; callers that send once, like
   /// the discover-confirm step, always get the rule above.
   ///
@@ -276,22 +276,23 @@ class ExchangeEngine {
   void set_pairing_telemetry(PairingTelemetry *telemetry) { this->pairing_telemetry_ = telemetry; }
 
   // -------------------------------------------------------------------------
-  // Low-power wake belief
+  // Per-target evidence
   // -------------------------------------------------------------------------
 
-  /// @brief Looks up the wake evidence for a destination node.
+  /// @brief Looks up what the hub knows about a destination node (decisions::TargetEvidence).
   /// @param dst Destination node ID (NODE_ID_SIZE bytes) of the request being sent.
   /// @param out Filled with that device's evidence when it is known.
   /// @return false when the destination is not a registered device (no evidence to give).
-  using WakeEvidenceProvider = std::function<bool(const uint8_t *dst, decisions::WakeEvidence &out)>;
+  using TargetEvidenceProvider = std::function<bool(const uint8_t *dst, decisions::TargetEvidence &out)>;
 
-  /// Install the evidence source for the wake belief. Installed once, when the hub is constructed. The provider only
-  /// looks evidence up; the engine turns it into a belief (decisions::wake_belief()) and applies the
-  /// `low_power_wake_belief` tuning switch itself, so the whole decision lives in one place. With no
-  /// provider installed every low-power exchange keeps `LONG_PREAMBLE` on every try.
+  /// Install the source of per-target evidence. Installed once, when the hub is constructed. The
+  /// provider only looks evidence up; every decision drawn from it stays in the engine — today the
+  /// wake belief (decisions::wake_belief(), gated by the `low_power_wake_belief` tuning switch), so
+  /// each decision lives in one place. With no provider installed every low-power exchange keeps
+  /// `LONG_PREAMBLE` on every try.
   /// @param provider Evidence lookup, or an empty function to detach.
-  void set_wake_evidence_provider(WakeEvidenceProvider provider) {
-    this->wake_evidence_provider_ = std::move(provider);
+  void set_target_evidence_provider(TargetEvidenceProvider provider) {
+    this->target_evidence_provider_ = std::move(provider);
   }
 
   // -------------------------------------------------------------------------
@@ -305,7 +306,7 @@ class ExchangeEngine {
     NOT_LOW_POWER,  ///< Not a low-power start frame: there is no wake-up preamble to reorder.
     OVERRIDE,       ///< The caller forced a preamble (pairing's directed frames).
     SWITCHED_OFF,   ///< The `low_power_wake_belief` tuning switch is off.
-    NO_PROVIDER,    ///< No evidence source installed (set_wake_evidence_provider()).
+    NO_PROVIDER,    ///< No evidence source installed (set_target_evidence_provider()).
     APPLIED,        ///< The tries followed the belief in DebugInfo::wake_belief.
   };
 
@@ -476,7 +477,7 @@ class ExchangeEngine {
   const uint8_t *system_key_;                     ///< Hub's system_key_[AES_KEY_SIZE] array.
   const TuningConfig *tuning_;                    ///< Hub's live TuningConfig (read on every LBT check).
   PairingTelemetry *pairing_telemetry_{nullptr};  ///< Set only during a pairing attempt; see set_pairing_telemetry().
-  WakeEvidenceProvider wake_evidence_provider_;   ///< Wake-belief evidence lookup; see set_wake_evidence_provider().
+  TargetEvidenceProvider target_evidence_provider_;  ///< See set_target_evidence_provider().
 
   // --- Engine state --------------------------------------------------------
 

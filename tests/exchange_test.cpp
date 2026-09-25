@@ -2796,7 +2796,7 @@ TEST(Exchange, CountersResetZeroesEveryField) {
 
 namespace {
 
-/// Standalone engine on a manual clock with a scripted wake-evidence provider, so the belief is
+/// Standalone engine on a manual clock with a scripted target-evidence provider, so the belief is
 /// driven by explicit "N ms ago" stamps rather than by a hub.
 struct WakeBeliefRig {
   esphome::test_clock::ManualClock clock;
@@ -2804,12 +2804,12 @@ struct WakeBeliefRig {
   RadioDriver *radio_ptr{&radio};
   TuningConfig tuning{};
   ExchangeEngine engine{&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning};
-  decisions::WakeEvidence evidence{};  // all zero = never moved, never heard from
+  decisions::TargetEvidence evidence{};  // all zero = never moved, never heard from
   bool evidence_known{true};
   int provider_calls{0};
 
   WakeBeliefRig() {
-    engine.set_wake_evidence_provider([this](const uint8_t *, decisions::WakeEvidence &out) {
+    engine.set_target_evidence_provider([this](const uint8_t *, decisions::TargetEvidence &out) {
       provider_calls++;
       out = evidence;
       return evidence_known;
@@ -2849,7 +2849,7 @@ using Preambles = std::vector<uint16_t>;
 
 TEST(WakeBelief, NoProviderKeepsTheWakeUpPreambleOnEveryTry) {
   WakeBeliefRig rig;
-  rig.engine.set_wake_evidence_provider({});
+  rig.engine.set_target_evidence_provider({});
   EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
 }
 
@@ -2932,7 +2932,7 @@ TEST(WakeBelief, DebugSnapshotNamesWhyNoBeliefApplied) {
   rig.send(low_power_position_request());
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::APPLIED);
 
-  rig.engine.set_wake_evidence_provider({});
+  rig.engine.set_target_evidence_provider({});
   rig.send(low_power_position_request());
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::NO_PROVIDER);
 }

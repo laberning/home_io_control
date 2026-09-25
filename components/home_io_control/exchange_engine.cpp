@@ -281,7 +281,7 @@ void log_exchange_frame(const char *stage, int tries, const IoFrame &frame, uint
 constexpr size_t TRY_AGE_BUFFER_SIZE = 12;
 
 /// Render a try's `age_ms=` field: how long before this try the target was last heard, or "n/a"
-/// when there is no stamp (never heard, or the wake evidence was not looked up). Every try line
+/// when there is no stamp (never heard, or the target evidence was not looked up). Every try line
 /// carries it next to the try's preamble, so field logs show which preamble reaches a low-power
 /// receiver how long after it last spoke — the data the wake-belief windows are sized from. The
 /// stamp is read once, before the exchange, so a challenge heard on an earlier try of the same
@@ -465,7 +465,7 @@ ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFram
     plan.use = WakeBeliefUse::NOT_LOW_POWER;
   } else if (!this->tuning_->low_power_wake_belief) {
     plan.use = WakeBeliefUse::SWITCHED_OFF;
-  } else if (!this->wake_evidence_provider_) {
+  } else if (!this->target_evidence_provider_) {
     plan.use = WakeBeliefUse::NO_PROVIDER;
   } else {
     plan.use = WakeBeliefUse::APPLIED;
@@ -474,8 +474,8 @@ ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFram
     return plan;
 
   // A destination the hub has no record of has no evidence: treat it as asleep, the safe default.
-  decisions::WakeEvidence evidence{};
-  const bool known = this->wake_evidence_provider_(request.dst, evidence);
+  decisions::TargetEvidence evidence{};
+  const bool known = this->target_evidence_provider_(request.dst, evidence);
   plan.short_preamble = this->tuning_->normal_start_preamble;
   plan.last_seen_ms = known ? evidence.last_seen_ms : 0;
   plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request))

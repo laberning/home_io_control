@@ -474,12 +474,23 @@ namespace {
 
 constexpr uint32_t WAKE_NOW = 1'000'000;  // Far from 0 so "now - stamp" never underflows by accident.
 
-decisions::WakeEvidence evidence(uint32_t moving_ago_ms, uint32_t seen_ago_ms) {
+decisions::TargetEvidence evidence(uint32_t moving_ago_ms, uint32_t seen_ago_ms) {
   // An age of 0 in these tests means "never", i.e. a zero stamp.
   return {moving_ago_ms == 0 ? 0 : WAKE_NOW - moving_ago_ms, seen_ago_ms == 0 ? 0 : WAKE_NOW - seen_ago_ms};
 }
 
 }  // namespace
+
+TEST(Decisions, TargetEvidenceCarriesTheDeviceStamps) {
+  // The engine never sees an IoDevice: this builder is its only view of one, so every field it
+  // reads must come from the record, field by field.
+  IoDevice dev;
+  dev.last_moving_evidence_ms = 1234;
+  dev.last_seen_ms = 5678;
+  const decisions::TargetEvidence ev = decisions::target_evidence(dev);
+  EXPECT_EQ(ev.last_moving_evidence_ms, 1234u);
+  EXPECT_EQ(ev.last_seen_ms, 5678u);
+}
 
 TEST(Decisions, IsStopRequestTrueOnlyForAStopExecute) {
   IoFrame stop{};
@@ -541,7 +552,7 @@ TEST(Decisions, WakeBeliefStaleMovingEvidenceWithARecentFrameIsMaybeAwake) {
 
 TEST(Decisions, WakeBeliefAgeArithmeticSurvivesMillisWrap) {
   // Stamp taken 1 s before millis() wraps; now is 1 s after the wrap: an age of 2 s.
-  const decisions::WakeEvidence wrapped{0xFFFFFFFFu - 999u, 0};
+  const decisions::TargetEvidence wrapped{0xFFFFFFFFu - 999u, 0};
   EXPECT_EQ(decisions::wake_belief(wrapped, 1000u, false), decisions::WakeBelief::AWAKE);
 }
 
@@ -552,7 +563,7 @@ TEST(Decisions, WakeBeliefStampEqualToNowIsFresh) {
 }
 
 TEST(Decisions, WakeBeliefLastSeenAgeArithmeticSurvivesMillisWrap) {
-  const decisions::WakeEvidence wrapped{0, 0xFFFFFFFFu - 999u};
+  const decisions::TargetEvidence wrapped{0, 0xFFFFFFFFu - 999u};
   EXPECT_EQ(decisions::wake_belief(wrapped, 1000u, false), decisions::WakeBelief::MAYBE_AWAKE);
 }
 

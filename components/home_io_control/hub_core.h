@@ -131,14 +131,15 @@ class IOHomeControlComponent : public Component,
             [this]() { this->warn_if_blocking_over_ = LR1121_FLASH_WARN_BLOCKING_MAX_CS; }, this)
 #endif
   {
-    // The hub only supplies the evidence; the engine turns it into a wake belief and applies the
-    // `low_power_wake_belief` switch. Installed here rather than in setup() so a component that
-    // never runs setup() (the host tests) is wired exactly like production.
-    this->exchange_engine_.set_wake_evidence_provider([this](const uint8_t *dst, decisions::WakeEvidence &out) {
+    // The hub only supplies what it knows about a target; the engine draws its own decisions from
+    // it (today the wake belief, gated by the `low_power_wake_belief` switch). Installed here
+    // rather than in setup() so a component that never runs setup() (the host tests) is wired
+    // exactly like production.
+    this->exchange_engine_.set_target_evidence_provider([this](const uint8_t *dst, decisions::TargetEvidence &out) {
       const IoDevice *dev = this->registry_.get(node_id_to_string(dst));
       if (dev == nullptr)
         return false;
-      out = decisions::wake_evidence(*dev);
+      out = decisions::target_evidence(*dev);
       return true;
     });
   }

@@ -364,16 +364,19 @@ enum class WakeBelief : uint8_t {
 static_assert(LOW_POWER_AWAKE_HOLD_MS <= LOW_POWER_MAX_TRAVEL_MS,
               "wake_belief() relies on moving evidence outliving the maybe-awake hold");
 
-/// @brief The per-device stamps wake_belief() reads. All are `millis()` values, 0 = never.
-struct WakeEvidence {
+/// @brief What the hub knows about the device an exchange is addressed to, as the exchange engine
+/// sees it. The engine has no device registry of its own; the hub hands this over through
+/// ExchangeEngine::set_target_evidence_provider(), and every per-target decision the engine makes
+/// (today: wake_belief()) reads from it. Timestamps are `millis()` values, 0 = never.
+struct TargetEvidence {
   uint32_t last_moving_evidence_ms;  ///< Last sign the receiver is travelling (see note_moving_evidence(),
                                      ///< clear_moving_evidence()).
   uint32_t last_seen_ms;             ///< Last frame received from the receiver, any command.
 };
 
-/// The wake-belief inputs a device record carries.
+/// Build the exchange engine's view of a device record.
 /// @param dev Device record to read.
-[[nodiscard]] inline WakeEvidence wake_evidence(const IoDevice &dev) {
+[[nodiscard]] inline TargetEvidence target_evidence(const IoDevice &dev) {
   return {dev.last_moving_evidence_ms, dev.last_seen_ms};
 }
 
@@ -392,7 +395,7 @@ struct WakeEvidence {
 /// @param evidence Stamps for the target device.
 /// @param now      Current millis().
 /// @param is_stop  True when the request being sent is a STOP (see is_stop_request()).
-[[nodiscard]] inline WakeBelief wake_belief(const WakeEvidence &evidence, uint32_t now, bool is_stop) {
+[[nodiscard]] inline WakeBelief wake_belief(const TargetEvidence &evidence, uint32_t now, bool is_stop) {
   const auto recent = [now](uint32_t stamp, uint32_t window_ms) { return stamp != 0 && (now - stamp) < window_ms; };
   if (is_stop || recent(evidence.last_moving_evidence_ms, LOW_POWER_MAX_TRAVEL_MS))
     return WakeBelief::AWAKE;
