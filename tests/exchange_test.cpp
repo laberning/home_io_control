@@ -27,7 +27,7 @@ exchange::OutboundExchangeContext make_outbound_context() {
   ctx.state = exchange::OutboundExchangeState::IDLE;
   ctx.try_index = 0;
   ctx.saw_challenge = false;
-  ctx.exchange_start_ms = 0;
+  ctx.try_start_ms = 0;
   ctx.wait_ms = 0;
   ctx.first_response_ms = 0;
   return ctx;
@@ -397,8 +397,9 @@ TEST(Exchange, SendAndReceive_MissingFinalResponseIsUnconfirmedSuccessNotFailure
   EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_UNCONFIRMED)
       << "an authenticated request with no final response is accepted, not failed";
   EXPECT_EQ(response.cmd, 0) << "there was no response frame, so none should be handed back";
-  // The retry is the part that actively hurt: the device may already be executing the command, so
-  // re-sending it twice more mostly reaches a device that has acted and now ignores duplicates.
+  // No re-send here: this hub has never seen the device close an EXECUTE, and a device that never
+  // does (it reports through a later status update) is already acting on the first copy. Re-sending
+  // to a device that does normally confirm is covered by the ResendRig tests below.
   EXPECT_EQ(radio.get_send_count(), 2) << "expected exactly the request plus the auth response, with no retries";
 }
 
@@ -429,7 +430,140 @@ TEST(Exchange, SendAndReceive_ExecuteStopsAfterOneUnconfirmedAccept) {
   EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_UNCONFIRMED)
       << "CMD_EXECUTE authenticated without a final reply must still count as accepted";
   EXPECT_EQ(radio.get_send_count(), 2)
-      << "CMD_EXECUTE must not retry after an unconfirmed accept: the device may already be acting on it";
+      << "CMD_EXECUTE to a device never seen to confirm must not be re-sent: it may already be acting on it";
+}
+
+// --- Re-sending an unconfirmed EXECUTE -----------------------------------------------------
+// A CMD_EXECUTE the target accepted without a closing reply is sent once more, but only to a target
+// that has confirmed an EXECUTE before (decisions::retry_after_unconfirmed_accept_is_safe()). A
+// standalone engine with a scripted evidence provider decides "confirms" per test; a ManualClock
+// makes each silent final wait expire at its deadline, as on a real radio.
+
+namespace {
+
+struct ResendRig {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr{&radio};
+  TuningConfig tuning{};
+  ExchangeEngine engine{&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning};
+  bool confirms{true};
+
+  ResendRig() {
+    engine.set_target_evidence_provider([this](const uint8_t *, decisions::TargetEvidence &out) {
+      out = decisions::TargetEvidence{};
+      out.confirms_execute = confirms;
+      return true;
+    });
+  }
+
+  void queue(const IoFrame &frame) {
+    uint8_t raw[64];
+    RadioRxPacket pkt{};
+    pkt.len = serialize(frame, raw, sizeof(raw));
+    memcpy(pkt.data, raw, pkt.len);
+    radio.queue_rx(pkt);
+  }
+  void queue_challenge() {
+    const uint8_t chal[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+    queue(build_challenge(test::DST_ID, test::OWN_ID, chal));
+  }
+  void queue_final_reply() { queue(build_status_response(test::DST_ID, test::OWN_ID)); }
+
+  ExchangeOutcome send(const IoFrame &request) {
+    IoFrame response{};
+    return engine.send_and_receive(request, response, FREQ_CH2);
+  }
+};
+
+IoFrame stop_request() {
+  IoFrame f{};
+  create_execute_command(f, test::OWN_ID, test::DST_ID, false, CoverCommand::STOP);
+  return f;
+}
+
+}  // namespace
+
+TEST(Exchange, UnconfirmedExecuteToAConfirmingDeviceIsResentAndCanSucceed) {
+  ResendRig rig;
+  rig.queue_challenge();                  // try 1: challenged, then the final wait stays silent
+  rig.radio.queue_rx_hold_until_sent(3);  // silent until the re-sent request (send #3) is out
+  rig.queue_challenge();                  // try 2: challenged again
+  rig.radio.queue_rx_hold_until_sent(4);  // ... and closed after our second 0x3D (send #4)
+  rig.queue_final_reply();
+
+  EXPECT_EQ(rig.send(stop_request()), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  ASSERT_EQ(rig.radio.get_send_count(), 4) << "request, 0x3D, the same request again, 0x3D";
+  EXPECT_EQ(rig.radio.get_sent_data()[0], rig.radio.get_sent_data()[2]) << "the re-send is the same command";
+}
+
+TEST(Exchange, UnconfirmedExecuteResendWaitsTheLongerGap) {
+  ResendRig rig;
+  rig.queue_challenge();
+  rig.radio.queue_rx_hold_until_sent(3);
+  rig.queue_challenge();
+  rig.radio.queue_rx_hold_until_sent(4);
+  rig.queue_final_reply();
+
+  ASSERT_EQ(rig.send(stop_request()), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  const auto &t = rig.radio.send_times_ms();
+  ASSERT_EQ(t.size(), 4u);
+  // From our first 0x3D to the re-sent command: the whole final-reply window, then the re-send gap
+  // in place of the ordinary retry gap, so a device still acting on the first copy has finished.
+  EXPECT_EQ(t[2] - t[1], rig.tuning.exchange_response_wait_ms + UNCONFIRMED_EXECUTE_RESEND_DELAY_MS);
+}
+
+TEST(Exchange, UnconfirmedExecuteIsResentAtMostOnce) {
+  ResendRig rig;
+  rig.queue_challenge();
+  rig.radio.queue_rx_hold_until_sent(3);
+  rig.queue_challenge();  // the re-send is challenged too, and again never closed
+
+  EXPECT_EQ(rig.send(stop_request()), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  EXPECT_EQ(rig.radio.get_send_count(), 4) << "one re-send, never a third copy of the command";
+}
+
+TEST(Exchange, UnansweredResendIsNotFollowedByAThirdCopy) {
+  ResendRig rig;
+  rig.queue_challenge();  // try 1 is challenged and never closed; the re-send then draws nothing at all
+
+  EXPECT_EQ(rig.send(stop_request()), ExchangeOutcome::SUCCESS_UNCONFIRMED)
+      << "the device did accept the first copy, so this is still an unconfirmed acceptance";
+  EXPECT_EQ(rig.radio.get_send_count(), 3)
+      << "request, 0x3D, the re-send; the ordinary failure retry must not add a third copy";
+}
+
+TEST(Exchange, UnconfirmedExecuteIsNotResentToADeviceNeverSeenToConfirm) {
+  ResendRig rig;
+  rig.confirms = false;  // e.g. a device that always reports through a later status update instead
+  rig.queue_challenge();
+
+  EXPECT_EQ(rig.send(stop_request()), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  EXPECT_EQ(rig.radio.get_send_count(), 2);
+}
+
+TEST(Exchange, UnconfirmedFavoriteIsNotResentEvenToAConfirmingDevice) {
+  ResendRig rig;
+  rig.queue_challenge();
+  IoFrame favorite{};
+  create_execute_command(favorite, test::OWN_ID, test::DST_ID, false, CoverCommand::FAVORITE);
+
+  EXPECT_EQ(rig.send(favorite), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  EXPECT_EQ(rig.radio.get_send_count(), 2) << "a second \"My\" could stop the move the first one started";
+}
+
+TEST(Exchange, UnconfirmedExecuteResendStaysInsideTheExchangeBudget) {
+  ResendRig rig;
+  // The first try's final wait (500 ms) plus the re-send gap (750 ms) would start the re-send after
+  // a 1000 ms budget, so it is not attempted, and not waited for either.
+  rig.tuning.exchange_total_budget_ms = 1000;
+  rig.queue_challenge();
+  const uint32_t start = esphome::millis();
+
+  EXPECT_EQ(rig.send(stop_request()), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  EXPECT_EQ(rig.radio.get_send_count(), 2);
+  EXPECT_LT(esphome::millis() - start, rig.tuning.exchange_total_budget_ms)
+      << "a re-send that cannot start inside the budget must not be waited for";
 }
 
 TEST(Exchange, SendAndReceive_StatusPollRetriesAfterUnconfirmedAccept) {
@@ -2043,6 +2177,10 @@ TEST(Exchange, DebugLineRendersEveryFieldADiagnosisNeeds) {
   d.capture_reported_len = 34;
   d.capture_frame_len = 23;
   d.capture_rssi_dbm = -47;
+  d.final_waits = 3;
+  d.final_rx_ignored = 2;
+  d.final_rx_failed = 1;
+  d.final_rx_irq = 0x0084;
 
   char buf[EXCHANGE_DEBUG_LINE_SIZE];
   const int written = render_exchange_debug(buf, sizeof(buf), "DA88B6", d);
@@ -2061,6 +2199,100 @@ TEST(Exchange, DebugLineRendersEveryFieldADiagnosisNeeds) {
   EXPECT_NE(line.find("cap_irq=0x000C"), std::string::npos);
   EXPECT_NE(line.find("cap_reported_len=34 cap_frame_len=23"), std::string::npos);
   EXPECT_NE(line.find("cap_rssi=-47"), std::string::npos);
+  EXPECT_NE(line.find("final_waits=3 final_rx_ignored=2 final_rx_failed=1 final_rx_irq=0x0084"), std::string::npos)
+      << "the final_rx_* fields are what separates a reply lost on this side from one never sent";
+}
+
+// --- Final-wait reception counters -------------------------------------------
+// The cap_* fields keep the first informative reception, which in an authenticated exchange is the
+// device's challenge, and every re-arm inside the final wait clears the capture. So what the final
+// wait heard is counted per event instead. A ManualClock makes a silent wait expire at its deadline
+// the way a real radio's does; under the legacy +1 ms clock every empty-queue return would look
+// like an early failed reception.
+
+namespace {
+/// Queue a valid 0x3C challenge from the device to the hub.
+void queue_device_challenge(MockRadio &radio) {
+  const uint8_t chal_data[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  IoFrame challenge = build_challenge(test::DST_ID, test::OWN_ID, chal_data);
+  uint8_t raw[64];
+  RadioRxPacket pkt{};
+  pkt.len = serialize(challenge, raw, sizeof(raw));
+  memcpy(pkt.data, raw, pkt.len);
+  radio.queue_rx(pkt);
+}
+}  // namespace
+
+TEST(Exchange, FinalWaitCountsFailedAndIgnoredReceptions) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  radio.set_emulate_capture_lifecycle(true);  // real drivers clear and refill the capture per wait
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, false, 100);
+
+  queue_device_challenge(radio);
+  // During the final wait: one reception that fails to decode, one frame from another device.
+  radio.queue_rx_failed_reception(0x0084);
+  const uint8_t other_device[3] = {0x11, 0x22, 0x33};
+  IoFrame unrelated = build_status_response(other_device, test::OWN_ID);
+  uint8_t raw[64];
+  RadioRxPacket unrelated_pkt{};
+  unrelated_pkt.len = serialize(unrelated, raw, sizeof(raw));
+  memcpy(unrelated_pkt.data, raw, unrelated_pkt.len);
+  radio.queue_rx(unrelated_pkt);
+
+  IoFrame response{};
+  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  const auto &d = engine.get_debug();
+  EXPECT_EQ(d.final_waits, 1u);
+  EXPECT_EQ(d.final_rx_failed, 1u) << "the failed reception must be counted before the re-arm clears it";
+  EXPECT_EQ(d.final_rx_irq, 0x0084u);
+  EXPECT_EQ(d.final_rx_ignored, 1u) << "the other device's frame arrived during the wait and was not the reply";
+  EXPECT_EQ(d.capture_frame_len, 15u) << "cap_* still describes the challenge, which is why final_rx_* exists";
+}
+
+TEST(Exchange, SilentFinalWaitCountsNothing) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, false, 100);
+  queue_device_challenge(radio);  // then nothing: the device never closes the exchange
+
+  IoFrame response{};
+  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  const auto &d = engine.get_debug();
+  EXPECT_EQ(d.final_waits, 1u);
+  EXPECT_EQ(d.final_rx_failed, 0u) << "a wait that simply expires is silence, not a failed reception";
+  EXPECT_EQ(d.final_rx_ignored, 0u);
+}
+
+TEST(Exchange, FirstResponseWaitDoesNotFeedTheFinalCounters) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  radio.queue_rx_failed_reception(0x0084);  // lands in the first-response wait; nothing answers
+
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2, /*max_tries=*/1);
+
+  const auto &d = engine.get_debug();
+  EXPECT_EQ(d.final_waits, 0u) << "no challenge, so no final wait ever ran";
+  EXPECT_EQ(d.final_rx_failed, 0u);
 }
 
 TEST(Exchange, UnconfirmedAcceptKeepsTheFinalWaitCaptureForTheLogLine) {
@@ -2698,7 +2930,7 @@ TEST(Exchange, CountersResetZeroesEveryField) {
 
 namespace {
 
-/// Standalone engine on a manual clock with a scripted wake-evidence provider, so the belief is
+/// Standalone engine on a manual clock with a scripted target-evidence provider, so the belief is
 /// driven by explicit "N ms ago" stamps rather than by a hub.
 struct WakeBeliefRig {
   esphome::test_clock::ManualClock clock;
@@ -2706,12 +2938,12 @@ struct WakeBeliefRig {
   RadioDriver *radio_ptr{&radio};
   TuningConfig tuning{};
   ExchangeEngine engine{&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning};
-  decisions::WakeEvidence evidence{};  // all zero = never moved, never heard from
+  decisions::TargetEvidence evidence{};  // all zero = never moved, never heard from
   bool evidence_known{true};
   int provider_calls{0};
 
   WakeBeliefRig() {
-    engine.set_wake_evidence_provider([this](const uint8_t *, decisions::WakeEvidence &out) {
+    engine.set_target_evidence_provider([this](const uint8_t *, decisions::TargetEvidence &out) {
       provider_calls++;
       out = evidence;
       return evidence_known;
@@ -2751,7 +2983,7 @@ using Preambles = std::vector<uint16_t>;
 
 TEST(WakeBelief, NoProviderKeepsTheWakeUpPreambleOnEveryTry) {
   WakeBeliefRig rig;
-  rig.engine.set_wake_evidence_provider({});
+  rig.engine.set_target_evidence_provider({});
   EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
 }
 
@@ -2834,7 +3066,7 @@ TEST(WakeBelief, DebugSnapshotNamesWhyNoBeliefApplied) {
   rig.send(low_power_position_request());
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::APPLIED);
 
-  rig.engine.set_wake_evidence_provider({});
+  rig.engine.set_target_evidence_provider({});
   rig.send(low_power_position_request());
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, Use::NO_PROVIDER);
 }

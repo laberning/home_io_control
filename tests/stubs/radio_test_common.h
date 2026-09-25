@@ -67,6 +67,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   struct RxQueueEntry {
     std::optional<esphome::home_io_control::RadioRxPacket> packet;
     std::optional<int> hold_until_send_count;
+    std::optional<uint16_t> failed_reception_irq;  ///< Set: a reception that started and failed.
   };
 
   // RadioDriver interface
@@ -111,6 +112,20 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
         }
         rx_queue_.pop_front();
         continue;
+      }
+      if (front.failed_reception_irq.has_value()) {
+        // A reception the radio started but could not deliver (CRC or length failure): returns
+        // early, well before the timeout, with a valid capture describing it — the shape a real
+        // driver's failed reception has.
+        const uint16_t irq = *front.failed_reception_irq;
+        rx_queue_.pop_front();
+        this->last_capture_ = esphome::home_io_control::RadioCaptureInfo{};
+        this->last_capture_.valid = true;
+        this->last_capture_.crc_error = true;
+        this->last_capture_.irq_status = irq;
+        this->last_capture_.freq_hz = current_freq_;
+        this->advance_manual_ms_(1);
+        return false;
       }
       std::optional<esphome::home_io_control::RadioRxPacket> entry = front.packet;
       rx_queue_.pop_front();
@@ -167,7 +182,9 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void dump_debug() override {}
 
   // Test helpers
-  void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) { rx_queue_.push_back({pkt, std::nullopt}); }
+  void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) {
+    rx_queue_.push_back({pkt, std::nullopt, std::nullopt});
+  }
   /// Queue `n` empty slices: wait_for_packet() returns false for each, exactly as if nothing had
   /// arrived, without needing to leave the whole queue empty (which a test can't do selectively
   /// mid-sequence). Lets a test express "several genuinely silent waits, then a reply" — distinct
@@ -176,7 +193,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// so has a different timing profile.
   void queue_rx_silence(uint8_t n = 1) {
     for (uint8_t i = 0; i < n; i++)
-      rx_queue_.push_back({std::nullopt, std::nullopt});
+      rx_queue_.push_back({std::nullopt, std::nullopt, std::nullopt});
   }
   /// Queue genuine silence for as long as it takes: wait_for_packet() returns false, without
   /// consuming this entry, until `get_send_count() >= send_count`; the call that finally meets the
@@ -191,7 +208,11 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// discover-confirm try, then answer once 0x31 goes out" without knowing how many
   /// wait_for_packet() calls that silence will actually take.
   /// @param send_count Number of transmitted frames (get_send_count()) to hold silent through.
-  void queue_rx_hold_until_sent(int send_count) { rx_queue_.push_back({std::nullopt, send_count}); }
+  void queue_rx_hold_until_sent(int send_count) { rx_queue_.push_back({std::nullopt, send_count, std::nullopt}); }
+  /// Queue one failed reception: wait_for_packet() returns false after 1 ms (not after its
+  /// timeout) with a valid capture carrying @p irq and the CRC-error flag. Only meaningful under a
+  /// ManualClock, where a genuinely silent wait instead advances time by its whole timeout.
+  void queue_rx_failed_reception(uint16_t irq) { rx_queue_.push_back({std::nullopt, std::nullopt, irq}); }
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }

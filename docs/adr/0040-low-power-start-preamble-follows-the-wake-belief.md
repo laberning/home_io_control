@@ -83,7 +83,7 @@ belief once per exchange (`plan_request_preamble_()`), so it is stable across th
 evidence is looked up once.
 
 **D3 — The engine decides, the hub supplies evidence.** The hub installs a lookup
-(`ExchangeEngine::set_wake_evidence_provider()`) that returns a device's stamps; the engine derives
+(`ExchangeEngine::set_target_evidence_provider()`) that returns a device's stamps; the engine derives
 the belief, checks the tuning switch, and picks the preamble. The whole decision — switch, evidence,
 STOP shortcut, plan — sits in one place and is testable without a hub.
 

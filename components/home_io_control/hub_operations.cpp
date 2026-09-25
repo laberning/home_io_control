@@ -158,23 +158,24 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
   // An unconfirmed acceptance means the device authenticated the request but never closed the
   // exchange. Whether that counts as success depends entirely on what the request was *for*:
-  //   - a command (CMD_EXECUTE) is done — the device has it and is acting on it, and its own
-  //     asynchronous status update carries the result a few seconds later;
+  //   - a command (CMD_EXECUTE) is treated as done. The device has it, and most devices that end
+  //     this way report the result in their own status update a few seconds later. It is not proof
+  //     the command was carried out, though, so the engine has already sent it once more where the
+  //     silence was an anomaly (decisions::retry_after_unconfirmed_accept_is_safe()), and the
+  //     confirmation poll corrects the state if the device did not act;
   //   - a status poll or a name read exists to obtain a payload. Getting none means the question
   //     went unanswered, so it stays a failure and keeps the aggressive auth-shaped poll backoff
   //     that exists for precisely this shape of miss.
   const bool unconfirmed_counts_as_success = request.cmd == CMD_EXECUTE;
 
-  // Counted once, here, for every unconfirmed acceptance — deliberately above the split below,
-  // because the rule is about the outcome and not about how this request chooses to classify it.
-  // The two branches disagree on whether this is a failure; they must not disagree on whether it
-  // happened. It is the only record of the CMD_EXECUTE case, which reports success, and it is what
-  // separates "the device never heard us" from "it heard us and the reply was lost" in the branch
-  // that does count as a failure.
-  if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
-    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr)
-      detail::record_exchange_unconfirmed(*dev);
-  }
+  // Recorded once, here, for every outcome — deliberately above the split below, because the rule
+  // is about the outcome and not about how this request chooses to classify it. The two branches
+  // disagree on whether an unconfirmed acceptance is a failure; they must not disagree on whether it
+  // happened. The unconfirmed count is the only record of the CMD_EXECUTE case, which reports
+  // success, and it is what separates "the device never heard us" from "it heard us and the reply
+  // was lost" in the branch that does count as a failure.
+  if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr)
+    detail::record_exchange_outcome(*dev, request.cmd, outcome);
 
   if (outcome == ExchangeOutcome::FAILED ||
       (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED && !unconfirmed_counts_as_success)) {
@@ -210,8 +211,9 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
     //
     // Log the snapshot anyway. This branch is the one exchange ending that prints nothing at all
     // otherwise, so a device that routinely stops replying here leaves no trace to diagnose, and
-    // the capture fields (did the radio see anything during the final wait?) are exactly what
-    // separates a lost answer from a lost reply.
+    // its final_rx_* fields (did the radio receive anything during the final wait?) are what
+    // separates a lost answer from a lost reply. Its cap_* fields describe the device's challenge,
+    // not that wait.
     this->log_exchange_unconfirmed_debug_(device_id.c_str());
     if (retry_after_fail_ms != 0)
       this->poll_policy_.clear_failure_streaks(device_id);
@@ -510,8 +512,7 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
   // Same rule as execute_request_and_update_(): an unconfirmed acceptance is counted wherever it
   // happens, or a climate device that authenticates and then goes silent stays invisible in the
   // very diagnostic built to surface that, while a cover doing the same thing is counted.
-  if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED)
-    detail::record_exchange_unconfirmed(d);
+  detail::record_exchange_outcome(d, request.cmd, outcome);
   if (outcome == ExchangeOutcome::FAILED) {
     detail::record_exchange_timeout(d, this->exchange_engine_.get_debug().tries);
   } else {

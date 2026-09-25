@@ -2230,3 +2230,93 @@ TEST(HubOperations, WakeBeliefSwitchOffRestoresTheWakeUpPreambleForALowPowerDevi
   for (const auto &config : radio.get_tx_configs())
     EXPECT_EQ(config.preamble_len, LONG_PREAMBLE);
 }
+
+// ============================================================================
+// Unconfirmed EXECUTE re-send — which outcomes mark a device as one that confirms, and the hub path
+// ============================================================================
+// The engine re-sends an unconfirmed CMD_EXECUTE only to a device that has closed an EXECUTE
+// exchange with a reply before (IoDevice::confirms_execute). These pin where that is learned.
+
+TEST(HubOperations, ExecuteAnsweredWithAReplyMarksTheDeviceAsConfirming) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_FALSE(dev->confirms_execute) << "nothing is known about a device until it has answered";
+  radio.queue_rx(test::make_rx_packet(build_status_response(comp.node_id_)));
+
+  ASSERT_TRUE(comp.set_device_position("ABC123", 50));
+
+  EXPECT_TRUE(dev->confirms_execute);
+}
+
+TEST(HubOperations, ExecuteAnsweredWithAnErrorStillMarksTheDeviceAsConfirming) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  radio.queue_rx(test::make_rx_packet(build_error_response(comp.node_id_, RESULT_PRIORITY_LEVEL_LOCKED)));
+
+  EXPECT_FALSE(comp.set_device_position("ABC123", 50)) << "the device refused the command";
+
+  EXPECT_TRUE(comp.get_device("ABC123")->confirms_execute) << "a refusal still closes the exchange";
+}
+
+TEST(HubOperations, UnconfirmedExecuteDoesNotMarkTheDevice) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  radio.queue_rx(test::make_rx_packet(build_challenge_request(dev->node_id, comp.node_id_)));
+
+  ASSERT_TRUE(comp.set_device_position("ABC123", 50)) << "an unconfirmed EXECUTE still counts as accepted";
+
+  EXPECT_FALSE(dev->confirms_execute);
+  EXPECT_EQ(dev->exchange_unconfirmed_count, 1u);
+}
+
+TEST(HubOperations, AnsweredStatusPollDoesNotMarkTheDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  radio.queue_rx(test::make_rx_packet(build_status_response(comp.node_id_)));
+
+  ASSERT_TRUE(comp.request_device_status("ABC123"));
+
+  EXPECT_FALSE(comp.get_device("ABC123")->confirms_execute)
+      << "only an EXECUTE's reply says how the device ends an EXECUTE exchange";
+}
+
+TEST(HubOperations, UnconfirmedStopIsSentTwiceOnceTheDeviceHasConfirmedACommand) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+
+  // First command: answered with a reply, which is how the hub learns this device confirms.
+  radio.queue_rx(test::make_rx_packet(build_status_response(comp.node_id_)));
+  ASSERT_TRUE(comp.set_device_position("ABC123", 50));
+  ASSERT_TRUE(dev->confirms_execute);
+  const size_t sent_before = radio.get_sent_data().size();
+  const int send_count_before = radio.get_send_count();
+
+  // STOP: challenged, never closed, then the re-send is challenged and closed.
+  radio.queue_rx(test::make_rx_packet(build_challenge_request(dev->node_id, comp.node_id_)));
+  radio.queue_rx_hold_until_sent(send_count_before + 3);  // silent until the re-sent STOP is out
+  radio.queue_rx(test::make_rx_packet(build_challenge_request(dev->node_id, comp.node_id_)));
+  radio.queue_rx_hold_until_sent(send_count_before + 4);
+  radio.queue_rx(test::make_rx_packet(build_status_response(comp.node_id_)));
+
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+
+  int executes = 0;
+  for (size_t i = sent_before; i < radio.get_sent_data().size(); ++i) {
+    const auto &sent = radio.get_sent_data()[i];
+    IoFrame f{};
+    if (parse(sent.data(), static_cast<uint8_t>(sent.size()), f) && f.cmd == CMD_EXECUTE)
+      executes++;
+  }
+  EXPECT_EQ(executes, 2) << "the STOP whose challenge answer went unconfirmed is sent once more";
+  EXPECT_EQ(dev->exchange_unconfirmed_count, 0u) << "the re-send was confirmed, so the exchange was too";
+}

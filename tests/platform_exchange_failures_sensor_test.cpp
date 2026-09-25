@@ -127,7 +127,7 @@ TEST(PlatformUnconfirmedExchangesSensor, DeviceUpdatePublishesNewCount) {
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  detail::record_exchange_unconfirmed(*device);
+  detail::record_exchange_outcome(*device, CMD_EXECUTE, ExchangeOutcome::SUCCESS_UNCONFIRMED);
   hub.notify_device_update_("ABC123");
 
   EXPECT_FLOAT_EQ(sensor.state, 1.0f);

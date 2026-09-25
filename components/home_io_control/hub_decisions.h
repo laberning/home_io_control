@@ -127,15 +127,43 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
                                                               : ExchangeFinalResponseDisposition::IGNORE_UNRELATED;
 }
 
+/// True for a CMD_EXECUTE that has the same effect sent twice as sent once. Every EXECUTE this hub
+/// sends names an absolute target (a position, open/close, STOP, a tilt angle, a light level)
+/// except the stored-position selector POS_FAVORITE, used by favourite and vent: on a Somfy motor
+/// "My" while moving means stop, so a second copy can undo what the first one started.
+/// @param request Outbound request frame.
+[[nodiscard]] inline bool is_repeatable_execute(const IoFrame &request) {
+  return request.cmd == CMD_EXECUTE && request.data_len > EXECUTE_MAIN_BYTE_OFFSET &&
+         request.data[EXECUTE_MAIN_BYTE_OFFSET] != POS_FAVORITE;
+}
+
 /// Whether an authenticated-but-unanswered request may be sent again.
 ///
-/// CMD_EXECUTE is the only request the hub sends that moves something, so a retry there is a
-/// second side effect on a device already acting on the first copy. Every other request (status
-/// polls, name reads, management actions, config writes) is idempotent and keeps its full retry
-/// budget when the device authenticates but never closes the exchange.
-/// @param cmd Command byte of the outbound request.
-/// @return true when the remaining retries should still be spent.
-[[nodiscard]] inline bool retry_after_unconfirmed_accept_is_safe(uint8_t cmd) { return cmd != CMD_EXECUTE; }
+/// Every request except CMD_EXECUTE is idempotent (status polls, name reads, management actions,
+/// config writes) and keeps its full retry budget when the device authenticates but never closes
+/// the exchange.
+///
+/// CMD_EXECUTE moves something, and a missing closing reply means two different things depending
+/// on the device. Some devices never close an EXECUTE exchange within the response window and
+/// report through a later status update instead; for them silence is normal and a re-send only
+/// repeats a command already being carried out. For a device that normally does close it, silence
+/// can mean our challenge answer never arrived and the command was not carried out at all (a STOP
+/// that left an awning moving). So an EXECUTE is sent again only to a device known to confirm,
+/// only when repeating it is harmless (is_repeatable_execute()), and at most
+/// UNCONFIRMED_EXECUTE_MAX_RESENDS times per exchange.
+/// @param request                  Outbound request frame.
+/// @param target_confirms_execute  The target has closed an EXECUTE exchange with a reply before
+///                                 (TargetEvidence::confirms_execute).
+/// @param unconfirmed_tries        Tries of this exchange that ended accepted without a closing
+///                                 reply, including the one just ended (1-based).
+/// @return true when the exchange should spend another try.
+[[nodiscard]] inline bool retry_after_unconfirmed_accept_is_safe(const IoFrame &request, bool target_confirms_execute,
+                                                                 uint8_t unconfirmed_tries) {
+  if (request.cmd != CMD_EXECUTE)
+    return true;
+  return target_confirms_execute && is_repeatable_execute(request) &&
+         unconfirmed_tries <= UNCONFIRMED_EXECUTE_MAX_RESENDS;
+}
 
 // == Pairing discovery & key-challenge classification ==
 
@@ -364,17 +392,22 @@ enum class WakeBelief : uint8_t {
 static_assert(LOW_POWER_AWAKE_HOLD_MS <= LOW_POWER_MAX_TRAVEL_MS,
               "wake_belief() relies on moving evidence outliving the maybe-awake hold");
 
-/// @brief The per-device stamps wake_belief() reads. All are `millis()` values, 0 = never.
-struct WakeEvidence {
+/// @brief What the hub knows about the device an exchange is addressed to, as the exchange engine
+/// sees it. The engine has no device registry of its own; the hub hands this over through
+/// ExchangeEngine::set_target_evidence_provider(), and every per-target decision the engine makes
+/// reads from it: wake_belief() and retry_after_unconfirmed_accept_is_safe(). Timestamps are `millis()` values, 0 =
+/// never.
+struct TargetEvidence {
   uint32_t last_moving_evidence_ms;  ///< Last sign the receiver is travelling (see note_moving_evidence(),
                                      ///< clear_moving_evidence()).
   uint32_t last_seen_ms;             ///< Last frame received from the receiver, any command.
+  bool confirms_execute;             ///< The device has closed a CMD_EXECUTE exchange with a reply before.
 };
 
-/// The wake-belief inputs a device record carries.
+/// Build the exchange engine's view of a device record.
 /// @param dev Device record to read.
-[[nodiscard]] inline WakeEvidence wake_evidence(const IoDevice &dev) {
-  return {dev.last_moving_evidence_ms, dev.last_seen_ms};
+[[nodiscard]] inline TargetEvidence target_evidence(const IoDevice &dev) {
+  return {dev.last_moving_evidence_ms, dev.last_seen_ms, dev.confirms_execute};
 }
 
 /// True for a CMD_EXECUTE whose main byte is POS_STOP. A STOP is only ever sent to a receiver that
@@ -392,7 +425,7 @@ struct WakeEvidence {
 /// @param evidence Stamps for the target device.
 /// @param now      Current millis().
 /// @param is_stop  True when the request being sent is a STOP (see is_stop_request()).
-[[nodiscard]] inline WakeBelief wake_belief(const WakeEvidence &evidence, uint32_t now, bool is_stop) {
+[[nodiscard]] inline WakeBelief wake_belief(const TargetEvidence &evidence, uint32_t now, bool is_stop) {
   const auto recent = [now](uint32_t stamp, uint32_t window_ms) { return stamp != 0 && (now - stamp) < window_ms; };
   if (is_stop || recent(evidence.last_moving_evidence_ms, LOW_POWER_MAX_TRAVEL_MS))
     return WakeBelief::AWAKE;

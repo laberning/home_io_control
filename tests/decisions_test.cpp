@@ -474,12 +474,79 @@ namespace {
 
 constexpr uint32_t WAKE_NOW = 1'000'000;  // Far from 0 so "now - stamp" never underflows by accident.
 
-decisions::WakeEvidence evidence(uint32_t moving_ago_ms, uint32_t seen_ago_ms) {
+decisions::TargetEvidence evidence(uint32_t moving_ago_ms, uint32_t seen_ago_ms) {
   // An age of 0 in these tests means "never", i.e. a zero stamp.
-  return {moving_ago_ms == 0 ? 0 : WAKE_NOW - moving_ago_ms, seen_ago_ms == 0 ? 0 : WAKE_NOW - seen_ago_ms};
+  return {moving_ago_ms == 0 ? 0 : WAKE_NOW - moving_ago_ms, seen_ago_ms == 0 ? 0 : WAKE_NOW - seen_ago_ms, false};
 }
 
 }  // namespace
+
+TEST(Decisions, TargetEvidenceCarriesTheDeviceStamps) {
+  // The engine never sees an IoDevice: this builder is its only view of one, so every field it
+  // reads must come from the record, field by field.
+  IoDevice dev;
+  dev.last_moving_evidence_ms = 1234;
+  dev.last_seen_ms = 5678;
+  dev.confirms_execute = true;
+  const decisions::TargetEvidence ev = decisions::target_evidence(dev);
+  EXPECT_EQ(ev.last_moving_evidence_ms, 1234u);
+  EXPECT_EQ(ev.last_seen_ms, 5678u);
+  EXPECT_TRUE(ev.confirms_execute);
+}
+
+// ============================================================================
+// Unconfirmed accept retry — is_repeatable_execute(), retry_after_unconfirmed_accept_is_safe()
+// ============================================================================
+
+namespace {
+
+IoFrame execute_frame(void (*build)(IoFrame &)) {
+  IoFrame f{};
+  build(f);
+  return f;
+}
+
+void build_position(IoFrame &f) { create_execute_position(f, test::OWN_ID, test::DST_ID, false, 40); }
+void build_stop(IoFrame &f) { create_execute_command(f, test::OWN_ID, test::DST_ID, false, CoverCommand::STOP); }
+void build_favorite(IoFrame &f) {
+  create_execute_command(f, test::OWN_ID, test::DST_ID, false, CoverCommand::FAVORITE);
+}
+void build_vent(IoFrame &f) { create_execute_command(f, test::OWN_ID, test::DST_ID, false, CoverCommand::VENT); }
+void build_tilt(IoFrame &f) { create_execute_tilt(f, test::OWN_ID, test::DST_ID, false, 30); }
+void build_status_poll(IoFrame &f) { create_get_status(f, test::OWN_ID, test::DST_ID, false); }
+
+}  // namespace
+
+TEST(Decisions, RepeatableExecuteExcludesOnlyTheStoredPositionSelector) {
+  EXPECT_TRUE(decisions::is_repeatable_execute(execute_frame(build_position)));
+  EXPECT_TRUE(decisions::is_repeatable_execute(execute_frame(build_stop)));
+  EXPECT_TRUE(decisions::is_repeatable_execute(execute_frame(build_tilt)));
+  EXPECT_FALSE(decisions::is_repeatable_execute(execute_frame(build_favorite)))
+      << "a second \"My\" can stop the move the first one started";
+  EXPECT_FALSE(decisions::is_repeatable_execute(execute_frame(build_vent))) << "vent uses the same selector";
+  EXPECT_FALSE(decisions::is_repeatable_execute(execute_frame(build_status_poll))) << "not an EXECUTE at all";
+}
+
+TEST(Decisions, UnconfirmedNonExecuteAlwaysKeepsItsRetryBudget) {
+  const IoFrame poll = execute_frame(build_status_poll);
+  EXPECT_TRUE(decisions::retry_after_unconfirmed_accept_is_safe(poll, false, 1));
+  EXPECT_TRUE(decisions::retry_after_unconfirmed_accept_is_safe(poll, false, 3));
+}
+
+TEST(Decisions, UnconfirmedExecuteIsResentOnceOnlyToADeviceThatConfirms) {
+  const IoFrame stop = execute_frame(build_stop);
+  EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(stop, false, 1))
+      << "a device never seen to confirm may simply never do so: silence is normal there";
+  EXPECT_TRUE(decisions::retry_after_unconfirmed_accept_is_safe(stop, true, 1))
+      << "silence from a device that normally confirms is an anomaly worth one re-send";
+  EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(stop, true, UNCONFIRMED_EXECUTE_MAX_RESENDS + 1))
+      << "a second silent try is not a one-off; a third copy only lengthens the blocked loop";
+}
+
+TEST(Decisions, UnconfirmedFavoriteIsNeverResent) {
+  EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(execute_frame(build_favorite), true, 1));
+  EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(execute_frame(build_vent), true, 1));
+}
 
 TEST(Decisions, IsStopRequestTrueOnlyForAStopExecute) {
   IoFrame stop{};
@@ -541,18 +608,18 @@ TEST(Decisions, WakeBeliefStaleMovingEvidenceWithARecentFrameIsMaybeAwake) {
 
 TEST(Decisions, WakeBeliefAgeArithmeticSurvivesMillisWrap) {
   // Stamp taken 1 s before millis() wraps; now is 1 s after the wrap: an age of 2 s.
-  const decisions::WakeEvidence wrapped{0xFFFFFFFFu - 999u, 0};
+  const decisions::TargetEvidence wrapped{0xFFFFFFFFu - 999u, 0, false};
   EXPECT_EQ(decisions::wake_belief(wrapped, 1000u, false), decisions::WakeBelief::AWAKE);
 }
 
 TEST(Decisions, WakeBeliefStampEqualToNowIsFresh) {
   // Age 0 is a legitimately fresh stamp (taken this very millisecond), unlike a zero *stamp*.
-  EXPECT_EQ(decisions::wake_belief({WAKE_NOW, 0}, WAKE_NOW, false), decisions::WakeBelief::AWAKE);
-  EXPECT_EQ(decisions::wake_belief({0, WAKE_NOW}, WAKE_NOW, false), decisions::WakeBelief::MAYBE_AWAKE);
+  EXPECT_EQ(decisions::wake_belief({WAKE_NOW, 0, false}, WAKE_NOW, false), decisions::WakeBelief::AWAKE);
+  EXPECT_EQ(decisions::wake_belief({0, WAKE_NOW, false}, WAKE_NOW, false), decisions::WakeBelief::MAYBE_AWAKE);
 }
 
 TEST(Decisions, WakeBeliefLastSeenAgeArithmeticSurvivesMillisWrap) {
-  const decisions::WakeEvidence wrapped{0, 0xFFFFFFFFu - 999u};
+  const decisions::TargetEvidence wrapped{0, 0xFFFFFFFFu - 999u, false};
   EXPECT_EQ(decisions::wake_belief(wrapped, 1000u, false), decisions::WakeBelief::MAYBE_AWAKE);
 }
 

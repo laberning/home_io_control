@@ -93,6 +93,17 @@ project controls.
 | **SML electric roller shutter** | `roller_shutter`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1276) | 1W enrollment: Gear on the existing KLI 310, then Enroll. Two-way Discover & Pair finds nothing (issue #17) | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `low_power: false` | Mains-fed, e.g. through a KUX 110 power supply, which has no radio role; see [Sending 1W commands](configuration/oneway-transmit.md) |
 | **Interior blinds behind a KLI 312** | `venetian_blind`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1262) | 1W enrollment: Gear on the existing KLI 312, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |  |
 
+### SIMU
+
+| Device | Type | Status | Route that worked | Key config | Evidence |
+|---|---|---|---|---|---|
+| **T3.5 E BHz DC solar tubular motor** (Autosun 2 BHz) | `roller_shutter` | ✅ Confirmed — Discover & Pair, open, close, live position, device name | Discover & Pair: hold PROG on the BHz transmitter that already controls the motor, release it at the first jog, then press Discover & Pair. | — | Reports its name as `T3.5EBHZ DC`; |
+| **BHz wall transmitter** (1 channel) | 1W remote | ✅ Confirmed for listening | — | — | Its PROG press decodes as an io add-controller frame and opens the motor's two-way pairing window |
+
+SIMU also sells a **T3.5 EHz DC**, without the B. That motor uses SIMU-Hz at 433 MHz, not
+io-homecontrol, so this project cannot control it. Check the motor label or its box for "E BHz"
+before pairing.
+
 ### Other vendors
 
 | Device | Status | Evidence |
