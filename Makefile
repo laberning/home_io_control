@@ -230,15 +230,53 @@ clean-test-cache:
 # test-esp32-lr1121-fwupdate.yaml is excluded here and built by firmware-test-fwupdate instead:
 # it is the only config that downloads firmware images at build time, so keeping it out of this
 # loop keeps `make check` runnable without network access.
-firmware-test:
+#
+# CI splits the compile across two parallel jobs (the `test-compile` matrix in ci.yml), one per
+# group below. The groups are balanced by measured compile time (~5 min each on a cold runner);
+# the two FEM configs share a group so the second compiles warm. Every other
+# config/tests/test-*.yaml must be in exactly one group — firmware-test-groups-check fails
+# otherwise, so a new config can never silently drop out of CI.
+FIRMWARE_TEST_GROUP_1 := test-esp32-arduino.yaml test-esp32-esp-idf-tuning.yaml
+FIRMWARE_TEST_GROUP_2 := test-esp32-esp-idf.yaml test-esp32-sx1262-fem-xy16p35.yaml test-esp32-sx1262-fem.yaml
+FIRMWARE_TEST_EXCLUDED := test-esp32-lr1121-fwupdate.yaml
+
+# Configs compiled by firmware-test; override to compile a subset, e.g.
+# `make firmware-test FIRMWARE_TEST_CONFIGS="$(FIRMWARE_TEST_GROUP_1)"`.
+FIRMWARE_TEST_CONFIGS ?= $(FIRMWARE_TEST_GROUP_1) $(FIRMWARE_TEST_GROUP_2)
+
+firmware-test: firmware-test-groups-check
 	@python3 scripts/check-build-cache.py --clean
 	@echo "Compiling test configurations in config/tests/"
-	@for cfg in config/tests/test-*.yaml; do \
-	  name=$$(basename "$$cfg"); \
-	  case "$$name" in test-esp32-lr1121-fwupdate.yaml) echo "=== Skipping $$name (needs network; make firmware-test-fwupdate) ==="; continue;; esac; \
+	@for name in $(FIRMWARE_TEST_CONFIGS); do \
 	  echo "=== Compiling $$name ==="; \
 	  docker compose run --rm esphome compile "/config/tests/$$name" || exit 1; \
 	done
+
+firmware-test-group-1:
+	@$(MAKE) --no-print-directory firmware-test FIRMWARE_TEST_CONFIGS="$(FIRMWARE_TEST_GROUP_1)"
+
+firmware-test-group-2:
+	@$(MAKE) --no-print-directory firmware-test FIRMWARE_TEST_CONFIGS="$(FIRMWARE_TEST_GROUP_2)"
+
+# Every config/tests/test-*.yaml must appear exactly once across the groups + exclusion list.
+firmware-test-groups-check:
+	@status=0; \
+	listed=" $(FIRMWARE_TEST_GROUP_1) $(FIRMWARE_TEST_GROUP_2) $(FIRMWARE_TEST_EXCLUDED) "; \
+	for cfg in config/tests/test-*.yaml; do \
+	  name=$$(basename "$$cfg"); \
+	  count=$$(printf '%s\n' $$listed | grep -cx "$$name"); \
+	  if [ "$$count" -ne 1 ]; then \
+	    echo "ERROR: $$name appears $$count times in FIRMWARE_TEST_GROUP_1/_2/EXCLUDED (Makefile); expected exactly 1"; \
+	    status=1; \
+	  fi; \
+	done; \
+	for name in $$listed; do \
+	  if [ ! -f "config/tests/$$name" ]; then \
+	    echo "ERROR: $$name is listed in a FIRMWARE_TEST_* group (Makefile) but config/tests/$$name does not exist"; \
+	    status=1; \
+	  fi; \
+	done; \
+	exit $$status
 
 # Compile test for the LR1121 firmware-update + bootloader-rewrite features. Separate from
 # firmware-test because it fetches two images from GitHub. Without it, IOHOME_LR1121_FIRMWARE_UPDATE
@@ -415,6 +453,7 @@ test-unit: unit-test
 		docs-prose-check \
 		key-material-scan \
 		fuzz-frame fuzz-soft-phy \
-		firmware-test unit-test unit-test-asan py-test host-run clean-host lint test check \
+		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
+		unit-test unit-test-asan py-test host-run clean-host lint test check \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

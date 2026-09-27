@@ -76,11 +76,18 @@ jobs:
       - uses: actions/checkout@v7
       - run: make key-material-scan
 
+  # Two parallel halves of `make firmware-test`; the groups live in the Makefile
+  # (FIRMWARE_TEST_GROUP_1/_2), and firmware-test-groups-check fails if a config is in neither.
   test-compile:
+    name: test-compile (group ${{ matrix.group }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2]
     steps:
       - uses: actions/checkout@v7
-      - run: make firmware-test
+      - run: make firmware-test-group-${{ matrix.group }}
 
   unit-test:
     runs-on: ubuntu-24.04
