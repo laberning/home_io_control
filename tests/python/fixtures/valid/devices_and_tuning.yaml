@@ -1,0 +1,38 @@
+# expect: valid
+# One entity of each device-bound platform plus a tuning block with a select-style option.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  tuning:
+    sx1262_rx_bandwidth: "117.3"
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "FEEB1E"
+    io_device_type: awning
+    linked_remotes: ["class:awning", "class:0x14"]
+    status_poll_interval: 60s
+
+light:
+  - platform: home_io_control
+    name: "Dimmer"
+    io_device_id: "1A2B3C"
+    dimmable: true
+
+switch:
+  - platform: home_io_control
+    name: "Plug"
+    io_device_id: "2B3C4D"
+
+lock:
+  - platform: home_io_control
+    name: "Door"
+    io_device_id: "3C4D5E"
+
+climate:
+  - platform: home_io_control
+    name: "Radiator"
+    io_device_id: "4D5E6F"

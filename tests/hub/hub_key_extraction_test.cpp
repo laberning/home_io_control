@@ -1254,7 +1254,7 @@ TEST(HubKeyExtraction, NodeVerifyChallengeExtendsGraceWindow) {
 // The ready-to-paste extraction report
 // ========================================================================================
 // build_key_extraction_report() is pure, so these assert the exact text a user will be asked to
-// copy — mirroring HubOneWayKeyAdoption's report tests (tests/hub_oneway_key_adoption_test.cpp),
+// copy — mirroring HubOneWayKeyAdoption's report tests (tests/hub/hub_oneway_key_adoption_test.cpp),
 // the host ESP_LOG stub discards its arguments, so testing the builder directly is the only way
 // to pin the report's contents.
 

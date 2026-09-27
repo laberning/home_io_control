@@ -5,7 +5,7 @@
 /// @ingroup hioc_radio
 ///
 /// Entirely wrapped in IOHOME_LR1121_FIRMWARE_UPDATE so it compiles to nothing unless a user
-/// opts in (components/home_io_control/__init__.py's `lr1121_firmware_update:` block sets the
+/// opts in (components/home_io_control/lr1121_update_codegen.py's `lr1121_firmware_update:` block sets the
 /// define). Bootloader-mode code is deliberately kept out of RadioDriver and
 /// RadioLR1121 — this class reimplements its own SPI transport against SpiAccess directly rather
 /// than sharing RadioLR1121's, because RadioLR1121::write_command_() takes a `uint8_t` length and

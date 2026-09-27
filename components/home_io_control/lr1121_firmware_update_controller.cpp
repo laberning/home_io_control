@@ -9,12 +9,12 @@
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
 
-// Only ever generated when this define is set (components/home_io_control/__init__.py), so this
+// Only ever generated when this define is set (components/home_io_control/lr1121_update_codegen.py), so this
 // #include must stay inside the guard above.
 #include "lr1121_firmware_update_image.h"
 
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
-// Only ever generated when the nested bootloader: sub-block is configured (__init__.py's
+// Only ever generated when the nested bootloader: sub-block is configured (lr1121_update_codegen.py's
 // _create_lr1121_bootloader_update()), so this #include must stay inside this guard too.
 #include "lr1121_bootloader_loader_image.h"
 #endif

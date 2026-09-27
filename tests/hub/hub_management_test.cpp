@@ -856,7 +856,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
 // tests/corpus/captures/discovery/somfy_izymo_dimmer_discovery_spe_paired_rollcall.yaml:
 // awning "04 00 30 E1 F2 02 CC FC 03" -> HORIZONTAL_AWNING/0, backbone 30E1F2, MANUFACTURER_SOMFY;
 // dimmer "01 80 41 5C E4 02 CC 07 EB" -> LIGHT/0, backbone 415CE4, MANUFACTURER_SOMFY. Using real
-// bytes here and in the corpus replay tests (tests/corpus_spe_rollcall_replay_test.cpp) means
+// bytes here and in the corpus replay tests (tests/corpus/corpus_spe_rollcall_replay_test.cpp) means
 // both tell the same story.
 
 TEST(HubManagement, ScanPairedDevicesRejectsWhenHubNotInitialized) {

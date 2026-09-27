@@ -3,7 +3,7 @@
 ///        device-error clear, the bounded XOSC-start retry ladder, the bare-crystal path, and the
 ///        device-error bit decoder.
 ///
-/// Mirrors the harness/mocking style of tests/radio_lr1121_test.cpp (ScriptedSpi + a testable
+/// Mirrors the harness/mocking style of tests/radio/radio_lr1121_test.cpp (ScriptedSpi + a testable
 /// subclass); SX1262 opcodes are a single byte, so transactions are matched on transaction[0]
 /// rather than ScriptedSpi::find_opcode(), which assumes the LR1121's 16-bit opcodes.
 
@@ -29,7 +29,7 @@ namespace {
 using TestableRadioSX1262 = test::TestableSoftPhy<RadioSX1262>;
 using TestableRadioLR1121 = test::TestableSoftPhy<RadioLR1121>;
 
-// TCXO_VOLTAGE_OPTIONS code for "1_8V" — the schema default (components/home_io_control/__init__.py,
+// TCXO_VOLTAGE_OPTIONS code for "1_8V" — the schema default (components/home_io_control/hub_validators.py,
 // hub_core.h DEFAULT_TCXO_VOLTAGE_SETTING_1P8V). 0-based: it is the chip's own SetDIO3AsTCXOCtrl /
 // SetTcxoMode voltage code with no mapping.
 constexpr uint8_t TCXO_CODE_1_8V = 0x02;

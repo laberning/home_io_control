@@ -1,0 +1,9 @@
+# expect-error: sx1262_rx_bandwidth must be one of
+# covers: tuning._one_of_string
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  tuning:
+    sx1262_rx_bandwidth: "100.0"

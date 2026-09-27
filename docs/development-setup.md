@@ -32,6 +32,12 @@ Use the Ubuntu command above inside a WSL2 distribution.
 
 ## Testing
 
+Host tests live in one directory per layer: `tests/proto/`, `tests/radio/`, `tests/hub/`,
+`tests/platform/`, `tests/oneway/` and `tests/tuning/` test that layer's code; `tests/corpus/` replays
+the golden-frame corpus, `tests/sync/` checks that C++ and Python tables agree, and `tests/harness/`
+tests the host stubs themselves. Put a new `*_test.cpp` in the directory of the code it tests; the
+Makefile finds it there. Any compiler warning fails the host build.
+
 ```bash
 # Run host-based Google Test unit tests (no ESP32 needed)
 make unit-test
@@ -39,7 +45,11 @@ make unit-test
 # Compile all platform configurations (firmware test)
 make firmware-test
 
-# Run all tests (unit + firmware compilation)
+# Codegen tests: validators and accept/reject YAML fixtures, run in the ESPHome container.
+# Every function that raises cv.Invalid needs a covering case, or this fails and names it.
+make py-test
+
+# Run all tests (unit, ASan, codegen, firmware compilation)
 make test
 
 # Full QA: lint + tests

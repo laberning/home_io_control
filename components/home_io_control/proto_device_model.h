@@ -48,7 +48,7 @@ enum class DeviceType : uint8_t {
   // VENTILATION_POINT (capability class SWITCH), EXTERIOR_HEATING and HEAT_PUMP (both CLIMATE)
   // decode and carry capability classes but are deliberately withheld from YAML: no platform
   // consumes CLIMATE yet, and the climate/ventilation platform is unbuilt. They are allowlisted
-  // in device_type_sync_test.cpp's reverse check; move them into __init__.py's
+  // in device_type_sync_test.cpp's reverse check; move them into hub_validators.py's
   // DEVICE_TYPE_OPTIONS (and yaml_device_type_name()) when that platform lands.
   VENTILATION_POINT = 0x14,  ///< Ventilation point.
   EXTERIOR_HEATING = 0x15,   ///< Exterior heating.

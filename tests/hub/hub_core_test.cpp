@@ -645,7 +645,7 @@ TEST(HubCore, LoopKeyExtractionHoldRespectsReceptionInProgressGuard) {
 /// The CH2 hold is a plain deadline (key_extraction_hold_deadline_ms_), deliberately decoupled
 /// from key_extraction_ctx_.state: letting the hold lapse must NOT touch state. See
 /// HubKeyExtraction.LateKeyTransferAfterHoldExpiryStillCompletesExtraction
-/// (tests/hub_key_extraction_test.cpp) for the end-to-end proof that a real hub's frame arriving
+/// (tests/hub/hub_key_extraction_test.cpp) for the end-to-end proof that a real hub's frame arriving
 /// after this expiry is still accepted.
 TEST(HubCore, KeyExtractionHoldExpiresAfterInactivityWithoutTouchingState) {
   TestableHubComponent comp;

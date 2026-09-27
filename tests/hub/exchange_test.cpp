@@ -1365,7 +1365,7 @@ TEST(Exchange, StatusUpdateAckUsesDriverResponsePreambleOnAllChannels) {
 // ============================================================================
 // Exercises ExchangeEngine directly (not through IOHomeControlComponent) to isolate this
 // primitive from the action layer that drives it (ManagementActions::scan_paired_devices(),
-// covered separately in tests/hub_management_test.cpp). A small pairing_discovery_wait_ms keeps
+// covered separately in tests/hub/hub_management_test.cpp). A small pairing_discovery_wait_ms keeps
 // host-test iteration counts meaningful: in host tests millis() advances by exactly 1 per call,
 // and MockRadio::wait_for_packet() returns false immediately once its queue is empty rather than
 // honouring the timeout.
@@ -3195,4 +3195,109 @@ TEST(WakeBelief, DiscoverConfirmStyleCallersStillGetTheAsleepRule) {
   rig.moved_ago(1000);
   EXPECT_EQ(rig.engine.request_preamble_for(low_power_position_request()), LONG_PREAMBLE);
   EXPECT_EQ(rig.provider_calls, 0);
+}
+
+// ============================================================================
+// Transmit observer — transmit_frame() reports LBT deferrals and sent frames to the attached
+// TransmitObserver (PairingTelemetry during pairing; any future TX accounting the same way).
+// ============================================================================
+
+namespace {
+
+/// Records every TransmitObserver callback it receives.
+struct RecordingTransmitObserver : TransmitObserver {
+  struct Sent {
+    uint8_t cmd;
+    RadioTxConfig config;
+    uint8_t wire_len;
+  };
+  std::vector<int16_t> lbt_defers;
+  std::vector<Sent> sent;
+
+  void on_lbt_defer(int16_t rssi_dbm) override { this->lbt_defers.push_back(rssi_dbm); }
+  void on_transmit(const IoFrame &frame, const RadioTxConfig &config, uint8_t wire_len) override {
+    this->sent.push_back({frame.cmd, config, wire_len});
+  }
+};
+
+/// A hub whose engine talks to `radio`, with the node ID set so frames serialize.
+void wire_observer_rig(TestableComponent &comp, MockRadio &radio) {
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+}
+
+}  // namespace
+
+TEST(Exchange, TransmitObserverSeesSentFrameWithItsTxShape) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  RecordingTransmitObserver observer;
+  comp.exchange_engine_.set_transmit_observer(&observer);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH3, LONG_PREAMBLE));
+
+  ASSERT_EQ(observer.sent.size(), 1u);
+  EXPECT_EQ(observer.sent[0].cmd, request.cmd);
+  EXPECT_EQ(observer.sent[0].config.freq_hz, FREQ_CH3);
+  EXPECT_EQ(observer.sent[0].config.preamble_len, LONG_PREAMBLE);
+  // The length the observer is told is the one the radio was handed.
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  EXPECT_EQ(observer.sent[0].wire_len, radio.get_sent_data()[0].size());
+  EXPECT_TRUE(observer.lbt_defers.empty());
+}
+
+TEST(Exchange, TransmitObserverSeesEachLbtDeferralWithItsRssi) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  RecordingTransmitObserver observer;
+  comp.exchange_engine_.set_transmit_observer(&observer);
+
+  // Two busy reads, then MockRadio's clear default: two deferrals, then the frame goes out.
+  radio.queue_rssi(-50);
+  radio.queue_rssi(-60);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_EQ(observer.lbt_defers, (std::vector<int16_t>{-50, -60}));
+  EXPECT_EQ(observer.sent.size(), 1u);
+}
+
+TEST(Exchange, TransmitObserverNotToldAboutAFailedSend) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  RecordingTransmitObserver observer;
+  comp.exchange_engine_.set_transmit_observer(&observer);
+
+  radio.queue_tx_result(false);
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  EXPECT_FALSE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_TRUE(observer.sent.empty());
+}
+
+TEST(Exchange, DetachedTransmitObserverHearsNothing) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  RecordingTransmitObserver observer;
+  comp.exchange_engine_.set_transmit_observer(&observer);
+  comp.exchange_engine_.set_transmit_observer(nullptr);
+
+  radio.queue_rssi(-50);
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_TRUE(observer.lbt_defers.empty());
+  EXPECT_TRUE(observer.sent.empty());
 }

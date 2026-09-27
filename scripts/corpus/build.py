@@ -48,7 +48,7 @@ EXCHANGE_OUTCOME_ENUM = {
 # enums give the same name a *different* numeric value: PairingDiscoveryDisposition::ACCEPT is
 # 2, while ExchangeFinalResponseDisposition::ACCEPT and PairingKeyChallengeDisposition::ACCEPT
 # are both 1 — that one case is disambiguated as DISCOVERY_ACCEPT. Every value here is pinned
-# against the real enum by a static_assert in tests/corpus_classification_test.cpp, so a reorder
+# against the real enum by a static_assert in tests/corpus/corpus_classification_test.cpp, so a reorder
 # of hub_decisions.h breaks the build instead of silently mis-scoring a capture.
 CLASSIFICATION_ENUM = {
     "IGNORE_UNRELATED": 0,  # ExchangeFirstResponseDisposition / ExchangeFinalResponseDisposition

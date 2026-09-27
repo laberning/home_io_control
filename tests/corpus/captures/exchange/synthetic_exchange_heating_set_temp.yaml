@@ -9,7 +9,7 @@ description: >
   reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md (low byte 0xCD = 205,
   high byte 0x00) = 20.5 C. HMAC on the 0x3D frame is computed under the public corpus key
   (tests/support/test_helpers.h :: TEST_SYSTEM_KEY), so this fixture's crypto is safe to commit —
-  see tests/corpus_bootstrap_dump_test.cpp (DISABLED_PrintSyntheticFrames) for how these bytes
+  see tests/corpus/corpus_bootstrap_dump_test.cpp (DISABLED_PrintSyntheticFrames) for how these bytes
   were generated from real serialize()/crc_ccitt()/create_challenge_resp() output. No Atlantic /
   Thermor / Sauter hardware exists in this project; the exchange *shape* is cross-checked against
   the real-device capture

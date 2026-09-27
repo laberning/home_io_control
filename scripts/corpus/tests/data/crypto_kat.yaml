@@ -2,8 +2,8 @@
 #
 # Generated from the real C++ implementation, not the Python port — run:
 #   ./build/test_home_io_control --gtest_also_run_disabled_tests --gtest_filter='*CryptoKat*'
-# (tests/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors). The same three
-# vectors are pinned again, hardcoded, in tests/corpus_crypto_test.cpp — this file and that test
+# (tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors). The same three
+# vectors are pinned again, hardcoded, in tests/corpus/corpus_crypto_test.cpp — this file and that test
 # must never be regenerated independently of each other; if hub_decisions.h, TEST_SYSTEM_KEY, or
 # proto_crypto.cpp's IV/checksum logic ever changes, regenerate both from the same run.
 #

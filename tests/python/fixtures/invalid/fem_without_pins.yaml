@@ -1,0 +1,9 @@
+# expect-error: fem: kct8103l requires vfem_pin, fem_en_pin, fem_pa_pin to be set
+# covers: hub_validators._validate_fem
+# A FEM profile names the part, never its pins: a board without them would not transmit.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  fem: kct8103l

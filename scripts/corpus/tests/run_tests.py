@@ -119,7 +119,7 @@ def test_merge_prefers_nonzero_freq_and_t_ms() -> None:
 
 def test_crc_ccitt_matches_known_vector() -> None:
     # Cross-check against tests/corpus/captures/oneway/synthetic_oneway_close.yaml, whose bytes
-    # were generated from the real C++ crc_ccitt() (tests/corpus_bootstrap_dump_test.cpp).
+    # were generated from the real C++ crc_ccitt() (tests/corpus/corpus_bootstrap_dump_test.cpp).
     payload = bytes.fromhex("EC 00 00 00 BF AA BB CC 00 01 41 C8 00".replace(" ", ""))
     assert protolib.crc_ccitt(payload) == 0x7E35, f"crc mismatch: 0x{protolib.crc_ccitt(payload):04X}"
 
@@ -389,8 +389,8 @@ def _run_ingest_main(argv: "list[str]") -> int:
 
 def test_crypto_kat_vectors_match_cpp() -> None:
     """Python port (protolib.create_hmac) must reproduce the vectors generated from the real
-    C++ implementation (tests/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors),
-    pinned again as a hardcoded C++ test in tests/corpus_crypto_test.cpp. A divergence between
+    C++ implementation (tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors),
+    pinned again as a hardcoded C++ test in tests/corpus/corpus_crypto_test.cpp. A divergence between
     the two implementations fails this gate.
     """
     kat_path = SCRIPTS_DIR / "tests" / "data" / "crypto_kat.yaml"

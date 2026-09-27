@@ -199,7 +199,7 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
 }
 
 /// Prints cross-language create_hmac() KAT vectors for scripts/corpus/tests/data/crypto_kat.yaml
-/// and the hardcoded pinned vectors in tests/corpus_crypto_test.cpp. Run explicitly and copy the
+/// and the hardcoded pinned vectors in tests/corpus/corpus_crypto_test.cpp. Run explicitly and copy the
 /// printed lines by hand — this is not part of any assertion, it's a generator:
 ///   ./build/test_home_io_control --gtest_also_run_disabled_tests --gtest_filter='*CryptoKat*'
 TEST(BootstrapDump, DISABLED_PrintCryptoKatVectors) {

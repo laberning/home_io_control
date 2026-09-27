@@ -1534,7 +1534,7 @@ TEST(PairingHelpers, DiscoverConfirm_SetsPhaseOncePerStateNotPerTry) {
   // Wires ExchangeEngine::transmit_frame()'s TX-recording hook to the same PairingTelemetry
   // object the shadow pairing_engine_ below shares with it, exactly as discover_and_pair() does
   // for the real hub member -- record_tx() only fires when this is set.
-  comp.exchange_engine_.set_pairing_telemetry(&comp.pairing_telemetry_);
+  comp.exchange_engine_.set_transmit_observer(&comp.pairing_telemetry_);
 
   const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
   pairing::PairingContext context;

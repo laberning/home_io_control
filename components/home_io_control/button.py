@@ -5,7 +5,7 @@
 ##
 ## Exposes the same Home Assistant button entity and companion "Last Pairing Result" diagnostic
 ## text sensor that `home_io_control.discover_and_pair_button: true` now creates directly (see
-## __init__.py's `_create_discover_and_pair_button()`). Kept working, with a deprecation warning,
+## hub_entities.py's `_create_discover_and_pair_button()`). Kept working, with a deprecation warning,
 ## for configs that predate that flag -- see `_warn_deprecated_platform()` below and ADR 0036.
 
 import logging

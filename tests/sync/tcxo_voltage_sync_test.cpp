@@ -4,7 +4,7 @@
 /// The SX1262 `SetDIO3AsTCXOCtrl` and LR1121 `SetTcxoMode` commands take the identical 0-based
 /// voltage code (0x00 = 1.6 V .. 0x07 = 3.3 V, Semtech SX1261/2 datasheet Table 13-35). Both
 /// drivers pass the generated `TCXO_VOLTAGE_OPTIONS` integer straight through with no mapping,
-/// so the Python table has to *be* the chip encoding. This test parses `__init__.py` at runtime
+/// so the Python table has to *be* the chip encoding. This test parses `hub_validators.py` at runtime
 /// (Python stays the single source of truth, same mechanism as device_type_sync_test.cpp) and
 /// pins:
 ///   - the voltage rungs are 0-based and contiguous, 1_6V..3_3V -> 0x00..0x07 in order;
@@ -27,7 +27,7 @@ using namespace esphome::home_io_control;
 namespace {
 
 std::map<std::string, uint8_t> parse_options() {
-  auto entries = test::parse_python_uint8_dict("components/home_io_control/__init__.py", "TCXO_VOLTAGE_OPTIONS");
+  auto entries = test::parse_python_uint8_dict("components/home_io_control/hub_validators.py", "TCXO_VOLTAGE_OPTIONS");
   std::map<std::string, uint8_t> by_name;
   for (const auto &[name, value] : entries)
     by_name[name] = value;

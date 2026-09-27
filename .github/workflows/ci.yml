@@ -84,6 +84,12 @@ jobs:
       - run: pip install --user pyyaml
       - run: make unit-test
 
+  py-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: make py-test
+
   unit-test-asan:
     runs-on: ubuntu-24.04
     steps:

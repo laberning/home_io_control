@@ -214,7 +214,7 @@ class IOHomeControlComponent : public Component,
   /// Set radio type ("sx1276", "sx1262", or "lr1121"); required by the YAML schema.
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
   /// Set the SX1262/LR1121 TCXO control-voltage code (0-based, `TCXO_VOLTAGE_OPTIONS` in
-  /// `__init__.py`: `1_6V`=0x00 .. `3_3V`=0x07), or `TCXO_VOLTAGE_NONE` (0xFF) for a board with a
+  /// `hub_validators.py`: `1_6V`=0x00 .. `3_3V`=0x07), or `TCXO_VOLTAGE_NONE` (0xFF) for a board with a
   /// bare crystal and no DIO3-controlled TCXO.
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
 
@@ -770,7 +770,7 @@ class IOHomeControlComponent : public Component,
 
   /// True while the key-extraction responder is mid-attempt and still within its bounded CH2-hold
   /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
-  /// — kept on the hub because defer_background_poll_() and tests/hub_core_test.cpp reach it here,
+  /// — kept on the hub because defer_background_poll_() and tests/hub/hub_core_test.cpp reach it here,
   /// mirroring the two set_key_extraction_armed* bindings.
   [[nodiscard]] bool key_extraction_awaiting_reply_() const { return this->key_extraction_.awaiting_reply(); }
 

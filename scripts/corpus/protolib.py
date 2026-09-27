@@ -7,8 +7,8 @@ toolchain in the loop. The AES-128-ECB primitive itself is NOT reimplemented her
 standard algorithm, so this uses the `cryptography` package; only the proprietary
 checksum/IV/truncation wrapper around it (proto_crypto.cpp) is ported by hand. Cross-language
 agreement is pinned by scripts/corpus/tests/data/crypto_kat.yaml against hardcoded vectors in
-tests/corpus_crypto_test.cpp — both generated from the real C++ implementation
-(tests/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors).
+tests/corpus/corpus_crypto_test.cpp — both generated from the real C++ implementation
+(tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors).
 """
 
 import re

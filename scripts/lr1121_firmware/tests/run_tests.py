@@ -221,7 +221,7 @@ def test_validate_bootloader_reachability_rejects_inverted_busy_pin() -> None:
 def _make_fetch(bin_data: bytes, sidecar_text: str | None):
     url_suffix = "lr1121/transceiver/lr1121_transceiver_0103.bin"
 
-    # expected_hash is accepted (a cache-key hint for __init__.py's real fetch) and ignored --
+    # expected_hash is accepted (a cache-key hint for lr1121_update_codegen.py's real fetch) and ignored --
     # this fake has no cache, so it plays no role here.
     def fetch(url: str, expected_hash: str | None = None) -> bytes:
         del expected_hash

@@ -1,10 +1,10 @@
 /// @file fem_tx_power_sync_test.cpp
-/// @brief Guards the FEM `tx_power` ceilings in `__init__.py` against the driver's own estimate.
+/// @brief Guards the FEM `tx_power` ceilings in `hub_validators.py` against the driver's own estimate.
 ///
 /// `FEM_TX_POWER_MAX_QUIET` (Python) is the highest `tx_power` per FEM part whose estimated
 /// antenna-port power stays at or under the 868 MHz SRD limit of +14 dBm; the schema warns above
 /// it, and docs/hardware.md quotes the same numbers. The estimate itself lives in C++
-/// (`sx1262_fem_tx_estimate()`), with no shared header. This test parses `__init__.py` at runtime
+/// (`sx1262_fem_tx_estimate()`), with no shared header. This test parses `hub_validators.py` at runtime
 /// (Python stays the source of truth, same mechanism as tcxo_voltage_sync_test.cpp) and pins each
 /// ceiling to the estimate: the ceiling itself stays within the limit, the next setting exceeds it.
 
@@ -36,7 +36,8 @@ constexpr FemUnderTest kFemProfiles[] = {
 }  // namespace
 
 TEST(FemTxPowerSync, PythonCeilingsSitExactlyAtTheSrdLimitOfTheDriverEstimate) {
-  auto ceilings = test::parse_python_uint8_dict("components/home_io_control/__init__.py", "FEM_TX_POWER_MAX_QUIET");
+  auto ceilings =
+      test::parse_python_uint8_dict("components/home_io_control/hub_validators.py", "FEM_TX_POWER_MAX_QUIET");
   ASSERT_EQ(ceilings.size(), std::size(kFemProfiles)) << "a FEM part was added or removed on one side only";
 
   for (const auto &fem : kFemProfiles) {

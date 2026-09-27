@@ -4,11 +4,11 @@
 /// @brief Structured per-attempt telemetry recorder for the pairing flow.
 /// @ingroup hioc_hub
 ///
-/// PairingTelemetry is a fixed-size recorder owned by the hub and shared (by pointer) with
-/// ExchangeEngine and PairingEngine, mirroring how TuningConfig is injected into both. It
-/// records every radio-visible event during a `discover_and_pair()` attempt — TX, RX (accepted
-/// and rejected), LBT defers, and hop/phase transitions — so a single attempt can be summarized
-/// as a human-readable log block and a frozen, machine-readable "Last Pairing Result" string.
+/// PairingTelemetry is a fixed-size recorder owned by the hub and shared by reference with
+/// PairingEngine, which also attaches it to ExchangeEngine as its TransmitObserver for the length
+/// of an attempt (that is how TX and LBT events reach it). It records every radio-visible event during a
+/// `discover_and_pair()` attempt — TX, RX (accepted and rejected), LBT defers, and hop/phase transitions — so a single
+/// attempt can be summarized as a human-readable log block and a frozen, machine-readable "Last Pairing Result" string.
 ///
 /// Telemetry events store only cmd/src/rssi/phase metadata, never frame payload bytes, so key
 /// material cannot appear here by construction — there is no redaction to apply because there
@@ -17,6 +17,7 @@
 #include "hub_pairing.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
+#include "transmit_observer.h"
 
 #include <cstdint>
 #include <string>
@@ -88,8 +89,15 @@ enum class PairingOutcome : uint8_t {
 ///
 /// Owned by the hub, reset at the start of every `discover_and_pair()` call. Not thread-safe —
 /// pairing is a single blocking call on the main loop, matching the rest of this component.
-class PairingTelemetry {
+class PairingTelemetry : public TransmitObserver {
  public:
+  /// TransmitObserver: records a TX event for the frame's command byte (see record_tx()).
+  void on_transmit(const IoFrame &frame, const RadioTxConfig &config, uint8_t wire_len) override {
+    this->record_tx(frame.cmd);
+  }
+  /// TransmitObserver: records an LBT_DEFER event (see record_lbt_defer()).
+  void on_lbt_defer(int16_t rssi_dbm) override { this->record_lbt_defer(rssi_dbm); }
+
   /// Reset all state and start a new attempt. Call once at `discover_and_pair()` entry.
   void begin();
 

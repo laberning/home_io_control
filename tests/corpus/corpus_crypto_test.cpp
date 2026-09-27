@@ -6,12 +6,14 @@
 /// does (proto_commands.cpp) and asserts the recomputed HMAC, under the public corpus key
 /// (test_helpers.h :: TEST_SYSTEM_KEY), matches the captured `0x3D` bytes byte-for-byte.
 /// This pins IV construction, checksum-byte derivation, and truncation against a real
-/// exchange shape instead of only synthetic vectors (tests/proto_crypto_test.cpp already
+/// exchange shape instead of only synthetic vectors (tests/proto/proto_crypto_test.cpp already
 /// covers the synthetic case).
 ///
-/// Captures that do not match the expected shape cause a loud failure (a corpus bug), not a
-/// silent pass; captures with no matching content (e.g. no `0x32` key-transfer frame yet) are
-/// skipped with a counted GTEST_SKIP(), never a vacuous pass.
+/// Each suite's parameter list holds only captures that contain the frames it checks (e.g. only
+/// pairing captures that reached the `0x32` key transfer), so nothing is skipped and a new skip
+/// would stand out. A capture that claims success but lacks the frames still fails loudly (a
+/// corpus bug), and CorpusCryptoSelection fails if a filter ever selects nothing, which would
+/// otherwise make its suite vanish silently.
 
 #include "corpus_generated.h"
 #include "proto_commands.h"
@@ -32,24 +34,113 @@ using namespace esphome::home_io_control;
 
 namespace {
 
-/// Captures that promise `key: corpus` and describe an authenticated command exchange —
-/// the only shape corpus_crypto_test.cpp knows how to replay today.
+/// The frames an authenticated-command replay needs, located by their *parsed* cmd byte rather
+/// than expect.cmd (cmd expectations are optional per the corpus schema, so a valid capture that
+/// omits them must still be locatable): the origin is the first tx frame, then the first rx 0x3C
+/// challenge and the first tx 0x3D response after it. Members stay nullptr when absent.
+struct AuthenticatedExchangeFrames {
+  const corpus::CorpusFrame *origin{nullptr};
+  const corpus::CorpusFrame *challenge{nullptr};
+  const corpus::CorpusFrame *response{nullptr};
+};
+
+AuthenticatedExchangeFrames find_authenticated_exchange_frames(const corpus::CorpusCapture *capture) {
+  AuthenticatedExchangeFrames found;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const corpus::CorpusFrame &cf = capture->frames[i];
+    if (found.origin == nullptr && cf.tx) {
+      found.origin = &cf;
+      continue;
+    }
+    const IoFrame parsed = corpus_test::parse_capture_frame(cf);
+    if (found.challenge == nullptr && !cf.tx && parsed.cmd == CMD_CHALLENGE_REQ) {
+      found.challenge = &cf;
+    } else if (found.response == nullptr && cf.tx && parsed.cmd == CMD_CHALLENGE_RESP) {
+      found.response = &cf;
+    }
+  }
+  return found;
+}
+
+/// The (0x31 key-init, 0x3C challenge, 0x32 key-transfer) triple, in that order, exactly as
+/// create_key_transfer() (proto_commands.cpp) sequences it. Members stay nullptr when absent.
+struct KeyTransferFrames {
+  const corpus::CorpusFrame *key_init{nullptr};
+  const corpus::CorpusFrame *challenge{nullptr};
+  const corpus::CorpusFrame *transfer{nullptr};
+};
+
+KeyTransferFrames find_key_transfer_frames(const corpus::CorpusCapture *capture) {
+  KeyTransferFrames found;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const corpus::CorpusFrame &cf = capture->frames[i];
+    const IoFrame parsed = corpus_test::parse_capture_frame(cf);
+    if (found.key_init == nullptr && cf.tx && parsed.cmd == CMD_KEY_INIT) {
+      found.key_init = &cf;
+    } else if (found.key_init != nullptr && found.challenge == nullptr && !cf.tx && parsed.cmd == CMD_CHALLENGE_REQ) {
+      found.challenge = &cf;
+    } else if (found.challenge != nullptr && found.transfer == nullptr && cf.tx && parsed.cmd == CMD_KEY_TRANSFER) {
+      found.transfer = &cf;
+    }
+  }
+  return found;
+}
+
+/// A CMD_DISCOVER_SPE_REQ (0x2A) carrying its own challenge and HMAC: [6-byte challenge | 6-byte HMAC].
+bool is_self_authenticated_frame(const IoFrame &parsed) {
+  return parsed.cmd == CMD_DISCOVER_SPE_REQ && parsed.data_len == HMAC_SIZE * 2;
+}
+
+/// Captures that promise `key: corpus`, describe an authenticated command exchange, and have a
+/// 0x3C/0x3D pair to verify. A capture whose recorded outcome is timeout/failure legitimately has
+/// no challenge (the device never responded, e.g. powered off), so it is left out; a claimed
+/// success stays in even without the pair, so the test's ASSERTs flag it as a corpus bug.
 std::vector<const corpus::CorpusCapture *> authenticated_corpus_captures() {
   return corpus_test::captures_where([](const corpus::CorpusCapture *cap) {
-    return cap->key == corpus::KeyMode::CORPUS && cap->has_exchange &&
-           cap->kind == corpus::ExchangeKind::AUTHENTICATED_COMMAND;
+    if (cap->key != corpus::KeyMode::CORPUS || !cap->has_exchange ||
+        cap->kind != corpus::ExchangeKind::AUTHENTICATED_COMMAND)
+      return false;
+    if (cap->outcome == corpus::ExchangeOutcome::SUCCESS)
+      return true;
+    const AuthenticatedExchangeFrames frames = find_authenticated_exchange_frames(cap);
+    return frames.challenge != nullptr && frames.response != nullptr;
   });
 }
 
-/// Captures that promise `key: corpus` and describe a pairing exchange — the shape the
-/// key-transfer (0x32) sub-test below replays.
+/// Captures that promise `key: corpus`, describe a pairing exchange, and reached the key transfer
+/// (a capture that failed before 0x32 has nothing for the key-transfer sub-test to decrypt).
 std::vector<const corpus::CorpusCapture *> pairing_corpus_captures() {
   return corpus_test::captures_where([](const corpus::CorpusCapture *cap) {
-    return cap->key == corpus::KeyMode::CORPUS && cap->has_exchange && cap->kind == corpus::ExchangeKind::PAIRING;
+    if (cap->key != corpus::KeyMode::CORPUS || !cap->has_exchange || cap->kind != corpus::ExchangeKind::PAIRING)
+      return false;
+    const KeyTransferFrames frames = find_key_transfer_frames(cap);
+    return frames.transfer != nullptr;
+  });
+}
+
+/// Captures that promise `key: corpus` and contain at least one self-authenticated 0x2A frame.
+std::vector<const corpus::CorpusCapture *> self_authenticated_captures() {
+  return corpus_test::captures_where([](const corpus::CorpusCapture *cap) {
+    if (cap->key != corpus::KeyMode::CORPUS)
+      return false;
+    for (uint8_t i = 0; i < cap->frame_count; i++) {
+      if (is_self_authenticated_frame(corpus_test::parse_capture_frame(cap->frames[i])))
+        return true;
+    }
+    return false;
   });
 }
 
 }  // namespace
+
+/// Every filter above selects at least one capture. INSTANTIATE_TEST_SUITE_P over an empty list
+/// registers no tests at all, so a renamed field or a broken filter would otherwise turn a whole
+/// suite into a silent pass.
+TEST(CorpusCryptoSelection, EveryFilterSelectsAtLeastOneCapture) {
+  EXPECT_FALSE(authenticated_corpus_captures().empty());
+  EXPECT_FALSE(pairing_corpus_captures().empty());
+  EXPECT_FALSE(self_authenticated_captures().empty());
+}
 
 class CorpusCryptoReplay : public ::testing::TestWithParam<const corpus::CorpusCapture *> {};
 
@@ -57,34 +148,11 @@ TEST_P(CorpusCryptoReplay, AuthenticatedCommandHmacMatchesCapture) {
   const corpus::CorpusCapture *capture = GetParam();
   SCOPED_TRACE(::testing::Message() << "capture=" << capture->id);
 
-  // Locate the origin (first tx frame — a required schema field, not an expectation), then the
-  // 0x3C challenge and 0x3D response by their *parsed* cmd byte rather than expect.cmd: cmd
-  // expectations are optional per the corpus schema, so a valid capture that omits them must
-  // still be locatable here.
-  const corpus::CorpusFrame *origin_cf = nullptr;
-  const corpus::CorpusFrame *challenge_cf = nullptr;
-  const corpus::CorpusFrame *response_cf = nullptr;
-  for (uint8_t i = 0; i < capture->frame_count; i++) {
-    const corpus::CorpusFrame &cf = capture->frames[i];
-    if (origin_cf == nullptr && cf.tx) {
-      origin_cf = &cf;
-      continue;
-    }
-    const IoFrame parsed = corpus_test::parse_capture_frame(cf);
-    if (challenge_cf == nullptr && !cf.tx && parsed.cmd == CMD_CHALLENGE_REQ) {
-      challenge_cf = &cf;
-    } else if (response_cf == nullptr && cf.tx && parsed.cmd == CMD_CHALLENGE_RESP) {
-      response_cf = &cf;
-    }
-  }
+  const AuthenticatedExchangeFrames frames = find_authenticated_exchange_frames(capture);
+  const corpus::CorpusFrame *origin_cf = frames.origin;
+  const corpus::CorpusFrame *challenge_cf = frames.challenge;
+  const corpus::CorpusFrame *response_cf = frames.response;
   ASSERT_NE(origin_cf, nullptr) << "authenticated_command capture must have an origin tx frame";
-
-  // A capture whose own recorded outcome is timeout/failure legitimately has no challenge —
-  // that's the shape of "the device never responded" (e.g. powered off), not a corpus bug. Only
-  // a claimed-success exchange is required to have completed the real crypto handshake.
-  if (capture->outcome != corpus::ExchangeOutcome::SUCCESS && (challenge_cf == nullptr || response_cf == nullptr)) {
-    GTEST_SKIP() << "capture outcome is not success and has no completed 0x3C/0x3D pair — nothing to verify";
-  }
   ASSERT_NE(challenge_cf, nullptr) << "authenticated_command capture must have a 0x3C challenge frame";
   ASSERT_NE(response_cf, nullptr) << "authenticated_command capture must have a 0x3D response frame";
 
@@ -119,7 +187,7 @@ TEST_P(CorpusCryptoReplay, AuthenticatedCommandHmacMatchesCapture) {
   }
 
   // Flip each byte position independently, not just byte 0 — see the identical rationale in
-  // tests/proto_crypto_test.cpp's ChallengeResponseHmac.
+  // tests/proto/proto_crypto_test.cpp's ChallengeResponseHmac.
   for (uint8_t i = 0; i < HMAC_SIZE; i++) {
     uint8_t tampered[HMAC_SIZE];
     std::memcpy(tampered, response.data, HMAC_SIZE);
@@ -142,24 +210,11 @@ TEST_P(CorpusCryptoKeyTransfer, KeyTransferDecryptsToCorpusKey) {
   const corpus::CorpusCapture *capture = GetParam();
   SCOPED_TRACE(::testing::Message() << "capture=" << capture->id);
 
-  const corpus::CorpusFrame *key_init_cf = nullptr;
-  const corpus::CorpusFrame *challenge_cf = nullptr;
-  const corpus::CorpusFrame *transfer_cf = nullptr;
-  for (uint8_t i = 0; i < capture->frame_count; i++) {
-    const corpus::CorpusFrame &cf = capture->frames[i];
-    const IoFrame parsed = corpus_test::parse_capture_frame(cf);
-    if (key_init_cf == nullptr && cf.tx && parsed.cmd == CMD_KEY_INIT) {
-      key_init_cf = &cf;
-    } else if (key_init_cf != nullptr && challenge_cf == nullptr && !cf.tx && parsed.cmd == CMD_CHALLENGE_REQ) {
-      challenge_cf = &cf;
-    } else if (challenge_cf != nullptr && transfer_cf == nullptr && cf.tx && parsed.cmd == CMD_KEY_TRANSFER) {
-      transfer_cf = &cf;
-    }
-  }
-  if (key_init_cf == nullptr || challenge_cf == nullptr || transfer_cf == nullptr) {
-    GTEST_SKIP() << "no complete 0x31/0x3C/0x32 triple in this pairing capture (e.g. a capture that failed "
-                    "before ever reaching key-transfer)";
-  }
+  const KeyTransferFrames frames = find_key_transfer_frames(capture);
+  const corpus::CorpusFrame *key_init_cf = frames.key_init;
+  const corpus::CorpusFrame *challenge_cf = frames.challenge;
+  const corpus::CorpusFrame *transfer_cf = frames.transfer;
+  ASSERT_NE(transfer_cf, nullptr) << "selection admitted a pairing capture without a complete 0x31/0x3C/0x32 triple";
 
   const IoFrame key_init = corpus_test::parse_capture_frame(*key_init_cf);
   const IoFrame challenge = corpus_test::parse_capture_frame(*challenge_cf);
@@ -189,7 +244,7 @@ TEST_P(CorpusCryptoSelfAuthenticated, SelfAuthenticatedPayloadVerifiesUnderCorpu
   uint8_t checked = 0;
   for (uint8_t i = 0; i < capture->frame_count; i++) {
     const IoFrame parsed = corpus_test::parse_capture_frame(capture->frames[i]);
-    if (parsed.cmd != CMD_DISCOVER_SPE_REQ || parsed.data_len != HMAC_SIZE * 2)
+    if (!is_self_authenticated_frame(parsed))
       continue;
     const uint8_t *challenge = parsed.data;
     const uint8_t *hmac = parsed.data + HMAC_SIZE;
@@ -200,14 +255,13 @@ TEST_P(CorpusCryptoSelfAuthenticated, SelfAuthenticatedPayloadVerifiesUnderCorpu
         << "frame " << static_cast<int>(i) << ": 0x2A HMAC does not match the corpus key over the command byte";
     checked++;
   }
-  if (checked == 0)
-    GTEST_SKIP() << "no self-authenticated frame in this capture";
+  EXPECT_GT(checked, 0) << "selection admitted a capture without a self-authenticated frame";
 }
 
 /// Reproduces the KLR200 pairing capture's node-verification 0x3D literally, byte-for-byte,
 /// under the corpus key -- the one claim in this feature's design that rests on hand-verified
 /// crypto rather than a general rule. Kept separate from HubKeyExtraction's end-to-end replay
-/// (tests/hub_key_extraction_test.cpp): that suite drives the real dispatch/handler code but with
+/// (tests/hub/hub_key_extraction_test.cpp): that suite drives the real dispatch/handler code but with
 /// a *scripted* challenge and key, so its 0x3D bytes are whatever those inputs produce, not the
 /// capture's literal `F0 30 3C C7 78 EF` -- this is where the C++ port and the Python port
 /// (scripts/corpus/validate.py's `key: corpus` enforcement) are pinned against the identical bytes,
@@ -250,21 +304,16 @@ TEST(CorpusCryptoKat, ChallengeRespDeviceRoleReproducesKlr200AddressProof) {
       << "create_challenge_resp_device_role() does not reproduce the captured 0x3D bytes";
 }
 
-std::vector<const corpus::CorpusCapture *> corpus_key_captures() {
-  return corpus_test::captures_where(
-      [](const corpus::CorpusCapture *cap) { return cap->key == corpus::KeyMode::CORPUS; });
-}
-
 INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoReplay, ::testing::ValuesIn(authenticated_corpus_captures()),
                          corpus_test::capture_name_generator);
-INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoSelfAuthenticated, ::testing::ValuesIn(corpus_key_captures()),
-                         corpus_test::capture_name_generator);
+INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoSelfAuthenticated,
+                         ::testing::ValuesIn(self_authenticated_captures()), corpus_test::capture_name_generator);
 INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoKeyTransfer, ::testing::ValuesIn(pairing_corpus_captures()),
                          corpus_test::capture_name_generator);
 
 /// Cross-language known-answer vectors, hardcoded here and in
 /// scripts/corpus/tests/data/crypto_kat.yaml — both generated from this same C++
-/// implementation via tests/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors.
+/// implementation via tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors.
 /// The Python port (scripts/corpus/protolib.py, used by ingest.py --rekey and validate.py's
 /// key:corpus enforcement) is asserted against the identical vectors in
 /// scripts/corpus/tests/run_tests.py. A divergence between the two implementations fails a gate

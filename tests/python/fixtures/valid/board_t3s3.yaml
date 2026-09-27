@@ -1,0 +1,5 @@
+# expect: valid
+# The t3s3 board package, as shipped, validates with nothing but a node ID and key added.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/t3s3.yaml

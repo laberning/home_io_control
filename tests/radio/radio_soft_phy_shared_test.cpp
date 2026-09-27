@@ -35,7 +35,7 @@ using namespace esphome::home_io_control;
 
 namespace {
 
-// TCXO_VOLTAGE_OPTIONS code for "3_3V" (components/home_io_control/__init__.py). The enum is
+// TCXO_VOLTAGE_OPTIONS code for "3_3V" (components/home_io_control/hub_validators.py). The enum is
 // 0-based and identical to the chip's own SetTcxoMode / SetDIO3AsTCXOCtrl voltage code; both
 // driver constructors take it directly. SX1262 ignores this argument's exact value here.
 constexpr uint8_t kTcxoYamlCode3_3V = 0x07;

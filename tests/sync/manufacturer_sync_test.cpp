@@ -1,10 +1,10 @@
 /// @file manufacturer_sync_test.cpp
-/// @brief Verifies that Python's MANUFACTURER_OPTIONS dict (__init__.py) and C++'s
+/// @brief Verifies that Python's MANUFACTURER_OPTIONS dict (hub_validators.py) and C++'s
 ///        MANUFACTURER_* constants (proto_constants.h) agree on every name and value,
 ///        preventing drift between the two hand-maintained tables.
 ///
 /// Same shape of check as device_type_sync_test.cpp, for the 1W `manufacturer:` YAML exposure
-/// (validate_manufacturer(), __init__.py) — including sharing that file's Python-dict parser
+/// (validate_manufacturer(), hub_validators.py) — including sharing that file's Python-dict parser
 /// (python_dict_parser.h). Both source files are parsed at runtime rather than hand-transcribed
 /// here, so neither language's copy is treated as more authoritative than the other — a rename or
 /// a value change on either side without a matching change on the other fails here, rather than
@@ -45,9 +45,10 @@ std::string to_lower(std::string s) {
 }  // namespace
 
 TEST(ManufacturerSync, PythonOptionsMatchCppConstants) {
-  auto py_entries = test::parse_python_uint8_dict("components/home_io_control/__init__.py", "MANUFACTURER_OPTIONS");
+  auto py_entries =
+      test::parse_python_uint8_dict("components/home_io_control/hub_validators.py", "MANUFACTURER_OPTIONS");
   auto cpp_entries = parse_cpp_manufacturer_constants();
-  ASSERT_GT(py_entries.size(), 10u) << "Parsed too few entries from __init__.py — parser may be broken.";
+  ASSERT_GT(py_entries.size(), 10u) << "Parsed too few entries from hub_validators.py — parser may be broken.";
   ASSERT_GT(cpp_entries.size(), 10u) << "Parsed too few entries from proto_constants.h — parser may be broken.";
 
   for (const auto &[name, value] : py_entries) {
@@ -65,7 +66,8 @@ TEST(ManufacturerSync, CppConstantsAreExposedInPython) {
   // The reverse direction: a manufacturer constant added to the C++ table but never given a
   // Python name is not a bug (validate_manufacturer()'s raw-hex escape hatch still reaches it),
   // but it is a missed usability win this test surfaces rather than lets go unnoticed.
-  auto py_entries = test::parse_python_uint8_dict("components/home_io_control/__init__.py", "MANUFACTURER_OPTIONS");
+  auto py_entries =
+      test::parse_python_uint8_dict("components/home_io_control/hub_validators.py", "MANUFACTURER_OPTIONS");
   auto cpp_entries = parse_cpp_manufacturer_constants();
   ASSERT_GT(cpp_entries.size(), 10u) << "Parsed too few entries from proto_constants.h — parser may be broken.";
 
@@ -74,7 +76,7 @@ TEST(ManufacturerSync, CppConstantsAreExposedInPython) {
     auto it = py_entries.find(py_name);
     ASSERT_NE(it, py_entries.end()) << "proto_constants.h's MANUFACTURER_" << cpp_name << " (0x" << std::hex
                                     << static_cast<int>(value) << ") has no matching \"" << py_name
-                                    << "\" entry in Python MANUFACTURER_OPTIONS (__init__.py).";
+                                    << "\" entry in Python MANUFACTURER_OPTIONS (hub_validators.py).";
     EXPECT_EQ(it->second, value) << "MANUFACTURER_OPTIONS[\"" << py_name << "\"] = 0x" << std::hex
                                  << static_cast<int>(it->second) << " but proto_constants.h's MANUFACTURER_" << cpp_name
                                  << " = 0x" << std::hex << static_cast<int>(value) << ". Values must match.";

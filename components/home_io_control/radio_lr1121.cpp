@@ -318,7 +318,7 @@ void RadioLR1121::configure_radio_() {
   }
   ESP_LOGI(TAG, "LR1121 detected: hw=0x%02X fw=%u.%u", version[0], version[2], version[3]);
 
-  // 2. TCXO: the YAML TCXO_VOLTAGE_OPTIONS code (1_6V=0x00 .. 3_3V=0x07, __init__.py) is already
+  // 2. TCXO: the YAML TCXO_VOLTAGE_OPTIONS code (1_6V=0x00 .. 3_3V=0x07, hub_validators.py) is already
   //    the LR1121's own SetTcxoMode voltage code — the same 0-based enum the SX1262's
   //    SetDIO3AsTCXOCtrl takes — so it goes straight through with no mapping. TCXO_VOLTAGE_NONE
   //    marks a bare-crystal board: skip SetTcxoMode entirely and let calibration run on the

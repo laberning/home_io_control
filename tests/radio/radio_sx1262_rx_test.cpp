@@ -504,7 +504,7 @@ TEST(RadioSX1262, EarlyCompletionIsOptInPerChip) {
 // Idle-path hop holdoff (issue #81): check_for_packet()'s sync-without-RX_DONE branch must arm
 // reception_in_progress() so ExchangeEngine::maybe_hop() does not retune under a frame that is
 // still arriving. The drop-the-holdoff-again-on-completion half is now covered for both chips by
-// SoftPhyDriver.ResetRxStateClearsHopHoldoff in tests/radio_soft_phy_shared_test.cpp.
+// SoftPhyDriver.ResetRxStateClearsHopHoldoff in tests/radio/radio_soft_phy_shared_test.cpp.
 // ============================================================================
 
 TEST(RadioSX1262, CheckForPacketSyncWithoutRxDoneArmsHopHoldoff) {
@@ -697,7 +697,7 @@ TEST(RadioSX1262, InitWritesExpectedSyncWordRegister) {
   ASSERT_GE(sync_word_idx, 0) << "the sync-word register must be written during init()";
 
   // Payload starts after opcode(1) + address(2); see SyncWordDerivation
-  // (tests/radio_soft_phy_test.cpp) for where this specific value comes from.
+  // (tests/radio/radio_soft_phy_test.cpp) for where this specific value comes from.
   const auto &tx = spi.transactions()[sync_word_idx];
   ASSERT_GE(tx.size(), 6u);
   EXPECT_EQ(tx[3], 0x57);

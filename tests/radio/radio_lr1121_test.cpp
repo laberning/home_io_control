@@ -32,7 +32,7 @@ class TestableRadioLR1121 : public test::TestableSoftPhy<RadioLR1121> {
 
 namespace {
 
-// TCXO_VOLTAGE_OPTIONS code for "3_3V" (components/home_io_control/__init__.py) — the top of the
+// TCXO_VOLTAGE_OPTIONS code for "3_3V" (components/home_io_control/hub_validators.py) — the top of the
 // 0-based voltage enum, passed through to the chip's SetTcxoMode unmapped.
 constexpr uint8_t TCXO_YAML_CODE_3_3V = 0x07;
 
@@ -725,7 +725,7 @@ TEST(RadioLR1121, SendPacketSetsPacketParamsLengthToEncodedLength) {
 }
 
 // Raises the TxDone interrupt the moment SetTx is issued — mirrors
-// tests/radio_sx1262_rx_test.cpp's TxCompletingRadioSX1262; this is the only way to reach
+// tests/radio/radio_sx1262_rx_test.cpp's TxCompletingRadioSX1262; this is the only way to reach
 // send_packet()'s success path (and hence rearm_rx_after_tx_()) in a synchronous host test.
 class TxCompletingRadioLR1121 : public TestableRadioLR1121 {
  public:

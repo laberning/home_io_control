@@ -219,7 +219,7 @@ four could be ingested, and none is in the tree.
 
 Parser robustness against malformed/truncated *input* is real coverage this project wants — it is
 just not this mechanism's job. `ProtoFrame.ParseRejectsNullAndTruncatedInputs`
-(`tests/proto_frame_test.cpp`) is the place for it: it constructs short/invalid byte buffers
+(`tests/proto/proto_frame_test.cpp`) is the place for it: it constructs short/invalid byte buffers
 directly, unconstrained by the golden-frame corpus's "these are real captured wire bytes" promise.
 
 ### Key hygiene — ⚠️ read before ever pasting a pairing log
@@ -273,8 +273,8 @@ field claims:
 
 Cross-language agreement between this Python port and the real C++ implementation is pinned by
 known-answer vectors: `scripts/corpus/tests/data/crypto_kat.yaml` and the hardcoded vectors in
-`tests/corpus_crypto_test.cpp` are both generated from the same C++ run
-(`tests/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors`); a divergence between
+`tests/corpus/corpus_crypto_test.cpp` are both generated from the same C++ run
+(`tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors`); a divergence between
 the two implementations fails a gate on both sides.
 
 ## Contribution workflow

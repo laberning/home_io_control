@@ -93,7 +93,7 @@ format-check:
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
 	@echo "Linting YAML configuration files..."
-	yamllint config/tests/*.yaml config/boards/*.yaml config/*.yaml tests/corpus/captures/ .github/workflows/*.yml .github/dependabot.yml
+	yamllint config/tests/*.yaml config/boards/*.yaml config/*.yaml tests/corpus/captures/ tests/python/fixtures/ .github/workflows/*.yml .github/dependabot.yml
 
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
 # (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.
@@ -236,14 +236,18 @@ COMPONENT_SRCS := $(wildcard components/home_io_control/*.cpp)
 # RAII rule between tests.
 STUB_SRCS := tests/stubs/stubs.cpp tests/support/test_isolation.cpp
 
-# All test files (*_test.cpp) in tests/ root
-TEST_SRCS := $(wildcard tests/*_test.cpp)
+# All test files (*_test.cpp), one directory per layer under tests/ (proto/, radio/, hub/, platform/,
+# oneway/, tuning/, corpus/, sync/, harness/). tests/fuzz/ holds libFuzzer targets, built separately.
+TEST_SRCS := $(sort $(shell find tests -name '*_test.cpp' -not -path 'tests/fuzz/*'))
 
-# Include paths (build/corpus holds the generated golden-frame corpus header — see corpus-gen below)
+# Include paths (build/corpus holds the generated golden-frame corpus header — see corpus-gen below).
+# -Itests comes last: test files name shared harness headers relative to tests/ ("stubs/…",
+# "support/…") from whichever layer directory they live in; component headers still win.
 INCLUDES := -Icomponents/home_io_control \
             -Itests/include \
             -Itests/support \
-            -Ibuild/corpus
+            -Ibuild/corpus \
+            -Itests
 
 # Mirror the ESPHome API defines that the component injects during firmware codegen.
 # Without these, host builds silently compile out the rename-action registration path and
@@ -283,12 +287,14 @@ HOST_EXTRA_FLAGS ?=
 # tests exercise the sources under the same language rules the firmware does. They were on c++17,
 # which meant C++20 library calls the device build accepts -- and that clang-tidy's device-side
 # analysis actively recommends, e.g. modernize-use-starts-ends-with -- would not compile here.
-# -Werror=switch: several switches over DeviceType / capability-class enums deliberately omit a
-# default: label so an unhandled new enumerator is caught at build time rather than silently
-# mapping to UNKNOWN. The reverse cross-language sync tests (device_type_sync_test.cpp) rely on
-# every enumerator being reachable through a named case, so this promotion is what makes that
-# guarantee hard on the host build.
-HOST_CXXFLAGS := -std=c++20 -Wall -Wextra -Werror=switch -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
+# -Werror: every host warning fails the build, so warnings cannot pile up between clang-tidy runs.
+# Safe because every CI job is pinned to ubuntu-24.04, whose g++ is the local dev toolchain's (13.3);
+# a warning that appears only in CI means that pin drifted. It also makes -Wswitch hard: several
+# switches over DeviceType / capability-class enums deliberately omit a default: label so an
+# unhandled new enumerator is caught at build time rather than silently mapping to UNKNOWN, and the
+# reverse cross-language sync tests (device_type_sync_test.cpp) rely on every enumerator being
+# reachable through a named case.
+HOST_CXXFLAGS := -std=c++20 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
                  $(UNIT_TEST_DEFINES) $(INCLUDES) $(HOST_EXTRA_FLAGS)
 
 HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)
@@ -335,6 +341,14 @@ unit-test-asan: corpus-gen
 clean-host:
 	rm -rf build/host
 
+# Codegen behaviour tests (tests/python/run_tests.py): validators, ID injection, and `esphome config`
+# over the accept/reject fixtures in tests/python/fixtures/. Runs inside the ESPHome image because
+# the modules import esphome.*; the repo is mounted read-only so the run can never write into it.
+py-test:
+	@echo "Running codegen tests in the ESPHome container..."
+	@docker compose run --rm -v "$(CURDIR):/repo:ro" -w /repo -e PYTHONDONTWRITEBYTECODE=1 \
+		--entrypoint python3 esphome tests/python/run_tests.py
+
 
 # === Documentation =============================================================
 
@@ -360,7 +374,7 @@ doxygen:
 #   docs-link-check     -> docs-link-check
 #   key-material-scan   -> key-material-scan
 lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan
-test: unit-test unit-test-asan firmware-test
+test: unit-test unit-test-asan py-test firmware-test
 check: lint test doxygen
 
 # Backward compatibility aliases (deprecated, use new names)
@@ -377,6 +391,6 @@ test-unit: unit-test
 		docs-prose-check \
 		key-material-scan \
 		fuzz-frame \
-		firmware-test unit-test unit-test-asan host-run clean-host lint test check \
+		firmware-test unit-test unit-test-asan py-test host-run clean-host lint test check \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

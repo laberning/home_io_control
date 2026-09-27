@@ -23,10 +23,10 @@
 
 #include "hub_exchange.h"
 #include "hub_decisions.h"
-#include "pairing_telemetry.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 #include "radio_interface.h"
+#include "transmit_observer.h"
 #include "tuning_config.h"
 
 #include <cstdint>
@@ -271,14 +271,15 @@ class ExchangeEngine {
   void reset_hop_timestamp();
 
   // -------------------------------------------------------------------------
-  // Pairing telemetry hook
+  // Transmit observer
   // -------------------------------------------------------------------------
 
-  /// Attach a telemetry recorder so transmit_frame()'s LBT loop records defer events.
-  /// Set by PairingEngine for the duration of a `discover_and_pair()` attempt only — nullptr
-  /// (the default) for every non-pairing exchange, which is the common case and stays a no-op.
-  /// @param telemetry Non-owning pointer, or nullptr to detach.
-  void set_pairing_telemetry(PairingTelemetry *telemetry) { this->pairing_telemetry_ = telemetry; }
+  /// Attach the observer transmit_frame() reports LBT deferrals and sent frames to. One slot:
+  /// attaching replaces the previous observer. PairingEngine attaches its PairingTelemetry for
+  /// the duration of a `discover_and_pair()` attempt and detaches it afterwards; outside that,
+  /// the slot is empty and reporting is a no-op.
+  /// @param observer Non-owning pointer, or nullptr to detach.
+  void set_transmit_observer(TransmitObserver *observer) { this->transmit_observer_ = observer; }
 
   // -------------------------------------------------------------------------
   // Per-target evidence
@@ -493,11 +494,11 @@ class ExchangeEngine {
 
   // --- Dependencies (back-references into the hub) -------------------------
 
-  RadioDriver **radio_ptr_;                       ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
-  const uint8_t *node_id_;                        ///< Hub's node_id_[NODE_ID_SIZE] array.
-  const uint8_t *system_key_;                     ///< Hub's system_key_[AES_KEY_SIZE] array.
-  const TuningConfig *tuning_;                    ///< Hub's live TuningConfig (read on every LBT check).
-  PairingTelemetry *pairing_telemetry_{nullptr};  ///< Set only during a pairing attempt; see set_pairing_telemetry().
+  RadioDriver **radio_ptr_;                          ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
+  const uint8_t *node_id_;                           ///< Hub's node_id_[NODE_ID_SIZE] array.
+  const uint8_t *system_key_;                        ///< Hub's system_key_[AES_KEY_SIZE] array.
+  const TuningConfig *tuning_;                       ///< Hub's live TuningConfig (read on every LBT check).
+  TransmitObserver *transmit_observer_{nullptr};     ///< Non-owning; see set_transmit_observer().
   TargetEvidenceProvider target_evidence_provider_;  ///< See set_target_evidence_provider().
 
   // --- Engine state --------------------------------------------------------
