@@ -10,7 +10,7 @@ Python schema (ONEWAY_CONTROLLER_SCHEMA, the hub's own CONFIG_SCHEMA, and the fo
 platform schemas respectively) by hand -- nothing else keeps the two in step, so a schema key
 rename or a newly-required key drifts silently until a user's paste fails to validate.
 
-Separately, DEVICE_TYPE_OPTIONS and MANUFACTURER_OPTIONS (__init__.py) are each hand-transcribed a
+Separately, DEVICE_TYPE_OPTIONS and MANUFACTURER_OPTIONS (hub_validators.py) are each hand-transcribed a
 second time as a markdown table in the published docs (see ``DOCS_MD`` below), for users picking a
 name -- the two headings in ``DOCS_TABLES`` are what locate them on that page. Nothing else
 keeps *that* copy honest either, and it is arguably the worst of the three places for one to drift:
@@ -34,7 +34,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPONENT_DIR = REPO_ROOT / "components" / "home_io_control"
 
-INIT_PY = COMPONENT_DIR / "__init__.py"
+INIT_PY = COMPONENT_DIR / "__init__.py"  # the hub CONFIG_SCHEMA
+HUB_NAMES_PY = COMPONENT_DIR / "hub_names.py"  # every hub-block CONF_* string constant
+HUB_VALIDATORS_PY = COMPONENT_DIR / "hub_validators.py"  # DEVICE_TYPE_OPTIONS, MANUFACTURER_OPTIONS
+ONEWAY_CONTROLLERS_PY = COMPONENT_DIR / "oneway_controllers.py"  # ONEWAY_CONTROLLER_SCHEMA
 PLATFORM_COMMON_PY = COMPONENT_DIR / "platform_common.py"
 COVER_PY = COMPONENT_DIR / "cover.py"
 LIGHT_PY = COMPONENT_DIR / "light.py"
@@ -116,10 +119,10 @@ def _schema_keys_from_dicts(dict_nodes: "list[ast.Dict]", constants: dict) -> di
 def _dicts_in_named_assignment(module: ast.Module, name: str, path: Path) -> "list[ast.Dict]":
     """Every ast.Dict literal within the RHS subtree of a top-level ``name = <expr>``.
 
-    Used for __init__.py, which defines several unrelated schemas in one file
-    (ONEWAY_CONTROLLER_SCHEMA, the hub's own CONFIG_SCHEMA, the LR1121 firmware-update schema) --
-    a whole-module walk would merge all of them, which is too loose for telling one emitter's
-    keys apart from another's.
+    Used for the hub codegen modules, whose schemas nest into each other by name
+    (CONFIG_SCHEMA refers to ONEWAY_CONTROLLER_SCHEMA and the LR1121 firmware-update schema) --
+    a whole-module walk could merge unrelated schemas, which is too loose for telling one
+    emitter's keys apart from another's.
     """
     for node in module.body:
         if isinstance(node, ast.Assign):
@@ -130,14 +133,16 @@ def _dicts_in_named_assignment(module: ast.Module, name: str, path: Path) -> "li
 
 
 def oneway_controller_schema_keys() -> dict:
-    module = ast.parse(INIT_PY.read_text(encoding="utf-8"))
-    constants = _load_constants([INIT_PY])
-    return _schema_keys_from_dicts(_dicts_in_named_assignment(module, "ONEWAY_CONTROLLER_SCHEMA", INIT_PY), constants)
+    module = ast.parse(ONEWAY_CONTROLLERS_PY.read_text(encoding="utf-8"))
+    constants = _load_constants([HUB_NAMES_PY, ONEWAY_CONTROLLERS_PY])
+    return _schema_keys_from_dicts(
+        _dicts_in_named_assignment(module, "ONEWAY_CONTROLLER_SCHEMA", ONEWAY_CONTROLLERS_PY), constants
+    )
 
 
 def hub_config_schema_keys() -> dict:
     module = ast.parse(INIT_PY.read_text(encoding="utf-8"))
-    constants = _load_constants([INIT_PY])
+    constants = _load_constants([HUB_NAMES_PY, INIT_PY])
     return _schema_keys_from_dicts(_dicts_in_named_assignment(module, "CONFIG_SCHEMA", INIT_PY), constants)
 
 
@@ -148,9 +153,9 @@ def device_platform_schema_keys() -> dict:
     light.py's CONFIG_SCHEMA builds its dict inside a helper function (_validate()), not in a
     top-level `CONFIG_SCHEMA = ...` assignment the way cover.py/switch.py/lock.py do -- each of
     these five files is narrowly scoped to one platform's schema, so a whole-file walk carries
-    none of __init__.py's multi-schema cross-contamination risk.
+    none of the hub modules' multi-schema cross-contamination risk.
     """
-    constants = _load_constants([INIT_PY] + PLATFORM_PY_FILES)
+    constants = _load_constants([HUB_NAMES_PY] + PLATFORM_PY_FILES)
     keys: dict = {}
     for path in PLATFORM_PY_FILES:
         module = ast.parse(path.read_text(encoding="utf-8"))
@@ -427,7 +432,7 @@ DOCS_TABLES = [
 
 
 def _check_docs_table(table: DocsTable, docs_text: str) -> bool:
-    python_entries = _named_int_dict(INIT_PY, table.python_dict_name)
+    python_entries = _named_int_dict(HUB_VALIDATORS_PY, table.python_dict_name)
     for key in table.exclude:
         python_entries.pop(key, None)
     docs_entries = _parse_docs_table(docs_text, table.heading, DOCS_MD)

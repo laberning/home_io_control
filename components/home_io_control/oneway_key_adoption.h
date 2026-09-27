@@ -96,7 +96,7 @@ namespace detail {
 /// 3-byte address. The report also explains that the hub always transmits under its own address:
 /// impersonating the sender would hijack that remote's rolling sequence counter and break it.
 ///
-/// The emitted keys must track `ONEWAY_CONTROLLER_SCHEMA` (`__init__.py`) by hand — a newly
+/// The emitted keys must track `ONEWAY_CONTROLLER_SCHEMA` (`oneway_controllers.py`) by hand — a newly
 /// required schema key needs a matching line here too. `make yaml-emitter-sync`
 /// (scripts/check-yaml-emitters.py) catches drift between the two statically; it does not tell
 /// you what to add here.

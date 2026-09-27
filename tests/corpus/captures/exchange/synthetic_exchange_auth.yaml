@@ -3,7 +3,7 @@ description: >
   Synthetic authenticated exchange: execute(50) -> challenge -> challenge-response -> status
   (END). HMAC is computed under the public corpus key (tests/support/test_helpers.h ::
   TEST_SYSTEM_KEY), so this fixture's crypto is safe to commit. Pipeline self-test fixture —
-  see tests/corpus_bootstrap_dump_test.cpp for how these bytes were generated (real
+  see tests/corpus/corpus_bootstrap_dump_test.cpp for how these bytes were generated (real
   serialize()/crc_ccitt()/create_challenge_resp() output, not hand-typed hex).
 source:
   device: "synthetic controller <-> synthetic device"

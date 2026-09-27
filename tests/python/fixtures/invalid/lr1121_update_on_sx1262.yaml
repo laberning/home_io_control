@@ -1,0 +1,10 @@
+# expect-error: lr1121_firmware_update requires radio_type: lr1121
+# covers: lr1121_update_codegen.validate_lr1121_firmware_update
+# The firmware-update path talks to the LR1121 bootloader; no other chip has one.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  lr1121_firmware_update:
+    source: github://Lora-net/radio_firmware_images/lr1121/transceiver/lr1121_transceiver_0104.bin

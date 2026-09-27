@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   weekly:
-    name: Compile test configs against ESPHome ${{ matrix.channel }}
+    name: Compile and validate test configs against ESPHome ${{ matrix.channel }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -29,6 +29,11 @@ jobs:
 
       - name: firmware-test (ESPHOME_TAG=${{ matrix.channel }})
         run: make firmware-test
+
+      # The codegen tests call ESPHome's validation API directly, so an upstream change there
+      # shows up here even when every test config still compiles.
+      - name: py-test (ESPHOME_TAG=${{ matrix.channel }})
+        run: make py-test
 
       - name: Open an issue on failure
         if: failure()

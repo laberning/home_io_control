@@ -20,3 +20,18 @@ jobs:
           path: |
             crash-*
             leak-*
+
+  fuzz-soft-phy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: pip install --user pyyaml
+      - run: make fuzz-soft-phy FUZZ_TIME=300
+      - name: Upload crash/leak artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-soft-phy-findings
+          path: |
+            crash-*
+            leak-*

@@ -1,0 +1,17 @@
+# expect-error: must also declare an explicit id:
+# covers: platform_common.companion_id_base
+# name: "" (the device-name idiom) leaves nothing to derive companion IDs from.
+esphome:
+  friendly_name: "Fixture"
+  devices:
+    - id: dev_awning
+      name: "Awning Device"
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+cover:
+  - platform: home_io_control
+    device_id: dev_awning
+    name: ""
+    io_device_id: "FEEB1E"

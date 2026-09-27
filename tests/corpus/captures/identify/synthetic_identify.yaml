@@ -3,7 +3,7 @@ description: >
   Synthetic authenticated identify exchange: identify(0x1E) -> challenge -> challenge-response ->
   ack (END). HMAC is computed under the public corpus key (tests/support/test_helpers.h ::
   TEST_SYSTEM_KEY), so this fixture's crypto is safe to commit. Pipeline self-test fixture —
-  see tests/corpus_bootstrap_dump_test.cpp for how these bytes were generated (real
+  see tests/corpus/corpus_bootstrap_dump_test.cpp for how these bytes were generated (real
   serialize()/crc_ccitt()/create_challenge_resp() output, not hand-typed hex). The final ack
   frame uses CMD_IDENTIFY as a stand-in response: there is no dedicated CMD_IDENTIFY response in
   the protocol, and identify_device() treats any endpoint-matched, non-error reply as success.

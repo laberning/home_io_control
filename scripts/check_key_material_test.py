@@ -139,7 +139,7 @@ def test_cpp_h_hpp_suffixed_files_are_in_scope() -> None:
     # nothing for some other reason".
     import fnmatch
 
-    for path in ("tests/proto_frame_test.cpp", "components/home_io_control/redaction.h", "components/home_io_control/foo.hpp"):
+    for path in ("tests/proto/proto_frame_test.cpp", "components/home_io_control/redaction.h", "components/home_io_control/foo.hpp"):
         assert any(fnmatch.fnmatch(path, pattern) for pattern in ckm.SCAN_PATTERNS), (
             f"no SCAN_PATTERNS entry matches {path!r}")
 
@@ -163,7 +163,7 @@ def test_hand_built_frame_array_literal_without_valid_crc_does_not_fire() -> Non
     # length here).
     frame = _frame_bytes(0x40, _DST, _SRC, protolib.CMD_KEY_TRANSFER, bytes(range(21)))
     text = f"const uint8_t kFrame[] = {{{', '.join(f'0x{b:02X}' for b in frame)}}};\n"
-    findings = ckm.scan_text(Path("tests/proto_frame_test.cpp"), text)
+    findings = ckm.scan_text(Path("tests/proto/proto_frame_test.cpp"), text)
     assert findings == [], f"expected no findings for a CRC-less array literal, got {findings}"
 
 

@@ -7,8 +7,8 @@ toolchain in the loop. The AES-128-ECB primitive itself is NOT reimplemented her
 standard algorithm, so this uses the `cryptography` package; only the proprietary
 checksum/IV/truncation wrapper around it (proto_crypto.cpp) is ported by hand. Cross-language
 agreement is pinned by scripts/corpus/tests/data/crypto_kat.yaml against hardcoded vectors in
-tests/corpus_crypto_test.cpp — both generated from the real C++ implementation
-(tests/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors).
+tests/corpus/corpus_crypto_test.cpp — both generated from the real C++ implementation
+(tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors).
 """
 
 import re
@@ -47,6 +47,21 @@ def crc_ccitt(data: bytes) -> int:
         for _ in range(8):
             crc = (crc >> 1) ^ CRC_POLYNOMIAL_REVERSED if (crc & 0x0001) else (crc >> 1)
     return crc & 0xFFFF
+
+
+def uart_encode(data: bytes) -> bytes:
+    """Port of uart_encode_packet() in radio_soft_phy.cpp: the soft-PHY on-air line coding.
+
+    Each byte becomes a 10-bit cell (start 0, eight data bits LSB-first, stop 1), cells are packed
+    MSB-first across bytes, and the unused bits of the last byte are padded with ones (line idle).
+    """
+    bits = []
+    for byte in data:
+        bits.append(0)
+        bits.extend((byte >> index) & 1 for index in range(8))
+        bits.append(1)
+    bits.extend([1] * (-len(bits) % 8))
+    return bytes(int("".join(map(str, bits[i : i + 8])), 2) for i in range(0, len(bits), 8))
 
 
 def ctrl0_implied_length(ctrl0: int) -> int:

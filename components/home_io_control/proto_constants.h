@@ -157,7 +157,7 @@ static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
            ///< ID plus a 6-byte challenge, nothing more — never observed in our corpus or in any
            ///< field log, and not sent or handled anywhere in this codebase — the constant is
            ///< used only to construct a hypothetical device-side IV in
-           ///< tests/proto_crypto_test.cpp, exercising the crypto primitive, not a dispatch path.
+           ///< tests/proto/proto_crypto_test.cpp, exercising the crypto primitive, not a dispatch path.
 
 // Authentication commands (challenge-response for secured commands)
 static constexpr uint8_t CMD_CHALLENGE_REQ =
@@ -446,7 +446,7 @@ static constexpr uint8_t MANUFACTURER_ATLANTIC_GROUP = 12;  ///< Atlantic Group 
 /// the pairing flow logs a warning suggesting the user file a GitHub issue.
 /// @warning **Display-only — do not use this for YAML.** Four of the twelve names do not
 /// round-trip through `.strip().lower()` to their `manufacturer:` YAML token
-/// (`MANUFACTURER_OPTIONS`, `__init__.py`): `"Hörmann"` has an umlaut the YAML token
+/// (`MANUFACTURER_OPTIONS`, `hub_validators.py`): `"Hörmann"` has an umlaut the YAML token
 /// (`hormann`) drops, and `"ASSA ABLOY"`/`"WINDOW MASTER"`/`"Atlantic Group"` use a space
 /// where the YAML token uses `_`. There is currently no YAML-token accessor for
 /// manufacturers — see `yaml_device_type_name()` (proto_device_model.h) for the pattern this

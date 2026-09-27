@@ -215,7 +215,7 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// 2W builder's FAVORITE encoding, with no source behind it at all. Worse, the one real capture
 /// this project has of an actual My/favorite button press —
 /// tests/corpus/captures/oneway/somfy_smoove_oneway_favorite_sx1276.yaml, pinned by
-/// `OneWayCommands.FavoriteButtonCaptureIsWritePrivateNotExecute` in tests/oneway_commands_test.cpp
+/// `OneWayCommands.FavoriteButtonCaptureIsWritePrivateNotExecute` in tests/oneway/oneway_commands_test.cpp
 /// — contradicts it directly: that remote's My button is CMD_WRITE_PRIVATE (0x20) with a 16-byte
 /// payload, not CMD_EXECUTE with main=0xD8.
 ///
@@ -773,7 +773,7 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 /// Payload is our own advertised node ID — the only identity this emulated device has to offer —
 /// the same value create_discover_resp() reports at DISCOVERY_RESP_BACKBONE_OFFSET.
 /// CorpusDeviceRoleBuilders.NodeVerifyRespPayloadMatchesOwnDiscoverRespBackboneAddress
-/// (tests/corpus_device_role_builder_test.cpp) pins that these two builders agree with *each
+/// (tests/corpus/corpus_device_role_builder_test.cpp) pins that these two builders agree with *each
 /// other*, not that this matches a real device's own backbone value: the one real capture of this
 /// exchange (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml) shows a genuine device whose 0x37
 /// payload — a persistent identity the io-homecontrol wire format tracks separately from a device's

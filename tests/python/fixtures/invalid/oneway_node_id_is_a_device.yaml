@@ -1,0 +1,18 @@
+# expect-error: uses node_id FEEB1E, which collides with
+# covers: oneway_controllers._reject_node_id_collision
+# Caught at final validation: the colliding address is declared by a cover:, outside the hub block.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      node_id: FEEB1E
+      io_device_type: awning
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "FEEB1E"
+    io_device_type: awning

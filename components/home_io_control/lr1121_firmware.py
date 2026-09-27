@@ -7,7 +7,7 @@
 ## Deliberately does NOT import esphome.config_validation: that test runner runs on a bare
 ## host Python without ESPHome installed (mirroring scripts/corpus/*.py's independence), so a
 ## module-level `import esphome...` here would break it. Every failure raises
-## Lr1121FirmwareError; __init__.py is the only place that translates it to cv.Invalid, at the
+## Lr1121FirmwareError; lr1121_update_codegen.py is the only place that translates it to cv.Invalid, at the
 ## config-validation/codegen boundary where ESPHome is guaranteed to be present.
 ##
 ## The goal this module serves is "flash whatever LR1121 transceiver image the user points at",
@@ -151,9 +151,9 @@ def validate_image(data, url):
 def validate_bootloader_reachability(radio_type, has_busy_pin, busy_pin_inverted):
     """Reject configurations that can't reach the LR1121 bootloader, or would reach it wrong.
 
-    Pure mirror of __init__.py's schema-time checks -- kept here, not there, so it is
+    Pure mirror of lr1121_update_codegen.py's schema-time checks -- kept here, not there, so it is
     host-testable like every other check in this module (see file header). @raises
-    Lr1121FirmwareError; __init__.py is the only place that translates it to cv.Invalid.
+    Lr1121FirmwareError; lr1121_update_codegen.py is the only place that translates it to cv.Invalid.
     """
     if radio_type != "lr1121":
         raise Lr1121FirmwareError("lr1121_firmware_update requires radio_type: lr1121")
@@ -240,7 +240,7 @@ def fetch_and_verify(source, ref, checksum_md5, target_version, fetch):
            Lr1121FirmwareNotFoundError for a definite "does not exist" (e.g. HTTP 404) and any
            other exception on a harder failure (network error, ...), which is left to propagate
            uncaught. `expected_hash`, when given, is a hint a caching `fetch` may use to key its
-           cache (see __init__.py's _cached_http_fetch) -- it carries no meaning here beyond that.
+           cache (see lr1121_update_codegen.py's _cached_http_fetch) -- it carries no meaning here beyond that.
     @return A verified FirmwareImage.
     @raises Lr1121FirmwareError (or whatever `fetch` raises) on any failure.
     """

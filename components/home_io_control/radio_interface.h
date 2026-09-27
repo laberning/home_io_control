@@ -47,7 +47,7 @@ inline constexpr uint8_t TCXO_VOLTAGE_NONE = 0xFF;
 /// @param code 0-based chip voltage code (0x00 = 1.6 V .. 0x07 = 3.3 V) or @ref TCXO_VOLTAGE_NONE.
 /// @return A static string; `"unknown"` for a code outside the table.
 ///
-/// Mirrors TCXO_VOLTAGE_OPTIONS in `__init__.py`, the YAML-side source of truth for the codes.
+/// Mirrors TCXO_VOLTAGE_OPTIONS in `hub_validators.py`, the YAML-side source of truth for the codes.
 [[nodiscard]] inline const char *tcxo_voltage_label(uint8_t code) {
   // Index = the 0-based chip voltage code.
   static constexpr const char *LABELS[] = {"1.6 V", "1.7 V", "1.8 V", "2.2 V", "2.4 V", "2.7 V", "3.0 V", "3.3 V"};
@@ -59,7 +59,7 @@ inline constexpr uint8_t TCXO_VOLTAGE_NONE = 0xFF;
 /// @brief Which RF front-end module (if any) sits between the SX1262 and the antenna.
 ///
 /// Selects two things: which of vfem_pin/fem_en_pin/fem_pa_pin the SX1262 driver's config-time
-/// validation requires present (see FEM_REQUIRED_PINS, components/home_io_control/__init__.py),
+/// validation requires present (see FEM_REQUIRED_PINS, components/home_io_control/hub_validators.py),
 /// and which level fem_pa_pin is driven to for the duration of a transmission
 /// (fem_tx_active_level_(), radio_sx1262.cpp). It never supplies a GPIO number -- every board
 /// package spells its own pins out explicitly, the same as every other radio pin in this schema.

@@ -1,0 +1,11 @@
+# expect-error: status_poll_interval must be at least 500ms
+# covers: hub_validators.validate_status_poll_interval
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "FEEB1E"
+    status_poll_interval: 100ms

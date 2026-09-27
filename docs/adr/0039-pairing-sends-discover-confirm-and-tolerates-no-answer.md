@@ -116,7 +116,7 @@ counterproductive. `record_debug()` (not telemetry) still runs every try.
 - **The default always-alive frame shape (`send`, `CTRL1` all-zero) is not the hub-observed one.**
   No corpus hub sends it, but it is the shape a Somfy device answers; the hub-observed `0x10` shape
   gets no answer from Somfy, so it stays opt-in (`send_with_ack`) for devices that need it.
-- **Corpus replay needs a mode per capture.** `tests/corpus_pairing_replay_test.cpp` sets
+- **Corpus replay needs a mode per capture.** `tests/corpus/corpus_pairing_replay_test.cpp` sets
   `pairing_discover_confirm` per capture (`skip` when it has no captured 0x2C, `send`/
   `send_with_ack` matching the captured frame's own `CTRL1_ACK` bit otherwise) so the byte-exact
   replay check also pins the new framing once a capture exercises it. A capture that shows a real

@@ -119,9 +119,18 @@ def test_merge_prefers_nonzero_freq_and_t_ms() -> None:
 
 def test_crc_ccitt_matches_known_vector() -> None:
     # Cross-check against tests/corpus/captures/oneway/synthetic_oneway_close.yaml, whose bytes
-    # were generated from the real C++ crc_ccitt() (tests/corpus_bootstrap_dump_test.cpp).
+    # were generated from the real C++ crc_ccitt() (tests/corpus/corpus_bootstrap_dump_test.cpp).
     payload = bytes.fromhex("EC 00 00 00 BF AA BB CC 00 01 41 C8 00".replace(" ", ""))
     assert protolib.crc_ccitt(payload) == 0x7E35, f"crc mismatch: 0x{protolib.crc_ccitt(payload):04X}"
+
+
+def test_uart_encode_matches_cpp() -> None:
+    # Vectors printed by the C++ uart_encode_packet() (radio_soft_phy.cpp). The first is the
+    # SX1276 sync word, whose encoding tests/radio/radio_soft_phy_test.cpp derives the SX1262
+    # sync register from; the second covers all-zero, all-one and both single-bit edge bytes plus
+    # the ones padding of a partial last byte.
+    assert protolib.uart_encode(bytes([0x55, 0xFF, 0x33])) == bytes.fromhex("555FF667")
+    assert protolib.uart_encode(bytes([0x00, 0x01, 0x80, 0xFE, 0xA5])) == bytes.fromhex("0050100CFF52FF")
 
 
 def _valid_capture_dict() -> dict:
@@ -192,6 +201,22 @@ def test_validate_bad_classification_name_is_rejected() -> None:
     data = copy.deepcopy(_valid_capture_dict())
     data["expect"]["frames"][0]["classification"] = "NOT_A_REAL_DISPOSITION"
     _assert_validation_fails(data, "classification must be one of")
+
+
+def test_validate_warns_on_replayable_capture_without_expect_exchange() -> None:
+    capture = _valid_capture_dict()
+    capture["frames"][0]["dir"] = "tx"
+    capture.pop("expect", None)
+    assert validate_module.unreplayed_capture_warning(capture, "exchange") is not None
+    # Asserting the exchange silences it.
+    capture["expect"] = {"exchange": {"kind": "direct", "outcome": "success"}}
+    assert validate_module.unreplayed_capture_warning(capture, "exchange") is None
+    # A phase without a replay suite never warns.
+    capture.pop("expect")
+    assert validate_module.unreplayed_capture_warning(capture, "oneway") is None
+    # Passive traffic (no tx frame) has nothing to replay.
+    capture["frames"][0]["dir"] = "rx"
+    assert validate_module.unreplayed_capture_warning(capture, "statuspoll") is None
 
 
 def test_naming_convention_id_parsing() -> None:
@@ -389,8 +414,8 @@ def _run_ingest_main(argv: "list[str]") -> int:
 
 def test_crypto_kat_vectors_match_cpp() -> None:
     """Python port (protolib.create_hmac) must reproduce the vectors generated from the real
-    C++ implementation (tests/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors),
-    pinned again as a hardcoded C++ test in tests/corpus_crypto_test.cpp. A divergence between
+    C++ implementation (tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors),
+    pinned again as a hardcoded C++ test in tests/corpus/corpus_crypto_test.cpp. A divergence between
     the two implementations fails this gate.
     """
     kat_path = SCRIPTS_DIR / "tests" / "data" / "crypto_kat.yaml"
@@ -781,11 +806,13 @@ TESTS = [
     test_mangled_paste_fallback_tier,
     test_merge_prefers_nonzero_freq_and_t_ms,
     test_crc_ccitt_matches_known_vector,
+    test_uart_encode_matches_cpp,
     test_validate_ctrl0_length_mismatch_is_rejected,
     test_validate_crc_mismatch_is_rejected,
     test_validate_unknown_expect_key_is_rejected,
     test_validate_over_length_expect_frames_is_rejected,
     test_validate_bad_classification_name_is_rejected,
+    test_validate_warns_on_replayable_capture_without_expect_exchange,
     test_naming_convention_id_parsing,
     test_validate_citation_regex_covers_every_shape,
     test_validate_flags_stale_and_wrong_phase_citations,

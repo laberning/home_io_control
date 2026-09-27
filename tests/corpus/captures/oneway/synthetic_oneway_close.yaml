@@ -1,7 +1,7 @@
 id: synthetic_oneway_close
 description: >
   Hand-assembled 1W remote CLOSE command, typed-broadcast to all roller-shutter devices.
-  Pure plaintext (no crypto) pipeline self-test fixture — see tests/corpus_bootstrap_dump_test.cpp
+  Pure plaintext (no crypto) pipeline self-test fixture — see tests/corpus/corpus_bootstrap_dump_test.cpp
   for how these bytes were generated (real serialize()/crc_ccitt() output, not hand-typed hex).
 source:
   device: "synthetic 1W remote"

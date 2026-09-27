@@ -93,7 +93,7 @@ format-check:
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
 	@echo "Linting YAML configuration files..."
-	yamllint config/tests/*.yaml config/boards/*.yaml config/*.yaml tests/corpus/captures/ .github/workflows/*.yml .github/dependabot.yml
+	yamllint config/tests/*.yaml config/boards/*.yaml config/*.yaml tests/corpus/captures/ tests/python/fixtures/ .github/workflows/*.yml .github/dependabot.yml
 
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
 # (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.
@@ -104,24 +104,39 @@ corpus-validate:
 	@python3 scripts/corpus/tests/run_tests.py
 	@python3 scripts/lr1121_firmware/tests/run_tests.py
 
-# libFuzzer target for the frame parser and its pure decoders, seeded from the golden-frame
-# corpus. Time-boxed background check (FUZZ_TIME seconds, default 60) — not part of `make check`/
-# `make test`, since fuzzing doesn't have a pass/fail gate the way a fixed test suite does. The
-# parser TUs (proto_frame/proto_codecs/proto_device_model/proto_crypto) are ESPHome-free; the
-# only host shim needed is tests/include/esp_random.h, which proto_crypto.cpp pulls in for
-# crypto::generate_challenge().
+# libFuzzer targets, seeded from the golden-frame corpus. Time-boxed background checks
+# (FUZZ_TIME seconds, default 60), not part of `make check`/`make test`: fuzzing has no pass/fail
+# gate the way a fixed test suite does. Each target keeps its own seed and working-corpus
+# directories under build/fuzz/, so inputs of different shapes never mix.
+#   fuzz-frame     frame parser + its pure decoders (proto_frame/codecs/device_model/crypto, all
+#                  ESPHome-free; tests/include only supplies esp_random.h for proto_crypto.cpp).
+#   fuzz-soft-phy  software-PHY RX decoder (radio_soft_phy.cpp): raw chip buffers through the
+#                  length peek, UART probe and CRC recovery. radio_soft_phy.h reaches
+#                  esphome/core/hal.h through radio_interface.h, which tests/include stubs.
+# A new target is one FUZZ_RUN call: name, extract_fuzz_seeds.py flags, sources.
 FUZZ_TIME ?= 60
+FUZZ_CXX ?= clang++
+FUZZ_CXXFLAGS := -std=c++20 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
+	-Icomponents/home_io_control -Itests/include
+
+# $(1) = binary/target name, $(2) = extract_fuzz_seeds.py flags, $(3) = seed dir name, $(4) = sources
+define FUZZ_RUN
+	@mkdir -p build/fuzz/$(3) build/fuzz/corpus_$(1)
+	@python3 scripts/corpus/extract_fuzz_seeds.py $(2)
+	$(FUZZ_CXX) $(FUZZ_CXXFLAGS) $(4) -o build/fuzz/$(1)
+	./build/fuzz/$(1) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 build/fuzz/corpus_$(1) build/fuzz/$(3)
+endef
+
 fuzz-frame:
-	@mkdir -p build/fuzz/seeds build/fuzz/corpus
-	@python3 scripts/corpus/extract_fuzz_seeds.py
-	clang++ -std=c++20 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
-		-Icomponents/home_io_control -Itests/include \
+	$(call FUZZ_RUN,fuzz_frame_parse,,seeds,\
 		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
 		components/home_io_control/proto_device_model.cpp components/home_io_control/proto_crypto.cpp \
-		tests/fuzz/fuzz_frame_parse.cpp \
-		-o build/fuzz/fuzz_frame_parse
-	./build/fuzz/fuzz_frame_parse -max_total_time=$(FUZZ_TIME) -print_final_stats=1 \
-		build/fuzz/corpus build/fuzz/seeds
+		tests/fuzz/fuzz_frame_parse.cpp)
+
+fuzz-soft-phy:
+	$(call FUZZ_RUN,fuzz_soft_phy_rx,--soft-phy,seeds_soft_phy,\
+		components/home_io_control/radio_soft_phy.cpp components/home_io_control/proto_frame.cpp \
+		tests/fuzz/fuzz_soft_phy_rx.cpp)
 
 # Static analysis (local clang-tidy after building inside Docker)
 clang-tidy:
@@ -148,6 +163,14 @@ key-material-scan:
 # emit keys that exist in their real ESPHome schemas -- see scripts/check-yaml-emitters.py.
 yaml-emitter-sync:
 	@python3 scripts/check-yaml-emitters.py
+
+# Host-stub drift check: the ESPHome API the component uses, as declared by the stubs in
+# tests/include/esphome, must match the real headers of the pinned ESPHome image (ADR 0014) --
+# see scripts/check-stub-sync.py. Runs in the container, where `import esphome` finds them.
+stub-sync:
+	@echo "Checking host stubs against the ESPHome headers..."
+	@docker compose run --rm -v "$(CURDIR):/repo:ro" -w /repo -e PYTHONDONTWRITEBYTECODE=1 \
+		--entrypoint python3 esphome scripts/check-stub-sync.py
 
 # Layering check: include direction between the component's layers (collaborators and entities
 # never include hub_internal.h; only listed files reach hub_core.h; protocol and radio files include
@@ -236,14 +259,18 @@ COMPONENT_SRCS := $(wildcard components/home_io_control/*.cpp)
 # RAII rule between tests.
 STUB_SRCS := tests/stubs/stubs.cpp tests/support/test_isolation.cpp
 
-# All test files (*_test.cpp) in tests/ root
-TEST_SRCS := $(wildcard tests/*_test.cpp)
+# All test files (*_test.cpp), one directory per layer under tests/ (proto/, radio/, hub/, platform/,
+# oneway/, tuning/, corpus/, sync/, harness/). tests/fuzz/ holds libFuzzer targets, built separately.
+TEST_SRCS := $(sort $(shell find tests -name '*_test.cpp' -not -path 'tests/fuzz/*'))
 
-# Include paths (build/corpus holds the generated golden-frame corpus header — see corpus-gen below)
+# Include paths (build/corpus holds the generated golden-frame corpus header — see corpus-gen below).
+# -Itests comes last: test files name shared harness headers relative to tests/ ("stubs/…",
+# "support/…") from whichever layer directory they live in; component headers still win.
 INCLUDES := -Icomponents/home_io_control \
             -Itests/include \
             -Itests/support \
-            -Ibuild/corpus
+            -Ibuild/corpus \
+            -Itests
 
 # Mirror the ESPHome API defines that the component injects during firmware codegen.
 # Without these, host builds silently compile out the rename-action registration path and
@@ -283,12 +310,14 @@ HOST_EXTRA_FLAGS ?=
 # tests exercise the sources under the same language rules the firmware does. They were on c++17,
 # which meant C++20 library calls the device build accepts -- and that clang-tidy's device-side
 # analysis actively recommends, e.g. modernize-use-starts-ends-with -- would not compile here.
-# -Werror=switch: several switches over DeviceType / capability-class enums deliberately omit a
-# default: label so an unhandled new enumerator is caught at build time rather than silently
-# mapping to UNKNOWN. The reverse cross-language sync tests (device_type_sync_test.cpp) rely on
-# every enumerator being reachable through a named case, so this promotion is what makes that
-# guarantee hard on the host build.
-HOST_CXXFLAGS := -std=c++20 -Wall -Wextra -Werror=switch -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
+# -Werror: every host warning fails the build, so warnings cannot pile up between clang-tidy runs.
+# Safe because every CI job is pinned to ubuntu-24.04, whose g++ is the local dev toolchain's (13.3);
+# a warning that appears only in CI means that pin drifted. It also makes -Wswitch hard: several
+# switches over DeviceType / capability-class enums deliberately omit a default: label so an
+# unhandled new enumerator is caught at build time rather than silently mapping to UNKNOWN, and the
+# reverse cross-language sync tests (device_type_sync_test.cpp) rely on every enumerator being
+# reachable through a named case.
+HOST_CXXFLAGS := -std=c++20 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-reorder -DIRAM_ATTR= \
                  $(UNIT_TEST_DEFINES) $(INCLUDES) $(HOST_EXTRA_FLAGS)
 
 HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)
@@ -335,6 +364,14 @@ unit-test-asan: corpus-gen
 clean-host:
 	rm -rf build/host
 
+# Codegen behaviour tests (tests/python/run_tests.py): validators, ID injection, and `esphome config`
+# over the accept/reject fixtures in tests/python/fixtures/. Runs inside the ESPHome image because
+# the modules import esphome.*; the repo is mounted read-only so the run can never write into it.
+py-test:
+	@echo "Running codegen tests in the ESPHome container..."
+	@docker compose run --rm -v "$(CURDIR):/repo:ro" -w /repo -e PYTHONDONTWRITEBYTECODE=1 \
+		--entrypoint python3 esphome tests/python/run_tests.py
+
 
 # === Documentation =============================================================
 
@@ -355,12 +392,13 @@ doxygen:
 #   tuning-sync         -> tuning-sync
 #   yaml-emitter-sync   -> yaml-emitter-sync
 #   include-graph       -> include-graph
+#   stub-sync           -> stub-sync
 #   board-pinout-sync   -> board-pinout-sync
 #   corpus-validate     -> corpus-validate
 #   docs-link-check     -> docs-link-check
 #   key-material-scan   -> key-material-scan
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan
-test: unit-test unit-test-asan firmware-test
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan
+test: unit-test unit-test-asan py-test firmware-test
 check: lint test doxygen
 
 # Backward compatibility aliases (deprecated, use new names)
@@ -373,10 +411,10 @@ test-unit: unit-test
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
 		docs-link-check \
-		include-graph \
+		include-graph stub-sync \
 		docs-prose-check \
 		key-material-scan \
-		fuzz-frame \
-		firmware-test unit-test unit-test-asan host-run clean-host lint test check \
+		fuzz-frame fuzz-soft-phy \
+		firmware-test unit-test unit-test-asan py-test host-run clean-host lint test check \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

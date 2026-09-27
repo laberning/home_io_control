@@ -76,6 +76,7 @@ How to call each action from Home Assistant, with its fields and result event, i
 
 - Hub entry point: `IOHomeControlComponent` in [hub_core.h](../components/home_io_control/hub_core.h)
 - Authenticated exchange engine: [exchange_engine.h](../components/home_io_control/exchange_engine.h)
+- Transmit observer (every sent frame and LBT deferral, reported from the engine's single TX path): [transmit_observer.h](../components/home_io_control/transmit_observer.h)
 - Pairing engine: [pairing_engine.h](../components/home_io_control/pairing_engine.h)
 - Key-extraction responder (device-role pairing mirror): [pairing_responder.h](../components/home_io_control/pairing_responder.h)
 - Exchange/auth state types: [hub_exchange.h](../components/home_io_control/hub_exchange.h)
@@ -100,7 +101,12 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Runtime tuning config: [tuning_config.h](../components/home_io_control/tuning_config.h)
 - Tuning parameter registry: [tuning_registry.h](../components/home_io_control/tuning_registry.h)
 - Shared entity mixins: [platform_entity_base.h](../components/home_io_control/platform_entity_base.h)
-- ESPHome hub schema: [__init__.py](../components/home_io_control/__init__.py)
+- ESPHome hub schema and `to_code()`: [__init__.py](../components/home_io_control/__init__.py)
+- Hub YAML keys and generated C++ handles: [hub_names.py](../components/home_io_control/hub_names.py)
+- Hub option tables and field validators: [hub_validators.py](../components/home_io_control/hub_validators.py)
+- 1W controller identities: [oneway_controllers.py](../components/home_io_control/oneway_controllers.py)
+- Hub-flag entities (arming switches, pairing and scan buttons): [hub_entities.py](../components/home_io_control/hub_entities.py)
+- LR1121 firmware-update codegen: [lr1121_update_codegen.py](../components/home_io_control/lr1121_update_codegen.py)
 - Shared platform codegen: [platform_common.py](../components/home_io_control/platform_common.py)
 
 ## Test Corpus
@@ -119,7 +125,7 @@ CRC/CTRL0 self-consistency, cryptographic promises, the naming convention (`file
 capture sits in its phase directory), and that every `tests/corpus/captures/<phase>/<id>.yaml`
 path cited across the tree resolves. Five host test suites replay the corpus
 through the real protocol/crypto/codec/decision/exchange code
-(`tests/corpus_frame_test.cpp`, `corpus_crypto_test.cpp`, `corpus_decode_test.cpp`,
+(`tests/corpus/corpus_frame_test.cpp`, `corpus_crypto_test.cpp`, `corpus_decode_test.cpp`,
 `corpus_classification_test.cpp`, `corpus_exchange_replay_test.cpp`) — an issue-derived capture
 becomes a permanent parser/decoder regression fixture the day it's ingested.
 

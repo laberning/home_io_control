@@ -66,7 +66,7 @@ Not a complete detector: it catches byte-exact frames in prose-shaped tracked te
 16-byte key with no frame around it, a paraphrased/partially-transcribed capture, a screenshot,
 or anything in a file type outside the scope above. A general "flag any bare key-shaped hex run"
 tier was deliberately not built: this repo already has several legitimate high-entropy 16-byte
-values with no frame around them (a test system key in tests/hub_core_test.cpp, a published IV
+values with no frame around them (a test system key in tests/hub/hub_core_test.cpp, a published IV
 vector in proto_crypto.cpp, firmware hashes in lr1121_firmware_update_controller.cpp) that are
 structurally identical to a real leaked key -- telling them apart needs an allowlist, which is
 the exact failure mode this scanner's no-allowlist policy exists to avoid.

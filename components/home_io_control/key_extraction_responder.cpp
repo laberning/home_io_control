@@ -45,7 +45,7 @@
 ///
 /// The device-role builders (create_discover_resp(), create_challenge_req_device_role(),
 /// create_key_confirm(), create_discover_confirm_ack()) are each pinned against a real device's
-/// captured framing by tests/corpus_device_role_builder_test.cpp, including
+/// captured framing by tests/corpus/corpus_device_role_builder_test.cpp, including
 /// create_discover_resp()'s flags/timestamp bytes, which mirror a real Somfy Izymo dimmer's
 /// captured values (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_commands.cpp for
 /// the derivation) but remain unconfirmed against a real hub like every device-role field here.

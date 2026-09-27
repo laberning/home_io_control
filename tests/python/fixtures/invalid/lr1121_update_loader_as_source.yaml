@@ -1,0 +1,10 @@
+# expect-error: only usable through the bootloader: sub-block
+# covers: lr1121_update_codegen.validate_lr1121_firmware_source
+# A loader image in the transceiver slot would flash the wrong thing.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/t3s3.yaml
+
+home_io_control:
+  lr1121_firmware_update:
+    source: github://Lora-net/radio_firmware_images/lr1121/loader/lr1121_loader_2101.bin

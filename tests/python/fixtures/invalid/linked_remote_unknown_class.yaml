@@ -1,0 +1,11 @@
+# expect-error: Unknown device class 'awnig' in linked_remotes
+# covers: hub_validators.validate_linked_remote_entry
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "FEEB1E"
+    linked_remotes: ["class:awnig"]
