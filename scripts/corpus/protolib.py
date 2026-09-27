@@ -49,6 +49,21 @@ def crc_ccitt(data: bytes) -> int:
     return crc & 0xFFFF
 
 
+def uart_encode(data: bytes) -> bytes:
+    """Port of uart_encode_packet() in radio_soft_phy.cpp: the soft-PHY on-air line coding.
+
+    Each byte becomes a 10-bit cell (start 0, eight data bits LSB-first, stop 1), cells are packed
+    MSB-first across bytes, and the unused bits of the last byte are padded with ones (line idle).
+    """
+    bits = []
+    for byte in data:
+        bits.append(0)
+        bits.extend((byte >> index) & 1 for index in range(8))
+        bits.append(1)
+    bits.extend([1] * (-len(bits) % 8))
+    return bytes(int("".join(map(str, bits[i : i + 8])), 2) for i in range(0, len(bits), 8))
+
+
 def ctrl0_implied_length(ctrl0: int) -> int:
     """Total non-CRC frame length implied by CTRL0 bits [4:0] (proto_frame.cpp :: frame_length())."""
     return (ctrl0 & CTRL0_LENGTH_MASK) + 1

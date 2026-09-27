@@ -487,6 +487,7 @@ TEST(SoftPhy, AirTimeIsRoundedUpToWholeBytes) {
   // 38400 bps: one byte is 208.33 µs, and the helper must never round below that.
   EXPECT_GE(soft_phy_air_time_us(1), 208u);
   EXPECT_GE(soft_phy_air_time_us(48), 10000u) << "the fixed-length RX window costs a full 10 ms";
+  EXPECT_EQ(soft_phy_air_time_us(1024), 213334u) << "a 1024-byte wake-up preamble must not wrap the arithmetic";
   EXPECT_LT(soft_phy_air_time_us(22 + SOFT_PHY_EARLY_READ_MARGIN_BYTES), soft_phy_air_time_us(48))
       << "a 15-byte frame must complete well before the fixed-length window would";
 }

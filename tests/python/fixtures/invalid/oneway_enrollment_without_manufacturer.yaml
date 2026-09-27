@@ -1,5 +1,5 @@
 # expect-error: has enrollment: true but no manufacturer:
-# covers: oneway_controllers._validate_oneway_controllers
+# covers: oneway_controllers.validate_oneway_controllers
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v3.yaml

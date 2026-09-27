@@ -90,6 +90,14 @@ differ. That is the whole idea, and also the whole risk.
   stub, and a stub that drifts from real behavior makes a test pass while the
   firmware fails. Compiling the real firmware is therefore a separate mandatory
   check; the host suite alone is never sufficient evidence.
+- **Signature drift is gated; behavioural drift is not.** `make stub-sync`
+  (part of `make lint`) checks the stubbed API the component uses against the
+  real headers of the pinned ESPHome image: every stub overload must exist
+  upstream with the same return and parameter types, and pinned data members
+  must have the same type. It found a stub that declared
+  `Component::warn_if_blocking_over_` as a millisecond `uint32_t` where ESPHome
+  stores centiseconds in a `uint8_t`. What a stub *does* when called is still
+  unchecked, so the firmware compile stays mandatory.
 - Some code only compiles when the right feature macros are defined. The host
   build must define the same ones the component injects into the firmware
   build, or whole paths silently vanish and their tests cover nothing. This has

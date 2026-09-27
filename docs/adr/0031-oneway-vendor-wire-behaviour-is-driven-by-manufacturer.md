@@ -60,7 +60,7 @@ one hardware-validated class-bound configuration with no failing test);
   on it. `proto_constants.h` already holds the `ACEI_*` and `MANUFACTURER_*`
   constants both sides need.
 - **The profiled-vendor set is written twice** — the C++ `switch` and the
-  Python `_ONEWAY_WIRE_PROFILE_MANUFACTURERS` — with no automated sync check
+  Python `ONEWAY_WIRE_PROFILE_MANUFACTURERS` — with no automated sync check
   (`check-yaml-emitters.py` compares key *names*, not table contents).
   Cross-referenced in both comments; promote to a generated table if it grows
   past a handful.

@@ -93,11 +93,11 @@ static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
 ///
 /// One byte is 8 / 38400 s = 208.333 µs. Computed as an integer division rounded *up*, so the
 /// result never falls short of a whole byte's air time and a caller that waits on it never reads
-/// the chip's buffer early. The numerator peaks around 360 million for the longest frame this is
-/// ever asked about, well inside uint32_t.
+/// the chip's buffer early. The numerator is 64-bit: in 32 bits it would wrap above 536 bytes, and
+/// a 1024-byte wake-up preamble is a real transmission length.
 constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
-  const uint32_t bit_periods = raw_bytes * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
-  return (bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS;
+  const uint64_t bit_periods = static_cast<uint64_t>(raw_bytes) * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
+  return static_cast<uint32_t>((bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS);
 }
 
 // RX_HOP_HOLDOFF_US (radio_interface.h) exists to outlast the fixed-length RX_DONE on the

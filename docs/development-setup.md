@@ -55,11 +55,19 @@ make test
 # Full QA: lint + tests
 make check
 
+# Check the host-test ESPHome stubs against the real ESPHome headers (in the container; part of lint)
+make stub-sync
+
 # Validate the golden-frame corpus (schema, CRC, crypto — see tests/corpus/README.md)
 make corpus-validate
 
 # Regenerate the corpus's generated C++ fixture header (also runs automatically before unit-test)
 make corpus-gen
+
+# Fuzz the frame parser and the software-PHY RX decoder, seeded from the corpus
+# (time-boxed, FUZZ_TIME seconds, default 60; not part of `make check`, runs weekly in CI)
+make fuzz-frame
+make fuzz-soft-phy
 
 # Clean stale build caches for config/tests/*.yaml (fixes confusing linker errors after
 # adding a new .cpp under components/home_io_control/)

@@ -66,7 +66,7 @@ class HubArmingSwitch : public switch_::Switch, public Component, public HubBoun
 /// (successful extraction or auto-off timeout), not just on a user-initiated toggle.
 ///
 /// Created dynamically from `home_io_control.accept_foreign_pairing: true` (see `hub_entities.py`'s
-/// `_create_hub_arming_switch()`), not through a `switch:` platform entry — see the file header
+/// `create_hub_arming_switch()`), not through a `switch:` platform entry — see the file header
 /// for why. See key_extraction_responder.cpp for what arming actually does.
 ///
 /// @note Hardware-confirmed on real RF hardware, but not yet against a third-party hub — see
@@ -109,7 +109,7 @@ class IOHomeRecoverOneWayKeySwitch : public HubArmingSwitch {
 /// @brief Button entity that triggers device discovery and pairing when pressed in Home Assistant.
 ///
 /// Created when `home_io_control.discover_and_pair_button: true` (see `hub_entities.py`'s
-/// `_create_discover_and_pair_button()`). The deprecated `button: - platform: home_io_control`
+/// `create_discover_and_pair_button()`). The deprecated `button: - platform: home_io_control`
 /// entry (`button.py`) still creates one too, for the duration of its deprecation window.
 /// @ingroup hioc_platforms
 class IOHomeDiscoverButton : public button::Button, public Component, public HubBoundEntity {
@@ -136,7 +136,7 @@ class IOHomeDiscoverButton : public button::Button, public Component, public Hub
 /// not a state.
 ///
 /// Created only when `home_io_control.scan_paired_devices_button: true` (see `hub_entities.py`'s
-/// `_create_scan_paired_devices_button()`) — the same hub-block-flag shape IOHomeDiscoverButton
+/// `create_scan_paired_devices_button()`) — the same hub-block-flag shape IOHomeDiscoverButton
 /// now uses too; see the file header for why hub entities come from the hub block.
 /// @ingroup hioc_platforms
 class IOHomeScanPairedDevicesButton : public button::Button, public Component, public HubBoundEntity {

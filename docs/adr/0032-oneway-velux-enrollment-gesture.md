@@ -121,5 +121,5 @@ after Gear.
   once a real VELUX enrollment is captured (hex is immutable, so that means delete +
   re-add).
 - The profiled-vendor set is now written in three places (the C++ `switch`, the
-  Python `_ONEWAY_WIRE_PROFILE_MANUFACTURERS`, and the schema warning) with no
+  Python `ONEWAY_WIRE_PROFILE_MANUFACTURERS`, and the schema warning) with no
   automated sync check — cross-referenced in comments, same treatment as ADR 0031.

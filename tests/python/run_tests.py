@@ -205,15 +205,15 @@ def hub_entity_ids_are_declared_at_validation_time():
     from esphome.components.home_io_control import hub_names as n
 
     injectors = [
-        (e._inject_accept_foreign_pairing_switch_id, n.CONF_ACCEPT_FOREIGN_PAIRING,
+        (e.inject_accept_foreign_pairing_switch_id, n.CONF_ACCEPT_FOREIGN_PAIRING,
          n.CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID, "accept_foreign_pairing_switch"),
-        (e._inject_recover_oneway_key_switch_id, n.CONF_RECOVER_ONEWAY_KEY,
+        (e.inject_recover_oneway_key_switch_id, n.CONF_RECOVER_ONEWAY_KEY,
          n.CONF_RECOVER_ONEWAY_KEY_SWITCH_ID, "recover_oneway_key_switch"),
-        (e._inject_scan_paired_devices_button_id, n.CONF_SCAN_PAIRED_DEVICES_BUTTON,
+        (e.inject_scan_paired_devices_button_id, n.CONF_SCAN_PAIRED_DEVICES_BUTTON,
          n.CONF_SCAN_PAIRED_DEVICES_BUTTON_ID, "scan_paired_devices_button"),
-        (e._inject_discover_and_pair_button_id, n.CONF_DISCOVER_AND_PAIR_BUTTON,
+        (e.inject_discover_and_pair_button_id, n.CONF_DISCOVER_AND_PAIR_BUTTON,
          n.CONF_DISCOVER_AND_PAIR_BUTTON_ID, "discover_and_pair_button"),
-        (e._inject_discover_and_pair_result_sensor_id, n.CONF_DISCOVER_AND_PAIR_BUTTON,
+        (e.inject_discover_and_pair_result_sensor_id, n.CONF_DISCOVER_AND_PAIR_BUTTON,
          n.CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID, "pairing_result_sensor"),
     ]
     for inject, flag, id_key, suffix in injectors:
@@ -233,7 +233,7 @@ def _raise_firmware_error(**_kwargs):
     raise lr1121_firmware.Lr1121FirmwareError("checksum mismatch")
 
 
-@case("lr1121_update_codegen._create_lr1121_firmware_update",
+@case("lr1121_update_codegen.create_lr1121_firmware_update",
       "lr1121_update_codegen._create_lr1121_bootloader_update")
 def firmware_fetch_errors_become_validation_errors():
     """A fetch/verify failure in to_code() is reported as a config error naming the block, not as
@@ -245,13 +245,14 @@ def firmware_fetch_errors_become_validation_errors():
     from esphome.components.home_io_control import lr1121_update_codegen as l
     from esphome.components.home_io_control import hub_names as n
 
+    original_config_path = CORE.config_path
     CORE.config_path = Path("/tmp/hioc-py-test/fixture.yaml")
     original = lr1121_firmware.fetch_and_verify
     lr1121_firmware.fetch_and_verify = _raise_firmware_error
     try:
         config = {n.CONF_LR1121_FIRMWARE_UPDATE: {CONF_SOURCE: "github://o/r/transceiver.bin"}}
         try:
-            asyncio.run(l._create_lr1121_firmware_update(config, var=None))
+            asyncio.run(l.create_lr1121_firmware_update(config, var=None))
             raise AssertionError("fetch failure was not reported")
         except cv.Invalid as err:
             assert str(err).startswith("lr1121_firmware_update: checksum mismatch"), str(err)
@@ -263,6 +264,7 @@ def firmware_fetch_errors_become_validation_errors():
             assert str(err).startswith("lr1121_firmware_update.bootloader: checksum mismatch"), str(err)
     finally:
         lr1121_firmware.fetch_and_verify = original
+        CORE.config_path = original_config_path
 
 
 # =============================================================================================

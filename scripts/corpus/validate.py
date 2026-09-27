@@ -422,6 +422,29 @@ def validate_crypto(data: dict, capture_id: str) -> None:
         )
 
 
+# Phases whose captures the host replay suites drive through the real engine
+# (tests/corpus/corpus_exchange_replay_test.cpp, corpus_pairing_replay_test.cpp).
+REPLAY_PHASES = frozenset({"exchange", "statuspoll", "pairing", "discovery"})
+
+
+def unreplayed_capture_warning(data: dict, phase: str) -> "str | None":
+    """Why a capture that could drive a replay isn't one, or None.
+
+    A capture in a replay phase that transmitted something but has no `expect.exchange` is never
+    replayed: its frames still face every per-frame check, but its timing and the engine's answer
+    to it go unasserted. That is legitimate for an excerpt missing frames, a multi-exchange log or
+    a roll-call, and worth a look otherwise, so it is a warning, not an error. A capture with no
+    `tx` frame (passive traffic) has nothing to replay and never warns.
+    """
+    if phase not in REPLAY_PHASES:
+        return None
+    if not any(frame.get("dir") == "tx" for frame in data.get("frames", [])):
+        return None
+    if "exchange" in (data.get("expect") or {}):
+        return None
+    return f"{data['id']}: {phase} capture has tx frames but no expect.exchange, so no replay suite runs it"
+
+
 def validate_capture(data: dict, path: Path) -> str:
     for field in ("id", "description", "source", "key", "frames"):
         require(field in data, f"{path}: missing required top-level field '{field}'")
@@ -470,6 +493,7 @@ def main() -> int:
 
     seen_ids: dict = {}
     errors: list = []
+    warnings: list = []
     total_frames = 0
 
     for path in paths:
@@ -484,6 +508,10 @@ def main() -> int:
             errors.append(f"{path}: YAML parse error: {exc}")
             continue
 
+        warning = unreplayed_capture_warning(data, path.parent.name)
+        if warning is not None:
+            warnings.append(warning)
+
         if capture_id in seen_ids:
             errors.append(f"{path}: duplicate id '{capture_id}' (already used by {seen_ids[capture_id]})")
         else:
@@ -491,6 +519,12 @@ def main() -> int:
             total_frames += len(data["frames"])
 
     errors.extend(check_names_and_citations(seen_ids))
+
+    if warnings:
+        print(f"validate.py: {len(warnings)} warning(s), not replayed (see tests/corpus/README.md, Timed replay):",
+              file=sys.stderr)  # fmt: skip
+        for warning in warnings:
+            print(f"  warning: {warning}", file=sys.stderr)
 
     if errors:
         print("validate.py: FAILED", file=sys.stderr)

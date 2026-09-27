@@ -1,5 +1,5 @@
 # expect-error: fem: kct8103l requires vfem_pin, fem_en_pin, fem_pa_pin to be set
-# covers: hub_validators._validate_fem
+# covers: hub_validators.validate_fem
 # A FEM profile names the part, never its pins: a board without them would not transmit.
 packages:
   common: !include ../_common.yaml

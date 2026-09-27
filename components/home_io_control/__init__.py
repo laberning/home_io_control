@@ -50,41 +50,41 @@ from .hub_validators import (
     PA_PIN_OPTIONS,
     RADIO_TYPE_OPTIONS,
     TCXO_VOLTAGE_OPTIONS,
-    _validate_fem,
+    validate_fem,
     validate_device_id,
     validate_node_id,
     validate_system_key,
 )
 from .lr1121_update_codegen import (
     LR1121_FIRMWARE_UPDATE_SCHEMA,
-    _create_lr1121_firmware_update,
-    _validate_lr1121_firmware_update,
+    create_lr1121_firmware_update,
+    validate_lr1121_firmware_update,
 )
 from .oneway_controllers import (
     ONEWAY_CONTROLLER_SCHEMA,
-    _create_oneway_controller_entities,
-    _final_validate_oneway_controller_addresses,
-    _validate_oneway_controllers,
+    create_oneway_controller_entities,
+    final_validate_oneway_controller_addresses,
+    validate_oneway_controllers,
     oneway_controller_expression,
 )
 from .hub_entities import (
-    _create_discover_and_pair_button,
-    _create_hub_arming_switch,
-    _create_scan_paired_devices_button,
-    _inject_accept_foreign_pairing_switch_id,
-    _inject_discover_and_pair_button_id,
-    _inject_discover_and_pair_result_sensor_id,
-    _inject_recover_oneway_key_switch_id,
-    _inject_scan_paired_devices_button_id,
+    create_discover_and_pair_button,
+    create_hub_arming_switch,
+    create_scan_paired_devices_button,
+    inject_accept_foreign_pairing_switch_id,
+    inject_discover_and_pair_button_id,
+    inject_discover_and_pair_result_sensor_id,
+    inject_recover_oneway_key_switch_id,
+    inject_scan_paired_devices_button_id,
 )
 
 # Re-exported for the platform modules (button.py, cover.py, platform_common.py, ...), which
-# import these names from the package itself.
+# import these names from the package itself. CONF_DISCOVER_AND_PAIR_BUTTON,
+# IOHomeControlComponent and validate_device_id are re-exported too; this file already imports
+# them above for its own use.
 from .hub_names import (  # noqa: F401
-    CONF_DISCOVER_AND_PAIR_BUTTON,
     CONF_HOME_IO_CONTROL_ID,
     CONF_LOW_POWER,
-    IOHomeControlComponent,
     IOHomeDiscoverButton,
     IOHomePairingResultTextSensor,
     home_io_control_ns,
@@ -92,7 +92,6 @@ from .hub_names import (  # noqa: F401
 from .hub_validators import (  # noqa: F401
     device_type_expression,
     inherit_esphome_device,
-    validate_device_id,
     validate_device_type,
     validate_linked_remote_entry,
     validate_status_poll_interval,
@@ -103,7 +102,7 @@ AUTO_LOAD = ["button", "climate", "cover", "light", "lock", "number", "select", 
 MULTI_CONF = False
 
 
-FINAL_VALIDATE_SCHEMA = _final_validate_oneway_controller_addresses
+FINAL_VALIDATE_SCHEMA = final_validate_oneway_controller_addresses
 
 
 CONFIG_SCHEMA = cv.All(
@@ -147,14 +146,14 @@ CONFIG_SCHEMA = cv.All(
     )
     .extend(cv.COMPONENT_SCHEMA)
     .extend(spi.spi_device_schema(True, 8e6, "mode0")),
-    _inject_accept_foreign_pairing_switch_id,
-    _inject_recover_oneway_key_switch_id,
-    _inject_scan_paired_devices_button_id,
-    _inject_discover_and_pair_button_id,
-    _inject_discover_and_pair_result_sensor_id,
-    _validate_oneway_controllers,
-    _validate_lr1121_firmware_update,
-    _validate_fem,
+    inject_accept_foreign_pairing_switch_id,
+    inject_recover_oneway_key_switch_id,
+    inject_scan_paired_devices_button_id,
+    inject_discover_and_pair_button_id,
+    inject_discover_and_pair_result_sensor_id,
+    validate_oneway_controllers,
+    validate_lr1121_firmware_update,
+    validate_fem,
 )
 
 
@@ -223,10 +222,10 @@ async def to_code(config):
                 oneway_controller_expression(identity, config[CONF_NODE_ID])
             )
         )
-        await _create_oneway_controller_entities(identity, var)
+        await create_oneway_controller_entities(identity, var)
 
     if config[CONF_ACCEPT_FOREIGN_PAIRING]:
-        await _create_hub_arming_switch(
+        await create_hub_arming_switch(
             config,
             var,
             cls=IOHomeAcceptForeignPairingSwitch,
@@ -235,7 +234,7 @@ async def to_code(config):
         )
 
     if config[CONF_RECOVER_ONEWAY_KEY]:
-        await _create_hub_arming_switch(
+        await create_hub_arming_switch(
             config,
             var,
             cls=IOHomeRecoverOneWayKeySwitch,
@@ -244,15 +243,15 @@ async def to_code(config):
         )
 
     if config[CONF_SCAN_PAIRED_DEVICES_BUTTON]:
-        await _create_scan_paired_devices_button(config, var)
+        await create_scan_paired_devices_button(config, var)
 
     if config[CONF_DISCOVER_AND_PAIR_BUTTON]:
-        await _create_discover_and_pair_button(config, var)
+        await create_discover_and_pair_button(config, var)
 
     cg.add(var.set_diagnostic_probes_enabled(config[CONF_DIAGNOSTIC_PROBES]))
 
     if CONF_LR1121_FIRMWARE_UPDATE in config:
-        await _create_lr1121_firmware_update(config, var)
+        await create_lr1121_firmware_update(config, var)
 
     if tuning_module.CONF_TUNING in config:
         await tuning_module.to_code(config[tuning_module.CONF_TUNING], var)

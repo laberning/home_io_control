@@ -12,20 +12,24 @@
 /// and is missing its 0x29 discovery-response frame entirely — neither is a byte-exact replay
 /// target, by the capture's own documentation.
 ///
-/// Two real-hardware timing gaps the host-side MockRadio can't model (it has no per-attempt
-/// clock — see tests/stubs/radio_test_common.h — `millis()` in host tests just increments once
-/// per call, so a "2000ms" wait is really "however many loop iterations", not real elapsed time):
+/// Timing: every capture replayed here is timestamped, so it replays on its own timeline under a
+/// test_clock::ManualClock (corpus_test::queue_timed_rx(), tests/support/timed_replay.h). Each rx
+/// frame arrives its captured gap after the first send with the same bytes as the tx frame it
+/// followed, and every send takes its modelled time on air. The engine's real discovery windows,
+/// key-exchange waits and retries therefore decide what it hears: a window shorter than a captured
+/// reply fails the replay.
 ///
-/// 1. **Retried TX with no intervening response.** A real capture may show the same command
-///    transmitted N times before a response finally arrives (e.g. 3 identical DISCOVER_REQ
-///    attempts, or an unanswered KEY_TRANSFER retried once). Replayed here, the queued response
-///    is available on the very first attempt (MockRadio just returns the next queued packet on
-///    any receive() call), so the engine only transmits once. This is a REPLAY LIMITATION, not
-///    a code bug: the retried frames are byte-identical (challenge/key-derived content is
-///    deterministic, so a retried KEY_TRANSFER is not a "different" frame), so collapsing
-///    consecutive identical-content tx frames to a single expected transmission still asserts
-///    real byte content — it just can't pin the real-world retry *count*, which was RF flakiness
-///    on the day of capture, not protocol behavior worth freezing into a test.
+/// Three rules shape what this replay asserts:
+///
+/// 1. **Retry counts.** A real capture may show the same command transmitted N times before a
+///    response arrives (e.g. 3 identical DISCOVER_REQ attempts, or an unanswered KEY_TRANSFER
+///    retried once), and a capture's excerpt may also show fewer tries than the hub really made.
+///    How many tries it took was RF conditions on the day, not protocol behavior worth freezing.
+///    Runs of consecutive byte-identical frames are therefore collapsed to one on **both** sides,
+///    the capture's tx and the engine's sends, before comparing. The retried frames are
+///    byte-identical (challenge/key-derived content is deterministic), so this still asserts real
+///    byte content and order; each reply is timed from the last try of its run, the one it
+///    actually followed.
 /// 2. **Trailing, wholly-unanswered tx.** SetConfig1 (0x6F) is sent at the end of pairing and is
 ///    optional (finalize_pairing_configuration_()'s own doc); a capture where nothing answers it
 ///    may record more tries than today's PAIRING_SET_CONFIG1_MAX_TRIES, from a build that
@@ -36,14 +40,11 @@
 ///
 /// 3. **A step-on discover-confirm (0x2C) replay needs its own 0x2D in the capture.** Each
 ///    replayed capture sets `comp.tuning_.pairing_discover_confirm` to match what it actually
-///    shows: `SKIP` when the capture has no tx 0x2C at all (every capture replayed here), or
-///    `SEND`/`SEND_WITH_ACK` — chosen from the captured 0x2C's own CTRL1_ACK bit —
-///    when it does. Turning the step on without a queued 0x2D rx would make the engine's listen
-///    swallow the capture's next rx frame as an unrelated reply, and would also collapse the
-///    capture's three identical 0x2C retries into a single expected tx under this file's own
-///    retry-dedup (limitation 1) — neither of which the capture's frames are shaped for. No
-///    current capture hits this; a future capture that shows a real 0x2C needs a captured 0x2D to
-///    replay cleanly here, or must be excluded from this suite with this reason.
+///    shows: `SKIP` when the capture has no tx 0x2C at all, or `SEND`/`SEND_WITH_ACK` — chosen
+///    from the captured 0x2C's own CTRL1_ACK bit — when it does (the `*_discover_confirm_*`
+///    captures, which also carry the device's 0x2D). A capture that shows a 0x2C but no 0x2D (the
+///    device never confirmed) has nothing for the step's listen to hear and must be excluded from
+///    this suite with this reason; it is not a successful pairing in any case.
 
 #include "corpus_generated.h"
 #include "hub_core.h"
@@ -55,6 +56,7 @@
 
 #include "corpus_test_helpers.h"
 #include "test_helpers.h"
+#include "timed_replay.h"
 #include "stubs/radio_test_common.h"
 
 #include <cstring>
@@ -84,6 +86,25 @@ std::unique_ptr<MockRadio> make_mock_radio(const corpus::CorpusCapture *capture)
 bool same_bytes(const corpus::CorpusFrame &a, const corpus::CorpusFrame &b) {
   return corpus_test::wire_len(a) == corpus_test::wire_len(b) &&
          std::memcmp(a.bytes, b.bytes, corpus_test::wire_len(a)) == 0;
+}
+
+/// The engine's sends and their configs with runs of consecutive byte-identical sends (retries)
+/// collapsed to their first, the same treatment the capture's own tx frames get (limitation 1).
+struct DedupedSends {
+  std::vector<std::vector<uint8_t>> data;
+  std::vector<RadioTxConfig> configs;
+};
+
+DedupedSends dedup_sends(const MockRadio &radio) {
+  DedupedSends out;
+  const auto &sent = radio.get_sent_data();
+  for (size_t i = 0; i < sent.size(); i++) {
+    if (!out.data.empty() && out.data.back() == sent[i])
+      continue;
+    out.data.push_back(sent[i]);
+    out.configs.push_back(radio.get_tx_configs()[i]);
+  }
+  return out;
 }
 
 }  // namespace
@@ -140,26 +161,29 @@ TEST_P(CorpusPairingReplay, EngineReproducesCapturedPairing) {
 
   const corpus::CorpusFrame *discover_resp_cf = nullptr;
   for (const corpus::CorpusFrame *rx_cf : rx_frames) {
-    RadioRxPacket packet{};
-    packet.len = rx_cf->crc_present ? static_cast<uint8_t>(rx_cf->len - 2) : rx_cf->len;
-    std::memcpy(packet.data, rx_cf->bytes, packet.len);
-    packet.freq_hz = rx_cf->freq_hz != 0 ? rx_cf->freq_hz : FREQ_CH2;
-    radio->queue_rx(packet);
     if (rx_cf->has_cmd && rx_cf->cmd == CMD_DISCOVER_RESP)
       discover_resp_cf = rx_cf;
   }
   ASSERT_NE(discover_resp_cf, nullptr) << "pairing capture must contain a DISCOVER_RESP frame";
 
+  ASSERT_TRUE(corpus_test::capture_is_timed(*capture)) << "every replayed pairing capture is timestamped";
+  esphome::test_clock::ManualClock clock;
+  radio->set_model_tx_airtime(true);
+  const std::string error =
+      corpus_test::queue_timed_rx(*radio, *capture, corpus_test::ReplayAnchor::FIRST_MATCHING_SEND);
+  ASSERT_TRUE(error.empty()) << error;
+
   const bool ok = comp.discover_and_pair();
   EXPECT_TRUE(ok) << "expected the replayed pairing to succeed, matching expect.exchange.outcome";
 
-  const auto &sent = radio->get_sent_data();
-  const auto &tx_configs = radio->get_tx_configs();
+  const DedupedSends deduped = dedup_sends(*radio);
+  const auto &sent = deduped.data;
+  const auto &tx_configs = deduped.configs;
   if (trailing_unanswered) {
     ASSERT_GE(sent.size(), expected_tx.size()) << "engine transmitted fewer frames than the capture's answered prefix";
   } else {
     ASSERT_EQ(sent.size(), expected_tx.size())
-        << "engine transmitted a different number of frames than the capture's (deduped) tx sequence";
+        << "engine's deduped sends differ in number from the capture's deduped tx sequence";
   }
 
   for (size_t i = 0; i < expected_tx.size(); i++) {

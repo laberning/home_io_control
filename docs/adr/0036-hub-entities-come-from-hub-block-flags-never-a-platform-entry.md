@@ -40,7 +40,7 @@ sized from it, is unverified territory for a purely cosmetic problem. With the f
 Add `discover_and_pair_button` (default `false`) to the hub schema, wired exactly like
 `scan_paired_devices_button`: an `_inject_hub_entity_id()`-based post-validator declares the
 button's and its companion "Last Pairing Result" sensor's IDs during schema validation, and a
-`_create_discover_and_pair_button()` helper builds both from `to_code()` when the flag is set.
+`create_discover_and_pair_button()` helper builds both from `to_code()` when the flag is set.
 
 The legacy `button:` platform (`button.py`) is not deleted outright. It keeps working exactly as
 before, with two additions:

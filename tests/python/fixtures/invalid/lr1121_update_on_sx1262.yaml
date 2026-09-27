@@ -1,5 +1,5 @@
 # expect-error: lr1121_firmware_update requires radio_type: lr1121
-# covers: lr1121_update_codegen._validate_lr1121_firmware_update
+# covers: lr1121_update_codegen.validate_lr1121_firmware_update
 # The firmware-update path talks to the LR1121 bootloader; no other chip has one.
 packages:
   common: !include ../_common.yaml

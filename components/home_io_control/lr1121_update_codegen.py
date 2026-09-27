@@ -14,11 +14,7 @@ import urllib.request
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-# Aliased: this package has its own switch.py/button.py platform submodules, so the real ESPHome
-# components are always imported under names that cannot be mistaken for them. In the package's
-# __init__.py an unaliased `switch`/`button` would even be overwritten: __init__.py's namespace IS
-# the package object, the slot ESPHome's loader binds `esphome.components.home_io_control.switch`
-# into when it imports our platform file, so whichever import ran last would silently win.
+# Aliased so they cannot be mistaken for this package's own platform modules (see hub_names.py).
 from esphome.components import button as button_component
 from esphome.components import switch as switch_component
 from esphome.const import (
@@ -149,7 +145,7 @@ def _validate_lr1121_bootloader_block(config):
     return config
 
 
-def _validate_lr1121_firmware_update(config):
+def validate_lr1121_firmware_update(config):
     """Gate + inject the button ID for the optional lr1121_firmware_update: block.
 
     Only runs when the block is present. Rejects configurations that can't reach the LR1121
@@ -279,7 +275,7 @@ def _render_lr1121_bootloader_loader_header(image):
     )
 
 
-async def _create_lr1121_firmware_update(config, var):
+async def create_lr1121_firmware_update(config, var):
     """Fetch/verify the configured firmware image, generate its header, set the build flag that
     gates the whole feature, and create the "Flash LR1121 Radio Firmware" button.
 
@@ -325,7 +321,7 @@ async def _create_lr1121_bootloader_update(bootloader_config, config, var, cache
     """Fetch/verify the configured loader image, generate its header, set the build flag that
     gates the bootloader-rewrite feature, and create the arming switch.
 
-    Mirrors _create_lr1121_firmware_update() above -- same "block's presence is the build flag"
+    Mirrors create_lr1121_firmware_update() above -- same "block's presence is the build flag"
     shape, one level down (ADR 0021). `target_version` is not passed to
     fetch_and_verify(): the loader is not a "target" the way the transceiver image is, its version
     is only ever compared for *equality* against the currently-running bootloader (Semtech's

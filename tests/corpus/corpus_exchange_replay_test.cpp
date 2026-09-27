@@ -11,6 +11,18 @@
 /// see corpus_classification_test.cpp for the same state machine asserted independently).
 /// PAIRING captures are out of scope here — they have their own harness (corpus_pairing_replay_test.cpp).
 ///
+/// Timing: a capture whose frames all carry `t_ms` replays on its own timeline under a
+/// test_clock::ManualClock (corpus_test::queue_timed_rx(), tests/support/timed_replay.h). Each rx
+/// frame arrives its captured gap after the start of the send it answers, and every send takes its
+/// modelled time on air, so the engine's real windows, retry gap and total budget decide what it
+/// hears: a response window shorter than a captured reply, a budget that no longer fits the
+/// captured retries, or a try budget below the try the device answered all fail here. Captures
+/// without timestamps (the synthetic ones) replay untimed, each rx frame delivered at once.
+///
+/// Try budget: send_and_receive_() defaults to the full EXCHANGE_RETRY_COUNT. A capture whose
+/// real caller grants a different budget names it in REPLAY_CONTEXTS below, computed by the same
+/// function that caller uses, so a change to that budget shows up against the captured behaviour.
+///
 /// Byte-exactness: for `key: corpus` captures the challenge comes from the capture itself and
 /// HMAC is a pure function of it, so every transmitted frame — including the computed 0x3D — is
 /// asserted **byte-exact** against the captured `tx` frames. For `key: unknown` captures the
@@ -27,7 +39,9 @@
 #include "radio_sx1262.h"
 
 #include "corpus_test_helpers.h"
+#include "hub_decisions.h"
 #include "test_helpers.h"
+#include "timed_replay.h"
 #include "stubs/radio_test_common.h"
 
 #include <esp_random.h>
@@ -35,6 +49,7 @@
 
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -61,6 +76,26 @@ std::unique_ptr<MockRadio> make_mock_radio(const corpus::CorpusCapture *capture)
   if (std::string(capture->captured_with) == "sx1262")
     return std::make_unique<MockRadioSX1262>();
   return std::make_unique<MockRadio>();
+}
+
+/// A capture's try budget when its real caller is not a plain send_and_receive_() call.
+struct ReplayContext {
+  const char *capture_id;
+  uint8_t (*max_tries)();
+};
+
+const ReplayContext REPLAY_CONTEXTS[] = {
+    // The status poll the scheduler sends to settle a STOP; the device answered only the retry.
+    {"velux_ssl_statuspoll_stop_settle_preamble_escalation",
+     [] { return decisions::scheduled_poll_max_tries(0, 0, /*settles_a_stop=*/true); }},
+};
+
+uint8_t max_tries_for(const corpus::CorpusCapture *capture) {
+  for (const ReplayContext &context : REPLAY_CONTEXTS) {
+    if (std::strcmp(context.capture_id, capture->id) == 0)
+      return context.max_tries();
+  }
+  return EXCHANGE_RETRY_COUNT;
 }
 
 }  // namespace
@@ -97,17 +132,41 @@ TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
   std::memcpy(comp.node_id_, request.src, NODE_ID_SIZE);
   std::memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
-  for (const corpus::CorpusFrame *rx_cf : rx_frames) {
-    RadioRxPacket packet{};
-    packet.len = rx_cf->crc_present ? static_cast<uint8_t>(rx_cf->len - 2) : rx_cf->len;
-    std::memcpy(packet.data, rx_cf->bytes, packet.len);
-    packet.freq_hz = rx_cf->freq_hz != 0 ? rx_cf->freq_hz : FREQ_CH2;
-    radio->queue_rx(packet);
+  // Constructed only for a timed capture: a ManualClock is opt-in per test (hal.h).
+  std::optional<esphome::test_clock::ManualClock> clock;
+  if (corpus_test::capture_is_timed(*capture)) {
+    clock.emplace();
+    radio->set_model_tx_airtime(true);
+    const std::string error = corpus_test::queue_timed_rx(*radio, *capture, corpus_test::ReplayAnchor::SEND_INDEX);
+    ASSERT_TRUE(error.empty()) << error;
+  } else {
+    for (const corpus::CorpusFrame *rx_cf : rx_frames)
+      radio->queue_rx(corpus_test::to_rx_packet(*rx_cf));
   }
 
   IoFrame response{};
   const uint32_t tx_freq = origin_cf->freq_hz != 0 ? origin_cf->freq_hz : FREQ_CH2;
-  const bool ok = comp.send_and_receive_(request, response, tx_freq) == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
+  const bool ok = comp.send_and_receive_(request, response, tx_freq, max_tries_for(capture)) ==
+                  ExchangeOutcome::SUCCESS_WITH_RESPONSE;
+
+  // On a timed replay, a failure names when the engine sent against when the capture did, and the
+  // windows it listened for: a shrunk window or budget reads straight off these three lines.
+  std::string timeline;
+  if (clock.has_value()) {
+    timeline += "\nengine sends at ms:";
+    const std::vector<uint32_t> &send_times = radio->send_times_ms();
+    for (uint32_t t : send_times)
+      timeline += " " + std::to_string(t - send_times.front());
+    timeline += "\ncaptured sends at ms:";
+    for (uint8_t i = 0; i < capture->frame_count; i++) {
+      if (capture->frames[i].tx)
+        timeline += " " + std::to_string(capture->frames[i].t_ms - origin_cf->t_ms);
+    }
+    timeline += "\nengine listen windows ms:";
+    for (uint32_t w : radio->wait_timeouts())
+      timeline += " " + std::to_string(w);
+  }
+  SCOPED_TRACE(timeline);
 
   if (capture->outcome == corpus::ExchangeOutcome::SUCCESS) {
     EXPECT_TRUE(ok) << "expected the replayed exchange to succeed, matching expect.exchange.outcome";

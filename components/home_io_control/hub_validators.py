@@ -2,7 +2,7 @@
 ## @brief Field validators and option tables for the ``home_io_control:`` hub block.
 ## @ingroup hioc_codegen
 ##
-## Radio type, PA pin, TCXO voltage and FEM profile tables (``_validate_fem`` checks a
+## Radio type, PA pin, TCXO voltage and FEM profile tables (``validate_fem`` checks a
 ## profile's required pins and TX-power ceiling), the device-type and manufacturer
 ## tables, and the validators for node IDs, system keys, device IDs, linked remotes and
 ## status-poll intervals that the hub schema and the platform modules share.
@@ -65,7 +65,7 @@ TCXO_VOLTAGE_OPTIONS = {
 # identifiable as "the FEM chip" from anything published -- see FEM_REQUIRED_PINS' own comment and
 # radio_interface.h's FemProfile doc block for the fuller explanation. Validated with cv.one_of
 # (not cv.enum) so config[CONF_FEM] stays a plain string usable in ordinary Python comparisons in
-# _validate_fem() below; the mapping to the generated C++ enum happens explicitly in to_code(),
+# validate_fem() below; the mapping to the generated C++ enum happens explicitly in to_code(),
 # same pattern as ONEWAY_COMMANDS.
 FemProfile = home_io_control_ns.enum("FemProfile", is_class=True)
 FEM_PROFILES = {
@@ -90,7 +90,7 @@ FEM_REQUIRED_PINS = {
 }
 
 # Highest tx_power setting whose estimated antenna-port power still stays at or under the
-# 868 MHz SRD ERP limit (+14 dBm); _validate_fem() warns on anything above it. Derived from the
+# 868 MHz SRD ERP limit (+14 dBm); validate_fem() warns on anything above it. Derived from the
 # same low-drive net-gain figures as SX1262_FEM_GAIN_*_DB in radio_sx1262.cpp (GC1109 ~+11 dB ->
 # 14 dBm at tx_power 3, 15 dBm at 4; KCT8103L ~+13 dB -> 14 dBm at tx_power 1, 15 dBm at 2;
 # XY16P35 ~+14 dB (measured; the PA's own nominal spec is +12dB) -> 14 dBm at tx_power 0, 15 dBm
@@ -103,7 +103,7 @@ FEM_TX_POWER_MAX_QUIET = {
 }
 
 
-def _validate_fem(config):
+def validate_fem(config):
     """Cross-key validation for `fem:` (ADR 0035): which front-end part's control behaviour the
     SX1262 driver applies to fem_pa_pin (and, for the two parts that have one, fem_en_pin), never
     which GPIO numbers to use for them -- those are always the board package's job, the same as
@@ -197,7 +197,7 @@ MANUFACTURER_OPTIONS = {
 # Manufacturer bytes for which oneway_controller.h's resolve_oneway_wire_profile() has a real 1W
 # wire profile. Keep this set in sync with that C++ switch — two values, and there is no automated
 # check (scripts/check-yaml-emitters.py compares key names, not table contents).
-_ONEWAY_WIRE_PROFILE_MANUFACTURERS = {
+ONEWAY_WIRE_PROFILE_MANUFACTURERS = {
     MANUFACTURER_OPTIONS["somfy"],
     MANUFACTURER_OPTIONS["velux"],
 }

@@ -153,7 +153,10 @@ expect:                              # deliberately sparse — only assert what 
 - `frames` (required, at least 1): every frame is a fixture even with zero `expect` entries —
   the universal wire invariants (round-trip, CRC, CTRL0 length) apply to all of them.
   - `dir`: `tx` (controller->device) or `rx` (device->controller).
-  - `t_ms` (optional): relative timestamp in milliseconds.
+  - `t_ms` (optional): relative timestamp in milliseconds, from the log line's timestamp. A
+    `tx` frame is stamped when its transmission starts, so a `tx`→`rx` gap includes the `tx`
+    frame's own airtime. When every frame has one, the replay suites run the capture on this
+    timeline (see "Timed replay" below).
   - `freq` (optional): capture frequency in Hz; omit or `0` if unknown.
   - `hex` (required): the exact wire bytes as captured, space-separated hex, even number of
     hex digits. Includes the trailing CRC bytes when `crc: present`.
@@ -276,6 +279,40 @@ known-answer vectors: `scripts/corpus/tests/data/crypto_kat.yaml` and the hardco
 `tests/corpus/corpus_crypto_test.cpp` are both generated from the same C++ run
 (`tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors`); a divergence between
 the two implementations fails a gate on both sides.
+
+### Timed replay
+
+`corpus_exchange_replay_test.cpp` and `corpus_pairing_replay_test.cpp` drive the real exchange and
+pairing engines with a capture's frames. When every frame of a real (non-synthetic) capture has a
+`t_ms`, the replay runs on the capture's own timeline, under the host test clock's manual mode:
+
+- each `rx` frame arrives its captured gap after the start of the send that answers to the `tx`
+  frame before it. In the exchange replay that is the send with the same index; in the pairing
+  replay, the first send with the same bytes, since retry counts there are not asserted. Within a
+  run of identical retries, the gap is taken from the last try, the one the reply followed;
+- every send takes its modelled airtime (preamble, sync word, and the frame and its CRC as 10-bit
+  UART cells, at 38.4 kbps), so the engine starts listening when a real one would;
+- `rx` frames before the first `tx` arrived before the exchange began and are not replayed.
+
+The engine's real response windows, retry gap and exchange budget therefore decide what it hears:
+a window shorter than a captured reply, or a budget that no longer fits the retries a capture
+shows, fails the replay. There is no tolerance band to tune. A captured reply time is a fixed
+input, and the only question is whether the engine was listening.
+
+When the replayed side sends a longer preamble than the capture did, a captured gap can end
+before this side's own transmission does. The reply is then delivered as soon as the engine
+listens, not dropped. The capture never showed a loss, and a replay must not invent one.
+
+A capture is replayed only when it has `expect.exchange`. `validate.py` warns about a capture in a
+replayed phase (`exchange`, `statuspoll`, `pairing`, `discovery`) that has `tx` frames but no
+`expect.exchange`. The warning is expected for:
+
+- an excerpt that is missing frames the engine needs (for example a challenge);
+- a log that spans several exchanges;
+- a roll-call, which has its own suite (`corpus_spe_rollcall_replay_test.cpp`);
+- a discovery or pairing attempt that is not a completed pairing.
+
+Add `expect.exchange` when a capture is one complete exchange, and check that it replays.
 
 ## Contribution workflow
 

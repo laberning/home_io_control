@@ -60,6 +60,11 @@ verifies under the public corpus key must actually do so.
   bug isn't fixed until its capture is in the corpus.
 - Coverage reflects what has actually been seen in the field, not what was
   anticipated.
+- Captured timing is load-bearing, not decoration. A capture's frame
+  timestamps drive its replay on the host test clock: every reply arrives at
+  its captured delay after the engine's matching transmission, so a response
+  window, retry gap or exchange budget that no longer fits what a real device
+  did fails a host test instead of surfacing only on hardware.
 - **Pairing captures leak the real system key if committed as captured** — the
   transfer key is public, so anyone with the raw bytes can recover the key.
   Ingestion therefore supports re-keying: verify the crypto under the real key

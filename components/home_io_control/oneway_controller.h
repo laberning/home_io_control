@@ -188,7 +188,7 @@ static constexpr std::array<DeviceType, 3> VELUX_KLI_ENROLLMENT_CLASSES{DeviceTy
 /// (`ONEWAY_EXECUTE_ACEI`, `EnrollGesture::SOMFY`); only VELUX (0x01) is special so far
 /// (`ONEWAY_EXECUTE_ACEI_VELUX`, `EnrollGesture::VELUX_KLI`, the class sweep). Any other
 /// explicitly-set manufacturer returns the Somfy default with `profile_is_a_guess=true` so the
-/// Python schema can warn (`oneway_controllers.py` `_validate_oneway_controllers()` — keep the {somfy,
+/// Python schema can warn (`oneway_controllers.py` `validate_oneway_controllers()` — keep the {somfy,
 /// velux} set here in sync with the warning there; there is no automated check).
 /// @param manufacturer The identity's manufacturer byte (`MANUFACTURER_*`, or a raw value).
 inline OneWayWireProfile resolve_oneway_wire_profile(uint8_t manufacturer) {

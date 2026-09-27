@@ -9,11 +9,7 @@
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-# Aliased: this package has its own switch.py/button.py platform submodules, so the real ESPHome
-# components are always imported under names that cannot be mistaken for them. In the package's
-# __init__.py an unaliased `switch`/`button` would even be overwritten: __init__.py's namespace IS
-# the package object, the slot ESPHome's loader binds `esphome.components.home_io_control.switch`
-# into when it imports our platform file, so whichever import ran last would silently win.
+# Aliased so they cannot be mistaken for this package's own platform modules (see hub_names.py).
 from esphome.components import button as button_component
 from esphome.components import switch as switch_component
 from esphome.components import text_sensor as text_sensor_component
@@ -59,7 +55,7 @@ def _inject_hub_entity_id(config, *, flag_key, id_key, suffix, cls):
     return config
 
 
-def _inject_accept_foreign_pairing_switch_id(config):
+def inject_accept_foreign_pairing_switch_id(config):
     return _inject_hub_entity_id(
         config,
         flag_key=CONF_ACCEPT_FOREIGN_PAIRING,
@@ -69,7 +65,7 @@ def _inject_accept_foreign_pairing_switch_id(config):
     )
 
 
-def _inject_recover_oneway_key_switch_id(config):
+def inject_recover_oneway_key_switch_id(config):
     return _inject_hub_entity_id(
         config,
         flag_key=CONF_RECOVER_ONEWAY_KEY,
@@ -79,7 +75,7 @@ def _inject_recover_oneway_key_switch_id(config):
     )
 
 
-def _inject_scan_paired_devices_button_id(config):
+def inject_scan_paired_devices_button_id(config):
     return _inject_hub_entity_id(
         config,
         flag_key=CONF_SCAN_PAIRED_DEVICES_BUTTON,
@@ -89,7 +85,7 @@ def _inject_scan_paired_devices_button_id(config):
     )
 
 
-def _inject_discover_and_pair_button_id(config):
+def inject_discover_and_pair_button_id(config):
     return _inject_hub_entity_id(
         config,
         flag_key=CONF_DISCOVER_AND_PAIR_BUTTON,
@@ -99,7 +95,7 @@ def _inject_discover_and_pair_button_id(config):
     )
 
 
-def _inject_discover_and_pair_result_sensor_id(config):
+def inject_discover_and_pair_result_sensor_id(config):
     """Second ID off the same flag: the button always ships with its "Last Pairing Result" sensor,
     so both IDs are gated on CONF_DISCOVER_AND_PAIR_BUTTON. _inject_hub_entity_id() already no-ops
     when the flag is false, so no extra guard is needed here.
@@ -113,88 +109,70 @@ def _inject_discover_and_pair_result_sensor_id(config):
     )
 
 
-async def _create_hub_arming_switch(config, var, *, cls, id_key, name):
-    """Create a hub-level arming switch (key extraction or key adoption).
+async def _create_hub_entity(schema, new_entity, entity_id, name, var):
+    """Create one hub-level entity from its declared ID and a fixed name, bound to the hub.
 
-    Mirrors tuning.py's _create_number()/_create_select(): normalize a bare {id, name} dict
-    through switch_schema()+COMPONENT_SCHEMA so it carries the entity/component defaults
-    register_switch()/register_component() require, matching the neighboring pattern rather than
-    hand-assembling a config dict shape of its own.
+    A bare {id, name} dict is run through the platform's entity schema plus COMPONENT_SCHEMA, so
+    it carries the entity/component defaults new_*()/register_component() require, instead of a
+    hand-assembled config dict of its own (tuning.py's _create_number()/_create_select() do the
+    same for the tuning entities).
+    """
+    entity_config = schema.extend(cv.COMPONENT_SCHEMA)({CONF_ID: entity_id, CONF_NAME: name})
+    entity = await new_entity(entity_config)
+    await cg.register_component(entity, entity_config)
+    cg.add(entity.set_parent(var))
+    return entity
+
+
+async def create_hub_arming_switch(config, var, *, cls, id_key, name):
+    """Create a hub-level arming switch (key extraction or key adoption).
 
     ALWAYS_OFF is a security property, not a UX default: every switch built here arms a window
     (foreign-key extraction or 1W key adoption) that must never come back armed after a reboot.
     """
-    entity_config = switch_component.switch_schema(
+    schema = switch_component.switch_schema(
         cls,
         default_restore_mode="ALWAYS_OFF",  # never auto-arm after a reboot
         entity_category=ENTITY_CATEGORY_CONFIG,
-    ).extend(cv.COMPONENT_SCHEMA)(
-        {
-            CONF_ID: config[id_key],
-            CONF_NAME: name,
-        }
     )
-    entity = await switch_component.new_switch(entity_config)
-    await cg.register_component(entity, entity_config)
-    cg.add(entity.set_parent(var))
+    await _create_hub_entity(schema, switch_component.new_switch, config[id_key], name, var)
 
 
-async def _create_scan_paired_devices_button(config, var):
+async def create_scan_paired_devices_button(config, var):
     """Create the hub-level "Scan Paired Devices" button.
 
-    Same normalization as _create_hub_arming_switch() above: run a bare {id, name} dict through
-    button_schema()+COMPONENT_SCHEMA so it carries the entity/component defaults register_button()/
-    register_component() require. The `scan_paired_devices` native API action is registered
-    independently in C++ (ManagementActions::register_actions()) and is unaffected by this key --
-    the button is an extra trigger onto the same method, not a replacement.
+    The `scan_paired_devices` native API action is registered independently in C++
+    (ManagementActions::register_actions()) and is unaffected by this key -- the button is an extra
+    trigger onto the same method, not a replacement.
     """
-    entity_config = button_component.button_schema(
-        IOHomeScanPairedDevicesButton,
-        entity_category=ENTITY_CATEGORY_CONFIG,
-    ).extend(cv.COMPONENT_SCHEMA)(
-        {
-            CONF_ID: config[CONF_SCAN_PAIRED_DEVICES_BUTTON_ID],
-            CONF_NAME: "Scan Paired Devices",
-        }
+    schema = button_component.button_schema(IOHomeScanPairedDevicesButton, entity_category=ENTITY_CATEGORY_CONFIG)
+    await _create_hub_entity(
+        schema, button_component.new_button, config[CONF_SCAN_PAIRED_DEVICES_BUTTON_ID], "Scan Paired Devices", var
     )
-    entity = await button_component.new_button(entity_config)
-    await cg.register_component(entity, entity_config)
-    cg.add(entity.set_parent(var))
 
 
-async def _create_discover_and_pair_button(config, var):
+async def create_discover_and_pair_button(config, var):
     """Create the hub-level "Discover & Pair" button and its "Last Pairing Result" sensor.
 
-    Same normalization as _create_scan_paired_devices_button() above. The two are always created
-    together: the sensor is the only place a pairing attempt's machine-readable outcome ever
-    appears, so a button without it would be a button whose result you cannot read.
+    The two are always created together: the sensor is the only place a pairing attempt's
+    machine-readable outcome ever appears, so a button without it would be a button whose result
+    you cannot read.
 
     inherit_esphome_device() is deliberately NOT called: the hub's own config has no `device_id:`
     slot for these to inherit -- see that function's docstring. This is the one behaviour the
     deprecated `button:` platform (button.py) had that this flag form cannot reproduce.
     """
-    button_config = button_component.button_schema(
-        IOHomeDiscoverButton,
-        entity_category=ENTITY_CATEGORY_CONFIG,
-    ).extend(cv.COMPONENT_SCHEMA)(
-        {
-            CONF_ID: config[CONF_DISCOVER_AND_PAIR_BUTTON_ID],
-            CONF_NAME: "Discover & Pair",
-        }
+    button_schema = button_component.button_schema(IOHomeDiscoverButton, entity_category=ENTITY_CATEGORY_CONFIG)
+    await _create_hub_entity(
+        button_schema, button_component.new_button, config[CONF_DISCOVER_AND_PAIR_BUTTON_ID], "Discover & Pair", var
     )
-    entity = await button_component.new_button(button_config)
-    await cg.register_component(entity, button_config)
-    cg.add(entity.set_parent(var))
-
-    sensor_config = text_sensor_component.text_sensor_schema(
-        IOHomePairingResultTextSensor,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-    ).extend(cv.COMPONENT_SCHEMA)(
-        {
-            CONF_ID: config[CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID],
-            CONF_NAME: "Last Pairing Result",
-        }
+    sensor_schema = text_sensor_component.text_sensor_schema(
+        IOHomePairingResultTextSensor, entity_category=ENTITY_CATEGORY_DIAGNOSTIC
     )
-    result_sensor = await text_sensor_component.new_text_sensor(sensor_config)
-    await cg.register_component(result_sensor, sensor_config)
-    cg.add(result_sensor.set_parent(var))
+    await _create_hub_entity(
+        sensor_schema,
+        text_sensor_component.new_text_sensor,
+        config[CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID],
+        "Last Pairing Result",
+        var,
+    )

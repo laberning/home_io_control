@@ -6,9 +6,10 @@
 ///
 /// PairingTelemetry is a fixed-size recorder owned by the hub and shared by reference with
 /// PairingEngine, which also attaches it to ExchangeEngine as its TransmitObserver for the length
-/// of an attempt (that is how TX and LBT events reach it). It records every radio-visible event during a
-/// `discover_and_pair()` attempt — TX, RX (accepted and rejected), LBT defers, and hop/phase transitions — so a single
-/// attempt can be summarized as a human-readable log block and a frozen, machine-readable "Last Pairing Result" string.
+/// of an attempt (that is how TX and LBT events reach it). It records every radio-visible event
+/// during a `discover_and_pair()` attempt — TX, RX (accepted and rejected), LBT defers, and
+/// hop/phase transitions — so a single attempt can be summarized as a human-readable log block and
+/// a frozen, machine-readable "Last Pairing Result" string.
 ///
 /// Telemetry events store only cmd/src/rssi/phase metadata, never frame payload bytes, so key
 /// material cannot appear here by construction — there is no redaction to apply because there

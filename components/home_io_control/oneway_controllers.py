@@ -13,11 +13,7 @@ import logging
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
-# Aliased: this package has its own switch.py/button.py platform submodules, so the real ESPHome
-# components are always imported under names that cannot be mistaken for them. In the package's
-# __init__.py an unaliased `switch`/`button` would even be overwritten: __init__.py's namespace IS
-# the package object, the slot ESPHome's loader binds `esphome.components.home_io_control.switch`
-# into when it imports our platform file, so whichever import ran last would silently win.
+# Aliased so they cannot be mistaken for this package's own platform modules (see hub_names.py).
 from esphome.components import button as button_component
 from esphome.components import text_sensor as text_sensor_component
 from esphome.const import (
@@ -56,7 +52,7 @@ from .hub_names import (
 from .hub_validators import (
     DEVICE_TYPE_OPTIONS,
     MANUFACTURER_OPTIONS,
-    _ONEWAY_WIRE_PROFILE_MANUFACTURERS,
+    ONEWAY_WIRE_PROFILE_MANUFACTURERS,
     validate_device_type,
     validate_manufacturer,
     validate_node_id,
@@ -111,10 +107,10 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # for one is an unanswerable question.
         cv.Optional(CONF_NODE_ID): validate_node_id,
         # Optional and inherits the hub's key when omitted. cv.sensitive matches the hub's own
-        # system_key handling (see the main schema below) so the value is redacted from ESPHome's
-        # config dump; without it a per-identity key would leak into logs verbatim.
+        # system_key handling (the hub schema in __init__.py) so the value is redacted from
+        # ESPHome's config dump; without it a per-identity key would leak into logs verbatim.
         cv.Optional(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
-        # No default here -- see _validate_oneway_controllers() for why: it must become required,
+        # No default here -- see validate_oneway_controllers() for why: it must become required,
         # not silently 0, whenever enrollment: true actually puts this byte on air. Named or raw
         # hex, same "known name, else escape hatch" shape as io_device_type below.
         cv.Optional(CONF_MANUFACTURER): validate_manufacturer,
@@ -142,7 +138,7 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # or the other; this exists so trying the other one needs a YAML edit, not a code change.
         # No VELUX capture this project holds carries the MAC trailer, and on sx1276 a MAC-bearing
         # 0x30 has been measured to take about twice as long per burst -- see
-        # _validate_oneway_controllers()'s warning below.
+        # validate_oneway_controllers()'s warning below.
         cv.Optional(CONF_ENROLLMENT_WITH_MAC, default=False): cv.boolean,
         # The device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
         # profile default ({roller_shutter, awning, dual_shutter} for velux). Set it to narrow the
@@ -285,8 +281,8 @@ def oneway_controller_expression(identity, hub_node_id):
 def _reject_node_id_collision(identity_id, node_id, seen_node_ids, derived):
     """Raise if `node_id` is already claimed in `seen_node_ids`; no-op otherwise.
 
-    Shared between _validate_oneway_controllers() (collisions against the hub's own node_id and
-    other oneway_controllers entries) and _final_validate_oneway_controller_addresses()
+    Shared between validate_oneway_controllers() (collisions against the hub's own node_id and
+    other oneway_controllers entries) and final_validate_oneway_controller_addresses()
     (collisions against `linked_remotes:`/`io_device_id:` declared elsewhere in the same YAML),
     so both raise identically-worded errors regardless of which side of the config the other
     claimant lives on.
@@ -306,14 +302,14 @@ def _reject_node_id_collision(identity_id, node_id, seen_node_ids, derived):
     )
 
 
-def _validate_oneway_controllers(config):
+def validate_oneway_controllers(config):
     """Resolve per-identity defaults and reject address/handle collisions at compile time.
 
     Runs as a post-validator on the whole hub config because every rule here needs the hub's own
     `node_id`/`system_key`, which a per-entry validator cannot see.
 
     Only checks addresses visible within `home_io_control:` itself (its own `node_id` and every
-    configured `oneway_controllers` entry) — see _final_validate_oneway_controller_addresses()
+    configured `oneway_controllers` entry) — see final_validate_oneway_controller_addresses()
     below for the matching check against `linked_remotes:`/`io_device_id:` declared elsewhere in
     the same YAML, which needs the full cross-component config and so cannot run here. Even
     together the two cannot see a real remote the user has never mentioned to this config at all;
@@ -377,7 +373,7 @@ def _validate_oneway_controllers(config):
         identity_can_transmit = bool(identity[CONF_COMMANDS]) or identity[CONF_ENROLLMENT]
         if (
             manufacturer_explicit
-            and identity[CONF_MANUFACTURER] not in _ONEWAY_WIRE_PROFILE_MANUFACTURERS
+            and identity[CONF_MANUFACTURER] not in ONEWAY_WIRE_PROFILE_MANUFACTURERS
             and identity_can_transmit
         ):
             _LOGGER.warning(
@@ -495,9 +491,9 @@ def _collect_declared_device_addresses(full_config):
 
     CONF_IO_DEVICE_ID/CONF_LINKED_REMOTES are imported locally from platform_common rather than at
     module level: platform_common imports from the package (`from . import ...`), whose
-    __init__.py imports this module, so a module-level import here would be circular. By the time this function actually runs (final
-    validation, after every used platform module has already been imported), the cycle has
-    already resolved and the import is a plain cache hit.
+    __init__.py imports this module, so a module-level import here would be circular. By the time
+    this function actually runs (final validation, after every used platform module has already
+    been imported), the cycle has already resolved and the import is a plain cache hit.
     """
     from .platform_common import CONF_IO_DEVICE_ID, CONF_LINKED_REMOTES
 
@@ -517,16 +513,16 @@ def _collect_declared_device_addresses(full_config):
     return addresses
 
 
-def _final_validate_oneway_controller_addresses(config):
+def final_validate_oneway_controller_addresses(config):
     """Extend the oneway_controllers address-collision check to addresses declared outside
     `home_io_control:` — a `linked_remotes:` entry or an `io_device_id:` on some other entity in
     this same YAML.
 
-    Runs as FINAL_VALIDATE_SCHEMA rather than inside _validate_oneway_controllers() because only
+    Runs as FINAL_VALIDATE_SCHEMA rather than inside validate_oneway_controllers() because only
     final validation has access to the full cross-component config (`fv.full_config`) —
     `cover:`/`light:`/`lock:`/`switch:` entries are validated independently of
     `home_io_control:`'s own CONFIG_SCHEMA and are not visible to it. By this point
-    _validate_oneway_controllers() has already run, so every identity's `node_id` (derived or
+    validate_oneway_controllers() has already run, so every identity's `node_id` (derived or
     explicit) is resolved.
     """
     identities = config.get(CONF_ONEWAY_CONTROLLERS, [])
@@ -541,10 +537,10 @@ def _final_validate_oneway_controller_addresses(config):
     return config
 
 
-async def _create_oneway_controller_entities(identity, var):
+async def create_oneway_controller_entities(identity, var):
     """Create one identity's command buttons and its "Last 1W Command" diagnostic sensor.
 
-    Same normalization as _create_hub_arming_switch() (hub_entities.py): run a bare {id, name}
+    Same normalization as create_hub_arming_switch() (hub_entities.py): run a bare {id, name}
     dict through the platform's own schema so it carries the entity/component defaults register_*() require.
 
     Entity names derive from the identity handle and the command ("awning_remote" + "open" ->

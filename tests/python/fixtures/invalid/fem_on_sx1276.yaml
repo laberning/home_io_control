@@ -1,5 +1,5 @@
 # expect-error: fem: gc1109 requires radio_type: sx1262
-# covers: hub_validators._validate_fem
+# covers: hub_validators.validate_fem
 # The FEM switching lives in the SX1262 driver only.
 packages:
   common: !include ../_common.yaml

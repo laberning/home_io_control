@@ -1117,7 +1117,9 @@ class IOHomeControlComponent : public Component,
   bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
-  PairingTelemetry pairing_telemetry_;  ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.
+  /// Per-attempt pairing telemetry. PairingEngine records into it and, during an attempt, attaches it
+  /// to ExchangeEngine as its TransmitObserver.
+  PairingTelemetry pairing_telemetry_;
   /// Most recent 1W pairing-gesture frame seen on the hub's normal passive RX path (e.g. a PROG
   /// press's WRITE_PRIVATE/1W-remove/discover-alt broadcast), remembered so PairingEngine can seed
   /// a fresh discover_and_pair() attempt's telemetry with it — see record_oneway_pairing_gesture_()

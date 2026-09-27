@@ -45,6 +45,9 @@ frames:
     crc: absent
     note: "cmd=EXECUTE(0x00) STOP, try 3; no frame back — exchange failed, the shutter did not stop"
 expect:
+  exchange:
+    kind: authenticated_command
+    outcome: failure
   frames:
     - {cmd: 0x00, start: true, end: false, protocol: 2w}
     - {cmd: 0x00, start: true, end: false, protocol: 2w}
