@@ -42,7 +42,10 @@ external_components:
 
 spi:
   # Heltec WiFi LoRa32 v2 pinout (SX1276)
-  clk_pin: 5
+  clk_pin:
+    number: 5
+    # GPIO5 is a strapping pin on the ESP32; it is only ever driven as SPI CLK here.
+    ignore_strapping_warning: true
   mosi_pin: 27
   miso_pin: 19
 
