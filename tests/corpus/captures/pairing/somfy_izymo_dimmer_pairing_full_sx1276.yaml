@@ -39,7 +39,7 @@ frames:
     freq: 868250000
     hex: "D1 00 C0 FF EE 38 96 18 29 01 80 38 96 18 02 DC 00 0E"
     crc: absent
-    note: "cmd=DISCOVER_RESP(0x29), device 389618 (Somfy Izymo dimmer) responds, manufacturer=2 (Somfy), turnaround=40s, power_save=always_alive, flags=0xDC"
+    note: "cmd=DISCOVER_RESP(0x29), device 389618 (Somfy Izymo dimmer) responds, manufacturer=2 (Somfy), turnaround=40ms, power_save=always_alive, flags=0xDC"
   - dir: tx
     t_ms: 5922
     freq: 868950000

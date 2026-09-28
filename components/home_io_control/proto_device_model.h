@@ -339,10 +339,11 @@ struct IoDevice {
                                          ///< A protocol-reported class exists (discovery Multi Information Byte) but
                                          ///< is surfaced through the pairing/scan snippet, never applied at runtime.
   bool dimmable{false};                  ///< True for a LIGHT-class device configured `dimmable: true` in YAML.
-                                         ///< Not a protocol-level fact (the wire gives no dimmable-capability
-                                         ///< signal) — set from platform_light.cpp's YAML config via
+                                         ///< Set from platform_light.cpp's YAML config via
                                          ///< DeviceRegistry::set_dimmable(), purely for accurate profile-name
-                                         ///< logging.
+                                         ///< logging. Light subtype 58 (0x01BA) is defined as on/off only
+                                         ///< (VELUX KLF 200 API v3.18, App. 2); the discovery subtype is
+                                         ///< not consulted for this flag yet.
   uint8_t last_result_code{0};           ///< Last CMD_ERROR_RESP result byte (0 = none recorded). See
                                 ///< command_result_name()/is_limitation_result() in proto_constants.h. Cleared by
                                 ///< the next successful status/command reply for this device. Note: 0 is also the

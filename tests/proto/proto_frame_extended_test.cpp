@@ -588,10 +588,10 @@ TEST(ProtoFrame, Ctrl1AckNotAutoSetOnOutboundFrames) {
 // ========================================================================================
 
 TEST(ProtoFrame, AttClassNameAllValues) {
-  EXPECT_STREQ(att_class_name(ATT_CLASS_5S), "5s");
-  EXPECT_STREQ(att_class_name(ATT_CLASS_10S), "10s");
-  EXPECT_STREQ(att_class_name(ATT_CLASS_20S), "20s");
-  EXPECT_STREQ(att_class_name(ATT_CLASS_40S), "40s");
+  EXPECT_STREQ(att_class_name(ATT_CLASS_5MS), "5ms");
+  EXPECT_STREQ(att_class_name(ATT_CLASS_10MS), "10ms");
+  EXPECT_STREQ(att_class_name(ATT_CLASS_20MS), "20ms");
+  EXPECT_STREQ(att_class_name(ATT_CLASS_40MS), "40ms");
   EXPECT_STREQ(att_class_name(0xFF), "unknown");
   EXPECT_STREQ(att_class_name(4), "unknown");
 }
@@ -604,12 +604,12 @@ TEST(ProtoFrame, PowerSaveModeNameAllValues) {
 }
 
 TEST(ProtoFrame, DiscoveryAttClassExtractsBitsSixAndSeven) {
-  EXPECT_EQ(discovery_att_class(0x00), ATT_CLASS_5S);
-  EXPECT_EQ(discovery_att_class(0x40), ATT_CLASS_10S);
-  EXPECT_EQ(discovery_att_class(0x80), ATT_CLASS_20S);
-  EXPECT_EQ(discovery_att_class(0xC0), ATT_CLASS_40S);
+  EXPECT_EQ(discovery_att_class(0x00), ATT_CLASS_5MS);
+  EXPECT_EQ(discovery_att_class(0x40), ATT_CLASS_10MS);
+  EXPECT_EQ(discovery_att_class(0x80), ATT_CLASS_20MS);
+  EXPECT_EQ(discovery_att_class(0xC0), ATT_CLASS_40MS);
   // Non-ATT bits must not leak into the extracted field.
-  EXPECT_EQ(discovery_att_class(0xEC), ATT_CLASS_40S);
+  EXPECT_EQ(discovery_att_class(0xEC), ATT_CLASS_40MS);
 }
 
 TEST(ProtoFrame, DiscoveryPowerSaveModeExtractsBitsZeroAndOne) {
@@ -620,34 +620,35 @@ TEST(ProtoFrame, DiscoveryPowerSaveModeExtractsBitsZeroAndOne) {
 }
 
 TEST(ProtoFrame, DiscoveryFlagsBitExtraction) {
-  // flags=0xEC: ATT=11 (40s), sync_ctrl=1, bit4=0, rf_support=1, io_member=0, power_save=00
+  // flags=0xEC: ATT=11 (40 ms), sync_ctrl=1, bit4=0, rf_support=1, io_member=1, power_save=00
   uint8_t flags = 0xEC;
   uint8_t att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
   uint8_t power_save = flags & DISCOVERY_FLAGS_POWER_SAVE_MASK;
-  EXPECT_EQ(att, ATT_CLASS_40S) << "ATT bits 11 should decode to 40s class";
+  EXPECT_EQ(att, ATT_CLASS_40MS) << "ATT bits 11 should decode to the 40 ms class";
   EXPECT_NE(flags & DISCOVERY_FLAGS_SYNC_CTRL_GRP, 0) << "Sync ctrl group bit should be set";
+  EXPECT_NE(flags & DISCOVERY_FLAGS_IO_MEMBERSHIP, 0) << "io-membership bit should be set";
   EXPECT_EQ(power_save, POWER_SAVE_ALWAYS_ALIVE) << "Power save bits 00 = always alive";
 
-  // flags=0x01: ATT=00 (5s), no sync, power_save=01 (low power)
+  // flags=0x01: ATT=00 (5 ms), no sync, power_save=01 (low power)
   flags = 0x01;
   att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
   power_save = flags & DISCOVERY_FLAGS_POWER_SAVE_MASK;
-  EXPECT_EQ(att, ATT_CLASS_5S) << "ATT bits 00 should decode to 5s class";
+  EXPECT_EQ(att, ATT_CLASS_5MS) << "ATT bits 00 should decode to the 5 ms class";
   EXPECT_EQ(flags & DISCOVERY_FLAGS_SYNC_CTRL_GRP, 0) << "Sync ctrl group bit should be clear";
   EXPECT_EQ(power_save, POWER_SAVE_LOW_POWER) << "Power save bits 01 = low power";
 
-  // flags=0x48: ATT=01 (10s), no sync, rf_support=1, power_save=00
+  // flags=0x48: ATT=01 (10 ms), no sync, rf_support=1, power_save=00
   flags = 0x48;
   att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
   power_save = flags & DISCOVERY_FLAGS_POWER_SAVE_MASK;
-  EXPECT_EQ(att, ATT_CLASS_10S) << "ATT bits 01 should decode to 10s class";
+  EXPECT_EQ(att, ATT_CLASS_10MS) << "ATT bits 01 should decode to the 10 ms class";
   EXPECT_NE(flags & DISCOVERY_FLAGS_RF_SUPPORT, 0) << "RF support bit should be set";
   EXPECT_EQ(power_save, POWER_SAVE_ALWAYS_ALIVE);
 
-  // flags=0x80: ATT=10 (20s), all other bits clear
+  // flags=0x80: ATT=10 (20 ms), all other bits clear
   flags = 0x80;
   att = (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
-  EXPECT_EQ(att, ATT_CLASS_20S) << "ATT bits 10 should decode to 20s class";
+  EXPECT_EQ(att, ATT_CLASS_20MS) << "ATT bits 10 should decode to the 20 ms class";
 }
 
 // ============================================================================

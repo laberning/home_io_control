@@ -93,8 +93,9 @@ data:
 | `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte | `0x06`, then `0x05`, `0x09` | Field-observed: a real hub sends exactly these modifier bytes in the long form to real motors (e.g. request data `D4 00 80 D8 06 00`). This component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` values (`0x00`/`0x03`) are not what a hub sends, and never draw the extended block described below. |
 | `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | `0x03`, then `0x09` | Field-observed: a real hub sends the short form with these modifiers (e.g. request data `D8 03 00 00`). |
 
-**There is deliberately no probe for `0x4A`.** Everything known about it points at a destructive
-file-management operation, and nothing has ever been observed transmitting it on air. See
+**There is deliberately no probe for `0x4A`.** It reads a buffer in chunks between two controllers
+and has been seen on air in a VELUX KLR 200 copy session. What it does to an actuator is unknown,
+and the command block around it includes write commands, so sending it is not worth the risk. See
 [ADR 0024](adr/0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md).
 
 A `get_info2` reply (`0x57`) leads with printable ASCII: paste the raw hex into the corpus and

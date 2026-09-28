@@ -4,7 +4,7 @@ description: >
   code 0x80 where a KEY_CONFIRM (0x33) was expected. 0x80 has no RESULT_* mapping anywhere in this
   codebase (proto_constants.h stops at 0x38, then jumps to 0xDF+); the maintainer has noted on the
   thread that it is documented nowhere. The device answered discovery normally
-  (manufacturer=Somfy, turnaround=40s, power_save=always_alive, flags=0xDC) and issued challenges
+  (manufacturer=Somfy, turnaround=40ms, power_save=always_alive, flags=0xDC) and issued challenges
   on every key-init, so this is a rejection at key transfer specifically, not a silent/no-contact
   device. The same 0xFE/0x80 frame recurs byte-identical on the next key-exchange retry, so it is a
   deterministic device response, not a one-off. The discovery reply also arrived on 868.25 MHz
@@ -35,7 +35,7 @@ frames:
     freq: 868250000
     hex: "D1 00 D4 C2 82 A8 4B 94 29 04 00 A8 4B 94 02 DC D4 AB"
     crc: absent
-    note: "cmd=DISCOVER_RESP(0x29), device A84B94 answers; manufacturer=2 (Somfy), turnaround=40s, power_save=always_alive, flags=0xDC. Reply on 868.25 MHz although DISCOVER_REQ went out on 868.95 MHz."
+    note: "cmd=DISCOVER_RESP(0x29), device A84B94 answers; manufacturer=2 (Somfy), turnaround=40ms, power_save=always_alive, flags=0xDC. Reply on 868.25 MHz although DISCOVER_REQ went out on 868.95 MHz."
   - dir: tx
     t_ms: 4687
     freq: 868950000
