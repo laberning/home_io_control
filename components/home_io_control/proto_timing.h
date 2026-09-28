@@ -74,6 +74,30 @@ static constexpr uint16_t NORMAL_START_PREAMBLE = 32;
 /// to the discovered device (`PairingEngine::pairing_start_preamble_()`).
 static constexpr uint16_t PAIRING_DISCOVERY_PREAMBLE = LONG_PREAMBLE;
 
+/// How hard a transmission has to work to be heard: the wake-up level the receiver needs. A radio
+/// that wakes receivers by preamble length gets the same information from
+/// `RadioTxConfig::preamble_len` and may ignore this; a radio that wakes them some other way (a
+/// train of frames, for example) reads it instead of guessing from a preamble length.
+enum class TxWake : uint8_t {
+  NONE,   ///< The receiver is already listening on this channel: the frame continues an exchange.
+  SHORT,  ///< The receiver is awake, but may be scanning channels.
+  LONG,   ///< The receiver may be duty-cycling.
+};
+
+/// True when a preamble this long is the wake-up burst for a duty-cycled receiver. Every preamble
+/// tunable except `pairing_discovery_preamble` is capped well below `LONG_PREAMBLE`, and that one
+/// is capped at it, so only a real wake-up burst reaches the threshold.
+constexpr bool is_wake_preamble(uint16_t len) { return len >= LONG_PREAMBLE; }
+
+/// The wake-up level of a frame, from the two facts that decide it: whether it starts an exchange
+/// (a continuation reaches a receiver that is already listening) and whether its preamble is the
+/// wake-up burst.
+constexpr TxWake tx_wake_for(bool start, uint16_t preamble) {
+  if (!start)
+    return TxWake::NONE;
+  return is_wake_preamble(preamble) ? TxWake::LONG : TxWake::SHORT;
+}
+
 /// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
 /// longer to stay on a channel once a frame is visibly incoming, so a hop doesn't cut it off
 /// mid-reception. Sized to a frame's air time, not to a hop slice, so it does not need to change

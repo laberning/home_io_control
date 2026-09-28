@@ -27,7 +27,7 @@ just *what* it is.
 These invariants keep the layers independent; changes should preserve them:
 
 1. The protocol layer is radio-agnostic: no chip names, chip registers, or driver behavior in `proto_*` files. `proto_timing.h` holds only chip-neutral protocol timing.
-2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `hop_dwell_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only.
+2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `hop_dwell_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only. What a transmission needs is stated in chip-neutral terms on `RadioTxConfig`: its channel, its preamble length and its wake-up level (`TxWake`, derived once in `ExchangeEngine::transmit_frame()` from the frame's START bit and preamble), so a driver never has to infer intent from a preamble length.
 3. Chip-specific constants live either in the driver header (`radio_sx1276.h` / `radio_sx1262.h` / `radio_lr1121.h`) or, when they are user-tunable defaults, next to their `TuningConfig` fields in `tuning_config.h`.
 4. The composition root is `hub_core.cpp` `setup()`: it is the only place that names concrete driver classes, selecting one by the required `radio_type` YAML field.
 5. Include direction is enforced. Collaborators and entities never include the hub's private `hub_internal.h`; only the hub itself and a listed set of files reach `hub_core.h`; protocol and radio files include only their own layer (and, for radio, the protocol layer). `make include-graph` checks this.
@@ -91,7 +91,7 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Operation queue: [operation_queue.h](../components/home_io_control/operation_queue.h)
 - Status poll policy: [status_poll_policy.h](../components/home_io_control/status_poll_policy.h)
 - Management actions: [management_actions.h](../components/home_io_control/management_actions.h)
-- Radio abstraction: [radio_interface.h](../components/home_io_control/radio_interface.h)
+- Radio abstraction (`RadioDriver`, and `RadioTxConfig` for each transmission's channel, preamble and wake-up level): [radio_interface.h](../components/home_io_control/radio_interface.h)
 - SX1276 driver: [radio_sx1276.h](../components/home_io_control/radio_sx1276.h)
 - SX1262 driver: [radio_sx1262.h](../components/home_io_control/radio_sx1262.h)
 - LR1121 driver: [radio_lr1121.h](../components/home_io_control/radio_lr1121.h)

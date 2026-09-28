@@ -105,10 +105,13 @@ class SpiAccess {
   virtual uint8_t spi_read() = 0;
 };
 
-/// Configuration for transmitting a packet: carrier frequency and preamble length.
+/// Configuration for transmitting a packet: carrier frequency, preamble length and wake-up level.
 struct RadioTxConfig {
   uint32_t freq_hz{FREQ_CH2};             ///< Carrier frequency in Hz.
   uint16_t preamble_len{SHORT_PREAMBLE};  ///< Preamble length in symbol periods (bytes).
+  /// Wake-up level the receiver needs (tx_wake_for()). A driver whose receivers are woken by the
+  /// preamble length alone may ignore it: `preamble_len` already carries the same decision.
+  TxWake wake{TxWake::NONE};
 };
 
 /// Raw packet received from the radio.

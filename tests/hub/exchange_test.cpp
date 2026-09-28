@@ -3301,3 +3301,29 @@ TEST(Exchange, DetachedTransmitObserverHearsNothing) {
   EXPECT_TRUE(observer.lbt_defers.empty());
   EXPECT_TRUE(observer.sent.empty());
 }
+
+// ============================================================================
+// Wake level — transmit_frame() stamps every transmission with tx_wake_for(START, preamble), so a
+// radio that wakes receivers some other way than by preamble length reads the same decision.
+// ============================================================================
+
+TEST(Exchange, TransmitFrameStampsTheWakeLevel) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+
+  IoFrame start{};
+  create_execute_position(start, comp.node_id_, test::DST_ID, false, 100);
+  ASSERT_TRUE(is_start(start));
+  IoFrame continuation = start;
+  continuation.ctrl0 &= static_cast<uint8_t>(~CTRL0_START);
+
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, LONG_PREAMBLE));
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, NORMAL_START_PREAMBLE));
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(continuation, FREQ_CH2, LONG_PREAMBLE));
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 3u);
+  EXPECT_EQ(radio.get_tx_configs()[0].wake, TxWake::LONG);
+  EXPECT_EQ(radio.get_tx_configs()[1].wake, TxWake::SHORT);
+  EXPECT_EQ(radio.get_tx_configs()[2].wake, TxWake::NONE);
+}

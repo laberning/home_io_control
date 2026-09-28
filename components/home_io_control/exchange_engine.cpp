@@ -189,6 +189,7 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   RadioTxConfig tx_config{};
   tx_config.freq_hz = freq;
   tx_config.preamble_len = preamble;
+  tx_config.wake = tx_wake_for(is_start(frame), preamble);
   if (!radio->send_packet(buf, len, tx_config)) {
     ESP_LOGW(TAG, "tx: send_failed cmd=0x%02X", frame.cmd);
     return false;
