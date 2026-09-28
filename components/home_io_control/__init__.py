@@ -49,8 +49,10 @@ from .hub_validators import (
     FEM_PROFILES,
     PA_PIN_OPTIONS,
     RADIO_TYPE_OPTIONS,
+    SPI_RADIO_TYPES,
     TCXO_VOLTAGE_OPTIONS,
     validate_fem,
+    validate_radio_transport,
     validate_device_id,
     validate_node_id,
     validate_system_key,
@@ -145,7 +147,7 @@ CONFIG_SCHEMA = cv.All(
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
-    .extend(spi.spi_device_schema(True, 8e6, "mode0")),
+    .extend(spi.spi_device_schema(False, 8e6, "mode0")),
     inject_accept_foreign_pairing_switch_id,
     inject_recover_oneway_key_switch_id,
     inject_scan_paired_devices_button_id,
@@ -153,6 +155,7 @@ CONFIG_SCHEMA = cv.All(
     inject_discover_and_pair_result_sensor_id,
     validate_oneway_controllers,
     validate_lr1121_firmware_update,
+    validate_radio_transport,
     validate_fem,
 )
 
@@ -169,7 +172,8 @@ async def to_code(config):
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    await spi.register_spi_device(var, config)
+    if config[CONF_RADIO_TYPE] in SPI_RADIO_TYPES:
+        await spi.register_spi_device(var, config)
 
     rst_pin = await cg.gpio_pin_expression(config[CONF_RST_PIN])
     cg.add(var.set_rst_pin(rst_pin))

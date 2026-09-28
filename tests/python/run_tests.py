@@ -129,6 +129,17 @@ def manufacturer_takes_a_name_or_a_byte():
     expect_invalid(v.validate_manufacturer, 256, "at most 255")
 
 
+@case("hub_validators.validate_radio_transport")
+def spi_radio_needs_its_chip_select_pin():
+    from esphome.components.home_io_control import hub_validators as v
+
+    # Every radio type reaches its chip over SPI today; a new one has to be placed deliberately.
+    assert set(v.RADIO_TYPE_OPTIONS) == set(v.SPI_RADIO_TYPES)
+    with_cs = {"radio_type": "sx1262", "cs_pin": 8}
+    assert v.validate_radio_transport(with_cs) is with_cs
+    expect_invalid(v.validate_radio_transport, {"radio_type": "lr1121"}, "radio_type: lr1121 is an SPI radio")
+
+
 @case("hub_validators.validate_status_poll_interval")
 def status_poll_interval_has_a_floor():
     from esphome.components.home_io_control import hub_validators as v

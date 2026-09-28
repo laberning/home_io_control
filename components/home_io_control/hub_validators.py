@@ -2,8 +2,9 @@
 ## @brief Field validators and option tables for the ``home_io_control:`` hub block.
 ## @ingroup hioc_codegen
 ##
-## Radio type, PA pin, TCXO voltage and FEM profile tables (``validate_fem`` checks a
-## profile's required pins and TX-power ceiling), the device-type and manufacturer
+## Radio type, PA pin, TCXO voltage and FEM profile tables (``validate_radio_transport`` checks
+## that an SPI radio has its chip-select pin, ``validate_fem`` a profile's required pins and
+## TX-power ceiling), the device-type and manufacturer
 ## tables, and the validators for node IDs, system keys, device IDs, linked remotes and
 ## status-poll intervals that the hub schema and the platform modules share.
 ##
@@ -15,7 +16,7 @@ import logging
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_DEVICE_ID
+from esphome.const import CONF_CS_PIN, CONF_DEVICE_ID
 
 from .hub_names import (
     CONF_FEM,
@@ -41,6 +42,11 @@ RADIO_TYPE_OPTIONS = {
     "sx1262": "sx1262",
     "lr1121": "lr1121",
 }
+
+# Radio types whose chip sits on the SPI bus, so the hub registers as an SPI device for them and
+# needs its chip-select pin. Every radio type is one today; a radio reached some other way is
+# left out of this set.
+SPI_RADIO_TYPES = frozenset({"sx1276", "sx1262", "lr1121"})
 
 # 0-based voltage enum shared verbatim by the SX1262 SetDIO3AsTCXOCtrl and LR1121 SetTcxoMode
 # commands (0x00 = 1.6 V .. 0x07 = 3.3 V; Semtech SX1261/2 datasheet Table 13-35). Both drivers
@@ -101,6 +107,20 @@ FEM_TX_POWER_MAX_QUIET = {
     "kct8103l": 1,
     "xy16p35": 0,
 }
+
+
+def validate_radio_transport(config):
+    """Require the SPI device keys for a radio on the SPI bus. The schema takes them as optional
+    (``spi.spi_device_schema(False, ...)``) so that the requirement follows ``radio_type`` here,
+    in one place, rather than being hard-wired into the schema for every radio."""
+    radio_type = config[CONF_RADIO_TYPE]
+    if radio_type in SPI_RADIO_TYPES and CONF_CS_PIN not in config:
+        raise cv.Invalid(
+            f"radio_type: {radio_type} is an SPI radio and needs cs_pin: (its chip-select GPIO); "
+            "a board package in config/boards/ sets it for you",
+            path=[CONF_CS_PIN],
+        )
+    return config
 
 
 def validate_fem(config):
