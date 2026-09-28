@@ -80,6 +80,14 @@ static constexpr uint32_t SOFT_PHY_EARLY_MIN_WINDOW_MS = 12;
 /// `loop()`.
 static constexpr uint32_t SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS = 20;
 
+/// Wait after retuning to the TX channel before the clear-channel RSSI reading. A retune on these
+/// chips is standby → SetRfFrequency → SetRx (the TCXO stays on in XOSC standby), after which the
+/// PLL has to relock and the instantaneous RSSI has to average over the new channel; 1 ms covers
+/// that with margin and costs nothing next to a preamble.
+/// \todo Confirm on the bench (Heltec V3, T3-S3 LR1121): time the retune and compare the reading
+/// against one taken after a long dwell on the same channel.
+static constexpr uint32_t SOFT_PHY_CCA_SETTLE_US = 1000;
+
 static_assert(SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS >= SOFT_PHY_EARLY_MIN_WINDOW_MS,
               "a budget below the minimum window makes try_early_completion_() decline every "
               "idle-path call, silently turning issue #81's fix into a no-op");
@@ -193,7 +201,7 @@ class SoftPhyDriverBase : public RadioDriver {
         busy_timeout_ms_(busy_timeout_ms) {}
 
   /// @copydoc RadioDriver::send_packet
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
   /// @copydoc RadioDriver::wait_for_packet
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
   /// @copydoc RadioDriver::check_for_packet

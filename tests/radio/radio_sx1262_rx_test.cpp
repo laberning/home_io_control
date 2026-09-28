@@ -606,7 +606,7 @@ TEST(RadioSX1262, PostTxRearmSkipsRedundantStandbyAndBufferBase) {
   RadioTxConfig cfg;
   cfg.freq_hz = FREQ_CH2;
   cfg.preamble_len = SHORT_PREAMBLE;
-  ASSERT_TRUE(radio.send_packet(frame, sizeof(frame), cfg)) << "TxDone was driven, so this must succeed";
+  ASSERT_TRUE(radio.send_packet(frame, sizeof(frame), cfg).sent()) << "TxDone was driven, so this must succeed";
 
   int set_tx_idx = -1;
   for (size_t i = 0; i < spi.transactions().size(); i++) {
@@ -812,7 +812,8 @@ TEST(RadioSX1262Fem, ProfileSetDrivesModePinAcrossTheFullLifecycle) {
     RadioTxConfig cfg;
     cfg.freq_hz = FREQ_CH2;
     cfg.preamble_len = SHORT_PREAMBLE;
-    EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg)) << "no TX_DONE IRQ is ever injected in this harness";
+    EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent())
+        << "no TX_DONE IRQ is ever injected in this harness";
 
     const int set_tx_idx = last_tx_with_opcode(spi, SX1262_SET_TX);
     ASSERT_GE(set_tx_idx, 0);

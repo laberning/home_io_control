@@ -379,6 +379,20 @@ TEST(HubCore, LBT_JustBelowThreshold_TransmitsImmediately) {
   EXPECT_EQ(radio.get_send_count(), 1);
 }
 
+TEST(HubCore, LBT_ReadsTheChannelItTransmitsOn) {
+  LBTTestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  radio.change_frequency(FREQ_CH1);  // where an idle hop left the receiver
+
+  IoFrame frame = make_simple_frame();
+  ASSERT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  ASSERT_FALSE(radio.rssi_read_freqs().empty());
+  EXPECT_EQ(radio.rssi_read_freqs().front(), FREQ_CH2)
+      << "listen-before-talk must measure the channel the frame goes out on, not where an idle hop left the receiver";
+}
+
 // ============================================================================
 // 1W transmitter wiring: the hub passes its own, live TuningConfig (ADR 0038)
 // ============================================================================

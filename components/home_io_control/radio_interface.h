@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cstdint>
 #include <iterator>
+#include <optional>
 #include "esphome/core/hal.h"
 
 namespace esphome {
@@ -105,13 +106,34 @@ class SpiAccess {
   virtual uint8_t spi_read() = 0;
 };
 
-/// Configuration for transmitting a packet: carrier frequency, preamble length and wake-up level.
+/// Configuration for transmitting a packet: carrier frequency, preamble length, wake-up level and
+/// clear-channel check.
 struct RadioTxConfig {
   uint32_t freq_hz{FREQ_CH2};             ///< Carrier frequency in Hz.
   uint16_t preamble_len{SHORT_PREAMBLE};  ///< Preamble length in symbol periods (bytes).
   /// Wake-up level the receiver needs (tx_wake_for()). A driver whose receivers are woken by the
   /// preamble length alone may ignore it: `preamble_len` already carries the same decision.
   TxWake wake{TxWake::NONE};
+  /// If set, send only if the energy on `freq_hz`, measured right before the first transmitted
+  /// symbol, is below this level (dBm); otherwise send_packet() reports CHANNEL_BUSY and sends
+  /// nothing. Unset: send without a check.
+  std::optional<int16_t> cca_threshold_dbm;
+};
+
+/// What send_packet() did with a frame.
+struct TxResult {
+  enum class Status : uint8_t {
+    SENT,          ///< The frame went out.
+    CHANNEL_BUSY,  ///< The clear-channel check found the channel busy; nothing was sent.
+    FAILED,        ///< The radio could not send (invalid frame, TX timeout).
+  };
+  Status status{Status::FAILED};
+  int16_t cca_level_dbm{0};  ///< The level the clear-channel check measured; set with CHANNEL_BUSY.
+
+  [[nodiscard]] bool sent() const { return this->status == Status::SENT; }
+  [[nodiscard]] static TxResult ok() { return {Status::SENT, 0}; }
+  [[nodiscard]] static TxResult failed() { return {Status::FAILED, 0}; }
+  [[nodiscard]] static TxResult channel_busy(int16_t level_dbm) { return {Status::CHANNEL_BUSY, level_dbm}; }
 };
 
 /// Raw packet received from the radio.
@@ -166,8 +188,12 @@ class RadioDriver {
 
   /// Send a packet using the specified carrier frequency and preamble settings.
   /// The driver is responsible for appending the protocol CRC on the air
-  /// (in hardware or software, depending on the chip).
-  virtual bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) = 0;
+  /// (in hardware or software, depending on the chip). With `tx_config.cca_threshold_dbm` set, the
+  /// driver first measures the energy on `tx_config.freq_hz` itself — retuning there if the
+  /// receiver is elsewhere — and reports CHANNEL_BUSY instead of sending when it is at or above
+  /// the threshold.
+  /// @return SENT, CHANNEL_BUSY (with the measured level) or FAILED.
+  virtual TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) = 0;
 
   /// Wait (blocking) for a packet with timeout. Returns true if a packet was received.
   /// Contract:
@@ -185,8 +211,8 @@ class RadioDriver {
   /// - On failure: may populate last_capture_ for diagnostics, returns false.
   virtual bool check_for_packet(RadioRxPacket &packet) = 0;
 
-  /// Read instantaneous RSSI (in dBm) while in RX mode.
-  /// Used for listen-before-talk (LBT) carrier sense before transmitting.
+  /// Read instantaneous RSSI (in dBm) on the current channel, while in RX mode. Drivers take their
+  /// clear-channel reading inside send_packet() with it; otherwise it is for diagnostics.
   /// @return RSSI in dBm (negative value).
   virtual int16_t read_rssi() = 0;
 
@@ -413,6 +439,16 @@ class RadioDriver {
   /// Drop the holdoff: the reception ended, was delivered, or was torn down deliberately.
   void clear_reception_in_progress_() { this->rx_hold_armed_ = false; }
 
+  /// The clear-channel check a driver runs at the top of send_packet(). Without a threshold in
+  /// @p tx_config it does nothing. Otherwise it retunes the receiver to `tx_config.freq_hz` if it is
+  /// elsewhere and waits @p settle_us for the RSSI reading to describe the new channel, then reads
+  /// read_rssi() there.
+  /// @param tx_config The transmission about to be sent.
+  /// @param settle_us The chip's RSSI settle time after a retune (a driver constant).
+  /// @return The measured level if it is at or above the threshold (the channel is busy), else
+  ///         nothing.
+  std::optional<int16_t> channel_busy_level_(const RadioTxConfig &tx_config, uint32_t settle_us);
+
   /// Shared hardware reset sequence for chips with an active-low RST pin.
   /// Drives RST pin low → 10 ms → high → 10 ms. Called from derived driver init().
   void reset_hardware_();
@@ -460,6 +496,8 @@ class RadioDriver {
 
   bool failed_{false};                   ///< Latched by @ref fail_; see @ref is_failed.
   const char *failure_reason_{nullptr};  ///< First failure cause, see @ref failure_reason.
+
+  bool cca_retune_logged_{false};  ///< The first clear-channel retune's cost has been logged.
 
   bool rx_hold_armed_{false};     ///< Idle-hop holdoff latch — see reception_in_progress().
   uint32_t rx_hold_since_us_{0};  ///< micros() timestamp the holdoff was last (re-)armed at.

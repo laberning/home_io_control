@@ -35,6 +35,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0039](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md) | Pairing sends a discover-confirm (0x2C) and tolerates no answer | Universal `pairing_discover_confirm` mode (`skip`/`send`/`send_with_ack`); the step never fails the attempt; try 2 alone rotates channels (deviates from ADR 0028) |
 | [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | Tries ordered by per-device evidence (short first when believed awake, wake-up preamble in every multi-try plan; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch |
 | [0044](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md) | Chip-neutral transmit intent | Every transmission carries its wake level; a driver may scan idle channels by itself; a try starts only if its transmission ends inside the exchange budget |
+| [0045](0045-listen-before-talk-is-part-of-sending.md) | Listen-before-talk is part of sending | The radio checks the transmit channel inside `send_packet()`, retuning first when the idle receiver is elsewhere; the engine keeps the retry policy |
 
 ### Behavior
 
@@ -138,6 +139,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0042: The directed start preamble's default comes from the radio driver](0042-start-preamble-default-comes-from-the-radio-driver.md)
 - [ADR 0043: An unconfirmed movement command is re-sent once to a device that normally confirms](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md)
 - [ADR 0044: Chip-neutral transmit intent: wake level, idle scanning and air time](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)
+- [ADR 0045: Listen-before-talk is part of sending](0045-listen-before-talk-is-part-of-sending.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

@@ -755,7 +755,7 @@ TEST(RadioLR1121, PostTxRearmInvalidatesRxBufferBaseContent) {
   RadioTxConfig cfg;
   cfg.freq_hz = FREQ_CH2;
   cfg.preamble_len = SHORT_PREAMBLE;
-  ASSERT_TRUE(radio.send_packet(frame, sizeof(frame), cfg)) << "TxDone was driven, so this must succeed";
+  ASSERT_TRUE(radio.send_packet(frame, sizeof(frame), cfg).sent()) << "TxDone was driven, so this must succeed";
 
   int const set_tx_idx = spi.find_opcode(LR1121_CMD_SET_TX);
   ASSERT_GE(set_tx_idx, 0);

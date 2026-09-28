@@ -77,11 +77,21 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
 
   // RadioDriver interface
   bool init() override { return true; }
-  bool send_packet(const uint8_t *data, uint8_t len,
-                   const esphome::home_io_control::RadioTxConfig &tx_config) override {
-    bool result = true;
+  esphome::home_io_control::TxResult send_packet(const uint8_t *data, uint8_t len,
+                                                 const esphome::home_io_control::RadioTxConfig &tx_config) override {
+    using esphome::home_io_control::TxResult;
+    // The clear-channel check, as the real drivers make it: on the TX channel, before anything is
+    // sent. The retune it implies is assigned directly, so it stays out of freq_history() for the
+    // same reason as the post-send retune below. A busy result sends and records nothing.
+    if (tx_config.cca_threshold_dbm.has_value()) {
+      current_freq_ = tx_config.freq_hz;
+      const int16_t level = this->read_rssi();
+      if (level >= *tx_config.cca_threshold_dbm)
+        return TxResult::channel_busy(level);
+    }
+    TxResult result = TxResult::ok();
     if (!tx_results_.empty()) {
-      result = tx_results_.front();
+      result = tx_results_.front() ? TxResult::ok() : TxResult::failed();
       tx_results_.pop_front();
     }
     tx_configs_.push_back(tx_config);
@@ -180,6 +190,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     current_freq_ = freq_hz;
   }
   int16_t read_rssi() override {
+    rssi_read_freqs_.push_back(current_freq_);
     if (rssi_queue_.empty())
       return rssi_default_;
     int16_t val = rssi_queue_.front();
@@ -270,8 +281,12 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// listen started after it begins where a real one would. Off by default: existing tests count on
   /// a send taking no time.
   void set_model_tx_airtime(bool on) { model_tx_airtime_ = on; }
+  /// Queue the outcome of the next send that passes its clear-channel check: true = SENT,
+  /// false = FAILED. A busy channel is scripted through queue_rssi() / set_rssi_default() instead.
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
+  /// Queue the next RSSI reading: a send's clear-channel check or a direct read_rssi() pops it.
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
+  /// RSSI reading once the queue is empty (default -120 dBm: clear).
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
   /// Under a ManualClock, how far a delivered packet advances time past when it was requested —
   /// modelling the air time / turnaround between a device starting its reply and this driver
@@ -309,6 +324,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// presence-in-freq_history() alone can't distinguish "hopped before the first listen" from
   /// "hopped after a later one".
   const std::vector<CallKind> &call_log() const { return call_log_; }
+  /// The channel the radio was on at each RSSI reading, in order.
+  const std::vector<uint32_t> &rssi_read_freqs() const { return rssi_read_freqs_; }
   const std::vector<esphome::home_io_control::RadioTxConfig> &get_tx_configs() const { return tx_configs_; }
   const std::vector<std::vector<uint8_t>> &get_sent_data() const { return timeline_.sent_data(); }
   void clear() {
@@ -347,6 +364,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   int send_count_;
   std::vector<uint32_t> wait_timeouts_;
   std::vector<uint32_t> freq_history_;
+  std::vector<uint32_t> rssi_read_freqs_;
   std::vector<uint32_t> send_times_ms_;
   bool model_tx_airtime_{false};
   uint32_t rx_latency_ms_{0};

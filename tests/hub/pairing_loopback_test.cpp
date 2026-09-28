@@ -72,17 +72,17 @@ template<typename Base> class HubAirRadio : public Base {
   DropBudget drop_to_device;  ///< Hub frames the device never hears.
   DropBudget drop_to_hub;     ///< Device frame copies the hub never hears (each channel copy counts).
 
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
-    const bool ok = Base::send_packet(data, len, tx_config);
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
+    const TxResult result = Base::send_packet(data, len, tx_config);
     this->air_.clear();
-    if (!ok || this->device == nullptr || consume_drop(this->drop_to_device, wire_cmd(data, len)))
-      return ok;
+    if (!result.sent() || this->device == nullptr || consume_drop(this->drop_to_device, wire_cmd(data, len)))
+      return result;
     RadioRxPacket packet{};
     std::memcpy(packet.data, data, len);
     packet.len = len;
     packet.freq_hz = tx_config.freq_hz;
     this->device->process_received_packet_(packet);
-    return ok;
+    return result;
   }
 
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override {
@@ -117,11 +117,11 @@ class DeviceAirRadio : public MockRadio {
  public:
   std::function<void(const uint8_t *, uint8_t, uint32_t)> to_air;
 
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
-    const bool ok = MockRadio::send_packet(data, len, tx_config);
-    if (ok && this->to_air)
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
+    const TxResult result = MockRadio::send_packet(data, len, tx_config);
+    if (result.sent() && this->to_air)
       this->to_air(data, len, tx_config.freq_hz);
-    return ok;
+    return result;
   }
 };
 

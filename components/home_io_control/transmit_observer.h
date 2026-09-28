@@ -26,14 +26,15 @@ class TransmitObserver {
  public:
   virtual ~TransmitObserver() = default;
 
-  /// The channel was busy, so transmit_frame() backs off once before trying again.
-  /// @param rssi_dbm The RSSI reading that deferred the transmit.
+  /// The TX channel was busy, so transmit_frame() backs off once before trying again.
+  /// @param rssi_dbm The level the radio measured on the TX channel (TxResult::cca_level_dbm).
   virtual void on_lbt_defer(int16_t rssi_dbm) {}
 
-  /// The radio accepted a frame for transmission (send_packet() returned true). Not called when
-  /// serialization or send_packet() fails.
+  /// The radio sent a frame (send_packet() returned SENT). Not called when serialization or
+  /// send_packet() fails, nor for a send the clear-channel check turned away.
   /// @param frame    The logical frame that was sent.
-  /// @param config   The TX shape it was sent with (frequency, preamble length).
+  /// @param config   The TX shape it was sent with (frequency, preamble length, wake-up level, and
+  ///                 the clear-channel threshold if that send was checked).
   /// @param wire_len Serialized length in bytes as handed to the radio.
   virtual void on_transmit(const IoFrame &frame, const RadioTxConfig &config, uint8_t wire_len) {}
 };

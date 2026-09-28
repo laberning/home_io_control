@@ -1024,7 +1024,7 @@ class ScanSweepTestRadio : public MockRadio {
   /// transmits have gone out — i.e. "no earlier than attempt `min_send_count`".
   void queue_rx_after(int min_send_count, const RadioRxPacket &packet) { pending_.push_back({min_send_count, packet}); }
 
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
     tx_boundaries_.push_back(call_log().size());
     return MockRadio::send_packet(data, len, tx_config);
   }

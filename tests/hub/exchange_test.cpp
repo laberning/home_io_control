@@ -615,8 +615,8 @@ namespace {
 /// sent keeps every queued reply aligned with the wait it's meant for.
 class UnconfirmedThenFinalOnRetryMockRadio : public MockRadio {
  public:
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx) override {
-    bool result = MockRadio::send_packet(data, len, tx);
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx) override {
+    TxResult result = MockRadio::send_packet(data, len, tx);
     IoFrame frame;
     if (!parse(data, len, frame))
       return result;
@@ -976,8 +976,8 @@ class RespondOnChallengeMockRadio : public MockRadio {
     armed_ = true;
   }
 
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx) override {
-    bool result = MockRadio::send_packet(data, len, tx);
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx) override {
+    TxResult result = MockRadio::send_packet(data, len, tx);
     if (!armed_)
       return result;
     IoFrame frame;
@@ -3434,4 +3434,77 @@ TEST(Exchange, TransmitFrameStampsTheWakeLevel) {
   EXPECT_EQ(radio.get_tx_configs()[0].wake, TxWake::LONG);
   EXPECT_EQ(radio.get_tx_configs()[1].wake, TxWake::SHORT);
   EXPECT_EQ(radio.get_tx_configs()[2].wake, TxWake::NONE);
+}
+
+// ============================================================================
+// Listen before talk — transmit_frame() asks the radio to send only on a clear TX channel, up to
+// lbt_max_retries times, then sends once without the check; a failed send ends it at once.
+// ============================================================================
+
+TEST(Exchange, LbtBusyThenClearSendsOnTheSecondCheck) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  radio.queue_rssi(-50);  // busy once, then MockRadio's clear default
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_EQ(radio.get_send_count(), 1);
+  EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 1u);
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(radio.get_tx_configs()[0].cca_threshold_dbm, comp.tuning_.lbt_rssi_threshold_dbm)
+      << "the frame that went out was sent with the check";
+}
+
+TEST(Exchange, LbtBusyOnEveryCheckSendsOnceWithoutIt) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  RecordingTransmitObserver observer;
+  comp.exchange_engine_.set_transmit_observer(&observer);
+  radio.set_rssi_default(-50);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
+
+  const uint8_t checks = comp.tuning_.lbt_max_retries;
+  ASSERT_GT(checks, 0u);
+  EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, checks);
+  EXPECT_EQ(observer.lbt_defers.size(), checks);
+  EXPECT_EQ(radio.rssi_read_freqs().size(), checks) << "the forced send takes no reading";
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+  EXPECT_FALSE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value()) << "the last send is forced";
+}
+
+TEST(Exchange, LbtFailedSendIsNotRetried) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  radio.queue_tx_result(false);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  EXPECT_FALSE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_EQ(radio.get_send_count(), 1) << "FAILED is not CHANNEL_BUSY: no further attempt";
+  EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 0u);
+}
+
+TEST(Exchange, LbtSwitchedOffSendsWithoutACheck) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  comp.tuning_.lbt_max_retries = 0;
+  radio.set_rssi_default(-50);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_TRUE(radio.rssi_read_freqs().empty());
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+  EXPECT_FALSE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value());
 }

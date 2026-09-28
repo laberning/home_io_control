@@ -19,6 +19,13 @@ namespace home_io_control {
 /// pin. Doubles as the PaSelect bit of REG_PA_CONFIG.
 static constexpr uint8_t SX1276_PA_SELECT_PA_BOOST = 0x80;
 
+/// Wait after retuning to the TX channel before the clear-channel RSSI reading. The fast-hop PLL
+/// relocks in tens of µs, and with RssiSmoothing = 8 samples at the 50 kHz RX bandwidth one RSSI
+/// update takes about 40 µs; 250 µs covers both with margin and costs nothing next to a preamble.
+/// \todo Confirm on the bench (Heltec V2): time the retune and compare the reading against one
+/// taken after a long dwell on the same channel.
+static constexpr uint32_t SX1276_CCA_SETTLE_US = 250;
+
 // ============================================================================
 // SX1276 Register Addresses (subset needed for IO-Homecontrol)
 // Full register map: see Semtech SX1276 datasheet or sx1276Regs-Fsk.h
@@ -99,7 +106,7 @@ class RadioSX1276 : public RadioDriver {
   /// @param len Payload length.
   /// @param tx_config Transmission config (frequency, preamble).
   /// @return true if transmit succeeded.
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
   /// @brief Blocking wait for a packet with timeout.
   /// @param packet Output: received packet (freq, len, data).
   /// @param timeout_ms Maximum time to wait.

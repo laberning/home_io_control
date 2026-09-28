@@ -359,8 +359,8 @@ TEST(RadioSX1276, SendPacketWritesPreambleFrequencyAndFifoBeforeTxWait) {
   // iterations, still fast) and returns false. The bytes this test cares about — preamble,
   // frequency, FIFO — are all written before that wait starts, so the timeout doesn't affect
   // what's being asserted here (mirrors radio_lr1121_test.cpp's SendPacketWritesUartEncodedBytes).
-  bool result = radio.send_packet(payload, sizeof(payload), cfg);
-  EXPECT_FALSE(result) << "TX-done wait times out in a synchronous host test by design";
+  TxResult result = radio.send_packet(payload, sizeof(payload), cfg);
+  EXPECT_FALSE(result.sent()) << "TX-done wait times out in a synchronous host test by design";
 
   EXPECT_EQ(spi.get_reg(REG_PREAMBLE_MSB), (cfg.preamble_len >> 8) & 0xFF);
   EXPECT_EQ(spi.get_reg(REG_PREAMBLE_LSB), cfg.preamble_len & 0xFF);
@@ -373,13 +373,63 @@ TEST(RadioSX1276, SendPacketWritesPreambleFrequencyAndFifoBeforeTxWait) {
   EXPECT_TRUE(std::equal(spi.tx_fifo().begin(), spi.tx_fifo().end(), payload));
 }
 
+namespace {
+
+/// RadioSX1276 whose RSSI reading is scripted and records the channel it was taken on.
+class CcaProbeSX1276 : public RadioSX1276 {
+ public:
+  using RadioSX1276::RadioSX1276;
+  int16_t level{-120};
+  std::vector<uint32_t> read_freqs;
+  int16_t read_rssi() override {
+    this->read_freqs.push_back(this->get_current_freq());
+    return this->level;
+  }
+};
+
+}  // namespace
+
+TEST(RadioSX1276, BusyChannelOnTheTxFrequencySendsNothing) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  CcaProbeSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  radio.change_frequency(FREQ_CH1);  // where an idle hop left the receiver
+  radio.level = -60;
+
+  const uint8_t payload[] = {0x88, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x03};
+  RadioTxConfig cfg{};
+  cfg.freq_hz = FREQ_CH2;
+  cfg.cca_threshold_dbm = -90;
+  const TxResult result = radio.send_packet(payload, sizeof(payload), cfg);
+
+  EXPECT_EQ(result.status, TxResult::Status::CHANNEL_BUSY);
+  EXPECT_EQ(result.cca_level_dbm, -60);
+  EXPECT_EQ(radio.read_freqs, std::vector<uint32_t>{FREQ_CH2}) << "retuned to the TX channel before measuring";
+  EXPECT_TRUE(spi.tx_fifo().empty()) << "a busy channel must not reach the FIFO";
+}
+
+TEST(RadioSX1276, ClearChannelGoesOnToTransmit) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  CcaProbeSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  radio.level = -100;
+
+  const uint8_t payload[] = {0x88, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x03};
+  RadioTxConfig cfg{};
+  cfg.freq_hz = FREQ_CH2;
+  cfg.cca_threshold_dbm = -90;
+  // TX-done never fires in this host harness, so the send ends FAILED after reaching the FIFO.
+  EXPECT_EQ(radio.send_packet(payload, sizeof(payload), cfg).status, TxResult::Status::FAILED);
+  EXPECT_EQ(spi.tx_fifo().size(), sizeof(payload));
+}
+
 TEST(RadioSX1276, SendPacketRejectsZeroLength) {
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
 
   const uint8_t payload[] = {0xAA};
-  EXPECT_FALSE(radio.send_packet(payload, 0, RadioTxConfig{}));
+  EXPECT_FALSE(radio.send_packet(payload, 0, RadioTxConfig{}).sent());
   EXPECT_TRUE(spi.tx_fifo().empty());
   EXPECT_TRUE(spi.write_log().empty()) << "a rejected send must not touch SPI at all";
 }
@@ -390,7 +440,7 @@ TEST(RadioSX1276, SendPacketRejectsOverlongPayload) {
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
 
   uint8_t payload[RADIO_PACKET_BUFFER_SIZE + 1] = {0};
-  EXPECT_FALSE(radio.send_packet(payload, sizeof(payload), RadioTxConfig{}));
+  EXPECT_FALSE(radio.send_packet(payload, sizeof(payload), RadioTxConfig{}).sent());
   EXPECT_TRUE(spi.tx_fifo().empty());
   EXPECT_TRUE(spi.write_log().empty()) << "a rejected send must not touch SPI at all";
 }

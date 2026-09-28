@@ -458,9 +458,12 @@ bool SoftPhyDriverBase::check_for_packet(RadioRxPacket &packet) {
 
 // === Packet TX ===
 
-bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) {
+TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) {
   if (len == 0)
-    return false;
+    return TxResult::failed();
+  // Measured in RX, before standby: the check needs the receiver running on the TX channel.
+  if (auto busy = this->channel_busy_level_(tx_config, SOFT_PHY_CCA_SETTLE_US))
+    return TxResult::channel_busy(*busy);
 
 #ifdef IOHOME_FRAME_LOG
   log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);
@@ -475,7 +478,7 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
   uint8_t frame_with_crc[FRAME_MAX_WIRE_SIZE] = {0};
   uint8_t tx_buf[RADIO_PACKET_BUFFER_SIZE];
   if ((uint16_t) len + 2 > (uint16_t) sizeof(frame_with_crc))
-    return false;
+    return TxResult::failed();
 
   memcpy(frame_with_crc, data, len);
   const uint16_t crc = crc_ccitt(data, len);
@@ -484,7 +487,7 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
 
   const uint8_t encoded_len = uart_encode_packet(frame_with_crc, len + 2, tx_buf, sizeof(tx_buf));
   if (encoded_len == 0)
-    return false;
+    return TxResult::failed();
 
   this->set_tx_packet_params(tx_config.preamble_len, encoded_len);
 
@@ -506,7 +509,7 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
       if (millis() - start > 4000) {
         ESP_LOGE(TAG, "TX timeout — DIO/IRQ pin never fired");
         this->set_mode_standby();
-        return false;
+        return TxResult::failed();
       }
       App.feed_wdt();
       delayMicroseconds(100);
@@ -525,7 +528,7 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
     if (millis() - start > 4000) {
       ESP_LOGE(TAG, "TX timeout — no TX_DONE IRQ (last_irq=0x%08" PRIX32 ")", tx_irq);
       this->set_mode_standby();
-      return false;
+      return TxResult::failed();
     }
   }
   // TxDone used the same DIO/IRQ latch as RX. Clear the local latch before re-arming RX so an
@@ -553,7 +556,7 @@ bool SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const Radi
   ESP_LOGD(TAG, "TX->RX re-arm: %" PRIu32 " us (+%u us settle)", micros() - tx_done_us, this->post_tx_settle_us_);
 #endif
 
-  return true;
+  return TxResult::ok();
 }
 
 // === Frequency control ===

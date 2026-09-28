@@ -193,18 +193,28 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
     ESP_LOGW(TAG, "tx: serialize_failed cmd=0x%02X", frame.cmd);
     return false;
   }
-  for (uint8_t lbt = 0; lbt < this->tuning_->lbt_max_retries; lbt++) {
-    int16_t const rssi = radio->read_rssi();
-    if (rssi < this->tuning_->lbt_rssi_threshold_dbm)
+  // Listen before talk: up to lbt_max_retries sends that the radio makes only if the TX channel is
+  // clear, measured by the driver on that channel right before transmitting; after the last busy
+  // result, one send without the check, so a noisy channel delays a frame but never drops it.
+  RadioTxConfig tx_config = tx_config_for(frame, freq, preamble);
+  TxResult result;
+  for (uint8_t lbt = 0;; lbt++) {
+    if (lbt < this->tuning_->lbt_max_retries) {
+      tx_config.cca_threshold_dbm = this->tuning_->lbt_rssi_threshold_dbm;
+    } else {
+      tx_config.cca_threshold_dbm.reset();
+    }
+    result = radio->send_packet(buf, len, tx_config);
+    if (result.status != TxResult::Status::CHANNEL_BUSY)
       break;
-    ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm), retry %u/%u", rssi, lbt + 1, this->tuning_->lbt_max_retries);
+    ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm on %" PRIu32 " Hz), retry %u/%u", result.cca_level_dbm, freq, lbt + 1,
+             this->tuning_->lbt_max_retries);
     this->counters_.lbt_retries++;
     if (this->transmit_observer_ != nullptr)
-      this->transmit_observer_->on_lbt_defer(rssi);
+      this->transmit_observer_->on_lbt_defer(result.cca_level_dbm);
     delay(LBT_RETRY_DELAY_MS);
   }
-  RadioTxConfig const tx_config = tx_config_for(frame, freq, preamble);
-  if (!radio->send_packet(buf, len, tx_config)) {
+  if (!result.sent()) {
     ESP_LOGW(TAG, "tx: send_failed cmd=0x%02X", frame.cmd);
     return false;
   }

@@ -676,3 +676,90 @@ TYPED_TEST(SoftPhyDriver, ReadRssiAppliesFormula) {
 
   EXPECT_EQ(radio.read_rssi(), -50);
 }
+
+// ---------------------------------------------------------------------------
+// send_packet(): the clear-channel check (RadioTxConfig::cca_threshold_dbm)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Records where each RSSI reading is taken and how often the driver retunes, and returns a
+/// scripted level, so the check's order (retune to the TX channel, then measure) is observable.
+template<class Base> class CcaProbe : public Base {
+ public:
+  using Base::Base;
+  int16_t level{-120};
+  std::vector<uint32_t> read_freqs;
+  int retunes{0};
+  int16_t read_rssi() override {
+    this->read_freqs.push_back(this->get_current_freq());
+    return this->level;
+  }
+  void change_frequency(uint32_t freq_hz) override {
+    this->retunes++;
+    Base::change_frequency(freq_hz);
+  }
+};
+
+RadioTxConfig checked_tx(uint32_t freq_hz, int16_t threshold_dbm) {
+  RadioTxConfig cfg{};
+  cfg.freq_hz = freq_hz;
+  cfg.cca_threshold_dbm = threshold_dbm;
+  return cfg;
+}
+
+const uint8_t kCcaFrame[] = {0x88, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x03};
+
+}  // namespace
+
+TYPED_TEST(SoftPhyDriver, CcaRetunesToTheTxChannelBeforeMeasuring) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  CcaProbe<typename TestFixture::Testable> radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.change_frequency(FREQ_CH1);  // where an idle hop left the receiver
+  radio.retunes = 0;
+  radio.level = -50;
+
+  const TxResult result = radio.send_packet(kCcaFrame, sizeof(kCcaFrame), checked_tx(FREQ_CH2, -90));
+
+  EXPECT_EQ(result.status, TxResult::Status::CHANNEL_BUSY);
+  EXPECT_EQ(result.cca_level_dbm, -50);
+  EXPECT_EQ(radio.retunes, 1);
+  EXPECT_EQ(radio.read_freqs, std::vector<uint32_t>{FREQ_CH2}) << "measured on the TX channel, after the retune";
+}
+
+TYPED_TEST(SoftPhyDriver, CcaOnTheTxChannelAlreadyDoesNotRetune) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  CcaProbe<typename TestFixture::Testable> radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.change_frequency(FREQ_CH2);
+  radio.retunes = 0;
+  radio.level = -90;  // at the threshold counts as busy
+
+  EXPECT_EQ(radio.send_packet(kCcaFrame, sizeof(kCcaFrame), checked_tx(FREQ_CH2, -90)).status,
+            TxResult::Status::CHANNEL_BUSY);
+  EXPECT_EQ(radio.retunes, 0);
+}
+
+TYPED_TEST(SoftPhyDriver, ClearChannelGoesOnToTransmit) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  CcaProbe<typename TestFixture::Testable> radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.level = -91;
+
+  // The host harness never raises TxDone, so a send that got past the check ends FAILED (timeout).
+  EXPECT_EQ(radio.send_packet(kCcaFrame, sizeof(kCcaFrame), checked_tx(FREQ_CH2, -90)).status,
+            TxResult::Status::FAILED);
+  EXPECT_EQ(radio.read_freqs.size(), 1u);
+}
+
+TYPED_TEST(SoftPhyDriver, NoThresholdMeansNoMeasurement) {
+  MockSpi spi;
+  MockPin rst, dio1, busy(false);
+  CcaProbe<typename TestFixture::Testable> radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  RadioTxConfig cfg{};
+  cfg.freq_hz = FREQ_CH3;
+
+  radio.send_packet(kCcaFrame, sizeof(kCcaFrame), cfg);
+  EXPECT_TRUE(radio.read_freqs.empty());
+}

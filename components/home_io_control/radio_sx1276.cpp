@@ -253,9 +253,12 @@ void RadioSX1276::set_rx_bandwidth_(SX1276RxBandwidth bandwidth) {
 
 // === Packet TX/RX ===
 
-bool RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) {
+TxResult RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) {
   if (len == 0 || len > RADIO_PACKET_BUFFER_SIZE)
-    return false;
+    return TxResult::failed();
+  // Measured in RX, before standby: the check needs the receiver running on the TX channel.
+  if (auto busy = this->channel_busy_level_(tx_config, SX1276_CCA_SETTLE_US))
+    return TxResult::channel_busy(*busy);
 #ifdef IOHOME_FRAME_LOG
   log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);
 #endif
@@ -280,7 +283,7 @@ bool RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
     if (millis() - start > 4000) {
       ESP_LOGE(TAG, "TX timeout");
       this->set_mode_standby();
-      return false;
+      return TxResult::failed();
     }
     App.feed_wdt();
     delayMicroseconds(100);
@@ -290,7 +293,7 @@ bool RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioTxCon
   this->write_register_(REG_PREAMBLE_MSB, 0x00);
   this->write_register_(REG_PREAMBLE_LSB, 0x08);
   this->set_mode_rx();
-  return true;
+  return TxResult::ok();
 }
 
 bool RadioSX1276::poll_until_payload_ready_(uint32_t timeout_ms, bool &saw_dio0, uint8_t &irq1, uint8_t &irq2) {
