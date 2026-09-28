@@ -620,6 +620,82 @@ TEST(HubCore, LoopDoesNotForceRetuneWhileKeyExtractionArmedIdle) {
   delete comp.radio_;
 }
 
+// ========================================================================================
+// Idle scanning: a radio that scans the hop channels by itself (run_idle_scan() true) takes over
+// from the host-side hop; the default keeps the host hopping; the key-extraction CH2 hold wins.
+// ========================================================================================
+
+namespace {
+
+/// A radio that reports scanning the hop channels by itself, counting the idle passes it was asked.
+class SelfScanningRadio : public MockRadio {
+ public:
+  bool run_idle_scan() override {
+    this->scan_calls++;
+    return true;
+  }
+  int scan_calls{0};
+};
+
+/// Open maybe_hop()'s dwell gate: a full HOP_TIME_US since the last hop, on a manual clock.
+void open_hop_gate(TestableHubComponent &comp) {
+  comp.exchange_engine_.reset_hop_timestamp();
+  esphome::test_clock::advance_us(HOP_TIME_US + 1);
+}
+
+}  // namespace
+
+TEST(HubCore, LoopLeavesHoppingToARadioThatScansByItself) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  comp.initialized_ = true;
+  auto *radio = new SelfScanningRadio();
+  comp.radio_ = radio;
+  open_hop_gate(comp);
+
+  comp.loop();
+
+  EXPECT_EQ(radio->scan_calls, 1);
+  EXPECT_TRUE(radio->freq_history().empty()) << "a self-scanning radio must not be hopped from the host";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, LoopHopsFromTheHostByDefault) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  comp.initialized_ = true;
+  auto *radio = new MockRadio();
+  comp.radio_ = radio;
+  open_hop_gate(comp);
+
+  comp.loop();
+
+  EXPECT_EQ(radio->freq_history().size(), 1u) << "with the dwell served, the default radio is hopped from the host";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, KeyExtractionHoldWinsOverIdleScan) {
+  TestableHubComponent comp;
+  comp.initialized_ = true;
+  auto *radio = new SelfScanningRadio();
+  comp.radio_ = radio;
+  radio->change_frequency(FREQ_CH1);
+  radio->clear();
+
+  comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
+  ASSERT_TRUE(comp.key_extraction_awaiting_reply_());
+
+  comp.loop();
+
+  EXPECT_EQ(radio->freq_history(), std::vector<uint32_t>{FREQ_CH2});
+  EXPECT_EQ(radio->scan_calls, 0) << "the CH2 hold must not hand the idle pass to the radio's own scan";
+
+  delete comp.radio_;
+}
+
 TEST(HubCore, LoopKeyExtractionHoldRespectsReceptionInProgressGuard) {
   TestableHubComponent comp;
   comp.initialized_ = true;

@@ -265,6 +265,15 @@ class RadioDriver {
   /// @return true if an immediate reply after TX is reliably received.
   [[nodiscard]] virtual bool has_fast_tx_rx_turnaround() const = 0;
 
+  /// @brief Let the radio scan the hop channels by itself while the hub is idle.
+  ///
+  /// Called on every idle `loop()` pass. A driver whose radio can scan the hop channels by itself
+  /// starts or keeps that scan and returns true; the hub then does no host-side hopping for that
+  /// pass. Any explicit retune (`change_frequency()`, a transmission, a listen) ends the scan, and
+  /// the next idle pass starts it again. The default returns false: the hub hops from the host.
+  /// @return true if the radio is scanning by itself.
+  virtual bool run_idle_scan() { return false; }
+
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
 
