@@ -43,7 +43,7 @@ frames:
   - dir: tx
     hex: "D1 00 81 0B AB C4 33 3A 29 00 80 C4 33 3A 02 DD 00 0E"
     crc: absent
-    note: "cmd=DISCOVER_RESP(0x29), throwaway device id C4333A, manufacturer=2 (Somfy), type=roller_shutter, flags=0xDD (ATT_CLASS_40S | POWER_SAVE_LOW_POWER), timestamp=0x000E -- the exact post-fix-5 literal bytes, confirming that fix against a real hub for the first time"
+    note: "cmd=DISCOVER_RESP(0x29), throwaway device id C4333A, manufacturer=2 (Somfy), type=roller_shutter, flags=0xDD (ATT_CLASS_40MS | POWER_SAVE_LOW_POWER), timestamp=0x000E -- the exact post-fix-5 literal bytes, confirming that fix against a real hub for the first time"
   - dir: rx
     hex: "48 20 C4 33 3A 81 0B AB 2C"
     crc: absent

@@ -147,14 +147,14 @@ const char *manufacturer_name(uint8_t id) {
 
 const char *att_class_name(uint8_t att_class) {
   switch (att_class) {
-    case ATT_CLASS_5S:
-      return "5s";
-    case ATT_CLASS_10S:
-      return "10s";
-    case ATT_CLASS_20S:
-      return "20s";
-    case ATT_CLASS_40S:
-      return "40s";
+    case ATT_CLASS_5MS:
+      return "5ms";
+    case ATT_CLASS_10MS:
+      return "10ms";
+    case ATT_CLASS_20MS:
+      return "20ms";
+    case ATT_CLASS_40MS:
+      return "40ms";
     default:
       return "unknown";
   }

@@ -490,7 +490,8 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 
 /// @brief Build an extended CMD_PRIVATE (0x03) request with a selector/block pair.
 ///
-/// The shape real hubs use for both the tilt block (selector STATUS_TILT_SELECTOR) and the
+/// The shape real hubs use for both the tilt block (selector STATUS_TILT_SELECTOR: FPI1 bit 5 = FP3,
+/// see proto_constants.h) and the
 /// field-observed selector 0x80 (tests/corpus/captures/probe/multi_somfy_probe_extended_private_both_selectors.yaml),
 /// which this codebase has never decoded. create_get_status_tilt() below is this builder frozen at selector =
 /// STATUS_TILT_SELECTOR, block = 0x01.
@@ -594,8 +595,8 @@ bool create_discover(IoFrame &f, const uint8_t *own);
 /// @param subtype Device subtype to advertise.
 /// @param manufacturer_id Manufacturer ID to advertise (see MANUFACTURER_* in proto_constants.h).
 /// @note The flags byte (turnaround class, power-save) and timestamp are best-effort placeholder
-///       values — ATT_CLASS_40S/POWER_SAVE_LOW_POWER and a non-zero timestamp, matching a real
-///       captured device rather than the honest-but-misleading ATT_CLASS_5S/POWER_SAVE_ALWAYS_ALIVE
+///       values — ATT_CLASS_40MS/POWER_SAVE_LOW_POWER and a non-zero timestamp, matching a real
+///       captured device rather than the honest-but-misleading ATT_CLASS_5MS/POWER_SAVE_ALWAYS_ALIVE
 ///       (0x00) — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_commands.cpp for the
 ///       full reasoning. Still unverified against a real hub.
 /// @return true on success.

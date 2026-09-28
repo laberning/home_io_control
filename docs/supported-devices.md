@@ -41,8 +41,9 @@ match.
 | **J406 IO shutter motor** | `external_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: external_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard` |
 | **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | on a Heltec V3.2 / SX1262 |
 | **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction inversion is applied automatically for this family | Corpus `somfy_awning_discovery_spe_paired_rollcall` |
-| **Pergola io motor** | `horizontal_awning` | ✅ Confirmed | Discover & Pair, after a single PROG hold on its Situo | — | Heltec V3 / SX1262, issue #121 |
-| **White LED Receiver io** (4-output LED dimmer) | `light` | ❌ Never answered discovery | — | — | Discover & Pair failed in every state and setting tried, including right after a factory reset, while a Pergola io paired first try on the same board. 1W remotes register and control it normally. Heltec V3 / SX1262, issue #121 |
+| **Pergola io motor** | `horizontal_awning` | ✅ Confirmed | Discover & Pair, after a single PROG hold on its Situo | — | Heltec V3 / SX1262, issue #121. For the kit's LED lighting see [Pairing a pergola kit](devices/somfy-white-led-receiver.md#pairing-a-pergola-kit) |
+| **White LED Receiver io** (4-output LED dimmer, logs as `LightVar_Wh_io`) | `light` | ✅ Confirmed, including dimming | Discover & Pair once per output: hold PROG about 2 s on the Situo channel for that output, then press Discover & Pair | `dimmable: true`; `sx1262_rx_bandwidth: 156.2` on SX1262 | Each output is a separate device. Heltec V3 / SX1262, issues #119, #143. Step-by-step: [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md) |
+| **Sunea SCR 40 io** | — | ✅ Confirmed — open, close, position | Discover & Pair | — | Pergola kit, alongside a White LED Receiver io; keeps working at `sx1262_rx_bandwidth: 156.2`. Heltec V3 / SX1262, issue #143 |
 | **Awning actuator (IO Vertical)** | `awning` | ✅ Confirmed for discovery | Discover & Pair | — | Corpus `somfy_awning_discovery_lab_response` |
 | **RS100 IO / RS100 Solar** | `awning` / `roller_shutter` | ⚠️ Partial — pairing needs a retried key exchange | Discover & Pair, retried | `low_power: true` | 7 corpus captures including both a success and a key-transfer stall |
 | **Oximo 40 Solar tubular motor** | `roller_shutter` | 🔍 Traffic captured only | — | `low_power: true` | Corpus `somfy_oximo40_statuspoll_sx1262`, issue #45 |
@@ -167,13 +168,14 @@ vendor.
 
 ## Device pages
 
-Four devices have enough evidence behind them to be worth a page of their own.
+Five devices have enough evidence behind them to be worth a page of their own.
 
 <!-- doxygen-subpages -->
 - [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md)
 - [Somfy Sunea IO](devices/somfy-sunea-io.md)
 - [VELUX INTEGRA and the KLR/KLF/KUX family](devices/velux-integra.md)
 - [Somfy RS100 IO](devices/somfy-rs100.md)
+- [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md)
 <!-- /doxygen-subpages -->
 
 ## Getting your device added
