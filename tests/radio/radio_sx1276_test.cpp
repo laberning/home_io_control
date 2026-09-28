@@ -172,6 +172,17 @@ TEST(RadioSX1276, InitFailsOnWrongVersion) {
                                                           "version check";
 }
 
+/// The IoHomeOn coder produces the same waveform as the software PHY, so the budget estimate is the
+/// shared 868 model.
+TEST(RadioSX1276, TxAirTimeIsTheIo868Model) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  RadioTxConfig cfg{};
+  cfg.preamble_len = LONG_PREAMBLE;
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+}
+
 TEST(RadioSX1276, InitProgramsValidatedConfiguration) {
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);

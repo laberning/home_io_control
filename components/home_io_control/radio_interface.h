@@ -265,6 +265,18 @@ class RadioDriver {
   /// @return true if an immediate reply after TX is reliably received.
   [[nodiscard]] virtual bool has_fast_tx_rx_turnaround() const = 0;
 
+  /// @brief How long send_packet() with this length and config keeps the radio transmitting,
+  /// wake-up included.
+  ///
+  /// The exchange engine counts it against the exchange budget before it starts a try, so a try
+  /// whose transmission would end past the budget is not started. There is no generic default:
+  /// the estimate depends on the chip's line coding and wake-up mechanism, so each driver declares
+  /// it.
+  /// @param len Frame length in bytes, as handed to send_packet().
+  /// @param cfg The transmission's config.
+  /// @return Transmit time in microseconds.
+  [[nodiscard]] virtual uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const = 0;
+
   /// @brief Let the radio scan the hop channels by itself while the hub is idle.
   ///
   /// Called on every idle `loop()` pass. A driver whose radio can scan the hop channels by itself

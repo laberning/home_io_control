@@ -9,6 +9,7 @@
 /// handles CRC and packet framing specific to the IO-Homecontrol protocol.
 
 #include "radio_interface.h"
+#include "radio_soft_phy.h"  // io868_tx_air_time_us()
 #include "esphome/core/hal.h"
 
 namespace esphome {
@@ -139,6 +140,11 @@ class RadioSX1276 : public RadioDriver {
   /// (including the pairing key-confirm 0x33) are caught through the standard
   /// exchange wait — validated by real-hardware pairing on this driver.
   [[nodiscard]] bool has_fast_tx_rx_turnaround() const override { return true; }
+  /// @brief Transmit time (SX1276): the preamble, sync word and the IoHomeOn-coded frame at the
+  /// protocol line rate — the same waveform the software PHY produces.
+  [[nodiscard]] uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
+    return io868_tx_air_time_us(cfg.preamble_len, len);
+  }
   // `SX1276_RESPONSE_PREAMBLE` below is a code span, not \ref: doxygen 1.18 can't resolve \ref
   // to it in a whole-project build (details in proto_sizes.h). Autolinking still links it.
   /// @brief Preamble for response/continuation frames (SX1276).

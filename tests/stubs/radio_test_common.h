@@ -1,9 +1,8 @@
 #pragma once
 
 #include "radio_interface.h"
-#include "radio_soft_phy.h"              // soft_phy_raw_bytes_for_frame() for the airtime model
-#include "radio_soft_phy_driver_base.h"  // soft_phy_air_time_us() for the airtime model
-#include "radio_sx1262.h"                // SX1262_RESPONSE_PREAMBLE for the SX1262 mock
+#include "radio_soft_phy.h"  // io868_tx_air_time_us() for the airtime model
+#include "radio_sx1262.h"    // SX1262_RESPONSE_PREAMBLE for the SX1262 mock
 #include "../support/timed_release.h"
 #include <esphome/core/gpio.h>
 #include <esphome/core/hal.h>
@@ -92,7 +91,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     // and harmless (if not meaningful) under the default legacy clock.
     send_times_ms_.push_back(esphome::test_clock::peek_ms());
     if (model_tx_airtime_ && esphome::test_clock::is_manual())
-      esphome::test_clock::advance_us(modelled_tx_airtime_us(tx_config.preamble_len, len));
+      esphome::test_clock::advance_us(this->tx_air_time_us(len, tx_config));
     // Real drivers retune the receiver to the TX frequency as a side effect of sending (e.g.
     // RadioSX1276::send_packet() calls change_frequency(); SoftPhyDriverBase::send_packet() calls
     // set_frequency_register(), which assigns current_freq_ the same way). Assigned directly here,
@@ -204,6 +203,11 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     return tuning.sx1276_discovery_hop_slice_ms;
   }
   bool has_fast_tx_rx_turnaround() const override { return true; }
+  /// The 868 MHz production estimate, which set_model_tx_airtime() advances the clock by. A test
+  /// double for a radio with a different wake-up overrides it.
+  uint32_t tx_air_time_us(uint8_t len, const esphome::home_io_control::RadioTxConfig &cfg) const override {
+    return esphome::home_io_control::io868_tx_air_time_us(cfg.preamble_len, len);
+  }
   void set_mode_rx() override {}
   void set_mode_standby() override {}
   bool is_failed() const override { return false; }
@@ -262,17 +266,10 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     rx_queue_.push_back(
         {pkt, std::nullopt, std::nullopt, TimedRelease{std::nullopt, std::move(anchor_bytes), offset_us}});
   }
-  /// Under a ManualClock, make send_packet() take the frame's modelled time on air (see
-  /// modelled_tx_airtime_us()), so a listen started after it begins where a real one would. Off by
-  /// default: existing tests count on a send taking no time.
+  /// Under a ManualClock, make send_packet() take the frame's time on air (tx_air_time_us()), so a
+  /// listen started after it begins where a real one would. Off by default: existing tests count on
+  /// a send taking no time.
   void set_model_tx_airtime(bool on) { model_tx_airtime_ = on; }
-  /// Time on air of one transmission: preamble, sync word and the frame plus its CRC, each byte of
-  /// the latter a 10-bit UART cell, at the protocol's line rate. The same line coding applies to
-  /// every chip (the SX1276's IoHomeOn coder and the software PHY produce the same waveform).
-  static uint32_t modelled_tx_airtime_us(uint16_t preamble_len, uint8_t frame_len) {
-    return esphome::home_io_control::soft_phy_air_time_us(
-        preamble_len + MODELLED_SYNC_BYTES + esphome::home_io_control::soft_phy_raw_bytes_for_frame(frame_len));
-  }
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
@@ -283,8 +280,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// peek_ms() at each send_packet() call, in order — recorded in both clock modes (legacy values
   /// are meaningless on their own, same as every other legacy timing field here, but harmless).
   /// Lets a test assert retry cadence in real milliseconds instead of counting wait_timeouts().
-  /// TX air time itself is not modelled: send_packet() doesn't advance the clock, so two
-  /// consecutive sends with nothing queued in between record the same instant.
+  /// Unless set_model_tx_airtime() is on, a send takes no time, so two consecutive sends with
+  /// nothing queued in between record the same instant.
   const std::vector<uint32_t> &send_times_ms() const { return send_times_ms_; }
   // Stage a valid get_last_capture() for tests exercising the link-health RSSI path. Real drivers
   // populate this via populate_capture_base_() inside wait_for_packet()/check_for_packet(); this
@@ -328,9 +325,6 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   }
 
  private:
-  /// Sync word bytes on air after the preamble ({0x55, 0xFF, 0x33}), for the airtime model.
-  static constexpr uint16_t MODELLED_SYNC_BYTES = 3;
-
   /// A ManualClock does nothing on its own between calls, so wait_for_packet() must move time
   /// forward itself for every outcome or a bounded retry loop driven by this mock would spin
   /// forever: `std::max(timeout_ms, 1u)` on an empty slice (real air time is at least the slice

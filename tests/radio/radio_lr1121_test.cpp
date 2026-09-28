@@ -829,6 +829,15 @@ TEST(RadioLR1121, ApplyTuningRewritesModulationParamsBandwidth) {
 /// ADR 0042: the start-preamble default is the driver's to give, and the override lives on
 /// SoftPhyDriverBase rather than here — both soft-PHY chips measured the same, so letting them
 /// diverge per driver would be inventing a difference the evidence does not show.
+TEST(RadioLR1121, TxAirTimeIsTheIo868Model) {
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
+  RadioTxConfig cfg{};
+  cfg.preamble_len = LONG_PREAMBLE;
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+}
+
 TEST(RadioLR1121, DefaultStartPreambleComesFromTheSharedSoftPhy) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);

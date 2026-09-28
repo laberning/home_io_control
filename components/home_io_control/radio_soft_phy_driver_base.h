@@ -84,22 +84,6 @@ static_assert(SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS >= SOFT_PHY_EARLY_MIN_WINDOW
               "a budget below the minimum window makes try_early_completion_() decline every "
               "idle-path call, silently turning issue #81's fix into a no-op");
 
-/// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
-static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
-/// Microseconds in a second, for the air-time arithmetic below.
-static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
-
-/// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.
-///
-/// One byte is 8 / 38400 s = 208.333 µs. Computed as an integer division rounded *up*, so the
-/// result never falls short of a whole byte's air time and a caller that waits on it never reads
-/// the chip's buffer early. The numerator is 64-bit: in 32 bits it would wrap above 536 bytes, and
-/// a 1024-byte wake-up preamble is a real transmission length.
-constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
-  const uint64_t bit_periods = static_cast<uint64_t>(raw_bytes) * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
-  return static_cast<uint32_t>((bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS);
-}
-
 // RX_HOP_HOLDOFF_US (radio_interface.h) exists to outlast the fixed-length RX_DONE on the
 // software-PHY chips. Tied here, in the one header that can see both sides of the arithmetic,
 // so a change to either constant that breaks the relationship fails the build instead of
@@ -242,6 +226,11 @@ class SoftPhyDriverBase : public RadioDriver {
   /// and both differed from the register PHY, so a per-driver value would invent a difference the
   /// evidence does not show. See ADR 0042.
   [[nodiscard]] uint16_t default_start_preamble() const override { return SOFT_PHY_START_PREAMBLE; }
+
+  /// @brief Transmit time: the preamble, sync word and UART-coded frame at the protocol line rate.
+  [[nodiscard]] uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
+    return io868_tx_air_time_us(cfg.preamble_len, len);
+  }
 
  protected:
   // --- Tuning helpers shared by both drivers (values/defaults stay chip-specific) ---

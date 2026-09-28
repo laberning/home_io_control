@@ -492,6 +492,26 @@ TEST(SoftPhy, AirTimeIsRoundedUpToWholeBytes) {
       << "a 15-byte frame must complete well before the fixed-length window would";
 }
 
+TEST(SoftPhy, Io868AirTimeCountsPreambleSyncAndCodedFrame) {
+  // A 13-byte frame plus CRC is 15 UART cells = 150 bits = 19 bytes; plus 3 sync bytes.
+  EXPECT_EQ(io868_tx_air_time_us(1024, 13), soft_phy_air_time_us(1024 + 3 + 19));
+  EXPECT_GT(io868_tx_air_time_us(1024, 13), 217000u) << "a wake-up try is ~218 ms on air, not ~330";
+  EXPECT_LT(io868_tx_air_time_us(1024, 13), 219000u);
+  EXPECT_LT(io868_tx_air_time_us(NORMAL_START_PREAMBLE, 13), 12000u);
+}
+
+/// The budget estimate a soft-PHY driver reports is the shared 868 model, for its config's preamble.
+TEST(RadioSX1262, TxAirTimeIsTheIo868Model) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+  RadioTxConfig cfg{};
+  cfg.preamble_len = LONG_PREAMBLE;
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+  cfg.preamble_len = SHORT_PREAMBLE;
+  EXPECT_EQ(radio.tx_air_time_us(20, cfg), io868_tx_air_time_us(SHORT_PREAMBLE, 20));
+}
+
 TEST(RadioSX1262, EarlyCompletionIsOptInPerChip) {
   // The base class default keeps a chip on the RX_DONE path until it declares its buffer
   // readable mid-reception; SX1262 opts in with the RX base it already programs.

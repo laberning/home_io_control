@@ -365,7 +365,7 @@ void IOHomeControlComponent::loop() {
 
   // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
   // loop() every ~16-30ms. This is acceptable for a controller: a directed start frame to a
-  // low-power target still goes out with LONG_PREAMBLE (1024 bytes ≈ 330ms airtime), long enough
+  // low-power target still goes out with LONG_PREAMBLE (1024 bytes ≈ 218 ms airtime), long enough
   // to be detected regardless of channel alignment; a start frame to an always-alive target uses
   // the shorter normal_start_preamble (default 32 bytes), which such a receiver hears fine. This
   // coarse idle hop causes no exchange to miss its channel either way, because every TX retunes

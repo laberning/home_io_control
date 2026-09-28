@@ -1998,11 +1998,12 @@ TEST(Exchange, RetriesStopOnceTheTotalBudgetIsSpent) {
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
-  // Try 0's wait (250) plus the retry delay (250) already spends 500 of the 600 ms budget, so try
-  // 1 fits (started at 500 < 600) but try 2's budget check (started at 500 + 250 + 250 = 1000)
-  // does not -- exactly two tries, in real milliseconds rather than relative to the window.
+  // A try starts only if its transmission ends inside the budget: elapsed + retry delay (250) + the
+  // try's air time (a low-power START frame's 1024-byte preamble, ~218 ms). Try 2's check runs at
+  // 250 ms (try 1's wait) and ends its transmission at ~718 < 1000; try 3's runs at 750 and would
+  // end at ~1218 -- exactly two tries, in real milliseconds rather than relative to the window.
   tuning.exchange_start_response_wait_ms = 250;
-  tuning.exchange_total_budget_ms = 600;
+  tuning.exchange_total_budget_ms = 1000;
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   IoFrame request{};
@@ -2030,6 +2031,113 @@ TEST(Exchange, GenerousBudgetStillAllowsEveryRetry) {
   engine.send_and_receive(request, response, FREQ_CH2);
 
   EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "with budget to spare the retry count is unchanged";
+}
+
+// --- A try's transmission counts against the budget -------------------------------------------
+// A try starts only if its transmission ends inside the budget (ExchangeEngine::try_fits_budget_()),
+// with the transmit time taken from the driver's tx_air_time_us(). Every case models air time on a
+// ManualClock, so the clock the budget is checked against includes it.
+
+namespace {
+
+/// A radio whose wake-up is a 500 ms transmission for a LONG start frame, e.g. one that wakes
+/// receivers with a train of frames instead of a long preamble.
+class SlowWakeRadio : public MockRadio {
+ public:
+  static constexpr uint32_t LONG_WAKE_US = 500000;
+  uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
+    return cfg.wake == TxWake::LONG ? LONG_WAKE_US : MockRadio::tx_air_time_us(len, cfg);
+  }
+};
+
+/// Queue a challenge for every try of a status poll: each try is challenged and then never closed.
+void queue_challenges(MockRadio &radio, int tries) {
+  const uint8_t chal[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  const IoFrame challenge = build_challenge(test::DST_ID, test::OWN_ID, chal);
+  uint8_t raw[64];
+  RadioRxPacket pkt{};
+  pkt.len = serialize(challenge, raw, sizeof(raw));
+  memcpy(pkt.data, raw, pkt.len);
+  for (int i = 0; i < tries; i++) {
+    // Try N's request is send 2N-1 (request, 0x3D per earlier try): hold until it is out.
+    radio.queue_rx_hold_until_sent(2 * i + 1);
+    radio.queue_rx(pkt);
+  }
+}
+
+/// Run a status poll that is challenged and never closed on every try, with @p budget_ms.
+/// @return The radio's send count.
+int run_challenged_status_poll(uint16_t budget_ms, std::vector<uint32_t> *send_times = nullptr,
+                               const char **stage = nullptr) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  radio.set_model_tx_airtime(true);
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = budget_ms;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  queue_challenges(radio, EXCHANGE_RETRY_COUNT);
+
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  IoFrame response{};
+  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  if (send_times != nullptr)
+    *send_times = radio.send_times_ms();
+  if (stage != nullptr)
+    *stage = engine.get_debug().stage;
+  return radio.get_send_count();
+}
+
+}  // namespace
+
+TEST(Exchange, ThreeUnansweredSlowWakeTriesStayInsideTheBudget) {
+  esphome::test_clock::ManualClock clock;
+  SlowWakeRadio radio;
+  radio.set_model_tx_airtime(true);
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;  // defaults: 400 ms start window, 250 ms retry gap, 2500 ms budget
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, /*low_power=*/true, 100);
+  IoFrame response{};
+  const uint32_t start = esphome::test_clock::peek_ms();
+  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::FAILED);
+  const uint32_t blocked_ms = esphome::test_clock::peek_ms() - start;
+
+  // Try 1 ends at 500 + 400 = 900; try 2's transmission would end at 900 + 250 + 500 = 1650 and
+  // starts; try 3's would end at 2050 + 250 + 500 = 2800, past the budget, so it never starts.
+  // Counting only the elapsed time, try 3 would have started and blocked until ~3.2 s.
+  EXPECT_EQ(radio.get_send_count(), 2);
+  EXPECT_STREQ(engine.get_debug().stage, "retry_budget_exhausted");
+  EXPECT_LT(blocked_ms, tuning.exchange_total_budget_ms);
+  for (const auto &cfg : radio.get_tx_configs())
+    EXPECT_EQ(cfg.wake, TxWake::LONG);
+}
+
+TEST(Exchange, ATryWhoseTransmissionWouldEndAtTheBudgetIsNotStarted) {
+  // Measure the third try's check time with budget to spare: its request goes out one retry gap
+  // after the check.
+  std::vector<uint32_t> t;
+  ASSERT_EQ(run_challenged_status_poll(60000, &t), 2 * EXCHANGE_RETRY_COUNT);
+  ASSERT_EQ(t.size(), 6u);
+  const uint32_t third_check_ms = t[4] - EXCHANGE_RETRY_DELAY_MS - t[0];
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, false);
+  uint8_t raw[64];
+  const uint8_t len = serialize(request, raw, sizeof(raw));
+  const uint32_t tx_ms = (io868_tx_air_time_us(TuningConfig{}.normal_start_preamble, len) + 999) / 1000;
+  ASSERT_GT(tx_ms, 0u);
+
+  // The elapsed time alone is well inside the budget, but the third try's transmission would end
+  // exactly at it: that try does not start.
+  const auto edge = static_cast<uint16_t>(third_check_ms + EXCHANGE_RETRY_DELAY_MS + tx_ms);
+  const char *stage = nullptr;
+  EXPECT_EQ(run_challenged_status_poll(edge, nullptr, &stage), 4);
+  EXPECT_STREQ(stage, "retry_budget_exhausted");
+  // One millisecond more, and it ends inside the budget.
+  EXPECT_EQ(run_challenged_status_poll(static_cast<uint16_t>(edge + 1)), 6);
 }
 
 TEST(Exchange, RetryCadenceMatchesTheRecordedWaitSliceForEachTryPlusTheFixedRetryDelay) {

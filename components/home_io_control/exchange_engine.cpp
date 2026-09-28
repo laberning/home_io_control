@@ -27,6 +27,9 @@ namespace home_io_control {
 
 static const char *const TAG = "home_io_control.exchange";
 
+/// Microseconds per millisecond, for rounding a driver's transmit-time estimate up to whole ms.
+static constexpr uint32_t US_PER_MS = 1000;
+
 // ============================================================================
 // Construction
 // ============================================================================
@@ -164,6 +167,20 @@ void ExchangeEngine::maybe_hop() {
 // Transmit with LBT
 // ============================================================================
 
+namespace {
+
+/// The RadioTxConfig for `frame` on `freq` with `preamble`: the one place a transmission's shape
+/// (channel, preamble, wake-up level) is decided, for transmit_frame() and for the budget estimate.
+RadioTxConfig tx_config_for(const IoFrame &frame, uint32_t freq, uint16_t preamble) {
+  RadioTxConfig tx_config{};
+  tx_config.freq_hz = freq;
+  tx_config.preamble_len = preamble;
+  tx_config.wake = tx_wake_for(is_start(frame), preamble);
+  return tx_config;
+}
+
+}  // namespace
+
 bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble) {
   RadioDriver *radio = *this->radio_ptr_;
   // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: a frame with an out-of-length MAC trailer
@@ -186,10 +203,7 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
       this->transmit_observer_->on_lbt_defer(rssi);
     delay(LBT_RETRY_DELAY_MS);
   }
-  RadioTxConfig tx_config{};
-  tx_config.freq_hz = freq;
-  tx_config.preamble_len = preamble;
-  tx_config.wake = tx_wake_for(is_start(frame), preamble);
+  RadioTxConfig const tx_config = tx_config_for(frame, freq, preamble);
   if (!radio->send_packet(buf, len, tx_config)) {
     ESP_LOGW(TAG, "tx: send_failed cmd=0x%02X", frame.cmd);
     return false;
@@ -197,6 +211,19 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   if (this->transmit_observer_ != nullptr)
     this->transmit_observer_->on_transmit(frame, tx_config, len);
   return true;
+}
+
+uint32_t ExchangeEngine::tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16_t preamble) const {
+  uint8_t buf[FRAME_MAX_WIRE_SIZE];
+  uint8_t const len = serialize(frame, buf, sizeof(buf));
+  if (len == 0)
+    return 0;
+  uint32_t const tx_us = (*this->radio_ptr_)->tx_air_time_us(len, tx_config_for(frame, freq, preamble));
+  return (tx_us + US_PER_MS - 1) / US_PER_MS;
+}
+
+bool ExchangeEngine::try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms) const {
+  return elapsed_ms + gap_ms + tx_ms < this->tuning_->exchange_total_budget_ms;
 }
 
 // ============================================================================
@@ -341,10 +368,12 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     context.state = exchange::OutboundExchangeState::TX_REQUEST;
 
     if (tries > 0) {
-      // The retry count is a maximum, not a promise: don't start a try the exchange has no budget
-      // left for. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command from
-      // blocking the ESPHome loop for the full retries x response-window product.
-      if (millis() - exchange_begin_ms >= this->tuning_->exchange_total_budget_ms) {
+      // The retry count is a maximum, not a promise: don't start a try whose transmission would
+      // end past the budget. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command
+      // from blocking the ESPHome loop for the full retries x (transmission + response window)
+      // product.
+      if (!this->try_fits_budget_(millis() - exchange_begin_ms, EXCHANGE_RETRY_DELAY_MS,
+                                  this->tx_time_ms_(request, freq, preamble_plan.for_try(context.try_index)))) {
         this->record_debug("retry_budget_exhausted", tries, false);
         ESP_LOGI(TAG, "Exchange budget exhausted after %u tries for cmd=%s(0x%02X) (%" PRIu32 " of %u ms)", tries,
                  command_name(request.cmd), request.cmd, millis() - exchange_begin_ms,
@@ -405,8 +434,9 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_auth_unconfirmed", context.try_index, true);
       unconfirmed_tries++;
-      const uint8_t further_tries =
-          this->tries_after_unconfirmed_(request, unconfirmed_tries, context.try_index, millis() - exchange_begin_ms);
+      const uint8_t further_tries = this->tries_after_unconfirmed_(
+          request, unconfirmed_tries, context.try_index, millis() - exchange_begin_ms,
+          this->tx_time_ms_(request, freq, preamble_plan.for_try(context.try_index + 1)));
       if (further_tries == 0)
         return ExchangeOutcome::SUCCESS_UNCONFIRMED;
       tries_allowed = std::min<uint8_t>(tries_allowed, tries + 1 + further_tries);
@@ -577,7 +607,7 @@ bool ExchangeEngine::answer_challenge(const IoFrame &request, const IoFrame &cha
 }
 
 uint8_t ExchangeEngine::tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
-                                                 uint32_t elapsed_ms) {
+                                                 uint32_t elapsed_ms, uint32_t next_tx_ms) {
   // Only an EXECUTE's answer depends on the target, so only an EXECUTE pays for the lookup. A
   // destination the hub has no record of has never confirmed anything.
   decisions::TargetEvidence evidence{};
@@ -587,8 +617,8 @@ uint8_t ExchangeEngine::tries_after_unconfirmed_(const IoFrame &request, uint8_t
     return 0;
   if (request.cmd != CMD_EXECUTE)
     return EXCHANGE_RETRY_COUNT;  // no cap of its own: the exchange's retry count and budget bound it
-  // A re-send that could not start inside the exchange budget is not worth waiting for.
-  if (elapsed_ms + UNCONFIRMED_EXECUTE_RESEND_DELAY_MS >= this->tuning_->exchange_total_budget_ms)
+  // A re-send whose transmission could not end inside the exchange budget is not worth waiting for.
+  if (!this->try_fits_budget_(elapsed_ms, UNCONFIRMED_EXECUTE_RESEND_DELAY_MS, next_tx_ms))
     return 0;
   // The re-send may well succeed, and then no exchange-failure or unconfirmed line is printed at
   // all, so this is the one record that the first copy's reply went missing.

@@ -2,7 +2,6 @@
 
 #include "esphome/core/hal.h"
 #include "radio_soft_phy.h"
-#include "radio_soft_phy_driver_base.h"
 #include "stubs/radio_test_common.h"
 
 #include <vector>
@@ -113,7 +112,7 @@ TEST(MockRadioTimed, AirtimeModelAdvancesTheClockOnlyWhenEnabled) {
   radio.set_model_tx_airtime(true);
   const uint64_t before_on = esphome::test_clock::state().now_us;
   send(radio, frame, 1024);
-  const uint32_t expected = MockRadio::modelled_tx_airtime_us(1024, 12);
+  const uint32_t expected = esphome::home_io_control::io868_tx_air_time_us(1024, 12);
   EXPECT_EQ(esphome::test_clock::state().now_us - before_on, expected);
   // Preamble, 3 sync bytes, and 12 + 2 CRC bytes as 10-bit cells, at the 38.4 kbps line rate.
   EXPECT_EQ(expected, esphome::home_io_control::soft_phy_air_time_us(

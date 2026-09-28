@@ -34,6 +34,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0037](0037-the-roll-call-sweeps-both-power-classes.md) | The roll-call sweeps both power classes | A low-power pass (CTRL1=0x30, long preamble, all channels) then the unchanged always-alive pass; scan_power_classes narrows it |
 | [0039](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md) | Pairing sends a discover-confirm (0x2C) and tolerates no answer | Universal `pairing_discover_confirm` mode (`skip`/`send`/`send_with_ack`); the step never fails the attempt; try 2 alone rotates channels (deviates from ADR 0028) |
 | [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | Tries ordered by per-device evidence (short first when believed awake, wake-up preamble in every multi-try plan; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch |
+| [0044](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md) | Chip-neutral transmit intent | Every transmission carries its wake level; a driver may scan idle channels by itself; a try starts only if its transmission ends inside the exchange budget |
 
 ### Behavior
 
@@ -136,6 +137,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0041: An unset 1W `low_power:` resolves from the manufacturer profile](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)
 - [ADR 0042: The directed start preamble's default comes from the radio driver](0042-start-preamble-default-comes-from-the-radio-driver.md)
 - [ADR 0043: An unconfirmed movement command is re-sent once to a device that normally confirms](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md)
+- [ADR 0044: Chip-neutral transmit intent: wake level, idle scanning and air time](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

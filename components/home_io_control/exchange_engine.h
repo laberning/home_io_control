@@ -429,6 +429,18 @@ class ExchangeEngine {
   /// @param spec The listen this hop belongs to; only `on_hop` is read.
   void listen_hop_(uint32_t skip, const ListenSpec &spec);
 
+  // --- Transmission shape and the exchange budget ---------------------------
+
+  /// The radio's estimate of how long transmitting `frame` on `freq` with `preamble` takes, in
+  /// whole milliseconds rounded up; 0 for a frame that does not serialize (it is never sent).
+  [[nodiscard]] uint32_t tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16_t preamble) const;
+
+  /// The exchange budget rule: a try starts only if its transmission ends inside the budget.
+  /// @param elapsed_ms Time since the exchange began.
+  /// @param gap_ms     Wait before the try is sent.
+  /// @param tx_ms      The try's transmit time (tx_time_ms_()).
+  [[nodiscard]] bool try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms) const;
+
   // --- Outbound exchange step helpers --------------------------------------
 
   /// Transmit one request attempt and update context state on failure.
@@ -453,13 +465,14 @@ class ExchangeEngine {
   /// @param request           Outbound request frame.
   /// @param unconfirmed_tries Tries of this exchange so far that ended that way (1-based).
   /// @param try_index         The try that just ended, for the log line.
-  /// @param elapsed_ms        Time since the exchange began; a re-send that could not start inside
-  ///                          the exchange budget is not attempted.
+  /// @param elapsed_ms        Time since the exchange began.
+  /// @param next_tx_ms        The re-send's transmit time; a re-send whose transmission would not
+  ///                          end inside the exchange budget is not attempted (try_fits_budget_()).
   /// @return 0 to end the exchange now; UNCONFIRMED_EXECUTE_MAX_RESENDS for a CMD_EXECUTE that is
   ///         re-sent, which also caps the ordinary failure retries after it; EXCHANGE_RETRY_COUNT
   ///         (no cap beyond the exchange's own) for any other request.
   uint8_t tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
-                                   uint32_t elapsed_ms);
+                                   uint32_t elapsed_ms, uint32_t next_tx_ms);
 
   /// Add one final-reply wait's ListenStats to the debug snapshot's `final_*` fields.
   /// @param stats What that wait heard without accepting it.

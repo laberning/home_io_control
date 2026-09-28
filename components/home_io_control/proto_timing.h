@@ -220,10 +220,13 @@ static constexpr uint8_t STOP_SETTLE_POLL_TRIES = EXCHANGE_RETRY_COUNT;
 /// the receive path the rest of the exchange depends on. ESPHome itself warns when one operation
 /// takes longer than 2550 ms (ADR 0013); this budget must stay under that threshold.
 ///
-/// So the retry count is a maximum, not a promise: a try only starts if the exchange has budget
-/// left. At the current 400 ms response window all three tries still fit (~2.3 s); raising the
-/// window well past the default is what starts trimming retries, since three full tries stop being
-/// affordable at that point — one long listen is the better trade there anyway.
+/// So the retry count is a maximum, not a promise: a try only starts if its transmission ends inside
+/// the budget — elapsed time, plus the gap before the try, plus the radio's estimate of the try's
+/// transmit time (`RadioDriver::tx_air_time_us()`), must stay below it. Counting the transmission
+/// keeps a radio with a long wake-up from starting a try it cannot finish in time. At the current
+/// 400 ms response window all three tries still fit (~2.3 s); raising the window well past the
+/// default is what starts trimming retries, since three full tries stop being affordable at that
+/// point — one long listen is the better trade there anyway.
 static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 
 /// One-way (1W) transmit cadence.
