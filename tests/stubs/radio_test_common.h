@@ -4,6 +4,7 @@
 #include "radio_soft_phy.h"              // soft_phy_raw_bytes_for_frame() for the airtime model
 #include "radio_soft_phy_driver_base.h"  // soft_phy_air_time_us() for the airtime model
 #include "radio_sx1262.h"                // SX1262_RESPONSE_PREAMBLE for the SX1262 mock
+#include "../support/timed_release.h"
 #include <esphome/core/gpio.h>
 #include <esphome/core/hal.h>
 
@@ -65,15 +66,6 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// the first match) — this interleaved log can.
   enum class CallKind { kWait, kHop };
 
-  /// When a timed packet (queue_rx_timed_after_send()/queue_rx_timed_after_bytes()) arrives: a
-  /// fixed offset after the start of the send it answers. The anchor is either the N-th send
-  /// (0-based) or the first send whose bytes equal `anchor_bytes`.
-  struct TimedRelease {
-    std::optional<int> anchor_send_index;
-    std::vector<uint8_t> anchor_bytes;
-    uint64_t offset_us{0};
-  };
-
   /// One rx_queue_ entry: a packet (delivered at once, or at `timed`'s release time when set),
   /// plain silence (every field `std::nullopt`), or a "hold until sent" marker
   /// (`hold_until_send_count` set) — see queue_rx_hold_until_sent().
@@ -81,7 +73,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     std::optional<esphome::home_io_control::RadioRxPacket> packet;
     std::optional<int> hold_until_send_count;
     std::optional<uint16_t> failed_reception_irq;  ///< Set: a reception that started and failed.
-    std::optional<TimedRelease> timed;             ///< Set: `packet` arrives at a replayed time.
+    std::optional<TimedRelease> timed;             ///< Set: `packet` arrives at a replayed time (timed_release.h).
   };
 
   // RadioDriver interface
@@ -94,12 +86,11 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
       tx_results_.pop_front();
     }
     tx_configs_.push_back(tx_config);
-    sent_data_.push_back(std::vector<uint8_t>(data, data + len));
+    timeline_.record(data, len);  // Before the air-time advance: releases count from TX start.
     send_count_++;
     // peek_ms() has no side effect in either clock mode, so this is meaningful under ManualClock
     // and harmless (if not meaningful) under the default legacy clock.
     send_times_ms_.push_back(esphome::test_clock::peek_ms());
-    send_start_us_.push_back(esphome::test_clock::is_manual() ? esphome::test_clock::state().now_us : 0);
     if (model_tx_airtime_ && esphome::test_clock::is_manual())
       esphome::test_clock::advance_us(modelled_tx_airtime_us(tx_config.preamble_len, len));
     // Real drivers retune the receiver to the TX frequency as a side effect of sending (e.g.
@@ -134,7 +125,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
         // Only a replayed timeline uses this, and it is only meaningful when time is real.
         if (!esphome::test_clock::is_manual())
           std::abort();
-        const std::optional<uint64_t> release_us = this->release_us_(*front.timed);
+        const std::optional<uint64_t> release_us = timeline_.release_us(*front.timed);
         const uint64_t now_us = esphome::test_clock::state().now_us;
         const uint64_t window_us = static_cast<uint64_t>(std::max(timeout_ms, 1u)) * 1000u;
         if (!release_us.has_value() || *release_us > now_us + window_us) {
@@ -322,39 +313,23 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// "hopped after a later one".
   const std::vector<CallKind> &call_log() const { return call_log_; }
   const std::vector<esphome::home_io_control::RadioTxConfig> &get_tx_configs() const { return tx_configs_; }
-  const std::vector<std::vector<uint8_t>> &get_sent_data() const { return sent_data_; }
+  const std::vector<std::vector<uint8_t>> &get_sent_data() const { return timeline_.sent_data(); }
   void clear() {
     rx_queue_.clear();
     tx_results_.clear();
     tx_configs_.clear();
     rssi_queue_.clear();
-    sent_data_.clear();
+    timeline_.clear();
     send_count_ = 0;
     freq_history_.clear();
     wait_timeouts_.clear();
     call_log_.clear();
     send_times_ms_.clear();
-    send_start_us_.clear();
   }
 
  private:
   /// Sync word bytes on air after the preamble ({0x55, 0xFF, 0x33}), for the airtime model.
   static constexpr uint16_t MODELLED_SYNC_BYTES = 3;
-
-  /// Absolute release time of a timed entry, or nullopt while its anchor send hasn't happened.
-  std::optional<uint64_t> release_us_(const TimedRelease &timed) const {
-    if (timed.anchor_send_index.has_value()) {
-      const auto index = static_cast<size_t>(*timed.anchor_send_index);
-      if (index >= send_start_us_.size())
-        return std::nullopt;
-      return send_start_us_[index] + timed.offset_us;
-    }
-    for (size_t i = 0; i < sent_data_.size(); i++) {
-      if (sent_data_[i] == timed.anchor_bytes)
-        return send_start_us_[i] + timed.offset_us;
-    }
-    return std::nullopt;
-  }
 
   /// A ManualClock does nothing on its own between calls, so wait_for_packet() must move time
   /// forward itself for every outcome or a bounded retry loop driven by this mock would spin
@@ -372,14 +347,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::deque<RxQueueEntry> rx_queue_;
   std::deque<int16_t> rssi_queue_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
-  std::vector<std::vector<uint8_t>> sent_data_;
+  SendTimeline timeline_;  ///< Every send's bytes and start time; owns the timed-release rule.
   std::vector<CallKind> call_log_;
   int16_t rssi_default_{-120};
   int send_count_;
   std::vector<uint32_t> wait_timeouts_;
   std::vector<uint32_t> freq_history_;
   std::vector<uint32_t> send_times_ms_;
-  std::vector<uint64_t> send_start_us_;  ///< Manual-clock time at each send's start (0 in legacy mode).
   bool model_tx_airtime_{false};
   uint32_t rx_latency_ms_{0};
   bool emulate_capture_lifecycle_{false};

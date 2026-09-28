@@ -10,7 +10,8 @@
 /// keeps the device's timing while letting the engine choose its own. The engine only
 /// succeeds when its listens really cover each reply, and a reply the capture shows arriving after
 /// a retry needs the engine to really make that retry. The release rule itself lives in
-/// MockRadio::queue_rx_timed_after_send()/queue_rx_timed_after_bytes().
+/// timed_release.h (SendTimeline), fed by MockRadio::queue_rx_timed_after_send()/
+/// queue_rx_timed_after_bytes().
 ///
 /// Offsets are held in microseconds. Every capture today stamps `t_ms`; a source with finer
 /// timestamps (e.g. `t_us` on a UART-bridge session) only needs another builder here, and the same
