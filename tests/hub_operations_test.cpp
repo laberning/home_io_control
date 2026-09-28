@@ -1945,7 +1945,9 @@ TEST(HubOperations, FailedMoveDoesNotStampMovingEvidence) {
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a command the device never accepted proves nothing";
 }
 
-TEST(HubOperations, AcceptedStopClearsMovingEvidence) {
+TEST(HubOperations, StopAcceptedWithoutAStatusLeavesTheEvidenceAsItWas) {
+  // A challenged STOP with no closing reply has no status to say whether the motor is still winding
+  // down, so the evidence is left alone; the settle poll decides (a silent one spends it).
   esphome::test_clock::ManualClock clock(50000);
   TestableComponent comp;
   MockRadio radio;
@@ -1953,11 +1955,38 @@ TEST(HubOperations, AcceptedStopClearsMovingEvidence) {
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   note_moving_evidence(*dev, esphome::millis());  // it was travelling
+  const uint32_t stamp = dev->last_moving_evidence_ms;
   queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));
 
   ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
 
-  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a STOP ends a movement: it is neither evidence of one nor kept";
+  EXPECT_EQ(dev->last_moving_evidence_ms, stamp);
+}
+
+TEST(HubOperations, StopAckThatReportsMovingKeepsTheSettlePollShortFirst) {
+  // Field log (VELUX SSL, ADR 0040 amendment): the ack to an accepted STOP still reported "moving"
+  // while the motor wound down, and the settle poll a second later drew nothing on three wake-up
+  // tries. The ack's own flag keeps the evidence, so that poll leads with the short preamble.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+  queue_frame(radio, build_moving_status_response(comp.node_id_, /*delay_hint_seconds=*/0));
+
+  ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
+  EXPECT_NE(dev->last_moving_evidence_ms, 0u) << "the motor said it is still moving";
+
+  esphome::test_clock::advance_ms(STOP_SETTLE_POLL_CAP_MS);
+  const size_t before = radio.get_tx_configs().size();
+  comp.request_device_status("ABC123");
+
+  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(STOP_SETTLE_POLL_TRIES));
+  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
 }
 
 TEST(HubOperations, FailedStopKeepsMovingEvidence) {
@@ -2068,10 +2097,11 @@ TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryLeadingWithTheShort
   EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
 }
 
-TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryInMaybeAwakeOrder) {
+TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryOnTheWakeUpPreamble) {
   // After an accepted STOP nothing moves and the user's reversal waits on this poll, so it gets the
   // full budget instead of betting on one sample (STOP_SETTLE_POLL_TRIES). The STOP cleared the
-  // moving evidence and its reply was just heard: maybe awake — short, then the wake-up preamble.
+  // moving evidence: the receiver is at rest, which only the wake-up preamble reaches, even though
+  // its reply was just heard (ADR 0040, amendment).
   esphome::test_clock::ManualClock clock(50000);
   TestableComponent comp;
   MockRadio radio;
@@ -2080,7 +2110,7 @@ TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryInMaybeAwakeOrder) 
   ASSERT_NE(dev, nullptr);
   queue_frame(radio, build_challenge_request(dev->node_id, comp.node_id_));
   ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
-  ASSERT_EQ(dev->last_moving_evidence_ms, 0u) << "precondition: an accepted STOP clears moving evidence";
+  ASSERT_EQ(dev->last_moving_evidence_ms, 0u) << "precondition: no moving evidence before or after the STOP";
   ASSERT_NE(dev->last_seen_ms, 0u) << "precondition: the STOP's challenge was heard";
   esphome::test_clock::advance_ms(STOP_SETTLE_POLL_CAP_MS);
   const size_t before = radio.get_tx_configs().size();
@@ -2088,7 +2118,7 @@ TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryInMaybeAwakeOrder) 
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(STOP_SETTLE_POLL_TRIES));
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE);
   EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
   EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
 }
@@ -2126,7 +2156,7 @@ TEST(HubOperations, SettlePollAfterAFailedStopDoesNotGetTheStopBudget) {
 
 TEST(HubOperations, LadderSlotWithFullRetriesLeadsWithTheShortPreambleWhileBelievedAwake) {
   // The first slot after a missed settle poll gets the full retry budget, so the belief applies:
-  // short / wake-up / short for a receiver believed to be travelling.
+  // short / wake-up / wake-up for a receiver believed to be travelling.
   esphome::test_clock::ManualClock clock(50000);
   TestableComponent comp;
   MockRadio radio;
@@ -2143,7 +2173,29 @@ TEST(HubOperations, LadderSlotWithFullRetriesLeadsWithTheShortPreambleWhileBelie
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
   EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble);
   EXPECT_EQ(preamble_of_tx(radio, 1), LONG_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, 2), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, 2), LONG_PREAMBLE);
+}
+
+TEST(HubOperations, SilentPollWhileBelievedMovingSpendsTheMovingEvidence) {
+  // A short movement ends within seconds, long before LOW_POWER_MAX_TRAVEL_MS: the receiver is at
+  // rest and ignores the short preamble. A poll that draws nothing at all spends the evidence, so the
+  // next exchange leads with the wake-up preamble instead of losing its first try again.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+
+  comp.request_device_status("ABC123");
+  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "silence while believed moving spends the evidence";
+
+  const size_t before = radio.get_tx_configs().size();
+  esphome::test_clock::advance_ms(1000);
+  comp.set_device_position("ABC123", 40);
+  EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE);
 }
 
 TEST(HubOperations, MovingEvidenceExpiresAfterMaxTravel) {
@@ -2166,7 +2218,7 @@ TEST(HubOperations, MovingEvidenceExpiresAfterMaxTravel) {
       << "no reply since the move and the window is over: the receiver is presumed asleep again";
 }
 
-TEST(HubOperations, RecentReplyHoldsTheShortPreambleForTheAwakeHoldWindowOnly) {
+TEST(HubOperations, RecentReplyAloneKeepsTheWakeUpPreamble) {
   esphome::test_clock::ManualClock clock(500000);
   TestableComponent comp;
   MockRadio radio;
@@ -2175,14 +2227,10 @@ TEST(HubOperations, RecentReplyHoldsTheShortPreambleForTheAwakeHoldWindowOnly) {
   ASSERT_TRUE(comp.request_device_status("ABC123")) << "a real reply: stamps last_seen_ms";
   const size_t after_reply = radio.get_tx_configs().size();
 
-  esphome::test_clock::advance_ms(10000);
-  comp.request_device_status("ABC123");  // heard from 10 s ago
-  EXPECT_EQ(preamble_of_tx(radio, after_reply), comp.tuning_.normal_start_preamble);
-
-  const size_t before_late = radio.get_tx_configs().size();
-  esphome::test_clock::advance_ms(LOW_POWER_AWAKE_HOLD_MS + 1000);
-  comp.request_device_status("ABC123");  // more than the hold since the reply
-  EXPECT_EQ(preamble_of_tx(radio, before_late), LONG_PREAMBLE);
+  esphome::test_clock::advance_ms(100);
+  comp.request_device_status("ABC123");  // heard from 100 ms ago, reported stopped
+  EXPECT_EQ(preamble_of_tx(radio, after_reply), LONG_PREAMBLE)
+      << "a resting receiver ignores the short preamble even right after it answered";
 }
 
 TEST(HubOperations, UnregisteredDestinationIsTreatedAsAsleep) {

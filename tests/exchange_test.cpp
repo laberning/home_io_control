@@ -2755,26 +2755,27 @@ TEST(WakeBelief, NoProviderKeepsTheWakeUpPreambleOnEveryTry) {
   EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
 }
 
-TEST(WakeBelief, AwakeTargetGetsShortLongShort) {
+TEST(WakeBelief, AwakeTargetGetsShortThenWakeUpTwice) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
   const uint16_t short_preamble = rig.tuning.normal_start_preamble;
-  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{short_preamble, LONG_PREAMBLE, short_preamble}));
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{short_preamble, LONG_PREAMBLE, LONG_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
-  EXPECT_EQ(rig.engine.get_debug().last_try_preamble, short_preamble);
+  EXPECT_EQ(rig.engine.get_debug().last_try_preamble, LONG_PREAMBLE);
 }
 
-TEST(WakeBelief, MaybeAwakeTargetGetsShortThenWakeUpTwice) {
+TEST(WakeBelief, RecentlyHeardTargetWithoutMovingEvidenceIsAsleep) {
+  // A resting VELUX SSL ignored the short preamble even right after it had answered (ADR 0040,
+  // amendment): having heard from the device is no reason to lead short.
   WakeBeliefRig rig;
-  rig.heard_ago(10000);
-  EXPECT_EQ(rig.send(low_power_position_request()),
-            (Preambles{rig.tuning.normal_start_preamble, LONG_PREAMBLE, LONG_PREAMBLE}));
-  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::MAYBE_AWAKE);
+  rig.heard_ago(34);
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
 TEST(WakeBelief, AsleepTargetGetsTheWakeUpPreambleOnEveryTry) {
   WakeBeliefRig rig;
-  rig.heard_ago(LOW_POWER_AWAKE_HOLD_MS + 1000);  // heard from, but long enough ago
+  rig.heard_ago(60000);
   rig.moved_ago(LOW_POWER_MAX_TRAVEL_MS + 1000);
   EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
@@ -2783,7 +2784,7 @@ TEST(WakeBelief, AsleepTargetGetsTheWakeUpPreambleOnEveryTry) {
 TEST(WakeBelief, StopIsAwakeEvenWithoutEvidence) {
   WakeBeliefRig rig;
   const uint16_t short_preamble = rig.tuning.normal_start_preamble;
-  EXPECT_EQ(rig.send(low_power_stop_request()), (Preambles{short_preamble, LONG_PREAMBLE, short_preamble}));
+  EXPECT_EQ(rig.send(low_power_stop_request()), (Preambles{short_preamble, LONG_PREAMBLE, LONG_PREAMBLE}));
 }
 
 TEST(WakeBelief, UnknownDestinationIsAsleep) {
@@ -2898,18 +2899,11 @@ TEST(WakeBelief, SingleTryExchangeSendsTheBeliefsFirstTry) {
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
 }
 
-TEST(WakeBelief, SingleTryExchangeToARecentlyHeardTargetLeadsShort) {
-  // The settle poll after an accepted STOP: moving evidence was cleared, the STOP's reply was heard
-  // a second ago — maybe awake, so the short preamble first.
+TEST(WakeBelief, SingleTryExchangeToARecentlyHeardTargetKeepsTheWakeUpPreamble) {
+  // The settle poll after an accepted STOP: moving evidence was cleared and the STOP's reply was
+  // heard a second ago. The receiver is at rest, where only the wake-up preamble reaches it.
   WakeBeliefRig rig;
   rig.heard_ago(1000);
-  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{rig.tuning.normal_start_preamble}));
-  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::MAYBE_AWAKE);
-}
-
-TEST(WakeBelief, SingleTryExchangeToASleepingTargetKeepsTheWakeUpPreamble) {
-  WakeBeliefRig rig;
-  rig.heard_ago(LOW_POWER_AWAKE_HOLD_MS + 1000);
   EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LONG_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
@@ -2919,6 +2913,52 @@ TEST(WakeBelief, TwoTryExchangeStillFollowsThePlan) {
   rig.moved_ago(1000);
   EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/2),
             (Preambles{rig.tuning.normal_start_preamble, LONG_PREAMBLE}));
+}
+
+TEST(WakeBelief, TunedWakePreambleReplacesLongPreamble) {
+  WakeBeliefRig rig;
+  rig.tuning.low_power_wake_preamble = 2048;
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{2048, 2048, 2048}));
+}
+
+TEST(WakeBelief, TunedWakePreambleAppliesWithTheSwitchOff) {
+  WakeBeliefRig rig;
+  rig.tuning.low_power_wake_belief = false;
+  rig.tuning.low_power_wake_preamble = 1536;
+  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{1536, 1536, 1536}));
+}
+
+TEST(WakeBelief, SilentAwakeExchangeSpendsTheMovingEvidence) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  int spent = 0;
+  rig.engine.set_wake_evidence_spent_handler([&spent](const uint8_t *dst) {
+    EXPECT_EQ(memcmp(dst, test::DST_ID, NODE_ID_SIZE), 0);
+    spent++;
+  });
+  rig.send(low_power_position_request(), /*max_tries=*/1);
+  EXPECT_EQ(spent, 1) << "a receiver believed moving that answers nothing has most likely come to rest";
+}
+
+TEST(WakeBelief, SilentStopLeavesTheEvidenceAlone) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  int spent = 0;
+  rig.engine.set_wake_evidence_spent_handler([&spent](const uint8_t *) { spent++; });
+  rig.send(low_power_stop_request());
+  EXPECT_EQ(spent, 0) << "an unanswered STOP stopped nothing: the receiver may still be travelling";
+}
+
+TEST(WakeBelief, SilentAsleepExchangeLeavesTheEvidenceAlone) {
+  WakeBeliefRig rig;
+  int spent = 0;
+  rig.engine.set_wake_evidence_spent_handler([&spent](const uint8_t *) { spent++; });
+  rig.send(low_power_position_request());
+  EXPECT_EQ(spent, 0) << "only an AWAKE belief has moving evidence to spend";
+
+  rig.moved_ago(1000);
+  rig.send(low_power_position_request(/*low_power=*/false));
+  EXPECT_EQ(spent, 0) << "an always-alive target has no belief at all";
 }
 
 TEST(WakeBelief, EvidenceIsLookedUpOncePerExchange) {

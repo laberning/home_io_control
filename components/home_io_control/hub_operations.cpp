@@ -270,9 +270,10 @@ bool IOHomeControlComponent::run_execute_operation_(const std::string &device_id
   const bool accepted = this->try_execute_operation_(device_id, spec, accepts, rejection_profile, build);
   if (accepted && spec.settle_as_stop) {
     this->registry_.confirm_optimistic_stop(device_id);
-    // The receiver was just told to stop, so whatever moving evidence it had is spent.
-    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr)
-      clear_moving_evidence(*dev);
+    // The moving evidence is left to the STOP's own ack (apply_private_response_status()): a motor
+    // that reports "stopped" clears it, one still winding down keeps it, because right after a STOP
+    // a VELUX SSL can still be in the travelling state that hears only the short preamble. An ack
+    // with no status to decode leaves the evidence as it was; a settle poll that draws nothing spends it.
   } else if (accepted) {
     // An accepted movement command means the receiver is travelling now, whether or not the reply
     // carried a status to decode (ExchangeOutcome::SUCCESS_UNCONFIRMED has none). Stamped here,

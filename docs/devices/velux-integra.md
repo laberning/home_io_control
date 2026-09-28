@@ -127,7 +127,12 @@ moves the window to its predefined air-exchange opening rather than fully open.
   preamble whenever it has reason to believe the motor is awake — see
   [`low_power_wake_belief`](../configuration/tuning.md#low_power_wake_belief). On the SSL solar
   roller shutter that is what lets a `stop`, and the status polls after it, land mid-travel; it
-  does not land on every attempt, so press stop again if the shutter keeps moving. There is no
+  does not land on every attempt, so press stop again if the shutter keeps moving. Leave
+  `low_power_wake_belief` on: with it off, every `stop` goes out with the long preamble and never
+  lands mid-travel. The boot log states it (`Low-power wake belief: on`). At rest the SSL answers
+  only the wake-up preamble, and only on about half the tries; if commands to a resting shutter
+  often need a second press, try a longer
+  [`low_power_wake_preamble`](../configuration/tuning.md#low_power_wake_preamble). There is no
   such result for the MSU solar awning screen, so expect a mid-travel `stop` to do nothing there
   and use the product's own wall remote.
 - **1W enrollment is a Gear press on the existing KLI, not a button on the product.** Press the
