@@ -362,7 +362,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   this->debug_.wake_belief_use = preamble_plan.use;
   if (preamble_plan.use == WakeBeliefUse::APPLIED) {
     this->debug_.wake_belief = preamble_plan.belief;
-    if (preamble_plan.belief != decisions::WakeBelief::ASLEEP) {
+    if (preamble_plan.belief == decisions::WakeBelief::AWAKE) {
       ESP_LOGD(TAG, "Low-power target %s believed %s: short preamble first", node_id_to_string(request.dst).c_str(),
                decisions::wake_belief_name(preamble_plan.belief));
     }
@@ -462,7 +462,24 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   // An exchange that authenticated on some try but never got a reply is not the same as one the
   // device never answered at all: callers that only need "the request landed" can act on it, and
   // callers that need the payload still cannot.
-  return unconfirmed_tries > 0 ? ExchangeOutcome::SUCCESS_UNCONFIRMED : ExchangeOutcome::FAILED;
+  if (unconfirmed_tries > 0)
+    return ExchangeOutcome::SUCCESS_UNCONFIRMED;
+  this->spend_wake_evidence_if_silent_(request, preamble_plan);
+  return ExchangeOutcome::FAILED;
+}
+
+void ExchangeEngine::spend_wake_evidence_if_silent_(const IoFrame &request, const PreamblePlan &plan) {
+  // Believed moving, yet silent to the short preamble a moving receiver hears and to the wake-up
+  // preamble alike: it has most likely come to rest. Spend the moving evidence so the next exchange
+  // leads with the wake-up preamble instead of losing its first try (or, for a single-try poll, its
+  // only one) to the short preamble again. A challenge means it heard us, so that keeps the evidence.
+  // So does a silent STOP: nothing was stopped, and the receiver may well still be travelling.
+  if (plan.use == WakeBeliefUse::APPLIED && plan.belief == decisions::WakeBelief::AWAKE &&
+      !this->debug_.saw_challenge && !decisions::is_stop_request(request) && this->wake_evidence_spent_handler_) {
+    ESP_LOGD(TAG, "Low-power target %s silent while believed awake: next exchange leads with the wake-up preamble",
+             node_id_to_string(request.dst).c_str());
+    this->wake_evidence_spent_handler_(request.dst);
+  }
 }
 
 // ============================================================================
@@ -475,7 +492,7 @@ uint16_t ExchangeEngine::request_preamble_for(const IoFrame &request) const {
   // short response preamble, not be lengthened.
   if (!is_start(request))
     return (*this->radio_ptr_)->response_preamble();
-  return is_low_power_start(request) ? LONG_PREAMBLE : this->tuning_->normal_start_preamble;
+  return is_low_power_start(request) ? this->tuning_->low_power_wake_preamble : this->tuning_->normal_start_preamble;
 }
 
 const char *ExchangeEngine::wake_belief_use_name(WakeBeliefUse use) {
@@ -524,6 +541,7 @@ ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFram
   decisions::TargetEvidence evidence{};
   const bool known = this->target_evidence_provider_(request.dst, evidence);
   plan.short_preamble = this->tuning_->normal_start_preamble;
+  plan.wake_preamble = this->tuning_->low_power_wake_preamble;
   plan.last_seen_ms = known ? evidence.last_seen_ms : 0;
   plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request))
                       : decisions::WakeBelief::ASLEEP;

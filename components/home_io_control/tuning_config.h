@@ -278,7 +278,9 @@ struct TuningConfig {
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
   bool low_power_wake_belief{true};  ///< Order a `low_power` device's start-frame tries by its wake belief (short
                                      ///< preamble first when it is believed awake). False restores the fixed
-                                     ///< LONG_PREAMBLE on every try. A diagnostic off-switch, on by default.
+                                     ///< wake-up preamble on every try. A diagnostic off-switch, on by default.
+  uint16_t low_power_wake_preamble{LONG_PREAMBLE};  ///< Wake-up preamble (bytes) on a directed start frame to a
+                                                    ///< `low_power` target believed at rest.
 
   // --- Exchange response windows ---
   // How long the hub listens for a device's reply. Tunable because the right value is a property

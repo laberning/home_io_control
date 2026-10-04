@@ -592,18 +592,17 @@ TEST(Decisions, WakeBeliefExpiredMovingEvidenceIsAsleep) {
       << "no frame from the device since the move: it has long since finished and gone back to sleep";
 }
 
-TEST(Decisions, WakeBeliefRecentFrameAloneIsMaybeAwake) {
-  EXPECT_EQ(decisions::wake_belief(evidence(0, LOW_POWER_AWAKE_HOLD_MS - 1), WAKE_NOW, false),
-            decisions::WakeBelief::MAYBE_AWAKE);
-  EXPECT_EQ(decisions::wake_belief(evidence(0, LOW_POWER_AWAKE_HOLD_MS), WAKE_NOW, false),
-            decisions::WakeBelief::ASLEEP)
-      << "the hold expires at exactly LOW_POWER_AWAKE_HOLD_MS";
+TEST(Decisions, WakeBeliefRecentFrameAloneIsAsleep) {
+  // Field logs (VELUX SSL, ADR 0040 amendment): a resting receiver ignored the short preamble even
+  // 34 ms after it had answered, so having heard from it is no reason to lead short.
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 34), WAKE_NOW, false), decisions::WakeBelief::ASLEEP);
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 5000), WAKE_NOW, false), decisions::WakeBelief::ASLEEP);
 }
 
-TEST(Decisions, WakeBeliefStaleMovingEvidenceWithARecentFrameIsMaybeAwake) {
+TEST(Decisions, WakeBeliefStaleMovingEvidenceWithARecentFrameIsAsleep) {
   // The move ended long ago (evidence past MAX_TRAVEL) but the device spoke 5 s ago.
   EXPECT_EQ(decisions::wake_belief(evidence(LOW_POWER_MAX_TRAVEL_MS + 1, 5000), WAKE_NOW, false),
-            decisions::WakeBelief::MAYBE_AWAKE);
+            decisions::WakeBelief::ASLEEP);
 }
 
 TEST(Decisions, WakeBeliefAgeArithmeticSurvivesMillisWrap) {
@@ -615,28 +614,22 @@ TEST(Decisions, WakeBeliefAgeArithmeticSurvivesMillisWrap) {
 TEST(Decisions, WakeBeliefStampEqualToNowIsFresh) {
   // Age 0 is a legitimately fresh stamp (taken this very millisecond), unlike a zero *stamp*.
   EXPECT_EQ(decisions::wake_belief({WAKE_NOW, 0, false}, WAKE_NOW, false), decisions::WakeBelief::AWAKE);
-  EXPECT_EQ(decisions::wake_belief({0, WAKE_NOW, false}, WAKE_NOW, false), decisions::WakeBelief::MAYBE_AWAKE);
-}
-
-TEST(Decisions, WakeBeliefLastSeenAgeArithmeticSurvivesMillisWrap) {
-  const decisions::TargetEvidence wrapped{0, 0xFFFFFFFFu - 999u, false};
-  EXPECT_EQ(decisions::wake_belief(wrapped, 1000u, false), decisions::WakeBelief::MAYBE_AWAKE);
 }
 
 TEST(Decisions, LowPowerTryPreambleFollowsThePlanTable) {
   constexpr uint16_t SHORT = 32;
+  constexpr uint16_t WAKE = LONG_PREAMBLE;
   struct Row {
     decisions::WakeBelief belief;
     uint16_t plan[EXCHANGE_RETRY_COUNT];
   };
   const Row rows[] = {
-      {decisions::WakeBelief::AWAKE, {SHORT, LONG_PREAMBLE, SHORT}},
-      {decisions::WakeBelief::MAYBE_AWAKE, {SHORT, LONG_PREAMBLE, LONG_PREAMBLE}},
-      {decisions::WakeBelief::ASLEEP, {LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}},
+      {decisions::WakeBelief::AWAKE, {SHORT, WAKE, WAKE}},
+      {decisions::WakeBelief::ASLEEP, {WAKE, WAKE, WAKE}},
   };
   for (const Row &row : rows) {
     for (uint8_t try_index = 1; try_index <= EXCHANGE_RETRY_COUNT; try_index++) {
-      EXPECT_EQ(decisions::low_power_try_preamble(row.belief, try_index, SHORT), row.plan[try_index - 1])
+      EXPECT_EQ(decisions::low_power_try_preamble(row.belief, try_index, SHORT, WAKE), row.plan[try_index - 1])
           << decisions::wake_belief_name(row.belief) << " try " << static_cast<int>(try_index);
     }
   }
@@ -644,20 +637,21 @@ TEST(Decisions, LowPowerTryPreambleFollowsThePlanTable) {
 
 TEST(Decisions, LowPowerTryPreambleClampsTheTryIndex) {
   constexpr uint16_t SHORT = 32;
-  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 0, SHORT), SHORT)
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 0, SHORT, LONG_PREAMBLE), SHORT)
       << "try 0 is treated as try 1";
-  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 4, SHORT), SHORT)
-      << "try 4 is treated as the last try (short again for AWAKE)";
-  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::MAYBE_AWAKE, 4, SHORT), LONG_PREAMBLE);
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 4, SHORT, LONG_PREAMBLE), LONG_PREAMBLE)
+      << "try 4 is treated as the last try (wake-up for AWAKE)";
 }
 
-TEST(Decisions, LowPowerTryPreambleUsesTheTunedShortPreamble) {
-  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 1, 48), 48)
+TEST(Decisions, LowPowerTryPreambleUsesTheTunedPreambles) {
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 1, 48, 2048), 48)
       << "the short preamble is the caller's tuned value, not a fixed constant";
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 2, 48, 2048), 2048)
+      << "the wake-up preamble is the caller's tuned value, not LONG_PREAMBLE";
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::ASLEEP, 1, 48, 2048), 2048);
 }
 
 TEST(Decisions, WakeBeliefNamesAreDistinct) {
   EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::ASLEEP), "asleep");
-  EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::MAYBE_AWAKE), "maybe_awake");
   EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::AWAKE), "awake");
 }

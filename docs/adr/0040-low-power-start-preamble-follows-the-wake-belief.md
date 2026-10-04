@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0040 -->
 
-**Status:** Accepted · **Recorded:** 2026-09
+**Status:** Accepted, amended 2026-09 (see [Amendment](#amendment-a-resting-receiver-hears-only-the-wake-up-preamble)) · **Recorded:** 2026-09
 
 Amends [ADR 0029](0029-start-preamble-is-a-property-of-the-target.md). Confirmed on a VELUX SSL
 solar roller shutter: a `stop` and the status poll after it both land while the motor is
@@ -126,3 +126,50 @@ low-power device got worse after updating, set it to `false` and report.
 - **Not done here.** The ASLEEP plan stays long/long/long; a `long/short/long` variant is a
   follow-up only if logs show a receiver that wakes and then ignores the long preamble. The
   discovery sequence for a not-yet-paired device is a separate decision.
+
+## Amendment: a resting receiver hears only the wake-up preamble
+
+**Recorded:** 2026-09. Field logs from a VELUX SSL solar roller shutter (Heltec V3 / SX1262,
+`normal_start_preamble` 48, wake-up preamble 1024), with commands sent back to back without
+waiting for the previous one to finish:
+
+| Preamble | Motor | Answered |
+|---|---|---|
+| short (48) | travelling | 2 / 2 |
+| short (48) | at rest, including 34 ms and 39 ms after it had answered | 0 / 8 |
+| wake-up (1024) | travelling | 0 / 6 |
+| wake-up (1024) | at rest | 8 / 17 |
+
+Four parts of D1/D2 did not survive this:
+
+- **`MAYBE_AWAKE` is removed.** Having heard from the device says nothing about whether it hears the
+  short preamble; only travel does. Every `MAYBE_AWAKE` exchange lost its first try, and a
+  single-try poll its only one. `wake_belief()` now returns `AWAKE` (STOP, or moving evidence
+  younger than `LOW_POWER_MAX_TRAVEL_MS`) or `ASLEEP`; `LOW_POWER_AWAKE_HOLD_MS` is gone.
+  `last_seen_ms` is still read for the `age_ms=` log field.
+- **The `AWAKE` plan is short / wake-up / wake-up.** A travelling receiver answered the first
+  short try every time. When it does not, it has most likely come to rest — short movements end
+  within one to three seconds, long before `LOW_POWER_MAX_TRAVEL_MS` — and only the wake-up preamble
+  reaches it there. The old short / wake-up / short plan left one wake-up try, which misses half the
+  time.
+- **A silent `AWAKE` exchange spends the moving evidence.** An exchange planned on `AWAKE` that
+  draws no frame at all (no challenge, no reply) calls the hub's
+  `ExchangeEngine::set_wake_evidence_spent_handler()`, which clears the device's moving evidence, so
+  the next exchange leads with the wake-up preamble. A STOP is exempt: an unanswered STOP stopped
+  nothing, and the receiver may still be travelling. The engine decides, the hub owns the record,
+  as in D3.
+
+- **An accepted STOP no longer clears the moving evidence on its own.** The ack to a STOP is
+  decoded with stale positions, so the evidence follows the device's own stopped flag in it: a motor
+  that reports "stopped" clears it, one that still reports "moving" keeps it. A VELUX SSL acked a
+  mid-travel STOP with "moving" and then drew nothing on three wake-up tries of the settle poll a
+  second later, so that poll now leads short while the ack says the motor is winding down. A STOP
+  acked with no status leaves the evidence as it was, and a silent settle poll spends it.
+
+The wake-up preamble is now the `low_power_wake_preamble` tuning parameter (default
+`LONG_PREAMBLE`, 1024–4096 bytes), because 8 answers in 17 wake-up tries at rest suggest the
+receiver's listen interval is longer than 1024 bytes (~213 ms) on air. It applies to every
+directed start frame to a `low_power` target, with the switch on or off; pairing, discovery, the
+roll-call and 1W transmits keep their own preambles. A longer value costs every try at rest the
+extra air time, so three tries need a larger `exchange_total_budget_ms`.
+

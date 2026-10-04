@@ -303,6 +303,20 @@ class ExchangeEngine {
     this->target_evidence_provider_ = std::move(provider);
   }
 
+  /// @brief Forgets a destination's moving evidence.
+  /// @param dst Destination node ID (NODE_ID_SIZE bytes) of the request that went unanswered.
+  using WakeEvidenceSpentHandler = std::function<void(const uint8_t *dst)>;
+
+  /// Install what to do when an exchange planned on an `AWAKE` belief drew no frame at all: the
+  /// receiver did not answer the short preamble a moving one hears, nor the wake-up preamble, so the
+  /// belief that it is travelling is spent and the next exchange must lead with the wake-up preamble.
+  /// The engine decides when; the hub owns the device record and clears it. Installed once, next to
+  /// set_wake_evidence_provider().
+  /// @param handler Evidence reset, or an empty function to detach.
+  void set_wake_evidence_spent_handler(WakeEvidenceSpentHandler handler) {
+    this->wake_evidence_spent_handler_ = std::move(handler);
+  }
+
   // -------------------------------------------------------------------------
   // Exchange debug snapshot
   // -------------------------------------------------------------------------
@@ -485,15 +499,17 @@ class ExchangeEngine {
     uint16_t fixed{0};                                ///< Every try, unless `use` is WakeBeliefUse::APPLIED.
     WakeBeliefUse use{WakeBeliefUse::NOT_LOW_POWER};  ///< APPLIED: order the tries by `belief`.
     decisions::WakeBelief belief{decisions::WakeBelief::ASLEEP};  ///< Only read when APPLIED.
-    uint16_t short_preamble{0};  ///< The awake receiver's preamble; only read when APPLIED.
+    uint16_t short_preamble{0};  ///< The moving receiver's preamble; only read when APPLIED.
+    uint16_t wake_preamble{0};   ///< The resting receiver's wake-up preamble; only read when APPLIED.
     uint32_t last_seen_ms{0};    ///< When the target was last heard (`millis()`), for the per-try `age=` log
                                  ///< field; 0 = never, or the evidence was not looked up (belief not APPLIED).
 
     /// @param try_index 1-based try number.
     /// @return Preamble in bytes for that try.
     [[nodiscard]] uint16_t for_try(uint8_t try_index) const {
-      return use == WakeBeliefUse::APPLIED ? decisions::low_power_try_preamble(belief, try_index, short_preamble)
-                                           : fixed;
+      return use == WakeBeliefUse::APPLIED
+                 ? decisions::low_power_try_preamble(belief, try_index, short_preamble, wake_preamble)
+                 : fixed;
     }
   };
 
@@ -506,6 +522,12 @@ class ExchangeEngine {
   /// @param override_preamble Caller-forced preamble in bytes, or 0 for none.
   [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble) const;
 
+  /// Spends a device's moving evidence when an exchange planned on an `AWAKE` belief drew no frame at
+  /// all (see set_wake_evidence_spent_handler()). Called once, when the exchange has failed.
+  /// @param request The exchange's request frame (a STOP never spends the evidence).
+  /// @param plan    The preamble plan the exchange was sent with.
+  void spend_wake_evidence_if_silent_(const IoFrame &request, const PreamblePlan &plan);
+
   // --- Dependencies (back-references into the hub) -------------------------
 
   RadioDriver **radio_ptr_;                          ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
@@ -514,6 +536,7 @@ class ExchangeEngine {
   const TuningConfig *tuning_;                       ///< Hub's live TuningConfig (read on every LBT check).
   TransmitObserver *transmit_observer_{nullptr};     ///< Non-owning; see set_transmit_observer().
   TargetEvidenceProvider target_evidence_provider_;  ///< See set_target_evidence_provider().
+  WakeEvidenceSpentHandler wake_evidence_spent_handler_;  ///< See set_wake_evidence_spent_handler().
 
   // --- Engine state --------------------------------------------------------
 

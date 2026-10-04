@@ -156,12 +156,6 @@ static_assert(UNCONFIRMED_EXECUTE_RESEND_DELAY_MS >= EXCHANGE_RETRY_DELAY_MS,
 /// asleep.
 static constexpr uint32_t LOW_POWER_MAX_TRAVEL_MS = 120000;
 
-/// How long any sign of life (a frame from the device, or moving evidence) keeps a low-power
-/// receiver believed "maybe awake": short preamble first, wake-up preamble as the fallback. Shorter
-/// than LOW_POWER_MAX_TRAVEL_MS because a receiver that is merely active, not moving, drops back to
-/// its duty cycle sooner. A first estimate that field logs will correct.
-static constexpr uint32_t LOW_POWER_AWAKE_HOLD_MS = 30000;
-
 /// Tries for pairing's phase-3 SetConfig1 (0x6F). One: no device on record accepts it (a Somfy
 /// Izymo answers `FE 28`, a VELUX SSL solar roller shutter stays silent) and no real controller
 /// sends it, so a retry only adds 0.7–0.9 s of blocking and a frame of airtime to every pairing

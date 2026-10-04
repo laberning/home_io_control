@@ -7,6 +7,7 @@
 /// single source of truth) and pins:
 ///   - every `*_PREAMBLE` tunable's ceiling is below LONG_PREAMBLE, so its frames are never
 ///     treated as a wake-up burst;
+///   - `low_power_wake_preamble`'s floor is LONG_PREAMBLE, so it is always a wake-up burst;
 ///   - `pairing_discovery_preamble`'s ceiling is exactly LONG_PREAMBLE, its default and its only
 ///     wake-up value.
 /// A new preamble tunable or a raised ceiling fails here, which forces a decision about its wake
@@ -23,6 +24,7 @@ namespace {
 
 constexpr const char *kTuningPy = "components/home_io_control/tuning.py";
 constexpr const char *kDiscoveryPreamble = "CONF_PAIRING_DISCOVERY_PREAMBLE";
+constexpr const char *kWakePreamble = "CONF_LOW_POWER_WAKE_PREAMBLE";
 
 bool ends_with(const std::string &s, const std::string &suffix) {
   return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -39,13 +41,17 @@ TEST(PreambleWakeSync, OnlyTheDiscoveryPreambleCanReachTheWakeBurst) {
     preamble_params++;
     if (key == kDiscoveryPreamble) {
       EXPECT_EQ(range.max, LONG_PREAMBLE) << key;
+    } else if (key == kWakePreamble) {
+      // The resting receiver's wake-up burst: every value it can take is a wake-up, so its floor is
+      // LONG_PREAMBLE and tx_wake_for() labels it LONG whatever the user sets.
+      EXPECT_GE(range.min, LONG_PREAMBLE) << key;
     } else {
       EXPECT_LT(range.max, LONG_PREAMBLE) << key << " can reach the wake-up burst; decide its wake level";
       EXPECT_FALSE(is_wake_preamble(static_cast<uint16_t>(range.max))) << key;
     }
   }
-  // Response (x3), cold broadcast reply, normal start, pairing discovery.
-  EXPECT_EQ(preamble_params, 6);
+  // Response (x3), cold broadcast reply, normal start, pairing discovery, low-power wake-up.
+  EXPECT_EQ(preamble_params, 7);
   EXPECT_EQ(params.count(kDiscoveryPreamble), 1u);
 }
 

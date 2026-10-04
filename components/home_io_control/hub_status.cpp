@@ -152,7 +152,8 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
 /// status poll a few seconds later) remains the source of truth for target/current in that case.
 void apply_private_response_status(const std::string &id, IoDevice &dev, const IoFrame &frame, StatusPollPolicy &policy,
                                    bool trust_position = true) {
-  dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
+  const bool reported_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
+  dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   if (trust_position) {
     decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true);
@@ -160,10 +161,12 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
     detail::normalize_stopped_state(dev);
   }
   // On the execute-ack path (trust_position == false) dev.target/position are stale, so the
-  // normalized is_stopped can read "moving" for a device that just reported stopped. That is
-  // harmless here: run_execute_operation_() settles the evidence once the command is accepted (a
-  // STOP clears it, a move stamps it), after this runs.
-  track_motion_evidence(dev, !dev.is_stopped, dev.last_status);
+  // normalized is_stopped can read "moving" for a device that just reported stopped. The evidence
+  // therefore follows the device's own flag there. It matters for the ack to a STOP: a VELUX SSL
+  // still reports "moving" while it winds down, and in that state it ignores the wake-up preamble,
+  // so the settle poll after the STOP must lead short. A move's ack is overridden anyway:
+  // run_execute_operation_() stamps the evidence once the move is accepted, after this runs.
+  track_motion_evidence(dev, trust_position ? !dev.is_stopped : !reported_stopped, dev.last_status);
 
   if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);

@@ -142,6 +142,10 @@ class IOHomeControlComponent : public Component,
       out = decisions::target_evidence(*dev);
       return true;
     });
+    this->exchange_engine_.set_wake_evidence_spent_handler([this](const uint8_t *dst) {
+      if (IoDevice *dev = this->registry_.get(node_id_to_string(dst)); dev != nullptr)
+        clear_moving_evidence(*dev);
+    });
   }
 
   /// @brief Result payload used by hub-level management actions such as rename.

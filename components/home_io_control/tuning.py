@@ -38,6 +38,7 @@ CONF_NORMAL_START_PREAMBLE = "normal_start_preamble"
 CONF_LBT_MAX_RETRIES = "lbt_max_retries"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
 CONF_LOW_POWER_WAKE_BELIEF = "low_power_wake_belief"
+CONF_LOW_POWER_WAKE_PREAMBLE = "low_power_wake_preamble"
 CONF_EXCHANGE_START_RESPONSE_WAIT_MS = "exchange_start_response_wait_ms"
 CONF_EXCHANGE_RESPONSE_WAIT_MS = "exchange_response_wait_ms"
 CONF_EXCHANGE_TOTAL_BUDGET_MS = "exchange_total_budget_ms"
@@ -213,6 +214,7 @@ UI_NAMES = {
     CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
     CONF_LOW_POWER_WAKE_BELIEF: "Radio Low Power Wake Belief",
+    CONF_LOW_POWER_WAKE_PREAMBLE: "Radio Low Power Wake Preamble",
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: "Exchange Start Response Wait",
     CONF_EXCHANGE_RESPONSE_WAIT_MS: "Exchange Response Wait",
     CONF_EXCHANGE_TOTAL_BUDGET_MS: "Exchange Total Budget",
@@ -272,6 +274,12 @@ _NUMBER_PARAMS = {
     # burst (issue #27/#87's precedent), not to go longer than it — nothing calls for raising it
     # further.
     CONF_PAIRING_DISCOVERY_PREAMBLE: (8, 1024, 1, "B"),
+    # The wake-up preamble on a directed start frame to a `low_power` target believed at rest. The
+    # default is LONG_PREAMBLE (1024); a resting VELUX SSL solar roller shutter answered it on only
+    # about half the tries, so the knob goes longer, not shorter. Floor 1024 (LONG_PREAMBLE) keeps it a wake-up burst
+    # rather than a start preamble (and keeps every value a wake-up burst for tx_wake_for()); ceiling 4096 (~0.85 s on air) already needs a larger
+    # exchange_total_budget_ms to keep three tries.
+    CONF_LOW_POWER_WAKE_PREAMBLE: (1024, 4096, 64, "B"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     # Ceilings are generous because the right value is a property of the target device, not of

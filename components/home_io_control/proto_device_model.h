@@ -405,12 +405,13 @@ struct IoDevice {
 /// @param now_ms Current millis(). Must be non-zero in practice; 0 would read as "never".
 inline void note_moving_evidence(IoDevice &dev, uint32_t now_ms) { dev.last_moving_evidence_ms = now_ms; }
 
-/// @brief Forget that a device was travelling: it was observed stopped, or was told to stop.
+/// @brief Forget that a device was travelling: it reported itself stopped (including in the ack to a
+/// STOP), a linked remote was heard stopping it, or it stayed silent to an exchange sent while it
+/// was believed moving.
 ///
 /// The counterpart of note_moving_evidence(). Without it a receiver that has demonstrably stopped
 /// would keep reading as "moving" for the rest of LOW_POWER_MAX_TRAVEL_MS, although it goes back to
-/// duty-cycling within seconds. Its last frame heard (`last_seen_ms`) still keeps it "maybe awake"
-/// for a while.
+/// duty-cycling within seconds and then hears only the wake-up preamble.
 /// @param dev Device to clear.
 inline void clear_moving_evidence(IoDevice &dev) { dev.last_moving_evidence_ms = 0; }
 

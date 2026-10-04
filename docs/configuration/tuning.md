@@ -147,6 +147,7 @@ your device may differ.
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
 | `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `low_power_wake_preamble` | both | `1024` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before a frame is sent without one. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
@@ -350,28 +351,45 @@ use; drop it toward `8` only if a start frame is still not being heard
 and raise it toward `LONG_PREAMBLE` if a marginal always-alive link needs more. Because it is a
 live tuning knob, bisecting the right value needs no rebuild.
 
+#### `low_power_wake_preamble`
+
+The wake-up preamble, in bytes, on a directed start frame to a `low_power:` device believed at rest.
+The default is 1024 (~213 ms on air). A resting VELUX SSL solar roller shutter answered it on only
+about half the tries, which suggests it listens less often than every 213 ms; a longer preamble
+spans more of its sleep cycle. Raise it in steps (1536, 2048) and compare how often a try
+at rest is answered (`Try N answered … preamble=`).
+
+A longer preamble makes every try at rest longer: at 2048 bytes a try takes about 1.1 s, so only two
+fit in the default [`exchange_total_budget_ms`](#exchange_total_budget_ms). Raise that to about
+3500 ms to keep three, and expect ESPHome to warn that the component took a long time. Pairing,
+discovery, the roll-call and 1W transmits keep their own preambles.
+
 #### `low_power_wake_belief`
 
 A diagnostic switch, on by default. If a device declared `low_power: true` got worse after
 updating, set this to `false` and report it.
 
-A duty-cycled receiver that is asleep needs the 1024-byte wake-up preamble. One that is awake — a
-VELUX solar roller shutter mid-travel, for example — ignores that long preamble and answers only the
-short one, so a `stop` or status poll sent to a moving shutter with the long preamble goes
-unanswered. With this on, the hub tracks per device whether it was recently moving or heard from,
-and orders the tries of each directed exchange accordingly:
+A duty-cycled receiver at rest needs the wake-up preamble. One that is travelling — a VELUX solar
+roller shutter mid-travel, for example — ignores that long preamble and answers only the short one,
+so a `stop` or status poll sent to a moving shutter with the long preamble goes unanswered. With
+this on, the hub tracks per device whether it is moving, and orders the tries of each directed
+exchange accordingly:
 
 | Believed | Try 1 | Try 2 | Try 3 |
 |---|---|---|---|
-| awake (a `stop`, or a move the device accepted in the last 2 minutes that is not yet known to have ended) | short | wake-up | short |
-| maybe awake (heard from in the last 30 s) | short | wake-up | wake-up |
-| asleep | wake-up | wake-up | wake-up |
+| moving (a `stop`, or a move the device accepted in the last 2 minutes that is not yet known to have ended) | short | wake-up | wake-up |
+| at rest | wake-up | wake-up | wake-up |
 
-"Short" is [`normal_start_preamble`](#normal_start_preamble). A wrong belief costs one try, not the
-exchange, because every plan still sends the wake-up preamble at least once. A status poll allowed only
-one try (most scheduled polls) sends the first try's preamble; if it misses, the next poll a few
-seconds later has three tries. The poll right after an accepted `stop` always gets all three.
-Always-alive devices are unaffected, and the frame itself never changes between tries.
+"Short" is [`normal_start_preamble`](#normal_start_preamble), "wake-up" is
+[`low_power_wake_preamble`](#low_power_wake_preamble). Having merely heard from the device recently
+does not count as moving: a resting VELUX SSL ignored the short preamble even 34 ms after it had
+answered. A move is "known to have ended" when a status says stopped (including the reply to a `stop`, which
+can still say "moving" while the motor winds down), or when an exchange sent while
+the device was believed moving (other than a `stop`) draws no frame at all; the next exchange then
+leads with the wake-up preamble. A status poll allowed only one try (most scheduled polls) sends the
+first try's preamble; if it misses, the next poll a few seconds later has three tries. The poll right
+after an accepted `stop` always gets all three. Devices not declared `low_power:` are unaffected, and the frame
+itself never changes between tries. A mains-powered VELUX receiver that is always listening rejects the wake-up preamble, so declare it `low_power: false`.
 
 To see which preamble reaches a device how soon after it last answered, read the per-try log lines.
 Each carries `preamble=` (bytes) and `age_ms=` (time since the device was last heard; `n/a` when it
