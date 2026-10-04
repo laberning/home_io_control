@@ -1,0 +1,5 @@
+# expect: valid
+# The heltec-v4-3 board package, as shipped, validates with nothing but a node ID and key added.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v4-3.yaml

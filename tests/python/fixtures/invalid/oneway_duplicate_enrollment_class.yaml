@@ -1,0 +1,13 @@
+# expect-error: enrollment_classes has 'awning' more than once
+# covers: oneway_controllers._no_duplicate_enrollment_classes
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      manufacturer: velux
+      io_device_type: awning
+      enrollment: true
+      enrollment_classes: [awning, awning]

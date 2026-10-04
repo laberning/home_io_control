@@ -648,7 +648,7 @@ void PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
 /// The hub's thin wrapper manages the busy_ flag before and after this call.
 bool PairingEngine::discover_and_pair() {
   this->telemetry_.begin();
-  this->engine_.set_pairing_telemetry(&this->telemetry_);
+  this->engine_.set_transmit_observer(&this->telemetry_);
 
   // Seed telemetry with a 1W pairing-gesture frame the hub overheard shortly before this call
   // (issue #27/#65): without this, a PROG press completed a few seconds before "Discover & Pair"
@@ -781,7 +781,7 @@ bool PairingEngine::discover_and_pair() {
 
 void PairingEngine::finish_pairing_attempt_(PairingOutcome outcome) {
   this->telemetry_.set_outcome(outcome);
-  this->engine_.set_pairing_telemetry(nullptr);
+  this->engine_.set_transmit_observer(nullptr);
   this->telemetry_.log_summary();
 
   advisor::PairingAdvice advice[advisor::PAIRING_ADVICE_MAX];

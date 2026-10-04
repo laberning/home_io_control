@@ -7,7 +7,7 @@
 # supplied explicitly here — this is also the one compile test exercising the expanded
 # `number:`/`ignore_strapping_warning:` pin form end to end.
 substitutions:
-  device_name: test_sx1262_fem
+  device_name: test-sx1262-fem
 
 esphome:
   name: ${device_name}
@@ -45,6 +45,9 @@ home_io_control:
   radio_type: sx1262
   tcxo_voltage: 1_8V
   fem: gc1109
+  # The quiet ceiling for this FEM (FEM_TX_POWER_MAX_QUIET in hub_validators.py); the default 17
+  # would put the estimated antenna-port power over the 868 MHz SRD limit and warn.
+  tx_power: 3
   vfem_pin: 7
   fem_en_pin: 2
   fem_pa_pin:

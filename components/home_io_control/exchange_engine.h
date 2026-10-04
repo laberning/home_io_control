@@ -23,10 +23,10 @@
 
 #include "hub_exchange.h"
 #include "hub_decisions.h"
-#include "pairing_telemetry.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 #include "radio_interface.h"
+#include "transmit_observer.h"
 #include "tuning_config.h"
 
 #include <cstdint>
@@ -55,6 +55,9 @@ namespace home_io_control {
 /// SUCCESS_UNCONFIRMED exists so that silence after a real authentication is not treated the same
 /// as a request the device may never have heard at all: the two need different retry rules (see
 /// decisions::retry_after_unconfirmed_accept_is_safe()) and different reporting to the caller.
+/// Silence is not always harmless, though: a device that got the request may still have missed our
+/// challenge answer and not acted, which is why a CMD_EXECUTE to a device that normally confirms is
+/// sent once more before this outcome is returned.
 enum class ExchangeOutcome : uint8_t {
   FAILED,                 ///< No usable reply; the device may never have heard the request.
   SUCCESS_WITH_RESPONSE,  ///< Device replied; the caller's `response` frame is populated.
@@ -63,7 +66,9 @@ enum class ExchangeOutcome : uint8_t {
                           ///< need payload (key exchange) must treat this as failure; callers that
                           ///< only need "the command landed" should treat it as success. For every
                           ///< command but CMD_EXECUTE, this outcome is only returned after the full
-                          ///< retry budget is spent — see retry_after_unconfirmed_accept_is_safe().
+                          ///< retry budget is spent; a CMD_EXECUTE gets at most one re-send, and only
+                          ///< to a device that normally confirms — see
+                          ///< retry_after_unconfirmed_accept_is_safe().
 };
 
 class ExchangeEngine {
@@ -204,7 +209,8 @@ class ExchangeEngine {
   // Infrastructure delegated from the hub
   // -------------------------------------------------------------------------
 
-  /// Transmit a raw IoFrame with LBT and the given preamble length.
+  /// Transmit a raw IoFrame with the given preamble length, listening before talk on the TX
+  /// channel itself (the radio checks it inside send_packet(); see RadioTxConfig::cca_threshold_dbm).
   /// @param frame    Frame to transmit.
   /// @param freq     RF frequency in Hz.
   /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
@@ -220,7 +226,7 @@ class ExchangeEngine {
   /// `ManagementActions::scan_paired_devices()`).
   ///
   /// This is the asleep / always-alive rule. `send_and_receive()` may pick a shorter preamble per
-  /// try for a low-power target it believes awake (see set_wake_evidence_provider()), so the bit and
+  /// try for a low-power target it believes awake (see set_target_evidence_provider()), so the bit and
   /// the preamble agree here but not necessarily on every try there; callers that send once, like
   /// the discover-confirm step, always get the rule above.
   ///
@@ -266,32 +272,35 @@ class ExchangeEngine {
   void reset_hop_timestamp();
 
   // -------------------------------------------------------------------------
-  // Pairing telemetry hook
+  // Transmit observer
   // -------------------------------------------------------------------------
 
-  /// Attach a telemetry recorder so transmit_frame()'s LBT loop records defer events.
-  /// Set by PairingEngine for the duration of a `discover_and_pair()` attempt only — nullptr
-  /// (the default) for every non-pairing exchange, which is the common case and stays a no-op.
-  /// @param telemetry Non-owning pointer, or nullptr to detach.
-  void set_pairing_telemetry(PairingTelemetry *telemetry) { this->pairing_telemetry_ = telemetry; }
+  /// Attach the observer transmit_frame() reports LBT deferrals and sent frames to. One slot:
+  /// attaching replaces the previous observer. PairingEngine attaches its PairingTelemetry for
+  /// the duration of a `discover_and_pair()` attempt and detaches it afterwards; outside that,
+  /// the slot is empty and reporting is a no-op.
+  /// @param observer Non-owning pointer, or nullptr to detach.
+  void set_transmit_observer(TransmitObserver *observer) { this->transmit_observer_ = observer; }
 
   // -------------------------------------------------------------------------
-  // Low-power wake belief
+  // Per-target evidence
   // -------------------------------------------------------------------------
 
-  /// @brief Looks up the wake evidence for a destination node.
+  /// @brief Looks up what the hub knows about a destination node (decisions::TargetEvidence).
   /// @param dst Destination node ID (NODE_ID_SIZE bytes) of the request being sent.
   /// @param out Filled with that device's evidence when it is known.
   /// @return false when the destination is not a registered device (no evidence to give).
-  using WakeEvidenceProvider = std::function<bool(const uint8_t *dst, decisions::WakeEvidence &out)>;
+  using TargetEvidenceProvider = std::function<bool(const uint8_t *dst, decisions::TargetEvidence &out)>;
 
-  /// Install the evidence source for the wake belief. Installed once, when the hub is constructed. The provider only
-  /// looks evidence up; the engine turns it into a belief (decisions::wake_belief()) and applies the
-  /// `low_power_wake_belief` tuning switch itself, so the whole decision lives in one place. With no
-  /// provider installed every low-power exchange keeps `LONG_PREAMBLE` on every try.
+  /// Install the source of per-target evidence. Installed once, when the hub is constructed. The
+  /// provider only looks evidence up; every decision drawn from it stays in the engine — the wake
+  /// belief (decisions::wake_belief(), gated by the `low_power_wake_belief` tuning switch) and the
+  /// re-send of an unconfirmed CMD_EXECUTE (decisions::retry_after_unconfirmed_accept_is_safe()), so
+  /// each decision lives in one place. With no provider installed every low-power exchange keeps
+  /// `LONG_PREAMBLE` on every try.
   /// @param provider Evidence lookup, or an empty function to detach.
-  void set_wake_evidence_provider(WakeEvidenceProvider provider) {
-    this->wake_evidence_provider_ = std::move(provider);
+  void set_target_evidence_provider(TargetEvidenceProvider provider) {
+    this->target_evidence_provider_ = std::move(provider);
   }
 
   /// @brief Forgets a destination's moving evidence.
@@ -319,7 +328,7 @@ class ExchangeEngine {
     NOT_LOW_POWER,  ///< Not a low-power start frame: there is no wake-up preamble to reorder.
     OVERRIDE,       ///< The caller forced a preamble (pairing's directed frames).
     SWITCHED_OFF,   ///< The `low_power_wake_belief` tuning switch is off.
-    NO_PROVIDER,    ///< No evidence source installed (set_wake_evidence_provider()).
+    NO_PROVIDER,    ///< No evidence source installed (set_target_evidence_provider()).
     APPLIED,        ///< The tries followed the belief in DebugInfo::wake_belief.
   };
 
@@ -350,6 +359,13 @@ class ExchangeEngine {
     uint8_t capture_reported_len{0};   ///< Length reported by radio packet engine.
     uint8_t capture_frame_len{0};      ///< Parsed protocol frame length.
     int16_t capture_rssi_dbm{0};       ///< RSSI of the captured packet (dBm).
+    // What the final-reply waits of this exchange heard, counted per event (see ListenStats). The
+    // capture fields above keep the *first* informative reception, which in an authenticated
+    // exchange is the device's challenge, so they cannot describe the wait for the final reply.
+    uint8_t final_waits{0};       ///< Final-reply waits run (one per try that got as far as our 0x3D).
+    uint8_t final_rx_ignored{0};  ///< Frames received during those waits and not accepted as the reply.
+    uint8_t final_rx_failed{0};   ///< Receptions started during those waits that could not be decoded.
+    uint16_t final_rx_irq{0};     ///< Radio IRQ status at the most recent of those failed receptions.
   };
 
   /// Clear the debug snapshot and record the upcoming request command.
@@ -428,6 +444,18 @@ class ExchangeEngine {
   /// @param spec The listen this hop belongs to; only `on_hop` is read.
   void listen_hop_(uint32_t skip, const ListenSpec &spec);
 
+  // --- Transmission shape and the exchange budget ---------------------------
+
+  /// The radio's estimate of how long transmitting `frame` on `freq` with `preamble` takes, in
+  /// whole milliseconds rounded up; 0 for a frame that does not serialize (it is never sent).
+  [[nodiscard]] uint32_t tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16_t preamble) const;
+
+  /// The exchange budget rule: a try starts only if its transmission ends inside the budget.
+  /// @param elapsed_ms Time since the exchange began.
+  /// @param gap_ms     Wait before the try is sent.
+  /// @param tx_ms      The try's transmit time (tx_time_ms_()).
+  [[nodiscard]] bool try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms) const;
+
   // --- Outbound exchange step helpers --------------------------------------
 
   /// Transmit one request attempt and update context state on failure.
@@ -444,6 +472,26 @@ class ExchangeEngine {
   /// Block until the final authenticated response arrives or the window expires.
   decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
+
+  /// Decide how many more tries follow a try that ended accepted without a closing reply. When
+  /// that repeats a CMD_EXECUTE, log it and wait out the part of UNCONFIRMED_EXECUTE_RESEND_DELAY_MS
+  /// that the loop's own retry gap does not cover. For a CMD_EXECUTE, looks the target up through the
+  /// evidence provider; then applies decisions::retry_after_unconfirmed_accept_is_safe().
+  /// @param request           Outbound request frame.
+  /// @param unconfirmed_tries Tries of this exchange so far that ended that way (1-based).
+  /// @param try_index         The try that just ended, for the log line.
+  /// @param elapsed_ms        Time since the exchange began.
+  /// @param next_tx_ms        The re-send's transmit time; a re-send whose transmission would not
+  ///                          end inside the exchange budget is not attempted (try_fits_budget_()).
+  /// @return 0 to end the exchange now; UNCONFIRMED_EXECUTE_MAX_RESENDS for a CMD_EXECUTE that is
+  ///         re-sent, which also caps the ordinary failure retries after it; EXCHANGE_RETRY_COUNT
+  ///         (no cap beyond the exchange's own) for any other request.
+  uint8_t tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
+                                   uint32_t elapsed_ms, uint32_t next_tx_ms);
+
+  /// Add one final-reply wait's ListenStats to the debug snapshot's `final_*` fields.
+  /// @param stats What that wait heard without accepting it.
+  void note_final_wait_(const ListenStats &stats);
 
   /// @brief How the request's start preamble is chosen across one exchange's tries. Resolved once
   /// per exchange by plan_request_preamble_(), then asked for each try.
@@ -474,14 +522,20 @@ class ExchangeEngine {
   /// @param override_preamble Caller-forced preamble in bytes, or 0 for none.
   [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble) const;
 
+  /// Spends a device's moving evidence when an exchange planned on an `AWAKE` belief drew no frame at
+  /// all (see set_wake_evidence_spent_handler()). Called once, when the exchange has failed.
+  /// @param request The exchange's request frame (a STOP never spends the evidence).
+  /// @param plan    The preamble plan the exchange was sent with.
+  void spend_wake_evidence_if_silent_(const IoFrame &request, const PreamblePlan &plan);
+
   // --- Dependencies (back-references into the hub) -------------------------
 
-  RadioDriver **radio_ptr_;                       ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
-  const uint8_t *node_id_;                        ///< Hub's node_id_[NODE_ID_SIZE] array.
-  const uint8_t *system_key_;                     ///< Hub's system_key_[AES_KEY_SIZE] array.
-  const TuningConfig *tuning_;                    ///< Hub's live TuningConfig (read on every LBT check).
-  PairingTelemetry *pairing_telemetry_{nullptr};  ///< Set only during a pairing attempt; see set_pairing_telemetry().
-  WakeEvidenceProvider wake_evidence_provider_;   ///< Wake-belief evidence lookup; see set_wake_evidence_provider().
+  RadioDriver **radio_ptr_;                          ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
+  const uint8_t *node_id_;                           ///< Hub's node_id_[NODE_ID_SIZE] array.
+  const uint8_t *system_key_;                        ///< Hub's system_key_[AES_KEY_SIZE] array.
+  const TuningConfig *tuning_;                       ///< Hub's live TuningConfig (read on every LBT check).
+  TransmitObserver *transmit_observer_{nullptr};     ///< Non-owning; see set_transmit_observer().
+  TargetEvidenceProvider target_evidence_provider_;  ///< See set_target_evidence_provider().
   WakeEvidenceSpentHandler wake_evidence_spent_handler_;  ///< See set_wake_evidence_spent_handler().
 
   // --- Engine state --------------------------------------------------------
@@ -491,8 +545,10 @@ class ExchangeEngine {
   Counters counters_{};      ///< Free-running counters; see counters()/reset_counters().
 };
 
-/// Longest rendered exchange-debug field list, plus headroom for a long command name.
-static constexpr size_t EXCHANGE_DEBUG_LINE_SIZE = 320;
+/// Longest rendered exchange-debug field list, plus headroom for a long command name. Stays well
+/// under ESP-IDF's 512-byte log line together with the longest message prefix, so the trailing
+/// fields are never cut off on hardware.
+static constexpr size_t EXCHANGE_DEBUG_LINE_SIZE = 384;
 
 /// @brief Render the structured field list shared by both exchange-debug log lines.
 ///

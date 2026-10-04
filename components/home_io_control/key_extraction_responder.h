@@ -14,11 +14,13 @@
 #include "hub_hooks.h"
 #include "pairing_responder.h"
 #include "proto_frame.h"
+#include "proto_sizes.h"
 
 #include "esphome/core/hal.h"  // millis() for the inline awaiting_reply()
 
 #include <cstdint>
 #include <functional>
+#include <string>
 
 namespace esphome {
 namespace home_io_control {
@@ -174,6 +176,28 @@ class KeyExtractionResponder {
   NamedTimeoutFn schedule_auto_off_;
   std::function<void(bool)> armed_callback_;
 };
+
+namespace detail {
+
+/// @brief Build the ready-to-paste 2W system-key-extraction report: `node_id:`/`system_key:` as a
+/// `home_io_control:` YAML block.
+///
+/// Pure — takes already-decoded values, performs no I/O — so it is directly unit-testable without
+/// a live radio, mirroring build_oneway_adoption_report() (oneway_key_adoption.h); the two features
+/// end up sharing report *structure* as well as format_key_hex(). The caller
+/// (KeyExtractionResponder::log_result_()) logs the result through log_multiline_result() and
+/// nowhere else — this is the single intentional place the recovered `system_key` is formatted for
+/// display, a deliberate exception to redaction.h's masking.
+///
+/// The emitted keys must track the hub's own `CONFIG_SCHEMA` (`__init__.py`) by hand. `make
+/// yaml-emitter-sync` (scripts/check-yaml-emitters.py) catches drift between the two by
+/// cross-referencing this function's emitted key names against that schema statically.
+/// @param node_id Recovered hub node_id, 3 bytes.
+/// @param key Recovered system key, 16 bytes.
+/// @return Multi-line report text, ready to pass to log_multiline_result().
+std::string build_key_extraction_report(const uint8_t node_id[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]);
+
+}  // namespace detail
 
 }  // namespace home_io_control
 }  // namespace esphome

@@ -127,13 +127,18 @@ not a protocol problem.
 
 The press sends two bursts back to back — `0x39` (self-directed; carries only this identity's own
 address, so it can only ever clear its own prior entry, never a different controller's),
-immediately followed by `0x30` (the credential itself) — each ~125 ms, ~4 copies, no gap beyond the
-bursts' own airtime. This is the documented 1W pairing handshake (a real Somfy Smoove remote does
-exactly this, corpus-captured), not two independent actions. There is no "learn window" on the
-hub's side beyond that, because the device owns its own timeout and there is nothing further to
+immediately followed by `0x30` (the credential itself), about 4 copies each. With the Somfy default
+(`low_power` unset) every copy carries the long wake-up preamble, so a burst takes about a second
+and the whole press about two seconds on air; with `low_power: false` it is a fraction of that.
+Press Enroll soon after the receiver confirms its association mode, not at the end of its window.
+This is the documented 1W pairing handshake (a real Somfy Smoove remote does exactly this,
+corpus-captured), not two independent actions. For Somfy, both bursts go to the all-devices address
+`00003F`, like a real Somfy remote, so the `io_device_type` you configured does not decide whether
+the receiver is reached; it only addresses the identity's commands. There is no "learn window" on
+the hub's side beyond that, because the device owns its own timeout and there is nothing further to
 wait for. **Only one device should be in association mode at a time**: the frames reach every
-device of that class in range that is currently listening, so a second actuator in learn mode
-nearby would be taught too.
+device in range that is currently listening for them, so a second actuator in learn mode nearby
+would be taught too.
 
 The `0x30` half's MAC trailer is controlled by `enrollment_with_mac:` (default `false`, no MAC at
 all) — see the option table above if enrollment doesn't take with the default shape.

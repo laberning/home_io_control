@@ -142,6 +142,11 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
   // `0x39` immediately followed by `0x30`, both from the same controller, back to back within one
   // gesture -- a real Smoove capture landed them 128 ms apart, same burst (see
   // tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml).
+  // Both go to the all-devices broadcast (00 00 3F), as every real Somfy remote we hold sends them
+  // (Smoove, Situo 5, Situo 1): only a receiver already in association mode reacts, so naming a
+  // class adds nothing, and a class the receiver does not count itself in (a patio roof that is a
+  // horizontal awning, not an awning) would never be reached. The identity's `io_device_type` still
+  // addresses its commands.
   // `0x39` here carries only this
   // identity's own `src` address, so on the wire it can only mean "clear my own prior entry
   // before I re-register" -- it cannot name or displace a different controller. Sending it right
@@ -150,7 +155,7 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
   const bool removed = this->send_(
       identity.id,
       [](IoFrame &frame, const OneWayControllerIdentity &id, uint16_t sequence) {
-        return create_1w_remove_controller(frame, id.node_id, id.io_device_type, sequence, id.system_key);
+        return create_1w_remove_controller(frame, id.node_id, DeviceType::UNKNOWN, sequence, id.system_key);
       },
       "UNENROLL");
   if (!removed) {
@@ -161,8 +166,8 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
   return this->send_(
       identity.id,
       [](IoFrame &frame, const OneWayControllerIdentity &id, uint16_t sequence) {
-        return create_1w_add_controller(frame, id.node_id, id.io_device_type, id.manufacturer, sequence, id.system_key,
-                                        id.enrollment_with_mac);
+        return create_1w_add_controller(frame, id.node_id, DeviceType::UNKNOWN, id.manufacturer, sequence,
+                                        id.system_key, id.enrollment_with_mac);
       },
       "ENROLL");
 }
@@ -253,8 +258,8 @@ bool OneWayTransmitter::send_unenrollment(const std::string &controller_id) {
   return this->send_(
       controller_id,
       [](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
-        return create_1w_remove_controller(frame, identity.node_id, identity.io_device_type, sequence,
-                                           identity.system_key);
+        // All-devices broadcast, like the enrollment prelude: a real remote's 0x39 never names a class.
+        return create_1w_remove_controller(frame, identity.node_id, DeviceType::UNKNOWN, sequence, identity.system_key);
       },
       "UNENROLL");
 }

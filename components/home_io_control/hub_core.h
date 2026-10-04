@@ -131,14 +131,15 @@ class IOHomeControlComponent : public Component,
             [this]() { this->warn_if_blocking_over_ = LR1121_FLASH_WARN_BLOCKING_MAX_CS; }, this)
 #endif
   {
-    // The hub only supplies the evidence; the engine turns it into a wake belief and applies the
-    // `low_power_wake_belief` switch. Installed here rather than in setup() so a component that
-    // never runs setup() (the host tests) is wired exactly like production.
-    this->exchange_engine_.set_wake_evidence_provider([this](const uint8_t *dst, decisions::WakeEvidence &out) {
+    // The hub only supplies what it knows about a target; the engine draws its own decisions from
+    // it (the wake belief and the re-send of an unconfirmed movement command). Installed here
+    // rather than in setup() so a component that never runs setup() (the host tests) is wired
+    // exactly like production.
+    this->exchange_engine_.set_target_evidence_provider([this](const uint8_t *dst, decisions::TargetEvidence &out) {
       const IoDevice *dev = this->registry_.get(node_id_to_string(dst));
       if (dev == nullptr)
         return false;
-      out = decisions::wake_evidence(*dev);
+      out = decisions::target_evidence(*dev);
       return true;
     });
     this->exchange_engine_.set_wake_evidence_spent_handler([this](const uint8_t *dst) {
@@ -217,7 +218,7 @@ class IOHomeControlComponent : public Component,
   /// Set radio type ("sx1276", "sx1262", or "lr1121"); required by the YAML schema.
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
   /// Set the SX1262/LR1121 TCXO control-voltage code (0-based, `TCXO_VOLTAGE_OPTIONS` in
-  /// `__init__.py`: `1_6V`=0x00 .. `3_3V`=0x07), or `TCXO_VOLTAGE_NONE` (0xFF) for a board with a
+  /// `hub_validators.py`: `1_6V`=0x00 .. `3_3V`=0x07), or `TCXO_VOLTAGE_NONE` (0xFF) for a board with a
   /// bare crystal and no DIO3-controlled TCXO.
   void set_tcxo_voltage(uint8_t voltage) { this->tcxo_voltage_ = voltage; }
 
@@ -238,8 +239,8 @@ class IOHomeControlComponent : public Component,
 
   /// @brief Render a device's "last commanded by" string, resolving this hub's own node ID.
   ///
-  /// Thin wrapper over detail::describe_last_commander(); exists because the hub's node ID is not
-  /// reachable from a companion entity and hub_internal.h cannot be included from this header.
+  /// Thin wrapper over detail::describe_last_commander() (entity_helpers.h); exists because the
+  /// hub's node ID is not reachable from a companion entity.
   /// @param dev Device record to read.
   /// @return See detail::describe_last_commander().
   [[nodiscard]] std::string describe_last_commander(const IoDevice &dev) const;
@@ -773,7 +774,7 @@ class IOHomeControlComponent : public Component,
 
   /// True while the key-extraction responder is mid-attempt and still within its bounded CH2-hold
   /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
-  /// — kept on the hub because defer_background_poll_() and tests/hub_core_test.cpp reach it here,
+  /// — kept on the hub because defer_background_poll_() and tests/hub/hub_core_test.cpp reach it here,
   /// mirroring the two set_key_extraction_armed* bindings.
   [[nodiscard]] bool key_extraction_awaiting_reply_() const { return this->key_extraction_.awaiting_reply(); }
 
@@ -1120,7 +1121,9 @@ class IOHomeControlComponent : public Component,
   bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
   OperationQueue op_queue_;
-  PairingTelemetry pairing_telemetry_;  ///< Per-attempt pairing telemetry, shared with ExchangeEngine/PairingEngine.
+  /// Per-attempt pairing telemetry. PairingEngine records into it and, during an attempt, attaches it
+  /// to ExchangeEngine as its TransmitObserver.
+  PairingTelemetry pairing_telemetry_;
   /// Most recent 1W pairing-gesture frame seen on the hub's normal passive RX path (e.g. a PROG
   /// press's WRITE_PRIVATE/1W-remove/discover-alt broadcast), remembered so PairingEngine can seed
   /// a fresh discover_and_pair() attempt's telemetry with it — see record_oneway_pairing_gesture_()
@@ -1174,19 +1177,6 @@ class IOHomeControlComponent : public Component,
 // ----------------------------------------------------------------------------
 // Test-visible helpers (inline for host unit tests)
 // ----------------------------------------------------------------------------
-
-/// Check if a stored node ID is valid (not all-zero, not all-0xFF).
-/// @param id 3‑byte node ID buffer.
-/// @return true if the ID is non-zero and non-0xFF.
-inline bool stored_node_id_is_valid(const uint8_t id[NODE_ID_SIZE]) {
-  bool all_zero = true;
-  bool all_ff = true;
-  for (uint8_t i = 0; i < NODE_ID_SIZE; i++) {
-    all_zero = all_zero && id[i] == 0;
-    all_ff = all_ff && id[i] == UINT8_MAX;
-  }
-  return !all_zero && !all_ff;
-}
 
 /// Format a position float as a human‑readable string (e.g. "50%", "unknown").
 /// @param pos Position value (0–100 or UNKNOWN_POSITION).

@@ -1,11 +1,14 @@
 #pragma once
 
 #include "radio_interface.h"
-#include "radio_sx1262.h"  // SX1262_RESPONSE_PREAMBLE for the SX1262 mock
+#include "radio_soft_phy.h"  // io868_tx_air_time_us() for the airtime model
+#include "radio_sx1262.h"    // SX1262_RESPONSE_PREAMBLE for the SX1262 mock
+#include "../support/timed_release.h"
 #include <esphome/core/gpio.h>
 #include <esphome/core/hal.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <deque>
 #include <optional>
 #include <vector>
@@ -62,28 +65,43 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// the first match) — this interleaved log can.
   enum class CallKind { kWait, kHop };
 
-  /// One rx_queue_ entry: either a packet, plain silence (both `std::nullopt` fields), or a
-  /// "hold until sent" marker (`hold_until_send_count` set) — see queue_rx_hold_until_sent().
+  /// One rx_queue_ entry: a packet (delivered at once, or at `timed`'s release time when set),
+  /// plain silence (every field `std::nullopt`), or a "hold until sent" marker
+  /// (`hold_until_send_count` set) — see queue_rx_hold_until_sent().
   struct RxQueueEntry {
     std::optional<esphome::home_io_control::RadioRxPacket> packet;
     std::optional<int> hold_until_send_count;
+    std::optional<uint16_t> failed_reception_irq;  ///< Set: a reception that started and failed.
+    std::optional<TimedRelease> timed;             ///< Set: `packet` arrives at a replayed time (timed_release.h).
   };
 
   // RadioDriver interface
   bool init() override { return true; }
-  bool send_packet(const uint8_t *data, uint8_t len,
-                   const esphome::home_io_control::RadioTxConfig &tx_config) override {
-    bool result = true;
+  esphome::home_io_control::TxResult send_packet(const uint8_t *data, uint8_t len,
+                                                 const esphome::home_io_control::RadioTxConfig &tx_config) override {
+    using esphome::home_io_control::TxResult;
+    // The clear-channel check, as the real drivers make it: on the TX channel, before anything is
+    // sent. The retune it implies is assigned directly, so it stays out of freq_history() for the
+    // same reason as the post-send retune below. A busy result sends and records nothing.
+    if (tx_config.cca_threshold_dbm.has_value()) {
+      current_freq_ = tx_config.freq_hz;
+      const int16_t level = this->read_rssi();
+      if (level >= *tx_config.cca_threshold_dbm)
+        return TxResult::channel_busy(level);
+    }
+    TxResult result = TxResult::ok();
     if (!tx_results_.empty()) {
-      result = tx_results_.front();
+      result = tx_results_.front() ? TxResult::ok() : TxResult::failed();
       tx_results_.pop_front();
     }
     tx_configs_.push_back(tx_config);
-    sent_data_.push_back(std::vector<uint8_t>(data, data + len));
+    timeline_.record(data, len);  // Before the air-time advance: releases count from TX start.
     send_count_++;
     // peek_ms() has no side effect in either clock mode, so this is meaningful under ManualClock
     // and harmless (if not meaningful) under the default legacy clock.
     send_times_ms_.push_back(esphome::test_clock::peek_ms());
+    if (model_tx_airtime_ && esphome::test_clock::is_manual())
+      esphome::test_clock::advance_us(this->tx_air_time_us(len, tx_config));
     // Real drivers retune the receiver to the TX frequency as a side effect of sending (e.g.
     // RadioSX1276::send_packet() calls change_frequency(); SoftPhyDriverBase::send_packet() calls
     // set_frequency_register(), which assigns current_freq_ the same way). Assigned directly here,
@@ -112,6 +130,41 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
         rx_queue_.pop_front();
         continue;
       }
+      if (front.timed.has_value()) {
+        // Only a replayed timeline uses this, and it is only meaningful when time is real.
+        if (!esphome::test_clock::is_manual())
+          std::abort();
+        const std::optional<uint64_t> release_us = timeline_.release_us(*front.timed);
+        const uint64_t now_us = esphome::test_clock::state().now_us;
+        const uint64_t window_us = static_cast<uint64_t>(std::max(timeout_ms, 1u)) * 1000u;
+        if (!release_us.has_value() || *release_us > now_us + window_us) {
+          // Not sent yet, or arriving after this listen ends: a silent wait, entry kept.
+          esphome::test_clock::advance_us(window_us);
+          return false;
+        }
+        // A release already in the past (the reply "arrived" while this side was transmitting or
+        // not yet listening) is delivered at once. A captured gap is measured from TX start and
+        // so includes the capture's own airtime; when this side's preamble is longer than the
+        // capture's, the gap can end inside this side's TX. Delivering keeps the replay neutral
+        // about that; dropping it would invent a loss the capture never showed.
+        if (*release_us > now_us)
+          esphome::test_clock::advance_us(*release_us - now_us);
+        // Released: delivered below exactly like an untimed packet.
+      }
+      if (front.failed_reception_irq.has_value()) {
+        // A reception the radio started but could not deliver (CRC or length failure): returns
+        // early, well before the timeout, with a valid capture describing it — the shape a real
+        // driver's failed reception has.
+        const uint16_t irq = *front.failed_reception_irq;
+        rx_queue_.pop_front();
+        this->last_capture_ = esphome::home_io_control::RadioCaptureInfo{};
+        this->last_capture_.valid = true;
+        this->last_capture_.crc_error = true;
+        this->last_capture_.irq_status = irq;
+        this->last_capture_.freq_hz = current_freq_;
+        this->advance_manual_ms_(1);
+        return false;
+      }
       std::optional<esphome::home_io_control::RadioRxPacket> entry = front.packet;
       rx_queue_.pop_front();
       if (!entry.has_value()) {
@@ -137,6 +190,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     current_freq_ = freq_hz;
   }
   int16_t read_rssi() override {
+    rssi_read_freqs_.push_back(current_freq_);
     if (rssi_queue_.empty())
       return rssi_default_;
     int16_t val = rssi_queue_.front();
@@ -160,6 +214,11 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     return tuning.sx1276_discovery_hop_slice_ms;
   }
   bool has_fast_tx_rx_turnaround() const override { return true; }
+  /// The 868 MHz production estimate, which set_model_tx_airtime() advances the clock by. A test
+  /// double for a radio with a different wake-up overrides it.
+  uint32_t tx_air_time_us(uint8_t len, const esphome::home_io_control::RadioTxConfig &cfg) const override {
+    return esphome::home_io_control::io868_tx_air_time_us(cfg.preamble_len, len);
+  }
   void set_mode_rx() override {}
   void set_mode_standby() override {}
   bool is_failed() const override { return false; }
@@ -167,7 +226,9 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void dump_debug() override {}
 
   // Test helpers
-  void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) { rx_queue_.push_back({pkt, std::nullopt}); }
+  void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) {
+    rx_queue_.push_back({pkt, std::nullopt, std::nullopt, std::nullopt});
+  }
   /// Queue `n` empty slices: wait_for_packet() returns false for each, exactly as if nothing had
   /// arrived, without needing to leave the whole queue empty (which a test can't do selectively
   /// mid-sequence). Lets a test express "several genuinely silent waits, then a reply" — distinct
@@ -176,7 +237,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// so has a different timing profile.
   void queue_rx_silence(uint8_t n = 1) {
     for (uint8_t i = 0; i < n; i++)
-      rx_queue_.push_back({std::nullopt, std::nullopt});
+      rx_queue_.push_back({std::nullopt, std::nullopt, std::nullopt, std::nullopt});
   }
   /// Queue genuine silence for as long as it takes: wait_for_packet() returns false, without
   /// consuming this entry, until `get_send_count() >= send_count`; the call that finally meets the
@@ -191,9 +252,41 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// discover-confirm try, then answer once 0x31 goes out" without knowing how many
   /// wait_for_packet() calls that silence will actually take.
   /// @param send_count Number of transmitted frames (get_send_count()) to hold silent through.
-  void queue_rx_hold_until_sent(int send_count) { rx_queue_.push_back({std::nullopt, send_count}); }
+  void queue_rx_hold_until_sent(int send_count) {
+    rx_queue_.push_back({std::nullopt, send_count, std::nullopt, std::nullopt});
+  }
+  /// Queue one failed reception: wait_for_packet() returns false after 1 ms (not after its
+  /// timeout) with a valid capture carrying @p irq and the CRC-error flag. Only meaningful under a
+  /// ManualClock, where a genuinely silent wait instead advances time by its whole timeout.
+  void queue_rx_failed_reception(uint16_t irq) { rx_queue_.push_back({std::nullopt, std::nullopt, irq, std::nullopt}); }
+  /// Queue a packet that arrives @p offset_us after the start of the @p send_index-th send
+  /// (0-based), for replaying a captured timeline. Requires a ManualClock. Until that send has
+  /// happened, or while the arrival lies beyond a listen's timeout, wait_for_packet() is silent for
+  /// the whole timeout and keeps the entry; once a listen's window covers the arrival, time moves
+  /// to it and the packet is delivered. Entries are consumed in queue order, so a timed entry at
+  /// the front holds back everything queued behind it — correct for a chronological capture.
+  void queue_rx_timed_after_send(const esphome::home_io_control::RadioRxPacket &pkt, int send_index,
+                                 uint64_t offset_us) {
+    rx_queue_.push_back({pkt, std::nullopt, std::nullopt, TimedRelease{send_index, {}, offset_us}});
+  }
+  /// Same, anchored to the first send whose bytes equal @p anchor_bytes: for a replay whose
+  /// engine may send a different number of retries than the capture shows, so send indices don't
+  /// line up but frame contents do.
+  void queue_rx_timed_after_bytes(const esphome::home_io_control::RadioRxPacket &pkt, std::vector<uint8_t> anchor_bytes,
+                                  uint64_t offset_us) {
+    rx_queue_.push_back(
+        {pkt, std::nullopt, std::nullopt, TimedRelease{std::nullopt, std::move(anchor_bytes), offset_us}});
+  }
+  /// Under a ManualClock, make send_packet() take the frame's time on air (tx_air_time_us()), so a
+  /// listen started after it begins where a real one would. Off by default: existing tests count on
+  /// a send taking no time.
+  void set_model_tx_airtime(bool on) { model_tx_airtime_ = on; }
+  /// Queue the outcome of the next send that passes its clear-channel check: true = SENT,
+  /// false = FAILED. A busy channel is scripted through queue_rssi() / set_rssi_default() instead.
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
+  /// Queue the next RSSI reading: a send's clear-channel check or a direct read_rssi() pops it.
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
+  /// RSSI reading once the queue is empty (default -120 dBm: clear).
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
   /// Under a ManualClock, how far a delivered packet advances time past when it was requested —
   /// modelling the air time / turnaround between a device starting its reply and this driver
@@ -202,8 +295,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// peek_ms() at each send_packet() call, in order — recorded in both clock modes (legacy values
   /// are meaningless on their own, same as every other legacy timing field here, but harmless).
   /// Lets a test assert retry cadence in real milliseconds instead of counting wait_timeouts().
-  /// TX air time itself is not modelled: send_packet() doesn't advance the clock, so two
-  /// consecutive sends with nothing queued in between record the same instant.
+  /// Unless set_model_tx_airtime() is on, a send takes no time, so two consecutive sends with
+  /// nothing queued in between record the same instant.
   const std::vector<uint32_t> &send_times_ms() const { return send_times_ms_; }
   // Stage a valid get_last_capture() for tests exercising the link-health RSSI path. Real drivers
   // populate this via populate_capture_base_() inside wait_for_packet()/check_for_packet(); this
@@ -231,14 +324,16 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// presence-in-freq_history() alone can't distinguish "hopped before the first listen" from
   /// "hopped after a later one".
   const std::vector<CallKind> &call_log() const { return call_log_; }
+  /// The channel the radio was on at each RSSI reading, in order.
+  const std::vector<uint32_t> &rssi_read_freqs() const { return rssi_read_freqs_; }
   const std::vector<esphome::home_io_control::RadioTxConfig> &get_tx_configs() const { return tx_configs_; }
-  const std::vector<std::vector<uint8_t>> &get_sent_data() const { return sent_data_; }
+  const std::vector<std::vector<uint8_t>> &get_sent_data() const { return timeline_.sent_data(); }
   void clear() {
     rx_queue_.clear();
     tx_results_.clear();
     tx_configs_.clear();
     rssi_queue_.clear();
-    sent_data_.clear();
+    timeline_.clear();
     send_count_ = 0;
     freq_history_.clear();
     wait_timeouts_.clear();
@@ -263,13 +358,15 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::deque<RxQueueEntry> rx_queue_;
   std::deque<int16_t> rssi_queue_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
-  std::vector<std::vector<uint8_t>> sent_data_;
+  SendTimeline timeline_;  ///< Every send's bytes and start time; owns the timed-release rule.
   std::vector<CallKind> call_log_;
   int16_t rssi_default_{-120};
   int send_count_;
   std::vector<uint32_t> wait_timeouts_;
   std::vector<uint32_t> freq_history_;
+  std::vector<uint32_t> rssi_read_freqs_;
   std::vector<uint32_t> send_times_ms_;
+  bool model_tx_airtime_{false};
   uint32_t rx_latency_ms_{0};
   bool emulate_capture_lifecycle_{false};
 };

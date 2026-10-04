@@ -1,0 +1,11 @@
+# expect-error: status_poll_interval is not supported for the climate platform
+# covers: climate._reject_status_poll_interval
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+climate:
+  - platform: home_io_control
+    name: "Radiator"
+    io_device_id: "4D5E6F"
+    status_poll_interval: 60s

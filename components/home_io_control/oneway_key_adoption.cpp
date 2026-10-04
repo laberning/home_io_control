@@ -1,7 +1,13 @@
 #include "oneway_key_adoption.h"
 
-#include "hub_internal.h"
+#include "log_helpers.h"
 #include "proto_codecs.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstring>
+#include <string>
 
 /// @file oneway_key_adoption.cpp
 /// @brief Opt-in, receive-only adoption of a 1W installation's controller key.
@@ -43,6 +49,60 @@ constexpr uint32_t ONEWAY_KEY_ADOPTION_AUTO_OFF_MS = 10 * 60 * 1000;
 constexpr const char *ONEWAY_KEY_ADOPTION_TIMEOUT_NAME = "oneway_key_adoption_auto_off";
 
 }  // namespace
+
+namespace detail {
+
+std::string build_oneway_adoption_report(const OneWayAdoptedKey &adopted, bool observed_type_known,
+                                         DeviceType observed_type) {
+  std::string sender_hex_lower = node_id_to_string(adopted.sender_node);
+  std::transform(sender_hex_lower.begin(), sender_hex_lower.end(), sender_hex_lower.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  const std::string key_hex = format_key_hex(adopted.system_key);
+
+  std::string mac_line;
+  switch (adopted.mac_status) {
+    case OneWayMacStatus::VERIFIED:
+      mac_line = "MAC VERIFIED: this frame's MAC checked out under the recovered key -- the strongest evidence "
+                 "available on the spot that it is correct.";
+      break;
+    case OneWayMacStatus::FAILED:
+      mac_line = "MAC FAILED: this frame's MAC did NOT check out under the recovered key -- it is probably wrong. "
+                 "Re-arm and repeat the key-copy gesture closer to the hub.";
+      break;
+    case OneWayMacStatus::NOT_PRESENT:
+    default:
+      mac_line = "MAC not present: this frame carried no MAC trailer to verify against -- treat this key as "
+                 "unconfirmed until tested.";
+      break;
+  }
+
+  // Fits "    manufacturer: 0xNN" plus its terminator with room to spare.
+  constexpr size_t manufacturer_line_size = 32;
+  char manufacturer_line[manufacturer_line_size];
+  snprintf(manufacturer_line, sizeof(manufacturer_line), "    manufacturer: 0x%02X",
+           static_cast<unsigned>(adopted.manufacturer));
+
+  std::string type_lines;
+  if (observed_type_known) {
+    type_lines = "    io_device_type: " + format_device_type_for_yaml(observed_type) +
+                 "      # observed from this sender's traffic; verify\n";
+  } else {
+    type_lines = "    # io_device_type: unknown -- no other 1W traffic was observed from this sender while armed;\n"
+                 "    #   check the DEBUG \"rx 1W remote ...\" log line once you see this sender transmit again.\n";
+  }
+
+  return mac_line +
+         "\nThe hub always transmits under its own node_id, never the sender's -- copying the sender's address "
+         "would hijack its rolling sequence counter and break its existing remote.\n"
+         "Copy the block below into your hub's YAML.\n"
+         "oneway_controllers:\n"
+         "  # node_id omitted -> derived from your hub node_id; see the boot log\n"
+         "  - id: adopted_" +
+         sender_hex_lower + "\n" + "    system_key: \"" + key_hex + "\"\n" + manufacturer_line + "\n" + type_lines +
+         "    commands: [open, close, stop]";
+}
+
+}  // namespace detail
 
 void OnewayKeyAdoption::set_armed(bool armed) {
   if (!armed) {
@@ -123,7 +183,7 @@ void OnewayKeyAdoption::try_adopt(const IoFrame &frame) {
   // call: a single call silently truncates at ESPHome's 512-byte log buffer, and this report is
   // long enough to do exactly that — cutting off before the recovered key ever appears, which
   // defeats the entire feature with no error and no indication anything was lost. See
-  // log_multiline_result()'s doxygen (hub_internal.h) for the root cause.
+  // log_multiline_result()'s doxygen (log_helpers.h) for the root cause.
   ESP_LOGW(detail::TAG, "========================================");
   ESP_LOGW(detail::TAG, "1W CONTROLLER KEY ADOPTED FROM %s -- DO NOT SHARE THIS KEY",
            node_id_to_string(adopted.sender_node).c_str());

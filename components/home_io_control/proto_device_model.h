@@ -48,7 +48,7 @@ enum class DeviceType : uint8_t {
   // VENTILATION_POINT (capability class SWITCH), EXTERIOR_HEATING and HEAT_PUMP (both CLIMATE)
   // decode and carry capability classes but are deliberately withheld from YAML: no platform
   // consumes CLIMATE yet, and the climate/ventilation platform is unbuilt. They are allowlisted
-  // in device_type_sync_test.cpp's reverse check; move them into __init__.py's
+  // in device_type_sync_test.cpp's reverse check; move them into hub_validators.py's
   // DEVICE_TYPE_OPTIONS (and yaml_device_type_name()) when that platform lands.
   VENTILATION_POINT = 0x14,  ///< Ventilation point.
   EXTERIOR_HEATING = 0x15,   ///< Exterior heating.
@@ -339,10 +339,11 @@ struct IoDevice {
                                          ///< A protocol-reported class exists (discovery Multi Information Byte) but
                                          ///< is surfaced through the pairing/scan snippet, never applied at runtime.
   bool dimmable{false};                  ///< True for a LIGHT-class device configured `dimmable: true` in YAML.
-                                         ///< Not a protocol-level fact (the wire gives no dimmable-capability
-                                         ///< signal) — set from platform_light.cpp's YAML config via
+                                         ///< Set from platform_light.cpp's YAML config via
                                          ///< DeviceRegistry::set_dimmable(), purely for accurate profile-name
-                                         ///< logging.
+                                         ///< logging. Light subtype 58 (0x01BA) is defined as on/off only
+                                         ///< (VELUX KLF 200 API v3.18, App. 2); the discovery subtype is
+                                         ///< not consulted for this flag yet.
   uint8_t last_result_code{0};           ///< Last CMD_ERROR_RESP result byte (0 = none recorded). See
                                 ///< command_result_name()/is_limitation_result() in proto_constants.h. Cleared by
                                 ///< the next successful status/command reply for this device. Note: 0 is also the
@@ -352,7 +353,7 @@ struct IoDevice {
   uint8_t last_commander[NODE_ID_SIZE]{};     ///< Node ID of the controller that last commanded this device, as
                                               ///< reported verbatim by the device in its own status payload. All
                                               ///< zeroes until a status reply carrying the record has been decoded
-                                              ///< (see detail::decode_last_command_record() in hub_internal.h).
+                                              ///< (see decode_last_command_record() in proto_codecs.h).
   uint8_t last_command_originator{0};         ///< That command's Command Originator byte (ORIGINATOR_* in
                                               ///< proto_constants.h). Only meaningful when `has_last_command`.
   bool has_last_command{false};               ///< True once a status reply carried a well-formed last-command record.
@@ -383,7 +384,11 @@ struct IoDevice {
                                            ///< answer never landed). For a CMD_EXECUTE this outcome is treated as
                                            ///< success and raises no failure count, so without this counter it is
                                            ///< invisible in the diagnostics.
-  OptimisticState optimistic{};            ///< Hub-side predictions; see OptimisticState. Never observation.
+  bool confirms_execute{false};  ///< True once this device has answered a CMD_EXECUTE with a reply that closed the
+                                 ///< exchange (a status, or an error). Learned at runtime and never stored: it
+                                 ///< separates a device whose missing reply is an anomaly from one that never sends
+                                 ///< one (see decisions::retry_after_unconfirmed_accept_is_safe()).
+  OptimisticState optimistic{};  ///< Hub-side predictions; see OptimisticState. Never observation.
 };
 
 /// @brief Record that a device is (believed to be) travelling right now.

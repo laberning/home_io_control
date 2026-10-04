@@ -11,8 +11,8 @@
 //
 // MockSpi (radio_test_common.h) always returns 0 and does not record writes, so it cannot
 // support the byte-exact assertions two-transaction command protocols need (LR1121's normal
-// driver, and the bootloader-mode updater). Shared by tests/radio_lr1121_test.cpp and
-// tests/radio_lr1121_firmware_updater_test.cpp — both need the identical byte-exact,
+// driver, and the bootloader-mode updater). Shared by tests/radio/radio_lr1121_test.cpp and
+// tests/radio/radio_lr1121_firmware_updater_test.cpp — both need the identical byte-exact,
 // scriptable-response shape, just against different command sets.
 // ============================================================================
 

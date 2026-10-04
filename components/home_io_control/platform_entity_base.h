@@ -18,9 +18,10 @@
 /// position/tilt/movement inference, binary on/off decoding, each companion's value rendering)
 /// deliberately stays in the entities; only the device-binding plumbing lives here.
 
-#include "hub_internal.h"
+#include "hub_core.h"
 
 #include "esphome/core/application.h"
+#include "esphome/core/log.h"
 
 #include <cinttypes>
 #include <functional>
@@ -178,7 +179,7 @@ class DeviceBoundCompanion {
 /// setter and one member so each entity does not restate it. The tuning number/select entities
 /// are deliberately not migrated: they take the parent by constructor injection and keep
 /// hub_core.h out of their header via a forward declaration, which this mixin's include of
-/// hub_internal.h would defeat.
+/// hub_core.h would defeat.
 ///
 /// Why every one of these is created from the `home_io_control:` block (or a dedicated `button:`
 /// entry) and never from a device-bound `switch:`/`button:` platform entry: a user-declared

@@ -2,7 +2,7 @@
 """Turns a pasted on-air log excerpt into a scaffolded golden-frame capture YAML.
 
 Parses the two on-air log formats used by this project — the structured `io_capture` tag
-(hub_internal.h) and the legacy `io_frame` tag (log_frame.h) — via protolib.parse_log(), with a
+(log_helpers.h) and the legacy `io_frame` tag (log_frame.h) — via protolib.parse_log(), with a
 liberal fallback tier for mangled pastes. Emits a capture YAML skeleton (source metadata, raw
 frames, and mechanically-derived `expect:` proposals) that a human must review and confirm
 before committing — see tests/corpus/README.md :: "Expectations are human-verified". Every
@@ -244,7 +244,7 @@ def resolve_oneway_key(args) -> bytes:
             raise RekeyError(f"--oneway-key-from refuses to read {path}: not git-ignored "
                              f"(run `git check-ignore {path}` to confirm before pointing --rekey at it)")
         text = path.read_text(encoding="utf-8")
-        # No fixed field name to key off: the hub's own adoption report (hub_internal.h ::
+        # No fixed field name to key off: the hub's own adoption report (oneway_key_adoption.cpp ::
         # build_oneway_adoption_report()) emits the recovered key inline in the pasteable YAML
         # block (`system_key: "..."`) rather than naming a secrets.yaml field, mirroring the 2W
         # key-extraction report's style. Any 32-hex-digit run in the pointed-at file is accepted,

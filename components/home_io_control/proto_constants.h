@@ -157,7 +157,7 @@ static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
            ///< ID plus a 6-byte challenge, nothing more — never observed in our corpus or in any
            ///< field log, and not sent or handled anywhere in this codebase — the constant is
            ///< used only to construct a hypothetical device-side IV in
-           ///< tests/proto_crypto_test.cpp, exercising the crypto primitive, not a dispatch path.
+           ///< tests/proto/proto_crypto_test.cpp, exercising the crypto primitive, not a dispatch path.
 
 // Authentication commands (challenge-response for secured commands)
 static constexpr uint8_t CMD_CHALLENGE_REQ =
@@ -178,19 +178,18 @@ static constexpr uint8_t CMD_CHALLENGE_RESP =
 
 // File/blob management block (0x48-0x4B)
 static constexpr uint8_t CMD_UNKNOWN4A_REQ =
-    0x4A;  ///< Content undecoded. The leading published interpretation of this opcode is "Delete
-           ///< File" (a large-data-transfer / "ioblob" request), with "Rename File" as a
-           ///< conflicting second reading — both writes, and no project this codebase draws on
-           ///< has ever transmitted it. Never captured on the wire either. This constant exists
-           ///< solely so a received 0x4A frame renders by name in the log instead of as
-           ///< UNKNOWN_CMD; it must never be sent, and no builder for it exists anywhere in this
-           ///< codebase — see CMD_ONEWAY_ADD_CONTROLLER for the same "named but never sent"
-           ///< precedent, and docs/adr/ for the standing decision not to add one.
+    0x4A;  ///< Reads chunk `<handle><chunk u16>` of a buffer opened by a 0x46/0x47 exchange; seen
+           ///< on air between two controllers in a VELUX KLR 200 copy session. What it does to an
+           ///< actuator is unknown, and the surrounding 0x46-0x4B block includes write commands.
+           ///< This constant exists solely so a received 0x4A frame renders by name in the log
+           ///< instead of as UNKNOWN_CMD; it must never be sent, and no builder for it exists
+           ///< anywhere in this codebase — see CMD_ONEWAY_ADD_CONTROLLER for the same "named but
+           ///< never sent" precedent, and docs/adr/ for the standing decision not to add one.
 static constexpr uint8_t CMD_UNKNOWN4A_RESP =
-    0x4B;  ///< Observed on the wire (tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml) answering an
-           ///< ON_OFF_SWITCH-type device's traffic, but its request opcode is unconfirmed — it is not established to be
-           ///< CMD_UNKNOWN4A_REQ's reply rather than CMD_GET_GENERAL_INFO3's. Content undecoded.
-           ///< Not sent or handled anywhere in this codebase.
+    0x4B;  ///< Echoes `<handle><chunk>` followed by up to 18 bytes of data. Observed on the wire
+           ///< (tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml) answering an
+           ///< ON_OFF_SWITCH-type device's traffic; the `01 00 00` payload there has the shape of a
+           ///< close echo. Not sent or handled anywhere in this codebase.
 
 // Device info commands
 static constexpr uint8_t CMD_GET_NAME = 0x50;       ///< Request device name
@@ -367,9 +366,12 @@ static constexpr uint8_t POSITION_WIRE_SCALE = 2;
 static constexpr uint8_t POSITION_WIRE_MAX = 200;
 
 /// Status byte flags in CMD_PRIVATE_RESP and CMD_STATUS_UPDATE.
-static constexpr uint8_t STATUS_STOPPED = 0x01;        ///< Byte 0 bit 0: device is not moving
-static constexpr uint8_t STATUS_EXPECTED = 0x80;       ///< Byte 1 bit 7: device will send auto status update
-static constexpr uint8_t STATUS_TILT_SELECTOR = 0x20;  ///< Extended status payload marker for tilt-capable devices
+static constexpr uint8_t STATUS_STOPPED = 0x01;   ///< Byte 0 bit 0: device is not moving
+static constexpr uint8_t STATUS_EXPECTED = 0x80;  ///< Byte 1 bit 7: device will send auto status update
+static constexpr uint8_t STATUS_TILT_SELECTOR =
+    0x20;  ///< Extended status payload marker for tilt-capable devices: FPI1 with bit 5 set = functional parameter
+           ///< FP3 (FPI1 bit 7 = FP1 ... bit 0 = FP8). The actuator echoes FPI1/FPI2 in its ack (VELUX KLF 200 API
+           ///< v3.18 §10.1.1.5). The 0x80 form of the extended 0x03 request selects FP1.
 
 /// @brief CMD_PRIVATE (0x03) function ID for a position-status request — data[0] of the payload.
 ///
@@ -446,7 +448,7 @@ static constexpr uint8_t MANUFACTURER_ATLANTIC_GROUP = 12;  ///< Atlantic Group 
 /// the pairing flow logs a warning suggesting the user file a GitHub issue.
 /// @warning **Display-only — do not use this for YAML.** Four of the twelve names do not
 /// round-trip through `.strip().lower()` to their `manufacturer:` YAML token
-/// (`MANUFACTURER_OPTIONS`, `__init__.py`): `"Hörmann"` has an umlaut the YAML token
+/// (`MANUFACTURER_OPTIONS`, `hub_validators.py`): `"Hörmann"` has an umlaut the YAML token
 /// (`hormann`) drops, and `"ASSA ABLOY"`/`"WINDOW MASTER"`/`"Atlantic Group"` use a space
 /// where the YAML token uses `_`. There is currently no YAML-token accessor for
 /// manufacturers — see `yaml_device_type_name()` (proto_device_model.h) for the pattern this
@@ -591,26 +593,25 @@ static constexpr uint8_t DISCOVERY_RESP_FULL_SIZE = 9;            ///< Full disc
 static constexpr uint8_t DISCOVERY_FLAGS_ATT_MASK = 0xC0;       ///< Bits [7:6]: actuator turnaround time class.
 static constexpr uint8_t DISCOVERY_FLAGS_ATT_SHIFT = 6;         ///< Shift for ATT field extraction.
 static constexpr uint8_t DISCOVERY_FLAGS_SYNC_CTRL_GRP = 0x20;  ///< Bit 5: supports sync control group.
-// TODO(hardware-verify): a set bit here would literally read as "no RF support in node," which is
-// an odd claim for a radio responder to make of itself (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS in
-// proto_commands.cpp, which sets this bit because a real captured device did too). Left as an open
-// question rather than resolved here — not clear whether the polarity note is backwards, the field
-// means something narrower than "RF support" suggests, or the captured device is simply also
-// getting this bit "wrong" in some sense that doesn't matter to real hubs in practice.
-static constexpr uint8_t DISCOVERY_FLAGS_RF_SUPPORT = 0x08;       ///< Bit 3: RF support in node (0=yes, 1=no).
+static constexpr uint8_t DISCOVERY_FLAGS_RF_SUPPORT =
+    0x08;  ///< Bit 3: 1 = the node has its own RF, 0 = it sits on a wired backbone only (VELUX KLF 200 API
+           ///< v3.18 §7.4.1.2.4-7, Table 52).
+static constexpr uint8_t DISCOVERY_FLAGS_IO_MEMBERSHIP =
+    0x04;  ///< Bit 2: io-homecontrol membership; always 1 (same table).
 static constexpr uint8_t DISCOVERY_FLAGS_POWER_SAVE_MASK = 0x03;  ///< Bits [1:0]: power save mode.
 /// @}
 
 /// @brief Actuator Turnaround Time (ATT) class values.
 ///
-/// Indicates the maximum time window in which the actuator normally responds after
-/// receiving a command. Extracted from the Multi Information Byte via
+/// The time within which each node must respond after receiving a command (VELUX KLF 200 API
+/// v3.18 §7.4.1.2.4-7, Table 51: "Actuator Turnaround time"). The unit is milliseconds.
+/// Extracted from the Multi Information Byte via
 /// `(flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT`.
 /// @{
-static constexpr uint8_t ATT_CLASS_5S = 0;   ///< Response within 5 seconds.
-static constexpr uint8_t ATT_CLASS_10S = 1;  ///< Response within 10 seconds.
-static constexpr uint8_t ATT_CLASS_20S = 2;  ///< Response within 20 seconds.
-static constexpr uint8_t ATT_CLASS_40S = 3;  ///< Response within 40 seconds.
+static constexpr uint8_t ATT_CLASS_5MS = 0;   ///< Response within 5 ms.
+static constexpr uint8_t ATT_CLASS_10MS = 1;  ///< Response within 10 ms.
+static constexpr uint8_t ATT_CLASS_20MS = 2;  ///< Response within 20 ms.
+static constexpr uint8_t ATT_CLASS_40MS = 3;  ///< Response within 40 ms.
 /// @}
 
 /// @brief Power save mode values from the Multi Information Byte.
@@ -636,7 +637,7 @@ inline uint8_t discovery_power_save_mode(uint8_t flags) { return flags & DISCOVE
 
 /// @brief Get a human-readable turnaround time string for an ATT class value.
 /// @param att_class ATT class (0–3) extracted from the Multi Information Byte.
-/// @return Null-terminated string such as "5s", "10s", "20s", or "40s".
+/// @return Null-terminated string such as "5ms", "10ms", "20ms", or "40ms".
 const char *att_class_name(uint8_t att_class);
 
 /// @brief Get a human-readable power save mode name.

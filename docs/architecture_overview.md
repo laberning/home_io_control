@@ -27,9 +27,10 @@ just *what* it is.
 These invariants keep the layers independent; changes should preserve them:
 
 1. The protocol layer is radio-agnostic: no chip names, chip registers, or driver behavior in `proto_*` files. `proto_timing.h` holds only chip-neutral protocol timing.
-2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `hop_dwell_ms()`, `has_fast_tx_rx_turnaround()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only.
+2. The controller layer is chip-agnostic: hub and engine code interacts with the radio exclusively through `RadioDriver` virtuals (`response_preamble()`, `hop_dwell_ms()`, `has_fast_tx_rx_turnaround()`, `run_idle_scan()`, `tx_air_time_us()`, `apply_tuning()`, …). Chip-specific behavior belongs in a driver override, not in an `if (chip == …)` branch; `chip_name()` is for logging only. What a transmission needs is stated in chip-neutral terms on `RadioTxConfig`: its channel, its preamble length, its clear-channel threshold ([ADR 0045](adr/0045-listen-before-talk-is-part-of-sending.md)) and its wake-up level (`TxWake`, derived once in `ExchangeEngine::transmit_frame()` from the frame's START bit and preamble), so a driver never has to infer intent from a preamble length. The driver in turn states how long a transmission takes (`tx_air_time_us()`), and the exchange engine starts a try only if that transmission ends inside the exchange budget ([ADR 0044](adr/0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)).
 3. Chip-specific constants live either in the driver header (`radio_sx1276.h` / `radio_sx1262.h` / `radio_lr1121.h`) or, when they are user-tunable defaults, next to their `TuningConfig` fields in `tuning_config.h`.
 4. The composition root is `hub_core.cpp` `setup()`: it is the only place that names concrete driver classes, selecting one by the required `radio_type` YAML field.
+5. Include direction is enforced. Collaborators and entities never include the hub's private `hub_internal.h`; only the hub itself and a listed set of files reach `hub_core.h`; protocol and radio files include only their own layer (and, for radio, the protocol layer). `make include-graph` checks this.
 
 ## Request Flow
 
@@ -75,6 +76,7 @@ How to call each action from Home Assistant, with its fields and result event, i
 
 - Hub entry point: `IOHomeControlComponent` in [hub_core.h](../components/home_io_control/hub_core.h)
 - Authenticated exchange engine: [exchange_engine.h](../components/home_io_control/exchange_engine.h)
+- Transmit observer (every sent frame and LBT deferral, reported from the engine's single TX path): [transmit_observer.h](../components/home_io_control/transmit_observer.h)
 - Pairing engine: [pairing_engine.h](../components/home_io_control/pairing_engine.h)
 - Key-extraction responder (device-role pairing mirror): [pairing_responder.h](../components/home_io_control/pairing_responder.h)
 - Exchange/auth state types: [hub_exchange.h](../components/home_io_control/hub_exchange.h)
@@ -83,11 +85,13 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Pairing traffic advisor: [pairing_advisor.h](../components/home_io_control/pairing_advisor.h)
 - Key-material redaction helpers: [redaction.h](../components/home_io_control/redaction.h)
 - Pure frame-classification helpers: [hub_decisions.h](../components/home_io_control/hub_decisions.h)
+- Hub log/format helpers: [log_helpers.h](../components/home_io_control/log_helpers.h)
+- Hub/entity shared conversions: [entity_helpers.h](../components/home_io_control/entity_helpers.h)
 - Device registry: [device_registry.h](../components/home_io_control/device_registry.h)
 - Operation queue: [operation_queue.h](../components/home_io_control/operation_queue.h)
 - Status poll policy: [status_poll_policy.h](../components/home_io_control/status_poll_policy.h)
 - Management actions: [management_actions.h](../components/home_io_control/management_actions.h)
-- Radio abstraction: [radio_interface.h](../components/home_io_control/radio_interface.h)
+- Radio abstraction (`RadioDriver`, `RadioTxConfig` for each transmission's channel, preamble, wake-up level and clear-channel check, and `TxResult` for what `send_packet()` did): [radio_interface.h](../components/home_io_control/radio_interface.h)
 - SX1276 driver: [radio_sx1276.h](../components/home_io_control/radio_sx1276.h)
 - SX1262 driver: [radio_sx1262.h](../components/home_io_control/radio_sx1262.h)
 - LR1121 driver: [radio_lr1121.h](../components/home_io_control/radio_lr1121.h)
@@ -97,7 +101,12 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Runtime tuning config: [tuning_config.h](../components/home_io_control/tuning_config.h)
 - Tuning parameter registry: [tuning_registry.h](../components/home_io_control/tuning_registry.h)
 - Shared entity mixins: [platform_entity_base.h](../components/home_io_control/platform_entity_base.h)
-- ESPHome hub schema: [__init__.py](../components/home_io_control/__init__.py)
+- ESPHome hub schema and `to_code()`: [__init__.py](../components/home_io_control/__init__.py)
+- Hub YAML keys and generated C++ handles: [hub_names.py](../components/home_io_control/hub_names.py)
+- Hub option tables and field validators: [hub_validators.py](../components/home_io_control/hub_validators.py)
+- 1W controller identities: [oneway_controllers.py](../components/home_io_control/oneway_controllers.py)
+- Hub-flag entities (arming switches, pairing and scan buttons): [hub_entities.py](../components/home_io_control/hub_entities.py)
+- LR1121 firmware-update codegen: [lr1121_update_codegen.py](../components/home_io_control/lr1121_update_codegen.py)
 - Shared platform codegen: [platform_common.py](../components/home_io_control/platform_common.py)
 
 ## Test Corpus
@@ -116,7 +125,7 @@ CRC/CTRL0 self-consistency, cryptographic promises, the naming convention (`file
 capture sits in its phase directory), and that every `tests/corpus/captures/<phase>/<id>.yaml`
 path cited across the tree resolves. Five host test suites replay the corpus
 through the real protocol/crypto/codec/decision/exchange code
-(`tests/corpus_frame_test.cpp`, `corpus_crypto_test.cpp`, `corpus_decode_test.cpp`,
+(`tests/corpus/corpus_frame_test.cpp`, `corpus_crypto_test.cpp`, `corpus_decode_test.cpp`,
 `corpus_classification_test.cpp`, `corpus_exchange_replay_test.cpp`) — an issue-derived capture
 becomes a permanent parser/decoder regression fixture the day it's ingested.
 

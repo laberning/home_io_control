@@ -1,0 +1,12 @@
+# expect-error: which is known to require bootloader 0x2100
+# covers: lr1121_update_codegen._validate_lr1121_bootloader_block
+# Rewriting the bootloader to 0x2101 while targeting 0x0103 would leave that image unflashable.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/t3s3.yaml
+
+home_io_control:
+  lr1121_firmware_update:
+    source: github://Lora-net/radio_firmware_images/lr1121/transceiver/lr1121_transceiver_0103.bin
+    bootloader:
+      source: github://Lora-net/radio_firmware_images/lr1121/loader/lr1121_loader_2101.bin

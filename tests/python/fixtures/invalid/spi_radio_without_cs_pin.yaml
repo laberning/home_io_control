@@ -1,0 +1,22 @@
+# expect-error: radio_type: sx1276 is an SPI radio and needs cs_pin:
+# covers: hub_validators.validate_radio_transport
+# The board's radio keys without its chip-select pin: an SPI radio needs one.
+packages:
+  common: !include ../_common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+spi:
+  clk_pin:
+    number: 5
+    ignore_strapping_warning: true
+  mosi_pin: 27
+  miso_pin: 19
+
+home_io_control:
+  rst_pin: 14
+  dio0_pin: 26
+  radio_type: sx1276

@@ -170,9 +170,9 @@ it would be empty.
 ```
 Roll-call: 2 devices detected (1 known, 1 unknown)
 Known:
-  30E1F2: horizontal_awning subtype=0 rssi=-52dBm manufacturer=Somfy turnaround=40s power_save=always_alive [known]
+  30E1F2: horizontal_awning subtype=0 rssi=-52dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [known]
 Unknown:
-  415CE4: light subtype=0 rssi=-61dBm manufacturer=Somfy turnaround=40s power_save=always_alive [unknown]
+  415CE4: light subtype=0 rssi=-61dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [unknown]
     Paste this into your YAML to register it:
   light:
   - platform: home_io_control

@@ -1,0 +1,12 @@
+# expect-error: fem: gc1109 requires radio_type: sx1262
+# covers: hub_validators.validate_fem
+# The FEM switching lives in the SX1262 driver only.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+home_io_control:
+  fem: gc1109
+  vfem_pin: 21
+  fem_en_pin: 22
+  fem_pa_pin: 23

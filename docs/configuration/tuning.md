@@ -147,10 +147,10 @@ your device may differ.
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
 | `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
-| `low_power_wake_preamble` | both | `1024` | 256–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
+| `low_power_wake_preamble` | both | `1024` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
-| `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk carrier-sense attempts before TX. |
-| `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI below which the channel counts as free. |
+| `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before a frame is sent without one. |
+| `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` / `0x0001BB` / `0x0001BF` | Address the discovery frames are sent to. The last two are lighting-class addresses — see below. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
@@ -241,7 +241,9 @@ are worse for you than missed commands.
 
 Wall-clock ceiling on one whole exchange, including retries. `exchange_start_response_wait_ms` and
 `exchange_response_wait_ms` set how long each try waits; this caps how long *all* of them together
-may run, so a try only starts if there is still budget left for it.
+may run, so a try only starts if its transmission still ends inside the budget: the time already
+spent, the gap before the try and the try's own transmission (about 220 ms with a 1024-byte wake-up
+preamble) must stay below it ([ADR 0044](../adr/0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)).
 
 *Observations:* this exists to keep a failing command from blocking the ESPHome loop past its own
 "took a long time for an operation" warning threshold (2550 ms — see
@@ -386,8 +388,8 @@ can still say "moving" while the motor winds down), or when an exchange sent whi
 the device was believed moving (other than a `stop`) draws no frame at all; the next exchange then
 leads with the wake-up preamble. A status poll allowed only one try (most scheduled polls) sends the
 first try's preamble; if it misses, the next poll a few seconds later has three tries. The poll right
-after an accepted `stop` always gets all three. Always-alive devices are unaffected, and the frame
-itself never changes between tries.
+after an accepted `stop` always gets all three. Devices not declared `low_power:` are unaffected, and the frame
+itself never changes between tries. A mains-powered VELUX receiver that is always listening rejects the wake-up preamble, so declare it `low_power: false`.
 
 To see which preamble reaches a device how soon after it last answered, read the per-try log lines.
 Each carries `preamble=` (bytes) and `age_ms=` (time since the device was last heard; `n/a` when it
@@ -402,8 +404,11 @@ wake-up preamble on every try to a `low_power:` device.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 
-Listen-Before-Talk: before transmitting, the hub checks the channel is quieter than the
-threshold, retrying up to *max_retries* times, then transmits anyway. Loosen them when
+Listen-Before-Talk: right before transmitting, the radio measures the channel the frame is about to
+go out on and sends only if it is quieter than the threshold. The hub retries up to *max_retries*
+times, 5 ms apart, then transmits anyway. When the idle receiver is on another channel, the radio
+first retunes to the transmit channel and waits about a millisecond for the reading to settle
+([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). Loosen them when
 transmissions are delayed on a channel that only *looks* busy. The threshold applies to the signal
 level at the antenna: on a board with a front-end module the amplifier's gain is removed from the
 reading first (see [Hardware](../hardware.md)), so the same value means the same on every board.

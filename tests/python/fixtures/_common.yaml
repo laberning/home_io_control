@@ -1,0 +1,20 @@
+# Shared part of every fixture: the minimum ESPHome needs around a home_io_control: block (api:
+# requires a network component). Each fixture adds a board package from config/boards/ and the
+# few keys it is about. Paths are relative to the fixture's own directory (valid/ or invalid/).
+esphome:
+  name: hioc-fixture
+
+wifi:
+  ssid: "fixture"
+  password: "fixture-password"
+
+api:
+
+external_components:
+  - source:
+      type: local
+      path: ../../../../components
+
+home_io_control:
+  node_id: C0FFEE
+  system_key: 0123456789ABCDEF0123456789ABCDEF

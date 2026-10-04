@@ -4,7 +4,7 @@
 
 #include "platform_lock.h"
 
-#include "hub_internal.h"
+#include "entity_helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome {

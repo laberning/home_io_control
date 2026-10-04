@@ -44,6 +44,9 @@ frames:
     crc: absent
     note: "cmd=STATUS_RESP(0x04), answered 495 ms after try 2's frame went out; position and target both 0x45DC, movement state stopped; trailing E3 F1 D3 01 names this hub as the last commanding node"
 expect:
+  exchange:
+    kind: status_poll
+    outcome: success
   frames:
     - {cmd: 0x03, start: true, end: false, protocol: 2w}
     - {cmd: 0x03, start: true, end: false, protocol: 2w}

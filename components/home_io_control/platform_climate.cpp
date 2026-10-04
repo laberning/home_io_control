@@ -4,7 +4,6 @@
 
 #include "platform_climate.h"
 
-#include "hub_internal.h"
 #include "esphome/core/log.h"
 
 #include <string>

@@ -314,5 +314,50 @@ enum class OneWayAddControllerDecodeError : uint8_t {
 /// @warning `out` carries real key material once populated. See OneWayAdoptedKey's warning.
 OneWayAddControllerDecodeError decode_1w_add_controller(const IoFrame &frame, OneWayAdoptedKey &out);
 
+// ============================================================================
+// Last-command record (CMD_PRIVATE_RESP / CMD_STATUS_UPDATE)
+// ============================================================================
+
+/// @brief Offset of the last-command record within each status-bearing payload.
+///
+/// Both status-bearing frame types carry the same 4-byte record — three bytes of node ID for the
+/// controller that last commanded the device, then that command's Command Originator byte — and
+/// 0x71's whole payload is shifted +3 relative to 0x04's, exactly as its target/current position
+/// fields are. Confirmed on one device in one session across both frame types:
+/// tests/corpus/captures/statuspoll/somfy_rs100_statuspoll_kig300_sx1276.yaml, device E461E9,
+/// which names controller BE FE DB at 0x04 data[8..10] and 0x71 data[11..13] in the same capture —
+/// including in a 0x71 addressed to a *different* controller, which is what rules out "this is
+/// just the destination echoed back".
+inline constexpr uint8_t PRIVATE_RESPONSE_LAST_COMMAND_OFFSET = 8;
+inline constexpr uint8_t STATUS_UPDATE_LAST_COMMAND_OFFSET = 11;
+
+/// @brief Offset of the Command Originator byte in a CMD_STATUS_UPDATE (0x71) payload.
+///
+/// Deliberately not offset 1: `data[1]` on a 0x71 is the status byte (0x60/0x61, bit 0 = current
+/// position unknown), which matches no ORIGINATOR_* value, so reading it as an originator rendered
+/// "unknown" on every frame this project has ever captured. Every captured 0x71 carries 0x01
+/// (ORIGINATOR_USER_REMOTE) here.
+inline constexpr uint8_t STATUS_UPDATE_ORIGINATOR_OFFSET = 14;
+static_assert(STATUS_UPDATE_LAST_COMMAND_OFFSET + NODE_ID_SIZE == STATUS_UPDATE_ORIGINATOR_OFFSET,
+              "the Command Originator byte is the fourth byte of the last-command record; if one "
+              "offset moves the other must move with it");
+
+/// @brief One decoded last-command record.
+struct LastCommandRecord {
+  uint8_t commander[NODE_ID_SIZE]{};  ///< Controller that last commanded the device.
+  uint8_t originator{0};              ///< That command's Command Originator (ORIGINATOR_*).
+  bool valid{false};                  ///< False when the payload was too short, or the record was unpopulated.
+};
+
+/// @brief Decode the last-command record at `base` from a status-bearing payload.
+///
+/// Pure, so it is testable against corpus bytes directly. An all-zero commander is reported as invalid: 00 00 00 is not
+/// a node ID any observed controller uses, so a device that pads this field rather than implementing it publishes
+/// nothing instead of a fabricated address.
+/// @param frame A CMD_PRIVATE_RESP or CMD_STATUS_UPDATE frame.
+/// @param base PRIVATE_RESPONSE_LAST_COMMAND_OFFSET or STATUS_UPDATE_LAST_COMMAND_OFFSET.
+/// @return The decoded record, or `valid == false`.
+LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base);
+
 }  // namespace home_io_control
 }  // namespace esphome

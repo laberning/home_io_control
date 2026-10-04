@@ -8,7 +8,7 @@
 # still unresolved (not a documented value, not something this file needs) and its board package
 # does not exist in this tree yet.
 substitutions:
-  device_name: test_sx1262_fem_xy16p35
+  device_name: test-sx1262-fem-xy16p35
 
 esphome:
   name: ${device_name}
@@ -48,6 +48,9 @@ home_io_control:
   radio_type: sx1262
   tcxo_voltage: 1_8V
   fem: xy16p35
+  # The quiet ceiling for this FEM (FEM_TX_POWER_MAX_QUIET in hub_validators.py); the default 17
+  # would put the estimated antenna-port power over the 868 MHz SRD limit and warn.
+  tx_power: 0
   vfem_pin: 40
   fem_pa_pin: 21
   node_id: C0FFEE

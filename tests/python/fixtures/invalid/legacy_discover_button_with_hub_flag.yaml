@@ -1,0 +1,12 @@
+# expect-error: Delete this 'button:' entry
+# covers: button._reject_duplicate_with_hub_flag
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  discover_and_pair_button: true
+
+button:
+  - platform: home_io_control
+    name: "Discover & Pair"

@@ -1,0 +1,12 @@
+# expect-error: uses node_id C0FFEE, which collides with
+# covers: oneway_controllers._reject_node_id_collision
+# A 1W identity must never transmit from the hub's own 2W address.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      node_id: C0FFEE
+      io_device_type: awning

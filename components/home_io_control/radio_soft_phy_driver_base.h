@@ -80,25 +80,17 @@ static constexpr uint32_t SOFT_PHY_EARLY_MIN_WINDOW_MS = 12;
 /// `loop()`.
 static constexpr uint32_t SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS = 20;
 
+/// Wait after retuning to the TX channel before the clear-channel RSSI reading. A retune on these
+/// chips is standby → SetRfFrequency → SetRx (the TCXO stays on in XOSC standby), after which the
+/// PLL has to relock and the instantaneous RSSI has to average over the new channel; 1 ms covers
+/// that with margin and costs nothing next to a preamble.
+/// \todo Confirm on the bench (Heltec V3, T3-S3 LR1121): time the retune and compare the reading
+/// against one taken after a long dwell on the same channel.
+static constexpr uint32_t SOFT_PHY_CCA_SETTLE_US = 1000;
+
 static_assert(SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS >= SOFT_PHY_EARLY_MIN_WINDOW_MS,
               "a budget below the minimum window makes try_early_completion_() decline every "
               "idle-path call, silently turning issue #81's fix into a no-op");
-
-/// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
-static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
-/// Microseconds in a second, for the air-time arithmetic below.
-static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
-
-/// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.
-///
-/// One byte is 8 / 38400 s = 208.333 µs. Computed as an integer division rounded *up*, so the
-/// result never falls short of a whole byte's air time and a caller that waits on it never reads
-/// the chip's buffer early. The numerator peaks around 360 million for the longest frame this is
-/// ever asked about, well inside uint32_t.
-constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
-  const uint32_t bit_periods = raw_bytes * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
-  return (bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS;
-}
 
 // RX_HOP_HOLDOFF_US (radio_interface.h) exists to outlast the fixed-length RX_DONE on the
 // software-PHY chips. Tied here, in the one header that can see both sides of the arithmetic,
@@ -209,7 +201,7 @@ class SoftPhyDriverBase : public RadioDriver {
         busy_timeout_ms_(busy_timeout_ms) {}
 
   /// @copydoc RadioDriver::send_packet
-  bool send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
   /// @copydoc RadioDriver::wait_for_packet
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
   /// @copydoc RadioDriver::check_for_packet
@@ -242,6 +234,11 @@ class SoftPhyDriverBase : public RadioDriver {
   /// and both differed from the register PHY, so a per-driver value would invent a difference the
   /// evidence does not show. See ADR 0042.
   [[nodiscard]] uint16_t default_start_preamble() const override { return SOFT_PHY_START_PREAMBLE; }
+
+  /// @brief Transmit time: the preamble, sync word and UART-coded frame at the protocol line rate.
+  [[nodiscard]] uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
+    return io868_tx_air_time_us(cfg.preamble_len, len);
+  }
 
  protected:
   // --- Tuning helpers shared by both drivers (values/defaults stay chip-specific) ---

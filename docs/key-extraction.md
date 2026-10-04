@@ -2,7 +2,7 @@
 <!-- doxygen-label: key_extraction -->
 
 **Key extraction is the route to take when you already own a working IO-Homecontrol hub** — a
-Somfy TaHoma, Connexoon or Connectivity Kit, a VELUX KLF200, KLR200 or KIG300, and similar. The
+Somfy TaHoma, Connexoon or Connectivity Kit, a VELUX KLF200, KLR200, KLR300 or KIG300, and similar. The
 component emulates an unpaired device so that hub pairs *to it* and hands over its
 `node_id`/`system_key`. Your devices never leave their paired state, and once you hold the key,
 [Scan Paired Devices](pairing.md#scan-paired-devices) lists every one of them at once.
@@ -51,7 +51,7 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
    different control-point choice before concluding the extraction failed (issue #27).
 4. Watch the ESPHome log. Within a few seconds of the hub's discovery you get a clearly delimited
    block with your installation's real `node_id` and `system_key`.
-5. Leave the switch alone until it turns itself off. Some hubs (the VELUX KLR200, confirmed) follow
+5. Leave the switch alone until it turns itself off. Some hubs (the VELUX KLR200 and KLR300, confirmed) follow
    the key exchange with a node verification round, which checks that the new device holds the key.
    The switch therefore keeps listening for up to one more minute after the key is printed. A hub that sends nothing further
    leaves that minute unused.

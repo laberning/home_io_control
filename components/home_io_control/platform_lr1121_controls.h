@@ -10,7 +10,7 @@
 /// HubBoundEntity in platform_entity_base.h). They are created dynamically from the presence of
 /// `home_io_control.lr1121_firmware_update:` (the button, behind IOHOME_LR1121_FIRMWARE_UPDATE)
 /// and its `bootloader:` sub-block (the switch, behind IOHOME_LR1121_BOOTLOADER_UPDATE); see
-/// `__init__.py`'s `_create_lr1121_firmware_update()` / `_create_lr1121_bootloader_update()`.
+/// `lr1121_update_codegen.py`'s `create_lr1121_firmware_update()` / `_create_lr1121_bootloader_update()`.
 /// The bootloader define is only ever added from inside the firmware-update path, so it implies
 /// IOHOME_LR1121_FIRMWARE_UPDATE and the two guards nest.
 

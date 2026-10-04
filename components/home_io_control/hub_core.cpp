@@ -365,12 +365,13 @@ void IOHomeControlComponent::loop() {
 
   // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
   // loop() every ~16-30ms. This is acceptable for a controller: a directed start frame to a
-  // low-power target still goes out with LONG_PREAMBLE (1024 bytes ≈ 330ms airtime), long enough
+  // low-power target still goes out with LONG_PREAMBLE (1024 bytes ≈ 218 ms airtime), long enough
   // to be detected regardless of channel alignment; a start frame to an always-alive target uses
   // the shorter normal_start_preamble (default 32 bytes), which such a receiver hears fine. This
   // coarse idle hop causes no exchange to miss its channel either way, because every TX retunes
   // explicitly to a named channel before sending. Precise hopping would only matter for a passive
-  // receiver scanning for unsolicited frames.
+  // receiver scanning for unsolicited frames. A radio that scans the hop channels by itself
+  // (RadioDriver::run_idle_scan()) takes the idle pass over and the host does not hop.
   // Diagnostics build flag: park the receiver on one channel instead of hopping. A hopping monitor
   // is on any given channel roughly a third of the time, so "the capture never shows frame X" is
   // weak evidence — locking to the channel under study makes an absence mean something. Define it
@@ -395,7 +396,7 @@ void IOHomeControlComponent::loop() {
       // hop_frequency(), which is what normally updates that timestamp). Harmless: once the hold
       // ends, maybe_hop() will very likely hop on its next call instead of waiting out a full
       // HOP_TIME_US — resuming idle scanning a little early is not a bug.
-    } else {
+    } else if (!this->radio_->run_idle_scan()) {
       this->exchange_engine_.maybe_hop();
     }
   }

@@ -9,12 +9,15 @@
 /// checks (scripts/check-tuning-sync.py, scripts/check-yaml-emitters.py, both `make lint`); see
 /// any sync test's file header for the fuller note on why both forms are kept.
 ///
-/// Four public functions:
+/// Five public functions:
 ///  - parse_python_uint8_dict(path, dict_name): a top-level `NAME = { "key": 0xNN, ... }` dict
 ///    (string-keyed, int-valued) -- used for MANUFACTURER_OPTIONS, DEVICE_TYPE_OPTIONS,
 ///    TCXO_VOLTAGE_OPTIONS, FEM_TX_POWER_MAX_QUIET and PA_PIN_OPTIONS (device_type_sync_test.cpp,
 ///    manufacturer_sync_test.cpp, tcxo_voltage_sync_test.cpp, fem_tx_power_sync_test.cpp,
 ///    pa_pin_sync_test.cpp).
+///  - parse_python_range_dict(path, dict_name): `NAME = { CONF_KEY: (min, max, step, "unit"), ... }`
+///    (identifier-keyed, tuple-valued) -- used for tuning.py's _NUMBER_PARAMS
+///    (preamble_wake_sync_test.cpp).
 ///  - parse_python_uint8_keyed_string_dict(path, dict_name): the mirror shape,
 ///    `NAME = { 0xNN: "value", ... }` (int-keyed, string-valued) -- used for CMD_NAMES
 ///    (opcode_name_sync_test.cpp).
@@ -194,6 +197,58 @@ inline std::map<uint8_t, std::string> parse_python_uint8_keyed_string_dict(const
   std::map<uint8_t, std::string> result;
   for (const auto &[key, value] : detail::parse_python_dict_entries(path, dict_name))
     result[detail::parse_uint8_or_fail(key, path, std::string(dict_name) + " key '" + key + "'")] = value;
+  return result;
+}
+
+/// One `(min, max, step, "unit")` row of a range dict.
+struct PythonRange {
+  long min{0};
+  long max{0};
+  long step{0};
+  std::string unit;
+};
+
+/// Parse a top-level `NAME = { CONF_KEY: (min, max, step, "unit"), ... }` dict out of a Python
+/// source file (identifier-keyed, tuple-valued) -- e.g. tuning.py's _NUMBER_PARAMS. Every row must
+/// be a four-element tuple on one line; a row that is not records a failure naming it.
+/// @param path Path to the Python source file, relative to the project root.
+/// @param dict_name The dict's variable name, e.g. "_NUMBER_PARAMS".
+/// @return key identifier -> range; empty (with a test failure already recorded) if `path` could
+///         not be opened.
+inline std::map<std::string, PythonRange> parse_python_range_dict(const char *path, const char *dict_name) {
+  std::map<std::string, PythonRange> result;
+  for (const auto &[key, value] : detail::parse_python_dict_entries(path, dict_name)) {
+    const std::string context = std::string(dict_name) + "[" + key + "]";
+    if (value.size() < 2 || value.front() != '(' || value.back() != ')') {
+      ADD_FAILURE() << "Not a one-line tuple: '" << value << "' for " << context << " in " << path;
+      continue;
+    }
+    std::vector<std::string> fields;
+    std::string body = value.substr(1, value.size() - 2);
+    for (std::string::size_type start = 0;;) {
+      auto comma = body.find(',', start);
+      fields.push_back(detail::trim_ws(body.substr(start, comma - start)));
+      if (comma == std::string::npos)
+        break;
+      start = comma + 1;
+    }
+    if (fields.size() != 4) {
+      ADD_FAILURE() << "Expected (min, max, step, unit), got '" << value << "' for " << context << " in " << path;
+      continue;
+    }
+    PythonRange range;
+    try {
+      range.min = std::stol(fields[0], nullptr, 0);
+      range.max = std::stol(fields[1], nullptr, 0);
+      range.step = std::stol(fields[2], nullptr, 0);
+    } catch (const std::exception &e) {
+      ADD_FAILURE() << "Cannot parse '" << value << "' as integers for " << context << " in " << path << ": "
+                    << e.what();
+      continue;
+    }
+    range.unit = detail::trim_dict_token(fields[3]);
+    result[key] = range;
+  }
   return result;
 }
 

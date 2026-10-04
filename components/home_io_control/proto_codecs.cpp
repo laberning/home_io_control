@@ -450,5 +450,17 @@ OneWayAddControllerDecodeError decode_1w_add_controller(const IoFrame &frame, On
   return OneWayAddControllerDecodeError::NONE;
 }
 
+LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base) {
+  LastCommandRecord record;
+  if (frame.data_len < base + NODE_ID_SIZE + 1)
+    return record;
+  memcpy(record.commander, &frame.data[base], NODE_ID_SIZE);
+  if (record.commander[0] == 0 && record.commander[1] == 0 && record.commander[2] == 0)
+    return record;
+  record.originator = frame.data[base + NODE_ID_SIZE];
+  record.valid = true;
+  return record;
+}
+
 }  // namespace home_io_control
 }  // namespace esphome

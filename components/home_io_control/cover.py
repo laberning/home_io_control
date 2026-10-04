@@ -46,7 +46,7 @@ IOHomeCoverSilentSwitch = home_io_control_ns.class_(
     "IOHomeCoverSilentSwitch", switch.Switch, cg.Component
 )
 # One C++ class backs both cover command companions; codegen sets which command each press
-# sends via set_command() (mirrors OneWayButtonAction in __init__.py). A device-bound `button:`
+# sends via set_command() (mirrors OneWayButtonAction in hub_names.py). A device-bound `button:`
 # entry is deliberately never the source — see the IOHomeOneWayCommandButton comment there.
 IOHomeCoverCommandButton = home_io_control_ns.class_(
     "IOHomeCoverCommandButton", button.Button, cg.Component

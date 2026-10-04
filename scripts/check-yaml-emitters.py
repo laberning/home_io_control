@@ -3,14 +3,14 @@
 the two named-option tables' documented copies.
 
 Three C++ functions build a YAML snippet as a plain string, for a user to copy into their own
-config: build_oneway_adoption_report() and build_key_extraction_report() (both
-components/home_io_control/hub_internal.h) and build_device_yaml_snippet()
-(components/home_io_control/proto_device_model.cpp). Each one's emitted key names must track a
+config: build_oneway_adoption_report() (components/home_io_control/oneway_key_adoption.cpp),
+build_key_extraction_report() (components/home_io_control/key_extraction_responder.cpp) and
+build_device_yaml_snippet() (components/home_io_control/proto_device_model.cpp). Each one's emitted key names must track a
 Python schema (ONEWAY_CONTROLLER_SCHEMA, the hub's own CONFIG_SCHEMA, and the four device-bound
 platform schemas respectively) by hand -- nothing else keeps the two in step, so a schema key
 rename or a newly-required key drifts silently until a user's paste fails to validate.
 
-Separately, DEVICE_TYPE_OPTIONS and MANUFACTURER_OPTIONS (__init__.py) are each hand-transcribed a
+Separately, DEVICE_TYPE_OPTIONS and MANUFACTURER_OPTIONS (hub_validators.py) are each hand-transcribed a
 second time as a markdown table in the published docs (see ``DOCS_MD`` below), for users picking a
 name -- the two headings in ``DOCS_TABLES`` are what locate them on that page. Nothing else
 keeps *that* copy honest either, and it is arguably the worst of the three places for one to drift:
@@ -34,7 +34,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPONENT_DIR = REPO_ROOT / "components" / "home_io_control"
 
-INIT_PY = COMPONENT_DIR / "__init__.py"
+INIT_PY = COMPONENT_DIR / "__init__.py"  # the hub CONFIG_SCHEMA
+HUB_NAMES_PY = COMPONENT_DIR / "hub_names.py"  # every hub-block CONF_* string constant
+HUB_VALIDATORS_PY = COMPONENT_DIR / "hub_validators.py"  # DEVICE_TYPE_OPTIONS, MANUFACTURER_OPTIONS
+ONEWAY_CONTROLLERS_PY = COMPONENT_DIR / "oneway_controllers.py"  # ONEWAY_CONTROLLER_SCHEMA
 PLATFORM_COMMON_PY = COMPONENT_DIR / "platform_common.py"
 COVER_PY = COMPONENT_DIR / "cover.py"
 LIGHT_PY = COMPONENT_DIR / "light.py"
@@ -42,7 +45,8 @@ SWITCH_PY = COMPONENT_DIR / "switch.py"
 LOCK_PY = COMPONENT_DIR / "lock.py"
 PLATFORM_PY_FILES = [PLATFORM_COMMON_PY, COVER_PY, LIGHT_PY, SWITCH_PY, LOCK_PY]
 
-HUB_INTERNAL_H = COMPONENT_DIR / "hub_internal.h"
+ONEWAY_KEY_ADOPTION_CPP = COMPONENT_DIR / "oneway_key_adoption.cpp"
+KEY_EXTRACTION_RESPONDER_CPP = COMPONENT_DIR / "key_extraction_responder.cpp"
 PROTO_DEVICE_MODEL_CPP = COMPONENT_DIR / "proto_device_model.cpp"
 
 DOCS_MD = REPO_ROOT / "docs" / "supported-devices.md"
@@ -115,10 +119,10 @@ def _schema_keys_from_dicts(dict_nodes: "list[ast.Dict]", constants: dict) -> di
 def _dicts_in_named_assignment(module: ast.Module, name: str, path: Path) -> "list[ast.Dict]":
     """Every ast.Dict literal within the RHS subtree of a top-level ``name = <expr>``.
 
-    Used for __init__.py, which defines several unrelated schemas in one file
-    (ONEWAY_CONTROLLER_SCHEMA, the hub's own CONFIG_SCHEMA, the LR1121 firmware-update schema) --
-    a whole-module walk would merge all of them, which is too loose for telling one emitter's
-    keys apart from another's.
+    Used for the hub codegen modules, whose schemas nest into each other by name
+    (CONFIG_SCHEMA refers to ONEWAY_CONTROLLER_SCHEMA and the LR1121 firmware-update schema) --
+    a whole-module walk could merge unrelated schemas, which is too loose for telling one
+    emitter's keys apart from another's.
     """
     for node in module.body:
         if isinstance(node, ast.Assign):
@@ -129,14 +133,16 @@ def _dicts_in_named_assignment(module: ast.Module, name: str, path: Path) -> "li
 
 
 def oneway_controller_schema_keys() -> dict:
-    module = ast.parse(INIT_PY.read_text(encoding="utf-8"))
-    constants = _load_constants([INIT_PY])
-    return _schema_keys_from_dicts(_dicts_in_named_assignment(module, "ONEWAY_CONTROLLER_SCHEMA", INIT_PY), constants)
+    module = ast.parse(ONEWAY_CONTROLLERS_PY.read_text(encoding="utf-8"))
+    constants = _load_constants([HUB_NAMES_PY, ONEWAY_CONTROLLERS_PY])
+    return _schema_keys_from_dicts(
+        _dicts_in_named_assignment(module, "ONEWAY_CONTROLLER_SCHEMA", ONEWAY_CONTROLLERS_PY), constants
+    )
 
 
 def hub_config_schema_keys() -> dict:
     module = ast.parse(INIT_PY.read_text(encoding="utf-8"))
-    constants = _load_constants([INIT_PY])
+    constants = _load_constants([HUB_NAMES_PY, INIT_PY])
     return _schema_keys_from_dicts(_dicts_in_named_assignment(module, "CONFIG_SCHEMA", INIT_PY), constants)
 
 
@@ -147,9 +153,9 @@ def device_platform_schema_keys() -> dict:
     light.py's CONFIG_SCHEMA builds its dict inside a helper function (_validate()), not in a
     top-level `CONFIG_SCHEMA = ...` assignment the way cover.py/switch.py/lock.py do -- each of
     these five files is narrowly scoped to one platform's schema, so a whole-file walk carries
-    none of __init__.py's multi-schema cross-contamination risk.
+    none of the hub modules' multi-schema cross-contamination risk.
     """
-    constants = _load_constants([INIT_PY] + PLATFORM_PY_FILES)
+    constants = _load_constants([HUB_NAMES_PY] + PLATFORM_PY_FILES)
     keys: dict = {}
     for path in PLATFORM_PY_FILES:
         module = ast.parse(path.read_text(encoding="utf-8"))
@@ -271,9 +277,9 @@ def _extract_function_body(source: str, func_name: str, path: Path) -> str:
     over/under-match, which fails loudly (missing/garbled keys) rather than silently, an
     acceptable trade for staying dependency-light like check-tuning-sync.py.
     """
-    # Anchored on the return type, not just the bare name: several of these functions are also
-    # mentioned by name in doxygen prose elsewhere in the same file (e.g. "see
-    # build_oneway_adoption_report() above"), and a bare-name search finds whichever comes first
+    # Anchored on the return type, not just the bare name: these functions are also mentioned by
+    # name in comments elsewhere in the same file (e.g. "see build_oneway_adoption_report()'s
+    # caller"), and a bare-name search finds whichever comes first
     # in the file, definition or not -- silently brace-matching from the wrong `{` entirely.
     match = re.search(r"std::string\s+" + re.escape(func_name) + r"\s*\(", source)
     if not match:
@@ -342,7 +348,7 @@ class Emitter:
 EMITTERS = [
     Emitter(
         "build_oneway_adoption_report -> ONEWAY_CONTROLLER_SCHEMA",
-        HUB_INTERNAL_H,
+        ONEWAY_KEY_ADOPTION_CPP,
         "build_oneway_adoption_report",
         oneway_controller_schema_keys,
         skip_keys={"oneway_controllers"},  # the block's own wrapping key, not a schema field
@@ -350,7 +356,7 @@ EMITTERS = [
     ),
     Emitter(
         "build_key_extraction_report -> hub CONFIG_SCHEMA",
-        HUB_INTERNAL_H,
+        KEY_EXTRACTION_RESPONDER_CPP,
         "build_key_extraction_report",
         hub_config_schema_keys,
         skip_keys={"home_io_control"},  # the block's own wrapping key, not a schema field
@@ -426,7 +432,7 @@ DOCS_TABLES = [
 
 
 def _check_docs_table(table: DocsTable, docs_text: str) -> bool:
-    python_entries = _named_int_dict(INIT_PY, table.python_dict_name)
+    python_entries = _named_int_dict(HUB_VALIDATORS_PY, table.python_dict_name)
     for key in table.exclude:
         python_entries.pop(key, None)
     docs_entries = _parse_docs_table(docs_text, table.heading, DOCS_MD)

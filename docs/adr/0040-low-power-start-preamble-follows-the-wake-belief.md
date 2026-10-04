@@ -83,7 +83,7 @@ belief once per exchange (`plan_request_preamble_()`), so it is stable across th
 evidence is looked up once.
 
 **D3 — The engine decides, the hub supplies evidence.** The hub installs a lookup
-(`ExchangeEngine::set_wake_evidence_provider()`) that returns a device's stamps; the engine derives
+(`ExchangeEngine::set_target_evidence_provider()`) that returns a device's stamps; the engine derives
 the belief, checks the tuning switch, and picks the preamble. The whole decision — switch, evidence,
 STOP shortcut, plan — sits in one place and is testable without a hub.
 
@@ -167,7 +167,7 @@ Four parts of D1/D2 did not survive this:
   acked with no status leaves the evidence as it was, and a silent settle poll spends it.
 
 The wake-up preamble is now the `low_power_wake_preamble` tuning parameter (default
-`LONG_PREAMBLE`, 256–4096 bytes), because 8 answers in 17 wake-up tries at rest suggest the
+`LONG_PREAMBLE`, 1024–4096 bytes), because 8 answers in 17 wake-up tries at rest suggest the
 receiver's listen interval is longer than 1024 bytes (~213 ms) on air. It applies to every
 directed start frame to a `low_power` target, with the switch on or off; pairing, discovery, the
 roll-call and 1W transmits keep their own preambles. A longer value costs every try at rest the

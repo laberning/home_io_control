@@ -18,7 +18,7 @@ namespace home_io_control {
 /// @brief LR1121 GetVersion `type` byte in normal mode — must match radio_lr1121.h's
 /// LR1121_DEVICE_TYPE (0x03). Kept as a separate constant, not a shared header include, so this
 /// header stays dependency-free; see the file header for why. A static_assert in
-/// tests/radio_lr1121_firmware_updater_test.cpp (a translation unit that already includes both
+/// tests/radio/radio_lr1121_firmware_updater_test.cpp (a translation unit that already includes both
 /// headers) guards the two from silently drifting apart.
 inline constexpr uint8_t LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS = 0x03;
 

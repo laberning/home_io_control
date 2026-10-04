@@ -3,7 +3,7 @@
 /// @ingroup hioc_platforms
 
 #include "platform_switch.h"
-#include "hub_internal.h"
+#include "entity_helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome {

@@ -7,7 +7,7 @@ description: >
   reference/iohomecontrol/src/iohcCozyDevice2W.cpp:248. Complements
   synthetic_exchange_heating_set_temp (the 6-byte-payload path). HMAC on the 0x3D frame is
   computed under the public corpus key (tests/support/test_helpers.h :: TEST_SYSTEM_KEY), so this
-  fixture's crypto is safe to commit — see tests/corpus_bootstrap_dump_test.cpp
+  fixture's crypto is safe to commit — see tests/corpus/corpus_bootstrap_dump_test.cpp
   (DISABLED_PrintSyntheticFrames) for how these bytes were generated. No Atlantic / Thermor /
   Sauter hardware exists in this project. The 0x21 ACK payload here (0C 60 01 30) is a placeholder
   echo of the request, not a modelled register-read response — a real 0x0130 read answers with the

@@ -56,11 +56,11 @@ class Component {
     this->failed_ = true;
   }
   bool is_failed() const { return this->failed_; }
-  void set_warn_if_blocking_over(uint32_t ms) { (void) ms; }
 
  protected:
   bool failed_{false};
-  uint32_t warn_if_blocking_over_{0};
+  /// Same type and unit as ESPHome's: centiseconds in a uint8_t, so 255 is the ~2550 ms ceiling.
+  uint8_t warn_if_blocking_over_{0};
 };
 
 // Setup priority constants (approximate)

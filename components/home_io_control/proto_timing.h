@@ -74,6 +74,30 @@ static constexpr uint16_t NORMAL_START_PREAMBLE = 32;
 /// to the discovered device (`PairingEngine::pairing_start_preamble_()`).
 static constexpr uint16_t PAIRING_DISCOVERY_PREAMBLE = LONG_PREAMBLE;
 
+/// How hard a transmission has to work to be heard: the wake-up level the receiver needs. A radio
+/// that wakes receivers by preamble length gets the same information from
+/// `RadioTxConfig::preamble_len` and may ignore this; a radio that wakes them some other way (a
+/// train of frames, for example) reads it instead of guessing from a preamble length.
+enum class TxWake : uint8_t {
+  NONE,   ///< The receiver is already listening on this channel: the frame continues an exchange.
+  SHORT,  ///< The receiver is awake, but may be scanning channels.
+  LONG,   ///< The receiver may be duty-cycling.
+};
+
+/// True when a preamble this long is the wake-up burst for a duty-cycled receiver. Every preamble
+/// tunable except `pairing_discovery_preamble` is capped well below `LONG_PREAMBLE`, and that one
+/// is capped at it, so only a real wake-up burst reaches the threshold.
+constexpr bool is_wake_preamble(uint16_t len) { return len >= LONG_PREAMBLE; }
+
+/// The wake-up level of a frame, from the two facts that decide it: whether it starts an exchange
+/// (a continuation reaches a receiver that is already listening) and whether its preamble is the
+/// wake-up burst.
+constexpr TxWake tx_wake_for(bool start, uint16_t preamble) {
+  if (!start)
+    return TxWake::NONE;
+  return is_wake_preamble(preamble) ? TxWake::LONG : TxWake::SHORT;
+}
+
 /// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
 /// longer to stay on a channel once a frame is visibly incoming, so a hop doesn't cut it off
 /// mid-reception. Sized to a frame's air time, not to a hop slice, so it does not need to change
@@ -110,6 +134,19 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
     RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
+/// Re-sends allowed for a CMD_EXECUTE the target accepted without a closing reply, within the same
+/// exchange and its retry budget. One: a second silent try says the loss is not a one-off, and a
+/// third copy of a movement command would only lengthen the blocked loop. See
+/// decisions::retry_after_unconfirmed_accept_is_safe().
+static constexpr uint8_t UNCONFIRMED_EXECUTE_MAX_RESENDS = 1;
+/// Gap before that re-send, in place of EXCHANGE_RETRY_DELAY_MS. A device that did act on the first
+/// copy is often deaf for about a second while its motor or load switches: on a Somfy awning, a
+/// re-send 0.77 s after the first copy drew no challenge at all in 3 of 14 cases. With this gap the
+/// re-send goes out about 1.3 s after the first copy, and the whole exchange still fits
+/// EXCHANGE_TOTAL_BUDGET_MS.
+static constexpr uint32_t UNCONFIRMED_EXECUTE_RESEND_DELAY_MS = 750;
+static_assert(UNCONFIRMED_EXECUTE_RESEND_DELAY_MS >= EXCHANGE_RETRY_DELAY_MS,
+              "the re-send gap extends the ordinary retry gap, it never shortens it");
 
 /// How long evidence that a low-power receiver is moving keeps it believed awake enough to hear the
 /// short start preamble first. A moving VELUX solar receiver ignores the 1024-byte wake-up
@@ -177,10 +214,13 @@ static constexpr uint8_t STOP_SETTLE_POLL_TRIES = EXCHANGE_RETRY_COUNT;
 /// the receive path the rest of the exchange depends on. ESPHome itself warns when one operation
 /// takes longer than 2550 ms (ADR 0013); this budget must stay under that threshold.
 ///
-/// So the retry count is a maximum, not a promise: a try only starts if the exchange has budget
-/// left. At the current 400 ms response window all three tries still fit (~2.3 s); raising the
-/// window well past the default is what starts trimming retries, since three full tries stop being
-/// affordable at that point — one long listen is the better trade there anyway.
+/// So the retry count is a maximum, not a promise: a try only starts if its transmission ends inside
+/// the budget — elapsed time, plus the gap before the try, plus the radio's estimate of the try's
+/// transmit time (`RadioDriver::tx_air_time_us()`), must stay below it. Counting the transmission
+/// keeps a radio with a long wake-up from starting a try it cannot finish in time. At the current
+/// 400 ms response window all three tries still fit (~2.3 s); raising the window well past the
+/// default is what starts trimming retries, since three full tries stop being affordable at that
+/// point — one long listen is the better trade there anyway.
 static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 
 /// One-way (1W) transmit cadence.

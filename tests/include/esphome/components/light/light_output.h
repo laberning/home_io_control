@@ -29,7 +29,6 @@ class LightOutput {
   virtual void setup_state(LightState *state) = 0;
   virtual void write_state(LightState *state) = 0;
   virtual LightTraits get_traits() = 0;
-  virtual void publish_state(bool state) { (void) state; }
 };
 
 class Call {

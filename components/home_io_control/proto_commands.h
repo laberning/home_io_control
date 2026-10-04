@@ -215,7 +215,7 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// 2W builder's FAVORITE encoding, with no source behind it at all. Worse, the one real capture
 /// this project has of an actual My/favorite button press —
 /// tests/corpus/captures/oneway/somfy_smoove_oneway_favorite_sx1276.yaml, pinned by
-/// `OneWayCommands.FavoriteButtonCaptureIsWritePrivateNotExecute` in tests/oneway_commands_test.cpp
+/// `OneWayCommands.FavoriteButtonCaptureIsWritePrivateNotExecute` in tests/oneway/oneway_commands_test.cpp
 /// — contradicts it directly: that remote's My button is CMD_WRITE_PRIVATE (0x20) with a 16-byte
 /// payload, not CMD_EXECUTE with main=0xD8.
 ///
@@ -490,7 +490,8 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 
 /// @brief Build an extended CMD_PRIVATE (0x03) request with a selector/block pair.
 ///
-/// The shape real hubs use for both the tilt block (selector STATUS_TILT_SELECTOR) and the
+/// The shape real hubs use for both the tilt block (selector STATUS_TILT_SELECTOR: FPI1 bit 5 = FP3,
+/// see proto_constants.h) and the
 /// field-observed selector 0x80 (tests/corpus/captures/probe/multi_somfy_probe_extended_private_both_selectors.yaml),
 /// which this codebase has never decoded. create_get_status_tilt() below is this builder frozen at selector =
 /// STATUS_TILT_SELECTOR, block = 0x01.
@@ -594,8 +595,8 @@ bool create_discover(IoFrame &f, const uint8_t *own);
 /// @param subtype Device subtype to advertise.
 /// @param manufacturer_id Manufacturer ID to advertise (see MANUFACTURER_* in proto_constants.h).
 /// @note The flags byte (turnaround class, power-save) and timestamp are best-effort placeholder
-///       values — ATT_CLASS_40S/POWER_SAVE_LOW_POWER and a non-zero timestamp, matching a real
-///       captured device rather than the honest-but-misleading ATT_CLASS_5S/POWER_SAVE_ALWAYS_ALIVE
+///       values — ATT_CLASS_40MS/POWER_SAVE_LOW_POWER and a non-zero timestamp, matching a real
+///       captured device rather than the honest-but-misleading ATT_CLASS_5MS/POWER_SAVE_ALWAYS_ALIVE
 ///       (0x00) — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_commands.cpp for the
 ///       full reasoning. Still unverified against a real hub.
 /// @return true on success.
@@ -773,7 +774,7 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 /// Payload is our own advertised node ID — the only identity this emulated device has to offer —
 /// the same value create_discover_resp() reports at DISCOVERY_RESP_BACKBONE_OFFSET.
 /// CorpusDeviceRoleBuilders.NodeVerifyRespPayloadMatchesOwnDiscoverRespBackboneAddress
-/// (tests/corpus_device_role_builder_test.cpp) pins that these two builders agree with *each
+/// (tests/corpus/corpus_device_role_builder_test.cpp) pins that these two builders agree with *each
 /// other*, not that this matches a real device's own backbone value: the one real capture of this
 /// exchange (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml) shows a genuine device whose 0x37
 /// payload — a persistent identity the io-homecontrol wire format tracks separately from a device's

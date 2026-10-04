@@ -7,8 +7,8 @@ toolchain in the loop. The AES-128-ECB primitive itself is NOT reimplemented her
 standard algorithm, so this uses the `cryptography` package; only the proprietary
 checksum/IV/truncation wrapper around it (proto_crypto.cpp) is ported by hand. Cross-language
 agreement is pinned by scripts/corpus/tests/data/crypto_kat.yaml against hardcoded vectors in
-tests/corpus_crypto_test.cpp — both generated from the real C++ implementation
-(tests/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors).
+tests/corpus/corpus_crypto_test.cpp — both generated from the real C++ implementation
+(tests/corpus/corpus_bootstrap_dump_test.cpp :: DISABLED_PrintCryptoKatVectors).
 """
 
 import re
@@ -47,6 +47,21 @@ def crc_ccitt(data: bytes) -> int:
         for _ in range(8):
             crc = (crc >> 1) ^ CRC_POLYNOMIAL_REVERSED if (crc & 0x0001) else (crc >> 1)
     return crc & 0xFFFF
+
+
+def uart_encode(data: bytes) -> bytes:
+    """Port of uart_encode_packet() in radio_soft_phy.cpp: the soft-PHY on-air line coding.
+
+    Each byte becomes a 10-bit cell (start 0, eight data bits LSB-first, stop 1), cells are packed
+    MSB-first across bytes, and the unused bits of the last byte are padded with ones (line idle).
+    """
+    bits = []
+    for byte in data:
+        bits.append(0)
+        bits.extend((byte >> index) & 1 for index in range(8))
+        bits.append(1)
+    bits.extend([1] * (-len(bits) % 8))
+    return bytes(int("".join(map(str, bits[i : i + 8])), 2) for i in range(0, len(bits), 8))
 
 
 def ctrl0_implied_length(ctrl0: int) -> int:
@@ -530,7 +545,7 @@ class RawFrame:
         """CRC-detection rule (verified against RX call sites, see module docstring below):
         every on-air log line this parser ingests — both `io_capture` (tx_frame/parse_ok)
         and legacy `io_frame` (TX/RX) — logs bytes with CTRL0-implied length exactly, i.e.
-        **without** the trailing 2-byte CRC. `log_component_capture()` (hub_internal.h) is
+        **without** the trailing 2-byte CRC. `log_component_capture()` (log_helpers.h) is
         called with the frame's own `buf/len` (post radio_sx1262.cpp's software CRC strip for
         RX; pre-hardware-CRC-append for TX), and `log_frame()` (log_frame.h, used for the
         legacy `io_frame` tag) receives the same already-stripped bytes. So `crc_present()` is
@@ -545,7 +560,7 @@ class RawFrame:
         return len(raw) == implied + 2
 
 
-# --- io_capture (structured) — hub_internal.h :: log_component_capture() --------------------
+# --- io_capture (structured) — log_helpers.h :: log_component_capture() --------------------
 # With a decoded frame (cmd/src/dst present — tx_frame always has one; parse_ok always has one):
 _IO_CAPTURE_WITH_FRAME_RE = re.compile(
     r"chip=(?P<chip>\S+)\s+phase=component\s+stage=(?P<stage>\S+)\s+freq=(?P<freq>\d+)\s+ts=(?P<ts>\d+)\s+"
@@ -654,7 +669,7 @@ def parse_log_line(line: str) -> "RawFrame | None":
 
 def _same_physical_frame(a: RawFrame, b: RawFrame) -> bool:
     """True when two adjacently-extracted RawFrames are the *same* on-air event logged twice —
-    every physical TX/RX in this codebase is logged once via `io_capture` (hub_internal.h) and
+    every physical TX/RX in this codebase is logged once via `io_capture` (log_helpers.h) and
     once via the legacy `io_frame` tag (log_frame.h), back-to-back within a few ms of each other.
     Same direction + identical bytes, adjacent in parse order, is
     the signal; genuine retransmissions (e.g. three DISCOVER_REQ retries) are NOT adjacent to

@@ -19,7 +19,8 @@
 // IOHOME_LR1121_FIRMWARE_UPDATE is only visible after something pulls in esphome/core/defines.h
 // (ESPHome codegen's cg.add_define() lands there, not as a compiler -D flag) — the #include below
 // must run before the #ifdef check, not after, mirroring radio_lr1121_firmware_updater.h. hub_core.h
-// already includes esphome/core/hal.h before this header, so this is belt-and-braces.
+// already includes esphome/core/hal.h before this header, but lr1121_firmware_update_controller.cpp
+// reaches the define through this include alone.
 #include "esphome/core/hal.h"
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE

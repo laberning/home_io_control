@@ -67,6 +67,36 @@ static constexpr uint8_t UART_PROBE_MAX_BIT_OFFSET = 10;
 /// @return Raw byte count, rounded up to whole bytes.
 uint8_t soft_phy_raw_bytes_for_frame(uint8_t frame_len);
 
+/// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
+static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
+/// Microseconds in a second, for the air-time arithmetic below.
+static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
+
+/// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.
+///
+/// One byte is 8 / 38400 s = 208.333 µs. Computed as an integer division rounded *up*, so the
+/// result never falls short of a whole byte's air time and a caller that waits on it never reads
+/// the chip's buffer early. The numerator is 64-bit: in 32 bits it would wrap above 536 bytes, and
+/// a 1024-byte wake-up preamble is a real transmission length.
+constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
+  const uint64_t bit_periods = static_cast<uint64_t>(raw_bytes) * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
+  return static_cast<uint32_t>((bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS);
+}
+
+/// Sync word bytes on air after the preamble (`55 FF 33` on the SX1276, the UART-coded equivalent
+/// on the software PHY): three on every 868 MHz chip.
+static constexpr uint16_t IO868_SYNC_WORD_BYTES = 3;
+
+/// @brief Time on air of one 868 MHz transmission: preamble, sync word, and the frame plus its CRC,
+/// each byte of the latter a 10-bit UART cell, at the protocol's line rate.
+///
+/// The same line coding applies to every 868 MHz chip (the SX1276's IoHomeOn coder and the
+/// software PHY produce the same waveform), so every 868 driver's `tx_air_time_us()` is this.
+/// @param preamble_len Preamble length in bytes.
+/// @param frame_len    Frame length in bytes, without the CRC.
+/// @return Air time in microseconds, rounded up.
+uint32_t io868_tx_air_time_us(uint16_t preamble_len, uint8_t frame_len);
+
 /// @brief Recover a frame's total length from the very first UART cell of a reception.
 ///
 /// CTRL0 bits [4:0] hold `frame_length - 1` (see proto_frame.h), and CTRL0 is the first byte
