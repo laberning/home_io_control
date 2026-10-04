@@ -41,6 +41,7 @@ match.
 | **J406 IO shutter motor** | `external_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: external_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard` |
 | **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | on a Heltec V3.2 / SX1262 |
 | **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction inversion is applied automatically for this family | Corpus `somfy_awning_discovery_spe_paired_rollcall` |
+| **IO patio-roof motor** (logs as a "Somfy IO motor", behaves as a horizontal awning) | `horizontal_awning`, 1W | ✅ Confirmed — enrollment (the roof moved on Enroll); commands afterwards not reported | 1W enrollment: hold PROG on the existing Situo 1 until the roof jogs, then press Enroll. Two-way Discover & Pair got no answer | `manufacturer: somfy`, `execute_broadcast: all` | SX1276 board, issue #147. The full Somfy enrollment gesture goes to `00003F` |
 | **Pergola io motor** | `horizontal_awning` | ✅ Confirmed | Discover & Pair, after a single PROG hold on its Situo | — | Heltec V3 / SX1262, issue #121. For the kit's LED lighting see [Pairing a pergola kit](devices/somfy-white-led-receiver.md#pairing-a-pergola-kit) |
 | **White LED Receiver io** (4-output LED dimmer, logs as `LightVar_Wh_io`) | `light` | ✅ Confirmed, including dimming | Discover & Pair once per output: hold PROG about 2 s on the Situo channel for that output, then press Discover & Pair | `dimmable: true`; `sx1262_rx_bandwidth: 156.2` on SX1262 | Each output is a separate device. Heltec V3 / SX1262, issues #119, #143. Step-by-step: [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md) |
 | **Sunea SCR 40 io** | — | ✅ Confirmed — open, close, position | Discover & Pair | — | Pergola kit, alongside a White LED Receiver io; keeps working at `sx1262_rx_bandwidth: 156.2`. Heltec V3 / SX1262, issue #143 |
@@ -71,6 +72,7 @@ project controls.
 | **TaHoma Switch** | Third-party hub | ✅ Confirmed as a key-extraction source | Corpus `somfy_tahoma_pairing_key_extraction_success_sx1276` |
 | **Connectivity Kit** | Third-party hub | ⚠️ Partial — extraction stalled | Corpus `somfy_connectivity_kit_pairing_key_extraction_stall` |
 | **Smoove IO remote** | 1W remote | ✅ Confirmed for listening | Corpus `somfy_smoove_enrollment_monitor_sx1276`; issue #27 |
+| **Situo 1 io** | 1W remote | ✅ Confirmed for listening | Its PROG hold decodes as an io add-controller frame to `00003F`, followed by two `0x20` frames; it opens the motor's 1W learning window (issue #147) |
 | **Situo 5 io Pure II** | 1W remote | ✅ Confirmed for listening | Its PROG hold and its EXECUTE frames both decode, and a Somfy awning paired from that gesture |
 
 ### VELUX
@@ -78,6 +80,7 @@ project controls.
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
 | **KLR 200 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | succeeded end to end on the first attempt, including the node verification round that follows it; corpus `velux_klr200_pairing_key_extraction_success` |
+| **KLR 300 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction: start the KLR 300's own "search for new products" while the hub is armed | `accept_foreign_pairing: true` | One community tester on an SX1276 board, first attempt; the node verification round that follows also ran. Corpus `velux_klr300_pairing_key_extraction_success` and `velux_klr300_discovery_rollcall_node_verification` |
 | **KLR 100 two-way control pad** | Third-party hub | 📣 Reported as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | Its "Register product" gesture opens the extraction window the same way the KLR 200's does; issue #87 |
 | **KIG 300 hub** | Third-party hub | ⚠️ Partial — one extraction succeeded, one stalled | Key extraction | `accept_foreign_pairing: true` | 4 corpus captures |
 | **INTEGRA roof-window actuator** | `window_opener` | ✅ Confirmed | — | `io_device_type: window_opener`, which adds the Ventilation Position button | 3 corpus captures; issue #98 |
@@ -98,12 +101,12 @@ project controls.
 
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
-| **T3.5 E BHz DC solar tubular motor** (Autosun 2 BHz) | `roller_shutter` | ✅ Confirmed — Discover & Pair, open, close, live position, device name | Discover & Pair: hold PROG on the BHz transmitter that already controls the motor, release it at the first jog, then press Discover & Pair. | — | Reports its name as `T3.5EBHZ DC`; |
+| **T3.5 E BHz DC solar tubular motor** (Autosun 2 BHz) | `roller_shutter` | ✅ Confirmed on 6 motors — Discover & Pair, open, close, live position, device name | Discover & Pair: hold PROG on the BHz transmitter that already controls the motor, release it at the first jog, then press Discover & Pair. A three-jog gesture also worked; see [the device page](devices/simu-t35-bhz.md#pairing-a-simu-shutter-motor) | `low_power: true` | Reports its name as `T3.5EBHZ DC`. Heltec V3 / SX1262, issues #138, #149. Step-by-step: [SIMU T3.5 E BHz DC](devices/simu-t35-bhz.md) |
 | **BHz wall transmitter** (1 channel) | 1W remote | ✅ Confirmed for listening | — | — | Its PROG press decodes as an io add-controller frame and opens the motor's two-way pairing window |
 
 SIMU also sells a **T3.5 EHz DC**, without the B. That motor uses SIMU-Hz at 433 MHz, not
 io-homecontrol, so this project cannot control it. Check the motor label or its box for "E BHz"
-before pairing.
+before pairing; the [device page](devices/simu-t35-bhz.md#check-the-motor-first) has the details.
 
 ### Other vendors
 
@@ -168,7 +171,7 @@ vendor.
 
 ## Device pages
 
-Five devices have enough evidence behind them to be worth a page of their own.
+Six devices have enough evidence behind them to be worth a page of their own.
 
 <!-- doxygen-subpages -->
 - [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md)
@@ -176,6 +179,7 @@ Five devices have enough evidence behind them to be worth a page of their own.
 - [VELUX INTEGRA and the KLR/KLF/KUX family](devices/velux-integra.md)
 - [Somfy RS100 IO](devices/somfy-rs100.md)
 - [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md)
+- [SIMU T3.5 E BHz DC solar shutter motor](devices/simu-t35-bhz.md)
 <!-- /doxygen-subpages -->
 
 ## Getting your device added

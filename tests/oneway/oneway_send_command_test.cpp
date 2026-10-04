@@ -322,12 +322,12 @@ TEST_F(OneWaySendCommandTest, EnrollmentMatchesTheBuildersDirectly) {
   memset(key, 0x11, AES_KEY_SIZE);
 
   IoFrame expected_remove{};
-  ASSERT_TRUE(create_1w_remove_controller(expected_remove, OWN_NET_NODE, DeviceType::AWNING, 7, key));
+  ASSERT_TRUE(create_1w_remove_controller(expected_remove, OWN_NET_NODE, DeviceType::UNKNOWN, 7, key));
   EXPECT_EQ(0, memcmp(recorder.frames[0].data, expected_remove.data, expected_remove.data_len))
       << "the 0x39 prelude must match create_1w_remove_controller() at the sequence it actually consumed";
 
   IoFrame expected_add{};
-  ASSERT_TRUE(create_1w_add_controller(expected_add, OWN_NET_NODE, DeviceType::AWNING, 0, 8, key, /*with_mac=*/false));
+  ASSERT_TRUE(create_1w_add_controller(expected_add, OWN_NET_NODE, DeviceType::UNKNOWN, 0, 8, key, /*with_mac=*/false));
   EXPECT_EQ(0, memcmp(recorder.frames[ONEWAY_BURST_REPEATS].data, expected_add.data, expected_add.data_len))
       << "the 0x30 half must match create_1w_add_controller() at the sequence it actually consumed";
 }
@@ -469,13 +469,42 @@ TEST_F(OneWaySendCommandTest, SomfyManufacturerStillUsesTheUnchangedTwoFrameGest
 
   ASSERT_TRUE(transmitter.send_enrollment("somfy"));
 
-  // Exactly the pre-ADR-0032 shape: 0x39 then 0x30, both to the identity's typed class.
+  // Same two-frame shape as before ADR 0032, but both halves go to the all-devices broadcast, as a
+  // real Somfy remote sends them (issue #147: a typed 0x39/0x30 never reached a horizontal awning).
   ASSERT_EQ(recorder.frames.size(), 2u * ONEWAY_BURST_REPEATS);
   EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_REMOVE);
   EXPECT_EQ(recorder.frames[ONEWAY_BURST_REPEATS].cmd, CMD_ONEWAY_ADD_CONTROLLER);
-  const uint8_t awning_typed[NODE_ID_SIZE] = {0x00, 0x00, 0xFF};
-  EXPECT_EQ(0, memcmp(recorder.frames[0].dst, awning_typed, NODE_ID_SIZE)) << "Somfy 0x39 stays typed, not broadcast";
-  EXPECT_EQ(0, memcmp(recorder.frames[ONEWAY_BURST_REPEATS].dst, awning_typed, NODE_ID_SIZE));
+  for (const auto &frame : recorder.frames)
+    EXPECT_EQ(0, memcmp(frame.dst, ALL_DEVICES_DST, NODE_ID_SIZE)) << "Somfy 0x39/0x30 broadcast, not the typed class";
+}
+
+TEST_F(OneWaySendCommandTest, SomfyEnrollmentIgnoresTheIdentitysDeviceType) {
+  // A near-miss io_device_type (horizontal_awning vs awning vs pergola) must not decide whether the
+  // receiver is reached, so the destination is the same for every type.
+  for (const DeviceType type : {DeviceType::AWNING, DeviceType::HORIZONTAL_AWNING, DeviceType::ROLLER_SHUTTER}) {
+    BurstRecorder recorder;
+    OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+    OneWayControllerIdentity identity = make_identity("somfy", OWN_NET_NODE, type, 0x11, 5);
+    identity.manufacturer = MANUFACTURER_SOMFY;
+    transmitter.add_identity(identity);
+    transmitter.setup();
+
+    ASSERT_TRUE(transmitter.send_enrollment("somfy"));
+    for (const auto &frame : recorder.frames)
+      EXPECT_EQ(0, memcmp(frame.dst, ALL_DEVICES_DST, NODE_ID_SIZE)) << "type " << static_cast<int>(type);
+  }
+}
+
+TEST_F(OneWaySendCommandTest, UnenrollmentBroadcastsItsRemove) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::AWNING, 0x11, 5));
+  transmitter.setup();
+
+  ASSERT_TRUE(transmitter.send_unenrollment("awning"));
+  ASSERT_EQ(recorder.frames.size(), static_cast<size_t>(ONEWAY_BURST_REPEATS));
+  EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_REMOVE);
+  EXPECT_EQ(0, memcmp(recorder.frames[0].dst, ALL_DEVICES_DST, NODE_ID_SIZE));
 }
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentReproducesTheSyntheticGoldenGesture) {
