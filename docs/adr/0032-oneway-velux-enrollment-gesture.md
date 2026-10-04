@@ -123,3 +123,18 @@ after Gear.
 - The profiled-vendor set is now written in three places (the C++ `switch`, the
   Python `ONEWAY_WIRE_PROFILE_MANUFACTURERS`, and the schema warning) with no
   automated sync check — cross-referenced in comments, same treatment as ADR 0031.
+
+## Amendment (2026-10): the Somfy gesture addresses the all-devices broadcast
+
+The Decision above says the `SOMFY` gesture sends `0x39` and `0x30` to the identity's
+`io_device_type`. Issue #147 showed that a Somfy Situo 1 sends both to `00 00 3F`, as does every
+other real Somfy remote we hold (the Smoove, the Situo 5), and that the hub's typed form enrolled
+nothing on a patio-roof motor that counts itself as a horizontal awning. Typed Somfy enrollment had
+only ever been accepted by an Izymo light receiver. The same identity enrolled at once when its
+type was set to `unknown`, which addresses `00 00 3F`.
+
+The `SOMFY` gesture therefore sends `0x39` and `0x30` to `00 00 3F` whatever `io_device_type` is
+set, and the standalone un-enroll (`0x39`) does the same. The identity's type still addresses its
+commands. A near-miss type can no longer stop an enrollment. The change is pinned by host tests;
+the Izymo re-run on hardware is the remaining check, since it is the one device that accepted the
+typed form.
