@@ -349,6 +349,47 @@ inline void apply_last_command_record(IoDevice &dev, const LastCommandRecord &re
   dev.has_last_command = true;
 }
 
+/// @brief Refresh the derived rain-limitation flag from a status reply the device just sent.
+///
+/// Call after the reply's position and last-command record are applied. Stamps the rain-evidence
+/// memory when the device names the rain sensor, drops it once a stopped device sits where the
+/// hub had predicted (the clamp is over), then derives `limited_by_rain` through
+/// decisions::rain_limitation_rule(). Logs every change at DEBUG with its inputs: a clamped
+/// command's last-command record has not been observed in the field, so these lines are how field
+/// reports settle which evidence path a real window takes.
+/// @param id Device ID, for the log line.
+/// @param dev Device the reply came from.
+/// @param predicted_target `dev.optimistic.target` as it stood before the reply was decoded
+///        (decoding clears it), or UNKNOWN_POSITION.
+/// @param record_in_reply True when *this* reply carried a well-formed last-command record. The
+///        record on the device is last-writer-wins and persists across replies, so only a reply
+///        that carried it may refresh the rain-evidence memory; a shorter reply must not keep
+///        stale evidence alive.
+/// @param now_ms When the reply was received.
+inline void update_rain_limitation(const std::string &id, IoDevice &dev, float predicted_target, bool record_in_reply,
+                                   uint32_t now_ms) {
+  const bool evidence_recent =
+      dev.last_rain_evidence_ms != 0 && (now_ms - dev.last_rain_evidence_ms) <= RAIN_EVIDENCE_HOLD_MS;
+  const bool names_rain = dev.has_last_command && dev.last_command_originator == ORIGINATOR_RAIN_SENSOR;
+  if (names_rain && record_in_reply) {
+    dev.last_rain_evidence_ms = now_ms;
+  } else if (dev.is_stopped && has_reached_target_position(predicted_target, dev.target)) {
+    dev.last_rain_evidence_ms = 0;
+  }
+
+  const decisions::RainLimitationRule rule =
+      decisions::rain_limitation_rule({dev.has_last_command, dev.last_command_originator, evidence_recent,
+                                       predicted_target, dev.target, dev.is_stopped});
+  const bool limited = rule != decisions::RainLimitationRule::NONE;
+  if (limited != dev.limited_by_rain) {
+    ESP_LOGD(TAG, "Device %s: rain limitation %s (rule=%s originator=0x%02X predicted=%.0f%% observed=%.0f%% %s)",
+             id.c_str(), limited ? "set" : "cleared", decisions::rain_limitation_rule_name(rule),
+             dev.last_command_originator, static_cast<double>(predicted_target), static_cast<double>(dev.target),
+             dev.is_stopped ? "stopped" : "moving");
+  }
+  dev.limited_by_rain = limited;
+}
+
 /// @brief Describe a 0x71 status update's Command Originator as "name(0xXX)".
 ///
 /// Pure rather than inlined into the log line it feeds, so the offset is testable: ESP_LOG* is a

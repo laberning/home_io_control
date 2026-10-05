@@ -51,6 +51,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0041](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md) | An unset 1W `low_power:` resolves from the manufacturer profile | `velux` → `ALWAYS_ALIVE` (an awake VELUX receiver rejects the 1024-byte preamble, and 1W has no ACK to reveal it); Somfy and unrecognised manufacturers stay `LEGACY_LONG`; an explicit key always wins |
 | [0033](0033-heating-send-path-bypasses-the-cover-machinery.md) | Heating send path bypasses the cover machinery | 2W heating does a plain send-and-receive — no status decode, no poll backoff, no ADR 0030 overlay (heating has no observation stream); state is publish-on-success only |
 | [0043](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md) | An unconfirmed movement command is re-sent once to a device that normally confirms | Learned in RAM from the first EXECUTE the device closes with a reply; favourite/vent never re-sent; at most one re-send inside the exchange budget; no device list, nothing stored |
+| [0049](0049-a-rain-limitation-is-derived-from-observed-status-never-predicted.md) | A rain limitation is derived from observed status, never predicted | A separate `limited_by_rain` flag from two evidence rules on ordinary status replies (rain-sensor originator; a clamped command while rain evidence is fresh); an explicit `CMD_ERROR_RESP` still wins; no extra polling |
 
 ### Interfaces and naming
 
@@ -140,6 +141,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0043: An unconfirmed movement command is re-sent once to a device that normally confirms](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md)
 - [ADR 0044: Chip-neutral transmit intent: wake level, idle scanning and air time](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)
 - [ADR 0045: Listen-before-talk is part of sending](0045-listen-before-talk-is-part-of-sending.md)
+- [ADR 0049: A rain limitation is derived from observed status, never predicted](0049-a-rain-limitation-is-derived-from-observed-status-never-predicted.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

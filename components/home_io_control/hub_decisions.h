@@ -518,6 +518,62 @@ inline uint32_t remote_poll_timer_id(const uint8_t node_id[NODE_ID_SIZE]) {
          (static_cast<uint32_t>(node_id[1]) << BITS_PER_BYTE) | static_cast<uint32_t>(node_id[2]);
 }
 
+// === Rain limitation ===
+
+/// @brief Which evidence path labelled a device as limited by rain.
+enum class RainLimitationRule : uint8_t {
+  NONE = 0,         ///< No evidence of a rain limitation.
+  RAIN_ORIGINATOR,  ///< The device names the rain sensor as the originator of its last command.
+  CLAMPED_COMMAND,  ///< A position command was accepted but the stopped device ended elsewhere, while
+                    ///< rain protection was recently active.
+};
+
+/// @brief What one decoded status reply said, plus what the hub had predicted.
+struct RainLimitationInput {
+  bool has_last_command;      ///< The device record holds a well-formed last-command record.
+  uint8_t originator;         ///< Its Command Originator (ORIGINATOR_* in proto_constants.h).
+  bool rain_evidence_recent;  ///< A rain originator was seen from this device within RAIN_EVIDENCE_HOLD_MS.
+  float predicted_target;     ///< Hub's prediction before this reply (UNKNOWN_POSITION when none stood).
+  float observed_target;      ///< dev.target after decoding this reply.
+  bool stopped;               ///< The device reported itself stopped.
+};
+
+/// @brief Decide which rain-limitation evidence, if any, a status reply provides.
+///
+/// A rain limitation is an *inference from observations*, never a prediction (ADR 0030 keeps
+/// predictions apart): windows clamp an `open` to their ventilation position without sending
+/// CMD_ERROR_RESP / RESULT_LIMITATION_BY_RAIN, so the only evidence is what the device reports
+/// in its ordinary status replies. Rule order matters: the originator rule is the direct
+/// evidence and wins; the clamp rule only applies while earlier rain evidence is still fresh.
+/// @param in What the reply said and what had been predicted.
+/// @return The rule that fired, or RainLimitationRule::NONE.
+[[nodiscard]] inline RainLimitationRule rain_limitation_rule(const RainLimitationInput &in) {
+  if (in.has_last_command && in.originator == ORIGINATOR_RAIN_SENSOR)
+    return RainLimitationRule::RAIN_ORIGINATOR;
+  if (in.rain_evidence_recent && in.stopped && in.predicted_target != UNKNOWN_POSITION &&
+      in.observed_target != UNKNOWN_POSITION && !has_reached_target_position(in.predicted_target, in.observed_target))
+    return RainLimitationRule::CLAMPED_COMMAND;
+  return RainLimitationRule::NONE;
+}
+
+/// @brief True when rain_limitation_rule() finds evidence of a rain limitation.
+[[nodiscard]] inline bool is_rain_limited(const RainLimitationInput &in) {
+  return rain_limitation_rule(in) != RainLimitationRule::NONE;
+}
+
+/// @brief Name of a rain-limitation rule for log lines.
+[[nodiscard]] inline const char *rain_limitation_rule_name(RainLimitationRule rule) {
+  switch (rule) {
+    case RainLimitationRule::RAIN_ORIGINATOR:
+      return "rain_originator";
+    case RainLimitationRule::CLAMPED_COMMAND:
+      return "clamped_command";
+    case RainLimitationRule::NONE:
+      break;
+  }
+  return "none";
+}
+
 }  // namespace decisions
 }  // namespace home_io_control
 }  // namespace esphome

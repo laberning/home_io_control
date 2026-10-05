@@ -161,6 +161,24 @@ moves the window to its predefined air-exchange opening rather than fully open.
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on
   `CMD_EXECUTE`. Set `manufacturer: velux` on any 1W identity aimed at these devices — see
   [Sending 1W commands](../configuration/oneway-transmit.md).
+## Rain protection
+
+A VELUX window with a rain sensor closes itself when it rains and then refuses to open past its
+ventilation position. It sends no error when it clamps an `open`, so the hub works it out from the
+status replies it already reads:
+
+- **Last Command Source** shows `rain_sensor(0x02)` after a poll that follows a rain closure.
+- **Active Issue** shows `LIMITATION_BY_RAIN` while the last move was ordered by the rain sensor,
+  or while an `open` stops short soon after the window last reported the rain sensor.
+- The cover stops at the ventilation position (about 93 % closed on the INTEGRA window that
+  reported this) instead of opening fully.
+
+Nothing polls a window after it closes itself, so the state updates on the next command or status
+poll. Active Issue clears after the next `open` that reaches its target. The VELUX KLF 200 API
+specification v3.18 (section 8.1) explains why: the rain sensor talks directly to the window
+opener, so a gateway only learns of a rain closure when it asks.
+Field data comes from issue #98.
+
 ## Evidence
 
 Corpus captures across the family: 3 for the INTEGRA roof-window actuator (node `6544C6`, probe

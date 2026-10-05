@@ -579,6 +579,19 @@ bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *d
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
 
+/// Build the KLF-style status read of the main parameter plus FP1-FP7 (see the header for the
+/// evidence). Read-only and unauthenticated.
+bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  uint8_t d[2 + STATUS_MP_FP_PARAM_COUNT + 1] = {PRIVATE_STATUS_MP_FP, STATUS_MP_FP_FPI1_MASK};
+  for (uint8_t i = 0; i < STATUS_MP_FP_PARAM_COUNT; i++)
+    d[2 + i] = STATUS_MP_FP_PARAM_TYPE;
+  d[2 + STATUS_MP_FP_PARAM_COUNT] = STATUS_MP_FP_FPI2;
+  return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
+}
+
 /// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
 bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
   return create_get_status_extended(f, own, dst, low_power, STATUS_TILT_SELECTOR, 0x01);

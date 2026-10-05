@@ -278,6 +278,9 @@ class ManagementActions {
   ///   - "general_info3": create_general_info3(), `index` ignored (Q2).
   ///   - "private2": create_private2_read() long form, `index` = modifier (Q3).
   ///   - "private2_short": create_private2_read() short form, `index` = modifier (Q3).
+  ///   - "status_mp_fp": create_status_mp_fp_read() (CMD_PRIVATE function 0x01, FPI1 mask 0xFE:
+  ///     main parameter plus FP1-FP7), `index` ignored. The reply is reported raw like every
+  ///     probe reply and never applied to the device record (ADR 0024).
   /// There is deliberately no "unknown4a" probe and no builder for CMD_UNKNOWN4A_REQ (0x4A)
   /// anywhere in this codebase — see ADR 0024 for the standing safety decision.
   ///

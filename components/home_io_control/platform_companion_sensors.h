@@ -157,15 +157,23 @@ class IOHomeDeviceNameTextSensor : public IOHomeCompanionTextSensor {
   void dump_config() override;
 };
 
-/// @brief Diagnostic text sensor that publishes the symbolic name of a device's most recent
-/// CMD_ERROR_RESP result code (e.g. "LIMITATION_BY_RAIN"), letting a "nothing happened" command
-/// self-explain instead of only showing up in the log. Shared by every device-bound platform
-/// (cover, light, switch, lock) via platform_common.py's companion-sensor codegen.
+/// @brief Diagnostic text sensor that names what is currently limiting a device (e.g.
+/// "LIMITATION_BY_RAIN"), letting a "nothing happened" command self-explain instead of only
+/// showing up in the log. Shared by every device-bound platform (cover, light, switch, lock) via
+/// platform_common.py's companion-sensor codegen.
 ///
-/// Not a per-operation outcome — it does not get set on every command, only on an explicit
-/// CMD_ERROR_RESP. Publishes an empty string until the first one is seen, and again after any
-/// subsequent successful status/command reply clears it (see detail::clear_command_result()), so
-/// a non-empty value always means "this is still going on" rather than "this is what happened
+/// Two sources, in this order:
+///   1. The symbolic name of the device's latest explicit CMD_ERROR_RESP result. Cleared by the
+///      next successful status/command reply (see detail::clear_command_result()).
+///   2. "LIMITATION_BY_RAIN" while `IoDevice::limited_by_rain` is set. That flag is derived from
+///      the device's own status replies (the last move was ordered by the rain sensor, or a
+///      position command was clamped while rain protection was recently active), because windows
+///      do not send an error for a rain clamp. It clears itself when the window stops reporting
+///      the rain originator and a command is no longer clamped, so it is only as fresh as the
+///      last status reply.
+///
+/// Not a per-operation outcome. Publishes an empty string when neither source applies, so a
+/// non-empty value always means "this is still going on" rather than "this is what happened
 /// last."
 /// @ingroup hioc_platforms
 class IOHomeActiveIssueTextSensor : public IOHomeCompanionTextSensor {

@@ -14,6 +14,7 @@
 #include <functional>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -118,6 +119,35 @@ TEST(ProtoCommandsProbeBuilders, Private2ReadLowPowerIsIndependentOfLongForm) {
   IoFrame long_form_mains{};
   ASSERT_TRUE(create_private2_read(long_form_mains, test::OWN_ID, test::DST_ID, 0x06, true, false));
   EXPECT_TRUE((long_form_mains.ctrl1 & CTRL1_LOW_POWER) == 0);
+}
+
+namespace {
+
+/// Serializes create_status_mp_fp_read() and compares it with `expected` byte for byte.
+void expect_status_mp_fp_bytes(const uint8_t (&own)[3], const uint8_t (&dst)[3], bool low_power,
+                               const std::vector<uint8_t> &expected) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_status_mp_fp_read(frame, own, dst, low_power));
+  uint8_t bytes[64] = {0};
+  const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+  ASSERT_EQ(len, expected.size());
+  EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+}
+
+}  // namespace
+
+TEST(ProtoCommandsProbeBuilders, StatusMpFpReadMatchesLowPowerRequestFromALiveKlf200) {
+  // A KLF 200 request to a low-power device (CTRL1 20), heard on air.
+  expect_status_mp_fp_bytes({0x82, 0xE9, 0x00}, {0x05, 0x65, 0xE7}, /*low_power=*/true,
+                            {0x52, 0x20, 0x05, 0x65, 0xE7, 0x82, 0xE9, 0x00, 0x03, 0x01, 0xFE, 0x01, 0x01, 0x01, 0x01,
+                             0x01, 0x01, 0x01, 0x00});
+}
+
+TEST(ProtoCommandsProbeBuilders, StatusMpFpReadMatchesMainsRequestFromALiveKlf200) {
+  // The 868 MHz request (CTRL1 00 = mains-class target): 176 identical copies in 24 minutes.
+  expect_status_mp_fp_bytes({0x97, 0xDE, 0x1A}, {0x87, 0xDD, 0xE2}, /*low_power=*/false,
+                            {0x52, 0x00, 0x87, 0xDD, 0xE2, 0x97, 0xDE, 0x1A, 0x03, 0x01, 0xFE, 0x01, 0x01, 0x01, 0x01,
+                             0x01, 0x01, 0x01, 0x00});
 }
 
 TEST(ProtoCommandsProbeBuilders, GeneralInfo3NoPayload) {

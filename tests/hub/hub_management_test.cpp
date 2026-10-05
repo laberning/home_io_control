@@ -1874,7 +1874,7 @@ TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message,
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
-            "status_ext_fn9, get_info1, get_info2, general_info3, private2, or private2_short)");
+            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, or status_mp_fp)");
   EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
                                            "not by looping until this flag stops it";
 }
@@ -1955,6 +1955,80 @@ TEST(HubManagement, ProbeDeviceFunctionIdReplyNeverUpdatesDevicePosition) {
   EXPECT_FLOAT_EQ(dev->target, 42.0F) << "probe reply must never update device target";
   EXPECT_FLOAT_EQ(dev->tilt, 17.0F) << "probe reply must never update device tilt";
   EXPECT_TRUE(dev->is_stopped) << "probe reply must never update the stopped flag";
+}
+
+TEST(HubManagement, ProbeDeviceStatusMpFpSendsKlfStatusReadAndReportsRawReply) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_private_function_reply(component.node_id_)));
+
+  // `index` is ignored for this probe, so any string (even an invalid one) must be accepted.
+  const auto result = component.probe_device("ABC123", "status_mp_fp", "");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.probe_name, "status_mp_fp");
+  EXPECT_TRUE(result.has_response_cmd);
+  EXPECT_EQ(result.response_cmd, CMD_PRIVATE_RESP);
+  EXPECT_FALSE(result.response_hex.empty());
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  const auto &sent = radio.get_sent_data().front();
+  IoFrame frame{};
+  ASSERT_TRUE(parse(sent.data(), static_cast<uint8_t>(sent.size()), frame));
+  EXPECT_EQ(frame.cmd, CMD_PRIVATE);
+  const uint8_t expected[] = {0x01, 0xFE, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00};
+  ASSERT_EQ(frame.data_len, sizeof(expected));
+  EXPECT_EQ(0, std::memcmp(frame.data, expected, sizeof(expected)));
+}
+
+TEST(HubManagement, ProbeDeviceStatusMpFpReplyNeverUpdatesDeviceRecord) {
+  // Both the reply shape heard from a real KLF 200 exchange (`04 2D 60 00 00 80 00 00 00`) and a
+  // dry-state variant are CMD_PRIVATE_RESP frames long enough to look like a position report;
+  // neither may reach the status decoder (ADR 0024).
+  const std::vector<std::vector<uint8_t>> payloads = {
+      {0x04, 0x2D, 0x60, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00},
+      {0x04, 0x2D, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00},
+  };
+  for (const auto &payload : payloads) {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    auto *dev = component.get_device("ABC123");
+    ASSERT_NE(dev, nullptr);
+    dev->position = 42.0F;
+    dev->target = 42.0F;
+    dev->is_stopped = true;
+    ASSERT_FALSE(dev->has_last_command);
+
+    IoFrame reply{};
+    init_frame(reply, true, false, true, false);
+    const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+    set_dst(reply, component.node_id_);
+    set_src(reply, device_node_id);
+    set_cmd(reply, CMD_PRIVATE_RESP, payload.data(), static_cast<uint8_t>(payload.size()));
+    radio.queue_rx(frame_to_packet(reply));
+
+    const auto result = component.probe_device("ABC123", "status_mp_fp", "0");
+    ASSERT_TRUE(result.success);
+    EXPECT_FLOAT_EQ(dev->position, 42.0F);
+    EXPECT_FLOAT_EQ(dev->target, 42.0F);
+    EXPECT_FALSE(dev->has_last_command);
+    EXPECT_FALSE(dev->limited_by_rain);
+  }
+}
+
+TEST(HubManagement, ProbeSweepRejectsStatusMpFpNoIndexProbeWithoutLooping) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "status_mp_fp", "0", "15");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "probe \"status_mp_fp\" takes no index; use probe_device");
+  EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
 TEST(HubManagement, ApiProbeDevicePublishesManagementResultEvent) {
@@ -2063,7 +2137,7 @@ TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message,
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
-            "status_ext_fn9, get_info1, get_info2, general_info3, private2, or private2_short)");
+            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, or status_mp_fp)");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an invalid probe name must not enter the per-index loop at all: " << result.message;
 }

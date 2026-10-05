@@ -255,6 +255,16 @@ static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;  ///< Copies of each 1W comma
 /// (oneway_transmitter.h) has both real shapes.
 static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;
 
+/// How long a status reply that named the rain sensor as the last commander stays usable as
+/// evidence that rain protection is active (see decisions::is_rain_limited(), rule b). It is the
+/// memory for recognising a *clamped* position command: while it is fresh, a stopped device that
+/// ended up somewhere other than the commanded target is labelled as limited by rain. Too short,
+/// and a long shower is no longer recognised for the second and later `open` attempts; too long,
+/// and an unrelated clamp (end stop, obstacle, another protection) after the rain has stopped is
+/// mislabelled. A first estimate: the window's own rain-limitation timer is not known, so this
+/// is 2 hours.
+static constexpr uint32_t RAIN_EVIDENCE_HOLD_MS = 2UL * 60UL * 60UL * 1000UL;
+
 /// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.
 /// Before transmitting, the radio checks that the channel RSSI is below the
 /// threshold. If the channel is busy, TX is deferred by LBT_RETRY_DELAY_MS

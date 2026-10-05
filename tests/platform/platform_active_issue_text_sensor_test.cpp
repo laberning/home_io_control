@@ -69,6 +69,43 @@ TEST(PlatformActiveIssueTextSensor, DeviceUpdatePublishesNewResultAndClears) {
   EXPECT_EQ(sensor.state, "") << "a device update after clearing should publish an empty string again";
 }
 
+TEST(PlatformActiveIssueTextSensor, DerivedRainLimitationPublishesLimitationByRain) {
+  TestableActiveIssueHub hub;
+  hub.add_device("ABC123");
+  auto *device = hub.get_device("ABC123");
+  ASSERT_NE(device, nullptr);
+
+  IOHomeActiveIssueTextSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  ASSERT_EQ(sensor.state, "");
+
+  device->limited_by_rain = true;
+  hub.notify_device_update_("ABC123");
+  EXPECT_EQ(sensor.state, "LIMITATION_BY_RAIN");
+
+  device->limited_by_rain = false;
+  hub.notify_device_update_("ABC123");
+  EXPECT_EQ(sensor.state, "") << "the derived source clears with the flag";
+}
+
+TEST(PlatformActiveIssueTextSensor, ExplicitResultWinsOverDerivedRainLimitation) {
+  TestableActiveIssueHub hub;
+  hub.add_device("ABC123");
+  auto *device = hub.get_device("ABC123");
+  ASSERT_NE(device, nullptr);
+  device->limited_by_rain = true;
+  device->last_result_code = RESULT_LIMITATION_BY_WIND;
+
+  IOHomeActiveIssueTextSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  EXPECT_EQ(sensor.state, "LIMITATION_BY_WIND");
+}
+
 TEST(PlatformActiveIssueTextSensor, DeviceUpdateForOtherDeviceIsIgnored) {
   TestableActiveIssueHub hub;
   hub.add_device("ABC123");
