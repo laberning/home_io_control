@@ -655,3 +655,85 @@ TEST(Decisions, WakeBeliefNamesAreDistinct) {
   EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::ASLEEP), "asleep");
   EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::AWAKE), "awake");
 }
+
+// ========================================================================================
+// Rain limitation (derived from observed status)
+// ========================================================================================
+
+namespace {
+decisions::RainLimitationInput rain_input() {
+  return {/*has_last_command=*/true,
+          /*originator=*/ORIGINATOR_USER_REMOTE,
+          /*rain_evidence_recent=*/false,
+          /*predicted_target=*/0.0F,
+          /*observed_target=*/93.0F,
+          /*stopped=*/true};
+}
+}  // namespace
+
+TEST(Decisions, RainLimitedByRainOriginatorWhetherMovingOrStopped) {
+  auto in = rain_input();
+  in.originator = ORIGINATOR_RAIN_SENSOR;
+  in.stopped = false;
+  EXPECT_EQ(decisions::rain_limitation_rule(in), decisions::RainLimitationRule::RAIN_ORIGINATOR);
+  in.stopped = true;
+  EXPECT_TRUE(decisions::is_rain_limited(in));
+}
+
+TEST(Decisions, RainOriginatorNeedsAWellFormedRecord) {
+  auto in = rain_input();
+  in.originator = ORIGINATOR_RAIN_SENSOR;
+  in.has_last_command = false;
+  EXPECT_FALSE(decisions::is_rain_limited(in));
+}
+
+TEST(Decisions, RainClampedCommandWithFreshEvidenceIsLimited) {
+  auto in = rain_input();
+  in.rain_evidence_recent = true;
+  EXPECT_EQ(decisions::rain_limitation_rule(in), decisions::RainLimitationRule::CLAMPED_COMMAND);
+}
+
+TEST(Decisions, RainClampNotLabelledWithoutRecentEvidence) {
+  auto in = rain_input();
+  in.rain_evidence_recent = false;
+  EXPECT_FALSE(decisions::is_rain_limited(in));
+}
+
+TEST(Decisions, RainClampNotLabelledWhileMoving) {
+  auto in = rain_input();
+  in.rain_evidence_recent = true;
+  in.stopped = false;
+  EXPECT_FALSE(decisions::is_rain_limited(in));
+}
+
+TEST(Decisions, RainClampNeedsBothTargetsKnown) {
+  auto in = rain_input();
+  in.rain_evidence_recent = true;
+  in.predicted_target = UNKNOWN_POSITION;
+  EXPECT_FALSE(decisions::is_rain_limited(in));
+  in = rain_input();
+  in.rain_evidence_recent = true;
+  in.observed_target = UNKNOWN_POSITION;
+  EXPECT_FALSE(decisions::is_rain_limited(in));
+}
+
+TEST(Decisions, RainClampWithinToleranceIsNotAClamp) {
+  auto in = rain_input();
+  in.rain_evidence_recent = true;
+  in.observed_target = in.predicted_target;  // reached exactly what was asked
+  EXPECT_FALSE(decisions::is_rain_limited(in));
+}
+
+TEST(Decisions, RainLimitationOtherOriginatorsAreNotRain) {
+  auto in = rain_input();
+  for (uint8_t originator : {ORIGINATOR_USER_REMOTE, ORIGINATOR_WIND_SENSOR}) {
+    in.originator = originator;
+    EXPECT_FALSE(decisions::is_rain_limited(in)) << "originator " << static_cast<int>(originator);
+  }
+}
+
+TEST(Decisions, RainLimitationRuleNames) {
+  EXPECT_STREQ(decisions::rain_limitation_rule_name(decisions::RainLimitationRule::NONE), "none");
+  EXPECT_STREQ(decisions::rain_limitation_rule_name(decisions::RainLimitationRule::RAIN_ORIGINATOR), "rain_originator");
+  EXPECT_STREQ(decisions::rain_limitation_rule_name(decisions::RainLimitationRule::CLAMPED_COMMAND), "clamped_command");
+}

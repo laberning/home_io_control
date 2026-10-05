@@ -98,8 +98,15 @@ void IOHomeDeviceNameTextSensor::dump_config() {
 
 void IOHomeActiveIssueTextSensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
-    // Empty string when no result is recorded; otherwise the symbolic result name.
-    this->publish_state(dev.last_result_code == 0 ? "" : command_result_name(dev.last_result_code));
+    // An explicit CMD_ERROR_RESP result wins; otherwise the rain limitation the hub derived from
+    // the window's own status replies; otherwise empty.
+    if (dev.last_result_code != 0) {
+      this->publish_state(command_result_name(dev.last_result_code));
+    } else if (dev.limited_by_rain) {
+      this->publish_state(command_result_name(RESULT_LIMITATION_BY_RAIN));
+    } else {
+      this->publish_state("");
+    }
   });
 }
 

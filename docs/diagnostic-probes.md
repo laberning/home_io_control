@@ -92,6 +92,7 @@ data:
 | `general_info3` | `CMD_GET_GENERAL_INFO3` (0x58), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | — |
 | `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte | `0x06`, then `0x05`, `0x09` | Field-observed: a real hub sends exactly these modifier bytes in the long form to real motors (e.g. request data `D4 00 80 D8 06 00`). This component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` values (`0x00`/`0x03`) are not what a hub sends, and never draw the extended block described below. |
 | `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | `0x03`, then `0x09` | Field-observed: a real hub sends the short form with these modifiers (e.g. request data `D8 03 00 00`). |
+| `status_mp_fp` | `CMD_PRIVATE` (0x03) function `0x01`, FPI mask `0xFE` (main parameter plus FP1-FP7), no index | — (`probe_device` only; `probe_sweep` rejects it) | — | The same read-only status request a VELUX KLF 200 gateway sends to its devices (public KLF 200 API specification v3.18, section 10.3.1.4), heard on air at 868 MHz and 2.4 GHz. The reply layout is not decoded: flags `2D`, the main parameter, then the parameter values. |
 
 **There is deliberately no probe for `0x4A`.** It reads a buffer in chunks between two controllers
 and has been seen on air in a VELUX KLR 200 copy session. What it does to an actuator is unknown,
@@ -118,6 +119,7 @@ A running record of what these frames actually draw back — as much as is under
 | `get_info1` (`0x54`) | Not yet sent to a device by this project. No `0x55` answer has ever been captured from anything. |
 | `general_info3` (`0x58`) | Dimmer answered a real `0x59`; a Somfy awning and a Velux window both replied `ERROR_RESP` result `0x08` (`ERROR_DURING_EXECUTION`, "opcode not supported"). Device-dependent. |
 | `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices, and byte-identical between two window positions on a Velux window (a stored parameter, not a live reading) — its short form at modifier `0x03` read back the stored ventilation position (`BA 00`). See "Reading a `private2` reply" below. |
+| `status_mp_fp` | Unauthenticated, answered with a `0x04` and no challenge. A reply heard from a window: `04 2D 60 00 00 80 00 00 00`. The main parameter is `00 00` for open and `C8 00` for closed, followed by `80 00 00 00`. Nothing is applied to the device record. |
 
 **What the replies do and don't carry.** Across every probe and device tried so far — mains and
 solar, day and night — the only things recovered are position/target data and, via `status_ext` /

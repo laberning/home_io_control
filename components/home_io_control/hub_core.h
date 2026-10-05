@@ -556,10 +556,10 @@ class IOHomeControlComponent : public Component,
   /// gating). Protocol-research instrumentation for opcodes this codebase has not decoded — see
   /// docs/diagnostic-probes.md and ADR 0024.
   /// @param device_id Target device ID.
-  /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2", or
-  ///        "private2_short").
+  /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2",
+  ///        "private2_short", or "status_mp_fp").
   /// @param index Function ID / selector block / modifier, as a decimal or `0x`-prefixed hex
-  ///        string; ignored for "general_info3".
+  ///        string; ignored for "general_info3" and "status_mp_fp".
   /// @return Structured result whose `message` carries the reply's command byte and raw hex.
   virtual ManagementActionResult probe_device(const std::string &device_id, const std::string &probe,
                                               const std::string &index) {

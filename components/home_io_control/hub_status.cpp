@@ -359,13 +359,18 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     // commands (0x00). The position fields are shared across both response types, but the
     // immediate reply to our own execute command is not necessarily trustworthy for them (see
     // apply_private_response_status()'s trust_position parameter).
+    // Decoding a position clears the optimistic prediction, so capture it first: a clamped
+    // command is the disagreement between that prediction and what the device then reports.
+    const float predicted_target = dev.optimistic.target;
     apply_private_response_status(id, dev, frame, this->poll_policy_, trust_position);
     // The device names, in its own status payload, the controller that last commanded it. Skipped
     // on an execute ack (trust_position == false): that reply's payload layout is request-derived
     // rather than self-describing (see the offset comment at the top of this file), and our own
     // ack is not a report of the *last* command anyway — the settle poll a few seconds later is.
     if (trust_position) {
-      detail::apply_last_command_record(dev, decode_last_command_record(frame, PRIVATE_RESPONSE_LAST_COMMAND_OFFSET));
+      const LastCommandRecord record = decode_last_command_record(frame, PRIVATE_RESPONSE_LAST_COMMAND_OFFSET);
+      detail::apply_last_command_record(dev, record);
+      detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
     }
     detail::clear_command_result(dev);
     detail::log_status_update(id, dev);
@@ -381,8 +386,11 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
 
     // Status-update frames come from the device itself rather than from a direct controller poll.
     // They use different offsets for the target/current fields and do not carry reliable tilt data.
+    const float predicted_target = dev.optimistic.target;
     apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
-    detail::apply_last_command_record(dev, decode_last_command_record(frame, STATUS_UPDATE_LAST_COMMAND_OFFSET));
+    const LastCommandRecord record = decode_last_command_record(frame, STATUS_UPDATE_LAST_COMMAND_OFFSET);
+    detail::apply_last_command_record(dev, record);
+    detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
     detail::clear_command_result(dev);
 
     // What caused the device to move (wind sensor, timer, a remote). Empty when the payload is

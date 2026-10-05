@@ -357,6 +357,15 @@ struct IoDevice {
   uint8_t last_command_originator{0};         ///< That command's Command Originator byte (ORIGINATOR_* in
                                               ///< proto_constants.h). Only meaningful when `has_last_command`.
   bool has_last_command{false};               ///< True once a status reply carried a well-formed last-command record.
+  bool limited_by_rain{false};                ///< Derived from observed status replies, never from a prediction
+                                              ///< (decisions::is_rain_limited(); ADR 0030 keeps predictions apart):
+                                              ///< the last move was ordered by the rain sensor, or a position
+                                              ///< command was clamped while rain protection was recently active.
+                                              ///< Separate from `last_result_code`, which only an explicit
+                                              ///< CMD_ERROR_RESP sets.
+  uint32_t last_rain_evidence_ms{0};          ///< millis() of the last status reply that named the rain sensor as the
+                                              ///< last commander; 0 = never. Memory for the clamp rule, aged out
+                                              ///< by RAIN_EVIDENCE_HOLD_MS.
   uint32_t last_status{0};                    ///< millis() timestamp of last received status.
   int16_t last_rssi_dbm{RSSI_UNKNOWN_DBM};    ///< Most recent raw RSSI sample (dBm), or RSSI_UNKNOWN_DBM.
   int16_t rssi_ema_scaled{RSSI_UNKNOWN_DBM};  ///< Smoothed RSSI as fixed point in 1/RSSI_EMA_SCALE dBm — read

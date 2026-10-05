@@ -510,6 +510,19 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t selector,
                                 uint8_t block, uint8_t function_id = PRIVATE_GET_POSITION_STATUS);
 
+/// Build the status read of the main parameter plus functional parameters FP1-FP7: an
+/// unauthenticated CMD_PRIVATE (0x03) request with function ID 0x01, FPI1 mask 0xFE, one
+/// "current value" status type per parameter and FPI2 0x00 — the exact 10 bytes a VELUX
+/// KLF 200 gateway sends (public reference: KLF 200 API specification v3.18 §10.3.1.4; the same
+/// bytes were heard on air from a live KLF 200 at 868 MHz and 2.4 GHz). The reply layout is not
+/// decoded here.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @return true on success.
+bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
+
 /// Build a tilt‑aware get‑status request (0x03 with extended payload) that returns
 /// the 16‑byte tilt block in the response.
 /// @param f IoFrame to populate.

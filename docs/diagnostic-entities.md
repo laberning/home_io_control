@@ -51,6 +51,13 @@ It is not a per-command result. It is set only while an issue is outstanding:
   linger once the device is confirmed working.
 - Both an unsolicited report (a device announcing a limitation on its own, after a wind gust) and a
   refusal in direct reply to a Home Assistant command are recorded.
+- **Rain on a VELUX window is derived, not reported.** A VELUX window sends no error when rain
+  protection clamps an `open`; it stops at its ventilation position. The hub reads `LIMITATION_BY_RAIN`
+  from the window's own status replies instead: the last move was ordered by the rain sensor, or an
+  `open` was accepted and then clamped soon after the window last reported the rain sensor. No extra
+  radio traffic is used, so the value is as fresh as the last status poll, and it is not a direct
+  "is it raining" reading. An explicit refusal from the device takes precedence. See
+  [Rain protection](devices/velux-integra.md#rain-protection).
 
 A refused command also reverts the entity to the device's last reported state — see
 [Position and state](configuration/cover.md#position-and-state).

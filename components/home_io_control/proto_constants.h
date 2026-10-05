@@ -381,6 +381,19 @@ static constexpr uint8_t STATUS_TILT_SELECTOR =
 /// default argument is spelled in proto_commands.h.
 static constexpr uint8_t PRIVATE_GET_POSITION_STATUS = 0x03;
 
+/// @name CMD_PRIVATE status read of the main parameter plus functional parameters (MP + FP1-FP7)
+/// The payload create_status_mp_fp_read() sends is a replay of the status read a VELUX KLF 200
+/// gateway sends to its devices (KLF 200 API specification v3.18 §10.3.1.4: status type 1 =
+/// current position, FPI1 selecting FP1-FP7). The bytes are on-air evidence, not a decoded
+/// request: the reply layout is not interpreted by this codebase.
+/// @{
+static constexpr uint8_t PRIVATE_STATUS_MP_FP = 0x01;     ///< CMD_PRIVATE function ID at data[0].
+static constexpr uint8_t STATUS_MP_FP_FPI1_MASK = 0xFE;   ///< FPI1: FP1..FP7 requested (bit 7 = FP1 ... bit 1 = FP7).
+static constexpr uint8_t STATUS_MP_FP_PARAM_TYPE = 0x01;  ///< Status type per requested parameter: current value.
+static constexpr uint8_t STATUS_MP_FP_PARAM_COUNT = 7;    ///< FP1-FP7: the most one request can select.
+static constexpr uint8_t STATUS_MP_FP_FPI2 = 0x00;        ///< FPI2: no FP9-FP16 requested.
+/// @}
+
 // ============================================================================
 // Cryptographic Constants
 // ============================================================================

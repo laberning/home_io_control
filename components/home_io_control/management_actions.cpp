@@ -65,6 +65,7 @@ constexpr const char *PROBE_NAME_GET_INFO2 = "get_info2";            ///< create
 constexpr const char *PROBE_NAME_GENERAL_INFO3 = "general_info3";    ///< Q2: create_general_info3().
 constexpr const char *PROBE_NAME_PRIVATE2 = "private2";              ///< Q3 long form: create_private2_read().
 constexpr const char *PROBE_NAME_PRIVATE2_SHORT = "private2_short";  ///< Q3 short form: create_private2_read().
+constexpr const char *PROBE_NAME_STATUS_MP_FP = "status_mp_fp";      ///< create_status_mp_fp_read() (no index).
 /// Function IDs the extended-shape probes hold fixed. Production software elsewhere describes
 /// these two as a battery read; on real hardware (17 solar devices plus our own mains motors)
 /// the *short* 3-byte form at these IDs returned position-family values, never a charge value.
@@ -122,12 +123,15 @@ bool build_probe_private2_long(IoFrame &f, const uint8_t *own, const uint8_t *ds
 bool build_probe_private2_short(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
   return create_private2_read(f, own, dst, index, /*long_form=*/false, low_power);
 }
+bool build_probe_status_mp_fp(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t /*index*/, bool low_power) {
+  return create_status_mp_fp_read(f, own, dst, low_power);
+}
 
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
 struct ProbeDescriptor {
   const char *name;
-  bool needs_index;  ///< False for the no-payload probes ("general_info3", "get_info1", "get_info2") -- their
-                     ///< builders take no index/selector.
+  bool needs_index;  ///< False for the probes whose builders take no index/selector ("general_info3", "get_info1",
+                     ///< "get_info2", "status_mp_fp").
   ProbeBuilderFn builder;
 };
 
@@ -147,6 +151,7 @@ constexpr ProbeDescriptor PROBE_TABLE[] = {
     {PROBE_NAME_GENERAL_INFO3, false, build_probe_general_info3},
     {PROBE_NAME_PRIVATE2, true, build_probe_private2_long},
     {PROBE_NAME_PRIVATE2_SHORT, true, build_probe_private2_short},
+    {PROBE_NAME_STATUS_MP_FP, false, build_probe_status_mp_fp},
 };
 constexpr uint8_t PROBE_TABLE_SIZE = sizeof(PROBE_TABLE) / sizeof(PROBE_TABLE[0]);
 
