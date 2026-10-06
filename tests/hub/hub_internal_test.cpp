@@ -144,6 +144,24 @@ TEST(HubInternal, NormalizeStoppedStateKeepsStoppedWhenConverged) {
   EXPECT_TRUE(dev.is_stopped) << "stopped flag should remain when target and position are within tolerance";
 }
 
+TEST(HubInternal, NormalizeStoppedStateKeepsStoppedWhenTheReportRepeats) {
+  IoDevice dev{};
+  dev.is_stopped = true;
+  dev.target = 70.0f;
+  dev.position = 70.9f;
+  detail::normalize_stopped_state(dev, /*previous_target=*/70.0f, /*previous_position=*/70.9f);
+  EXPECT_TRUE(dev.is_stopped) << "a device that repeats the same stopped values has come to rest off target";
+}
+
+TEST(HubInternal, NormalizeStoppedStateKeepsMovingWhileThePositionChanges) {
+  IoDevice dev{};
+  dev.is_stopped = true;
+  dev.target = 70.0f;
+  dev.position = 68.0f;
+  detail::normalize_stopped_state(dev, /*previous_target=*/70.0f, /*previous_position=*/55.0f);
+  EXPECT_FALSE(dev.is_stopped) << "a position that moved since the last report is still converging";
+}
+
 TEST(HubInternal, NormalizeStoppedStateUnknownPosition) {
   IoDevice dev{};
   dev.is_stopped = true;
