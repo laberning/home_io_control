@@ -523,6 +523,20 @@ bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *d
 /// @return true on success.
 bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
 
+/// Build the read of a device's resulting limitation: an unauthenticated CMD_LIMITATION_STATUS_REQ
+/// (0x25) with data `{selector, 0x00, 0x00}`, byte for byte what a VELUX KLF 200 gateway was
+/// heard sending (issue #98; public reference: KLF 200 API specification v3.18 section 10.5). The
+/// layout is an assumption until a reply under an active limitation is captured. Read-only: the
+/// selector is an enum with two values, so this builder cannot produce a limitation write.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param type Which resulting limit to read.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @return true on success.
+bool create_limitation_status_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, LimitationType type,
+                                   bool low_power);
+
 /// Build a tilt‑aware get‑status request (0x03 with extended payload) that returns
 /// the 16‑byte tilt block in the response.
 /// @param f IoFrame to populate.

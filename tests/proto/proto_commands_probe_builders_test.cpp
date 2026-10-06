@@ -150,6 +150,38 @@ TEST(ProtoCommandsProbeBuilders, StatusMpFpReadMatchesMainsRequestFromALiveKlf20
                              0x01, 0x01, 0x01, 0x00});
 }
 
+TEST(ProtoCommandsProbeBuilders, LimitationStatusReadMinimumMatchesKlf200Request) {
+  IoFrame frame{};
+  const uint8_t own[3] = {0x97, 0xDE, 0x1A};
+  const uint8_t dst[3] = {0x51, 0xE3, 0x03};
+  ASSERT_TRUE(create_limitation_status_read(frame, own, dst, LimitationType::MINIMUM, /*low_power=*/false));
+  uint8_t bytes[64] = {0};
+  const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+  const std::vector<uint8_t> expected = {0x4B, 0x00, 0x51, 0xE3, 0x03, 0x97, 0xDE, 0x1A, 0x25, 0x80, 0x00, 0x00};
+  ASSERT_EQ(len, expected.size());
+  EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+}
+
+TEST(ProtoCommandsProbeBuilders, LimitationStatusReadMaximumMatchesKlf200Request) {
+  IoFrame frame{};
+  const uint8_t own[3] = {0x97, 0xDE, 0x1A};
+  const uint8_t dst[3] = {0x51, 0xE3, 0x03};
+  ASSERT_TRUE(create_limitation_status_read(frame, own, dst, LimitationType::MAXIMUM, /*low_power=*/false));
+  uint8_t bytes[64] = {0};
+  const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+  const std::vector<uint8_t> expected = {0x4B, 0x00, 0x51, 0xE3, 0x03, 0x97, 0xDE, 0x1A, 0x25, 0xC0, 0x00, 0x00};
+  ASSERT_EQ(len, expected.size());
+  EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+}
+
+TEST(ProtoCommandsProbeBuilders, LimitationStatusReadSetsLowPowerFlagOnRequest) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_limitation_status_read(frame, test::OWN_ID, test::DST_ID, LimitationType::MINIMUM, true));
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0);
+  ASSERT_TRUE(create_limitation_status_read(frame, test::OWN_ID, test::DST_ID, LimitationType::MINIMUM, false));
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) == 0);
+}
+
 TEST(ProtoCommandsProbeBuilders, GeneralInfo3NoPayload) {
   IoFrame frame{};
   ASSERT_TRUE(create_general_info3(frame, test::OWN_ID, test::DST_ID, true));

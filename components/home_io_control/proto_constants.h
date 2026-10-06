@@ -408,6 +408,27 @@ static constexpr uint8_t STATUS_MP_FP_PARAM_COUNT = 7;    ///< FP1-FP7: the most
 static constexpr uint8_t STATUS_MP_FP_FPI2 = 0x00;        ///< FPI2: no FP9-FP16 requested.
 /// @}
 
+/// @name Limitation read (CMD_LIMITATION_STATUS_REQ / CMD_LIMITATION_STATUS_RESP)
+/// The layout is a hypothesis built from frames a VELUX KLF 200 was heard sending (issue #98) and
+/// the KLF 200 API specification v3.18, section 10.5 (get limitation: parameter id and limitation
+/// type, 0 = resulting minimum, 1 = resulting maximum). Confirm it against a reply captured under
+/// an active limitation before building on it.
+/// @{
+
+/// On-air selector byte (request data[0]) choosing which resulting limit to read. Exactly two
+/// values exist on purpose: the same opcode probably also carries the limitation write of section
+/// 10.5.2, so no other selector may be constructible. The minimum/maximum assignment rests on
+/// request order only (the minimum read always came first, with 0x80).
+enum class LimitationType : uint8_t {
+  MINIMUM = 0x80,  ///< Resulting minimum limit; rain protection raises it (a floor on the position value).
+  MAXIMUM = 0xC0,  ///< Resulting maximum limit.
+};
+
+static constexpr uint8_t LIMITATION_PARAM_MP = 0x00;     ///< Parameter id of the main parameter.
+static constexpr uint8_t LIMITATION_REQ_DATA_SIZE = 3;   ///< Request data: selector, parameter id, 0x00.
+static constexpr uint8_t LIMITATION_RESP_DATA_SIZE = 5;  ///< Reply data: parameter id, value (2), originator, time.
+/// @}
+
 // ============================================================================
 // Cryptographic Constants
 // ============================================================================
