@@ -206,8 +206,9 @@ Field data comes from issue #98.
 
 ## Evidence
 
-Corpus captures across the family: 3 for the INTEGRA roof-window actuator (node `6544C6`, probe
-replies, from issue #98), 1 for the successful KLR 200 key extraction (node `810BAB`, issue #80), 2 for a KLR 300 extraction and the node verification round after it (node `E2D1FF`, a community tester),
+Corpus captures across the family: 5 for the INTEGRA roof-window actuator (probe replies, a dry and a
+rain-limited limitation read, and private-function sweeps dry and in the rain state, from issue #98),
+1 for a KLF 200 gateway polling nine devices at 868 MHz (issue #98), 1 for the successful KLR 200 key extraction (node `810BAB`, issue #80), 2 for a KLR 300 extraction and the node verification round after it (node `E2D1FF`, a community tester),
 4 for the KIG 300 hub (node `BEFEDB`), 3 for KLR200 ↔ KUX100 bridge traffic, 3 for the KLI 310
 and KLI 313 remotes, and 6 for the SSL solar roller shutter (a TaHoma pairing it; this hub pairing it,
 with the long preamble ignored and the short one answered; a set-position ack; a stop and status

@@ -72,7 +72,9 @@ What to expect from the sensor:
 
 - **No state until the first answer.** "Off" always means the window said so. The sensor goes back
   to no state after three polls in a row get no answer, so a window that is out of range does not
-  keep showing an old reading.
+  keep showing an old reading. A device whose reply is not in the VELUX layout never gives a
+  state either. Set `logger: level: DEBUG` to see what each poll received: the log shows the
+  decoded limitation reply, or the raw frame when it does not fit.
 - **A reading is as fresh as the interval.** A shower that starts right after a poll shows up at the
   next one.
 - **It does not replace Active Issue.** Rain sensor reports the window's opening limit right now;
