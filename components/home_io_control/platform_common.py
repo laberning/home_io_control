@@ -110,8 +110,8 @@ _COMPANION_SENSOR_IDS = (
 )
 
 
-def _companion_sensor_name(config, suffix):
-    """Derive a companion sensor's entity name from the parent entity name."""
+def companion_entity_name(config, suffix):
+    """Derive a companion entity's name from the parent entity name and a suffix."""
     base_name = config.get(CONF_NAME, "")
     if base_name:
         return f"{base_name} {suffix}"
@@ -328,21 +328,21 @@ async def create_companion_sensors(config, parent):
         config,
         parent,
         config[CONF_DEVICE_NAME_SENSOR_ID],
-        _companion_sensor_name(config, "Device Name"),
+        companion_entity_name(config, "Device Name"),
         disabled_by_default=True,
     )
     await _create_companion_text_sensor(
         config,
         parent,
         config[CONF_ACTIVE_ISSUE_SENSOR_ID],
-        _companion_sensor_name(config, "Active Issue"),
+        companion_entity_name(config, "Active Issue"),
         disabled_by_default=False,
     )
     await _create_link_health_sensor(
         config,
         parent,
         config[CONF_RSSI_SENSOR_ID],
-        _companion_sensor_name(config, "RSSI"),
+        companion_entity_name(config, "RSSI"),
         **{
             CONF_UNIT_OF_MEASUREMENT: "dBm",
             CONF_DEVICE_CLASS: DEVICE_CLASS_SIGNAL_STRENGTH,
@@ -354,7 +354,7 @@ async def create_companion_sensors(config, parent):
         config,
         parent,
         config[CONF_LAST_CONTACT_SENSOR_ID],
-        _companion_sensor_name(config, "Last Contact"),
+        companion_entity_name(config, "Last Contact"),
         **{
             CONF_UNIT_OF_MEASUREMENT: "s",
             CONF_STATE_CLASS: STATE_CLASS_MEASUREMENT,
@@ -365,7 +365,7 @@ async def create_companion_sensors(config, parent):
         config,
         parent,
         config[CONF_EXCHANGE_FAILURES_SENSOR_ID],
-        _companion_sensor_name(config, "Exchange Failures"),
+        companion_entity_name(config, "Exchange Failures"),
         **{
             CONF_STATE_CLASS: STATE_CLASS_TOTAL_INCREASING,
             CONF_ACCURACY_DECIMALS: 0,
@@ -375,7 +375,7 @@ async def create_companion_sensors(config, parent):
         config,
         parent,
         config[CONF_UNCONFIRMED_EXCHANGES_SENSOR_ID],
-        _companion_sensor_name(config, "Unconfirmed Exchanges"),
+        companion_entity_name(config, "Unconfirmed Exchanges"),
         **{
             CONF_STATE_CLASS: STATE_CLASS_TOTAL_INCREASING,
             CONF_ACCURACY_DECIMALS: 0,
@@ -385,13 +385,13 @@ async def create_companion_sensors(config, parent):
         config,
         parent,
         config[CONF_LAST_COMMANDED_BY_SENSOR_ID],
-        _companion_sensor_name(config, "Last Commanded By"),
+        companion_entity_name(config, "Last Commanded By"),
         disabled_by_default=True,
     )
     await _create_companion_text_sensor(
         config,
         parent,
         config[CONF_LAST_COMMAND_SOURCE_SENSOR_ID],
-        _companion_sensor_name(config, "Last Command Source"),
+        companion_entity_name(config, "Last Command Source"),
         disabled_by_default=True,
     )
