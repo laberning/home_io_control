@@ -1,5 +1,5 @@
 /// @file platform_cover_controls.cpp
-/// @brief Generated per-cover auxiliary controls: command button and silent-operation toggle.
+/// @brief Generated per-cover auxiliary entities: command button, silent-operation toggle and rain sensor.
 /// @ingroup hioc_platforms
 
 #include "platform_cover_controls.h"
@@ -14,6 +14,7 @@ namespace home_io_control {
 // name, not by log tag, and this reads correctly for either command.
 static const char *const TAG_COMMAND_BUTTON = "home_io_control.cover_command_button";
 static const char *const TAG_SILENT = "home_io_control.cover.silent";
+static const char *const TAG_RAIN = "home_io_control.cover.rain_sensor";
 
 void IOHomeCoverCommandButton::press_action() {
   if (this->parent_ == nullptr) {
@@ -56,6 +57,30 @@ void IOHomeCoverSilentSwitch::write_state(bool state) {
 void IOHomeCoverSilentSwitch::dump_config() {
   ESP_LOGCONFIG(TAG_SILENT, "IO-Homecontrol Silent Operation:");
   ESP_LOGCONFIG(TAG_SILENT, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeRainBinarySensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) { this->publish_rain_state_(dev.rain_sensor); });
+}
+
+void IOHomeRainBinarySensor::publish_rain_state_(RainSensorState state) {
+  switch (state) {
+    case RainSensorState::RAIN:
+      this->publish_state(true);
+      break;
+    case RainSensorState::DRY:
+      this->publish_state(false);
+      break;
+    case RainSensorState::UNKNOWN:
+      // Nothing was read, or the last reads went unanswered; "dry" must mean a reply said so.
+      this->invalidate_state();
+      break;
+  }
+}
+
+void IOHomeRainBinarySensor::dump_config() {
+  ESP_LOGCONFIG(TAG_RAIN, "IO-Homecontrol Rain Sensor:");
+  ESP_LOGCONFIG(TAG_RAIN, "  Device ID: %s", this->device_id_.c_str());
 }
 
 }  // namespace home_io_control

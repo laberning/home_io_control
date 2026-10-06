@@ -155,6 +155,26 @@ TEST(OperationQueue, RequestNameDeduplicates) {
   EXPECT_EQ(q.size(), 1u);
 }
 
+TEST(OperationQueue, RequestLimitationDeduplicatesPerDevice) {
+  OperationQueue q;
+  EXPECT_TRUE(q.enqueue_request_limitation("DEV"));
+  EXPECT_FALSE(q.enqueue_request_limitation("DEV")) << "duplicate limitation read should be suppressed";
+  EXPECT_TRUE(q.enqueue_request_limitation("OTHER"));
+  EXPECT_EQ(q.size(), 2u);
+}
+
+TEST(OperationQueue, LimitationAndStatusReadsOfOneDeviceAreIndependent) {
+  OperationQueue q;
+  q.enqueue_request_status("DEV");
+  q.enqueue_request_limitation("DEV");
+
+  EXPECT_EQ(q.size(), 2u) << "a status poll does not stand in for a limitation read";
+}
+
+TEST(OperationQueue, LimitationReadIsBackgroundWork) {
+  EXPECT_TRUE(OperationQueue::is_background_op(PendingOperationType::REQUEST_LIMITATION));
+}
+
 // ============================================================================
 // Discover-and-pair priority + flushing
 // ============================================================================
@@ -171,6 +191,16 @@ TEST(OperationQueue, DiscoverAndPairFlushesPollsAndPushesToFront) {
   ASSERT_EQ(q.size(), 2u) << "status+name flushed, position+discover remain";
   EXPECT_EQ(q.front().type, PendingOperationType::DISCOVER_AND_PAIR) << "discover should be at front";
   EXPECT_EQ(q.back().type, PendingOperationType::SET_POSITION) << "position command should be preserved";
+}
+
+TEST(OperationQueue, DiscoverAndPairFlushesQueuedLimitationReads) {
+  OperationQueue q;
+  q.enqueue_request_limitation("A");
+
+  q.enqueue_discover_and_pair();
+
+  ASSERT_EQ(q.size(), 1u) << "a limitation read must not consume the short pairing window";
+  EXPECT_EQ(q.front().type, PendingOperationType::DISCOVER_AND_PAIR);
 }
 
 TEST(OperationQueue, DiscoverAndPairDeduplicates) {
@@ -304,6 +334,16 @@ TEST(OperationQueue, RequestNameNotDroppedOnControlEnqueue) {
   ASSERT_EQ(q.size(), 2u) << "REQUEST_NAME should not be dropped (only REQUEST_STATUS is)";
   EXPECT_EQ(q[0].type, PendingOperationType::SET_POSITION);
   EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_NAME);
+}
+
+TEST(OperationQueue, QueuedLimitationReadSurvivesAndYieldsToControlEnqueue) {
+  OperationQueue q;
+  q.enqueue_request_limitation("DEV");
+  q.enqueue_set_position("DEV", 50);
+
+  ASSERT_EQ(q.size(), 2u) << "a command reply does not answer a limitation read, so it is kept";
+  EXPECT_EQ(q[0].type, PendingOperationType::SET_POSITION);
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_LIMITATION);
 }
 
 TEST(OperationQueue, DiscoverAndPairPopsBeforeControlOp) {

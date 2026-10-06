@@ -39,6 +39,7 @@
 #include "hub_pairing.h"
 #include "device_registry.h"
 #include "status_poll_policy.h"
+#include "rain_poll_policy.h"
 #include "operation_queue.h"
 #include "exchange_engine.h"
 #include "pairing_engine.h"
@@ -491,6 +492,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the legacy one-shot settle poll only.
   virtual void set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms);
+  /// Opt a registered device into the periodic rain sensor poll (a read of its minimum limitation).
+  /// @param device_id Target device ID.
+  /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
+  virtual void set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms);
 
   // --- High-level operations ---
   /// Send a position command to a device.
@@ -514,6 +519,14 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @return true if status frame was received and processed.
   virtual bool request_device_status(const std::string &device_id);
+  /// Read the device's minimum limitation and derive its rain sensor state from the reply.
+  ///
+  /// Unauthenticated read (CMD_LIMITATION_STATUS_REQ); the reply is accepted only inside this
+  /// exchange (ADR 0022) and never reaches update_device_status_(), so a poll cannot move the
+  /// device's position or target. A moving device is not asked: the poll is deferred instead.
+  /// @param device_id Target device ID.
+  /// @return true if a usable limitation reply arrived and was applied.
+  virtual bool request_device_limitation(const std::string &device_id);
   /// Request the stored device name from a device.
   /// @param device_id Target device ID.
   /// @return true if a name response frame was received and processed.
@@ -679,6 +692,10 @@ class IOHomeControlComponent : public Component,
   /// Queue an async status request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   virtual void queue_request_device_status(const std::string &device_id);
+  /// Queue an async minimum-limitation read for the rain sensor poll; executed in loop() as a
+  /// background operation (yields to commands and 1W activity).
+  /// @param device_id Target device ID.
+  virtual void queue_request_device_limitation(const std::string &device_id);
   /// Queue an async device-name request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   virtual void queue_request_device_name(const std::string &device_id);
@@ -894,6 +911,12 @@ class IOHomeControlComponent : public Component,
   /// @return Always false; a refusal is never a success.
   bool handle_error_response_(const std::string &device_id, const IoFrame &request, const IoFrame &response,
                               uint32_t retry_after_fail_ms);
+
+  /// Fold one rain poll outcome into the device's rain sensor state and tell subscribers.
+  /// @param device_id Target device ID.
+  /// @param reading DRY or RAIN for an answered poll, UNKNOWN for a miss.
+  /// @param limit_text Rendering of the reported limit for the state-change log, empty for a miss.
+  void apply_rain_poll_result_(const std::string &device_id, RainSensorState reading, const std::string &limit_text);
 
   /// @brief What exchange_and_record_() found.
   enum class RequestResult : uint8_t {
@@ -1148,6 +1171,7 @@ class IOHomeControlComponent : public Component,
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().
   bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
+  RainPollPolicy rain_poll_policy_;  ///< Schedule of the opt-in rain sensor poll.
   OperationQueue op_queue_;
   /// Per-attempt pairing telemetry. PairingEngine records into it and, during an attempt, attaches it
   /// to ExchangeEngine as its TransmitObserver.

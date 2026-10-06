@@ -208,3 +208,31 @@ TEST(RainPollPolicy, UnscheduledDeviceCountsNoMisses) {
   policy.on_poll_succeeded("DEV");
   EXPECT_EQ(policy.get_failures("DEV"), 0u);
 }
+
+// ============================================================================
+// Due check and error-reply warning
+// ============================================================================
+
+TEST(RainPollPolicy, HasDueMatchesPopWithoutConsumingTheSchedule) {
+  RainPollPolicy policy;
+  EXPECT_FALSE(policy.has_due(T0)) << "an empty schedule has nothing due";
+  policy.set_interval("DEV", INTERVAL, T0, 0);
+  const uint32_t due_at = T0 + RAIN_POLL_INITIAL_DELAY_MS;
+
+  EXPECT_FALSE(policy.has_due(due_at - 1));
+  EXPECT_TRUE(policy.has_due(due_at));
+  EXPECT_TRUE(policy.has_due(due_at)) << "asking does not re-arm the poll";
+  ASSERT_TRUE(policy.pop_due_device(due_at, MID).has_value());
+  EXPECT_FALSE(policy.has_due(due_at));
+}
+
+TEST(RainPollPolicy, ErrorReplyWarningIsGivenOncePerDevice) {
+  RainPollPolicy policy;
+  policy.set_interval("A", INTERVAL, T0, 0);
+  policy.set_interval("B", INTERVAL, T0, 0);
+
+  EXPECT_TRUE(policy.first_error_reply("A"));
+  EXPECT_FALSE(policy.first_error_reply("A"));
+  EXPECT_TRUE(policy.first_error_reply("B")) << "each device gets its own warning";
+  EXPECT_FALSE(policy.first_error_reply("UNKNOWN")) << "an unscheduled device is never warned about";
+}

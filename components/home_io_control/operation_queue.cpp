@@ -10,7 +10,8 @@ namespace esphome {
 namespace home_io_control {
 
 bool OperationQueue::is_background_op(PendingOperationType t) {
-  return t == PendingOperationType::REQUEST_STATUS || t == PendingOperationType::REQUEST_NAME;
+  return t == PendingOperationType::REQUEST_STATUS || t == PendingOperationType::REQUEST_NAME ||
+         t == PendingOperationType::REQUEST_LIMITATION;
 }
 
 void OperationQueue::push_control_(PendingOperation op) {
@@ -129,6 +130,10 @@ bool OperationQueue::enqueue_request_status(const std::string &device_id) {
 
 bool OperationQueue::enqueue_request_name(const std::string &device_id) {
   return enqueue_background_unique_(PendingOperationType::REQUEST_NAME, device_id);
+}
+
+bool OperationQueue::enqueue_request_limitation(const std::string &device_id) {
+  return enqueue_background_unique_(PendingOperationType::REQUEST_LIMITATION, device_id);
 }
 
 bool OperationQueue::enqueue_discover_and_pair() {

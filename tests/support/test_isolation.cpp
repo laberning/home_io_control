@@ -2,6 +2,7 @@
 
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 
 /// Per-test reset for the deterministic-clock/scheduler-stub pair (WP1): a gtest listener,
 /// registered once during static initialization, so no individual test has to remember to clean
@@ -12,6 +13,7 @@ class TestIsolationListener : public ::testing::EmptyTestEventListener {
  public:
   void OnTestStart(const ::testing::TestInfo & /*test_info*/) override {
     esphome::test_scheduler::clear();
+    esphome::test_random::set(0);
     // App.scheduler's last_self_timeout_* fields live on the single global Scheduler instance
     // (unlike Component's own last_* fields, which start fresh every test simply because each
     // test constructs its own Component) — clear them too, or a self pointer from a destroyed

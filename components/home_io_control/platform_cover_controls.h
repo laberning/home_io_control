@@ -1,8 +1,8 @@
 #pragma once
 
 /// @file platform_cover_controls.h
-/// @brief Generated per-cover auxiliary controls: the command button (favorite / ventilation)
-/// and the silent-operation toggle.
+/// @brief Generated per-cover auxiliary entities: the command button (favorite / ventilation),
+/// the silent-operation toggle and the rain binary sensor.
 /// @ingroup hioc_platforms
 ///
 /// Both are device-bound companions (DeviceBoundCompanion), generated alongside a `cover:` entity
@@ -12,6 +12,7 @@
 
 #include <string>
 
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/core/component.h"
@@ -84,6 +85,31 @@ class IOHomeCoverSilentSwitch : public switch_::Switch, public Component, public
   /// @brief Apply the requested travel profile to the bound device.
   /// @param state True for silent (slower) operation.
   void write_state(bool state) override;
+};
+
+/// @brief Binary sensor that reports whether the window currently limits its own opening for rain.
+/// @ingroup hioc_platforms
+///
+/// ON when the device's minimum limitation read at least the rain threshold, OFF when it read
+/// below it. Only generated when the cover declares `rain_sensor_poll_interval:`, which is also what
+/// schedules the poll that feeds it. It has no state until the first answered poll, and loses it
+/// again after several unanswered polls: "off" always means a device said so. Independent of the
+/// Active Issue sensor, which reports what the last move or a clamped command implied.
+class IOHomeRainBinarySensor : public binary_sensor::BinarySensor, public Component, public DeviceBoundCompanion {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+
+ protected:
+  /// @brief Publish a rain state: true for RAIN, false for DRY, no state for UNKNOWN.
+  void publish_rain_state_(RainSensorState state);
 };
 
 }  // namespace home_io_control

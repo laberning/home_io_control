@@ -4,6 +4,8 @@
 
 #include "rain_poll_policy.h"
 
+#include <algorithm>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -28,6 +30,11 @@ void RainPollPolicy::set_interval(const std::string &device_id, uint32_t interva
 uint32_t RainPollPolicy::get_interval(const std::string &device_id) const {
   const auto it = entries_.find(device_id);
   return it != entries_.end() ? it->second.interval_ms : 0;
+}
+
+bool RainPollPolicy::has_due(uint32_t now) const {
+  return std::any_of(entries_.begin(), entries_.end(),
+                     [now](const auto &entry) { return reached(now, entry.second.next_poll); });
 }
 
 std::optional<std::string> RainPollPolicy::pop_due_device(uint32_t now, uint32_t random) {
@@ -62,6 +69,14 @@ void RainPollPolicy::on_poll_succeeded(const std::string &device_id) {
   const auto it = entries_.find(device_id);
   if (it != entries_.end())
     it->second.failures = 0;
+}
+
+bool RainPollPolicy::first_error_reply(const std::string &device_id) {
+  const auto it = entries_.find(device_id);
+  if (it == entries_.end() || it->second.error_reported)
+    return false;
+  it->second.error_reported = true;
+  return true;
 }
 
 uint8_t RainPollPolicy::get_failures(const std::string &device_id) const {

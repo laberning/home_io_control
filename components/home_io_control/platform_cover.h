@@ -52,6 +52,9 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
     this->invert_ = invert;
     this->invert_explicit_ = true;
   }
+  /// @brief Opt this cover into the periodic rain sensor poll (from YAML `rain_sensor_poll_interval`).
+  /// @param interval_ms Poll interval in milliseconds; zero (the default) means no poll.
+  void set_rain_sensor_poll_interval(uint32_t interval_ms) { this->rain_sensor_poll_interval_ms_ = interval_ms; }
   /// @brief Query whether this device supports tilt (slat angle) control.
   /// @return true if the YAML‑declared device type is tilt‑capable.
   [[nodiscard]] bool supports_tilt() const;
@@ -77,6 +80,7 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   bool invert_{false};
   bool invert_explicit_{false};
   float last_io_position_{UNKNOWN_POSITION};
+  uint32_t rain_sensor_poll_interval_ms_{0};  ///< 0 = not opted in; no rain poll is scheduled.
 };
 
 }  // namespace home_io_control

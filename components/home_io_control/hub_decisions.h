@@ -331,7 +331,7 @@ inline bool is_duplicate_1w_frame(const OneWayDedupState &last, const OneWayDedu
 /// The gate only ever delays a poll, never drops one — it stays queued and fires as soon as it is
 /// no longer deferred.
 ///
-/// @param next_op_is_background True if the queue front is a REQUEST_STATUS / REQUEST_NAME.
+/// @param next_op_is_background True if the queue front is a background poll (OperationQueue::is_background_op()).
 /// @param first_1w_activity_ms  millis() of the first frame in the current 1W burst; 0 if none seen
 ///                               since boot.
 /// @param last_1w_activity_ms   millis() of the most recent 1W frame; 0 if none seen since boot.
@@ -581,9 +581,14 @@ struct RainLimitationInput {
 /// integration reads that limit and calls it rain from this minimum limit upward (observed values
 /// 89, 91, 93 and 100 %).
 static constexpr uint8_t RAIN_MINIMUM_LIMIT_PERCENT = 89;
-static_assert(STATUS_POS_MAX % 100 == 0, "the raw rain threshold must be an exact multiple of one percent");
+/// Percent value of a fully limited position, the divisor of the raw position coding.
+static constexpr uint16_t POSITION_FULL_PERCENT = 100;
+/// Raw position units per percent (512).
+static constexpr uint16_t POSITION_RAW_PER_PERCENT = STATUS_POS_MAX / POSITION_FULL_PERCENT;
+static_assert(POSITION_RAW_PER_PERCENT * POSITION_FULL_PERCENT == STATUS_POS_MAX,
+              "the raw rain threshold must be an exact multiple of one percent");
 /// RAIN_MINIMUM_LIMIT_PERCENT in the raw position coding (0xB200).
-static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = STATUS_POS_MAX / 100 * RAIN_MINIMUM_LIMIT_PERCENT;
+static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RAIN_MINIMUM_LIMIT_PERCENT;
 
 /// @brief Rain state from the raw value of a minimum-limitation reply.
 /// @param value_raw Big-endian raw value in position coding (LimitationStatus::value_raw).

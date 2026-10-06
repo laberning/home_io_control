@@ -83,6 +83,13 @@ ROWS = (
         methods=("setup_state", "write_state", "get_traits"),
     ),
     Row("components/switch/switch.h", "components/switch/switch.h", "Switch", methods=("write_state", "publish_state")),
+    Row(
+        "components/binary_sensor/binary_sensor.h",
+        "components/binary_sensor/binary_sensor.h",
+        "BinarySensor",
+        methods=("publish_state",),
+        members=("state",),
+    ),
     Row("components/lock/lock.h", "components/lock/lock.h", "Lock", methods=("control", "publish_state")),
     Row(
         "components/climate/climate.h",

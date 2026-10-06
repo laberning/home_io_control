@@ -434,6 +434,79 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
 }
 
+bool IOHomeControlComponent::request_device_limitation(const std::string &device_id) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  // Not a failure and not a reading: a moving device is left alone (the same caution the diagnostic
+  // probe applies), and asking again soon is cheaper than waiting out a whole interval.
+  if (!effective_is_stopped(*dev)) {
+    ESP_LOGD(detail::TAG, "Device %s: rain sensor poll deferred, device is moving", device_id.c_str());
+    this->rain_poll_policy_.defer(device_id, RAIN_POLL_MOVING_RETRY_MS, millis());
+    return false;
+  }
+
+  IoFrame request;
+  if (!create_limitation_status_read(request, this->node_id_, dev->node_id, LimitationType::MINIMUM, dev->low_power))
+    return false;
+
+  // retry_after_fail_ms = 0 keeps the status-poll backoff ladder out of a rain poll's way; a miss
+  // here is counted by the rain schedule instead.
+  IoFrame response;
+  const RequestResult result =
+      this->exchange_and_record_(device_id, request, response, {false, 0, RAIN_POLL_MAX_TRIES});
+
+  // A reply consumed inside the blocking exchange never reaches the normal receive path.
+  dev = this->registry_.get(device_id);
+  RainSensorState reading = RainSensorState::UNKNOWN;
+  std::string limit_text;
+  if (result == RequestResult::REPLY && dev != nullptr) {
+    // The device transmitted, whatever it said: stamp link health the way the status path does.
+    detail::update_link_health(*dev, this->radio_);
+    uint8_t raw[FRAME_MAX_SIZE] = {0};
+    const uint8_t raw_len = serialize(response, raw, sizeof(raw));
+    detail::log_component_capture(this->radio_, "limitation_rx", raw, raw_len, &response);
+    LimitationStatus status;
+    if (response.cmd == CMD_LIMITATION_STATUS_RESP && decode_limitation_status(response, status)) {
+      ESP_LOGD(detail::TAG, "Device %s: %s", device_id.c_str(), detail::describe_limitation_reply(response).c_str());
+      reading = decisions::rain_state_from_limitation_reply(status);
+      limit_text = detail::format_limitation_value(status.value_raw);
+    } else {
+      ESP_LOGD(detail::TAG, "Device %s: unexpected reply 0x%02X to the limitation read", device_id.c_str(),
+               response.cmd);
+    }
+  } else if (result == RequestResult::ERROR_REPLY && this->rain_poll_policy_.first_error_reply(device_id)) {
+    ESP_LOGW(detail::TAG, "Device %s answers the limitation read with an error; its rain sensor stays unknown",
+             device_id.c_str());
+  }
+
+  this->apply_rain_poll_result_(device_id, reading, limit_text);
+  return reading != RainSensorState::UNKNOWN;
+}
+
+void IOHomeControlComponent::apply_rain_poll_result_(const std::string &device_id, RainSensorState reading,
+                                                     const std::string &limit_text) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return;
+  RainSensorState state = dev->rain_sensor;
+  if (reading != RainSensorState::UNKNOWN) {
+    this->rain_poll_policy_.on_poll_succeeded(device_id);
+    state = reading;
+  } else if (this->rain_poll_policy_.on_poll_failed(device_id)) {
+    state = RainSensorState::UNKNOWN;  // the last reading is too old to keep showing
+  }
+  if (state != dev->rain_sensor) {
+    ESP_LOGI(detail::TAG, "Device %s: rain sensor %s -> %s%s%s%s", device_id.c_str(),
+             rain_sensor_state_name(dev->rain_sensor), rain_sensor_state_name(state),
+             limit_text.empty() ? "" : " (minimum limit ", limit_text.c_str(), limit_text.empty() ? "" : ")");
+    dev->rain_sensor = state;
+  }
+  // Notify on every outcome: link health moved too, so the link sensors need the update.
+  this->notify_device_update_(device_id);
+}
+
 bool IOHomeControlComponent::request_device_name(const std::string &device_id) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
@@ -653,6 +726,12 @@ void IOHomeControlComponent::queue_request_device_status(const std::string &devi
   this->op_queue_.enqueue_request_status(device_id);
 }
 
+void IOHomeControlComponent::queue_request_device_limitation(const std::string &device_id) {
+  if (this->get_device(device_id) == nullptr)
+    return;
+  this->op_queue_.enqueue_request_limitation(device_id);
+}
+
 void IOHomeControlComponent::queue_request_device_name(const std::string &device_id) {
   if (this->get_device(device_id) == nullptr)
     return;
@@ -779,6 +858,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::REQUEST_NAME:
       this->request_device_name(operation.device_id);
+      break;
+    case PendingOperationType::REQUEST_LIMITATION:
+      this->request_device_limitation(operation.device_id);
       break;
     case PendingOperationType::DISCOVER_AND_PAIR:
       this->discover_and_pair();

@@ -66,6 +66,10 @@ class RainPollPolicy {
   /// Return the configured interval (0 when the device is not scheduled).
   [[nodiscard]] uint32_t get_interval(const std::string &device_id) const;
 
+  /// True when any device's poll is due at @p now. Lets the caller draw a random number only when
+  /// pop_due_device() will use it.
+  [[nodiscard]] bool has_due(uint32_t now) const;
+
   /// Return one device whose poll is due and immediately schedule its next poll at
   /// rain_poll_jittered_interval_ms() after @p now, so a poll that is later dropped from the
   /// operation queue (pairing flushes background work) is skipped rather than lost forever.
@@ -81,6 +85,9 @@ class RainPollPolicy {
   bool on_poll_failed(const std::string &device_id);
   /// Clear the unanswered-poll count.
   void on_poll_succeeded(const std::string &device_id);
+  /// True the first time it is called for a device that answered the limitation read with an error
+  /// reply, false afterwards, so the log names that once instead of every poll.
+  [[nodiscard]] bool first_error_reply(const std::string &device_id);
   /// Consecutive unanswered polls (0 for an unscheduled device).
   [[nodiscard]] uint8_t get_failures(const std::string &device_id) const;
   /// Absolute millis() time of the device's next poll (0 for an unscheduled device).
@@ -89,9 +96,10 @@ class RainPollPolicy {
  private:
   /// Schedule state of one device.
   struct Entry {
-    uint32_t interval_ms{0};  ///< Configured interval.
-    uint32_t next_poll{0};    ///< Absolute millis() time of the next poll.
-    uint8_t failures{0};      ///< Consecutive unanswered polls.
+    uint32_t interval_ms{0};     ///< Configured interval.
+    uint32_t next_poll{0};       ///< Absolute millis() time of the next poll.
+    uint8_t failures{0};         ///< Consecutive unanswered polls.
+    bool error_reported{false};  ///< True once first_error_reply() has returned true.
   };
 
   std::map<std::string, Entry> entries_;  ///< Scheduled devices, keyed by device id.
