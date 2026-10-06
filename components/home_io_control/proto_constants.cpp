@@ -31,6 +31,10 @@ const char *command_name(uint8_t cmd) {
       return "WRITE_PRIVATE";
     case CMD_WRITE_PRIVATE_ACK:
       return "WRITE_PRIVATE_ACK";
+    case CMD_LIMITATION_STATUS_REQ:
+      return "LIMITATION_STATUS_REQ";
+    case CMD_LIMITATION_STATUS_RESP:
+      return "LIMITATION_STATUS_RESP";
     case CMD_DISCOVER_REQ:
       return "DISCOVER_REQ";
     case CMD_DISCOVER_RESP:

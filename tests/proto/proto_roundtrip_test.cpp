@@ -23,7 +23,7 @@ namespace {
 
 /// Every command ID defined in proto_frame.h, so the generated corpus exercises
 /// each real CMD_* value in the command byte position (not just random bytes).
-constexpr std::array<uint8_t, 34> kAllCommands = {
+constexpr std::array<uint8_t, 36> kAllCommands = {
     CMD_EXECUTE,
     CMD_ACTIVATE_MODE,
     CMD_PRIVATE,
@@ -32,6 +32,8 @@ constexpr std::array<uint8_t, 34> kAllCommands = {
     CMD_PRIORITY_LEVEL_RESP,
     CMD_WRITE_PRIVATE,
     CMD_WRITE_PRIVATE_ACK,
+    CMD_LIMITATION_STATUS_REQ,
+    CMD_LIMITATION_STATUS_RESP,
     CMD_DISCOVER_REQ,
     CMD_DISCOVER_RESP,
     CMD_DISCOVER_SPE_REQ,

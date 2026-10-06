@@ -222,6 +222,42 @@ TEST(RadioSX1262, UartProbeAcceptsEveryKnownIoCommand) {
   }
 }
 
+TEST(RadioSX1262, UartProbeAcceptsLimitationStatusFramesAsHeardOnAir) {
+  // The request/reply pair a VELUX KLF 200 exchanges with a window (issue #98): 12-byte request
+  // (CTRL0 0x4B) and 14-byte reply (CTRL0 0x8D). The CRC matches, but before the two opcodes
+  // were known the soft PHY rejected the candidate and handed the raw chip buffer up as garbage.
+  struct Case {
+    std::vector<uint8_t> frame;
+    uint8_t cmd;
+  };
+  const std::vector<Case> cases = {
+      {{0x4B, 0x00, 0x51, 0xE3, 0x03, 0xAB, 0xC1, 0x24, 0x25, 0x80, 0x00, 0x00}, CMD_LIMITATION_STATUS_REQ},
+      {{0x4B, 0x00, 0x51, 0xE3, 0x03, 0xAB, 0xC1, 0x24, 0x25, 0xC0, 0x00, 0x00}, CMD_LIMITATION_STATUS_REQ},
+      {{0x8D, 0x00, 0xAB, 0xC1, 0x24, 0x51, 0xE3, 0x03, 0x26, 0x00, 0x00, 0x00, 0x00, 0x00},
+       CMD_LIMITATION_STATUS_RESP},
+      {{0x8D, 0x00, 0xAB, 0xC1, 0x24, 0x51, 0xE3, 0x03, 0x26, 0x00, 0xC8, 0x00, 0x00, 0x00},
+       CMD_LIMITATION_STATUS_RESP},
+  };
+  for (const Case &c : cases) {
+    SCOPED_TRACE(::testing::Message() << "cmd=0x" << std::hex << static_cast<int>(c.cmd) << " len=" << std::dec
+                                      << c.frame.size());
+    uint8_t frame_with_crc[FRAME_MAX_WIRE_SIZE];
+    memcpy(frame_with_crc, c.frame.data(), c.frame.size());
+    const uint16_t crc = crc_ccitt(c.frame.data(), static_cast<uint8_t>(c.frame.size()));
+    frame_with_crc[c.frame.size()] = crc & 0xFF;
+    frame_with_crc[c.frame.size() + 1] = (crc >> 8) & 0xFF;
+    uint8_t encoded[64] = {0};
+    const uint8_t encoded_len =
+        uart_encode_packet(frame_with_crc, static_cast<uint8_t>(c.frame.size() + 2), encoded, sizeof(encoded));
+    ASSERT_GT(encoded_len, 0u);
+
+    const UartProbeResult probe = find_uart_probe(encoded, encoded_len);
+    ASSERT_TRUE(probe.valid);
+    ASSERT_EQ(probe.frame_len, c.frame.size());
+    EXPECT_EQ(memcmp(probe.decoded + probe.frame_start, c.frame.data(), c.frame.size()), 0);
+  }
+}
+
 TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   // UartProbeAcceptsEveryKnownIoCommand above closes the class of bug where find_uart_probe()
   // disagrees with is_known_io_command() -- but it cannot catch the original bug itself: an

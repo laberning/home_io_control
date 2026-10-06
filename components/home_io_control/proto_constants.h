@@ -55,6 +55,20 @@ static constexpr uint8_t CMD_IDENTIFY = 0x1E;  ///< Device physical identificati
 static constexpr uint8_t CMD_WRITE_PRIVATE = 0x20;      ///< Write private register (climate/heating devices)
 static constexpr uint8_t CMD_WRITE_PRIVATE_ACK = 0x21;  ///< Acknowledgment to CMD_WRITE_PRIVATE
 
+// Limitation read
+static constexpr uint8_t CMD_LIMITATION_STATUS_REQ =
+    0x25;  ///< Limitation read: asks a device for its resulting minimum or maximum position limit,
+           ///< the value a protective function such as rain protection imposes (CMD_LIMITATION_STATUS_RESP).
+           ///< Heard from a VELUX KLF 200 gateway to VELUX windows (issue #98) every five minutes,
+           ///< minimum first, then maximum; its purpose follows the KLF 200 API specification v3.18,
+           ///< section 10.5 (get limitation / limitation status). The three data bytes are assumed to be
+           ///< `[selector] [parameter id] [00]` (see LimitationType); the layout is not yet confirmed
+           ///< under an active limitation. Build it with create_limitation_status_read().
+static constexpr uint8_t CMD_LIMITATION_STATUS_RESP =
+    0x26;  ///< Reply to CMD_LIMITATION_STATUS_REQ. Five data bytes, assumed to be
+           ///< `[parameter id] [value hi] [value lo] [originator] [time]`; decode_limitation_status()
+           ///< documents the assumption. Only the unlimited case (0 % and 100 %) has been captured.
+
 // Discovery and pairing commands
 static constexpr uint8_t CMD_DISCOVER_REQ = 0x28;   ///< Broadcast discovery request
 static constexpr uint8_t CMD_DISCOVER_RESP = 0x29;  ///< Device responds with its ID and type

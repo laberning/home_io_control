@@ -88,6 +88,8 @@ bool is_known_io_command(uint8_t cmd) {
     case CMD_IDENTIFY:
     case CMD_WRITE_PRIVATE:
     case CMD_WRITE_PRIVATE_ACK:
+    case CMD_LIMITATION_STATUS_REQ:
+    case CMD_LIMITATION_STATUS_RESP:
     case CMD_DISCOVER_REQ:
     case CMD_DISCOVER_RESP:
     case CMD_DISCOVER_SPE_REQ:
