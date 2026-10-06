@@ -8,6 +8,7 @@
 /// for exchange and pairing flows, plus shared timing utilities. No state, no
 /// side effects — suitable for unit testing without radio hardware.
 
+#include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
@@ -572,6 +573,36 @@ struct RainLimitationInput {
       break;
   }
   return "none";
+}
+
+// === Rain sensor from the minimum limitation ===
+
+/// A window with a wired rain sensor limits its own opening while it rains. Home Assistant's VELUX
+/// integration reads that limit and calls it rain from this minimum limit upward (observed values
+/// 89, 91, 93 and 100 %).
+static constexpr uint8_t RAIN_MINIMUM_LIMIT_PERCENT = 89;
+static_assert(STATUS_POS_MAX % 100 == 0, "the raw rain threshold must be an exact multiple of one percent");
+/// RAIN_MINIMUM_LIMIT_PERCENT in the raw position coding (0xB200).
+static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = STATUS_POS_MAX / 100 * RAIN_MINIMUM_LIMIT_PERCENT;
+
+/// @brief Rain state from the raw value of a minimum-limitation reply.
+/// @param value_raw Big-endian raw value in position coding (LimitationStatus::value_raw).
+/// @return UNKNOWN for a value above STATUS_POS_MAX (not a percentage), RAIN at or above
+///         RAIN_MINIMUM_LIMIT_RAW, DRY below it.
+[[nodiscard]] inline RainSensorState rain_state_from_minimum_limit(uint16_t value_raw) {
+  if (value_raw > STATUS_POS_MAX)
+    return RainSensorState::UNKNOWN;
+  return value_raw >= RAIN_MINIMUM_LIMIT_RAW ? RainSensorState::RAIN : RainSensorState::DRY;
+}
+
+/// @brief Rain state from a decoded limitation reply: the one place that knows which reply fields
+/// decide. Only the main parameter's value counts; originator and remaining time do not.
+/// @param status A decoded CMD_LIMITATION_STATUS_RESP payload.
+/// @return UNKNOWN unless the reply is for the main parameter, else rain_state_from_minimum_limit().
+[[nodiscard]] inline RainSensorState rain_state_from_limitation_reply(const LimitationStatus &status) {
+  if (status.parameter_id != LIMITATION_PARAM_MP)
+    return RainSensorState::UNKNOWN;
+  return rain_state_from_minimum_limit(status.value_raw);
 }
 
 }  // namespace decisions

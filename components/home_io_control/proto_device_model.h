@@ -227,6 +227,18 @@ enum class CoverCommand : uint8_t {
 /// @return Null-terminated string such as "STOP", "FAVORITE", or "VENT".
 const char *cover_command_name(CoverCommand cmd);
 
+/// @brief What the hub's latest minimum-limitation read says about a rain-protection limit.
+enum class RainSensorState : uint8_t {
+  UNKNOWN = 0,  ///< No usable reading: never read, or the last reads went unanswered.
+  DRY = 1,      ///< The device answered and reports no rain-sized opening limit.
+  RAIN = 2,     ///< The device answered and reports an opening limit of rain size.
+};
+
+/// @brief Get a human-readable name for a RainSensorState.
+/// @param state The state to name.
+/// @return Null-terminated lowercase string: "unknown", "dry" or "rain".
+const char *rain_sensor_state_name(RainSensorState state);
+
 // ============================================================================
 // Position Report Decoding
 // ============================================================================
@@ -398,6 +410,10 @@ struct IoDevice {
                                  ///< separates a device whose missing reply is an anomaly from one that never sends
                                  ///< one (see decisions::retry_after_unconfirmed_accept_is_safe()).
   OptimisticState optimistic{};  ///< Hub-side predictions; see OptimisticState. Never observation.
+  RainSensorState rain_sensor{RainSensorState::UNKNOWN};  ///< Rain state from the opt-in minimum-limitation poll.
+                                                          ///< Set only from a limitation reply inside an exchange the
+                                                          ///< hub started; independent of `limited_by_rain`, which is
+                                                          ///< derived from status replies.
 };
 
 /// @brief Record that a device is (believed to be) travelling right now.
