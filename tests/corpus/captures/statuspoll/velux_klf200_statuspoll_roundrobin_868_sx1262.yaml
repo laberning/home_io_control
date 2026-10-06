@@ -1,0 +1,1705 @@
+id: velux_klf200_statuspoll_roundrobin_868_sx1262
+description: >
+  2026-10-05 passive capture of a VELUX KLF 200 gateway in normal use at 868 MHz, heard by the
+  reporter's own SX1262 monitor next to it (issue #98). 24 minutes, nine io devices (windows and
+  roller shutters), every frame as heard. The gateway sends the same unauthenticated read to each
+  device in turn: CMD_PRIVATE (0x03) with data 01 FE 01 01 01 01 01 01 01 00 (function 0x01,
+  functional-parameter mask FE, one 01 per parameter). Polling rounds start about every 45 s, one to
+  five devices per round about 0.7 s apart; eight devices are reached roughly every two to four
+  minutes, and one low-power device (CTRL1 LOW_POWER, the long wake-up preamble) in every round with
+  up to six tries. The devices answer with CMD_PRIVATE_RESP (0x04), flags 2D, main parameter 00 00
+  (open) or C8 00 (closed). One device challenges the poll; the 0x3C challenges and the gateway's
+  0x3D answers are not in this file because the log masks their MAC bytes. Replies the monitor
+  could not parse (the low-power device's, about a second after each of its requests) are not
+  included. No CMD_STATUS_UPDATE (0x71) or its acknowledgement (0x72) was heard in the 24 minutes,
+  a window's rain sensor being sprayed in that time included. Channels rotate per poll. Node IDs
+  are replaced (none of the IDs in this file belongs to the reporter's devices); the gateway
+  appears as C0FFEE and the window that was sprayed as 8A2C4E.
+source:
+  device: "VELUX KLF 200 gateway polling nine io devices, heard by a passive SX1262 monitor"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-05
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/98"
+key: unknown
+node_map:
+  gateway: C0FFEE
+  window: 8A2C4E
+  low_power_device: 2D7E10
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 869850000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 724
+    freq: 868250000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1301
+    freq: 868950000
+    hex: "52 00 90 D6 FB C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1898
+    freq: 868250000
+    hex: "96 00 C0 FF EE 7F C5 EA 04 05 00 00 00 00 00 00 00 17 5E 7C 01 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 2152
+    freq: 869850000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 2891
+    freq: 868950000
+    hex: "90 00 C0 FF EE 6E B4 D9 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 3583
+    freq: 868250000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 4420
+    freq: 868950000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 6991
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 10047
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 45995
+    freq: 869850000
+    hex: "8E 00 C0 FF EE 3F 81 A6 04 2D 00 00 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 46703
+    freq: 869850000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 47438
+    freq: 868950000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 50000
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 57809
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 88847
+    freq: 869850000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 89571
+    freq: 868250000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 91661
+    freq: 868250000
+    hex: "90 00 C0 FF EE 6E B4 D9 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 96503
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 99311
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 100652
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 134880
+    freq: 868950000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 136268
+    freq: 868950000
+    hex: "52 10 A1 E7 0C C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 137636
+    freq: 868250000
+    hex: "52 00 8A 2C 4E C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 140507
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 144159
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 178896
+    freq: 869850000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 181753
+    freq: 868950000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 184314
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 185110
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 190918
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 222638
+    freq: 868250000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 224015
+    freq: 869850000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 229961
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 231106
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 232632
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 234137
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 235616
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 237029
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 268055
+    freq: 869850000
+    hex: "90 00 C0 FF EE 5D A3 C8 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 268730
+    freq: 868250000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 269441
+    freq: 868250000
+    hex: "52 00 90 D6 FB C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 270135
+    freq: 869850000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 270861
+    freq: 868250000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 271554
+    freq: 869850000
+    hex: "52 10 A1 E7 0C C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 272282
+    freq: 868250000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 274132
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 274935
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 277657
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 278897
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 311964
+    freq: 868950000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 313375
+    freq: 869850000
+    hex: "52 00 90 D6 FB C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 314046
+    freq: 868250000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 316153
+    freq: 869850000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 318785
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 320366
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 321191
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 323019
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 355947
+    freq: 869850000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 356684
+    freq: 868950000
+    hex: "90 00 C0 FF EE 90 D6 FB 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 357387
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 3F 81 A6 04 2D 00 00 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 363542
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 364591
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 365932
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 368544
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 369980
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 402375
+    freq: 869850000
+    hex: "52 00 90 D6 FB C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 405865
+    freq: 868250000
+    hex: "52 00 8A 2C 4E C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 408695
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 409582
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 410604
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 445057
+    freq: 869850000
+    hex: "90 00 C0 FF EE 5D A3 C8 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 446422
+    freq: 869850000
+    hex: "90 00 C0 FF EE 90 D6 FB 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 447836
+    freq: 869850000
+    hex: "90 00 C0 FF EE 6E B4 D9 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 448543
+    freq: 869850000
+    hex: "52 10 A1 E7 0C C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 449282
+    freq: 868950000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 451990
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 452892
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 455214
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 458642
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 490407
+    freq: 869850000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 494390
+    freq: 869850000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 534294
+    freq: 868250000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 534978
+    freq: 869850000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 535661
+    freq: 868950000
+    hex: "52 00 90 D6 FB C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 536332
+    freq: 869850000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 537054
+    freq: 868250000
+    hex: "90 00 C0 FF EE 6E B4 D9 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 537789
+    freq: 869850000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 538490
+    freq: 869850000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 540398
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 541234
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 544451
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 546768
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 547814
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 578829
+    freq: 869850000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 579548
+    freq: 868250000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 581701
+    freq: 868950000
+    hex: "90 00 C0 FF EE 6E B4 D9 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 583077
+    freq: 868250000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 585758
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 586615
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 587550
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 588666
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 591482
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 592678
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 625815
+    freq: 868250000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 626504
+    freq: 869850000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 627899
+    freq: 869850000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 628577
+    freq: 868250000
+    hex: "90 00 C0 FF EE 8A 2C 4E 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 629743
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 631367
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 632233
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 634362
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 667040
+    freq: 869850000
+    hex: "90 00 C0 FF EE 5D A3 C8 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 667734
+    freq: 868950000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 669844
+    freq: 869850000
+    hex: "90 00 C0 FF EE 6E B4 D9 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 670516
+    freq: 868250000
+    hex: "52 10 A1 E7 0C C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 671240
+    freq: 868950000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 673998
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 674953
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 713103
+    freq: 868250000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 714478
+    freq: 869850000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 716610
+    freq: 869850000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 717283
+    freq: 868250000
+    hex: "52 00 8A 2C 4E C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 719277
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 725463
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 757149
+    freq: 868950000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 759252
+    freq: 869850000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 760001
+    freq: 869850000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 760688
+    freq: 868950000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 761393
+    freq: 868950000
+    hex: "90 00 C0 FF EE 8A 2C 4E 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 763421
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 764320
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 768994
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 805276
+    freq: 869850000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 805987
+    freq: 869850000
+    hex: "52 00 8A 2C 4E C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 814551
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 845559
+    freq: 869850000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 846260
+    freq: 869850000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 846929
+    freq: 868250000
+    hex: "90 00 C0 FF EE 90 D6 FB 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 849050
+    freq: 869850000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 849758
+    freq: 869850000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 852491
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 853396
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 858030
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 890090
+    freq: 869850000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 890811
+    freq: 868250000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 896191
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 898810
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 901379
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 903938
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 936384
+    freq: 868250000
+    hex: "90 00 C0 FF EE 90 D6 FB 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 937771
+    freq: 869850000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 939163
+    freq: 869850000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 939834
+    freq: 868250000
+    hex: "52 00 8A 2C 4E C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 943494
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 947237
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 979707
+    freq: 868950000
+    hex: "90 00 C0 FF EE 90 D6 FB 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 980412
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 3F 81 A6 04 2D 00 00 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 981087
+    freq: 869850000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 983209
+    freq: 869850000
+    hex: "90 00 C0 FF EE 8A 2C 4E 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 985269
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 986221
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 988833
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 992666
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1025782
+    freq: 869850000
+    hex: "8E 00 C0 FF EE 3F 81 A6 04 2D 00 00 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1027170
+    freq: 869850000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1028574
+    freq: 868250000
+    hex: "90 00 C0 FF EE 8A 2C 4E 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1032277
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1034545
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1067732
+    freq: 869850000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1068423
+    freq: 868950000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1069098
+    freq: 869850000
+    hex: "52 00 90 D6 FB C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1069773
+    freq: 868250000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1070661
+    freq: 869850000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1071406
+    freq: 868950000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1073973
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1075708
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1076757
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1112641
+    freq: 868950000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1113329
+    freq: 868250000
+    hex: "52 00 7F C5 EA C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1115428
+    freq: 868950000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1116149
+    freq: 869850000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1116859
+    freq: 869850000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1117532
+    freq: 868250000
+    hex: "52 00 8A 2C 4E C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1121237
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1123514
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1157405
+    freq: 868950000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1158071
+    freq: 869850000
+    hex: "52 00 90 D6 FB C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1158784
+    freq: 868250000
+    hex: "8E 00 C0 FF EE 3F 81 A6 04 2D 00 00 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1160203
+    freq: 869850000
+    hex: "52 10 A1 E7 0C C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1160936
+    freq: 868950000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1162816
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1164549
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1201341
+    freq: 868250000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1202780
+    freq: 868250000
+    hex: "90 00 C0 FF EE 90 D6 FB 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1204887
+    freq: 868250000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1208331
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1209251
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1245681
+    freq: 868950000
+    hex: "90 00 C0 FF EE 5D A3 C8 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1247727
+    freq: 869850000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1248434
+    freq: 869850000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1249138
+    freq: 869850000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1249804
+    freq: 868250000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1250491
+    freq: 869850000
+    hex: "90 00 C0 FF EE 8A 2C 4E 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1255684
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1257806
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1289546
+    freq: 868250000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1290252
+    freq: 868250000
+    hex: "90 00 C0 FF EE 90 D6 FB 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1291658
+    freq: 868250000
+    hex: "90 00 C0 FF EE 6E B4 D9 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1292382
+    freq: 868950000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1293059
+    freq: 869850000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1294973
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1295815
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1296717
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1297765
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1335938
+    freq: 868250000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1335970
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 3F 81 A6 04 2D 00 00 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1336641
+    freq: 869850000
+    hex: "52 00 6E B4 D9 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1337396
+    freq: 869850000
+    hex: "90 08 C0 FF EE A1 E7 0C 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1338069
+    freq: 868250000
+    hex: "90 00 C0 FF EE 4C 92 B7 04 2D 00 C8 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1340739
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1341561
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1343424
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1344617
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1377378
+    freq: 868250000
+    hex: "52 00 5D A3 C8 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1381622
+    freq: 868250000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1383503
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1385255
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1387606
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1391308
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1422191
+    freq: 868950000
+    hex: "90 00 C0 FF EE 5D A3 C8 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1422877
+    freq: 868250000
+    hex: "90 00 C0 FF EE 7F C5 EA 04 2D 00 00 00 80 00 00 00"
+    crc: absent
+    note: "device reply, cmd=PRIVATE_RESP(0x04)."
+  - dir: rx
+    t_ms: 1424258
+    freq: 869850000
+    hex: "52 00 3F 81 A6 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1426389
+    freq: 869850000
+    hex: "52 00 4C 92 B7 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1427066
+    freq: 868250000
+    hex: "52 00 8A 2C 4E C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1429894
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1430782
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1431799
+    freq: 868950000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+  - dir: rx
+    t_ms: 1434052
+    freq: 868250000
+    hex: "52 20 2D 7E 10 C0 FF EE 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "gateway poll, cmd=PRIVATE(0x03), data=01 FE 01 01 01 01 01 01 01 00."
+expect:
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
