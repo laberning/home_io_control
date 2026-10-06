@@ -50,6 +50,9 @@ struct ManagementActionResult {
                                  ///< different meaning).
   std::string response_hex;      ///< Probe reply's full raw wire hex, for pasting into
                                  ///< scripts/corpus/ingest.py.
+  std::string decoded;           ///< Rendering of the probe reply for the replies this codebase can
+                                 ///< decode (currently a limitation reply, labelled "assumed layout");
+                                 ///< empty otherwise. Reported beside the raw hex, never instead of it.
   bool terminal_refusal{false};  ///< True when probe_device() failed for a reason that will
                                  ///< recur identically for every remaining index in a sweep
                                  ///< (diagnostic probes not enabled, device moving) — set only by

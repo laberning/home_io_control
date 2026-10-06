@@ -10,6 +10,7 @@
 
 #include "management_actions.h"
 
+#include "entity_helpers.h"
 #include "hub_core.h"
 #include "log_helpers.h"
 #include "proto_commands.h"
@@ -1378,6 +1379,12 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     result.message += " [" + std::string(command_result_name(result.result_code)) + ": " +
                       command_result_description(result.result_code) + "]";
   }
+  // The decode depends on the reply, not on which probe drew it, so any probe that happens to
+  // draw a limitation reply reports it. Rendered, never applied: the device record is untouched.
+  if (response.cmd == CMD_LIMITATION_STATUS_RESP) {
+    result.decoded = detail::describe_limitation_reply(response);
+    result.message += " [" + result.decoded + "]";
+  }
   return result;
 }
 
@@ -1439,7 +1446,11 @@ ManagementActionResult ManagementActions::probe_sweep(const std::string &device_
     report += "index=0x" + format_hex_byte(static_cast<uint8_t>(idx)) + ": ";
     if (step.success) {
       answered_count++;
-      report += "cmd=0x" + format_hex_byte(step.response_cmd) + " hex=" + step.response_hex + "\n";
+      report += "cmd=0x" + format_hex_byte(step.response_cmd) + " hex=" + step.response_hex;
+      if (!step.decoded.empty()) {
+        report += " [" + step.decoded + "]";
+      }
+      report += "\n";
     } else {
       report += step.message + "\n";
     }
