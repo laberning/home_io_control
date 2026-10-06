@@ -57,7 +57,9 @@ It is not a per-command result. It is set only while an issue is outstanding:
   `open` was accepted and then clamped soon after the window last reported the rain sensor. No extra
   radio traffic is used, so the value is as fresh as the last status poll, and it is not a direct
   "is it raining" reading. An explicit refusal from the device takes precedence. See
-  [Rain protection](devices/velux-integra.md#rain-protection).
+  [Rain protection](devices/velux-integra.md#rain-protection). For a direct reading of the window's
+  opening limit, set `rain_sensor_poll_interval` and use the Rain sensor binary sensor — see
+  [Polling for rain](configuration/cover.md#polling-for-rain).
 
 A refused command also reverts the entity to the device's last reported state — see
 [Position and state](configuration/cover.md#position-and-state).
