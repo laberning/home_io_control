@@ -68,4 +68,12 @@ uint32_t fnv1_hash(const char *str) {
   return hash;
 }
 
+// Deterministic random_uint32() for the host build; see tests/include/esphome/core/helpers.h.
+namespace test_random {
+static uint32_t current_value = 0;
+void set(uint32_t value) { current_value = value; }
+}  // namespace test_random
+
+uint32_t random_uint32() { return test_random::current_value; }
+
 }  // namespace esphome

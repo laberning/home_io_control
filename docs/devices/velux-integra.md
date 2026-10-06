@@ -163,31 +163,52 @@ moves the window to its predefined air-exchange opening rather than fully open.
   [Sending 1W commands](../configuration/oneway-transmit.md).
 ## Rain protection
 
-A VELUX window with a rain sensor closes itself when it rains and then refuses to open past its
-ventilation position. It sends no error when it clamps an `open`, so the hub works it out from the
-status replies it already reads:
+A VELUX window with a wired rain sensor limits its own opening while it rains and then refuses to
+open past its ventilation position. The rain sensor talks only to the window, so the hub learns
+about rain only by asking. Set `rain_sensor_poll_interval` on the window's cover to read the
+window's opening limit on a schedule; the hub then generates a `<Cover Name> Rain sensor` binary
+sensor that is on while the window's minimum limit is 89 % or more:
+
+```yaml
+cover:
+  - platform: home_io_control
+    name: "Roof Window"
+    io_device_id: "123ABC"
+    io_device_type: window_opener
+    rain_sensor_poll_interval: 15min
+```
+
+This is hardware-validated on a VELUX INTEGRA roof-window actuator with a wired rain sensor (issue
+#98). The reading is as fresh as the interval and uses transmit time on a shared band, so pick the
+interval with [Polling for rain](../configuration/cover.md#polling-for-rain). VELUX KLF 200 API
+specification v3.18 (section 8.1) describes the same arrangement: a gateway learns of rain only by
+asking the window.
+
+### How it relates to Active Issue
+
+The two entities answer different questions and work independently:
+
+- **Rain sensor** says the window reports an opening limit right now.
+- **Active Issue** shows `LIMITATION_BY_RAIN` while the last move was ordered by the rain sensor,
+  or while an `open` stops short soon after the window last reported the rain sensor. The hub works
+  this out from the status replies it already reads, with no extra radio traffic, so it only updates
+  on the next command or status poll. It clears after the next `open` that reaches its target.
+
+Other signs of a rain closure, without the poll:
 
 - **Last Command Source** shows `rain_sensor(0x02)` after a poll that follows a rain closure.
-- **Active Issue** shows `LIMITATION_BY_RAIN` while the last move was ordered by the rain sensor,
-  or while an `open` stops short soon after the window last reported the rain sensor.
 - The cover stops at the ventilation position (about 93 % closed on the INTEGRA window that
   reported this) instead of opening fully.
 
-Nothing polls a window after it closes itself, so the state updates on the next command or status
-poll. Active Issue clears after the next `open` that reaches its target. The VELUX KLF 200 API
-specification v3.18 (section 8.1) explains why: the rain sensor talks directly to the window
-opener, so a gateway only learns of a rain closure when it asks.
+The same read is available once as the `limitation` [diagnostic probe](../diagnostic-probes.md),
+for checking what a window reports without enabling the sensor.
 Field data comes from issue #98.
-
-A VELUX KLF 200 reads a window's limitation with its own request, which this project can send as
-the `limitation` [diagnostic probe](../diagnostic-probes.md). Running it dry, with the rain sensor
-wet and again once dry helps confirm how the reply encodes the limit, so a future version can show
-rain protection without waiting for the window to move.
 
 ## Evidence
 
-Corpus captures across the family: 3 for the INTEGRA roof-window actuator (node `6544C6`, probe
-replies, from issue #98), 1 for the successful KLR 200 key extraction (node `810BAB`, issue #80), 2 for a KLR 300 extraction and the node verification round after it (node `E2D1FF`, a community tester),
+Corpus captures across the family: 5 for the INTEGRA roof-window actuator (probe replies, a dry and a
+rain-limited limitation read, and private-function sweeps dry and in the rain state, from issue #98),
+1 for a KLF 200 gateway polling nine devices at 868 MHz (issue #98), 1 for the successful KLR 200 key extraction (node `810BAB`, issue #80), 2 for a KLR 300 extraction and the node verification round after it (node `E2D1FF`, a community tester),
 4 for the KIG 300 hub (node `BEFEDB`), 3 for KLR200 ↔ KUX100 bridge traffic, 3 for the KLI 310
 and KLI 313 remotes, and 6 for the SSL solar roller shutter (a TaHoma pairing it; this hub pairing it,
 with the long preamble ignored and the short one answered; a set-position ack; a stop and status

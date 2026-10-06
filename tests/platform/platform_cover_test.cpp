@@ -230,6 +230,30 @@ TEST(PlatformCover, SetupStoresConfiguredStatusPollInterval) {
       << "entity setup should store the configured status poll interval in the shared device registry";
 }
 
+TEST(PlatformCover, SetupForwardsTheRainSensorPollInterval) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_rain_sensor_poll_interval(900000);
+
+  cover.setup();
+
+  EXPECT_EQ(hub.rain_poll_policy_.get_interval("ABC123"), 900000u)
+      << "the opt-in interval must reach the hub's rain poll schedule";
+}
+
+TEST(PlatformCover, SetupSchedulesNoRainPollWithoutTheKey) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+
+  cover.setup();
+
+  EXPECT_EQ(hub.rain_poll_policy_.get_interval("ABC123"), 0u) << "a cover that never opted in is never polled";
+}
+
 TEST(PlatformCover, SetupStoresLowPowerFlag) {
   MockHub hub;
   TestableCover cover;

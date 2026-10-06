@@ -712,6 +712,16 @@ TEST(ProtoCommands, CoverCommandNameLookup) {
   EXPECT_STREQ(cover_command_name(CoverCommand::FORCE_OPEN), "FORCE_OPEN");
 }
 
+TEST(ProtoCommands, RainSensorStateNameLookup) {
+  EXPECT_STREQ(rain_sensor_state_name(RainSensorState::UNKNOWN), "unknown");
+  EXPECT_STREQ(rain_sensor_state_name(RainSensorState::DRY), "dry");
+  EXPECT_STREQ(rain_sensor_state_name(RainSensorState::RAIN), "rain");
+}
+
+TEST(ProtoCommands, NewDeviceStartsWithUnknownRainSensor) {
+  EXPECT_EQ(IoDevice{}.rain_sensor, RainSensorState::UNKNOWN);
+}
+
 // ============================================================================
 // Silent operation: the reference hub's slower travel profile, isolated by A/B capture on
 // 2026-08-15 with the Velux app's toggle flipped between otherwise identical close commands.

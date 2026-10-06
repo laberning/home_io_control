@@ -140,12 +140,15 @@ def spi_radio_needs_its_chip_select_pin():
     expect_invalid(v.validate_radio_transport, {"radio_type": "lr1121"}, "radio_type: lr1121 is an SPI radio")
 
 
-@case("hub_validators.validate_status_poll_interval")
-def status_poll_interval_has_a_floor():
+@case("hub_validators._validate_min_interval")
+def poll_intervals_have_a_floor():
     from esphome.components.home_io_control import hub_validators as v
 
     assert v.validate_status_poll_interval("60s") is not None
-    expect_invalid(v.validate_status_poll_interval, "100ms", "at least 500ms")
+    expect_invalid(v.validate_status_poll_interval, "100ms", "status_poll_interval must be at least 500ms")
+    assert v.validate_rain_sensor_poll_interval("15min") is not None
+    assert v.validate_rain_sensor_poll_interval("1min") is not None
+    expect_invalid(v.validate_rain_sensor_poll_interval, "59s", "rain_sensor_poll_interval must be at least 60000ms")
 
 
 @case("hub_validators.validate_linked_remote_entry")

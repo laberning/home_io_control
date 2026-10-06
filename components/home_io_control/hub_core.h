@@ -39,6 +39,7 @@
 #include "hub_pairing.h"
 #include "device_registry.h"
 #include "status_poll_policy.h"
+#include "rain_poll_policy.h"
 #include "operation_queue.h"
 #include "exchange_engine.h"
 #include "pairing_engine.h"
@@ -491,6 +492,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the legacy one-shot settle poll only.
   virtual void set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms);
+  /// Opt a registered device into the periodic rain sensor poll (a read of its minimum limitation).
+  /// @param device_id Target device ID.
+  /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
+  virtual void set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms);
 
   // --- High-level operations ---
   /// Send a position command to a device.
@@ -514,6 +519,14 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @return true if status frame was received and processed.
   virtual bool request_device_status(const std::string &device_id);
+  /// Read the device's minimum limitation and derive its rain sensor state from the reply.
+  ///
+  /// Unauthenticated read (CMD_LIMITATION_STATUS_REQ); the reply is accepted only inside this
+  /// exchange (ADR 0022) and never reaches update_device_status_(), so a poll cannot move the
+  /// device's position or target. A moving device is not asked: the poll is deferred instead.
+  /// @param device_id Target device ID.
+  /// @return true if a usable limitation reply arrived and was applied.
+  virtual bool request_device_limitation(const std::string &device_id);
   /// Request the stored device name from a device.
   /// @param device_id Target device ID.
   /// @return true if a name response frame was received and processed.
@@ -679,6 +692,10 @@ class IOHomeControlComponent : public Component,
   /// Queue an async status request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   virtual void queue_request_device_status(const std::string &device_id);
+  /// Queue an async minimum-limitation read for the rain sensor poll; executed in loop() as a
+  /// background operation (yields to commands and 1W activity).
+  /// @param device_id Target device ID.
+  virtual void queue_request_device_limitation(const std::string &device_id);
   /// Queue an async device-name request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   virtual void queue_request_device_name(const std::string &device_id);
@@ -884,7 +901,7 @@ class IOHomeControlComponent : public Component,
   /// @param src_id Sender's node ID as a string (already computed by the caller).
   void maybe_fire_sender_event_(const OneWayFrameInfo &info, bool linked, const std::string &src_id);
   /// Handle an explicit CMD_ERROR_RESP refusal from the device: record the result code, stamp link
-  /// health, and schedule the poll backoff. Split out of execute_request_and_update_() to keep that
+  /// health, and schedule the poll backoff. Split out of exchange_and_record_() to keep that
   /// function's outcome dispatch readable — a refusal is a distinct concern from "what did the
   /// exchange achieve".
   /// @param device_id Target device ID.
@@ -895,7 +912,41 @@ class IOHomeControlComponent : public Component,
   bool handle_error_response_(const std::string &device_id, const IoFrame &request, const IoFrame &response,
                               uint32_t retry_after_fail_ms);
 
-  /// Shared request/response helper for high-level operations.
+  /// Fold one rain poll outcome into the device's rain sensor state and tell subscribers.
+  /// @param device_id Target device ID.
+  /// @param reading DRY or RAIN for an answered poll, UNKNOWN for a miss.
+  /// @param limit_text Rendering of the reported limit for the state-change log, empty for a miss.
+  void apply_rain_poll_result_(const std::string &device_id, RainSensorState reading, const std::string &limit_text);
+
+  /// @brief What exchange_and_record_() found.
+  enum class RequestResult : uint8_t {
+    FAILED,       ///< No usable reply (silence, or an unconfirmed acceptance of a request that needs a payload).
+    UNCONFIRMED,  ///< A CMD_EXECUTE the device accepted but never closed; counted as success, no reply frame.
+    ERROR_REPLY,  ///< The device refused with CMD_ERROR_RESP; handle_error_response_() has recorded it.
+    REPLY,        ///< The device answered; the caller interprets the reply frame.
+  };
+
+  /// @brief Per-request knobs of exchange_and_record_().
+  struct RequestOptions {
+    bool warn_on_no_response;      ///< Log a warning when no response arrives.
+    uint32_t retry_after_fail_ms;  ///< If non-zero, drives the status-poll backoff and failure streaks.
+    uint8_t max_tries;             ///< Transmit-attempt cap forwarded to send_and_receive_().
+  };
+
+  /// Run one authenticated request/response exchange on the standard command channel and record
+  /// its outcome: exchange-outcome and timeout counters, link health, challenge-seen handling,
+  /// CMD_ERROR_RESP handling, debug logs and (when requested) the status-poll backoff. It does not
+  /// interpret a reply — callers decide what a REPLY means.
+  /// @param device_id Target device ID.
+  /// @param request Outbound request frame.
+  /// @param[out] response The device's reply, valid for RequestResult::REPLY and ERROR_REPLY.
+  /// @param options See RequestOptions.
+  /// @return What happened, see RequestResult.
+  RequestResult exchange_and_record_(const std::string &device_id, const IoFrame &request, IoFrame &response,
+                                     const RequestOptions &options);
+
+  /// Shared request/response helper for high-level operations: exchange_and_record_() plus
+  /// update_device_status_() on a reply.
   /// @param device_id Target device ID.
   /// @param request Outbound request frame.
   /// @param warn_on_no_response If true, logs a warning when no response is received.
@@ -1120,6 +1171,7 @@ class IOHomeControlComponent : public Component,
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().
   bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
+  RainPollPolicy rain_poll_policy_;  ///< Schedule of the opt-in rain sensor poll.
   OperationQueue op_queue_;
   /// Per-attempt pairing telemetry. PairingEngine records into it and, during an attempt, attaches it
   /// to ExchangeEngine as its TransmitObserver.

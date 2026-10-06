@@ -43,6 +43,18 @@ const char *pairing_platform_name(DeviceCapabilityClass capability_class) {
 
 bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HORIZONTAL_AWNING; }
 
+const char *rain_sensor_state_name(RainSensorState state) {
+  switch (state) {
+    case RainSensorState::UNKNOWN:
+      return "unknown";
+    case RainSensorState::DRY:
+      return "dry";
+    case RainSensorState::RAIN:
+      return "rain";
+  }
+  return "unknown";
+}
+
 const char *cover_command_name(CoverCommand cmd) {
   switch (cmd) {
     case CoverCommand::STOP:

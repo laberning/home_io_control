@@ -139,6 +139,10 @@ cover:
     io_device_id: "FEEB2F"
     device_class: window
     io_device_type: "window_opener"
+    # Declaring `rain_sensor_poll_interval:` is what generates the Rain sensor binary sensor and
+    # schedules the limitation read; the covers above omit it, so this compiles both branches. It
+    # sits on the nameless entry so the generated name falls back to the bare suffix.
+    rain_sensor_poll_interval: 15min
 
 light:
   - platform: home_io_control

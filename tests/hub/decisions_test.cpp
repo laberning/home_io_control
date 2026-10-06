@@ -737,3 +737,52 @@ TEST(Decisions, RainLimitationRuleNames) {
   EXPECT_STREQ(decisions::rain_limitation_rule_name(decisions::RainLimitationRule::RAIN_ORIGINATOR), "rain_originator");
   EXPECT_STREQ(decisions::rain_limitation_rule_name(decisions::RainLimitationRule::CLAMPED_COMMAND), "clamped_command");
 }
+
+// ========================================================================================
+// Rain state from the minimum limitation
+// ========================================================================================
+
+TEST(Decisions, RainThresholdIsEightyNinePercentInRawUnits) {
+  EXPECT_EQ(decisions::RAIN_MINIMUM_LIMIT_RAW, 0xB200);
+  EXPECT_EQ(decisions::RAIN_MINIMUM_LIMIT_RAW * 100 / STATUS_POS_MAX, decisions::RAIN_MINIMUM_LIMIT_PERCENT);
+}
+
+TEST(Decisions, RainStateFromMinimumLimitValue) {
+  struct Case {
+    uint16_t value_raw;
+    RainSensorState expected;
+  };
+  const Case cases[] = {
+      {0x0000, RainSensorState::DRY},      // dry reply heard from a real window
+      {0xB1FF, RainSensorState::DRY},      // one raw unit below the threshold
+      {0xB200, RainSensorState::RAIN},     // 89 %, the boundary
+      {0xBA00, RainSensorState::RAIN},     // 91 %
+      {0xC800, RainSensorState::RAIN},     // 100 %
+      {0xC801, RainSensorState::UNKNOWN},  // not a percentage
+      {0xD400, RainSensorState::UNKNOWN},  // "unknown position" selector
+      {0xF7FF, RainSensorState::UNKNOWN},
+  };
+  for (const auto &c : cases) {
+    EXPECT_EQ(decisions::rain_state_from_minimum_limit(c.value_raw), c.expected)
+        << "value 0x" << std::hex << c.value_raw;
+  }
+}
+
+TEST(Decisions, RainStateFromLimitationReplyUsesOnlyTheMainParameterValue) {
+  LimitationStatus status;
+  status.value_raw = 0xBA00;
+  status.originator = 0x02;
+  status.time_raw = 0x1D;
+  EXPECT_EQ(decisions::rain_state_from_limitation_reply(status), RainSensorState::RAIN);
+
+  status.originator = 0x00;  // originator and remaining time do not change the decision
+  status.time_raw = 0x00;
+  EXPECT_EQ(decisions::rain_state_from_limitation_reply(status), RainSensorState::RAIN);
+
+  status.value_raw = 0x0000;
+  EXPECT_EQ(decisions::rain_state_from_limitation_reply(status), RainSensorState::DRY);
+
+  status.value_raw = 0xBA00;
+  status.parameter_id = LIMITATION_PARAM_FP_FIRST;  // a functional parameter is not the window's limit
+  EXPECT_EQ(decisions::rain_state_from_limitation_reply(status), RainSensorState::UNKNOWN);
+}

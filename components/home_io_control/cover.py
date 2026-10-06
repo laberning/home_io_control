@@ -4,21 +4,25 @@
 ##
 ## Bridges the YAML ``cover:`` platform declaration to the runtime IOHomeCover entity.
 ## Shared device-binding logic lives in platform_common.py; cover-specific extras — the
-## ``invert_position`` option and the favorite/ventilation companion buttons — stay here.
+## ``invert_position`` option, the favorite/ventilation companion buttons and the opt-in
+## ``rain_sensor_poll_interval`` key with its rain binary sensor — stay here.
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import button, cover, switch
+from esphome.components import binary_sensor, button, cover, switch
 from esphome.const import (
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_NAME,
+    DEVICE_CLASS_MOISTURE,
     ENTITY_CATEGORY_CONFIG,
 )
 from esphome.core import ID
 
 from . import home_io_control_ns
+from .hub_validators import validate_rain_sensor_poll_interval
 from .platform_common import (
+    companion_entity_name,
     companion_id_base,
     create_companion_sensors,
     inherit_esphome_device,
@@ -36,6 +40,8 @@ CONF_INVERT_POSITION = "invert_position"
 CONF_SILENT = "silent"
 CONF_SILENT_SWITCH_ID = "_silent_switch_id"
 CONF_OPTIMISTIC_STATE = "optimistic_state"
+CONF_RAIN_SENSOR_POLL_INTERVAL = "rain_sensor_poll_interval"
+CONF_RAIN_SENSOR_ID = "_rain_sensor_id"
 
 # Internal config keys for the cover-only companion button IDs (injected by post-validator).
 CONF_FAVORITE_BUTTON_ID = "_favorite_button_id"
@@ -44,6 +50,9 @@ CONF_VENT_BUTTON_ID = "_vent_button_id"
 IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component)
 IOHomeCoverSilentSwitch = home_io_control_ns.class_(
     "IOHomeCoverSilentSwitch", switch.Switch, cg.Component
+)
+IOHomeRainBinarySensor = home_io_control_ns.class_(
+    "IOHomeRainBinarySensor", binary_sensor.BinarySensor, cg.Component
 )
 # One C++ class backs both cover command companions; codegen sets which command each press
 # sends via set_command() (mirrors OneWayButtonAction in hub_names.py). A device-bound `button:`
@@ -94,26 +103,22 @@ def device_supports_vent(value):
 
 def favorite_button_name(config):
     """Derive the favorite-position button name from the parent cover name."""
-    base_name = config.get(CONF_NAME, "")
-    if base_name:
-        return f"{base_name} Favorite Position"
-    return "Favorite Position"
+    return companion_entity_name(config, "Favorite Position")
 
 
 def vent_button_name(config):
     """Derive the ventilation-position button name from the parent cover name."""
-    base_name = config.get(CONF_NAME, "")
-    if base_name:
-        return f"{base_name} Ventilation Position"
-    return "Ventilation Position"
+    return companion_entity_name(config, "Ventilation Position")
 
 
 def silent_switch_name(config):
     """Derive the silent-operation switch name from the parent cover name."""
-    base_name = config.get(CONF_NAME, "")
-    if base_name:
-        return f"{base_name} Silent Operation"
-    return "Silent Operation"
+    return companion_entity_name(config, "Silent Operation")
+
+
+def rain_sensor_name(config):
+    """Derive the rain binary sensor name from the parent cover name."""
+    return companion_entity_name(config, "Rain sensor")
 
 
 def _inject_companion_ids(config):
@@ -153,6 +158,15 @@ def _inject_companion_ids(config):
             type=IOHomeCoverSilentSwitch,
         )
 
+    # Rain binary sensor — only when the cover declares `rain_sensor_poll_interval:`. The key is
+    # the opt-in to the periodic limitation read, so a config without it gains no entity.
+    if CONF_RAIN_SENSOR_POLL_INTERVAL in config:
+        config[CONF_RAIN_SENSOR_ID] = ID(
+            f"{base}_rain_sensor",
+            is_declaration=True,
+            type=IOHomeRainBinarySensor,
+        )
+
     # Companion diagnostic sensors — always generated (shared with other platforms).
     return inject_companion_sensor_ids(config, CONF_ID)
 
@@ -162,6 +176,13 @@ CONFIG_SCHEMA = cv.All(
     .extend(platform_schema_extension())
     .extend({cv.Optional(CONF_INVERT_POSITION): cv.boolean})
     .extend({cv.Optional(CONF_SILENT): cv.boolean})
+    .extend(
+        {
+            cv.Optional(
+                CONF_RAIN_SENSOR_POLL_INTERVAL
+            ): validate_rain_sensor_poll_interval
+        }
+    )
     .extend({cv.Optional(CONF_OPTIMISTIC_STATE, default=True): cv.boolean})
     .extend(cv.COMPONENT_SCHEMA),
     _inject_companion_ids,
@@ -205,6 +226,28 @@ async def to_code(config):
         await cg.register_component(silent_switch, silent_config)
         cg.add(silent_switch.set_parent(parent))
         cg.add(silent_switch.set_device_id(config[CONF_IO_DEVICE_ID]))
+
+    if CONF_RAIN_SENSOR_ID in config:
+        cg.add(
+            var.set_rain_sensor_poll_interval(
+                config[CONF_RAIN_SENSOR_POLL_INTERVAL].total_milliseconds
+            )
+        )
+        rain_config = binary_sensor.binary_sensor_schema(
+            IOHomeRainBinarySensor, device_class=DEVICE_CLASS_MOISTURE
+        ).extend(cv.COMPONENT_SCHEMA)(
+            inherit_esphome_device(
+                {
+                    CONF_ID: config[CONF_RAIN_SENSOR_ID],
+                    CONF_NAME: rain_sensor_name(config),
+                },
+                config,
+            )
+        )
+        rain_sensor = await binary_sensor.new_binary_sensor(rain_config)
+        await cg.register_component(rain_sensor, rain_config)
+        cg.add(rain_sensor.set_parent(parent))
+        cg.add(rain_sensor.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_FAVORITE_BUTTON_ID in config:
         favorite_config = inherit_esphome_device(

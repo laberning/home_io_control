@@ -10,7 +10,8 @@ namespace esphome {
 namespace home_io_control {
 
 bool OperationQueue::is_background_op(PendingOperationType t) {
-  return t == PendingOperationType::REQUEST_STATUS || t == PendingOperationType::REQUEST_NAME;
+  return t == PendingOperationType::REQUEST_STATUS || t == PendingOperationType::REQUEST_NAME ||
+         t == PendingOperationType::REQUEST_LIMITATION;
 }
 
 void OperationQueue::push_control_(PendingOperation op) {
@@ -114,22 +115,25 @@ void OperationQueue::enqueue_set_switch_state(const std::string &device_id, bool
       {PendingOperationType::SET_SWITCH_STATE, device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION});
 }
 
-bool OperationQueue::enqueue_request_status(const std::string &device_id) {
+bool OperationQueue::enqueue_background_unique_(PendingOperationType type, const std::string &device_id) {
   for (const auto &op : queue_) {
-    if (op.type == PendingOperationType::REQUEST_STATUS && op.device_id == device_id)
+    if (op.type == type && op.device_id == device_id)
       return false;
   }
-  queue_.push_back({PendingOperationType::REQUEST_STATUS, device_id, 0});
+  queue_.push_back({type, device_id, 0});
   return true;
 }
 
+bool OperationQueue::enqueue_request_status(const std::string &device_id) {
+  return enqueue_background_unique_(PendingOperationType::REQUEST_STATUS, device_id);
+}
+
 bool OperationQueue::enqueue_request_name(const std::string &device_id) {
-  for (const auto &op : queue_) {
-    if (op.type == PendingOperationType::REQUEST_NAME && op.device_id == device_id)
-      return false;
-  }
-  queue_.push_back({PendingOperationType::REQUEST_NAME, device_id, 0});
-  return true;
+  return enqueue_background_unique_(PendingOperationType::REQUEST_NAME, device_id);
+}
+
+bool OperationQueue::enqueue_request_limitation(const std::string &device_id) {
+  return enqueue_background_unique_(PendingOperationType::REQUEST_LIMITATION, device_id);
 }
 
 bool OperationQueue::enqueue_discover_and_pair() {
@@ -138,10 +142,7 @@ bool OperationQueue::enqueue_discover_and_pair() {
       return false;
   }
   queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
-                              [](const PendingOperation &op) {
-                                return op.type == PendingOperationType::REQUEST_STATUS ||
-                                       op.type == PendingOperationType::REQUEST_NAME;
-                              }),
+                              [](const PendingOperation &op) { return is_background_op(op.type); }),
                queue_.end());
   queue_.push_front({PendingOperationType::DISCOVER_AND_PAIR, {}, 0});
   return true;

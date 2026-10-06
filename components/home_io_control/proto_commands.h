@@ -526,7 +526,8 @@ bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst
 /// Build the read of a device's resulting limitation: an unauthenticated CMD_LIMITATION_STATUS_REQ
 /// (0x25) with data `{selector, 0x00, 0x00}`, byte for byte what a VELUX KLF 200 gateway was
 /// heard sending (issue #98; public reference: KLF 200 API specification v3.18 section 10.5). The
-/// layout is an assumption until a reply under an active limitation is captured. Read-only: the
+/// reply's value layout is confirmed under rain on a VELUX window (minimum 93 %); its originator and
+/// remaining-time bytes read 00 even then, so they stay unverified. Read-only: the
 /// selector is an enum with two values, so this builder cannot produce a limitation write.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.

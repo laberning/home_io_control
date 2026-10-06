@@ -38,6 +38,7 @@ enum class PendingOperationType : uint8_t {
   ONEWAY_UNENROLL,        ///< 1W remove-controller (0x39) un-registering an identity.
   REQUEST_STATUS,         ///< request_device_status call (poll for current position).
   REQUEST_NAME,           ///< request_device_name call (poll for stored device name).
+  REQUEST_LIMITATION,     ///< request_device_limitation call (read the device's minimum limitation).
   DISCOVER_AND_PAIR,      ///< discover_and_pair call (starts 3-phase pairing flow).
 };
 
@@ -58,12 +59,13 @@ struct PendingOperation {
 /// @brief Serialized pending-operation queue with coalescing, deduplication, and two-band ordering.
 ///
 /// **Ordering:** DISCOVER_AND_PAIR > control operations > background polls.
-/// Control operations (SET_*, DEVICE_COMMAND) are inserted before any queued REQUEST_STATUS /
-/// REQUEST_NAME entries so user-visible commands execute with minimum queue latency.
+/// Control operations (SET_*, DEVICE_COMMAND) are inserted before any queued background polls
+/// (REQUEST_STATUS, REQUEST_NAME, REQUEST_LIMITATION) so user-visible commands execute with minimum queue latency.
 /// DISCOVER_AND_PAIR always front-inserts ahead of all other entries.
 ///
 /// **Stale-poll drop:** enqueueing a control operation for device X drops any queued
-/// REQUEST_STATUS for X, since the command reply supersedes it and re-arms tracking.
+/// REQUEST_STATUS for X, since the command reply supersedes it and re-arms tracking. A queued
+/// REQUEST_LIMITATION is kept: a status reply does not answer it.
 ///
 /// Coalescing rules (both directions):
 /// - SET_POSITION arriving while SET_TILT is pending for the same device → SET_POSITION_AND_TILT.
@@ -72,7 +74,8 @@ struct PendingOperation {
 /// Deduplication rules:
 /// - At most one REQUEST_STATUS per device.
 /// - At most one REQUEST_NAME per device.
-/// - At most one DISCOVER_AND_PAIR (any pending REQUEST_STATUS / REQUEST_NAME entries are flushed
+/// - At most one REQUEST_LIMITATION per device.
+/// - At most one DISCOVER_AND_PAIR (every pending background poll is flushed
 ///   and the discover entry is pushed to the front to minimize pairing-window latency).
 ///
 /// All coalescing and deduplication log messages are suppressed here — callers are responsible
@@ -140,10 +143,14 @@ class OperationQueue {
   /// @return true if pushed, false if a duplicate was already pending.
   bool enqueue_request_name(const std::string &device_id);
 
+  /// Enqueue REQUEST_LIMITATION, suppressing duplicates.
+  /// @return true if pushed, false if a duplicate was already pending.
+  bool enqueue_request_limitation(const std::string &device_id);
+
   // --- Pairing (dedup + priority front-push) ---
 
   /// Enqueue DISCOVER_AND_PAIR with elevated priority.
-  /// Flushes pending REQUEST_STATUS / REQUEST_NAME entries and pushes to front.
+  /// Flushes every pending background poll (see is_background_op()) and pushes to front.
   /// @return true if pushed, false if a DISCOVER_AND_PAIR was already pending.
   bool enqueue_discover_and_pair();
 
@@ -159,8 +166,8 @@ class OperationQueue {
   [[nodiscard]] std::deque<PendingOperation>::const_iterator begin() const;
   [[nodiscard]] std::deque<PendingOperation>::const_iterator end() const;
 
-  /// True for background poll types (REQUEST_STATUS, REQUEST_NAME) that yield to control operations.
-  /// Public because the dispatch gate in loop() defers *only* background work when a 1W remote is
+  /// True for background poll types (REQUEST_STATUS, REQUEST_NAME, REQUEST_LIMITATION) that yield to control
+  /// operations. Public because the dispatch gate in loop() defers *only* background work when a 1W remote is
   /// transmitting; a user command must never be held back for it.
   [[nodiscard]] static bool is_background_op(PendingOperationType t);
 
@@ -169,6 +176,9 @@ class OperationQueue {
   /// Insert a control operation before the first background entry; also drops any queued
   /// REQUEST_STATUS for the same device since the incoming command supersedes it.
   void push_control_(PendingOperation op);
+  /// Append a background operation of @p type for @p device_id unless an identical one is already
+  /// queued. @return true if pushed, false if a duplicate was already pending.
+  bool enqueue_background_unique_(PendingOperationType type, const std::string &device_id);
 };
 
 }  // namespace home_io_control

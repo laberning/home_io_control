@@ -8,6 +8,7 @@
 /// for exchange and pairing flows, plus shared timing utilities. No state, no
 /// side effects — suitable for unit testing without radio hardware.
 
+#include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
@@ -330,7 +331,7 @@ inline bool is_duplicate_1w_frame(const OneWayDedupState &last, const OneWayDedu
 /// The gate only ever delays a poll, never drops one — it stays queued and fires as soon as it is
 /// no longer deferred.
 ///
-/// @param next_op_is_background True if the queue front is a REQUEST_STATUS / REQUEST_NAME.
+/// @param next_op_is_background True if the queue front is a background poll (OperationQueue::is_background_op()).
 /// @param first_1w_activity_ms  millis() of the first frame in the current 1W burst; 0 if none seen
 ///                               since boot.
 /// @param last_1w_activity_ms   millis() of the most recent 1W frame; 0 if none seen since boot.
@@ -572,6 +573,41 @@ struct RainLimitationInput {
       break;
   }
   return "none";
+}
+
+// === Rain sensor from the minimum limitation ===
+
+/// A window with a wired rain sensor limits its own opening while it rains. Home Assistant's VELUX
+/// integration reads that limit and calls it rain from this minimum limit upward (observed values
+/// 89, 91, 93 and 100 %).
+static constexpr uint8_t RAIN_MINIMUM_LIMIT_PERCENT = 89;
+/// Percent value of a fully limited position, the divisor of the raw position coding.
+static constexpr uint16_t POSITION_FULL_PERCENT = 100;
+/// Raw position units per percent (512).
+static constexpr uint16_t POSITION_RAW_PER_PERCENT = STATUS_POS_MAX / POSITION_FULL_PERCENT;
+static_assert(POSITION_RAW_PER_PERCENT * POSITION_FULL_PERCENT == STATUS_POS_MAX,
+              "the raw rain threshold must be an exact multiple of one percent");
+/// RAIN_MINIMUM_LIMIT_PERCENT in the raw position coding (0xB200).
+static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RAIN_MINIMUM_LIMIT_PERCENT;
+
+/// @brief Rain state from the raw value of a minimum-limitation reply.
+/// @param value_raw Big-endian raw value in position coding (LimitationStatus::value_raw).
+/// @return UNKNOWN for a value above STATUS_POS_MAX (not a percentage), RAIN at or above
+///         RAIN_MINIMUM_LIMIT_RAW, DRY below it.
+[[nodiscard]] inline RainSensorState rain_state_from_minimum_limit(uint16_t value_raw) {
+  if (value_raw > STATUS_POS_MAX)
+    return RainSensorState::UNKNOWN;
+  return value_raw >= RAIN_MINIMUM_LIMIT_RAW ? RainSensorState::RAIN : RainSensorState::DRY;
+}
+
+/// @brief Rain state from a decoded limitation reply: the one place that knows which reply fields
+/// decide. Only the main parameter's value counts; originator and remaining time do not.
+/// @param status A decoded CMD_LIMITATION_STATUS_RESP payload.
+/// @return UNKNOWN unless the reply is for the main parameter, else rain_state_from_minimum_limit().
+[[nodiscard]] inline RainSensorState rain_state_from_limitation_reply(const LimitationStatus &status) {
+  if (status.parameter_id != LIMITATION_PARAM_MP)
+    return RainSensorState::UNKNOWN;
+  return rain_state_from_minimum_limit(status.value_raw);
 }
 
 }  // namespace decisions

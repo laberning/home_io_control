@@ -25,6 +25,7 @@ from .hub_names import (
     CONF_RADIO_TYPE,
     CONF_TX_POWER,
     CONF_VFEM_PIN,
+    MIN_RAIN_SENSOR_POLL_INTERVAL_MS,
     MIN_STATUS_POLL_INTERVAL_MS,
     home_io_control_ns,
 )
@@ -389,11 +390,23 @@ def validate_linked_remote_entry(value):
     return validate_device_id(value)
 
 
+def _validate_min_interval(value, minimum_ms, key):
+    """Parse a time period and reject anything shorter than minimum_ms, naming the key."""
+    value = cv.positive_time_period_milliseconds(value)
+    if value.total_milliseconds < minimum_ms:
+        raise cv.Invalid(f"{key} must be at least {minimum_ms}ms")
+    return value
+
+
 def validate_status_poll_interval(value):
     """Validate status_poll_interval is at least MIN_STATUS_POLL_INTERVAL_MS."""
-    value = cv.positive_time_period_milliseconds(value)
-    if value.total_milliseconds < MIN_STATUS_POLL_INTERVAL_MS:
-        raise cv.Invalid(
-            f"status_poll_interval must be at least {MIN_STATUS_POLL_INTERVAL_MS}ms"
-        )
-    return value
+    return _validate_min_interval(
+        value, MIN_STATUS_POLL_INTERVAL_MS, "status_poll_interval"
+    )
+
+
+def validate_rain_sensor_poll_interval(value):
+    """Validate rain_sensor_poll_interval is at least MIN_RAIN_SENSOR_POLL_INTERVAL_MS."""
+    return _validate_min_interval(
+        value, MIN_RAIN_SENSOR_POLL_INTERVAL_MS, "rain_sensor_poll_interval"
+    )

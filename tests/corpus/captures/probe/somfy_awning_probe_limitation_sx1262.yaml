@@ -1,0 +1,108 @@
+id: somfy_awning_probe_limitation_sx1262
+description: >
+  2026-10 limitation read (CMD_LIMITATION_STATUS_REQ 0x25, data selector 00 00) against our own
+  mains-powered awning, minimum (selector 0x80) and maximum (selector 0xC0), with the awning at
+  three positions: 97 % closed, fully open and fully closed. In each run the request drew a 0x3C
+  challenge, the hub answered with 0x3D, and the device then sent the 0x26 reply below (the
+  challenge exchange is not recorded here; its bytes are masked in the log). The reply is
+  byte-identical at every position: data=05 00 00 00 00 for the minimum and 05 C8 00 00 00 for the
+  maximum. Bytes 1-4 follow the layout of the two replies a VELUX window sends with no limitation
+  active (00 00 00 00 00 / 00 C8 00 00 00); only data[0] differs (05 here, 00 on the window), and
+  it does not follow the selector or the position. The limitation reply carries no position
+  information on this device. The first call of a series sometimes drew a final reply only on the
+  third try (the hub answered the challenge each time), which is not recorded.
+source:
+  device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2), limitation probe at three awning positions"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-06
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 25 80 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_REQ(0x25), data=80 00 00 -- minimum limit request, awning 97 % closed (probe limitation, index 0)."
+  - dir: rx
+    t_ms: 75
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 26 05 00 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26), data=05 00 00 00 00 -- minimum limit, awning 97 % closed. Identical at every position."
+  - dir: tx
+    t_ms: 1062
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 25 C0 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_REQ(0x25), data=C0 00 00 -- maximum limit request, awning 97 % closed (probe limitation, index 1)."
+  - dir: rx
+    t_ms: 1124
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 26 05 C8 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26), data=05 C8 00 00 00 -- maximum limit, awning 97 % closed. Identical at every position."
+  - dir: tx
+    t_ms: 100000
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 25 80 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_REQ(0x25), data=80 00 00 -- minimum limit request, awning fully open (probe limitation, index 0)."
+  - dir: rx
+    t_ms: 100098
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 26 05 00 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26), data=05 00 00 00 00 -- minimum limit, awning fully open. Identical at every position."
+  - dir: tx
+    t_ms: 125062
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 25 C0 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_REQ(0x25), data=C0 00 00 -- maximum limit request, awning fully open (probe limitation, index 1)."
+  - dir: rx
+    t_ms: 125130
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 26 05 C8 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26), data=05 C8 00 00 00 -- maximum limit, awning fully open. Identical at every position."
+  - dir: tx
+    t_ms: 200000
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 25 80 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_REQ(0x25), data=80 00 00 -- minimum limit request, awning fully closed (probe limitation, index 0)."
+  - dir: rx
+    t_ms: 200065
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 26 05 00 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26), data=05 00 00 00 00 -- minimum limit, awning fully closed. Identical at every position."
+  - dir: tx
+    t_ms: 211770
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 25 C0 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_REQ(0x25), data=C0 00 00 -- maximum limit request, awning fully closed (probe limitation, index 1)."
+  - dir: rx
+    t_ms: 211834
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 26 05 C8 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26), data=05 C8 00 00 00 -- maximum limit, awning fully closed. Identical at every position."
+expect:
+  frames:
+    - {cmd: 0x25, start: true, end: false, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}
+    - {cmd: 0x25, start: true, end: false, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}
+    - {cmd: 0x25, start: true, end: false, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}
+    - {cmd: 0x25, start: true, end: false, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}
+    - {cmd: 0x25, start: true, end: false, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}
+    - {cmd: 0x25, start: true, end: false, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}

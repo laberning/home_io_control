@@ -39,6 +39,9 @@ void IOHomeCover::setup() {
   const bool initial_invert = this->invert_explicit_ ? this->invert_ : default_inverted_for_type(this->device_type_);
   this->register_device_binding_(
       this, initial_invert, [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
+  // After the registration above: the hub only schedules a poll for a registered device.
+  if (this->rain_sensor_poll_interval_ms_ != 0)
+    this->parent_->set_device_rain_poll_interval(this->device_id_, this->rain_sensor_poll_interval_ms_);
 }
 
 cover::CoverTraits IOHomeCover::get_traits() {
@@ -194,6 +197,8 @@ void IOHomeCover::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Invert Position Override: %s", this->invert_explicit_ ? YESNO(this->invert_) : "AUTO");
   this->log_poll_interval_config_(TAG);
+  if (this->rain_sensor_poll_interval_ms_ != 0)
+    ESP_LOGCONFIG(TAG, "  Rain Sensor Poll Interval: %" PRIu32 " ms", this->rain_sensor_poll_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt()));
 }
 

@@ -148,14 +148,15 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
     this->poll_policy_.mark_stop_settle(device_id);
 }
 
-// Execute an authenticated request on the standard command channel and, on success, feed the
-// device's reply back through the normal inbound status parser so all state normalization stays
-// in one place.
-bool IOHomeControlComponent::execute_request_and_update_(const std::string &device_id, const IoFrame &request,
-                                                         bool warn_on_no_response, uint32_t retry_after_fail_ms,
-                                                         uint8_t max_tries) {
-  IoFrame response;
-  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
+// Run an authenticated request on the standard command channel and do the per-outcome bookkeeping
+// every caller shares; what the reply means is left to the caller.
+IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_record_(const std::string &device_id,
+                                                                                   const IoFrame &request,
+                                                                                   IoFrame &response,
+                                                                                   const RequestOptions &options) {
+  const bool warn_on_no_response = options.warn_on_no_response;
+  const uint32_t retry_after_fail_ms = options.retry_after_fail_ms;
+  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, options.max_tries);
   // An unconfirmed acceptance means the device authenticated the request but never closed the
   // exchange. Whether that counts as success depends entirely on what the request was *for*:
   //   - a command (CMD_EXECUTE) is treated as done. The device has it, and most devices that end
@@ -198,7 +199,7 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
       ESP_LOGW(detail::TAG, "Command 0x%02X failed for device %s: no valid response (stage=%s tries=%u)", request.cmd,
                device_id.c_str(), dbg.stage, dbg.tries);
     }
-    return false;
+    return RequestResult::FAILED;
   }
 
   if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
@@ -221,14 +222,35 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
       detail::update_link_health(*dev, this->radio_);
       this->notify_device_update_(device_id);
     }
-    return true;
+    return RequestResult::UNCONFIRMED;
   }
 
-  if (response.cmd == CMD_ERROR_RESP)
-    return this->handle_error_response_(device_id, request, response, retry_after_fail_ms);
+  if (response.cmd == CMD_ERROR_RESP) {
+    this->handle_error_response_(device_id, request, response, retry_after_fail_ms);
+    return RequestResult::ERROR_REPLY;
+  }
 
   if (retry_after_fail_ms != 0)
     this->poll_policy_.clear_failure_streaks(device_id);
+  return RequestResult::REPLY;
+}
+
+// Execute an authenticated request and, on a reply, feed it back through the normal inbound status
+// parser so all state normalization stays in one place.
+bool IOHomeControlComponent::execute_request_and_update_(const std::string &device_id, const IoFrame &request,
+                                                         bool warn_on_no_response, uint32_t retry_after_fail_ms,
+                                                         uint8_t max_tries) {
+  IoFrame response;
+  switch (
+      this->exchange_and_record_(device_id, request, response, {warn_on_no_response, retry_after_fail_ms, max_tries})) {
+    case RequestResult::FAILED:
+    case RequestResult::ERROR_REPLY:
+      return false;
+    case RequestResult::UNCONFIRMED:
+      return true;
+    case RequestResult::REPLY:
+      break;
+  }
 
   // The immediate reply to our own CMD_EXECUTE (position/tilt/stop/favorite/vent) is not
   // trustworthy for target/current position on at least some devices — see
@@ -241,9 +263,9 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
 bool IOHomeControlComponent::handle_error_response_(const std::string &device_id, const IoFrame &request,
                                                     const IoFrame &response, uint32_t retry_after_fail_ms) {
   IoDevice *dev = this->registry_.get(device_id);
-  // An explicit refusal is still a reply from the device: this path returns before
-  // execute_request_and_update_()'s update_device_status_() call, so it must stamp link health
-  // itself to keep update_link_health()'s "every frame from a registered device" contract.
+  // An explicit refusal is still a reply from the device, but no caller feeds it to
+  // update_device_status_(), so stamp link health here to keep update_link_health()'s "every frame
+  // from a registered device" contract.
   if (dev != nullptr)
     detail::update_link_health(*dev, this->radio_);
   if (response.data_len == 0) {
@@ -410,6 +432,79 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
                                                               this->poll_policy_.take_stop_settle(device_id))
                         : EXCHANGE_RETRY_COUNT;
   return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
+}
+
+bool IOHomeControlComponent::request_device_limitation(const std::string &device_id) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  // Not a failure and not a reading: a moving device is left alone (the same caution the diagnostic
+  // probe applies), and asking again soon is cheaper than waiting out a whole interval.
+  if (!effective_is_stopped(*dev)) {
+    ESP_LOGD(detail::TAG, "Device %s: rain sensor poll deferred, device is moving", device_id.c_str());
+    this->rain_poll_policy_.defer(device_id, RAIN_POLL_MOVING_RETRY_MS, millis());
+    return false;
+  }
+
+  IoFrame request;
+  if (!create_limitation_status_read(request, this->node_id_, dev->node_id, LimitationType::MINIMUM, dev->low_power))
+    return false;
+
+  // retry_after_fail_ms = 0 keeps the status-poll backoff ladder out of a rain poll's way; a miss
+  // here is counted by the rain schedule instead.
+  IoFrame response;
+  const RequestResult result =
+      this->exchange_and_record_(device_id, request, response, {false, 0, RAIN_POLL_MAX_TRIES});
+
+  // A reply consumed inside the blocking exchange never reaches the normal receive path.
+  dev = this->registry_.get(device_id);
+  RainSensorState reading = RainSensorState::UNKNOWN;
+  std::string limit_text;
+  if (result == RequestResult::REPLY && dev != nullptr) {
+    // The device transmitted, whatever it said: stamp link health the way the status path does.
+    detail::update_link_health(*dev, this->radio_);
+    uint8_t raw[FRAME_MAX_SIZE] = {0};
+    const uint8_t raw_len = serialize(response, raw, sizeof(raw));
+    detail::log_component_capture(this->radio_, "limitation_rx", raw, raw_len, &response);
+    LimitationStatus status;
+    if (response.cmd == CMD_LIMITATION_STATUS_RESP && decode_limitation_status(response, status)) {
+      ESP_LOGD(detail::TAG, "Device %s: %s", device_id.c_str(), detail::describe_limitation_reply(response).c_str());
+      reading = decisions::rain_state_from_limitation_reply(status);
+      limit_text = detail::format_limitation_value(status.value_raw);
+    } else {
+      ESP_LOGD(detail::TAG, "Device %s: unexpected reply 0x%02X to the limitation read", device_id.c_str(),
+               response.cmd);
+    }
+  } else if (result == RequestResult::ERROR_REPLY && this->rain_poll_policy_.first_error_reply(device_id)) {
+    ESP_LOGW(detail::TAG, "Device %s answers the limitation read with an error; its rain sensor stays unknown",
+             device_id.c_str());
+  }
+
+  this->apply_rain_poll_result_(device_id, reading, limit_text);
+  return reading != RainSensorState::UNKNOWN;
+}
+
+void IOHomeControlComponent::apply_rain_poll_result_(const std::string &device_id, RainSensorState reading,
+                                                     const std::string &limit_text) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return;
+  RainSensorState state = dev->rain_sensor;
+  if (reading != RainSensorState::UNKNOWN) {
+    this->rain_poll_policy_.on_poll_succeeded(device_id);
+    state = reading;
+  } else if (this->rain_poll_policy_.on_poll_failed(device_id)) {
+    state = RainSensorState::UNKNOWN;  // the last reading is too old to keep showing
+  }
+  if (state != dev->rain_sensor) {
+    ESP_LOGI(detail::TAG, "Device %s: rain sensor %s -> %s%s%s%s", device_id.c_str(),
+             rain_sensor_state_name(dev->rain_sensor), rain_sensor_state_name(state),
+             limit_text.empty() ? "" : " (minimum limit ", limit_text.c_str(), limit_text.empty() ? "" : ")");
+    dev->rain_sensor = state;
+  }
+  // Notify on every outcome: link health moved too, so the link sensors need the update.
+  this->notify_device_update_(device_id);
 }
 
 bool IOHomeControlComponent::request_device_name(const std::string &device_id) {
@@ -631,6 +726,12 @@ void IOHomeControlComponent::queue_request_device_status(const std::string &devi
   this->op_queue_.enqueue_request_status(device_id);
 }
 
+void IOHomeControlComponent::queue_request_device_limitation(const std::string &device_id) {
+  if (this->get_device(device_id) == nullptr)
+    return;
+  this->op_queue_.enqueue_request_limitation(device_id);
+}
+
 void IOHomeControlComponent::queue_request_device_name(const std::string &device_id) {
   if (this->get_device(device_id) == nullptr)
     return;
@@ -757,6 +858,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::REQUEST_NAME:
       this->request_device_name(operation.device_id);
+      break;
+    case PendingOperationType::REQUEST_LIMITATION:
+      this->request_device_limitation(operation.device_id);
       break;
     case PendingOperationType::DISCOVER_AND_PAIR:
       this->discover_and_pair();

@@ -1,0 +1,237 @@
+id: velux_window_probe_private_fn_rain_state_at_rest_sx1262
+description: >
+  2026-10-04 private_fn sweep (function IDs 0x00-0x0E, CMD_PRIVATE 0x03) of a VELUX INTEGRA
+  roof-window actuator with a wired rain sensor, run twice about a minute apart by the reporter's own
+  SX1262 hub (issue #98): first with the window dry, then at rest in the rain-limited state after
+  the sensor was sprayed. Every reply is a CMD_PRIVATE_RESP, data[0]=05 (stopped). The second sweep
+  differs from the first at fn 0x00 (target selector D8 01 instead of 00 00), fn 0x01 (BA 00, 93 %),
+  fn 0x03 (record: D8 01, BA 00, master 00 00 32, originator 02), fn 0x04 (master 00 00 32),
+  fn 0x05 (02 00) , fn 0x09 (D8 01) and fn 0x0E (BA 00); fn 0x0A and 0x0B stay 00 00 and C8 00, so no
+  private function holds the limit itself. Two opens sent afterwards both ended at 93 % (position
+  93 %, target 93 %, no error reply). The requests were not logged, only the replies, which stand
+  in function-ID order; node IDs are replaced (the hub and window IDs in this file are not the
+  reporter's), and the hub ID the log had masked is the controller address inside the replies.
+source:
+  device: "Velux INTEGRA roof-window actuator (WINDOW_OPENER) with a wired rain sensor"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-04
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/98"
+key: unknown
+node_map:
+  hub: C0FFEE
+  window: 8A2C4E
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x00 (target), window dry."
+  - dir: rx
+    t_ms: 1038
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x01 (current), window dry."
+  - dir: rx
+    t_ms: 2074
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x02 (fn 0x02), window dry."
+  - dir: rx
+    t_ms: 3114
+    freq: 868950000
+    hex: "96 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00 00 00 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x03 (record), window dry."
+  - dir: rx
+    t_ms: 4151
+    freq: 868950000
+    hex: "8F 00 C0 FF EE 8A 2C 4E 04 05 00 C0 FF EE 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x04 (master), window dry."
+  - dir: rx
+    t_ms: 5188
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 8A 2C 4E 04 05 00 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x05 (originator flag), window dry."
+  - dir: rx
+    t_ms: 6225
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x06 (fn 0x06), window dry."
+  - dir: rx
+    t_ms: 7263
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 27 10 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x07 (fn 0x07), window dry."
+  - dir: rx
+    t_ms: 8300
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 D1 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x08 (fn 0x08), window dry."
+  - dir: rx
+    t_ms: 9337
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x09 (fn 0x09), window dry."
+  - dir: rx
+    t_ms: 10374
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0A (fn 0x0A), window dry."
+  - dir: rx
+    t_ms: 11410
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 C8 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0B (fn 0x0B), window dry."
+  - dir: rx
+    t_ms: 12448
+    freq: 868950000
+    hex: "96 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00 00 00 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0C (fn 0x0C), window dry."
+  - dir: rx
+    t_ms: 13488
+    freq: 868950000
+    hex: "96 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00 00 00 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0D (fn 0x0D), window dry."
+  - dir: rx
+    t_ms: 14526
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0E (fn 0x0E), window dry."
+  - dir: rx
+    t_ms: 75984
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 D8 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x00 (target), window rain-limited at rest."
+  - dir: rx
+    t_ms: 77022
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 BA 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x01 (current), window rain-limited at rest."
+  - dir: rx
+    t_ms: 78059
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x02 (fn 0x02), window rain-limited at rest."
+  - dir: rx
+    t_ms: 79096
+    freq: 868950000
+    hex: "96 00 C0 FF EE 8A 2C 4E 04 05 00 D8 01 BA 00 00 00 00 00 32 02 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x03 (record), window rain-limited at rest."
+  - dir: rx
+    t_ms: 80133
+    freq: 868950000
+    hex: "8F 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 32 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x04 (master), window rain-limited at rest."
+  - dir: rx
+    t_ms: 81169
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 8A 2C 4E 04 05 00 02 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x05 (originator flag), window rain-limited at rest."
+  - dir: rx
+    t_ms: 82203
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x06 (fn 0x06), window rain-limited at rest."
+  - dir: rx
+    t_ms: 83241
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 27 10 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x07 (fn 0x07), window rain-limited at rest."
+  - dir: rx
+    t_ms: 84278
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 D1 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x08 (fn 0x08), window rain-limited at rest."
+  - dir: rx
+    t_ms: 85316
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 D8 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x09 (fn 0x09), window rain-limited at rest."
+  - dir: rx
+    t_ms: 86352
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 00 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0A (fn 0x0A), window rain-limited at rest."
+  - dir: rx
+    t_ms: 87389
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 C8 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0B (fn 0x0B), window rain-limited at rest."
+  - dir: rx
+    t_ms: 88428
+    freq: 868950000
+    hex: "96 00 C0 FF EE 8A 2C 4E 04 05 00 D8 01 BA 00 00 00 00 00 32 02 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0C (fn 0x0C), window rain-limited at rest."
+  - dir: rx
+    t_ms: 89466
+    freq: 868950000
+    hex: "96 00 C0 FF EE 8A 2C 4E 04 05 00 D8 01 D8 01 00 00 00 00 32 02 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0D (fn 0x0D), window rain-limited at rest."
+  - dir: rx
+    t_ms: 90504
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 8A 2C 4E 04 05 00 BA 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), private_fn index 0x0E (fn 0x0E), window rain-limited at rest."
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

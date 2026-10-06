@@ -236,6 +236,8 @@ A few additional options worth knowing about:
   is a common reason a hub pairs successfully and then hears nothing back.
 - **`invert_position: true`** — if open and closed come out backwards.
 - **`silent: true`** — move at the manufacturer app's quieter, slower speed.
+- **`rain_sensor_poll_interval: 15min`** — on a VELUX window with a wired rain sensor, adds a Rain
+  sensor binary sensor; see [Polling for rain](configuration/cover.md#polling-for-rain).
 
 The rest are in [Covers](configuration/cover.md), and on each platform's own page.
 
