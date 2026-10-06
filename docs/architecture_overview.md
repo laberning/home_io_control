@@ -90,6 +90,7 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Device registry: [device_registry.h](../components/home_io_control/device_registry.h)
 - Operation queue: [operation_queue.h](../components/home_io_control/operation_queue.h)
 - Status poll policy: [status_poll_policy.h](../components/home_io_control/status_poll_policy.h)
+- Rain sensor poll policy (schedule of the opt-in limitation read): [rain_poll_policy.h](../components/home_io_control/rain_poll_policy.h)
 - Management actions: [management_actions.h](../components/home_io_control/management_actions.h)
 - Radio abstraction (`RadioDriver`, `RadioTxConfig` for each transmission's channel, preamble, wake-up level and clear-channel check, and `TxResult` for what `send_packet()` did): [radio_interface.h](../components/home_io_control/radio_interface.h)
 - SX1276 driver: [radio_sx1276.h](../components/home_io_control/radio_sx1276.h)
