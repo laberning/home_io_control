@@ -462,5 +462,37 @@ LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base)
   return record;
 }
 
+bool decode_limitation_status(const IoFrame &f, LimitationStatus &out) {
+  if (f.cmd != CMD_LIMITATION_STATUS_RESP || f.data_len != LIMITATION_RESP_DATA_SIZE)
+    return false;
+  out.parameter_id = f.data[0];
+  out.value_raw = static_cast<uint16_t>((f.data[1] << BITS_PER_BYTE) | f.data[2]);
+  out.originator = f.data[3];
+  out.time_raw = f.data[4];
+  return true;
+}
+
+bool decode_limitation_request(const IoFrame &f, LimitationType &type, uint8_t &parameter_id) {
+  if (f.cmd != CMD_LIMITATION_STATUS_REQ || f.data_len != LIMITATION_REQ_DATA_SIZE)
+    return false;
+  if (f.data[0] == static_cast<uint8_t>(LimitationType::MINIMUM)) {
+    type = LimitationType::MINIMUM;
+  } else if (f.data[0] == static_cast<uint8_t>(LimitationType::MAXIMUM)) {
+    type = LimitationType::MAXIMUM;
+  } else {
+    return false;
+  }
+  parameter_id = f.data[1];
+  return true;
+}
+
+uint32_t limitation_time_seconds(uint8_t time_raw) {
+  if (time_raw == LIMITATION_TIME_UNLIMITED)
+    return UINT32_MAX;
+  if (time_raw > LIMITATION_TIME_MAX_COUNTED)
+    return 0;
+  return (static_cast<uint32_t>(time_raw) + 1) * LIMITATION_TIME_STEP_S;
+}
+
 }  // namespace home_io_control
 }  // namespace esphome

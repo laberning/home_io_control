@@ -8,13 +8,17 @@
 /// hub's private helpers (make include-graph enforces that split).
 
 #include "log_helpers.h"
+#include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
 #include "proto_sizes.h"
 
+#include <array>
+#include <cinttypes>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -93,6 +97,94 @@ inline std::string describe_last_command_source(const IoDevice &dev) {
   if (!dev.has_last_command)
     return {};
   return format_originator(dev.last_command_originator);
+}
+
+// ============================================================================
+// Limitation read rendering
+// ============================================================================
+
+/// Buffer size for the limitation fragments below: the longest is "selector (D8 01)" or "0xFD (unlimited)".
+inline constexpr size_t LIMITATION_TEXT_BUFFER_SIZE = 32;
+
+/// @brief Render a limitation parameter id: "MP" for the main parameter, "FP<n>" for 1-16, else hex.
+inline std::string format_limitation_param(uint8_t parameter_id) {
+  if (parameter_id == LIMITATION_PARAM_MP) {
+    return "MP";
+  }
+  std::array<char, LIMITATION_TEXT_BUFFER_SIZE> buffer{};
+  if (parameter_id >= LIMITATION_PARAM_FP_FIRST && parameter_id <= LIMITATION_PARAM_FP_LAST) {
+    std::snprintf(buffer.data(), buffer.size(), "FP%u", parameter_id);
+  } else {
+    std::snprintf(buffer.data(), buffer.size(), "0x%02X", parameter_id);
+  }
+  return std::string(buffer.data());
+}
+
+/// @brief Render a limitation value: a percentage, or the raw selector when it is not a position.
+///
+/// Values above STATUS_POS_MAX are position selectors (stop, unknown, ...), never percentages, so
+/// they print as `selector (D8 01)`. A percentage always keeps its raw bytes beside it, so a wrong
+/// layout assumption stays visible in the log.
+/// @param value_raw Big-endian raw value (LimitationStatus::value_raw).
+/// @return e.g. "93% (BA 00)", "46.5% (5D 00)" or "selector (D8 01)".
+inline std::string format_limitation_value(uint16_t value_raw) {
+  std::array<char, LIMITATION_TEXT_BUFFER_SIZE> buffer{};
+  const unsigned hi = value_raw >> BITS_PER_BYTE;
+  const unsigned lo = value_raw & 0xFFU;
+  if (value_raw > STATUS_POS_MAX) {
+    std::snprintf(buffer.data(), buffer.size(), "selector (%02X %02X)", hi, lo);
+    return std::string(buffer.data());
+  }
+  const double percent = value_raw * 100.0 / STATUS_POS_MAX;
+  const bool whole = (value_raw * 100U) % STATUS_POS_MAX == 0;
+  std::snprintf(buffer.data(), buffer.size(), whole ? "%.0f%% (%02X %02X)" : "%.1f%% (%02X %02X)", percent, hi, lo);
+  return std::string(buffer.data());
+}
+
+/// @brief Render a limitation time code with its raw byte: "0x1D (900 s)", "0xFD (unlimited)", "0xFE (code 254)".
+inline std::string format_limitation_time(uint8_t time_raw) {
+  std::array<char, LIMITATION_TEXT_BUFFER_SIZE> buffer{};
+  if (time_raw == LIMITATION_TIME_UNLIMITED) {
+    std::snprintf(buffer.data(), buffer.size(), "0x%02X (unlimited)", time_raw);
+  } else if (time_raw > LIMITATION_TIME_MAX_COUNTED) {
+    std::snprintf(buffer.data(), buffer.size(), "0x%02X (code %u)", time_raw, time_raw);
+  } else {
+    std::snprintf(buffer.data(), buffer.size(), "0x%02X (%" PRIu32 " s)", time_raw, limitation_time_seconds(time_raw));
+  }
+  return std::string(buffer.data());
+}
+
+/// @brief Render a decoded limitation reply on one line, raw bytes beside every decoded value.
+/// @return e.g. "limitation (assumed layout): param=MP value=93% (BA 00) originator=rain_sensor(0x02) time=0x1D (900
+/// s)".
+inline std::string format_limitation_status(const LimitationStatus &status) {
+  return "limitation (assumed layout): param=" + format_limitation_param(status.parameter_id) +
+         " value=" + format_limitation_value(status.value_raw) + " originator=" + format_originator(status.originator) +
+         " time=" + format_limitation_time(status.time_raw);
+}
+
+/// @brief Render a CMD_LIMITATION_STATUS_RESP frame for a log line or probe report.
+/// @param frame A parsed CMD_LIMITATION_STATUS_RESP frame.
+/// @return format_limitation_status() of the decode, or "limitation (assumed layout): unexpected
+///         length N" when the payload is not the assumed five bytes.
+inline std::string describe_limitation_reply(const IoFrame &frame) {
+  LimitationStatus status;
+  if (!decode_limitation_status(frame, status))
+    return "limitation (assumed layout): unexpected length " + std::to_string(frame.data_len);
+  return format_limitation_status(status);
+}
+
+/// @brief Render a CMD_LIMITATION_STATUS_REQ frame for a log line.
+/// @param frame A parsed CMD_LIMITATION_STATUS_REQ frame.
+/// @return e.g. "limitation request (assumed layout): type=minimum param=MP", or "... unexpected payload"
+///         when the length or selector is not one of the known shapes.
+inline std::string describe_limitation_request(const IoFrame &frame) {
+  LimitationType type;
+  uint8_t parameter_id = 0;
+  if (!decode_limitation_request(frame, type, parameter_id))
+    return "limitation request (assumed layout): unexpected payload";
+  return std::string("limitation request (assumed layout): type=") +
+         (type == LimitationType::MINIMUM ? "minimum" : "maximum") + " param=" + format_limitation_param(parameter_id);
 }
 
 }  // namespace detail

@@ -8,6 +8,7 @@
 /// Latin-1 device-name round-tripping, broadcast address classification and
 /// structured decoding of overheard 1W remote frames.
 
+#include "proto_constants.h"
 #include "proto_device_model.h"
 #include "proto_sizes.h"
 
@@ -358,6 +359,42 @@ struct LastCommandRecord {
 /// @param base PRIVATE_RESPONSE_LAST_COMMAND_OFFSET or STATUS_UPDATE_LAST_COMMAND_OFFSET.
 /// @return The decoded record, or `valid == false`.
 LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base);
+
+// ============================================================================
+// Limitation read (0x25 / 0x26)
+// ============================================================================
+
+/// @brief One decoded CMD_LIMITATION_STATUS_RESP payload.
+///
+/// The field layout is an assumption: it fits the two replies heard from VELUX windows (issue #98)
+/// and the limitation status of the KLF 200 API specification v3.18, section 10.5.4, but has not
+/// been confirmed against a reply under an active limitation.
+struct LimitationStatus {
+  uint8_t parameter_id{0};  ///< data[0]; LIMITATION_PARAM_MP for the main parameter.
+  uint16_t value_raw{0};    ///< data[1..2], big-endian, position coding (STATUS_POS_MAX = 100 %).
+  uint8_t originator{0};    ///< data[3], Command Originator that imposed the limit (ORIGINATOR_*).
+  uint8_t time_raw{0};      ///< data[4], remaining-time code; see limitation_time_seconds().
+};
+
+/// @brief Decode a limitation reply (assumed layout, see LimitationStatus).
+/// @param f A parsed frame.
+/// @param out Receives the decoded fields on success.
+/// @return false unless `f` is a CMD_LIMITATION_STATUS_RESP carrying exactly LIMITATION_RESP_DATA_SIZE bytes.
+bool decode_limitation_status(const IoFrame &f, LimitationStatus &out);
+
+/// @brief Decode a limitation request (assumed layout `[selector] [parameter id] [00]`).
+/// @param f A parsed frame.
+/// @param type Receives the limit the request asks for.
+/// @param parameter_id Receives the parameter id (data[1]).
+/// @return false unless `f` is a CMD_LIMITATION_STATUS_REQ carrying exactly LIMITATION_REQ_DATA_SIZE
+///         bytes with one of the two known selectors.
+bool decode_limitation_request(const IoFrame &f, LimitationType &type, uint8_t &parameter_id);
+
+/// @brief Remaining time of a limitation in seconds.
+/// @param time_raw Time code (LimitationStatus::time_raw).
+/// @return `(n + 1) * 30` for codes 0..252, UINT32_MAX for LIMITATION_TIME_UNLIMITED, and 0 for the
+///         timer-delete codes 254/255, which are not durations.
+uint32_t limitation_time_seconds(uint8_t time_raw);
 
 }  // namespace home_io_control
 }  // namespace esphome

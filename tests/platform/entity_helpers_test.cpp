@@ -2,6 +2,7 @@
 /// @brief Tests for the conversions and renderers in entity_helpers.h.
 
 #include "entity_helpers.h"
+#include "payload_frame.h"
 
 #include <gtest/gtest.h>
 
@@ -101,4 +102,64 @@ TEST(EntityHelpers, DescribeLastCommandSourceIsEmptyBeforeAnyRecord) {
   IoDevice dev{};  // has_last_command == false
 
   EXPECT_TRUE(detail::describe_last_command_source(dev).empty());
+}
+
+// ============================================================================
+// Limitation read rendering
+// ============================================================================
+
+TEST(EntityHelpers, DescribeLimitationReplyRendersPredictedRainLayout) {
+  // Prediction from the KLF 200 API specification, not a capture.
+  EXPECT_EQ(detail::describe_limitation_reply(
+                test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0xBA, 0x00, 0x02, 0x1D})),
+            "limitation (assumed layout): param=MP value=93% (BA 00) originator=rain_sensor(0x02) time=0x1D (900 s)");
+}
+
+TEST(EntityHelpers, DescribeLimitationReplyRendersHeardReplies) {
+  EXPECT_EQ(detail::describe_limitation_reply(
+                test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0xC8, 0x00, 0x00, 0x00})),
+            "limitation (assumed layout): param=MP value=100% (C8 00) originator=local_user(0x00) time=0x00 (30 s)");
+  EXPECT_EQ(detail::describe_limitation_reply(
+                test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0x00, 0x00, 0x00, 0x00})),
+            "limitation (assumed layout): param=MP value=0% (00 00) originator=local_user(0x00) time=0x00 (30 s)");
+}
+
+TEST(EntityHelpers, DescribeLimitationReplyReportsUnexpectedLength) {
+  EXPECT_EQ(detail::describe_limitation_reply(test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0xC8, 0x00})),
+            "limitation (assumed layout): unexpected length 3");
+}
+
+TEST(EntityHelpers, LimitationValueShowsSelectorsAndFractionsHonestly) {
+  EXPECT_EQ(detail::format_limitation_value(0xD801), "selector (D8 01)")
+      << "a selector must never read as a percentage";
+  EXPECT_EQ(detail::format_limitation_value(0x5D00), "46.5% (5D 00)") << "a non-whole percentage keeps one decimal";
+  EXPECT_EQ(detail::format_limitation_value(STATUS_POS_MAX), "100% (C8 00)") << "the boundary is still a position";
+  EXPECT_EQ(detail::format_limitation_value(STATUS_POS_MAX + 1), "selector (C8 01)");
+}
+
+TEST(EntityHelpers, LimitationParamNamesMainAndFunctionalParameters) {
+  EXPECT_EQ(detail::format_limitation_param(0), "MP");
+  EXPECT_EQ(detail::format_limitation_param(1), "FP1");
+  EXPECT_EQ(detail::format_limitation_param(16), "FP16");
+  EXPECT_EQ(detail::format_limitation_param(17), "0x11");
+}
+
+TEST(EntityHelpers, LimitationTimeRendersEveryCodeClass) {
+  EXPECT_EQ(detail::format_limitation_time(0), "0x00 (30 s)");
+  EXPECT_EQ(detail::format_limitation_time(252), "0xFC (7590 s)");
+  EXPECT_EQ(detail::format_limitation_time(253), "0xFD (unlimited)");
+  EXPECT_EQ(detail::format_limitation_time(254), "0xFE (code 254)");
+  EXPECT_EQ(detail::format_limitation_time(255), "0xFF (code 255)");
+}
+
+TEST(EntityHelpers, DescribeLimitationRequestNamesTypeAndParameter) {
+  EXPECT_EQ(
+      detail::describe_limitation_request(test::make_payload_frame(CMD_LIMITATION_STATUS_REQ, {0x80, 0x00, 0x00})),
+      "limitation request (assumed layout): type=minimum param=MP");
+  EXPECT_EQ(
+      detail::describe_limitation_request(test::make_payload_frame(CMD_LIMITATION_STATUS_REQ, {0xC0, 0x00, 0x00})),
+      "limitation request (assumed layout): type=maximum param=MP");
+  EXPECT_EQ(
+      detail::describe_limitation_request(test::make_payload_frame(CMD_LIMITATION_STATUS_REQ, {0x40, 0x00, 0x00})),
+      "limitation request (assumed layout): unexpected payload");
 }

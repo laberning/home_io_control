@@ -425,8 +425,17 @@ enum class LimitationType : uint8_t {
 };
 
 static constexpr uint8_t LIMITATION_PARAM_MP = 0x00;     ///< Parameter id of the main parameter.
+static constexpr uint8_t LIMITATION_PARAM_FP_FIRST = 1;  ///< Parameter id of FP1.
+static constexpr uint8_t LIMITATION_PARAM_FP_LAST = 16;  ///< Parameter id of FP16.
 static constexpr uint8_t LIMITATION_REQ_DATA_SIZE = 3;   ///< Request data: selector, parameter id, 0x00.
 static constexpr uint8_t LIMITATION_RESP_DATA_SIZE = 5;  ///< Reply data: parameter id, value (2), originator, time.
+
+/// Remaining-time codes of a limitation reply's last byte (KLF 200 API specification v3.18, table
+/// 200): codes 0-252 count `(n + 1) * 30` seconds, 253 means no time limit, and 254/255 are the
+/// timer values the set command uses to delete an entry (never a duration).
+static constexpr uint8_t LIMITATION_TIME_MAX_COUNTED = 252;  ///< Highest code that encodes a duration.
+static constexpr uint8_t LIMITATION_TIME_UNLIMITED = 253;    ///< Limitation without a time limit.
+static constexpr uint32_t LIMITATION_TIME_STEP_S = 30;       ///< Seconds per time-code step.
 /// @}
 
 // ============================================================================
