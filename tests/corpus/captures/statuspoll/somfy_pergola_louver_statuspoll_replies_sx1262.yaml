@@ -1,0 +1,58 @@
+id: somfy_pergola_louver_statuspoll_replies_sx1262
+description: >
+  Seven full status-poll replies (0x04, 23 bytes) from a Somfy bioclimatic pergola (io type
+  0x1D), PR #157 (@piitaya), logged by the reporter's hub itself (Heltec V3 / SX1262, IOHOME_FRAME_LOG)
+  earlier on 2026-10-06 than the session in
+  tests/corpus/captures/exchange/somfy_pergola_louver_exchange_open_close_position_stop_sx1262.yaml,
+  on CH1, CH2 or CH3 (not recorded per frame, so there is no freq and no timing). Main parameter
+  0x0000 is open and 0xC800 closed. Two behaviours the docs rest on: the louvres can rest a
+  fraction of a percent off their target (rows 3 and 4), and after a STOP the target can read
+  0xD200 with no usable position (row 5). Positions are the 16-bit values divided by 512 and were checked
+  by arithmetic; the state and flags readings are the reporter's. The polls these answer are not
+  in the log.
+source:
+  device: "Somfy bioclimatic pergola louvers (TaHoma: Pergola louver IO, io type 0x1D, node 262552), paired two-way to the reporter's hub 9AF3CE via key extraction from a TaHoma Switch"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/pull/157"
+key: unknown
+frames:
+  - dir: rx
+    hex: "96 00 9A F3 CE 26 25 52 04 05 00 C8 00 C8 00 00 00 9A F3 CE 01 00 00"
+    crc: absent
+    note: "stopped, target 0xC800, current 0xC800: closed (100 %)"
+  - dir: rx
+    hex: "96 00 9A F3 CE 26 25 52 04 04 80 C8 00 93 B1 00 05 9A F3 CE 01 00 00"
+    crc: absent
+    note: "moving (state 0x04) to target 0xC800 (100 %), current 0x93B1 = 73.9 %, time hint 5 s (data[6..7] = 00 05)"
+  - dir: rx
+    hex: "96 00 9A F3 CE 26 25 52 04 05 00 8C 00 8D DF 00 00 9A F3 CE 01 00 00"
+    crc: absent
+    note: "stopped, target 0x8C00 = 70 %, current 0x8DDF = 70.9 %: the louvres rest off target"
+  - dir: rx
+    hex: "96 00 9A F3 CE 26 25 52 04 05 00 64 00 65 7A 00 00 9A F3 CE 01 00 00"
+    crc: absent
+    note: "stopped, target 0x6400 = 50 %, current 0x657A = 50.7 %: rests off target"
+  - dir: rx
+    hex: "96 00 9A F3 CE 26 25 52 04 05 00 D2 00 D2 00 00 00 9A F3 CE 01 00 00"
+    crc: absent
+    note: "after a STOP: target 0xD200 and current 0xD200, no position reported"
+  - dir: rx
+    hex: "96 00 9A F3 CE 26 25 52 04 05 00 D2 00 22 DF 00 00 9A F3 CE 01 00 00"
+    crc: absent
+    note: "after a STOP: target 0xD200, current 0x22DF = 17.4 %"
+  - dir: rx
+    hex: "96 00 9A F3 CE 26 25 52 04 05 00 D8 00 62 05 00 00 9A F3 CE 01 00 00"
+    crc: absent
+    note: "after My (favorite): target 0xD800, current 0x6205 = 49.0 %"
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

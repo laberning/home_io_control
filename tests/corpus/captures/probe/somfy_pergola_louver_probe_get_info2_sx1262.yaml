@@ -1,0 +1,37 @@
+id: somfy_pergola_louver_probe_get_info2_sx1262
+description: >
+  CMD_GET_INFO2 (0x56) probe against a Somfy bioclimatic pergola (node 262552), PR #157
+  (@piitaya): probe_device get_info2 from a Heltec V3 hub (9AF3CE), recorded by a second Heltec
+  V3 (SX1262) sniffer on CH2. The reply payload is 10 ASCII bytes "5150702A08" (a Somfy-internal
+  reference/sw-version code, not a public catalogue number), then the packed type/subtype bytes.
+  Human-verified: data[10]=0x07, data[11]=0x40 -> (0x07<<2)|(0x40>>6) = 0x1D, subtype 0, via
+  decode_packed_device_type() (proto_device_model.cpp). 0x1D is the io type TaHoma shows as
+  "Pergola louver IO"; no reference project in this repository names it. data[12..15] = 01 0A 00 00
+  are undecoded.
+source:
+  device: "Somfy bioclimatic pergola louvers (TaHoma: Pergola louver IO, io type 0x1D, node 262552), paired two-way to the reporter's hub 9AF3CE via key extraction from a TaHoma Switch"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/pull/157"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "48 00 26 25 52 9A F3 CE 56"
+    crc: absent
+    note: "cmd=GET_INFO2(0x56), no payload (probe_device get_info2)"
+  - dir: rx
+    freq: 868950000
+    hex: "98 00 9A F3 CE 26 25 52 57 35 31 35 30 37 30 32 41 30 38 07 40 01 0A 00 00"
+    crc: absent
+    note: >
+      cmd=GET_INFO2_RESP(0x57). data[0..9]="5150702A08" (ASCII reference/sw-version code).
+      data[10]=0x07, data[11]=0x40 -> decode_packed_device_type() = 0x1D = BIOCLIMATIC_PERGOLA,
+      subtype 0 (human-verified). data[12..15] = 01 0A 00 00 undecoded.
+expect:
+  frames:
+    - {cmd: 0x56, start: true, end: false, protocol: 2w}
+    - {cmd: 0x57, start: false, end: true, protocol: 2w}

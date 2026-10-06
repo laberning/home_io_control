@@ -1,0 +1,180 @@
+id: somfy_pergola_louver_exchange_open_close_position_stop_sx1262
+description: >
+  A hub session against a Somfy bioclimatic pergola (io type 0x1D, louvre opening as the main
+  parameter), PR #157 (@piitaya): open, close, set position 50, open again and STOP, Heltec V3
+  hub 9AF3CE with sx1262_rx_bandwidth 156.2 on CH2, recorded by a second Heltec V3 (SX1262)
+  sniffer locked on CH2. Main parameter 0x0000 is open and 0xC800 closed, no inversion; the hub
+  logged the pergola stopped at 0, 100, 51 and 31 % at the end of the four moves. The sniffer
+  drops frames that follow another frame too closely, so it caught one device reply (the STOP
+  ack) and none of the poll replies; the hub's own log decoded them and is quoted in each note.
+  The 0x3C/0x3D frames are masked in the source log, so every challenge and challenge response
+  is omitted and this excerpt is not a replayable exchange. t_ms are the sniffer's timestamps
+  relative to the first frame. The device's own 0x04 replies are in
+  tests/corpus/captures/statuspoll/somfy_pergola_louver_statuspoll_replies_sx1262.yaml and
+  tests/corpus/captures/exchange/somfy_pergola_louver_exchange_execute_acks_sx1262.yaml, and its
+  identity in tests/corpus/captures/probe/somfy_pergola_louver_probe_get_info2_sx1262.yaml.
+source:
+  device: "Somfy bioclimatic pergola louvers (TaHoma: Pergola louver IO, io type 0x1D, node 262552), paired two-way to the reporter's hub 9AF3CE via key extraction from a TaHoma Switch"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/pull/157"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "50 00 26 25 52 9A F3 CE 00 01 63 00 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), open: main parameter 0x0000 (0 % in IO terms). Hub log: optimistic target=0, last reported position=30"
+  - dir: tx
+    t_ms: 3092
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) status poll, 3 s after the command. Hub decoded position=14 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 6188
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=0 % target=0 % stopped; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 49947
+    freq: 868950000
+    hex: "50 00 26 25 52 9A F3 CE 00 01 63 C8 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), close: main parameter 0xC800 (100 %)"
+  - dir: tx
+    t_ms: 53044
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=15 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 56142
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=31 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 59242
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=46 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 62322
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=62 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 65415
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=77 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 68502
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll, the hub's exchange failed (wait_first_timeout, no frame heard)"
+  - dir: tx
+    t_ms: 73957
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=100 % target=100 % stopped; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 99834
+    freq: 868950000
+    hex: "50 00 26 25 52 9A F3 CE 00 01 63 64 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), set position 50: main parameter 0x6400 (50 %)"
+  - dir: tx
+    t_ms: 102930
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=84 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 106026
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=68 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 109104
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=52 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 112206
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=51 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 115301
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=51 % and stopped, 1 % past the target; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 135016
+    freq: 868950000
+    hex: "50 00 26 25 52 9A F3 CE 00 01 63 00 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), open again from 51 %"
+  - dir: tx
+    t_ms: 138099
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=35 % moving; reply not caught by the sniffer"
+  - dir: tx
+    t_ms: 138895
+    freq: 868950000
+    hex: "4E 00 26 25 52 9A F3 CE 00 01 63 D2 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) STOP: main parameter 0xD200 (stop), 7-byte payload, CTRL0 0x4E"
+  - dir: rx
+    t_ms: 138951
+    freq: 868950000
+    hex: "8E 00 9A F3 CE 26 25 52 04 05 00 3E A0 00 00"
+    crc: absent
+    note: "cmd=0x04 ack to STOP: state 0x05 (stopped), current 0x3EA0 = 31.3 %. The 0x3C challenge between the STOP and this ack is masked in the source log and omitted"
+  - dir: tx
+    t_ms: 140003
+    freq: 868950000
+    hex: "4B 00 26 25 52 9A F3 CE 03 03 00 00"
+    crc: absent
+    note: "status poll. Hub decoded position=31 % target=31 % stopped; reply not caught by the sniffer"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
