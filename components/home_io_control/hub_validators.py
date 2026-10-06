@@ -192,6 +192,7 @@ DEVICE_TYPE_OPTIONS = {
     "curtain_track": 0x13,
     "intrusion_alarm": 0x17,
     "swinging_shutter": 0x18,
+    "bioclimatic_pergola": 0x1D,
 }
 
 

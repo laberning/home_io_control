@@ -80,6 +80,7 @@ POSITION_CONTROL_DEVICE_TYPES = {
     0x12,  # louvre_blind
     0x13,  # curtain_track
     0x18,  # swinging_shutter
+    0x1D,  # bioclimatic_pergola
 }
 
 

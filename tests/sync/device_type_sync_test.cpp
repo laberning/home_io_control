@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <set>
 #include <string>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -40,7 +41,7 @@ constexpr AllowlistedType kNotYamlSelectable[] = {
 /// hand-maintained list to keep in sync: a newly added enumerator gains a name (forced by
 /// -Wswitch) and is picked up here automatically — including one added above SWINGING_SHUTTER,
 /// which a hard-coded 0x18 upper bound would silently skip.
-bool is_named_device_type(uint8_t v) { return std::string(device_type_name(static_cast<DeviceType>(v))) != "unknown"; }
+bool is_named_device_type(uint8_t v) { return is_known_device_type(v); }
 
 }  // namespace
 
@@ -62,12 +63,17 @@ TEST(DeviceTypeSync, YamlDeviceTypeNameCoversAllPythonOptions) {
 }
 
 TEST(DeviceTypeSync, DeviceTypeNameCoversAllEnumValues) {
-  // Every value 0x01–0x18 in the DeviceType enum should have a meaningful name. Unlike the two
-  // reverse tests below, this one cannot use is_named_device_type() to find enumerators — a "name
-  // is 'unknown'" bug is exactly what it exists to catch — so it keeps an explicit range. The
-  // enum is contiguous through SWINGING_SHUTTER (0x18); extend this bound if it grows. -Wswitch on
-  // device_type_name() (no default: label) is the primary guard that every enumerator is handled.
-  for (uint8_t v = 0x01; v <= 0x18; v++) {
+  // Every DeviceType enumerator should have a meaningful name. Unlike the two reverse tests
+  // below, this one cannot use is_named_device_type() to find enumerators — a "name is 'unknown'"
+  // bug is exactly what it exists to catch — so it lists the values explicitly: the contiguous
+  // run 0x01–0x18 plus BIOCLIMATIC_PERGOLA (0x1D); extend the list when an enumerator is added.
+  // -Wswitch on device_type_name() (no default: label) is the primary guard that every
+  // enumerator is handled.
+  std::vector<uint8_t> values;
+  for (uint8_t v = 0x01; v <= 0x18; v++)
+    values.push_back(v);
+  values.push_back(static_cast<uint8_t>(DeviceType::BIOCLIMATIC_PERGOLA));
+  for (uint8_t v : values) {
     auto type = static_cast<DeviceType>(v);
     const char *name = device_type_name(type);
     EXPECT_NE(name, nullptr) << "device_type_name() returned nullptr for 0x" << std::hex << static_cast<int>(v);

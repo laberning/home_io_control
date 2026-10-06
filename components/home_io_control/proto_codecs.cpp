@@ -242,7 +242,7 @@ DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]) {
   uint16_t const type_raw =
       (static_cast<uint16_t>(addr[1]) << DEVICE_TYPE_LOW_BITS_SHIFT) | (addr[2] >> DEVICE_TYPE_HIGH_BITS_SHIFT);
 
-  if (type_raw > static_cast<uint16_t>(DeviceType::SWINGING_SHUTTER))
+  if (!is_known_device_type(type_raw))
     return DeviceType::UNKNOWN;
 
   return static_cast<DeviceType>(type_raw);

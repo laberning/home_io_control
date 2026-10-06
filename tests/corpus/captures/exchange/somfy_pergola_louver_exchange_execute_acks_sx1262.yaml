@@ -1,0 +1,32 @@
+id: somfy_pergola_louver_exchange_execute_acks_sx1262
+description: >
+  The immediate 0x04 acks (15 bytes) a Somfy bioclimatic pergola (io type 0x1D) sends to an
+  EXECUTE, PR #157 (@piitaya), logged by the reporter's hub itself (Heltec V3 / SX1262,
+  IOHOME_FRAME_LOG) on 2026-10-06, channel not recorded. The ack to a STOP has the same bytes as the
+  device frame in
+  tests/corpus/captures/exchange/somfy_pergola_louver_exchange_open_close_position_stop_sx1262.yaml
+  and is not repeated. The EXECUTEs these answer and the 0x3C/0x3D frames around them are not in
+  the log, so this is two device frames and not a replayable exchange. The data layout is shorter
+  than the 23-byte poll reply's; for the STOP ack the 16-bit value after state and flags (0x3EA0)
+  equals the position the pergola stopped at, 31.3 %. The other two values are not decoded.
+source:
+  device: "Somfy bioclimatic pergola louvers (TaHoma: Pergola louver IO, io type 0x1D, node 262552), paired two-way to the reporter's hub 9AF3CE via key extraction from a TaHoma Switch"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/pull/157"
+key: unknown
+frames:
+  - dir: rx
+    hex: "8E 00 9A F3 CE 26 25 52 04 2C 80 A5 20 00 00"
+    crc: absent
+    note: "ack to the 8-byte position EXECUTE: state 0x2C, acted on (reporter's reading)"
+  - dir: rx
+    hex: "8E 00 9A F3 CE 26 25 52 04 04 80 31 81 00 00"
+    crc: absent
+    note: "ack to a 6-byte main-only EXECUTE: state 0x04 (reporter's reading); that EXECUTE is not in the log"
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

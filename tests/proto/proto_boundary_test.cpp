@@ -199,6 +199,28 @@ TEST(ProtocolBoundary, DeviceCapabilityClass_SwingingShutterIsCover) {
       << "SWINGING_SHUTTER must be classified as COVER";
 }
 
+TEST(ProtocolBoundary, DeviceCapabilityClass_PergolaIsPlainPositionCover) {
+  // The louvres move on the main parameter (0x0000 open, 0xC800 closed).
+  EXPECT_EQ(device_capability_class(DeviceType::BIOCLIMATIC_PERGOLA), DeviceCapabilityClass::COVER)
+      << "BIOCLIMATIC_PERGOLA must be classified as COVER";
+  EXPECT_FALSE(device_supports_tilt(DeviceType::BIOCLIMATIC_PERGOLA))
+      << "BIOCLIMATIC_PERGOLA louvres move on the main parameter";
+  EXPECT_FALSE(device_supports_vent(DeviceType::BIOCLIMATIC_PERGOLA));
+  EXPECT_FALSE(default_inverted_for_type(DeviceType::BIOCLIMATIC_PERGOLA)) << "0x0000 is open, as for a vertical cover";
+  EXPECT_STREQ(yaml_device_type_name(DeviceType::BIOCLIMATIC_PERGOLA), "bioclimatic_pergola");
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::BIOCLIMATIC_PERGOLA), "cover_position");
+}
+
+TEST(ProtocolBoundary, IsKnownDeviceType_HandlesTheNonContiguousEnum) {
+  EXPECT_FALSE(is_known_device_type(0x00)) << "UNKNOWN is not a known type";
+  EXPECT_TRUE(is_known_device_type(0x18)) << "last value of the contiguous run";
+  for (uint16_t gap = 0x19; gap <= 0x1C; gap++)
+    EXPECT_FALSE(is_known_device_type(gap)) << "0x" << std::hex << gap << " has no enumerator";
+  EXPECT_TRUE(is_known_device_type(0x1D));
+  EXPECT_FALSE(is_known_device_type(0x1E));
+  EXPECT_FALSE(is_known_device_type(0x11D)) << "must not alias 0x1D by truncation to uint8_t";
+}
+
 // ========================================================================================
 // Device operation profile name: LOCK, CLIMATE, SENSOR, BEACON not yet covered
 // ========================================================================================
