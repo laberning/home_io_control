@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 namespace esphome {
 namespace home_io_control {
@@ -108,6 +109,12 @@ float decode_tilt_report(uint16_t tilt_raw) {
   if (tilt_raw > STATUS_POS_MAX)
     return UNKNOWN_POSITION;
   return 100.0F - (tilt_raw * 100.0F / STATUS_POS_MAX);
+}
+
+bool is_known_device_type(uint16_t raw) {
+  // Defined by device_type_name(): its -Wswitch-checked switch is the single list of enumerators.
+  return raw <= std::numeric_limits<uint8_t>::max() &&
+         std::strcmp(device_type_name(static_cast<DeviceType>(raw)), "unknown") != 0;
 }
 
 const char *device_type_name(DeviceType type) {

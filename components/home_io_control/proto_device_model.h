@@ -50,11 +50,12 @@ enum class DeviceType : uint8_t {
   // consumes CLIMATE yet, and the climate/ventilation platform is unbuilt. They are allowlisted
   // in device_type_sync_test.cpp's reverse check; move them into hub_validators.py's
   // DEVICE_TYPE_OPTIONS (and yaml_device_type_name()) when that platform lands.
-  VENTILATION_POINT = 0x14,    ///< Ventilation point.
-  EXTERIOR_HEATING = 0x15,     ///< Exterior heating.
-  HEAT_PUMP = 0x16,            ///< Heat pump.
-  INTRUSION_ALARM = 0x17,      ///< Intrusion alarm.
-  SWINGING_SHUTTER = 0x18,     ///< Swinging shutter.
+  VENTILATION_POINT = 0x14,  ///< Ventilation point.
+  EXTERIOR_HEATING = 0x15,   ///< Exterior heating.
+  HEAT_PUMP = 0x16,          ///< Heat pump.
+  INTRUSION_ALARM = 0x17,    ///< Intrusion alarm.
+  SWINGING_SHUTTER = 0x18,   ///< Swinging shutter.
+  // 0x19-0x1C are not defined; the enum is non-contiguous from here on.
   BIOCLIMATIC_PERGOLA = 0x1D,  ///< Bioclimatic pergola (louvre opening as the position).
 };
 
@@ -74,6 +75,13 @@ enum class DeviceCapabilityClass : uint8_t {
 /// @param type Device type enum.
 /// @return Null‑terminated string name (e.g., "roller_shutter").
 const char *device_type_name(DeviceType type);
+
+/// @brief True when a raw 10-bit device-type value is a named DeviceType enumerator.
+/// @details The enum is not contiguous (0x19-0x1C are undefined), so a range check is not enough.
+///          UNKNOWN (0) is not "known", and values above 0xFF never match (they would alias a
+///          valid enumerator once truncated to the enum's uint8_t).
+/// @param raw Raw type value as decoded from an address or info frame.
+bool is_known_device_type(uint16_t raw);
 
 /// @brief Return the YAML-friendly device-type name for types exposed in the Python schema.
 /// @param type Device type enum.
