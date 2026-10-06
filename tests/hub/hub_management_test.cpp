@@ -143,17 +143,8 @@ static IoFrame make_private_function_reply(const uint8_t dst[3]) {
   return frame;
 }
 
-// A CMD_LIMITATION_STATUS_RESP from the test device, carrying the five assumed data bytes
-// `[param] [value hi] [value lo] [originator] [time]`.
-static IoFrame make_limitation_reply(const uint8_t dst[3], const std::array<uint8_t, LIMITATION_RESP_DATA_SIZE> &data) {
-  IoFrame frame{};
-  init_frame(frame, true, false, true, false);
-  const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
-  set_dst(frame, dst);
-  set_src(frame, device_node_id);
-  set_cmd(frame, CMD_LIMITATION_STATUS_RESP, data.data(), static_cast<uint8_t>(data.size()));
-  return frame;
-}
+/// Node ID of the device the probe tests talk to ("ABC123").
+const uint8_t PROBE_DEVICE_NODE_ID[3] = {0xAB, 0xC1, 0x23};
 
 }  // namespace
 
@@ -1950,7 +1941,8 @@ TEST(HubManagement, ProbeDeviceReportsDecodedLimitationReplyBesideRawHex) {
   MockRadio radio;
   setup_component(component, radio);
   component.set_diagnostic_probes_enabled(true);
-  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xBA, 0x00, 0x02, 0x1D})));
+  radio.queue_rx(
+      frame_to_packet(test::make_limitation_reply(component.node_id_, PROBE_DEVICE_NODE_ID, 0xBA00, 0x02, 0x1D)));
 
   const auto result = component.probe_device("ABC123", "private_fn", "0x06");
   ASSERT_TRUE(result.success) << result.message;
@@ -1986,7 +1978,8 @@ TEST(HubManagement, ProbeDeviceLimitationReplyNeverUpdatesDeviceRecord) {
   dev->is_stopped = true;
   dev->limited_by_rain = false;
   const uint8_t had_result_code = dev->last_result_code;
-  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xBA, 0x00, 0x02, 0x1D})));
+  radio.queue_rx(
+      frame_to_packet(test::make_limitation_reply(component.node_id_, PROBE_DEVICE_NODE_ID, 0xBA00, 0x02, 0x1D)));
 
   ASSERT_TRUE(component.probe_device("ABC123", "private_fn", "0x06").success);
 
@@ -2002,7 +1995,7 @@ TEST(HubManagement, ProbeSweepAppendsDecodedLimitationToTheIndexLine) {
   MockRadio radio;
   setup_component(component, radio);
   component.set_diagnostic_probes_enabled(true);
-  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xC8, 0x00, 0x00, 0x00})));
+  radio.queue_rx(frame_to_packet(test::make_limitation_reply(component.node_id_, PROBE_DEVICE_NODE_ID, 0xC800)));
 
   const auto result = component.probe_sweep("ABC123", "private_fn", "6", "6");
   ASSERT_TRUE(result.success);
@@ -2117,7 +2110,8 @@ TEST(HubManagement, ProbeDeviceLimitationIndexZeroSendsMinimumRead) {
   MockRadio radio;
   setup_component(component, radio);
   component.set_diagnostic_probes_enabled(true);
-  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xBA, 0x00, 0x02, 0x1D})));
+  radio.queue_rx(
+      frame_to_packet(test::make_limitation_reply(component.node_id_, PROBE_DEVICE_NODE_ID, 0xBA00, 0x02, 0x1D)));
 
   const auto result = component.probe_device("ABC123", "limitation", "0");
   ASSERT_TRUE(result.success) << result.message;
@@ -2135,7 +2129,7 @@ TEST(HubManagement, ProbeDeviceLimitationIndexOneSendsMaximumRead) {
   MockRadio radio;
   setup_component(component, radio);
   component.set_diagnostic_probes_enabled(true);
-  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xC8, 0x00, 0x00, 0x00})));
+  radio.queue_rx(frame_to_packet(test::make_limitation_reply(component.node_id_, PROBE_DEVICE_NODE_ID, 0xC800)));
 
   ASSERT_TRUE(component.probe_device("ABC123", "limitation", "1").success);
   ASSERT_FALSE(radio.get_sent_data().empty());
@@ -2165,8 +2159,8 @@ TEST(HubManagement, ProbeSweepLimitationOverBothIndicesReportsDecodedLines) {
   MockRadio radio;
   setup_component(component, radio);
   component.set_diagnostic_probes_enabled(true);
-  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0x00, 0x00, 0x00, 0x00})));
-  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xC8, 0x00, 0x00, 0x00})));
+  radio.queue_rx(frame_to_packet(test::make_limitation_reply(component.node_id_, PROBE_DEVICE_NODE_ID, 0x0000)));
+  radio.queue_rx(frame_to_packet(test::make_limitation_reply(component.node_id_, PROBE_DEVICE_NODE_ID, 0xC800)));
 
   const auto result = component.probe_sweep("ABC123", "limitation", "0", "1");
   ASSERT_TRUE(result.success) << result.message;

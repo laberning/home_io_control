@@ -52,6 +52,21 @@ inline IoFrame make_frame(const uint8_t src[3], const uint8_t dst[3], uint8_t cm
   return frame;
 }
 
+// Build a CMD_LIMITATION_STATUS_RESP from `device` to `dst`, carrying the assumed data layout
+// `[parameter id] [value hi] [value lo] [originator] [time]` (see LimitationStatus in proto_codecs.h).
+inline IoFrame make_limitation_reply(const uint8_t dst[3], const uint8_t device[3], uint16_t value_raw,
+                                     uint8_t originator = 0, uint8_t time_raw = 0,
+                                     uint8_t parameter_id = LIMITATION_PARAM_MP) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  set_dst(frame, dst);
+  set_src(frame, device);
+  const uint8_t data[LIMITATION_RESP_DATA_SIZE] = {parameter_id, static_cast<uint8_t>(value_raw >> 8),
+                                                   static_cast<uint8_t>(value_raw & 0xFF), originator, time_raw};
+  set_cmd(frame, CMD_LIMITATION_STATUS_RESP, data, sizeof(data));
+  return frame;
+}
+
 /// Burn `n` calls to esphome::micros() without caring about the return values. Legacy-clock-mode
 /// only: micros() advances by one per *call* there, not per unit of real time, so a test that
 /// needs a real deadline (e.g. HOP_TIME_US, RX_HOP_HOLDOFF_US) to elapse has to spend that many
