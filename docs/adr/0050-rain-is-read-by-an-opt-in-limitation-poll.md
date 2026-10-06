@@ -52,9 +52,12 @@ have.
 - **Latency equals the interval.** A shower that starts just after a poll shows up at the next one.
 - **A missed poll counts in the device's Exchange Failures** like any other unanswered request, and
   it never touches the status poll's backoff ladder.
-- **The reply is unauthenticated, like a status reply.** It is accepted only inside an exchange the
-  hub started (ADR 0022); an overheard `0x26` is still only logged, and a poll never changes a
-  device's position, target or movement state.
+- **The reply is accepted only inside an exchange the hub started** (ADR 0022). A VELUX window
+  answers the read without a challenge; a Somfy awning challenges it and answers after the exchange
+  engine's usual authentication. An overheard `0x26` is still only logged, and a poll never changes
+  a device's position, target or movement state.
 - **The reply layout under rain is an assumption** carried by one function and one constant, so a
   captured wet reply that differs changes one place.
-- **Other manufacturers are untested.** Whether their actuators answer the same read is not known.
+- **Other manufacturers are not supported.** A Somfy Sunea awning answers the read, but its reply
+  does not fit the layout the rule decodes (the first data byte is `05`, not the main parameter).
+  The rule reads that as unknown, so the sensor stays without state on such a device.
