@@ -143,7 +143,7 @@ class OperationQueue {
   // --- Pairing (dedup + priority front-push) ---
 
   /// Enqueue DISCOVER_AND_PAIR with elevated priority.
-  /// Flushes pending REQUEST_STATUS / REQUEST_NAME entries and pushes to front.
+  /// Flushes every pending background poll (see is_background_op()) and pushes to front.
   /// @return true if pushed, false if a DISCOVER_AND_PAIR was already pending.
   bool enqueue_discover_and_pair();
 
@@ -169,6 +169,9 @@ class OperationQueue {
   /// Insert a control operation before the first background entry; also drops any queued
   /// REQUEST_STATUS for the same device since the incoming command supersedes it.
   void push_control_(PendingOperation op);
+  /// Append a background operation of @p type for @p device_id unless an identical one is already
+  /// queued. @return true if pushed, false if a duplicate was already pending.
+  bool enqueue_background_unique_(PendingOperationType type, const std::string &device_id);
 };
 
 }  // namespace home_io_control
