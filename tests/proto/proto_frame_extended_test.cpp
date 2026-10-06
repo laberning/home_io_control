@@ -532,6 +532,15 @@ TEST(ProtoFrame, BroadcastTargetTypeExtraction) {
   // Type=0 (unknown/all): addr = {0x00, 0x00, 0x3F} → type bits = 0
   uint8_t all[3] = {0x00, 0x00, 0x3F};
   EXPECT_EQ(broadcast_target_type(all), DeviceType::UNKNOWN) << "type 0 should extract UNKNOWN";
+
+  // Type=0x1D (pergola) sits past the 0x19-0x1C gap: addr[1] = 0x1D >> 2 = 7, addr[2] = (1 << 6) | 0x3F
+  uint8_t pergola[3] = {0x00, 0x07, 0x7F};
+  EXPECT_EQ(broadcast_target_type(pergola), DeviceType::BIOCLIMATIC_PERGOLA)
+      << "type 0x1D should extract BIOCLIMATIC_PERGOLA";
+
+  // Type=0x19 is inside the gap and has no enumerator
+  uint8_t gap[3] = {0x00, 0x06, 0x7F};
+  EXPECT_EQ(broadcast_target_type(gap), DeviceType::UNKNOWN) << "unnamed type 0x19 should extract UNKNOWN";
 }
 
 // ========================================================================================

@@ -43,6 +43,7 @@ match.
 | **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction inversion is applied automatically for this family | Corpus `somfy_awning_discovery_spe_paired_rollcall` |
 | **IO patio-roof motor** (logs as a "Somfy IO motor", behaves as a horizontal awning) | `horizontal_awning`, 1W | ✅ Confirmed — enrollment (the roof moved on Enroll); commands afterwards not reported | 1W enrollment: hold PROG on the existing Situo 1 until the roof jogs, then press Enroll. Two-way Discover & Pair got no answer | `manufacturer: somfy`, `execute_broadcast: all` | SX1276 board, issue #147. The full Somfy enrollment gesture goes to `00003F` |
 | **Pergola io motor** | `horizontal_awning` | ✅ Confirmed | Discover & Pair, after a single PROG hold on its Situo | — | Heltec V3 / SX1262, issue #121. For the kit's LED lighting see [Pairing a pergola kit](devices/somfy-white-led-receiver.md#pairing-a-pergola-kit) |
+| **Bioclimatic pergola louvers** (TaHoma: "Pergola louver IO") | `bioclimatic_pergola` (`0x1D`) | ✅ Confirmed — position, open, close, stop | **Key extraction** | `io_device_type: bioclimatic_pergola`; `sx1262_rx_bandwidth: 156.2` on SX1262 | Heltec V3 / SX1262. At the default 58.6 kHz about one reply in four is missed. Stops about 1 % off target; reports no position after a STOP |
 | **White LED Receiver io** (4-output LED dimmer, logs as `LightVar_Wh_io`) | `light` | ✅ Confirmed, including dimming | Discover & Pair once per output: hold PROG about 2 s on the Situo channel for that output, then press Discover & Pair | `dimmable: true`; `sx1262_rx_bandwidth: 156.2` on SX1262 | Each output is a separate device. Heltec V3 / SX1262, issues #119, #143. Step-by-step: [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md) |
 | **Sunea SCR 40 io** | — | ✅ Confirmed — open, close, position | Discover & Pair | — | Pergola kit, alongside a White LED Receiver io; keeps working at `sx1262_rx_bandwidth: 156.2`. Heltec V3 / SX1262, issue #143 |
 | **Awning actuator (IO Vertical)** | `awning` | ✅ Confirmed for discovery | Discover & Pair | — | Corpus `somfy_awning_discovery_lab_response` |
@@ -131,7 +132,7 @@ values:
 | `garage_opener` | `0x05` | `curtain_track` | `0x13` |
 | `light` | `0x06` | `intrusion_alarm` | `0x17` |
 | `gate_opener` | `0x07` | `swinging_shutter` | `0x18` |
-| `rolling_door_opener` | `0x08` | | |
+| `rolling_door_opener` | `0x08` | `bioclimatic_pergola` | `0x1D` |
 | `lock` | `0x09` | | |
 | `blind` | `0x0A` | | |
 | `screen` | `0x0B` | | |

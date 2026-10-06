@@ -148,6 +148,8 @@ const char *device_type_name(DeviceType type) {
       return "curtain_track";
     case DeviceType::SWINGING_SHUTTER:
       return "swinging_shutter";
+    case DeviceType::BIOCLIMATIC_PERGOLA:
+      return "bioclimatic_pergola";
     case DeviceType::LOCK:
       return "lock";
     case DeviceType::BEACON:
@@ -211,6 +213,8 @@ const char *yaml_device_type_name(DeviceType type) {
       return "intrusion_alarm";
     case DeviceType::SWINGING_SHUTTER:
       return "swinging_shutter";
+    case DeviceType::BIOCLIMATIC_PERGOLA:
+      return "bioclimatic_pergola";
     // Not YAML-selectable (nullptr, so callers fall back to a raw numeric value). Listed
     // explicitly instead of default: so -Wswitch flags any new DeviceType that skips this switch.
     case DeviceType::BEACON:
@@ -240,6 +244,7 @@ DeviceCapabilityClass device_capability_class(DeviceType type) {
     case DeviceType::LOUVRE_BLIND:
     case DeviceType::CURTAIN_TRACK:
     case DeviceType::SWINGING_SHUTTER:
+    case DeviceType::BIOCLIMATIC_PERGOLA:
       return DeviceCapabilityClass::COVER;
 
     // Binary and other capabilities
@@ -345,6 +350,7 @@ bool device_supports_tilt(DeviceType type) {
     case DeviceType::HEAT_PUMP:
     case DeviceType::INTRUSION_ALARM:
     case DeviceType::SWINGING_SHUTTER:
+    case DeviceType::BIOCLIMATIC_PERGOLA:
       return false;
   }
   return false;
@@ -380,6 +386,7 @@ bool device_supports_vent(DeviceType type) {
     case DeviceType::HEAT_PUMP:
     case DeviceType::INTRUSION_ALARM:
     case DeviceType::SWINGING_SHUTTER:
+    case DeviceType::BIOCLIMATIC_PERGOLA:
       return false;
   }
   return false;

@@ -50,11 +50,12 @@ enum class DeviceType : uint8_t {
   // consumes CLIMATE yet, and the climate/ventilation platform is unbuilt. They are allowlisted
   // in device_type_sync_test.cpp's reverse check; move them into hub_validators.py's
   // DEVICE_TYPE_OPTIONS (and yaml_device_type_name()) when that platform lands.
-  VENTILATION_POINT = 0x14,  ///< Ventilation point.
-  EXTERIOR_HEATING = 0x15,   ///< Exterior heating.
-  HEAT_PUMP = 0x16,          ///< Heat pump.
-  INTRUSION_ALARM = 0x17,    ///< Intrusion alarm.
-  SWINGING_SHUTTER = 0x18,   ///< Swinging shutter.
+  VENTILATION_POINT = 0x14,    ///< Ventilation point.
+  EXTERIOR_HEATING = 0x15,     ///< Exterior heating.
+  HEAT_PUMP = 0x16,            ///< Heat pump.
+  INTRUSION_ALARM = 0x17,      ///< Intrusion alarm.
+  SWINGING_SHUTTER = 0x18,     ///< Swinging shutter.
+  BIOCLIMATIC_PERGOLA = 0x1D,  ///< Bioclimatic pergola (louvre opening as the position).
 };
 
 /// @brief High‑level capability class derived from DeviceType.
