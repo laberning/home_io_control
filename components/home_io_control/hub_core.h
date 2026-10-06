@@ -884,7 +884,7 @@ class IOHomeControlComponent : public Component,
   /// @param src_id Sender's node ID as a string (already computed by the caller).
   void maybe_fire_sender_event_(const OneWayFrameInfo &info, bool linked, const std::string &src_id);
   /// Handle an explicit CMD_ERROR_RESP refusal from the device: record the result code, stamp link
-  /// health, and schedule the poll backoff. Split out of execute_request_and_update_() to keep that
+  /// health, and schedule the poll backoff. Split out of exchange_and_record_() to keep that
   /// function's outcome dispatch readable — a refusal is a distinct concern from "what did the
   /// exchange achieve".
   /// @param device_id Target device ID.
@@ -895,7 +895,35 @@ class IOHomeControlComponent : public Component,
   bool handle_error_response_(const std::string &device_id, const IoFrame &request, const IoFrame &response,
                               uint32_t retry_after_fail_ms);
 
-  /// Shared request/response helper for high-level operations.
+  /// @brief What exchange_and_record_() found.
+  enum class RequestResult : uint8_t {
+    FAILED,       ///< No usable reply (silence, or an unconfirmed acceptance of a request that needs a payload).
+    UNCONFIRMED,  ///< A CMD_EXECUTE the device accepted but never closed; counted as success, no reply frame.
+    ERROR_REPLY,  ///< The device refused with CMD_ERROR_RESP; handle_error_response_() has recorded it.
+    REPLY,        ///< The device answered; the caller interprets the reply frame.
+  };
+
+  /// @brief Per-request knobs of exchange_and_record_().
+  struct RequestOptions {
+    bool warn_on_no_response;      ///< Log a warning when no response arrives.
+    uint32_t retry_after_fail_ms;  ///< If non-zero, drives the status-poll backoff and failure streaks.
+    uint8_t max_tries;             ///< Transmit-attempt cap forwarded to send_and_receive_().
+  };
+
+  /// Run one authenticated request/response exchange on the standard command channel and record
+  /// its outcome: exchange-outcome and timeout counters, link health, challenge-seen handling,
+  /// CMD_ERROR_RESP handling, debug logs and (when requested) the status-poll backoff. It does not
+  /// interpret a reply — callers decide what a REPLY means.
+  /// @param device_id Target device ID.
+  /// @param request Outbound request frame.
+  /// @param[out] response The device's reply, valid for RequestResult::REPLY and ERROR_REPLY.
+  /// @param options See RequestOptions.
+  /// @return What happened, see RequestResult.
+  RequestResult exchange_and_record_(const std::string &device_id, const IoFrame &request, IoFrame &response,
+                                     const RequestOptions &options);
+
+  /// Shared request/response helper for high-level operations: exchange_and_record_() plus
+  /// update_device_status_() on a reply.
   /// @param device_id Target device ID.
   /// @param request Outbound request frame.
   /// @param warn_on_no_response If true, logs a warning when no response is received.

@@ -148,14 +148,15 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
     this->poll_policy_.mark_stop_settle(device_id);
 }
 
-// Execute an authenticated request on the standard command channel and, on success, feed the
-// device's reply back through the normal inbound status parser so all state normalization stays
-// in one place.
-bool IOHomeControlComponent::execute_request_and_update_(const std::string &device_id, const IoFrame &request,
-                                                         bool warn_on_no_response, uint32_t retry_after_fail_ms,
-                                                         uint8_t max_tries) {
-  IoFrame response;
-  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
+// Run an authenticated request on the standard command channel and do the per-outcome bookkeeping
+// every caller shares; what the reply means is left to the caller.
+IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_record_(const std::string &device_id,
+                                                                                   const IoFrame &request,
+                                                                                   IoFrame &response,
+                                                                                   const RequestOptions &options) {
+  const bool warn_on_no_response = options.warn_on_no_response;
+  const uint32_t retry_after_fail_ms = options.retry_after_fail_ms;
+  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, options.max_tries);
   // An unconfirmed acceptance means the device authenticated the request but never closed the
   // exchange. Whether that counts as success depends entirely on what the request was *for*:
   //   - a command (CMD_EXECUTE) is treated as done. The device has it, and most devices that end
@@ -198,7 +199,7 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
       ESP_LOGW(detail::TAG, "Command 0x%02X failed for device %s: no valid response (stage=%s tries=%u)", request.cmd,
                device_id.c_str(), dbg.stage, dbg.tries);
     }
-    return false;
+    return RequestResult::FAILED;
   }
 
   if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
@@ -221,14 +222,35 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
       detail::update_link_health(*dev, this->radio_);
       this->notify_device_update_(device_id);
     }
-    return true;
+    return RequestResult::UNCONFIRMED;
   }
 
-  if (response.cmd == CMD_ERROR_RESP)
-    return this->handle_error_response_(device_id, request, response, retry_after_fail_ms);
+  if (response.cmd == CMD_ERROR_RESP) {
+    this->handle_error_response_(device_id, request, response, retry_after_fail_ms);
+    return RequestResult::ERROR_REPLY;
+  }
 
   if (retry_after_fail_ms != 0)
     this->poll_policy_.clear_failure_streaks(device_id);
+  return RequestResult::REPLY;
+}
+
+// Execute an authenticated request and, on a reply, feed it back through the normal inbound status
+// parser so all state normalization stays in one place.
+bool IOHomeControlComponent::execute_request_and_update_(const std::string &device_id, const IoFrame &request,
+                                                         bool warn_on_no_response, uint32_t retry_after_fail_ms,
+                                                         uint8_t max_tries) {
+  IoFrame response;
+  switch (
+      this->exchange_and_record_(device_id, request, response, {warn_on_no_response, retry_after_fail_ms, max_tries})) {
+    case RequestResult::FAILED:
+    case RequestResult::ERROR_REPLY:
+      return false;
+    case RequestResult::UNCONFIRMED:
+      return true;
+    case RequestResult::REPLY:
+      break;
+  }
 
   // The immediate reply to our own CMD_EXECUTE (position/tilt/stop/favorite/vent) is not
   // trustworthy for target/current position on at least some devices — see
@@ -241,9 +263,9 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
 bool IOHomeControlComponent::handle_error_response_(const std::string &device_id, const IoFrame &request,
                                                     const IoFrame &response, uint32_t retry_after_fail_ms) {
   IoDevice *dev = this->registry_.get(device_id);
-  // An explicit refusal is still a reply from the device: this path returns before
-  // execute_request_and_update_()'s update_device_status_() call, so it must stamp link health
-  // itself to keep update_link_health()'s "every frame from a registered device" contract.
+  // An explicit refusal is still a reply from the device, but no caller feeds it to
+  // update_device_status_(), so stamp link health here to keep update_link_health()'s "every frame
+  // from a registered device" contract.
   if (dev != nullptr)
     detail::update_link_health(*dev, this->radio_);
   if (response.data_len == 0) {
