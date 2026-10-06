@@ -1885,9 +1885,10 @@ TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
 
   const auto result = component.probe_device("ABC123", "unknown4a", "0");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(result.message,
-            "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
-            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, or status_mp_fp)");
+  EXPECT_EQ(
+      result.message,
+      "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
+      "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, or limitation)");
   EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
                                            "not by looping until this flag stops it";
 }
@@ -2099,6 +2100,100 @@ TEST(HubManagement, ProbeDeviceStatusMpFpReplyNeverUpdatesDeviceRecord) {
   }
 }
 
+namespace {
+/// Serializes the `index`-th frame the radio transmitted and returns its bytes.
+std::vector<uint8_t> sent_frame_bytes(const MockRadio &radio, size_t index) {
+  IoFrame frame{};
+  EXPECT_TRUE(
+      parse(radio.get_sent_data()[index].data(), static_cast<uint8_t>(radio.get_sent_data()[index].size()), frame));
+  uint8_t bytes[FRAME_MAX_SIZE] = {0};
+  const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+  return std::vector<uint8_t>(bytes, bytes + len);
+}
+}  // namespace
+
+TEST(HubManagement, ProbeDeviceLimitationIndexZeroSendsMinimumRead) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xBA, 0x00, 0x02, 0x1D})));
+
+  const auto result = component.probe_device("ABC123", "limitation", "0");
+  ASSERT_TRUE(result.success) << result.message;
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  // Byte for byte the request a KLF 200 sends for the minimum (own and device ids aside).
+  EXPECT_EQ(sent_frame_bytes(radio, 0),
+            (std::vector<uint8_t>{0x4B, 0x00, 0xAB, 0xC1, 0x23, 0xC0, 0xFF, 0xEE, 0x25, 0x80, 0x00, 0x00}));
+  // The exact substring a reporter reads in the INFO log and the action-result event.
+  EXPECT_NE(result.message.find("value=93% (BA 00) originator=rain_sensor(0x02) time=0x1D (900 s)"), std::string::npos)
+      << result.message;
+}
+
+TEST(HubManagement, ProbeDeviceLimitationIndexOneSendsMaximumRead) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xC8, 0x00, 0x00, 0x00})));
+
+  ASSERT_TRUE(component.probe_device("ABC123", "limitation", "1").success);
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_EQ(sent_frame_bytes(radio, 0),
+            (std::vector<uint8_t>{0x4B, 0x00, 0xAB, 0xC1, 0x23, 0xC0, 0xFF, 0xEE, 0x25, 0xC0, 0x00, 0x00}));
+}
+
+TEST(HubManagement, ProbeDeviceLimitationRejectsEveryOtherIndexWithoutTransmitting) {
+  // The index is the KLF API's LimitationType, never the on-air selector byte: 0x80 and 0xC0
+  // typed by a user must not reach the radio, and neither may any other value.
+  for (const char *index : {"2", "0x80", "0xC0", "255"}) {
+    SCOPED_TRACE(index);
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+
+    const auto result = component.probe_device("ABC123", "limitation", index);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.message, "probe \"limitation\" takes index 0 (minimum) or 1 (maximum)");
+    EXPECT_TRUE(radio.get_sent_data().empty());
+  }
+}
+
+TEST(HubManagement, ProbeSweepLimitationOverBothIndicesReportsDecodedLines) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0x00, 0x00, 0x00, 0x00})));
+  radio.queue_rx(frame_to_packet(make_limitation_reply(component.node_id_, {0x00, 0xC8, 0x00, 0x00, 0x00})));
+
+  const auto result = component.probe_sweep("ABC123", "limitation", "0", "1");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_NE(result.message.find("2 answered"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("index=0x00: cmd=0x26 hex="), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("[limitation (assumed layout): param=MP value=0% (00 00)"), std::string::npos)
+      << result.message;
+  EXPECT_NE(result.message.find("index=0x01: cmd=0x26 hex="), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("[limitation (assumed layout): param=MP value=100% (C8 00)"), std::string::npos)
+      << result.message;
+  ASSERT_GE(radio.get_sent_data().size(), 2u);
+  EXPECT_EQ(sent_frame_bytes(radio, 0)[9], 0x80);
+  EXPECT_EQ(sent_frame_bytes(radio, 1)[9], 0xC0);
+}
+
+TEST(HubManagement, ProbeSweepLimitationRejectsARangePastTheMaximumAsAWhole) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "limitation", "0", "2");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "probe \"limitation\" takes index 0 (minimum) or 1 (maximum)");
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "no index of a rejected range may be sent";
+}
+
 TEST(HubManagement, ProbeSweepRejectsStatusMpFpNoIndexProbeWithoutLooping) {
   TestableManagementComponent component;
   MockRadio radio;
@@ -2215,9 +2310,10 @@ TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
 
   const auto result = component.probe_sweep("ABC123", "unknown4a", "0", "5");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(result.message,
-            "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
-            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, or status_mp_fp)");
+  EXPECT_EQ(
+      result.message,
+      "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
+      "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, or limitation)");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an invalid probe name must not enter the per-index loop at all: " << result.message;
 }
