@@ -56,8 +56,10 @@ have.
   answers the read without a challenge; a Somfy awning challenges it and answers after the exchange
   engine's usual authentication. An overheard `0x26` is still only logged, and a poll never changes
   a device's position, target or movement state.
-- **The reply layout under rain is an assumption** carried by one function and one constant, so a
-  captured wet reply that differs changes one place.
+- **The rule rests on one captured wet reply.** A VELUX window answers the minimum read with 93 %
+  (`BA 00`) under rain and 0 % dry, with originator and remaining time `00` in both; the rule is one
+  function and one constant, so a window that behaves differently changes one place. The originator
+  is therefore not a usable signal, which matches leaving it out of the rule.
 - **Other manufacturers are not supported.** A Somfy Sunea awning answers the read, but its reply
   does not fit the layout the rule decodes (the first data byte is `05`, not the main parameter).
   The rule reads that as unknown, so the sensor stays without state on such a device.

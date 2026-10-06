@@ -2,7 +2,8 @@
 /// @brief Tests for the opt-in rain sensor poll: scheduling in loop(), the limitation read, and how
 ///        its outcome reaches the device record.
 ///
-/// The "wet" replies are constructed from the documented reply layout; none was captured under rain.
+/// The wet reply with originator and time 00 is the one a real window sent under rain; the one with
+/// originator 02 and a running timer is constructed.
 
 #include "hub_core.h"
 #include "proto_commands.h"
@@ -105,7 +106,8 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(ReplyCase{"dry_reply_heard_from_a_window", 0x0000, 0x00, 0x00, RainSensorState::DRY},
                       ReplyCase{"one_raw_unit_below_the_threshold", 0xB1FF, 0x00, 0x00, RainSensorState::DRY},
                       ReplyCase{"boundary_89_percent", 0xB200, 0x00, 0x00, RainSensorState::RAIN},
-                      // Constructed from the documented layout; not captured under rain.
+                      ReplyCase{"wet_reply_heard_from_a_window", 0xBA00, 0x00, 0x00, RainSensorState::RAIN},
+                      // Constructed: originator and timer set, which no real reply has shown.
                       ReplyCase{"synthetic_wet_reply", 0xBA00, 0x02, 0x1D, RainSensorState::RAIN},
                       ReplyCase{"fully_limited", 0xC800, 0x02, 0x1D, RainSensorState::RAIN},
                       ReplyCase{"high_value_is_rain_whoever_set_it", 0xBA00, 0x00, 0x00, RainSensorState::RAIN}),

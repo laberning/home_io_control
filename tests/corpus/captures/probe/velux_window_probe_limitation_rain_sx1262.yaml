@@ -1,0 +1,53 @@
+id: velux_window_probe_limitation_rain_sx1262
+description: >
+  2026-10 limitation read (CMD_LIMITATION_STATUS_REQ 0x25, minimum then maximum) answered by a VELUX
+  INTEGRA roof-window actuator with a wired rain sensor, once dry and once with the sensor wetted by
+  a spray bottle (about 30 s apart), captured by the reporter's own SX1262 hub through the
+  limitation probe_sweep of issue #98. Dry: minimum 0 % (00 00), maximum 100 % (C8 00). Wet:
+  minimum 93 % (BA 00), the window's ventilation position; maximum unchanged. The originator
+  (data[3]) and remaining time (data[4]) stay 00 in the wet reply, so the rain state is carried by
+  the value alone. The window answered without an authentication challenge. The requests were not
+  logged, only the replies; node IDs are replaced (the hub and window IDs in this file are not the
+  reporter's).
+source:
+  device: "Velux INTEGRA roof-window actuator (WINDOW_OPENER) with a wired rain sensor"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/98"
+key: unknown
+node_map:
+  hub: C0FFEE
+  window: 8A2C4E
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 8A 2C 4E 26 00 00 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26) -- minimum limit, window dry: 0 %."
+  - dir: rx
+    t_ms: 3
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 8A 2C 4E 26 00 C8 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26) -- maximum limit, window dry: 100 %."
+  - dir: rx
+    t_ms: 28995
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 8A 2C 4E 26 00 BA 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26) -- minimum limit, rain sensor wet: 93 % (BA 00); originator and remaining time stay 00."
+  - dir: rx
+    t_ms: 28998
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 8A 2C 4E 26 00 C8 00 00 00"
+    crc: absent
+    note: "cmd=LIMITATION_STATUS_RESP(0x26) -- maximum limit, rain sensor wet: 100 %, unchanged."
+expect:
+  frames:
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}
+    - {cmd: 0x26, start: false, end: true, protocol: 2w}

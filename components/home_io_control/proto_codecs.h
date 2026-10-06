@@ -366,9 +366,12 @@ LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base)
 
 /// @brief One decoded CMD_LIMITATION_STATUS_RESP payload.
 ///
-/// The field layout is an assumption: it fits the two replies heard from VELUX windows (issue #98)
-/// and the limitation status of the KLF 200 API specification v3.18, section 10.5.4, but has not
-/// been confirmed against a reply under an active limitation.
+/// The value layout is confirmed: it fits the replies of a VELUX window dry (0 % minimum, 100 %
+/// maximum) and under rain (93 % minimum), and the limitation status of the KLF 200 API
+/// specification v3.18, section 10.5.4 (issue #98). The originator and remaining-time bytes read
+/// 00 in every reply captured so far, rain included, so their meaning is still an assumption.
+/// A Somfy awning answers with another value in the first byte, which decodes as a non-main
+/// parameter.
 struct LimitationStatus {
   uint8_t parameter_id{0};  ///< data[0]; LIMITATION_PARAM_MP for the main parameter.
   uint16_t value_raw{0};    ///< data[1..2], big-endian, position coding (STATUS_POS_MAX = 100 %).

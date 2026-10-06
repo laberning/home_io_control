@@ -36,8 +36,9 @@ TEST(LimitationStatus, DecodesHeardReplyForUnlimitedMaximum) {
   EXPECT_EQ(s.value_raw, STATUS_POS_MAX);
 }
 
-TEST(LimitationStatus, DecodesPredictedRainLayout) {
-  // Prediction, not a capture: minimum read of a rain-limited window, 93 %, rain sensor, timer running.
+TEST(LimitationStatus, DecodesOriginatorAndTimeWhenSet) {
+  // Constructed, not captured: the value is what a rain-limited window reports, but the real reply
+  // carries originator and time 00; this pins the decode of those two bytes when they are set.
   LimitationStatus s;
   ASSERT_TRUE(decode_limitation_status(
       test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0xBA, 0x00, 0x02, 0x1D}), s));
