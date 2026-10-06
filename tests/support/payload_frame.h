@@ -5,8 +5,8 @@
 
 #include "proto_frame.h"
 
+#include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <initializer_list>
 
 namespace test {
@@ -17,7 +17,7 @@ inline esphome::home_io_control::IoFrame make_payload_frame(uint8_t cmd, std::in
   esphome::home_io_control::IoFrame f{};
   f.cmd = cmd;
   f.data_len = static_cast<uint8_t>(data.size());
-  std::memcpy(f.data, data.begin(), data.size());
+  std::copy(data.begin(), data.end(), f.data);  // not memcpy: an empty list's begin() is null
   return f;
 }
 
