@@ -1488,3 +1488,53 @@ TEST(HubStatus, ReplyWithoutALastCommandRecordDoesNotRefreshRainEvidence) {
 
   EXPECT_EQ(dev->last_rain_evidence_ms, stamp);
 }
+
+TEST(HubStatus, OverheardLimitationReplyIsNeverAppliedToTheDeviceRecord) {
+  // A KLF 200 polling a window we also hold: the window's 0x26 reply is rendered (DEBUG) and
+  // nothing else -- its sender's key is unproven (ADR 0022), and the layout is an assumption.
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  dev->position = 42.0F;
+  dev->target = 42.0F;
+  dev->is_stopped = true;
+  const uint8_t last_result_code = dev->last_result_code;
+
+  IoFrame reply{};
+  init_frame(reply, true, false, true, false);
+  const uint8_t window[3] = {0x05, 0x4E, 0x17};
+  const uint8_t klf[3] = {0x97, 0xDE, 0x1A};
+  set_src(reply, window);
+  set_dst(reply, klf);
+  const uint8_t data[LIMITATION_RESP_DATA_SIZE] = {0x00, 0xBA, 0x00, 0x02, 0x1D};
+  set_cmd(reply, CMD_LIMITATION_STATUS_RESP, data, sizeof(data));
+  comp.process_received_packet_(make_rx_packet(reply));
+
+  EXPECT_FLOAT_EQ(dev->position, 42.0F);
+  EXPECT_FLOAT_EQ(dev->target, 42.0F);
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FALSE(dev->limited_by_rain);
+  EXPECT_EQ(dev->last_result_code, last_result_code);
+}
+
+TEST(HubStatus, OverheardLimitationRequestToOurDeviceStillSchedulesTheRemoteActivityPoll) {
+  // Rendering the request must not consume it: a KLF 200 talking to a device we own is remote
+  // activity like any other and keeps triggering the status poll.
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  IoFrame req{};
+  init_frame(req, true, true, false, false);
+  const uint8_t klf[3] = {0x97, 0xDE, 0x1A};
+  const uint8_t window[3] = {0x05, 0x4E, 0x17};
+  set_src(req, klf);
+  set_dst(req, window);
+  const uint8_t data[LIMITATION_REQ_DATA_SIZE] = {static_cast<uint8_t>(LimitationType::MINIMUM), 0x00, 0x00};
+  set_cmd(req, CMD_LIMITATION_STATUS_REQ, data, sizeof(data));
+  comp.process_received_packet_(make_rx_packet(req));
+
+  EXPECT_EQ(comp.last_timeout_id_, decisions::remote_poll_timer_id(window));
+}

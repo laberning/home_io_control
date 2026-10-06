@@ -50,6 +50,9 @@ struct ManagementActionResult {
                                  ///< different meaning).
   std::string response_hex;      ///< Probe reply's full raw wire hex, for pasting into
                                  ///< scripts/corpus/ingest.py.
+  std::string decoded;           ///< Rendering of the probe reply for the replies this codebase can
+                                 ///< decode (currently a limitation reply, labelled "assumed layout");
+                                 ///< empty otherwise. Reported beside the raw hex, never instead of it.
   bool terminal_refusal{false};  ///< True when probe_device() failed for a reason that will
                                  ///< recur identically for every remaining index in a sweep
                                  ///< (diagnostic probes not enabled, device moving) — set only by
@@ -281,6 +284,10 @@ class ManagementActions {
   ///   - "status_mp_fp": create_status_mp_fp_read() (CMD_PRIVATE function 0x01, FPI1 mask 0xFE:
   ///     main parameter plus FP1-FP7), `index` ignored. The reply is reported raw like every
   ///     probe reply and never applied to the device record (ADR 0024).
+  ///   - "limitation": create_limitation_status_read() (CMD_LIMITATION_STATUS_REQ 0x25), `index` 0 =
+  ///     resulting minimum, 1 = resulting maximum (any other index is rejected, a sweep reaching
+  ///     past 1 is rejected whole). The reply is reported raw plus a decode labelled "assumed
+  ///     layout" in `ManagementActionResult::decoded`; it is never applied to the device record.
   /// There is deliberately no "unknown4a" probe and no builder for CMD_UNKNOWN4A_REQ (0x4A)
   /// anywhere in this codebase — see ADR 0024 for the standing safety decision.
   ///

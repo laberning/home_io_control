@@ -476,6 +476,15 @@ void IOHomeControlComponent::record_oneway_pairing_gesture_(const IoFrame &frame
   this->recent_oneway_pairing_sighting_.seen_ms = now;
 }
 
+/// @brief Log an overheard limitation request/reply decoded at DEBUG; any other frame is ignored.
+static void log_overheard_limitation_read(const IoFrame &frame) {
+  if (frame.cmd == CMD_LIMITATION_STATUS_REQ) {
+    ESP_LOGD(detail::TAG, "rx %s", detail::describe_limitation_request(frame).c_str());
+  } else if (frame.cmd == CMD_LIMITATION_STATUS_RESP) {
+    ESP_LOGD(detail::TAG, "rx %s", detail::describe_limitation_reply(frame).c_str());
+  }
+}
+
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
   IoFrame frame;
   if (!parse(packet.data, packet.len, frame)) {
@@ -553,6 +562,11 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     this->schedule_device_polls_(target_devices, is_stop ? 0 : REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     return;
   }
+
+  // Limitation reads between other parties (a KLF 200 polling a window) are only rendered, so a
+  // passive monitor's log shows what they asked and answered. Nothing is applied -- the sender's
+  // key is unproven (ADR 0022) -- and the frame continues into the normal handling below.
+  log_overheard_limitation_read(frame);
 
   if (frame.cmd == CMD_STATUS_UPDATE && memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0) {
     if (this->authenticate_request_(frame, packet.freq_hz)) {

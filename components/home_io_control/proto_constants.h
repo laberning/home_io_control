@@ -55,6 +55,20 @@ static constexpr uint8_t CMD_IDENTIFY = 0x1E;  ///< Device physical identificati
 static constexpr uint8_t CMD_WRITE_PRIVATE = 0x20;      ///< Write private register (climate/heating devices)
 static constexpr uint8_t CMD_WRITE_PRIVATE_ACK = 0x21;  ///< Acknowledgment to CMD_WRITE_PRIVATE
 
+// Limitation read
+static constexpr uint8_t CMD_LIMITATION_STATUS_REQ =
+    0x25;  ///< Limitation read: asks a device for its resulting minimum or maximum position limit,
+           ///< the value a protective function such as rain protection imposes (CMD_LIMITATION_STATUS_RESP).
+           ///< Heard from a VELUX KLF 200 gateway to VELUX windows (issue #98) every five minutes,
+           ///< minimum first, then maximum; its purpose follows the KLF 200 API specification v3.18,
+           ///< section 10.5 (get limitation / limitation status). The three data bytes are assumed to be
+           ///< `[selector] [parameter id] [00]` (see LimitationType); the layout is not yet confirmed
+           ///< under an active limitation. Build it with create_limitation_status_read().
+static constexpr uint8_t CMD_LIMITATION_STATUS_RESP =
+    0x26;  ///< Reply to CMD_LIMITATION_STATUS_REQ. Five data bytes, assumed to be
+           ///< `[parameter id] [value hi] [value lo] [originator] [time]`; decode_limitation_status()
+           ///< documents the assumption. Only the unlimited case (0 % and 100 %) has been captured.
+
 // Discovery and pairing commands
 static constexpr uint8_t CMD_DISCOVER_REQ = 0x28;   ///< Broadcast discovery request
 static constexpr uint8_t CMD_DISCOVER_RESP = 0x29;  ///< Device responds with its ID and type
@@ -392,6 +406,36 @@ static constexpr uint8_t STATUS_MP_FP_FPI1_MASK = 0xFE;   ///< FPI1: FP1..FP7 re
 static constexpr uint8_t STATUS_MP_FP_PARAM_TYPE = 0x01;  ///< Status type per requested parameter: current value.
 static constexpr uint8_t STATUS_MP_FP_PARAM_COUNT = 7;    ///< FP1-FP7: the most one request can select.
 static constexpr uint8_t STATUS_MP_FP_FPI2 = 0x00;        ///< FPI2: no FP9-FP16 requested.
+/// @}
+
+/// @name Limitation read (CMD_LIMITATION_STATUS_REQ / CMD_LIMITATION_STATUS_RESP)
+/// The layout is a hypothesis built from frames a VELUX KLF 200 was heard sending (issue #98) and
+/// the KLF 200 API specification v3.18, section 10.5 (get limitation: parameter id and limitation
+/// type, 0 = resulting minimum, 1 = resulting maximum). Confirm it against a reply captured under
+/// an active limitation before building on it.
+/// @{
+
+/// On-air selector byte (request data[0]) choosing which resulting limit to read. Exactly two
+/// values exist on purpose: the same opcode probably also carries the limitation write of section
+/// 10.5.2, so no other selector may be constructible. The minimum/maximum assignment rests on
+/// request order only (the minimum read always came first, with 0x80).
+enum class LimitationType : uint8_t {
+  MINIMUM = 0x80,  ///< Resulting minimum limit; rain protection raises it (a floor on the position value).
+  MAXIMUM = 0xC0,  ///< Resulting maximum limit.
+};
+
+static constexpr uint8_t LIMITATION_PARAM_MP = 0x00;     ///< Parameter id of the main parameter.
+static constexpr uint8_t LIMITATION_PARAM_FP_FIRST = 1;  ///< Parameter id of FP1.
+static constexpr uint8_t LIMITATION_PARAM_FP_LAST = 16;  ///< Parameter id of FP16.
+static constexpr uint8_t LIMITATION_REQ_DATA_SIZE = 3;   ///< Request data: selector, parameter id, 0x00.
+static constexpr uint8_t LIMITATION_RESP_DATA_SIZE = 5;  ///< Reply data: parameter id, value (2), originator, time.
+
+/// Remaining-time codes of a limitation reply's last byte (KLF 200 API specification v3.18, table
+/// 200): codes 0-252 count `(n + 1) * 30` seconds, 253 means no time limit, and 254/255 are the
+/// timer values the set command uses to delete an entry (never a duration).
+static constexpr uint8_t LIMITATION_TIME_MAX_COUNTED = 252;  ///< Highest code that encodes a duration.
+static constexpr uint8_t LIMITATION_TIME_UNLIMITED = 253;    ///< Limitation without a time limit.
+static constexpr uint32_t LIMITATION_TIME_STEP_S = 30;       ///< Seconds per time-code step.
 /// @}
 
 // ============================================================================

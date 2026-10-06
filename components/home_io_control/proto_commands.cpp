@@ -592,6 +592,16 @@ bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
 
+/// Build the limitation read (see the header for the evidence and the read-only guarantee).
+bool create_limitation_status_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, LimitationType type,
+                                   bool low_power) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  const uint8_t d[LIMITATION_REQ_DATA_SIZE] = {static_cast<uint8_t>(type), LIMITATION_PARAM_MP, 0x00};
+  return set_cmd(f, CMD_LIMITATION_STATUS_REQ, d, sizeof(d));
+}
+
 /// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
 bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
   return create_get_status_extended(f, own, dst, low_power, STATUS_TILT_SELECTOR, 0x01);

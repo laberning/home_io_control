@@ -10,6 +10,7 @@
 
 #include "management_actions.h"
 
+#include "entity_helpers.h"
 #include "hub_core.h"
 #include "log_helpers.h"
 #include "proto_commands.h"
@@ -66,6 +67,12 @@ constexpr const char *PROBE_NAME_GENERAL_INFO3 = "general_info3";    ///< Q2: cr
 constexpr const char *PROBE_NAME_PRIVATE2 = "private2";              ///< Q3 long form: create_private2_read().
 constexpr const char *PROBE_NAME_PRIVATE2_SHORT = "private2_short";  ///< Q3 short form: create_private2_read().
 constexpr const char *PROBE_NAME_STATUS_MP_FP = "status_mp_fp";      ///< create_status_mp_fp_read() (no index).
+constexpr const char *PROBE_NAME_LIMITATION =
+    "limitation";  ///< create_limitation_status_read(); index 0 = minimum, 1 = maximum.
+/// Highest `limitation` index: the two limit types of the KLF 200 API's get-limitation command
+/// (LimitationType numbering). The index is never the on-air selector byte.
+constexpr uint8_t PROBE_LIMITATION_MAX_INDEX = 1;
+constexpr uint8_t PROBE_LIMITATION_INDEX_MINIMUM = 0;  ///< `limitation` index that reads the resulting minimum.
 /// Function IDs the extended-shape probes hold fixed. Production software elsewhere describes
 /// these two as a battery read; on real hardware (17 solar devices plus our own mains motors)
 /// the *short* 3-byte form at these IDs returned position-family values, never a charge value.
@@ -127,12 +134,23 @@ bool build_probe_status_mp_fp(IoFrame &f, const uint8_t *own, const uint8_t *dst
   return create_status_mp_fp_read(f, own, dst, low_power);
 }
 
+bool build_probe_limitation(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  if (index > PROBE_LIMITATION_MAX_INDEX) {
+    return false;  // Unreachable through probe_device()/probe_sweep(), which gate on max_index.
+  }
+  const LimitationType type =
+      index == PROBE_LIMITATION_INDEX_MINIMUM ? LimitationType::MINIMUM : LimitationType::MAXIMUM;
+  return create_limitation_status_read(f, own, dst, type, low_power);
+}
+
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
 struct ProbeDescriptor {
   const char *name;
-  bool needs_index;  ///< False for the probes whose builders take no index/selector ("general_info3", "get_info1",
-                     ///< "get_info2", "status_mp_fp").
   ProbeBuilderFn builder;
+  const char *index_help;  ///< Wording for the rejection when an index exceeds max_index (null: unbounded).
+  bool needs_index;   ///< False for the probes whose builders take no index/selector ("general_info3", "get_info1",
+                      ///< "get_info2", "status_mp_fp").
+  uint8_t max_index;  ///< Highest index the probe accepts; the full byte range when index_help is null.
 };
 
 /// @brief The full set of probes probe_device()/probe_sweep() can dispatch to.
@@ -141,17 +159,19 @@ struct ProbeDescriptor {
 /// change here rather than a change to both probe_device()'s dispatch and its "index must be..."
 /// error message. Deliberately has no "unknown4a" row -- see ADR 0024.
 constexpr ProbeDescriptor PROBE_TABLE[] = {
-    {PROBE_NAME_PRIVATE_FN, true, build_probe_private_fn},
-    {PROBE_NAME_PRIVATE_FN_SUB, true, build_probe_private_fn_sub},
-    {PROBE_NAME_STATUS_EXT, true, build_probe_status_ext},
-    {PROBE_NAME_STATUS_EXT_FN6, true, build_probe_status_ext_fn6},
-    {PROBE_NAME_STATUS_EXT_FN9, true, build_probe_status_ext_fn9},
-    {PROBE_NAME_GET_INFO1, false, build_probe_get_info1},
-    {PROBE_NAME_GET_INFO2, false, build_probe_get_info2},
-    {PROBE_NAME_GENERAL_INFO3, false, build_probe_general_info3},
-    {PROBE_NAME_PRIVATE2, true, build_probe_private2_long},
-    {PROBE_NAME_PRIVATE2_SHORT, true, build_probe_private2_short},
-    {PROBE_NAME_STATUS_MP_FP, false, build_probe_status_mp_fp},
+    {PROBE_NAME_PRIVATE_FN, build_probe_private_fn, nullptr, true, UINT8_MAX},
+    {PROBE_NAME_PRIVATE_FN_SUB, build_probe_private_fn_sub, nullptr, true, UINT8_MAX},
+    {PROBE_NAME_STATUS_EXT, build_probe_status_ext, nullptr, true, UINT8_MAX},
+    {PROBE_NAME_STATUS_EXT_FN6, build_probe_status_ext_fn6, nullptr, true, UINT8_MAX},
+    {PROBE_NAME_STATUS_EXT_FN9, build_probe_status_ext_fn9, nullptr, true, UINT8_MAX},
+    {PROBE_NAME_GET_INFO1, build_probe_get_info1, nullptr, false, UINT8_MAX},
+    {PROBE_NAME_GET_INFO2, build_probe_get_info2, nullptr, false, UINT8_MAX},
+    {PROBE_NAME_GENERAL_INFO3, build_probe_general_info3, nullptr, false, UINT8_MAX},
+    {PROBE_NAME_PRIVATE2, build_probe_private2_long, nullptr, true, UINT8_MAX},
+    {PROBE_NAME_PRIVATE2_SHORT, build_probe_private2_short, nullptr, true, UINT8_MAX},
+    {PROBE_NAME_STATUS_MP_FP, build_probe_status_mp_fp, nullptr, false, UINT8_MAX},
+    {PROBE_NAME_LIMITATION, build_probe_limitation, "index 0 (minimum) or 1 (maximum)", true,
+     PROBE_LIMITATION_MAX_INDEX},
 };
 constexpr uint8_t PROBE_TABLE_SIZE = sizeof(PROBE_TABLE) / sizeof(PROBE_TABLE[0]);
 
@@ -175,6 +195,11 @@ std::string unknown_probe_message(const std::string &probe) {
     names += PROBE_TABLE[i].name;
   }
   return "unknown probe \"" + probe + "\" (expected " + names + ")";
+}
+
+/// @brief The error message for an index above a probe's max_index (probe_device() and probe_sweep()).
+std::string index_out_of_range_message(const ProbeDescriptor &descriptor) {
+  return "probe \"" + std::string(descriptor.name) + "\" takes " + descriptor.index_help;
 }
 
 /// @brief Shared probe-name lookup for probe_device()/probe_sweep(): returns the descriptor, or
@@ -1326,6 +1351,10 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     result.message = "index must be a decimal or 0x-prefixed byte value (0-255)";
     return result;
   }
+  if (descriptor->needs_index && index_byte > descriptor->max_index) {
+    result.message = index_out_of_range_message(*descriptor);
+    return result;
+  }
 
   IoFrame request;
   if (!descriptor->builder(request, node_id_, dev->node_id, index_byte, dev->low_power)) {
@@ -1378,6 +1407,12 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     result.message += " [" + std::string(command_result_name(result.result_code)) + ": " +
                       command_result_description(result.result_code) + "]";
   }
+  // The decode depends on the reply, not on which probe drew it, so any probe that happens to
+  // draw a limitation reply reports it. Rendered, never applied: the device record is untouched.
+  if (response.cmd == CMD_LIMITATION_STATUS_RESP) {
+    result.decoded = detail::describe_limitation_reply(response);
+    result.message += " [" + result.decoded + "]";
+  }
   return result;
 }
 
@@ -1419,6 +1454,10 @@ ManagementActionResult ManagementActions::probe_sweep(const std::string &device_
     result.message = "last_index must be >= first_index";
     return result;
   }
+  if (last > descriptor->max_index) {
+    result.message = index_out_of_range_message(*descriptor);
+    return result;
+  }
   const uint32_t span = static_cast<uint32_t>(last) - first + 1;
   if (span > PROBE_SWEEP_MAX_INDICES) {
     result.message =
@@ -1439,7 +1478,11 @@ ManagementActionResult ManagementActions::probe_sweep(const std::string &device_
     report += "index=0x" + format_hex_byte(static_cast<uint8_t>(idx)) + ": ";
     if (step.success) {
       answered_count++;
-      report += "cmd=0x" + format_hex_byte(step.response_cmd) + " hex=" + step.response_hex + "\n";
+      report += "cmd=0x" + format_hex_byte(step.response_cmd) + " hex=" + step.response_hex;
+      if (!step.decoded.empty()) {
+        report += " [" + step.decoded + "]";
+      }
+      report += "\n";
     } else {
       report += step.message + "\n";
     }

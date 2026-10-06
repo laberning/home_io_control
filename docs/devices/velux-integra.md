@@ -179,6 +179,11 @@ specification v3.18 (section 8.1) explains why: the rain sensor talks directly t
 opener, so a gateway only learns of a rain closure when it asks.
 Field data comes from issue #98.
 
+A VELUX KLF 200 reads a window's limitation with its own request, which this project can send as
+the `limitation` [diagnostic probe](../diagnostic-probes.md). Running it dry, with the rain sensor
+wet and again once dry helps confirm how the reply encodes the limit, so a future version can show
+rain protection without waiting for the window to move.
+
 ## Evidence
 
 Corpus captures across the family: 3 for the INTEGRA roof-window actuator (node `6544C6`, probe
