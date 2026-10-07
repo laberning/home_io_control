@@ -175,9 +175,15 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
     return;
   }
   // Follow a device read as moving even when no poll was planned (e.g. the one after boot), so it
-  // ends as stopped instead of reading as moving until its next command.
-  if (!policy.is_tracking_active(id, dev.last_status))
+  // ends as stopped instead of reading as moving until its next command. A window that ran out is
+  // not reopened, so a device that keeps reading as moving is not polled forever.
+  if (!policy.is_tracking_active(id, dev.last_status)) {
+    if (policy.get_poll_deadline(id) != 0) {
+      policy.clear(id);
+      return;
+    }
     policy.begin_tracking(id, 0, dev.last_status);
+  }
 
   uint32_t const delay_ms = compute_private_response_delay_ms(dev, frame, policy, id);
   const bool hint_present = frame.data_len > PRIVATE_RESPONSE_DELAY_HINT_OFFSET;
@@ -213,8 +219,13 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
     return;
   }
   // As for a poll reply: a device read as moving is followed until it reports stopped.
-  if (!policy.is_tracking_active(id, dev.last_status))
+  if (!policy.is_tracking_active(id, dev.last_status)) {
+    if (policy.get_poll_deadline(id) != 0) {
+      policy.clear(id);
+      return;
+    }
     policy.begin_tracking(id, 0, dev.last_status);
+  }
 
   policy.set_next_update(id, dev.last_status + compute_status_update_delay_ms(dev, policy, id));
 }
