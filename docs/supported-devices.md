@@ -38,7 +38,7 @@ match.
 | **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
 | **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
 | **Izymo IO dimmer** | `light` | ✅ Confirmed, including dimming | Discover & Pair, including repeated reset-and-repair cycles | `dimmable: true` | 39 corpus captures; the `light:` platform's hardware validation |
-| **J406 IO shutter motor** | `external_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: external_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard` |
+| **J406 IO shutter motor** | `external_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: external_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard`, "J406io Protect" is the same, works too |
 | **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | on a Heltec V3.2 / SX1262 |
 | **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction inversion is applied automatically for this family | Corpus `somfy_awning_discovery_spe_paired_rollcall` |
 | **IO patio-roof motor** (logs as a "Somfy IO motor", behaves as a horizontal awning) | `horizontal_awning`, 1W | ✅ Confirmed — enrollment (the roof moved on Enroll); commands afterwards not reported | 1W enrollment: hold PROG on the existing Situo 1 until the roof jogs, then press Enroll. Two-way Discover & Pair got no answer | `manufacturer: somfy`, `execute_broadcast: all` | SX1276 board, issue #147. The full Somfy enrollment gesture goes to `00003F` |
