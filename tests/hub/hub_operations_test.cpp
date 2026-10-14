@@ -2045,6 +2045,50 @@ TEST(HubOperations, DecodedStatusTracksMovingEvidence) {
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a decoded 'stopped' status spends the evidence";
 }
 
+TEST(HubOperations, AReplyAfterTheTrackingWindowRanOutDoesNotReopenIt) {
+  // A device that keeps reading as moving must not be polled forever.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS + 1);
+
+  queue_frame(radio, build_moving_status_response(comp.node_id_, /*delay_hint_seconds=*/5));
+  ASSERT_TRUE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), 0u) << "the window that ran out is closed, not reopened";
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubOperations, PollingEndsWhenADeviceRepeatsAStoppedReportShortOfItsTarget) {
+  // A bioclimatic pergola at rest just past its 70 % target: stopped, target 0x8C00, current 0x8DDF.
+  // No poll is tracked, as for the one after boot.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  IoFrame at_rest{};
+  init_frame(at_rest, true, false, true, false);
+  const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(at_rest, comp.node_id_);
+  set_src(at_rest, device_node_id);
+  const uint8_t payload[7] = {0x05, 0x00, 0x8C, 0x00, 0x8D, 0xDF, 0x00};
+  ASSERT_TRUE(set_cmd(at_rest, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  queue_frame(radio, at_rest);
+  ASSERT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "a first stopped report short of the target may still be converging, so polling goes on";
+
+  queue_frame(radio, at_rest);
+  ASSERT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u)
+      << "the same stopped report twice means the device is at rest, so polling ends";
+  EXPECT_TRUE(comp.get_device("ABC123")->is_stopped);
+}
+
 // --- wiring: the belief the engine derives from the hub's evidence ----------------------------
 
 TEST(HubOperations, HaMoveToARestingLowPowerDeviceLeadsWithTheWakeUpPreamble) {

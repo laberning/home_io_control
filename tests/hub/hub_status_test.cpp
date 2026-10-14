@@ -71,6 +71,52 @@ TEST(HubStatus, StoppedFlagMismatchKeepsDeviceMoving) {
   EXPECT_FALSE(dev->is_stopped) << "stopped flag should be overridden when target and current are still far apart";
 }
 
+TEST(HubStatus, StoppedReportWithANewTargetKeepsDeviceMoving) {
+  // Sent elsewhere but not yet under way: the position repeats, the target does not.
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+
+  IoFrame frame{};
+  init_frame(frame, true, false, false, false);
+  uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  uint8_t device[3] = {0xAB, 0xC1, 0x23};
+  set_dst(frame, own);
+  set_src(frame, device);
+  uint8_t at_rest[8] = {STATUS_STOPPED, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, at_rest, sizeof(at_rest)));
+  comp.update_device_status_(frame);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(dev->is_stopped);
+
+  uint8_t not_started[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0x64, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, not_started, sizeof(not_started)));
+  comp.update_device_status_(frame);
+
+  EXPECT_FALSE(dev->is_stopped) << "a target that changed since the last report is a move not yet under way";
+}
+
+TEST(HubStatus, StatusUpdateReadAsMovingIsFollowedWhenNothingWasTracked) {
+  // A bioclimatic pergola moved by another controller announces itself at rest just past its target.
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x8C, 0x00, 0x8D, 0xDF, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_FALSE(comp.get_device("054E17")->is_stopped);
+  EXPECT_NE(comp.poll_policy_.get_next_update("054E17"), 0u)
+      << "a device read as moving is polled until it reports stopped";
+}
+
 // ============================================================================
 // Optimistic-overlay supersede rule (a decoded observation replaces a prediction, per axis)
 // ============================================================================

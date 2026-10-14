@@ -75,8 +75,10 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
                           bool allow_tilt_from_extended_response) {
   uint16_t const tgt = (frame.data[target_offset] << 8) | frame.data[target_offset + 1];
   uint16_t const cur = (frame.data[current_offset] << 8) | frame.data[current_offset + 1];
+  const float previous_target = dev.target;
+  const float previous_position = dev.position;
   decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
-  detail::normalize_stopped_state(dev);
+  detail::normalize_stopped_state(dev, previous_target, previous_position);
   // A decoded position is the observation this prediction existed to stand in for.
   dev.optimistic.clear_position();
 
@@ -168,9 +170,19 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   // run_execute_operation_() stamps the evidence once the move is accepted, after this runs.
   track_motion_evidence(dev, trust_position ? !dev.is_stopped : !reported_stopped, dev.last_status);
 
-  if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
+  if (effective_is_stopped(dev)) {
     policy.clear(id);
     return;
+  }
+  // Follow a device read as moving even when no poll was planned (e.g. the one after boot), so it
+  // ends as stopped instead of reading as moving until its next command. A window that ran out is
+  // not reopened, so a device that keeps reading as moving is not polled forever.
+  if (!policy.is_tracking_active(id, dev.last_status)) {
+    if (policy.get_poll_deadline(id) != 0) {
+      policy.clear(id);
+      return;
+    }
+    policy.begin_tracking(id, 0, dev.last_status);
   }
 
   uint32_t const delay_ms = compute_private_response_delay_ms(dev, frame, policy, id);
@@ -202,9 +214,17 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
   decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
   track_motion_evidence(dev, !dev.is_stopped, dev.last_status);
 
-  if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
+  if (effective_is_stopped(dev)) {
     policy.clear(id);
     return;
+  }
+  // As for a poll reply: a device read as moving is followed until it reports stopped.
+  if (!policy.is_tracking_active(id, dev.last_status)) {
+    if (policy.get_poll_deadline(id) != 0) {
+      policy.clear(id);
+      return;
+    }
+    policy.begin_tracking(id, 0, dev.last_status);
   }
 
   policy.set_next_update(id, dev.last_status + compute_status_update_delay_ms(dev, policy, id));

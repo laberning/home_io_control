@@ -253,14 +253,24 @@ inline std::map<std::string, std::string> build_sender_event_data(const OneWayFr
 /// feeding it a prediction would push a guess back into an observed field. On the execute-ack path
 /// (`trust_position = false`) `dev.target` does not hold the commanded value, so this function does
 /// not use it to flip `is_stopped` back to false — effective_is_stopped() owns that.
+///
+/// A stopped report that repeats the previous one stands, so a device that rests short of its
+/// target (a Somfy bioclimatic pergola stops about 1 % off) is not read as moving forever.
 /// @param dev Device record to update (may clear is_stopped if positions differ).
-inline void normalize_stopped_state(IoDevice &dev) {
+/// @param previous_target `dev.target` as the previous report left it, or UNKNOWN_POSITION.
+/// @param previous_position `dev.position` as the previous report left it, or UNKNOWN_POSITION.
+inline void normalize_stopped_state(IoDevice &dev, float previous_target = UNKNOWN_POSITION,
+                                    float previous_position = UNKNOWN_POSITION) {
   // Some devices briefly report STATUS_STOPPED before current and target have numerically
-  // converged. Keep the device in the moving state until the decoded values are effectively equal.
-  if (dev.is_stopped && dev.target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION &&
-      !has_reached_target_position(dev.target, dev.position)) {
+  // converged. Keep the device in the moving state until the decoded values are effectively equal,
+  // or until the device repeats them.
+  if (!dev.is_stopped || dev.target == UNKNOWN_POSITION || dev.position == UNKNOWN_POSITION ||
+      has_reached_target_position(dev.target, dev.position))
+    return;
+  const bool repeated = has_reached_target_position(previous_target, dev.target) &&
+                        has_reached_target_position(previous_position, dev.position);
+  if (!repeated)
     dev.is_stopped = false;
-  }
 }
 
 /// @brief Update per-device link-health stats from the radio's last capture.
