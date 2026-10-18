@@ -124,6 +124,18 @@ class ExchangeEngine {
   /// @return true if the device answered and its HMAC verified with `key`.
   bool authenticate_request(const IoFrame &request, uint32_t freq, const uint8_t *key);
 
+  /// Challenge the sender of `request` (0x3C) and capture its 0x3D without checking it.
+  ///
+  /// The first half of authenticate_request(), for a caller that has to try several keys or
+  /// transcripts against one answer (the key pull's diagnosis, find_pull_proof()).
+  /// @param request         The device's frame the challenge is about; only its source is used.
+  /// @param freq            RF channel to challenge on.
+  /// @param challenge_out   Output: the 6 bytes we sent in the 0x3C.
+  /// @param proof_mac_out   Output: the 6 bytes of the device's 0x3D.
+  /// @return true if the device answered with a 0x3D.
+  bool challenge_device(const IoFrame &request, uint32_t freq, uint8_t challenge_out[HMAC_SIZE],
+                        uint8_t proof_mac_out[HMAC_SIZE]);
+
   /// @brief Per-reply facts collect_broadcast_responses() hands its caller alongside the frame.
   ///
   /// The engine owns the TX-complete instant and the received packet; the caller cannot

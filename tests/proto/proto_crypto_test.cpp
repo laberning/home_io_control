@@ -143,6 +143,72 @@ TEST(ProtoCrypto, CryptKeyMatchesDocumentedIownHomecontrolPullCapture) {
       << "crypt_key() must recover the documented Pull-flow device key from the captured wire ciphertext";
 }
 
+// The same documented pull exchange, through the helpers the hub's key pull uses: the request's
+// 6 bytes double as the IV challenge, and the device's 0x3D signs its own 0x32 with its own key
+// under our 0x3C challenge (here equal to the request's bytes, as documented).
+TEST(ProtoCrypto, KeyPullHelpersMatchDocumentedPullCapture) {
+  const uint8_t request_bytes[HMAC_SIZE] = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
+  const uint8_t wire_ciphertext[AES_KEY_SIZE] = {0xEA, 0x42, 0x5A, 0x7A, 0x18, 0x28, 0x85, 0xD4,
+                                                 0xEA, 0xEE, 0xFD, 0x41, 0x6D, 0x62, 0x5E, 0x01};
+  const uint8_t device_key[AES_KEY_SIZE] = {0xAB, 0xCD, 0xEF, 0x01, 0x02, 0x03, 0x04, 0x05,
+                                            0x06, 0x07, 0x08, 0x09, 0x10, 0x11, 0x12, 0x13};
+  const uint8_t proof_challenge[HMAC_SIZE] = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
+  const uint8_t proof_mac[HMAC_SIZE] = {0x0A, 0xE5, 0x19, 0xA7, 0x3C, 0x99};
+
+  uint8_t recovered[AES_KEY_SIZE] = {};
+  ASSERT_TRUE(recover_key_from_pull(wire_ciphertext, request_bytes, recovered));
+  EXPECT_EQ(0, memcmp(recovered, device_key, AES_KEY_SIZE)) << "the pull IV is built from the whole 0x38 request";
+
+  PullKeyCandidates candidates;
+  ASSERT_TRUE(recover_pull_key_candidates(wire_ciphertext, request_bytes, candidates));
+  EXPECT_EQ(0, memcmp(candidates.keys[static_cast<uint8_t>(PullKeyIv::REQUEST_FRAME)], device_key, AES_KEY_SIZE));
+  EXPECT_NE(0, memcmp(candidates.keys[static_cast<uint8_t>(PullKeyIv::REQUEST_CMD)], device_key, AES_KEY_SIZE))
+      << "the command byte alone gives a different key";
+
+  const PullProof proof = find_pull_proof(candidates, wire_ciphertext, request_bytes, proof_challenge, proof_mac);
+  EXPECT_TRUE(proof.found) << "the documented 0x3D must verify";
+  EXPECT_FALSE(proof.signed_with_transfer_key);
+  EXPECT_EQ(proof.iv, PullKeyIv::REQUEST_FRAME);
+  EXPECT_EQ(proof.transcript, PullProofTranscript::REPLY_FRAME);
+}
+
+TEST(ProtoCrypto, FindPullProofRejectsAWrongMac) {
+  const uint8_t request_bytes[HMAC_SIZE] = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
+  const uint8_t wire_ciphertext[AES_KEY_SIZE] = {0xEA, 0x42, 0x5A, 0x7A, 0x18, 0x28, 0x85, 0xD4,
+                                                 0xEA, 0xEE, 0xFD, 0x41, 0x6D, 0x62, 0x5E, 0x01};
+  const uint8_t wrong_mac[HMAC_SIZE] = {0x0A, 0xE5, 0x19, 0xA7, 0x3C, 0x98};
+  PullKeyCandidates candidates;
+  ASSERT_TRUE(recover_pull_key_candidates(wire_ciphertext, request_bytes, candidates));
+  EXPECT_FALSE(find_pull_proof(candidates, wire_ciphertext, request_bytes, request_bytes, wrong_mac).found);
+}
+
+TEST(ProtoCrypto, FindPullProofDetectsTransferKeySignature) {
+  const uint8_t request_bytes[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  const uint8_t challenge[HMAC_SIZE] = {0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+  const uint8_t payload[AES_KEY_SIZE] = {0x55};
+  uint8_t transcript[1 + AES_KEY_SIZE];
+  transcript[0] = CMD_KEY_TRANSFER;
+  memcpy(transcript + 1, payload, AES_KEY_SIZE);
+  uint8_t mac[HMAC_SIZE];
+  ASSERT_TRUE(crypto::create_hmac(transcript, sizeof(transcript), challenge, TRANSFER_KEY, mac));
+  PullKeyCandidates candidates;
+  ASSERT_TRUE(recover_pull_key_candidates(payload, request_bytes, candidates));
+  const PullProof proof = find_pull_proof(candidates, payload, request_bytes, challenge, mac);
+  EXPECT_TRUE(proof.found);
+  EXPECT_TRUE(proof.signed_with_transfer_key) << "a transfer-key signature proves no key";
+}
+
+// AES-128 of a zero block under a zero key is the FIPS-197 / SP 800-38A known value 66E94BD4...,
+// so its first three bytes are the zero key's check value.
+TEST(ProtoCrypto, KeyCheckValueMatchesAesZeroVector) {
+  const uint8_t zero_key[AES_KEY_SIZE] = {};
+  uint8_t kcv[crypto::KEY_CHECK_VALUE_SIZE];
+  ASSERT_TRUE(crypto::key_check_value(zero_key, kcv));
+  EXPECT_EQ(kcv[0], 0x66);
+  EXPECT_EQ(kcv[1], 0xE9);
+  EXPECT_EQ(kcv[2], 0x4B);
+}
+
 TEST(ProtoCrypto, CryptKeyRoundTrip) {
   uint8_t encrypted[AES_KEY_SIZE] = {0};
   uint8_t decrypted[AES_KEY_SIZE] = {0};

@@ -56,10 +56,19 @@ heater type. `DeviceType` is 8 bits wide and truncated it to `0xFF`, so nothing 
   for any other refusal.
 - `pairing_key_transfer: pull` (default `push`) is an experimental alternative to the push. The
   hub sends a key transfer request (0x38) with six random bytes, and the device answers with a 0x32
-  holding its key. The hub decrypts it with the IV built from `{0x38}` and those six bytes. It then
-  challenges the device (0x3C) to prove it holds that key. A key equal to the hub's own is accepted:
-  the decrypt cannot produce it by chance. A different key is printed for the user and never adopted
-  (outcome `key_received`).
+  holding its key under the transfer key. The IV's data is the whole request (`0x38` and the six
+  bytes) and its challenge the same six bytes. The hub then challenges the device (0x3C), and the
+  device's answer (0x3D) is a MAC over its own 0x32 with its own key. A host test checks this
+  construction against a documented pull exchange, including the 0x3D.
+- A device family may build the IV or the 0x3D differently. The hub therefore also decrypts the key
+  with three other IVs and checks the 0x3D over a second transcript and against the transfer key. A
+  6-byte MAC match proves the construction it was made under. The log names the construction that
+  matched and gives one key check value per IV (the first three bytes of the key's AES encryption of
+  a zero block), never the key, so a user can post it and compare two attempts.
+- A pulled key equal to the hub's own is accepted: no decrypt produces it by chance. A different key
+  is printed only when the 0x3D proves it, and never adopted (outcome `key_received`). An unproven
+  key is not printed. The advisor reports `key_pull_not_offered` when the device answers the request
+  with an error, and `key_pull_unproven` when it sends a key it does not prove.
 
 ## Consequences
 
@@ -70,8 +79,9 @@ heater type. `DeviceType` is 8 bits wide and truncated it to `0xFF`, so nothing 
   attempt that is already failing, after a challenge.
 - **A refused attempt ends sooner.** A slow-turnaround radio no longer re-sends the key init twice
   after a refusal.
-- **The pull is not validated on hardware.** The request shape and the IV are unconfirmed on air.
-  The first bench check is a device that already holds the hub's key: it must hand back the hub's
-  own key. Until then the documentation marks the tunable experimental.
+- **The pull is not validated on hardware.** No pulled key has been proven on air. A bench check
+  against a device that already holds the hub's key is not possible: a Somfy Izymo dimmer answers the
+  request with `COMMAND_UNKNOWN`. Until a pull is proven, the documentation marks the tunable
+  experimental.
 - **A pulled foreign key costs the other devices.** A hub has one system key. Adopting a device's
   key, which the user does by hand, stops every device paired with the old key from answering.

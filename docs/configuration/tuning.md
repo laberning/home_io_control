@@ -635,13 +635,26 @@ it only when the pairing advisor reports `key_push_not_accepted`: the device ans
 key with `COMMAND_UNKNOWN`, or it answered discovery as a remote controller. An Atlantic AGILIA IO
 radiator does both in its display's pairing mode (issue #165).
 
-What happens next depends on the key the device sends back:
+The hub then checks which key it received. The device's answer to the challenge is a 6-byte
+code, and only the right key produces it, so a match proves the key. The hub tries the documented
+way to unwrap the key and three alternatives, because a device family may build it differently.
+The log shows one `Key pull check` line per way, with a *key check value*: six hex digits that
+identify a key without revealing it, so these lines are safe to post. Two attempts with the same
+check value on the same line mean the device kept its key.
 
-- It is the hub's own key: the device is paired, and the log prints the usual YAML snippet.
-- It is a different key: the hub registers nothing. The log prints the device's key and node ID in
-  the same block that [key extraction](../key-extraction.md) prints. To control the device, put that
-  key into `system_key:`. Devices paired with the hub's old key stop answering, because a hub has
-  one system key.
+What happens next depends on that check:
+
+- The device sent the hub's own key: the device is paired, and the log prints the usual YAML
+  snippet.
+- The device sent a different key and proved it: the hub registers nothing. The log prints the
+  device's key and node ID in the same block that [key extraction](../key-extraction.md) prints. To
+  control the device, put that key into `system_key:`. Devices paired with the hub's old key stop
+  answering, because a hub has one system key.
+- The device sent a key it did not prove: the hub prints no key, and the advisor reports
+  `key_pull_unproven`. Post the `Key pull check` lines in your issue.
+
+A device that answers the key request with an error does not hand out its key: the advisor
+reports `key_pull_not_offered`. Pair it with `push`.
 
 `pull` is not validated on hardware yet. Switch back to `push` before pairing any other device.
 

@@ -370,6 +370,16 @@ bool create_hmac(const uint8_t *data, uint8_t len, const uint8_t challenge[HMAC_
   return true;
 }
 
+/// Compute a key check value. See proto_crypto.h for the full contract.
+bool key_check_value(const uint8_t key[AES_KEY_SIZE], uint8_t out[KEY_CHECK_VALUE_SIZE]) {
+  const uint8_t zeros[AES_BLOCK_SIZE] = {};
+  uint8_t encrypted[AES_BLOCK_SIZE];
+  if (!aes128_encrypt(zeros, key, encrypted))
+    return false;
+  memcpy(out, encrypted, KEY_CHECK_VALUE_SIZE);
+  return true;
+}
+
 /// Create the 6-byte authenticator for a 1W frame. See proto_crypto.h for the full contract —
 /// in particular that `data`/`len` is a command-specific span the caller must get right, and that
 /// `controller_key` is whichever key the controller identity holds. Structurally identical to

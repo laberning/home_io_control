@@ -110,7 +110,7 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=awning; attempts=1; lbt=0;
 
 | Field | Meaning |
 |-------|---------|
-| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, `key_transfer_refused` (the device answered the key with an error, see the advisor), or `key_received` (`pairing_key_transfer: pull` got a different key; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)). |
+| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, `key_transfer_refused` (the device answered the key with an error, see the advisor), or `key_received` (`pairing_key_transfer: pull` got a different key and the device proved it; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)). |
 | `phase` | The furthest stage the pairing state machine reached. |
 | `node` / `type` | The paired device's node ID and type, or `-` if nothing was paired. |
 | `attempts` | Number of discovery command retries sent. |
@@ -135,6 +135,8 @@ RF silence, and is reported as `1w_traffic`.
 | `foreign_controller` | A discovery response (0x29) was seen addressed to a node ID that is not this hub's. | Another controller (a TaHoma, say) is pairing the same device right now. Wait for it to finish, or make sure yours is the only controller with the device in pairing mode. |
 | `key_push_not_accepted` | The device answered the hub's key with `COMMAND_UNKNOWN`, or it answered discovery as a remote controller (node type 1023) and the key step failed. | The device does not take a pushed key in this mode. It may hand over its own key instead: try `pairing_key_transfer: pull`, described in [Radio tuning](configuration/tuning.md#pairing_key_transfer). An Atlantic AGILIA IO radiator does this in its display's pairing mode (issue #165). |
 | `key_refused` | The device answered the hub's key with any other error. The message names the code. | If the device was paired before, run [Scan Paired Devices](#scan-paired-devices) before retrying: it may already hold a key. |
+| `key_pull_not_offered` | With `pairing_key_transfer: pull`, the device answered the key request with an error. | The device does not hand out its key. Remove `pairing_key_transfer: pull` and pair it normally. A Somfy Izymo dimmer answers this way. |
+| `key_pull_unproven` | With `pairing_key_transfer: pull`, the device sent a key but did not prove it holds that key. | The hub prints no key. Post the `Key pull check` lines in your issue: they contain no key. |
 | `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Either the radio is not receiving (antenna, wiring, wrong tuning), or the channel was simply quiet for those few seconds. Look at the rest of the log first. If it shows other IO-Homecontrol frames being received (your remotes, a neighbour's devices), the radio works, and this reads as "the device did not answer". Only if nothing is ever received, check the antenna and radio tuning before pressing PROG again. |
 
 ## Scan Paired Devices

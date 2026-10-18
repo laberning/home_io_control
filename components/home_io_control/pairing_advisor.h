@@ -37,6 +37,10 @@ enum class PairingAdviceCode : uint8_t {
                                ///< RESULT_COMMAND_UNKNOWN, or it answered discovery as a remote
                                ///< controller and the push failed. Suggests `pairing_key_transfer: pull`.
   KEY_TRANSFER_REFUSED,        ///< The device answered the key transfer with any other CMD_ERROR_RESP.
+  KEY_PULL_NOT_OFFERED,        ///< `pairing_key_transfer: pull` was refused with CMD_ERROR_RESP: the
+                               ///< device does not hand out its key. Suggests pairing with `push`.
+  KEY_PULL_UNPROVEN,           ///< The device answered the pull with a key, but no construction the
+                               ///< hub knows made its 0x3D verify; the key is not printed.
 };
 
 /// @brief One piece of advice, with the node/RSSI it pertains to (if any).
@@ -49,7 +53,7 @@ struct PairingAdvice {
   bool answered_as_controller{false};    ///< True when the device answered discovery as a remote controller.
 };
 
-/// @brief Maximum number of advice entries a single attempt can produce (one slot per non-NONE code).
+/// @brief Maximum number of advice entries a single attempt can produce (each advice source adds at most one).
 static constexpr uint8_t PAIRING_ADVICE_MAX = 6;
 
 /// @brief Inspect a completed pairing attempt's telemetry and produce actionable advice.
