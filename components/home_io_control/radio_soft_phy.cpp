@@ -96,10 +96,17 @@ bool is_known_io_command(uint8_t cmd) {
     case CMD_DISCOVER_SPE_RESP:
     case CMD_DISCOVER_CONFIRM:
     case CMD_DISCOVER_CONFIRM_ACK:
+    // A foreign controller adding the key-extraction responder as a product follows its 0x36/0x37
+    // with an addressed 0x2E (issue #162, a Somfy Nina io), and a pull answers with these replies.
+    // Dropping them here turns a CRC-valid frame into an unreadable raw-byte parse_fail line.
+    case CMD_DISCOVER_ALT_REQ:
+    case CMD_DISCOVER_ALT_RESP:
     case CMD_KEY_INIT:
     case CMD_KEY_TRANSFER:
     case CMD_KEY_CONFIRM:
+    case CMD_LAUNCH_KEY_TRANSFER:
     case CMD_NODE_VERIFY_REQ:
+    case CMD_NODE_VERIFY_RESP:
     case CMD_CHALLENGE_REQ:
     case CMD_CHALLENGE_RESP:
     case CMD_UNKNOWN4A_RESP:
