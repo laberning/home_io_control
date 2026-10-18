@@ -13,7 +13,9 @@
 #include "pairing_engine.h"
 
 #include "hub_decisions.h"
+#include "log_helpers.h"
 #include "proto_commands.h"
+#include "proto_crypto.h"
 #include "tuning_config.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
@@ -57,6 +59,24 @@ void delay_feeding_wdt(uint32_t ms) {
     delay(chunk);
     ms -= chunk;
   }
+}
+
+/// Log the device's key after a pull returned a key different from the hub's.
+void log_pulled_key_report(const std::string &device_id, const uint8_t key[AES_KEY_SIZE], bool verified) {
+  // Deliberate exception to redaction.h's masking, the same as the key-extraction report: printing
+  // the key is the point of this step. Logged line by line so no single line hits the 512-byte cap.
+  std::string report = "DEVICE KEY RECEIVED -- DO NOT SHARE IT\n";
+  report += "Device " + device_id + " holds a different system key than this hub";
+  report += verified ? ", and proved it holds it.\n"
+                     : ", but did not prove it holds it: this key may be wrong (experimental decrypt).\n";
+  report += "To control the device, set this key in the hub's YAML. Devices paired with the hub's\n"
+            "current key stop answering, because a hub has one system key.\n"
+            "home_io_control:\n"
+            "  system_key: \"" +
+            detail::format_key_hex(key) + "\"";
+  ESP_LOGW(TAG, "========================================");
+  detail::log_multiline_result(TAG, /*is_warning=*/true, /*prefix=*/"", report);
+  ESP_LOGW(TAG, "========================================");
 }
 
 }  // namespace
@@ -258,10 +278,12 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
         const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
         if (disposition == decisions::PairingKeyConfirmDisposition::REFUSE) {
           this->telemetry_.record_rx_reject(*parsed, rssi);
-          ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
-                   command_name(parsed->cmd), parsed->cmd);
-          if (parsed->cmd == CMD_ERROR_RESP && parsed->data_len > 0)
-            ESP_LOGW(TAG, "Key transfer: error code=0x%02X", parsed->data[0]);
+          if (parsed->cmd == CMD_ERROR_RESP) {
+            this->note_key_refusal_(context, *parsed, "Key transfer");
+          } else {
+            ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
+                     command_name(parsed->cmd), parsed->cmd);
+          }
           return ReplyDisposition::ABORT;
         }
         // CONFIRM (0x33) or CHALLENGE (a well-formed 0x3C): both are legitimate answers, not
@@ -343,8 +365,11 @@ bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &cont
   if (radio_()->has_fast_tx_rx_turnaround()) {
     // Key exchange is the one caller that genuinely needs the payload: without the 0x33 there is
     // no confirmation the device took the key, so an unconfirmed acceptance is not good enough.
-    return engine_.send_and_receive(context.req, context.resp, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
-           frame_is_key_confirm(context.resp);
+    if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2) != ExchangeOutcome::SUCCESS_WITH_RESPONSE)
+      return false;
+    if (context.resp.cmd == CMD_ERROR_RESP)
+      this->note_key_refusal_(context, context.resp, "Key transfer");
+    return frame_is_key_confirm(context.resp);
   }
   return wait_for_key_confirm_(context);
 }
@@ -436,6 +461,14 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
         context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
         context.discovery_low_power =
             info.has_extended && discovery_power_save_mode(info.flags) == POWER_SAVE_LOW_POWER;
+        context.node_type = info.node_type;
+        this->telemetry_.set_discovered_device(context.device.node_id, info.node_type);
+        if (info.node_type == NODE_TYPE_REMOTE_CONTROLLER) {
+          ESP_LOGW(TAG,
+                   "Discovery: device %s answered as a remote controller (node type %u), not as an actuator. "
+                   "It may not accept a pushed key; the pairing advisor says what to try if the key step fails.",
+                   context.device_id.c_str(), info.node_type);
+        }
         return result;
       }
       if (result == decisions::PairingDiscoveryDisposition::INVALID) {
@@ -585,6 +618,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
     return true;
   }
 
+  context.saw_key_challenge = true;
   // No challenge bytes here: the raw 0x3C payload plus the 0x3D response it provokes is a
   // known-plaintext/known-ciphertext pair under the system key (see redaction.h). The generic
   // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
@@ -594,9 +628,11 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   bool key_ok = transfer_key_and_wait_confirm_(context);
   // Fast-turnaround radios catch the 0x33 through the standard exchange wait inside the helper
   // above and never reach this loop. Slow-turnaround radios miss it while re-entering RX, so on a
-  // miss they re-send the key-init to trigger the device's auto-confirm.
+  // miss they re-send the key-init to trigger the device's auto-confirm. An explicit refusal is
+  // the device's answer, not a missed confirm: re-sending the key-init after it only draws the same
+  // refusal again (or, seen in the field, a refusal of a second key the device did not need).
   if (!radio_()->has_fast_tx_rx_turnaround()) {
-    for (int re = 0; !key_ok && re < 2; re++) {
+    for (int re = 0; !key_ok && !context.key_refused && re < 2; re++) {
       ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %d/2)", re + 1);
       App.feed_wdt();
       delay(EXCHANGE_RETRY_DELAY_MS);
@@ -609,6 +645,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
         key_ok = true;
         continue;
       }
+      context.saw_key_challenge = true;
       // A fresh CHALLENGE_REQ (0x3C), not a direct KEY_CONFIRM (0x33): the device never received
       // our first 0x32 in the first place, so there is no key for it to auto-confirm yet -- a
       // fresh 0x3C is exactly the signal that the right response is "resend 0x32 against this new
@@ -684,21 +721,22 @@ bool PairingEngine::discover_and_pair() {
   // so a retry of that loop never repeats it. Never fails the attempt — see the function's doc.
   this->run_discover_confirm_step_(context);
 
-  // Phase 2: Key exchange — retry up to the configured number of times.
-  bool key_exchanged = false;
-  for (uint8_t ke_attempt = 0; ke_attempt < tuning_->pairing_key_exchange_retries; ke_attempt++) {
-    if (ke_attempt > 0) {
-      ESP_LOGI(TAG, "Retrying key exchange (attempt %d/%u)...", ke_attempt + 1, tuning_->pairing_key_exchange_retries);
-      App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
+  // Phase 2: move the key, in the direction `pairing_key_transfer` selects.
+  if (tuning_->pairing_key_transfer == KeyTransferMode::PULL) {
+    this->telemetry_.set_key_pull_attempted();
+    const KeyPullResult pulled = run_key_pull_phase_(context);
+    if (pulled == KeyPullResult::OTHER_KEY) {
+      this->finish_pairing_attempt_(PairingOutcome::KEY_RECEIVED);
+      return false;
     }
-    if (run_key_exchange_phase_(context)) {
-      key_exchanged = true;
-      break;
+    if (pulled == KeyPullResult::FAILED) {
+      this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
+                                                        : PairingOutcome::KEY_EXCHANGE_FAILED);
+      return false;
     }
-  }
-  if (!key_exchanged) {
-    this->finish_pairing_attempt_(PairingOutcome::KEY_EXCHANGE_FAILED);
+  } else if (!run_push_key_step_(context)) {
+    this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
+                                                      : PairingOutcome::KEY_EXCHANGE_FAILED);
     return false;
   }
 
@@ -777,6 +815,133 @@ bool PairingEngine::discover_and_pair() {
   this->telemetry_.set_phase(context.state);
   this->finish_pairing_attempt_(PairingOutcome::PAIRED);
   return true;
+}
+
+bool PairingEngine::run_push_key_step_(pairing::PairingContext &context) {
+  for (uint8_t ke_attempt = 0; ke_attempt < tuning_->pairing_key_exchange_retries; ke_attempt++) {
+    if (ke_attempt > 0) {
+      ESP_LOGI(TAG, "Retrying key exchange (attempt %d/%u)...", ke_attempt + 1, tuning_->pairing_key_exchange_retries);
+      App.feed_wdt();
+      delay(EXCHANGE_RETRY_DELAY_MS);
+    }
+    if (run_key_exchange_phase_(context))
+      return true;
+    // A refusal is final for this attempt: retrying the same push only repeats the question.
+    if (context.key_refused)
+      break;
+  }
+  // The device challenged our key-init, so it was talking to us; it may still have taken a key
+  // whose confirm we lost. Without a challenge there is nothing to check.
+  if (!context.saw_key_challenge)
+    return false;
+  return verify_device_holds_key_(context);
+}
+
+bool PairingEngine::verify_device_holds_key_(pairing::PairingContext &context) {
+  context.state = pairing::PairingState::VERIFY_KEY_HELD;
+  engine_.record_debug(pairing_stage_name(context.state), 1, false);
+  this->telemetry_.set_phase(context.state);
+  ESP_LOGI(TAG, "Key exchange: not confirmed; checking whether %s took the key anyway (authenticated name read)",
+           context.device_id.c_str());
+  if (!create_get_name(context.req, node_id_, context.device.node_id, context.discovery_low_power))
+    return false;
+  const ExchangeOutcome outcome = engine_.send_and_receive(
+      context.req, context.resp, FREQ_CH2, PAIRING_KEY_VERIFY_MAX_TRIES, pairing_start_preamble_(context.req));
+  const bool held = outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE && engine_.get_debug().saw_challenge &&
+                    context.resp.cmd == CMD_GET_NAME_RESP;
+  if (held) {
+    ESP_LOGW(TAG,
+             "Key exchange: %s never confirmed the key, but it answered an authenticated request with it. "
+             "Treating it as paired.",
+             context.device_id.c_str());
+  } else {
+    ESP_LOGW(TAG, "Key exchange failed: %s does not answer authenticated requests with our key",
+             context.device_id.c_str());
+  }
+  return held;
+}
+
+void PairingEngine::note_key_refusal_(pairing::PairingContext &context, const IoFrame &reply, const char *step) {
+  const uint8_t code = reply.data_len > 0 ? reply.data[0] : 0;
+  context.key_refused = true;
+  context.key_refusal_code = code;
+  this->telemetry_.set_key_refusal(code);
+  ESP_LOGW(TAG, "%s: device %s refused with 0x%02X %s (%s; code %u, state %u)", step, context.device_id.c_str(), code,
+           command_result_name(code), command_result_description(code), error_resp_code(code), error_resp_state(code));
+}
+
+bool PairingEngine::wait_for_pulled_key_(pairing::PairingContext &context) {
+  ListenSpec spec;
+  spec.window_ms = PAIRING_KEY_PULL_REPLY_TIMEOUT_MS;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;  // Unicast reply to a unicast request, as for 0x33.
+
+  auto outcome =
+      engine_.listen(spec, context.packet, context.rx, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
+        if (parsed == nullptr || memcmp(parsed->src, context.device.node_id, NODE_ID_SIZE) != 0 ||
+            memcmp(parsed->dst, node_id_, NODE_ID_SIZE) != 0)
+          return ReplyDisposition::IGNORE;
+        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+        if (parsed->cmd == CMD_KEY_TRANSFER && parsed->data_len >= AES_KEY_SIZE) {
+          this->telemetry_.record_rx(*parsed, rssi);
+          return ReplyDisposition::ACCEPT;
+        }
+        this->telemetry_.record_rx_reject(*parsed, rssi);
+        if (parsed->cmd == CMD_ERROR_RESP) {
+          this->note_key_refusal_(context, *parsed, "Key pull");
+          return ReplyDisposition::ABORT;
+        }
+        return ReplyDisposition::IGNORE;
+      });
+  return outcome == ListenOutcome::ACCEPTED;
+}
+
+PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::PairingContext &context) {
+  ESP_LOGW(TAG, "Key pull (pairing_key_transfer: pull, experimental): asking %s for its key",
+           context.device_id.c_str());
+  uint8_t challenge[HMAC_SIZE];
+  bool got_key = false;
+  for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT && !got_key && !context.key_refused; tries++) {
+    if (tries > 0) {
+      App.feed_wdt();
+      delay(EXCHANGE_RETRY_DELAY_MS);
+    }
+    context.state = pairing::PairingState::TX_KEY_PULL;
+    engine_.record_debug(pairing_stage_name(context.state), tries + 1, false);
+    this->telemetry_.set_phase(context.state);
+    // Fresh random bytes per try: the IV of the device's answer is built from the request it answers.
+    crypto::generate_challenge(challenge);
+    if (!create_launch_key_transfer(context.req, node_id_, context.device.node_id, challenge) ||
+        !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble_(context.req)))
+      continue;
+    context.state = pairing::PairingState::WAIT_KEY_PULL_REPLY;
+    this->telemetry_.set_phase(context.state);
+    got_key = wait_for_pulled_key_(context);
+    if (!got_key && !context.key_refused) {
+      ESP_LOGI(TAG, "Key pull try %u: no key transfer (0x32) from %s within %" PRIu32 " ms", tries + 1,
+               context.device_id.c_str(), PAIRING_KEY_PULL_REPLY_TIMEOUT_MS);
+    }
+  }
+  if (!got_key) {
+    ESP_LOGW(TAG, "Key pull failed: %s sent no key", context.device_id.c_str());
+    return KeyPullResult::FAILED;
+  }
+
+  uint8_t key[AES_KEY_SIZE];
+  if (!recover_key_from_pull(context.rx.data, challenge, key))
+    return KeyPullResult::FAILED;
+
+  context.state = pairing::PairingState::VERIFY_PULLED_KEY;
+  this->telemetry_.set_phase(context.state);
+  const bool verified = engine_.authenticate_request(context.rx, FREQ_CH2, key);
+  const bool ours = memcmp(key, system_key_, AES_KEY_SIZE) == 0;
+  ESP_LOGI(TAG, "Key pull: %s sent a key; matches ours=%s, proved with a challenge=%s", context.device_id.c_str(),
+           ours ? "yes" : "no", verified ? "yes" : "no");
+  // Our own key cannot come out of the decrypt by chance, so a match proves both the decrypt and
+  // that the device holds our key, whether or not it answered the challenge.
+  if (ours)
+    return KeyPullResult::OUR_KEY;
+  log_pulled_key_report(context.device_id, key, verified);
+  return verified ? KeyPullResult::OTHER_KEY : KeyPullResult::FAILED;
 }
 
 void PairingEngine::finish_pairing_attempt_(PairingOutcome outcome) {

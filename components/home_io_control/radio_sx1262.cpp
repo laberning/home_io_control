@@ -691,6 +691,8 @@ void RadioSX1262::configure_radio_() {
   // SX1262_IRQ_ACTIVITY_MASK's doc comment (radio_sx1262.h) for the other half of this change —
   // poll_until_activity_() must not treat a bare preamble as terminal, or this unmask tears down
   // RX mid-reception instead of fixing anything.
+  // Each 16-bit mask's two bytes stay on one line with their comment.
+  // clang-format off
   uint8_t irq_params[8] = {
       0x00, 0x4F,  // irqMask: TxDone(0x0001) | RxDone(0x0002) | PreambleDetected(0x0004) |
                    // SyncWordValid(0x0008) | CrcErr(0x0040)
@@ -698,6 +700,7 @@ void RadioSX1262::configure_radio_() {
       0x00, 0x00,  // dio2Mask: none
       0x00, 0x00,  // dio3Mask: none
   };
+  // clang-format on
   this->write_opcode_(SX1262_SET_DIO_IRQ_PARAMS, irq_params, sizeof(irq_params));
 
   // 17. Attach DIO1 interrupt

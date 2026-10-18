@@ -291,10 +291,15 @@ filter_tidy_output() {
   done
 }
 
+# Binaries are overridable so CI can pin the same LLVM major as a local Ubuntu 26.04 machine.
+CLANG_TIDY="${CLANG_TIDY:-clang-tidy}"
+RUN_CLANG_TIDY="${RUN_CLANG_TIDY:-run-clang-tidy}"
+
 echo "==> Running clang-tidy on ${#FILES_ARRAY[@]} translation units (device: $DEVICE_NAME, jobs: $JOBS)..."
-if command -v run-clang-tidy >/dev/null 2>&1; then
+if command -v "$RUN_CLANG_TIDY" >/dev/null 2>&1; then
   set +e
-  run-clang-tidy \
+  "$RUN_CLANG_TIDY" \
+    -clang-tidy-binary "$(command -v "$CLANG_TIDY")" \
     -p "$(dirname "$FILTERED_DB")" \
     -j "$JOBS" \
     -header-filter "$HEADER_FILTER" \
@@ -307,7 +312,7 @@ if command -v run-clang-tidy >/dev/null 2>&1; then
     exit "$status"
   fi
 else
-  clang-tidy \
+  "$CLANG_TIDY" \
     -p "$(dirname "$FILTERED_DB")" \
     --header-filter "$HEADER_FILTER" \
     --use-color \

@@ -168,11 +168,11 @@ static constexpr uint8_t CMD_NODE_VERIFY_RESP =
            ///< CMD_CHALLENGE_REQ). Sent by create_node_verify_resp_device_role()
            ///< (proto_commands.h/.cpp), the key-extraction responder's answer to CMD_NODE_VERIFY_REQ.
 static constexpr uint8_t CMD_LAUNCH_KEY_TRANSFER =
-    0x38;  ///< Device-initiated ("pull") key transfer request: documented elsewhere as a command
-           ///< ID plus a 6-byte challenge, nothing more — never observed in our corpus or in any
-           ///< field log, and not sent or handled anywhere in this codebase — the constant is
-           ///< used only to construct a hypothetical device-side IV in
-           ///< tests/proto/proto_crypto_test.cpp, exercising the crypto primitive, not a dispatch path.
+    0x38;  ///< Key transfer request ("pull"): a controller asks a device for its system key. Payload
+           ///< is 6 random bytes; the device answers with a CMD_KEY_TRANSFER (0x32) holding its key
+           ///< under the transfer key, the IV built from {0x38} and those 6 bytes. Sent only by
+           ///< `pairing_key_transfer: pull` (create_launch_key_transfer()); not yet seen on air in
+           ///< this project's corpus.
 
 // Authentication commands (challenge-response for secured commands)
 static constexpr uint8_t CMD_CHALLENGE_REQ =
@@ -261,6 +261,24 @@ static constexpr uint8_t CMD_SERVICE_STATUS_ACK = 0xF3;  ///< No description ava
 
 static constexpr uint8_t CMD_ERROR_RESP = 0xFE;  ///< Error response to any command
 
+// === CMD_ERROR_RESP result byte ===
+//
+// DATA[0] of a CMD_ERROR_RESP packs a result code into bits [7:3] and an execution state into
+// bits [2:0]: byte = (code << 3) | state. Our captures fit this layout: every corpus 0xFE byte
+// but one has state 0, a device answers a command it does not implement with 0x08 = code 1
+// "command unknown" (tests/corpus/captures/probe/somfy_awning_probe_general_info3_lr1121.yaml,
+// velux_window_probe_metadata_replies.yaml, velux_kig300_probe_capability_burst.yaml), and a
+// priority lock comes back as 0x38 = code 7 (tests/corpus/captures/exchange/
+// tilt_cover_exchange_priority_locked_error.yaml). The RESULT_* values below that are multiples
+// of 8 (RESULT_COMMAND_UNKNOWN .. RESULT_ALREADY_CONFIGURED) are those codes already shifted into
+// place. The run-status values with state bits set (0x01-0x24) and the limitation values
+// (0xDF-0xEE) stay as a fallback: one Somfy capture does answer with 0x05
+// (tests/corpus/captures/identify/somfy_awning_identify_wrong_systemkey_sx1276.yaml), so not
+// every device uses the packed form.
+static constexpr uint8_t ERROR_RESP_CODE_SHIFT = 3;     ///< Result code sits in bits [7:3] of the 0xFE byte.
+static constexpr uint8_t ERROR_RESP_STATE_MASK = 0x07;  ///< Execution state sits in bits [2:0] of the 0xFE byte.
+static constexpr uint8_t ERROR_RESP_CODE_MAX = 0x11;    ///< Highest named result code (17, "already configured").
+
 // Command-result / limitation codes carried in CMD_ERROR_RESP DATA[0].
 static constexpr uint8_t RESULT_UNKNOWN_STATUS_REPLY = 0x00;        ///< Device returned an unknown status reply.
 static constexpr uint8_t RESULT_COMMAND_COMPLETED_OK = 0x01;        ///< No errors detected.
@@ -270,7 +288,6 @@ static constexpr uint8_t RESULT_BLOCKED = 0x04;                     ///< Node bl
 static constexpr uint8_t RESULT_WRONG_SYSTEMKEY = 0x05;             ///< Node contains the wrong system key.
 static constexpr uint8_t RESULT_PRIORITY_LEVEL_LOCKED = 0x06;       ///< Node is locked on this priority level.
 static constexpr uint8_t RESULT_REACHED_WRONG_POSITION = 0x07;      ///< Node stopped in another position than expected.
-static constexpr uint8_t RESULT_ERROR_DURING_EXECUTION = 0x08;      ///< Generic execution failure.
 static constexpr uint8_t RESULT_NO_EXECUTION = 0x09;                ///< Node did not move.
 static constexpr uint8_t RESULT_CALIBRATING = 0x0A;                 ///< Node is calibrating.
 static constexpr uint8_t RESULT_POWER_CONSUMPTION_TOO_HIGH = 0x0B;  ///< Node power consumption is too high.
@@ -278,7 +295,6 @@ static constexpr uint8_t RESULT_POWER_CONSUMPTION_TOO_LOW = 0x0C;   ///< Node po
 static constexpr uint8_t RESULT_LOCK_POSITION_OPEN = 0x0D;          ///< Lock command failed because the door is open.
 static constexpr uint8_t RESULT_MOTION_TIME_TOO_LONG = 0x0E;        ///< Target was not reached in time.
 static constexpr uint8_t RESULT_THERMAL_PROTECTION = 0x0F;          ///< Node entered thermal protection mode.
-static constexpr uint8_t RESULT_PRODUCT_NOT_OPERATIONAL = 0x10;     ///< Node is not currently operational.
 static constexpr uint8_t RESULT_FILTER_MAINTENANCE_NEEDED = 0x11;   ///< Filter needs maintenance.
 static constexpr uint8_t RESULT_BATTERY_LEVEL = 0x12;               ///< Battery level is low.
 static constexpr uint8_t RESULT_TARGET_MODIFIED = 0x13;             ///< Node modified the requested target value.
@@ -286,27 +302,45 @@ static constexpr uint8_t RESULT_MODE_NOT_IMPLEMENTED = 0x14;        ///< Mode is
 static constexpr uint8_t RESULT_COMMAND_INCOMPATIBLE_TO_MOVEMENT = 0x15;  ///< Command cannot move the node that way.
 static constexpr uint8_t RESULT_USER_ACTION = 0x16;                       ///< User action overrode the command.
 static constexpr uint8_t RESULT_DEAD_BOLT_ERROR = 0x17;                   ///< Dead bolt error.
-static constexpr uint8_t RESULT_AUTOMATIC_CYCLE_ENGAGED = 0x18;           ///< Node entered automatic cycle mode.
 static constexpr uint8_t RESULT_WRONG_LOAD_CONNECTED = 0x19;              ///< Wrong load connected to node.
 static constexpr uint8_t RESULT_COLOUR_NOT_REACHABLE = 0x1A;              ///< Requested colour not reachable.
 static constexpr uint8_t RESULT_TARGET_NOT_REACHABLE = 0x1B;              ///< Requested target not reachable.
 static constexpr uint8_t RESULT_BAD_INDEX_RECEIVED = 0x1C;                ///< Invalid index received.
 static constexpr uint8_t RESULT_COMMAND_OVERRULED = 0x1D;                 ///< Command was overruled by a newer command.
 static constexpr uint8_t RESULT_NODE_WAITING_FOR_POWER = 0x1E;            ///< Node is waiting for power.
-static constexpr uint8_t RESULT_NODE_LOCKED = 0x20;                       ///< Node is locked.
 static constexpr uint8_t RESULT_WRONG_POSITION = 0x21;                    ///< Node reports wrong position.
 static constexpr uint8_t RESULT_LIMITS_NOT_SET = 0x22;                    ///< Device limits are not set.
 static constexpr uint8_t RESULT_IP_NOT_SET = 0x23;                        ///< Intermediate position is not set.
 static constexpr uint8_t RESULT_OUT_OF_RANGE = 0x24;                      ///< Requested value is out of range.
-static constexpr uint8_t RESULT_PRIORITY_LOCKED_NON_EXEC =
-    0x38;  ///< Priority locked, command not executed (ACEI priority too low).
-static constexpr uint8_t RESULT_INVALID_FUNCTION_INDEX =
-    0x58;  ///< CMD_PRIVATE-family function ID / sub-index / selector-block outside the range the
-           ///< device implements. Seen cross-vendor (Somfy Sunea awning + dimmer, Velux window)
-           ///< when a diagnostic probe walks past the last supported index; not in any reference
-           ///< error table. Distinct from RESULT_BAD_INDEX_RECEIVED (0x1C).
-static constexpr uint8_t RESULT_INFORMATION_CODE = 0xDF;              ///< Information-only code with unknown semantics.
-static constexpr uint8_t RESULT_PARAMETER_LIMITED = 0xE0;             ///< Parameter limited by an unknown device.
+// Packed result codes (code << 3, state 0 = "non executing"); see the block comment above.
+static constexpr uint8_t RESULT_COMMAND_UNKNOWN = 0x08;  ///< Code 1: the device does not offer this command in its
+                                                         ///< current state or class.
+static constexpr uint8_t RESULT_MODE_OR_STATE_UNKNOWN = 0x10;  ///< Code 2: mode or state number unknown.
+static constexpr uint8_t RESULT_BAD_MAC = 0x18;                ///< Code 3: challenge answer (MAC) did not verify.
+static constexpr uint8_t RESULT_SETUP_REQUIRED = 0x20;         ///< Code 4: the device needs setting up first.
+static constexpr uint8_t RESULT_PARAMETER_UNKNOWN = 0x28;      ///< Code 5: parameter, alias, access method or scenario
+                                                               ///< unknown. The Somfy Izymo answers our SetConfig1
+                                                               ///< (0x6F) with it during pairing.
+static constexpr uint8_t RESULT_ORIGINATOR_DISABLED = 0x30;    ///< Code 6: command originator disabled.
+static constexpr uint8_t RESULT_PRIORITY_LOCKED = 0x38;        ///< Code 7: priority locked; the command's priority
+                                                               ///< level is too low to run.
+static constexpr uint8_t RESULT_PRIORITY_SERVICE_NOT_SUPPORTED = 0x40;   ///< Code 8: priority service not supported.
+static constexpr uint8_t RESULT_PARAMETER_LIMITATION_ADJUSTMENT = 0x48;  ///< Code 9: parameter limitation adjustment.
+static constexpr uint8_t RESULT_PARAMETER_INCOHERENCE_ADJUSTMENT =
+    0x50;                                                    ///< Code 10: parameter incoherence adjustment.
+static constexpr uint8_t RESULT_TOTAL_INCOHERENCE = 0x58;    ///< Code 11: the request does not fit what the device
+                                                             ///< implements. Seen cross-vendor (Somfy Sunea awning +
+                                                             ///< dimmer, Velux window) when a diagnostic probe walks
+                                                             ///< past the last supported function index or block.
+static constexpr uint8_t RESULT_SERVICE_FULL = 0x60;         ///< Code 12: service full.
+static constexpr uint8_t RESULT_ALIAS_INCOHERENCE = 0x68;    ///< Code 13: alias incoherence.
+static constexpr uint8_t RESULT_SESSION_INTERRUPTED = 0x70;  ///< Code 14: session interrupted.
+static constexpr uint8_t RESULT_NOT_IMPLEMENTED = 0x78;      ///< Code 15: not implemented.
+static constexpr uint8_t RESULT_COMMAND_REJECTED = 0x80;     ///< Code 16: command rejected. A Somfy Sunilus and a
+                                                             ///< Somfy J406io answered a key transfer (0x32) with it.
+static constexpr uint8_t RESULT_ALREADY_CONFIGURED = 0x88;   ///< Code 17: already configured.
+static constexpr uint8_t RESULT_INFORMATION_CODE = 0xDF;     ///< Information-only code with unknown semantics.
+static constexpr uint8_t RESULT_PARAMETER_LIMITED = 0xE0;    ///< Parameter limited by an unknown device.
 static constexpr uint8_t RESULT_LIMITATION_BY_LOCAL_USER = 0xE1;      ///< Parameter limited by local button.
 static constexpr uint8_t RESULT_LIMITATION_BY_USER = 0xE2;            ///< Parameter limited by a remote control.
 static constexpr uint8_t RESULT_LIMITATION_BY_RAIN = 0xE3;            ///< Parameter limited by a rain sensor.
@@ -707,7 +741,20 @@ const char *power_save_mode_name(uint8_t mode);
 // Command Result Codes
 // ============================================================================
 
+/// @brief Result code (bits [7:3]) of a CMD_ERROR_RESP byte.
+/// @param result Result byte from CMD_ERROR_RESP data[0].
+/// @return Code 0..31; codes 1..ERROR_RESP_CODE_MAX are named (see the RESULT_* block).
+constexpr uint8_t error_resp_code(uint8_t result) { return result >> ERROR_RESP_CODE_SHIFT; }
+
+/// @brief Execution state (bits [2:0]) of a CMD_ERROR_RESP byte.
+/// @param result Result byte from CMD_ERROR_RESP data[0].
+/// @return State 0..7; 0 means the command was not executed.
+constexpr uint8_t error_resp_state(uint8_t result) { return result & ERROR_RESP_STATE_MASK; }
+
 /// @brief Return a stable symbolic name for a CMD_ERROR_RESP result code.
+///
+/// A byte with state 0 and a named code reads as a packed result code (RESULT_COMMAND_UNKNOWN ..
+/// RESULT_ALREADY_CONFIGURED); every other byte is looked up in the run-status / limitation table.
 /// @param result Result byte from CMD_ERROR_RESP data[0].
 /// @return Uppercase symbolic name, or "UNKNOWN_RESULT_CODE" when unmapped.
 const char *command_result_name(uint8_t result);

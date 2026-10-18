@@ -1918,12 +1918,12 @@ TEST(HubManagement, ProbeDeviceSuccessReportsRawReplyHexAndCmd) {
 
 TEST(HubManagement, ProbeDeviceErrorResponseReportsDecodedResultCode) {
   // The exact shape a real awning returned to a general_info3 probe: CMD_ERROR_RESP with
-  // RESULT_ERROR_DURING_EXECUTION (0x08).
+  // RESULT_COMMAND_UNKNOWN (0x08).
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
   component.set_diagnostic_probes_enabled(true);
-  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_ERROR_DURING_EXECUTION)));
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_COMMAND_UNKNOWN)));
 
   const auto result = component.probe_device("ABC123", "private_fn", "0x06");
   EXPECT_TRUE(result.success) << "CMD_ERROR_RESP is a real, decoded reply, not a probe failure";
@@ -1931,8 +1931,8 @@ TEST(HubManagement, ProbeDeviceErrorResponseReportsDecodedResultCode) {
   EXPECT_EQ(result.response_cmd, CMD_ERROR_RESP);
   EXPECT_FALSE(result.response_hex.empty()) << "the raw reply is still reported alongside the decode";
   EXPECT_TRUE(result.has_result_code);
-  EXPECT_EQ(result.result_code, RESULT_ERROR_DURING_EXECUTION);
-  EXPECT_NE(result.message.find(command_result_name(RESULT_ERROR_DURING_EXECUTION)), std::string::npos);
+  EXPECT_EQ(result.result_code, RESULT_COMMAND_UNKNOWN);
+  EXPECT_NE(result.message.find(command_result_name(RESULT_COMMAND_UNKNOWN)), std::string::npos);
 }
 
 TEST(HubManagement, ProbeDeviceReportsDecodedLimitationReplyBesideRawHex) {

@@ -16,7 +16,7 @@ description: >
     - D1 00 = 0xD1 = POS_SECURED_TARGET marker (the secured/environmental retreat setting).
     - C8 00 = 0xC800 = STATUS_POS_MAX (100% closed / full-scale).
     - 27 10 = 0x2710 = 10000, a stable constant across window positions (not %-of-0xC800).
-    - fn 0x0F answers CMD_ERROR_RESP (0xFE) result code 0x58 -> RESULT_INVALID_FUNCTION_INDEX
+    - fn 0x0F answers CMD_ERROR_RESP (0xFE) result code 0x58 -> RESULT_TOTAL_INCOHERENCE
       ("requested function/sub-index is not implemented by the device"), the same rejection a
       Somfy Sunea awning/dimmer gives for an out-of-range block
       (somfy_awning_probe_extended_fn_sx1262.yaml).
@@ -89,7 +89,7 @@ frames:
     crc: absent
     note: >
       `private_fn` fn 0x0F reply: CMD_ERROR_RESP (0xFE), result code 0x58 =
-      RESULT_INVALID_FUNCTION_INDEX. The window implements function IDs 0x00–0x0E; 0x0F is past
+      RESULT_TOTAL_INCOHERENCE. The window implements function IDs 0x00–0x0E; 0x0F is past
       the end. END frame.
   - dir: rx
     t_ms: 0

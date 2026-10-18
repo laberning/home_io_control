@@ -255,8 +255,6 @@ const char *command_result_name(uint8_t result) {
       return "PRIORITY_LEVEL_LOCKED";
     case RESULT_REACHED_WRONG_POSITION:
       return "REACHED_WRONG_POSITION";
-    case RESULT_ERROR_DURING_EXECUTION:
-      return "ERROR_DURING_EXECUTION";
     case RESULT_NO_EXECUTION:
       return "NO_EXECUTION";
     case RESULT_CALIBRATING:
@@ -271,8 +269,6 @@ const char *command_result_name(uint8_t result) {
       return "MOTION_TIME_TOO_LONG";
     case RESULT_THERMAL_PROTECTION:
       return "THERMAL_PROTECTION";
-    case RESULT_PRODUCT_NOT_OPERATIONAL:
-      return "PRODUCT_NOT_OPERATIONAL";
     case RESULT_FILTER_MAINTENANCE_NEEDED:
       return "FILTER_MAINTENANCE_NEEDED";
     case RESULT_BATTERY_LEVEL:
@@ -287,8 +283,6 @@ const char *command_result_name(uint8_t result) {
       return "USER_ACTION";
     case RESULT_DEAD_BOLT_ERROR:
       return "DEAD_BOLT_ERROR";
-    case RESULT_AUTOMATIC_CYCLE_ENGAGED:
-      return "AUTOMATIC_CYCLE_ENGAGED";
     case RESULT_WRONG_LOAD_CONNECTED:
       return "WRONG_LOAD_CONNECTED";
     case RESULT_COLOUR_NOT_REACHABLE:
@@ -301,8 +295,6 @@ const char *command_result_name(uint8_t result) {
       return "COMMAND_OVERRULED";
     case RESULT_NODE_WAITING_FOR_POWER:
       return "NODE_WAITING_FOR_POWER";
-    case RESULT_NODE_LOCKED:
-      return "NODE_LOCKED";
     case RESULT_WRONG_POSITION:
       return "WRONG_POSITION";
     case RESULT_LIMITS_NOT_SET:
@@ -311,10 +303,40 @@ const char *command_result_name(uint8_t result) {
       return "IP_NOT_SET";
     case RESULT_OUT_OF_RANGE:
       return "OUT_OF_RANGE";
-    case RESULT_PRIORITY_LOCKED_NON_EXEC:
+    case RESULT_COMMAND_UNKNOWN:
+      return "COMMAND_UNKNOWN";
+    case RESULT_MODE_OR_STATE_UNKNOWN:
+      return "MODE_OR_STATE_UNKNOWN";
+    case RESULT_BAD_MAC:
+      return "BAD_MAC";
+    case RESULT_SETUP_REQUIRED:
+      return "SETUP_REQUIRED";
+    case RESULT_PARAMETER_UNKNOWN:
+      return "PARAMETER_UNKNOWN";
+    case RESULT_ORIGINATOR_DISABLED:
+      return "ORIGINATOR_DISABLED";
+    case RESULT_PRIORITY_LOCKED:
       return "PRIORITY_LOCKED";
-    case RESULT_INVALID_FUNCTION_INDEX:
-      return "INVALID_FUNCTION_INDEX";
+    case RESULT_PRIORITY_SERVICE_NOT_SUPPORTED:
+      return "PRIORITY_SERVICE_NOT_SUPPORTED";
+    case RESULT_PARAMETER_LIMITATION_ADJUSTMENT:
+      return "PARAMETER_LIMITATION_ADJUSTMENT";
+    case RESULT_PARAMETER_INCOHERENCE_ADJUSTMENT:
+      return "PARAMETER_INCOHERENCE_ADJUSTMENT";
+    case RESULT_TOTAL_INCOHERENCE:
+      return "TOTAL_INCOHERENCE";
+    case RESULT_SERVICE_FULL:
+      return "SERVICE_FULL";
+    case RESULT_ALIAS_INCOHERENCE:
+      return "ALIAS_INCOHERENCE";
+    case RESULT_SESSION_INTERRUPTED:
+      return "SESSION_INTERRUPTED";
+    case RESULT_NOT_IMPLEMENTED:
+      return "NOT_IMPLEMENTED";
+    case RESULT_COMMAND_REJECTED:
+      return "COMMAND_REJECTED";
+    case RESULT_ALREADY_CONFIGURED:
+      return "ALREADY_CONFIGURED";
     case RESULT_INFORMATION_CODE:
       return "INFORMATION_CODE";
     case RESULT_PARAMETER_LIMITED:
@@ -366,8 +388,6 @@ const char *command_result_description(uint8_t result) {
       return "node is locked on this priority level";
     case RESULT_REACHED_WRONG_POSITION:
       return "node stopped in another position than expected";
-    case RESULT_ERROR_DURING_EXECUTION:
-      return "an error occurred during command execution";
     case RESULT_NO_EXECUTION:
       return "no movement of the node parameter";
     case RESULT_CALIBRATING:
@@ -382,8 +402,6 @@ const char *command_result_description(uint8_t result) {
       return "target was not reached in time";
     case RESULT_THERMAL_PROTECTION:
       return "node has gone into thermal protection mode";
-    case RESULT_PRODUCT_NOT_OPERATIONAL:
-      return "node is not currently operational";
     case RESULT_FILTER_MAINTENANCE_NEEDED:
       return "filter needs maintenance";
     case RESULT_BATTERY_LEVEL:
@@ -398,8 +416,6 @@ const char *command_result_description(uint8_t result) {
       return "user action overrode the command";
     case RESULT_DEAD_BOLT_ERROR:
       return "dead bolt error";
-    case RESULT_AUTOMATIC_CYCLE_ENGAGED:
-      return "node has gone into automatic cycle mode";
     case RESULT_WRONG_LOAD_CONNECTED:
       return "wrong load connected to node";
     case RESULT_COLOUR_NOT_REACHABLE:
@@ -412,8 +428,6 @@ const char *command_result_description(uint8_t result) {
       return "command was overruled by a newer command";
     case RESULT_NODE_WAITING_FOR_POWER:
       return "node is waiting for power";
-    case RESULT_NODE_LOCKED:
-      return "node is locked";
     case RESULT_WRONG_POSITION:
       return "wrong position";
     case RESULT_LIMITS_NOT_SET:
@@ -422,10 +436,40 @@ const char *command_result_description(uint8_t result) {
       return "intermediate position is not set";
     case RESULT_OUT_OF_RANGE:
       return "requested value is out of range";
-    case RESULT_PRIORITY_LOCKED_NON_EXEC:
+    case RESULT_COMMAND_UNKNOWN:
+      return "the device does not offer this command in its current state";
+    case RESULT_MODE_OR_STATE_UNKNOWN:
+      return "mode or state number unknown to the device";
+    case RESULT_BAD_MAC:
+      return "the device rejected our challenge answer (wrong system key?)";
+    case RESULT_SETUP_REQUIRED:
+      return "the device needs setting up first";
+    case RESULT_PARAMETER_UNKNOWN:
+      return "parameter, alias or access method unknown to the device";
+    case RESULT_ORIGINATOR_DISABLED:
+      return "command originator disabled on the device";
+    case RESULT_PRIORITY_LOCKED:
       return "command priority too low, node rejected execution";
-    case RESULT_INVALID_FUNCTION_INDEX:
-      return "requested function/sub-index is not implemented by the device";
+    case RESULT_PRIORITY_SERVICE_NOT_SUPPORTED:
+      return "priority service not supported by the device";
+    case RESULT_PARAMETER_LIMITATION_ADJUSTMENT:
+      return "the device adjusted the parameter to a limitation";
+    case RESULT_PARAMETER_INCOHERENCE_ADJUSTMENT:
+      return "the device adjusted an incoherent parameter";
+    case RESULT_TOTAL_INCOHERENCE:
+      return "the request does not fit what the device implements";
+    case RESULT_SERVICE_FULL:
+      return "the device has no room left for this request";
+    case RESULT_ALIAS_INCOHERENCE:
+      return "alias incoherence";
+    case RESULT_SESSION_INTERRUPTED:
+      return "session interrupted";
+    case RESULT_NOT_IMPLEMENTED:
+      return "not implemented by the device";
+    case RESULT_COMMAND_REJECTED:
+      return "the device rejected the command";
+    case RESULT_ALREADY_CONFIGURED:
+      return "the device is already configured";
     case RESULT_INFORMATION_CODE:
       return "information-only result with unknown semantics";
     case RESULT_PARAMETER_LIMITED:

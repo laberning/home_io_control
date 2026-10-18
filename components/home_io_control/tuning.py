@@ -57,6 +57,7 @@ CONF_SCAN_POWER_CLASSES = "scan_power_classes"
 CONF_PAIRING_DISCOVER_CONFIRM = "pairing_discover_confirm"
 CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS = "pairing_discovery_listen_channels"
 CONF_PAIRING_KEY_INIT_DELAY_MS = "pairing_key_init_delay_ms"
+CONF_PAIRING_KEY_TRANSFER = "pairing_key_transfer"
 
 # C++ type references
 TuningConfig = home_io_control_ns.class_("TuningConfig")
@@ -77,6 +78,7 @@ DiscoveryCommand = home_io_control_ns.enum("DiscoveryCommand", is_class=True)
 ScanPowerClasses = home_io_control_ns.enum("ScanPowerClasses", is_class=True)
 DiscoverConfirmMode = home_io_control_ns.enum("DiscoverConfirmMode", is_class=True)
 DiscoveryListenChannels = home_io_control_ns.enum("DiscoveryListenChannels", is_class=True)
+KeyTransferMode = home_io_control_ns.enum("KeyTransferMode", is_class=True)
 
 # Map each YAML option string to its C++ enum value. Options are bare kHz numbers (the "kHz"
 # unit lives in the entity name) for uniformity with the numeric parameters.
@@ -188,6 +190,14 @@ DISCOVERY_LISTEN_CHANNELS_OPTIONS = {
     "all": DiscoveryListenChannels.ALL,
 }
 
+# Which direction pairing moves the system key in. `push` (default) sends our key; `pull` asks the
+# device for its own key. Option strings mirror key_transfer_mode_to_string() (tuning_config.h),
+# pinned against each other by tuning_registry_test.cpp. See KeyTransferMode for the details.
+KEY_TRANSFER_MODE_OPTIONS = {
+    "push": KeyTransferMode.PUSH,
+    "pull": KeyTransferMode.PULL,
+}
+
 
 def _id_key(param_key):
     """Config-dict key under which a parameter's injected companion entity ID is stored."""
@@ -231,6 +241,7 @@ UI_NAMES = {
     CONF_PAIRING_DISCOVER_CONFIRM: "Pairing Discover Confirm",
     CONF_PAIRING_KEY_INIT_DELAY_MS: "Pairing Key Init Delay",
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: "Pairing Discovery Listen Channels",
+    CONF_PAIRING_KEY_TRANSFER: "Pairing Key Transfer",
 }
 
 # Numeric parameters: key -> (min, max, step, unit). Single source of truth for both the
@@ -329,6 +340,7 @@ _SELECT_OPTIONS = {
     CONF_SCAN_POWER_CLASSES: list(SCAN_POWER_CLASSES_OPTIONS),
     CONF_PAIRING_DISCOVER_CONFIRM: list(DISCOVER_CONFIRM_MODE_OPTIONS),
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: list(DISCOVERY_LISTEN_CHANNELS_OPTIONS),
+    CONF_PAIRING_KEY_TRANSFER: list(KEY_TRANSFER_MODE_OPTIONS),
 }
 
 
@@ -379,6 +391,9 @@ _validate_discover_confirm_mode = _one_of_string(
 _validate_discovery_listen_channels = _one_of_string(
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS, DISCOVERY_LISTEN_CHANNELS_OPTIONS
 )
+_validate_key_transfer_mode = _one_of_string(
+    CONF_PAIRING_KEY_TRANSFER, KEY_TRANSFER_MODE_OPTIONS
+)
 
 
 def _parse_destination_to_bytes(value):
@@ -415,6 +430,7 @@ TUNING_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS
         ): _validate_discovery_listen_channels,
+        cv.Optional(CONF_PAIRING_KEY_TRANSFER): _validate_key_transfer_mode,
         **{cv.Optional(key): cv.boolean for key in _BOOL_PARAMS},
         # Numeric parameters share their range with the number-entity bounds via _NUMBER_PARAMS.
         **{
@@ -523,6 +539,13 @@ def _apply_tuning_config(config, var):
             DISCOVERY_LISTEN_CHANNELS_OPTIONS[
                 config[CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS]
             ],
+        )
+
+    if CONF_PAIRING_KEY_TRANSFER in config:
+        _assign(
+            tuning,
+            "pairing_key_transfer",
+            KEY_TRANSFER_MODE_OPTIONS[config[CONF_PAIRING_KEY_TRANSFER]],
         )
 
     # Ordered discovery commands. Clear the struct default before appending so a

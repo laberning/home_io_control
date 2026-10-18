@@ -116,6 +116,14 @@ class ExchangeEngine {
   /// @return true if HMAC verified; false on timeout or mismatch.
   bool authenticate_request(const IoFrame &request, uint32_t freq);
 
+  /// Same as authenticate_request(), but checks the device's 0x3D against `key` instead of the
+  /// hub's system key. Used by the key pull to make a device prove it holds the key it just sent.
+  /// @param request The device's frame the challenge is about (its cmd + data are the transcript).
+  /// @param freq    RF channel to challenge on.
+  /// @param key     16-byte key the device's 0x3D must verify against.
+  /// @return true if the device answered and its HMAC verified with `key`.
+  bool authenticate_request(const IoFrame &request, uint32_t freq, const uint8_t *key);
+
   /// @brief Per-reply facts collect_broadcast_responses() hands its caller alongside the frame.
   ///
   /// The engine owns the TX-complete instant and the received packet; the caller cannot

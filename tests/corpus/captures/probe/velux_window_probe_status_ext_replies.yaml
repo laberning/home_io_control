@@ -18,7 +18,7 @@ description: >
   the 0x80 tail (compact form). `status_ext_fn6` zeroes data[2..5]; `status_ext_fn9` keeps the
   target selector but drops the resolved-position field. The tails seen dry (78 00, 50 00,
   C8 00 — position-family values) have no decode. An out-of-range block answers CMD_ERROR_RESP
-  result 0x58 = RESULT_INVALID_FUNCTION_INDEX, same as `private_fn` fn 0x0F.
+  result 0x58 = RESULT_TOTAL_INCOHERENCE, same as `private_fn` fn 0x0F.
 
   No TX probe frames were logged by the reporter. Community capture: no system key, HMAC not
   verifiable.
@@ -55,7 +55,7 @@ frames:
     t_ms: 0
     hex: "89 00 51 3B 34 65 44 C6 FE 58"
     crc: absent
-    note: "`status_ext_fn6` (fn 0x06), block 0x80: CMD_ERROR_RESP (0xFE) result code 0x58 = RESULT_INVALID_FUNCTION_INDEX. Every block 0x80–0x8F answered this; the block space is 0x00–0x0E. END."
+    note: "`status_ext_fn6` (fn 0x06), block 0x80: CMD_ERROR_RESP (0xFE) result code 0x58 = RESULT_TOTAL_INCOHERENCE. Every block 0x80–0x8F answered this; the block space is 0x00–0x0E. END."
   - dir: rx
     t_ms: 0
     hex: "90 00 51 3B 34 65 44 C6 04 05 00 D8 03 80 78 00 00"

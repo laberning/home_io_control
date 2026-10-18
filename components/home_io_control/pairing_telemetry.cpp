@@ -41,6 +41,10 @@ const char *outcome_name(PairingOutcome outcome) {
       return "invalid_response";
     case PairingOutcome::KEY_EXCHANGE_FAILED:
       return "key_exchange_failed";
+    case PairingOutcome::KEY_TRANSFER_REFUSED:
+      return "key_transfer_refused";
+    case PairingOutcome::KEY_RECEIVED:
+      return "key_received";
     case PairingOutcome::NONE:
     default:
       return "none";
@@ -83,6 +87,12 @@ void PairingTelemetry::begin() {
   this->has_paired_device_ = false;
   memset(this->paired_node_id_, 0, sizeof(this->paired_node_id_));
   this->paired_device_type_ = DeviceType::UNKNOWN;
+  this->has_key_refusal_ = false;
+  this->key_refusal_code_ = 0;
+  this->key_pull_attempted_ = false;
+  this->has_discovered_device_ = false;
+  memset(this->discovered_node_id_, 0, sizeof(this->discovered_node_id_));
+  this->discovered_node_type_ = 0;
   this->advice_codes_.clear();
 }
 
@@ -160,6 +170,12 @@ void PairingTelemetry::set_paired_device(const uint8_t node_id[NODE_ID_SIZE], De
   this->has_paired_device_ = true;
   memcpy(this->paired_node_id_, node_id, NODE_ID_SIZE);
   this->paired_device_type_ = type;
+}
+
+void PairingTelemetry::set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], uint16_t node_type) {
+  this->has_discovered_device_ = true;
+  memcpy(this->discovered_node_id_, node_id, NODE_ID_SIZE);
+  this->discovered_node_type_ = node_type;
 }
 
 void PairingTelemetry::increment_discovery_attempt() {

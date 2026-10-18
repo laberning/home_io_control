@@ -148,6 +148,13 @@ bool device_supports_vent(DeviceType type);
 /// @return Decoded device type.
 DeviceType decode_packed_device_type(uint8_t type_msb, uint8_t type_subtype);
 
+/// @brief Decode the full 10-bit node type from two metadata bytes, without narrowing it to
+/// DeviceType (which keeps only the low 8 bits).
+/// @param type_msb First metadata byte.
+/// @param type_subtype Second metadata byte containing the remaining type bits and subtype.
+/// @return Node type 0..1023; NODE_TYPE_REMOTE_CONTROLLER is 1023.
+uint16_t decode_packed_node_type(uint8_t type_msb, uint8_t type_subtype);
+
 /// @brief Decode a protocol-packed device subtype from the second metadata byte.
 /// @param type_subtype Second metadata byte containing subtype in bits [5:0].
 /// @return Manufacturer-specific subtype.
@@ -266,6 +273,13 @@ static constexpr uint8_t DEVICE_METADATA_SIZE = 2;
 static constexpr uint8_t DEVICE_TYPE_LOW_BITS_SHIFT = 2;
 static constexpr uint8_t DEVICE_TYPE_HIGH_BITS_SHIFT = 6;
 static constexpr uint8_t DEVICE_SUBTYPE_MASK = 0x3F;
+/// Node type 1023 (all ten type bits set, packed bytes `FF C0`): a remote controller. DeviceType is
+/// 8 bits wide and truncates it to 0xFF, so callers that need to recognise it read the full 10-bit
+/// value with decode_packed_node_type(). An Atlantic AGILIA IO radiator answers discovery with this
+/// type while in its display's pairing mode, and then refuses a pushed key with
+/// RESULT_COMMAND_UNKNOWN (tests/corpus/captures/pairing/
+/// atlantic_agilia_pairing_key_transfer_command_unknown.yaml).
+static constexpr uint16_t NODE_TYPE_REMOTE_CONTROLLER = 0x3FF;
 
 // ============================================================================
 // Device State

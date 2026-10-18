@@ -212,6 +212,8 @@ const char *oneway_target_label(const OneWayFrameInfo &info);
 /// address, timestamp) plus flags recording how much of the payload was actually present.
 struct DiscoveryResponseInfo {
   bool metadata_complete{false};     ///< data_len >= DEVICE_METADATA_SIZE (type/subtype present).
+  uint16_t node_type{0};             ///< Full 10-bit node type (0 when metadata is absent); compare
+                                     ///< against NODE_TYPE_REMOTE_CONTROLLER, which DeviceType cannot hold.
   bool has_extended{false};          ///< data_len >= DISCOVERY_RESP_FULL_SIZE (mfr/flags/timestamp present).
   uint8_t manufacturer{0};           ///< Raw manufacturer ID; name via manufacturer_name().
   uint8_t flags{0};                  ///< Multi Information Byte; decode with DISCOVERY_FLAGS_* masks.

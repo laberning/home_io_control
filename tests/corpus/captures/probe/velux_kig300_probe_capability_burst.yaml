@@ -71,7 +71,7 @@ frames:
     freq: 868250000
     hex: "89 00 CA 0A 18 58 6E 37 FE 08"
     crc: absent
-    note: "cmd=ERROR_RESP(0xFE), result code 0x08 = ERROR_DURING_EXECUTION."
+    note: "cmd=ERROR_RESP(0xFE), result code 0x08 = COMMAND_UNKNOWN."
   - dir: rx
     t_ms: 812
     freq: 868950000

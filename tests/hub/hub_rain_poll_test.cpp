@@ -233,7 +233,7 @@ TEST_F(RainPollHub, AnErrorReplyIsAMissAndIsRecorded) {
   init_frame(error, true, false, true, false);
   set_dst(error, comp.node_id_);
   set_src(error, DEVICE_NODE_ID);
-  const uint8_t payload[1] = {RESULT_ERROR_DURING_EXECUTION};
+  const uint8_t payload[1] = {RESULT_COMMAND_UNKNOWN};
   set_cmd(error, CMD_ERROR_RESP, payload, sizeof(payload));
   radio.queue_rx(test::make_rx_packet(error));
 
@@ -241,7 +241,7 @@ TEST_F(RainPollHub, AnErrorReplyIsAMissAndIsRecorded) {
 
   EXPECT_EQ(device().rain_sensor, RainSensorState::UNKNOWN);
   EXPECT_EQ(comp.rain_poll_policy_.get_failures(DEVICE_ID), 1u);
-  EXPECT_EQ(device().last_result_code, RESULT_ERROR_DURING_EXECUTION);
+  EXPECT_EQ(device().last_result_code, RESULT_COMMAND_UNKNOWN);
   EXPECT_FALSE(comp.rain_poll_policy_.first_error_reply(DEVICE_ID)) << "the warning was spent on this reply";
 }
 

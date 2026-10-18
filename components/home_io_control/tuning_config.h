@@ -132,6 +132,20 @@ enum class DiscoveryListenChannels : uint8_t {
                  ///< the other two; use it to rule out a responder that only answers on CH2.
 };
 
+/// @brief Which direction PairingEngine moves the system key in after discovery.
+///
+/// `push` is the usual pairing: we send our key to the device (0x31 key init, the device's 0x3C,
+/// our 0x32, its 0x33). `pull` asks the device for its own key instead: we send a 0x38 key-transfer
+/// request with six random bytes, the device answers with a 0x32 holding its key, and we challenge
+/// it (0x3C) to prove it holds that key before trusting it. An Atlantic AGILIA IO radiator in its
+/// display's pairing mode answers a pushed key with RESULT_COMMAND_UNKNOWN (tests/corpus/captures/
+/// pairing/atlantic_agilia_pairing_key_transfer_command_unknown.yaml); `pull` is the experiment for
+/// such a device. Pull is not hardware-validated: see PairingEngine::run_key_pull_phase_().
+enum class KeyTransferMode : uint8_t {
+  PUSH,  ///< Default. Send our system key to the device.
+  PULL,  ///< Experimental. Ask the device for its key; adopt nothing automatically.
+};
+
 /// @brief Discovery request command codes.
 enum class DiscoveryCommand : uint8_t {
   DISCOVER = 0x28,      ///< Standard broadcast discovery request (to 0x00003B).
@@ -317,7 +331,8 @@ struct TuningConfig {
   DiscoverConfirmMode pairing_discover_confirm{
       DiscoverConfirmMode::SEND};  ///< Whether/how to send CMD_DISCOVER_CONFIRM (0x2C) during pairing.
   DiscoveryListenChannels pairing_discovery_listen_channels{
-      DiscoveryListenChannels::SKIP_REQUEST};  ///< Channels the discovery response wait covers.
+      DiscoveryListenChannels::SKIP_REQUEST};                   ///< Channels the discovery response wait covers.
+  KeyTransferMode pairing_key_transfer{KeyTransferMode::PUSH};  ///< Push our key, or pull the device's key.
   uint16_t pairing_key_init_delay_ms{
       PAIRING_KEY_INIT_DELAY_MS};  ///< Pause after the discover-confirm step, before CMD_KEY_INIT (0x31).
 
@@ -541,6 +556,18 @@ std::string discovery_listen_channels_to_string(DiscoveryListenChannels value);
 /// @param value Option string to parse.
 /// @return The selection, or `std::nullopt` if `value` is not one of the options.
 std::optional<DiscoveryListenChannels> discovery_listen_channels_from_string(const std::string &value);
+
+/// @brief Render a KeyTransferMode as its YAML/select option string.
+/// @param value Selection to render.
+/// @return `"push"` or `"pull"`.
+std::string key_transfer_mode_to_string(KeyTransferMode value);
+
+/// @brief Parse a KeyTransferMode from its YAML/select option string.
+///
+/// Exact, case-sensitive match against the strings key_transfer_mode_to_string() emits.
+/// @param value Option string to parse.
+/// @return The selection, or `std::nullopt` if `value` is not one of the options.
+std::optional<KeyTransferMode> key_transfer_mode_from_string(const std::string &value);
 
 }  // namespace home_io_control
 }  // namespace esphome

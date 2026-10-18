@@ -283,7 +283,7 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @return The reading with @ref front_end_rx_gain_db removed. Used for every RSSI this driver
   ///         reports — live (@ref read_rssi) and per received packet — so they share one scale.
   [[nodiscard]] int16_t raw_rssi_to_dbm_(uint8_t raw) const {
-    return static_cast<int16_t>(-static_cast<int16_t>(raw) / 2 - this->front_end_rx_gain_db());
+    return static_cast<int16_t>((-static_cast<int16_t>(raw) / 2) - this->front_end_rx_gain_db());
   }
   /// @brief Log the init-time device errors under @p tag, or nothing when there were none.
   /// @param tag Log tag of the calling driver, so the line stays inside its own dump section.

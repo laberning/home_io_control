@@ -95,6 +95,8 @@ class TestablePairingEngine : public PairingEngine {
   using PairingEngine::wait_for_discover_confirm_ack_;
   using PairingEngine::wait_for_key_challenge_;
   using PairingEngine::wait_for_key_confirm_;
+  using PairingEngine::verify_device_holds_key_;
+  using PairingEngine::run_key_pull_phase_;
 };
 
 /// Hub subclass exposing protected members and methods for unit tests.

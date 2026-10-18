@@ -78,11 +78,15 @@ struct RecentOneWayPairingSighting {
 
 /// @brief Final disposition of a pairing attempt, used by the result sensor string.
 enum class PairingOutcome : uint8_t {
-  NONE,                 ///< No attempt has completed yet (initial state).
-  PAIRED,               ///< The key exchange completed and the device is registered.
-  NO_RESPONSE,          ///< No device responded to discovery.
-  INVALID_RESPONSE,     ///< Discovery saw traffic but nothing valid.
-  KEY_EXCHANGE_FAILED,  ///< Discovery succeeded but the key exchange did not complete.
+  NONE,                  ///< No attempt has completed yet (initial state).
+  PAIRED,                ///< The key exchange completed and the device is registered.
+  NO_RESPONSE,           ///< No device responded to discovery.
+  INVALID_RESPONSE,      ///< Discovery saw traffic but nothing valid.
+  KEY_EXCHANGE_FAILED,   ///< Discovery succeeded but the key exchange did not complete.
+  KEY_TRANSFER_REFUSED,  ///< The device answered our key transfer with CMD_ERROR_RESP; the code is in
+                         ///< PairingTelemetry::key_refusal_code().
+  KEY_RECEIVED,          ///< `pairing_key_transfer: pull` received a key that differs from ours and the device
+                 ///< proved it holds it; the device is not registered (see PairingEngine::run_key_pull_phase_()).
 };
 
 /// @brief Fixed-size per-attempt telemetry recorder for the pairing flow.
@@ -150,6 +154,18 @@ class PairingTelemetry : public TransmitObserver {
   /// Record the advisor's short advice codes for the `;advice=` result-sensor field.
   /// @param codes Comma-separated short codes (e.g. "1w_traffic,channel_busy"), or empty if none.
   void set_advice_codes(const std::string &codes) { this->advice_codes_ = codes; }
+  /// Record the CMD_ERROR_RESP byte the device answered a key transfer (or key pull) with.
+  /// @param code Result byte (decode with command_result_name()).
+  void set_key_refusal(uint8_t code) {
+    this->has_key_refusal_ = true;
+    this->key_refusal_code_ = code;
+  }
+  /// Record the device discovery accepted: its node ID and full 10-bit node type.
+  /// @param node_id Discovered device's node ID.
+  /// @param node_type Node type from DiscoveryResponseInfo::node_type.
+  void set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], uint16_t node_type);
+  /// Record that this attempt pulled the key (0x38) instead of pushing it (0x31/0x32).
+  void set_key_pull_attempted() { this->key_pull_attempted_ = true; }
 
   /// Seed telemetry with a 1W pairing-gesture frame observed shortly before this attempt began.
   /// Recorded as an RX event with its real RSSI, marked seeded (PairingTelemetryEvent::aux = 1) so
@@ -193,6 +209,18 @@ class PairingTelemetry : public TransmitObserver {
   [[nodiscard]] const uint8_t *paired_node_id() const { return this->paired_node_id_; }
   /// @return Paired device's type; only meaningful if has_paired_device() is true.
   [[nodiscard]] DeviceType paired_device_type() const { return this->paired_device_type_; }
+  /// @return true if the device answered a key transfer or key pull with CMD_ERROR_RESP.
+  [[nodiscard]] bool has_key_refusal() const { return this->has_key_refusal_; }
+  /// @return The CMD_ERROR_RESP byte of that refusal; only meaningful if has_key_refusal() is true.
+  [[nodiscard]] uint8_t key_refusal_code() const { return this->key_refusal_code_; }
+  /// @return true if this attempt pulled the key instead of pushing it.
+  [[nodiscard]] bool key_pull_attempted() const { return this->key_pull_attempted_; }
+  /// @return true if discovery accepted a device this attempt.
+  [[nodiscard]] bool has_discovered_device() const { return this->has_discovered_device_; }
+  /// @return Discovered device's node ID; only meaningful if has_discovered_device() is true.
+  [[nodiscard]] const uint8_t *discovered_node_id() const { return this->discovered_node_id_; }
+  /// @return Full 10-bit node type of the discovered device, 0 if discovery accepted none.
+  [[nodiscard]] uint16_t discovered_node_type() const { return this->discovered_node_type_; }
   /// @return Duration of the attempt so far (or total, once complete) in milliseconds.
   [[nodiscard]] uint32_t duration_ms() const;
 
@@ -230,6 +258,12 @@ class PairingTelemetry : public TransmitObserver {
   bool has_paired_device_{false};
   uint8_t paired_node_id_[NODE_ID_SIZE]{};
   DeviceType paired_device_type_{DeviceType::UNKNOWN};
+  bool has_key_refusal_{false};
+  uint8_t key_refusal_code_{0};
+  bool key_pull_attempted_{false};
+  bool has_discovered_device_{false};
+  uint8_t discovered_node_id_[NODE_ID_SIZE]{};
+  uint16_t discovered_node_type_{0};
   std::string advice_codes_;
 };
 

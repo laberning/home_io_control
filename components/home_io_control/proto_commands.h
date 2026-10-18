@@ -712,6 +712,30 @@ bool create_discover_confirm_ack(IoFrame &f, const uint8_t *own, const uint8_t *
 bool recover_system_key_from_transfer(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE],
                                       uint8_t out_key[AES_KEY_SIZE]);
 
+/// @brief Build a key transfer request (0x38, "pull") asking a discovered device for its key.
+///
+/// START set, END clear, CTRL1_LOW_POWER clear, CTRL1 bit 2 (CTRL1_PRIORITY) set: the shape vendor
+/// controllers use for this request, not yet seen on air by this project. The device is expected
+/// to answer with a CMD_KEY_TRANSFER (0x32); recover_key_from_pull() decrypts it.
+/// @param f IoFrame to populate.
+/// @param own Controller node ID.
+/// @param dst Discovered device node ID.
+/// @param challenge 6 random bytes, kept by the caller for the decrypt.
+/// @return true on success.
+bool create_launch_key_transfer(IoFrame &f, const uint8_t *own, const uint8_t *dst, const uint8_t challenge[HMAC_SIZE]);
+
+/// @brief Recover a device's key from the CMD_KEY_TRANSFER (0x32) it sent in answer to our
+/// CMD_LAUNCH_KEY_TRANSFER (0x38).
+///
+/// Same construction as recover_system_key_from_transfer(), with the IV taken from the request
+/// that asked for the key: `{CMD_LAUNCH_KEY_TRANSFER}` and the 6 bytes we sent in it.
+/// @param transfer_payload 16-byte CMD_KEY_TRANSFER payload from the device.
+/// @param challenge The 6 bytes we sent in our 0x38.
+/// @param out_key Output: the device's 16-byte key.
+/// @return true on success (crypt_key() AES failure is the only false case).
+bool recover_key_from_pull(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE],
+                           uint8_t out_key[AES_KEY_SIZE]);
+
 /// Build a key‑init request (0x31) to start pairing key exchange with a discovered device.
 /// @param f IoFrame to populate.
 /// @param own Controller node ID.
