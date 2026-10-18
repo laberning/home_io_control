@@ -1,0 +1,35 @@
+id: wisniowski_moto1000_exchange_execute_parameter_unknown
+description: >
+  A Wisniowski garage opener with a Somfy "MOTO 1000 io" drive refuses the hub's regular position
+  EXECUTE (open, data 01 63 00 00 80 D8 06 00) with ERROR_RESP 0x28 straight away, without a
+  challenge. Under the packed (code << 3) | state layout of the 0xFE byte (proto_constants.h) 0x28 is
+  code 5, RESULT_PARAMETER_UNKNOWN: the opener does not implement a parameter in the request. The
+  same report shows a 6-byte STOP (01 63 D2 00 00 00) drawing a challenge, and the opener's own 1W
+  remote opening it with 01 43 00 00 00 00 (main parameter only, no functional-parameter block).
+  That is why garage openers now get create_execute_main_parameter() (issue #163).
+source:
+  device: "Wisniowski garage door opener, Somfy MOTO 1000 io drive (garage_opener, subtype 58)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-10
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/163"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    hex: "50 20 8D 76 33 A9 DB EC 00 01 63 00 00 80 D8 06 00"
+    crc: absent
+    note: "EXECUTE open (position 0) with the functional-parameter block 80 D8 06 00, START, CTRL1_LOW_POWER"
+  - dir: rx
+    t_ms: 30
+    hex: "89 00 A9 DB EC 8D 76 33 FE 28"
+    crc: absent
+    note: "ERROR_RESP, result 0x28 = PARAMETER_UNKNOWN (code 5, state 0), no challenge first. Timing approximate: the report gives no timestamps."
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w, classification: ACCEPT}

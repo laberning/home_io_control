@@ -2400,3 +2400,83 @@ TEST(HubOperations, UnconfirmedStopIsSentTwiceOnceTheDeviceHasConfirmedACommand)
   EXPECT_EQ(executes, 2) << "the STOP whose challenge answer went unconfirmed is sent once more";
   EXPECT_EQ(dev->exchange_unconfirmed_count, 0u) << "the re-send was confirmed, so the exchange was too";
 }
+
+// ========================================================================================
+// Garage opener: main-parameter-only movement (issue #163)
+// ========================================================================================
+
+namespace {
+
+// Wire layout: [CTRL0][CTRL1][DST 3B][SRC 3B][CMD][DATA...] — data starts at offset 9.
+constexpr size_t WIRE_DATA_OFFSET = 9;
+
+std::vector<uint8_t> first_sent_payload(const MockRadio &radio) {
+  if (radio.get_sent_data().empty())
+    return {};
+  const auto &frame = radio.get_sent_data()[0];
+  return {frame.begin() + WIRE_DATA_OFFSET, frame.end()};
+}
+
+void make_garage(TestableComponent &comp, MockRadio &radio) {
+  setup_cover_component(comp, radio);
+  comp.get_device("ABC123")->type = DeviceType::GARAGE_OPENER;
+}
+
+}  // namespace
+
+TEST(HubOperations, GarageOpenerPositionSendsMainParameterOnly) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_garage(comp, radio);
+
+  comp.set_device_position("ABC123", 100);  // no reply queued: only the transmitted frame matters
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_EQ(radio.get_sent_data()[0][WIRE_DATA_OFFSET - 1], CMD_EXECUTE);
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0xC8, 0x00, 0x00, 0x00}))
+      << "a garage opener gets the 6-byte form, without the functional-parameter block";
+}
+
+TEST(HubOperations, RollerShutterPositionKeepsExtendedBlock) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.set_device_position("ABC123", 0);
+
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x00, 0x00, 0x80, 0xD8, 0x06, 0x00}));
+}
+
+TEST(HubOperations, GarageOpenerFavoriteIsRefusedWithoutTransmitting) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_garage(comp, radio);
+
+  EXPECT_FALSE(comp.execute_device_command_("ABC123", CoverCommand::FAVORITE));
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "the favourite alias is refused by the device, so it is never sent";
+}
+
+TEST(HubOperations, GarageOpenerStopIsUnchanged) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_garage(comp, radio);
+
+  comp.execute_device_command_("ABC123", CoverCommand::STOP);
+
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0xD2, 0x00, 0x00, 0x00}));
+}
+
+TEST(HubOperations, GarageOpenerForceOpenUsesMainParameterAtForcePriority) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_garage(comp, radio);
+
+  comp.execute_device_command_("ABC123", CoverCommand::FORCE_OPEN);
+
+  const std::vector<uint8_t> payload = first_sent_payload(radio);
+  ASSERT_EQ(payload.size(), 6u);
+  EXPECT_EQ(payload[1], 0x03) << "force-open priority";
+  EXPECT_EQ(payload[2], 0x00) << "fully open";
+  EXPECT_EQ(payload[4], 0x00);
+  EXPECT_EQ(payload[5], 0x00);
+}

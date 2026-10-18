@@ -380,6 +380,8 @@ bool device_supports_tilt(DeviceType type) {
   return false;
 }
 
+bool device_takes_main_parameter_only(DeviceType type) { return type == DeviceType::GARAGE_OPENER; }
+
 bool device_supports_vent(DeviceType type) {
   // No default: every DeviceType is listed so -Wswitch catches any new one (error in the host
   // unit build, warning in the firmware build), forcing an explicit tilt/vent decision.

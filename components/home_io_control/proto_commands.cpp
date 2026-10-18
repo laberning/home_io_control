@@ -343,6 +343,25 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
 
+/// Build a main-parameter-only position execute frame (0x00). See proto_commands.h.
+bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
+                                   bool force_open_priority) {
+  if (position > POSITION_PERCENT_MAX)
+    return false;
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  // Same 6-byte shape as the STOP/FAVORITE special form: both functional-parameter indicator bytes
+  // are zero, so the device is asked about the main parameter only.
+  const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR,
+                                                         force_open_priority ? EXECUTE_ACEI_FORCE_OPEN : EXECUTE_ACEI,
+                                                         static_cast<uint8_t>(POSITION_WIRE_SCALE * position),
+                                                         0x00,
+                                                         0x00,
+                                                         0x00};
+  return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+}
+
 /// Build a 1W position execute frame (CMD 0x00) targeting a device class. See proto_commands.h
 /// for the full contract.
 bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t position,

@@ -33,7 +33,7 @@ SUBJECTS = frozenset({
     "synthetic", "tilt_cover", "unidentified_1w_remote",
     "velux_kig300", "velux_kli310", "velux_kli313", "velux_klf200", "velux_klr200", "velux_klr300", "velux_kux100",
     "velux_ssl",
-    "velux_window",
+    "velux_window", "wisniowski_moto1000",
 })
 
 

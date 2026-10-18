@@ -142,6 +142,17 @@ bool device_supports_tilt(DeviceType type);
 /// @return true for WINDOW_OPENER and VENTILATION_POINT.
 bool device_supports_vent(DeviceType type);
 
+/// @brief Does this device type take movement commands as the main parameter only?
+///
+/// True for GARAGE_OPENER: a Wisniowski / Somfy MOTO 1000 io refuses the functional-parameter
+/// block of the regular position execute (the travel-speed profile roller motors use) and the
+/// "favourite" alias with RESULT_PARAMETER_UNKNOWN, and accepts a frame without them (issue #163).
+/// Gate and rolling-door openers may behave the same but have no field report yet, so they keep
+/// the regular frame.
+/// @param type Device type.
+/// @return true if movement must use create_execute_main_parameter() and FAVORITE is unsupported.
+bool device_takes_main_parameter_only(DeviceType type);
+
 /// @brief Decode a protocol-packed device type from two metadata bytes.
 /// @param type_msb First metadata byte.
 /// @param type_subtype Second metadata byte containing the remaining type bits and subtype.
