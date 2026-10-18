@@ -127,6 +127,9 @@ cover:
     # low_power: on one entity only, so `make firmware-test` compiles both the guarded-present
     # and the absent branch of the shared low_power codegen.
     low_power: true
+    # `battery: true` generates the Battery Low binary sensor and the Battery text sensor; the
+    # other covers omit it, so this compiles both branches.
+    battery: true
   # window_opener is the one device type that also generates a ventilation-position companion
   # button (device_supports_vent()) alongside the favorite-position one; neither cover above uses
   # a vent-capable io_device_type, so without this entry that codegen path never compiles.

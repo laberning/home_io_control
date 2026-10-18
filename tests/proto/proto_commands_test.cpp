@@ -722,6 +722,30 @@ TEST(ProtoCommands, NewDeviceStartsWithUnknownRainSensor) {
   EXPECT_EQ(IoDevice{}.rain_sensor, RainSensorState::UNKNOWN);
 }
 
+TEST(ProtoCommands, BatteryStateNameLookup) {
+  EXPECT_STREQ(battery_state_name(BatteryState::NOT_REPORTED), "not_reported");
+  EXPECT_STREQ(battery_state_name(BatteryState::LOW_CHARGE), "low");
+  EXPECT_STREQ(battery_state_name(BatteryState::NORMAL_CHARGE), "normal");
+  EXPECT_STREQ(battery_state_name(BatteryState::FULL_CHARGE), "full");
+}
+
+TEST(ProtoCommands, DecodeBatteryStateReadsBitsFiveAndSix) {
+  EXPECT_EQ(decode_battery_state(0x00), BatteryState::NOT_REPORTED);
+  EXPECT_EQ(decode_battery_state(0x20), BatteryState::LOW_CHARGE);
+  EXPECT_EQ(decode_battery_state(0x40), BatteryState::NORMAL_CHARGE);
+  EXPECT_EQ(decode_battery_state(0x60), BatteryState::FULL_CHARGE);
+}
+
+TEST(ProtoCommands, DecodeBatteryStateIgnoresTheOtherBits) {
+  // Seen on real devices: 0x61 (RS100 Solar EXECUTE ack, bit 0 undecoded) and 0x80 (mains Sunea,
+  // STATUS_EXPECTED).
+  EXPECT_EQ(decode_battery_state(0x61), BatteryState::FULL_CHARGE);
+  EXPECT_EQ(decode_battery_state(0x80), BatteryState::NOT_REPORTED);
+  EXPECT_EQ(decode_battery_state(0x9F), BatteryState::NOT_REPORTED);
+}
+
+TEST(ProtoCommands, NewDeviceStartsWithNoBatteryReported) { EXPECT_EQ(IoDevice{}.battery, BatteryState::NOT_REPORTED); }
+
 // ============================================================================
 // Silent operation: the reference hub's slower travel profile, isolated by A/B capture on
 // 2026-08-15 with the Velux app's toggle flipped between otherwise identical close commands.

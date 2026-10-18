@@ -2,10 +2,10 @@
 
 /// @file platform_cover_controls.h
 /// @brief Generated per-cover auxiliary entities: the command button (favorite / ventilation),
-/// the silent-operation toggle and the rain binary sensor.
+/// the silent-operation toggle, the rain binary sensor and the battery sensors.
 /// @ingroup hioc_platforms
 ///
-/// Both are device-bound companions (DeviceBoundCompanion), generated alongside a `cover:` entity
+/// All are device-bound companions (DeviceBoundCompanion), generated alongside a `cover:` entity
 /// by cover.py when the device type supports them, and both act on an already-registered device
 /// rather than owning one. They live together here because they are the cover platform's small
 /// auxiliary surface, not full entity platforms of their own.
@@ -15,6 +15,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/switch/switch.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "hub_core.h"
 #include "platform_entity_base.h"
@@ -110,6 +111,53 @@ class IOHomeRainBinarySensor : public binary_sensor::BinarySensor, public Compon
  protected:
   /// @brief Publish a rain state: true for RAIN, false for DRY, no state for UNKNOWN.
   void publish_rain_state_(RainSensorState state);
+};
+
+/// @brief Binary sensor (`device_class: battery`) that is ON while the device reports a low battery.
+/// @ingroup hioc_platforms
+///
+/// Home Assistant's own low-battery convention, so generic battery tooling (low-battery
+/// notification blueprints, battery views) picks it up without per-entity setup. Generated with
+/// IOHomeBatteryTextSensor when the cover declares `battery: true`. It reads IoDevice::battery,
+/// which only status replies update: the boot poll, the settle polls after a move, and the
+/// device's own status updates. No state while the device reports no battery; the first status
+/// that shows none logs one INFO line, so a mains device with the key set explains itself.
+class IOHomeBatteryLowBinarySensor : public binary_sensor::BinarySensor, public Component, public DeviceBoundCompanion {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+
+ protected:
+  /// @brief Publish from a device record: ON for LOW_CHARGE, OFF for NORMAL/FULL, no state otherwise.
+  void publish_battery_(const IoDevice &dev);
+
+  bool logged_not_reported_{false};  ///< The "reports no battery" INFO line was written once already.
+};
+
+/// @brief Diagnostic text sensor naming the device's coarse battery level: "full", "normal" or "low".
+/// @ingroup hioc_platforms
+///
+/// Disabled by default: IOHomeBatteryLowBinarySensor is the entity automations should use. This
+/// one shows all three levels, which is useful while it is still open whether a device ever reports
+/// anything but "full". Publishes nothing while the device reports no battery.
+class IOHomeBatteryTextSensor : public text_sensor::TextSensor, public Component, public DeviceBoundCompanion {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 };
 
 }  // namespace home_io_control

@@ -36,7 +36,8 @@ constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload le
 constexpr uint8_t ERROR_RESPONSE_MIN_DATA_LEN = 1;       ///< Minimum payload length for 0xFE result-bearing replies.
 constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
     15;  ///< Minimum payload length for tilt-capable extended status replies.
-constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;         ///< Byte containing STATUS_STOPPED.
+constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;  ///< Byte containing STATUS_STOPPED.
+constexpr uint8_t STATUS_BATTERY_OFFSET = 1;  ///< Byte holding STATUS_BATTERY_MASK, the same in 0x04 and 0x71 payloads.
 constexpr uint8_t PRIVATE_RESPONSE_DELAY_HINT_OFFSET = 7;  ///< Coarse follow-up delay hint byte in many 0x04 replies.
 // A 0x04 payload does not describe its own layout — which fields these offsets name depends on
 // the request that drew the reply, and only the caller knows that. A reply to a tilt EXECUTE puts
@@ -210,6 +211,21 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
   policy.set_next_update(id, dev.last_status + compute_status_update_delay_ms(dev, policy, id));
 }
 
+/// @brief Record the coarse battery level a status payload carries, logging a change.
+/// @param id Device ID for the log line.
+/// @param dev Device record to update.
+/// @param frame A status poll reply or a device-originated status update (both put it at data[1]).
+void apply_battery_state(const std::string &id, IoDevice &dev, const IoFrame &frame) {
+  const BatteryState reported = decode_battery_state(frame.data[STATUS_BATTERY_OFFSET]);
+  if (reported == dev.battery)
+    return;
+  // A battery level changes rarely, so a change is worth an INFO line; mains devices stay at
+  // NOT_REPORTED and never log.
+  ESP_LOGI(detail::TAG, "Device %s: battery %s -> %s", id.c_str(), battery_state_name(dev.battery),
+           battery_state_name(reported));
+  dev.battery = reported;
+}
+
 /// @brief Apply INFO2 metadata to the device record when YAML has not already declared it.
 /// @param dev Device record to update.
 /// @param frame INFO2 response frame.
@@ -371,6 +387,8 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       const LastCommandRecord record = decode_last_command_record(frame, PRIVATE_RESPONSE_LAST_COMMAND_OFFSET);
       detail::apply_last_command_record(dev, record);
       detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
+      // Same reason as the record above: only a reply to a status poll is a status report.
+      apply_battery_state(id, dev, frame);
     }
     detail::clear_command_result(dev);
     detail::log_status_update(id, dev);
@@ -391,6 +409,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     const LastCommandRecord record = decode_last_command_record(frame, STATUS_UPDATE_LAST_COMMAND_OFFSET);
     detail::apply_last_command_record(dev, record);
     detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
+    apply_battery_state(id, dev, frame);
     detail::clear_command_result(dev);
 
     // What caused the device to move (wind sensor, timer, a remote). Empty when the payload is

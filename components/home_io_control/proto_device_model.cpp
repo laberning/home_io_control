@@ -4,6 +4,8 @@
 
 #include "proto_device_model.h"
 
+#include "proto_constants.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -54,6 +56,25 @@ const char *rain_sensor_state_name(RainSensorState state) {
       return "rain";
   }
   return "unknown";
+}
+
+const char *battery_state_name(BatteryState state) {
+  switch (state) {
+    case BatteryState::NOT_REPORTED:
+      return "not_reported";
+    case BatteryState::LOW_CHARGE:
+      return "low";
+    case BatteryState::NORMAL_CHARGE:
+      return "normal";
+    case BatteryState::FULL_CHARGE:
+      return "full";
+  }
+  return "not_reported";
+}
+
+BatteryState decode_battery_state(uint8_t status_byte) {
+  // The mask leaves exactly two bits, so every result is a named enumerator.
+  return static_cast<BatteryState>((status_byte & STATUS_BATTERY_MASK) >> STATUS_BATTERY_SHIFT);
 }
 
 const char *cover_command_name(CoverCommand cmd) {

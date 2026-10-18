@@ -417,6 +417,12 @@ static constexpr uint8_t POSITION_WIRE_MAX = 200;
 /// Status byte flags in CMD_PRIVATE_RESP and CMD_STATUS_UPDATE.
 static constexpr uint8_t STATUS_STOPPED = 0x01;   ///< Byte 0 bit 0: device is not moving
 static constexpr uint8_t STATUS_EXPECTED = 0x80;  ///< Byte 1 bit 7: device will send auto status update
+/// Byte 1 bits 5-6: the device's coarse battery level (BatteryState). Every solar Somfy actuator
+/// captured reports 3 here and every mains one 0 (tests/corpus/captures/statuspoll/
+/// somfy_rs100_statuspoll_kig300_sx1276.yaml, somfy_oximo40_statuspoll_sx1262.yaml,
+/// somfy_awning_statuspoll_success_sx1262.yaml).
+static constexpr uint8_t STATUS_BATTERY_MASK = 0x60;
+static constexpr uint8_t STATUS_BATTERY_SHIFT = 5;  ///< Right shift that brings STATUS_BATTERY_MASK down to 0-3.
 static constexpr uint8_t STATUS_TILT_SELECTOR =
     0x20;  ///< Extended status payload marker for tilt-capable devices: FPI1 with bit 5 set = functional parameter
            ///< FP3 (FPI1 bit 7 = FP1 ... bit 0 = FP8). The actuator echoes FPI1/FPI2 in its ack (VELUX KLF 200 API

@@ -20,11 +20,13 @@ enable one from the device page in Home Assistant when you need it.
 | `<Name> Last Commanded By` | Text | No | Which controller last commanded the device. |
 | `<Name> Last Command Source` | Text | No | What kind of source that was. |
 
-Two other diagnostic sensors belong to specific features and are documented with them: the
+Other diagnostic sensors belong to specific features and are documented with them: the
 "Last Pairing Result" sensor that comes with the Discover & Pair button
-([Pairing](pairing.md#diagnosing-a-failed-pairing-attempt)) and the "Last 1W Command" sensor each
+([Pairing](pairing.md#diagnosing-a-failed-pairing-attempt)), the "Last 1W Command" sensor each
 1W controller identity gets
-([Sending 1W commands](configuration/oneway-transmit.md#the-last-1w-command-sensor)).
+([Sending 1W commands](configuration/oneway-transmit.md#the-last-1w-command-sensor)), and the
+battery sensors a cover gets with `battery: true`
+([Battery level](configuration/cover.md#battery-level)).
 
 ## Device Name
 

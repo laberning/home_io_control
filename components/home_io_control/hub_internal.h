@@ -428,6 +428,20 @@ inline std::string describe_prediction(const IoDevice &dev) {
   return out;
 }
 
+/// @brief Describe the device's battery level for the status line.
+///
+/// Pure for the same reason as describe_prediction(). Rendered whenever the device reports a level,
+/// and also as "not_reported" when the YAML asked for battery entities (`battery: true`), so a
+/// device that reports none says so on every status line instead of only once.
+/// @param dev Device record to read.
+/// @return e.g. " battery=full", or an empty string for a device without battery entities that
+///         reports no level.
+inline std::string describe_battery(const IoDevice &dev) {
+  if (dev.battery == BatteryState::NOT_REPORTED && !dev.battery_entities)
+    return {};
+  return std::string(" battery=") + battery_state_name(dev.battery);
+}
+
 /// @brief Log a concise status‑update line used by inbound handlers.
 ///
 /// The position/target/motion fields report what the device observed — never a hub prediction. A
@@ -436,9 +450,9 @@ inline std::string describe_prediction(const IoDevice &dev) {
 /// @param dev Current device state.
 /// @param suffix Optional suffix added after the state string (e.g., " (status update)").
 inline void log_status_update(const std::string &id, const IoDevice &dev, const char *suffix = "") {
-  ESP_LOGI(TAG, "Device %s: position=%s target=%s %s%s%s", id.c_str(), format_position(dev.position).c_str(),
-           format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving", describe_prediction(dev).c_str(),
-           suffix);
+  ESP_LOGI(TAG, "Device %s: position=%s target=%s %s%s%s%s", id.c_str(), format_position(dev.position).c_str(),
+           format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving", describe_battery(dev).c_str(),
+           describe_prediction(dev).c_str(), suffix);
 }
 
 /// @brief Log a decoded CMD_ERROR_RESP result with optional request-command context.

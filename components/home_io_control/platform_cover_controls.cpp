@@ -1,5 +1,5 @@
 /// @file platform_cover_controls.cpp
-/// @brief Generated per-cover auxiliary entities: command button, silent-operation toggle and rain sensor.
+/// @brief Generated per-cover auxiliary entities: command button, silent-operation toggle, rain and battery sensors.
 /// @ingroup hioc_platforms
 
 #include "platform_cover_controls.h"
@@ -15,6 +15,7 @@ namespace home_io_control {
 static const char *const TAG_COMMAND_BUTTON = "home_io_control.cover_command_button";
 static const char *const TAG_SILENT = "home_io_control.cover.silent";
 static const char *const TAG_RAIN = "home_io_control.cover.rain_sensor";
+static const char *const TAG_BATTERY = "home_io_control.cover.battery";
 
 void IOHomeCoverCommandButton::press_action() {
   if (this->parent_ == nullptr) {
@@ -81,6 +82,48 @@ void IOHomeRainBinarySensor::publish_rain_state_(RainSensorState state) {
 void IOHomeRainBinarySensor::dump_config() {
   ESP_LOGCONFIG(TAG_RAIN, "IO-Homecontrol Rain Sensor:");
   ESP_LOGCONFIG(TAG_RAIN, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeBatteryLowBinarySensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) { this->publish_battery_(dev); });
+}
+
+void IOHomeBatteryLowBinarySensor::publish_battery_(const IoDevice &dev) {
+  switch (dev.battery) {
+    case BatteryState::LOW_CHARGE:
+      this->publish_state(true);
+      return;
+    case BatteryState::NORMAL_CHARGE:
+    case BatteryState::FULL_CHARGE:
+      this->publish_state(false);
+      return;
+    case BatteryState::NOT_REPORTED:
+      break;
+  }
+  // "off" must mean the device said its battery is fine, so no level means no state.
+  this->invalidate_state();
+  // last_status != 0: a status was decoded and carried no battery, rather than none read yet.
+  if (dev.last_status != 0 && !this->logged_not_reported_) {
+    this->logged_not_reported_ = true;
+    ESP_LOGI(TAG_BATTERY, "Device %s reports no battery state; it is probably mains powered", this->device_id_.c_str());
+  }
+}
+
+void IOHomeBatteryLowBinarySensor::dump_config() {
+  ESP_LOGCONFIG(TAG_BATTERY, "IO-Homecontrol Battery Low:");
+  ESP_LOGCONFIG(TAG_BATTERY, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeBatteryTextSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    if (dev.battery != BatteryState::NOT_REPORTED)
+      this->publish_state(battery_state_name(dev.battery));
+  });
+}
+
+void IOHomeBatteryTextSensor::dump_config() {
+  ESP_LOGCONFIG(TAG_BATTERY, "IO-Homecontrol Battery:");
+  ESP_LOGCONFIG(TAG_BATTERY, "  Device ID: %s", this->device_id_.c_str());
 }
 
 }  // namespace home_io_control

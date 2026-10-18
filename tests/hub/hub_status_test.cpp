@@ -1538,3 +1538,99 @@ TEST(HubStatus, OverheardLimitationRequestToOurDeviceStillSchedulesTheRemoteActi
 
   EXPECT_EQ(comp.last_timeout_id_, decisions::remote_poll_timer_id(window));
 }
+
+// ============================================================================
+// Coarse battery level (data[1] bits 5-6)
+// ============================================================================
+// Same byte in 0x04 and 0x71 payloads. Read from status-poll replies and device status updates only,
+// never from an execute ack, whose layout follows the request.
+
+namespace {
+
+/// Build a status-bearing frame from E461E9 (the RS100 Solar of somfy_rs100_statuspoll_kig300_sx1276).
+IoFrame make_rs100_status_frame(uint8_t cmd, const uint8_t *payload, uint8_t len) {
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  uint8_t src[3] = {0xE4, 0x61, 0xE9};
+  uint8_t dst[3] = {0xA0, 0x25, 0xE1};
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, cmd, payload, len);
+  return f;
+}
+
+}  // namespace
+
+TEST(HubStatus, StatusPollReplyRecordsFullBatteryOnASolarMotor) {
+  // tests/corpus/captures/statuspoll/somfy_rs100_statuspoll_kig300_sx1276.yaml frame 3 (0x04): data[1] = 0x60.
+  TestableHubComponent comp;
+  comp.add_device("E461E9");
+  const uint8_t payload[14] = {0x04, 0x60, 0x00, 0x00, 0x77, 0xCE, 0x00, 0x0B, 0xBE, 0xFE, 0xDB, 0x01, 0x00, 0x00};
+
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::FULL_CHARGE);
+}
+
+TEST(HubStatus, StatusUpdateRecordsTheBatteryAtTheSameOffset) {
+  // Same corpus file, frame 2 (0x71): data[1] = 0x60 as in the 0x04 reply.
+  TestableHubComponent comp;
+  comp.add_device("E461E9");
+  const uint8_t payload[16] = {0x04, 0x60, 0x10, 0x0A, 0x0B, 0x00, 0x00, 0xAC,
+                               0x9E, 0x00, 0x0F, 0xBE, 0xFE, 0xDB, 0x01, 0x00};
+
+  comp.update_device_status_(make_rs100_status_frame(CMD_STATUS_UPDATE, payload, sizeof(payload)));
+
+  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::FULL_CHARGE);
+}
+
+TEST(HubStatus, BatteryFollowsALaterLowerLevel) {
+  TestableHubComponent comp;
+  comp.add_device("E461E9");
+  uint8_t payload[14] = {0x04, 0x60, 0x00, 0x00, 0x77, 0xCE, 0x00, 0x0B, 0xBE, 0xFE, 0xDB, 0x01, 0x00, 0x00};
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  payload[1] = 0x20;  // level 1, the other bits clear
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::LOW_CHARGE);
+}
+
+TEST(HubStatus, ExecuteAckDoesNotChangeTheBattery) {
+  // A non-zero level (0x20 = low) applied as an execute ack must not land, so the result pins the
+  // trust_position gate rather than a payload that happens to decode to NOT_REPORTED.
+  TestableHubComponent comp;
+  comp.add_device("E461E9");
+  const uint8_t payload[8] = {0x04, 0x20, 0x00, 0x00, 0x77, 0xCE, 0x00, 0x0B};
+
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)),
+                             /*trust_position=*/false);
+
+  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::NOT_REPORTED);
+}
+
+TEST(HubStatus, MainsReplyLeavesTheBatteryNotReported) {
+  // Mains Sunea replies read 0x00 or 0x80 at data[1] (somfy_awning_statuspoll_success_sx1262):
+  // bit 7 is the status-update flag, not part of the battery field.
+  TestableHubComponent comp;
+  comp.add_device("E461E9");
+  const uint8_t payload[8] = {0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::NOT_REPORTED);
+}
+
+TEST(HubStatus, StatusLineNamesAReportedBatteryLevel) {
+  IoDevice dev{};
+  dev.battery = BatteryState::FULL_CHARGE;
+  EXPECT_EQ(detail::describe_battery(dev), " battery=full") << "a reported level is logged with or without the key";
+}
+
+TEST(HubStatus, StatusLineNamesAMissingLevelOnlyWhenBatteryEntitiesAreDeclared) {
+  IoDevice dev{};
+  EXPECT_EQ(detail::describe_battery(dev), "") << "mains devices without `battery: true` keep their line unchanged";
+
+  dev.battery_entities = true;
+  EXPECT_EQ(detail::describe_battery(dev), " battery=not_reported");
+}
