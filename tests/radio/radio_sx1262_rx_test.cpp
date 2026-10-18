@@ -258,6 +258,26 @@ TEST(RadioSX1262, UartProbeAcceptsLimitationStatusFramesAsHeardOnAir) {
   }
 }
 
+TEST(RadioSX1262, UartProbeAcceptsAddressedDiscoverAltFromForeignController) {
+  // Issue #162: the first 16 raw bytes of a "len=40 parse_fail" line, logged on an SX1262 while a
+  // Somfy Nina io added the key-extraction responder as a product. They hold a CRC-valid 2W frame
+  // `49 30 C64C3B A994E2 2E 02` at bit offset 0. With 0x2E missing from is_known_io_command() the
+  // probe rejected it and the hub logged the raw window (capped at FRAME_MAX_WIRE_SIZE = 40).
+  const uint8_t raw[] = {0x49, 0x41, 0x93, 0x1C, 0x65, 0x6E, 0x52, 0xB1,
+                         0x4C, 0x8F, 0x3A, 0x48, 0x10, 0xEC, 0x99, 0x78};
+  const uint8_t expected[] = {0x49, 0x30, 0xC6, 0x4C, 0x3B, 0xA9, 0x94, 0xE2, 0x2E, 0x02};
+
+  const UartProbeResult probe = find_uart_probe(raw, sizeof(raw));
+  ASSERT_TRUE(probe.valid);
+  ASSERT_EQ(probe.frame_len, sizeof(expected));
+  EXPECT_EQ(memcmp(probe.decoded + probe.frame_start, expected, sizeof(expected)), 0);
+
+  IoFrame frame;
+  ASSERT_TRUE(parse(probe.decoded + probe.frame_start, probe.frame_len, frame));
+  EXPECT_EQ(frame.cmd, CMD_DISCOVER_ALT_REQ);
+  EXPECT_FALSE(is_end(frame));
+}
+
 TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   // UartProbeAcceptsEveryKnownIoCommand above closes the class of bug where find_uart_probe()
   // disagrees with is_known_io_command() -- but it cannot catch the original bug itself: an
@@ -278,41 +298,15 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //     not a gap -- both are actively received and handled (oneway_key_adoption.cpp's
   //     OnewayKeyAdoption::try_adopt(), pairing_advisor.cpp), just never through is_known_io_command().
   //   - CMD_PRIORITY_LEVEL_REQ / CMD_PRIORITY_LEVEL_RESP: zero references anywhere outside proto_constants.*.
-  //   - CMD_DISCOVER_ALT_REQ: this codebase can transmit it (proto_commands.cpp, as an optional
-  //     `pairing_discovery_commands` entry), but the reply PairingEngine actually waits for is the
-  //     generic CMD_DISCOVER_RESP (0x29, already known) regardless of which discovery variant was
-  //     sent -- and key_extraction_responder.cpp's KeyExtractionResponder::try_handle_frame() only recognizes
-  //     CMD_DISCOVER_REQ (0x28), not this variant, so there is no live dispatch path that needs
-  //     to receive 0x2E itself.
-  //   - CMD_DISCOVER_ALT_RESP: captured once (velux_kux100/discover_alt_addressed_challenge_
-  //     response.yaml) but "not otherwise used anywhere in this codebase" per its own doxygen --
-  //     nothing dispatches on it, corpus replay doesn't go through this soft-PHY gate at all.
-  //   - CMD_NODE_VERIFY_RESP: captured once (velux_kux100_pairing_full.yaml) but we only ever
-  //     transmit it (create_node_verify_resp_device_role(), the key-extraction responder's answer to
-  //     an inbound 0x36) -- we never wait for a reply carrying this opcode. CMD_NODE_VERIFY_REQ is
-  //     deliberately NOT in this list any more: the key-extraction responder now expects to
-  //     receive it, so it belongs in is_known_io_command() instead (see radio_soft_phy.cpp).
-  //   - CMD_LAUNCH_KEY_TRANSFER: never observed in corpus or field log; not sent or handled
-  //     anywhere; used only to construct a hypothetical IV in proto_crypto_test.cpp.
   //   - CMD_UNKNOWN4A_REQ: deliberately excluded, see ADR 0024 -- nothing this codebase sends
   //     would ever draw a reply carrying this opcode.
   //   - CMD_SEND_RAW_MESSAGE / CMD_READ_GROUPS / CMD_REBOOT / CMD_SERVICE_STATUS_ACK: never
   //     observed in corpus or field log, not sent or handled anywhere in this codebase -- named
   //     purely so a future capture of one of them has a symbol to log against.
   static constexpr uint8_t NEVER_RECEIVED_ALLOWLIST[] = {
-      CMD_ACTIVATE_MODE,
-      CMD_ONEWAY_ADD_CONTROLLER,
-      CMD_ONEWAY_REMOVE,
-      CMD_PRIORITY_LEVEL_REQ,
-      CMD_PRIORITY_LEVEL_RESP,
-      CMD_DISCOVER_ALT_REQ,
-      CMD_DISCOVER_ALT_RESP,
-      CMD_NODE_VERIFY_RESP,
-      CMD_LAUNCH_KEY_TRANSFER,
-      CMD_UNKNOWN4A_REQ,
-      CMD_SEND_RAW_MESSAGE,
-      CMD_READ_GROUPS,
-      CMD_REBOOT,
+      CMD_ACTIVATE_MODE,      CMD_ONEWAY_ADD_CONTROLLER, CMD_ONEWAY_REMOVE,
+      CMD_PRIORITY_LEVEL_REQ, CMD_PRIORITY_LEVEL_RESP,   CMD_UNKNOWN4A_REQ,
+      CMD_SEND_RAW_MESSAGE,   CMD_READ_GROUPS,           CMD_REBOOT,
       CMD_SERVICE_STATUS_ACK,
   };
 
