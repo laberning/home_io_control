@@ -7,7 +7,7 @@ on:
 
 jobs:
   fuzz-frame:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: pip install --user pyyaml
@@ -22,7 +22,7 @@ jobs:
             leak-*
 
   fuzz-soft-phy:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: pip install --user pyyaml

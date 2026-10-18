@@ -8,70 +8,74 @@ on:
 
 jobs:
   format:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
-      - run: make format-check
+      - run: clang-format-21 --version
+      - run: make format-check CLANG_FORMAT=clang-format-21
 
   yamllint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y yamllint
       - run: make yamllint
 
   tidy:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
-      - run: clang-tidy --version
+      - run: clang-tidy-21 --version
       - run: make clang-tidy
+        env:
+          CLANG_TIDY: clang-tidy-21
+          RUN_CLANG_TIDY: run-clang-tidy-21
 
   tuning-sync:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make tuning-sync
 
   yaml-emitter-sync:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make yaml-emitter-sync
 
   include-graph:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make include-graph
 
   stub-sync:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make stub-sync
 
   board-pinout-sync:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make board-pinout-sync
 
   corpus-validate:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: pip install --user pyyaml
       - run: make corpus-validate
 
   docs-link-check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make docs-link-check
 
   key-material-scan:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make key-material-scan
@@ -80,7 +84,7 @@ jobs:
   # (FIRMWARE_TEST_GROUP_1/_2), and firmware-test-groups-check fails if a config is in neither.
   test-compile:
     name: test-compile (group ${{ matrix.group }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +94,7 @@ jobs:
       - run: make firmware-test-group-${{ matrix.group }}
 
   unit-test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
@@ -98,13 +102,13 @@ jobs:
       - run: make unit-test
 
   py-test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make py-test
 
   unit-test-asan:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
@@ -112,7 +116,7 @@ jobs:
       - run: make unit-test-asan
 
   doxygen:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y graphviz python3-pygments

@@ -81,14 +81,17 @@ clean-docs:
 dashboard:
 	docker compose up
 
-# Formatting
+# Formatting. CLANG_FORMAT picks the binary; CI pins clang-format-21 (the version an Ubuntu 26.04
+# dev machine installs as plain `clang-format`), because versions disagree on comment alignment.
+CLANG_FORMAT ?= clang-format
+
 format:
 	@echo "Formatting C++ source files with clang-format..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format -i {} +
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec $(CLANG_FORMAT) -i {} +
 
 format-check:
 	@echo "Checking C++ formatting with clang-format (--dry-run)..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format --dry-run --Werror {} +
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec $(CLANG_FORMAT) --dry-run --Werror {} +
 
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
