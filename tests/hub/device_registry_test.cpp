@@ -55,6 +55,17 @@ TEST(DeviceRegistry, AddDefaultsLowPowerToFalse) {
   EXPECT_FALSE(dev->low_power) << "an undeclared device is not low-power";
 }
 
+TEST(DeviceRegistry, AddStoresBatteryEntitiesFlag) {
+  DeviceRegistry reg;
+  DeviceConfig cfg;
+  cfg.battery_entities = true;
+  reg.add("AABBCC", cfg);
+  reg.add("ABC123");
+  ASSERT_NE(reg.get("AABBCC"), nullptr);
+  EXPECT_TRUE(reg.get("AABBCC")->battery_entities) << "battery_entities must survive add(id, cfg)";
+  EXPECT_FALSE(reg.get("ABC123")->battery_entities) << "an undeclared device has no battery entities";
+}
+
 TEST(DeviceRegistry, AddStoresNodeIdBytes) {
   DeviceRegistry reg;
   reg.add("ABC123");

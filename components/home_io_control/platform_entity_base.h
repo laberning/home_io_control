@@ -61,6 +61,9 @@ class DeviceBoundEntity {
   /// neither. Radio property of the device, shared by all four platforms.
   /// @param low_power True for a battery/solar or otherwise sleeping receiver; default false.
   void set_low_power(bool low_power) { this->low_power_ = low_power; }
+  /// @brief Record that the YAML declared `battery: true`, so the status log line names the battery
+  /// level even when the device reports none. Cover-only in practice.
+  void set_battery_entities(bool battery_entities) { this->battery_entities_ = battery_entities; }
   /// @brief Configure bounded follow-up polling while a state change is expected.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
   void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
@@ -81,8 +84,9 @@ class DeviceBoundEntity {
   void register_device_binding_(Component *self, bool inverted,
                                 std::function<void(const std::string &, const IoDevice &)> on_update,
                                 bool schedule_initial_poll = true) {
-    this->parent_->add_device(this->device_id_, DeviceConfig{this->device_type_, this->subtype_, inverted,
-                                                             this->optimistic_state_, this->silent_, this->low_power_});
+    this->parent_->add_device(this->device_id_,
+                              DeviceConfig{this->device_type_, this->subtype_, inverted, this->optimistic_state_,
+                                           this->silent_, this->low_power_, this->battery_entities_});
     this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
     this->parent_->register_device_callback(std::move(on_update));
     if (!schedule_initial_poll)
@@ -120,6 +124,7 @@ class DeviceBoundEntity {
   bool optimistic_state_{true};
   bool silent_{false};
   bool low_power_{false};
+  bool battery_entities_{false};
 };
 
 /// @brief Mixin holding the parent + device-id binding shared by per-device entities that are

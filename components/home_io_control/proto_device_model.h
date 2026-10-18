@@ -266,6 +266,30 @@ enum class RainSensorState : uint8_t {
 /// @return Null-terminated lowercase string: "unknown", "dry" or "rain".
 const char *rain_sensor_state_name(RainSensorState state);
 
+/// @brief A device's coarse battery level, as it reports it in byte 1 of its status payload.
+///
+/// Three levels, not a percentage. Only FULL_CHARGE has been seen on real hardware so far (every
+/// solar Somfy capture in the corpus, in daylight); LOW_CHARGE and NORMAL_CHARGE are the two values
+/// below it and have not been observed. Mains devices report NOT_REPORTED.
+/// The names avoid a bare `LOW`, which the Arduino core defines as a macro.
+enum class BatteryState : uint8_t {
+  NOT_REPORTED = 0,   ///< The device does not report a battery (mains powered), or no status was read yet.
+  LOW_CHARGE = 1,     ///< Battery low.
+  NORMAL_CHARGE = 2,  ///< Battery neither low nor full.
+  FULL_CHARGE = 3,    ///< Battery full.
+};
+
+/// @brief Get the name a battery level is published under.
+/// @param state The level to name.
+/// @return "low", "normal" or "full", or "not_reported" for NOT_REPORTED.
+const char *battery_state_name(BatteryState state);
+
+/// @brief Decode the coarse battery level from byte 1 of a status payload (CMD_PRIVATE_RESP to a
+/// status poll, or CMD_STATUS_UPDATE).
+/// @param status_byte data[1] of the payload.
+/// @return The level held in bits 5-6 (STATUS_BATTERY_MASK); the other bits are ignored.
+BatteryState decode_battery_state(uint8_t status_byte);
+
 // ============================================================================
 // Position Report Decoding
 // ============================================================================
@@ -448,6 +472,12 @@ struct IoDevice {
                                                           ///< Set only from a limitation reply inside an exchange the
                                                           ///< hub started; independent of `limited_by_rain`, which is
                                                           ///< derived from status replies.
+  BatteryState battery{BatteryState::NOT_REPORTED};       ///< Coarse battery level from byte 1 of the device's own
+                                                          ///< status: a reply to a status poll or an authenticated
+                                                          ///< CMD_STATUS_UPDATE. Never from an execute ack (its layout
+                                                          ///< follows the request) or an overheard frame (ADR 0022).
+  bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
+                                 ///< line names the level even when the device reports none.
 };
 
 /// @brief Record that a device is (believed to be) travelling right now.

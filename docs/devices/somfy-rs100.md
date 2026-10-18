@@ -12,6 +12,7 @@ confirmed device here, and the reason is worth understanding before you start.
 | Position feedback | ✅ Confirmed |
 | Discover & Pair | ⚠️ Partial — the key exchange often needs a retry |
 | Status poll while driven by another hub | 🔍 Captured, from a KIG 300 installation |
+| Battery level (`battery: true`) | ⚠️ Coarse level only (full / normal / low); only `full` observed so far |
 
 ## Onboarding route that worked
 
@@ -35,6 +36,7 @@ cover:
     io_subtype: 0
     low_power: true
     status_poll_interval: 2s
+    battery: true
 ```
 
 ## Known quirks
@@ -46,6 +48,9 @@ cover:
   many words that setting it fixed an RS100. If you try it either way, that is worth an issue.
 - **Range matters more than on a mains-powered motor.** The corpus has near, far and failure
   captures at different distances against the same device, and the failure case is a range case.
+- **The battery level is coarse.** The motor reports full, normal or low, not a percentage, and
+  only `full` has been seen so far — see [Battery level](../configuration/cover.md#battery-level).
+  Illuminance and sun-energy readings are not supported (issue #156).
 - **The Oximo 40 Solar is the same story.** It appears in the corpus only as overheard status
   traffic, but it is the same solar class and the same `low_power:` advice applies.
 

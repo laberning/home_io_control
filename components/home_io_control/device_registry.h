@@ -32,6 +32,7 @@ struct DeviceConfig {
   bool silent{false};                    ///< Send position moves in "silent operation" (slower) mode.
   bool low_power{false};                 ///< Target is a low-power / duty-cycled receiver: directed frames set
                                          ///< CTRL1_LOW_POWER and use the long wake-up preamble.
+  bool battery_entities{false};          ///< `battery: true` declared: the battery entities exist for this device.
 };
 
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.

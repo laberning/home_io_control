@@ -31,6 +31,7 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   dev.optimistic_state = cfg.optimistic_state;
   dev.silent = cfg.silent;
   dev.low_power = cfg.low_power;
+  dev.battery_entities = cfg.battery_entities;
   devices_[device_id] = dev;
 }
 
