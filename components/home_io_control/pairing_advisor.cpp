@@ -120,7 +120,8 @@ void append_foreign_controller_advice(const uint8_t own_node_id[NODE_ID_SIZE], c
 }
 
 /// Key-step advice: only for attempts that did not pair and got as far as discovering a device.
-/// A pushed key answered with "command unknown", or a failed push to a device that answered
+/// A pull gets its own two codes: refused (the device does not hand out its key) or answered with a
+/// key it did not prove. For a push, "command unknown", or a failed push to a device that answered
 /// discovery as a remote controller, points at the pull direction; any other refusal is reported
 /// with its code.
 void append_key_step_advice(const PairingTelemetry &telemetry, PairingAdvice out[], uint8_t &count) {
@@ -129,6 +130,17 @@ void append_key_step_advice(const PairingTelemetry &telemetry, PairingAdvice out
   const PairingOutcome outcome = telemetry.outcome();
   if (outcome != PairingOutcome::KEY_EXCHANGE_FAILED && outcome != PairingOutcome::KEY_TRANSFER_REFUSED)
     return;
+  if (telemetry.key_pull_attempted()) {
+    if (!telemetry.has_key_refusal() && !telemetry.key_pull_unproven())
+      return;
+    PairingAdvice &advice = out[count++];
+    advice.code =
+        telemetry.has_key_refusal() ? PairingAdviceCode::KEY_PULL_NOT_OFFERED : PairingAdviceCode::KEY_PULL_UNPROVEN;
+    memcpy(advice.subject_node, telemetry.discovered_node_id(), NODE_ID_SIZE);
+    advice.has_result_code = telemetry.has_key_refusal();
+    advice.result_code = telemetry.key_refusal_code();
+    return;
+  }
   const bool as_controller = telemetry.discovered_node_type() == NODE_TYPE_REMOTE_CONTROLLER;
   const bool command_unknown = telemetry.has_key_refusal() && telemetry.key_refusal_code() == RESULT_COMMAND_UNKNOWN;
   // Suggesting pull only makes sense when this attempt pushed.
@@ -177,6 +189,10 @@ const char *pairing_advice_code_name(PairingAdviceCode code) {
       return "key_push_not_accepted";
     case PairingAdviceCode::KEY_TRANSFER_REFUSED:
       return "key_refused";
+    case PairingAdviceCode::KEY_PULL_NOT_OFFERED:
+      return "key_pull_not_offered";
+    case PairingAdviceCode::KEY_PULL_UNPROVEN:
+      return "key_pull_unproven";
     case PairingAdviceCode::NONE:
     default:
       return "none";
@@ -231,6 +247,19 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
                "Devices before retrying: it may already hold a key.",
                node_id_to_string(advice.subject_node).c_str(), advice.result_code,
                command_result_name(advice.result_code), command_result_description(advice.result_code));
+      return std::string(buf);
+    case PairingAdviceCode::KEY_PULL_NOT_OFFERED:
+      snprintf(buf, sizeof(buf),
+               "Device %s does not hand out its key: it answered the key request with 0x%02X %s. Remove "
+               "`pairing_key_transfer: pull` and pair it normally.",
+               node_id_to_string(advice.subject_node).c_str(), advice.result_code,
+               command_result_name(advice.result_code));
+      return std::string(buf);
+    case PairingAdviceCode::KEY_PULL_UNPROVEN:
+      snprintf(buf, sizeof(buf),
+               "Device %s sent a key, but the hub could not verify it, so it is not printed. The 'Key pull "
+               "check' lines above show what was tried; they contain no key and are safe to share.",
+               node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::NONE:
     default:

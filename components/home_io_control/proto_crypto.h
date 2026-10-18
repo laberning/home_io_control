@@ -87,6 +87,19 @@ bool aes128_encrypt(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_
 /// @return true on success.
 bool aes128_decrypt(const uint8_t in[AES_BLOCK_SIZE], const uint8_t key[AES_KEY_SIZE], uint8_t out[AES_BLOCK_SIZE]);
 
+/// Length of a key check value (key_check_value()).
+static constexpr uint8_t KEY_CHECK_VALUE_SIZE = 3;
+
+/// Compute a key check value: the first 3 bytes of AES‑128 encrypting a block of zeros with `key`.
+///
+/// The usual way to name a key without revealing it: equal keys give equal values, and the value
+/// cannot be turned back into the key. Logged where a key must be compared across attempts, but must
+/// not be printed.
+/// @param key 16‑byte key.
+/// @param out Output: 3‑byte check value.
+/// @return true on success.
+bool key_check_value(const uint8_t key[AES_KEY_SIZE], uint8_t out[KEY_CHECK_VALUE_SIZE]);
+
 /// Create a 6‑byte HMAC for authentication (IO‑Homecontrol proprietary scheme).
 /// Process: build IV from [data + challenge] → AES‑128‑ECB encrypt IV with system key → take first 6 bytes.
 /// This is NOT a standard HMAC; it is specific to IO‑Homecontrol and matches

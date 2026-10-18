@@ -166,6 +166,9 @@ class PairingTelemetry : public TransmitObserver {
   void set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], uint16_t node_type);
   /// Record that this attempt pulled the key (0x38) instead of pushing it (0x31/0x32).
   void set_key_pull_attempted() { this->key_pull_attempted_ = true; }
+  /// Record that a pulled key could not be verified: the device sent a 0x32, but no candidate
+  /// construction made its 0x3D verify (see find_pull_proof()).
+  void set_key_pull_unproven() { this->key_pull_unproven_ = true; }
 
   /// Seed telemetry with a 1W pairing-gesture frame observed shortly before this attempt began.
   /// Recorded as an RX event with its real RSSI, marked seeded (PairingTelemetryEvent::aux = 1) so
@@ -215,6 +218,8 @@ class PairingTelemetry : public TransmitObserver {
   [[nodiscard]] uint8_t key_refusal_code() const { return this->key_refusal_code_; }
   /// @return true if this attempt pulled the key instead of pushing it.
   [[nodiscard]] bool key_pull_attempted() const { return this->key_pull_attempted_; }
+  /// @return true if this attempt's pull received a key that the device did not prove.
+  [[nodiscard]] bool key_pull_unproven() const { return this->key_pull_unproven_; }
   /// @return true if discovery accepted a device this attempt.
   [[nodiscard]] bool has_discovered_device() const { return this->has_discovered_device_; }
   /// @return Discovered device's node ID; only meaningful if has_discovered_device() is true.
@@ -261,6 +266,7 @@ class PairingTelemetry : public TransmitObserver {
   bool has_key_refusal_{false};
   uint8_t key_refusal_code_{0};
   bool key_pull_attempted_{false};
+  bool key_pull_unproven_{false};
   bool has_discovered_device_{false};
   uint8_t discovered_node_id_[NODE_ID_SIZE]{};
   uint16_t discovered_node_type_{0};

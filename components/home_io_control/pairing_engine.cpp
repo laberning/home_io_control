@@ -61,14 +61,13 @@ void delay_feeding_wdt(uint32_t ms) {
   }
 }
 
-/// Log the device's key after a pull returned a key different from the hub's.
-void log_pulled_key_report(const std::string &device_id, const uint8_t key[AES_KEY_SIZE], bool verified) {
+/// Log the device's key after a pull returned a different key that the device proved it holds.
+void log_pulled_key_report(const std::string &device_id, const uint8_t key[AES_KEY_SIZE]) {
   // Deliberate exception to redaction.h's masking, the same as the key-extraction report: printing
-  // the key is the point of this step. Logged line by line so no single line hits the 512-byte cap.
+  // the key is the point of this step. Only a proven key gets here. Logged line by line so no single
+  // line hits the 512-byte cap.
   std::string report = "DEVICE KEY RECEIVED -- DO NOT SHARE IT\n";
-  report += "Device " + device_id + " holds a different system key than this hub";
-  report += verified ? ", and proved it holds it.\n"
-                     : ", but did not prove it holds it: this key may be wrong (experimental decrypt).\n";
+  report += "Device " + device_id + " holds a different system key than this hub, and proved it holds it.\n";
   report += "To control the device, set this key in the hub's YAML. Devices paired with the hub's\n"
             "current key stop answering, because a hub has one system key.\n"
             "home_io_control:\n"
@@ -77,6 +76,42 @@ void log_pulled_key_report(const std::string &device_id, const uint8_t key[AES_K
   ESP_LOGW(TAG, "========================================");
   detail::log_multiline_result(TAG, /*is_warning=*/true, /*prefix=*/"", report);
   ESP_LOGW(TAG, "========================================");
+}
+
+/// Format a key check value as six hex digits.
+std::string format_key_check_value(const uint8_t key[AES_KEY_SIZE]) {
+  uint8_t kcv[crypto::KEY_CHECK_VALUE_SIZE];
+  if (!crypto::key_check_value(key, kcv))
+    return "------";
+  char buf[(2 * crypto::KEY_CHECK_VALUE_SIZE) + 1];
+  snprintf(buf, sizeof(buf), "%02X%02X%02X", kcv[0], kcv[1], kcv[2]);
+  return std::string(buf);
+}
+
+/// Log what the key pull's check tried, without the key: one line per IV variant with its key check
+/// value, and the construction the device's 0x3D verified under, if any. Comparing the check values
+/// of two attempts shows whether the device keeps its key: the right IV variant gives the same value
+/// both times.
+void log_key_pull_check(const std::string &device_id, const PullKeyCandidates &candidates, bool answered,
+                        const PullProof &proof, uint8_t ours_iv) {
+  for (uint8_t iv = 0; iv < PULL_KEY_IV_COUNT; iv++) {
+    const bool proven = proof.found && !proof.signed_with_transfer_key && static_cast<uint8_t>(proof.iv) == iv;
+    ESP_LOGI(TAG, "Key pull check: %s IV %-6s -> key check value %s%s%s", device_id.c_str(),
+             pull_key_iv_name(static_cast<PullKeyIv>(iv)), format_key_check_value(candidates.keys[iv]).c_str(),
+             proven ? " (proven by its 0x3D)" : "", ours_iv == iv ? " (the hub's own key)" : "");
+  }
+  if (!answered) {
+    ESP_LOGW(TAG, "Key pull check: %s sent no 0x3D to our challenge", device_id.c_str());
+  } else if (!proof.found) {
+    ESP_LOGW(TAG, "Key pull check: %s's 0x3D matches none of the %u key x %u transcript variants, nor the transfer key",
+             device_id.c_str(), PULL_KEY_IV_COUNT, PULL_PROOF_TRANSCRIPT_COUNT);
+  } else if (proof.signed_with_transfer_key) {
+    ESP_LOGW(TAG, "Key pull check: %s signed its 0x3D over %s with the public transfer key, which proves no key",
+             device_id.c_str(), pull_proof_transcript_name(proof.transcript));
+  } else {
+    ESP_LOGW(TAG, "Key pull check: %s proved its key: IV %s, 0x3D over %s", device_id.c_str(),
+             pull_key_iv_name(proof.iv), pull_proof_transcript_name(proof.transcript));
+  }
 }
 
 }  // namespace
@@ -854,6 +889,14 @@ bool PairingEngine::verify_device_holds_key_(pairing::PairingContext &context) {
              "Key exchange: %s never confirmed the key, but it answered an authenticated request with it. "
              "Treating it as paired.",
              context.device_id.c_str());
+  } else if (outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE && context.resp.cmd == CMD_ERROR_RESP &&
+             context.resp.data_len > 0) {
+    // Refused outright: the device never got as far as checking a key.
+    const uint8_t code = context.resp.data[0];
+    ESP_LOGW(TAG,
+             "Key exchange failed: %s refused the name read with 0x%02X %s (%s), so it does not act as a "
+             "paired device",
+             context.device_id.c_str(), code, command_result_name(code), command_result_description(code));
   } else {
     ESP_LOGW(TAG, "Key exchange failed: %s does not answer authenticated requests with our key",
              context.device_id.c_str());
@@ -926,22 +969,38 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
     return KeyPullResult::FAILED;
   }
 
-  uint8_t key[AES_KEY_SIZE];
-  if (!recover_key_from_pull(context.rx.data, challenge, key))
+  PullKeyCandidates candidates;
+  if (!recover_pull_key_candidates(context.rx.data, challenge, candidates))
     return KeyPullResult::FAILED;
+  // Our own key cannot come out of a decrypt by chance, so a match proves that IV variant and that
+  // the device holds our key, whether or not it answers the challenge.
+  uint8_t ours_iv = PULL_KEY_IV_COUNT;  // PULL_KEY_IV_COUNT: no variant gave our key.
+  for (uint8_t iv = 0; iv < PULL_KEY_IV_COUNT && ours_iv == PULL_KEY_IV_COUNT; iv++) {
+    if (memcmp(candidates.keys[iv], system_key_, AES_KEY_SIZE) == 0)
+      ours_iv = iv;
+  }
 
   context.state = pairing::PairingState::VERIFY_PULLED_KEY;
   this->telemetry_.set_phase(context.state);
-  const bool verified = engine_.authenticate_request(context.rx, FREQ_CH2, key);
-  const bool ours = memcmp(key, system_key_, AES_KEY_SIZE) == 0;
-  ESP_LOGI(TAG, "Key pull: %s sent a key; matches ours=%s, proved with a challenge=%s", context.device_id.c_str(),
-           ours ? "yes" : "no", verified ? "yes" : "no");
-  // Our own key cannot come out of the decrypt by chance, so a match proves both the decrypt and
-  // that the device holds our key, whether or not it answered the challenge.
-  if (ours)
+  uint8_t proof_challenge[HMAC_SIZE];
+  uint8_t proof_mac[HMAC_SIZE];
+  const bool answered = engine_.challenge_device(context.rx, FREQ_CH2, proof_challenge, proof_mac);
+  const PullProof proof =
+      answered ? find_pull_proof(candidates, context.rx.data, challenge, proof_challenge, proof_mac) : PullProof{};
+  log_key_pull_check(context.device_id, candidates, answered, proof, ours_iv);
+
+  if (ours_iv < PULL_KEY_IV_COUNT) {
+    ESP_LOGI(TAG, "Key pull: %s holds this hub's key", context.device_id.c_str());
     return KeyPullResult::OUR_KEY;
-  log_pulled_key_report(context.device_id, key, verified);
-  return verified ? KeyPullResult::OTHER_KEY : KeyPullResult::FAILED;
+  }
+  if (proof.found && !proof.signed_with_transfer_key) {
+    log_pulled_key_report(context.device_id, candidates.keys[static_cast<uint8_t>(proof.iv)]);
+    return KeyPullResult::OTHER_KEY;
+  }
+  this->telemetry_.set_key_pull_unproven();
+  ESP_LOGW(TAG, "Key pull: %s sent a key the hub could not verify; it is not printed and must not be used",
+           context.device_id.c_str());
+  return KeyPullResult::FAILED;
 }
 
 void PairingEngine::finish_pairing_attempt_(PairingOutcome outcome) {

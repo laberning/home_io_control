@@ -90,6 +90,7 @@ void PairingTelemetry::begin() {
   this->has_key_refusal_ = false;
   this->key_refusal_code_ = 0;
   this->key_pull_attempted_ = false;
+  this->key_pull_unproven_ = false;
   this->has_discovered_device_ = false;
   memset(this->discovered_node_id_, 0, sizeof(this->discovered_node_id_));
   this->discovered_node_type_ = 0;

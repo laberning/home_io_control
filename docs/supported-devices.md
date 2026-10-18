@@ -114,7 +114,7 @@ before pairing; the [device page](devices/simu-t35-bhz.md#check-the-motor-first)
 
 | Device | Status | Evidence |
 |---|---|---|
-| **AGILIA IO electric radiator** (Atlantic, display model) | ❌ Key step refused: in its display's pairing mode ("Connectivité" → "Connexion") it answers discovery as a remote controller and refuses the pushed key with `COMMAND_UNKNOWN` | Corpus `atlantic_agilia_pairing_key_transfer_command_unknown`, issue #165. `pairing_key_transfer: pull` is the next experiment |
+| **AGILIA IO electric radiator** (Atlantic, display model) | ❌ Key step refused: in its display's pairing mode ("Connectivité" → "Connexion") it answers discovery as a remote controller and refuses the pushed key with `COMMAND_UNKNOWN` | Corpus `atlantic_agilia_pairing_key_transfer_command_unknown`, issue #165. With `pairing_key_transfer: pull` it hands over a key and reports the pairing done; the hub has not yet proven that key |
 | **Atlantic Thermor-style climate/heating actuator** | 🔍 Traffic captured only — the `climate:` platform is built against it but has never run on hardware | Corpus `atlantic_thermor_exchange_write_private_param` |
 | **Honeywell, Hörmann, Assa Abloy, Niko, WindowMaster, Renson, CIAT, Secuyou, Overkiz, Atlantic Group** | Untested — these are names the schema accepts, not devices anyone has reported | Only `somfy` and `velux` have a verified 1W wire profile |
 

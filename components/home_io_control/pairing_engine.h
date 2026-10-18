@@ -83,7 +83,7 @@ class PairingEngine {
  public:
   /// @brief What run_key_pull_phase_() ended with.
   enum class KeyPullResult : uint8_t {
-    FAILED,     ///< No key received, refused, or a different key the device did not prove.
+    FAILED,     ///< No key received, refused, or a different key the device did not prove (not printed).
     OUR_KEY,    ///< The device sent the hub's own key: it is paired with this hub.
     OTHER_KEY,  ///< The device sent a different key and proved it holds it; reported, not adopted.
   };
@@ -215,11 +215,16 @@ class PairingEngine {
   /// @brief Experimental key pull (`pairing_key_transfer: pull`): 0x38 -> device's 0x32 -> our 0x3C
   /// -> device's 0x3D.
   ///
-  /// Sends a key transfer request with 6 random bytes, waits for the device's 0x32, decrypts the key
-  /// with recover_key_from_pull(), then challenges the device to prove it holds that key
-  /// (ExchangeEngine::authenticate_request() with the received key). A key equal to the hub's own
-  /// is accepted as is: the decrypt cannot produce it by chance. A different key is printed for the
-  /// user (like key extraction does), never adopted. Not hardware-validated.
+  /// Sends a key transfer request with 6 random bytes and waits for the device's 0x32. A device
+  /// family may build the IV or its 0x3D differently from the documented exchange, so the hub
+  /// decrypts the key under every PullKeyIv (recover_pull_key_candidates()), challenges the device once
+  /// (ExchangeEngine::challenge_device()) and looks for the construction its 0x3D verifies under
+  /// (find_pull_proof()). The log gets one "Key pull check" line per IV variant with a key check
+  /// value, never the key, so two attempts can be compared from the log alone.
+  ///
+  /// A candidate equal to the hub's own key is accepted as is: no decrypt produces it by chance. A
+  /// different key is printed only when its 0x3D proves it, and never adopted. An unproven key is
+  /// not printed. Not hardware-validated.
   /// @param context Pairing context populated by run_discovery_phase_().
   /// @return See KeyPullResult.
   KeyPullResult run_key_pull_phase_(pairing::PairingContext &context);
