@@ -356,6 +356,8 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
       [position](const IoDevice &d) { return detail::known_device_accepts_execute_position(d, position); },
       position_rejection_profile(*dev, position),
       [this, position](IoFrame &request, const IoDevice &d) {
+        if (device_takes_main_parameter_only(d.type))
+          return create_execute_main_parameter(request, this->node_id_, d.node_id, d.low_power, position);
         return create_execute_position(request, this->node_id_, d.node_id, d.low_power, position, d.silent);
       });
 }
@@ -365,7 +367,22 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
       device_id, {cover_command_name(cmd), cmd == CoverCommand::STOP},
       [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::COVER); },
       "cover entity",
-      [this, cmd](IoFrame &request, const IoDevice &d) {
+      [this, cmd, &device_id](IoFrame &request, const IoDevice &d) {
+        if (device_takes_main_parameter_only(d.type)) {
+          // These devices refuse the favourite alias (issue #163: RESULT_PARAMETER_UNKNOWN), so
+          // say so here instead of sending a frame that can only be refused.
+          if (cmd == CoverCommand::FAVORITE || cmd == CoverCommand::VENT) {
+            ESP_LOGW(detail::TAG, "Device %s: %s is not supported on a %s", device_id.c_str(), cover_command_name(cmd),
+                     device_type_name(d.type));
+            return false;
+          }
+          if (cmd == CoverCommand::FORCE_OPEN) {
+            return create_execute_main_parameter(
+                request, this->node_id_, d.node_id, d.low_power,
+                d.inverted ? FORCE_OPEN_WIRE_POSITION_INVERTED : FORCE_OPEN_WIRE_POSITION,
+                /*force_open_priority=*/true);
+          }
+        }
         // FORCE_OPEN needs the device's own wire-scale "fully open" position (0, or 100 for an
         // IoDevice::inverted device such as a horizontal awning) — create_execute_command() has no
         // device access to resolve that, so it is built separately here where d is in scope.

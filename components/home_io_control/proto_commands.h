@@ -116,6 +116,24 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 ///       environmental lock.
 bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t open_position);
 
+/// @brief Build a position execute frame (0x00) that carries the main parameter only: the 6-byte
+/// form `originator, ACEI, MP, MP, 00, 00`, with no functional-parameter block.
+///
+/// For devices that refuse the block create_execute_position() appends. A Wisniowski / Somfy
+/// MOTO 1000 io garage opener answers that block with RESULT_PARAMETER_UNKNOWN before any
+/// challenge, accepts a 6-byte STOP, and is opened by its own 1W remote with exactly this shape
+/// (`01 43 00 00 00 00`, issue #163). See device_takes_main_parameter_only().
+/// @param f IoFrame to populate.
+/// @param own Controller's 3‑byte node ID (source address).
+/// @param dst Target device's 3‑byte node ID (destination address).
+/// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
+/// @param position Target position 0..100 (IO scale: 0 = open, 100 = closed).
+/// @param force_open_priority True to send at the force-open ACEI (see create_force_open()) instead
+///        of the normal one.
+/// @return true on success; false for a position above 100.
+bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
+                                   bool force_open_priority = false);
+
 /// @brief Build a CMD_PRIVATE (0x03) request for an arbitrary function ID.
 ///
 /// function_id = 0x06 (battery-status) or 0x09 (battery-state) is reported elsewhere to read the
