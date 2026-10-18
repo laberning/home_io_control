@@ -295,11 +295,9 @@ TEST(ProtoFrame, CommandResultDecodeHelpers) {
       << "thermal protection should stay in the generic error bucket";
 
   // 0x58: a diagnostic probe walked past the last function/sub-index the device implements.
-  // Seen cross-vendor; mapped so probe-sweep logs don't read as UNKNOWN_RESULT_CODE.
-  EXPECT_STREQ(command_result_name(RESULT_INVALID_FUNCTION_INDEX), "INVALID_FUNCTION_INDEX");
-  EXPECT_STREQ(command_result_description(RESULT_INVALID_FUNCTION_INDEX),
-               "requested function/sub-index is not implemented by the device");
-  EXPECT_FALSE(is_limitation_result(RESULT_INVALID_FUNCTION_INDEX)) << "an index rejection is not a limitation";
+  // Seen cross-vendor; it is code 11 of the packed (code << 3) | state layout.
+  EXPECT_STREQ(command_result_name(RESULT_TOTAL_INCOHERENCE), "TOTAL_INCOHERENCE");
+  EXPECT_FALSE(is_limitation_result(RESULT_TOTAL_INCOHERENCE)) << "an index rejection is not a limitation";
 
   EXPECT_STREQ(command_result_name(0xFF), "UNKNOWN_RESULT_CODE");
   EXPECT_STREQ(command_result_description(0xFF), "unknown result code");

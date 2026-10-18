@@ -1,7 +1,7 @@
 id: somfy_awning_probe_general_info3_lr1121
 description: >
   CMD_GET_GENERAL_INFO3 (0x58) probe against our own mains-powered awning. Device replied
-  CMD_ERROR_RESP (0xFE), result code 0x08 (ERROR_DURING_EXECUTION) -- this device does not
+  CMD_ERROR_RESP (0xFE), result code 0x08 (COMMAND_UNKNOWN) -- this device does not
   support the opcode, unlike the companion dimmer capture
   (somfy_izymo_dimmer_probe_general_info3_lr1121.yaml), which answered with a real 0x59.
 source:
@@ -24,7 +24,7 @@ frames:
     freq: 868950000
     hex: "89 00 C0 FF EE 30 E1 F2 FE 08"
     crc: absent
-    note: "cmd=ERROR_RESP(0xFE), result code 0x08 = ERROR_DURING_EXECUTION -- opcode not supported."
+    note: "cmd=ERROR_RESP(0xFE), result code 0x08 = COMMAND_UNKNOWN -- opcode not supported."
 expect:
   frames:
     - {cmd: 0x58, start: true, end: false, protocol: 2w}

@@ -55,6 +55,11 @@ enum class PairingState : uint8_t {
   WAIT_KEY_CHALLENGE,      ///< Waiting for challenge (0x3C) from device as part of key transfer.
   TX_KEY_TRANSFER,         ///< Key‑transfer (0x32) sent with encrypted system key.
   WAIT_KEY_CONFIRM,        ///< Waiting for key‑confirm (0x33) from device (key receipt acknowledgement).
+  VERIFY_KEY_HELD,         ///< Key exchange unconfirmed: checking with an authenticated read whether the
+                           ///< device took our key anyway.
+  TX_KEY_PULL,             ///< Key transfer request (0x38) sent: `pairing_key_transfer: pull`.
+  WAIT_KEY_PULL_REPLY,     ///< Waiting for the device's key transfer (0x32) in answer to our 0x38.
+  VERIFY_PULLED_KEY,       ///< Challenging the device to prove it holds the key it sent.
   REGISTER_DEVICE,         ///< Registering device in the runtime registry for the current boot.
   COMPLETE,                ///< Pairing completed successfully; device ready for use.
   FAILED,                  ///< Pairing failed (timeout, radio error, or protocol violation).
@@ -72,6 +77,10 @@ struct PairingContext {
   std::string device_id;                   ///< Hex string representation of the paired node ID.
   bool discovery_metadata_complete{false};  ///< True when discovery carried type/subtype bytes.
   bool discovery_low_power{false};          ///< True when discovery reported POWER_SAVE_LOW_POWER.
+  uint16_t node_type{0};                    ///< Full 10-bit node type from discovery (see NODE_TYPE_REMOTE_CONTROLLER).
+  bool saw_key_challenge{false};            ///< True once the device challenged our key-init this attempt.
+  bool key_refused{false};                  ///< True once the device answered the key step with CMD_ERROR_RESP.
+  uint8_t key_refusal_code{0};              ///< That CMD_ERROR_RESP byte; only meaningful if key_refused.
 };
 
 /// @brief What PairingEngine::run_discover_confirm_step_() actually observed.
@@ -111,6 +120,14 @@ inline const char *pairing_stage_name(pairing::PairingState state) {
       return "tx_key_transfer";
     case pairing::PairingState::WAIT_KEY_CONFIRM:
       return "wait_key_confirm";
+    case pairing::PairingState::VERIFY_KEY_HELD:
+      return "verify_key_held";
+    case pairing::PairingState::TX_KEY_PULL:
+      return "tx_key_pull";
+    case pairing::PairingState::WAIT_KEY_PULL_REPLY:
+      return "wait_key_pull_reply";
+    case pairing::PairingState::VERIFY_PULLED_KEY:
+      return "verify_pulled_key";
     case pairing::PairingState::REGISTER_DEVICE:
       return "register_device";
     case pairing::PairingState::COMPLETE:

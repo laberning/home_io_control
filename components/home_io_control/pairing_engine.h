@@ -57,6 +57,13 @@ inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait win
 inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for 0x33 key confirm after sending 0x32.
 inline constexpr uint8_t PAIRING_DISCOVER_CONFIRM_TRIES = 3;       ///< Max tries for the discover-confirm (0x2C) step.
 inline constexpr uint32_t PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS = 1500;  ///< Wait window per discover-confirm try.
+/// Tries for the authenticated name read that checks whether a device took our key although the
+/// key exchange did not confirm. Two, not EXCHANGE_RETRY_COUNT: the device answered moments ago, so
+/// one retry covers a lost frame, and the check runs only on an attempt that is already failing.
+inline constexpr uint8_t PAIRING_KEY_VERIFY_MAX_TRIES = 2;
+/// Wait for the device's key transfer (0x32) after our key transfer request (0x38). Same window as
+/// the 0x33 wait: both are a unicast reply to a unicast pairing frame.
+inline constexpr uint32_t PAIRING_KEY_PULL_REPLY_TIMEOUT_MS = PAIRING_KEY_CONFIRM_TIMEOUT_MS;
 /// How recent a RecentOneWayPairingSighting has to be, relative to discover_and_pair() starting,
 /// to still count as evidence for this attempt. Generous relative to the doc's "a few seconds"
 /// PROG-then-press guidance: real field reports (issue #27) show gaps up to ~4-7 s between the
@@ -74,6 +81,13 @@ inline constexpr uint32_t PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS = 15000;
 /// @ingroup hioc_hub
 class PairingEngine {
  public:
+  /// @brief What run_key_pull_phase_() ended with.
+  enum class KeyPullResult : uint8_t {
+    FAILED,     ///< No key received, refused, or a different key the device did not prove.
+    OUR_KEY,    ///< The device sent the hub's own key: it is paired with this hub.
+    OTHER_KEY,  ///< The device sent a different key and proved it holds it; reported, not adopted.
+  };
+
   /// Construct the engine with all required collaborators.
   ///
   /// @param radio_ptr  Double pointer into the hub's `radio_` member — survives driver replacement in tests.
@@ -187,6 +201,29 @@ class PairingEngine {
   /// @return true if the device confirmed the key.
   bool transfer_key_and_wait_confirm_(pairing::PairingContext &context);
 
+  /// @brief Check whether the device took our key although the key exchange did not confirm it.
+  ///
+  /// A device can accept a key transfer whose 0x33 we never hear, then refuse the next one, so an
+  /// unconfirmed key exchange is not proof of failure. Sends one authenticated name read (0x50).
+  /// Only a device that challenges the read and then answers it with its name (0x51) has proven it
+  /// verifies our MAC with our key. A device that answers without challenging proves nothing, and
+  /// counts as "not held".
+  /// @param context Pairing context; `context.req`/`context.resp` are reused as scratch.
+  /// @return true if the device answered an authenticated request with our key.
+  bool verify_device_holds_key_(pairing::PairingContext &context);
+
+  /// @brief Experimental key pull (`pairing_key_transfer: pull`): 0x38 -> device's 0x32 -> our 0x3C
+  /// -> device's 0x3D.
+  ///
+  /// Sends a key transfer request with 6 random bytes, waits for the device's 0x32, decrypts the key
+  /// with recover_key_from_pull(), then challenges the device to prove it holds that key
+  /// (ExchangeEngine::authenticate_request() with the received key). A key equal to the hub's own
+  /// is accepted as is: the decrypt cannot produce it by chance. A different key is printed for the
+  /// user (like key extraction does), never adopted. Not hardware-validated.
+  /// @param context Pairing context populated by run_discovery_phase_().
+  /// @return See KeyPullResult.
+  KeyPullResult run_key_pull_phase_(pairing::PairingContext &context);
+
  private:
   /// Preamble for a directed pairing start frame (0x2C, 0x31, 0x6F) to the device discovery just
   /// found: the shorter of ExchangeEngine::request_preamble_for()'s rule and the preamble the
@@ -231,6 +268,23 @@ class PairingEngine {
   /// @param accepted true if the frame was classified as a valid discovery response.
   /// @param rssi RSSI of the captured frame.
   void record_discovery_rx_telemetry_(const IoFrame &frame, bool accepted, int16_t rssi);
+
+  /// Record a CMD_ERROR_RESP answer to the key step: context flag, telemetry, and a decoded log line.
+  /// @param context Pairing context to mark as refused.
+  /// @param reply   The device's CMD_ERROR_RESP frame.
+  /// @param step    Log label for the refused step (e.g. "Key transfer").
+  void note_key_refusal_(pairing::PairingContext &context, const IoFrame &reply, const char *step);
+
+  /// Wait for the device's 0x32 answer to our 0x38, holding the request channel.
+  /// @param context Pairing context; `context.rx` receives the accepted 0x32.
+  /// @return true if a well-formed 0x32 from the device arrived; false on timeout or refusal
+  ///         (a refusal also sets `context.key_refused`).
+  bool wait_for_pulled_key_(pairing::PairingContext &context);
+
+  /// Run the push key exchange with its retry loop, then the key-held check if it did not confirm.
+  /// @param context Pairing context populated by the discovery phase.
+  /// @return true if the device holds our key (confirmed, or proven by verify_device_holds_key_()).
+  bool run_push_key_step_(pairing::PairingContext &context);
 
   RadioDriver **radio_ptr_;
   const uint8_t *node_id_;

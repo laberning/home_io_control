@@ -11,7 +11,7 @@ description: >
       (no leading ASCII reference string, unlike the Somfy get_info2 replies). data[12..15]
       undecoded.
     - GET_GENERAL_INFO3: the window does not implement it — answers CMD_ERROR_RESP (0xFE)
-      result 0x08 = RESULT_ERROR_DURING_EXECUTION, same as a Somfy Sunea awning
+      result 0x08 = RESULT_COMMAND_UNKNOWN, same as a Somfy Sunea awning
       (velux_kig300_probe_capability_burst.yaml shows a Somfy dimmer answering a real 0x59 instead —
       device-dependent).
     - GET_INFO1_RESP: body is 9 zero bytes then 30 03 then 00 00 00; static, no position/limit
@@ -51,7 +51,7 @@ frames:
     t_ms: 0
     hex: "89 00 51 3B 34 65 44 C6 FE 08"
     crc: absent
-    note: "cmd=ERROR_RESP(0xFE) answering CMD_GET_GENERAL_INFO3 (0x58): result code 0x08 = ERROR_DURING_EXECUTION — this window does not implement the opcode. END."
+    note: "cmd=ERROR_RESP(0xFE) answering CMD_GET_GENERAL_INFO3 (0x58): result code 0x08 = COMMAND_UNKNOWN — this window does not implement the opcode. END."
   - dir: rx
     t_ms: 0
     hex: "8D 00 51 3B 34 65 44 C6 0D 68 D4 00 00 00"

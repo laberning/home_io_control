@@ -40,7 +40,7 @@ static constexpr uint8_t RAIN_POLL_FAILURES_BEFORE_UNKNOWN = 3;
 /// @param random A uniformly distributed 32-bit random number.
 /// @return RAIN_POLL_INITIAL_DELAY_MS plus an offset in [0, RAIN_POLL_INITIAL_SPREAD_MS].
 [[nodiscard]] inline uint32_t rain_poll_first_delay_ms(uint32_t random) {
-  return RAIN_POLL_INITIAL_DELAY_MS + random % (RAIN_POLL_INITIAL_SPREAD_MS + 1);
+  return RAIN_POLL_INITIAL_DELAY_MS + (random % (RAIN_POLL_INITIAL_SPREAD_MS + 1));
 }
 
 /// @brief One poll interval moved by a uniform offset of up to RAIN_POLL_JITTER_PERCENT either way.

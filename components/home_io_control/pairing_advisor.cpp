@@ -21,6 +21,9 @@ namespace {
 /// and kept under ESPHome's 512-byte log line so the WARN line isn't truncated on hardware — the
 /// longest message plus the "Pairing advisor: " prefix comes to ~400 bytes on the wire.
 constexpr size_t ADVICE_MESSAGE_BUFFER_SIZE = 416;
+/// Buffer for the " answered our key with 0xNN NAME;" fragment: the longest result name is 32
+/// characters, plus 29 characters of fixed text and the terminator, with room to spare.
+constexpr size_t RESULT_CODE_TEXT_BUFFER_SIZE = 72;
 
 bool is_rx_kind(PairingTelemetryEventKind kind) {
   return kind == PairingTelemetryEventKind::RX || kind == PairingTelemetryEventKind::RX_REJECT;
@@ -116,6 +119,30 @@ void append_foreign_controller_advice(const uint8_t own_node_id[NODE_ID_SIZE], c
   }
 }
 
+/// Key-step advice: only for attempts that did not pair and got as far as discovering a device.
+/// A pushed key answered with "command unknown", or a failed push to a device that answered
+/// discovery as a remote controller, points at the pull direction; any other refusal is reported
+/// with its code.
+void append_key_step_advice(const PairingTelemetry &telemetry, PairingAdvice out[], uint8_t &count) {
+  if (count >= PAIRING_ADVICE_MAX || !telemetry.has_discovered_device())
+    return;
+  const PairingOutcome outcome = telemetry.outcome();
+  if (outcome != PairingOutcome::KEY_EXCHANGE_FAILED && outcome != PairingOutcome::KEY_TRANSFER_REFUSED)
+    return;
+  const bool as_controller = telemetry.discovered_node_type() == NODE_TYPE_REMOTE_CONTROLLER;
+  const bool command_unknown = telemetry.has_key_refusal() && telemetry.key_refusal_code() == RESULT_COMMAND_UNKNOWN;
+  // Suggesting pull only makes sense when this attempt pushed.
+  const bool suggest_pull = (command_unknown || as_controller) && !telemetry.key_pull_attempted();
+  if (!suggest_pull && !telemetry.has_key_refusal())
+    return;
+  PairingAdvice &advice = out[count++];
+  advice.code = suggest_pull ? PairingAdviceCode::KEY_PUSH_NOT_ACCEPTED : PairingAdviceCode::KEY_TRANSFER_REFUSED;
+  memcpy(advice.subject_node, telemetry.discovered_node_id(), NODE_ID_SIZE);
+  advice.has_result_code = telemetry.has_key_refusal();
+  advice.result_code = telemetry.key_refusal_code();
+  advice.answered_as_controller = as_controller;
+}
+
 }  // namespace
 
 uint8_t analyze_pairing_telemetry(const PairingTelemetry &telemetry, const uint8_t own_node_id[NODE_ID_SIZE],
@@ -127,6 +154,7 @@ uint8_t analyze_pairing_telemetry(const PairingTelemetry &telemetry, const uint8
   append_one_way_pairing_advice(telemetry, events, event_count, out, count);
   append_channel_busy_advice(telemetry, events, event_count, out, count);
   append_foreign_controller_advice(own_node_id, events, event_count, out, count);
+  append_key_step_advice(telemetry, out, count);
 
   if (count == 0 && telemetry.heard_count() == 0 && count < PAIRING_ADVICE_MAX) {
     out[count++].code = PairingAdviceCode::RF_SILENT;
@@ -145,6 +173,10 @@ const char *pairing_advice_code_name(PairingAdviceCode code) {
       return "foreign_controller";
     case PairingAdviceCode::RF_SILENT:
       return "rf_silent";
+    case PairingAdviceCode::KEY_PUSH_NOT_ACCEPTED:
+      return "key_push_not_accepted";
+    case PairingAdviceCode::KEY_TRANSFER_REFUSED:
+      return "key_refused";
     case PairingAdviceCode::NONE:
     default:
       return "none";
@@ -180,6 +212,26 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
       return "Nothing heard on any channel during the whole discovery window. If this log shows other "
              "IO-Homecontrol frames being received, the radio works and the device did not answer; otherwise "
              "check the antenna/RF path.";
+    case PairingAdviceCode::KEY_PUSH_NOT_ACCEPTED: {
+      char code_text[RESULT_CODE_TEXT_BUFFER_SIZE] = "";
+      if (advice.has_result_code) {
+        snprintf(code_text, sizeof(code_text), " answered our key with 0x%02X %s;", advice.result_code,
+                 command_result_name(advice.result_code));
+      }
+      snprintf(buf, sizeof(buf),
+               "Device %s does not take a pushed key:%s%s It may hand over its own key instead: add "
+               "`pairing_key_transfer: pull` under `tuning:`, put the device back into pairing mode and pair again.",
+               node_id_to_string(advice.subject_node).c_str(), code_text,
+               advice.answered_as_controller ? " it answered discovery as a remote controller (node type 1023)." : "");
+      return std::string(buf);
+    }
+    case PairingAdviceCode::KEY_TRANSFER_REFUSED:
+      snprintf(buf, sizeof(buf),
+               "Device %s refused the key transfer with 0x%02X %s (%s). If it was paired before, run Scan Paired "
+               "Devices before retrying: it may already hold a key.",
+               node_id_to_string(advice.subject_node).c_str(), advice.result_code,
+               command_result_name(advice.result_code), command_result_description(advice.result_code));
+      return std::string(buf);
     case PairingAdviceCode::NONE:
     default:
       return "";

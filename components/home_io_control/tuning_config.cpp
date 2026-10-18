@@ -295,6 +295,24 @@ std::optional<DiscoveryListenChannels> discovery_listen_channels_from_string(con
   return std::nullopt;
 }
 
+std::string key_transfer_mode_to_string(KeyTransferMode value) {
+  switch (value) {
+    case KeyTransferMode::PUSH:
+      return "push";
+    case KeyTransferMode::PULL:
+      return "pull";
+  }
+  return "push";
+}
+
+std::optional<KeyTransferMode> key_transfer_mode_from_string(const std::string &value) {
+  if (value == key_transfer_mode_to_string(KeyTransferMode::PUSH))
+    return KeyTransferMode::PUSH;
+  if (value == key_transfer_mode_to_string(KeyTransferMode::PULL))
+    return KeyTransferMode::PULL;
+  return std::nullopt;
+}
+
 std::string tuning_update_log_line(const std::string &name, const std::string &value) {
   return "Tuning updated via HA: " + name + "=" + value;
 }
@@ -360,6 +378,9 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
     result += " pairing_discovery_listen_channels=" +
               discovery_listen_channels_to_string(cfg.pairing_discovery_listen_channels);
   }
+  // pairing_key_transfer is an enum SELECT_PARAMS row, same as the ones above.
+  if (cfg.pairing_key_transfer != DEFAULTS.pairing_key_transfer)
+    result += " pairing_key_transfer=" + key_transfer_mode_to_string(cfg.pairing_key_transfer);
   // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms,
   // pairing_key_exchange_retries, and pairing_key_init_delay_ms are plain NUMBER_PARAMS entries —
   // covered by the loop above.

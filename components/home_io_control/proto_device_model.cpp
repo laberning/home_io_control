@@ -76,6 +76,11 @@ DeviceType decode_packed_device_type(uint8_t type_msb, uint8_t type_subtype) {
                                  (type_subtype >> DEVICE_TYPE_HIGH_BITS_SHIFT));
 }
 
+uint16_t decode_packed_node_type(uint8_t type_msb, uint8_t type_subtype) {
+  return static_cast<uint16_t>((type_msb << DEVICE_TYPE_LOW_BITS_SHIFT) |
+                               (type_subtype >> DEVICE_TYPE_HIGH_BITS_SHIFT));
+}
+
 uint8_t decode_packed_device_subtype(uint8_t type_subtype) { return type_subtype & DEVICE_SUBTYPE_MASK; }
 
 void encode_packed_device_type(DeviceType type, uint8_t subtype, uint8_t &type_msb, uint8_t &type_subtype) {

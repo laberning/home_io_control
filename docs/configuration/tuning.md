@@ -163,6 +163,7 @@ your device may differ.
 | `pairing_discover_confirm` | both | `send` | `skip` / `send` / `send_with_ack` | Whether/how to send `DISCOVER_CONFIRM` (0x2C) to a freshly-discovered device before the key exchange. |
 | `pairing_key_init_delay_ms` | both | `300` | 0–10000 ms | Pause after the discover-confirm step (ACKed, refused, or silent) and before `KEY_INIT` (0x31). |
 | `pairing_discovery_listen_channels` | both | `skip_request` | `skip_request` / `all` | Which channels the wait for a discovery response covers. |
+| `pairing_key_transfer` | both | `push` | `push` / `pull` | Send the hub's key to the device, or ask the device for its own key. `pull` is experimental. |
 
 `ui_controls` itself is a feature toggle (default `false`) that exposes these as entities; it is
 not a tunable.
@@ -621,6 +622,28 @@ on the two channels that carry nearly all of them — a third more dwell on each
 Set `all` when a device never answers discovery at all. That measurement comes from devices we
 already hear, so it cannot speak for one whose replies we might be missing entirely; `all` costs a
 third of the dwell on the other two channels and removes the only blind spot the default has.
+
+#### `pairing_key_transfer`
+
+Which way the system key moves after discovery.
+
+`push` is the normal pairing: the hub sends its own key to the device, and the device confirms it.
+
+`pull` asks the device for its own key instead. The hub sends a key request (0x38), the device
+answers with its key, and the hub then challenges the device to prove that it holds that key. Use
+it only when the pairing advisor reports `key_push_not_accepted`: the device answered the pushed
+key with `COMMAND_UNKNOWN`, or it answered discovery as a remote controller. An Atlantic AGILIA IO
+radiator does both in its display's pairing mode (issue #165).
+
+What happens next depends on the key the device sends back:
+
+- It is the hub's own key: the device is paired, and the log prints the usual YAML snippet.
+- It is a different key: the hub registers nothing. The log prints the device's key and node ID in
+  the same block that [key extraction](../key-extraction.md) prints. To control the device, put that
+  key into `system_key:`. Devices paired with the hub's old key stop answering, because a hub has
+  one system key.
+
+`pull` is not validated on hardware yet. Switch back to `push` before pairing any other device.
 
 ### Reading pairing results without the tuning UI
 

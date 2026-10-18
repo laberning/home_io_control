@@ -463,6 +463,7 @@ static bool parse_probe_index(const std::string &text, uint8_t &out) {
   if (text.size() > 1 && text[0] == '0' && text[1] != 'x' && text[1] != 'X')
     return false;
   errno = 0;
+  // NOLINTNEXTLINE(misc-const-correctness): strtoul()/strtof() take a `char **` end pointer.
   char *end = nullptr;
   // Base 0: strtoul() itself recognizes a "0x"/"0X" prefix as hex and a bare "0" as decimal
   // zero, which is exactly the "6" / "0x06" / "0" shape probes need to accept.
@@ -505,6 +506,7 @@ static bool match_heating_named_value(const std::string &token, const HeatingNam
 static bool parse_heating_temperature(const std::string &value, float &value_out, std::string &error) {
   const std::string text = trim_ascii_whitespace(value);
   errno = 0;
+  // NOLINTNEXTLINE(misc-const-correctness): strtoul()/strtof() take a `char **` end pointer.
   char *end = nullptr;
   const float parsed = std::strtof(text.c_str(), &end);
   if (text.empty() || end != text.c_str() + text.size() || errno == ERANGE || !std::isfinite(parsed)) {

@@ -30,7 +30,7 @@ constexpr uint8_t EXECUTE_ORIGINATOR = ORIGINATOR_USER_REMOTE;
 /// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml), not a 2W hub, and a
 /// handheld remote claiming a higher priority than a home-automation hub is unsurprising.
 ///
-/// A device locked at level 3 rejects this with RESULT_PRIORITY_LOCKED_NON_EXEC (0x38) rather than
+/// A device locked at level 3 rejects this with RESULT_PRIORITY_LOCKED (0x38) rather than
 /// silence. Watch command results for 0x38 after touching this value; if it appears, level=2
 /// (0x43) is the fallback and the priority/reliability tradeoff is real.
 ///
@@ -43,7 +43,7 @@ constexpr uint8_t EXECUTE_ACEI =
 /// The protocol's only documented override mechanism for an environmental soft lock (e.g. a
 /// wind/rain sensor holding a device at its secured position) is ACEI priority elevation: a node
 /// locked at some priority level rejects any command at that level or below (result codes
-/// RESULT_PRIORITY_LEVEL_LOCKED / RESULT_PRIORITY_LOCKED_NON_EXEC) and only a strictly
+/// RESULT_PRIORITY_LEVEL_LOCKED / RESULT_PRIORITY_LOCKED) and only a strictly
 /// higher-priority command gets through. Real captures of this repo's own wind/rain sensor
 /// traffic show it locks at ACEI_LEVEL_PROTECTION_SENSOR (1), so force-open uses level 0
 /// (protection_human, the highest level)
@@ -777,6 +777,24 @@ bool recover_system_key_from_transfer(const uint8_t transfer_payload[AES_KEY_SIZ
                                       uint8_t out_key[AES_KEY_SIZE]) {
   const uint8_t key_init_cmd = CMD_KEY_INIT;
   return crypto::crypt_key(&key_init_cmd, 1, challenge, transfer_payload, out_key);
+}
+
+/// Build a key transfer request (0x38). See proto_commands.h for the frame shape.
+bool create_launch_key_transfer(IoFrame &f, const uint8_t *own, const uint8_t *dst,
+                                const uint8_t challenge[HMAC_SIZE]) {
+  init_frame(f, true, /*start=*/true, /*end=*/false, /*low_power=*/false);
+  f.ctrl1 |= CTRL1_PRIORITY;
+  set_dst(f, dst);
+  set_src(f, own);
+  return set_cmd(f, CMD_LAUNCH_KEY_TRANSFER, challenge, HMAC_SIZE);
+}
+
+/// Recover a device's key from its answer to our 0x38. The IV-`data` convention is
+/// `{CMD_LAUNCH_KEY_TRANSFER}, len 1`, mirroring recover_system_key_from_transfer().
+bool recover_key_from_pull(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE],
+                           uint8_t out_key[AES_KEY_SIZE]) {
+  const uint8_t request_cmd = CMD_LAUNCH_KEY_TRANSFER;
+  return crypto::crypt_key(&request_cmd, 1, challenge, transfer_payload, out_key);
 }
 
 /// Build a key-init request (0x31) to start the pairing key exchange with a discovered device.

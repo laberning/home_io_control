@@ -33,6 +33,10 @@ enum class PairingAdviceCode : uint8_t {
                                ///< not be among the parsed events attributed here).
   FOREIGN_CONTROLLER_PAIRING,  ///< A discovery response was seen addressed to another controller.
   RF_SILENT,                   ///< Nothing at all was heard during the whole window.
+  KEY_PUSH_NOT_ACCEPTED,       ///< The device does not take a pushed key: it answered 0x32 with
+                               ///< RESULT_COMMAND_UNKNOWN, or it answered discovery as a remote
+                               ///< controller and the push failed. Suggests `pairing_key_transfer: pull`.
+  KEY_TRANSFER_REFUSED,        ///< The device answered the key transfer with any other CMD_ERROR_RESP.
 };
 
 /// @brief One piece of advice, with the node/RSSI it pertains to (if any).
@@ -40,10 +44,13 @@ struct PairingAdvice {
   PairingAdviceCode code{PairingAdviceCode::NONE};
   uint8_t subject_node[NODE_ID_SIZE]{};  ///< Node the advice is about; zero if not applicable.
   int16_t rssi{0};                       ///< RSSI associated with the observation; zero if not applicable.
+  bool has_result_code{false};           ///< True when result_code carries the device's CMD_ERROR_RESP byte.
+  uint8_t result_code{0};                ///< CMD_ERROR_RESP byte the advice is about.
+  bool answered_as_controller{false};    ///< True when the device answered discovery as a remote controller.
 };
 
 /// @brief Maximum number of advice entries a single attempt can produce (one slot per non-NONE code).
-static constexpr uint8_t PAIRING_ADVICE_MAX = 4;
+static constexpr uint8_t PAIRING_ADVICE_MAX = 6;
 
 /// @brief Inspect a completed pairing attempt's telemetry and produce actionable advice.
 ///

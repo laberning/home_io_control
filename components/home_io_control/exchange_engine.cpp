@@ -906,6 +906,10 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
 // ============================================================================
 
 bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq) {
+  return this->authenticate_request(request, freq, this->system_key_);
+}
+
+bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq, const uint8_t *key) {
   RadioDriver *radio = *this->radio_ptr_;
   exchange::InboundAuthContext context;
   context.state = exchange::InboundAuthState::TX_CHALLENGE;
@@ -946,7 +950,7 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq)
   uint8_t frame_data[FRAME_MAX_SIZE];
   frame_data[0] = request.cmd;
   memcpy(frame_data + 1, request.data, request.data_len);
-  if (!crypto::verify_hmac(frame_data, request.data_len + 1, rx.data, context.challenge.data, this->system_key_)) {
+  if (!crypto::verify_hmac(frame_data, request.data_len + 1, rx.data, context.challenge.data, key)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return false;

@@ -362,6 +362,7 @@ DiscoveryResponseInfo decode_discovery_response(const IoFrame &frame, IoDevice &
   info.metadata_complete = frame.data_len >= DEVICE_METADATA_SIZE;
   if (info.metadata_complete) {
     device.type = decode_packed_device_type(frame.data[0], frame.data[1]);
+    info.node_type = decode_packed_node_type(frame.data[0], frame.data[1]);
     device.subtype = decode_packed_device_subtype(frame.data[1]);
     device.inverted = default_inverted_for_type(device.type);
   } else {

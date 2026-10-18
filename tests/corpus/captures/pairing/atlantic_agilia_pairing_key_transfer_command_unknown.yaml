@@ -1,0 +1,64 @@
+id: atlantic_agilia_pairing_key_transfer_command_unknown
+description: >
+  An Atlantic AGILIA IO radiator, put into its own pairing mode from the display ("Connectivité" ->
+  "Connexion"), answers our discovery, acknowledges the discover-confirm and challenges our key-init,
+  then answers our key transfer (0x32) with ERROR_RESP 0x08 within 28 ms. Under the packed
+  (code << 3) | state layout of the 0xFE byte (proto_constants.h) 0x08 is code 1,
+  RESULT_COMMAND_UNKNOWN: the radiator does not take a pushed key in this state, it is not
+  complaining about the key's value.
+
+  The discovery reply's node type bytes are FF C0: type 1023, subtype 0, the remote-controller
+  node type, not a heater. The radiator answers discovery in this mode as a controller, which fits
+  a node that does not accept a pushed key.
+
+  The CHALLENGE_REQ (0x3C) and KEY_TRANSFER (0x32) payloads were masked in the reporter's log, so
+  those two frames are not in this capture; the frame notes say where they sat. One attempt only.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model, never paired to a gateway)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-16
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868250000
+    hex: "D1 00 60 F8 23 B6 BD FB 29 FF C0 B6 BD FB 0C CC 00 00"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29), radiator B6BDFB answers our discovery (request not in the log). Node type bytes FF C0 = type 1023 (remote controller), subtype 0; backbone B6BDFB, manufacturer 12 (Atlantic Group), flags 0xCC (turnaround 40 ms, always_alive), timestamp 0."
+  - dir: tx
+    t_ms: 17
+    freq: 868950000
+    hex: "48 00 B6 BD FB 60 F8 23 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), preamble 48"
+  - dir: rx
+    t_ms: 49
+    freq: 868950000
+    hex: "88 00 60 F8 23 B6 BD FB 2D"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM_ACK(0x2D), 13 ms after the 0x2C"
+  - dir: tx
+    t_ms: 352
+    freq: 868950000
+    hex: "48 20 B6 BD FB 60 F8 23 31"
+    crc: absent
+    note: "cmd=KEY_INIT(0x31), preamble 1024, CTRL1_LOW_POWER set. The radiator answered it with a CHALLENGE_REQ (0x3C) at rssi -38, then we sent KEY_TRANSFER (0x32) with preamble 8; both payloads were masked in the source log and are omitted here."
+  - dir: rx
+    t_ms: 626
+    freq: 868950000
+    hex: "89 00 60 F8 23 B6 BD FB FE 08"
+    crc: absent
+    note: "cmd=ERROR_RESP(0xFE), result 0x08 = COMMAND_UNKNOWN (code 1, state 0), 28 ms after our 0x32."
+expect:
+  exchange:
+    kind: pairing
+    outcome: failure
+  frames:
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x31, start: true, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w}

@@ -27,7 +27,7 @@ PHASES = ("exchange", "probe", "oneway", "statuspoll", "pairing", "discovery",
 # one-line addition here (rare). Keeping it closed is what stops `somfy_dimmer` drifting back in
 # next to `somfy_izymo_dimmer`, or a `velux_windwo` typo, from ever reaching main.
 SUBJECTS = frozenset({
-    "atlantic_thermor", "multi_somfy", "reference_1w", "selfpair", "wind_sensor",
+    "atlantic_agilia", "atlantic_thermor", "multi_somfy", "reference_1w", "selfpair", "wind_sensor",
     "somfy_awning", "somfy_connectivity_kit", "somfy_izymo_dimmer", "somfy_j406",
     "somfy_oximo40", "somfy_pergola_louver", "somfy_rs100", "somfy_smoove", "somfy_sunilus", "somfy_tahoma",
     "synthetic", "tilt_cover", "unidentified_1w_remote",
