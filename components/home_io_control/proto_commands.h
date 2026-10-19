@@ -733,8 +733,8 @@ bool recover_system_key_from_transfer(const uint8_t transfer_payload[AES_KEY_SIZ
 /// @brief Build a key transfer request (0x38, "pull") asking a discovered device for its key.
 ///
 /// START set, END clear, CTRL1_LOW_POWER clear, CTRL1 bit 2 (CTRL1_PRIORITY) set: the shape vendor
-/// controllers use for this request, not yet seen on air by this project. The device is expected
-/// to answer with a CMD_KEY_TRANSFER (0x32); recover_key_from_pull() decrypts it.
+/// controllers use for this request. An Atlantic AGILIA IO radiator answers it with a CMD_KEY_TRANSFER
+/// (0x32) (issue #165); recover_key_from_pull() decrypts that.
 /// @param f IoFrame to populate.
 /// @param own Controller node ID.
 /// @param dst Discovered device node ID.
@@ -747,87 +747,14 @@ bool create_launch_key_transfer(IoFrame &f, const uint8_t *own, const uint8_t *d
 ///
 /// Same construction as recover_system_key_from_transfer(), with the IV taken from the request
 /// that asked for the key: its `data` is the whole request, `{CMD_LAUNCH_KEY_TRANSFER, r0..r5}`, and
-/// its challenge the same 6 bytes. Checked against a documented pull exchange in
-/// proto_crypto_test.cpp, including the device's 0x3D.
+/// its challenge the request's 6 bytes. Checked against a documented pull exchange in
+/// proto_crypto_test.cpp, and on an Atlantic AGILIA IO radiator, whose 0x3D proved the key (issue #165).
+/// @param request Our 0x38, as built by create_launch_key_transfer().
 /// @param transfer_payload 16-byte CMD_KEY_TRANSFER payload from the device.
-/// @param challenge The 6 bytes we sent in our 0x38.
 /// @param out_key Output: the device's 16-byte key.
-/// @return true on success (crypt_key() AES failure is the only false case).
-bool recover_key_from_pull(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE],
+/// @return true on success; false when `request` carries fewer than 6 bytes or AES fails.
+bool recover_key_from_pull(const IoFrame &request, const uint8_t transfer_payload[AES_KEY_SIZE],
                            uint8_t out_key[AES_KEY_SIZE]);
-
-// === Key pull: which construction did the device use? ===
-//
-// One pull exchange is documented (the known-answer test in proto_crypto_test.cpp); this project
-// has not captured one of its own, and a device family may build its IV or 0x3D differently. A
-// device that answers a pull hands us its 0x32 and a 0x3D, and a 6-byte MAC that verifies under one
-// of a few candidate constructions proves that construction (a chance match is 1 in 2^48). These
-// helpers try that small set, so one attempt settles the question without logging the key.
-
-/// IV `data` a device may have used to wrap its key in the 0x32 it answers a pull with. Every
-/// variant uses the 6 bytes of our 0x38 as the IV's challenge.
-enum class PullKeyIv : uint8_t {
-  REQUEST_FRAME,  ///< `{0x38, r0..r5}`: the whole request, command byte and its 6 bytes. The documented
-                  ///< construction, the one recover_key_from_pull() uses.
-  REQUEST_CMD,    ///< `{0x38}`: the request's command byte alone.
-  REPLY_CMD,      ///< `{0x32}`: the reply's own command byte.
-  KEY_INIT_CMD,   ///< `{0x31}`: the push direction's IV, for a device that reuses its push code.
-};
-
-/// Number of PullKeyIv values.
-static constexpr uint8_t PULL_KEY_IV_COUNT = 4;
-
-/// The bytes a device may sign in the 0x3D that answers our 0x3C after a pull.
-enum class PullProofTranscript : uint8_t {
-  REPLY_FRAME,    ///< Its own 0x32: `{0x32, 16 payload bytes}`, as for any challenged command.
-  REQUEST_FRAME,  ///< Our 0x38: `{0x38, r0..r5}`, the request the pull session is about.
-};
-
-/// Number of PullProofTranscript values.
-static constexpr uint8_t PULL_PROOF_TRANSCRIPT_COUNT = 2;
-
-/// The device's key under each PullKeyIv, indexed by the enum value.
-struct PullKeyCandidates {
-  uint8_t keys[PULL_KEY_IV_COUNT][AES_KEY_SIZE]{};  ///< Decrypted 0x32 payload per IV variant.
-};
-
-/// What find_pull_proof() matched.
-struct PullProof {
-  bool found{false};                       ///< A candidate MAC equals the device's 0x3D.
-  bool signed_with_transfer_key{false};    ///< The match used the public transfer key, not a candidate
-                                           ///< key: the 0x3D then proves no key.
-  PullKeyIv iv{PullKeyIv::REQUEST_FRAME};  ///< IV variant of the proven key (unused when signed with the
-                                           ///< transfer key).
-  PullProofTranscript transcript{PullProofTranscript::REPLY_FRAME};  ///< Transcript that matched.
-};
-
-/// Decrypt the device's 0x32 payload under every PullKeyIv.
-/// @param transfer_payload 16-byte CMD_KEY_TRANSFER payload from the device.
-/// @param request_bytes The 6 bytes we sent in our 0x38.
-/// @param out Output: one candidate key per IV variant.
-/// @return true on success (an AES failure is the only false case).
-bool recover_pull_key_candidates(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t request_bytes[HMAC_SIZE],
-                                 PullKeyCandidates &out);
-
-/// Find the construction under which the device's 0x3D verifies.
-///
-/// Tries each candidate key with each PullProofTranscript, the documented construction (REQUEST_FRAME
-/// key, REPLY_FRAME transcript) first, then the public transfer key with each transcript.
-/// @param candidates Output of recover_pull_key_candidates().
-/// @param transfer_payload The device's 16-byte 0x32 payload (part of the REPLY_FRAME transcript).
-/// @param request_bytes The 6 bytes we sent in our 0x38 (part of the REQUEST_FRAME transcript).
-/// @param proof_challenge The 6 bytes we sent in our 0x3C.
-/// @param proof_mac The 6 bytes of the device's 0x3D.
-/// @return The first match; `found` is false when none verifies.
-PullProof find_pull_proof(const PullKeyCandidates &candidates, const uint8_t transfer_payload[AES_KEY_SIZE],
-                          const uint8_t request_bytes[HMAC_SIZE], const uint8_t proof_challenge[HMAC_SIZE],
-                          const uint8_t proof_mac[HMAC_SIZE]);
-
-/// Short log name of an IV variant, e.g. `"{38}"`.
-const char *pull_key_iv_name(PullKeyIv iv);
-
-/// Short log name of a transcript, e.g. `"its 0x32"`.
-const char *pull_proof_transcript_name(PullProofTranscript transcript);
 
 /// Build a key‑init request (0x31) to start pairing key exchange with a discovered device.
 /// @param f IoFrame to populate.
@@ -912,6 +839,26 @@ bool create_challenge_req_device_role(IoFrame &f, const uint8_t *dst, const uint
 /// @return true on success.
 bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, const uint8_t challenge[HMAC_SIZE],
                            const IoFrame &origin, const uint8_t *key);
+
+/// Compute the 6-byte MAC a challenge response (0x3D) carries for `origin`: create_hmac() over the
+/// challenged frame's command byte and payload. Used for our own 0x3D (create_challenge_resp()).
+/// @param origin The challenged frame.
+/// @param challenge 6-byte challenge from the 0x3C.
+/// @param key 16-byte key.
+/// @param hmac Output: 6-byte MAC.
+/// @return true on success.
+bool challenge_resp_hmac(const IoFrame &origin, const uint8_t challenge[HMAC_SIZE], const uint8_t *key,
+                         uint8_t hmac[HMAC_SIZE]);
+
+/// Check a device's challenge response (0x3D) for `origin`, the frame it sent and we challenged.
+/// The device signs its own frame, the same transcript as challenge_resp_hmac().
+/// @param origin The device's challenged frame.
+/// @param challenge The 6 bytes we sent in the 0x3C.
+/// @param mac The 6 bytes of the device's 0x3D.
+/// @param key 16-byte key the MAC must verify under.
+/// @return true if the MAC matches.
+bool verify_challenge_resp(const IoFrame &origin, const uint8_t challenge[HMAC_SIZE], const uint8_t mac[HMAC_SIZE],
+                           const uint8_t *key);
 
 /// @brief Build a node verification response (0x37) — device side, answering a hub's CMD_NODE_VERIFY_REQ
 /// (0x36).

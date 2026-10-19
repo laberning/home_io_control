@@ -166,8 +166,8 @@ class PairingTelemetry : public TransmitObserver {
   void set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], uint16_t node_type);
   /// Record that this attempt pulled the key (0x38) instead of pushing it (0x31/0x32).
   void set_key_pull_attempted() { this->key_pull_attempted_ = true; }
-  /// Record that a pulled key could not be verified: the device sent a 0x32, but no candidate
-  /// construction made its 0x3D verify (see find_pull_proof()).
+  /// Record that a pulled key could not be verified: the device sent a 0x32, but no 0x3D that
+  /// verifies under the key it carries.
   void set_key_pull_unproven() { this->key_pull_unproven_ = true; }
 
   /// Seed telemetry with a 1W pairing-gesture frame observed shortly before this attempt began.

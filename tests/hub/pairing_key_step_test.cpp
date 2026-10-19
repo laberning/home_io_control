@@ -290,42 +290,25 @@ constexpr uint8_t VERIFY_CHALLENGE[HMAC_SIZE] = {0x11, 0x12, 0x13, 0x14, 0x15, 0
 constexpr uint8_t OTHER_KEY[AES_KEY_SIZE] = {0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE,
                                              0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
 
-/// The device's 0x32 answering a 0x38 that carried PULL_CHALLENGE, wrapping `key` with the IV `iv`
-/// (the documented whole-request IV by default).
-IoFrame pulled_key_frame(const uint8_t dst[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE],
-                         PullKeyIv iv = PullKeyIv::REQUEST_FRAME) {
-  uint8_t iv_data[1 + HMAC_SIZE] = {CMD_LAUNCH_KEY_TRANSFER};
-  uint8_t iv_len = 1;
-  if (iv == PullKeyIv::REQUEST_FRAME) {
-    memcpy(iv_data + 1, PULL_CHALLENGE, HMAC_SIZE);
-    iv_len = 1 + HMAC_SIZE;
-  } else if (iv == PullKeyIv::REPLY_CMD) {
-    iv_data[0] = CMD_KEY_TRANSFER;
-  } else if (iv == PullKeyIv::KEY_INIT_CMD) {
-    iv_data[0] = CMD_KEY_INIT;
-  }
+/// Our 0x38 carrying PULL_CHALLENGE.
+IoFrame pull_request(const uint8_t own[NODE_ID_SIZE]) {
+  IoFrame request{};
+  create_launch_key_transfer(request, own, DEVICE_ID, PULL_CHALLENGE);
+  return request;
+}
+
+/// The device's 0x32 answering pull_request(), wrapping `key` with the whole-request IV. Encrypting
+/// and decrypting are the same XOR, so recover_key_from_pull() also wraps.
+IoFrame pulled_key_frame(const uint8_t dst[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
   uint8_t wrapped[AES_KEY_SIZE];
-  crypto::crypt_key(iv_data, iv_len, PULL_CHALLENGE, key, wrapped);
+  recover_key_from_pull(pull_request(dst), key, wrapped);
   return device_frame(dst, CMD_KEY_TRANSFER, wrapped, AES_KEY_SIZE);
 }
 
-/// The device's 0x3D answering our VERIFY_CHALLENGE, signed with `key` over its own 0x32 (the
-/// documented transcript) or over our 0x38.
-IoFrame proof_frame(const uint8_t dst[NODE_ID_SIZE], const IoFrame &its_key_transfer, const uint8_t key[AES_KEY_SIZE],
-                    PullProofTranscript transcript_kind = PullProofTranscript::REPLY_FRAME) {
-  uint8_t transcript[FRAME_MAX_SIZE];
-  uint8_t len;
-  if (transcript_kind == PullProofTranscript::REPLY_FRAME) {
-    transcript[0] = its_key_transfer.cmd;
-    memcpy(transcript + 1, its_key_transfer.data, its_key_transfer.data_len);
-    len = its_key_transfer.data_len + 1;
-  } else {
-    transcript[0] = CMD_LAUNCH_KEY_TRANSFER;
-    memcpy(transcript + 1, PULL_CHALLENGE, HMAC_SIZE);
-    len = 1 + HMAC_SIZE;
-  }
+/// The device's 0x3D answering our VERIFY_CHALLENGE, signed with `key` over its own 0x32.
+IoFrame proof_frame(const uint8_t dst[NODE_ID_SIZE], const IoFrame &its_key_transfer, const uint8_t key[AES_KEY_SIZE]) {
   uint8_t mac[HMAC_SIZE];
-  crypto::create_hmac(transcript, len, VERIFY_CHALLENGE, key, mac);
+  challenge_resp_hmac(its_key_transfer, VERIFY_CHALLENGE, key, mac);
   return device_frame(dst, CMD_CHALLENGE_RESP, mac, HMAC_SIZE);
 }
 
@@ -355,7 +338,7 @@ TEST(PairingKeyPull, RequestFrameShape) {
 TEST(PairingKeyPull, RecoverKeyRoundTrip) {
   const IoFrame reply = pulled_key_frame(test::OWN_ID, OTHER_KEY);
   uint8_t out[AES_KEY_SIZE];
-  ASSERT_TRUE(recover_key_from_pull(reply.data, PULL_CHALLENGE, out));
+  ASSERT_TRUE(recover_key_from_pull(pull_request(test::OWN_ID), reply.data, out));
   EXPECT_EQ(0, memcmp(out, OTHER_KEY, AES_KEY_SIZE));
 }
 
@@ -369,8 +352,7 @@ TEST(PairingKeyPull, DeviceSendingOurKeyIsPaired) {
   radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, comp.system_key_)));
 
   EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OUR_KEY);
-  ASSERT_FALSE(radio.get_sent_data().empty());
-  EXPECT_EQ(sent_commands(radio)[0], CMD_LAUNCH_KEY_TRANSFER);
+  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER})) << "our own key needs no challenge";
 }
 
 TEST(PairingKeyPull, ProvenForeignKeyIsReportedNotAdopted) {
@@ -404,34 +386,6 @@ TEST(PairingKeyPull, UnprovenForeignKeyFails) {
   EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
 }
 
-TEST(PairingKeyPull, KeyUnderAnotherConstructionIsProvenByItsChallengeAnswer) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  // A device that wraps with the command byte alone and signs our 0x38: the check finds it.
-  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY, PullKeyIv::REQUEST_CMD);
-  radio.queue_rx(to_packet(reply));
-  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY, PullProofTranscript::REQUEST_FRAME)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);
-  EXPECT_FALSE(comp.pairing_telemetry_.key_pull_unproven());
-}
-
-TEST(PairingKeyPull, OurKeyUnderAnotherConstructionIsPaired) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, comp.system_key_, PullKeyIv::KEY_INIT_CMD)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OUR_KEY);
-}
-
 TEST(PairingKeyPull, WrongChallengeAnswerLeavesTheKeyUnproven) {
   RngGuard rng;
   TestableComponent comp;
@@ -449,21 +403,6 @@ TEST(PairingKeyPull, WrongChallengeAnswerLeavesTheKeyUnproven) {
   EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
   EXPECT_TRUE(comp.pairing_telemetry_.key_pull_unproven());
   EXPECT_EQ(0, memcmp(comp.system_key_, key_before, AES_KEY_SIZE));
-}
-
-TEST(PairingKeyPull, TransferKeySignatureProvesNoKey) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
-  radio.queue_rx(to_packet(reply));
-  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, TRANSFER_KEY)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
-  EXPECT_TRUE(comp.pairing_telemetry_.key_pull_unproven());
 }
 
 TEST(PairingKeyPull, RefusalEndsThePull) {
@@ -557,4 +496,20 @@ TEST(PairingKeyAdvice, UnprovenPullKeyWarnsNotToUseIt) {
   ASSERT_GE(n, 1u);
   EXPECT_EQ(out[n - 1].code, advisor::PairingAdviceCode::KEY_PULL_UNPROVEN);
   EXPECT_STREQ(advisor::pairing_advice_code_name(out[n - 1].code), "key_pull_unproven");
+}
+
+TEST(PairingKeyAdvice, ReceivedKeySaysHowToUseIt) {
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  telemetry.set_discovered_device(DEVICE_ID, NODE_TYPE_REMOTE_CONTROLLER);
+  telemetry.set_key_pull_attempted();
+  telemetry.set_outcome(PairingOutcome::KEY_RECEIVED);
+  advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
+  const uint8_t n = advise(telemetry, out);
+  ASSERT_GE(n, 1u);
+  EXPECT_EQ(out[n - 1].code, advisor::PairingAdviceCode::PULLED_KEY_RECEIVED);
+  EXPECT_STREQ(advisor::pairing_advice_code_name(out[n - 1].code), "pulled_key_received");
+  const std::string message = advisor::pairing_advice_message(out[n - 1]);
+  EXPECT_NE(message.find("system_key:"), std::string::npos);
+  EXPECT_NE(message.find("Scan Paired Devices"), std::string::npos);
 }

@@ -910,30 +910,6 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq)
 }
 
 bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq, const uint8_t *key) {
-  uint8_t challenge[HMAC_SIZE];
-  uint8_t proof_mac[HMAC_SIZE];
-  if (!this->challenge_device(request, freq, challenge, proof_mac))
-    return false;
-
-  // Transcript is the *device's* own frame (cmd + data), not our challenge — the challenged
-  // party authenticates what it said. Long assumed by symmetry with our outbound direction;
-  // confirmed against real hardware bytes by the device-side 0x3D in
-  // tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml.
-  uint8_t frame_data[FRAME_MAX_SIZE];
-  frame_data[0] = request.cmd;
-  memcpy(frame_data + 1, request.data, request.data_len);
-  if (!crypto::verify_hmac(frame_data, request.data_len + 1, proof_mac, challenge, key)) {
-    this->record_debug(inbound_stage_name(exchange::InboundAuthState::FAILED), 1, true);
-    return false;
-  }
-
-  this->record_debug(inbound_stage_name(exchange::InboundAuthState::VERIFIED), 1, true);
-  this->counters_.challenge_round_trips++;
-  return true;
-}
-
-bool ExchangeEngine::challenge_device(const IoFrame &request, uint32_t freq, uint8_t challenge_out[HMAC_SIZE],
-                                      uint8_t proof_mac_out[HMAC_SIZE]) {
   RadioDriver *radio = *this->radio_ptr_;
   exchange::InboundAuthContext context;
   context.state = exchange::InboundAuthState::TX_CHALLENGE;
@@ -960,15 +936,20 @@ bool ExchangeEngine::challenge_device(const IoFrame &request, uint32_t freq, uin
     return false;
   }
 
+  // Transcript is the *device's* own frame (cmd + data), not our challenge — the challenged
+  // party authenticates what it said. Confirmed against real hardware bytes by the device-side
+  // 0x3D in tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml.
   IoFrame rx;
-  if (!parse(packet.data, packet.len, rx) || !frame_is_challenge_response(rx) || rx.data_len < HMAC_SIZE) {
+  if (!parse(packet.data, packet.len, rx) || !frame_is_challenge_response(rx) || rx.data_len < HMAC_SIZE ||
+      !verify_challenge_resp(request, context.challenge.data, rx.data, key)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return false;
   }
 
-  memcpy(challenge_out, context.challenge.data, HMAC_SIZE);
-  memcpy(proof_mac_out, rx.data, HMAC_SIZE);
+  context.state = exchange::InboundAuthState::VERIFIED;
+  this->record_debug(inbound_stage_name(context.state), 1, true);
+  this->counters_.challenge_round_trips++;
   return true;
 }
 

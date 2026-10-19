@@ -39,8 +39,10 @@ enum class PairingAdviceCode : uint8_t {
   KEY_TRANSFER_REFUSED,        ///< The device answered the key transfer with any other CMD_ERROR_RESP.
   KEY_PULL_NOT_OFFERED,        ///< `pairing_key_transfer: pull` was refused with CMD_ERROR_RESP: the
                                ///< device does not hand out its key. Suggests pairing with `push`.
-  KEY_PULL_UNPROVEN,           ///< The device answered the pull with a key, but no construction the
-                               ///< hub knows made its 0x3D verify; the key is not printed.
+  KEY_PULL_UNPROVEN,           ///< The device answered the pull with a key, but sent no 0x3D that
+                               ///< verifies under it; the key is not printed.
+  PULLED_KEY_RECEIVED,         ///< The pull got a different key that the device proved (outcome
+                               ///< KEY_RECEIVED). Says how to use it: system_key, then Scan Paired Devices.
 };
 
 /// @brief One piece of advice, with the node/RSSI it pertains to (if any).

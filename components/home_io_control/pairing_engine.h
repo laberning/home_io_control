@@ -215,16 +215,14 @@ class PairingEngine {
   /// @brief Experimental key pull (`pairing_key_transfer: pull`): 0x38 -> device's 0x32 -> our 0x3C
   /// -> device's 0x3D.
   ///
-  /// Sends a key transfer request with 6 random bytes and waits for the device's 0x32. A device
-  /// family may build the IV or its 0x3D differently from the documented exchange, so the hub
-  /// decrypts the key under every PullKeyIv (recover_pull_key_candidates()), challenges the device once
-  /// (ExchangeEngine::challenge_device()) and looks for the construction its 0x3D verifies under
-  /// (find_pull_proof()). The log gets one "Key pull check" line per IV variant with a key check
-  /// value, never the key, so two attempts can be compared from the log alone.
+  /// Sends a key transfer request with 6 random bytes, waits for the device's 0x32 and decrypts the
+  /// key (recover_key_from_pull()). The log gets one "Key pull check" line with the key's check value,
+  /// never the key, so two attempts or two devices can be compared from the log alone.
   ///
-  /// A candidate equal to the hub's own key is accepted as is: no decrypt produces it by chance. A
-  /// different key is printed only when its 0x3D proves it, and never adopted. An unproven key is
-  /// not printed. Not hardware-validated.
+  /// The hub's own key is accepted as is: no decrypt produces it by chance. A different key must be
+  /// proven by the device's 0x3D to our challenge (ExchangeEngine::authenticate_request() under that
+  /// key); only then is it printed, and it is never adopted. An unproven key is not printed.
+  /// Hardware-validated on an Atlantic AGILIA IO radiator (issue #165).
   /// @param context Pairing context populated by run_discovery_phase_().
   /// @return See KeyPullResult.
   KeyPullResult run_key_pull_phase_(pairing::PairingContext &context);
