@@ -34,6 +34,7 @@
 #include <limits>
 #include <map>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 namespace esphome {
@@ -315,21 +316,34 @@ namespace detail {
 
 #if defined(USE_API_USER_DEFINED_ACTIONS) && defined(USE_API_CUSTOM_SERVICES)
 
-// ESPHome 2026.9 added a `std::span<char> scratch` parameter to
-// UserServiceDescriptor::encode_list_service_response(): on ESP8266 the arg-name
-// string literals live in PROGMEM and are copied into `scratch`, so the returned
-// message is only valid while `scratch` is. 2026.8.x (incl. beta) still has the
-// zero-arg signature, hence the >= 2026.9.0 gate. Detect that ABI here so our
-// override keeps matching the pure virtual across ESPHome versions. The nested #if
-// is deliberate: VERSION_CODE is undefined on older ESPHome and in the host test
-// stubs, and a skipped outer group is not parsed, so the macro call never leaks.
-// The host unit-test build always takes the zero-arg branch (its api stub mirrors
-// stable), so the scratch branch is only exercised by the weekly ESPHome-dev CI.
-#if defined(ESPHOME_VERSION_CODE) && defined(VERSION_CODE)
-#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 9, 0)
-#define IOHOME_USERSERVICE_ENCODE_TAKES_SCRATCH 1
-#endif
-#endif
+/// True when the installed ESPHome's `UserServiceDescriptor::encode_list_service_response()`
+/// takes a `std::span<char>` scratch buffer (present in some 2026.9 betas, absent on stable and
+/// current dev). Detected from the base class itself so no version gate can drift.
+template<typename Base>
+concept EncodeTakesScratch = requires(Base &base) { base.encode_list_service_response(std::span<char>{}); };
+
+/// @brief Bridges the version-dependent `encode_list_service_response` signature.
+///
+/// Only the specialization matching the installed base is ever instantiated (the `Base`
+/// parameter keeps the `override` checks dependent), and both forms forward to
+/// `build_list_response()`, which the concrete descriptor implements.
+template<bool TakesScratch, typename Base = api::UserServiceDescriptor> class EncodeListAdapter : public Base {
+ public:
+  api::ListEntitiesServicesResponse encode_list_service_response() override { return this->build_list_response(); }
+
+ protected:
+  virtual api::ListEntitiesServicesResponse build_list_response() = 0;
+};
+
+template<typename Base> class EncodeListAdapter<true, Base> : public Base {
+ public:
+  api::ListEntitiesServicesResponse encode_list_service_response(std::span<char> /*scratch*/) override {
+    return this->build_list_response();
+  }
+
+ protected:
+  virtual api::ListEntitiesServicesResponse build_list_response() = 0;
+};
 
 /// @brief Native API descriptor shared by every management action.
 ///
@@ -344,32 +358,11 @@ namespace detail {
 /// public methods on it, so no friend declaration into the hub is needed. Adding action
 /// N+1 is therefore a new register_user_service() call in register_actions(), not a new
 /// descriptor class.
-class ManagementServiceDescriptor : public api::UserServiceDescriptor {
+class ManagementServiceDescriptor : public EncodeListAdapter<EncodeTakesScratch<api::UserServiceDescriptor>> {
  public:
   ManagementServiceDescriptor(const char *name, std::vector<const char *> arg_names,
                               std::function<void(const api::ExecuteServiceRequest &)> callback)
       : name_(name), key_(fnv1_hash(name)), arg_names_(std::move(arg_names)), callback_(std::move(callback)) {}
-
-  // name_ and arg_names_ point at ordinary (non-PROGMEM) .rodata string literals, so
-  // the StringRefs stay valid after return on any target and the scratch buffer is
-  // unused -- same reasoning as upstream's own UserServiceDynamic.
-#ifdef IOHOME_USERSERVICE_ENCODE_TAKES_SCRATCH
-  api::ListEntitiesServicesResponse encode_list_service_response(std::span<char> /*scratch*/) override {
-#else
-  api::ListEntitiesServicesResponse encode_list_service_response() override {
-#endif
-    api::ListEntitiesServicesResponse response;
-    response.name = StringRef(this->name_);
-    response.key = this->key_;
-    response.supports_response = api::enums::SUPPORTS_RESPONSE_NONE;
-    response.args.init(this->arg_names_.size());
-    for (const char *arg_name : this->arg_names_) {
-      auto &arg = response.args.emplace_back();
-      arg.name = StringRef(arg_name);
-      arg.type = api::enums::SERVICE_ARG_TYPE_STRING;
-    }
-    return response;
-  }
 
   bool execute_service(const api::ExecuteServiceRequest &request) override {
     if (request.key != this->key_ || request.args.size() != this->arg_names_.size())
@@ -385,13 +378,38 @@ class ManagementServiceDescriptor : public api::UserServiceDescriptor {
 #endif
 
  protected:
+  /// Wrap a literal in whatever string type the message field uses: StringRef on older
+  /// ESPHome, ProgmemStringRef (explicit from StringRef, not assignable) on newer.
+  template<typename T> static T make_ref(const char *s) {
+    if constexpr (std::is_assignable_v<T &, StringRef>) {
+      return StringRef(s);
+    } else {
+      return T(StringRef(s));
+    }
+  }
+
+  // name_ and arg_names_ point at ordinary (non-PROGMEM) .rodata string literals, so the
+  // refs stay valid after return on any target and any scratch buffer is unused.
+  api::ListEntitiesServicesResponse build_list_response() override {
+    api::ListEntitiesServicesResponse response;
+    response.name = make_ref<decltype(response.name)>(this->name_);
+    response.key = this->key_;
+    response.supports_response = api::enums::SUPPORTS_RESPONSE_NONE;
+    response.args.init(this->arg_names_.size());
+    for (const char *arg_name : this->arg_names_) {
+      auto &arg = response.args.emplace_back();
+      arg.name = make_ref<decltype(arg.name)>(arg_name);
+      arg.type = api::enums::SERVICE_ARG_TYPE_STRING;
+    }
+    return response;
+  }
+
   const char *name_;
   uint32_t key_;
   std::vector<const char *> arg_names_;
   std::function<void(const api::ExecuteServiceRequest &)> callback_;
 };
 
-#undef IOHOME_USERSERVICE_ENCODE_TAKES_SCRATCH
 #endif
 
 }  // namespace detail
