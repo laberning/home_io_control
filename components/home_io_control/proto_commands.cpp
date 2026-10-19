@@ -808,86 +808,24 @@ bool create_launch_key_transfer(IoFrame &f, const uint8_t *own, const uint8_t *d
   return set_cmd(f, CMD_LAUNCH_KEY_TRANSFER, challenge, HMAC_SIZE);
 }
 
+/// Copy a frame's command byte and payload into `out`: the bytes a challenge response (0x3D)
+/// authenticates, and the IV data of a pulled key. Returns the length.
+static uint8_t frame_transcript(const IoFrame &frame, uint8_t out[FRAME_MAX_SIZE]) {
+  out[0] = frame.cmd;
+  memcpy(out + 1, frame.data, frame.data_len);
+  return frame.data_len + 1;
+}
+
 /// Recover a device's key from its answer to our 0x38. The IV `data` is the whole request,
 /// `{CMD_LAUNCH_KEY_TRANSFER, r0..r5}` (7 bytes); a 0x31 has no payload, which is why the push
 /// direction's IV is the command byte alone.
-bool recover_key_from_pull(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE],
+bool recover_key_from_pull(const IoFrame &request, const uint8_t transfer_payload[AES_KEY_SIZE],
                            uint8_t out_key[AES_KEY_SIZE]) {
-  uint8_t request_frame[1 + HMAC_SIZE];
-  request_frame[0] = CMD_LAUNCH_KEY_TRANSFER;
-  memcpy(request_frame + 1, challenge, HMAC_SIZE);
-  return crypto::crypt_key(request_frame, sizeof(request_frame), challenge, transfer_payload, out_key);
-}
-
-/// Decrypt a pulled key under every IV variant. See proto_commands.h for the variants.
-bool recover_pull_key_candidates(const uint8_t transfer_payload[AES_KEY_SIZE], const uint8_t request_bytes[HMAC_SIZE],
-                                 PullKeyCandidates &out) {
-  const uint8_t request_cmd = CMD_LAUNCH_KEY_TRANSFER;
-  const uint8_t reply_cmd = CMD_KEY_TRANSFER;
-  const uint8_t key_init_cmd = CMD_KEY_INIT;
-  return recover_key_from_pull(transfer_payload, request_bytes,
-                               out.keys[static_cast<uint8_t>(PullKeyIv::REQUEST_FRAME)]) &&
-         crypto::crypt_key(&request_cmd, 1, request_bytes, transfer_payload,
-                           out.keys[static_cast<uint8_t>(PullKeyIv::REQUEST_CMD)]) &&
-         crypto::crypt_key(&reply_cmd, 1, request_bytes, transfer_payload,
-                           out.keys[static_cast<uint8_t>(PullKeyIv::REPLY_CMD)]) &&
-         crypto::crypt_key(&key_init_cmd, 1, request_bytes, transfer_payload,
-                           out.keys[static_cast<uint8_t>(PullKeyIv::KEY_INIT_CMD)]);
-}
-
-/// Find the construction a device's 0x3D verifies under. See proto_commands.h for the search order.
-PullProof find_pull_proof(const PullKeyCandidates &candidates, const uint8_t transfer_payload[AES_KEY_SIZE],
-                          const uint8_t request_bytes[HMAC_SIZE], const uint8_t proof_challenge[HMAC_SIZE],
-                          const uint8_t proof_mac[HMAC_SIZE]) {
-  uint8_t reply_frame[1 + AES_KEY_SIZE];
-  reply_frame[0] = CMD_KEY_TRANSFER;
-  memcpy(reply_frame + 1, transfer_payload, AES_KEY_SIZE);
-  uint8_t request_frame[1 + HMAC_SIZE];
-  request_frame[0] = CMD_LAUNCH_KEY_TRANSFER;
-  memcpy(request_frame + 1, request_bytes, HMAC_SIZE);
-  const uint8_t *const transcripts[PULL_PROOF_TRANSCRIPT_COUNT] = {reply_frame, request_frame};
-  const uint8_t lengths[PULL_PROOF_TRANSCRIPT_COUNT] = {sizeof(reply_frame), sizeof(request_frame)};
-
-  PullProof proof;
-  // Candidate keys first (enum order puts the documented construction first), then the public transfer key.
-  for (uint8_t iv = 0; iv <= PULL_KEY_IV_COUNT; iv++) {
-    const bool transfer_key = iv == PULL_KEY_IV_COUNT;
-    const uint8_t *key = transfer_key ? TRANSFER_KEY : candidates.keys[iv];
-    for (uint8_t t = 0; t < PULL_PROOF_TRANSCRIPT_COUNT; t++) {
-      if (!crypto::verify_hmac(transcripts[t], lengths[t], proof_mac, proof_challenge, key))
-        continue;
-      proof.found = true;
-      proof.signed_with_transfer_key = transfer_key;
-      proof.iv = transfer_key ? PullKeyIv::REQUEST_FRAME : static_cast<PullKeyIv>(iv);
-      proof.transcript = static_cast<PullProofTranscript>(t);
-      return proof;
-    }
-  }
-  return proof;
-}
-
-const char *pull_key_iv_name(PullKeyIv iv) {
-  switch (iv) {
-    case PullKeyIv::REQUEST_CMD:
-      return "{38}";
-    case PullKeyIv::REQUEST_FRAME:
-      return "{38+6}";
-    case PullKeyIv::REPLY_CMD:
-      return "{32}";
-    case PullKeyIv::KEY_INIT_CMD:
-      return "{31}";
-  }
-  return "?";
-}
-
-const char *pull_proof_transcript_name(PullProofTranscript transcript) {
-  switch (transcript) {
-    case PullProofTranscript::REPLY_FRAME:
-      return "its 0x32";
-    case PullProofTranscript::REQUEST_FRAME:
-      return "our 0x38";
-  }
-  return "?";
+  if (request.data_len < HMAC_SIZE)
+    return false;
+  uint8_t iv_data[FRAME_MAX_SIZE];
+  const uint8_t len = frame_transcript(request, iv_data);
+  return crypto::crypt_key(iv_data, len, request.data, transfer_payload, out_key);
 }
 
 /// Build a key-init request (0x31) to start the pairing key exchange with a discovered device.
@@ -959,15 +897,27 @@ static bool create_challenge_resp_framed(IoFrame &f, const uint8_t *dst, const u
   init_frame(f, true, /*start=*/false, end, low_power);
   set_dst(f, dst);
   set_src(f, src);
-  // The authenticated transcript covers the original request, not the 0x3D wrapper. Using the
-  // origin command byte and payload here was one of the key interoperability findings.
-  uint8_t frame_data[FRAME_MAX_SIZE];
-  frame_data[0] = origin.cmd;
-  memcpy(frame_data + 1, origin.data, origin.data_len);
   uint8_t hmac[HMAC_SIZE];
-  if (!crypto::create_hmac(frame_data, origin.data_len + 1, challenge, key, hmac))
+  if (!challenge_resp_hmac(origin, challenge, key, hmac))
     return false;
   return set_cmd(f, CMD_CHALLENGE_RESP, hmac, HMAC_SIZE);
+}
+
+/// The 0x3D MAC for `origin`. The transcript is the challenged frame, not the 0x3D wrapper: using the
+/// origin command byte and payload was one of the key interoperability findings.
+bool challenge_resp_hmac(const IoFrame &origin, const uint8_t challenge[HMAC_SIZE], const uint8_t *key,
+                         uint8_t hmac[HMAC_SIZE]) {
+  uint8_t transcript[FRAME_MAX_SIZE];
+  const uint8_t len = frame_transcript(origin, transcript);
+  return crypto::create_hmac(transcript, len, challenge, key, hmac);
+}
+
+/// Check a device's 0x3D for `origin`, in constant time (crypto::verify_hmac()).
+bool verify_challenge_resp(const IoFrame &origin, const uint8_t challenge[HMAC_SIZE], const uint8_t mac[HMAC_SIZE],
+                           const uint8_t *key) {
+  uint8_t transcript[FRAME_MAX_SIZE];
+  const uint8_t len = frame_transcript(origin, transcript);
+  return crypto::verify_hmac(transcript, len, mac, challenge, key);
 }
 
 /// Build a challenge response (0x3D) proving we know the system key.
