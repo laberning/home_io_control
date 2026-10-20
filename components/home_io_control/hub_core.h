@@ -620,6 +620,13 @@ class IOHomeControlComponent : public Component,
   ///        brightness and 100 to off, the same 0-100 scale platform_cover.cpp uses.
   /// @return true if device acknowledged.
   virtual bool set_light_position(const std::string &device_id, uint8_t position);
+  /// Send a heat level to an exterior heater (a fan entity) as an IO position. Mapped to the shared
+  /// execute path, like set_light_position().
+  /// @param device_id Target device ID.
+  /// @param position Desired IO position (0-100): 0 = full heat, 100 = off (the KLF 200 exterior
+  ///        heating mapping, MP = position x 0x200).
+  /// @return true if device acknowledged.
+  virtual bool set_fan_position(const std::string &device_id, uint8_t position);
   /// Semantic binary helper for light entities. Internally mapped to the shared execute path.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
@@ -747,6 +754,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired IO position (0-100).
   virtual void queue_set_light_position(const std::string &device_id, uint8_t position);
+  /// Async form of set_fan_position() that keeps radio work serialized on the main loop.
+  /// @param device_id Target device ID.
+  /// @param position Desired IO position (0-100).
+  virtual void queue_set_fan_position(const std::string &device_id, uint8_t position);
   /// Async form of set_light_state() that keeps radio work serialized on the main loop.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.

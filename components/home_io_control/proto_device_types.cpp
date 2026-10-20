@@ -23,6 +23,7 @@ constexpr DeviceCapabilityClass CAP_LIGHT = DeviceCapabilityClass::LIGHT;
 constexpr DeviceCapabilityClass CAP_SWITCH = DeviceCapabilityClass::SWITCH;
 constexpr DeviceCapabilityClass CAP_LOCK = DeviceCapabilityClass::LOCK;
 constexpr DeviceCapabilityClass CAP_CLIMATE = DeviceCapabilityClass::CLIMATE;
+constexpr DeviceCapabilityClass CAP_HEATER_LEVEL = DeviceCapabilityClass::HEATER_LEVEL;
 
 constexpr uint8_t SELECTABLE_PLATFORM =
     YAML_SELECTABLE | HAS_PLATFORM;                 ///< Type row that YAML can name and a platform drives.
@@ -99,8 +100,11 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::VENTILATION_POINT, 2, "air transfer", CAP_SWITCH, 0},
     {DeviceType::VENTILATION_POINT, 3, "air outlet", CAP_SWITCH, 0},
 
-    {DeviceType::EXTERIOR_HEATING, 0, "exterior_heating", CAP_CLIMATE, 0},
-    {DeviceType::EXTERIOR_HEATING, SUBTYPE_MAIN_PARAMETER_ONLY, "on/off only", CAP_CLIMATE, 0},
+    // Exterior heating takes a heat level in the position field (a fan entity), not a setpoint. Every
+    // exterior heater gets the main parameter only: its first functional parameter is not a cover's, and
+    // a guessed block is what issue #163 showed to cost a refusal.
+    {DeviceType::EXTERIOR_HEATING, 0, "exterior_heating", CAP_HEATER_LEVEL, SELECTABLE_PLATFORM | MAIN_PARAMETER_ONLY},
+    {DeviceType::EXTERIOR_HEATING, SUBTYPE_MAIN_PARAMETER_ONLY, "on/off only", CAP_HEATER_LEVEL, SUBTYPE_PLATFORM},
 
     {DeviceType::HEAT_PUMP, 0, "heat_pump", CAP_CLIMATE, 0},
     // The two Atlantic profiles use a different private register family from the electrical
@@ -178,6 +182,8 @@ const char *device_platform_name(DeviceType type, uint8_t subtype) {
       return "lock";
     case DeviceCapabilityClass::CLIMATE:
       return "climate";
+    case DeviceCapabilityClass::HEATER_LEVEL:
+      return "fan";
     // No platform drives these classes; listed so -Wswitch flags a new class that needs a decision.
     case DeviceCapabilityClass::UNKNOWN:
     case DeviceCapabilityClass::SENSOR:

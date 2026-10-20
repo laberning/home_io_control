@@ -162,6 +162,18 @@ switch:
     name: "Test Switch"
     io_device_id: "FEEB20"
 
+fan:
+  # Experimental exterior heating: a heat level as a fan speed (subtype 58: on/off only).
+  - platform: home_io_control
+    name: "Test Terrace Heater"
+    io_device_id: "FEEB24"
+    io_device_type: "exterior_heating"
+  - platform: home_io_control
+    name: "Test Terrace Heater On Off"
+    io_device_id: "FEEB25"
+    io_device_type: "exterior_heating"
+    io_subtype: 58
+
 climate:
   # Experimental heating/climate platform (CMD_WRITE_PRIVATE 0x20). It drives an electrical
   # heater with an adjustable setpoint (io_subtype 1) and the plain electrical heater (io_subtype 0).

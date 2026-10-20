@@ -33,7 +33,6 @@ constexpr AllowlistedType kNotYamlSelectable[] = {
     {DeviceType::BEACON, "discovery pseudo-type (unpaired/announcement), not a configurable actuator"},
     {DeviceType::HEATING_TEMPERATURE_INTERFACE, "no platform drives it yet; its only consumer would be climate:"},
     {DeviceType::VENTILATION_POINT, "ventilation platform unbuilt; not selectable yet"},
-    {DeviceType::EXTERIOR_HEATING, "no platform drives it yet"},
     {DeviceType::HEAT_PUMP, "no platform drives it yet"},
     {DeviceType::ZONE_CONTROL, "no platform drives it yet"},
     {DeviceType::SIREN, "no platform drives it yet"},

@@ -75,7 +75,7 @@ bool device_has_platform(DeviceType type, uint8_t subtype);
 /// @brief Name of the ESPHome platform that drives this (type, subtype).
 /// @param type Node type.
 /// @param subtype Subtype.
-/// @return "cover", "light", "switch", "lock" or "climate", or nullptr when no platform drives it yet.
+/// @return "cover", "light", "switch", "lock", "climate" or "fan", or nullptr when no platform drives it yet.
 const char *device_platform_name(DeviceType type, uint8_t subtype);
 
 /// @brief Capability class of a (type, subtype), subtype-aware.

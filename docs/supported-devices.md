@@ -131,12 +131,12 @@ values:
 | `roller_shutter` | `0x02` | `exterior_venetian_blind` | `0x11` |
 | `vertical_exterior_awning` | `0x03` | `louvre_blind` | `0x12` |
 | `window_opener` | `0x04` | `curtain_track` | `0x13` |
-| `garage_opener` | `0x05` | `intrusion_alarm` | `0x17` |
-| `light` | `0x06` | `swinging_shutter` | `0x18` |
-| `gate_opener` | `0x07` | `sliding_window` | `0x1B` |
-| `rolling_door_opener` | `0x08` | `bioclimatic_pergola` | `0x1D` |
-| `lock` | `0x09` | `electrical_heater` | `0x34` |
-| `vertical_interior_blind` | `0x0A` | | |
+| `garage_opener` | `0x05` | `exterior_heating` | `0x15` |
+| `light` | `0x06` | `intrusion_alarm` | `0x17` |
+| `gate_opener` | `0x07` | `swinging_shutter` | `0x18` |
+| `rolling_door_opener` | `0x08` | `sliding_window` | `0x1B` |
+| `lock` | `0x09` | `bioclimatic_pergola` | `0x1D` |
+| `vertical_interior_blind` | `0x0A` | `electrical_heater` | `0x34` |
 | `dual_roller_shutter` | `0x0D` | | |
 | `on_off_switch` | `0x0F` | | |
 
@@ -182,7 +182,7 @@ device are marked experimental.
 | `0x12` | louvre blind | | Cover with tilt |
 | `0x13` | curtain track | | Cover |
 | `0x14` | ventilation point | 1 air inlet, 2 air transfer, 3 air outlet | Not supported yet |
-| `0x15` | exterior heating | 58 on/off only | Not supported yet |
+| `0x15` | exterior heating | 58 on/off only | Fan, a heat level of 0–100 % (subtype 58: on/off), experimental and unconfirmed on hardware; see [Exterior heating](configuration/fan.md) |
 | `0x16` | heat pump | 1 heat pump (Atlantic) (experimental), 2 boiler (Atlantic) (experimental) | Not supported yet |
 | `0x17` | intrusion alarm | | Not supported yet |
 | `0x18` | swinging shutter | 1 with independent leaves, 58 position only (experimental) | Cover |

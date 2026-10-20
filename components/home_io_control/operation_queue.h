@@ -32,6 +32,7 @@ enum class PendingOperationType : uint8_t {
   SET_LIGHT_STATE,        ///< set_light_state call (binary on/off).
   SET_LOCK_STATE,         ///< set_lock_state call (locked/unlocked).
   SET_SWITCH_STATE,       ///< set_switch_state call (binary on/off).
+  SET_FAN_POSITION,       ///< set_fan_position call (heat level of an exterior heater as an IO position).
   ONEWAY_COMMAND,         ///< 1W named command sent as a controller identity.
   ONEWAY_POSITION,        ///< 1W numeric position sent as a controller identity.
   ONEWAY_ENROLL,          ///< 1W add-controller (0x30) registering an identity.
@@ -103,6 +104,8 @@ class OperationQueue {
   /// enqueue_set_light_state() is a thin binary-position wrapper around this.
   void enqueue_set_light_position(const std::string &device_id, uint8_t position);
   void enqueue_set_light_state(const std::string &device_id, bool on);
+  /// Enqueue SET_FAN_POSITION with an IO position (0-100; 0 = full heat, 100 = off).
+  void enqueue_set_fan_position(const std::string &device_id, uint8_t position);
   void enqueue_set_lock_state(const std::string &device_id, bool locked);
   void enqueue_set_switch_state(const std::string &device_id, bool on);
 

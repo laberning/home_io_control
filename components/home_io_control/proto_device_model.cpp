@@ -164,6 +164,8 @@ const char *device_capability_class_name(DeviceType type) {
       return "climate";
     case DeviceCapabilityClass::LOCK:
       return "lock";
+    case DeviceCapabilityClass::HEATER_LEVEL:
+      return "heater_level";
     case DeviceCapabilityClass::UNKNOWN:
       return "unknown";
   }
@@ -183,13 +185,21 @@ bool device_supports_lock_control(DeviceType type) {
   return device_capability_class(type) == DeviceCapabilityClass::LOCK;
 }
 
+bool device_supports_heat_level_control(DeviceType type) {
+  return device_capability_class(type) == DeviceCapabilityClass::HEATER_LEVEL;
+}
+
+bool device_has_no_motion(DeviceType type, uint8_t subtype) {
+  return device_uses_heating_levels(type, subtype) || device_supports_heat_level_control(type);
+}
+
 bool device_supports_climate_control(DeviceType type, uint8_t subtype) {
   return find_heating_profile(type, subtype) != nullptr;
 }
 
 bool device_supports_status_requests(DeviceType type) {
   return device_supports_position_control(type) || device_supports_binary_control(type) ||
-         device_supports_lock_control(type);
+         device_supports_lock_control(type) || device_supports_heat_level_control(type);
 }
 
 bool device_supports_tilt(DeviceType type) {
@@ -298,6 +308,8 @@ const char *device_operation_profile_name(DeviceType type) {
   switch (device_capability_class(type)) {
     case DeviceCapabilityClass::LOCK:
       return "lock";
+    case DeviceCapabilityClass::HEATER_LEVEL:
+      return "heat_level";
     case DeviceCapabilityClass::CLIMATE:
       return "climate";
     case DeviceCapabilityClass::SENSOR:

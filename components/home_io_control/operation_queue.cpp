@@ -101,6 +101,10 @@ void OperationQueue::enqueue_set_light_position(const std::string &device_id, ui
   push_control_({PendingOperationType::SET_LIGHT_STATE, device_id, position});
 }
 
+void OperationQueue::enqueue_set_fan_position(const std::string &device_id, uint8_t position) {
+  push_control_({PendingOperationType::SET_FAN_POSITION, device_id, position});
+}
+
 void OperationQueue::enqueue_set_light_state(const std::string &device_id, bool on) {
   this->enqueue_set_light_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
 }

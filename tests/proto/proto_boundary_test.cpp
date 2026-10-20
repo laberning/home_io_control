@@ -176,9 +176,23 @@ TEST(ProtocolBoundary, DeviceCapabilityClass_VentilationPointIsSwitch) {
       << "VENTILATION_POINT must be classified as SWITCH (binary on/off)";
 }
 
-TEST(ProtocolBoundary, DeviceCapabilityClass_ExteriorHeatingIsClimate) {
-  EXPECT_EQ(device_capability_class(DeviceType::EXTERIOR_HEATING), DeviceCapabilityClass::CLIMATE)
-      << "EXTERIOR_HEATING must be classified as CLIMATE";
+TEST(ProtocolBoundary, DeviceCapabilityClass_ExteriorHeatingIsAHeatLevelNotClimate) {
+  EXPECT_EQ(device_capability_class(DeviceType::EXTERIOR_HEATING), DeviceCapabilityClass::HEATER_LEVEL)
+      << "EXTERIOR_HEATING takes a heat level in the position field, so the climate gate must not reach it";
+  EXPECT_FALSE(device_supports_climate_control(DeviceType::EXTERIOR_HEATING, 0));
+  EXPECT_TRUE(device_supports_heat_level_control(DeviceType::EXTERIOR_HEATING));
+  EXPECT_TRUE(device_supports_status_requests(DeviceType::EXTERIOR_HEATING));
+  EXPECT_FALSE(device_supports_position_control(DeviceType::EXTERIOR_HEATING)) << "not a cover";
+  EXPECT_FALSE(device_supports_binary_control(DeviceType::EXTERIOR_HEATING));
+}
+
+TEST(ProtocolBoundary, DevicesWithoutMotion) {
+  EXPECT_TRUE(device_has_no_motion(DeviceType::EXTERIOR_HEATING, 0));
+  EXPECT_TRUE(device_has_no_motion(DeviceType::EXTERIOR_HEATING, 58));
+  EXPECT_TRUE(device_has_no_motion(DeviceType::ELECTRICAL_HEATER, 0)) << "heating levels";
+  EXPECT_FALSE(device_has_no_motion(DeviceType::ELECTRICAL_HEATER, 1)) << "register heaters are not polled with 0x03";
+  EXPECT_FALSE(device_has_no_motion(DeviceType::ROLLER_SHUTTER, 0));
+  EXPECT_FALSE(device_has_no_motion(DeviceType::LIGHT, 0));
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_HeatPumpIsClimate) {

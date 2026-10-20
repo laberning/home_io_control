@@ -143,14 +143,15 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
 
 /// @brief Does a status reply's flags byte say the device is at rest?
 ///
-/// A heater has no motion, so a heating-level heater is always at rest whatever its flags byte says:
-/// the movement settle loop (follow-up polls while "moving") must never run for it, and what that
-/// byte holds on a heater is unconfirmed. Every other device reports it in STATUS_STOPPED.
+/// A heater has no motion, so a heating-level heater and an exterior heater are always at rest
+/// whatever their flags byte says (device_has_no_motion()): the movement settle loop (follow-up
+/// polls while "moving") must never run for them, and what that byte holds on a heater is
+/// unconfirmed. Every other device reports it in STATUS_STOPPED.
 /// @param dev Device the reply came from.
 /// @param flags The reply's stopped-flags byte.
 /// @return true when the device is at rest.
 bool reports_stopped(const IoDevice &dev, uint8_t flags) {
-  return device_uses_heating_levels(dev.type, dev.subtype) || (flags & STATUS_STOPPED) != 0;
+  return device_has_no_motion(dev.type, dev.subtype) || (flags & STATUS_STOPPED) != 0;
 }
 
 /// @brief Apply a private-response frame to the device record.

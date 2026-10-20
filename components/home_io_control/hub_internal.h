@@ -83,7 +83,9 @@ inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t p
   // just the two binary extremes — accept the full range for LIGHT here and trust the entity
   // layer to only ever send binary values for a non-dimmable light. SWITCH and LOCK have no
   // continuous concept, so they stay restricted to the binary encoding below.
-  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT)
+  // A heater with a heat level (exterior heating) sends the full 0-100 span as a fan's speed.
+  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT ||
+      device_capability_class(dev.type) == DeviceCapabilityClass::HEATER_LEVEL)
     return position <= BINARY_ENTITY_OFF_POSITION;
   return is_binary_entity_position(position) &&
          (device_supports_binary_control(dev.type) || device_supports_lock_control(dev.type));

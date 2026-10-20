@@ -193,6 +193,7 @@ DEVICE_TYPE_OPTIONS = {
     "exterior_venetian_blind": 0x11,
     "louvre_blind": 0x12,
     "curtain_track": 0x13,
+    "exterior_heating": 0x15,
     "intrusion_alarm": 0x17,
     "swinging_shutter": 0x18,
     "sliding_window": 0x1B,

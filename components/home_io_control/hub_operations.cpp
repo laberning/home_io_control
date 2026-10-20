@@ -52,6 +52,7 @@ const char *position_command_action(const IoDevice &dev, uint8_t position) {
   switch (device_capability_class(dev.type)) {
     case DeviceCapabilityClass::LIGHT:
     case DeviceCapabilityClass::SWITCH:
+    case DeviceCapabilityClass::HEATER_LEVEL:
       return active_state ? "turn on" : "turn off";
     case DeviceCapabilityClass::LOCK:
       return active_state ? "unlock" : "lock";
@@ -84,7 +85,8 @@ const char *position_rejection_profile(const IoDevice &dev, uint8_t position) {
   // A LIGHT-class device only reaches rejection for a genuinely out-of-range value (dimmable
   // lights already accept the full 0-100 span in known_device_accepts_execute_position()) — the
   // fix there isn't "needs cover_position", it's "needs a value in 0-100".
-  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT)
+  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT ||
+      device_capability_class(dev.type) == DeviceCapabilityClass::HEATER_LEVEL)
     return "0-100";
   return detail::is_binary_entity_position(position) ? "cover_position or binary_on_off" : "cover_position";
 }
@@ -116,6 +118,9 @@ constexpr QueueGuard QUEUE_GUARD_POSITION_AND_TILT{
 constexpr QueueGuard QUEUE_GUARD_LIGHT{
     [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::LIGHT); },
     "queued light command", "light entity"};
+constexpr QueueGuard QUEUE_GUARD_FAN{
+    [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::HEATER_LEVEL); },
+    "queued fan command", "exterior heating (fan entity)"};
 constexpr QueueGuard QUEUE_GUARD_LOCK{
     [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::LOCK); },
     "queued lock command", "lock entity"};
@@ -568,6 +573,21 @@ bool IOHomeControlComponent::set_light_position(const std::string &device_id, ui
   return this->set_device_position(device_id, position);
 }
 
+bool IOHomeControlComponent::set_fan_position(const std::string &device_id, uint8_t position) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  if (!detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::HEATER_LEVEL)) {
+    detail::log_rejected_operation(device_id, *dev, "fan command", "exterior heating (fan entity)");
+    return false;
+  }
+
+  // An exterior heater takes the same position execute as a dimmable light; the heat level is the
+  // IO position (0 = full heat), see platform_fan.cpp.
+  return this->set_device_position(device_id, position);
+}
+
 bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool on) {
   return this->set_light_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
 }
@@ -918,6 +938,12 @@ void IOHomeControlComponent::queue_set_light_position(const std::string &device_
   this->op_queue_.enqueue_set_light_position(device_id, position);
 }
 
+void IOHomeControlComponent::queue_set_fan_position(const std::string &device_id, uint8_t position) {
+  if (queue_guard_rejects(this, device_id, QUEUE_GUARD_FAN))
+    return;
+  this->op_queue_.enqueue_set_fan_position(device_id, position);
+}
+
 void IOHomeControlComponent::queue_set_light_state(const std::string &device_id, bool on) {
   this->queue_set_light_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
 }
@@ -981,6 +1007,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       // it was enqueued via queue_set_light_state() (binary extremes) or
       // queue_set_light_position() (dimmable) — see enqueue_set_light_state()'s thin-wrapper doc.
       this->set_light_position(operation.device_id, operation.position);
+      break;
+    case PendingOperationType::SET_FAN_POSITION:
+      this->set_fan_position(operation.device_id, operation.position);
       break;
     case PendingOperationType::SET_LOCK_STATE:
       this->set_lock_state(operation.device_id, operation.position == BINARY_ENTITY_OFF_POSITION);

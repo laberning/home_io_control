@@ -131,14 +131,16 @@ TEST(DeviceTypesTable, PlatformNameFollowsTheRowNotTheType) {
   EXPECT_STREQ(device_platform_name(DeviceType::ELECTRICAL_HEATER, 1), "climate");
   EXPECT_STREQ(device_platform_name(DeviceType::ELECTRICAL_HEATER, 0), "climate");
   EXPECT_EQ(device_platform_name(DeviceType::HEAT_PUMP, 0), nullptr);
+  EXPECT_STREQ(device_platform_name(DeviceType::EXTERIOR_HEATING, 0), "fan");
+  EXPECT_STREQ(device_platform_name(DeviceType::EXTERIOR_HEATING, 58), "fan");
   EXPECT_STREQ(device_platform_name(DeviceType::ROLLER_SHUTTER, 1), "cover");
   EXPECT_STREQ(device_platform_name(DeviceType::LIGHT, 58), "light");
   EXPECT_STREQ(device_platform_name(DeviceType::ON_OFF_SWITCH, 2), "switch");
   EXPECT_STREQ(device_platform_name(DeviceType::LOCK, 1), "lock");
   EXPECT_EQ(device_platform_name(DeviceType::LOCK, 2), nullptr) << "car controller has no platform";
-  for (const DeviceType type : {DeviceType::HEATING_TEMPERATURE_INTERFACE, DeviceType::EXTERIOR_HEATING,
-                                DeviceType::HEAT_PUMP, DeviceType::VENTILATION_POINT, DeviceType::INTRUSION_ALARM,
-                                DeviceType::SECURE_CONFIGURATION_DEVICE, DeviceType::REMOTE_CONTROLLER}) {
+  for (const DeviceType type :
+       {DeviceType::HEATING_TEMPERATURE_INTERFACE, DeviceType::HEAT_PUMP, DeviceType::VENTILATION_POINT,
+        DeviceType::INTRUSION_ALARM, DeviceType::SECURE_CONFIGURATION_DEVICE, DeviceType::REMOTE_CONTROLLER}) {
     EXPECT_FALSE(device_has_platform(type, 0)) << static_cast<unsigned>(type);
   }
   EXPECT_FALSE(device_has_platform(DeviceType::HEAT_PUMP, 1)) << "Atlantic profile: other register family";
@@ -159,6 +161,7 @@ TEST(DeviceTypesTable, MainParameterOnlyForSubtype58OfAnyTypeAndEveryGarageOpene
   EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::GARAGE_OPENER, 58));
   EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::GATE_OPENER, 58));
   EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::EXTERIOR_HEATING, 58));
+  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::EXTERIOR_HEATING, 0)) << "every exterior heater";
   EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::SWINGING_SHUTTER, 58));
   EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::ROLLER_SHUTTER, 58))
       << "subtype 58 is defined on every type, with or without a row of its own";
@@ -209,6 +212,16 @@ TEST(DeviceTypesTable, PlainHeaterGetsAClimateSnippet) {
   const std::string snippet = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 0, "AABBCC", true, false, false);
   EXPECT_NE(snippet.find("  climate:\n"), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_subtype: 0"), std::string::npos) << snippet;
+}
+
+TEST(DeviceTypesTable, ExteriorHeatingGetsAFanSnippetForBothSubtypes) {
+  for (const uint8_t subtype : {0, 58}) {
+    const std::string snippet =
+        build_device_yaml_snippet(DeviceType::EXTERIOR_HEATING, subtype, "AABBCC", true, false, false);
+    EXPECT_NE(snippet.find("  fan:\n"), std::string::npos) << snippet;
+    EXPECT_NE(snippet.find("io_device_type: \"exterior_heating\""), std::string::npos) << snippet;
+    EXPECT_NE(snippet.find("io_subtype: " + std::to_string(subtype)), std::string::npos) << snippet;
+  }
 }
 
 TEST(DeviceTypesTable, HeatPumpAndRemoteControllerGetNoSnippet) {

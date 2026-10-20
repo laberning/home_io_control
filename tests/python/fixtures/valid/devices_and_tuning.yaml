@@ -34,6 +34,17 @@ lock:
     name: "Door"
     io_device_id: "3C4D5E"
 
+fan:
+  - platform: home_io_control
+    name: "Terrace Heater"
+    io_device_id: "6F7081"
+    io_device_type: exterior_heating
+  - platform: home_io_control
+    name: "Terrace Heater On Off"
+    io_device_id: "708192"
+    io_device_type: exterior_heating
+    io_subtype: 58
+
 climate:
   - platform: home_io_control
     name: "Radiator"

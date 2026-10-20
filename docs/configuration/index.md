@@ -14,6 +14,7 @@ installation's identity. Everything else attaches to it.
 | [Covers](cover.md) | `cover:` — shutters, blinds, awnings, openers, curtains |
 | [Lights, locks and switches](light-lock-switch.md) | `light:`, `lock:`, `switch:` |
 | [Heating and climate](climate.md) | `climate:` — experimental |
+| [Exterior heating](fan.md) | `fan:` — experimental |
 | [Home Assistant actions](actions.md) | Hub-level actions such as `rename_device` and `scan_paired_devices` |
 | [Linked remotes and sender events](remotes.md) | `linked_remotes:`, `exposed_senders:` |
 | [Sending 1W commands](oneway-transmit.md) | `oneway_controllers:` — driving devices that only listen for a remote |
@@ -227,6 +228,7 @@ inline pin values from the worked example above.
 - [Covers](cover.md)
 - [Lights, locks and switches](light-lock-switch.md)
 - [Heating and climate](climate.md)
+- [Exterior heating](fan.md)
 - [Home Assistant actions](actions.md)
 - [Linked remotes and sender events](remotes.md)
 - [Sending 1W commands](oneway-transmit.md)

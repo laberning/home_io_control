@@ -441,3 +441,18 @@ TEST(OperationQueue, EnrollOpsDoNotCancelAStatusPoll) {
 
   ASSERT_EQ(q.size(), 4u) << "neither status poll may be dropped by the enroll/unenroll op that shares its handle";
 }
+
+TEST(OperationQueue, SetFanPositionIsAControlOperationAheadOfPolls) {
+  OperationQueue q;
+  q.enqueue_request_status("OTHER");
+  q.enqueue_set_fan_position("DEV", 25);
+  q.enqueue_request_status("DEV");
+  q.enqueue_set_fan_position("DEV", 50);  // the command supersedes the queued poll of the same device
+
+  ASSERT_EQ(q.size(), 3u);
+  EXPECT_EQ(q[0].type, PendingOperationType::SET_FAN_POSITION);
+  EXPECT_EQ(q[0].position, 25u);
+  EXPECT_EQ(q[1].type, PendingOperationType::SET_FAN_POSITION);
+  EXPECT_EQ(q[2].type, PendingOperationType::REQUEST_STATUS);
+  EXPECT_EQ(q[2].device_id, "OTHER");
+}

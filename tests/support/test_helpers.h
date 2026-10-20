@@ -212,6 +212,7 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   bool discover_and_pair() override { return false; }
   bool set_light_position(const std::string &, uint8_t) override { return false; }
   bool set_light_state(const std::string &, bool) override { return false; }
+  bool set_fan_position(const std::string &, uint8_t) override { return false; }
   bool set_switch_state(const std::string &, bool) override { return false; }
   bool set_lock_state(const std::string &, bool) override { return false; }
 
@@ -223,6 +224,7 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   void queue_discover_and_pair() override {}
   void queue_set_light_position(const std::string &, uint8_t) override {}
   void queue_set_light_state(const std::string &, bool) override {}
+  void queue_set_fan_position(const std::string &, uint8_t) override {}
   void queue_set_switch_state(const std::string &, bool) override {}
   void queue_set_lock_state(const std::string &, bool) override {}
 

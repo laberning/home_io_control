@@ -71,14 +71,15 @@ enum class DeviceType : uint16_t {
 
 /// @brief High‑level capability class derived from DeviceType.
 enum class DeviceCapabilityClass : uint8_t {
-  UNKNOWN = 0x00,  ///< Unknown capability.
-  COVER = 0x01,    ///< Position‑controlled cover (shutter/blind/awning).
-  LIGHT = 0x02,    ///< Binary on/off light.
-  SWITCH = 0x03,   ///< Binary on/off switch.
-  SENSOR = 0x04,   ///< Sensor device.
-  BEACON = 0x05,   ///< Beacon.
-  CLIMATE = 0x06,  ///< Climate device (heating/cooling).
-  LOCK = 0x07,     ///< Lock.
+  UNKNOWN = 0x00,       ///< Unknown capability.
+  COVER = 0x01,         ///< Position‑controlled cover (shutter/blind/awning).
+  LIGHT = 0x02,         ///< Binary on/off light.
+  SWITCH = 0x03,        ///< Binary on/off switch.
+  SENSOR = 0x04,        ///< Sensor device.
+  BEACON = 0x05,        ///< Beacon.
+  CLIMATE = 0x06,       ///< Climate device (heating/cooling).
+  LOCK = 0x07,          ///< Lock.
+  HEATER_LEVEL = 0x08,  ///< Heater with a heat level in the position field (exterior heating).
 };
 
 /// @brief Convert a DeviceType to a lowercase string identifier.
@@ -128,6 +129,19 @@ bool device_supports_status_requests(DeviceType type);
 /// @param type Device type.
 /// @return true for lock devices.
 bool device_supports_lock_control(DeviceType type);
+
+/// @brief Does this device take a heat level as its position (exterior heating)?
+/// @param type Device type.
+/// @return true for the HEATER_LEVEL capability class.
+bool device_supports_heat_level_control(DeviceType type);
+
+/// @brief Does this device never move, so a status reply must not start the movement settle loop?
+/// @details Heating-level heaters (climate profile) and exterior heating (a heat level in the
+///          position field) have no motion; their status "stopped" flag is not consulted.
+/// @param type Device type.
+/// @param subtype Device subtype.
+/// @return true when the device has no motion.
+bool device_has_no_motion(DeviceType type, uint8_t subtype);
 
 /// @brief Can a climate entity drive this device?
 ///
