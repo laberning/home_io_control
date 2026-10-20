@@ -309,7 +309,7 @@ TEST(PlatformCover, TiltControlQueuesTiltCommand) {
   hub.add_device("ABC123");
   auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr) << "test device should be retrievable after add_device";
-  dev->type = DeviceType::VENETIAN_BLIND;
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
 
   CoverCall call(&cover);
   call.set_tilt(0.25f);
@@ -376,8 +376,8 @@ TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTargetImmedia
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  cover.set_device_type(DeviceType::VENETIAN_BLIND);  // tilt-capable, required for the combined branch
-  hub.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);  // tilt-capable, required for the combined branch
+  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
 
   CoverCall call(&cover);
   call.set_position(0.25);  // HA 0.25 open -> IO 75 (non-inverted)
@@ -401,8 +401,8 @@ TEST(PlatformCover, ControlSetTiltAppliesOptimisticTiltImmediately) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  cover.set_device_type(DeviceType::VENETIAN_BLIND);
-  hub.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);
+  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
 
   CoverCall call(&cover);
   call.set_tilt(0.83f);
@@ -423,8 +423,8 @@ TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTiltToo) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  cover.set_device_type(DeviceType::VENETIAN_BLIND);
-  hub.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);
+  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
 
   CoverCall call(&cover);
   call.set_position(0.25);
@@ -445,8 +445,8 @@ TEST(PlatformCover, ControlSetTiltRespectsOptimisticStateFalse) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  cover.set_device_type(DeviceType::VENETIAN_BLIND);
-  hub.add_device("ABC123", {DeviceType::VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
+  cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);
+  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
 
   CoverCall call(&cover);
   call.set_tilt(0.83f);
@@ -547,8 +547,8 @@ TEST(PlatformCover, SupportsTiltBasedOnDeviceType) {
   EXPECT_FALSE(cover.supports_tilt()) << "UNKNOWN device type should not support tilt";
 
   // After set_device_type with a tilt-capable type: tilt support even without registry
-  cover.set_device_type(DeviceType::EXTERNAL_VENETIAN_BLIND);
-  EXPECT_TRUE(cover.supports_tilt()) << "EXTERNAL_VENETIAN_BLIND should support tilt without registry lookup";
+  cover.set_device_type(DeviceType::EXTERIOR_VENETIAN_BLIND);
+  EXPECT_TRUE(cover.supports_tilt()) << "EXTERIOR_VENETIAN_BLIND should support tilt without registry lookup";
 
   // Non-tilt type
   TestableCover cover2;
@@ -563,17 +563,17 @@ TEST(PlatformCover, DeviceUpdatePublishesTilt) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  cover.set_device_type(DeviceType::VENETIAN_BLIND);
+  cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);
 
   hub.add_device("ABC123");
   auto *registered = hub.get_device("ABC123");
   ASSERT_NE(registered, nullptr) << "registered device should be available for type configuration";
-  registered->type = DeviceType::VENETIAN_BLIND;
+  registered->type = DeviceType::INTERIOR_VENETIAN_BLIND;
 
   cover.setup();
 
   IoDevice dev{};
-  dev.type = DeviceType::VENETIAN_BLIND;
+  dev.type = DeviceType::INTERIOR_VENETIAN_BLIND;
   dev.position = 75.0f;
   dev.tilt = 40.0f;
   dev.is_stopped = true;

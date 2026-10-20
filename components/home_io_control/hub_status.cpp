@@ -1,4 +1,5 @@
 #include "hub_internal.h"
+#include "proto_heating_profiles.h"
 
 #include "hub_decisions.h"
 #include "proto_commands.h"
@@ -49,15 +50,16 @@ constexpr uint8_t PRIVATE_RESPONSE_DELAY_HINT_OFFSET = 7;  ///< Coarse follow-up
 // first would blank real readings from any cover resting near 16%. The request-derived
 // `trust_position` parameter on update_device_status_() is the discriminator, and the only
 // correct one. See tests/corpus/captures/exchange/tilt_cover_exchange_ack_tilt_block*.yaml.
-constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;   ///< Target-position MSB offset in 0x04 replies.
-constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;  ///< Current-position MSB offset in 0x04 replies.
-constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;      ///< Target-position MSB offset in 0x71 updates.
-constexpr uint8_t STATUS_UPDATE_CURRENT_OFFSET = 7;     ///< Current-position MSB offset in 0x71 updates.
-constexpr uint8_t GET_INFO2_TYPE_OFFSET = 10;           ///< Packed device type byte in 0x57 replies.
-constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;   ///< Packed type low bits plus subtype byte in 0x57 replies.
-constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;   ///< Selector byte announcing extended tilt payload.
-constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;        ///< Tilt-position MSB within extended replies.
-constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;        ///< Tilt-position LSB within extended replies.
+constexpr uint16_t MAIN_PARAMETER_LOW_BYTE_MASK = 0xFF;  ///< Low byte of a 16-bit main parameter.
+constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;    ///< Target-position MSB offset in 0x04 replies.
+constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;   ///< Current-position MSB offset in 0x04 replies.
+constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;       ///< Target-position MSB offset in 0x71 updates.
+constexpr uint8_t STATUS_UPDATE_CURRENT_OFFSET = 7;      ///< Current-position MSB offset in 0x71 updates.
+constexpr uint8_t GET_INFO2_TYPE_OFFSET = 10;            ///< Packed device type byte in 0x57 replies.
+constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;    ///< Packed type low bits plus subtype byte in 0x57 replies.
+constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;    ///< Selector byte announcing extended tilt payload.
+constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;         ///< Tilt-position MSB within extended replies.
+constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;         ///< Tilt-position LSB within extended replies.
 constexpr uint8_t PRIVATE_RESPONSE_HINT_UNUSED = 0xFF;  ///< Value used by devices that do not expose a follow-up timer.
 constexpr uint8_t PRIVATE_RESPONSE_HINT_ZERO =
     0x00;  ///< Value treated as invalid or uninformative for follow-up timing.
@@ -140,6 +142,19 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
   return settle_delay_ms(policy.get_interval(id), /*hint_delay_ms=*/0, /*cap_for_stop=*/false);
 }
 
+/// @brief Does a status reply's flags byte say the device is at rest?
+///
+/// A heater has no motion, so a heating-level heater and an exterior heater are always at rest
+/// whatever their flags byte says (device_has_no_motion()): the movement settle loop (follow-up
+/// polls while "moving") must never run for them, and what that byte holds on a heater is
+/// unconfirmed. Every other device reports it in STATUS_STOPPED.
+/// @param dev Device the reply came from.
+/// @param flags The reply's stopped-flags byte.
+/// @return true when the device is at rest.
+bool reports_stopped(const IoDevice &dev, uint8_t flags) {
+  return device_has_no_motion(dev.type, dev.subtype) || (flags & STATUS_STOPPED) != 0;
+}
+
 /// @brief Apply a private-response frame to the device record.
 /// @param id Device ID for policy lookup.
 /// @param dev Device record to update.
@@ -153,7 +168,7 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
 /// status poll a few seconds later) remains the source of truth for target/current in that case.
 void apply_private_response_status(const std::string &id, IoDevice &dev, const IoFrame &frame, StatusPollPolicy &policy,
                                    bool trust_position = true) {
-  const bool reported_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
+  const bool reported_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   if (trust_position) {
@@ -198,7 +213,7 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
 /// @param policy Poll policy for scheduling follow-up polls.
 void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const IoFrame &frame,
                                      StatusPollPolicy &policy) {
-  dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
+  dev.is_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
   dev.last_status = millis();
   decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
   track_motion_evidence(dev, !dev.is_stopped, dev.last_status);
@@ -209,6 +224,38 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
   }
 
   policy.set_next_update(id, dev.last_status + compute_status_update_delay_ms(dev, policy, id));
+}
+
+/// @brief Record what a heater commanded with an EXECUTE reports as its current main parameter.
+///
+/// A heating-level heater reports a level; a temperature heater reports an alias (kept in
+/// HeatingReadings::level) or a plain temperature (HeatingReadings::setpoint_c, decoded over the
+/// device's encoding range, which also clears a stale alias).
+/// @param id Device ID for the log line.
+/// @param dev Device record to update; other devices are left alone.
+/// @param frame A reply to a status poll (the layout of a reply to an EXECUTE follows the request).
+void apply_heating_main_parameter(const std::string &id, IoDevice &dev, const IoFrame &frame) {
+  const HeatingProfile *profile = find_heating_profile(dev.type, dev.subtype);
+  if (profile == nullptr || profile->path == HeatingControlPath::PRIVATE_REGISTERS)
+    return;
+  const auto current = static_cast<uint16_t>((frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET] << BITS_PER_BYTE) |
+                                             frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET + 1]);
+  dev.heating.main_parameter = current;
+  if ((current >> BITS_PER_BYTE) == profile->mp_prefix) {
+    const auto wire = static_cast<int16_t>(current & MAIN_PARAMETER_LOW_BYTE_MASK);
+    if (dev.heating.level != wire)
+      ESP_LOGI(detail::TAG, "Device %s: heating value 0x%02X", id.c_str(), static_cast<unsigned>(wire));
+    dev.heating.level = wire;
+    return;
+  }
+  float celsius = 0.0F;
+  if (profile->path == HeatingControlPath::TEMPERATURE_EXECUTE &&
+      decode_temperature_main_parameter(current, dev.temperature_range_min_c, dev.temperature_range_max_c, celsius)) {
+    dev.heating.setpoint_c = celsius;
+    dev.heating.level = -1;
+    return;
+  }
+  ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating value", id.c_str(), current);
 }
 
 /// @brief Record the coarse battery level a status payload carries, logging a change.
@@ -267,6 +314,14 @@ void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id,
   if (!hex_to_bytes(device_id, node_id, NODE_ID_SIZE))
     return;  // malformed device_id: every caller passes one already validated by the registry
   this->set_timeout(decisions::remote_poll_timer_id(node_id), delay_ms,
+                    [this, device_id]() { this->queue_request_device_status(device_id); });
+}
+
+void IOHomeControlComponent::schedule_heating_poll_(const std::string &device_id, uint32_t delay_ms) {
+  uint8_t node_id[NODE_ID_SIZE];
+  if (!hex_to_bytes(device_id, node_id, NODE_ID_SIZE))
+    return;  // malformed device_id: the caller passes one already validated by the registry
+  this->set_timeout(decisions::heating_poll_timer_id(node_id), delay_ms,
                     [this, device_id]() { this->queue_request_device_status(device_id); });
 }
 
@@ -389,6 +444,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
       // Same reason as the record above: only a reply to a status poll is a status report.
       apply_battery_state(id, dev, frame);
+      apply_heating_main_parameter(id, dev, frame);
     }
     detail::clear_command_result(dev);
     detail::log_status_update(id, dev);
@@ -453,7 +509,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     const bool type_was_unknown = dev.type == DeviceType::UNKNOWN;
     apply_info2_response(dev, frame);
     ESP_LOGI(detail::TAG, "Device %s: type=%s (%u) class=%s profile=%s subtype=%u", id.c_str(),
-             device_type_name(dev.type), (uint8_t) dev.type, device_capability_class_name(dev.type),
+             device_type_name(dev.type), static_cast<unsigned>(dev.type), device_capability_class_name(dev.type),
              device_operation_profile_name(dev.type), dev.subtype);
     if (type_was_unknown && dev.type != DeviceType::UNKNOWN) {
       ESP_LOGI(detail::TAG,

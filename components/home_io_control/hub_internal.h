@@ -63,7 +63,10 @@ inline bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabil
 /// @param dev IoDevice to check.
 /// @return true if device type supports status requests or is UNKNOWN.
 inline bool known_device_supports_status_requests(const IoDevice &dev) {
-  return dev.type == DeviceType::UNKNOWN || device_supports_status_requests(dev.type);
+  // A heater is polled over its register protocol rather than with the 0x03 status request, but it
+  // is polled all the same (IOHomeControlComponent::poll_heating_device_()).
+  return dev.type == DeviceType::UNKNOWN || device_supports_status_requests(dev.type) ||
+         device_supports_climate_control(dev.type, dev.subtype);
 }
 
 /// @brief Can this device accept an execute (position) command?
@@ -80,7 +83,9 @@ inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t p
   // just the two binary extremes — accept the full range for LIGHT here and trust the entity
   // layer to only ever send binary values for a non-dimmable light. SWITCH and LOCK have no
   // continuous concept, so they stay restricted to the binary encoding below.
-  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT)
+  // A heater with a heat level (exterior heating) sends the full 0-100 span as a fan's speed.
+  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT ||
+      device_capability_class(dev.type) == DeviceCapabilityClass::HEATER_LEVEL)
     return position <= BINARY_ENTITY_OFF_POSITION;
   return is_binary_entity_position(position) &&
          (device_supports_binary_control(dev.type) || device_supports_lock_control(dev.type));
@@ -105,7 +110,7 @@ inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
 inline void log_rejected_operation(const std::string &device_id, const IoDevice &dev, const char *operation,
                                    const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
-           device_id.c_str(), device_type_name(dev.type), static_cast<uint8_t>(dev.type),
+           device_id.c_str(), device_type_name(dev.type), static_cast<unsigned>(dev.type),
            device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
 }
 
@@ -212,13 +217,13 @@ inline constexpr size_t LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE = 24;
 /// until the user copies the line in). Reuses yaml_device_type_name() so the exact syntax always
 /// matches what the pairing snippet and the Python schema accept.
 /// @param type The now-known device type. Must not be DeviceType::UNKNOWN.
-/// @return The YAML line to add, e.g. `io_device_type: "venetian_blind"` or `io_device_type: 0x11`.
+/// @return The YAML line to add, e.g. `io_device_type: "interior_venetian_blind"` or `io_device_type: 0x11`.
 inline std::string describe_learned_device_type(DeviceType type) {
   const char *name = yaml_device_type_name(type);
   if (name != nullptr)
     return std::string("io_device_type: \"") + name + "\"";
   std::array<char, LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE> buffer{};
-  std::snprintf(buffer.data(), buffer.size(), "io_device_type: 0x%02X", static_cast<uint8_t>(type));
+  std::snprintf(buffer.data(), buffer.size(), "io_device_type: 0x%02X", static_cast<unsigned>(type));
   return std::string(buffer.data());
 }
 

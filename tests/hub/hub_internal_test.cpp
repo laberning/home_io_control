@@ -89,7 +89,7 @@ TEST(HubInternal, KnownDeviceAcceptsExecutePosition) {
 
 TEST(HubInternal, KnownDeviceAcceptsTilt) {
   IoDevice tilt_dev{};
-  tilt_dev.type = DeviceType::VENETIAN_BLIND;
+  tilt_dev.type = DeviceType::INTERIOR_VENETIAN_BLIND;
   EXPECT_TRUE(detail::known_device_accepts_execute_tilt(tilt_dev)) << "venetian blind should accept tilt commands";
 
   IoDevice no_tilt_dev{};
@@ -164,7 +164,8 @@ TEST(HubInternal, NormalizeStoppedStateUnknownPosition) {
 // ========================================================================================
 
 TEST(HubInternal, DescribeLearnedDeviceTypeUsesNamedYamlAlias) {
-  EXPECT_EQ(detail::describe_learned_device_type(DeviceType::VENETIAN_BLIND), "io_device_type: \"venetian_blind\"")
+  EXPECT_EQ(detail::describe_learned_device_type(DeviceType::INTERIOR_VENETIAN_BLIND),
+            "io_device_type: \"interior_venetian_blind\"")
       << "a type with a named YAML alias should be quoted exactly as the schema expects it";
 }
 

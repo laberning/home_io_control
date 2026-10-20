@@ -297,15 +297,19 @@ std::optional<DiscoveryListenChannels> discovery_listen_channels_from_string(con
 
 std::string key_transfer_mode_to_string(KeyTransferMode value) {
   switch (value) {
+    case KeyTransferMode::AUTO:
+      return "auto";
     case KeyTransferMode::PUSH:
       return "push";
     case KeyTransferMode::PULL:
       return "pull";
   }
-  return "push";
+  return "auto";
 }
 
 std::optional<KeyTransferMode> key_transfer_mode_from_string(const std::string &value) {
+  if (value == key_transfer_mode_to_string(KeyTransferMode::AUTO))
+    return KeyTransferMode::AUTO;
   if (value == key_transfer_mode_to_string(KeyTransferMode::PUSH))
     return KeyTransferMode::PUSH;
   if (value == key_transfer_mode_to_string(KeyTransferMode::PULL))

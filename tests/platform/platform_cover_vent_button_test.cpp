@@ -106,9 +106,9 @@ TEST(DeviceProfile, VentSupportedForWindowTypes) {
 
 TEST(DeviceProfile, VentNotSupportedForOtherTypes) {
   EXPECT_FALSE(device_supports_vent(DeviceType::ROLLER_SHUTTER)) << "roller shutter should not support vent";
-  EXPECT_FALSE(device_supports_vent(DeviceType::AWNING)) << "awning should not support vent";
+  EXPECT_FALSE(device_supports_vent(DeviceType::VERTICAL_EXTERIOR_AWNING)) << "awning should not support vent";
   EXPECT_FALSE(device_supports_vent(DeviceType::LIGHT)) << "light should not support vent";
-  EXPECT_FALSE(device_supports_vent(DeviceType::VENETIAN_BLIND)) << "venetian blind should not support vent";
+  EXPECT_FALSE(device_supports_vent(DeviceType::INTERIOR_VENETIAN_BLIND)) << "venetian blind should not support vent";
   EXPECT_FALSE(device_supports_vent(DeviceType::GARAGE_OPENER)) << "garage opener should not support vent";
   EXPECT_FALSE(device_supports_vent(DeviceType::UNKNOWN)) << "unknown should not support vent";
 }

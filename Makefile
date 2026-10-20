@@ -133,7 +133,8 @@ endef
 fuzz-frame:
 	$(call FUZZ_RUN,fuzz_frame_parse,,seeds,\
 		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
-		components/home_io_control/proto_device_model.cpp components/home_io_control/proto_crypto.cpp \
+		components/home_io_control/proto_device_model.cpp components/home_io_control/proto_device_types.cpp \
+		components/home_io_control/proto_crypto.cpp \
 		tests/fuzz/fuzz_frame_parse.cpp)
 
 fuzz-soft-phy:

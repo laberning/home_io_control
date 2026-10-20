@@ -14,6 +14,7 @@ installation's identity. Everything else attaches to it.
 | [Covers](cover.md) | `cover:` — shutters, blinds, awnings, openers, curtains |
 | [Lights, locks and switches](light-lock-switch.md) | `light:`, `lock:`, `switch:` |
 | [Heating and climate](climate.md) | `climate:` — experimental |
+| [Exterior heating](fan.md) | `fan:` — experimental |
 | [Home Assistant actions](actions.md) | Hub-level actions such as `rename_device` and `scan_paired_devices` |
 | [Linked remotes and sender events](remotes.md) | `linked_remotes:`, `exposed_senders:` |
 | [Sending 1W commands](oneway-transmit.md) | `oneway_controllers:` — driving devices that only listen for a remote |
@@ -83,7 +84,7 @@ the same set of keys. Platform-specific options are documented on each platform'
   one `home_io_control:` block exists.
 - `io_device_id` (Required): The device's 3-byte address, as exactly 6 hexadecimal characters. If
   you do not know it yet, use the Discover & Pair button — see [Pairing](../pairing.md).
-- `io_device_type` (Optional): The device's IO-Homecontrol type, named (`awning`) or raw (`0x11`).
+- `io_device_type` (Optional): The device's IO-Homecontrol type, named (`vertical_exterior_awning`) or raw (`0x11`).
   Declaring it is what enables type-specific behaviour such as the Favorite Position button and
   automatic direction inversion. The full list of names is in
   [Supported devices](../supported-devices.md). A declared type is authoritative: the hub may
@@ -96,6 +97,25 @@ the same set of keys. Platform-specific options are documented on each platform'
   common cause of a hub that pairs but then hears nothing back.
 - `linked_remotes` (Optional): 1W remotes or device classes whose presses should update this
   entity's state. See [Linked remotes and sender events](remotes.md).
+- `system_key` (Optional): A 32-character hex key this one device keeps of its own. Every exchange
+  with the device then uses it instead of the hub's `system_key`. Set it for a device that does not
+  share your installation's key, such as an Atlantic AGILIA radiator, where each radiator has its
+  own. A key equal to the hub's changes nothing. Devices without the option keep using the hub key.
+  Keep the key in `secrets.yaml` like the hub's (example below). Scan Paired Devices calls each
+  distinct key in turn and prints the key's check value next to every device that answered under
+  it; see [Pairing](../pairing.md#scan-paired-devices).
+
+The example below gives one radiator its own key:
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Bedroom Radiator"
+    io_device_id: "4D5E6F"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    system_key: !secret bedroom_radiator_key
+```
 
 ### Companion entities
 
@@ -164,12 +184,12 @@ cover:
     name: "Awning"
     device_class: awning
     io_device_id: "FEEB1E"
-    io_device_type: "awning"
+    io_device_type: "vertical_exterior_awning"
     io_subtype: 0
     invert_position: true
 ```
 
-With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position`
+With `io_device_type: "vertical_exterior_awning"`, the example above also generates an `Awning Favorite Position`
 button automatically.
 
 ## Working configs in this repo
@@ -208,6 +228,7 @@ inline pin values from the worked example above.
 - [Covers](cover.md)
 - [Lights, locks and switches](light-lock-switch.md)
 - [Heating and climate](climate.md)
+- [Exterior heating](fan.md)
 - [Home Assistant actions](actions.md)
 - [Linked remotes and sender events](remotes.md)
 - [Sending 1W commands](oneway-transmit.md)

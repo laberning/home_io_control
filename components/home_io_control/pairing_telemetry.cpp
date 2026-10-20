@@ -93,7 +93,7 @@ void PairingTelemetry::begin() {
   this->key_pull_unproven_ = false;
   this->has_discovered_device_ = false;
   memset(this->discovered_node_id_, 0, sizeof(this->discovered_node_id_));
-  this->discovered_node_type_ = 0;
+  this->discovered_node_type_ = DeviceType::UNKNOWN;
   this->advice_codes_.clear();
 }
 
@@ -173,7 +173,7 @@ void PairingTelemetry::set_paired_device(const uint8_t node_id[NODE_ID_SIZE], De
   this->paired_device_type_ = type;
 }
 
-void PairingTelemetry::set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], uint16_t node_type) {
+void PairingTelemetry::set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], DeviceType node_type) {
   this->has_discovered_device_ = true;
   memcpy(this->discovered_node_id_, node_id, NODE_ID_SIZE);
   this->discovered_node_type_ = node_type;

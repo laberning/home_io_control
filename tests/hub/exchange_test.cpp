@@ -3548,3 +3548,161 @@ TEST(Exchange, LbtSwitchedOffSendsWithoutACheck) {
   ASSERT_EQ(radio.get_tx_configs().size(), 1u);
   EXPECT_FALSE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value());
 }
+
+// ============================================================================
+// Per-device system keys (ADR 0053)
+// ============================================================================
+
+namespace {
+
+/// A second key for a device that keeps one of its own (the same test value the key-pull tests use).
+constexpr uint8_t DEVICE_OWN_KEY[AES_KEY_SIZE] = {0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE,
+                                                  0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
+
+/// Register `test::DST_ID` on `comp`, optionally with a key of its own.
+void register_destination(TestableComponent &comp, const uint8_t *own_key) {
+  DeviceConfig cfg;
+  if (own_key != nullptr) {
+    cfg.has_system_key = true;
+    memcpy(cfg.system_key, own_key, AES_KEY_SIZE);
+  }
+  comp.add_device(node_id_to_string(test::DST_ID), cfg);
+}
+
+/// Run a challenge exchange against `test::DST_ID` and return the HMAC the hub put in its 0x3D.
+bool run_challenge_exchange(TestableComponent &comp, MockRadio &radio, IoFrame &request, uint8_t (&challenge)[6],
+                            uint8_t (&sent_hmac)[HMAC_SIZE]) {
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  const IoFrame chal = build_challenge(test::DST_ID, comp.node_id_, challenge);
+  uint8_t raw[64];
+  RadioRxPacket pkt{};
+  pkt.len = serialize(chal, raw, sizeof(raw));
+  memcpy(pkt.data, raw, pkt.len);
+  radio.queue_rx(pkt);
+  const IoFrame final_resp = build_status_response(test::DST_ID, comp.node_id_);
+  RadioRxPacket final_pkt{};
+  final_pkt.len = serialize(final_resp, raw, sizeof(raw));
+  memcpy(final_pkt.data, raw, final_pkt.len);
+  radio.queue_rx(final_pkt);
+
+  IoFrame response{};
+  if (comp.send_and_receive_(request, response, FREQ_CH2) != ExchangeOutcome::SUCCESS_WITH_RESPONSE)
+    return false;
+  IoFrame auth{};
+  const auto &auth_raw = radio.get_sent_data()[1];
+  if (!parse(auth_raw.data(), static_cast<uint8_t>(auth_raw.size()), auth) || auth.cmd != CMD_CHALLENGE_RESP)
+    return false;
+  memcpy(sent_hmac, auth.data, HMAC_SIZE);
+  return true;
+}
+
+/// The HMAC a 0x3D for `request` carries under `key`.
+void expected_hmac(const IoFrame &request, const uint8_t (&challenge)[6], const uint8_t *key,
+                   uint8_t (&out)[HMAC_SIZE]) {
+  uint8_t frame_data[FRAME_MAX_SIZE];
+  frame_data[0] = request.cmd;
+  memcpy(frame_data + 1, request.data, request.data_len);
+  ASSERT_TRUE(crypto::create_hmac(frame_data, request.data_len + 1, challenge, key, out));
+}
+
+}  // namespace
+
+TEST(DeviceKey, ChallengeResponseIsSignedWithTheDevicesOwnKey) {
+  TestableComponent comp;
+  MockRadio radio;
+  register_destination(comp, DEVICE_OWN_KEY);
+  IoFrame request{};
+  uint8_t challenge[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  uint8_t sent[HMAC_SIZE];
+  ASSERT_TRUE(run_challenge_exchange(comp, radio, request, challenge, sent));
+
+  uint8_t with_device_key[HMAC_SIZE];
+  uint8_t with_hub_key[HMAC_SIZE];
+  expected_hmac(request, challenge, DEVICE_OWN_KEY, with_device_key);
+  expected_hmac(request, challenge, test::TEST_SYSTEM_KEY, with_hub_key);
+  EXPECT_EQ(0, memcmp(sent, with_device_key, HMAC_SIZE)) << "the 0x3D must use the destination's own key";
+  EXPECT_NE(0, memcmp(sent, with_hub_key, HMAC_SIZE));
+}
+
+TEST(DeviceKey, DeviceWithoutAKeyOfItsOwnUsesTheHubKey) {
+  TestableComponent comp;
+  MockRadio radio;
+  register_destination(comp, nullptr);
+  IoFrame request{};
+  uint8_t challenge[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  uint8_t sent[HMAC_SIZE];
+  ASSERT_TRUE(run_challenge_exchange(comp, radio, request, challenge, sent));
+
+  uint8_t with_hub_key[HMAC_SIZE];
+  expected_hmac(request, challenge, test::TEST_SYSTEM_KEY, with_hub_key);
+  EXPECT_EQ(0, memcmp(sent, with_hub_key, HMAC_SIZE));
+}
+
+TEST(DeviceKey, UnregisteredDestinationUsesTheHubKey) {
+  TestableComponent comp;
+  MockRadio radio;
+  // A different device carries a key of its own; the destination is not registered at all.
+  comp.add_device("AABBCC", [] {
+    DeviceConfig cfg;
+    cfg.has_system_key = true;
+    memcpy(cfg.system_key, DEVICE_OWN_KEY, AES_KEY_SIZE);
+    return cfg;
+  }());
+  IoFrame request{};
+  uint8_t challenge[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  uint8_t sent[HMAC_SIZE];
+  ASSERT_TRUE(run_challenge_exchange(comp, radio, request, challenge, sent));
+
+  uint8_t with_hub_key[HMAC_SIZE];
+  expected_hmac(request, challenge, test::TEST_SYSTEM_KEY, with_hub_key);
+  EXPECT_EQ(0, memcmp(sent, with_hub_key, HMAC_SIZE));
+}
+
+TEST(DeviceKey, ADeviceKeyEqualToTheHubKeyChangesNothing) {
+  TestableComponent comp;
+  MockRadio radio;
+  register_destination(comp, test::TEST_SYSTEM_KEY);
+  IoFrame request{};
+  uint8_t challenge[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  uint8_t sent[HMAC_SIZE];
+  ASSERT_TRUE(run_challenge_exchange(comp, radio, request, challenge, sent));
+
+  uint8_t with_hub_key[HMAC_SIZE];
+  expected_hmac(request, challenge, test::TEST_SYSTEM_KEY, with_hub_key);
+  EXPECT_EQ(0, memcmp(sent, with_hub_key, HMAC_SIZE));
+}
+
+TEST(DeviceKey, InboundAuthenticationVerifiesAgainstTheSendersOwnKey) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  RespondOnChallengeMockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  register_destination(comp, DEVICE_OWN_KEY);
+
+  IoFrame status_update = build_status_update_from_device(test::DST_ID, comp.node_id_);
+  radio.arm(status_update, DEVICE_OWN_KEY, /*valid=*/true);
+  EXPECT_TRUE(comp.authenticate_request_(status_update, FREQ_CH2))
+      << "a 0x3D signed with the device's own key verifies";
+}
+
+TEST(DeviceKey, InboundAuthenticationRejectsTheHubKeyFromAKeyedDevice) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  RespondOnChallengeMockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  register_destination(comp, DEVICE_OWN_KEY);
+
+  IoFrame status_update = build_status_update_from_device(test::DST_ID, comp.node_id_);
+  radio.arm(status_update, test::TEST_SYSTEM_KEY, /*valid=*/true);
+  EXPECT_FALSE(comp.authenticate_request_(status_update, FREQ_CH2))
+      << "a device that keeps its own key is not authenticated by the hub key";
+}

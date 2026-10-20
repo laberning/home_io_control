@@ -39,7 +39,11 @@ struct ManagementActionResult {
   uint8_t result_code{0};        ///< Optional CMD_ERROR_RESP result byte.
   std::string action;            ///< Action name, e.g. "rename_device".
   std::string device_id;         ///< Target IO-homecontrol device ID.
-  std::string message;           ///< Human-readable outcome summary.
+  std::string message;           ///< Human-readable outcome summary. Published as the action-result event, which
+                                 ///< Home Assistant records: it never carries key material.
+  std::string log_message;       ///< When non-empty, the device log shows this instead of `message`. For the
+                                 ///< one report that may print a device key (scan_paired_devices()); the key
+                                 ///< stays in the log and out of the event.
   std::string requested_name;    ///< Requested normalized UTF-8 name for rename actions.
   std::string applied_name;      ///< Verified cached UTF-8 name after a readback, when available.
   std::string probe_name;        ///< Probe name for probe_device()/probe_sweep(), e.g. "private_fn".
@@ -340,21 +344,21 @@ class ManagementActions {
   /// @brief Send one 2W heating/climate function (CMD_WRITE_PRIVATE 0x20) to a registered climate
   /// device.
   ///
-  /// A real user feature, but an unvalidated one — the protocol is derived from the iohomecontrol
-  /// project's Cozytouch support and has never been exercised against real Atlantic/Thermor/Sauter
-  /// hardware (see docs/configuration/climate.md's experimental banner). It is NOT diagnostic-gated;
-  /// the guard is documentation, not `diagnostic_probes:`.
+  /// A real user feature, but an unvalidated one — the register protocol has never been exercised
+  /// against real Atlantic/Thermor/Sauter hardware (see docs/configuration/climate.md's experimental
+  /// banner). It is NOT diagnostic-gated; the guard is documentation, not `diagnostic_probes:`.
   ///
   /// `function` is one of `power_on` / `set_temperature` / `set_mode` / `set_presence` /
-  /// `set_window` / `midnight_sync`. `value` is parsed per function: a float in degrees Celsius
-  /// (7.0-28.0) for `set_temperature`, `auto|manual|prog|off` for `set_mode`, `on|off` for
-  /// `set_presence`, `open|close` for `set_window`, ignored for the other two. A malformed value
-  /// is reported, never coerced.
+  /// `set_open_window_detection` / `midnight_sync` / `window_open`. `value` is parsed per function:
+  /// a float in degrees Celsius (7.0-28.0) for `set_temperature`, `auto|manual|prog|off` for
+  /// `set_mode`, `on|off` for `set_presence` and `set_open_window_detection`, ignored for the
+  /// register reads. A malformed value is reported, never coerced.
   ///
-  /// Delegates to IOHomeControlComponent::send_heating_command() so the entity and the action
-  /// share exactly one transmit path (see that method). `verified` is always false: the `set_*`
-  /// functions are write-only — nothing decodes what the radiator did into an entity. (`power_on`
-  /// and `midnight_sync` are register reads; their ACK payload is logged at DEBUG but not decoded.)
+  /// Delegates to IOHomeControlComponent::send_heating_command() (and, for `window_open`,
+  /// read_heating_register()) so the entity and the action share one transmit path. `verified` is
+  /// always false: an acknowledged write is not the device showing the new value. `window_open`
+  /// reports the heater's window sensor in the result message; `power_on` and `midnight_sync` log
+  /// their ACK payload at DEBUG.
   /// @param device_id Target device ID (hex string, case-insensitive).
   /// @param function Heating function name (see above).
   /// @param value Function-specific value string (see above).

@@ -153,7 +153,7 @@ void append_key_step_advice(const PairingTelemetry &telemetry, PairingAdvice out
   }
   // This attempt pushed: "command unknown", or a failed push to a device that answered discovery as a
   // remote controller, points at the pull direction.
-  const bool as_controller = telemetry.discovered_node_type() == NODE_TYPE_REMOTE_CONTROLLER;
+  const bool as_controller = telemetry.discovered_node_type() == DeviceType::REMOTE_CONTROLLER;
   const bool command_unknown = telemetry.has_key_refusal() && telemetry.key_refusal_code() == RESULT_COMMAND_UNKNOWN;
   if (command_unknown || as_controller) {
     add(PairingAdviceCode::KEY_PUSH_NOT_ACCEPTED).answered_as_controller = as_controller;
@@ -244,8 +244,9 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
                  command_result_name(advice.result_code));
       }
       snprintf(buf, sizeof(buf),
-               "Device %s does not take a pushed key:%s%s It may hand over its own key instead: add "
-               "`pairing_key_transfer: pull` under `tuning:`, put the device back into pairing mode and pair again.",
+               "Device %s does not take a pushed key:%s%s It may hand over its own key instead: set "
+               "`pairing_key_transfer: pull` (or `auto`, the default, which pulls from a device that answers as a "
+               "remote controller) under `tuning:`, put the device back into pairing mode and pair again.",
                node_id_to_string(advice.subject_node).c_str(), code_text,
                advice.answered_as_controller ? " it answered discovery as a remote controller (node type 1023)." : "");
       return std::string(buf);
@@ -259,8 +260,9 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
       return std::string(buf);
     case PairingAdviceCode::KEY_PULL_NOT_OFFERED:
       snprintf(buf, sizeof(buf),
-               "Device %s does not hand out its key: it answered the key request with 0x%02X %s. Remove "
-               "`pairing_key_transfer: pull` and pair it normally.",
+               "Device %s does not hand out its key: it answered the key request with 0x%02X %s. Set "
+               "`pairing_key_transfer: push` to force the usual pairing, put the device back into pairing mode and "
+               "pair again.",
                node_id_to_string(advice.subject_node).c_str(), advice.result_code,
                command_result_name(advice.result_code));
       return std::string(buf);
@@ -272,10 +274,10 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
       return std::string(buf);
     case PairingAdviceCode::PULLED_KEY_RECEIVED:
       snprintf(buf, sizeof(buf),
-               "Device %s handed over its key (printed above). If this hub controls no other IO devices, set "
-               "it as `system_key:`, flash, then run Scan Paired Devices: the device should answer and the log "
-               "prints its config block. Pairing more devices of this kind? Pull each one and compare the key "
-               "check values: one hub controls only devices that share its key.",
+               "Device %s handed over its key (printed above), but a roll-call under it found no device that holds "
+               "it. Put the key into the `system_key:` of the entity that controls the device, flash, then run Scan "
+               "Paired Devices: the log prints its config block. Each device of this kind keeps its own key, so "
+               "pull each one and compare the key check values.",
                node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::NONE:

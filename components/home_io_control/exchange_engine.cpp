@@ -629,7 +629,8 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
 
 bool ExchangeEngine::answer_challenge(const IoFrame &request, const IoFrame &challenge, uint32_t freq) {
   IoFrame auth_resp;
-  if (!create_challenge_resp(auth_resp, request.dst, this->node_id_, challenge.data, request, this->system_key_))
+  if (!create_challenge_resp(auth_resp, request.dst, this->node_id_, challenge.data, request,
+                             this->key_for(request.dst)))
     return false;
   return this->transmit_frame(auth_resp, freq, (*this->radio_ptr_)->response_preamble());
 }
@@ -906,7 +907,15 @@ ListenOutcome ExchangeEngine::listen(const ListenSpec &spec, RadioRxPacket &pack
 // ============================================================================
 
 bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq) {
-  return this->authenticate_request(request, freq, this->system_key_);
+  return this->authenticate_request(request, freq, this->key_for(request.src));
+}
+
+const uint8_t *ExchangeEngine::key_for(const uint8_t *node) const {
+  if (this->device_key_provider_) {
+    if (const uint8_t *device_key = this->device_key_provider_(node); device_key != nullptr)
+      return device_key;
+  }
+  return this->system_key_;
 }
 
 bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq, const uint8_t *key) {

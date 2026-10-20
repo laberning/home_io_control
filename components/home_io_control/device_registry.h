@@ -33,6 +33,8 @@ struct DeviceConfig {
   bool low_power{false};                 ///< Target is a low-power / duty-cycled receiver: directed frames set
                                          ///< CTRL1_LOW_POWER and use the long wake-up preamble.
   bool battery_entities{false};          ///< `battery: true` declared: the battery entities exist for this device.
+  bool has_system_key{false};            ///< `system_key:` declared: the device keeps a key of its own.
+  uint8_t system_key[AES_KEY_SIZE]{};    ///< That key; meaningful only when `has_system_key`. Never logged.
 };
 
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.

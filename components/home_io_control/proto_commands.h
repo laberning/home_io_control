@@ -134,6 +134,67 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
                                    bool force_open_priority = false);
 
+/// @brief Highest heating level low byte create_execute_heating_level() will frame (the secured level).
+static constexpr uint8_t HEATING_LEVEL_MAX = 0x3F;
+
+/// @brief Build a main-parameter-only EXECUTE (0x00) that sets a heater's heating level.
+///
+/// Same 6-byte shape as create_execute_main_parameter(), with the heating level in the main
+/// parameter (high byte HEATING_LEVEL_MP_PREFIX, low byte the level; see proto_heating_profiles.h).
+/// Experimental: unconfirmed on hardware until a capture or a reporter's heater confirms it.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param level Heating level low byte (heating_level::*).
+/// @return true on success; false for a level above HEATING_LEVEL_MAX.
+bool create_execute_heating_level(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t level);
+
+/// @brief Build a main-parameter-only EXECUTE (0x00) whose main parameter is a temperature or an alias.
+///
+/// Same 6-byte shape as create_execute_heating_level(); the caller encodes the value
+/// (encode_temperature_main_parameter(), or heating_prefixed_main_parameter() for an alias).
+/// Experimental: unconfirmed on hardware.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param main_parameter The 16-bit main parameter.
+/// @return true on success.
+bool create_execute_heating_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                           uint16_t main_parameter);
+
+/// @brief Build an EXECUTE (0x00) with a temperature or alias main parameter and functional parameter 9.
+///
+/// Payload: originator, ACEI, MP(2), `00` (no FP1-FP8), `80` (FP9 present), FP9 as two bytes, high
+/// byte first (every functional-parameter value is two bytes wide, like the main parameter). FP9
+/// carries the active mode (heating_mode_flags::*). No other functional parameter is sent.
+/// Experimental: unconfirmed on hardware.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param main_parameter The 16-bit main parameter.
+/// @param mode_flags FP9 value.
+/// @return true on success.
+bool create_execute_heating_with_mode_flags(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                            uint16_t main_parameter, uint16_t mode_flags);
+
+/// @brief Build an EXECUTE (0x00) with a temperature or alias main parameter and functional parameter 16.
+///
+/// Payload: originator, ACEI, MP(2), `00` (no FP1-FP8), `01` (FP16 present, the last bit of the second
+/// bitmap), FP16 (two bytes, big-endian like the main parameter). No other functional parameter is sent.
+/// Experimental: unconfirmed on hardware.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param main_parameter The 16-bit main parameter.
+/// @param fp16 FP16 value.
+/// @return true on success.
+bool create_execute_heating_with_fp16(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                      uint16_t main_parameter, uint16_t fp16);
+
 /// @brief Build a CMD_PRIVATE (0x03) request for an arbitrary function ID.
 ///
 /// function_id = 0x06 (battery-status) or 0x09 (battery-state) is reported elsewhere to read the
@@ -460,10 +521,10 @@ bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 
 /// @brief Build a generic CMD_WRITE_PRIVATE (0x20) frame carrying a caller-supplied payload.
 ///
-/// The single builder behind every heating/climate function (power, setpoint, mode, presence,
-/// window, midnight time-sync). The payload is produced by encode_heating_payload() in
-/// proto_heating.h; this builder only frames it. Framing is fixed by the reference implementation's
-/// `forgePacket()` (StartFrame=1, EndFrame=0, Protocol=0) and cross-checked against the real
+/// The single builder behind every heating/climate register read and write (power, setpoint, mode,
+/// presence, open-window detection, the measurement and sensor reads). The payload is produced by
+/// encode_heating_payload(), encode_heating_read() or encode_heating_write() in proto_heating.h; this
+/// builder only frames it. Framing (StartFrame=1, EndFrame=0, Protocol=0) is cross-checked against the real
 /// Atlantic Thermor exchange capture
 /// tests/corpus/captures/exchange/atlantic_thermor_exchange_write_private_param.yaml (frame 1:
 /// start=true, end=false). The device answers with CMD_WRITE_PRIVATE_ACK (0x21) after an
@@ -474,7 +535,7 @@ bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 /// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER;
 ///        the exchange layer then also uses the long wake-up preamble). Per-device, from the
 ///        target's YAML `low_power:` class (ADR 0029) — not hardcoded.
-/// @param payload Payload bytes (from encode_heating_payload()).
+/// @param payload Payload bytes (from encode_heating_payload(), encode_heating_read() or encode_heating_write()).
 /// @param payload_len Payload length in bytes. Rejected if 0 or > FRAME_MAX_DATA_SIZE.
 /// @return true on success; false if payload_len is out of range or set_cmd() fails.
 bool create_write_private(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, const uint8_t *payload,

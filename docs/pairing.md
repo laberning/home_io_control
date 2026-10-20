@@ -50,6 +50,32 @@ home_io_control:
 - Both live on the hub's own ESPHome device and, like every other hub-level entity (the arming
   switches, Scan Paired Devices, tuning numbers/selects), take no `device_id:` of their own.
 
+### Devices that hand over their own key
+
+Some devices keep a key of their own and refuse a pushed one. An Atlantic AGILIA IO radiator in its
+display's pairing mode answers discovery as a remote controller, so `pairing_key_transfer: auto`
+(the default, see [Radio tuning](configuration/tuning.md#pairing_key_transfer)) pulls its key
+instead of pushing yours. After the device proves the key, the hub calls a roll-call under it and
+logs one report between a `DEVICE KEY RECEIVED -- DO NOT SHARE IT` line and an
+`END OF DEVICE KEY REPORT` line. For an AGILIA the roll-call finds the heater at the next address
+up. Each device gets a paste-ready block that includes its own `system_key:`:
+
+```
+  climate:
+  - platform: home_io_control
+    name: "My Device"
+    io_device_id: "B6BDFC"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    system_key: "<32 hex characters>"
+```
+
+Paste the block into your YAML, move the key into `secrets.yaml` (`system_key: !secret ...`), and
+flash. Until you reboot the hub already controls the registered devices with that key. The key
+appears in the device log only: the Last Pairing Result sensor and the Home Assistant events show
+the key check value at most, so it is safe to share those. Remove the key from any log you post.
+Each radiator has its own key, so pair each one in turn.
+
 ## The pairing workflow
 
 1. Choose a `node_id` (6 hex characters) and a `system_key` (32 hex characters) for the hub, and
@@ -105,12 +131,12 @@ sensor alongside the button. It updates after every attempt with a frozen, machi
 summary:
 
 ```
-v1; outcome=paired; phase=complete; node=30E1F2; type=awning; attempts=1; lbt=0; dur_ms=842; heard=3; advice=none
+v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; attempts=1; lbt=0; dur_ms=842; heard=3; advice=none
 ```
 
 | Field | Meaning |
 |-------|---------|
-| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, `key_transfer_refused` (the device answered the key with an error, see the advisor), or `key_received` (`pairing_key_transfer: pull` got a different key and the device proved it; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)). |
+| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, `key_transfer_refused` (the device answered the key with an error, see the advisor), or `key_received` (a key pull got a different key and the device proved it, but no device that holds it could be registered; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)). |
 | `phase` | The furthest stage the pairing state machine reached. |
 | `node` / `type` | The paired device's node ID and type, or `-` if nothing was paired. |
 | `attempts` | Number of discovery command retries sent. |
@@ -133,11 +159,11 @@ RF silence, and is reported as `1w_traffic`.
 | `1w_traffic` | A 1W remote was seen performing 1W pairing (a broadcast to `00003F` with a 1W pairing command byte). The broadcast does not identify a target, so this fires on any 1W pairing gesture in range. | A remote's PROG gesture was heard, and no device answered. That shows a gesture happened, **not** what state the device is in: the same frames have come just before a successful pairing, too. Check in order. **1.** If a **two-way** hub already controls the device (a TaHoma, KLF200, KLR200, KIG300, and similar; not a 1W wall switch or remote), it is almost certainly paired to that hub: use [key extraction](key-extraction.md). **2.** Was the PROG press on a remote *already registered to this device*, released at the first jog? A longer hold can remove the remote, or reset the device straight after a power cut. On such a remote a PROG press is also the add/remove step, so give each attempt one press: a second press while the device is still in pairing mode can close the window the first press opened. **3.** Was this the only device in pairing mode? One remote often drives several devices. **4.** A Double Power Cut or factory reset is not a pairing gesture on its own. Afterwards a device with a local remote expects that remote to be registered again, as its manual describes, so do that first, then repeat 2. Some families document a separate gesture: a VELUX SSL has a physical **P** button that opens a 10-minute 2W registration window (see [VELUX INTEGRA](devices/velux-integra.md)). |
 | `channel_busy` | Listen-before-talk retries were exhausted and the same source was heard repeatedly during the wait. | A repeating beacon (usually a nearby remote or sensor) is flooding the channel and delaying discovery transmissions. Try again, or tune `lbt_max_retries`/`lbt_rssi_threshold_dbm` — see [Radio tuning](configuration/tuning.md). |
 | `foreign_controller` | A discovery response (0x29) was seen addressed to a node ID that is not this hub's. | Another controller (a TaHoma, say) is pairing the same device right now. Wait for it to finish, or make sure yours is the only controller with the device in pairing mode. |
-| `key_push_not_accepted` | The device answered the hub's key with `COMMAND_UNKNOWN`, or it answered discovery as a remote controller (node type 1023) and the key step failed. | The device does not take a pushed key in this mode. It may hand over its own key instead: try `pairing_key_transfer: pull`, described in [Radio tuning](configuration/tuning.md#pairing_key_transfer). An Atlantic AGILIA IO radiator does this in its display's pairing mode (issue #165). |
+| `key_push_not_accepted` | The device answered the hub's key with `COMMAND_UNKNOWN`, or it answered discovery as a remote controller (node type 1023) and the key step failed. | The device does not take a pushed key in this mode. It may hand over its own key instead: set `pairing_key_transfer` to `pull` or back to `auto`, described in [Radio tuning](configuration/tuning.md#pairing_key_transfer). An Atlantic AGILIA IO radiator does this in its display's pairing mode, and `auto` pulls it (issue #165). |
 | `key_refused` | The device answered the hub's key with any other error. The message names the code. | If the device was paired before, run [Scan Paired Devices](#scan-paired-devices) before retrying: it may already hold a key. |
-| `key_pull_not_offered` | With `pairing_key_transfer: pull`, the device answered the key request with an error. | The device does not hand out its key. Remove `pairing_key_transfer: pull` and pair it normally. A Somfy Izymo dimmer answers this way. |
-| `key_pull_unproven` | With `pairing_key_transfer: pull`, the device sent a key but did not prove it holds that key. | The hub prints no key. Post the `Key pull check` line in your issue: it contains no key. |
-| `pulled_key_received` | With `pairing_key_transfer: pull`, the device sent a different key and proved it holds it. | The log prints the key. If this hub controls no other IO devices, put it into `system_key:`, flash, and run [Scan Paired Devices](#scan-paired-devices): the device should answer, and the log prints its YAML snippet. Pulling several devices of one kind? Compare their `Key pull check` values first: one hub controls only devices that share its key. |
+| `key_pull_not_offered` | The hub pulled (`auto` for a remote controller, or `pull`), and the device answered the key request with an error. | The device does not hand out its key. Set `pairing_key_transfer: push` to pair it normally. A Somfy Izymo dimmer answers this way. |
+| `key_pull_unproven` | The hub pulled, and the device sent a key but did not prove it holds that key. | The hub prints no key. Post the `Key pull check` line in your issue: it contains no key. |
+| `pulled_key_received` | The hub pulled, the device sent a different key and proved it holds it, and a roll-call under that key found no device the hub could register. | The log prints the key once. Put it into the `system_key:` of the entity that controls the device, flash, and run [Scan Paired Devices](#scan-paired-devices): the log prints its YAML snippet. Each device of this kind keeps its own key, so compare their `Key pull check` values. |
 | `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Either the radio is not receiving (antenna, wiring, wrong tuning), or the channel was simply quiet for those few seconds. Look at the rest of the log first. If it shows other IO-Homecontrol frames being received (your remotes, a neighbour's devices), the radio works, and this reads as "the device did not answer". Only if nothing is ever received, check the antenna and radio tuning before pressing PROG again. |
 
 ## Scan Paired Devices
@@ -170,14 +196,17 @@ action: esphome.hioc_heltec_v2_scan_paired_devices
 The hub broadcasts a roll-call (`CMD_DISCOVER_SPE_REQ`, 0x2A) and listens for every device that
 holds its system key. Responders are grouped into a `Known:` section (already in your YAML) and an
 `Unknown:` section, and each unknown one gets a paste-ready block. Either section is omitted when
-it would be empty.
+it would be empty. Each line names the device as `<type>, <subtype>` (for example
+`electrical heater, with adjustable setpoint`, or `subtype N` when the subtype has no name; the
+[node types table](supported-devices.md#node-types-and-subtypes) lists them). A responder whose type
+no platform drives yet gets `not supported yet` in place of the block.
 
 ```
 Roll-call: 2 devices detected (1 known, 1 unknown)
 Known:
-  30E1F2: horizontal_awning subtype=0 rssi=-52dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [known]
+  30E1F2: horizontal awning (0x10/0) rssi=-52dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [known]
 Unknown:
-  415CE4: light subtype=0 rssi=-61dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [unknown]
+  415CE4: light (0x06/0) rssi=-61dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [unknown]
     Paste this into your YAML to register it:
   light:
   - platform: home_io_control
@@ -195,6 +224,17 @@ Unknown:
   wake-up preamble), then the always-alive pass (a short preamble) — six broadcasts total, each
   with a full `pairing_discovery_wait_ms` listen window. The "operation took a long time" warning
   ESPHome logs on every run is expected.
+- **Each per-device key adds a full sweep.** A device that keeps a key of its own (the
+  [`system_key`](configuration/index.md) option on its entity) only answers a roll-call built with
+  that key. The scan therefore runs the six broadcasts once with the hub key, then once for every
+  different per-device key, and logs `Roll-call with key check value ABC123 (n registered devices)`
+  before each sweep. A device found under a per-device key shows `key=ABC123` (the key's check
+  value, never the key) on its line. An unknown device found that way gets a snippet with its
+  `system_key:` in the **device log only**, inside a `DEVICE KEY BELOW -- DO NOT SHARE IT` block:
+  move the key into `secrets.yaml` before you post the log anywhere. The
+  `esphome.home_io_control_action_result` event that Home Assistant records carries the same report
+  without the key. A known device that answers under a different key than its YAML uses gets a
+  `hint:` naming both key check values; fix that entity's `system_key:`.
 - **An installation with no solar or battery devices can skip the low-power pass.** Set
   [`scan_power_classes: always_alive`](configuration/tuning.md#scan_power_classes) to restore the
   original ~6 second, single-pass scan. The same tunable also isolates one class when bisecting a

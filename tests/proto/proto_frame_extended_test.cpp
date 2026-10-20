@@ -185,7 +185,8 @@ TEST(ProtoFrame, EncodeDeviceNamePayloadRejectsMalformedUtf8) {
 TEST(ProtoFrame, DefaultInvertedForType) {
   EXPECT_TRUE(default_inverted_for_type(DeviceType::HORIZONTAL_AWNING)) << "horizontal awnings should be inverted";
   EXPECT_FALSE(default_inverted_for_type(DeviceType::ROLLER_SHUTTER)) << "roller shutters should not be inverted";
-  EXPECT_FALSE(default_inverted_for_type(DeviceType::AWNING)) << "standard awnings should not be inverted";
+  EXPECT_FALSE(default_inverted_for_type(DeviceType::VERTICAL_EXTERIOR_AWNING))
+      << "standard awnings should not be inverted";
   EXPECT_FALSE(default_inverted_for_type(DeviceType::LIGHT)) << "lights should not be inverted";
   EXPECT_FALSE(default_inverted_for_type(DeviceType::ON_OFF_SWITCH)) << "switches should not be inverted";
 }
@@ -215,13 +216,16 @@ TEST(ProtoFrame, CrcCcittAllOnes) {
 TEST(ProtoFrame, DeviceCapabilityClassClassification) {
   EXPECT_EQ(device_capability_class(DeviceType::UNKNOWN), DeviceCapabilityClass::UNKNOWN)
       << "UNKNOWN should map to UNKNOWN";
-  EXPECT_EQ(device_capability_class(DeviceType::BLIND), DeviceCapabilityClass::COVER) << "blind should be COVER";
-  EXPECT_EQ(device_capability_class(DeviceType::VENETIAN_BLIND), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::VERTICAL_INTERIOR_BLIND), DeviceCapabilityClass::COVER)
+      << "blind should be COVER";
+  EXPECT_EQ(device_capability_class(DeviceType::INTERIOR_VENETIAN_BLIND), DeviceCapabilityClass::COVER)
       << "venetian blind should be COVER";
   EXPECT_EQ(device_capability_class(DeviceType::ROLLER_SHUTTER), DeviceCapabilityClass::COVER)
       << "roller shutter should be COVER";
-  EXPECT_EQ(device_capability_class(DeviceType::SCREEN), DeviceCapabilityClass::COVER) << "screen should be COVER";
-  EXPECT_EQ(device_capability_class(DeviceType::AWNING), DeviceCapabilityClass::COVER) << "awning should be COVER";
+  EXPECT_EQ(device_capability_class(DeviceType::SECURE_CONFIGURATION_DEVICE), DeviceCapabilityClass::UNKNOWN)
+      << "a secure configuration device is no entity class";
+  EXPECT_EQ(device_capability_class(DeviceType::VERTICAL_EXTERIOR_AWNING), DeviceCapabilityClass::COVER)
+      << "awning should be COVER";
   EXPECT_EQ(device_capability_class(DeviceType::LIGHT), DeviceCapabilityClass::LIGHT) << "light should be LIGHT";
   EXPECT_EQ(device_capability_class(DeviceType::ON_OFF_SWITCH), DeviceCapabilityClass::SWITCH)
       << "on/off switch should be SWITCH";

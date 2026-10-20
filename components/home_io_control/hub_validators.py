@@ -170,29 +170,71 @@ def validate_fem(config):
     return config
 
 
+# The wire carries the node type in ten bits (0..1023). The names below are the types a YAML entity
+# can declare; the table that names every node type and subtype is proto_device_types.cpp, and
+# tests/sync/device_type_sync_test.cpp keeps the two in step.
+DEVICE_TYPE_MAX = 0x3FF
+
 DEVICE_TYPE_OPTIONS = {
     "unknown": 0x00,
-    "venetian_blind": 0x01,
+    "interior_venetian_blind": 0x01,
     "roller_shutter": 0x02,
-    "awning": 0x03,
+    "vertical_exterior_awning": 0x03,
     "window_opener": 0x04,
     "garage_opener": 0x05,
     "light": 0x06,
     "gate_opener": 0x07,
     "rolling_door_opener": 0x08,
     "lock": 0x09,
-    "blind": 0x0A,
-    "screen": 0x0B,
-    "dual_shutter": 0x0D,
+    "vertical_interior_blind": 0x0A,
+    "dual_roller_shutter": 0x0D,
     "heating_temperature_interface": 0x0E,
     "on_off_switch": 0x0F,
     "horizontal_awning": 0x10,
-    "external_venetian_blind": 0x11,
+    "exterior_venetian_blind": 0x11,
     "louvre_blind": 0x12,
     "curtain_track": 0x13,
+    "exterior_heating": 0x15,
+    "heat_pump": 0x16,
     "intrusion_alarm": 0x17,
     "swinging_shutter": 0x18,
+    "sliding_window": 0x1B,
     "bioclimatic_pergola": 0x1D,
+    "electrical_heater": 0x34,
+}
+
+# Heating profiles (proto_heating_profiles.cpp) that have a window sensor and an open-window
+# detection switch, as {io_device_type name: io_subtype}. climate.py generates those two companions
+# for exactly these devices; tests/sync/heating_profile_sync_test.cpp keeps the table in step with
+# the C++ profile features.
+HEATING_WINDOW_PROFILES = {
+    "electrical_heater": 1,
+}
+
+
+def heating_profile_has_window(device_type, subtype):
+    """True when the heating profile of (io_device_type value, io_subtype) has the window companions."""
+    return any(
+        DEVICE_TYPE_OPTIONS[name] == device_type and profile_subtype == subtype
+        for name, profile_subtype in HEATING_WINDOW_PROFILES.items()
+    )
+
+
+# Device-type names that were renamed. Each maps to the message the validator raises, so a config
+# that still uses one fails with the name to switch to rather than a generic "unknown name".
+RENAMED_DEVICE_TYPES = {
+    "screen": (
+        "device type 'screen' no longer exists: type 11 is a secure configuration device, not an "
+        "actuator. Use the type Scan Paired Devices reports for your device, usually "
+        "'vertical_exterior_awning' or 'vertical_interior_blind'"
+    ),
+    "blind": "device type 'blind' was renamed: use 'vertical_interior_blind' instead",
+    "venetian_blind": "device type 'venetian_blind' was renamed: use 'interior_venetian_blind' instead",
+    "awning": "device type 'awning' was renamed: use 'vertical_exterior_awning' instead",
+    "dual_shutter": "device type 'dual_shutter' was renamed: use 'dual_roller_shutter' instead",
+    "external_venetian_blind": (
+        "device type 'external_venetian_blind' was renamed: use 'exterior_venetian_blind' instead"
+    ),
 }
 
 
@@ -242,22 +284,25 @@ def _resolve_named_or_raw_token(token, options, max_value=0xFF):
 
 
 def _resolve_device_type_token(token):
-    """Resolve a lowercase, stripped device-type token (name or raw int/hex string) to 0-255.
+    """Resolve a lowercase, stripped device-type token (name or raw int/hex string) to 0-1023.
 
     Single source of truth for the "named value from DEVICE_TYPE_OPTIONS, else raw integer"
     acceptance rule shared by validate_device_type() (io_device_type) and
     validate_linked_remote_entry() (the class:<device_type> linked-remotes form) — both accept
     the exact same set of device-type spellings, so the lookup lives here once.
     @raises ValueError if token is neither a known name nor a parseable integer.
-    @raises cv.Invalid if token parses as an integer but is out of range 0-255.
+    @raises cv.Invalid if token is a renamed device-type name (naming the new one), or parses as an
+    integer but is out of range 0-1023.
     """
-    return _resolve_named_or_raw_token(token, DEVICE_TYPE_OPTIONS)
+    if token in RENAMED_DEVICE_TYPES:
+        raise cv.Invalid(RENAMED_DEVICE_TYPES[token])
+    return _resolve_named_or_raw_token(token, DEVICE_TYPE_OPTIONS, DEVICE_TYPE_MAX)
 
 
 def validate_device_type(value):
-    """Validate io_device_type as a named string or integer 0-255."""
+    """Validate io_device_type as a named string or integer 0-1023."""
     if isinstance(value, int):
-        return cv.int_range(min=0, max=0xFF)(value)
+        return cv.int_range(min=0, max=DEVICE_TYPE_MAX)(value)
 
     if isinstance(value, str):
         normalized = cv.string_strict(value).strip().lower()
@@ -265,11 +310,11 @@ def validate_device_type(value):
             return _resolve_device_type_token(normalized)
         except ValueError as err:
             raise cv.Invalid(
-                "Device type must be a known name or an integer in the range 0..255 (for example 0x11)"
+                "Device type must be a known name or an integer in the range 0..1023 (for example 0x11)"
             ) from err
 
     raise cv.Invalid(
-        "Device type must be a known name or an integer in the range 0..255"
+        "Device type must be a known name or an integer in the range 0..1023"
     )
 
 

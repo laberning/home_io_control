@@ -22,6 +22,7 @@
 
 #include "esphome/core/helpers.h"
 
+#include <array>
 #include <cinttypes>
 #include <new>
 #include <vector>
@@ -30,6 +31,9 @@ namespace esphome {
 namespace home_io_control {
 
 namespace {
+
+/// Room for "3FF" and the terminator: an enrollment class is a ten-bit node type.
+constexpr size_t ENROLLMENT_CLASS_HEX_BUFFER_SIZE = 8;
 
 constexpr uint32_t BLOCKING_WARNING_THRESHOLD_MS =
     250;  ///< setup() and exchanges can legitimately block longer than generic ESPHome components.
@@ -516,13 +520,13 @@ void IOHomeControlComponent::dump_oneway_controllers_config_() const {
     // the most surprising resolved value on the identity, so print it (ADR 0032).
     if (profile.enroll_gesture == EnrollGesture::VELUX_KLI) {
       std::string classes;
-      char byte_hex[3];
+      std::array<char, ENROLLMENT_CLASS_HEX_BUFFER_SIZE> byte_hex{};
       for (const DeviceType c : effective_enrollment_classes(identity)) {
         if (c == DeviceType::UNKNOWN)
           continue;
-        snprintf(byte_hex, sizeof(byte_hex), "%02X", static_cast<unsigned>(c));
+        snprintf(byte_hex.data(), byte_hex.size(), "%02X", static_cast<unsigned>(c));
         classes += classes.empty() ? "0x" : " 0x";
-        classes += byte_hex;
+        classes += byte_hex.data();
       }
       ESP_LOGCONFIG(detail::TAG, "        enroll: VELUX KLI gesture, 0x30 sweep -> %s", classes.c_str());
     }

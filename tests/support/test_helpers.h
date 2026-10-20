@@ -97,6 +97,8 @@ class TestablePairingEngine : public PairingEngine {
   using PairingEngine::wait_for_key_confirm_;
   using PairingEngine::verify_device_holds_key_;
   using PairingEngine::run_key_pull_phase_;
+  using PairingEngine::key_pull_selected_;
+  using PairingEngine::register_pulled_key_devices_;
 };
 
 /// Hub subclass exposing protected members and methods for unit tests.
@@ -210,6 +212,7 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   bool discover_and_pair() override { return false; }
   bool set_light_position(const std::string &, uint8_t) override { return false; }
   bool set_light_state(const std::string &, bool) override { return false; }
+  bool set_fan_position(const std::string &, uint8_t) override { return false; }
   bool set_switch_state(const std::string &, bool) override { return false; }
   bool set_lock_state(const std::string &, bool) override { return false; }
 
@@ -221,6 +224,7 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   void queue_discover_and_pair() override {}
   void queue_set_light_position(const std::string &, uint8_t) override {}
   void queue_set_light_state(const std::string &, bool) override {}
+  void queue_set_fan_position(const std::string &, uint8_t) override {}
   void queue_set_switch_state(const std::string &, bool) override {}
   void queue_set_lock_state(const std::string &, bool) override {}
 

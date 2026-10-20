@@ -6,8 +6,9 @@
 ///
 /// DeviceType/DeviceCapabilityClass, the capability predicates, packed-metadata
 /// decoders, cover commands, position/tilt report decoding and the IoDevice
-/// runtime struct.
+/// runtime struct. The per-(type, subtype) names and flags live in the table in proto_device_types.h.
 
+#include "proto_heating.h"
 #include "proto_sizes.h"
 
 #include <cstdint>
@@ -20,72 +21,82 @@ namespace home_io_control {
 // Device Types — from the IO-Homecontrol specification
 // ============================================================================
 
-/// @brief Device type identifiers reported by IO‑Homecontrol products.
-/// The numeric values follow the official specification. Do not reassign or reorder these.
-enum class DeviceType : uint8_t {
-  UNKNOWN = 0x00,                        ///< Unknown/unspecified device.
-  VENETIAN_BLIND = 0x01,                 ///< Venetian blind.
-  ROLLER_SHUTTER = 0x02,                 ///< Roller shutter.
-  AWNING = 0x03,                         ///< Awning.
-  WINDOW_OPENER = 0x04,                  ///< Window opening actuator.
-  GARAGE_OPENER = 0x05,                  ///< Garage door opener.
-  LIGHT = 0x06,                          ///< Binary light.
-  GATE_OPENER = 0x07,                    ///< Gate opener.
-  ROLLING_DOOR_OPENER = 0x08,            ///< Rolling door opener.
-  LOCK = 0x09,                           ///< Lock.
-  BLIND = 0x0A,                          ///< Generic blind.
-  SCREEN = 0x0B,                         ///< Insect/privacy screen.
-  BEACON = 0x0C,                         ///< Beacon (unpaired/announcement). Not YAML-selectable: a
-                                         ///< discovery pseudo-type, not a configurable actuator.
-                                         ///< Allowlisted in device_type_sync_test.cpp.
-  DUAL_SHUTTER = 0x0D,                   ///< Dual-section shutter.
-  HEATING_TEMPERATURE_INTERFACE = 0x0E,  ///< Heating temperature interface.
-  ON_OFF_SWITCH = 0x0F,                  ///< Generic on/off switch.
-  HORIZONTAL_AWNING = 0x10,              ///< Horizontal awning (open/close inverted).
-  EXTERNAL_VENETIAN_BLIND = 0x11,        ///< External venetian blind.
-  LOUVRE_BLIND = 0x12,                   ///< Louvre blind.
-  CURTAIN_TRACK = 0x13,                  ///< Curtain track.
-  // VENTILATION_POINT (capability class SWITCH), EXTERIOR_HEATING and HEAT_PUMP (both CLIMATE)
-  // decode and carry capability classes but are deliberately withheld from YAML: no platform
-  // consumes CLIMATE yet, and the climate/ventilation platform is unbuilt. They are allowlisted
-  // in device_type_sync_test.cpp's reverse check; move them into hub_validators.py's
-  // DEVICE_TYPE_OPTIONS (and yaml_device_type_name()) when that platform lands.
-  VENTILATION_POINT = 0x14,  ///< Ventilation point.
-  EXTERIOR_HEATING = 0x15,   ///< Exterior heating.
-  HEAT_PUMP = 0x16,          ///< Heat pump.
-  INTRUSION_ALARM = 0x17,    ///< Intrusion alarm.
-  SWINGING_SHUTTER = 0x18,   ///< Swinging shutter.
-  // 0x19-0x1C are not defined; the enum is non-contiguous from here on.
-  BIOCLIMATIC_PERGOLA = 0x1D,  ///< Bioclimatic pergola (louvre opening as the position).
+/// @brief IO-Homecontrol node types.
+/// The numeric values follow the specification's 10-bit node-type field, so the enum is 16 bits
+/// wide: a remote controller (1023) and the test type (1008) do not fit in 8 bits. Do not reassign
+/// or reorder these. Names, subtype names and capabilities live in the table in proto_device_types.h.
+enum class DeviceType : uint16_t {
+  UNKNOWN = 0,                         ///< Unknown/unspecified device.
+  INTERIOR_VENETIAN_BLIND = 1,         ///< Interior venetian blind.
+  ROLLER_SHUTTER = 2,                  ///< Roller shutter.
+  VERTICAL_EXTERIOR_AWNING = 3,        ///< Vertical exterior awning.
+  WINDOW_OPENER = 4,                   ///< Window opening actuator.
+  GARAGE_OPENER = 5,                   ///< Garage door opener.
+  LIGHT = 6,                           ///< Light.
+  GATE_OPENER = 7,                     ///< Gate opener.
+  ROLLING_DOOR_OPENER = 8,             ///< Rolling door opener.
+  LOCK = 9,                            ///< Lock.
+  VERTICAL_INTERIOR_BLIND = 10,        ///< Vertical interior blind.
+  SECURE_CONFIGURATION_DEVICE = 11,    ///< Secure configuration device (a commissioning tool, not an actuator).
+  BEACON = 12,                         ///< Beacon (unpaired/announcement). Not YAML-selectable: a
+                                       ///< discovery pseudo-type, not a configurable actuator.
+  DUAL_ROLLER_SHUTTER = 13,            ///< Dual-section roller shutter.
+  HEATING_TEMPERATURE_INTERFACE = 14,  ///< Heating temperature interface.
+  ON_OFF_SWITCH = 15,                  ///< Generic on/off switch.
+  HORIZONTAL_AWNING = 16,              ///< Horizontal awning (open/close inverted).
+  EXTERIOR_VENETIAN_BLIND = 17,        ///< Exterior venetian blind.
+  LOUVRE_BLIND = 18,                   ///< Louvre blind.
+  CURTAIN_TRACK = 19,                  ///< Curtain track.
+  VENTILATION_POINT = 20,              ///< Ventilation point.
+  EXTERIOR_HEATING = 21,               ///< Exterior heating.
+  HEAT_PUMP = 22,                      ///< Heat pump.
+  INTRUSION_ALARM = 23,                ///< Intrusion alarm.
+  SWINGING_SHUTTER = 24,               ///< Swinging shutter.
+  // 25 and 26 are not defined; the enum is non-contiguous from here on.
+  SLIDING_WINDOW = 27,             ///< Sliding window.
+  ZONE_CONTROL = 28,               ///< Zone control.
+  BIOCLIMATIC_PERGOLA = 29,        ///< Bioclimatic pergola (louvre opening as the position).
+  SIREN = 30,                      ///< Siren.
+  DOMESTIC_HOT_WATER = 51,         ///< Domestic hot water.
+  ELECTRICAL_HEATER = 52,          ///< Electrical heater.
+  HEAT_RECOVERY_VENTILATION = 53,  ///< Heat recovery ventilation.
+  CENTRAL_HOUSE_CONTROL = 255,     ///< Central house control.
+  TEST_AND_EVALUATION = 1008,      ///< Test and evaluation equipment.
+  REMOTE_CONTROLLER = 1023,        ///< Remote controller (all ten type bits set, packed bytes `FF C0`). An
+                                   ///< Atlantic AGILIA IO radiator answers discovery with this type while in
+                                   ///< its display's pairing mode, and then refuses a pushed key with
+                                   ///< RESULT_COMMAND_UNKNOWN (tests/corpus/captures/pairing/
+                                   ///< atlantic_agilia_pairing_key_transfer_command_unknown.yaml).
 };
 
 /// @brief High‑level capability class derived from DeviceType.
 enum class DeviceCapabilityClass : uint8_t {
-  UNKNOWN = 0x00,  ///< Unknown capability.
-  COVER = 0x01,    ///< Position‑controlled cover (shutter/blind/awning).
-  LIGHT = 0x02,    ///< Binary on/off light.
-  SWITCH = 0x03,   ///< Binary on/off switch.
-  SENSOR = 0x04,   ///< Sensor device.
-  BEACON = 0x05,   ///< Beacon.
-  CLIMATE = 0x06,  ///< Climate device (heating/cooling).
-  LOCK = 0x07,     ///< Lock.
+  UNKNOWN = 0x00,       ///< Unknown capability.
+  COVER = 0x01,         ///< Position‑controlled cover (shutter/blind/awning).
+  LIGHT = 0x02,         ///< Binary on/off light.
+  SWITCH = 0x03,        ///< Binary on/off switch.
+  SENSOR = 0x04,        ///< Sensor device.
+  BEACON = 0x05,        ///< Beacon.
+  CLIMATE = 0x06,       ///< Climate device (heating/cooling).
+  LOCK = 0x07,          ///< Lock.
+  HEATER_LEVEL = 0x08,  ///< Heater with a heat level in the position field (exterior heating).
 };
 
 /// @brief Convert a DeviceType to a lowercase string identifier.
 /// @param type Device type enum.
-/// @return Null‑terminated string name (e.g., "roller_shutter").
+/// @return Null‑terminated string name (e.g., "roller_shutter"), or "unknown" for a value the
+///         table does not name.
 const char *device_type_name(DeviceType type);
 
 /// @brief True when a raw 10-bit device-type value is a named DeviceType enumerator.
-/// @details The enum is not contiguous (0x19-0x1C are undefined), so a range check is not enough.
-///          UNKNOWN (0) is not "known", and values above 0xFF never match (they would alias a
-///          valid enumerator once truncated to the enum's uint8_t).
+/// @details The enum is not contiguous (25 and 26 are undefined), so a range check is not enough.
+///          UNKNOWN (0) is not "known".
 /// @param raw Raw type value as decoded from an address or info frame.
 bool is_known_device_type(uint16_t raw);
 
 /// @brief Return the YAML-friendly device-type name for types exposed in the Python schema.
 /// @param type Device type enum.
-/// @return Null‑terminated string (e.g., "external_venetian_blind"), or nullptr if the type
+/// @return Null‑terminated string (e.g., "exterior_venetian_blind"), or nullptr if the type
 ///         has no symbolic YAML alias (user must use a raw numeric value).
 const char *yaml_device_type_name(DeviceType type);
 
@@ -119,19 +130,35 @@ bool device_supports_status_requests(DeviceType type);
 /// @return true for lock devices.
 bool device_supports_lock_control(DeviceType type);
 
-/// @brief Does this device type support 2W climate/heating control (CMD_WRITE_PRIVATE 0x20)?
-///
-/// The single capability gate for the heating send path and the climate entity: true exactly
-/// when device_capability_class(type) is DeviceCapabilityClass::CLIMATE
-/// (HEATING_TEMPERATURE_INTERFACE, EXTERIOR_HEATING, HEAT_PUMP). There is deliberately no
-/// per-device-type or per-vendor branch anywhere downstream.
+/// @brief Does this device take a heat level as its position (exterior heating)?
 /// @param type Device type.
-/// @return true for climate-class devices.
-bool device_supports_climate_control(DeviceType type);
+/// @return true for the HEATER_LEVEL capability class.
+bool device_supports_heat_level_control(DeviceType type);
+
+/// @brief Does this device never move, so a status reply must not start the movement settle loop?
+/// @details Heaters commanded with an EXECUTE (heating levels or temperatures; climate profile) and exterior heating (a
+/// heat level in the
+///          position field) have no motion; their status "stopped" flag is not consulted.
+/// @param type Device type.
+/// @param subtype Device subtype.
+/// @return true when the device has no motion.
+bool device_has_no_motion(DeviceType type, uint8_t subtype);
+
+/// @brief Can a climate entity drive this device?
+///
+/// True exactly when a heating profile exists for (type, subtype) (proto_heating_profiles.h): the
+/// electrical heater with an adjustable setpoint (52/1, private registers) and the plain electrical
+/// heater (52/0, heating levels). This only says a climate entity may bind; whether the private
+/// register protocol may be sent to the device is device_uses_heating_registers().
+/// @param type Device type.
+/// @param subtype Device subtype.
+/// @return true for devices that have a heating profile.
+bool device_supports_climate_control(DeviceType type, uint8_t subtype);
 
 /// @brief Does this device type support tilt (slat angle) control?
 /// @param type Device type.
-/// @return true for venetian blinds, blinds, external venetian blinds, louvre blinds.
+/// @return true for interior venetian blinds, vertical interior blinds, exterior venetian blinds
+///         and louvre blinds.
 bool device_supports_tilt(DeviceType type);
 
 /// @brief Does this device type support the ventilation position command?
@@ -142,29 +169,24 @@ bool device_supports_tilt(DeviceType type);
 /// @return true for WINDOW_OPENER and VENTILATION_POINT.
 bool device_supports_vent(DeviceType type);
 
-/// @brief Does this device type take movement commands as the main parameter only?
+/// @brief Does this device take movement commands as the main parameter only?
 ///
-/// True for GARAGE_OPENER: a Wisniowski / Somfy MOTO 1000 io refuses the functional-parameter
+/// True for every garage opener: a Wisniowski / Somfy MOTO 1000 io refuses the functional-parameter
 /// block of the regular position execute (the travel-speed profile roller motors use) and the
 /// "favourite" alias with RESULT_PARAMETER_UNKNOWN, and accepts a frame without them (issue #163).
-/// Gate and rolling-door openers may behave the same but have no field report yet, so they keep
-/// the regular frame.
+/// True for subtype 58 of any node type too: the public KLF 200 API specification defines it as the
+/// position-only variant. Other gate and rolling-door openers may behave the same but have no field
+/// report yet, so they keep the regular frame.
 /// @param type Device type.
+/// @param subtype Device subtype.
 /// @return true if movement must use create_execute_main_parameter() and FAVORITE is unsupported.
-bool device_takes_main_parameter_only(DeviceType type);
+bool device_takes_main_parameter_only(DeviceType type, uint8_t subtype);
 
-/// @brief Decode a protocol-packed device type from two metadata bytes.
+/// @brief Decode the 10-bit node type from two packed metadata bytes.
 /// @param type_msb First metadata byte.
 /// @param type_subtype Second metadata byte containing the remaining type bits and subtype.
-/// @return Decoded device type.
+/// @return Decoded node type; a value the enum has no enumerator for is returned as is.
 DeviceType decode_packed_device_type(uint8_t type_msb, uint8_t type_subtype);
-
-/// @brief Decode the full 10-bit node type from two metadata bytes, without narrowing it to
-/// DeviceType (which keeps only the low 8 bits).
-/// @param type_msb First metadata byte.
-/// @param type_subtype Second metadata byte containing the remaining type bits and subtype.
-/// @return Node type 0..1023; NODE_TYPE_REMOTE_CONTROLLER is 1023.
-uint16_t decode_packed_node_type(uint8_t type_msb, uint8_t type_subtype);
 
 /// @brief Decode a protocol-packed device subtype from the second metadata byte.
 /// @param type_subtype Second metadata byte containing subtype in bits [5:0].
@@ -175,7 +197,8 @@ uint8_t decode_packed_device_subtype(uint8_t type_subtype);
 /// discovery responses — the inverse of decode_packed_device_type()/decode_packed_device_subtype().
 /// @param type Device type to encode.
 /// @param subtype Manufacturer-specific subtype; only bits [5:0] are used.
-/// @param type_msb Output: first metadata byte.
+/// @param type_msb Output: first metadata byte. Only the low ten bits of `type` fit the wire field;
+///        higher bits are dropped.
 /// @param type_subtype Output: second metadata byte (top 2 type bits + 6-bit subtype).
 void encode_packed_device_type(DeviceType type, uint8_t subtype, uint8_t &type_msb, uint8_t &type_subtype);
 
@@ -188,13 +211,13 @@ const char *device_operation_profile_name(DeviceType type);
 /// @brief Human-readable device type string for diagnostics, including the raw numeric value.
 /// @param type Device type.
 /// @return String such as "horizontal_awning (0x10)", or the raw hex form ("0x1A") when the
-///         type has no symbolic name.
+///         type has no symbolic name. The value is printed in full ("0x3FF").
 std::string format_device_type_diagnostic(DeviceType type);
 
 /// @brief Build the YAML value for a device's `io_device_type` key.
 /// @param type Device type.
 /// @return A quoted symbolic name (e.g. `"horizontal_awning"`) when one exists, otherwise the
-///         raw hex form (e.g. `0x1A`) for a type with no YAML alias.
+///         raw hex form (e.g. `0x1A`, `0x3FF`) for a type with no YAML alias.
 std::string format_device_type_for_yaml(DeviceType type);
 
 /// @brief Build the ready-to-paste YAML block describing a device, for both a fully-decoded
@@ -205,9 +228,10 @@ std::string format_device_type_for_yaml(DeviceType type);
 /// `io_device_type` explanation; `type`, `subtype`, and `inverted` are ignored in this case.
 ///
 /// With `metadata_complete == true`, the snippet names the concrete ESPHome platform for
-/// `type` and fills in `io_subtype` and (for an inverted cover) `invert_position: true`. If
-/// `type` has no known ESPHome platform, an empty string is returned instead — the caller
-/// decides what to say when there's no snippet to show.
+/// `type` and fills in `io_subtype`, `invert_position: true` for an inverted cover and
+/// `dimmable: true` for a brightness-only light subtype. If the (type, subtype) has no ESPHome
+/// platform yet (device_has_platform() in proto_device_types.h), an empty string is returned
+/// instead — the caller decides what to say when there's no snippet to show.
 ///
 /// `low_power: true` is emitted in **both** shapes when `low_power` is set (the device
 /// self-reported POWER_SAVE_LOW_POWER in its discovery Multi Information Byte); it is omitted
@@ -225,10 +249,14 @@ std::string format_device_type_for_yaml(DeviceType type);
 ///        `metadata_complete` is true and `type` is a cover.
 /// @param low_power Whether the device self-reported a low-power / duty-cycled class; emits
 ///        `low_power: true` when set, in both snippet shapes.
+/// @param system_key_hex The device's own system key as 32 hex characters, or empty when it uses the
+///        hub's. Emits `system_key: "<hex>"` in both snippet shapes. Key material: a caller that
+///        passes one must print the snippet only inside a DO-NOT-SHARE block.
 /// @return Multi-line YAML snippet, or an empty string when `metadata_complete` is true but
-///         `type` maps to no ESPHome platform.
+///         the (type, subtype) maps to no ESPHome platform.
 std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
-                                      bool metadata_complete, bool inverted, bool low_power);
+                                      bool metadata_complete, bool inverted, bool low_power,
+                                      const std::string &system_key_hex = std::string());
 
 // ============================================================================
 // Cover Commands
@@ -307,14 +335,8 @@ static constexpr uint16_t STATUS_POS_TOLERANCE_RAW = 100;
 static constexpr uint8_t DEVICE_METADATA_SIZE = 2;
 static constexpr uint8_t DEVICE_TYPE_LOW_BITS_SHIFT = 2;
 static constexpr uint8_t DEVICE_TYPE_HIGH_BITS_SHIFT = 6;
+static constexpr uint16_t DEVICE_TYPE_WIRE_MASK = 0x3FF;  ///< The node-type wire field is ten bits wide.
 static constexpr uint8_t DEVICE_SUBTYPE_MASK = 0x3F;
-/// Node type 1023 (all ten type bits set, packed bytes `FF C0`): a remote controller. DeviceType is
-/// 8 bits wide and truncates it to 0xFF, so callers that need to recognise it read the full 10-bit
-/// value with decode_packed_node_type(). An Atlantic AGILIA IO radiator answers discovery with this
-/// type while in its display's pairing mode, and then refuses a pushed key with
-/// RESULT_COMMAND_UNKNOWN (tests/corpus/captures/pairing/
-/// atlantic_agilia_pairing_key_transfer_command_unknown.yaml).
-static constexpr uint16_t NODE_TYPE_REMOTE_CONTROLLER = 0x3FF;
 
 // ============================================================================
 // Device State
@@ -476,8 +498,20 @@ struct IoDevice {
                                                           ///< status: a reply to a status poll or an authenticated
                                                           ///< CMD_STATUS_UPDATE. Never from an execute ack (its layout
                                                           ///< follows the request) or an overheard frame (ADR 0022).
+  float temperature_range_min_c{
+      HEATING_TEMPERATURE_RANGE_MIN_C};  ///< Lower end of the temperature encoding range of a heater that
+                                         ///< carries a temperature in its main parameter (YAML `min_temperature:`).
+  float temperature_range_max_c{
+      HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of that range (YAML `max_temperature:`).
+  HeatingReadings heating{};             ///< What the hub has read from a heater over the private register protocol
+                                         ///< (room temperature, setpoint, mode, regulator state). Set only from decoded
+                                         ///< replies; stays "never read" for every other device type.
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
+  bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
+                                 ///< exchange with it uses `system_key` below instead of the hub's key.
+  uint8_t system_key[AES_KEY_SIZE]{};  ///< The device's own key; meaningful only when `has_system_key`. Key material:
+                                       ///< never logged outside a bannered report block.
 };
 
 /// @brief Record that a device is (believed to be) travelling right now.

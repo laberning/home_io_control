@@ -43,7 +43,7 @@ cover:
     name: "Demo Awning"
     device_class: awning
     io_device_id: "A1B2C3"
-    io_device_type: "awning"
+    io_device_type: "vertical_exterior_awning"
     io_subtype: 0
     invert_position: true
 
@@ -53,7 +53,7 @@ cover:
     name: "Demo Blind"
     device_class: blind
     io_device_id: "A1B2C4"
-    io_device_type: "blind"
+    io_device_type: "vertical_interior_blind"
     io_subtype: 0
 
 light:

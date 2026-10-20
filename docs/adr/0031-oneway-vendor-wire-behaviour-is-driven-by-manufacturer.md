@@ -67,7 +67,7 @@ one hardware-validated class-bound configuration with no failing test);
 - **`execute_broadcast: all` makes the wire destination decode to
   `DeviceType::UNKNOWN`.** The `OneWayCommandReport` therefore takes
   `target_type` from the *identity's* class, not the built frame's, so the
-  "Last 1W Command" sensor and the TX log still read `STOP -> awning`, not
+  "Last 1W Command" sensor and the TX log still read `STOP -> vertical_exterior_awning`, not
   `STOP -> unknown`. (The boot log was never affected — it prints `class 0x%02X`
   straight from `io_device_type`.) Pinned by
   `OneWaySendCommandTest.ExecuteBroadcastAllDoesNotDegradeTheReportToUnknown`.

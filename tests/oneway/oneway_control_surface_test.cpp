@@ -68,7 +68,7 @@ TEST(OneWayControlSurface, ReportNamesTheIntentClassAndSequence) {
   OneWayCommandReport report{};
   report.controller_id = "awning_remote";
   report.intent = "STOP";
-  report.target_type = DeviceType::AWNING;
+  report.target_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   report.sequence = 1234;
   report.sequence_reserved = true;
   report.transmitted = true;
@@ -76,7 +76,7 @@ TEST(OneWayControlSurface, ReportNamesTheIntentClassAndSequence) {
   const std::string summary = format_oneway_command_report(report);
   EXPECT_NE(summary.find("STOP"), std::string::npos) << "the intent must be visible";
   EXPECT_NE(summary.find("1234"), std::string::npos) << "the sequence used must be visible";
-  EXPECT_NE(summary.find(device_type_name(DeviceType::AWNING)), std::string::npos)
+  EXPECT_NE(summary.find(device_type_name(DeviceType::VERTICAL_EXTERIOR_AWNING)), std::string::npos)
       << "the addressed class must be visible; 1W has no device to name instead";
 }
 
@@ -85,7 +85,7 @@ TEST(OneWayControlSurface, ReportNeverClaimsTheDeviceActed) {
   // it is exactly what would send a user looking at the wrong thing.
   OneWayCommandReport report{};
   report.intent = "CLOSE";
-  report.target_type = DeviceType::AWNING;
+  report.target_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   report.sequence = 9;
   report.sequence_reserved = true;
   report.transmitted = true;
@@ -98,7 +98,7 @@ TEST(OneWayControlSurface, ReportNeverClaimsTheDeviceActed) {
 TEST(OneWayControlSurface, ReportDistinguishesNotTransmittedFromTransmitted) {
   OneWayCommandReport report{};
   report.intent = "STOP";
-  report.target_type = DeviceType::AWNING;
+  report.target_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   report.sequence = 5;
   report.sequence_reserved = true;
   report.transmitted = false;
@@ -129,7 +129,7 @@ TEST(OneWayControlSurface, ReportForAGenuineSequenceZeroDoesNotSayNoSequence) {
   OneWayCommandReport report{};
   report.controller_id = "awning_remote";
   report.intent = "STOP";
-  report.target_type = DeviceType::AWNING;
+  report.target_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   report.sequence = 0;
   report.sequence_reserved = true;
   report.transmitted = false;

@@ -77,21 +77,21 @@ CoverCommand = home_io_control_ns.enum("CoverCommand", is_class=True)
 # Device types that support 0-100% position control (maps to DeviceCapabilityClass::COVER in C++).
 # Used to decide whether a favorite-position button companion should be generated.
 POSITION_CONTROL_DEVICE_TYPES = {
-    0x01,  # venetian_blind
+    0x01,  # interior_venetian_blind
     0x02,  # roller_shutter
-    0x03,  # awning
+    0x03,  # vertical_exterior_awning
     0x04,  # window_opener
     0x05,  # garage_opener
     0x07,  # gate_opener
     0x08,  # rolling_door_opener
-    0x0A,  # blind
-    0x0B,  # screen
-    0x0D,  # dual_shutter
+    0x0A,  # vertical_interior_blind
+    0x0D,  # dual_roller_shutter
     0x10,  # horizontal_awning
-    0x11,  # external_venetian_blind
+    0x11,  # exterior_venetian_blind
     0x12,  # louvre_blind
     0x13,  # curtain_track
     0x18,  # swinging_shutter
+    0x1B,  # sliding_window
     0x1D,  # bioclimatic_pergola
 }
 

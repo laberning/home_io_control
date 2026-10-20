@@ -32,6 +32,7 @@
 #include "proto_codecs.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
+#include "proto_heating_profiles.h"
 #include "radio_interface.h"
 #include "tuning_config.h"
 #include "hub_exchange.h"
@@ -142,6 +143,10 @@ class IOHomeControlComponent : public Component,
         return false;
       out = decisions::target_evidence(*dev);
       return true;
+    });
+    this->exchange_engine_.set_device_key_provider([this](const uint8_t *node) -> const uint8_t * {
+      const IoDevice *dev = this->registry_.get(node_id_to_string(node));
+      return dev != nullptr && dev->has_system_key ? dev->system_key : nullptr;
     });
     this->exchange_engine_.set_wake_evidence_spent_handler([this](const uint8_t *dst) {
       if (IoDevice *dev = this->registry_.get(node_id_to_string(dst)); dev != nullptr)
@@ -592,11 +597,10 @@ class IOHomeControlComponent : public Component,
   /// @brief Run one 2W heating/climate function (CMD_WRITE_PRIVATE 0x20) against a registered
   /// climate device — the `heating_control` hub action.
   ///
-  /// Experimental: the protocol is derived from the iohomecontrol project's Cozytouch support and
-  /// has never been validated on real Atlantic/Thermor/Sauter hardware. `verified` is always
-  /// false: the `set_*` functions are write-only — nothing decodes what the radiator did into an
-  /// entity. (`power_on` and `midnight_sync` are register reads; their ACK payload is logged at
-  /// DEBUG but not decoded.) See ManagementActions::heating_control() for argument formats.
+  /// Experimental: the register protocol is unvalidated on real Atlantic/Thermor/Sauter hardware.
+  /// A write is reported as acknowledged by the device, never as confirmed; the register reads
+  /// (`window_open`) put the decoded value into the result message, and `power_on` / `midnight_sync`
+  /// log their ACK payload at DEBUG. See ManagementActions::heating_control() for argument formats.
   /// @param device_id Target device ID.
   /// @param function Heating function name.
   /// @param value Function-specific value string.
@@ -616,6 +620,13 @@ class IOHomeControlComponent : public Component,
   ///        brightness and 100 to off, the same 0-100 scale platform_cover.cpp uses.
   /// @return true if device acknowledged.
   virtual bool set_light_position(const std::string &device_id, uint8_t position);
+  /// Send a heat level to an exterior heater (a fan entity) as an IO position. Mapped to the shared
+  /// execute path, like set_light_position().
+  /// @param device_id Target device ID.
+  /// @param position Desired IO position (0-100): 0 = full heat, 100 = off (the KLF 200 exterior
+  ///        heating mapping, MP = position x 0x200).
+  /// @return true if device acknowledged.
+  virtual bool set_fan_position(const std::string &device_id, uint8_t position);
   /// Semantic binary helper for light entities. Internally mapped to the shared execute path.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
@@ -631,29 +642,67 @@ class IOHomeControlComponent : public Component,
   /// @param locked Desired locked/unlocked state.
   /// @return true if device acknowledged.
   virtual bool set_lock_state(const std::string &device_id, bool locked);
-  /// @brief The single hub-side transmit path for 2W heating/climate control (CMD_WRITE_PRIVATE
-  /// 0x20). Both the `heating_control` hub action and the climate entity call this — there is
-  /// exactly one place that transmits heating frames and exactly one caller of
-  /// create_write_private().
+  /// @brief Run one heating function on the heater's private register protocol (CMD_WRITE_PRIVATE
+  /// 0x20): a write for a settable register, a read for a read-only one (`power_on`, `midnight_sync`).
+  /// Both the `heating_control` hub action and the climate entity's writes call this; together with
+  /// read_heating_register() it is the only place heating frames are built and sent, through one
+  /// shared exchange helper.
   ///
   /// Flow: registry lookup -> device_supports_climate_control() gate (rejected via
   /// detail::log_rejected_operation()) -> encode_heating_payload() -> create_write_private() (with
   /// the device's `low_power` flag) -> a plain send_and_receive_(). Deliberately NOT routed
   /// through execute_request_and_update_(): that helper is cover/position-shaped (status decode,
-  /// poll backoff), and a heater has no position and no status poll. A CMD_WRITE_PRIVATE_ACK
-  /// (0x21) reply is success; anything else (including CMD_ERROR_RESP) is failure. The exchange
-  /// still feeds the device-agnostic Last Contact / Exchange Failures link-health sensors.
-  ///
-  /// Write-only semantics: this only reports whether the device acknowledged the write. The `set_*`
-  /// functions decode nothing back into an entity, so callers publish "last commanded, never
-  /// confirmed" state on success and never at request time. `power_on` and `midnight_sync` are
-  /// register reads whose 0x21 ACK payload is logged at DEBUG (see the .cpp) but not decoded.
+  /// poll backoff). A CMD_WRITE_PRIVATE_ACK (0x21) reply is success; anything else (including
+  /// CMD_ERROR_RESP) is failure. The exchange still feeds the device-agnostic Last Contact /
+  /// Exchange Failures link-health sensors. The ack carries no state: a caller that wants the
+  /// value the heater now holds reads it back with read_heating_register().
   /// @param device_id Target device ID (hex string).
   /// @param fn Heating function to send.
   /// @param value Function-specific value (degrees C, a HeatingMode as float, 0/1, or ignored) —
   ///        see encode_heating_payload().
   /// @return true only if the device answered with CMD_WRITE_PRIVATE_ACK.
   virtual bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value);
+  /// @brief Set the heating level of a heater that is commanded with levels (the plain electrical heater).
+  ///
+  /// A main-parameter-only EXECUTE through the execute-family funnel; the settle poll that follows
+  /// reads the level back with the ordinary status read, and the climate entity shows that reading.
+  /// Experimental: unconfirmed on hardware.
+  /// @param device_id Target device ID (hex string).
+  /// @param level Heating level low byte (heating_level::*).
+  /// @return true when the device accepted the command.
+  virtual bool set_heating_level(const std::string &device_id, uint8_t level);
+  /// @brief Command a heater that carries a temperature or an alias in its main parameter (the heating
+  /// temperature interface and the heat pump).
+  ///
+  /// A main-parameter-only EXECUTE, or one that also carries functional parameter 9 when the profile
+  /// sends mode flags, through the execute-family funnel; the settle poll that follows reads the
+  /// state back with the ordinary status read. Experimental: unconfirmed on hardware.
+  /// @param device_id Target device ID (hex string).
+  /// @param main_parameter The 16-bit main parameter (encode_temperature_main_parameter() or an alias).
+  /// @param fp The functional parameter that accompanies it, if any (kind NONE sends a main-parameter-only
+  ///        EXECUTE).
+  /// @return true when the device accepted the command.
+  virtual bool set_heating_temperature(const std::string &device_id, uint16_t main_parameter, const HeatingFp &fp);
+  /// @brief Set the temperature encoding range of a heater that carries a temperature in its main
+  /// parameter (YAML `min_temperature:` / `max_temperature:`).
+  /// @param device_id Target device ID.
+  /// @param min_c Lower end of the range in degrees Celsius.
+  /// @param max_c Upper end; must exceed `min_c`.
+  virtual void set_device_temperature_range(const std::string &device_id, float min_c, float max_c);
+  /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
+  ///
+  /// Same gate, frame builder and exchange bookkeeping as send_heating_command(); a reply that
+  /// decodes (decode_heating_reply()) updates the device record and notifies the entity callbacks,
+  /// so what an entity shows is what the heater reported.
+  /// @param device_id Target device ID (hex string).
+  /// @param fn Register to read; must be readable (see heating_function_is_readable()).
+  /// @param[out] value_out Decoded value (NaN for a room-temperature sensor fault); pass nullptr when
+  ///        only the stored reading is wanted.
+  /// @param max_tries Transmit-attempt cap: EXCHANGE_RETRY_COUNT for a read the user waits on (the
+  ///        action, the read-back of a write), the scheduled-poll band for the background poll.
+  /// @return true only if the device answered and the reply decoded to a value for `fn`.
+  virtual bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
+                                     uint8_t max_tries);
   /// @brief Queue an async position update; returns immediately, executed in loop().
   ///
   /// If a pending SET_TILT operation for the same device is already in the queue, the two are
@@ -723,6 +772,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired IO position (0-100).
   virtual void queue_set_light_position(const std::string &device_id, uint8_t position);
+  /// Async form of set_fan_position() that keeps radio work serialized on the main loop.
+  /// @param device_id Target device ID.
+  /// @param position Desired IO position (0-100).
+  virtual void queue_set_fan_position(const std::string &device_id, uint8_t position);
   /// Async form of set_light_state() that keeps radio work serialized on the main loop.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
@@ -832,6 +885,11 @@ class IOHomeControlComponent : public Component,
   /// @note Uses ESPHome's set_timeout() mechanism; the callback executes in loop().
   ///       A zero delay schedules immediately on the next loop iteration.
   void schedule_status_poll_(const std::string &device_id, uint32_t delay_ms);
+  /// Arm the heater's regular-cadence poll timer. Own timer id (decisions::heating_poll_timer_id()),
+  /// so remote-activity polls scheduled by schedule_status_poll_() never replace it.
+  /// @param device_id ID of the heater.
+  /// @param delay_ms Delay in milliseconds before the poll is queued.
+  void schedule_heating_poll_(const std::string &device_id, uint32_t delay_ms);
   /// Begin bounded follow-up polling for a device after a command or overheard remote activity.
   /// @param device_id ID of the device to poll.
   /// @param initial_delay_ms Delay before the first follow-up poll.
@@ -1031,6 +1089,26 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param auth_like True when the failed exchange saw a 0x3C challenge.
   void schedule_background_poll_backoff_(const std::string &device_id, bool auth_like);
+  /// @brief The exchange every heating frame shares: send on the command channel, record the
+  /// outcome (exchange counters, link health, error result code), notify the entities and report
+  /// whether the device answered with CMD_WRITE_PRIVATE_ACK.
+  /// @param device_id Target device ID.
+  /// @param label What was sent, for the log ("set_temperature", "read room_temperature").
+  /// @param request The framed CMD_WRITE_PRIVATE request.
+  /// @param[out] response The device's reply; valid when true is returned.
+  /// @param max_tries Transmit-attempt cap forwarded to send_and_receive_().
+  /// @return true only if the reply is a CMD_WRITE_PRIVATE_ACK.
+  bool exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request, IoFrame &response,
+                         uint8_t max_tries);
+  /// @brief Poll a heater: read its room temperature, setpoint, mode and regulator state (stopping
+  /// at the first failure), plus its maximum setpoint until that has been read once.
+  ///
+  /// A failure moves the retry onto the StatusPollPolicy ladder; either way the next regular poll
+  /// is armed one interval out (the device's `status_poll_interval`, else
+  /// HEATING_POLL_DEFAULT_INTERVAL_MS). Called from request_device_status() for climate devices.
+  /// @param device_id Target device ID.
+  /// @return true when all four registers were read.
+  bool poll_heating_device_(const std::string &device_id);
   /// Pop next pending operation from the queue and execute it (set position, request status, discover).
   void process_pending_operation_();
 

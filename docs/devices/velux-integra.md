@@ -17,7 +17,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | SSL solar roller shutter | ⚠️ Partial — Discover & Pair, open, close, position and status work; `stop` reaches it mid-travel, but not on every attempt |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
 | SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false`. Two-way Discover & Pair finds nothing |
-| Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [blind, venetian_blind]`, `low_power: true` |
+| Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true` |
 
 ## Onboarding routes
 
@@ -145,7 +145,7 @@ moves the window to its predefined air-exchange opening rather than fully open.
   cover ends up fully closed, the closing step at the end of Enroll shows no movement, so check with
   Open afterwards. The enrollment classes must match the remote: the default fits a KLI
   310/313 (exterior shading, e.g. an SML roller shutter), while a KLI 312 interior blind needs
-  `enrollment_classes: [blind, venetian_blind]`. The remote's own `0x2E` log lines after Gear name
+  `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`. The remote's own `0x2E` log lines after Gear name
   the classes. Confirmed in issue #74 (see
   [Sending 1W commands](../configuration/oneway-transmit.md)).
 - **The KUX 110 is a power supply, not a radio bridge.** It feeds 24 V DC to a mains-powered product

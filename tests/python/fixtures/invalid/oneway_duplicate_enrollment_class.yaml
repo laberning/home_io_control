@@ -1,4 +1,4 @@
-# expect-error: enrollment_classes has 'awning' more than once
+# expect-error: enrollment_classes has 'vertical_exterior_awning' more than once
 # covers: oneway_controllers._no_duplicate_enrollment_classes
 packages:
   common: !include ../_common.yaml
@@ -8,6 +8,6 @@ home_io_control:
   oneway_controllers:
     - id: remote
       manufacturer: velux
-      io_device_type: awning
+      io_device_type: vertical_exterior_awning
       enrollment: true
-      enrollment_classes: [awning, awning]
+      enrollment_classes: [vertical_exterior_awning, vertical_exterior_awning]

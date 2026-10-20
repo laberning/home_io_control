@@ -2,7 +2,9 @@
 /// @brief Tests for hub_management.cpp rename action support.
 
 #include "hub_core.h"
+#include "log_helpers.h"
 #include "proto_commands.h"
+#include "proto_crypto.h"
 #include "proto_frame.h"
 
 #include "esphome/components/api/custom_api_device.h"
@@ -555,7 +557,8 @@ static IoFrame make_write_private_ack(const uint8_t dst[3]) {
 static void make_climate_device(TestableManagementComponent &component) {
   auto *dev = component.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
 }
 
 TEST(HubManagement, HeatingControlRejectsUnknownDevice) {
@@ -663,15 +666,73 @@ TEST(HubManagement, HeatingControlRejectsInvalidPresence) {
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
-TEST(HubManagement, HeatingControlRejectsInvalidWindow) {
+TEST(HubManagement, HeatingControlSendsNothingToAHeatingLevelHeater) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 0;
+  for (const char *function : {"power_on", "set_mode", "window_open"}) {
+    const auto result = component.heating_control("ABC123", function, "auto");
+    EXPECT_FALSE(result.success) << function;
+    EXPECT_EQ(result.message, "device is commanded with heating levels, not private registers") << function;
+  }
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlRejectsInvalidOpenWindowDetection) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "set_window", "ajar");
+  const auto result = component.heating_control("ABC123", "set_open_window_detection", "ajar");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(result.message, "window must be 'open' or 'close'");
+  EXPECT_EQ(result.message, "open-window detection must be 'on' or 'off'");
   EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+// The window sensor register is read-only; the one writable window function is the detection setting.
+TEST(HubManagement, HeatingControlHasNoSetWindowFunction) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  const auto result = component.heating_control("ABC123", "set_window", "open");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "unknown heating function 'set_window'");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlWindowOpenReadsTheSensorAndReportsIt) {
+  for (const auto &[reply_value, text] : {std::pair<uint8_t, const char *>{0x01, "open"}, {0x00, "closed"}}) {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    make_climate_device(component);
+    IoFrame reply{};
+    init_frame(reply, true, false, true, false);
+    const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+    set_dst(reply, component.node_id_);
+    set_src(reply, device_node_id);
+    const uint8_t payload[] = {0x0C, 0x60, 0x01, 0x0E, reply_value};
+    set_cmd(reply, CMD_WRITE_PRIVATE_ACK, payload, sizeof(payload));
+    radio.queue_rx(frame_to_packet(reply));
+
+    const auto result = component.heating_control("ABC123", "window_open", "");
+    EXPECT_TRUE(result.success);
+    EXPECT_FALSE(result.verified);
+    EXPECT_EQ(result.message, std::string("heating window_open: window ") + text);
+
+    ASSERT_EQ(radio.get_sent_data().size(), 1u);
+    const auto &tx = radio.get_sent_data().front();
+    ASSERT_GE(tx.size(), 13u);
+    EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE);
+    const std::vector<uint8_t> expected = {0x0C, 0x60, 0x01, 0x0E};
+    for (size_t i = 0; i < expected.size(); i++)
+      EXPECT_EQ(tx[9 + i], expected[i]) << "payload byte " << i;
+  }
 }
 
 // The function name and named values are case-folded and ASCII-trimmed before matching
@@ -695,8 +756,7 @@ TEST(HubManagement, HeatingControlNormalizesCaseAndWhitespace) {
     EXPECT_EQ(tx[9 + i], expected[i]) << "payload byte " << i;
 }
 
-// Each function's happy path: assert the exact bytes handed to the radio, byte-for-byte against
-// the iohomecontrol reference implementation's Cozy 2W payload builders.
+// Each function's happy path: assert the exact bytes handed to the radio.
 namespace {
 struct HeatingCase {
   const char *function;
@@ -707,12 +767,12 @@ struct HeatingCase {
 
 TEST(HubManagement, HeatingControlHappyPathSendsExactBytesPerFunction) {
   const std::vector<HeatingCase> cases = {
-      {"power_on", "", {0x0C, 0x60, 0x01, 0x2C}},                         // :105
-      {"set_temperature", "20.5", {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}},  // :125
-      {"set_mode", "manual", {0x0C, 0x61, 0x01, 0x00, 0x01}},             // :155/:159
-      {"set_presence", "on", {0x0C, 0x61, 0x01, 0x10, 0x01}},             // :195/:198
-      {"set_window", "open", {0x0C, 0x61, 0x01, 0x0E, 0x01}},             // :218/:221
-      {"midnight_sync", "", {0x0C, 0x60, 0x01, 0x30}},                    // :248
+      {"power_on", "", {0x0C, 0x60, 0x01, 0x2C}},
+      {"set_temperature", "20.5", {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}},
+      {"set_mode", "manual", {0x0C, 0x61, 0x01, 0x00, 0x01}},
+      {"set_presence", "on", {0x0C, 0x61, 0x01, 0x10, 0x01}},
+      {"set_open_window_detection", "on", {0x0C, 0x61, 0x01, 0x06, 0x01}},
+      {"midnight_sync", "", {0x0C, 0x60, 0x01, 0x30}},
   };
 
   for (const auto &tc : cases) {
@@ -724,7 +784,7 @@ TEST(HubManagement, HeatingControlHappyPathSendsExactBytesPerFunction) {
 
     const auto result = component.heating_control("ABC123", tc.function, tc.value);
     EXPECT_TRUE(result.success) << tc.function;
-    EXPECT_FALSE(result.verified) << tc.function << " has no readback";
+    EXPECT_FALSE(result.verified) << tc.function << " is an ack, not a readback";
     EXPECT_EQ(result.message, std::string("heating ") + tc.function + " acknowledged by device");
 
     ASSERT_EQ(radio.get_sent_data().size(), 1u) << tc.function;
@@ -946,6 +1006,186 @@ TEST(HubManagement, ScanPairedDevicesSweepsBothPowerClasses) {
   }
 }
 
+namespace {
+
+/// A key a device keeps of its own (the test value the key-pull tests use).
+constexpr uint8_t SCAN_DEVICE_KEY[AES_KEY_SIZE] = {0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE,
+                                                   0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
+
+/// Whether the 0x2A in `raw` carries an HMAC that verifies under `key` (nonce in data[0..5], HMAC in data[6..11]).
+bool roll_call_is_signed_with(const std::vector<uint8_t> &raw, const uint8_t *key) {
+  IoFrame frame{};
+  if (!parse(raw.data(), static_cast<uint8_t>(raw.size()), frame) || frame.data_len < 2 * HMAC_SIZE)
+    return false;
+  uint8_t expected[HMAC_SIZE];
+  const uint8_t command = CMD_DISCOVER_SPE_REQ;
+  return crypto::create_hmac(&command, 1, frame.data, key, expected) &&
+         memcmp(expected, frame.data + HMAC_SIZE, HMAC_SIZE) == 0;
+}
+
+/// Register a device with a key of its own.
+void add_keyed_device(TestableManagementComponent &component, const char *id, const uint8_t *key) {
+  DeviceConfig cfg;
+  cfg.type = DeviceType::ELECTRICAL_HEATER;
+  cfg.subtype = 1;
+  cfg.has_system_key = true;
+  memcpy(cfg.system_key, key, AES_KEY_SIZE);
+  component.add_device(id, cfg);
+}
+
+}  // namespace
+
+TEST(HubManagement, ScanPairedDevicesSweepsOncePerDistinctKey) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+  add_keyed_device(component, "AABB02", SCAN_DEVICE_KEY);        // same key: no sweep of its own
+  add_keyed_device(component, "AABB03", component.system_key_);  // equal to the hub key: no sweep either
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  ASSERT_EQ(radio.get_sent_data().size(), 12u) << "6 attempts for the hub key, 6 for the one other key";
+  for (size_t i = 0; i < 12; i++) {
+    const uint8_t *expected_key = i < 6 ? component.system_key_ : SCAN_DEVICE_KEY;
+    const uint8_t *other_key = i < 6 ? SCAN_DEVICE_KEY : component.system_key_;
+    EXPECT_TRUE(roll_call_is_signed_with(radio.get_sent_data()[i], expected_key)) << "attempt " << (i + 1);
+    EXPECT_FALSE(roll_call_is_signed_with(radio.get_sent_data()[i], other_key)) << "attempt " << (i + 1);
+  }
+}
+
+TEST(HubManagement, ScanPairedDevicesWithoutPerDeviceKeysSweepsTheHubKeyOnly) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  ASSERT_TRUE(component.scan_paired_devices().success);
+  ASSERT_EQ(radio.get_sent_data().size(), 6u);
+  EXPECT_TRUE(roll_call_is_signed_with(radio.get_sent_data()[0], component.system_key_));
+}
+
+TEST(HubManagement, ScanPairedDevicesNamesTheKeyOfAResponderFoundUnderAPerDeviceKey) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+
+  // Silent through the six hub-key attempts, then a registered keyed device answers the seventh.
+  radio.queue_rx_hold_until_sent(7);
+  const uint8_t payload[] = {0x0D, 0x01, 0xAA, 0xBB, 0x01, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src[3] = {0xAA, 0xBB, 0x01};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  const std::string kcv = detail::format_key_check_value(SCAN_DEVICE_KEY);
+  EXPECT_NE(result.message.find("(0x34/1) key=" + kcv + " rssi="), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("[known]"), std::string::npos);
+  EXPECT_EQ(result.message.find(detail::format_key_hex(SCAN_DEVICE_KEY)), std::string::npos)
+      << "a known responder needs no snippet, so the key itself must not appear";
+}
+
+TEST(HubManagement, ScanPairedDevicesPutsAnUnknownKeyedResponderSnippetInsideAKeyBannerInTheLogOnly) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+
+  radio.queue_rx_hold_until_sent(7);
+  const uint8_t payload[] = {0x0D, 0x01, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE5};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+
+  // The device log gets the report with the key, inside a banner.
+  const std::string &log = result.log_message;
+  const std::string key_hex = detail::format_key_hex(SCAN_DEVICE_KEY);
+  const size_t key_pos = log.find("system_key: \"" + key_hex + "\"");
+  ASSERT_NE(key_pos, std::string::npos) << log;
+  const size_t banner = log.find("DO NOT SHARE");
+  const size_t end = log.find("END OF DEVICE KEY BLOCK");
+  ASSERT_NE(banner, std::string::npos) << log;
+  ASSERT_NE(end, std::string::npos) << log;
+  EXPECT_LT(banner, key_pos);
+  EXPECT_LT(key_pos, end);
+  EXPECT_NE(log.find("  climate:\n"), std::string::npos);
+  EXPECT_NE(log.find("key=" + detail::format_key_check_value(SCAN_DEVICE_KEY)), std::string::npos);
+
+  // The message is what the action-result event carries into Home Assistant: no key, same device.
+  EXPECT_EQ(result.message.find(key_hex), std::string::npos) << "the published message must not carry the key";
+  EXPECT_EQ(result.message.find("system_key: \""), std::string::npos) << "no system_key line in the published snippet";
+  EXPECT_EQ(result.message.find("DO NOT SHARE"), std::string::npos);
+  EXPECT_NE(result.message.find("printed in the device log"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("  climate:\n"), std::string::npos);
+  EXPECT_NE(result.message.find("key=" + detail::format_key_check_value(SCAN_DEVICE_KEY)), std::string::npos);
+}
+
+TEST(HubManagement, ScanPairedDevicesHintsWhenAKnownDeviceAnswersUnderAnotherKeyThanItsYaml) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  // The YAML gives this radiator the device key, but it answers the hub-key sweep: a key pasted on the
+  // wrong radiator.
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+  const uint8_t payload[] = {0x0D, 0x01, 0xAA, 0xBB, 0x01, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src[3] = {0xAA, 0xBB, 0x01};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("hint: answered under the key with check value " +
+                                detail::format_key_check_value(component.system_key_) +
+                                " but its YAML uses the key with check value " +
+                                detail::format_key_check_value(SCAN_DEVICE_KEY) + "; fix its system_key:"),
+            std::string::npos)
+      << result.message;
+}
+
+TEST(HubManagement, ScanPairedDevicesGivesNoKeyHintWhenTheKeysAgree) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+  DeviceConfig plain;
+  plain.type = DeviceType::ROLLER_SHUTTER;
+  component.add_device("AABB02", plain);
+
+  // AABB01 answers the per-device-key sweep (7th send on), AABB02 the hub-key sweep.
+  const uint8_t payload1[] = {0x0D, 0x01, 0xAA, 0xBB, 0x01, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src1[3] = {0xAA, 0xBB, 0x01};
+  const uint8_t payload2[] = {0x00, 0x80, 0xAA, 0xBB, 0x02, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src2[3] = {0xAA, 0xBB, 0x02};
+  radio.queue_rx(frame_to_packet(build_spe_response(src2, component.node_id_, payload2, sizeof(payload2))));
+  radio.queue_rx_hold_until_sent(7);
+  radio.queue_rx(frame_to_packet(build_spe_response(src1, component.node_id_, payload1, sizeof(payload1))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("AABB01"), std::string::npos);
+  EXPECT_NE(result.message.find("AABB02"), std::string::npos);
+  EXPECT_EQ(result.message.find("fix its system_key"), std::string::npos) << result.message;
+}
+
+TEST(HubManagement, ScanPairedDevicesHubKeyResponderSnippetCarriesNoKey) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+
+  const uint8_t payload[] = {0x0D, 0x01, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE5};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("  climate:\n"), std::string::npos);
+  EXPECT_EQ(result.message.find("system_key: \""), std::string::npos) << "no system_key line in the published snippet";
+  EXPECT_EQ(result.message.find("key="), std::string::npos) << "hub-key lines stay unchanged";
+  EXPECT_EQ(result.message.find("DO NOT SHARE"), std::string::npos);
+}
+
 TEST(HubManagement, ScanPairedDevicesAckTunableChangesNeitherPass) {
   // Both roll-call frame shapes are fixed, named constants (ROLL_CALL_PASSES in
   // management_actions.cpp): the low-power pass always sets ACK as part of its own header (it
@@ -1116,7 +1356,7 @@ TEST(HubManagement, ScanPairedDevicesKnownResponderReportedWithoutYamlSnippet) {
   const auto result = component.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_NE(result.message.find("30E1F2"), std::string::npos);
-  EXPECT_NE(result.message.find("horizontal_awning"), std::string::npos);
+  EXPECT_NE(result.message.find("horizontal awning"), std::string::npos);
   EXPECT_NE(result.message.find("[known]"), std::string::npos);
   EXPECT_EQ(result.message.find("io_device_id"), std::string::npos) << "a known responder must not get a YAML snippet";
 }
@@ -1273,6 +1513,42 @@ TEST(HubManagement, ScanPairedDevicesUnknownResponderGetsYamlSnippet) {
   EXPECT_EQ(result.message.find("hint:"), std::string::npos)
       << "an unknown responder has no registry entry to hint about";
   EXPECT_EQ(component.get_device("415CE4"), nullptr) << "an unknown responder must not be auto-registered";
+}
+
+TEST(HubManagement, ScanPairedDevicesHeaterWithSetpointGetsClimateSnippet) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  // Type 52 (0x34) subtype 1: packed bytes 0D 01.
+  const uint8_t payload[] = {0x0D, 0x01, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE5};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("electrical heater, with adjustable setpoint (0x34/1)"), std::string::npos)
+      << result.message;
+  EXPECT_NE(result.message.find("  climate:\n"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("io_device_type: \"electrical_heater\""), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("io_subtype: 1"), std::string::npos) << result.message;
+}
+
+TEST(HubManagement, ScanPairedDevicesTypeWithoutPlatformIsReportedAsNotSupportedYet) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  // Type 22 subtype 1 (the Atlantic heat pump): recognised and named, but no platform drives it.
+  const uint8_t payload[] = {0x05, 0x81, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE5};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("heat pump"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("not supported yet"), std::string::npos) << result.message;
+  EXPECT_EQ(result.message.find("io_device_id"), std::string::npos) << "no snippet for a type without a platform";
 }
 
 TEST(HubManagement, ScanPairedDevicesLowPowerResponderGetsLowPowerLineInSnippet) {
@@ -1701,7 +1977,7 @@ TEST(HubManagement, OneWaySetPositionRejectsAMalformedPosition) {
 
   OneWayControllerIdentity identity{};
   identity.id = "awning_remote";
-  identity.io_device_type = DeviceType::AWNING;
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   component.add_oneway_controller(identity);
 
   for (const char *bad : {"", "abc", "101", "-1", "12x"}) {
@@ -1723,7 +1999,7 @@ TEST(HubManagement, OneWaySetPositionQueuesTheParsedPositionForAKnownIdentity) {
 
   OneWayControllerIdentity identity{};
   identity.id = "awning_remote";
-  identity.io_device_type = DeviceType::AWNING;
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
 
   const struct {
     const char *input;
@@ -1785,7 +2061,7 @@ TEST(HubManagement, OneWayRemoveControllerQueuesForAKnownIdentity) {
 
   OneWayControllerIdentity identity{};
   identity.id = "awning_remote";
-  identity.io_device_type = DeviceType::AWNING;
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   component.add_oneway_controller(identity);
 
   component.api_oneway_remove_controller_("awning_remote");

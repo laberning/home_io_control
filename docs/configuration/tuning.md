@@ -163,7 +163,7 @@ your device may differ.
 | `pairing_discover_confirm` | both | `send` | `skip` / `send` / `send_with_ack` | Whether/how to send `DISCOVER_CONFIRM` (0x2C) to a freshly-discovered device before the key exchange. |
 | `pairing_key_init_delay_ms` | both | `300` | 0–10000 ms | Pause after the discover-confirm step (ACKed, refused, or silent) and before `KEY_INIT` (0x31). |
 | `pairing_discovery_listen_channels` | both | `skip_request` | `skip_request` / `all` | Which channels the wait for a discovery response covers. |
-| `pairing_key_transfer` | both | `push` | `push` / `pull` | Send the hub's key to the device, or ask the device for its own key. `pull` is experimental. |
+| `pairing_key_transfer` | both | `auto` | `auto` / `push` / `pull` | Send the hub's key to the device, or ask the device for its own key. `auto` pulls from a device that answers discovery as a remote controller and pushes to any other. |
 
 `ui_controls` itself is a feature toggle (default `false`) that exposes these as entities; it is
 not a tunable.
@@ -625,15 +625,19 @@ third of the dwell on the other two channels and removes the only blind spot the
 
 #### `pairing_key_transfer`
 
-Which way the system key moves after discovery.
+Which way the system key moves after discovery. `auto` is the default.
+
+`auto` picks the direction from the device's discovery answer. A device that answers as a remote
+controller (node type 1023) is pulled; any other device is pushed. The hub never switches to the
+other direction inside one attempt: a refusal repeats, and a retry costs pairing time. Force a
+direction with `push` or `pull` when `auto` guesses wrong.
 
 `push` is the normal pairing: the hub sends its own key to the device, and the device confirms it.
 
 `pull` asks the device for its own key instead. The hub sends a key request (0x38), the device
-answers with its key, and the hub then challenges the device to prove that it holds that key. Use
-it only when the pairing advisor reports `key_push_not_accepted`: the device answered the pushed
-key with `COMMAND_UNKNOWN`, or it answered discovery as a remote controller. An Atlantic AGILIA IO
-radiator does both in its display's pairing mode (issue #165).
+answers with its key, and the hub then challenges the device to prove that it holds that key. An
+Atlantic AGILIA IO radiator in its display's pairing mode answers discovery as a remote controller
+and refuses a pushed key with `COMMAND_UNKNOWN`, so `auto` pulls it (issue #165).
 
 The device's answer to the challenge is a 6-byte code, and only the right key produces it, so a
 match proves the key. The log shows one `Key pull check` line with the key's *key check value*:
@@ -643,20 +647,25 @@ share one key.
 
 What happens next depends on that check:
 
-- The device sent the hub's own key: the device is paired, and the log prints the usual YAML
-  snippet.
-- The device sent a different key and proved it: the hub registers nothing. The log prints the
-  device's key, and the advisor reports `pulled_key_received`. To control the device, put that key
-  into `system_key:`, flash, then run [Scan Paired Devices](../pairing.md#scan-paired-devices): the
-  device should answer, and the log prints its YAML snippet. Devices paired with the hub's old key stop
-  answering, because a hub has one system key.
+- The device sent the hub's own key: it is paired, and the log prints the usual YAML snippet. If the
+  node that answered has no platform of its own (an AGILIA's remote-controller node), the hub first
+  runs a roll-call under the hub key, registers the devices that answer with a platform, and prints
+  their blocks, which need no `system_key:` because they use the hub key.
+- The device sent a different key and proved it: the hub runs a roll-call under that key (about
+  13 seconds) and registers every device that answers and has a platform, carrying the pulled key as
+  its own until you reboot. For an AGILIA that is the heater at the next address up, not the node
+  that handed the key over. The log prints one report, framed by a single `DO NOT SHARE IT` banner,
+  with a paste-ready block per device that includes `system_key:`. The attempt ends as `paired` when
+  at least one device was registered. With no device registered it ends as `key_received`, the log
+  prints the key once, and the advisor reports `pulled_key_received`. The key appears in the device
+  log only, never in the Last Pairing Result sensor or a Home Assistant event.
 - The device sent a key it did not prove: the hub prints no key, and the advisor reports
   `key_pull_unproven`. Post the `Key pull check` line in your issue.
 
 A device that answers the key request with an error does not hand out its key: the advisor
-reports `key_pull_not_offered`. Pair it with `push`.
+reports `key_pull_not_offered`. Set `pairing_key_transfer: push` to pair it the usual way.
 
-`pull` is experimental. It is proven on one device so far: an Atlantic AGILIA IO radiator hands over its key and proves it (issue #165). Switch back to `push` before pairing any other device.
+Pulling is proven on one device so far: an Atlantic AGILIA IO radiator hands over its key and proves it (issue #165).
 
 ### Reading pairing results without the tuning UI
 

@@ -242,8 +242,9 @@ TEST(OneWayCommands, VeluxProfileStopReproducesTheKli313RemotesFrame) {
   ASSERT_NO_FATAL_FAILURE(load_captured_execute("velux_kli313_oneway_stop", velux_stop));
 
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_execute_command(frame, VELUX_KLI313_SRC, DeviceType::AWNING, CoverCommand::STOP,
-                                        velux_stop.sequence, test::TEST_SYSTEM_KEY, ONEWAY_EXECUTE_ACEI_VELUX,
+  ASSERT_TRUE(create_1w_execute_command(frame, VELUX_KLI313_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING,
+                                        CoverCommand::STOP, velux_stop.sequence, test::TEST_SYSTEM_KEY,
+                                        ONEWAY_EXECUTE_ACEI_VELUX,
                                         /*broadcast_all=*/true))
       << "building a VELUX-profile 1W STOP should succeed";
 
@@ -264,14 +265,16 @@ TEST(OneWayCommands, BuilderDefaultsAreUnchangedAndCustomAceiStillSigns) {
 
   // Default call (no acei / broadcast_all args) == today's frame, byte for byte.
   IoFrame dflt{};
-  ASSERT_TRUE(create_1w_execute_command(dflt, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 5, key));
+  ASSERT_TRUE(create_1w_execute_command(dflt, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING,
+                                        CoverCommand::STOP, 5, key));
   EXPECT_EQ(dflt.data[1], ONEWAY_EXECUTE_ACEI) << "payload[1] defaults to the Somfy-shaped ACEI";
   const uint8_t typed_awning[NODE_ID_SIZE] = {0x00, 0x00, 0xFF};
   EXPECT_EQ(0, memcmp(dflt.dst, typed_awning, NODE_ID_SIZE)) << "default dst is still the typed class";
 
   // Custom ACEI: lands at payload[1], and the MAC is over the assembled span so it verifies.
   IoFrame velux{};
-  ASSERT_TRUE(create_1w_execute_command(velux, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 5, key, 0x61));
+  ASSERT_TRUE(create_1w_execute_command(velux, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING,
+                                        CoverCommand::STOP, 5, key, 0x61));
   EXPECT_EQ(velux.data[1], 0x61);
   const uint8_t span[7] = {CMD_EXECUTE, ORIGINATOR_USER_REMOTE, 0x61, POS_STOP, 0x00, 0x00, 0x00};
   uint8_t expected_mac[HMAC_SIZE] = {0};
@@ -312,8 +315,8 @@ TEST(OneWayCommands, VeluxEnrollmentClassListMatchesTheRealKli310DiscoverySweep)
 
 TEST(OneWayCommands, FrameCarriesTheOneWayShape) {
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 1,
-                                        test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING,
+                                        CoverCommand::STOP, 1, test::TEST_SYSTEM_KEY));
 
   EXPECT_NE(0, frame.ctrl0 & CTRL0_PROTOCOL_1W) << "a 1W frame must declare the 1W protocol bit";
   EXPECT_TRUE(is_start(frame) && is_end(frame)) << "a 1W command is a single self-contained frame";
@@ -425,15 +428,15 @@ TEST(OneWayCommands, NamedCommandsDecodeBackToTheirIntent) {
 
   for (const auto &c : cases) {
     IoFrame frame{};
-    ASSERT_TRUE(
-        create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, c.cmd, 42, test::TEST_SYSTEM_KEY))
+    ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, c.cmd, 42,
+                                          test::TEST_SYSTEM_KEY))
         << "building " << c.intent << " should succeed";
     EXPECT_EQ(frame.data[2], c.main0) << c.intent << " main0";
     EXPECT_EQ(frame.data[3], c.main1) << c.intent << " main1";
 
     const OneWayFrameInfo info = decode_1w_frame(frame);
     EXPECT_TRUE(info.has_intent) << c.intent << " must decode as an intent-bearing frame";
-    EXPECT_EQ(info.target_type, DeviceType::AWNING) << c.intent << " target class";
+    EXPECT_EQ(info.target_type, DeviceType::VERTICAL_EXTERIOR_AWNING) << c.intent << " target class";
     EXPECT_EQ(info.originator, ORIGINATOR_USER_REMOTE) << c.intent << " originator";
     EXPECT_EQ(info.acei_level, ACEI_LEVEL_USER_HIGH) << c.intent << " ACEI level";
     EXPECT_STREQ(info.intent, c.intent) << "the shipped decoder must read back what the builder wrote";
@@ -450,8 +453,8 @@ TEST(OneWayCommands, PositionsDecodeBackToTheSamePercentage) {
     if (position == 50)
       continue;
     IoFrame frame{};
-    ASSERT_TRUE(
-        create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, position, 42, test::TEST_SYSTEM_KEY))
+    ASSERT_TRUE(create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, position, 42,
+                                           test::TEST_SYSTEM_KEY))
         << "position " << static_cast<int>(position) << " should build";
 
     const OneWayFrameInfo info = decode_1w_frame(frame);
@@ -469,16 +472,17 @@ TEST(OneWayCommands, PositionsDecodeBackToTheSamePercentage) {
 
 TEST(OneWayCommands, TargetLabelNamesATypedDestination) {
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 1,
-                                        test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING,
+                                        CoverCommand::STOP, 1, test::TEST_SYSTEM_KEY));
   const OneWayFrameInfo info = decode_1w_frame(frame);
-  EXPECT_STREQ(oneway_target_label(info), "awning");
+  EXPECT_STREQ(oneway_target_label(info), "vertical_exterior_awning");
 }
 
 TEST(OneWayCommands, TargetLabelIsAllForTheAllDevicesBroadcast) {
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::STOP, 1,
-                                        test::TEST_SYSTEM_KEY, ONEWAY_EXECUTE_ACEI, /*broadcast_all=*/true));
+  ASSERT_TRUE(create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING,
+                                        CoverCommand::STOP, 1, test::TEST_SYSTEM_KEY, ONEWAY_EXECUTE_ACEI,
+                                        /*broadcast_all=*/true));
   const OneWayFrameInfo info = decode_1w_frame(frame);
   EXPECT_STREQ(oneway_target_label(info), "all")
       << "the all-devices broadcast decodes to DeviceType::UNKNOWN; the label must not render that name";
@@ -491,16 +495,16 @@ TEST(OneWayCommands, ForceOpenHasNoOneWayEncoding) {
   // position command, and create_1w_execute_command() rejects CoverCommand::FORCE_OPEN outright
   // rather than reuse that byte under a misleading label.
   IoFrame position_frame{};
-  ASSERT_TRUE(
-      create_1w_execute_position(position_frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, 50, 42, test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_1w_execute_position(position_frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, 50, 42,
+                                         test::TEST_SYSTEM_KEY));
   EXPECT_EQ(position_frame.data[2], static_cast<uint8_t>(2 * 50)) << "position 50 is an ordinary doubled-position byte";
   EXPECT_EQ(position_frame.data[3], 0x00);
 
   IoFrame force_frame{};
   memset(reinterpret_cast<uint8_t *>(&force_frame), 0xAA, sizeof(force_frame));
   const IoFrame untouched = force_frame;
-  EXPECT_FALSE(create_1w_execute_command(force_frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, CoverCommand::FORCE_OPEN,
-                                         42, test::TEST_SYSTEM_KEY))
+  EXPECT_FALSE(create_1w_execute_command(force_frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING,
+                                         CoverCommand::FORCE_OPEN, 42, test::TEST_SYSTEM_KEY))
       << "1W has no known force-open encoding";
   EXPECT_EQ(0, memcmp(&force_frame, &untouched, sizeof(IoFrame)))
       << "a rejected command must leave the frame untouched";
@@ -542,7 +546,8 @@ TEST(OneWayCommands, PositionAboveHundredIsRejectedWithoutTouchingTheFrame) {
   // on air and fail silently. Refuse before writing anything.
   IoFrame frame{};
   memset(reinterpret_cast<uint8_t *>(&frame), 0xEE, sizeof(frame));
-  EXPECT_FALSE(create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, 101, 1, test::TEST_SYSTEM_KEY))
+  EXPECT_FALSE(create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, 101, 1,
+                                          test::TEST_SYSTEM_KEY))
       << "positions run 0-100";
   EXPECT_EQ(frame.ctrl0, 0xEE) << "a rejected build must leave the caller's frame untouched";
 }
@@ -673,7 +678,8 @@ TEST(OneWayEnrollment, AddControllerWithMacReproducesRealHardwareCapture) {
 
 TEST(OneWayEnrollment, RemoveControllerKeepsMacInsideDeclaredLength) {
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_remove_controller(frame, SOMFY_REMOTE_SRC, DeviceType::AWNING, 1, test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_1w_remove_controller(frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, 1,
+                                          test::TEST_SYSTEM_KEY));
 
   EXPECT_FALSE(frame.has_mac) << "0x39's MAC sits inside the declared payload, unlike 0x30's out-of-length trailer";
   EXPECT_EQ(frame.data_len, 9) << "data(1) + sequence(2) + mac(6)";
@@ -741,7 +747,8 @@ TEST(OneWayEnrollment, LowPowerBitIsNeverSet) {
   EXPECT_EQ(add.ctrl1, 0x00);
 
   IoFrame remove{};
-  ASSERT_TRUE(create_1w_remove_controller(remove, SOMFY_REMOTE_SRC, DeviceType::AWNING, 1, test::TEST_SYSTEM_KEY));
+  ASSERT_TRUE(create_1w_remove_controller(remove, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, 1,
+                                          test::TEST_SYSTEM_KEY));
   EXPECT_EQ(remove.ctrl1, 0x00);
 }
 

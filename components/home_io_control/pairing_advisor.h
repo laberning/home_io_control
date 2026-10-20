@@ -35,14 +35,15 @@ enum class PairingAdviceCode : uint8_t {
   RF_SILENT,                   ///< Nothing at all was heard during the whole window.
   KEY_PUSH_NOT_ACCEPTED,       ///< The device does not take a pushed key: it answered 0x32 with
                                ///< RESULT_COMMAND_UNKNOWN, or it answered discovery as a remote
-                               ///< controller and the push failed. Suggests `pairing_key_transfer: pull`.
+                               ///< controller and the push failed. Suggests `pairing_key_transfer: pull` or `auto`.
   KEY_TRANSFER_REFUSED,        ///< The device answered the key transfer with any other CMD_ERROR_RESP.
   KEY_PULL_NOT_OFFERED,        ///< `pairing_key_transfer: pull` was refused with CMD_ERROR_RESP: the
-                               ///< device does not hand out its key. Suggests pairing with `push`.
+                               ///< device does not hand out its key. Suggests forcing `pairing_key_transfer: push`.
   KEY_PULL_UNPROVEN,           ///< The device answered the pull with a key, but sent no 0x3D that
                                ///< verifies under it; the key is not printed.
-  PULLED_KEY_RECEIVED,         ///< The pull got a different key that the device proved (outcome
-                               ///< KEY_RECEIVED). Says how to use it: system_key, then Scan Paired Devices.
+  PULLED_KEY_RECEIVED,         ///< The pull got a different key that the device proved, and a roll-call
+                               ///< under it found no registrable device (outcome KEY_RECEIVED). Says to
+                               ///< put the key into the controlling entity's `system_key:`.
 };
 
 /// @brief One piece of advice, with the node/RSSI it pertains to (if any).

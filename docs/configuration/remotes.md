@@ -50,7 +50,7 @@ cover:
   - platform: home_io_control
     name: "Patio Awning"
     io_device_id: "30E1F2"
-    io_device_type: "awning"
+    io_device_type: "vertical_exterior_awning"
     linked_remotes:
       - "9D6085"
 ```
@@ -82,12 +82,12 @@ cover:
   - platform: home_io_control
     name: "Patio Awning"
     io_device_id: "30E1F2"
-    io_device_type: "awning"
+    io_device_type: "vertical_exterior_awning"
     linked_remotes:
-      - "class:awning"
+      - "class:vertical_exterior_awning"
 ```
 
-`<device_type>` accepts the same named values as `io_device_type` — see the [named device types table](../supported-devices.md#named-device-types) for the full list (e.g. `awning`, `roller_shutter`, `venetian_blind`) — or a raw hex ID such as `class:0x14` for a type without a named alias yet. Bare node-ID entries, named `class:` entries, and raw-hex `class:` entries can all be mixed freely in the same list, and a device linked both ways (by ID and by class) is only updated once per press — the class form is purely a convenience for "any remote that presses this device's type," it does not change how bare node IDs behave.
+`<device_type>` accepts the same named values as `io_device_type` — see the [named device types table](../supported-devices.md#named-device-types) for the full list (e.g. `vertical_exterior_awning`, `roller_shutter`, `interior_venetian_blind`) — or a raw hex ID such as `class:0x14` for a type without a named alias yet. Bare node-ID entries, named `class:` entries, and raw-hex `class:` entries can all be mixed freely in the same list, and a device linked both ways (by ID and by class) is only updated once per press — the class form is purely a convenience for "any remote that presses this device's type," it does not change how bare node IDs behave.
 
 ### Optimistic state
 
@@ -103,7 +103,7 @@ Notes:
 | Field | Meaning |
 |-------|---------|
 | `1W remote XXXXXX` | The remote's 6-character node ID |
-| `dst-class=all` / `dst-class=awning` | The broadcast device-type class the frame is addressed to. Remotes often send the same press to a class and to `all`, so this does not tell you what the remote drives |
+| `dst-class=all` / `dst-class=vertical_exterior_awning` | The broadcast device-type class the frame is addressed to. Remotes often send the same press to a class and to `all`, so this does not tell you what the remote drives |
 | `EXECUTE(0x00) CLOSE` | The command: OPEN, CLOSE, STOP, FAVORITE, VENT, or a numeric position |
 | `originator=user_remote` | Who triggered the command (user, wind sensor, rain sensor, timer, etc.) |
 | `priority=user_high` | The ACEI priority level of the command |
@@ -149,7 +149,7 @@ home_io_control:
 |-------|---------|
 | `remote_id` | The sender's 6-character node ID |
 | `target_class` | Address classification: `unicast`, `broadcast_all`, `broadcast_type`, `discovery`, or `unknown_broadcast` |
-| `target_type` | The broadcast device-type class the sender addresses (e.g. `awning`, or `unknown` for an all-devices broadcast) |
+| `target_type` | The broadcast device-type class the sender addresses (e.g. `vertical_exterior_awning`, or `unknown` for an all-devices broadcast) |
 | `cmd` | The command name and hex code, e.g. `execute(0x00)` |
 | `intent` | The decoded command: `OPEN`, `CLOSE`, `STOP`, `FAVORITE`, `VENT`, or a numeric position |
 | `originator` | Who triggered the command (`user_remote`, `wind_sensor`, `rain_sensor`, `timer`, etc.) |

@@ -417,7 +417,7 @@ TEST(HubCore, OneWaySendReadsTheHubsLiveTuningForAnAlwaysAliveIdentity) {
   const uint8_t node_id[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
   memcpy(identity.node_id, node_id, NODE_ID_SIZE);
   memset(identity.system_key, 0x11, AES_KEY_SIZE);
-  identity.io_device_type = DeviceType::AWNING;
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   identity.power_class_override = OneWayPowerClass::ALWAYS_ALIVE;
   comp.oneway_transmitter().add_identity(identity);
   comp.oneway_transmitter().setup();

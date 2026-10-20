@@ -4,6 +4,7 @@
 
 #include "hub_core.h"
 #include "hub_pairing.h"
+#include "log_helpers.h"
 #include "pairing_advisor.h"
 #include "pairing_engine.h"
 #include "proto_codecs.h"
@@ -132,17 +133,17 @@ TEST(ErrorRespDecoding, BytesWithStateBitsKeepTheRunStatusTable) {
 // ============================================================================
 
 TEST(DiscoveryNodeType, RemoteControllerTypeSurvivesInFull) {
-  EXPECT_EQ(decode_packed_node_type(0xFF, 0xC0), NODE_TYPE_REMOTE_CONTROLLER);
+  EXPECT_EQ(decode_packed_device_type(0xFF, 0xC0), DeviceType::REMOTE_CONTROLLER);
   IoDevice device{};
   std::string id;
   const DiscoveryResponseInfo info = decode_discovery_response(atlantic_discovery_reply(test::OWN_ID), device, id);
-  EXPECT_EQ(info.node_type, NODE_TYPE_REMOTE_CONTROLLER);
+  EXPECT_EQ(device.type, DeviceType::REMOTE_CONTROLLER);
   EXPECT_EQ(info.manufacturer, 12u);
 }
 
 TEST(DiscoveryNodeType, ActuatorTypeMatchesDeviceType) {
   // 0x04 0x00 = type 0x10 (horizontal awning), as in the Sunilus corpus capture's family.
-  EXPECT_EQ(decode_packed_node_type(0x04, 0x00), 0x10u);
+  EXPECT_EQ(decode_packed_device_type(0x04, 0x00), DeviceType::HORIZONTAL_AWNING);
 }
 
 // ============================================================================
@@ -180,10 +181,11 @@ TEST(PairingKeyStep, FastTurnaroundRefusalIsRecorded) {
   EXPECT_EQ(context.key_refusal_code, RESULT_COMMAND_UNKNOWN);
 }
 
-TEST(PairingKeyStep, AtlanticFlowEndsRefusedWithPullAdvice) {
+TEST(PairingKeyStep, AtlanticFlowWithAForcedPushEndsRefusedWithPullAdvice) {
   TestableComponent comp;
   MockRadioSX1262 radio;
   setup(comp, radio);
+  comp.tuning_.pairing_key_transfer = KeyTransferMode::PUSH;  // auto would pull from a remote controller
 
   radio.queue_rx(to_packet(atlantic_discovery_reply(comp.node_id_)));
   IoFrame ack{};
@@ -197,7 +199,7 @@ TEST(PairingKeyStep, AtlanticFlowEndsRefusedWithPullAdvice) {
 
   const PairingTelemetry &telemetry = comp.pairing_telemetry();
   EXPECT_EQ(telemetry.outcome(), PairingOutcome::KEY_TRANSFER_REFUSED);
-  EXPECT_EQ(telemetry.discovered_node_type(), NODE_TYPE_REMOTE_CONTROLLER);
+  EXPECT_EQ(telemetry.discovered_node_type(), DeviceType::REMOTE_CONTROLLER);
   EXPECT_NE(telemetry.result_sensor_string().find("outcome=key_transfer_refused"), std::string::npos);
   EXPECT_NE(telemetry.result_sensor_string().find("key_push_not_accepted"), std::string::npos);
 
@@ -419,6 +421,299 @@ TEST(PairingKeyPull, RefusalEndsThePull) {
 }
 
 // ============================================================================
+// Direction: pairing_key_transfer auto | push | pull
+// ============================================================================
+
+namespace {
+
+pairing::PairingContext context_of_type(DeviceType type) {
+  pairing::PairingContext context = context_for_device();
+  context.device.type = type;
+  return context;
+}
+
+}  // namespace
+
+TEST(PairingKeyDirection, AutoPullsFromARemoteControllerAndPushesToAnythingElse) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  ASSERT_EQ(comp.tuning_.pairing_key_transfer, KeyTransferMode::AUTO) << "auto is the default";
+
+  EXPECT_TRUE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::REMOTE_CONTROLLER)));
+  EXPECT_FALSE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::ROLLER_SHUTTER)));
+  EXPECT_FALSE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::UNKNOWN)));
+}
+
+TEST(PairingKeyDirection, ForcedModesIgnoreTheDiscoveryType) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+
+  comp.tuning_.pairing_key_transfer = KeyTransferMode::PUSH;
+  EXPECT_FALSE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::REMOTE_CONTROLLER)));
+  comp.tuning_.pairing_key_transfer = KeyTransferMode::PULL;
+  EXPECT_TRUE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::ROLLER_SHUTTER)));
+}
+
+TEST(PairingKeyDirection, AutoPushesToAnActuatorAndNeverFallsBackToAPull) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+
+  // A roller shutter (type 2, packed 00 80) answers discovery; the key step then gets a refusal.
+  const uint8_t payload[] = {0x00, 0x80, 0xB6, 0xBD, 0xFB, 0x02, 0xCC, 0x00, 0x00};
+  IoFrame reply{};
+  init_frame(reply, true, true, true, false);
+  set_dst(reply, comp.node_id_);
+  set_src(reply, DEVICE_ID);
+  set_cmd(reply, CMD_DISCOVER_RESP, payload, sizeof(payload));
+  radio.queue_rx(to_packet(reply));
+  IoFrame ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(ack, DEVICE_ID, comp.node_id_));
+  radio.queue_rx(to_packet(ack));
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  EXPECT_FALSE(comp.discover_and_pair());
+  const std::vector<uint8_t> cmds = sent_commands(radio);
+  EXPECT_NE(std::find(cmds.begin(), cmds.end(), CMD_KEY_INIT), cmds.end()) << "an actuator is pushed a key";
+  EXPECT_EQ(std::find(cmds.begin(), cmds.end(), CMD_LAUNCH_KEY_TRANSFER), cmds.end())
+      << "a refusal repeats; there is no switch to the pull inside the attempt";
+}
+
+// ============================================================================
+// Pull -> roll-call under the pulled key -> registered devices
+// ============================================================================
+
+namespace {
+
+/// The heater's roll-call reply (0x2B): type 52 subtype 1 (packed 0D 01) at the address after the
+/// pairing node, manufacturer 12, always-alive.
+IoFrame heater_roll_call_reply(const uint8_t dst[NODE_ID_SIZE], uint8_t type_msb = 0x0D, uint8_t type_low = 0x01) {
+  const uint8_t payload[] = {type_msb, type_low, 0xB6, 0xBD, 0xFC, 0x0C, 0xCC, 0x00, 0x00};
+  IoFrame f{};
+  init_frame(f, true, true, true, false);
+  set_dst(f, dst);
+  const uint8_t heater[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
+  set_src(f, heater);
+  set_cmd(f, CMD_DISCOVER_SPE_RESP, payload, sizeof(payload));
+  return f;
+}
+
+/// Queue discovery, discover-confirm ack and a proven pull of `key` (the Atlantic flow up to the key).
+void queue_proven_pull(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
+  radio.queue_rx(to_packet(atlantic_discovery_reply(dst)));
+  IoFrame ack{};
+  create_discover_confirm_ack(ack, DEVICE_ID, dst);
+  radio.queue_rx(to_packet(ack));
+  const IoFrame reply = pulled_key_frame(dst, key);
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx(to_packet(proof_frame(dst, reply, key)));
+}
+
+std::string key_hex(const uint8_t key[AES_KEY_SIZE]) { return detail::format_key_hex(key); }
+
+}  // namespace
+
+TEST(PairingKeyPullFlow, ARemoteControllerThatRefusesThePullNeverGetsThePushSuggestion) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  radio.queue_rx(to_packet(atlantic_discovery_reply(comp.node_id_)));
+  IoFrame ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(ack, DEVICE_ID, comp.node_id_));
+  radio.queue_rx(to_packet(ack));
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  const std::string result = comp.pairing_telemetry().result_sensor_string();
+  EXPECT_NE(result.find("key_pull_not_offered"), std::string::npos) << result;
+  EXPECT_EQ(result.find("key_push_not_accepted"), std::string::npos) << result;
+}
+
+TEST(PairingKeyPullFlow, AutoPullsAnAgiliaThenRegistersTheHeaterWithItsKey) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_)));
+
+  EXPECT_TRUE(comp.discover_and_pair());
+
+  const IoDevice *heater = comp.get_device("B6BDFC");
+  ASSERT_NE(heater, nullptr) << "the responder, not the pairing node, is registered";
+  EXPECT_EQ(heater->type, DeviceType::ELECTRICAL_HEATER);
+  EXPECT_EQ(heater->subtype, 1);
+  ASSERT_TRUE(heater->has_system_key);
+  EXPECT_EQ(0, memcmp(heater->system_key, OTHER_KEY, AES_KEY_SIZE));
+  EXPECT_EQ(comp.get_device("B6BDFB"), nullptr) << "the node that handed the key over is not a controllable device";
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+
+  const std::vector<uint8_t> cmds = sent_commands(radio);
+  EXPECT_EQ(std::count(cmds.begin(), cmds.end(), CMD_KEY_INIT), 0) << "auto pulled: no push";
+  EXPECT_EQ(std::count(cmds.begin(), cmds.end(), CMD_DISCOVER_SPE_REQ), 6)
+      << "one roll-call sweep under the pulled key";
+  EXPECT_EQ(comp.system_key_[0], test::TEST_SYSTEM_KEY[0]);
+  EXPECT_EQ(0, memcmp(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE)) << "the hub key is never replaced";
+}
+
+TEST(PairingKeyPullFlow, TheRollCallIsSignedWithThePulledKey) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+
+  comp.discover_and_pair();
+
+  size_t checked = 0;
+  for (const auto &raw : radio.get_sent_data()) {
+    IoFrame frame{};
+    if (!parse(raw.data(), static_cast<uint8_t>(raw.size()), frame) || frame.cmd != CMD_DISCOVER_SPE_REQ)
+      continue;
+    uint8_t expected[HMAC_SIZE];
+    const uint8_t command = CMD_DISCOVER_SPE_REQ;
+    ASSERT_TRUE(crypto::create_hmac(&command, 1, frame.data, OTHER_KEY, expected));
+    EXPECT_EQ(0, memcmp(expected, frame.data + HMAC_SIZE, HMAC_SIZE));
+    checked++;
+  }
+  EXPECT_EQ(checked, 6u);
+}
+
+TEST(PairingKeyPullFlow, LastPairingResultCarriesNoKey) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_)));
+
+  ASSERT_TRUE(comp.discover_and_pair());
+
+  const std::string result = comp.pairing_telemetry().result_sensor_string();
+  EXPECT_EQ(result.find(key_hex(OTHER_KEY)), std::string::npos) << result;
+  EXPECT_NE(result.find("outcome=paired"), std::string::npos) << result;
+  EXPECT_NE(result.find("node=B6BDFB"), std::string::npos) << "node= stays the discovered node: " << result;
+}
+
+TEST(PairingKeyPullFlow, NoResponderEndsAsKeyReceivedAndRegistersNothing) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::KEY_RECEIVED);
+  EXPECT_NE(comp.pairing_telemetry().result_sensor_string().find("pulled_key_received"), std::string::npos);
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+  EXPECT_EQ(comp.get_device("B6BDFB"), nullptr);
+}
+
+TEST(PairingKeyPullFlow, AResponderOfATypeWithoutAPlatformIsNotRegistered) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  // Type 22 subtype 1 (packed 05 81): the Atlantic heat pump, which no platform drives yet.
+  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_, 0x05, 0x81)));
+
+  EXPECT_FALSE(comp.discover_and_pair());
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::KEY_RECEIVED);
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+}
+
+TEST(PairingKeyPullFlow, AResponderTheRegistryAlreadyKnowsKeepsItsRecord) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  DeviceConfig cfg;
+  cfg.type = DeviceType::ELECTRICAL_HEATER;
+  cfg.subtype = 1;
+  comp.add_device("B6BDFC", cfg);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_)));
+
+  EXPECT_FALSE(comp.discover_and_pair()) << "nothing new was registered";
+  EXPECT_FALSE(comp.get_device("B6BDFC")->has_system_key) << "the YAML record is left alone";
+}
+
+TEST(PairingKeyPullFlow, AHubKeyPullFromARemoteControllerRollCallsForTheDevicesHoldingIt) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, test::TEST_SYSTEM_KEY);
+  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_)));
+
+  EXPECT_TRUE(comp.discover_and_pair());
+
+  const IoDevice *heater = comp.get_device("B6BDFC");
+  ASSERT_NE(heater, nullptr) << "the heater behind the remote-controller node is registered";
+  EXPECT_EQ(heater->type, DeviceType::ELECTRICAL_HEATER);
+  EXPECT_FALSE(heater->has_system_key) << "it uses the hub key, so it carries none of its own";
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+
+  size_t signed_with_hub_key = 0;
+  for (const auto &raw : radio.get_sent_data()) {
+    IoFrame frame{};
+    if (!parse(raw.data(), static_cast<uint8_t>(raw.size()), frame) || frame.cmd != CMD_DISCOVER_SPE_REQ)
+      continue;
+    uint8_t expected[HMAC_SIZE];
+    const uint8_t command = CMD_DISCOVER_SPE_REQ;
+    ASSERT_TRUE(crypto::create_hmac(&command, 1, frame.data, test::TEST_SYSTEM_KEY, expected));
+    if (memcmp(expected, frame.data + HMAC_SIZE, HMAC_SIZE) == 0)
+      signed_with_hub_key++;
+  }
+  EXPECT_EQ(signed_with_hub_key, 6u);
+}
+
+TEST(PairingKeyPullFlow, AHubKeyPullWithNothingAnsweringKeepsThePairedNoPlatformPath) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, test::TEST_SYSTEM_KEY);
+
+  EXPECT_TRUE(comp.discover_and_pair());
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+  EXPECT_NE(comp.get_device("B6BDFB"), nullptr) << "the pairing node is registered as before";
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+}
+
+TEST(PairingKeyPullFlow, AHubKeyPullFromAnActuatorTakesThePairedPathWithoutARollCall) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  // Forced pull of a roller shutter (type 2, packed 00 80) that sends the hub's own key: it has a platform
+  // itself, so there is nothing to look for behind it.
+  comp.tuning_.pairing_key_transfer = KeyTransferMode::PULL;
+  const uint8_t payload[] = {0x00, 0x80, 0xB6, 0xBD, 0xFB, 0x02, 0xCC, 0x00, 0x00};
+  IoFrame reply{};
+  init_frame(reply, true, true, true, false);
+  set_dst(reply, comp.node_id_);
+  set_src(reply, DEVICE_ID);
+  set_cmd(reply, CMD_DISCOVER_RESP, payload, sizeof(payload));
+  radio.queue_rx(to_packet(reply));
+  IoFrame ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(ack, DEVICE_ID, comp.node_id_));
+  radio.queue_rx(to_packet(ack));
+  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, test::TEST_SYSTEM_KEY)));
+
+  EXPECT_TRUE(comp.discover_and_pair());
+  const std::vector<uint8_t> cmds = sent_commands(radio);
+  EXPECT_EQ(std::count(cmds.begin(), cmds.end(), CMD_DISCOVER_SPE_REQ), 0);
+}
+
+// ============================================================================
 // Advisor
 // ============================================================================
 
@@ -433,7 +728,7 @@ uint8_t advise(PairingTelemetry &telemetry, advisor::PairingAdvice out[advisor::
 TEST(PairingKeyAdvice, CommandUnknownSuggestsPull) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, 0x10);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::HORIZONTAL_AWNING);
   telemetry.set_key_refusal(RESULT_COMMAND_UNKNOWN);
   telemetry.set_outcome(PairingOutcome::KEY_TRANSFER_REFUSED);
   advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
@@ -446,7 +741,7 @@ TEST(PairingKeyAdvice, CommandUnknownSuggestsPull) {
 TEST(PairingKeyAdvice, OtherRefusalNamesTheCode) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, 0x10);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::HORIZONTAL_AWNING);
   telemetry.set_key_refusal(RESULT_COMMAND_REJECTED);
   telemetry.set_outcome(PairingOutcome::KEY_TRANSFER_REFUSED);
   advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
@@ -459,7 +754,7 @@ TEST(PairingKeyAdvice, OtherRefusalNamesTheCode) {
 TEST(PairingKeyAdvice, NoPullSuggestionAfterAPull) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, NODE_TYPE_REMOTE_CONTROLLER);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::REMOTE_CONTROLLER);
   telemetry.set_key_pull_attempted();
   telemetry.set_outcome(PairingOutcome::KEY_EXCHANGE_FAILED);
   advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
@@ -471,7 +766,7 @@ TEST(PairingKeyAdvice, NoPullSuggestionAfterAPull) {
 TEST(PairingKeyAdvice, RefusedPullSaysThePullIsNotOffered) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, 0x10);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::HORIZONTAL_AWNING);
   telemetry.set_key_pull_attempted();
   telemetry.set_key_refusal(RESULT_COMMAND_UNKNOWN);
   telemetry.set_outcome(PairingOutcome::KEY_TRANSFER_REFUSED);
@@ -481,13 +776,14 @@ TEST(PairingKeyAdvice, RefusedPullSaysThePullIsNotOffered) {
   EXPECT_EQ(out[n - 1].code, advisor::PairingAdviceCode::KEY_PULL_NOT_OFFERED);
   const std::string message = advisor::pairing_advice_message(out[n - 1]);
   EXPECT_NE(message.find("does not hand out its key"), std::string::npos);
+  EXPECT_NE(message.find("pairing_key_transfer: push"), std::string::npos) << "the direction can be forced";
   EXPECT_EQ(message.find("Scan Paired Devices"), std::string::npos) << "push advice does not apply to a pull";
 }
 
 TEST(PairingKeyAdvice, UnprovenPullKeyWarnsNotToUseIt) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, NODE_TYPE_REMOTE_CONTROLLER);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::REMOTE_CONTROLLER);
   telemetry.set_key_pull_attempted();
   telemetry.set_key_pull_unproven();
   telemetry.set_outcome(PairingOutcome::KEY_EXCHANGE_FAILED);
@@ -501,7 +797,7 @@ TEST(PairingKeyAdvice, UnprovenPullKeyWarnsNotToUseIt) {
 TEST(PairingKeyAdvice, ReceivedKeySaysHowToUseIt) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, NODE_TYPE_REMOTE_CONTROLLER);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::REMOTE_CONTROLLER);
   telemetry.set_key_pull_attempted();
   telemetry.set_outcome(PairingOutcome::KEY_RECEIVED);
   advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
@@ -511,5 +807,6 @@ TEST(PairingKeyAdvice, ReceivedKeySaysHowToUseIt) {
   EXPECT_STREQ(advisor::pairing_advice_code_name(out[n - 1].code), "pulled_key_received");
   const std::string message = advisor::pairing_advice_message(out[n - 1]);
   EXPECT_NE(message.find("system_key:"), std::string::npos);
+  EXPECT_NE(message.find("found no device"), std::string::npos);
   EXPECT_NE(message.find("Scan Paired Devices"), std::string::npos);
 }

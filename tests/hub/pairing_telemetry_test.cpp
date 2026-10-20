@@ -292,13 +292,13 @@ TEST(PairingTelemetry, SetOutcomeAndPairedDeviceFeedResultString) {
   telemetry.increment_discovery_attempt();
   telemetry.record_lbt_defer(-40);
   const uint8_t node_id[NODE_ID_SIZE] = {0x30, 0xE1, 0xF2};
-  telemetry.set_paired_device(node_id, DeviceType::AWNING);
+  telemetry.set_paired_device(node_id, DeviceType::VERTICAL_EXTERIOR_AWNING);
   telemetry.set_outcome(PairingOutcome::PAIRED);
 
   const std::string result = telemetry.result_sensor_string();
   EXPECT_EQ(result.rfind("v1; outcome=paired;", 0), 0u) << "must start with the frozen v1; prefix: " << result;
   EXPECT_NE(result.find("node=30E1F2"), std::string::npos) << result;
-  EXPECT_NE(result.find("type=awning"), std::string::npos) << result;
+  EXPECT_NE(result.find("type=vertical_exterior_awning"), std::string::npos) << result;
   EXPECT_NE(result.find("attempts=1"), std::string::npos) << result;
   EXPECT_NE(result.find("lbt=1"), std::string::npos) << result;
 }

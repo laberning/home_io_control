@@ -97,6 +97,7 @@ ROWS = (
         "Climate",
         methods=("control", "traits", "publish_state"),
     ),
+    Row("components/fan/fan.h", "components/fan/fan.h", "Fan", methods=("control", "get_traits", "publish_state")),
     Row("components/button/button.h", "components/button/button.h", "Button", methods=("press_action",)),
     Row("components/sensor/sensor.h", "components/sensor/sensor.h", "Sensor", methods=("publish_state",)),
     Row(

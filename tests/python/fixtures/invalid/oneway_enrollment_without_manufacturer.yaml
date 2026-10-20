@@ -7,5 +7,5 @@ packages:
 home_io_control:
   oneway_controllers:
     - id: remote
-      io_device_type: awning
+      io_device_type: vertical_exterior_awning
       enrollment: true

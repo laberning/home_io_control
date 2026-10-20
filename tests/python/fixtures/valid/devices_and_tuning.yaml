@@ -12,8 +12,8 @@ cover:
   - platform: home_io_control
     name: "Awning"
     io_device_id: "FEEB1E"
-    io_device_type: awning
-    linked_remotes: ["class:awning", "class:0x14"]
+    io_device_type: vertical_exterior_awning
+    linked_remotes: ["class:vertical_exterior_awning", "class:0x14"]
     status_poll_interval: 60s
     rain_sensor_poll_interval: 15min
     battery: true
@@ -34,7 +34,38 @@ lock:
     name: "Door"
     io_device_id: "3C4D5E"
 
+fan:
+  - platform: home_io_control
+    name: "Terrace Heater"
+    io_device_id: "6F7081"
+    io_device_type: exterior_heating
+  - platform: home_io_control
+    name: "Terrace Heater On Off"
+    io_device_id: "708192"
+    io_device_type: exterior_heating
+    io_subtype: 58
+
 climate:
   - platform: home_io_control
     name: "Radiator"
     io_device_id: "4D5E6F"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    status_poll_interval: 60s
+    # A device that keeps a key of its own (ADR 0053); any device-bound platform takes it.
+    system_key: "FEDCBA9876543210FEDCBA9876543210"
+  - platform: home_io_control
+    name: "Plain Heater"
+    io_device_id: "5E6F70"
+    io_device_type: electrical_heater
+    io_subtype: 0
+  - platform: home_io_control
+    name: "Thermostat"
+    io_device_id: "6F7092"
+    io_device_type: heating_temperature_interface
+    min_temperature: -30
+    max_temperature: 70
+  - platform: home_io_control
+    name: "Heat Pump"
+    io_device_id: "7081A3"
+    io_device_type: heat_pump
