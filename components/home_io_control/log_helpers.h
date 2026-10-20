@@ -8,6 +8,7 @@
 /// this header instead of the hub's private helpers (make include-graph enforces that split).
 
 #include "log_frame.h"
+#include "proto_crypto.h"
 #include "proto_frame.h"
 #include "proto_sizes.h"
 #include "radio_interface.h"
@@ -67,6 +68,19 @@ inline std::string format_key_hex(const uint8_t key[AES_KEY_SIZE]) {
     out += byte_buf;
   }
   return out;
+}
+
+/// A key check value: the first three bytes of the key's AES encryption of a zero block. It names a
+/// key without revealing it, so it is safe in any log line and in a report that is not bannered.
+/// @param key Pointer to AES_KEY_SIZE key bytes.
+/// @return Six uppercase hex digits, or "------" if the check value could not be computed.
+inline std::string format_key_check_value(const uint8_t key[AES_KEY_SIZE]) {
+  uint8_t kcv[crypto::KEY_CHECK_VALUE_SIZE];
+  if (!crypto::key_check_value(key, kcv))
+    return "------";
+  char buf[(2 * crypto::KEY_CHECK_VALUE_SIZE) + 1];
+  snprintf(buf, sizeof(buf), "%02X%02X%02X", kcv[0], kcv[1], kcv[2]);
+  return std::string(buf);
 }
 
 // ============================================================================

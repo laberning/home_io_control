@@ -2,7 +2,9 @@
 /// @brief Tests for hub_management.cpp rename action support.
 
 #include "hub_core.h"
+#include "log_helpers.h"
 #include "proto_commands.h"
+#include "proto_crypto.h"
 #include "proto_frame.h"
 
 #include "esphome/components/api/custom_api_device.h"
@@ -945,6 +947,186 @@ TEST(HubManagement, ScanPairedDevicesSweepsBothPowerClasses) {
     EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
     EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, component.tuning_.normal_start_preamble) << "attempt " << (i + 1);
   }
+}
+
+namespace {
+
+/// A key a device keeps of its own (the test value the key-pull tests use).
+constexpr uint8_t SCAN_DEVICE_KEY[AES_KEY_SIZE] = {0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE,
+                                                   0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
+
+/// Whether the 0x2A in `raw` carries an HMAC that verifies under `key` (nonce in data[0..5], HMAC in data[6..11]).
+bool roll_call_is_signed_with(const std::vector<uint8_t> &raw, const uint8_t *key) {
+  IoFrame frame{};
+  if (!parse(raw.data(), static_cast<uint8_t>(raw.size()), frame) || frame.data_len < 2 * HMAC_SIZE)
+    return false;
+  uint8_t expected[HMAC_SIZE];
+  const uint8_t command = CMD_DISCOVER_SPE_REQ;
+  return crypto::create_hmac(&command, 1, frame.data, key, expected) &&
+         memcmp(expected, frame.data + HMAC_SIZE, HMAC_SIZE) == 0;
+}
+
+/// Register a device with a key of its own.
+void add_keyed_device(TestableManagementComponent &component, const char *id, const uint8_t *key) {
+  DeviceConfig cfg;
+  cfg.type = DeviceType::ELECTRICAL_HEATER;
+  cfg.subtype = 1;
+  cfg.has_system_key = true;
+  memcpy(cfg.system_key, key, AES_KEY_SIZE);
+  component.add_device(id, cfg);
+}
+
+}  // namespace
+
+TEST(HubManagement, ScanPairedDevicesSweepsOncePerDistinctKey) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+  add_keyed_device(component, "AABB02", SCAN_DEVICE_KEY);        // same key: no sweep of its own
+  add_keyed_device(component, "AABB03", component.system_key_);  // equal to the hub key: no sweep either
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  ASSERT_EQ(radio.get_sent_data().size(), 12u) << "6 attempts for the hub key, 6 for the one other key";
+  for (size_t i = 0; i < 12; i++) {
+    const uint8_t *expected_key = i < 6 ? component.system_key_ : SCAN_DEVICE_KEY;
+    const uint8_t *other_key = i < 6 ? SCAN_DEVICE_KEY : component.system_key_;
+    EXPECT_TRUE(roll_call_is_signed_with(radio.get_sent_data()[i], expected_key)) << "attempt " << (i + 1);
+    EXPECT_FALSE(roll_call_is_signed_with(radio.get_sent_data()[i], other_key)) << "attempt " << (i + 1);
+  }
+}
+
+TEST(HubManagement, ScanPairedDevicesWithoutPerDeviceKeysSweepsTheHubKeyOnly) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  ASSERT_TRUE(component.scan_paired_devices().success);
+  ASSERT_EQ(radio.get_sent_data().size(), 6u);
+  EXPECT_TRUE(roll_call_is_signed_with(radio.get_sent_data()[0], component.system_key_));
+}
+
+TEST(HubManagement, ScanPairedDevicesNamesTheKeyOfAResponderFoundUnderAPerDeviceKey) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+
+  // Silent through the six hub-key attempts, then a registered keyed device answers the seventh.
+  radio.queue_rx_hold_until_sent(7);
+  const uint8_t payload[] = {0x0D, 0x01, 0xAA, 0xBB, 0x01, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src[3] = {0xAA, 0xBB, 0x01};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  const std::string kcv = detail::format_key_check_value(SCAN_DEVICE_KEY);
+  EXPECT_NE(result.message.find("(0x34/1) key=" + kcv + " rssi="), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("[known]"), std::string::npos);
+  EXPECT_EQ(result.message.find(detail::format_key_hex(SCAN_DEVICE_KEY)), std::string::npos)
+      << "a known responder needs no snippet, so the key itself must not appear";
+}
+
+TEST(HubManagement, ScanPairedDevicesPutsAnUnknownKeyedResponderSnippetInsideAKeyBannerInTheLogOnly) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+
+  radio.queue_rx_hold_until_sent(7);
+  const uint8_t payload[] = {0x0D, 0x01, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE5};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+
+  // The device log gets the report with the key, inside a banner.
+  const std::string &log = result.log_message;
+  const std::string key_hex = detail::format_key_hex(SCAN_DEVICE_KEY);
+  const size_t key_pos = log.find("system_key: \"" + key_hex + "\"");
+  ASSERT_NE(key_pos, std::string::npos) << log;
+  const size_t banner = log.find("DO NOT SHARE");
+  const size_t end = log.find("END OF DEVICE KEY BLOCK");
+  ASSERT_NE(banner, std::string::npos) << log;
+  ASSERT_NE(end, std::string::npos) << log;
+  EXPECT_LT(banner, key_pos);
+  EXPECT_LT(key_pos, end);
+  EXPECT_NE(log.find("  climate:\n"), std::string::npos);
+  EXPECT_NE(log.find("key=" + detail::format_key_check_value(SCAN_DEVICE_KEY)), std::string::npos);
+
+  // The message is what the action-result event carries into Home Assistant: no key, same device.
+  EXPECT_EQ(result.message.find(key_hex), std::string::npos) << "the published message must not carry the key";
+  EXPECT_EQ(result.message.find("system_key: \""), std::string::npos) << "no system_key line in the published snippet";
+  EXPECT_EQ(result.message.find("DO NOT SHARE"), std::string::npos);
+  EXPECT_NE(result.message.find("printed in the device log"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("  climate:\n"), std::string::npos);
+  EXPECT_NE(result.message.find("key=" + detail::format_key_check_value(SCAN_DEVICE_KEY)), std::string::npos);
+}
+
+TEST(HubManagement, ScanPairedDevicesHintsWhenAKnownDeviceAnswersUnderAnotherKeyThanItsYaml) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  // The YAML gives this radiator the device key, but it answers the hub-key sweep: a key pasted on the
+  // wrong radiator.
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+  const uint8_t payload[] = {0x0D, 0x01, 0xAA, 0xBB, 0x01, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src[3] = {0xAA, 0xBB, 0x01};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("hint: answered under the key with check value " +
+                                detail::format_key_check_value(component.system_key_) +
+                                " but its YAML uses the key with check value " +
+                                detail::format_key_check_value(SCAN_DEVICE_KEY) + "; fix its system_key:"),
+            std::string::npos)
+      << result.message;
+}
+
+TEST(HubManagement, ScanPairedDevicesGivesNoKeyHintWhenTheKeysAgree) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+  DeviceConfig plain;
+  plain.type = DeviceType::ROLLER_SHUTTER;
+  component.add_device("AABB02", plain);
+
+  // AABB01 answers the per-device-key sweep (7th send on), AABB02 the hub-key sweep.
+  const uint8_t payload1[] = {0x0D, 0x01, 0xAA, 0xBB, 0x01, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src1[3] = {0xAA, 0xBB, 0x01};
+  const uint8_t payload2[] = {0x00, 0x80, 0xAA, 0xBB, 0x02, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src2[3] = {0xAA, 0xBB, 0x02};
+  radio.queue_rx(frame_to_packet(build_spe_response(src2, component.node_id_, payload2, sizeof(payload2))));
+  radio.queue_rx_hold_until_sent(7);
+  radio.queue_rx(frame_to_packet(build_spe_response(src1, component.node_id_, payload1, sizeof(payload1))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("AABB01"), std::string::npos);
+  EXPECT_NE(result.message.find("AABB02"), std::string::npos);
+  EXPECT_EQ(result.message.find("fix its system_key"), std::string::npos) << result.message;
+}
+
+TEST(HubManagement, ScanPairedDevicesHubKeyResponderSnippetCarriesNoKey) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_keyed_device(component, "AABB01", SCAN_DEVICE_KEY);
+
+  const uint8_t payload[] = {0x0D, 0x01, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE5};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("  climate:\n"), std::string::npos);
+  EXPECT_EQ(result.message.find("system_key: \""), std::string::npos) << "no system_key line in the published snippet";
+  EXPECT_EQ(result.message.find("key="), std::string::npos) << "hub-key lines stay unchanged";
+  EXPECT_EQ(result.message.find("DO NOT SHARE"), std::string::npos);
 }
 
 TEST(HubManagement, ScanPairedDevicesAckTunableChangesNeitherPass) {

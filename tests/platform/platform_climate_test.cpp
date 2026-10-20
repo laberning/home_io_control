@@ -211,6 +211,30 @@ TEST(PlatformClimate, ClimateTypeWithoutAPlatformIsRejectedInSetup) {
   EXPECT_TRUE(interface.is_failed());
 }
 
+TEST(PlatformClimate, SystemKeyOptionReachesTheRegisteredDevice) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.set_system_key("00112233445566778899AABBCCDDEEFF");
+  entity.setup();
+
+  const IoDevice *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(dev->has_system_key);
+  const uint8_t expected[AES_KEY_SIZE] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                                          0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  EXPECT_EQ(0, memcmp(dev->system_key, expected, AES_KEY_SIZE));
+}
+
+TEST(PlatformClimate, WithoutASystemKeyOptionTheDeviceUsesTheHubKey) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();
+
+  const IoDevice *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->has_system_key);
+}
+
 TEST(PlatformClimate, UnknownDeviceTypeIsToleratedInSetup) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub, DeviceType::UNKNOWN);

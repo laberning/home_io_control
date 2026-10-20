@@ -113,8 +113,13 @@ class ExchangeEngine {
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).
   /// @param freq    RF channel the frame arrived on.
-  /// @return true if HMAC verified; false on timeout or mismatch.
+  /// @return true if HMAC verified under the sender's key (see set_device_key_provider()); false on
+  ///         timeout or mismatch.
   bool authenticate_request(const IoFrame &request, uint32_t freq);
+
+  /// The key an exchange with `node` uses: the device's own key when the provider has one, else the hub key.
+  /// @param node Node ID (NODE_ID_SIZE bytes) of the device on the other end.
+  [[nodiscard]] const uint8_t *key_for(const uint8_t *node) const;
 
   /// Same as authenticate_request(), but checks the device's 0x3D against `key` instead of the
   /// hub's system key. Used by the key pull to make a device prove it holds the key it just sent.
@@ -310,6 +315,20 @@ class ExchangeEngine {
   void set_target_evidence_provider(TargetEvidenceProvider provider) {
     this->target_evidence_provider_ = std::move(provider);
   }
+
+  /// @brief Looks up the system key a device keeps of its own.
+  /// @param node Node ID (NODE_ID_SIZE bytes) of the device on the other end of the exchange.
+  /// @return The device's AES_KEY_SIZE-byte key, or nullptr when it has none (the hub key applies).
+  ///         The pointer must stay valid until the exchange returns.
+  using DeviceKeyProvider = std::function<const uint8_t *(const uint8_t *node)>;
+
+  /// Install the source of per-device system keys. Installed once, when the hub is constructed. The
+  /// engine picks the key per frame: our `0x3D` is signed with the key of the request's destination,
+  /// and an inbound `0x3D` is verified against the key of the request's sender. A node the provider
+  /// does not know, or one without a key of its own, uses the hub key, so every call site of
+  /// send_and_receive() stays unchanged. With no provider installed every exchange uses the hub key.
+  /// @param provider Key lookup, or an empty function to detach.
+  void set_device_key_provider(DeviceKeyProvider provider) { this->device_key_provider_ = std::move(provider); }
 
   /// @brief Forgets a destination's moving evidence.
   /// @param dst Destination node ID (NODE_ID_SIZE bytes) of the request that went unanswered.
@@ -544,6 +563,7 @@ class ExchangeEngine {
   const TuningConfig *tuning_;                       ///< Hub's live TuningConfig (read on every LBT check).
   TransmitObserver *transmit_observer_{nullptr};     ///< Non-owning; see set_transmit_observer().
   TargetEvidenceProvider target_evidence_provider_;  ///< See set_target_evidence_provider().
+  DeviceKeyProvider device_key_provider_;            ///< See set_device_key_provider().
   WakeEvidenceSpentHandler wake_evidence_spent_handler_;  ///< See set_wake_evidence_spent_handler().
 
   // --- Engine state --------------------------------------------------------

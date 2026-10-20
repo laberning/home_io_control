@@ -68,6 +68,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0027](0027-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
 | [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is deprecated, not deleted outright |
 | [0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) | Device types follow the IO node-type and subtype table | A 16-bit `DeviceType` and one (type, subtype) table drive names, entity class, platform and behaviour flags; six YAML names change and the old ones fail with the replacement |
+| [0053](0053-a-device-may-carry-its-own-system-key.md) | A device may carry its own system key | An optional `system_key:` on any device entity; the exchange engine picks the key per frame from the peer's node, falling back to the hub key; Scan Paired Devices sweeps once per distinct key |
 
 ### Security
 
@@ -148,6 +149,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0050: Rain is read by an opt-in limitation poll](0050-rain-is-read-by-an-opt-in-limitation-poll.md)
 - [ADR 0051: Pairing reads the key refusal and checks an unconfirmed key](0051-pairing-reads-the-key-refusal-and-checks-an-unconfirmed-key.md)
 - [ADR 0052: Device types follow the IO node-type and subtype table](0052-device-types-follow-the-io-node-type-and-subtype-table.md)
+- [ADR 0053: A device may carry its own system key](0053-a-device-may-carry-its-own-system-key.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

@@ -79,16 +79,6 @@ void log_pulled_key_report(const std::string &device_id, const uint8_t key[AES_K
   ESP_LOGW(TAG, "========================================");
 }
 
-/// Format a key check value as six hex digits.
-std::string format_key_check_value(const uint8_t key[AES_KEY_SIZE]) {
-  uint8_t kcv[crypto::KEY_CHECK_VALUE_SIZE];
-  if (!crypto::key_check_value(key, kcv))
-    return "------";
-  char buf[(2 * crypto::KEY_CHECK_VALUE_SIZE) + 1];
-  snprintf(buf, sizeof(buf), "%02X%02X%02X", kcv[0], kcv[1], kcv[2]);
-  return std::string(buf);
-}
-
 }  // namespace
 
 // --- Constructor ---
@@ -959,7 +949,7 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
     return KeyPullResult::FAILED;
   // The key check value names the key without revealing it, so two attempts or two devices can be
   // compared from the log alone.
-  const std::string check_value = format_key_check_value(key);
+  const std::string check_value = detail::format_key_check_value(key);
   // Our own key cannot come out of the decrypt by chance, so a match proves the device holds it.
   if (memcmp(key, system_key_, AES_KEY_SIZE) == 0) {
     ESP_LOGI(TAG, "Key pull check: %s -> key check value %s, the hub's own key", context.device_id.c_str(),

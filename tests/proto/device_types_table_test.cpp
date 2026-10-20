@@ -189,6 +189,21 @@ TEST(DeviceTypesTable, HeaterWithSetpointGetsAClimateSnippet) {
   EXPECT_EQ(snippet.find("invert_position"), std::string::npos);
 }
 
+TEST(DeviceTypesTable, SnippetCarriesTheDeviceKeyOnlyWhenOneIsGiven) {
+  const std::string key = "00112233445566778899AABBCCDDEEFF";
+  const std::string keyed =
+      build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false, false, key);
+  EXPECT_NE(keyed.find("    system_key: \"" + key + "\"\n"), std::string::npos) << keyed;
+  EXPECT_NE(keyed.find("io_subtype: 1"), std::string::npos);
+
+  const std::string plain = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false, false);
+  EXPECT_EQ(plain.find("system_key"), std::string::npos);
+
+  const std::string no_metadata = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "AABBCC", false, false, false, key);
+  EXPECT_NE(no_metadata.find("system_key: \"" + key + "\""), std::string::npos)
+      << "the key also rides in the shape used when the device withheld its type";
+}
+
 TEST(DeviceTypesTable, PlainHeaterAndRemoteControllerGetNoSnippet) {
   EXPECT_TRUE(build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 0, "AABBCC", true, false, false).empty());
   EXPECT_TRUE(build_device_yaml_snippet(DeviceType::REMOTE_CONTROLLER, 0, "AABBCC", true, false, false).empty());

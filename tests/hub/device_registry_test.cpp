@@ -37,6 +37,21 @@ TEST(DeviceRegistry, AddWithMetadataStoresFields) {
   EXPECT_TRUE(dev->inverted);
 }
 
+TEST(DeviceRegistry, AddStoresAPerDeviceSystemKey) {
+  DeviceRegistry reg;
+  DeviceConfig cfg;
+  cfg.has_system_key = true;
+  for (uint8_t i = 0; i < AES_KEY_SIZE; i++)
+    cfg.system_key[i] = static_cast<uint8_t>(0xA0 + i);
+  reg.add("AABBCC", cfg);
+  reg.add("DDEEFF");
+  const IoDevice *keyed = reg.get("AABBCC");
+  ASSERT_NE(keyed, nullptr);
+  EXPECT_TRUE(keyed->has_system_key);
+  EXPECT_EQ(0, memcmp(keyed->system_key, cfg.system_key, AES_KEY_SIZE));
+  EXPECT_FALSE(reg.get("DDEEFF")->has_system_key) << "a device without system_key: stays on the hub key";
+}
+
 TEST(DeviceRegistry, AddStoresLowPowerFlag) {
   DeviceRegistry reg;
   DeviceConfig cfg;

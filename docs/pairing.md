@@ -198,6 +198,17 @@ Unknown:
   wake-up preamble), then the always-alive pass (a short preamble) — six broadcasts total, each
   with a full `pairing_discovery_wait_ms` listen window. The "operation took a long time" warning
   ESPHome logs on every run is expected.
+- **Each per-device key adds a full sweep.** A device that keeps a key of its own (the
+  [`system_key`](configuration/index.md) option on its entity) only answers a roll-call built with
+  that key. The scan therefore runs the six broadcasts once with the hub key, then once for every
+  different per-device key, and logs `Roll-call with key check value ABC123 (n registered devices)`
+  before each sweep. A device found under a per-device key shows `key=ABC123` (the key's check
+  value, never the key) on its line. An unknown device found that way gets a snippet with its
+  `system_key:` in the **device log only**, inside a `DEVICE KEY BELOW -- DO NOT SHARE IT` block:
+  move the key into `secrets.yaml` before you post the log anywhere. The
+  `esphome.home_io_control_action_result` event that Home Assistant records carries the same report
+  without the key. A known device that answers under a different key than its YAML uses gets a
+  `hint:` naming both key check values; fix that entity's `system_key:`.
 - **An installation with no solar or battery devices can skip the low-power pass.** Set
   [`scan_power_classes: always_alive`](configuration/tuning.md#scan_power_classes) to restore the
   original ~6 second, single-pass scan. The same tunable also isolates one class when bisecting a

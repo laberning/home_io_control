@@ -331,11 +331,13 @@ std::string format_device_type_for_yaml(DeviceType type) {
 }
 
 std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
-                                      bool metadata_complete, bool inverted, bool low_power) {
+                                      bool metadata_complete, bool inverted, bool low_power,
+                                      const std::string &system_key_hex) {
   // A device that self-reported POWER_SAVE_LOW_POWER needs `low_power: true` so directed commands
   // wake it with the long preamble — emit it in both snippet shapes, since a low-power device that
   // also withheld its type is exactly the case a user most needs told.
   const std::string low_power_line = low_power ? "    low_power: true\n" : "";
+  const std::string system_key_line = system_key_hex.empty() ? "" : "    system_key: \"" + system_key_hex + "\"\n";
 
   if (!metadata_complete) {
     return "  <cover|light|switch|lock>:\n"
@@ -348,7 +350,7 @@ std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const st
            "    #   discovery, so the controller learns it automatically from the next status\n"
            "    #   reply. Add it explicitly once you see it logged, to skip re-learning on\n"
            "    #   every future boot.\n" +
-           low_power_line;
+           low_power_line + system_key_line;
   }
 
   const char *platform = device_platform_name(type, subtype);
@@ -361,6 +363,7 @@ std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const st
   if (device_light_is_brightness_only(type, subtype))
     extra_lines += "    dimmable: true\n";
   extra_lines += low_power_line;
+  extra_lines += system_key_line;
 
   const std::string subtype_line = "    io_subtype: " + std::to_string(subtype) + "\n";
 

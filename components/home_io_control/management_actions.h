@@ -39,7 +39,11 @@ struct ManagementActionResult {
   uint8_t result_code{0};        ///< Optional CMD_ERROR_RESP result byte.
   std::string action;            ///< Action name, e.g. "rename_device".
   std::string device_id;         ///< Target IO-homecontrol device ID.
-  std::string message;           ///< Human-readable outcome summary.
+  std::string message;           ///< Human-readable outcome summary. Published as the action-result event, which
+                                 ///< Home Assistant records: it never carries key material.
+  std::string log_message;       ///< When non-empty, the device log shows this instead of `message`. For the
+                                 ///< one report that may print a device key (scan_paired_devices()); the key
+                                 ///< stays in the log and out of the event.
   std::string requested_name;    ///< Requested normalized UTF-8 name for rename actions.
   std::string applied_name;      ///< Verified cached UTF-8 name after a readback, when available.
   std::string probe_name;        ///< Probe name for probe_device()/probe_sweep(), e.g. "private_fn".

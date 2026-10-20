@@ -234,10 +234,14 @@ std::string format_device_type_for_yaml(DeviceType type);
 ///        `metadata_complete` is true and `type` is a cover.
 /// @param low_power Whether the device self-reported a low-power / duty-cycled class; emits
 ///        `low_power: true` when set, in both snippet shapes.
+/// @param system_key_hex The device's own system key as 32 hex characters, or empty when it uses the
+///        hub's. Emits `system_key: "<hex>"` in both snippet shapes. Key material: a caller that
+///        passes one must print the snippet only inside a DO-NOT-SHARE block.
 /// @return Multi-line YAML snippet, or an empty string when `metadata_complete` is true but
 ///         the (type, subtype) maps to no ESPHome platform.
 std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
-                                      bool metadata_complete, bool inverted, bool low_power);
+                                      bool metadata_complete, bool inverted, bool low_power,
+                                      const std::string &system_key_hex = std::string());
 
 // ============================================================================
 // Cover Commands
@@ -481,6 +485,10 @@ struct IoDevice {
                                                           ///< follows the request) or an overheard frame (ADR 0022).
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
+  bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
+                                 ///< exchange with it uses `system_key` below instead of the hub's key.
+  uint8_t system_key[AES_KEY_SIZE]{};  ///< The device's own key; meaningful only when `has_system_key`. Key material:
+                                       ///< never logged outside a bannered report block.
 };
 
 /// @brief Record that a device is (believed to be) travelling right now.

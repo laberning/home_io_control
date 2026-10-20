@@ -96,6 +96,25 @@ the same set of keys. Platform-specific options are documented on each platform'
   common cause of a hub that pairs but then hears nothing back.
 - `linked_remotes` (Optional): 1W remotes or device classes whose presses should update this
   entity's state. See [Linked remotes and sender events](remotes.md).
+- `system_key` (Optional): A 32-character hex key this one device keeps of its own. Every exchange
+  with the device then uses it instead of the hub's `system_key`. Set it for a device that does not
+  share your installation's key, such as an Atlantic AGILIA radiator, where each radiator has its
+  own. A key equal to the hub's changes nothing. Devices without the option keep using the hub key.
+  Keep the key in `secrets.yaml` like the hub's (example below). Scan Paired Devices calls each
+  distinct key in turn and prints the key's check value next to every device that answered under
+  it; see [Pairing](../pairing.md#scan-paired-devices).
+
+The example below gives one radiator its own key:
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Bedroom Radiator"
+    io_device_id: "4D5E6F"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    system_key: !secret bedroom_radiator_key
+```
 
 ### Companion entities
 

@@ -143,6 +143,10 @@ class IOHomeControlComponent : public Component,
       out = decisions::target_evidence(*dev);
       return true;
     });
+    this->exchange_engine_.set_device_key_provider([this](const uint8_t *node) -> const uint8_t * {
+      const IoDevice *dev = this->registry_.get(node_id_to_string(node));
+      return dev != nullptr && dev->has_system_key ? dev->system_key : nullptr;
+    });
     this->exchange_engine_.set_wake_evidence_spent_handler([this](const uint8_t *dst) {
       if (IoDevice *dev = this->registry_.get(node_id_to_string(dst)); dev != nullptr)
         clear_moving_evidence(*dev);

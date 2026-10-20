@@ -9,6 +9,8 @@
 
 #include "esphome/core/log.h"
 
+#include <cstring>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -32,6 +34,9 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   dev.silent = cfg.silent;
   dev.low_power = cfg.low_power;
   dev.battery_entities = cfg.battery_entities;
+  dev.has_system_key = cfg.has_system_key;
+  if (cfg.has_system_key)
+    memcpy(dev.system_key, cfg.system_key, AES_KEY_SIZE);
   devices_[device_id] = dev;
 }
 

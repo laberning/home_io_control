@@ -45,6 +45,8 @@ from . import (
     validate_linked_remote_entry,
     validate_status_poll_interval,
 )
+from .hub_names import CONF_SYSTEM_KEY
+from .hub_validators import validate_system_key
 
 # Shared YAML config keys used by every device-bound platform.
 # Named CONF_IO_DEVICE_ID (not CONF_DEVICE_ID) to stay distinct from ESPHome's own
@@ -215,6 +217,9 @@ def platform_schema_extension():
         cv.Optional(CONF_LINKED_REMOTES): cv.ensure_list(validate_linked_remote_entry),
         cv.Optional(CONF_STATUS_POLL_INTERVAL): validate_status_poll_interval,
         cv.Optional(CONF_LOW_POWER): cv.boolean,
+        # A key this one device keeps of its own, for a device that does not share the hub's
+        # (ADR 0053). Same validator as the hub's system_key; `!secret` works as for any string.
+        cv.Optional(CONF_SYSTEM_KEY): validate_system_key,
     }
 
 
@@ -240,6 +245,8 @@ async def wire_device_binding(var, parent, config):
         )
     if CONF_LOW_POWER in config:
         cg.add(var.set_low_power(config[CONF_LOW_POWER]))
+    if CONF_SYSTEM_KEY in config:
+        cg.add(var.set_system_key(config[CONF_SYSTEM_KEY]))
 
     if CONF_LINKED_REMOTES in config:
         for remote_id in config[CONF_LINKED_REMOTES]:

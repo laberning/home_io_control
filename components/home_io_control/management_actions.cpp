@@ -15,6 +15,7 @@
 #include "log_helpers.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
+#include "roll_call.h"
 
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
@@ -215,101 +216,6 @@ const ProbeDescriptor *resolve_probe_descriptor(const std::string &probe, Manage
     result.message = unknown_probe_message(probe);
   return descriptor;
 }
-
-/// @brief Maximum distinct responders reported by one scan_paired_devices() call.
-///
-/// Sized against the loop task's stack, which is where this runs: ESPHome spawns its own
-/// `loopTask` with `ESPHOME_LOOP_TASK_STACK_SIZE` (8192 B) — not the 3.5 KB ESP-IDF main task.
-/// `ScanResponder` is 12 B, so 24 slots cost ≈288 B (~3.5 % of that stack) in a single array;
-/// replies are decoded on arrival rather than buffered as whole 33 B `IoFrame`s, which is what
-/// makes a limit this size cheap. Installs with 20+ actuators are real, so 8 (the original
-/// value, chosen when whole frames were retained) was too low to be useful. Overflow beyond
-/// this is reported in the scan's own output, never silent.
-constexpr uint8_t SCAN_MAX_REPLIES = 24;
-
-/// @brief One roll-call responder, decoded on arrival.
-///
-/// Deliberately holds only what the report needs, so the fixed array stays small: the raw
-/// `IoFrame` is discarded as soon as decode_discovery_response() has run, and the hex device-ID
-/// string is rebuilt from `src` at format time rather than stored (a `std::string` member would
-/// cost more per entry than this whole struct).
-struct ScanResponder {
-  uint8_t src[NODE_ID_SIZE];  ///< Responder's node ID; also the dedup key.
-  DeviceType type;            ///< Decoded device type.
-  uint8_t subtype;            ///< Decoded device subtype.
-  bool inverted;              ///< Decoded position-inversion flag.
-  int16_t rssi_dbm;           ///< RSSI of the reply that produced this entry.
-  uint8_t manufacturer;       ///< Raw manufacturer ID; name via manufacturer_name().
-  uint8_t flags;              ///< Multi Information Byte; decode with DISCOVERY_FLAGS_* masks.
-  bool has_extended;          ///< Whether manufacturer/flags above are present.
-  bool metadata_complete;     ///< Whether type/subtype were present in the payload.
-};
-
-/// @brief Channels scan_paired_devices() transmits its roll-call request on, one attempt per
-/// channel, per pass (see @ref ROLL_CALL_PASSES).
-///
-/// A single broadcast on one fixed channel only reaches a paired device that happens to be
-/// awake and listening on that exact channel at that exact instant — real hardware testing
-/// found paired devices duty-cycle across all three channels independently of the hub, so a
-/// one-shot broadcast on CH2 alone misses whichever devices are elsewhere in their cycle right
-/// then. Retrying the same request on the other two channels gives every device up to three
-/// chances per pass to be listening when the hub transmits. CH2 first since it is the protocol's
-/// designated TX channel (see FREQ_CH2's doc comment) and therefore the most likely to catch a
-/// reply on the first attempt.
-///
-/// This TX retry is a duty-cycle workaround, not a receive-side fix. The hub's listen path
-/// separately extends its dwell on a detected preamble/sync rather than hopping mid-frame, which
-/// is what keeps it from dropping replies it does hear.
-constexpr uint32_t SCAN_CHANNELS[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
-constexpr uint8_t SCAN_CHANNEL_COUNT = sizeof(SCAN_CHANNELS) / sizeof(SCAN_CHANNELS[0]);
-
-/// @brief One roll-call frame shape, and how to listen for its replies.
-///
-/// `low_power` for the frame builder is derived from `power_save_mode` (`== POWER_SAVE_LOW_POWER`)
-/// rather than stored separately, and the pass name used in logs is
-/// `power_save_mode_name(power_save_mode)` — one vocabulary, shared with the responder's own
-/// self-reported power-save byte, instead of a second spelling table.
-struct RollCallPass {
-  uint8_t power_save_mode;     ///< POWER_SAVE_LOW_POWER or POWER_SAVE_ALWAYS_ALIVE: the class this pass calls.
-  bool ack_capable;            ///< Set CTRL1_ACK on the 0x2A.
-  ListenPolicy listen_policy;  ///< Channel policy for this pass's reply windows.
-};
-
-/// @brief The roll-call's two fixed frame shapes, low-power first.
-///
-/// Low-power pass first: a sleeper that answers late is still collected by the later
-/// always-alive windows (collect_broadcast_responses() accepts any 0x2B addressed to us,
-/// regardless of which pass is currently running); in the opposite order a late low-power reply
-/// would fall off the end of the scan with nothing left to catch it.
-///
-/// Low-power pass, `CTRL1 = 0x30` (LOW_POWER | ACK): the exact header a real VELUX KLR300 uses
-/// for its own roll-call, whose low-power shutters answered it. Setting CTRL1_LOW_POWER selects
-/// LONG_PREAMBLE through the shared start-preamble rule (request_preamble_for()) — no preamble is
-/// picked here. `ROTATE_ALL_CHANNELS`: those VELUX low-power replies were observed landing on the
-/// request channel, which a skipping listen would miss entirely.
-///
-/// Always-alive pass, `CTRL1 = 0x00` at `normal_start_preamble`: an always-alive VELUX
-/// installation ignores a 1024-byte start preamble and answers the 32-byte one; Somfy roll-call
-/// replies land on the request channel about 1 in 149 times, so `ROTATE_SKIPPING_REQUEST` keeps
-/// the window on the channels replies actually use.
-///
-/// Both shapes are fixed, named constants: `pairing_discovery_ack_capable` belongs to Discover &
-/// Pair and does not influence the roll-call either way.
-constexpr RollCallPass ROLL_CALL_PASSES[] = {
-    {POWER_SAVE_LOW_POWER, /*ack_capable=*/true, ListenPolicy::ROTATE_ALL_CHANNELS},
-    {POWER_SAVE_ALWAYS_ALIVE, /*ack_capable=*/false, ListenPolicy::ROTATE_SKIPPING_REQUEST},
-};
-
-/// A broadcast has no pinned conversation to hold a channel for, so HOLD_REQUEST_CHANNEL can
-/// never be a valid roll-call listen policy — checked at compile time rather than at every call
-/// site.
-constexpr bool no_roll_call_pass_holds_request_channel() {
-  return std::ranges::all_of(ROLL_CALL_PASSES, [](const RollCallPass &pass) {
-    return pass.listen_policy != ListenPolicy::HOLD_REQUEST_CHANNEL;
-  });
-}
-static_assert(no_roll_call_pass_holds_request_channel(),
-              "a broadcast roll-call pass has no pinned conversation to hold the request channel for");
 
 }  // namespace
 
@@ -759,7 +665,8 @@ void ManagementActions::publish_result(const ManagementActionResult &result) {
   if (has_device)
     prefix += " for device " + result.device_id;
   prefix += result.success ? ": " : " failed: ";
-  detail::log_multiline_result(detail::TAG, !result.success, prefix, result.message);
+  detail::log_multiline_result(detail::TAG, !result.success, prefix,
+                               result.log_message.empty() ? result.message : result.log_message);
 
   if (!hub_->is_connected())
     return;
@@ -1032,6 +939,13 @@ void ManagementActions::api_oneway_remove_controller(const std::string &controll
   publish_result(result);
 }
 
+/// @brief The keys a scan line needs: the one a responder answered under, and the hub's.
+struct ScanReplyKeys {
+  const uint8_t *answered;  ///< The key of the sweep the responder answered in (always set).
+  const uint8_t *hub;       ///< The hub key (slot 0).
+  bool per_device;          ///< True when `answered` is a per-device key, not the hub's.
+};
+
 /// @brief Format one roll-call responder's report line(s).
 ///
 /// Known responders get a single summary line, plus an indented `hint:` line when their
@@ -1040,15 +954,24 @@ void ManagementActions::api_oneway_remove_controller(const std::string &controll
 /// all). Unknown responders get the same summary line plus a lead-in sentence and a
 /// ready-to-paste YAML block (or, if the decoded type has no ESPHome platform yet, a
 /// "not supported yet" line instead of a blank) — the same "paste this in" framing a successful pairing prints.
+/// A responder found under a per-device key gets that key's check value on its summary line. With
+/// `reveal_key`, an unknown one also gets a snippet that carries the key itself inside a DO-NOT-SHARE
+/// banner; without it the snippet omits the key and says the device log has it. A known responder
+/// that answered under a key other than the one its YAML uses gets a `hint:` line.
 /// @param responder Decoded responder record.
 /// @param device_id Hex device ID string for this responder, rebuilt from `responder.src`.
 /// @param registered The matching registry entry, or nullptr if this responder is not known.
+/// @param keys Which key the responder answered under and what the hub key is.
+/// @param reveal_key True for the log version of the report, false for the published one.
 static std::string format_scan_reply_line(const ScanResponder &responder, const std::string &device_id,
-                                          const IoDevice *registered) {
+                                          const IoDevice *registered, const ScanReplyKeys &keys, bool reveal_key) {
+  const uint8_t *key = keys.per_device ? keys.answered : nullptr;
   const bool known = registered != nullptr;
   std::string line = "  " + device_id + ": " + format_device_kind(responder.type, responder.subtype) + " (" +
-                     format_device_ids(responder.type, responder.subtype) +
-                     ") rssi=" + std::to_string(responder.rssi_dbm) + "dBm";
+                     format_device_ids(responder.type, responder.subtype) + ")";
+  if (key != nullptr)
+    line += " key=" + detail::format_key_check_value(key);
+  line += " rssi=" + std::to_string(responder.rssi_dbm) + "dBm";
   uint8_t power_save = 0;
   if (responder.has_extended) {
     uint8_t const att = discovery_att_class(responder.flags);
@@ -1075,173 +998,82 @@ static std::string format_scan_reply_line(const ScanResponder &responder, const 
                 "-byte wake-up preamble can stop an always-alive receiver answering\n";
       }
     }
+    // The exchanges with this device use its YAML key (or the hub's). If it answered a roll-call built
+    // with another key, every exchange will fail.
+    const uint8_t *yaml_key = registered->has_system_key ? registered->system_key : keys.hub;
+    if (memcmp(yaml_key, keys.answered, AES_KEY_SIZE) != 0) {
+      line += "    hint: answered under the key with check value " + detail::format_key_check_value(keys.answered) +
+              " but its YAML uses the key with check value " + detail::format_key_check_value(yaml_key) +
+              "; fix its system_key:\n";
+    }
     return line;
   }
 
   const bool low_power = responder.has_extended && power_save == POWER_SAVE_LOW_POWER;
-  const std::string snippet = build_device_yaml_snippet(responder.type, responder.subtype, device_id,
-                                                        responder.metadata_complete, responder.inverted, low_power);
-  if (!snippet.empty())
+  const std::string snippet = build_device_yaml_snippet(
+      responder.type, responder.subtype, device_id, responder.metadata_complete, responder.inverted, low_power,
+      key != nullptr && reveal_key ? detail::format_key_hex(key) : std::string());
+  if (!snippet.empty() && key == nullptr)
     return line + "    Paste this into your YAML to register it:\n" + snippet;
+  if (!snippet.empty() && !reveal_key) {
+    return line +
+           "    Paste this into your YAML to register it, and add this device's system_key: (the key is printed in "
+           "the device log, not here).\n" +
+           snippet;
+  }
+  if (!snippet.empty()) {
+    // The snippet carries the device's own key: the one place this report prints key material, so
+    // it sits inside the same kind of banner the key-extraction and key-pull reports use.
+    return line +
+           "    DEVICE KEY BELOW -- DO NOT SHARE IT. Keep it in secrets.yaml and write `system_key: !secret ...`.\n"
+           "    Paste this into your YAML to register it:\n" +
+           snippet + "    END OF DEVICE KEY BLOCK\n";
+  }
 
   return line + "    not supported yet\n";
 }
 
-/// @brief Outcome of add_scan_responder(), so callers can tell a harmless repeat from real loss.
-enum class ScanAddResult : uint8_t {
-  ADDED,      ///< New responder recorded.
-  DUPLICATE,  ///< Already recorded from an earlier reply; nothing changed.
-  FULL,       ///< Dropped: SCAN_MAX_REPLIES distinct responders already recorded.
-};
+/// @brief The keys one scan sweeps with: slot 0 is the hub key, the rest are the distinct per-device keys.
+using ScanKeys = std::vector<std::array<uint8_t, AES_KEY_SIZE>>;
 
-/// @brief Record a responder unless its address is already present.
-///
-/// Deduplication is by node ID across the whole scan, so a device that answers several of the
-/// six attempts — or twice inside one attempt — still yields one entry. The duplicate check
-/// runs before the capacity check so that repeat replies from already-recorded devices never
-/// look like overflow once the array is full.
-/// @param responders Accumulated array, appended to in place.
-/// @param count In: entries already present. Out: updated count.
-/// @param capacity Maximum entries `responders` can hold.
-/// @param frame Reply frame to decode and store.
-/// @param rssi_dbm RSSI of that reply.
-/// @param entry Out: the newly recorded entry (ADDED), the already-recorded entry with the same
-///        `src` (DUPLICATE), or nullptr (FULL) — lets a caller read back the stored
-///        manufacturer/flags without decoding the frame a second time.
-/// @return Which of the three outcomes occurred.
-static ScanAddResult add_scan_responder(ScanResponder *responders, uint8_t &count, uint8_t capacity,
-                                        const IoFrame &frame, int16_t rssi_dbm, const ScanResponder *&entry) {
-  for (uint8_t i = 0; i < count; i++) {
-    if (memcmp(responders[i].src, frame.src, NODE_ID_SIZE) == 0) {
-      entry = &responders[i];
-      return ScanAddResult::DUPLICATE;
-    }
+/// @brief Collect the keys to sweep: the hub key, then each per-device key that differs from it and
+/// from every key already collected. A per-device key equal to the hub key changes nothing, so it
+/// never earns a sweep of its own.
+static ScanKeys collect_scan_keys(const uint8_t *hub_key, DeviceRegistry &registry) {
+  ScanKeys keys(1);
+  memcpy(keys[0].data(), hub_key, AES_KEY_SIZE);
+  for (auto &entry : registry) {
+    const IoDevice &dev = entry.second;
+    if (!dev.has_system_key)
+      continue;
+    const bool known = std::ranges::any_of(
+        keys, [&dev](const auto &key) { return memcmp(key.data(), dev.system_key, AES_KEY_SIZE) == 0; });
+    if (known)
+      continue;
+    keys.emplace_back();
+    memcpy(keys.back().data(), dev.system_key, AES_KEY_SIZE);
   }
-  if (count >= capacity) {
-    entry = nullptr;
-    return ScanAddResult::FULL;
-  }
-
-  // decode_discovery_response() also produces the hex device-ID string, which is deliberately
-  // discarded here and rebuilt from `src` when the report is formatted. Keeping it would mean a
-  // std::string per entry — more memory than the entire ScanResponder — to save re-deriving six
-  // characters that fit in a small-string buffer. Do not "optimise" this by adding a string member.
-  IoDevice device{};
-  std::string unused_device_id;
-  const DiscoveryResponseInfo info = decode_discovery_response(frame, device, unused_device_id);
-
-  ScanResponder &new_entry = responders[count++];
-  memcpy(new_entry.src, frame.src, NODE_ID_SIZE);
-  new_entry.type = device.type;
-  new_entry.subtype = device.subtype;
-  new_entry.inverted = device.inverted;
-  new_entry.rssi_dbm = rssi_dbm;
-  new_entry.manufacturer = info.manufacturer;
-  new_entry.flags = info.flags;
-  new_entry.has_extended = info.has_extended;
-  new_entry.metadata_complete = info.metadata_complete;
-  entry = &new_entry;
-  return ScanAddResult::ADDED;
+  return keys;
 }
 
-/// @brief Accumulated state for one scan_paired_devices() call, threaded through every attempt.
-struct ScanState {
-  ScanResponder responders[SCAN_MAX_REPLIES];
-  uint8_t count{0};
-  bool truncated{false};
-};
-
-/// @brief How many of ROLL_CALL_PASSES `selection` actually calls.
-static uint8_t count_enabled_passes(ScanPowerClasses selection) {
-  uint8_t count = 0;
-  for (const RollCallPass &pass : ROLL_CALL_PASSES) {
-    if (scan_power_classes_include(selection, pass.power_save_mode))
+/// @brief How many registered devices exchange with `key`: those with it as their own key, or, for the
+/// hub key, those with no key of their own (or one equal to the hub's).
+static size_t count_devices_using_key(DeviceRegistry &registry, const uint8_t *hub_key, const uint8_t *key) {
+  const bool is_hub_key = memcmp(key, hub_key, AES_KEY_SIZE) == 0;
+  size_t count = 0;
+  for (auto &entry : registry) {
+    const IoDevice &dev = entry.second;
+    const uint8_t *device_key = dev.has_system_key ? dev.system_key : hub_key;
+    if (memcmp(device_key, key, AES_KEY_SIZE) == 0 && (is_hub_key || dev.has_system_key))
       count++;
   }
   return count;
 }
 
-/// @brief Per-attempt facts a roll-call reply's DEBUG line needs, kept in one small struct so the
-/// reply lambda's capture list stays a couple of pointers rather than growing one field at a time.
-struct RollCallAttemptContext {
-  const RollCallPass *pass;
-  uint8_t attempt;      ///< Global attempt number (1-based, across all passes).
-  uint32_t tx_freq_hz;  ///< Channel this attempt transmitted the request on.
-};
-
-/// @brief Record one accepted roll-call reply into the scan state, and log it.
-///
-/// Reads back `add_scan_responder()`'s out-parameter rather than decoding the frame a second time
-/// to learn the responder's self-reported power-save class. RSSI in the log line is this reply's
-/// own `info.rssi_dbm`, not the value stored on first sighting, so a later, stronger or weaker
-/// reception of an already-known responder is still visible. Duplicates are logged too — a repeat
-/// still answers "which pass heard this device".
-static void record_roll_call_reply(ScanState &state, const RollCallAttemptContext &ctx, const IoFrame &frame,
-                                   const ExchangeEngine::BroadcastReplyInfo &info) {
-  const ScanResponder *entry = nullptr;
-  if (add_scan_responder(state.responders, state.count, SCAN_MAX_REPLIES, frame, info.rssi_dbm, entry) ==
-      ScanAddResult::FULL) {
-    state.truncated = true;
-  }
-
-  const char *power_save = (entry != nullptr && entry->has_extended)
-                               ? power_save_mode_name(discovery_power_save_mode(entry->flags))
-                               : "unknown";
-  ESP_LOGD(detail::TAG,
-           "Roll-call reply src=%s pass=%s attempt=%u tx=%" PRIu32 " rx=%" PRIu32 " +%" PRIu32
-           "ms rssi=%d power_save=%s",
-           node_id_to_string(frame.src).c_str(), power_save_mode_name(ctx.pass->power_save_mode), ctx.attempt,
-           ctx.tx_freq_hz, info.rx_freq_hz, info.after_tx_ms, info.rssi_dbm, power_save);
-}
-
-/// @brief Outcome of run_roll_call_attempt(), so the sweep loop can surface a build failure the
-/// same way scan_paired_devices() always has.
-enum class RollCallAttemptResult : uint8_t {
-  OK,            ///< Request built and transmitted (with or without replies).
-  BUILD_FAILED,  ///< create_discovery_request() failed; the caller should abort the whole scan.
-};
-
-/// @brief Transmit one roll-call attempt and collect its replies into `state`.
-///
-/// Builds a fresh request every call (create_discovery_request() draws a new random nonce each
-/// time) rather than replaying one frame across attempts, and logs one attempt-summary DEBUG line
-/// after collection closes. The pass determines the frame shape (CTRL1, and therefore preamble via
-/// request_preamble_for()'s rule) and the listen policy; this function does not choose either.
-static RollCallAttemptResult run_roll_call_attempt(ExchangeEngine &engine, const uint8_t *node_id,
-                                                   const uint8_t *system_key, const TuningConfig &tuning,
-                                                   const RollCallPass &pass, uint32_t tx_freq_hz, uint8_t attempt,
-                                                   uint8_t total_attempts, ScanState &state) {
-  IoFrame request;
-  const bool low_power = pass.power_save_mode == POWER_SAVE_LOW_POWER;
-  if (!create_discovery_request(request, node_id, CMD_DISCOVER_SPE_REQ, BROADCAST_DISCOVER, low_power, pass.ack_capable,
-                                /*payload_enabled=*/false, /*payload=*/0, system_key)) {
-    return RollCallAttemptResult::BUILD_FAILED;
-  }
-
-  const uint8_t before = state.count;
-  RollCallAttemptContext ctx{&pass, attempt, tx_freq_hz};
-  const uint8_t heard = engine.collect_broadcast_responses(
-      request, tx_freq_hz, CMD_DISCOVER_SPE_RESP, tuning.pairing_discovery_wait_ms,
-      [&state, &ctx](const IoFrame &frame, const ExchangeEngine::BroadcastReplyInfo &info) {
-        record_roll_call_reply(state, ctx, frame, info);
-      },
-      pass.listen_policy);
-
-  // Diagnostic only (not part of the user-facing report). Reporting heard and new separately is
-  // what makes it useful: "heard 3, 0 new" means devices are answering every attempt (so the
-  // extra channels are redundant here). ctrl1 is read back from the built frame rather than
-  // re-derived from the pass, so this line can never disagree with what was actually transmitted.
-  const uint8_t new_count = state.count - before;
-  ESP_LOGD(detail::TAG,
-           "Roll-call attempt %u/%u (pass=%s, ctrl1=0x%02X, tx %" PRIu32 " Hz, %u ms window): %u repl%s heard, %u new",
-           attempt, total_attempts, power_save_mode_name(pass.power_save_mode), request.ctrl1, tx_freq_hz,
-           tuning.pairing_discovery_wait_ms, heard, heard == 1 ? "y" : "ies", new_count);
-  return RollCallAttemptResult::OK;
-}
-
 /// @brief Build the final report: known/unknown grouping, header, the selection NOTE, and the
 /// truncation NOTE.
-static std::string build_scan_report(const ScanState &state, DeviceRegistry &registry, ScanPowerClasses selection) {
+static std::string build_scan_report(const ScanState &state, DeviceRegistry &registry, ScanPowerClasses selection,
+                                     const ScanKeys &keys, bool reveal_keys) {
   // Grouped into known-first, unknown-second rather than interleaved in arrival order: the two
   // groups need very different follow-up (nothing to do vs. paste a YAML block), so burying an
   // unknown responder between two known ones makes it easy to miss.
@@ -1251,11 +1083,13 @@ static std::string build_scan_report(const ScanState &state, DeviceRegistry &reg
   for (uint8_t i = 0; i < state.count; i++) {
     const std::string device_id = node_id_to_string(state.responders[i].src);
     const IoDevice *registered = registry.get(device_id);
+    const uint8_t slot = state.responders[i].key_slot;
+    const ScanReplyKeys reply_keys{keys[slot].data(), keys[0].data(), slot != 0};
     if (registered != nullptr) {
-      known_body += format_scan_reply_line(state.responders[i], device_id, registered);
+      known_body += format_scan_reply_line(state.responders[i], device_id, registered, reply_keys, reveal_keys);
     } else {
       unknown_count++;
-      unknown_body += format_scan_reply_line(state.responders[i], device_id, nullptr);
+      unknown_body += format_scan_reply_line(state.responders[i], device_id, nullptr, reply_keys, reveal_keys);
     }
   }
 
@@ -1299,31 +1133,34 @@ ManagementActionResult ManagementActions::scan_paired_devices() {
     return result;
   }
 
-  // Outer loop over passes (low-power first, see ROLL_CALL_PASSES), skipping any pass the
-  // scan_power_classes tunable excludes; inner loop over SCAN_CHANNELS. Attempt numbers are
-  // global and 1-based across the passes actually run, matching the "n/N" log line and the
-  // per-reply `attempt=` field. Every attempt always runs, even once the array is full: stopping
-  // early would silently skip channels/passes, which is exactly the single-channel behaviour the
-  // repeated attempts exist to avoid.
+  // One full sweep (run_roll_call_sweep(): every enabled pass on every channel) per distinct key:
+  // the hub key first, then each different per-device key. A device answers only a roll-call built
+  // with the key it holds, so a device that keeps its own key is invisible to the hub-key sweep.
+  // Attempt numbers are global and 1-based across the sweeps actually run, matching the "n/N" log
+  // line and the per-reply `attempt=` field.
   const ScanPowerClasses selection = tuning_->scan_power_classes;
-  const uint8_t total_attempts = count_enabled_passes(selection) * SCAN_CHANNEL_COUNT;
+  const ScanKeys keys = collect_scan_keys(system_key_, registry_);
+  const uint8_t total_attempts = count_enabled_passes(selection) * SCAN_CHANNEL_COUNT * keys.size();
   ScanState state{};
   uint8_t attempt = 0;
-  for (const RollCallPass &pass : ROLL_CALL_PASSES) {
-    if (!scan_power_classes_include(selection, pass.power_save_mode))
-      continue;
-    for (const uint32_t tx_freq_hz : SCAN_CHANNELS) {
-      attempt++;
-      if (run_roll_call_attempt(engine_, node_id_, system_key_, *tuning_, pass, tx_freq_hz, attempt, total_attempts,
-                                state) == RollCallAttemptResult::BUILD_FAILED) {
-        result.message = "failed to build roll-call request";
-        return result;
-      }
+  for (size_t slot = 0; slot < keys.size(); slot++) {
+    const size_t using_key = count_devices_using_key(registry_, system_key_, keys[slot].data());
+    ESP_LOGI(detail::TAG, "Roll-call with key check value %s (%u registered device%s)",
+             detail::format_key_check_value(keys[slot].data()).c_str(), static_cast<unsigned>(using_key),
+             using_key == 1 ? "" : "s");
+    if (run_roll_call_sweep(engine_, node_id_, keys[slot].data(), static_cast<uint8_t>(slot), *tuning_, state, attempt,
+                            total_attempts) == RollCallAttemptResult::BUILD_FAILED) {
+      result.message = "failed to build roll-call request";
+      return result;
     }
   }
 
   result.success = true;
-  result.message = build_scan_report(state, registry_, selection);
+  // Two renderings of one report. The event message goes to Home Assistant, whose recorder stores it, so
+  // it must not carry a device key; the device log gets the version with the key, bannered.
+  result.message = build_scan_report(state, registry_, selection, keys, /*reveal_keys=*/false);
+  if (keys.size() > 1)  // with the hub key alone there is no key to reveal, so one report serves both
+    result.log_message = build_scan_report(state, registry_, selection, keys, /*reveal_keys=*/true);
   return result;
 }
 

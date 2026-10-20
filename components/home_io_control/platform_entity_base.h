@@ -19,11 +19,13 @@
 /// deliberately stays in the entities; only the device-binding plumbing lives here.
 
 #include "hub_core.h"
+#include "proto_frame.h"
 
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
 #include <cinttypes>
+#include <cstring>
 #include <functional>
 #include <string>
 #include <utility>
@@ -61,6 +63,14 @@ class DeviceBoundEntity {
   /// neither. Radio property of the device, shared by all four platforms.
   /// @param low_power True for a battery/solar or otherwise sleeping receiver; default false.
   void set_low_power(bool low_power) { this->low_power_ = low_power; }
+  /// @brief Give this device a system key of its own (`system_key:` in YAML).
+  /// @details Every exchange with the device then uses this key instead of the hub's. The key is
+  /// validated as 32 hex characters at config time, so a parse failure here leaves the device on the
+  /// hub key.
+  /// @param key 32 hex characters.
+  void set_system_key(const std::string &key) {
+    this->has_system_key_ = hex_to_bytes(key, this->system_key_, AES_KEY_SIZE);
+  }
   /// @brief Record that the YAML declared `battery: true`, so the status log line names the battery
   /// level even when the device reports none. Cover-only in practice.
   void set_battery_entities(bool battery_entities) { this->battery_entities_ = battery_entities; }
@@ -84,9 +94,12 @@ class DeviceBoundEntity {
   void register_device_binding_(Component *self, bool inverted,
                                 std::function<void(const std::string &, const IoDevice &)> on_update,
                                 bool schedule_initial_poll = true) {
-    this->parent_->add_device(this->device_id_,
-                              DeviceConfig{this->device_type_, this->subtype_, inverted, this->optimistic_state_,
-                                           this->silent_, this->low_power_, this->battery_entities_});
+    DeviceConfig config{this->device_type_, this->subtype_,         inverted, this->optimistic_state_, this->silent_,
+                        this->low_power_,   this->battery_entities_};
+    config.has_system_key = this->has_system_key_;
+    if (this->has_system_key_)
+      memcpy(config.system_key, this->system_key_, AES_KEY_SIZE);
+    this->parent_->add_device(this->device_id_, config);
     this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
     this->parent_->register_device_callback(std::move(on_update));
     if (!schedule_initial_poll)
@@ -125,6 +138,8 @@ class DeviceBoundEntity {
   bool silent_{false};
   bool low_power_{false};
   bool battery_entities_{false};
+  bool has_system_key_{false};
+  uint8_t system_key_[AES_KEY_SIZE]{};  ///< Key material: never logged.
 };
 
 /// @brief Mixin holding the parent + device-id binding shared by per-device entities that are
