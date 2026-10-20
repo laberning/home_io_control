@@ -35,8 +35,11 @@ ten-bit field.
   reason to send.
 - **Treat any unconfirmed key exchange as a failure.** Rejected: #161 shows a device that holds our
   key while every logged attempt says it failed.
-- **Report the key step as it really ended, check an unconfirmed key before failing, and add an
-  opt-in pull for devices that refuse a pushed key** (chosen).
+- **Switch to the other direction inside one attempt when a push is refused.** Rejected: a refusal
+  repeats deterministically, so the second direction would cost pairing time on a device that the
+  discovery answer already identified.
+- **Report the key step as it really ended, check an unconfirmed key before failing, and choose the
+  direction from the discovery answer, with a pull for devices that refuse a pushed key** (chosen).
 
 ## Decision
 
@@ -56,21 +59,35 @@ ten-bit field.
 - The pairing advisor reports `key_push_not_accepted` when the device answered the push with
   "command unknown" or answered discovery as a remote controller, and `key_refused` (with the code)
   for any other refusal.
-- `pairing_key_transfer: pull` (default `push`) is an experimental alternative to the push. The
-  hub sends a key transfer request (0x38) with six random bytes, and the device answers with a 0x32
-  holding its key under the transfer key. The IV's data is the whole request (`0x38` and the six
+- `pairing_key_transfer: auto | push | pull` (default `auto`) picks the direction. `auto` pulls from
+  a device that answered discovery as a remote controller (node type 1023) and pushes to any other
+  device; `push` and `pull` force it. The hub never switches direction inside one attempt. With `auto`
+  a remote controller therefore never gets the push suggestion, and the advisor's push and pull
+  advice both name the setting that forces the other direction.
+- A pull sends a key transfer request (0x38) with six random bytes, and the device answers with a
+  0x32 holding its key under the transfer key. The IV's data is the whole request (`0x38` and the six
   bytes) and its challenge the same six bytes. The hub then challenges the device (0x3C), and the
   device's answer (0x3D) is a MAC over its own 0x32 with its own key. A host test checks this
   construction against a documented pull exchange, including the 0x3D, and an Atlantic AGILIA IO
   radiator proves it on air (issue #165).
-- A pulled key equal to the hub's own is accepted: no decrypt produces it by chance. A different key
-  must verify the device's 0x3D; only then is it printed, and it is never adopted (outcome
-  `key_received`, advice `pulled_key_received`: put it into `system_key:`, then Scan Paired
-  Devices). An unproven key is not printed. Either way the log gives the key's check value (the
-  first three bytes of the key's AES encryption of a zero block), never the key, so a user can post
-  it and compare two attempts or two devices. The advisor reports `key_pull_not_offered` when the
-  device answers the request with an error, and `key_pull_unproven` when it sends a key it does not
-  prove.
+- A pulled key equal to the hub's own is accepted: no decrypt produces it by chance, and the device is
+  paired as after a push. When the node that answered has no platform of its own, the hub first runs
+  the same roll-call under the hub key and registers the responders with a platform (they use the hub
+  key and carry none of their own); with no responder it keeps the plain paired path. A different key must verify the device's 0x3D. The hub then runs one
+  roll-call sweep under the pulled key (`run_roll_call_sweep()`), because the node that hands a key
+  over is not necessarily the node that holds it as an actuator: the AGILIA's heater is the next
+  address up. Every responder with a platform that the registry does not know yet is registered with the
+  pulled key as its own `system_key` ([ADR 0053](0053-a-device-may-carry-its-own-system-key.md)), so it
+  can be controlled until the YAML is flashed. The outcome is `paired` when at least one device was
+  registered and `key_received` when none was (advice `pulled_key_received`).
+- The device log gets one report for the whole pull, framed by a single DO-NOT-SHARE banner: a
+  paste-ready block per responder with its `system_key:`, "not supported yet" and the key for a type
+  no platform drives, or the key once when nothing answered. The key appears there only. The Last
+  Pairing Result sensor (`node=` stays the node that was discovered), the pairing summary and every
+  Home Assistant event carry the key's check value at most (the first three bytes of the key's AES
+  encryption of a zero block), so a user can post them and compare two attempts or two devices. An
+  unproven key is not printed at all. The advisor reports `key_pull_not_offered` when the device
+  answers the request with an error, and `key_pull_unproven` when it sends a key it does not prove.
 
 ## Consequences
 
@@ -83,7 +100,9 @@ ten-bit field.
   after a refusal.
 - **The pull is proven on one device.** An Atlantic AGILIA IO radiator hands over its key and
   proves it with its 0x3D under the documented construction (issue #165). A Somfy Izymo dimmer
-  answers the request with `COMMAND_UNKNOWN`, so actuators of that kind offer no pull. The
-  documentation marks the tunable experimental until more devices are known.
-- **A pulled foreign key costs the other devices.** A hub has one system key. Adopting a device's
-  key, which the user does by hand, stops every device paired with the old key from answering.
+  answers the request with `COMMAND_UNKNOWN`, so actuators of that kind offer no pull, and `auto`
+  never asks them: only a remote-controller answer pulls.
+- **A pull adds a roll-call to the attempt.** It costs one sweep (about 13 seconds on a default
+  configuration) on top of the pull itself.
+- **A pulled key never replaces the hub's.** A hub keeps one system key for its own installation;
+  a device with a different key carries it as its own, so devices on the old key keep answering.

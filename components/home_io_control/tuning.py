@@ -190,10 +190,12 @@ DISCOVERY_LISTEN_CHANNELS_OPTIONS = {
     "all": DiscoveryListenChannels.ALL,
 }
 
-# Which direction pairing moves the system key in. `push` (default) sends our key; `pull` asks the
+# Which direction pairing moves the system key in. `auto` (default) pulls from a device that answers
+# discovery as a remote controller and pushes to any other; `push` sends our key; `pull` asks the
 # device for its own key. Option strings mirror key_transfer_mode_to_string() (tuning_config.h),
 # pinned against each other by tuning_registry_test.cpp. See KeyTransferMode for the details.
 KEY_TRANSFER_MODE_OPTIONS = {
+    "auto": KeyTransferMode.AUTO,
     "push": KeyTransferMode.PUSH,
     "pull": KeyTransferMode.PULL,
 }

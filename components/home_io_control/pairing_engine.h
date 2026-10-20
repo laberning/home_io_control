@@ -85,7 +85,7 @@ class PairingEngine {
   enum class KeyPullResult : uint8_t {
     FAILED,     ///< No key received, refused, or a different key the device did not prove (not printed).
     OUR_KEY,    ///< The device sent the hub's own key: it is paired with this hub.
-    OTHER_KEY,  ///< The device sent a different key and proved it holds it; reported, not adopted.
+    OTHER_KEY,  ///< The device sent a different key and proved it holds it (`context.pulled_key`).
   };
 
   /// Construct the engine with all required collaborators.
@@ -212,8 +212,8 @@ class PairingEngine {
   /// @return true if the device answered an authenticated request with our key.
   bool verify_device_holds_key_(pairing::PairingContext &context);
 
-  /// @brief Experimental key pull (`pairing_key_transfer: pull`): 0x38 -> device's 0x32 -> our 0x3C
-  /// -> device's 0x3D.
+  /// @brief Key pull (`pairing_key_transfer: pull`, or `auto` for a remote controller): 0x38 ->
+  /// device's 0x32 -> our 0x3C -> device's 0x3D.
   ///
   /// Sends a key transfer request with 6 random bytes, waits for the device's 0x32 and decrypts the
   /// key (recover_key_from_pull()). The log gets one "Key pull check" line with the key's check value,
@@ -221,11 +221,43 @@ class PairingEngine {
   ///
   /// The hub's own key is accepted as is: no decrypt produces it by chance. A different key must be
   /// proven by the device's 0x3D to our challenge (ExchangeEngine::authenticate_request() under that
-  /// key); only then is it printed, and it is never adopted. An unproven key is not printed.
-  /// Hardware-validated on an Atlantic AGILIA IO radiator (issue #165).
+  /// key); only then does it become `context.pulled_key`, for register_pulled_key_devices_(). The hub's
+  /// own key is never replaced. An unproven key is not printed. Hardware-validated on an Atlantic
+  /// AGILIA IO radiator (issue #165).
   /// @param context Pairing context populated by run_discovery_phase_().
   /// @return See KeyPullResult.
   KeyPullResult run_key_pull_phase_(pairing::PairingContext &context);
+
+  /// @brief Which direction this attempt moves the key in.
+  ///
+  /// `pull` and `push` force it; `auto` pulls when the device answered discovery as a remote
+  /// controller (node type 1023) and pushes otherwise. Logs the `auto` decision.
+  /// @param context Pairing context populated by run_discovery_phase_().
+  /// @return true to pull the device's key, false to push the hub's.
+  [[nodiscard]] bool key_pull_selected_(const pairing::PairingContext &context) const;
+
+  /// @brief Roll-call under `key`, log one report, register the responders that can be controlled.
+  ///
+  /// Runs one roll-call sweep (run_roll_call_sweep()) with `key` and registers every responder that has
+  /// a platform and no record yet. With a device key the report is build_pulled_key_report() (device log
+  /// only, one banner, the responders carry the key as their own `system_key`); with the hub key it is
+  /// build_hub_key_pull_report() (no key, no banner, the responders use the hub key).
+  /// @param context Pairing context of the attempt.
+  /// @param key AES_KEY_SIZE bytes the roll-call is built with.
+  /// @param device_key true when `key` is a key the device handed over, false for the hub's own.
+  /// @return How many devices were registered.
+  uint8_t roll_call_and_register_(pairing::PairingContext &context, const uint8_t *key, bool device_key);
+
+  /// @brief Record a pairing that ends with devices found by roll-call: `paired`, `node=` unchanged.
+  void finish_paired_by_roll_call_(pairing::PairingContext &context);
+
+  /// @brief After a proven pull of a different key: roll-call under it, then end the attempt.
+  ///
+  /// At least one registered responder ends the attempt as `paired`; none ends it as `key_received`.
+  /// Zeroes the pulled key afterwards.
+  /// @param context Pairing context holding the pulled key (`has_pulled_key`).
+  /// @return true when the attempt ended as `paired`.
+  bool register_pulled_key_devices_(pairing::PairingContext &context);
 
  private:
   /// Preamble for a directed pairing start frame (0x2C, 0x31, 0x6F) to the device discovery just

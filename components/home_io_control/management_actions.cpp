@@ -939,100 +939,6 @@ void ManagementActions::api_oneway_remove_controller(const std::string &controll
   publish_result(result);
 }
 
-/// @brief The keys a scan line needs: the one a responder answered under, and the hub's.
-struct ScanReplyKeys {
-  const uint8_t *answered;  ///< The key of the sweep the responder answered in (always set).
-  const uint8_t *hub;       ///< The hub key (slot 0).
-  bool per_device;          ///< True when `answered` is a per-device key, not the hub's.
-};
-
-/// @brief Format one roll-call responder's report line(s).
-///
-/// Known responders get a single summary line, plus an indented `hint:` line when their
-/// self-reported power-save class disagrees with the registered device's YAML `low_power`
-/// property (the responder must carry extended metadata for the comparison to be possible at
-/// all). Unknown responders get the same summary line plus a lead-in sentence and a
-/// ready-to-paste YAML block (or, if the decoded type has no ESPHome platform yet, a
-/// "not supported yet" line instead of a blank) — the same "paste this in" framing a successful pairing prints.
-/// A responder found under a per-device key gets that key's check value on its summary line. With
-/// `reveal_key`, an unknown one also gets a snippet that carries the key itself inside a DO-NOT-SHARE
-/// banner; without it the snippet omits the key and says the device log has it. A known responder
-/// that answered under a key other than the one its YAML uses gets a `hint:` line.
-/// @param responder Decoded responder record.
-/// @param device_id Hex device ID string for this responder, rebuilt from `responder.src`.
-/// @param registered The matching registry entry, or nullptr if this responder is not known.
-/// @param keys Which key the responder answered under and what the hub key is.
-/// @param reveal_key True for the log version of the report, false for the published one.
-static std::string format_scan_reply_line(const ScanResponder &responder, const std::string &device_id,
-                                          const IoDevice *registered, const ScanReplyKeys &keys, bool reveal_key) {
-  const uint8_t *key = keys.per_device ? keys.answered : nullptr;
-  const bool known = registered != nullptr;
-  std::string line = "  " + device_id + ": " + format_device_kind(responder.type, responder.subtype) + " (" +
-                     format_device_ids(responder.type, responder.subtype) + ")";
-  if (key != nullptr)
-    line += " key=" + detail::format_key_check_value(key);
-  line += " rssi=" + std::to_string(responder.rssi_dbm) + "dBm";
-  uint8_t power_save = 0;
-  if (responder.has_extended) {
-    uint8_t const att = discovery_att_class(responder.flags);
-    power_save = discovery_power_save_mode(responder.flags);
-    line += std::string(" manufacturer=") + manufacturer_name(responder.manufacturer) +
-            " turnaround=" + att_class_name(att) + " power_save=" + power_save_mode_name(power_save);
-  }
-  line += known ? " [known]\n" : " [unknown]\n";
-
-  if (known) {
-    // Advice only: this never touches the registry or the device's runtime low_power property
-    // (an explicit YAML override stays authoritative). A responder without extended metadata has
-    // nothing to compare, so it gets no hint either way. A power_save value outside the two known
-    // classes (2 or 3) is not evidence of either class, so it gets no hint either — only an exact
-    // match against one of the two known classes triggers advice.
-    if (responder.has_extended) {
-      if (power_save == POWER_SAVE_LOW_POWER && !registered->low_power) {
-        line += "    hint: reports power_save=" + std::string(power_save_mode_name(power_save)) +
-                " but its YAML has no low_power: true; add it or directed commands may miss it while it "
-                "sleeps\n";
-      } else if (power_save == POWER_SAVE_ALWAYS_ALIVE && registered->low_power) {
-        line += "    hint: reports power_save=" + std::string(power_save_mode_name(power_save)) +
-                " but its YAML sets low_power: true; remove it, the " + std::to_string(LONG_PREAMBLE) +
-                "-byte wake-up preamble can stop an always-alive receiver answering\n";
-      }
-    }
-    // The exchanges with this device use its YAML key (or the hub's). If it answered a roll-call built
-    // with another key, every exchange will fail.
-    const uint8_t *yaml_key = registered->has_system_key ? registered->system_key : keys.hub;
-    if (memcmp(yaml_key, keys.answered, AES_KEY_SIZE) != 0) {
-      line += "    hint: answered under the key with check value " + detail::format_key_check_value(keys.answered) +
-              " but its YAML uses the key with check value " + detail::format_key_check_value(yaml_key) +
-              "; fix its system_key:\n";
-    }
-    return line;
-  }
-
-  const bool low_power = responder.has_extended && power_save == POWER_SAVE_LOW_POWER;
-  const std::string snippet = build_device_yaml_snippet(
-      responder.type, responder.subtype, device_id, responder.metadata_complete, responder.inverted, low_power,
-      key != nullptr && reveal_key ? detail::format_key_hex(key) : std::string());
-  if (!snippet.empty() && key == nullptr)
-    return line + "    Paste this into your YAML to register it:\n" + snippet;
-  if (!snippet.empty() && !reveal_key) {
-    return line +
-           "    Paste this into your YAML to register it, and add this device's system_key: (the key is printed in "
-           "the device log, not here).\n" +
-           snippet;
-  }
-  if (!snippet.empty()) {
-    // The snippet carries the device's own key: the one place this report prints key material, so
-    // it sits inside the same kind of banner the key-extraction and key-pull reports use.
-    return line +
-           "    DEVICE KEY BELOW -- DO NOT SHARE IT. Keep it in secrets.yaml and write `system_key: !secret ...`.\n"
-           "    Paste this into your YAML to register it:\n" +
-           snippet + "    END OF DEVICE KEY BLOCK\n";
-  }
-
-  return line + "    not supported yet\n";
-}
-
 /// @brief The keys one scan sweeps with: slot 0 is the hub key, the rest are the distinct per-device keys.
 using ScanKeys = std::vector<std::array<uint8_t, AES_KEY_SIZE>>;
 
@@ -1084,12 +990,13 @@ static std::string build_scan_report(const ScanState &state, DeviceRegistry &reg
     const std::string device_id = node_id_to_string(state.responders[i].src);
     const IoDevice *registered = registry.get(device_id);
     const uint8_t slot = state.responders[i].key_slot;
-    const ScanReplyKeys reply_keys{keys[slot].data(), keys[0].data(), slot != 0};
+    const RollCallReplyKeys reply_keys{keys[slot].data(), keys[0].data(), slot != 0};
+    const RollCallKeyDisplay display = reveal_keys ? RollCallKeyDisplay::BANNERED : RollCallKeyDisplay::HIDDEN;
     if (registered != nullptr) {
-      known_body += format_scan_reply_line(state.responders[i], device_id, registered, reply_keys, reveal_keys);
+      known_body += format_roll_call_responder(state.responders[i], device_id, registered, reply_keys, display);
     } else {
       unknown_count++;
-      unknown_body += format_scan_reply_line(state.responders[i], device_id, nullptr, reply_keys, reveal_keys);
+      unknown_body += format_roll_call_responder(state.responders[i], device_id, nullptr, reply_keys, display);
     }
   }
 

@@ -145,7 +145,7 @@ TEST(TuningRegistry, EverySelectOptionRoundTrips) {
       {"scan_power_classes", {"both", "always_alive", "low_power"}},
       {"pairing_discover_confirm", {"skip", "send", "send_with_ack"}},
       {"pairing_discovery_listen_channels", {"skip_request", "all"}},
-      {"pairing_key_transfer", {"push", "pull"}},
+      {"pairing_key_transfer", {"auto", "push", "pull"}},
   };
 
   const std::set<std::string> bandwidth_params = {"sx1262_rx_bandwidth", "sx1276_rx_bandwidth", "lr1121_rx_bandwidth"};

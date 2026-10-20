@@ -60,6 +60,7 @@ enum class PairingState : uint8_t {
   TX_KEY_PULL,             ///< Key transfer request (0x38) sent: `pairing_key_transfer: pull`.
   WAIT_KEY_PULL_REPLY,     ///< Waiting for the device's key transfer (0x32) in answer to our 0x38.
   VERIFY_PULLED_KEY,       ///< Challenging the device to prove it holds the key it sent.
+  SCAN_PULLED_KEY,         ///< Roll-call under the pulled key: finding the devices that hold it.
   REGISTER_DEVICE,         ///< Registering device in the runtime registry for the current boot.
   COMPLETE,                ///< Pairing completed successfully; device ready for use.
   FAILED,                  ///< Pairing failed (timeout, radio error, or protocol violation).
@@ -80,6 +81,8 @@ struct PairingContext {
   bool saw_key_challenge{false};            ///< True once the device challenged our key-init this attempt.
   bool key_refused{false};                  ///< True once the device answered the key step with CMD_ERROR_RESP.
   uint8_t key_refusal_code{0};              ///< That CMD_ERROR_RESP byte; only meaningful if key_refused.
+  bool has_pulled_key{false};               ///< True once a pull produced a different key the device proved.
+  uint8_t pulled_key[AES_KEY_SIZE]{};       ///< That key. Key material: never logged outside the pull report.
 };
 
 /// @brief What PairingEngine::run_discover_confirm_step_() actually observed.
@@ -127,6 +130,8 @@ inline const char *pairing_stage_name(pairing::PairingState state) {
       return "wait_key_pull_reply";
     case pairing::PairingState::VERIFY_PULLED_KEY:
       return "verify_pulled_key";
+    case pairing::PairingState::SCAN_PULLED_KEY:
+      return "scan_pulled_key";
     case pairing::PairingState::REGISTER_DEVICE:
       return "register_device";
     case pairing::PairingState::COMPLETE:

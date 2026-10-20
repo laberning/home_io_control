@@ -8,6 +8,7 @@
 /// roll-call under this key?". This module is that question, with the key passed in explicitly:
 /// the frame shapes, the channels, the reply decoding and the de-duplication live here once.
 
+#include "device_registry.h"
 #include "exchange_engine.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
@@ -179,6 +180,74 @@ ScanAddResult add_scan_responder(ScanResponder *responders, uint8_t &count, uint
 RollCallAttemptResult run_roll_call_sweep(ExchangeEngine &engine, const uint8_t *node_id, const uint8_t *key,
                                           uint8_t key_slot, const TuningConfig &tuning, ScanState &state,
                                           uint8_t &attempt, uint8_t total_attempts);
+
+/// @brief The keys a responder line needs: the one a responder answered under, and the hub's.
+struct RollCallReplyKeys {
+  const uint8_t *answered;  ///< The key of the sweep the responder answered in (always set).
+  const uint8_t *hub;       ///< The hub key (slot 0).
+  bool per_device;          ///< True when `answered` is a per-device key, not the hub's.
+};
+
+/// @brief How a responder line shows the key it answered under.
+enum class RollCallKeyDisplay : uint8_t {
+  HIDDEN,    ///< Never print the key: its check value only. For anything Home Assistant records.
+  BANNERED,  ///< Print the key in a snippet, wrapped in the line's own DO-NOT-SHARE block.
+  PLAIN,     ///< Print the key in a snippet with no framing: the caller's report supplies one banner.
+};
+
+/// @brief Format one roll-call responder's report line(s).
+///
+/// Known responders get a single summary line, plus an indented `hint:` line when their
+/// self-reported power-save class disagrees with the registered device's YAML `low_power`
+/// property (the responder must carry extended metadata for the comparison to be possible at
+/// all), or when they answered under a key other than the one their YAML uses. Unknown responders
+/// get the same summary line plus a lead-in sentence and a ready-to-paste YAML block (or, if the
+/// decoded type has no ESPHome platform yet, a "not supported yet" line instead of a blank) — the
+/// same "paste this in" framing a successful pairing prints. A responder found under a per-device
+/// key gets that key's check value on its summary line; `display` decides whether its snippet
+/// carries the key itself.
+/// @param responder Decoded responder record.
+/// @param device_id Hex device ID string for this responder, rebuilt from `responder.src`.
+/// @param registered The matching registry entry, or nullptr if this responder is not known.
+/// @param keys Which key the responder answered under and what the hub key is.
+/// @param display Whether and how the key is printed.
+/// @return The report text, ending in a newline.
+std::string format_roll_call_responder(const ScanResponder &responder, const std::string &device_id,
+                                       const IoDevice *registered, const RollCallReplyKeys &keys,
+                                       RollCallKeyDisplay display);
+
+/// @brief What build_pulled_key_report() says about the device that handed over a key.
+struct PulledKeyReportInfo {
+  std::string pairing_device_id;  ///< Hex node ID of the device that sent the key.
+  DeviceType type;                ///< Its node type from discovery.
+  uint8_t subtype;                ///< Its subtype from discovery.
+  const uint8_t *key;             ///< The pulled key (AES_KEY_SIZE bytes) it proved it holds.
+  const uint8_t *hub_key;         ///< The hub's own key.
+};
+
+/// @brief Build the report for a pull that returned the hub's own key from a node no platform drives.
+///
+/// The roll-call under the hub key found the devices that hold it. Their blocks need no key and no
+/// banner, so they read like a scan's unknown responders.
+/// @param info The device that sent the key.
+/// @param state The roll-call result under the hub key.
+/// @param registry Device registry before any registration: a responder already in it is known.
+/// @return The report, or an empty string when nothing answered.
+std::string build_hub_key_pull_report(const PulledKeyReportInfo &info, const ScanState &state,
+                                      DeviceRegistry &registry);
+
+/// @brief Build the one report a proven key pull prints after the roll-call under the pulled key.
+///
+/// One DO-NOT-SHARE banner frames the whole report (device log only; it carries the key). Each
+/// responder gets its summary line and a paste-ready block with `system_key:` added
+/// (RollCallKeyDisplay::PLAIN); a responder of a type no platform drives yet gets the "not supported
+/// yet" line and its key. With no responder, the report gives the key once for the pairing node
+/// itself. Nothing here registers a device.
+/// @param info The device that sent the key.
+/// @param state The roll-call result under that key.
+/// @param registry Device registry as it stands before any registration: a responder already in it
+///        is reported as known.
+std::string build_pulled_key_report(const PulledKeyReportInfo &info, const ScanState &state, DeviceRegistry &registry);
 
 }  // namespace home_io_control
 }  // namespace esphome

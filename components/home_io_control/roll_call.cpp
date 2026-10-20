@@ -5,6 +5,8 @@
 #include "roll_call.h"
 
 #include "log_helpers.h"
+#include "proto_constants.h"
+#include "proto_device_model.h"
 
 #include <cstring>
 #include <string>
@@ -149,6 +151,144 @@ RollCallAttemptResult run_roll_call_sweep(ExchangeEngine &engine, const uint8_t 
     }
   }
   return RollCallAttemptResult::OK;
+}
+
+namespace {
+
+/// The `hint:` lines for a responder the registry knows: a power-save class that disagrees with its
+/// YAML `low_power`, and an answer under another key than its YAML uses.
+///
+/// Advice only: this never touches the registry or the device's runtime low_power property (an
+/// explicit YAML override stays authoritative). A responder without extended metadata has nothing to
+/// compare, so it gets no power-save hint either way. A power_save value outside the two known classes
+/// (2 or 3) is not evidence of either class, so it gets none either: only an exact match against one
+/// of the two known classes triggers advice.
+std::string known_responder_hints(const ScanResponder &responder, const IoDevice &registered,
+                                  const RollCallReplyKeys &keys, uint8_t power_save) {
+  std::string hints;
+  if (responder.has_extended) {
+    if (power_save == POWER_SAVE_LOW_POWER && !registered.low_power) {
+      hints += "    hint: reports power_save=" + std::string(power_save_mode_name(power_save)) +
+               " but its YAML has no low_power: true; add it or directed commands may miss it while it "
+               "sleeps\n";
+    } else if (power_save == POWER_SAVE_ALWAYS_ALIVE && registered.low_power) {
+      hints += "    hint: reports power_save=" + std::string(power_save_mode_name(power_save)) +
+               " but its YAML sets low_power: true; remove it, the " + std::to_string(LONG_PREAMBLE) +
+               "-byte wake-up preamble can stop an always-alive receiver answering\n";
+    }
+  }
+  // The exchanges with this device use its YAML key (or the hub's). If it answered a roll-call built
+  // with another key, every exchange will fail.
+  const uint8_t *yaml_key = registered.has_system_key ? registered.system_key : keys.hub;
+  if (memcmp(yaml_key, keys.answered, AES_KEY_SIZE) != 0) {
+    hints += "    hint: answered under the key with check value " + detail::format_key_check_value(keys.answered) +
+             " but its YAML uses the key with check value " + detail::format_key_check_value(yaml_key) +
+             "; fix its system_key:\n";
+  }
+  return hints;
+}
+
+/// The paste-ready part of an unknown responder's entry, or the "not supported yet" line.
+/// @param key The per-device key it answered under, or nullptr for the hub key.
+std::string unknown_responder_block(const ScanResponder &responder, const std::string &device_id, const uint8_t *key,
+                                    RollCallKeyDisplay display, bool low_power) {
+  const bool with_key = key != nullptr && display != RollCallKeyDisplay::HIDDEN;
+  const std::string snippet =
+      build_device_yaml_snippet(responder.type, responder.subtype, device_id, responder.metadata_complete,
+                                responder.inverted, low_power, with_key ? detail::format_key_hex(key) : std::string());
+  if (snippet.empty()) {
+    if (key != nullptr && display == RollCallKeyDisplay::PLAIN) {
+      return "    not supported yet. Its system_key, for when support lands: \"" + detail::format_key_hex(key) + "\"\n";
+    }
+    return "    not supported yet\n";
+  }
+  if (key == nullptr || display == RollCallKeyDisplay::PLAIN)
+    return "    Paste this into your YAML to register it:\n" + snippet;
+  if (display == RollCallKeyDisplay::HIDDEN) {
+    return "    Paste this into your YAML to register it, and add this device's system_key: (the key is printed in "
+           "the device log, not here).\n" +
+           snippet;
+  }
+  // The snippet carries the device's own key: the one place this report prints key material, so it sits
+  // inside the same kind of banner the key-extraction and key-pull reports use.
+  return "    DEVICE KEY BELOW -- DO NOT SHARE IT. Keep it in secrets.yaml and write `system_key: !secret ...`.\n"
+         "    Paste this into your YAML to register it:\n" +
+         snippet + "    END OF DEVICE KEY BLOCK\n";
+}
+
+}  // namespace
+
+std::string format_roll_call_responder(const ScanResponder &responder, const std::string &device_id,
+                                       const IoDevice *registered, const RollCallReplyKeys &keys,
+                                       RollCallKeyDisplay display) {
+  const uint8_t *key = keys.per_device ? keys.answered : nullptr;
+  std::string line = "  " + device_id + ": " + format_device_kind(responder.type, responder.subtype) + " (" +
+                     format_device_ids(responder.type, responder.subtype) + ")";
+  if (key != nullptr)
+    line += " key=" + detail::format_key_check_value(key);
+  line += " rssi=" + std::to_string(responder.rssi_dbm) + "dBm";
+  uint8_t power_save = 0;
+  if (responder.has_extended) {
+    uint8_t const att = discovery_att_class(responder.flags);
+    power_save = discovery_power_save_mode(responder.flags);
+    line += std::string(" manufacturer=") + manufacturer_name(responder.manufacturer) +
+            " turnaround=" + att_class_name(att) + " power_save=" + power_save_mode_name(power_save);
+  }
+  line += registered != nullptr ? " [known]\n" : " [unknown]\n";
+
+  if (registered != nullptr)
+    return line + known_responder_hints(responder, *registered, keys, power_save);
+  const bool low_power = responder.has_extended && power_save == POWER_SAVE_LOW_POWER;
+  return line + unknown_responder_block(responder, device_id, key, display, low_power);
+}
+
+std::string build_hub_key_pull_report(const PulledKeyReportInfo &info, const ScanState &state,
+                                      DeviceRegistry &registry) {
+  if (state.count == 0)
+    return "";
+  std::string report = "Device " + info.pairing_device_id + " (" + format_device_kind(info.type, info.subtype) + ", " +
+                       format_device_ids(info.type, info.subtype) +
+                       ") answered the key pull with this hub's own key. A roll-call under it found " +
+                       std::to_string(state.count) + " device" + (state.count == 1 ? "" : "s") + " that hold it:\n";
+  const RollCallReplyKeys keys{info.hub_key, info.hub_key, false};
+  for (uint8_t i = 0; i < state.count; i++) {
+    const std::string device_id = node_id_to_string(state.responders[i].src);
+    report += format_roll_call_responder(state.responders[i], device_id, registry.get(device_id), keys,
+                                         RollCallKeyDisplay::HIDDEN);
+  }
+  if (state.truncated)
+    report += "NOTE: more devices answered than the list holds; it is truncated.\n";
+  return report;
+}
+
+std::string build_pulled_key_report(const PulledKeyReportInfo &info, const ScanState &state, DeviceRegistry &registry) {
+  const std::string key_hex = detail::format_key_hex(info.key);
+  std::string report = "DEVICE KEY RECEIVED -- DO NOT SHARE IT\n";
+  report += "Device " + info.pairing_device_id + " (" + format_device_kind(info.type, info.subtype) + ", " +
+            format_device_ids(info.type, info.subtype) +
+            ") holds a different system key than this hub (key check value " +
+            detail::format_key_check_value(info.key) + ") and proved it holds it.\n";
+  report += "Anyone with this key can control every device that holds it. Keep it in secrets.yaml and write\n"
+            "`system_key: !secret ...` in the entity of each device.\n";
+  if (state.count == 0) {
+    report += "A roll-call under that key found no device. Put this key into the system_key: of the entity that\n"
+              "controls the device:\n"
+              "    system_key: \"" +
+              key_hex + "\"\n";
+  } else {
+    report += "A roll-call under that key found " + std::to_string(state.count) + " device" +
+              (state.count == 1 ? "" : "s") + " that hold it. Paste a block per device:\n";
+    const RollCallReplyKeys keys{info.key, info.hub_key, true};
+    for (uint8_t i = 0; i < state.count; i++) {
+      const std::string device_id = node_id_to_string(state.responders[i].src);
+      report += format_roll_call_responder(state.responders[i], device_id, registry.get(device_id), keys,
+                                           RollCallKeyDisplay::PLAIN);
+    }
+    if (state.truncated)
+      report += "NOTE: more devices answered than the list holds; it is truncated.\n";
+  }
+  report += "END OF DEVICE KEY REPORT";
+  return report;
 }
 
 }  // namespace home_io_control

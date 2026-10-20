@@ -134,16 +134,23 @@ enum class DiscoveryListenChannels : uint8_t {
 
 /// @brief Which direction PairingEngine moves the system key in after discovery.
 ///
+/// `auto` (the default) picks the direction from the device's discovery answer: a device that answers
+/// as a remote controller (node type 1023) is pulled, any other device is pushed. There is no switch to the
+/// other direction inside one attempt: a refusal repeats, and a retry costs pairing time. `push` and
+/// `pull` force the direction.
+///
 /// `push` is the usual pairing: we send our key to the device (0x31 key init, the device's 0x3C,
 /// our 0x32, its 0x33). `pull` asks the device for its own key instead: we send a 0x38 key-transfer
 /// request with six random bytes, the device answers with a 0x32 holding its key, and we challenge
 /// it (0x3C) to prove it holds that key before trusting it. An Atlantic AGILIA IO radiator in its
 /// display's pairing mode answers a pushed key with RESULT_COMMAND_UNKNOWN (tests/corpus/captures/
-/// pairing/atlantic_agilia_pairing_key_transfer_command_unknown.yaml); `pull` is the experiment for
-/// such a device. Pull is not hardware-validated: see PairingEngine::run_key_pull_phase_().
+/// pairing/atlantic_agilia_pairing_key_transfer_command_unknown.yaml); `auto` pulls such a device. A
+/// pulled key is carried by the devices that answer a roll-call under it, never adopted as the hub's:
+/// see PairingEngine::run_key_pull_phase_() and register_pulled_key_devices_().
 enum class KeyTransferMode : uint8_t {
-  PUSH,  ///< Default. Send our system key to the device.
-  PULL,  ///< Experimental. Ask the device for its key; adopt nothing automatically.
+  AUTO,  ///< Default. Pull from a device that answered discovery as a remote controller, push to any other.
+  PUSH,  ///< Send our system key to the device.
+  PULL,  ///< Ask the device for its key, then run a roll-call under it to find the devices that hold it.
 };
 
 /// @brief Discovery request command codes.
@@ -332,7 +339,7 @@ struct TuningConfig {
       DiscoverConfirmMode::SEND};  ///< Whether/how to send CMD_DISCOVER_CONFIRM (0x2C) during pairing.
   DiscoveryListenChannels pairing_discovery_listen_channels{
       DiscoveryListenChannels::SKIP_REQUEST};                   ///< Channels the discovery response wait covers.
-  KeyTransferMode pairing_key_transfer{KeyTransferMode::PUSH};  ///< Push our key, or pull the device's key.
+  KeyTransferMode pairing_key_transfer{KeyTransferMode::AUTO};  ///< Push our key, or pull the device's key.
   uint16_t pairing_key_init_delay_ms{
       PAIRING_KEY_INIT_DELAY_MS};  ///< Pause after the discover-confirm step, before CMD_KEY_INIT (0x31).
 

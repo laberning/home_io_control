@@ -17,6 +17,7 @@
 #include "proto_commands.h"
 #include "proto_crypto.h"
 #include "proto_device_types.h"
+#include "roll_call.h"
 #include "tuning_config.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
@@ -60,23 +61,6 @@ void delay_feeding_wdt(uint32_t ms) {
     delay(chunk);
     ms -= chunk;
   }
-}
-
-/// Log the device's key after a pull returned a different key that the device proved it holds.
-void log_pulled_key_report(const std::string &device_id, const uint8_t key[AES_KEY_SIZE]) {
-  // Deliberate exception to redaction.h's masking, the same as the key-extraction report: printing
-  // the key is the point of this step. Only a proven key gets here. Logged line by line so no single
-  // line hits the 512-byte cap.
-  std::string report = "DEVICE KEY RECEIVED -- DO NOT SHARE IT\n";
-  report += "Device " + device_id + " holds a different system key than this hub, and proved it holds it.\n";
-  report += "To control the device, set this key in the hub's YAML. Devices paired with the hub's\n"
-            "current key stop answering, because a hub has one system key.\n"
-            "home_io_control:\n"
-            "  system_key: \"" +
-            detail::format_key_hex(key) + "\"";
-  ESP_LOGW(TAG, "========================================");
-  detail::log_multiline_result(TAG, /*is_warning=*/true, /*prefix=*/"", report);
-  ESP_LOGW(TAG, "========================================");
 }
 
 }  // namespace
@@ -731,13 +715,20 @@ bool PairingEngine::discover_and_pair() {
   // so a retry of that loop never repeats it. Never fails the attempt — see the function's doc.
   this->run_discover_confirm_step_(context);
 
-  // Phase 2: move the key, in the direction `pairing_key_transfer` selects.
-  if (tuning_->pairing_key_transfer == KeyTransferMode::PULL) {
+  // Phase 2: move the key, in the direction `pairing_key_transfer` selects (auto: the discovery
+  // answer decides).
+  if (key_pull_selected_(context)) {
     this->telemetry_.set_key_pull_attempted();
     const KeyPullResult pulled = run_key_pull_phase_(context);
-    if (pulled == KeyPullResult::OTHER_KEY) {
-      this->finish_pairing_attempt_(PairingOutcome::KEY_RECEIVED);
-      return false;
+    if (pulled == KeyPullResult::OTHER_KEY)
+      return this->register_pulled_key_devices_(context);
+    // The device shares the hub's key. If it is a node with no platform of its own (an AGILIA's remote
+    // controller node), the devices that hold that key are elsewhere: roll-call for them, as after a
+    // foreign key, and register the ones found with the hub key.
+    if (pulled == KeyPullResult::OUR_KEY && !device_has_platform(context.device.type, context.device.subtype) &&
+        this->roll_call_and_register_(context, system_key_, /*device_key=*/false) > 0) {
+      this->finish_paired_by_roll_call_(context);
+      return true;
     }
     if (pulled == KeyPullResult::FAILED) {
       this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
@@ -913,9 +904,104 @@ bool PairingEngine::wait_for_pulled_key_(pairing::PairingContext &context) {
   return outcome == ListenOutcome::ACCEPTED;
 }
 
+bool PairingEngine::key_pull_selected_(const pairing::PairingContext &context) const {
+  switch (tuning_->pairing_key_transfer) {
+    case KeyTransferMode::PULL:
+      return true;
+    case KeyTransferMode::PUSH:
+      return false;
+    case KeyTransferMode::AUTO:
+      break;
+  }
+  // A device that answers discovery as a remote controller (node type 1023) hands out its own key and
+  // refuses a pushed one; every other device takes a push. No switch to the other direction inside the
+  // attempt: a refusal repeats deterministically, and a retry only costs pairing time.
+  const bool pull = context.device.type == DeviceType::REMOTE_CONTROLLER;
+  ESP_LOGI(TAG, "Key transfer: auto -> %s (%s answered discovery as %s)", pull ? "pull" : "push",
+           context.device_id.c_str(), format_device_kind(context.device.type, context.device.subtype).c_str());
+  return pull;
+}
+
+uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context, const uint8_t *key, bool device_key) {
+  // Every device that holds the key answers a roll-call built with it. For an Atlantic AGILIA radiator
+  // that is the heater at the next address up, not the node that handed the key over.
+  context.state = pairing::PairingState::SCAN_PULLED_KEY;
+  engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
+  ScanState state{};
+  uint8_t attempt = 0;
+  const uint8_t total_attempts = count_enabled_passes(tuning_->scan_power_classes) * SCAN_CHANNEL_COUNT;
+  ESP_LOGI(TAG, "Roll-call with key check value %s (%s %s handed over)", detail::format_key_check_value(key).c_str(),
+           device_key ? "the key" : "the hub key, which", context.device_id.c_str());
+  if (run_roll_call_sweep(engine_, node_id_, key, /*key_slot=*/device_key ? 1 : 0, *tuning_, state, attempt,
+                          total_attempts) == RollCallAttemptResult::BUILD_FAILED) {
+    ESP_LOGW(TAG, "Could not build the roll-call under the pulled key");
+  }
+
+  // One report for the device log only: with a device key it carries the key, so the pairing summary, the
+  // Last Pairing Result sensor and every Home Assistant event keep to the key check value. A hub-key report
+  // carries no key and has no banner.
+  const PulledKeyReportInfo info{context.device_id, context.device.type, context.device.subtype, key, system_key_};
+  if (device_key) {
+    ESP_LOGW(TAG, "========================================");
+    detail::log_multiline_result(TAG, /*is_warning=*/true, /*prefix=*/"",
+                                 build_pulled_key_report(info, state, registry_));
+    ESP_LOGW(TAG, "========================================");
+  } else if (state.count != 0) {
+    detail::log_multiline_result(TAG, /*is_warning=*/false, /*prefix=*/"",
+                                 build_hub_key_pull_report(info, state, registry_));
+  }
+
+  // Register each device the report offers a block for, so it can be controlled until the YAML is
+  // flashed: with the key it answered under when that is a device key, with the hub key otherwise. A
+  // device the registry already knows keeps its record; one of a type no platform drives yet is reported
+  // but not registered.
+  uint8_t registered = 0;
+  for (uint8_t i = 0; i < state.count; i++) {
+    const ScanResponder &responder = state.responders[i];
+    const std::string responder_id = node_id_to_string(responder.src);
+    if (registry_.get(responder_id) != nullptr || !device_has_platform(responder.type, responder.subtype))
+      continue;
+    IoDevice device{};
+    memcpy(device.node_id, responder.src, NODE_ID_SIZE);
+    device.type = responder.type;
+    device.subtype = responder.subtype;
+    device.inverted = responder.inverted;
+    device.low_power = responder.has_extended && discovery_power_save_mode(responder.flags) == POWER_SAVE_LOW_POWER;
+    device.has_system_key = device_key;
+    if (device_key)
+      memcpy(device.system_key, key, AES_KEY_SIZE);
+    device.last_seen_ms = millis();
+    registry_.put(responder_id, device);
+    registered++;
+  }
+  return registered;
+}
+
+void PairingEngine::finish_paired_by_roll_call_(pairing::PairingContext &context) {
+  // `node=` in the frozen result string stays the node that was discovered; the responders appear in
+  // the log report only.
+  this->telemetry_.set_paired_device(context.device.node_id, context.device.type);
+  context.state = pairing::PairingState::COMPLETE;
+  engine_.record_debug(pairing_stage_name(context.state), 1, true);
+  this->telemetry_.set_phase(context.state);
+  this->finish_pairing_attempt_(PairingOutcome::PAIRED);
+}
+
+bool PairingEngine::register_pulled_key_devices_(pairing::PairingContext &context) {
+  const uint8_t registered = this->roll_call_and_register_(context, context.pulled_key, /*device_key=*/true);
+  memset(context.pulled_key, 0, AES_KEY_SIZE);
+  context.has_pulled_key = false;
+  if (registered == 0) {
+    this->finish_pairing_attempt_(PairingOutcome::KEY_RECEIVED);
+    return false;
+  }
+  this->finish_paired_by_roll_call_(context);
+  return true;
+}
+
 PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::PairingContext &context) {
-  ESP_LOGW(TAG, "Key pull (pairing_key_transfer: pull, experimental): asking %s for its key",
-           context.device_id.c_str());
+  ESP_LOGW(TAG, "Key pull: asking %s for its key", context.device_id.c_str());
   uint8_t challenge[HMAC_SIZE];
   bool got_key = false;
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT && !got_key && !context.key_refused; tries++) {
@@ -964,7 +1050,8 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   if (engine_.authenticate_request(context.rx, FREQ_CH2, key)) {
     ESP_LOGI(TAG, "Key pull check: %s -> key check value %s, proven by its 0x3D", context.device_id.c_str(),
              check_value.c_str());
-    log_pulled_key_report(context.device_id, key);
+    memcpy(context.pulled_key, key, AES_KEY_SIZE);
+    context.has_pulled_key = true;
     return KeyPullResult::OTHER_KEY;
   }
   this->telemetry_.set_key_pull_unproven();
