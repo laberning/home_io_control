@@ -14,7 +14,7 @@ optional one-tap button.
 | [`force_open_device`](#force_open_device) ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. | No — the outcome is asynchronous |
 | [`scan_paired_devices`](../pairing.md) | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. Also reachable as a one-tap button via `scan_paired_devices_button: true`. | No — nothing here is read back either |
 | [`oneway_set_position`](oneway-transmit.md) | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. | No — 1W has no reply at all |
-| [`heating_control`](climate.md) ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. | No — `set_*` are write-only; the `power_on` / `midnight_sync` reads are logged, not decoded |
+| [`heating_control`](climate.md) ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. | No — an acknowledged write is not a readback; `window_open` reports the sensor in the `message`, the `power_on` / `midnight_sync` reads are logged |
 
 Two more actions, `probe_device` and `probe_sweep`, exist behind a separate opt-in
 (`diagnostic_probes: true`) for sending opcodes this project hasn't fully decoded yet — see

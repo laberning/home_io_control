@@ -344,21 +344,21 @@ class ManagementActions {
   /// @brief Send one 2W heating/climate function (CMD_WRITE_PRIVATE 0x20) to a registered climate
   /// device.
   ///
-  /// A real user feature, but an unvalidated one — the protocol is derived from the iohomecontrol
-  /// project's Cozytouch support and has never been exercised against real Atlantic/Thermor/Sauter
-  /// hardware (see docs/configuration/climate.md's experimental banner). It is NOT diagnostic-gated;
-  /// the guard is documentation, not `diagnostic_probes:`.
+  /// A real user feature, but an unvalidated one — the register protocol has never been exercised
+  /// against real Atlantic/Thermor/Sauter hardware (see docs/configuration/climate.md's experimental
+  /// banner). It is NOT diagnostic-gated; the guard is documentation, not `diagnostic_probes:`.
   ///
   /// `function` is one of `power_on` / `set_temperature` / `set_mode` / `set_presence` /
-  /// `set_window` / `midnight_sync`. `value` is parsed per function: a float in degrees Celsius
-  /// (7.0-28.0) for `set_temperature`, `auto|manual|prog|off` for `set_mode`, `on|off` for
-  /// `set_presence`, `open|close` for `set_window`, ignored for the other two. A malformed value
-  /// is reported, never coerced.
+  /// `set_open_window_detection` / `midnight_sync` / `window_open`. `value` is parsed per function:
+  /// a float in degrees Celsius (7.0-28.0) for `set_temperature`, `auto|manual|prog|off` for
+  /// `set_mode`, `on|off` for `set_presence` and `set_open_window_detection`, ignored for the
+  /// register reads. A malformed value is reported, never coerced.
   ///
-  /// Delegates to IOHomeControlComponent::send_heating_command() so the entity and the action
-  /// share exactly one transmit path (see that method). `verified` is always false: the `set_*`
-  /// functions are write-only — nothing decodes what the radiator did into an entity. (`power_on`
-  /// and `midnight_sync` are register reads; their ACK payload is logged at DEBUG but not decoded.)
+  /// Delegates to IOHomeControlComponent::send_heating_command() (and, for `window_open`,
+  /// read_heating_register()) so the entity and the action share one transmit path. `verified` is
+  /// always false: an acknowledged write is not the device showing the new value. `window_open`
+  /// reports the heater's window sensor in the result message; `power_on` and `midnight_sync` log
+  /// their ACK payload at DEBUG.
   /// @param device_id Target device ID (hex string, case-insensitive).
   /// @param function Heating function name (see above).
   /// @param value Function-specific value string (see above).

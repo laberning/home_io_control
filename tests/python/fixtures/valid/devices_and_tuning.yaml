@@ -40,5 +40,6 @@ climate:
     io_device_id: "4D5E6F"
     io_device_type: electrical_heater
     io_subtype: 1
+    status_poll_interval: 60s
     # A device that keeps a key of its own (ADR 0053); any device-bound platform takes it.
     system_key: "FEDCBA9876543210FEDCBA9876543210"

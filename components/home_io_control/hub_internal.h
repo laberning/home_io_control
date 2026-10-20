@@ -63,7 +63,10 @@ inline bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabil
 /// @param dev IoDevice to check.
 /// @return true if device type supports status requests or is UNKNOWN.
 inline bool known_device_supports_status_requests(const IoDevice &dev) {
-  return dev.type == DeviceType::UNKNOWN || device_supports_status_requests(dev.type);
+  // A heater is polled over its register protocol rather than with the 0x03 status request, but it
+  // is polled all the same (IOHomeControlComponent::poll_heating_device_()).
+  return dev.type == DeviceType::UNKNOWN || device_supports_status_requests(dev.type) ||
+         device_supports_climate_control(dev.type, dev.subtype);
 }
 
 /// @brief Can this device accept an execute (position) command?

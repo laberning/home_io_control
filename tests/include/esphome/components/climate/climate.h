@@ -28,6 +28,21 @@ enum ClimateMode : uint8_t {
   CLIMATE_MODE_AUTO = 6,
 };
 
+enum ClimateAction : uint8_t {
+  CLIMATE_ACTION_OFF = 0,
+  CLIMATE_ACTION_COOLING = 2,
+  CLIMATE_ACTION_HEATING = 3,
+  CLIMATE_ACTION_IDLE = 4,
+  CLIMATE_ACTION_DRYING = 5,
+  CLIMATE_ACTION_FAN = 6,
+  CLIMATE_ACTION_DEFROSTING = 7,
+};
+
+enum ClimateFeatureFlags : uint32_t {
+  CLIMATE_SUPPORTS_CURRENT_TEMPERATURE = 1 << 0,
+  CLIMATE_SUPPORTS_ACTION = 1 << 5,
+};
+
 enum ClimatePreset : uint8_t {
   CLIMATE_PRESET_NONE = 0,
   CLIMATE_PRESET_HOME = 1,
@@ -58,9 +73,14 @@ class ClimateTraits {
         return true;
     return false;
   }
-  // Real ClimateTraits models current-temperature support via feature flags now; this stub only
-  // needs the "not supported" default the platform relies on.
-  bool get_supports_current_temperature() const { return this->supports_current_temperature_; }
+  // Real ClimateTraits models current-temperature and action support via feature flags.
+  uint32_t get_feature_flags() const { return this->feature_flags_; }
+  void add_feature_flags(uint32_t feature_flags) { this->feature_flags_ |= feature_flags; }
+  bool has_feature_flags(uint32_t feature_flags) const { return (this->feature_flags_ & feature_flags) != 0; }
+  bool get_supports_current_temperature() const {
+    return this->has_feature_flags(CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
+  }
+  bool get_supports_action() const { return this->has_feature_flags(CLIMATE_SUPPORTS_ACTION); }
   void set_visual_min_temperature(float value) { this->visual_min_temperature_ = value; }
   float get_visual_min_temperature() const { return this->visual_min_temperature_; }
   void set_visual_max_temperature(float value) { this->visual_max_temperature_ = value; }
@@ -71,7 +91,7 @@ class ClimateTraits {
  protected:
   std::vector<ClimateMode> supported_modes_;
   std::vector<ClimatePreset> supported_presets_;
-  bool supports_current_temperature_{false};
+  uint32_t feature_flags_{0};
   float visual_min_temperature_{0.0F};
   float visual_max_temperature_{0.0F};
   float visual_target_temperature_step_{0.1F};
@@ -132,6 +152,7 @@ class Climate {
   float current_temperature{NAN};
   float target_temperature{NAN};
   ClimateMode mode{CLIMATE_MODE_OFF};
+  ClimateAction action{CLIMATE_ACTION_OFF};
   std::optional<ClimatePreset> preset;
 
   /// Test-only: number of publish_state() calls.

@@ -270,6 +270,14 @@ void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id,
                     [this, device_id]() { this->queue_request_device_status(device_id); });
 }
 
+void IOHomeControlComponent::schedule_heating_poll_(const std::string &device_id, uint32_t delay_ms) {
+  uint8_t node_id[NODE_ID_SIZE];
+  if (!hex_to_bytes(device_id, node_id, NODE_ID_SIZE))
+    return;  // malformed device_id: the caller passes one already validated by the registry
+  this->set_timeout(decisions::heating_poll_timer_id(node_id), delay_ms,
+                    [this, device_id]() { this->queue_request_device_status(device_id); });
+}
+
 void IOHomeControlComponent::schedule_device_polls_(const std::vector<std::string> &device_ids, uint32_t delay_ms) {
   for (const auto &device_id : device_ids) {
     this->begin_status_poll_tracking_(device_id, 0);

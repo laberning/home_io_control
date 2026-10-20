@@ -9,8 +9,10 @@
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
+#include <cmath>
 #include <cstring>
 #include <functional>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -39,6 +41,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::poll_policy_;
+  using IOHomeControlComponent::schedule_status_poll_;
   using IOHomeControlComponent::tuning_;
 };
 
@@ -405,6 +408,165 @@ TEST(HubOperations, SendHeatingCommandFailsOnNonAckReply) {
   })) << "a CMD_ERROR_RESP reply must not count as an acknowledgement";
   EXPECT_FALSE(run_heating_command_with_reply([](const uint8_t *dst) { return build_status_response(dst); }))
       << "a CMD_PRIVATE_RESP reply must not count as an acknowledgement";
+}
+
+// ========================================================================================
+// Heater register reads and the heater poll
+// ========================================================================================
+
+namespace {
+
+// A 0x21 from the heater (0xABC123) whose data is `payload`.
+IoFrame build_register_ack(const uint8_t dst[3], const std::vector<uint8_t> &payload) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  set_cmd(f, CMD_WRITE_PRIVATE_ACK, payload.data(), payload.size());
+  return f;
+}
+
+// Register low byte of a sent CMD_WRITE_PRIVATE frame (payload `0C <dir> 01 <reg>` starts at offset 9).
+uint8_t sent_register(const std::vector<uint8_t> &tx) { return tx.at(12); }
+
+IoDevice *make_heater(TestableComponent &comp, MockRadio &radio) {
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  EXPECT_NE(dev, nullptr);
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
+  return dev;
+}
+
+}  // namespace
+
+TEST(HubOperations, ReadHeatingRegisterDecodesAndStoresTheValue) {
+  TestableComponent comp;
+  MockRadio radio;
+  auto *dev = make_heater(comp, radio);
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));
+
+  float value = 0.0F;
+  ASSERT_TRUE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, &value, EXCHANGE_RETRY_COUNT));
+
+  EXPECT_FLOAT_EQ(value, 20.75F);
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  const auto &tx = radio.get_sent_data().front();
+  EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE);
+  EXPECT_EQ(tx[9], 0x0C);
+  EXPECT_EQ(tx[10], 0x60) << "a read is a get";
+  EXPECT_EQ(tx[11], 0x01);
+  EXPECT_EQ(tx[12], 0x15);
+}
+
+TEST(HubOperations, ReadHeatingRegisterWithoutAValueInTheReplyFails) {
+  TestableComponent comp;
+  MockRadio radio;
+  auto *dev = make_heater(comp, radio);
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15})));
+
+  EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+  EXPECT_TRUE(std::isnan(dev->heating.room_temperature_c)) << "nothing is stored from a reply without a value";
+}
+
+TEST(HubOperations, ReadHeatingRegisterRejectsWhatItCannotRead) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_heater(comp, radio);
+  EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::SET_PRESENCE, nullptr, EXCHANGE_RETRY_COUNT))
+      << "write-only register";
+  EXPECT_TRUE(radio.get_sent_data().empty());
+
+  TestableComponent cover;
+  MockRadio cover_radio;
+  setup_cover_component(cover, cover_radio);  // ROLLER_SHUTTER
+  EXPECT_FALSE(cover.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+  EXPECT_TRUE(cover_radio.get_sent_data().empty());
+}
+
+TEST(HubOperations, HeaterPollReadsFourRegistersThenTheMaximumOnce) {
+  TestableComponent comp;
+  MockRadio radio;
+  auto *dev = make_heater(comp, radio);
+  radio.queue_rx(
+      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));  // 20.75 C
+  radio.queue_rx(
+      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00})));       // 19.5 C
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x00, 0x01})));  // manual
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x17, 0x02})));  // heating
+  radio.queue_rx(
+      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01})));  // 28.0 C
+
+  EXPECT_TRUE(comp.request_device_status("ABC123")) << "a heater is polled over its registers, not with 0x03";
+
+  ASSERT_EQ(radio.get_sent_data().size(), 5u);
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x02};
+  for (size_t i = 0; i < 5; i++)
+    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.5F);
+  EXPECT_EQ(dev->heating.mode, 1);
+  EXPECT_EQ(dev->heating.regulator, 2);
+  EXPECT_FLOAT_EQ(dev->heating.max_setpoint_c, 28.0F);
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()))
+      << "a good poll closes its retry window";
+
+  // The maximum is a property of the heater: the next poll does not ask again.
+  const size_t sent_before = radio.get_sent_data().size();
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x59, 0x06})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x00, 0x01})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x17, 0x01})));
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 4u);
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 16.25F);
+}
+
+TEST(HubOperations, HeaterPollStopsAtTheFirstFailureAndBacksOff) {
+  TestableComponent comp;
+  MockRadio radio;
+  auto *dev = make_heater(comp, radio);
+  // Nothing queued: the first register never answers.
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  for (const auto &tx : radio.get_sent_data())
+    EXPECT_EQ(sent_register(tx), 0x15) << "only the first register is asked for (retries of it)";
+  EXPECT_LE(radio.get_sent_data().size(), SCHEDULED_POLL_MAX_TRIES)
+      << "a background poll is held to the scheduled-poll band; the ladder is its retry";
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u) << "the failure moves onto the retry ladder";
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "and a retry is scheduled";
+  EXPECT_TRUE(std::isnan(dev->heating.setpoint_c));
+}
+
+TEST(HubOperations, AUserWriteToAHeaterKeepsTheFullRetryBudget) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_heater(comp, radio);
+  // No reply: every try is spent.
+  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5F));
+  EXPECT_GT(radio.get_sent_data().size(), static_cast<size_t>(SCHEDULED_POLL_MAX_TRIES));
+  EXPECT_LE(radio.get_sent_data().size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
+}
+
+TEST(HubOperations, HeaterCadenceTimerHasItsOwnIdAndARemotePollDoesNotCancelIt) {
+  const uint8_t node[3] = {0xAB, 0xC1, 0x23};
+  EXPECT_NE(decisions::heating_poll_timer_id(node), decisions::remote_poll_timer_id(node));
+
+  TestableComponent comp;
+  MockRadio radio;
+  make_heater(comp, radio);
+  // A failed poll still re-arms the cadence.
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(node));
+
+  // A linked remote's poll uses the other id, so the pending cadence timer is a different timer.
+  comp.schedule_status_poll_("ABC123", 2000);
+  EXPECT_EQ(comp.last_timeout_id_, decisions::remote_poll_timer_id(node));
+  EXPECT_NE(comp.last_timeout_id_, decisions::heating_poll_timer_id(node));
 }
 
 // ========================================================================================

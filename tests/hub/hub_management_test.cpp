@@ -666,15 +666,57 @@ TEST(HubManagement, HeatingControlRejectsInvalidPresence) {
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
-TEST(HubManagement, HeatingControlRejectsInvalidWindow) {
+TEST(HubManagement, HeatingControlRejectsInvalidOpenWindowDetection) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "set_window", "ajar");
+  const auto result = component.heating_control("ABC123", "set_open_window_detection", "ajar");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(result.message, "window must be 'open' or 'close'");
+  EXPECT_EQ(result.message, "open-window detection must be 'on' or 'off'");
   EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+// The window sensor register is read-only; the one writable window function is the detection setting.
+TEST(HubManagement, HeatingControlHasNoSetWindowFunction) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  const auto result = component.heating_control("ABC123", "set_window", "open");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "unknown heating function 'set_window'");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlWindowOpenReadsTheSensorAndReportsIt) {
+  for (const auto &[reply_value, text] : {std::pair<uint8_t, const char *>{0x01, "open"}, {0x00, "closed"}}) {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    make_climate_device(component);
+    IoFrame reply{};
+    init_frame(reply, true, false, true, false);
+    const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+    set_dst(reply, component.node_id_);
+    set_src(reply, device_node_id);
+    const uint8_t payload[] = {0x0C, 0x60, 0x01, 0x0E, reply_value};
+    set_cmd(reply, CMD_WRITE_PRIVATE_ACK, payload, sizeof(payload));
+    radio.queue_rx(frame_to_packet(reply));
+
+    const auto result = component.heating_control("ABC123", "window_open", "");
+    EXPECT_TRUE(result.success);
+    EXPECT_FALSE(result.verified);
+    EXPECT_EQ(result.message, std::string("heating window_open: window ") + text);
+
+    ASSERT_EQ(radio.get_sent_data().size(), 1u);
+    const auto &tx = radio.get_sent_data().front();
+    ASSERT_GE(tx.size(), 13u);
+    EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE);
+    const std::vector<uint8_t> expected = {0x0C, 0x60, 0x01, 0x0E};
+    for (size_t i = 0; i < expected.size(); i++)
+      EXPECT_EQ(tx[9 + i], expected[i]) << "payload byte " << i;
+  }
 }
 
 // The function name and named values are case-folded and ASCII-trimmed before matching
@@ -698,8 +740,7 @@ TEST(HubManagement, HeatingControlNormalizesCaseAndWhitespace) {
     EXPECT_EQ(tx[9 + i], expected[i]) << "payload byte " << i;
 }
 
-// Each function's happy path: assert the exact bytes handed to the radio, byte-for-byte against
-// the iohomecontrol reference implementation's Cozy 2W payload builders.
+// Each function's happy path: assert the exact bytes handed to the radio.
 namespace {
 struct HeatingCase {
   const char *function;
@@ -710,12 +751,12 @@ struct HeatingCase {
 
 TEST(HubManagement, HeatingControlHappyPathSendsExactBytesPerFunction) {
   const std::vector<HeatingCase> cases = {
-      {"power_on", "", {0x0C, 0x60, 0x01, 0x2C}},                         // :105
-      {"set_temperature", "20.5", {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}},  // :125
-      {"set_mode", "manual", {0x0C, 0x61, 0x01, 0x00, 0x01}},             // :155/:159
-      {"set_presence", "on", {0x0C, 0x61, 0x01, 0x10, 0x01}},             // :195/:198
-      {"set_window", "open", {0x0C, 0x61, 0x01, 0x0E, 0x01}},             // :218/:221
-      {"midnight_sync", "", {0x0C, 0x60, 0x01, 0x30}},                    // :248
+      {"power_on", "", {0x0C, 0x60, 0x01, 0x2C}},
+      {"set_temperature", "20.5", {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}},
+      {"set_mode", "manual", {0x0C, 0x61, 0x01, 0x00, 0x01}},
+      {"set_presence", "on", {0x0C, 0x61, 0x01, 0x10, 0x01}},
+      {"set_open_window_detection", "on", {0x0C, 0x61, 0x01, 0x06, 0x01}},
+      {"midnight_sync", "", {0x0C, 0x60, 0x01, 0x30}},
   };
 
   for (const auto &tc : cases) {
@@ -727,7 +768,7 @@ TEST(HubManagement, HeatingControlHappyPathSendsExactBytesPerFunction) {
 
     const auto result = component.heating_control("ABC123", tc.function, tc.value);
     EXPECT_TRUE(result.success) << tc.function;
-    EXPECT_FALSE(result.verified) << tc.function << " has no readback";
+    EXPECT_FALSE(result.verified) << tc.function << " is an ack, not a readback";
     EXPECT_EQ(result.message, std::string("heating ") + tc.function + " acknowledged by device");
 
     ASSERT_EQ(radio.get_sent_data().size(), 1u) << tc.function;

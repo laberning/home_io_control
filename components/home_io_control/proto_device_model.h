@@ -8,6 +8,7 @@
 /// decoders, cover commands, position/tilt report decoding and the IoDevice
 /// runtime struct. The per-(type, subtype) names and flags live in the table in proto_device_types.h.
 
+#include "proto_heating.h"
 #include "proto_sizes.h"
 
 #include <cstdint>
@@ -483,6 +484,9 @@ struct IoDevice {
                                                           ///< status: a reply to a status poll or an authenticated
                                                           ///< CMD_STATUS_UPDATE. Never from an execute ack (its layout
                                                           ///< follows the request) or an overheard frame (ADR 0022).
+  HeatingReadings heating{};     ///< What the hub has read from a heater over the private register protocol
+                                 ///< (room temperature, setpoint, mode, regulator state). Set only from decoded
+                                 ///< replies; stays "never read" for every other device type.
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every

@@ -3,7 +3,7 @@
 ## @ingroup hioc_codegen
 ##
 ## Defines the experimental IO-Homecontrol heating/climate integration and wires it to the shared
-## hub. Shared device-binding logic lives in platform_common.py; only climate-specific entity
+## hub. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
 ## construction/registration stays here.
 
 import esphome.codegen as cg
@@ -30,14 +30,19 @@ def _inject_companion_ids(config):
     return inject_companion_sensor_ids(config, CONF_ID)
 
 
-def _reject_status_poll_interval(config):
-    # CMD_WRITE_PRIVATE (0x20) is write-only: a heating device has nothing to read back, so a
-    # status poll interval is meaningless here (and would only schedule rejected polls against
-    # the device). The key is accepted by the shared platform schema; reject it for climate.
-    if CONF_STATUS_POLL_INTERVAL in config:
+# A heater's state moves over minutes and a poll costs four exchanges, so the interval floor is
+# well above the cover floor (hub_names.MIN_STATUS_POLL_INTERVAL_MS).
+MIN_CLIMATE_POLL_INTERVAL_MS = 60000
+
+
+def _validate_climate_poll_interval(config):
+    # The key is accepted by the shared platform schema; a climate entity raises its floor to one
+    # minute. Without it the hub polls every five minutes.
+    interval = config.get(CONF_STATUS_POLL_INTERVAL)
+    if interval is not None and interval.total_milliseconds < MIN_CLIMATE_POLL_INTERVAL_MS:
         raise cv.Invalid(
-            "status_poll_interval is not supported for the climate platform: IO-Homecontrol "
-            "heating is write-only and never polls",
+            f"status_poll_interval must be at least {MIN_CLIMATE_POLL_INTERVAL_MS}ms for the "
+            "climate platform: a heater is polled over four radio exchanges per poll",
             path=[CONF_STATUS_POLL_INTERVAL],
         )
     return config
@@ -47,7 +52,7 @@ CONFIG_SCHEMA = cv.All(
     climate.climate_schema(IOHomeClimate)
     .extend(platform_schema_extension())
     .extend(cv.COMPONENT_SCHEMA),
-    _reject_status_poll_interval,
+    _validate_climate_poll_interval,
     _inject_companion_ids,
 )
 

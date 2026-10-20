@@ -4,6 +4,7 @@
 #include "proto_commands.h"
 #include "proto_device_types.h"
 
+#include <cmath>
 #include <algorithm>
 #include <cstdio>
 
@@ -428,6 +429,10 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
     return false;
   }
 
+  // A heater has no 0x03 status: its state is a handful of private registers.
+  if (device_supports_climate_control(dev->type, dev->subtype))
+    return this->poll_heating_device_(device_id);
+
   IoFrame request;
   // Tilt-capable covers need the extended 0x03200100 status request so the response includes
   // the reliable 16-byte tilt block. Other devices stay on the shorter generic request.
@@ -584,6 +589,52 @@ bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool l
   return this->set_device_position(device_id, locked ? BINARY_ENTITY_OFF_POSITION : BINARY_ENTITY_ON_POSITION);
 }
 
+bool IOHomeControlComponent::exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request,
+                                               IoFrame &response, uint8_t max_tries) {
+  ESP_LOGI(detail::TAG, "Sending heating %s to device %s", label, device_id.c_str());
+
+  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
+  const bool got_reply = outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
+  const bool acknowledged = got_reply && response.cmd == CMD_WRITE_PRIVATE_ACK;
+
+  // Feed the device-agnostic link-health / exchange-failure companion sensors either way, so a
+  // climate device is never silently invisible to the Last Contact / Exchange Failures
+  // diagnostics. A CMD_ERROR_RESP is still a reply — record its result code on the device so the
+  // "Last Result Code" diagnostic surfaces it, exactly as the cover path does.
+  IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return false;
+  // Same rule as execute_request_and_update_(): an unconfirmed acceptance is counted wherever it
+  // happens, or a climate device that authenticates and then goes silent stays invisible in the
+  // very diagnostic built to surface that, while a cover doing the same thing is counted.
+  detail::record_exchange_outcome(*dev, request.cmd, outcome);
+  if (outcome == ExchangeOutcome::FAILED) {
+    detail::record_exchange_timeout(*dev, this->exchange_engine_.get_debug().tries);
+  } else {
+    detail::update_link_health(*dev, this->radio_);
+    if (got_reply && response.cmd == CMD_ERROR_RESP && response.data_len > 0) {
+      detail::record_command_result(*dev, device_id, response.data[0], CMD_WRITE_PRIVATE, true);
+    } else if (acknowledged) {
+      detail::clear_command_result(*dev);
+    }
+  }
+  this->notify_device_update_(device_id);
+
+  if (!acknowledged) {
+    this->log_exchange_debug_(device_id.c_str());
+    ESP_LOGW(detail::TAG, "Heating %s not acknowledged by device %s (no CMD_WRITE_PRIVATE_ACK)", label,
+             device_id.c_str());
+    return false;
+  }
+
+  // Logging the ack payload lets a field tester read back what the heater reports even for the
+  // registers nothing decodes (`power_on`, `midnight_sync`).
+  char ack_payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
+  bytes_to_hex(response.data, response.data_len, ack_payload_hex, sizeof(ack_payload_hex));
+  ESP_LOGD(detail::TAG, "heating %s ACK payload: %s", label, ack_payload_hex);
+  return true;
+}
+
 bool IOHomeControlComponent::send_heating_command(const std::string &device_id, HeatingFunction fn, float value) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
@@ -610,52 +661,107 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
     return false;
   }
 
-  ESP_LOGI(detail::TAG, "Sending heating command %s to device %s", heating_function_name(fn), device_id.c_str());
-
   IoFrame response;
-  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2);
-  const bool got_reply = outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
-  const bool acknowledged = got_reply && response.cmd == CMD_WRITE_PRIVATE_ACK;
+  // A write is something the user waits on: the full retry budget.
+  return this->exchange_heating_(device_id, heating_function_name(fn), request, response, EXCHANGE_RETRY_COUNT);
+}
 
-  // Feed the device-agnostic link-health / exchange-failure companion sensors either way, so a
-  // climate device is never silently invisible to the Last Contact / Exchange Failures
-  // diagnostics. A CMD_ERROR_RESP is still a reply — record its result code on the device so the
-  // "Last Result Code" diagnostic surfaces it, exactly as the cover path does.
-  // `dev` was resolved above via get_device(), which is registry_.get(); reuse it.
-  IoDevice &d = *dev;
-  // Same rule as execute_request_and_update_(): an unconfirmed acceptance is counted wherever it
-  // happens, or a climate device that authenticates and then goes silent stays invisible in the
-  // very diagnostic built to surface that, while a cover doing the same thing is counted.
-  detail::record_exchange_outcome(d, request.cmd, outcome);
-  if (outcome == ExchangeOutcome::FAILED) {
-    detail::record_exchange_timeout(d, this->exchange_engine_.get_debug().tries);
-  } else {
-    detail::update_link_health(d, this->radio_);
-    if (got_reply && response.cmd == CMD_ERROR_RESP && response.data_len > 0) {
-      detail::record_command_result(d, device_id, response.data[0], CMD_WRITE_PRIVATE, true);
-    } else if (acknowledged) {
-      detail::clear_command_result(d);
-    }
-  }
-  this->notify_device_update_(device_id);
+bool IOHomeControlComponent::read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
+                                                   uint8_t max_tries) {
+  auto *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
 
-  if (!acknowledged) {
-    this->log_exchange_debug_(device_id.c_str());
-    ESP_LOGW(detail::TAG, "Heating command %s not acknowledged by device %s (no CMD_WRITE_PRIVATE_ACK)",
-             heating_function_name(fn), device_id.c_str());
+  if (!device_supports_climate_control(dev->type, dev->subtype)) {
+    detail::log_rejected_operation(device_id, *dev, "heating read", "climate device");
     return false;
   }
 
-  // 0x60 functions (power_on, midnight_sync) are register reads: the 0x21 ACK carries the answer
-  // (per the iown-homecontrol project's Atlantic/Thermor register map — a paired-device list for
-  // 0x012C, the ~17-byte comfort/eco/auto setpoint block for 0x0130). Nothing decodes it
-  // into an entity, but logging it lets a field tester read back what the radiator reports — for
-  // instance whether its own setpoint block exceeds 25.5 C. Log-only: success is not gated on the
-  // echo, one transcribed capture is not enough to make a mismatch a hard failure.
-  char ack_payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
-  bytes_to_hex(response.data, response.data_len, ack_payload_hex, sizeof(ack_payload_hex));
-  ESP_LOGD(detail::TAG, "heating %s ACK payload: %s", heating_function_name(fn), ack_payload_hex);
+  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_heating_read(fn, payload);
+  if (payload_len == 0) {
+    ESP_LOGW(detail::TAG, "Heating read %s for device %s rejected: not a readable register", heating_function_name(fn),
+             device_id.c_str());
+    return false;
+  }
+
+  IoFrame request;
+  if (!create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
+    ESP_LOGW(detail::TAG, "Heating read %s for device %s: failed to build frame", heating_function_name(fn),
+             device_id.c_str());
+    return false;
+  }
+
+  IoFrame response;
+  if (!this->exchange_heating_(device_id, heating_function_name(fn), request, response, max_tries))
+    return false;
+
+  float value = NAN;
+  if (!decode_heating_reply(response, fn, value)) {
+    char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
+    bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
+    ESP_LOGD(detail::TAG, "heating %s reply from device %s carries no value: %s", heating_function_name(fn),
+             device_id.c_str(), payload_hex);
+    return false;
+  }
+
+  // exchange_heating_() ran get_device() before the exchange; the pointer is re-resolved here
+  // because the exchange blocks and the registry may have been touched by a callback meanwhile.
+  dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return false;
+  dev->heating.store(fn, value);
+  this->notify_device_update_(device_id);
+  if (value_out != nullptr)
+    *value_out = value;
   return true;
+}
+
+bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) {
+  // Registers one poll reads, in the order the entity needs them. The room temperature leads: it is
+  // the value a user looks at, so a poll that dies half-way still delivered it.
+  static constexpr HeatingFunction POLL_REGISTERS[] = {HeatingFunction::ROOM_TEMPERATURE,
+                                                       HeatingFunction::SET_TEMPERATURE, HeatingFunction::SET_MODE,
+                                                       HeatingFunction::REGULATOR_STATE};
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  // The failure ladder lives in StatusPollPolicy and only runs inside a tracking window. Open one
+  // unless one is already running: begin_tracking() resets the failure counters, which would flatten
+  // the ladder to its first step on every retry.
+  if (!this->poll_policy_.is_tracking_active(device_id, millis()))
+    this->begin_status_poll_tracking_(device_id, 0);
+
+  // A poll always runs inside a tracking window, so the ladder is its retry mechanism: the same try
+  // band as a scheduled cover poll (decisions::scheduled_poll_max_tries()).
+  const uint8_t max_tries = decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
+                                                                this->poll_policy_.get_auth_poll_failures(device_id));
+
+  bool ok = true;
+  for (const HeatingFunction fn : POLL_REGISTERS) {
+    if (!this->read_heating_register(device_id, fn, nullptr, max_tries)) {
+      ok = false;
+      break;
+    }
+  }
+
+  // The maximum setpoint is a fixed property of the heater: read it until it has been read once.
+  // A miss here is not a poll failure; the next poll asks again.
+  dev = this->get_device(device_id);
+  if (ok && dev != nullptr && std::isnan(dev->heating.max_setpoint_c))
+    this->read_heating_register(device_id, HeatingFunction::MAX_SETPOINT, nullptr, max_tries);
+
+  if (ok) {
+    this->poll_policy_.clear(device_id);
+  } else {
+    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
+  }
+  // The regular cadence continues whatever this poll found; a failed poll is additionally retried
+  // sooner by the ladder above.
+  const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
+  this->schedule_heating_poll_(device_id, configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS);
+  return ok;
 }
 
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {

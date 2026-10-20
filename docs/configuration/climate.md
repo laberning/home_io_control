@@ -12,14 +12,14 @@
 > This component deliberately does not synthesize either — each `heating_control` call sends
 > exactly one write. Field testers: please report whether a bare `set_temperature` takes effect.
 
-2W heating devices are driven with `CMD_WRITE_PRIVATE` (0x20). The `set_*` functions are
-**write-only** — nothing decodes what the radiator actually did back into an entity, and the hub
-only learns whether the device acknowledged the write. (`power_on` and `midnight_sync` are register
-*reads*; their ACK payload is logged at DEBUG but not decoded.) State shown in Home Assistant is
-"last commanded, never confirmed".
+2W heating devices are driven with `CMD_WRITE_PRIVATE` (0x20), the private register protocol of the
+heater: the hub reads and writes registers such as the setpoint, the mode and the room temperature.
+The `climate:` entity polls the heater and shows what the heater reports. Reads of this protocol
+are experimental: the shape of a register read's reply is confirmed only for writes so far (see
+[ADR 0054](../adr/0054-heaters-are-read-back-over-the-private-register-protocol.md)).
 
 The `climate:` entity drives an electrical heater with an adjustable setpoint: node type 52
-(`electrical_heater`), subtype 1. The `CMD_WRITE_PRIVATE` registers it writes are that device's;
+(`electrical_heater`), subtype 1. The `CMD_WRITE_PRIVATE` registers it uses are that device's;
 other heating devices (the heating temperature interface, exterior heating, heat pumps and the plain
 electrical heater, subtype 0) take the standard EXECUTE instead, which this entity does not send,
 so a `climate:` entity bound to one of them (by raw type value) fails at boot with a log line
@@ -37,22 +37,33 @@ climate:
     io_device_id: "FEEB22"
     io_device_type: "electrical_heater"
     io_subtype: 1
+    status_poll_interval: 5min  # optional; default 5 min, at least 60 s
 ```
 
 - Modes: `off` → mode `off`, `heat` → mode `manual`, `auto` → mode `auto`.
 - Presets: `home` → presence on, `away` → presence off; the custom preset `Program` → mode `prog`.
-- Target-temperature range 7.0–28.0 °C at a 0.5 °C UI step (the wire carries 0.1 °C; 0.5 is a
-  UI-only choice).
-- No current temperature — nothing in the protocol reports a measured room temperature.
-- Entity state is published **only after a send succeeds** and is never confirmed. There is no
-  status poll for climate devices.
+- Target-temperature range 7.0 °C up to the heater's own maximum setpoint (28.0 °C until the
+  heater has reported it) at a 0.5 °C UI step (the wire carries 0.1 °C; 0.5 is a UI-only choice).
+- Experimental: current temperature, setpoint, mode and action (`heating` while the heater's regulator reports
+  heating, `idle` otherwise, `off` when the mode is off) come from the heater's replies.
+  Home Assistant shows them after the first poll, about five seconds after boot. A room-temperature
+  sensor fault leaves the current temperature empty.
+- Experimental: the heater is polled every `status_poll_interval` (default 5 minutes, minimum 60 s). A poll reads
+  four registers; when one fails the hub retries with a growing delay and keeps polling at the
+  regular interval.
+- Experimental: after an accepted mode or setpoint write the hub reads the register back, so a setpoint the heater
+  adjusts shows as the heater holds it. Until the first read succeeds the card shows the last
+  commanded mode and setpoint.
+- Experimental: a mode set outside Home Assistant shows up at the next poll: the heater's program mode appears as
+  `auto` with the `Program` preset, and its external mode as `heat`.
+- The `home` / `away` presets write a register that cannot be read back, so they show the last
+  command.
 
 ## Companion entities
 
 The usual companion diagnostic sensors (`Device Name`, `Active Issue`, `Last Contact`, `RSSI`,
 `Exchange Failures`, `Unconfirmed Exchanges`, `Last Commanded By`, `Last Command Source`) are
-generated as for the other platforms. `Last Contact` and `Active Issue` are the only feedback a
-write-only device can give.
+generated as for the other platforms. `Last Contact` shows when the heater last answered a poll.
 
 ## Temperature range — 7.0–28.0 °C
 
@@ -69,7 +80,8 @@ frost-protection setpoint can be commanded directly.
 
 ## The `heating_control` action
 
-Takes `device_id`, `function`, and `value`. `verified` is always `false`.
+Takes `device_id`, `function`, and `value`. `verified` is always `false`: an acknowledged write means
+the heater took the frame, and the climate entity reads the register back to show the result.
 
 | `function` | `value` | Effect |
 |---|---|---|
@@ -77,7 +89,8 @@ Takes `device_id`, `function`, and `value`. `verified` is always `false`.
 | `set_temperature` | float °C, `7.0`–`28.0` | Setpoint. |
 | `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
 | `set_presence` | `on` \| `off` | Presence / absence. |
-| `set_window` | `open` \| `close` | Open-window / frost protection. |
+| `set_open_window_detection` | `on` \| `off` | Switches the heater's open-window detection on or off (register `0x0106`). |
+| `window_open` | *(ignored)* | Reads the heater's window sensor (register `0x010E`) and reports `window open` or `window closed` in the result `message`. |
 | `midnight_sync` | *(ignored)* | Reads register `0x0130` (the comfort/eco/auto setpoint block). Despite the name, the payload is a `0x60` **read**, not a clock-set — the device's clock register is `0x010F` and this component never writes it. Provided for protocol exploration; the ACK payload is logged at DEBUG. |
 
 ```yaml

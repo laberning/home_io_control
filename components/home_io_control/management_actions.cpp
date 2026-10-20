@@ -409,7 +409,8 @@ static std::string normalize_lower_argument(const std::string &value) {
   return normalized;
 }
 
-/// @brief A `value` token that maps to a fixed float (used by set_mode / set_presence / set_window).
+/// @brief A `value` token that maps to a fixed float (used by set_mode / set_presence /
+/// set_open_window_detection).
 struct HeatingNamedValue {
   const char *token;
   float value;
@@ -454,9 +455,9 @@ static bool parse_heating_temperature(const std::string &value, float &value_out
 /// Every native-API argument is a string (ManagementServiceDescriptor hardcodes
 /// SERVICE_ARG_TYPE_STRING), so this turns the two strings into a HeatingFunction plus the float
 /// encode_heating_payload() expects: degrees C for `set_temperature`, a HeatingMode value for
-/// `set_mode`, 0/1 for `set_presence` / `set_window`, and an ignored 0 for `power_on` /
-/// `midnight_sync`. On any malformed input it fills `error` with a caller-facing message and
-/// returns false rather than coercing a value. Kept next to the action (not in proto_heating)
+/// `set_mode`, 0/1 for `set_presence` / `set_open_window_detection`, and an ignored 0 for the
+/// register reads (`power_on`, `midnight_sync`, `window_open`). On any malformed input it fills `error` with a
+/// caller-facing message and returns false rather than coercing a value. Kept next to the action (not in proto_heating)
 /// because the climate entity receives typed enums from Home Assistant and needs no string
 /// parsing.
 /// @param function Function name argument.
@@ -474,7 +475,7 @@ static bool parse_heating_arguments(const std::string &function, const std::stri
       {"off", static_cast<float>(HeatingMode::OFF)},
   };
   static constexpr HeatingNamedValue PRESENCE_VALUES[] = {{"on", 1.0F}, {"off", 0.0F}};
-  static constexpr HeatingNamedValue WINDOW_VALUES[] = {{"open", 1.0F}, {"close", 0.0F}};
+  static constexpr HeatingNamedValue DETECTION_VALUES[] = {{"on", 1.0F}, {"off", 0.0F}};
 
   const std::string fn = normalize_lower_argument(function);
   value_out = 0.0F;
@@ -506,12 +507,17 @@ static bool parse_heating_arguments(const std::string &function, const std::stri
     error = "presence must be 'on' or 'off'";
     return false;
   }
-  if (fn == "set_window") {
-    fn_out = HeatingFunction::SET_WINDOW;
-    if (match_heating_named_value(normalize_lower_argument(value), WINDOW_VALUES, std::size(WINDOW_VALUES), value_out))
+  if (fn == "set_open_window_detection") {
+    fn_out = HeatingFunction::SET_OPEN_WINDOW_DETECTION;
+    if (match_heating_named_value(normalize_lower_argument(value), DETECTION_VALUES, std::size(DETECTION_VALUES),
+                                  value_out))
       return true;
-    error = "window must be 'open' or 'close'";
+    error = "open-window detection must be 'on' or 'off'";
     return false;
+  }
+  if (fn == "window_open") {
+    fn_out = HeatingFunction::WINDOW_OPEN;
+    return true;
   }
 
   error = "unknown heating function '" + trim_ascii_whitespace(function) + "'";
@@ -862,9 +868,15 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   const uint8_t prior_result_code = dev->last_result_code;
   const uint32_t prior_result_at_ms = dev->last_result_at_ms;
 
-  // One shared transmit path (invariant): the climate entity calls the same method. A
-  // CMD_ERROR_RESP surfaced by this call is recorded on the device record by that path.
-  if (!hub_->send_heating_command(result.device_id, fn, encoded_value)) {
+  // A register with a decoded value (the window sensor) is read through the entity's read path, so
+  // the action shows exactly what the climate card would; every other function is one send. Both
+  // paths share the hub's exchange helper, and a CMD_ERROR_RESP is recorded on the device record by it.
+  float read_value = 0.0F;
+  const bool read_with_value = fn == HeatingFunction::WINDOW_OPEN;
+  const bool acknowledged = read_with_value
+                                ? hub_->read_heating_register(result.device_id, fn, &read_value, EXCHANGE_RETRY_COUNT)
+                                : hub_->send_heating_command(result.device_id, fn, encoded_value);
+  if (!acknowledged) {
     result.message = std::string("device did not acknowledge the ") + heating_function_name(fn) + " command";
     if (const auto *updated = registry_.get(result.device_id);
         updated != nullptr && updated->last_result_code != 0 &&
@@ -878,9 +890,14 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   }
 
   result.success = true;
-  // verified stays false: the set_* functions decode nothing back into an entity (the two 0x60
-  // reads have their ACK payload logged at DEBUG only), so nothing can confirm the write.
-  result.message = std::string("heating ") + heating_function_name(fn) + " acknowledged by device";
+  // verified stays false: an acknowledged write is the device saying it took the frame, not the
+  // device showing the new value; the climate entity reads the register back for that.
+  if (read_with_value) {
+    result.message =
+        std::string("heating ") + heating_function_name(fn) + ": window " + (read_value != 0.0F ? "open" : "closed");
+  } else {
+    result.message = std::string("heating ") + heating_function_name(fn) + " acknowledged by device";
+  }
   return result;
 }
 

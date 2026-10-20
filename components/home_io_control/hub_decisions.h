@@ -498,10 +498,15 @@ inline bool is_one_way_pairing_gesture(bool oneway, const uint8_t dst[NODE_ID_SI
 }
 
 /// Namespace tag for `remote_poll_timer_id()` below: the node address occupies the low 24 bits,
-/// and this is OR-ed in above them. Nothing else uses `Component::set_timeout`'s numeric-id
-/// overload today, so the tag has no collision to avoid yet — it exists so the id space stays
-/// self-describing (which caller a given id belongs to) the day a second numeric-id timer is added.
+/// and this is OR-ed in above them. Each numeric-id timer caller has its own tag (see
+/// HEATING_POLL_TIMER_ID_TAG), so two timers for the same device never replace one another and an id
+/// says which caller it belongs to.
 constexpr uint32_t REMOTE_POLL_TIMER_ID_TAG = 0x01000000;
+
+/// Namespace tag for `heating_poll_timer_id()`: the same node-address scheme under its own bit, so
+/// a heater's regular-cadence timer and a remote-activity poll timer for the same device never replace
+/// one another.
+constexpr uint32_t HEATING_POLL_TIMER_ID_TAG = 0x02000000;
 
 /// @brief Numeric `set_timeout()` id for a device's remote-activity poll timer (hub_status.cpp's
 /// `schedule_status_poll_()`).
@@ -517,6 +522,15 @@ constexpr uint32_t REMOTE_POLL_TIMER_ID_TAG = 0x01000000;
 inline uint32_t remote_poll_timer_id(const uint8_t node_id[NODE_ID_SIZE]) {
   return REMOTE_POLL_TIMER_ID_TAG | (static_cast<uint32_t>(node_id[0]) << (2 * BITS_PER_BYTE)) |
          (static_cast<uint32_t>(node_id[1]) << BITS_PER_BYTE) | static_cast<uint32_t>(node_id[2]);
+}
+
+/// @brief Numeric `set_timeout()` id for a heater's regular-cadence poll timer
+/// (`IOHomeControlComponent::schedule_heating_poll_()`). Same keying as remote_poll_timer_id(), in
+/// the HEATING_POLL_TIMER_ID_TAG namespace, so a poll that a linked remote triggers cannot cancel it.
+/// @param node_id 3-byte device node address.
+/// @return Numeric timer id, unique per device and distinct from remote_poll_timer_id().
+inline uint32_t heating_poll_timer_id(const uint8_t node_id[NODE_ID_SIZE]) {
+  return HEATING_POLL_TIMER_ID_TAG | (remote_poll_timer_id(node_id) & ~REMOTE_POLL_TIMER_ID_TAG);
 }
 
 // === Rain limitation ===

@@ -1,7 +1,7 @@
 # ADR 0033: The heating send path bypasses the cover status/optimistic machinery
 <!-- doxygen-label: adr0033 -->
 
-**Status:** Accepted · **Recorded:** 2026-09
+**Status:** Accepted, superseded in part by [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md) (the write-only premise; the send-path decision stands) · **Recorded:** 2026-09
 
 ## Context
 
