@@ -11,12 +11,12 @@ cover:
     name: "Patio Awning"
     device_class: awning
     io_device_id: "FEEB1E"
-    io_device_type: "awning"
+    io_device_type: "vertical_exterior_awning"
     invert_position: true
     status_poll_interval: 2s
     linked_remotes:
       - "ABCDEF"
-      - "class:awning"
+      - "class:vertical_exterior_awning"
     optimistic_state: true
 ```
 
@@ -126,7 +126,7 @@ cover:
   - platform: home_io_control
     name: "Terrace Awning"
     io_device_id: "123ABC"
-    io_device_type: awning
+    io_device_type: vertical_exterior_awning
     low_power: true
     battery: true
 ```
@@ -150,8 +150,8 @@ What to expect:
 
 ## Tilt
 
-When `io_device_type` is declared as a tilt-capable type — `venetian_blind`,
-`external_venetian_blind`, `blind`, or `louvre_blind` — the cover entity automatically exposes a
+When `io_device_type` is declared as a tilt-capable type — `interior_venetian_blind`,
+`exterior_venetian_blind`, `vertical_interior_blind`, or `louvre_blind` — the cover entity automatically exposes a
 tilt slider in Home Assistant.
 
 Tilt-only commands keep the current position unchanged. When Home Assistant sends both a position

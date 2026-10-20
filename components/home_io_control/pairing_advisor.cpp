@@ -153,7 +153,7 @@ void append_key_step_advice(const PairingTelemetry &telemetry, PairingAdvice out
   }
   // This attempt pushed: "command unknown", or a failed push to a device that answered discovery as a
   // remote controller, points at the pull direction.
-  const bool as_controller = telemetry.discovered_node_type() == NODE_TYPE_REMOTE_CONTROLLER;
+  const bool as_controller = telemetry.discovered_node_type() == DeviceType::REMOTE_CONTROLLER;
   const bool command_unknown = telemetry.has_key_refusal() && telemetry.key_refusal_code() == RESULT_COMMAND_UNKNOWN;
   if (command_unknown || as_controller) {
     add(PairingAdviceCode::KEY_PUSH_NOT_ACCEPTED).answered_as_controller = as_controller;

@@ -160,10 +160,10 @@ class PairingTelemetry : public TransmitObserver {
     this->has_key_refusal_ = true;
     this->key_refusal_code_ = code;
   }
-  /// Record the device discovery accepted: its node ID and full 10-bit node type.
+  /// Record the device discovery accepted: its node ID and node type.
   /// @param node_id Discovered device's node ID.
-  /// @param node_type Node type from DiscoveryResponseInfo::node_type.
-  void set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], uint16_t node_type);
+  /// @param node_type Node type decoded from the discovery response.
+  void set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], DeviceType node_type);
   /// Record that this attempt pulled the key (0x38) instead of pushing it (0x31/0x32).
   void set_key_pull_attempted() { this->key_pull_attempted_ = true; }
   /// Record that a pulled key could not be verified: the device sent a 0x32, but no 0x3D that
@@ -224,8 +224,8 @@ class PairingTelemetry : public TransmitObserver {
   [[nodiscard]] bool has_discovered_device() const { return this->has_discovered_device_; }
   /// @return Discovered device's node ID; only meaningful if has_discovered_device() is true.
   [[nodiscard]] const uint8_t *discovered_node_id() const { return this->discovered_node_id_; }
-  /// @return Full 10-bit node type of the discovered device, 0 if discovery accepted none.
-  [[nodiscard]] uint16_t discovered_node_type() const { return this->discovered_node_type_; }
+  /// @return Node type of the discovered device, DeviceType::UNKNOWN if discovery accepted none.
+  [[nodiscard]] DeviceType discovered_node_type() const { return this->discovered_node_type_; }
   /// @return Duration of the attempt so far (or total, once complete) in milliseconds.
   [[nodiscard]] uint32_t duration_ms() const;
 
@@ -269,7 +269,7 @@ class PairingTelemetry : public TransmitObserver {
   bool key_pull_unproven_{false};
   bool has_discovered_device_{false};
   uint8_t discovered_node_id_[NODE_ID_SIZE]{};
-  uint16_t discovered_node_type_{0};
+  DeviceType discovered_node_type_{DeviceType::UNKNOWN};
   std::string advice_codes_;
 };
 

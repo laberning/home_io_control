@@ -2,6 +2,7 @@
 
 #include "hub_decisions.h"
 #include "proto_commands.h"
+#include "proto_device_types.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -356,7 +357,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
       [position](const IoDevice &d) { return detail::known_device_accepts_execute_position(d, position); },
       position_rejection_profile(*dev, position),
       [this, position](IoFrame &request, const IoDevice &d) {
-        if (device_takes_main_parameter_only(d.type))
+        if (device_takes_main_parameter_only(d.type, d.subtype))
           return create_execute_main_parameter(request, this->node_id_, d.node_id, d.low_power, position);
         return create_execute_position(request, this->node_id_, d.node_id, d.low_power, position, d.silent);
       });
@@ -368,12 +369,12 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
       [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::COVER); },
       "cover entity",
       [this, cmd, &device_id](IoFrame &request, const IoDevice &d) {
-        if (device_takes_main_parameter_only(d.type)) {
+        if (device_takes_main_parameter_only(d.type, d.subtype)) {
           // These devices refuse the favourite alias (issue #163: RESULT_PARAMETER_UNKNOWN), so
           // say so here instead of sending a frame that can only be refused.
           if (cmd == CoverCommand::FAVORITE || cmd == CoverCommand::VENT) {
-            ESP_LOGW(detail::TAG, "Device %s: %s is not supported on a %s", device_id.c_str(), cover_command_name(cmd),
-                     device_type_name(d.type));
+            ESP_LOGW(detail::TAG, "Device %s: %s is not supported on this device (%s)", device_id.c_str(),
+                     cover_command_name(cmd), format_device_kind(d.type, d.subtype).c_str());
             return false;
           }
           if (cmd == CoverCommand::FORCE_OPEN) {
@@ -589,7 +590,7 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
     return false;
 
   // Capability gate: only via the predicate, never an inline device-type or vendor list.
-  if (!device_supports_climate_control(dev->type)) {
+  if (!device_supports_climate_control(dev->type, dev->subtype)) {
     detail::log_rejected_operation(device_id, *dev, "heating command", "climate device");
     return false;
   }

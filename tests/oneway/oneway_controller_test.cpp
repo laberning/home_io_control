@@ -28,7 +28,7 @@ TEST(OneWayController, BroadcastAddressEncodesDeviceClass) {
   // 1W addresses a device *class*, never a node -- which is why a 1W entity has no io_device_id.
   // The awning class (0x03) is small enough to fit entirely in the low byte; see
   // BroadcastAddressMatchesKnownWireValues for one that is not.
-  const OneWayControllerIdentity awning = make_identity("awning", DeviceType::AWNING);
+  const OneWayControllerIdentity awning = make_identity("awning", DeviceType::VERTICAL_EXTERIOR_AWNING);
 
   uint8_t addr[NODE_ID_SIZE] = {0xFF, 0xFF, 0xFF};
   awning.broadcast_address(addr);
@@ -68,7 +68,7 @@ TEST(OneWayController, BroadcastAddressMatchesKnownWireValues) {
 }
 
 TEST(OneWayController, DifferentClassesProduceDifferentBroadcastAddresses) {
-  const OneWayControllerIdentity awning = make_identity("awning", DeviceType::AWNING);
+  const OneWayControllerIdentity awning = make_identity("awning", DeviceType::VERTICAL_EXTERIOR_AWNING);
   const OneWayControllerIdentity light = make_identity("light", DeviceType::LIGHT);
 
   uint8_t awning_addr[NODE_ID_SIZE] = {0};
@@ -84,7 +84,7 @@ TEST(OneWayController, RegistryLooksUpByHandleAndPreservesOrder) {
   OneWayControllerRegistry registry;
   EXPECT_TRUE(registry.empty());
 
-  registry.add(make_identity("first", DeviceType::AWNING));
+  registry.add(make_identity("first", DeviceType::VERTICAL_EXTERIOR_AWNING));
   registry.add(make_identity("second", DeviceType::ROLLER_SHUTTER));
 
   ASSERT_EQ(registry.all().size(), 2u);
@@ -102,9 +102,9 @@ TEST(OneWayController, IdentitiesCarryIndependentKeys) {
   // hub's own rather than replace it.
   OneWayControllerRegistry registry;
 
-  OneWayControllerIdentity own = make_identity("own_net", DeviceType::AWNING);
+  OneWayControllerIdentity own = make_identity("own_net", DeviceType::VERTICAL_EXTERIOR_AWNING);
   memset(own.system_key, 0x11, AES_KEY_SIZE);
-  OneWayControllerIdentity adopted = make_identity("adopted_net", DeviceType::AWNING);
+  OneWayControllerIdentity adopted = make_identity("adopted_net", DeviceType::VERTICAL_EXTERIOR_AWNING);
   memset(adopted.system_key, 0x22, AES_KEY_SIZE);
 
   registry.add(own);
@@ -142,7 +142,7 @@ TEST(OneWayController, WireProfileUnknownVendorFallsBackAndIsFlaggedAGuess) {
 }
 
 TEST(OneWayController, EffectiveExecuteAceiPrefersTheOverride) {
-  OneWayControllerIdentity id = make_identity("id", DeviceType::AWNING);
+  OneWayControllerIdentity id = make_identity("id", DeviceType::VERTICAL_EXTERIOR_AWNING);
   id.manufacturer = MANUFACTURER_VELUX;
   EXPECT_EQ(effective_execute_acei(id), 0x61) << "no override -> the VELUX profile value";
 
@@ -161,9 +161,10 @@ TEST(OneWayController, WireProfileVeluxSweepsThreeExteriorShadingClasses) {
   const OneWayWireProfile p = resolve_oneway_wire_profile(MANUFACTURER_VELUX);
   EXPECT_EQ(p.enroll_gesture, EnrollGesture::VELUX_KLI);
   EXPECT_EQ(p.enrollment_classes[0], DeviceType::ROLLER_SHUTTER);
-  EXPECT_EQ(p.enrollment_classes[1], DeviceType::AWNING);
-  EXPECT_EQ(p.enrollment_classes[2], DeviceType::DUAL_SHUTTER)
-      << "the exact {roller_shutter, awning, dual_shutter} set a real KLI PROG gesture sweeps (issue #74)";
+  EXPECT_EQ(p.enrollment_classes[1], DeviceType::VERTICAL_EXTERIOR_AWNING);
+  EXPECT_EQ(p.enrollment_classes[2], DeviceType::DUAL_ROLLER_SHUTTER)
+      << "the exact {roller_shutter, vertical_exterior_awning, dual_roller_shutter} set a real KLI PROG gesture sweeps "
+         "(issue #74)";
 }
 
 TEST(OneWayController, WireProfileSomfyAndUnprofiledUseTheSomfyGesture) {
@@ -177,16 +178,17 @@ TEST(OneWayController, WireProfileSomfyAndUnprofiledUseTheSomfyGesture) {
 }
 
 TEST(OneWayController, EffectiveEnrollmentClassesPrefersTheOverride) {
-  OneWayControllerIdentity id = make_identity("id", DeviceType::SCREEN);
+  OneWayControllerIdentity id = make_identity("id", DeviceType::VERTICAL_INTERIOR_BLIND);
   id.manufacturer = MANUFACTURER_VELUX;
 
   auto classes = effective_enrollment_classes(id);
   EXPECT_EQ(classes[0], DeviceType::ROLLER_SHUTTER) << "no override -> the VELUX profile list, not io_device_type";
-  EXPECT_EQ(classes[2], DeviceType::DUAL_SHUTTER);
+  EXPECT_EQ(classes[2], DeviceType::DUAL_ROLLER_SHUTTER);
 
-  id.enrollment_classes = {DeviceType::AWNING, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
+  id.enrollment_classes = {DeviceType::VERTICAL_EXTERIOR_AWNING, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
   classes = effective_enrollment_classes(id);
-  EXPECT_EQ(classes[0], DeviceType::AWNING) << "a non-empty override replaces the profile list entirely";
+  EXPECT_EQ(classes[0], DeviceType::VERTICAL_EXTERIOR_AWNING)
+      << "a non-empty override replaces the profile list entirely";
   EXPECT_EQ(classes[1], DeviceType::UNKNOWN);
   EXPECT_EQ(classes[2], DeviceType::UNKNOWN);
 

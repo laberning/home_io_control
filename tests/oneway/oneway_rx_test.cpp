@@ -373,7 +373,7 @@ TEST(OnewayRx, OptimisticState_TypeMismatchSkipsOptimisticApplyButStillPolls) {
   MockRadio radio;
   setup_component(comp, radio);
   // BROADCAST_ROLLER targets ROLLER_SHUTTER; link a device of a different known type.
-  comp.add_device("112233", {DeviceType::AWNING, 0, false});
+  comp.add_device("112233", {DeviceType::VERTICAL_EXTERIOR_AWNING, 0, false});
   comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
 
   IoFrame frame = make_1w_execute(0xC8, 0x00);  // CLOSE

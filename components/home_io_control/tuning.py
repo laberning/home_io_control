@@ -146,7 +146,7 @@ DISCOVERY_COMMAND_PRESETS = [
 # the device type as (type << 6) | subtype-mask, so LIGHT (0x06) gives 0x0001BF with the
 # all-subtypes mask 0x3F and 0x0001BB with discovery's 0x3B. They are offered because the only
 # system-opening sweep in the corpus is typed by class — a VELUX KLI 313 hitting 0x0000BF /
-# 0x0000FF / 0x00037F (roller_shutter / awning / dual_shutter) in
+# 0x0000FF / 0x00037F (roller_shutter / vertical_exterior_awning / dual_roller_shutter) in
 # velux_ssl_discovery_tahoma_pairing — while every discovery this project sends is class-less.
 # No capture shows a *hub* sourcing a typed discovery, so these are an experiment, not a fix.
 DISCOVERY_DESTINATION_OPTIONS = [

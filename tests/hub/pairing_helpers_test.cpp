@@ -557,8 +557,8 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataNonInvertedLight) {
 }
 
 TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataNoPlatformReturnsEmpty) {
-  // HEATING_TEMPERATURE_INTERFACE maps to DeviceCapabilityClass::CLIMATE, which has no
-  // ESPHome platform in this repo (no platform_climate.{h,cpp}, unlike cover/light/switch/lock).
+  // HEATING_TEMPERATURE_INTERFACE is a climate-class type the table marks as not driven by any
+  // platform yet (only the electrical heater with an adjustable setpoint is).
   const std::string snippet =
       build_device_yaml_snippet(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, "AABBCC",
                                 /*metadata_complete=*/true, /*inverted=*/false, /*low_power=*/false);

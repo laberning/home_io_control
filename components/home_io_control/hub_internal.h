@@ -105,7 +105,7 @@ inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
 inline void log_rejected_operation(const std::string &device_id, const IoDevice &dev, const char *operation,
                                    const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
-           device_id.c_str(), device_type_name(dev.type), static_cast<uint8_t>(dev.type),
+           device_id.c_str(), device_type_name(dev.type), static_cast<unsigned>(dev.type),
            device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
 }
 
@@ -212,13 +212,13 @@ inline constexpr size_t LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE = 24;
 /// until the user copies the line in). Reuses yaml_device_type_name() so the exact syntax always
 /// matches what the pairing snippet and the Python schema accept.
 /// @param type The now-known device type. Must not be DeviceType::UNKNOWN.
-/// @return The YAML line to add, e.g. `io_device_type: "venetian_blind"` or `io_device_type: 0x11`.
+/// @return The YAML line to add, e.g. `io_device_type: "interior_venetian_blind"` or `io_device_type: 0x11`.
 inline std::string describe_learned_device_type(DeviceType type) {
   const char *name = yaml_device_type_name(type);
   if (name != nullptr)
     return std::string("io_device_type: \"") + name + "\"";
   std::array<char, LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE> buffer{};
-  std::snprintf(buffer.data(), buffer.size(), "io_device_type: 0x%02X", static_cast<uint8_t>(type));
+  std::snprintf(buffer.data(), buffer.size(), "io_device_type: 0x%02X", static_cast<unsigned>(type));
   return std::string(buffer.data());
 }
 

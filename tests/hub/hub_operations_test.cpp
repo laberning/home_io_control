@@ -257,7 +257,8 @@ TEST(HubOperations, HeatingCommandAuthenticatedWithoutFinalResponseIsCountedToo)
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
 
   // Only the challenge — no closing reply.
   IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
@@ -281,7 +282,8 @@ TEST(HubOperations, SendHeatingCommandAcceptsClimateDeviceAndSendsExactBytes) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
 
   IoFrame resp = build_write_private_ack(comp.node_id_);
   uint8_t raw[64];
@@ -323,7 +325,8 @@ TEST(HubOperations, SendHeatingCommandRejectsOutOfRangeTemperature) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
 
   EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 28.1f));
   EXPECT_TRUE(radio.get_sent_data().empty()) << "an unencodable value must not transmit";
@@ -335,13 +338,14 @@ TEST(HubOperations, SendHeatingCommandFailsWithoutAnyReply) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
 
   // No reply queued -> exchange times out -> not acknowledged.
   EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0f));
 }
 
-// Run send_heating_command against a HEATING_TEMPERATURE_INTERFACE device with a single reply
+// Run send_heating_command against an electrical heater with an adjustable setpoint with a single reply
 // frame (built from the hub node id by `build_reply`) queued as the device's answer.
 static bool run_heating_command_with_reply(const std::function<IoFrame(const uint8_t *)> &build_reply) {
   TestableComponent comp;
@@ -349,7 +353,8 @@ static bool run_heating_command_with_reply(const std::function<IoFrame(const uin
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   EXPECT_NE(dev, nullptr);
-  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
 
   IoFrame resp = build_reply(comp.node_id_);
   uint8_t raw[64];
@@ -1250,7 +1255,7 @@ TEST(HubOperations, TiltExecuteReplyTiltBlockIsNotDecodedAsPosition) {
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::VENETIAN_BLIND;  // supports tilt
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;  // supports tilt
   dev->target = 77.0F;
   dev->position = 88.0F;
   // The angle the entity layer already applied optimistically for this very command
@@ -1443,7 +1448,7 @@ TEST(HubOperations, CoalescePositionThenTilt) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::VENETIAN_BLIND;  // supports tilt
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;  // supports tilt
 
   // Queue position first, then tilt for the same device
   comp.queue_set_device_position("ABC123", 50);
@@ -1463,7 +1468,7 @@ TEST(HubOperations, CoalesceTiltThenPosition) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::VENETIAN_BLIND;
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
 
   // Queue tilt first, then position for the same device
   comp.queue_set_device_tilt("ABC123", 80);
@@ -1483,13 +1488,13 @@ TEST(HubOperations, NoCoalesceForDifferentDevices) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::VENETIAN_BLIND;
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
 
   // Register a second tilt-capable device
   comp.add_device("DEF456");
   auto *dev2 = comp.get_device("DEF456");
   ASSERT_NE(dev2, nullptr);
-  dev2->type = DeviceType::VENETIAN_BLIND;
+  dev2->type = DeviceType::INTERIOR_VENETIAN_BLIND;
 
   // Queue position for one device, tilt for another — should NOT coalesce
   comp.queue_set_device_position("ABC123", 50);
@@ -1508,7 +1513,7 @@ TEST(HubOperations, NoCoalescePositionWithPosition) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::VENETIAN_BLIND;
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
 
   // Queue two positions — should not coalesce (no tilt involved)
   comp.queue_set_device_position("ABC123", 50);
@@ -1525,7 +1530,7 @@ TEST(HubOperations, NoCoalesceTiltWithTilt) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::VENETIAN_BLIND;
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
 
   // Queue two tilts — should not coalesce (no position involved)
   comp.queue_set_device_tilt("ABC123", 50);
@@ -1542,7 +1547,7 @@ TEST(HubOperations, CoalesceDoesNotAffectOtherPendingOps) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::VENETIAN_BLIND;
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
 
   // Queue a status request for a different device, then position + tilt for the target.
   // The status poll for "ABC123" would be dropped, but "OTHER"'s poll should survive.
@@ -1864,8 +1869,8 @@ TEST(HubOperations, FailedTiltCommandRollsBackOptimisticTilt) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::VENETIAN_BLIND;  // tilt-capable
-  dev->tilt = 15.0f;                       // a real angle from an earlier poll
+  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;  // tilt-capable
+  dev->tilt = 15.0f;                                // a real angle from an earlier poll
   ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 80.0f));
   ASSERT_FLOAT_EQ(effective_tilt(*dev), 80.0f);
 

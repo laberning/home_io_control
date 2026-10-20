@@ -132,17 +132,17 @@ TEST(ErrorRespDecoding, BytesWithStateBitsKeepTheRunStatusTable) {
 // ============================================================================
 
 TEST(DiscoveryNodeType, RemoteControllerTypeSurvivesInFull) {
-  EXPECT_EQ(decode_packed_node_type(0xFF, 0xC0), NODE_TYPE_REMOTE_CONTROLLER);
+  EXPECT_EQ(decode_packed_device_type(0xFF, 0xC0), DeviceType::REMOTE_CONTROLLER);
   IoDevice device{};
   std::string id;
   const DiscoveryResponseInfo info = decode_discovery_response(atlantic_discovery_reply(test::OWN_ID), device, id);
-  EXPECT_EQ(info.node_type, NODE_TYPE_REMOTE_CONTROLLER);
+  EXPECT_EQ(device.type, DeviceType::REMOTE_CONTROLLER);
   EXPECT_EQ(info.manufacturer, 12u);
 }
 
 TEST(DiscoveryNodeType, ActuatorTypeMatchesDeviceType) {
   // 0x04 0x00 = type 0x10 (horizontal awning), as in the Sunilus corpus capture's family.
-  EXPECT_EQ(decode_packed_node_type(0x04, 0x00), 0x10u);
+  EXPECT_EQ(decode_packed_device_type(0x04, 0x00), DeviceType::HORIZONTAL_AWNING);
 }
 
 // ============================================================================
@@ -197,7 +197,7 @@ TEST(PairingKeyStep, AtlanticFlowEndsRefusedWithPullAdvice) {
 
   const PairingTelemetry &telemetry = comp.pairing_telemetry();
   EXPECT_EQ(telemetry.outcome(), PairingOutcome::KEY_TRANSFER_REFUSED);
-  EXPECT_EQ(telemetry.discovered_node_type(), NODE_TYPE_REMOTE_CONTROLLER);
+  EXPECT_EQ(telemetry.discovered_node_type(), DeviceType::REMOTE_CONTROLLER);
   EXPECT_NE(telemetry.result_sensor_string().find("outcome=key_transfer_refused"), std::string::npos);
   EXPECT_NE(telemetry.result_sensor_string().find("key_push_not_accepted"), std::string::npos);
 
@@ -433,7 +433,7 @@ uint8_t advise(PairingTelemetry &telemetry, advisor::PairingAdvice out[advisor::
 TEST(PairingKeyAdvice, CommandUnknownSuggestsPull) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, 0x10);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::HORIZONTAL_AWNING);
   telemetry.set_key_refusal(RESULT_COMMAND_UNKNOWN);
   telemetry.set_outcome(PairingOutcome::KEY_TRANSFER_REFUSED);
   advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
@@ -446,7 +446,7 @@ TEST(PairingKeyAdvice, CommandUnknownSuggestsPull) {
 TEST(PairingKeyAdvice, OtherRefusalNamesTheCode) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, 0x10);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::HORIZONTAL_AWNING);
   telemetry.set_key_refusal(RESULT_COMMAND_REJECTED);
   telemetry.set_outcome(PairingOutcome::KEY_TRANSFER_REFUSED);
   advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
@@ -459,7 +459,7 @@ TEST(PairingKeyAdvice, OtherRefusalNamesTheCode) {
 TEST(PairingKeyAdvice, NoPullSuggestionAfterAPull) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, NODE_TYPE_REMOTE_CONTROLLER);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::REMOTE_CONTROLLER);
   telemetry.set_key_pull_attempted();
   telemetry.set_outcome(PairingOutcome::KEY_EXCHANGE_FAILED);
   advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
@@ -471,7 +471,7 @@ TEST(PairingKeyAdvice, NoPullSuggestionAfterAPull) {
 TEST(PairingKeyAdvice, RefusedPullSaysThePullIsNotOffered) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, 0x10);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::HORIZONTAL_AWNING);
   telemetry.set_key_pull_attempted();
   telemetry.set_key_refusal(RESULT_COMMAND_UNKNOWN);
   telemetry.set_outcome(PairingOutcome::KEY_TRANSFER_REFUSED);
@@ -487,7 +487,7 @@ TEST(PairingKeyAdvice, RefusedPullSaysThePullIsNotOffered) {
 TEST(PairingKeyAdvice, UnprovenPullKeyWarnsNotToUseIt) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, NODE_TYPE_REMOTE_CONTROLLER);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::REMOTE_CONTROLLER);
   telemetry.set_key_pull_attempted();
   telemetry.set_key_pull_unproven();
   telemetry.set_outcome(PairingOutcome::KEY_EXCHANGE_FAILED);
@@ -501,7 +501,7 @@ TEST(PairingKeyAdvice, UnprovenPullKeyWarnsNotToUseIt) {
 TEST(PairingKeyAdvice, ReceivedKeySaysHowToUseIt) {
   PairingTelemetry telemetry;
   telemetry.begin();
-  telemetry.set_discovered_device(DEVICE_ID, NODE_TYPE_REMOTE_CONTROLLER);
+  telemetry.set_discovered_device(DEVICE_ID, DeviceType::REMOTE_CONTROLLER);
   telemetry.set_key_pull_attempted();
   telemetry.set_outcome(PairingOutcome::KEY_RECEIVED);
   advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];

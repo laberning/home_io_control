@@ -249,7 +249,9 @@ DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]) {
 }
 
 void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
-  const auto type_raw = static_cast<uint16_t>(type);
+  // Both bytes together carry the ten type bits, so a 16-bit enumerator is encoded exactly; bits
+  // above the wire field are dropped explicitly rather than spilling into out[1].
+  const auto type_raw = static_cast<uint16_t>(static_cast<uint16_t>(type) & DEVICE_TYPE_WIRE_MASK);
   out[0] = 0;
   out[1] = static_cast<uint8_t>(type_raw >> DEVICE_TYPE_LOW_BITS_SHIFT);
   out[2] = static_cast<uint8_t>((type_raw << DEVICE_TYPE_HIGH_BITS_SHIFT) | DEVICE_SUBTYPE_MASK);
@@ -362,7 +364,6 @@ DiscoveryResponseInfo decode_discovery_response(const IoFrame &frame, IoDevice &
   info.metadata_complete = frame.data_len >= DEVICE_METADATA_SIZE;
   if (info.metadata_complete) {
     device.type = decode_packed_device_type(frame.data[0], frame.data[1]);
-    info.node_type = decode_packed_node_type(frame.data[0], frame.data[1]);
     device.subtype = decode_packed_device_subtype(frame.data[1]);
     device.inverted = default_inverted_for_type(device.type);
   } else {

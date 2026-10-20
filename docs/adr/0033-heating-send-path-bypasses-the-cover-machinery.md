@@ -51,6 +51,13 @@ superseded by real data, weakening ADR 0030's invariant.
    or `rollback_optimistic()`. Because the send path is synchronous,
    publish-on-success is sufficient and no rollback hook is needed.
 
+3. **One predicate gates every heating entry point.** `send_heating_command()`, the
+   `IOHomeClimate` entity and the `heating_control` action all ask
+   `device_supports_climate_control(type, subtype)`, which is true for the electrical
+   heater with an adjustable setpoint (node type 52, subtype 1): the device the `0x20`
+   registers are specified for. The other heating types are driven with the standard
+   EXECUTE and are reported as not supported yet.
+
 ## Consequences
 
 - One transmit path, one caller of `create_write_private()`: the entity and the

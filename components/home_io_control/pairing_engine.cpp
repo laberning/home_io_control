@@ -16,6 +16,7 @@
 #include "log_helpers.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
+#include "proto_device_types.h"
 #include "tuning_config.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
@@ -425,6 +426,22 @@ DiscoveryResponseInfo PairingEngine::parse_device_from_discovery(const IoFrame &
 
 // --- Phase helpers ---
 
+/// Log what discovery accepted: the device kind, and a warning when it answered as a remote controller.
+static void log_discovered_device(const pairing::PairingContext &context) {
+  if (context.discovery_metadata_complete) {
+    ESP_LOGI(TAG, "Discovery: device %s: %s (%s)%s", context.device_id.c_str(),
+             format_device_kind(context.device.type, context.device.subtype).c_str(),
+             format_device_ids(context.device.type, context.device.subtype).c_str(),
+             device_has_platform(context.device.type, context.device.subtype) ? "" : " (not supported yet)");
+  }
+  if (context.device.type == DeviceType::REMOTE_CONTROLLER) {
+    ESP_LOGW(TAG,
+             "Discovery: device %s answered as a remote controller (node type %u), not as an actuator. "
+             "It may not accept a pushed key; the pairing advisor says what to try if the key step fails.",
+             context.device_id.c_str(), static_cast<unsigned>(context.device.type));
+  }
+}
+
 /// Phase 1: broadcast discovery command(s) and wait for a device response (0x29).
 ///
 /// Sends each configured discovery command in order, waiting up to
@@ -470,14 +487,8 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
         context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
         context.discovery_low_power =
             info.has_extended && discovery_power_save_mode(info.flags) == POWER_SAVE_LOW_POWER;
-        context.node_type = info.node_type;
-        this->telemetry_.set_discovered_device(context.device.node_id, info.node_type);
-        if (info.node_type == NODE_TYPE_REMOTE_CONTROLLER) {
-          ESP_LOGW(TAG,
-                   "Discovery: device %s answered as a remote controller (node type %u), not as an actuator. "
-                   "It may not accept a pushed key; the pairing advisor says what to try if the key step fails.",
-                   context.device_id.c_str(), info.node_type);
-        }
+        this->telemetry_.set_discovered_device(context.device.node_id, context.device.type);
+        log_discovered_device(context);
         return result;
       }
       if (result == decisions::PairingDiscoveryDisposition::INVALID) {
@@ -771,12 +782,12 @@ bool PairingEngine::discover_and_pair() {
   if (snippet.empty()) {
     // metadata_complete is true here (build_device_yaml_snippet() never returns empty for
     // metadata_complete == false), so this is specifically "we know the type, but there's no
-    // ESPHome platform for it yet".
+    // ESPHome platform for it yet" (device_has_platform()).
     ESP_LOGW(TAG,
-             "Device %s paired successfully, but this repo does not yet expose an ESPHome platform for type=%s "
+             "Device %s paired successfully (%s), but no ESPHome platform drives it yet: type=%s "
              "class=%s subtype=%u.",
-             context.device_id.c_str(), type_diag.c_str(), device_capability_class_name(context.device.type),
-             context.device.subtype);
+             context.device_id.c_str(), format_device_kind(context.device.type, context.device.subtype).c_str(),
+             type_diag.c_str(), device_capability_class_name(context.device.type), context.device.subtype);
     ESP_LOGW(TAG,
              "No ready-to-paste YAML was generated. If you want to experiment manually, choose the most likely "
              "platform and set io_device_type: %s.",

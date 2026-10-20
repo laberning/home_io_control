@@ -107,14 +107,35 @@ def device_id_is_three_hex_bytes():
 def device_type_takes_a_name_or_a_byte():
     from esphome.components.home_io_control import hub_validators as v
 
-    assert v.validate_device_type("awning") == v.DEVICE_TYPE_OPTIONS["awning"]
+    assert v.validate_device_type("vertical_exterior_awning") == v.DEVICE_TYPE_OPTIONS["vertical_exterior_awning"]
+    assert v.validate_device_type("electrical_heater") == 0x34
     assert v.validate_device_type("0x11") == 0x11
     assert v.validate_device_type(0x11) == 0x11
+    # Node types are ten bits wide, so a remote controller (1023) is a legal raw value.
+    assert v.validate_device_type("0x3FF") == 0x3FF
     # The two rejection sites: a string that is neither a name nor a number, and a value that is
     # neither a string nor an int. An out-of-range number is cv.int_range's own message.
-    expect_invalid(v.validate_device_type, "awnig", "known name or an integer in the range 0..255 (for example 0x11)")
-    expect_invalid(v.validate_device_type, 1.5, "known name or an integer in the range 0..255")
-    expect_invalid(v.validate_device_type, 256, "at most 255")
+    expect_invalid(v.validate_device_type, "awnig", "known name or an integer in the range 0..1023 (for example 0x11)")
+    expect_invalid(v.validate_device_type, 1.5, "known name or an integer in the range 0..1023")
+    expect_invalid(v.validate_device_type, 1024, "at most 1023")
+
+
+@case("hub_validators._resolve_device_type_token")
+def renamed_device_types_name_their_replacement():
+    from esphome.components.home_io_control import hub_validators as v
+
+    expect_invalid(v.validate_device_type, "awning", "use 'vertical_exterior_awning' instead")
+    expect_invalid(v.validate_device_type, "blind", "use 'vertical_interior_blind' instead")
+    expect_invalid(v.validate_device_type, "venetian_blind", "use 'interior_venetian_blind' instead")
+    expect_invalid(v.validate_device_type, "dual_shutter", "use 'dual_roller_shutter' instead")
+    expect_invalid(v.validate_device_type, "external_venetian_blind", "use 'exterior_venetian_blind' instead")
+    expect_invalid(v.validate_device_type, "screen", "type 11 is a secure configuration device")
+    expect_invalid(v.validate_device_type, "SCREEN", "'vertical_exterior_awning' or 'vertical_interior_blind'")
+    # The class form of linked_remotes shares the resolver, so it gives the same migration message.
+    expect_invalid(v.validate_linked_remote_entry, "class:awning", "use 'vertical_exterior_awning' instead")
+    # Every renamed name has a replacement that is a current option (or the screen explanation).
+    for old, message in v.RENAMED_DEVICE_TYPES.items():
+        assert old not in v.DEVICE_TYPE_OPTIONS, old
 
 
 @case("hub_validators.validate_manufacturer")
@@ -155,7 +176,7 @@ def poll_intervals_have_a_floor():
 def linked_remote_entry_takes_a_class_or_an_address():
     from esphome.components.home_io_control import hub_validators as v
 
-    assert v.validate_linked_remote_entry("class:awning") is not None
+    assert v.validate_linked_remote_entry("class:vertical_exterior_awning") is not None
     assert v.validate_linked_remote_entry("class:0x14") is not None
     assert v.validate_linked_remote_entry("A1B2C3") is not None
     expect_invalid(v.validate_linked_remote_entry, "class:awnig", "Unknown device class 'awnig'")
@@ -192,9 +213,9 @@ def enrollment_classes_reject_repeats():
     from esphome.components.home_io_control.hub_validators import DEVICE_TYPE_OPTIONS
 
     # Runs after each entry was resolved to its device-type byte; the message names it again.
-    awning, shutter = DEVICE_TYPE_OPTIONS["awning"], DEVICE_TYPE_OPTIONS["roller_shutter"]
+    awning, shutter = DEVICE_TYPE_OPTIONS["vertical_exterior_awning"], DEVICE_TYPE_OPTIONS["roller_shutter"]
     assert o._no_duplicate_enrollment_classes([awning, shutter]) == [awning, shutter]
-    expect_invalid(o._no_duplicate_enrollment_classes, [awning, awning], "'awning' more than once")
+    expect_invalid(o._no_duplicate_enrollment_classes, [awning, awning], "'vertical_exterior_awning' more than once")
     expect_invalid(o._no_duplicate_enrollment_classes, [0xFE, 0xFE], "'0xfe' more than once")
 
 

@@ -22,7 +22,7 @@ cover:
     id: patio_awning
     name: ""
     io_device_id: "FEEB1E"
-    io_device_type: "awning"
+    io_device_type: "vertical_exterior_awning"
 ```
 
 - Declare each sub-device once under `esphome: devices:`, then reference its `id:` from the

@@ -7,13 +7,13 @@ packages:
 home_io_control:
   oneway_controllers:
     - id: awning_remote
-      io_device_type: awning
+      io_device_type: vertical_exterior_awning
       commands: [open, close, stop]
     - id: screen_remote
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF
       manufacturer: velux
-      io_device_type: awning
+      io_device_type: vertical_exterior_awning
       commands: [stop]
       enrollment: true
-      enrollment_classes: [awning, roller_shutter]
+      enrollment_classes: [vertical_exterior_awning, roller_shutter]

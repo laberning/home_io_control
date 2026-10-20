@@ -555,7 +555,8 @@ static IoFrame make_write_private_ack(const uint8_t dst[3]) {
 static void make_climate_device(TestableManagementComponent &component) {
   auto *dev = component.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
 }
 
 TEST(HubManagement, HeatingControlRejectsUnknownDevice) {
@@ -1116,7 +1117,7 @@ TEST(HubManagement, ScanPairedDevicesKnownResponderReportedWithoutYamlSnippet) {
   const auto result = component.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_NE(result.message.find("30E1F2"), std::string::npos);
-  EXPECT_NE(result.message.find("horizontal_awning"), std::string::npos);
+  EXPECT_NE(result.message.find("horizontal awning"), std::string::npos);
   EXPECT_NE(result.message.find("[known]"), std::string::npos);
   EXPECT_EQ(result.message.find("io_device_id"), std::string::npos) << "a known responder must not get a YAML snippet";
 }
@@ -1273,6 +1274,42 @@ TEST(HubManagement, ScanPairedDevicesUnknownResponderGetsYamlSnippet) {
   EXPECT_EQ(result.message.find("hint:"), std::string::npos)
       << "an unknown responder has no registry entry to hint about";
   EXPECT_EQ(component.get_device("415CE4"), nullptr) << "an unknown responder must not be auto-registered";
+}
+
+TEST(HubManagement, ScanPairedDevicesHeaterWithSetpointGetsClimateSnippet) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  // Type 52 (0x34) subtype 1: packed bytes 0D 01.
+  const uint8_t payload[] = {0x0D, 0x01, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE5};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("electrical heater, with adjustable setpoint (0x34/1)"), std::string::npos)
+      << result.message;
+  EXPECT_NE(result.message.find("  climate:\n"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("io_device_type: \"electrical_heater\""), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("io_subtype: 1"), std::string::npos) << result.message;
+}
+
+TEST(HubManagement, ScanPairedDevicesTypeWithoutPlatformIsReportedAsNotSupportedYet) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  // Type 52 subtype 0 (the plain electrical heater): recognised and named, but no platform drives it.
+  const uint8_t payload[] = {0x0D, 0x00, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  const uint8_t src[3] = {0x41, 0x5C, 0xE5};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("electrical heater"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("not supported yet"), std::string::npos) << result.message;
+  EXPECT_EQ(result.message.find("io_device_id"), std::string::npos) << "no snippet for a type without a platform";
 }
 
 TEST(HubManagement, ScanPairedDevicesLowPowerResponderGetsLowPowerLineInSnippet) {
@@ -1701,7 +1738,7 @@ TEST(HubManagement, OneWaySetPositionRejectsAMalformedPosition) {
 
   OneWayControllerIdentity identity{};
   identity.id = "awning_remote";
-  identity.io_device_type = DeviceType::AWNING;
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   component.add_oneway_controller(identity);
 
   for (const char *bad : {"", "abc", "101", "-1", "12x"}) {
@@ -1723,7 +1760,7 @@ TEST(HubManagement, OneWaySetPositionQueuesTheParsedPositionForAKnownIdentity) {
 
   OneWayControllerIdentity identity{};
   identity.id = "awning_remote";
-  identity.io_device_type = DeviceType::AWNING;
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
 
   const struct {
     const char *input;
@@ -1785,7 +1822,7 @@ TEST(HubManagement, OneWayRemoveControllerQueuesForAKnownIdentity) {
 
   OneWayControllerIdentity identity{};
   identity.id = "awning_remote";
-  identity.io_device_type = DeviceType::AWNING;
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   component.add_oneway_controller(identity);
 
   component.api_oneway_remove_controller_("awning_remote");

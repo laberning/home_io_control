@@ -77,7 +77,6 @@ struct PairingContext {
   std::string device_id;                   ///< Hex string representation of the paired node ID.
   bool discovery_metadata_complete{false};  ///< True when discovery carried type/subtype bytes.
   bool discovery_low_power{false};          ///< True when discovery reported POWER_SAVE_LOW_POWER.
-  uint16_t node_type{0};                    ///< Full 10-bit node type from discovery (see NODE_TYPE_REMOTE_CONTROLLER).
   bool saw_key_challenge{false};            ///< True once the device challenged our key-init this attempt.
   bool key_refused{false};                  ///< True once the device answered the key step with CMD_ERROR_RESP.
   uint8_t key_refusal_code{0};              ///< That CMD_ERROR_RESP byte; only meaningful if key_refused.

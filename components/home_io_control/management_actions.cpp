@@ -14,6 +14,7 @@
 #include "hub_core.h"
 #include "log_helpers.h"
 #include "proto_commands.h"
+#include "proto_device_types.h"
 
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
@@ -944,7 +945,7 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   }
 
   // Capability gate via the predicate only — no inline device-type or vendor list.
-  if (!device_supports_climate_control(dev->type)) {
+  if (!device_supports_climate_control(dev->type, dev->subtype)) {
     result.message = "device is not a climate device";
     return result;
   }
@@ -1037,17 +1038,17 @@ void ManagementActions::api_oneway_remove_controller(const std::string &controll
 /// self-reported power-save class disagrees with the registered device's YAML `low_power`
 /// property (the responder must carry extended metadata for the comparison to be possible at
 /// all). Unknown responders get the same summary line plus a lead-in sentence and a
-/// ready-to-paste YAML block (or, if the decoded type has no ESPHome platform, an explanatory
-/// line instead of a blank) — the same "paste this in" framing a successful pairing prints.
+/// ready-to-paste YAML block (or, if the decoded type has no ESPHome platform yet, a
+/// "not supported yet" line instead of a blank) — the same "paste this in" framing a successful pairing prints.
 /// @param responder Decoded responder record.
 /// @param device_id Hex device ID string for this responder, rebuilt from `responder.src`.
 /// @param registered The matching registry entry, or nullptr if this responder is not known.
 static std::string format_scan_reply_line(const ScanResponder &responder, const std::string &device_id,
                                           const IoDevice *registered) {
   const bool known = registered != nullptr;
-  std::string line = "  " + device_id + ": " + device_type_name(responder.type) +
-                     " subtype=" + std::to_string(responder.subtype) + " rssi=" + std::to_string(responder.rssi_dbm) +
-                     "dBm";
+  std::string line = "  " + device_id + ": " + format_device_kind(responder.type, responder.subtype) + " (" +
+                     format_device_ids(responder.type, responder.subtype) +
+                     ") rssi=" + std::to_string(responder.rssi_dbm) + "dBm";
   uint8_t power_save = 0;
   if (responder.has_extended) {
     uint8_t const att = discovery_att_class(responder.flags);
@@ -1083,8 +1084,7 @@ static std::string format_scan_reply_line(const ScanResponder &responder, const 
   if (!snippet.empty())
     return line + "    Paste this into your YAML to register it:\n" + snippet;
 
-  return line + "    no ready-to-paste YAML: no ESPHome platform for io_device_type: " +
-         format_device_type_for_yaml(responder.type) + "\n";
+  return line + "    not supported yet\n";
 }
 
 /// @brief Outcome of add_scan_responder(), so callers can tell a harmless repeat from real loss.

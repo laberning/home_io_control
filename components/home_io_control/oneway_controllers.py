@@ -50,6 +50,7 @@ from .hub_names import (
     OneWayButtonAction,
 )
 from .hub_validators import (
+    DEVICE_TYPE_MAX,
     DEVICE_TYPE_OPTIONS,
     MANUFACTURER_OPTIONS,
     ONEWAY_WIRE_PROFILE_MANUFACTURERS,
@@ -141,15 +142,16 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # validate_oneway_controllers()'s warning below.
         cv.Optional(CONF_ENROLLMENT_WITH_MAC, default=False): cv.boolean,
         # The device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
-        # profile default ({roller_shutter, awning, dual_shutter} for velux). Set it to narrow the
-        # sweep, e.g. [awning], once you know which class your actuator listens on. Ignored by the
-        # somfy gesture (which always uses io_device_type). Max 3 -- the C++ side is a fixed array.
+        # profile default ({roller_shutter, vertical_exterior_awning, dual_roller_shutter} for velux).
+        # Set it to narrow the sweep, e.g. [vertical_exterior_awning], once you know which class
+        # your actuator listens on. Ignored by the somfy gesture (which always uses io_device_type).
+        # Max 3 -- the C++ side is a fixed array.
         # `unknown` (0x00) is rejected: it is the C++ "not overridden" sentinel
         # (effective_enrollment_classes()), so [unknown] would silently expand back to the full
         # three-class sweep -- the opposite of narrowing it. Duplicates are rejected too: each just
         # retransmits the same frame and costs ~1s of the blocking gesture for nothing.
         cv.Optional(CONF_ENROLLMENT_CLASSES): cv.All(
-            cv.ensure_list(cv.All(validate_device_type, cv.int_range(min=1, max=0xFF))),
+            cv.ensure_list(cv.All(validate_device_type, cv.int_range(min=1, max=DEVICE_TYPE_MAX))),
             cv.Length(min=1, max=3),
             _no_duplicate_enrollment_classes,
         ),
@@ -401,8 +403,9 @@ def validate_oneway_controllers(config):
             )
 
         # The velux profile's default 0x30 sweep is the exterior-shading set a KLI 310/313 uses
-        # ({roller_shutter, awning, dual_shutter}). An interior-blind remote (KLI 312) sweeps
-        # blind/venetian_blind instead, so a screen/blind identity that enrolls with the default
+        # ({roller_shutter, vertical_exterior_awning, dual_roller_shutter}). An interior-blind remote
+        # (KLI 312) sweeps vertical_interior_blind/interior_venetian_blind instead, so a blind
+        # identity that enrolls with the default
         # sweep almost certainly misses the actuator. Enrollment ignores io_device_type,
         # so point the user at enrollment_classes: and at the KLI's own 0x2E lines that name the classes.
         if (
@@ -411,19 +414,19 @@ def validate_oneway_controllers(config):
             and CONF_ENROLLMENT_CLASSES not in identity
             and identity[CONF_IO_DEVICE_TYPE]
             in (
-                DEVICE_TYPE_OPTIONS["screen"],
-                DEVICE_TYPE_OPTIONS["blind"],
-                DEVICE_TYPE_OPTIONS["venetian_blind"],
+                DEVICE_TYPE_OPTIONS["vertical_interior_blind"],
+                DEVICE_TYPE_OPTIONS["interior_venetian_blind"],
             )
         ):
             _LOGGER.warning(
                 "home_io_control: oneway_controllers '%s' is a VELUX %s with enrollment: true, but "
                 "enrollment_classes: is unset, so the enrollment 0x30 sweep uses the exterior-shading "
-                "default roller_shutter/awning/dual_shutter and ignores io_device_type. This device may "
-                "enroll on other classes: set enrollment_classes: (a KLI 312 interior blind uses "
-                "[blind, venetian_blind]). To find yours, press Gear on the existing remote and use "
-                "the classes named in its 'rx 1W remote ... (0x2E)' DEBUG log lines -- see 'Finding "
-                "your enrollment classes' in the 1W transmit docs.",
+                "default roller_shutter/vertical_exterior_awning/dual_roller_shutter and ignores "
+                "io_device_type. This device may enroll on other classes: set enrollment_classes: (a KLI "
+                "312 interior blind uses [vertical_interior_blind, interior_venetian_blind]). To find "
+                "yours, press Gear on the existing remote and use the classes named in its 'rx 1W "
+                "remote ... (0x2E)' DEBUG log lines -- see 'Finding your enrollment classes' in the "
+                "1W transmit docs.",
                 identity_id,
                 next(
                     name
@@ -434,7 +437,7 @@ def validate_oneway_controllers(config):
 
         # enrollment_classes: only feeds the VELUX enrollment gesture. On a somfy/unprofiled
         # identity, or one with no enroll button at all, it is silently inert -- flag it, the same
-        # way the screen/blind case above is flagged.
+        # way the blind case above is flagged.
         if CONF_ENROLLMENT_CLASSES in identity and (
             identity[CONF_MANUFACTURER] != MANUFACTURER_OPTIONS["velux"]
             or not identity[CONF_ENROLLMENT]

@@ -106,16 +106,18 @@ TEST(ProtocolBoundary, IsExchangeInternalCommand_ZeroNotInternal) {
 // ========================================================================================
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_VenetianBlind) {
-  EXPECT_TRUE(device_supports_tilt(DeviceType::VENETIAN_BLIND)) << "VENETIAN_BLIND should support tilt";
+  EXPECT_TRUE(device_supports_tilt(DeviceType::INTERIOR_VENETIAN_BLIND))
+      << "INTERIOR_VENETIAN_BLIND should support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_Blind) {
-  EXPECT_TRUE(device_supports_tilt(DeviceType::BLIND)) << "BLIND should support tilt (covered by doxygen list)";
+  EXPECT_TRUE(device_supports_tilt(DeviceType::VERTICAL_INTERIOR_BLIND))
+      << "VERTICAL_INTERIOR_BLIND should support tilt (covered by doxygen list)";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_ExternalVenetianBlind) {
-  EXPECT_TRUE(device_supports_tilt(DeviceType::EXTERNAL_VENETIAN_BLIND))
-      << "EXTERNAL_VENETIAN_BLIND should support tilt";
+  EXPECT_TRUE(device_supports_tilt(DeviceType::EXTERIOR_VENETIAN_BLIND))
+      << "EXTERIOR_VENETIAN_BLIND should support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_LouvreBlind) {
@@ -127,7 +129,8 @@ TEST(ProtocolBoundary, DeviceSupportsTilt_RollerShutterNotTilt) {
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_AwningNotTilt) {
-  EXPECT_FALSE(device_supports_tilt(DeviceType::AWNING)) << "AWNING must NOT support tilt";
+  EXPECT_FALSE(device_supports_tilt(DeviceType::VERTICAL_EXTERIOR_AWNING))
+      << "VERTICAL_EXTERIOR_AWNING must NOT support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_LightNotTilt) {
@@ -164,8 +167,8 @@ TEST(ProtocolBoundary, DeviceCapabilityClass_RollingDoorOpenerIsCover) {
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_DualShutterIsCover) {
-  EXPECT_EQ(device_capability_class(DeviceType::DUAL_SHUTTER), DeviceCapabilityClass::COVER)
-      << "DUAL_SHUTTER must be classified as COVER";
+  EXPECT_EQ(device_capability_class(DeviceType::DUAL_ROLLER_SHUTTER), DeviceCapabilityClass::COVER)
+      << "DUAL_ROLLER_SHUTTER must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_VentilationPointIsSwitch) {
@@ -185,8 +188,8 @@ TEST(ProtocolBoundary, DeviceCapabilityClass_HeatPumpIsClimate) {
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_VerticalDescending) {
   // ExternalVenetianBlind is explicitly in the COVER switch arm of device_capability_class
-  EXPECT_EQ(device_capability_class(DeviceType::EXTERNAL_VENETIAN_BLIND), DeviceCapabilityClass::COVER)
-      << "EXTERNAL_VENETIAN_BLIND must be classified as COVER";
+  EXPECT_EQ(device_capability_class(DeviceType::EXTERIOR_VENETIAN_BLIND), DeviceCapabilityClass::COVER)
+      << "EXTERIOR_VENETIAN_BLIND must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_CurtainTrackIsCover) {
@@ -214,11 +217,12 @@ TEST(ProtocolBoundary, DeviceCapabilityClass_PergolaIsPlainPositionCover) {
 TEST(ProtocolBoundary, IsKnownDeviceType_HandlesTheNonContiguousEnum) {
   EXPECT_FALSE(is_known_device_type(0x00)) << "UNKNOWN is not a known type";
   EXPECT_TRUE(is_known_device_type(0x18)) << "last value of the contiguous run";
-  for (uint16_t gap = 0x19; gap <= 0x1C; gap++)
-    EXPECT_FALSE(is_known_device_type(gap)) << "0x" << std::hex << gap << " has no enumerator";
-  EXPECT_TRUE(is_known_device_type(0x1D));
-  EXPECT_FALSE(is_known_device_type(0x1E));
-  EXPECT_FALSE(is_known_device_type(0x11D)) << "must not alias 0x1D by truncation to uint8_t";
+  for (uint16_t gap = 25; gap <= 26; gap++)
+    EXPECT_FALSE(is_known_device_type(gap)) << gap << " has no enumerator";
+  for (const uint16_t known : {27, 28, 29, 30, 51, 52, 53, 255, 1008, 1023})
+    EXPECT_TRUE(is_known_device_type(known)) << known << " is a named node type";
+  for (const uint16_t gap : {31, 50, 54, 254, 256, 285, 1007, 1022})
+    EXPECT_FALSE(is_known_device_type(gap)) << gap << " has no enumerator";
 }
 
 // ========================================================================================

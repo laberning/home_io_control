@@ -32,11 +32,13 @@ class MockHubClimate : public test::MockPlatformHubBase {
   }
 };
 
-IOHomeClimate make_bound_climate(MockHubClimate &hub, DeviceType type = DeviceType::HEATING_TEMPERATURE_INTERFACE) {
+IOHomeClimate make_bound_climate(MockHubClimate &hub, DeviceType type = DeviceType::ELECTRICAL_HEATER,
+                                 uint8_t subtype = 1) {
   IOHomeClimate entity;
   entity.set_parent(&hub);
   entity.set_device_id("ABC123");
   entity.set_device_type(type);
+  entity.set_subtype(subtype);
   return entity;
 }
 
@@ -194,6 +196,19 @@ TEST(PlatformClimate, NonClimateDeviceBindingIsRejectedInSetup) {
   IOHomeClimate entity = make_bound_climate(hub, DeviceType::ROLLER_SHUTTER);
   entity.setup();
   EXPECT_TRUE(entity.is_failed()) << "a known non-climate io_device_type must fail the entity";
+}
+
+TEST(PlatformClimate, ClimateTypeWithoutAPlatformIsRejectedInSetup) {
+  MockHubClimate hub;
+  // A heater without the adjustable-setpoint subtype and a heating interface are climate-class
+  // types, but the heating payloads fit neither.
+  IOHomeClimate plain_heater = make_bound_climate(hub, DeviceType::ELECTRICAL_HEATER, 0);
+  plain_heater.setup();
+  EXPECT_TRUE(plain_heater.is_failed()) << "an electrical heater without io_subtype: 1 is not driven by this entity";
+
+  IOHomeClimate interface = make_bound_climate(hub, DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  interface.setup();
+  EXPECT_TRUE(interface.is_failed());
 }
 
 TEST(PlatformClimate, UnknownDeviceTypeIsToleratedInSetup) {

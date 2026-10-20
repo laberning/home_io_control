@@ -453,7 +453,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     const bool type_was_unknown = dev.type == DeviceType::UNKNOWN;
     apply_info2_response(dev, frame);
     ESP_LOGI(detail::TAG, "Device %s: type=%s (%u) class=%s profile=%s subtype=%u", id.c_str(),
-             device_type_name(dev.type), (uint8_t) dev.type, device_capability_class_name(dev.type),
+             device_type_name(dev.type), static_cast<unsigned>(dev.type), device_capability_class_name(dev.type),
              device_operation_profile_name(dev.type), dev.subtype);
     if (type_was_unknown && dev.type != DeviceType::UNKNOWN) {
       ESP_LOGI(detail::TAG,

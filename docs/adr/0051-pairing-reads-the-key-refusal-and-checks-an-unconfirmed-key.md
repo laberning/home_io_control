@@ -24,7 +24,9 @@ back as `0x38` (code 7). The table the hub used looked the byte up unshifted, so
 "error during execution" and `0x80` had no name.
 
 The radiator's discovery reply also carries node type 1023 (`FF C0`, a remote controller), not a
-heater type. `DeviceType` is 8 bits wide and truncated it to `0xFF`, so nothing noticed.
+heater type. `DeviceType` held 8 bits and truncated it to `0xFF`, so nothing noticed;
+[ADR 0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) widens it to the full
+ten-bit field.
 
 ## Options considered
 

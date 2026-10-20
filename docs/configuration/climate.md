@@ -18,9 +18,15 @@ only learns whether the device acknowledged the write. (`power_on` and `midnight
 *reads*; their ACK payload is logged at DEBUG but not decoded.) State shown in Home Assistant is
 "last commanded, never confirmed".
 
-Supported device types: `heating_temperature_interface` (0x0E) is the one selectable from YAML
-today. `exterior_heating` (0x15) and `heat_pump` (0x16) also map to the climate capability class
-but are not yet YAML-selectable — open an issue if you have one.
+The `climate:` entity drives an electrical heater with an adjustable setpoint: node type 52
+(`electrical_heater`), subtype 1. The `CMD_WRITE_PRIVATE` registers it writes are that device's;
+other heating devices (the heating temperature interface, exterior heating, heat pumps and the plain
+electrical heater, subtype 0) take the standard EXECUTE instead, which this entity does not send,
+so a `climate:` entity bound to one of them (by raw type value) fails at boot with a log line
+saying so. Unconfirmed on
+hardware until a test is reported in
+[issue #165](https://github.com/laberning/home_io_control/issues/165). Scan Paired Devices and
+Discover & Pair print a ready-to-paste `climate:` block for a heater of this kind.
 
 ## `climate:` entity
 
@@ -29,7 +35,8 @@ climate:
   - platform: home_io_control
     name: "Living Room Radiator"
     io_device_id: "FEEB22"
-    io_device_type: "heating_temperature_interface"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
 ```
 
 - Modes: `off` → mode `off`, `heat` → mode `manual`, `auto` → mode `auto`.

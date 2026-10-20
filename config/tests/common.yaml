@@ -64,7 +64,7 @@ home_io_control:
   # key and an explicit address — the two shapes the schema has to support.
   oneway_controllers:
     - id: awning_remote
-      io_device_type: awning
+      io_device_type: vertical_exterior_awning
       commands: [open, close, stop]
     - id: velux_screen_remote
       # ADR 0031: manufacturer: drives the CMD_EXECUTE ACEI byte; execute_broadcast: all mimics a
@@ -72,12 +72,12 @@ home_io_control:
       # manufacturer: velux identity compiles the VELUX enroll gesture + button, and
       # enrollment_classes: exercises the non-empty sweep-list initialiser.
       manufacturer: velux
-      io_device_type: awning
+      io_device_type: vertical_exterior_awning
       execute_broadcast: all
       execute_acei: 0x61
       commands: [stop]
       enrollment: true
-      enrollment_classes: [awning, roller_shutter]
+      enrollment_classes: [vertical_exterior_awning, roller_shutter]
       # ADR 0041: low_power: is deliberately absent here, so this identity exercises the
       # profile-resolution path -- codegen emits an empty optional and effective_power_class()
       # turns it into ALWAYS_ALIVE because manufacturer: is velux. Setting it explicitly would
@@ -113,8 +113,8 @@ cover:
     name: "Test Cover"
     io_device_id: "FEEB1E"
     device_class: awning
-    io_device_type: "awning"
-    linked_remotes: ["class:awning", "class:0x14"]
+    io_device_type: "vertical_exterior_awning"
+    linked_remotes: ["class:vertical_exterior_awning", "class:0x14"]
     optimistic_state: false
   # Declaring `silent:` is what generates the runtime Silent Operation switch; the cover above
   # omits it, so this pair compiles both branches of that codegen.
@@ -163,9 +163,10 @@ switch:
     io_device_id: "FEEB20"
 
 climate:
-  # Experimental heating/climate platform (CMD_WRITE_PRIVATE 0x20). heating_temperature_interface
-  # is the one climate io_device_type selectable from YAML today.
+  # Experimental heating/climate platform (CMD_WRITE_PRIVATE 0x20). It drives an electrical
+  # heater with an adjustable setpoint: io_device_type electrical_heater, io_subtype 1.
   - platform: home_io_control
     name: "Test Heating"
     io_device_id: "FEEB22"
-    io_device_type: "heating_temperature_interface"
+    io_device_type: "electrical_heater"
+    io_subtype: 1

@@ -34,7 +34,7 @@ cover:
     name: "Patio Awning"
     device_class: awning
     io_device_id: "30E1F2"
-    io_device_type: "awning"
+    io_device_type: "vertical_exterior_awning"
     io_subtype: 0
     invert_position: true
     status_poll_interval: 2s

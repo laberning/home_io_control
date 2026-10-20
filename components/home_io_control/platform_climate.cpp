@@ -4,6 +4,8 @@
 
 #include "platform_climate.h"
 
+#include "proto_device_types.h"
+
 #include "esphome/core/log.h"
 
 #include <string>
@@ -47,16 +49,18 @@ constexpr float CLIMATE_TARGET_TEMP_STEP_C = 0.5F;
 }  // namespace
 
 void IOHomeClimate::setup() {
-  // Device-type gating, the single predicate. A known non-climate type is a configuration
-  // mistake this entity can never drive, so fail it loudly rather than let every command be
-  // rejected downstream. An UNKNOWN type is left to pass through: discovery may still resolve it
-  // to a climate type, exactly as the other platforms tolerate unknown bindings. This runs
-  // BEFORE register_device_binding_() so a misconfigured binding never injects a device into the
-  // hub registry and never leaves a live callback on a failed entity.
-  if (this->device_type_ != DeviceType::UNKNOWN && !device_supports_climate_control(this->device_type_)) {
+  // Device gating, the single predicate. A known device this entity cannot drive (a non-climate
+  // type, or a heater without the adjustable-setpoint subtype) is a configuration mistake, so fail
+  // it loudly rather than let every command be rejected downstream. An UNKNOWN type is left to pass through: discovery
+  // may still resolve it to a climate type, exactly as the other platforms tolerate unknown bindings. This runs BEFORE
+  // register_device_binding_() so a misconfigured binding never injects a device into the hub registry and never leaves
+  // a live callback on a failed entity.
+  if (this->device_type_ != DeviceType::UNKNOWN &&
+      !device_supports_climate_control(this->device_type_, this->subtype_)) {
     ESP_LOGE(TAG,
-             "Device %s declares io_device_type '%s', which is not a climate device — disabling this climate entity",
-             this->device_id_.c_str(), device_type_name(this->device_type_));
+             "Device %s is declared as %s, which this climate entity cannot drive yet (it drives an electrical heater "
+             "with an adjustable setpoint: io_device_type: electrical_heater, io_subtype: 1) — disabling it",
+             this->device_id_.c_str(), format_device_kind(this->device_type_, this->subtype_).c_str());
     this->mark_failed();
     return;
   }

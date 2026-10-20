@@ -47,7 +47,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
 | [0030](0030-predictions-are-kept-apart-from-observations.md) | Predictions are kept apart from observations | An optimistic guess lives in its own overlay, withdrawn on failure and superseded per-axis by real data — never written into a reported field |
 | [0031](0031-oneway-vendor-wire-behaviour-is-driven-by-manufacturer.md) | 1W vendor wire behaviour is driven by `manufacturer:` | `manufacturer:` selects the 1W `CMD_EXECUTE` ACEI byte (`0x43` Somfy / `0x61` Velux); `execute_broadcast: typed\|all` is a separate handheld-vs-class-bound axis, not a vendor one |
-| [0032](0032-oneway-velux-enrollment-gesture.md) | 1W enrollment follows the gesture the target's `manufacturer:` expects | `velux` → `0x39` broadcast, a `0x30` sweep across `{roller_shutter, awning, dual_shutter}` under one sequence, then STOP+DOWN; `somfy` path unchanged; `enrollment_classes:` overrides the sweep list |
+| [0032](0032-oneway-velux-enrollment-gesture.md) | 1W enrollment follows the gesture the target's `manufacturer:` expects | `velux` → `0x39` broadcast, a `0x30` sweep across `{roller_shutter, vertical_exterior_awning, dual_roller_shutter}` under one sequence, then STOP+DOWN; `somfy` path unchanged; `enrollment_classes:` overrides the sweep list |
 | [0041](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md) | An unset 1W `low_power:` resolves from the manufacturer profile | `velux` → `ALWAYS_ALIVE` (an awake VELUX receiver rejects the 1024-byte preamble, and 1W has no ACK to reveal it); Somfy and unrecognised manufacturers stay `LEGACY_LONG`; an explicit key always wins |
 | [0033](0033-heating-send-path-bypasses-the-cover-machinery.md) | Heating send path bypasses the cover machinery | 2W heating does a plain send-and-receive — no status decode, no poll backoff, no ADR 0030 overlay (heating has no observation stream); state is publish-on-success only |
 | [0043](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md) | An unconfirmed movement command is re-sent once to a device that normally confirms | Learned in RAM from the first EXECUTE the device closes with a reply; favourite/vent never re-sent; at most one re-send inside the exchange budget; no device list, nothing stored |
@@ -67,6 +67,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) | Counters are the one exception to 0018 | 1W's rolling sequence cannot be re-derived, so it is persisted — and nothing else is |
 | [0027](0027-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
 | [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is deprecated, not deleted outright |
+| [0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) | Device types follow the IO node-type and subtype table | A 16-bit `DeviceType` and one (type, subtype) table drive names, entity class, platform and behaviour flags; six YAML names change and the old ones fail with the replacement |
 
 ### Security
 
@@ -146,6 +147,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0049: A rain limitation is derived from observed status, never predicted](0049-a-rain-limitation-is-derived-from-observed-status-never-predicted.md)
 - [ADR 0050: Rain is read by an opt-in limitation poll](0050-rain-is-read-by-an-opt-in-limitation-poll.md)
 - [ADR 0051: Pairing reads the key refusal and checks an unconfirmed key](0051-pairing-reads-the-key-refusal-and-checks-an-unconfirmed-key.md)
+- [ADR 0052: Device types follow the IO node-type and subtype table](0052-device-types-follow-the-io-node-type-and-subtype-table.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

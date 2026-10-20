@@ -12,8 +12,8 @@ cover:
   - platform: home_io_control
     name: "Awning"
     io_device_id: "FEEB1E"
-    io_device_type: awning
-    linked_remotes: ["class:awning", "class:0x14"]
+    io_device_type: vertical_exterior_awning
+    linked_remotes: ["class:vertical_exterior_awning", "class:0x14"]
     status_poll_interval: 60s
     rain_sensor_poll_interval: 15min
     battery: true

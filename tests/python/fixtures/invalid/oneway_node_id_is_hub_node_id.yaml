@@ -9,4 +9,4 @@ home_io_control:
   oneway_controllers:
     - id: remote
       node_id: C0FFEE
-      io_device_type: awning
+      io_device_type: vertical_exterior_awning

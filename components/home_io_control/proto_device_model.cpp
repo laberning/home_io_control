@@ -5,41 +5,24 @@
 #include "proto_device_model.h"
 
 #include "proto_constants.h"
+#include "proto_device_types.h"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <limits>
 
 namespace esphome {
 namespace home_io_control {
 
 namespace {
 
-constexpr size_t DEVICE_TYPE_HEX_STRING_BUFFER_SIZE = 8;  ///< Buffer for strings such as "0x11" plus terminator.
+constexpr size_t DEVICE_TYPE_HEX_STRING_BUFFER_SIZE = 8;  ///< Buffer for strings such as "0x3FF" plus terminator.
 
 /// Format a raw device type as hexadecimal, for diagnostics and as the YAML fallback.
 std::string format_device_type_hex(DeviceType type) {
   char buf[DEVICE_TYPE_HEX_STRING_BUFFER_SIZE];
-  snprintf(buf, sizeof(buf), "0x%02X", static_cast<uint8_t>(type));
+  snprintf(buf, sizeof(buf), "0x%02X", static_cast<unsigned>(type));
   return std::string(buf);
-}
-
-/// Map a capability class to the corresponding ESPHome platform name, or nullptr when the
-/// class has no dedicated platform yet.
-const char *pairing_platform_name(DeviceCapabilityClass capability_class) {
-  switch (capability_class) {
-    case DeviceCapabilityClass::COVER:
-      return "cover";
-    case DeviceCapabilityClass::LIGHT:
-      return "light";
-    case DeviceCapabilityClass::SWITCH:
-      return "switch";
-    case DeviceCapabilityClass::LOCK:
-      return "lock";
-    default:
-      return nullptr;
-  }
 }
 
 }  // namespace
@@ -97,15 +80,12 @@ DeviceType decode_packed_device_type(uint8_t type_msb, uint8_t type_subtype) {
                                  (type_subtype >> DEVICE_TYPE_HIGH_BITS_SHIFT));
 }
 
-uint16_t decode_packed_node_type(uint8_t type_msb, uint8_t type_subtype) {
-  return static_cast<uint16_t>((type_msb << DEVICE_TYPE_LOW_BITS_SHIFT) |
-                               (type_subtype >> DEVICE_TYPE_HIGH_BITS_SHIFT));
-}
-
 uint8_t decode_packed_device_subtype(uint8_t type_subtype) { return type_subtype & DEVICE_SUBTYPE_MASK; }
 
 void encode_packed_device_type(DeviceType type, uint8_t subtype, uint8_t &type_msb, uint8_t &type_subtype) {
-  const auto raw = static_cast<uint8_t>(type);
+  // The wire field holds ten type bits; anything above is dropped here rather than aliasing the
+  // subtype bits below.
+  const auto raw = static_cast<uint16_t>(static_cast<uint16_t>(type) & DEVICE_TYPE_WIRE_MASK);
   type_msb = static_cast<uint8_t>(raw >> DEVICE_TYPE_LOW_BITS_SHIFT);
   type_subtype = static_cast<uint8_t>((raw << DEVICE_TYPE_HIGH_BITS_SHIFT) | (subtype & DEVICE_SUBTYPE_MASK));
 }
@@ -150,176 +130,21 @@ float decode_tilt_report(uint16_t tilt_raw) {
 }
 
 bool is_known_device_type(uint16_t raw) {
-  // Defined by device_type_name(): its -Wswitch-checked switch is the single list of enumerators.
-  return raw <= std::numeric_limits<uint8_t>::max() &&
-         std::strcmp(device_type_name(static_cast<DeviceType>(raw)), "unknown") != 0;
+  return raw != static_cast<uint16_t>(DeviceType::UNKNOWN) &&
+         find_exact_device_type_info(static_cast<DeviceType>(raw), 0) != nullptr;
 }
 
 const char *device_type_name(DeviceType type) {
-  switch (type) {
-    case DeviceType::UNKNOWN:
-      return "unknown";
-    case DeviceType::VENETIAN_BLIND:
-      return "venetian_blind";
-    case DeviceType::ROLLER_SHUTTER:
-      return "roller_shutter";
-    case DeviceType::SCREEN:
-      return "screen";
-    case DeviceType::AWNING:
-      return "awning";
-    case DeviceType::WINDOW_OPENER:
-      return "window_opener";
-    case DeviceType::GARAGE_OPENER:
-      return "garage_opener";
-    case DeviceType::LIGHT:
-      return "light";
-    case DeviceType::GATE_OPENER:
-      return "gate_opener";
-    case DeviceType::ROLLING_DOOR_OPENER:
-      return "rolling_door_opener";
-    case DeviceType::BLIND:
-      return "blind";
-    case DeviceType::DUAL_SHUTTER:
-      return "dual_shutter";
-    case DeviceType::ON_OFF_SWITCH:
-      return "on_off_switch";
-    case DeviceType::HORIZONTAL_AWNING:
-      return "horizontal_awning";
-    case DeviceType::EXTERNAL_VENETIAN_BLIND:
-      return "external_venetian_blind";
-    case DeviceType::LOUVRE_BLIND:
-      return "louvre_blind";
-    case DeviceType::CURTAIN_TRACK:
-      return "curtain_track";
-    case DeviceType::SWINGING_SHUTTER:
-      return "swinging_shutter";
-    case DeviceType::BIOCLIMATIC_PERGOLA:
-      return "bioclimatic_pergola";
-    case DeviceType::LOCK:
-      return "lock";
-    case DeviceType::BEACON:
-      return "beacon";
-    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
-      return "heating_temperature_interface";
-    case DeviceType::VENTILATION_POINT:
-      return "ventilation_point";
-    case DeviceType::EXTERIOR_HEATING:
-      return "exterior_heating";
-    case DeviceType::HEAT_PUMP:
-      return "heat_pump";
-    case DeviceType::INTRUSION_ALARM:
-      return "intrusion_alarm";
-  }
-
-  return "unknown";
+  const DeviceTypeInfo *row = find_exact_device_type_info(type, 0);
+  return row != nullptr ? row->name : "unknown";
 }
 
 const char *yaml_device_type_name(DeviceType type) {
-  switch (type) {
-    case DeviceType::UNKNOWN:
-      return "unknown";
-    case DeviceType::VENETIAN_BLIND:
-      return "venetian_blind";
-    case DeviceType::ROLLER_SHUTTER:
-      return "roller_shutter";
-    case DeviceType::AWNING:
-      return "awning";
-    case DeviceType::WINDOW_OPENER:
-      return "window_opener";
-    case DeviceType::GARAGE_OPENER:
-      return "garage_opener";
-    case DeviceType::LIGHT:
-      return "light";
-    case DeviceType::GATE_OPENER:
-      return "gate_opener";
-    case DeviceType::ROLLING_DOOR_OPENER:
-      return "rolling_door_opener";
-    case DeviceType::LOCK:
-      return "lock";
-    case DeviceType::BLIND:
-      return "blind";
-    case DeviceType::SCREEN:
-      return "screen";
-    case DeviceType::DUAL_SHUTTER:
-      return "dual_shutter";
-    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
-      return "heating_temperature_interface";
-    case DeviceType::ON_OFF_SWITCH:
-      return "on_off_switch";
-    case DeviceType::HORIZONTAL_AWNING:
-      return "horizontal_awning";
-    case DeviceType::EXTERNAL_VENETIAN_BLIND:
-      return "external_venetian_blind";
-    case DeviceType::LOUVRE_BLIND:
-      return "louvre_blind";
-    case DeviceType::CURTAIN_TRACK:
-      return "curtain_track";
-    case DeviceType::INTRUSION_ALARM:
-      return "intrusion_alarm";
-    case DeviceType::SWINGING_SHUTTER:
-      return "swinging_shutter";
-    case DeviceType::BIOCLIMATIC_PERGOLA:
-      return "bioclimatic_pergola";
-    // Not YAML-selectable (nullptr, so callers fall back to a raw numeric value). Listed
-    // explicitly instead of default: so -Wswitch flags any new DeviceType that skips this switch.
-    case DeviceType::BEACON:
-    case DeviceType::VENTILATION_POINT:
-    case DeviceType::EXTERIOR_HEATING:
-    case DeviceType::HEAT_PUMP:
-      return nullptr;
-  }
-  return nullptr;
+  const DeviceTypeInfo *row = find_exact_device_type_info(type, 0);
+  return row != nullptr && (row->flags & device_type_flags::YAML_SELECTABLE) != 0 ? row->name : nullptr;
 }
 
-DeviceCapabilityClass device_capability_class(DeviceType type) {
-  switch (type) {
-    // Cover types (position-controlled)
-    case DeviceType::VENETIAN_BLIND:
-    case DeviceType::ROLLER_SHUTTER:
-    case DeviceType::SCREEN:
-    case DeviceType::AWNING:
-    case DeviceType::WINDOW_OPENER:
-    case DeviceType::GARAGE_OPENER:
-    case DeviceType::GATE_OPENER:
-    case DeviceType::ROLLING_DOOR_OPENER:
-    case DeviceType::BLIND:
-    case DeviceType::DUAL_SHUTTER:
-    case DeviceType::HORIZONTAL_AWNING:
-    case DeviceType::EXTERNAL_VENETIAN_BLIND:
-    case DeviceType::LOUVRE_BLIND:
-    case DeviceType::CURTAIN_TRACK:
-    case DeviceType::SWINGING_SHUTTER:
-    case DeviceType::BIOCLIMATIC_PERGOLA:
-      return DeviceCapabilityClass::COVER;
-
-    // Binary and other capabilities
-    case DeviceType::LIGHT:
-      return DeviceCapabilityClass::LIGHT;
-    case DeviceType::ON_OFF_SWITCH:
-      return DeviceCapabilityClass::SWITCH;
-    case DeviceType::LOCK:
-      return DeviceCapabilityClass::LOCK;
-    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
-    case DeviceType::EXTERIOR_HEATING:
-    case DeviceType::HEAT_PUMP:
-      return DeviceCapabilityClass::CLIMATE;
-    case DeviceType::VENTILATION_POINT:
-      // Binary ventilation on/off; treated as switch
-      return DeviceCapabilityClass::SWITCH;
-    case DeviceType::BEACON:
-      return DeviceCapabilityClass::BEACON;
-    case DeviceType::INTRUSION_ALARM:
-      return DeviceCapabilityClass::SENSOR;
-
-    case DeviceType::UNKNOWN:
-      return DeviceCapabilityClass::UNKNOWN;
-  }
-  // No default: -Wswitch flags any new DeviceType not handled above (a hard error in the host unit
-  // build via -Werror=switch, a warning in the firmware build), rather than letting it fall through
-  // silently to UNKNOWN (which would make known_device_matches_entity_class() accept everything for
-  // that type).
-  return DeviceCapabilityClass::UNKNOWN;
-}
+DeviceCapabilityClass device_capability_class(DeviceType type) { return device_capability_class(type, 0); }
 
 const char *device_capability_class_name(DeviceType type) {
   switch (device_capability_class(type)) {
@@ -356,8 +181,8 @@ bool device_supports_lock_control(DeviceType type) {
   return device_capability_class(type) == DeviceCapabilityClass::LOCK;
 }
 
-bool device_supports_climate_control(DeviceType type) {
-  return device_capability_class(type) == DeviceCapabilityClass::CLIMATE;
+bool device_supports_climate_control(DeviceType type, uint8_t subtype) {
+  return device_capability_class(type, subtype) == DeviceCapabilityClass::CLIMATE && device_has_platform(type, subtype);
 }
 
 bool device_supports_status_requests(DeviceType type) {
@@ -369,23 +194,23 @@ bool device_supports_tilt(DeviceType type) {
   // No default: every DeviceType is listed so -Wswitch catches any new one (error in the host
   // unit build, warning in the firmware build), forcing an explicit tilt/vent decision.
   switch (type) {
-    case DeviceType::VENETIAN_BLIND:
-    case DeviceType::BLIND:
-    case DeviceType::EXTERNAL_VENETIAN_BLIND:
+    case DeviceType::INTERIOR_VENETIAN_BLIND:
+    case DeviceType::VERTICAL_INTERIOR_BLIND:
+    case DeviceType::EXTERIOR_VENETIAN_BLIND:
     case DeviceType::LOUVRE_BLIND:
       return true;
     case DeviceType::UNKNOWN:
     case DeviceType::ROLLER_SHUTTER:
-    case DeviceType::AWNING:
+    case DeviceType::VERTICAL_EXTERIOR_AWNING:
     case DeviceType::WINDOW_OPENER:
     case DeviceType::GARAGE_OPENER:
     case DeviceType::LIGHT:
     case DeviceType::GATE_OPENER:
     case DeviceType::ROLLING_DOOR_OPENER:
     case DeviceType::LOCK:
-    case DeviceType::SCREEN:
+    case DeviceType::SECURE_CONFIGURATION_DEVICE:
     case DeviceType::BEACON:
-    case DeviceType::DUAL_SHUTTER:
+    case DeviceType::DUAL_ROLLER_SHUTTER:
     case DeviceType::HEATING_TEMPERATURE_INTERFACE:
     case DeviceType::ON_OFF_SWITCH:
     case DeviceType::HORIZONTAL_AWNING:
@@ -395,13 +220,27 @@ bool device_supports_tilt(DeviceType type) {
     case DeviceType::HEAT_PUMP:
     case DeviceType::INTRUSION_ALARM:
     case DeviceType::SWINGING_SHUTTER:
+    case DeviceType::SLIDING_WINDOW:
+    case DeviceType::ZONE_CONTROL:
     case DeviceType::BIOCLIMATIC_PERGOLA:
+    case DeviceType::SIREN:
+    case DeviceType::DOMESTIC_HOT_WATER:
+    case DeviceType::ELECTRICAL_HEATER:
+    case DeviceType::HEAT_RECOVERY_VENTILATION:
+    case DeviceType::CENTRAL_HOUSE_CONTROL:
+    case DeviceType::TEST_AND_EVALUATION:
+    case DeviceType::REMOTE_CONTROLLER:
       return false;
   }
   return false;
 }
 
-bool device_takes_main_parameter_only(DeviceType type) { return type == DeviceType::GARAGE_OPENER; }
+bool device_takes_main_parameter_only(DeviceType type, uint8_t subtype) {
+  if (subtype == SUBTYPE_MAIN_PARAMETER_ONLY)
+    return true;
+  const DeviceTypeInfo *row = find_device_type_info(type, subtype);
+  return row != nullptr && (row->flags & device_type_flags::MAIN_PARAMETER_ONLY) != 0;
+}
 
 bool device_supports_vent(DeviceType type) {
   // No default: every DeviceType is listed so -Wswitch catches any new one (error in the host
@@ -411,29 +250,38 @@ bool device_supports_vent(DeviceType type) {
     case DeviceType::VENTILATION_POINT:
       return true;
     case DeviceType::UNKNOWN:
-    case DeviceType::VENETIAN_BLIND:
+    case DeviceType::INTERIOR_VENETIAN_BLIND:
     case DeviceType::ROLLER_SHUTTER:
-    case DeviceType::AWNING:
+    case DeviceType::VERTICAL_EXTERIOR_AWNING:
     case DeviceType::GARAGE_OPENER:
     case DeviceType::LIGHT:
     case DeviceType::GATE_OPENER:
     case DeviceType::ROLLING_DOOR_OPENER:
     case DeviceType::LOCK:
-    case DeviceType::BLIND:
-    case DeviceType::SCREEN:
+    case DeviceType::VERTICAL_INTERIOR_BLIND:
+    case DeviceType::SECURE_CONFIGURATION_DEVICE:
     case DeviceType::BEACON:
-    case DeviceType::DUAL_SHUTTER:
+    case DeviceType::DUAL_ROLLER_SHUTTER:
     case DeviceType::HEATING_TEMPERATURE_INTERFACE:
     case DeviceType::ON_OFF_SWITCH:
     case DeviceType::HORIZONTAL_AWNING:
-    case DeviceType::EXTERNAL_VENETIAN_BLIND:
+    case DeviceType::EXTERIOR_VENETIAN_BLIND:
     case DeviceType::LOUVRE_BLIND:
     case DeviceType::CURTAIN_TRACK:
     case DeviceType::EXTERIOR_HEATING:
     case DeviceType::HEAT_PUMP:
     case DeviceType::INTRUSION_ALARM:
     case DeviceType::SWINGING_SHUTTER:
+    case DeviceType::SLIDING_WINDOW:
+    case DeviceType::ZONE_CONTROL:
     case DeviceType::BIOCLIMATIC_PERGOLA:
+    case DeviceType::SIREN:
+    case DeviceType::DOMESTIC_HOT_WATER:
+    case DeviceType::ELECTRICAL_HEATER:
+    case DeviceType::HEAT_RECOVERY_VENTILATION:
+    case DeviceType::CENTRAL_HOUSE_CONTROL:
+    case DeviceType::TEST_AND_EVALUATION:
+    case DeviceType::REMOTE_CONTROLLER:
       return false;
   }
   return false;
@@ -503,14 +351,15 @@ std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const st
            low_power_line;
   }
 
-  const auto capability_class = device_capability_class(type);
-  const char *platform = pairing_platform_name(capability_class);
+  const char *platform = device_platform_name(type, subtype);
   if (platform == nullptr)
     return "";
 
   std::string extra_lines;
-  if (capability_class == DeviceCapabilityClass::COVER && inverted)
+  if (device_capability_class(type, subtype) == DeviceCapabilityClass::COVER && inverted)
     extra_lines += "    invert_position: true\n";
+  if (device_light_is_brightness_only(type, subtype))
+    extra_lines += "    dimmable: true\n";
   extra_lines += low_power_line;
 
   const std::string subtype_line = "    io_subtype: " + std::to_string(subtype) + "\n";

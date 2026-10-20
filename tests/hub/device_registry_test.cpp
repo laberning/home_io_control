@@ -29,10 +29,10 @@ TEST(DeviceRegistry, AddAndGetReturnsDevice) {
 
 TEST(DeviceRegistry, AddWithMetadataStoresFields) {
   DeviceRegistry reg;
-  reg.add("AABBCC", {DeviceType::AWNING, 2, true});
+  reg.add("AABBCC", {DeviceType::VERTICAL_EXTERIOR_AWNING, 2, true});
   IoDevice *dev = reg.get("AABBCC");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->type, DeviceType::AWNING);
+  EXPECT_EQ(dev->type, DeviceType::VERTICAL_EXTERIOR_AWNING);
   EXPECT_EQ(dev->subtype, 2);
   EXPECT_TRUE(dev->inverted);
 }
@@ -79,7 +79,7 @@ TEST(DeviceRegistry, AddStoresNodeIdBytes) {
 TEST(DeviceRegistry, DuplicateAddIsIgnored) {
   DeviceRegistry reg;
   reg.add("ABC123");
-  reg.add("ABC123", {DeviceType::AWNING, 5, true});
+  reg.add("ABC123", {DeviceType::VERTICAL_EXTERIOR_AWNING, 5, true});
   IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::UNKNOWN);  // first registration wins
@@ -140,11 +140,11 @@ TEST(DeviceRegistry, PutOverwritesExistingEntry) {
   DeviceRegistry reg;
   reg.add("DD7788");
   IoDevice replacement{};
-  replacement.type = DeviceType::AWNING;
+  replacement.type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   reg.put("DD7788", replacement);
   IoDevice *stored = reg.get("DD7788");
   ASSERT_NE(stored, nullptr);
-  EXPECT_EQ(stored->type, DeviceType::AWNING);
+  EXPECT_EQ(stored->type, DeviceType::VERTICAL_EXTERIOR_AWNING);
 }
 
 // --- callback fan-out (notify) ---
@@ -308,7 +308,7 @@ TEST(DeviceRegistry, ApplyOptimisticStopPredictsStoppedAndLeavesObservationUntou
 // §7.3 — apply_optimistic_tilt() writes only the overlay, leaving a wire-reported slat angle intact.
 TEST(DeviceRegistry, ApplyOptimisticTiltSetsOverlayAndLeavesObservationUntouched) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
 
   IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
@@ -357,7 +357,7 @@ TEST(DeviceRegistry, ApplyOptimisticTiltOnUnknownDeviceReturnsFalseWithoutCrashi
 
 TEST(DeviceRegistry, OptimisticNoOpWhenOptimisticStateDisabled) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
+  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
 
   EXPECT_FALSE(reg.apply_optimistic_target("ABC123", 75.0f));
   EXPECT_FALSE(reg.apply_optimistic_stop("ABC123"));
@@ -375,7 +375,7 @@ TEST(DeviceRegistry, OptimisticNoOpWhenOptimisticStateDisabled) {
 // §7.4 — rollback_optimistic() withdraws every axis and is idempotent.
 TEST(DeviceRegistry, RollbackOptimisticWithdrawsBothAxesThenNoOps) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
   reg.apply_optimistic_target("ABC123", 75.0f);
   reg.apply_optimistic_tilt("ABC123", 83.0f);
 
@@ -470,7 +470,7 @@ TEST(DeviceRegistry, ReplacedMovementIsForgottenWhenNoLongerRestorable) {
 // failed command does.
 TEST(DeviceRegistry, NonStopFailureDoesNotRestoreMovementAStopReplaced) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::VENETIAN_BLIND, 0, false});
+  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
   reg.apply_optimistic_target("ABC123", 100.0f);
   reg.apply_optimistic_stop("ABC123", /*restorable=*/true);
   reg.apply_optimistic_tilt("ABC123", 50.0f);
@@ -517,10 +517,10 @@ TEST(DeviceRegistry, EffectiveAccessorsPreferPredictionOtherwiseObservation) {
 
 TEST(DeviceRegistry, LinkedDevicesForClassReturnsAllSameTypeDevices) {
   DeviceRegistry reg;
-  reg.add_linked_remote_class(DeviceType::AWNING, "DEVICE1");
-  reg.add_linked_remote_class(DeviceType::AWNING, "DEVICE2");
+  reg.add_linked_remote_class(DeviceType::VERTICAL_EXTERIOR_AWNING, "DEVICE1");
+  reg.add_linked_remote_class(DeviceType::VERTICAL_EXTERIOR_AWNING, "DEVICE2");
 
-  const std::vector<std::string> *linked = reg.linked_devices_for_class(DeviceType::AWNING);
+  const std::vector<std::string> *linked = reg.linked_devices_for_class(DeviceType::VERTICAL_EXTERIOR_AWNING);
   ASSERT_NE(linked, nullptr);
   ASSERT_EQ(linked->size(), 2u);
   EXPECT_EQ((*linked)[0], "DEVICE1");
@@ -529,7 +529,7 @@ TEST(DeviceRegistry, LinkedDevicesForClassReturnsAllSameTypeDevices) {
 
 TEST(DeviceRegistry, LinkedDevicesForClassReturnsNullptrForUnknownClass) {
   DeviceRegistry reg;
-  reg.add_linked_remote_class(DeviceType::AWNING, "DEVICE1");
+  reg.add_linked_remote_class(DeviceType::VERTICAL_EXTERIOR_AWNING, "DEVICE1");
   EXPECT_EQ(reg.linked_devices_for_class(DeviceType::ROLLER_SHUTTER), nullptr)
       << "a class with no linked devices must not be confused with a different registered class";
 }
@@ -537,10 +537,10 @@ TEST(DeviceRegistry, LinkedDevicesForClassReturnsNullptrForUnknownClass) {
 TEST(DeviceRegistry, IdLinkingAndClassLinkingAreIndependentMaps) {
   DeviceRegistry reg;
   reg.add_linked_remote("REMOTE1", "DEVICE1");
-  reg.add_linked_remote_class(DeviceType::AWNING, "DEVICE1");
+  reg.add_linked_remote_class(DeviceType::VERTICAL_EXTERIOR_AWNING, "DEVICE1");
 
   const std::vector<std::string> *by_id = reg.linked_devices("REMOTE1");
-  const std::vector<std::string> *by_class = reg.linked_devices_for_class(DeviceType::AWNING);
+  const std::vector<std::string> *by_class = reg.linked_devices_for_class(DeviceType::VERTICAL_EXTERIOR_AWNING);
   ASSERT_NE(by_id, nullptr);
   ASSERT_NE(by_class, nullptr);
   EXPECT_EQ((*by_id)[0], "DEVICE1");

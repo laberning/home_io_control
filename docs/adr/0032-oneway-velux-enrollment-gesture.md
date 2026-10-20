@@ -20,9 +20,9 @@ KLI 313 "rings" captures), cross-checked against the KLI manual:
 2. **`0x30` add-controller is swept** across several typed classes under **one shared
    rolling sequence**. The receiver presumably filters by its own class, so only the
    matching frame registers the controller. The class set depends on the remote. A KLI 310/313
-   (exterior shading) sweeps `roller_shutter` (`00 00 BF`), `awning` (`00 00 FF`) and
-   `dual_shutter` (`00 03 7F`). A KLI 312 driving interior blinds names `blind`
-   (`00 02 BF`) and `venetian_blind` (`00 00 7F`) in its `0x2E` instead, and a sweep
+   (exterior shading) sweeps `roller_shutter` (`00 00 BF`), `vertical_exterior_awning` (`00 00 FF`) and
+   `dual_roller_shutter` (`00 03 7F`). A KLI 312 driving interior blinds names `vertical_interior_blind`
+   (`00 02 BF`) and `interior_venetian_blind` (`00 00 7F`) in its `0x2E` instead, and a sweep
    over those registers.
 3. **A STOP then a DOWN `CMD_EXECUTE`** follow the sweep, to `00 00 3F` at the VELUX
    ACEI — the KLI manual's STOP-then-DOWN registration completion.
@@ -51,14 +51,14 @@ both send it, and `iohc-flipper` sends it for both vendors, so it is not opt-in.
 
 - `EnrollGesture enroll_gesture` — `SOMFY` or `VELUX_KLI`.
 - `std::array<DeviceType, 3> enrollment_classes` — the `0x30` sweep target list
-  (`{roller_shutter, awning, dual_shutter}` for VELUX; all-`UNKNOWN` for SOMFY).
+  (`{roller_shutter, vertical_exterior_awning, dual_roller_shutter}` for VELUX; all-`UNKNOWN` for SOMFY).
 
 `resolve_oneway_wire_profile()` maps manufacturer `velux` → `VELUX_KLI` + that list;
 `somfy` / unset / any unprofiled vendor → `SOMFY` + empty. The exterior-shading set is
 the profile default because it is the one captured from a real KLI gesture. A
 per-identity `enrollment_classes:` YAML key overrides it (via
 `effective_enrollment_classes()`). That is how an interior-blind identity gets
-`[blind, venetian_blind]`. The classes to set are the ones the existing remote's `0x2E`
+`[vertical_interior_blind, interior_venetian_blind]`. The classes to set are the ones the existing remote's `0x2E`
 burst targets after a Gear press, visible in the DEBUG `rx 1W remote … targets …` log
 lines (which keep one line per destination for intent-less frames).
 
@@ -74,7 +74,7 @@ lines (which keep one line per destination for intent-less frames).
   warns; the sweep is what the return value reflects.
 
 The schema warns when a `manufacturer: velux` + `enrollment: true` identity has an
-`io_device_type` of `screen` / `blind` / `venetian_blind` and no
+`io_device_type` of `vertical_interior_blind` / `interior_venetian_blind` and no
 `enrollment_classes:` override. The default sweep ignores that `io_device_type` and
 targets the exterior-shading classes, which such a device is unlikely to listen on.
 The warning names the KLI 312 set and the `0x2E` lines as the fix.
@@ -103,7 +103,7 @@ after Gear.
 - A `manufacturer: velux` enroll button emits the KLI gesture, and it has registered
   the hub as a controller on real VELUX hardware (issue #74): a VELUX SML roller shutter
   (mains-fed through a KUX 110 power supply) on SX1276 with `low_power: false` and the default sweep, and KLI 312 interior blinds
-  on SX1262 with `low_power: true` and `enrollment_classes: [blind, venetian_blind]`.
+  on SX1262 with `low_power: true` and `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`.
   The identity's commands worked afterwards in both cases, and on the blinds the
   closing DOWN at the end of the gesture was reported as the visible success signal.
   That signal is invisible when the cover is already fully closed, which is where the

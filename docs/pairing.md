@@ -105,7 +105,7 @@ sensor alongside the button. It updates after every attempt with a frozen, machi
 summary:
 
 ```
-v1; outcome=paired; phase=complete; node=30E1F2; type=awning; attempts=1; lbt=0; dur_ms=842; heard=3; advice=none
+v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; attempts=1; lbt=0; dur_ms=842; heard=3; advice=none
 ```
 
 | Field | Meaning |
@@ -170,14 +170,17 @@ action: esphome.hioc_heltec_v2_scan_paired_devices
 The hub broadcasts a roll-call (`CMD_DISCOVER_SPE_REQ`, 0x2A) and listens for every device that
 holds its system key. Responders are grouped into a `Known:` section (already in your YAML) and an
 `Unknown:` section, and each unknown one gets a paste-ready block. Either section is omitted when
-it would be empty.
+it would be empty. Each line names the device as `<type>, <subtype>` (for example
+`electrical heater, with adjustable setpoint`, or `subtype N` when the subtype has no name; the
+[node types table](supported-devices.md#node-types-and-subtypes) lists them). A responder whose type
+no platform drives yet gets `not supported yet` in place of the block.
 
 ```
 Roll-call: 2 devices detected (1 known, 1 unknown)
 Known:
-  30E1F2: horizontal_awning subtype=0 rssi=-52dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [known]
+  30E1F2: horizontal awning (0x10/0) rssi=-52dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [known]
 Unknown:
-  415CE4: light subtype=0 rssi=-61dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [unknown]
+  415CE4: light (0x06/0) rssi=-61dBm manufacturer=Somfy turnaround=40ms power_save=always_alive [unknown]
     Paste this into your YAML to register it:
   light:
   - platform: home_io_control

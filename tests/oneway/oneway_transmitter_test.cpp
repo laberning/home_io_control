@@ -54,8 +54,8 @@ class TransmitRecorder {
 
 IoFrame make_stop_frame() {
   IoFrame frame{};
-  EXPECT_TRUE(create_1w_execute_command(frame, CONTROLLER_SRC, DeviceType::AWNING, CoverCommand::STOP, 0x1234,
-                                        test::TEST_SYSTEM_KEY));
+  EXPECT_TRUE(create_1w_execute_command(frame, CONTROLLER_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, CoverCommand::STOP,
+                                        0x1234, test::TEST_SYSTEM_KEY));
   return frame;
 }
 
@@ -278,8 +278,8 @@ TEST_F(OneWayTransmitterTest, FlaggedCopyStillCarriesAValidMac) {
   // a hand-rolled recomputation: the flagged copy 1 of a LOW_POWER burst must decode_1w_add_
   // controller() to a VERIFIED MAC and the correct recovered key, exactly like an unflagged repeat.
   IoFrame frame{};
-  ASSERT_TRUE(create_1w_add_controller(frame, CONTROLLER_SRC, DeviceType::AWNING, MANUFACTURER_SOMFY, 0x1234,
-                                       test::TEST_SYSTEM_KEY, /*with_mac=*/true));
+  ASSERT_TRUE(create_1w_add_controller(frame, CONTROLLER_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, MANUFACTURER_SOMFY,
+                                       0x1234, test::TEST_SYSTEM_KEY, /*with_mac=*/true));
   TransmitRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_);
 

@@ -83,7 +83,7 @@ the same set of keys. Platform-specific options are documented on each platform'
   one `home_io_control:` block exists.
 - `io_device_id` (Required): The device's 3-byte address, as exactly 6 hexadecimal characters. If
   you do not know it yet, use the Discover & Pair button — see [Pairing](../pairing.md).
-- `io_device_type` (Optional): The device's IO-Homecontrol type, named (`awning`) or raw (`0x11`).
+- `io_device_type` (Optional): The device's IO-Homecontrol type, named (`vertical_exterior_awning`) or raw (`0x11`).
   Declaring it is what enables type-specific behaviour such as the Favorite Position button and
   automatic direction inversion. The full list of names is in
   [Supported devices](../supported-devices.md). A declared type is authoritative: the hub may
@@ -164,12 +164,12 @@ cover:
     name: "Awning"
     device_class: awning
     io_device_id: "FEEB1E"
-    io_device_type: "awning"
+    io_device_type: "vertical_exterior_awning"
     io_subtype: 0
     invert_position: true
 ```
 
-With `io_device_type: "awning"`, the example above also generates an `Awning Favorite Position`
+With `io_device_type: "vertical_exterior_awning"`, the example above also generates an `Awning Favorite Position`
 button automatically.
 
 ## Working configs in this repo

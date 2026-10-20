@@ -215,7 +215,7 @@ cover:
     name: "Patio Awning"
     device_class: awning        # from the log
     io_device_id: "FEEB1E"      # from the log
-    io_device_type: "awning"    # from the log
+    io_device_type: "vertical_exterior_awning"    # from the log
     io_subtype: 0               # from the log
 ```
 
@@ -225,7 +225,7 @@ lists every value the option accepts. If the log printed a raw numeric type such
 that exact value.
 
 Declaring `io_device_type` is worth doing even though it is optional. It is what enables
-type-specific behaviour: an `awning` gets a `Patio Awning Favorite Position` button, a
+type-specific behaviour: a `vertical_exterior_awning` gets a `Patio Awning Favorite Position` button, a
 `window_opener` also gets a Ventilation Position button, and families such as horizontal awnings
 get their direction inverted automatically. These entities are generated at compile time, so a type
 learned later over the radio cannot add them.

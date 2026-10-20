@@ -70,7 +70,7 @@ CONF_ENROLLMENT = "enrollment"
 # @warning (proto_commands.h) for why real hardware disagrees on this byte.
 CONF_ENROLLMENT_WITH_MAC = "enrollment_with_mac"
 # Override for the device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
-# profile's list (velux: {roller_shutter, awning, dual_shutter}). Ignored by the somfy gesture.
+# profile's list (velux: {roller_shutter, vertical_exterior_awning, dual_roller_shutter}). Ignored by the somfy gesture.
 # See resolve_oneway_wire_profile() / effective_enrollment_classes() (oneway_controller.h), ADR 0032.
 CONF_ENROLLMENT_CLASSES = "enrollment_classes"
 # Same YAML key as platform_common.py's per-device 2W low_power (ADR 0029), tri-state here: unset
