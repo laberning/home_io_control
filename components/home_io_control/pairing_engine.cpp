@@ -17,6 +17,7 @@
 #include "proto_commands.h"
 #include "proto_crypto.h"
 #include "proto_device_types.h"
+#include "proto_heating.h"
 #include "roll_call.h"
 #include "tuning_config.h"
 #include "esphome/core/application.h"
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
 #include <cstring>
 
 namespace esphome {
@@ -461,6 +463,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
         context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
         context.discovery_low_power =
             info.has_extended && discovery_power_save_mode(info.flags) == POWER_SAVE_LOW_POWER;
+        context.discovery_manufacturer = info.has_extended ? info.manufacturer : 0;
         this->telemetry_.set_discovered_device(context.device.node_id, context.device.type);
         log_discovered_device(context);
         return result;
@@ -718,23 +721,9 @@ bool PairingEngine::discover_and_pair() {
   // Phase 2: move the key, in the direction `pairing_key_transfer` selects (auto: the discovery
   // answer decides).
   if (key_pull_selected_(context)) {
-    this->telemetry_.set_key_pull_attempted();
-    const KeyPullResult pulled = run_key_pull_phase_(context);
-    if (pulled == KeyPullResult::OTHER_KEY)
-      return this->register_pulled_key_devices_(context);
-    // The device shares the hub's key. If it is a node with no platform of its own (an AGILIA's remote
-    // controller node), the devices that hold that key are elsewhere: roll-call for them, as after a
-    // foreign key, and register the ones found with the hub key.
-    if (pulled == KeyPullResult::OUR_KEY && !device_has_platform(context.device.type, context.device.subtype) &&
-        this->roll_call_and_register_(context, system_key_, /*device_key=*/false) > 0) {
-      this->finish_paired_by_roll_call_(context);
-      return true;
-    }
-    if (pulled == KeyPullResult::FAILED) {
-      this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
-                                                        : PairingOutcome::KEY_EXCHANGE_FAILED);
-      return false;
-    }
+    bool paired = false;
+    if (this->run_pull_and_finish_(context, paired))
+      return paired;
   } else if (!run_push_key_step_(context)) {
     this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
                                                       : PairingOutcome::KEY_EXCHANGE_FAILED);
@@ -751,6 +740,8 @@ bool PairingEngine::discover_and_pair() {
   // The device just sent its 0x33, so it counts as heard from: its wake belief starts at "maybe
   // awake" for the follow-up exchanges rather than "asleep" (same stamp update_link_health() sets).
   context.device.last_seen_ms = millis();
+  // A YAML entry for this node keeps its declared status; anything else lives until reboot.
+  context.device.registered_by_pairing = registry_.get_declared(context.device_id) == nullptr;
   registry_.put(context.device_id, context.device);
   this->telemetry_.set_paired_device(context.device.node_id, context.device.type);
 
@@ -929,13 +920,18 @@ uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
   this->telemetry_.set_phase(context.state);
   ScanState state{};
-  uint8_t attempt = 0;
-  const uint8_t total_attempts = count_enabled_passes(tuning_->scan_power_classes) * SCAN_CHANNEL_COUNT;
-  ESP_LOGI(TAG, "Roll-call with key check value %s (%s %s handed over)", detail::format_key_check_value(key).c_str(),
-           device_key ? "the key" : "the hub key, which", context.device_id.c_str());
-  if (run_roll_call_sweep(engine_, node_id_, key, /*key_slot=*/device_key ? 1 : 0, *tuning_, state, attempt,
-                          total_attempts) == RollCallAttemptResult::BUILD_FAILED) {
-    ESP_LOGW(TAG, "Could not build the roll-call under the pulled key");
+  // An Atlantic radiator's heater answers a direct read every time but a roll-call only now and then
+  // (about one request in four), so it is asked first; the roll-call is the fallback, and the only
+  // search for any other device.
+  if (!this->probe_heater_at_next_address_(context, key, device_key, state)) {
+    uint8_t attempt = 0;
+    const uint8_t total_attempts = count_enabled_passes(tuning_->scan_power_classes) * SCAN_CHANNEL_COUNT;
+    ESP_LOGI(TAG, "Roll-call with key check value %s (%s %s handed over)", detail::format_key_check_value(key).c_str(),
+             device_key ? "the key" : "the hub key, which", context.device_id.c_str());
+    if (run_roll_call_sweep(engine_, node_id_, key, /*key_slot=*/device_key ? 1 : 0, *tuning_, state, attempt,
+                            total_attempts) == RollCallAttemptResult::BUILD_FAILED) {
+      ESP_LOGW(TAG, "Could not build the roll-call under the pulled key");
+    }
   }
 
   // One report for the device log only: with a device key it carries the key, so the pairing summary, the
@@ -954,13 +950,13 @@ uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
 
   // Register each device the report offers a block for, so it can be controlled until the YAML is
   // flashed: with the key it answered under when that is a device key, with the hub key otherwise. A
-  // device the registry already knows keeps its record; one of a type no platform drives yet is reported
-  // but not registered.
+  // device the YAML declares keeps its record; one an earlier pairing in this boot added is replaced, so
+  // pairing it again counts as paired. One of a type no platform drives yet is reported but not registered.
   uint8_t registered = 0;
   for (uint8_t i = 0; i < state.count; i++) {
     const ScanResponder &responder = state.responders[i];
     const std::string responder_id = node_id_to_string(responder.src);
-    if (registry_.get(responder_id) != nullptr || !device_has_platform(responder.type, responder.subtype))
+    if (registry_.get_declared(responder_id) != nullptr || !device_has_platform(responder.type, responder.subtype))
       continue;
     IoDevice device{};
     memcpy(device.node_id, responder.src, NODE_ID_SIZE);
@@ -972,10 +968,83 @@ uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
     if (device_key)
       memcpy(device.system_key, key, AES_KEY_SIZE);
     device.last_seen_ms = millis();
+    device.registered_by_pairing = true;
     registry_.put(responder_id, device);
     registered++;
+    ESP_LOGI(TAG, "Pairing: registered %s (%s) until reboot; paste its block above to keep it", responder_id.c_str(),
+             format_device_kind(responder.type, responder.subtype).c_str());
   }
   return registered;
+}
+
+bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext &context, const uint8_t *key,
+                                                  bool device_key, ScanState &state) {
+  uint8_t heater[NODE_ID_SIZE];
+  if (!decisions::pairing_node_has_heater_at_next_address(context.device.type, context.discovery_manufacturer) ||
+      !decisions::next_node_id(context.device.node_id, heater))
+    return false;
+  const std::string heater_id = node_id_to_string(heater);
+  // A YAML entry keeps its own key; the roll-call reports it against that.
+  if (registry_.get_declared(heater_id) != nullptr)
+    return false;
+
+  // The exchange picks its key from the registry, so the candidate is in it for the read only; the
+  // caller registers it properly if it answered. A record an earlier pairing in this boot left there is
+  // put back afterwards.
+  const IoDevice *earlier = registry_.get(heater_id);
+  const bool had_earlier = earlier != nullptr;
+  const IoDevice previous = had_earlier ? *earlier : IoDevice{};
+  IoDevice candidate{};
+  memcpy(candidate.node_id, heater, NODE_ID_SIZE);
+  candidate.type = DeviceType::ELECTRICAL_HEATER;
+  candidate.subtype = SUBTYPE_HEATER_WITH_SETPOINT;
+  candidate.has_system_key = device_key;
+  if (device_key)
+    memcpy(candidate.system_key, key, AES_KEY_SIZE);
+  candidate.registered_by_pairing = true;
+  registry_.put(heater_id, candidate);
+
+  // The maximum setpoint is a read-only register every such heater holds, so reading it changes nothing.
+  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_heating_read(HeatingFunction::MAX_SETPOINT, payload);
+  IoFrame request{};
+  IoFrame response{};
+  float max_setpoint_c = NAN;
+  ESP_LOGI(TAG, "Heater probe: reading %s, the address after %s, under key check value %s", heater_id.c_str(),
+           context.device_id.c_str(), detail::format_key_check_value(key).c_str());
+  const bool answered =
+      payload_len != 0 && create_write_private(request, node_id_, heater, /*low_power=*/false, payload, payload_len) &&
+      engine_.send_and_receive(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
+      decode_heating_reply(response, HeatingFunction::MAX_SETPOINT, max_setpoint_c);
+  const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+  if (had_earlier) {
+    registry_.put(heater_id, previous);
+  } else {
+    registry_.remove_registered_by_pairing(heater_id);
+  }
+  if (!answered) {
+    ESP_LOGI(TAG, "Heater probe: %s did not answer; looking for devices with a roll-call instead", heater_id.c_str());
+    return false;
+  }
+  ESP_LOGI(TAG, "Heater probe: %s answered (maximum setpoint %.1f C); no roll-call needed", heater_id.c_str(),
+           max_setpoint_c);
+
+  // Only the register protocol answers this read, and only the heater with an adjustable setpoint
+  // speaks it; manufacturer and flags come from no reply of its own, so the report omits them.
+  ScanResponder &responder = state.responders[0];
+  memcpy(responder.src, heater, NODE_ID_SIZE);
+  responder.type = DeviceType::ELECTRICAL_HEATER;
+  responder.subtype = SUBTYPE_HEATER_WITH_SETPOINT;
+  responder.inverted = false;
+  responder.rssi_dbm = rssi;
+  responder.manufacturer = context.discovery_manufacturer;
+  responder.flags = 0;
+  responder.has_extended = false;
+  responder.metadata_complete = true;
+  responder.key_slot = device_key ? 1 : 0;
+  state.count = 1;
+  state.truncated = false;
+  return true;
 }
 
 void PairingEngine::finish_paired_by_roll_call_(pairing::PairingContext &context) {
@@ -986,6 +1055,38 @@ void PairingEngine::finish_paired_by_roll_call_(pairing::PairingContext &context
   engine_.record_debug(pairing_stage_name(context.state), 1, true);
   this->telemetry_.set_phase(context.state);
   this->finish_pairing_attempt_(PairingOutcome::PAIRED);
+}
+
+bool PairingEngine::run_pull_and_finish_(pairing::PairingContext &context, bool &paired) {
+  this->telemetry_.set_key_pull_attempted();
+  const KeyPullResult pulled = run_key_pull_phase_(context);
+  if (pulled == KeyPullResult::OTHER_KEY) {
+    paired = this->register_pulled_key_devices_(context);
+    return true;
+  }
+  if (pulled == KeyPullResult::FAILED) {
+    this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
+                                                      : PairingOutcome::KEY_EXCHANGE_FAILED);
+    paired = false;
+    return true;
+  }
+  // The device shares the hub's key. A device with a platform of its own is paired as after a push.
+  if (device_has_platform(context.device.type, context.device.subtype))
+    return false;
+  // A node with no platform of its own (an AGILIA's remote-controller node): the devices that hold the
+  // key are elsewhere, so look for them, as after a foreign key, and register the ones found with the
+  // hub key. With none found the attempt ends here: the node itself cannot be controlled, and it
+  // refuses the SetConfig1 the push path sends.
+  if (this->roll_call_and_register_(context, system_key_, /*device_key=*/false) > 0) {
+    this->finish_paired_by_roll_call_(context);
+    paired = true;
+    return true;
+  }
+  ESP_LOGW(TAG, "Pairing: %s holds this hub's key, but no device that holds it answered; nothing registered",
+           context.device_id.c_str());
+  this->finish_pairing_attempt_(PairingOutcome::HUB_KEY_RETURNED);
+  paired = false;
+  return true;
 }
 
 bool PairingEngine::register_pulled_key_devices_(pairing::PairingContext &context) {
@@ -1046,8 +1147,18 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   context.state = pairing::PairingState::VERIFY_PULLED_KEY;
   this->telemetry_.set_phase(context.state);
   // The device's 0x3D over its own 0x32, under the key it sent, proves the decrypt and that it holds
-  // the key (a chance match is 1 in 2^48).
-  if (engine_.authenticate_request(context.rx, FREQ_CH2, key)) {
+  // the key (a chance match is 1 in 2^48). A lost answer is challenged again; a wrong one is final.
+  ExchangeEngine::ChallengeResult proof = ExchangeEngine::ChallengeResult::NO_ANSWER;
+  uint8_t challenges = 0;
+  while (challenges < EXCHANGE_RETRY_COUNT && proof == ExchangeEngine::ChallengeResult::NO_ANSWER) {
+    if (challenges > 0) {
+      App.feed_wdt();
+      delay(EXCHANGE_RETRY_DELAY_MS);
+    }
+    challenges++;
+    proof = engine_.challenge_sender(context.rx, FREQ_CH2, key);
+  }
+  if (proof == ExchangeEngine::ChallengeResult::VERIFIED) {
     ESP_LOGI(TAG, "Key pull check: %s -> key check value %s, proven by its 0x3D", context.device_id.c_str(),
              check_value.c_str());
     memcpy(context.pulled_key, key, AES_KEY_SIZE);
@@ -1055,10 +1166,17 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
     return KeyPullResult::OTHER_KEY;
   }
   this->telemetry_.set_key_pull_unproven();
-  ESP_LOGW(TAG,
-           "Key pull check: %s -> key check value %s, not proven: no matching 0x3D. The key is not printed "
-           "and must not be used",
-           context.device_id.c_str(), check_value.c_str());
+  if (proof == ExchangeEngine::ChallengeResult::MISMATCH) {
+    ESP_LOGW(TAG,
+             "Key pull check: %s -> key check value %s, not proven: its 0x3D does not match. The key is not "
+             "printed and must not be used",
+             context.device_id.c_str(), check_value.c_str());
+  } else {
+    ESP_LOGW(TAG,
+             "Key pull check: %s -> key check value %s, not proven: no 0x3D received after %u challenges. The key "
+             "is not printed and must not be used",
+             context.device_id.c_str(), check_value.c_str(), challenges);
+  }
   return KeyPullResult::FAILED;
 }
 

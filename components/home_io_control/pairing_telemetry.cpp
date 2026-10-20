@@ -45,6 +45,8 @@ const char *outcome_name(PairingOutcome outcome) {
       return "key_transfer_refused";
     case PairingOutcome::KEY_RECEIVED:
       return "key_received";
+    case PairingOutcome::HUB_KEY_RETURNED:
+      return "hub_key_returned";
     case PairingOutcome::NONE:
     default:
       return "none";

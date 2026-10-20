@@ -248,12 +248,12 @@ std::string build_hub_key_pull_report(const PulledKeyReportInfo &info, const Sca
     return "";
   std::string report = "Device " + info.pairing_device_id + " (" + format_device_kind(info.type, info.subtype) + ", " +
                        format_device_ids(info.type, info.subtype) +
-                       ") answered the key pull with this hub's own key. A roll-call under it found " +
-                       std::to_string(state.count) + " device" + (state.count == 1 ? "" : "s") + " that hold it:\n";
+                       ") answered the key pull with this hub's own key. " + std::to_string(state.count) + " device" +
+                       (state.count == 1 ? "" : "s") + " that hold it answered:\n";
   const RollCallReplyKeys keys{info.hub_key, info.hub_key, false};
   for (uint8_t i = 0; i < state.count; i++) {
     const std::string device_id = node_id_to_string(state.responders[i].src);
-    report += format_roll_call_responder(state.responders[i], device_id, registry.get(device_id), keys,
+    report += format_roll_call_responder(state.responders[i], device_id, registry.get_declared(device_id), keys,
                                          RollCallKeyDisplay::HIDDEN);
   }
   if (state.truncated)
@@ -276,12 +276,12 @@ std::string build_pulled_key_report(const PulledKeyReportInfo &info, const ScanS
               "    system_key: \"" +
               key_hex + "\"\n";
   } else {
-    report += "A roll-call under that key found " + std::to_string(state.count) + " device" +
-              (state.count == 1 ? "" : "s") + " that hold it. Paste a block per device:\n";
+    report += std::to_string(state.count) + " device" + (state.count == 1 ? "" : "s") +
+              " that hold it answered. Paste a block per device:\n";
     const RollCallReplyKeys keys{info.key, info.hub_key, true};
     for (uint8_t i = 0; i < state.count; i++) {
       const std::string device_id = node_id_to_string(state.responders[i].src);
-      report += format_roll_call_responder(state.responders[i], device_id, registry.get(device_id), keys,
+      report += format_roll_call_responder(state.responders[i], device_id, registry.get_declared(device_id), keys,
                                            RollCallKeyDisplay::PLAIN);
     }
     if (state.truncated)

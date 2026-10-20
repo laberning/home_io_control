@@ -129,6 +129,21 @@ class ExchangeEngine {
   /// @return true if the device answered and its HMAC verified with `key`.
   bool authenticate_request(const IoFrame &request, uint32_t freq, const uint8_t *key);
 
+  /// @brief What one challenge (our 0x3C, the device's 0x3D) came to.
+  enum class ChallengeResult : uint8_t {
+    VERIFIED,   ///< The device's 0x3D verified under the key.
+    NO_ANSWER,  ///< Our 0x3C could not be sent, or no 0x3D came back within the response window.
+    MISMATCH,   ///< A 0x3D came back, but it does not verify under the key.
+  };
+
+  /// One challenge of `request`'s sender under `key`, telling a lost answer from a wrong one. A caller
+  /// may retry a NO_ANSWER; a MISMATCH means the device does not hold `key`.
+  /// @param request The device's frame the challenge is about (its cmd + data are the transcript).
+  /// @param freq    RF channel to challenge on.
+  /// @param key     16-byte key the device's 0x3D must verify against.
+  /// @return See ChallengeResult.
+  ChallengeResult challenge_sender(const IoFrame &request, uint32_t freq, const uint8_t *key);
+
   /// @brief Per-reply facts collect_broadcast_responses() hands its caller alongside the frame.
   ///
   /// The engine owns the TX-complete instant and the received packet; the caller cannot

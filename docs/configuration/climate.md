@@ -1,33 +1,31 @@
 # Heating and climate
 <!-- doxygen-label: cfg_climate -->
 
-> [!WARNING]
-> **This platform has not been exercised against a real radiator valve.** Expect to report results.
->
-> **If you own an Atlantic / Thermor / Sauter IO-Homecontrol heater, please try it and report what
-> happens** on the [issue tracker](https://github.com/laberning/home_io_control/issues) — success,
-> silence, or a wrong setpoint are all useful.
->
-> It is also unknown whether `set_temperature` requires a prior `power_on` or `set_mode manual`.
-> This component deliberately does not synthesize either — each `heating_control` call sends
-> exactly one write. Field testers: please report whether a bare `set_temperature` takes effect.
+> [!NOTE]
+> **The heater with an adjustable setpoint is confirmed on the
+> [Atlantic AGILIA IO](../devices/atlantic-agilia-io.md) electric radiator**: target temperature, Off /
+> Heat / Auto / `Program`, room temperature and heating / idle. A bare `set_temperature` takes effect
+> without a prior `power_on` or mode write. Every other heater kind on this page has not run on
+> hardware yet. **If you own one, please try it and report what happens** on the
+> [issue tracker](https://github.com/laberning/home_io_control/issues) — success, silence, or a wrong
+> setpoint are all useful.
 
 The `climate:` entity drives electrical heaters, a heating temperature interface and a generic heat pump,
 and what its card offers follows the device kind. A heater with an adjustable setpoint (node type 52, subtype 1) is driven over its
 private register protocol (`CMD_WRITE_PRIVATE`, 0x20): the hub reads and writes registers such as the
 setpoint, the mode and the room temperature, and the entity shows what the heater reports. A plain
 electrical heater (node type 52, subtype 0) is commanded with heating levels in the standard EXECUTE
-and read with the ordinary status request. Reads of the register protocol are experimental: the
-shape of a register read's reply is confirmed only for writes so far (see
-[ADR 0054](../adr/0054-heaters-are-read-back-over-the-private-register-protocol.md)). The
-heating-level control of the plain heater is experimental too, with no hardware confirmation yet (see
+and read with the ordinary status request. Reads and writes of the register protocol are confirmed
+on an Atlantic AGILIA IO radiator (see
+[ADR 0054](../adr/0054-heaters-are-read-back-over-the-private-register-protocol.md) for the
+design). The heating-level control of the plain heater is experimental, with no hardware
+confirmation yet (see
 [ADR 0055](../adr/0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md)).
 
 Other heating devices (exterior heating is a [fan](fan.md); the Atlantic heat pump and boiler) have no
 profile, so a `climate:` entity bound to one of them (by raw type value) fails at boot with a log
-line saying so. Register-protocol support is unconfirmed on hardware until a test is reported in
-[issue #165](https://github.com/laberning/home_io_control/issues/165). Scan Paired Devices and
-Discover & Pair print a ready-to-paste `climate:` block for either kind.
+line saying so. Scan Paired Devices and Discover & Pair print a ready-to-paste `climate:` block for
+either kind.
 
 ## `climate:` entity
 
@@ -53,20 +51,22 @@ What the card shows for each heater kind:
 | Action | `heating`, `idle`, `off` | No |
 | Companion entities | `Window` binary sensor; `Open Window Detection` switch (disabled by default) | None |
 
-- Experimental: current temperature, setpoint, mode, action and the window state come from the
-  heater's replies. Home Assistant shows them after the first poll, about five seconds after boot. A
+- Current temperature, setpoint, mode, action and the window state come from the heater's
+  replies. Home Assistant shows them after the first poll, about five seconds after boot. A
   room-temperature sensor fault leaves the current temperature empty. `heating` means the heater's
   regulator reports heating, `idle` that it does not, and `off` that the mode is off.
-- Experimental: the heater is polled every `status_poll_interval` (default 5 minutes, minimum 60 s). A
+- The heater is polled every `status_poll_interval` (default 5 minutes, minimum 60 s). A
   heater with an adjustable setpoint is polled with five register reads (room temperature, setpoint,
   mode, regulator state, window sensor), and the first poll also reads its maximum setpoint and the
   open-window-detection setting, once. A plain heater is polled with one status read. When a read
   fails the hub retries with a growing delay and keeps polling at the regular interval.
-- Experimental: after an accepted mode or setpoint write to a heater with an adjustable setpoint, the
-  hub reads the register back, so a setpoint the heater adjusts shows as the heater holds it. After a
-  level write to a plain heater, the next status read shows the level. Until the first read
+- After an accepted mode or setpoint write to a heater with an adjustable setpoint, the hub reads
+  the register back, so a setpoint the heater adjusts shows as the heater holds it. It also polls the
+  heater again 45 seconds later, so `heating` / `idle` follows the change without waiting a whole
+  poll interval. After a
+  level write to a plain heater (experimental), the next status read shows the level. Until the first read
   succeeds the card shows the last commanded mode, setpoint or preset.
-- Experimental: a change made outside Home Assistant shows up at the next poll. The program mode of
+- A change made outside Home Assistant shows up at the next poll. The program mode of
   a heater with an adjustable setpoint appears as `auto` with the `Program` preset, and its external
   mode as `heat`. Open-window detection is read once, at the first poll, so a change made at the
   heater's panel appears after a reboot.

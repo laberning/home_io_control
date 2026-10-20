@@ -919,6 +919,11 @@ const uint8_t *ExchangeEngine::key_for(const uint8_t *node) const {
 }
 
 bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq, const uint8_t *key) {
+  return this->challenge_sender(request, freq, key) == ChallengeResult::VERIFIED;
+}
+
+ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &request, uint32_t freq,
+                                                                 const uint8_t *key) {
   RadioDriver *radio = *this->radio_ptr_;
   exchange::InboundAuthContext context;
   context.state = exchange::InboundAuthState::TX_CHALLENGE;
@@ -927,12 +932,12 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq,
   if (!create_challenge_req(context.challenge, request.src, this->node_id_)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
-    return false;
+    return ChallengeResult::NO_ANSWER;
   }
   if (!this->transmit_frame(context.challenge, freq, radio->response_preamble())) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
-    return false;
+    return ChallengeResult::NO_ANSWER;
   }
 
   context.state = exchange::InboundAuthState::WAIT_CHALLENGE_RESPONSE;
@@ -942,24 +947,29 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq,
   if (!radio->wait_for_packet(packet, this->tuning_->exchange_response_wait_ms)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
-    return false;
+    return ChallengeResult::NO_ANSWER;
   }
 
   // Transcript is the *device's* own frame (cmd + data), not our challenge — the challenged
   // party authenticates what it said. Confirmed against real hardware bytes by the device-side
   // 0x3D in tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml.
+  // Anything but a 0x3D counts as no answer; a 0x3D that does not verify is a wrong one.
   IoFrame rx;
-  if (!parse(packet.data, packet.len, rx) || !frame_is_challenge_response(rx) || rx.data_len < HMAC_SIZE ||
-      !verify_challenge_resp(request, context.challenge.data, rx.data, key)) {
+  if (!parse(packet.data, packet.len, rx) || !frame_is_challenge_response(rx) || rx.data_len < HMAC_SIZE) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
-    return false;
+    return ChallengeResult::NO_ANSWER;
+  }
+  if (!verify_challenge_resp(request, context.challenge.data, rx.data, key)) {
+    context.state = exchange::InboundAuthState::FAILED;
+    this->record_debug(inbound_stage_name(context.state), 1, true);
+    return ChallengeResult::MISMATCH;
   }
 
   context.state = exchange::InboundAuthState::VERIFIED;
   this->record_debug(inbound_stage_name(context.state), 1, true);
   this->counters_.challenge_round_trips++;
-  return true;
+  return ChallengeResult::VERIFIED;
 }
 
 }  // namespace home_io_control

@@ -1,0 +1,70 @@
+id: atlantic_agilia_discovery_heater_rollcall_late_reply
+description: >
+  Scan Paired Devices under the hub key, 50 s after the pairing attempt in
+  tests/corpus/captures/pairing/atlantic_agilia_pairing_key_pull_own_key_heater_silent.yaml. The
+  previous sweep, 30 s earlier, drew no reply at all. This one is answered once, in the fourth of six
+  attempts, by the AGILIA radiator's heater B6BDFC (type 52 subtype 1, Atlantic, always alive), 1020 ms
+  after our 0x2A and on another channel (869.85 MHz) than the one we sent on (868.95 MHz). The log then
+  printed the climate block that put the heater under control.
+
+  Across all of issue #165's roll-calls three heaters answered 10 of 42 attempts, 274 to 1263 ms after
+  the request, and two whole six-attempt sweeps were silent. The 2000 ms listen window covers every
+  delay seen so far.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model), radiator 1: heater B6BDFC"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main after the heater support merge"
+  date: 2026-10-20
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "D4 30 00 00 3B 60 F8 23 2A DC 34 AD 2D A5 3A 39 F9 2D CB 2A AD"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_REQ(0x2A), attempt 1/6 (low-power pass, CTRL1 0x30), preamble 1024, no reply"
+  - dir: tx
+    t_ms: 2233
+    freq: 868250000
+    hex: "D4 30 00 00 3B 60 F8 23 2A AF 36 55 7F 67 02 12 67 C7 05 1F 7B"
+    crc: absent
+    note: "0x2A attempt 2/6, no reply"
+  - dir: tx
+    t_ms: 4472
+    freq: 869850000
+    hex: "D4 30 00 00 3B 60 F8 23 2A FC 35 5B 05 DE 83 22 67 99 A4 42 CA"
+    crc: absent
+    note: "0x2A attempt 3/6, no reply"
+  - dir: tx
+    t_ms: 6700
+    freq: 868950000
+    hex: "D4 00 00 00 3B 60 F8 23 2A F2 D5 02 1A 0B DE 19 17 9C C3 76 4D"
+    crc: absent
+    note: "0x2A attempt 4/6 (always-alive pass, CTRL1 0x00, preamble 48)"
+  - dir: rx
+    t_ms: 7720
+    freq: 869850000
+    hex: "D1 00 60 F8 23 B6 BD FC 2B 0D 01 B6 BD FC 0C CC EA 8E"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from B6BDFC: type 0x34 (52, electrical heater), subtype 1, backbone B6BDFC, Atlantic, flags 0xCC. +1020 ms. rssi -38"
+  - dir: tx
+    t_ms: 8733
+    freq: 868250000
+    hex: "D4 00 00 00 3B 60 F8 23 2A 53 66 32 3C B0 34 23 B9 87 3A 9C 2A"
+    crc: absent
+    note: "0x2A attempt 5/6, no reply"
+  - dir: tx
+    t_ms: 10771
+    freq: 869850000
+    hex: "D4 00 00 00 3B 60 F8 23 2A DF 7A 2E 77 2C 89 0D 66 ED 9A 60 F5"
+    crc: absent
+    note: "0x2A attempt 6/6, no reply"
+expect:
+  frames:
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {}
+    - {}
+    - {}
+    - {cmd: 0x2B, start: true, end: true, protocol: 2w}

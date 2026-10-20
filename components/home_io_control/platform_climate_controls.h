@@ -11,7 +11,9 @@
 /// except the switch's write and the read-back that confirms it.
 ///
 /// @todo Experimental: the meaning of registers 0x010E (window sensor) and 0x0106 (open-window
-///       detection) is unconfirmed on hardware
+///       detection) is unconfirmed on hardware. An AGILIA IO radiator answers both reads (window 0,
+///       detection 1, tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml), but no
+///       report has opened a window or switched detection off yet
 ///       ([issue #165](https://github.com/laberning/home_io_control/issues/165)).
 
 #include "esphome/components/binary_sensor/binary_sensor.h"

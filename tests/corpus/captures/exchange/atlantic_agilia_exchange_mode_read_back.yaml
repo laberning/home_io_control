@@ -1,0 +1,106 @@
+id: atlantic_agilia_exchange_mode_read_back
+description: >
+  Home Assistant switches an Atlantic AGILIA IO radiator's heater (B6BDFC, type 52 subtype 1) between
+  Heat, Auto and the Program preset. Each change is an authenticated CMD_WRITE_PRIVATE (0x20) to mode
+  register 0x0100, acknowledged by CMD_WRITE_PRIVATE_ACK (0x21) echoing the write, then read straight
+  back: 1 (manual, the climate entity's Heat), 0 (auto) and 2 (program, Auto with the Program preset)
+  each read back as written. The reporter confirmed the display followed mode changes made from Home
+  Assistant.
+
+  The challenge frames (0x3C from the radiator 37-40 ms after each 0x20, our 0x3D with preamble 8)
+  were masked in the reporter's log and are omitted.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model), radiator 1: heater B6BDFC"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main after the heater support merge"
+  date: 2026-10-20
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4D 00 B6 BD FC 60 F8 23 20 0C 61 01 00 01"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20), write mode register 0x0100 = 1 (manual), preamble 48"
+  - dir: rx
+    t_ms: 58
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 61 01 00 01"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE_ACK(0x21), echoes the write"
+  - dir: tx
+    t_ms: 61
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 00"
+    crc: absent
+    note: "read the mode back"
+  - dir: rx
+    t_ms: 128
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 60 01 00 01"
+    crc: absent
+    note: "mode 1 (manual): the climate entity shows Heat"
+  - dir: tx
+    t_ms: 2241
+    freq: 868950000
+    hex: "4D 00 B6 BD FC 60 F8 23 20 0C 61 01 00 00"
+    crc: absent
+    note: "write mode = 0 (auto)"
+  - dir: rx
+    t_ms: 2306
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 61 01 00 00"
+    crc: absent
+    note: "ack echoes the write"
+  - dir: tx
+    t_ms: 2317
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 00"
+    crc: absent
+    note: "read the mode back"
+  - dir: rx
+    t_ms: 2390
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 60 01 00 00"
+    crc: absent
+    note: "mode 0 (auto): the climate entity shows Auto with no preset"
+  - dir: tx
+    t_ms: 5933
+    freq: 868950000
+    hex: "4D 00 B6 BD FC 60 F8 23 20 0C 61 01 00 02"
+    crc: absent
+    note: "write mode = 2 (program)"
+  - dir: rx
+    t_ms: 6002
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 61 01 00 02"
+    crc: absent
+    note: "ack echoes the write"
+  - dir: tx
+    t_ms: 6005
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 00"
+    crc: absent
+    note: "read the mode back"
+  - dir: rx
+    t_ms: 6075
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 60 01 00 02"
+    crc: absent
+    note: "mode 2 (program): the climate entity shows Auto with the Program preset"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

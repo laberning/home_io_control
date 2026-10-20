@@ -227,16 +227,18 @@ struct PulledKeyReportInfo {
 
 /// @brief Build the report for a pull that returned the hub's own key from a node no platform drives.
 ///
-/// The roll-call under the hub key found the devices that hold it. Their blocks need no key and no
-/// banner, so they read like a scan's unknown responders.
+/// The devices that hold the hub key were found by a roll-call under it, or by a direct read of the
+/// address after an Atlantic pairing node. Their blocks need no key and no banner, so they read like a
+/// scan's unknown responders.
 /// @param info The device that sent the key.
-/// @param state The roll-call result under the hub key.
-/// @param registry Device registry before any registration: a responder already in it is known.
+/// @param state The devices found under the hub key.
+/// @param registry Device registry before any registration: a responder the YAML declares is known; one
+///        an earlier pairing in this boot added is not (DeviceRegistry::get_declared()).
 /// @return The report, or an empty string when nothing answered.
 std::string build_hub_key_pull_report(const PulledKeyReportInfo &info, const ScanState &state,
                                       DeviceRegistry &registry);
 
-/// @brief Build the one report a proven key pull prints after the roll-call under the pulled key.
+/// @brief Build the one report a proven key pull prints after looking for the devices that hold the key.
 ///
 /// One DO-NOT-SHARE banner frames the whole report (device log only; it carries the key). Each
 /// responder gets its summary line and a paste-ready block with `system_key:` added
@@ -244,9 +246,9 @@ std::string build_hub_key_pull_report(const PulledKeyReportInfo &info, const Sca
 /// yet" line and its key. With no responder, the report gives the key once for the pairing node
 /// itself. Nothing here registers a device.
 /// @param info The device that sent the key.
-/// @param state The roll-call result under that key.
-/// @param registry Device registry as it stands before any registration: a responder already in it
-///        is reported as known.
+/// @param state The devices found under that key (roll-call, or the direct read of the next address).
+/// @param registry Device registry as it stands before any registration: a responder the YAML declares
+///        is reported as known; one an earlier pairing in this boot added gets its block again.
 std::string build_pulled_key_report(const PulledKeyReportInfo &info, const ScanState &state, DeviceRegistry &registry);
 
 }  // namespace home_io_control

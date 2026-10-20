@@ -7,10 +7,10 @@
 /// predicate below matches on the frames themselves instead ("any frame with cmd ==
 /// CMD_DISCOVER_SPE_RESP"), so it keeps working as more roll-call captures arrive.
 ///
-/// Two shapes are covered: our own hub's roll-call answered by Somfy devices (`rx` = the 0x2B
-/// replies only), and a passive capture of a real VELUX KLR300's roll-call, where the hub's own
-/// 0x2A and the traffic around it are `rx` too — so only the 0x2B frames are decoded, and every
-/// per-device field is pinned per responder rather than assumed brand-wide.
+/// Two shapes are covered: our own hub's roll-call answered by Somfy devices and by Atlantic AGILIA
+/// heaters (`rx` = the 0x2B replies only), and a passive capture of a real VELUX KLR300's roll-call, where the hub's
+/// own 0x2A and the traffic around it are `rx` too — so only the 0x2B frames are decoded, and every per-device field is
+/// pinned per responder rather than assumed brand-wide.
 
 #include "corpus_generated.h"
 #include "proto_codecs.h"
@@ -59,6 +59,10 @@ constexpr ExpectedResponder EXPECTED_RESPONDERS[] = {
     // velux_klr300: ATT class 2 / 3, power-save low-power, backbone 00 00 00.
     {{0x15, 0x5D, 0x81}, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_VELUX, 0x8D, {0x00, 0x00, 0x00}},
     {{0x56, 0x22, 0x92}, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_VELUX, 0xCD, {0x00, 0x00, 0x00}},
+    // atlantic_agilia: the heater of each radiator, one address above the node that paired; electrical
+    // heater with an adjustable setpoint, ATT class 3, always alive, backbone == src.
+    {{0xB6, 0xBD, 0xFC}, DeviceType::ELECTRICAL_HEATER, 1, MANUFACTURER_ATLANTIC_GROUP, 0xCC, {0xB6, 0xBD, 0xFC}},
+    {{0x98, 0x61, 0x11}, DeviceType::ELECTRICAL_HEATER, 1, MANUFACTURER_ATLANTIC_GROUP, 0xCC, {0x98, 0x61, 0x11}},
 };
 
 const ExpectedResponder *find_expected_responder(const uint8_t src[NODE_ID_SIZE]) {

@@ -1,0 +1,119 @@
+id: atlantic_agilia_pairing_key_pull_own_key_heater_silent
+description: >
+  Discover & Pair of an Atlantic AGILIA IO radiator that already holds the hub's key (radiator 1, paired
+  the day before under the key it handed over). It answers discovery from B6BDFB as a remote controller
+  (node type 1023) and our 0x38 with a 0x32 that decrypts to the hub's own key (key check value A91125).
+  The roll-call under that key then draws no reply in any of its six attempts, although the radiator's
+  heater B6BDFC (pairing node + 1) answered a roll-call under the same key the day before and again
+  50 s after this attempt (tests/corpus/captures/discovery/atlantic_agilia_discovery_heater_rollcall_late_reply.yaml).
+
+  With no heater found, the hub falls through to the push path's ending: it sends the optional
+  SET_CONFIG1 (0x6F) to the pairing node, which answers FE 08 (code 1, COMMAND_UNKNOWN, the same
+  refusal it gives a pushed key), and then registers B6BDFB itself as a paired remote controller with
+  no platform. The attempt reports outcome=paired, which is wrong for this device: the node it
+  registered is not the one that can be controlled.
+
+  The 0x32 (16 encrypted bytes) was masked in the reporter's log and is omitted. Timestamps are the
+  hub's pairing-attempt summary offsets.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model), radiator 1: pairing node B6BDFB, heater B6BDFC"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main after the heater support merge"
+  date: 2026-10-20
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B 60 F8 23 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28) to 00003B, preamble 1024"
+  - dir: rx
+    t_ms: 522
+    freq: 869850000
+    hex: "D1 00 60 F8 23 B6 BD FB 29 FF C0 B6 BD FB 0C CC 00 00"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29) from B6BDFB: type 1023 (remote controller), subtype 0, Atlantic, flags 0xCC. rssi -36"
+  - dir: tx
+    t_ms: 555
+    freq: 868950000
+    hex: "48 00 B6 BD FB 60 F8 23 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), preamble 48"
+  - dir: rx
+    t_ms: 568
+    freq: 868950000
+    hex: "88 00 60 F8 23 B6 BD FB 2D"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM_ACK(0x2D), 14 ms after the 0x2C"
+  - dir: tx
+    t_ms: 901
+    freq: 868950000
+    hex: "4E 04 B6 BD FB 60 F8 23 38 20 79 5F 74 89 93"
+    crc: absent
+    note: "cmd=LAUNCH_KEY_TRANSFER(0x38), preamble 48. The radiator answered at t=917 with KEY_TRANSFER(0x32, 18 04, 16 bytes masked) that decrypts to the hub's own key, so no 0x3C/0x3D check follows."
+  - dir: tx
+    t_ms: 1151
+    freq: 868950000
+    hex: "D4 30 00 00 3B 60 F8 23 2A 76 D2 D0 A2 FA 90 AD 10 9E D4 54 2A"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_REQ(0x2A) under the hub key, attempt 1/6 (low-power pass, CTRL1 0x30), preamble 1024, no reply"
+  - dir: tx
+    t_ms: 3386
+    freq: 868250000
+    hex: "D4 30 00 00 3B 60 F8 23 2A 77 24 F1 AB 2F AA 68 F0 12 F9 8B FD"
+    crc: absent
+    note: "0x2A attempt 2/6, no reply"
+  - dir: tx
+    t_ms: 5623
+    freq: 869850000
+    hex: "D4 30 00 00 3B 60 F8 23 2A 1A C7 16 72 F2 50 28 44 82 DE 84 B5"
+    crc: absent
+    note: "0x2A attempt 3/6, no reply"
+  - dir: tx
+    t_ms: 7656
+    freq: 868950000
+    hex: "D4 00 00 00 3B 60 F8 23 2A 42 D7 CE 89 58 AF 3F 7D 8C 72 17 A9"
+    crc: absent
+    note: "0x2A attempt 4/6 (always-alive pass, CTRL1 0x00, preamble 48), no reply"
+  - dir: tx
+    t_ms: 9687
+    freq: 868250000
+    hex: "D4 00 00 00 3B 60 F8 23 2A 70 EA 73 F5 44 68 47 B9 19 69 F8 DD"
+    crc: absent
+    note: "0x2A attempt 5/6, no reply"
+  - dir: tx
+    t_ms: 11728
+    freq: 869850000
+    hex: "D4 00 00 00 3B 60 F8 23 2A 6F E2 6C 44 4F 67 2B 44 14 5D 90 7D"
+    crc: absent
+    note: "0x2A attempt 6/6 (sent after one LBT deferral on this channel), no reply"
+  - dir: tx
+    t_ms: 13958
+    freq: 868950000
+    hex: "4D 20 B6 BD FB 60 F8 23 6F E0 10 0A 08 00"
+    crc: absent
+    note: "cmd=SET_CONFIG1(0x6F), preamble 1024, CTRL1_LOW_POWER set"
+  - dir: rx
+    t_ms: 14196
+    freq: 868950000
+    hex: "89 00 60 F8 23 B6 BD FB FE 08"
+    crc: absent
+    note: "cmd=ERROR_RESP(0xFE), result 0x08 = COMMAND_UNKNOWN (code 1, state 0), 238 ms after the 0x6F"
+expect:
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x38, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {}
+    - {}
+    - {}
+    - {}
+    - {}
+    - {cmd: 0x6F, start: true, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w}

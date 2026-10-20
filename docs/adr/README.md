@@ -58,6 +58,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0049](0049-a-rain-limitation-is-derived-from-observed-status-never-predicted.md) | A rain limitation is derived from observed status, never predicted | A separate `limited_by_rain` flag from two evidence rules on ordinary status replies (rain-sensor originator; a clamped command while rain evidence is fresh); an explicit `CMD_ERROR_RESP` still wins; no extra polling |
 | [0050](0050-rain-is-read-by-an-opt-in-limitation-poll.md) | Rain is read by an opt-in limitation poll | `rain_sensor_poll_interval` reads the minimum limit on a jittered interval and drives a Rain sensor binary sensor (89 % rule, unknown after three misses); independent of the derived flag; transmit time is the user's choice |
 | [0051](0051-pairing-reads-the-key-refusal-and-checks-an-unconfirmed-key.md) | Pairing reads the key refusal and checks an unconfirmed key | `0xFE` byte decoded as `code << 3 \| state`; a refused key transfer ends the attempt (`key_transfer_refused`); an unconfirmed one gets an authenticated name read before it fails; `pairing_key_transfer: auto` pulls a remote controller's key, rolls call under it and registers the devices that hold it |
+| [0058](0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md) | Pairing reads the heater behind an Atlantic pairing node directly | After a pull from an Atlantic remote-controller node, one register read of the next address finds the heater; the roll-call is the fallback; a hub-key pull with nothing found ends `hub_key_returned`; pairing-registered devices keep getting their block; the key proof is retried |
 
 ### Interfaces and naming
 
@@ -158,6 +159,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0055: A climate entity's traits come from the device's heating profile](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md)
 - [ADR 0056: Exterior heating is a fan entity](0056-exterior-heating-is-a-fan-entity.md)
 - [ADR 0057: Temperature setpoints travel in the main parameter](0057-temperature-setpoints-travel-in-the-main-parameter.md)
+- [ADR 0058: Pairing reads the heater behind an Atlantic pairing node directly](0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

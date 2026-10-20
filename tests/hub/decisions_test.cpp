@@ -786,3 +786,33 @@ TEST(Decisions, RainStateFromLimitationReplyUsesOnlyTheMainParameterValue) {
   status.parameter_id = LIMITATION_PARAM_FP_FIRST;  // a functional parameter is not the window's limit
   EXPECT_EQ(decisions::rain_state_from_limitation_reply(status), RainSensorState::UNKNOWN);
 }
+
+// === Pairing: the device behind a pairing node ===
+
+TEST(PairingNextAddress, OnlyAnAtlanticRemoteControllerHasAHeaterAtTheNextAddress) {
+  EXPECT_TRUE(
+      decisions::pairing_node_has_heater_at_next_address(DeviceType::REMOTE_CONTROLLER, MANUFACTURER_ATLANTIC_GROUP));
+  EXPECT_FALSE(decisions::pairing_node_has_heater_at_next_address(DeviceType::REMOTE_CONTROLLER, MANUFACTURER_SOMFY));
+  EXPECT_FALSE(decisions::pairing_node_has_heater_at_next_address(DeviceType::REMOTE_CONTROLLER, 0));
+  EXPECT_FALSE(
+      decisions::pairing_node_has_heater_at_next_address(DeviceType::ELECTRICAL_HEATER, MANUFACTURER_ATLANTIC_GROUP));
+}
+
+TEST(PairingNextAddress, NextNodeIdCountsUpAsOneTwentyFourBitNumber) {
+  // The three radiators of issue #165.
+  const uint8_t radiators[][NODE_ID_SIZE] = {{0xB6, 0xBD, 0xFB}, {0x98, 0x61, 0x10}, {0xF6, 0xBE, 0x8D}};
+  const uint8_t heaters[][NODE_ID_SIZE] = {{0xB6, 0xBD, 0xFC}, {0x98, 0x61, 0x11}, {0xF6, 0xBE, 0x8E}};
+  for (size_t i = 0; i < 3; i++) {
+    uint8_t next[NODE_ID_SIZE] = {};
+    ASSERT_TRUE(decisions::next_node_id(radiators[i], next));
+    EXPECT_EQ(0, memcmp(next, heaters[i], NODE_ID_SIZE)) << i;
+  }
+  const uint8_t carry[NODE_ID_SIZE] = {0x12, 0x34, 0xFF};
+  uint8_t next[NODE_ID_SIZE] = {};
+  ASSERT_TRUE(decisions::next_node_id(carry, next));
+  EXPECT_EQ(next[0], 0x12);
+  EXPECT_EQ(next[1], 0x35);
+  EXPECT_EQ(next[2], 0x00);
+  const uint8_t last[NODE_ID_SIZE] = {0xFF, 0xFF, 0xFF};
+  EXPECT_FALSE(decisions::next_node_id(last, next));
+}

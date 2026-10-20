@@ -87,6 +87,8 @@ enum class PairingOutcome : uint8_t {
                          ///< PairingTelemetry::key_refusal_code().
   KEY_RECEIVED,          ///< `pairing_key_transfer: pull` received a key that differs from ours and the device
                  ///< proved it holds it; the device is not registered (see PairingEngine::run_key_pull_phase_()).
+  HUB_KEY_RETURNED,  ///< A pull returned the hub's own key from a node no platform drives (an Atlantic radiator's
+                     ///< pairing node), and no device that holds the key answered; nothing is registered.
 };
 
 /// @brief Fixed-size per-attempt telemetry recorder for the pairing flow.

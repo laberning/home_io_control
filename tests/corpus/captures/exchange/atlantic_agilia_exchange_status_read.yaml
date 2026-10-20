@@ -1,0 +1,125 @@
+id: atlantic_agilia_exchange_status_read
+description: >
+  The climate entity's read-back of an Atlantic AGILIA IO radiator's heater (B6BDFC, type 52 subtype 1)
+  right after boot: seven authenticated CMD_WRITE_PRIVATE (0x20) register reads `0C 60 01 <reg>`, each
+  answered by CMD_WRITE_PRIVATE_ACK (0x21) echoing the four header bytes followed by the register's
+  little-endian value. This is the first hardware capture of the reply to a read; until now only the
+  write ack had been seen.
+
+  Values, as the climate entity then showed them: room temperature
+  0x0115 = 0x0779 hundredths = 19.13 C; setpoint 0x0103 = 0x00AF tenths = 17.5 C; mode 0x0100 = 2
+  (program, shown as Auto with the Program preset); regulator 0x0117 = 0 (idle); window 0x010E = 0
+  (closed); maximum setpoint 0x0102 = 0x0118 = 28.0 C; open-window detection 0x0106 = 1 (on).
+
+  Every read is challenged: the radiator's 0x3C came 36-40 ms after our 0x20 and our 0x3D (preamble 8)
+  drew the 0x21. Both challenge frames were masked in the reporter's log and are omitted, so this
+  capture is not replayed as an exchange; the notes give each reply's timing.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model), radiator 1: heater B6BDFC"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main after the heater support merge"
+  date: 2026-10-20
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 15"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20), read register 0x0115 (room temperature), preamble 48"
+  - dir: rx
+    t_ms: 62
+    freq: 868950000
+    hex: "8E 00 60 F8 23 B6 BD FC 21 0C 60 01 15 79 07"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE_ACK(0x21): 0x0779 = 1913 hundredths = 19.13 C. Challenge 0x3C at +32 ms and our 0x3D masked"
+  - dir: tx
+    t_ms: 66
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 03"
+    crc: absent
+    note: "read register 0x0103 (comfort setpoint)"
+  - dir: rx
+    t_ms: 135
+    freq: 868950000
+    hex: "8E 00 60 F8 23 B6 BD FC 21 0C 60 01 03 AF 00"
+    crc: absent
+    note: "0x00AF = 175 tenths = 17.5 C"
+  - dir: tx
+    t_ms: 148
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 00"
+    crc: absent
+    note: "read register 0x0100 (mode)"
+  - dir: rx
+    t_ms: 218
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 60 01 00 02"
+    crc: absent
+    note: "mode 2 = program (the radiator runs its own schedule); one value byte"
+  - dir: tx
+    t_ms: 222
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 17"
+    crc: absent
+    note: "read register 0x0117 (regulator state)"
+  - dir: rx
+    t_ms: 289
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 60 01 17 00"
+    crc: absent
+    note: "regulator 0 (not heating)"
+  - dir: tx
+    t_ms: 301
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 0E"
+    crc: absent
+    note: "read register 0x010E (window)"
+  - dir: rx
+    t_ms: 368
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 60 01 0E 00"
+    crc: absent
+    note: "window 0 (closed)"
+  - dir: tx
+    t_ms: 374
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 02"
+    crc: absent
+    note: "read register 0x0102 (maximum setpoint)"
+  - dir: rx
+    t_ms: 444
+    freq: 868950000
+    hex: "8E 00 60 F8 23 B6 BD FC 21 0C 60 01 02 18 01"
+    crc: absent
+    note: "0x0118 = 280 tenths = 28.0 C"
+  - dir: tx
+    t_ms: 454
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 06"
+    crc: absent
+    note: "read register 0x0106 (open-window detection)"
+  - dir: rx
+    t_ms: 523
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 60 01 06 01"
+    crc: absent
+    note: "open-window detection 1 (on)"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

@@ -58,7 +58,8 @@ display's pairing mode answers discovery as a remote controller, so `pairing_key
 instead of pushing yours. After the device proves the key, the hub calls a roll-call under it and
 logs one report between a `DEVICE KEY RECEIVED -- DO NOT SHARE IT` line and an
 `END OF DEVICE KEY REPORT` line. For an AGILIA the roll-call finds the heater at the next address
-up. Each device gets a paste-ready block that includes its own `system_key:`:
+up; [Atlantic AGILIA IO](devices/atlantic-agilia-io.md#pairing-a-radiator) has the radiator's menu
+steps. Each device gets a paste-ready block that includes its own `system_key:`:
 
 ```
   climate:
@@ -136,7 +137,7 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; 
 
 | Field | Meaning |
 |-------|---------|
-| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, `key_transfer_refused` (the device answered the key with an error, see the advisor), or `key_received` (a key pull got a different key and the device proved it, but no device that holds it could be registered; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)). |
+| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, `key_transfer_refused` (the device answered the key with an error, see the advisor), `key_received` (a key pull got a different key and the device proved it, but no device that holds it could be registered; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)), or `hub_key_returned` (a key pull got the hub's own key from a node no platform drives, and no device that holds the key answered). |
 | `phase` | The furthest stage the pairing state machine reached. |
 | `node` / `type` | The paired device's node ID and type, or `-` if nothing was paired. |
 | `attempts` | Number of discovery command retries sent. |
@@ -147,6 +148,10 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; 
 
 The format is stable and versioned (the `v1;` prefix), so an automation can alert when `outcome`
 is not `paired`.
+
+Discover & Pair blocks the hub while it runs, so a press made during an attempt is handled only
+after it ends. The hub ignores a press it handles within a second of an attempt ending and logs that
+it did: put the device back into pairing mode and press again.
 
 The log also gets a full human-readable summary of every TX, RX, rejected RX, listen-before-talk
 deferral and phase event, plus a total channel-hop count. When the overheard traffic tells a story,
@@ -164,6 +169,7 @@ RF silence, and is reported as `1w_traffic`.
 | `key_pull_not_offered` | The hub pulled (`auto` for a remote controller, or `pull`), and the device answered the key request with an error. | The device does not hand out its key. Set `pairing_key_transfer: push` to pair it normally. A Somfy Izymo dimmer answers this way. |
 | `key_pull_unproven` | The hub pulled, and the device sent a key but did not prove it holds that key. | The hub prints no key. Post the `Key pull check` line in your issue: it contains no key. |
 | `pulled_key_received` | The hub pulled, the device sent a different key and proved it holds it, and a roll-call under that key found no device the hub could register. | The log prints the key once. Put it into the `system_key:` of the entity that controls the device, flash, and run [Scan Paired Devices](#scan-paired-devices): the log prints its YAML snippet. Each device of this kind keeps its own key, so compare their `Key pull check` values. |
+| `hub_key_no_responder` | The hub pulled, the device sent the hub's own key, it has no platform of its own, and no device that holds the key answered. | The device that pairs is not always the one to control: an Atlantic radiator's heater sits at the next address. Press [Scan Paired Devices](#scan-paired-devices), and again if nothing answers; it prints the YAML block of each device that holds the key. |
 | `rf_silent` | Nothing at all was heard on any channel during the whole discovery window. | Either the radio is not receiving (antenna, wiring, wrong tuning), or the channel was simply quiet for those few seconds. Look at the rest of the log first. If it shows other IO-Homecontrol frames being received (your remotes, a neighbour's devices), the radio works, and this reads as "the device did not answer". Only if nothing is ever received, check the antenna and radio tuning before pressing PROG again. |
 
 ## Scan Paired Devices
