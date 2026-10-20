@@ -190,7 +190,11 @@ bool device_supports_heat_level_control(DeviceType type) {
 }
 
 bool device_has_no_motion(DeviceType type, uint8_t subtype) {
-  return device_uses_heating_levels(type, subtype) || device_supports_heat_level_control(type);
+  const HeatingProfile *profile = find_heating_profile(type, subtype);
+  // A heater commanded with an EXECUTE (levels, temperatures) never moves; a register heater is not
+  // polled with 0x03 at all.
+  return (profile != nullptr && profile->path != HeatingControlPath::PRIVATE_REGISTERS) ||
+         device_supports_heat_level_control(type);
 }
 
 bool device_supports_climate_control(DeviceType type, uint8_t subtype) {

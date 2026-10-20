@@ -52,9 +52,9 @@ TEST(DeviceProfile, ClimateControlSupportedForTheTwoElectricalHeaters) {
       << "the plain electrical heater has a heating-level profile";
   EXPECT_TRUE(device_supports_climate_control(DeviceType::ELECTRICAL_HEATER, 3))
       << "an unnamed subtype falls back to the plain heater";
-  EXPECT_FALSE(device_supports_climate_control(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0));
+  EXPECT_TRUE(device_supports_climate_control(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0));
+  EXPECT_TRUE(device_supports_climate_control(DeviceType::HEAT_PUMP, 0));
   EXPECT_FALSE(device_supports_climate_control(DeviceType::EXTERIOR_HEATING, 0));
-  EXPECT_FALSE(device_supports_climate_control(DeviceType::HEAT_PUMP, 0));
   EXPECT_FALSE(device_supports_climate_control(DeviceType::HEAT_PUMP, 1)) << "Atlantic profile uses other registers";
   EXPECT_FALSE(device_supports_climate_control(DeviceType::VERTICAL_EXTERIOR_AWNING, 0))
       << "cover should not report climate control";

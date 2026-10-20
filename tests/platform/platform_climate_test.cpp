@@ -29,6 +29,13 @@ class MockHubClimate : public test::MockPlatformHubBase {
   bool send_result{true};
   /// Registers read through read_heating_register(), in order.
   std::vector<HeatingFunction> reads;
+  /// One set_heating_temperature() call.
+  struct TemperatureCall {
+    uint16_t main_parameter;
+    HeatingFp fp;
+  };
+  std::vector<TemperatureCall> temperature_calls;
+  bool temperature_result{true};
   /// Heating levels sent through set_heating_level(), in order.
   std::vector<uint8_t> levels;
   bool level_result{true};
@@ -36,6 +43,12 @@ class MockHubClimate : public test::MockPlatformHubBase {
   std::vector<uint8_t> read_tries;
   /// What the heater answers a read with; a register not listed here does not answer.
   std::map<HeatingFunction, float> read_replies;
+
+  bool set_heating_temperature(const std::string & /*device_id*/, uint16_t main_parameter,
+                               const HeatingFp &fp) override {
+    this->temperature_calls.push_back({main_parameter, fp});
+    return this->temperature_result;
+  }
 
   bool set_heating_level(const std::string & /*device_id*/, uint8_t level) override {
     this->levels.push_back(level);
@@ -234,14 +247,21 @@ TEST(PlatformClimate, NonClimateDeviceBindingIsRejectedInSetup) {
 
 TEST(PlatformClimate, ClimateTypeWithoutAPlatformIsRejectedInSetup) {
   MockHubClimate hub;
-  // A heat pump and a heating interface are climate-class types with no heating profile yet.
-  IOHomeClimate heat_pump = make_bound_climate(hub, DeviceType::HEAT_PUMP, 0);
-  heat_pump.setup();
-  EXPECT_TRUE(heat_pump.is_failed()) << "a heat pump has no heating profile";
+  // The Atlantic heat pump and exterior heating have no heating profile (the latter is a fan).
+  IOHomeClimate atlantic = make_bound_climate(hub, DeviceType::HEAT_PUMP, 1);
+  atlantic.setup();
+  EXPECT_TRUE(atlantic.is_failed()) << "the Atlantic heat pump has no heating profile";
 
-  IOHomeClimate interface = make_bound_climate(hub, DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
-  interface.setup();
-  EXPECT_TRUE(interface.is_failed());
+  IOHomeClimate exterior = make_bound_climate(hub, DeviceType::EXTERIOR_HEATING, 0);
+  exterior.setup();
+  EXPECT_TRUE(exterior.is_failed());
+
+  IOHomeClimate thermostat = make_bound_climate(hub, DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  thermostat.setup();
+  EXPECT_FALSE(thermostat.is_failed());
+  IOHomeClimate pump = make_bound_climate(hub, DeviceType::HEAT_PUMP, 0);
+  pump.setup();
+  EXPECT_FALSE(pump.is_failed());
 
   IOHomeClimate plain_heater = make_bound_climate(hub, DeviceType::ELECTRICAL_HEATER, 0);
   plain_heater.setup();
@@ -702,4 +722,247 @@ TEST(PlatformClimate, ALevelHeaterNeverShowsAnActionOrTemperature) {
   });
   EXPECT_TRUE(std::isnan(entity.current_temperature));
   EXPECT_EQ(entity.action, CLIMATE_ACTION_OFF);
+}
+
+// ========================================================================================
+// Temperature in the main parameter (heating temperature interface, heat pump)
+// ========================================================================================
+
+namespace {
+
+IOHomeClimate make_thermostat(MockHubClimate &hub) {
+  return make_bound_climate(hub, DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+}
+IOHomeClimate make_pump(MockHubClimate &hub) { return make_bound_climate(hub, DeviceType::HEAT_PUMP, 0); }
+
+void expect_call(const MockHubClimate::TemperatureCall &call, uint16_t main_parameter, HeatingFpKind kind,
+                 uint16_t value) {
+  EXPECT_EQ(call.main_parameter, main_parameter);
+  EXPECT_EQ(call.fp.kind, kind);
+  EXPECT_EQ(call.fp.value, value);
+}
+
+}  // namespace
+
+TEST(PlatformClimate, ThermostatTraitsAreExactlyTheProfile) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.setup();
+  const ClimateTraits traits = entity.traits();
+  EXPECT_EQ(supported_modes(traits),
+            (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT, CLIMATE_MODE_AUTO}));
+  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}));
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Secured"}));
+  EXPECT_FALSE(traits.get_supports_current_temperature()) << "no temperature is invented";
+  EXPECT_FALSE(traits.get_supports_action());
+  EXPECT_FLOAT_EQ(traits.get_visual_min_temperature(), 5.0F);
+  EXPECT_FLOAT_EQ(traits.get_visual_max_temperature(), 30.0F);
+}
+
+TEST(PlatformClimate, HeatPumpTraitsAreExactlyTheProfile) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_pump(hub);
+  entity.setup();
+  const ClimateTraits traits = entity.traits();
+  EXPECT_EQ(supported_modes(traits), (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT}))
+      << "heat and off; no cooling";
+  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}));
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Setback", "Halted"}));
+}
+
+TEST(PlatformClimate, ThermostatSetpointIsTheTemperatureWithTheManualFlag) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.setup();
+  auto call = entity.make_call();
+  call.set_target_temperature(20.0F);
+  call.perform();
+
+  ASSERT_EQ(hub.temperature_calls.size(), 1u);
+  expect_call(hub.temperature_calls[0], 25600, HeatingFpKind::FP9, heating_mode_flags::MANUAL);
+  EXPECT_TRUE(hub.calls.empty()) << "no register write";
+  EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F) << "the commanded value stands in until a reading";
+}
+
+TEST(PlatformClimate, ThermostatUsesTheYamlRangeButAHeatPumpNeverDoes) {
+  MockHubClimate hub;
+  IOHomeClimate thermostat = make_thermostat(hub);
+  thermostat.set_temperature_range(10.0F, 30.0F);
+  thermostat.setup();
+  auto call = thermostat.make_call();
+  call.set_target_temperature(20.0F);
+  call.perform();
+  ASSERT_EQ(hub.temperature_calls.size(), 1u);
+  EXPECT_EQ(hub.temperature_calls[0].main_parameter, 25600) << "the middle of 10..30";
+
+  MockHubClimate pump_hub;
+  IOHomeClimate pump = make_pump(pump_hub);
+  pump.set_temperature_range(10.0F, 30.0F);  // not reachable from YAML; the profile still ignores it
+  pump.setup();
+  auto pump_call = pump.make_call();
+  pump_call.set_target_temperature(20.0F);
+  pump_call.perform();
+  ASSERT_EQ(pump_hub.temperature_calls.size(), 1u);
+  EXPECT_EQ(pump_hub.temperature_calls[0].main_parameter, 25600) << "20 C over the fixed -40..80 is also half way";
+  auto top = pump.make_call();
+  top.set_target_temperature(30.0F);
+  top.perform();
+  EXPECT_EQ(pump_hub.temperature_calls[1].main_parameter, 29867) << "round(70 x 51200 / 120), not the YAML range's top";
+}
+
+TEST(PlatformClimate, HeatPumpSetpointCarriesNoFunctionalParameter) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_pump(hub);
+  entity.setup();
+  auto call = entity.make_call();
+  call.set_target_temperature(21.0F);
+  call.perform();
+  ASSERT_EQ(hub.temperature_calls.size(), 1u);
+  EXPECT_EQ(hub.temperature_calls[0].fp.kind, HeatingFpKind::NONE);
+}
+
+TEST(PlatformClimate, ThermostatPresetsAreTheAliasAloneWithNoFunctionalParameter) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.setup();
+  auto comfort = entity.make_call();
+  comfort.set_preset(CLIMATE_PRESET_COMFORT);
+  comfort.perform();
+  auto eco = entity.make_call();
+  eco.set_preset(CLIMATE_PRESET_ECO);
+  eco.perform();
+  auto secured = entity.make_call();
+  secured.set_preset(std::string("Secured"));
+  secured.perform();
+  ASSERT_EQ(hub.temperature_calls.size(), 3u);
+  expect_call(hub.temperature_calls[0], 0xD80F, HeatingFpKind::NONE, 0);
+  expect_call(hub.temperature_calls[1], 0xD80E, HeatingFpKind::NONE, 0);
+  expect_call(hub.temperature_calls[2], 0xD80A, HeatingFpKind::NONE, 0);
+  EXPECT_EQ(entity.get_custom_preset(), "Secured");
+}
+
+TEST(PlatformClimate, ThermostatModesAreTheDevicesOwnCommands) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.setup();
+
+  perform_mode(entity, CLIMATE_MODE_AUTO);
+  perform_mode(entity, CLIMATE_MODE_OFF);
+  ASSERT_EQ(hub.temperature_calls.size(), 2u);
+  expect_call(hub.temperature_calls[0], 0xD80F, HeatingFpKind::FP9, heating_mode_flags::AUTO);
+  expect_call(hub.temperature_calls[1], 0xD400, HeatingFpKind::FP9, heating_mode_flags::OFF);
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
+
+  // Heat is the current target temperature with the manual flag; with no target known, nothing is sent.
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  EXPECT_EQ(hub.temperature_calls.size(), 2u);
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF) << "a refused mode is not shown";
+  auto target = entity.make_call();
+  target.set_target_temperature(22.0F);
+  target.perform();
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  ASSERT_EQ(hub.temperature_calls.size(), 4u);
+  expect_call(hub.temperature_calls[3], hub.temperature_calls[2].main_parameter, HeatingFpKind::FP9,
+              heating_mode_flags::MANUAL);
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+}
+
+TEST(PlatformClimate, ThermostatHeatUsesTheReportedSetpointWhenNoTargetWasSet) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.setup();
+  deliver_readings(hub, [](HeatingReadings &r) { r.setpoint_c = 20.0F; });
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  ASSERT_EQ(hub.temperature_calls.size(), 1u);
+  expect_call(hub.temperature_calls[0], 25600, HeatingFpKind::FP9, heating_mode_flags::MANUAL);
+}
+
+TEST(PlatformClimate, HeatPumpModesAndPresetsCarryFp16) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_pump(hub);
+  entity.setup();
+
+  perform_mode(entity, CLIMATE_MODE_OFF);
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  auto eco = entity.make_call();
+  eco.set_preset(CLIMATE_PRESET_ECO);
+  eco.perform();
+  for (const char *name : {"Setback", "Halted"}) {
+    auto custom = entity.make_call();
+    custom.set_preset(std::string(name));
+    custom.perform();
+  }
+  ASSERT_EQ(hub.temperature_calls.size(), 5u);
+  expect_call(hub.temperature_calls[0], 0xD400, HeatingFpKind::FP16, 0x8000);
+  expect_call(hub.temperature_calls[1], 0xD80F, HeatingFpKind::FP16, 0x4000);
+  expect_call(hub.temperature_calls[2], 0xD812, HeatingFpKind::FP16, 0x4000);
+  expect_call(hub.temperature_calls[3], 0xD80E, HeatingFpKind::FP16, 0x4000);
+  expect_call(hub.temperature_calls[4], 0xD813, HeatingFpKind::FP16, 0x4000);
+}
+
+TEST(PlatformClimate, AFailedTemperatureSendShowsNothing) {
+  MockHubClimate hub;
+  hub.temperature_result = false;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.setup();
+  auto call = entity.make_call();
+  call.set_target_temperature(20.0F);
+  call.perform();
+  perform_mode(entity, CLIMATE_MODE_AUTO);
+  EXPECT_TRUE(std::isnan(entity.target_temperature));
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
+  EXPECT_EQ(entity.publish_count_, 0);
+}
+
+TEST(PlatformClimate, ObservedAliasAndTemperatureDrivePresetAndTargetNotTheCommandedMode) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.setup();
+  perform_mode(entity, CLIMATE_MODE_AUTO);
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_alias::THERMOSTAT_ECO; });
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO);
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << "the mode is the last command: nothing reads it back";
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_alias::SECURED; });
+  EXPECT_EQ(entity.get_custom_preset(), "Secured");
+
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.level = -1;
+    r.setpoint_c = 21.5F;
+  });
+  EXPECT_FLOAT_EQ(entity.target_temperature, 21.5F);
+  EXPECT_FALSE(entity.preset.has_value()) << "a plain temperature is on no alias preset";
+  EXPECT_FALSE(entity.has_custom_preset());
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
+}
+
+TEST(PlatformClimate, WithoutACommandedModeADeviceThatReportsIsShownAsHeating) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_pump(hub);
+  entity.setup();
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_alias::HEAT_PUMP_ECO; });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO);
+
+  perform_mode(entity, CLIMATE_MODE_OFF);
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_alias::COMFORT; });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF) << "a commanded mode is not overwritten by a reading that cannot tell";
+}
+
+TEST(PlatformClimate, TemperatureHeatersNeverGetARegisterWrite) {
+  for (const DeviceType type : {DeviceType::HEATING_TEMPERATURE_INTERFACE, DeviceType::HEAT_PUMP}) {
+    MockHubClimate hub;
+    IOHomeClimate entity = make_bound_climate(hub, type, 0);
+    entity.setup();
+    perform_mode(entity, CLIMATE_MODE_HEAT);
+    auto away = entity.make_call();
+    away.set_preset(CLIMATE_PRESET_AWAY);
+    away.perform();
+    EXPECT_TRUE(hub.calls.empty());
+    EXPECT_TRUE(hub.reads.empty());
+    EXPECT_TRUE(hub.levels.empty());
+  }
 }

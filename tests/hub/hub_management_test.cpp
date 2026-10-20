@@ -1539,8 +1539,8 @@ TEST(HubManagement, ScanPairedDevicesTypeWithoutPlatformIsReportedAsNotSupported
   MockRadio radio;
   setup_component(component, radio);
 
-  // Type 22 subtype 0 (the heat pump): recognised and named, but no platform drives it.
-  const uint8_t payload[] = {0x05, 0x80, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  // Type 22 subtype 1 (the Atlantic heat pump): recognised and named, but no platform drives it.
+  const uint8_t payload[] = {0x05, 0x81, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
   const uint8_t src[3] = {0x41, 0x5C, 0xE5};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 

@@ -130,7 +130,9 @@ TEST(DeviceTypesTable, DiagnosticAndYamlFormsPrintTheFullTypeValue) {
 TEST(DeviceTypesTable, PlatformNameFollowsTheRowNotTheType) {
   EXPECT_STREQ(device_platform_name(DeviceType::ELECTRICAL_HEATER, 1), "climate");
   EXPECT_STREQ(device_platform_name(DeviceType::ELECTRICAL_HEATER, 0), "climate");
-  EXPECT_EQ(device_platform_name(DeviceType::HEAT_PUMP, 0), nullptr);
+  EXPECT_STREQ(device_platform_name(DeviceType::HEAT_PUMP, 0), "climate");
+  EXPECT_STREQ(device_platform_name(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0), "climate");
+  EXPECT_EQ(device_platform_name(DeviceType::HEAT_PUMP, 1), nullptr);
   EXPECT_STREQ(device_platform_name(DeviceType::EXTERIOR_HEATING, 0), "fan");
   EXPECT_STREQ(device_platform_name(DeviceType::EXTERIOR_HEATING, 58), "fan");
   EXPECT_STREQ(device_platform_name(DeviceType::ROLLER_SHUTTER, 1), "cover");
@@ -138,9 +140,8 @@ TEST(DeviceTypesTable, PlatformNameFollowsTheRowNotTheType) {
   EXPECT_STREQ(device_platform_name(DeviceType::ON_OFF_SWITCH, 2), "switch");
   EXPECT_STREQ(device_platform_name(DeviceType::LOCK, 1), "lock");
   EXPECT_EQ(device_platform_name(DeviceType::LOCK, 2), nullptr) << "car controller has no platform";
-  for (const DeviceType type :
-       {DeviceType::HEATING_TEMPERATURE_INTERFACE, DeviceType::HEAT_PUMP, DeviceType::VENTILATION_POINT,
-        DeviceType::INTRUSION_ALARM, DeviceType::SECURE_CONFIGURATION_DEVICE, DeviceType::REMOTE_CONTROLLER}) {
+  for (const DeviceType type : {DeviceType::VENTILATION_POINT, DeviceType::INTRUSION_ALARM,
+                                DeviceType::SECURE_CONFIGURATION_DEVICE, DeviceType::REMOTE_CONTROLLER}) {
     EXPECT_FALSE(device_has_platform(type, 0)) << static_cast<unsigned>(type);
   }
   EXPECT_FALSE(device_has_platform(DeviceType::HEAT_PUMP, 1)) << "Atlantic profile: other register family";
@@ -225,7 +226,7 @@ TEST(DeviceTypesTable, ExteriorHeatingGetsAFanSnippetForBothSubtypes) {
 }
 
 TEST(DeviceTypesTable, HeatPumpAndRemoteControllerGetNoSnippet) {
-  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::HEAT_PUMP, 0, "AABBCC", true, false, false).empty());
+  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::HEAT_PUMP, 1, "AABBCC", true, false, false).empty());
   EXPECT_TRUE(build_device_yaml_snippet(DeviceType::REMOTE_CONTROLLER, 0, "AABBCC", true, false, false).empty());
 }
 

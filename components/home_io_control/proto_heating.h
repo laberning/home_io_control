@@ -98,6 +98,12 @@ constexpr uint8_t HEATING_DIRECTION_SET = 0x61;
 /// A reading stores it as NaN, the same as "never read".
 constexpr int16_t HEATING_SENSOR_FAULT_RAW = -1;
 
+/// @brief Default encoding range of a temperature main parameter, in degrees Celsius. The main
+/// parameter spans HEATING_TEMPERATURE_MP_SPAN steps over [min, max]; this range is the one a device
+/// is assumed to use unless the YAML says otherwise (`min_temperature:` / `max_temperature:`).
+static constexpr float HEATING_TEMPERATURE_RANGE_MIN_C = -40.0F;
+static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATING_TEMPERATURE_RANGE_MIN_C.
+
 /// @brief Stable lowercase name for a heating function ("power_on", "set_temperature", ...).
 /// @param fn Function.
 /// @return Null-terminated string; "unknown" for an out-of-range value.
@@ -177,9 +183,13 @@ struct HeatingReadings {
   int16_t regulator{-1};              ///< HeatingRegulatorState value; -1 until read.
   int16_t window_open{-1};            ///< 0 closed / 1 open; -1 until read.
   int16_t open_window_detection{-1};  ///< 1 detection on / 0 off; -1 until read.
-  int16_t level{-1};                  ///< Heating level (low byte of the main parameter) of a heater that is
-                                      ///< commanded with levels; -1 until a status reply carried one. Set by
-                                      ///< the hub's status path, not by store().
+  int16_t level{-1};                  ///< Low byte of the main parameter of a heater commanded with a prefixed
+                                      ///< value: a heating level, or a setpoint alias. -1 until a status reply
+                                      ///< carried one, and again after a reply that carried a plain
+                                      ///< temperature. Set by the hub's status path, not by store().
+  int32_t main_parameter{-1};         ///< The raw current main parameter of a heater commanded with an EXECUTE
+                                      ///< (a temperature, an alias or a level); -1 until a status reply
+                                      ///< carried one. Set by the hub's status path, not by store().
 
   /// @brief Fold one decoded register value into the readings.
   /// @param fn Register the value was read from.

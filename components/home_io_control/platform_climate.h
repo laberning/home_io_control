@@ -66,6 +66,16 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @param call The requested attribute changes.
   void control(const climate::ClimateCall &call) override;
 
+  /// @brief Override the temperature encoding range (YAML `min_temperature:` / `max_temperature:`) of a
+  /// heater that carries a temperature in its main parameter; applied to the device in setup().
+  /// @param min_c Lower end of the range in degrees Celsius.
+  /// @param max_c Upper end of the range.
+  void set_temperature_range(float min_c, float max_c) {
+    this->range_min_c_ = min_c;
+    this->range_max_c_ = max_c;
+    this->has_range_ = true;
+  }
+
  protected:
   /// @brief The device's heating profile: from the declared type, else from the type the hub learned.
   /// @return The profile, or nullptr while the type is unknown.
@@ -102,12 +112,36 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @return true when the mode or a preset changed; a value the profile does not map changes nothing.
   bool apply_observed_state_(const HeatingProfile &profile, uint8_t wire);
 
-  /// @brief Send one mode or preset value over the profile's control path.
+  /// @brief Send one preset value (or, on the register and level paths, one mode value) over the
+  /// profile's control path.
   /// @param profile The device's profile.
   /// @param fn Register to write (PRIVATE_REGISTERS only).
-  /// @param wire Register value, or level low byte.
+  /// @param wire Register value, or the low byte of a level or alias.
   /// @return true when the device accepted it.
   bool write_(const HeatingProfile &profile, HeatingFunction fn, uint8_t wire);
+
+  /// @brief Send one preset over the profile's control path: a register or level write, or, for a
+  /// TEMPERATURE_EXECUTE heater, its alias as the main parameter with the entry's functional parameter.
+  /// @param profile The device's profile.
+  /// @param entry The preset entry.
+  /// @return true when the device accepted it.
+  bool write_preset_(const HeatingProfile &profile, const HeatingPresetEntry &entry);
+
+  /// @brief Encode a target temperature as a main parameter over the device's range (the fixed range
+  /// for a profile that has one).
+  /// @param profile The device's profile.
+  /// @param celsius The target.
+  /// @param[out] main_parameter The encoded value.
+  /// @return false when the temperature or the range cannot be encoded.
+  bool encode_target_(const HeatingProfile &profile, float celsius, uint16_t &main_parameter);
+
+  /// @brief Send an HVAC mode to a TEMPERATURE_EXECUTE heater: the mode entry's main parameter (the
+  /// target temperature for heat on a thermostat) with its functional parameter.
+  /// @param profile The device's profile.
+  /// @param entry The mode entry.
+  /// @return true when the device accepted it; false when it did not, or when heat needs a target
+  ///         temperature that is not known yet.
+  bool write_temperature_mode_(const HeatingProfile &profile, const HeatingModeEntry &entry);
 
   /// @brief Read one register back after an accepted write so the entity shows the heater's value.
   /// @param fn Register that was just written.
@@ -122,7 +156,11 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @brief Apply the target temperature, if present. @return true if published.
   bool apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call);
 
-  bool observed_{false};                         ///< True once a reading has been folded in.
+  bool observed_{false};                                ///< True once a reading has been folded in.
+  bool has_range_{false};                               ///< YAML overrode the temperature encoding range.
+  float range_min_c_{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< YAML `min_temperature:`.
+  float range_max_c_{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< YAML `max_temperature:`.
+  bool mode_commanded_{false};                   ///< A mode was commanded (matters where nothing reads the mode back).
   float max_temperature_c_{HEATING_TEMP_MAX_C};  ///< Upper end of the target range (heater's own maximum once read).
   std::vector<const char *> custom_presets_;     ///< Custom preset names of the profile, registered in setup().
 };

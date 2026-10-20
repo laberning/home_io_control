@@ -106,9 +106,14 @@ void IOHomeClimate::setup() {
     this->on_device_update_(id, dev);
   });
 
+  if (this->has_range_)
+    this->parent_->set_device_temperature_range(this->device_id_, this->range_min_c_, this->range_max_c_);
+
   // Custom presets are registered on the entity and referenced by the traits; IO's program mode,
   // the comfort offsets and the secured level have no standard preset.
   if (const HeatingProfile *profile = this->profile_(); profile != nullptr) {
+    if (profile->features.target_temperature)
+      this->max_temperature_c_ = profile->visual_max_c;
     for (size_t i = 0; i < profile->preset_count; i++) {
       if (profile->presets[i].id == HeatingPresetId::CUSTOM)
         this->custom_presets_.push_back(profile->presets[i].custom_name);
@@ -140,9 +145,11 @@ climate::ClimateTraits IOHomeClimate::traits() {
   }
   // HEATING_TEMP_MIN_C up to the heater's own maximum setpoint once read, never past what
   // encode_heating_write() accepts (HEATING_TEMP_MAX_C).
-  traits.set_visual_min_temperature(HEATING_TEMP_MIN_C);
-  traits.set_visual_max_temperature(this->max_temperature_c_);
-  traits.set_visual_target_temperature_step(CLIMATE_TARGET_TEMP_STEP_C);
+  if (profile->features.target_temperature) {
+    traits.set_visual_min_temperature(profile->visual_min_c);
+    traits.set_visual_max_temperature(this->max_temperature_c_);
+    traits.set_visual_target_temperature_step(CLIMATE_TARGET_TEMP_STEP_C);
+  }
   return traits;
 }
 
@@ -166,9 +173,51 @@ void IOHomeClimate::control(const climate::ClimateCall &call) {
 }
 
 bool IOHomeClimate::write_(const HeatingProfile &profile, HeatingFunction fn, uint8_t wire) {
-  if (profile.path == HeatingControlPath::HEATING_LEVEL)
-    return this->parent_->set_heating_level(this->device_id_, wire);
-  return this->parent_->send_heating_command(this->device_id_, fn, static_cast<float>(wire));
+  switch (profile.path) {
+    case HeatingControlPath::HEATING_LEVEL:
+      return this->parent_->set_heating_level(this->device_id_, wire);
+    case HeatingControlPath::PRIVATE_REGISTERS:
+      return this->parent_->send_heating_command(this->device_id_, fn, static_cast<float>(wire));
+    case HeatingControlPath::TEMPERATURE_EXECUTE:
+      break;  // its commands carry a main parameter and a functional parameter: write_preset_() and friends
+  }
+  return false;
+}
+
+bool IOHomeClimate::write_preset_(const HeatingProfile &profile, const HeatingPresetEntry &entry) {
+  if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE)
+    return this->write_(profile, entry.write_fn, entry.wire);
+  // A setpoint alias is a main parameter, with the functional parameter the profile names for it.
+  return this->parent_->set_heating_temperature(
+      this->device_id_, heating_prefixed_main_parameter(profile.mp_prefix, entry.wire), entry.fp);
+}
+
+bool IOHomeClimate::encode_target_(const HeatingProfile &profile, float celsius, uint16_t &main_parameter) {
+  const IoDevice *dev = this->parent_->get_device(this->device_id_);
+  if (dev == nullptr)
+    return false;
+  // A profile with a fixed range never takes the YAML range, whatever the record holds.
+  const float min_c = profile.fixed_range ? HEATING_TEMPERATURE_RANGE_MIN_C : dev->temperature_range_min_c;
+  const float max_c = profile.fixed_range ? HEATING_TEMPERATURE_RANGE_MAX_C : dev->temperature_range_max_c;
+  return encode_temperature_main_parameter(celsius, min_c, max_c, main_parameter);
+}
+
+bool IOHomeClimate::write_temperature_mode_(const HeatingProfile &profile, const HeatingModeEntry &entry) {
+  uint16_t main_parameter = entry.main_parameter;
+  if (main_parameter == HEATING_MP_FROM_TARGET) {
+    // Heat (manual) is the current target temperature with the manual flag: the target the card shows,
+    // else the one the device last reported.
+    const IoDevice *dev = this->parent_->get_device(this->device_id_);
+    float target = this->target_temperature;
+    if (std::isnan(target) && dev != nullptr)
+      target = dev->heating.setpoint_c;
+    if (std::isnan(target) || !this->encode_target_(profile, target, main_parameter)) {
+      ESP_LOGW(TAG, "Device %s: no target temperature known yet, set one before selecting heat",
+               this->device_id_.c_str());
+      return false;
+    }
+  }
+  return this->parent_->set_heating_temperature(this->device_id_, main_parameter, entry.fp);
 }
 
 void IOHomeClimate::confirm_write_(HeatingFunction fn) {
@@ -186,15 +235,24 @@ bool IOHomeClimate::apply_mode_(const HeatingProfile &profile, const climate::Cl
     const HeatingModeEntry &entry = profile.modes[i];
     if (to_climate_mode(entry.hvac) != requested)
       continue;
-    if (!this->write_(profile, HeatingFunction::SET_MODE, entry.wire))
+    const bool sent = profile.path == HeatingControlPath::TEMPERATURE_EXECUTE
+                          ? this->write_temperature_mode_(profile, entry)
+                          : this->write_(profile, HeatingFunction::SET_MODE, entry.wire);
+    if (!sent)
       return false;
-    // Until a read has succeeded there is nothing observed to show: the commanded mode stands in.
-    const bool commanded = !this->observed_;
+    // Until a read has succeeded there is nothing observed to show: the commanded mode stands in. A mode
+    // that nothing reads back stays the last command.
+    const bool commanded = !this->observed_ || !profile.features.mode_observed;
+    this->mode_commanded_ = true;
     if (commanded) {
       this->mode = requested;
-      this->clear_custom_preset_();  // a real HVAC mode supersedes a custom preset
-      if (has_observed_standard_preset(profile))
-        this->preset.reset();
+      // A real HVAC mode supersedes a preset on the register and level paths; a temperature heater's
+      // preset follows its status reply instead.
+      if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE) {
+        this->clear_custom_preset_();
+        if (has_observed_standard_preset(profile))
+          this->preset.reset();
+      }
     }
     if (profile.path == HeatingControlPath::PRIVATE_REGISTERS) {
       this->confirm_write_(HeatingFunction::SET_MODE);
@@ -218,7 +276,7 @@ bool IOHomeClimate::apply_custom_preset_(const HeatingProfile &profile, const cl
                entry.custom_name);
       return false;
     }
-    if (!this->write_(profile, entry.write_fn, entry.wire))
+    if (!this->write_preset_(profile, entry))
       return false;
     const bool commanded = !this->observed_ || !entry.observed;
     if (commanded)
@@ -241,15 +299,15 @@ bool IOHomeClimate::apply_preset_(const HeatingProfile &profile, const climate::
     const HeatingPresetEntry &entry = profile.presets[i];
     if (entry.id == HeatingPresetId::CUSTOM || to_climate_preset(entry.id) != requested)
       continue;
-    if (!entry.commandable || !this->write_(profile, entry.write_fn, entry.wire))
+    if (!entry.commandable || !this->write_preset_(profile, entry))
       return false;
     // A preset no register reports (presence) stays "last commanded" for good.
     const bool commanded = !this->observed_ || !entry.observed;
     if (commanded) {
       this->preset = requested;
       this->clear_custom_preset_();  // a standard preset supersedes a custom one
-      if (profile.path == HeatingControlPath::HEATING_LEVEL && !this->observed_)
-        this->mode = climate::CLIMATE_MODE_HEAT;  // every level preset heats
+      if (profile.path != HeatingControlPath::PRIVATE_REGISTERS && !this->observed_)
+        this->mode = climate::CLIMATE_MODE_HEAT;  // every level or alias preset heats
     }
     if (profile.path == HeatingControlPath::PRIVATE_REGISTERS && entry.observed) {
       this->confirm_write_(entry.write_fn);
@@ -269,6 +327,21 @@ bool IOHomeClimate::apply_target_temperature_(const HeatingProfile &profile, con
     return false;
   }
   const float target = *target_opt;
+  if (profile.path == HeatingControlPath::TEMPERATURE_EXECUTE) {
+    // The temperature travels in the main parameter, encoded over the device's range; the settle poll
+    // reads it back.
+    uint16_t main_parameter = 0;
+    if (!this->encode_target_(profile, target, main_parameter) ||
+        !this->parent_->set_heating_temperature(this->device_id_, main_parameter, profile.setpoint_fp))
+      return false;
+    const bool commanded = !this->observed_;
+    if (commanded) {
+      this->target_temperature = target;
+      this->clear_custom_preset_();
+      this->preset.reset();
+    }
+    return commanded;
+  }
   if (!this->parent_->send_heating_command(this->device_id_, HeatingFunction::SET_TEMPERATURE, target))
     return false;
   const bool commanded = !this->observed_;
@@ -303,7 +376,7 @@ bool IOHomeClimate::sync_temperatures_(const HeatingProfile &profile, const Heat
   if (profile.features.target_temperature && !std::isnan(readings.max_setpoint_c) &&
       readings.max_setpoint_c > HEATING_TEMP_MIN_C) {
     seen = true;
-    const float max_c = std::min(readings.max_setpoint_c, HEATING_TEMP_MAX_C);
+    const float max_c = std::min(readings.max_setpoint_c, profile.visual_max_c);
     if (max_c != this->max_temperature_c_) {
       this->max_temperature_c_ = max_c;
       changed = true;
@@ -342,8 +415,25 @@ bool IOHomeClimate::sync_from_readings_(const HeatingProfile &profile, const Hea
   if (wire >= 0) {
     seen = true;
     changed = this->apply_observed_state_(profile, static_cast<uint8_t>(wire)) || changed;
+  } else if (profile.path == HeatingControlPath::TEMPERATURE_EXECUTE && !std::isnan(readings.setpoint_c)) {
+    // The device reports a plain temperature, so it is on no alias preset.
+    if (this->has_custom_preset()) {
+      this->clear_custom_preset_();
+      changed = true;
+    }
+    if (this->preset.has_value()) {
+      this->preset.reset();
+      changed = true;
+    }
   }
   changed = this->sync_action_(profile, readings, wire >= 0, seen) || changed;
+
+  // Where nothing reads the mode back, a device that reports a setpoint or an alias is evidently on:
+  // show heat until a mode is commanded, instead of the entity's default "off".
+  if (!profile.features.mode_observed && !this->mode_commanded_ && seen && this->mode == climate::CLIMATE_MODE_OFF) {
+    this->mode = climate::CLIMATE_MODE_HEAT;
+    changed = true;
+  }
 
   this->observed_ = this->observed_ || seen;
   return changed;
@@ -354,9 +444,13 @@ bool IOHomeClimate::apply_observed_state_(const HeatingProfile &profile, uint8_t
   if (observed == nullptr)
     return false;  // unknown value: leave the card as it was
 
-  const climate::ClimateMode mode = to_climate_mode(observed->hvac);
-  bool changed = mode != this->mode;
-  this->mode = mode;
+  // A mode nothing reads back stays the last command; the table then only names the preset.
+  bool changed = false;
+  if (profile.features.mode_observed) {
+    const climate::ClimateMode mode = to_climate_mode(observed->hvac);
+    changed = mode != this->mode;
+    this->mode = mode;
+  }
 
   const HeatingPresetEntry *shown = observed->preset >= 0 ? &profile.presets[observed->preset] : nullptr;
   if (shown != nullptr && shown->id == HeatingPresetId::CUSTOM) {

@@ -150,6 +150,51 @@ static constexpr uint8_t HEATING_LEVEL_MAX = 0x3F;
 /// @return true on success; false for a level above HEATING_LEVEL_MAX.
 bool create_execute_heating_level(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t level);
 
+/// @brief Build a main-parameter-only EXECUTE (0x00) whose main parameter is a temperature or an alias.
+///
+/// Same 6-byte shape as create_execute_heating_level(); the caller encodes the value
+/// (encode_temperature_main_parameter(), or heating_prefixed_main_parameter() for an alias).
+/// Experimental: unconfirmed on hardware.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param main_parameter The 16-bit main parameter.
+/// @return true on success.
+bool create_execute_heating_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                           uint16_t main_parameter);
+
+/// @brief Build an EXECUTE (0x00) with a temperature or alias main parameter and functional parameter 9.
+///
+/// Payload: originator, ACEI, MP(2), `00` (no FP1-FP8), `80` (FP9 present), FP9 as two bytes, high
+/// byte first (every functional-parameter value is two bytes wide, like the main parameter). FP9
+/// carries the active mode (heating_mode_flags::*). No other functional parameter is sent.
+/// Experimental: unconfirmed on hardware.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param main_parameter The 16-bit main parameter.
+/// @param mode_flags FP9 value.
+/// @return true on success.
+bool create_execute_heating_with_mode_flags(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                            uint16_t main_parameter, uint16_t mode_flags);
+
+/// @brief Build an EXECUTE (0x00) with a temperature or alias main parameter and functional parameter 16.
+///
+/// Payload: originator, ACEI, MP(2), `00` (no FP1-FP8), `01` (FP16 present, the last bit of the second
+/// bitmap), FP16 (two bytes, big-endian like the main parameter). No other functional parameter is sent.
+/// Experimental: unconfirmed on hardware.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param main_parameter The 16-bit main parameter.
+/// @param fp16 FP16 value.
+/// @return true on success.
+bool create_execute_heating_with_fp16(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                      uint16_t main_parameter, uint16_t fp16);
+
 /// @brief Build a CMD_PRIVATE (0x03) request for an arbitrary function ID.
 ///
 /// function_id = 0x06 (battery-status) or 0x09 (battery-state) is reported elsewhere to read the

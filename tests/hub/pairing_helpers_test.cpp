@@ -557,10 +557,9 @@ TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataNonInvertedLight) {
 }
 
 TEST(PairingHelpers, BuildDeviceYamlSnippet_CompleteMetadataNoPlatformReturnsEmpty) {
-  // HEATING_TEMPERATURE_INTERFACE is a climate-class type the table marks as not driven by any
-  // platform yet (only the electrical heater with an adjustable setpoint is).
+  // The Atlantic heat pump (22/1) is a named row the table marks as not driven by any platform.
   const std::string snippet =
-      build_device_yaml_snippet(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, "AABBCC",
+      build_device_yaml_snippet(DeviceType::HEAT_PUMP, 1, "AABBCC",
                                 /*metadata_complete=*/true, /*inverted=*/false, /*low_power=*/false);
 
   EXPECT_TRUE(snippet.empty()) << "a type with no known ESPHome platform must yield an empty snippet";

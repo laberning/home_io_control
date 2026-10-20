@@ -136,8 +136,9 @@ values:
 | `gate_opener` | `0x07` | `swinging_shutter` | `0x18` |
 | `rolling_door_opener` | `0x08` | `sliding_window` | `0x1B` |
 | `lock` | `0x09` | `bioclimatic_pergola` | `0x1D` |
-| `vertical_interior_blind` | `0x0A` | `electrical_heater` | `0x34` |
-| `dual_roller_shutter` | `0x0D` | | |
+| `vertical_interior_blind` | `0x0A` | `heat_pump` | `0x16` |
+| `dual_roller_shutter` | `0x0D` | `electrical_heater` | `0x34` |
+| `heating_temperature_interface` | `0x0E` | | |
 | `on_off_switch` | `0x0F` | | |
 
 A device type not in this table can still be declared as a raw hex ID, in either place:
@@ -175,7 +176,7 @@ device are marked experimental.
 | `0x0B` | secure configuration device | | Not supported yet |
 | `0x0C` | beacon | | Not supported yet |
 | `0x0D` | dual roller shutter | | Cover |
-| `0x0E` | heating temperature interface | | Not supported yet |
+| `0x0E` | heating temperature interface | | Climate with a setpoint, off / heat / auto and comfort / eco / secured presets (experimental, untested); see [Heating and climate](configuration/climate.md#heating-temperature-interface-and-heat-pump) |
 | `0x0F` | on/off switch | 2 micromodule (experimental) | Switch (experimental) |
 | `0x10` | horizontal awning | 1 rail-guided pergola | Cover, direction inverted |
 | `0x11` | exterior venetian blind | | Cover with tilt |
@@ -183,7 +184,7 @@ device are marked experimental.
 | `0x13` | curtain track | | Cover |
 | `0x14` | ventilation point | 1 air inlet, 2 air transfer, 3 air outlet | Not supported yet |
 | `0x15` | exterior heating | 58 on/off only | Fan, a heat level of 0–100 % (subtype 58: on/off), experimental and unconfirmed on hardware; see [Exterior heating](configuration/fan.md) |
-| `0x16` | heat pump | 1 heat pump (Atlantic) (experimental), 2 boiler (Atlantic) (experimental) | Not supported yet |
+| `0x16` | heat pump | 1 heat pump (Atlantic) (experimental), 2 boiler (Atlantic) (experimental) | Climate for subtype 0 with a setpoint, off / heat and comfort / eco / setback / halted presets (experimental, untested); the Atlantic subtypes are not supported yet |
 | `0x17` | intrusion alarm | | Not supported yet |
 | `0x18` | swinging shutter | 1 with independent leaves, 58 position only (experimental) | Cover |
 | `0x1B` | sliding window | 1 with lock (experimental) | Cover |

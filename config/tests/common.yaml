@@ -188,3 +188,14 @@ climate:
     io_device_id: "FEEB23"
     io_device_type: "electrical_heater"
     io_subtype: 0
+  # The heating temperature interface and the heat pump carry a temperature or an alias in the main parameter.
+  - platform: home_io_control
+    name: "Test Thermostat"
+    io_device_id: "FEEB26"
+    io_device_type: "heating_temperature_interface"
+    min_temperature: -30
+    max_temperature: 70
+  - platform: home_io_control
+    name: "Test Heat Pump"
+    io_device_id: "FEEB27"
+    io_device_type: "heat_pump"

@@ -13,6 +13,8 @@ from esphome.components import binary_sensor, climate, switch
 from esphome.const import (
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
+    CONF_MAX_TEMPERATURE,
+    CONF_MIN_TEMPERATURE,
     CONF_NAME,
     DEVICE_CLASS_WINDOW,
     ENTITY_CATEGORY_CONFIG,
@@ -20,7 +22,7 @@ from esphome.const import (
 from esphome.core import ID
 
 from . import home_io_control_ns
-from .hub_validators import heating_profile_has_window
+from .hub_validators import DEVICE_TYPE_OPTIONS, heating_profile_has_window
 from .platform_common import (
     companion_entity_name,
     companion_id_base,
@@ -96,11 +98,52 @@ def _validate_climate_poll_interval(config):
     return config
 
 
+# The range a heating temperature interface encodes its temperature over. It defaults to -40..+80 degrees
+# Celsius (proto_heating.h) as an assumption; a device that turns out to use another range is told here.
+# A heat pump uses the fixed range, so the keys do not apply to it. Mirrors
+# HEATING_TEMPERATURE_RANGE_MIN_C / _MAX_C.
+DEFAULT_TEMPERATURE_RANGE_C = (-40.0, 80.0)
+TEMPERATURE_RANGE_BOUNDS_C = (-50.0, 100.0)
+
+
+def _validate_temperature_range(config):
+    # Applies to the two keys only when one is given; the other keeps its default.
+    if CONF_MIN_TEMPERATURE not in config and CONF_MAX_TEMPERATURE not in config:
+        return config
+    if config.get(CONF_DEVICE_TYPE) != DEVICE_TYPE_OPTIONS["heating_temperature_interface"]:
+        raise cv.Invalid(
+            "min_temperature and max_temperature apply to io_device_type: heating_temperature_interface "
+            "only: a heat pump uses a fixed range, and every other device has no temperature range"
+        )
+    low, high = TEMPERATURE_RANGE_BOUNDS_C
+    for key in (CONF_MIN_TEMPERATURE, CONF_MAX_TEMPERATURE):
+        if key in config and not low <= config[key] <= high:
+            raise cv.Invalid(
+                f"{key} must be between {low:g} and {high:g} degrees Celsius",
+                path=[key],
+            )
+    minimum = config.get(CONF_MIN_TEMPERATURE, DEFAULT_TEMPERATURE_RANGE_C[0])
+    maximum = config.get(CONF_MAX_TEMPERATURE, DEFAULT_TEMPERATURE_RANGE_C[1])
+    if minimum >= maximum:
+        raise cv.Invalid(
+            f"min_temperature ({minimum:g}) must be below max_temperature ({maximum:g}): they are the "
+            "range the device encodes its temperature over, not the range of the card"
+        )
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     climate.climate_schema(IOHomeClimate)
     .extend(platform_schema_extension())
+    .extend(
+        {
+            cv.Optional(CONF_MIN_TEMPERATURE): cv.temperature,
+            cv.Optional(CONF_MAX_TEMPERATURE): cv.temperature,
+        }
+    )
     .extend(cv.COMPONENT_SCHEMA),
     _validate_climate_poll_interval,
+    _validate_temperature_range,
     _inject_companion_ids,
 )
 
@@ -113,6 +156,14 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_HOME_IO_CONTROL_ID])
     await wire_device_binding(var, parent, config)
     await create_companion_sensors(config, parent)
+
+    if CONF_MIN_TEMPERATURE in config or CONF_MAX_TEMPERATURE in config:
+        cg.add(
+            var.set_temperature_range(
+                config.get(CONF_MIN_TEMPERATURE, DEFAULT_TEMPERATURE_RANGE_C[0]),
+                config.get(CONF_MAX_TEMPERATURE, DEFAULT_TEMPERATURE_RANGE_C[1]),
+            )
+        )
 
     if CONF_WINDOW_SENSOR_ID in config:
         window_config = binary_sensor.binary_sensor_schema(

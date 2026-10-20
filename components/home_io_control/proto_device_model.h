@@ -136,7 +136,8 @@ bool device_supports_lock_control(DeviceType type);
 bool device_supports_heat_level_control(DeviceType type);
 
 /// @brief Does this device never move, so a status reply must not start the movement settle loop?
-/// @details Heating-level heaters (climate profile) and exterior heating (a heat level in the
+/// @details Heaters commanded with an EXECUTE (heating levels or temperatures; climate profile) and exterior heating (a
+/// heat level in the
 ///          position field) have no motion; their status "stopped" flag is not consulted.
 /// @param type Device type.
 /// @param subtype Device subtype.
@@ -497,9 +498,14 @@ struct IoDevice {
                                                           ///< status: a reply to a status poll or an authenticated
                                                           ///< CMD_STATUS_UPDATE. Never from an execute ack (its layout
                                                           ///< follows the request) or an overheard frame (ADR 0022).
-  HeatingReadings heating{};     ///< What the hub has read from a heater over the private register protocol
-                                 ///< (room temperature, setpoint, mode, regulator state). Set only from decoded
-                                 ///< replies; stays "never read" for every other device type.
+  float temperature_range_min_c{
+      HEATING_TEMPERATURE_RANGE_MIN_C};  ///< Lower end of the temperature encoding range of a heater that
+                                         ///< carries a temperature in its main parameter (YAML `min_temperature:`).
+  float temperature_range_max_c{
+      HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of that range (YAML `max_temperature:`).
+  HeatingReadings heating{};             ///< What the hub has read from a heater over the private register protocol
+                                         ///< (room temperature, setpoint, mode, regulator state). Set only from decoded
+                                         ///< replies; stays "never read" for every other device type.
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every

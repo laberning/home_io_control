@@ -59,3 +59,13 @@ climate:
     io_device_id: "5E6F70"
     io_device_type: electrical_heater
     io_subtype: 0
+  - platform: home_io_control
+    name: "Thermostat"
+    io_device_id: "6F7092"
+    io_device_type: heating_temperature_interface
+    min_temperature: -30
+    max_temperature: 70
+  - platform: home_io_control
+    name: "Heat Pump"
+    io_device_id: "7081A3"
+    io_device_type: heat_pump

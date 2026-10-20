@@ -671,6 +671,24 @@ class IOHomeControlComponent : public Component,
   /// @param level Heating level low byte (heating_level::*).
   /// @return true when the device accepted the command.
   virtual bool set_heating_level(const std::string &device_id, uint8_t level);
+  /// @brief Command a heater that carries a temperature or an alias in its main parameter (the heating
+  /// temperature interface and the heat pump).
+  ///
+  /// A main-parameter-only EXECUTE, or one that also carries functional parameter 9 when the profile
+  /// sends mode flags, through the execute-family funnel; the settle poll that follows reads the
+  /// state back with the ordinary status read. Experimental: unconfirmed on hardware.
+  /// @param device_id Target device ID (hex string).
+  /// @param main_parameter The 16-bit main parameter (encode_temperature_main_parameter() or an alias).
+  /// @param fp The functional parameter that accompanies it, if any (kind NONE sends a main-parameter-only
+  ///        EXECUTE).
+  /// @return true when the device accepted the command.
+  virtual bool set_heating_temperature(const std::string &device_id, uint16_t main_parameter, const HeatingFp &fp);
+  /// @brief Set the temperature encoding range of a heater that carries a temperature in its main
+  /// parameter (YAML `min_temperature:` / `max_temperature:`).
+  /// @param device_id Target device ID.
+  /// @param min_c Lower end of the range in degrees Celsius.
+  /// @param max_c Upper end; must exceed `min_c`.
+  virtual void set_device_temperature_range(const std::string &device_id, float min_c, float max_c);
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   ///
   /// Same gate, frame builder and exchange bookkeeping as send_heating_command(); a reply that

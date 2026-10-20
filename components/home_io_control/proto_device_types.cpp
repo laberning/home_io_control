@@ -81,7 +81,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     {DeviceType::DUAL_ROLLER_SHUTTER, 0, "dual_roller_shutter", CAP_COVER, SELECTABLE_PLATFORM},
 
-    {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, "heating_temperature_interface", CAP_CLIMATE, 0},
+    {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, "heating_temperature_interface", CAP_CLIMATE, SELECTABLE_PLATFORM},
 
     {DeviceType::ON_OFF_SWITCH, 0, "on_off_switch", CAP_SWITCH, SELECTABLE_PLATFORM},
     {DeviceType::ON_OFF_SWITCH, 2, "micromodule", CAP_SWITCH, SUBTYPE_PLATFORM},
@@ -106,7 +106,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::EXTERIOR_HEATING, 0, "exterior_heating", CAP_HEATER_LEVEL, SELECTABLE_PLATFORM | MAIN_PARAMETER_ONLY},
     {DeviceType::EXTERIOR_HEATING, SUBTYPE_MAIN_PARAMETER_ONLY, "on/off only", CAP_HEATER_LEVEL, SUBTYPE_PLATFORM},
 
-    {DeviceType::HEAT_PUMP, 0, "heat_pump", CAP_CLIMATE, 0},
+    {DeviceType::HEAT_PUMP, 0, "heat_pump", CAP_CLIMATE, SELECTABLE_PLATFORM},
     // The two Atlantic profiles use a different private register family from the electrical
     // heater's, so the heating payloads must not be sent to them: no climate class.
     {DeviceType::HEAT_PUMP, 1, "heat pump (Atlantic)", CAP_NONE, STANDALONE_NAME},

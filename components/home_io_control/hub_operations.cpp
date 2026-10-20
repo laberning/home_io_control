@@ -632,6 +632,35 @@ bool IOHomeControlComponent::set_heating_level(const std::string &device_id, uin
       });
 }
 
+bool IOHomeControlComponent::set_heating_temperature(const std::string &device_id, uint16_t main_parameter,
+                                                     const HeatingFp &fp) {
+  return this->run_execute_operation_(
+      device_id, {"heating temperature", false},
+      [](const IoDevice &d) { return device_uses_heating_temperature(d.type, d.subtype); },
+      "temperature-controlled climate device",
+      [this, main_parameter, fp](IoFrame &request, const IoDevice &d) {
+        switch (fp.kind) {
+          case HeatingFpKind::FP9:
+            return create_execute_heating_with_mode_flags(request, this->node_id_, d.node_id, d.low_power,
+                                                          main_parameter, fp.value);
+          case HeatingFpKind::FP16:
+            return create_execute_heating_with_fp16(request, this->node_id_, d.node_id, d.low_power, main_parameter,
+                                                    fp.value);
+          case HeatingFpKind::NONE:
+            break;
+        }
+        return create_execute_heating_main_parameter(request, this->node_id_, d.node_id, d.low_power, main_parameter);
+      });
+}
+
+void IOHomeControlComponent::set_device_temperature_range(const std::string &device_id, float min_c, float max_c) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return;
+  dev->temperature_range_min_c = min_c;
+  dev->temperature_range_max_c = max_c;
+}
+
 bool IOHomeControlComponent::exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request,
                                                IoFrame &response, uint8_t max_tries) {
   ESP_LOGI(detail::TAG, "Sending heating %s to device %s", label, device_id.c_str());

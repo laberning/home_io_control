@@ -31,9 +31,7 @@ struct AllowlistedType {
 constexpr AllowlistedType kNotYamlSelectable[] = {
     {DeviceType::SECURE_CONFIGURATION_DEVICE, "a commissioning tool, not an actuator any platform drives"},
     {DeviceType::BEACON, "discovery pseudo-type (unpaired/announcement), not a configurable actuator"},
-    {DeviceType::HEATING_TEMPERATURE_INTERFACE, "no platform drives it yet; its only consumer would be climate:"},
     {DeviceType::VENTILATION_POINT, "ventilation platform unbuilt; not selectable yet"},
-    {DeviceType::HEAT_PUMP, "no platform drives it yet"},
     {DeviceType::ZONE_CONTROL, "no platform drives it yet"},
     {DeviceType::SIREN, "no platform drives it yet"},
     {DeviceType::DOMESTIC_HOT_WATER, "no platform drives it yet"},

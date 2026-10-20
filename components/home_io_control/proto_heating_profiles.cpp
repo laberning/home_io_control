@@ -4,8 +4,11 @@
 
 #include "proto_heating_profiles.h"
 
+#include "proto_device_types.h"
 #include "proto_sizes.h"
 
+#include <algorithm>
+#include <cmath>
 #include <iterator>
 
 namespace esphome {
@@ -89,12 +92,116 @@ constexpr HeatingObservedState LEVEL_HEATER_OBSERVED[] = {
     {heating_level::SECURED, HeatingHvacMode::HEAT, 6},
 };
 
+// === Heating temperature interface (14/0) and heat pump (22/0): temperature in the main parameter ===
+
+constexpr HeatingFp NO_FP{};
+constexpr HeatingFp THERMOSTAT_MANUAL{HeatingFpKind::FP9, heating_mode_flags::MANUAL};
+constexpr HeatingFp HEAT_PUMP_ON{HeatingFpKind::FP16, heating_fp16::ON};
+
+/// Thermostat modes as the device's own controller sends them: off is the off marker with FP9 0, auto is
+/// the comfort alias with FP9 1, heat (manual) is the current target temperature with FP9 2.
+constexpr HeatingModeEntry TEMPERATURE_INTERFACE_MODES[] = {
+    {HeatingHvacMode::OFF, 0, HEATING_OFF_MP, {HeatingFpKind::FP9, heating_mode_flags::OFF}},
+    {HeatingHvacMode::HEAT, 0, HEATING_MP_FROM_TARGET, THERMOSTAT_MANUAL},
+    {HeatingHvacMode::AUTO,
+     0,
+     heating_prefixed_main_parameter(HEATING_ALIAS_MP_PREFIX, heating_alias::COMFORT),
+     {HeatingFpKind::FP9, heating_mode_flags::AUTO}},
+};
+
+/// A setpoint alias is selected by its main parameter alone, with no functional parameter.
+constexpr HeatingPresetEntry TEMPERATURE_INTERFACE_PRESETS[] = {
+    {HeatingPresetId::COMFORT, nullptr, HeatingFunction::SET_MODE, heating_alias::COMFORT, true, true, NO_FP},
+    {HeatingPresetId::ECO, nullptr, HeatingFunction::SET_MODE, heating_alias::THERMOSTAT_ECO, true, true, NO_FP},
+    {HeatingPresetId::CUSTOM, "Secured", HeatingFunction::SET_MODE, heating_alias::SECURED, true, true, NO_FP},
+};
+
+/// The mode is the last command (nothing reads it back), so the hvac column is not consulted; the rows
+/// only name the preset an alias stands for.
+constexpr HeatingObservedState TEMPERATURE_INTERFACE_OBSERVED[] = {
+    {heating_alias::COMFORT, HeatingHvacMode::HEAT, 0},
+    {heating_alias::THERMOSTAT_ECO, HeatingHvacMode::HEAT, 1},
+    {heating_alias::SECURED, HeatingHvacMode::HEAT, 2},
+};
+
+/// Heat pump: off is the off marker with FP16 off; on is the comfort alias with FP16 on, which is also
+/// what a preset sends. No mode selects cooling.
+constexpr HeatingModeEntry HEAT_PUMP_MODES[] = {
+    {HeatingHvacMode::OFF, 0, HEATING_OFF_MP, {HeatingFpKind::FP16, heating_fp16::OFF}},
+    {HeatingHvacMode::HEAT, 0, heating_prefixed_main_parameter(HEATING_ALIAS_MP_PREFIX, heating_alias::COMFORT),
+     HEAT_PUMP_ON},
+};
+
+constexpr HeatingPresetEntry HEAT_PUMP_PRESETS[] = {
+    {HeatingPresetId::COMFORT, nullptr, HeatingFunction::SET_MODE, heating_alias::COMFORT, true, true, HEAT_PUMP_ON},
+    {HeatingPresetId::ECO, nullptr, HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_ECO, true, true, HEAT_PUMP_ON},
+    {HeatingPresetId::CUSTOM, "Setback", HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_SETBACK, true, true,
+     HEAT_PUMP_ON},
+    {HeatingPresetId::CUSTOM, "Halted", HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_HALTED, true, true,
+     HEAT_PUMP_ON},
+};
+
+constexpr HeatingObservedState HEAT_PUMP_OBSERVED[] = {
+    {heating_alias::COMFORT, HeatingHvacMode::HEAT, 0},
+    {heating_alias::HEAT_PUMP_ECO, HeatingHvacMode::HEAT, 1},
+    {heating_alias::HEAT_PUMP_SETBACK, HeatingHvacMode::HEAT, 2},
+    {heating_alias::HEAT_PUMP_HALTED, HeatingHvacMode::HEAT, 3},
+};
+
+constexpr float TEMPERATURE_VISUAL_MIN_C = 5.0F;   ///< Lowest target the card offers for a temperature profile.
+constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card offers for a temperature profile.
+
 constexpr HeatingProfile HEATING_PROFILES[] = {
+    {DeviceType::HEATING_TEMPERATURE_INTERFACE,
+     0,
+     HeatingControlPath::TEMPERATURE_EXECUTE,
+     {/*target_temperature=*/true, /*current_temperature=*/false, /*action=*/false, /*window_sensor=*/false,
+      /*open_window_detection=*/false, /*mode_observed=*/false},
+     HEATING_ALIAS_MP_PREFIX,
+     TEMPERATURE_VISUAL_MIN_C,
+     TEMPERATURE_VISUAL_MAX_C,
+     THERMOSTAT_MANUAL,
+     /*fixed_range=*/false,
+     TEMPERATURE_INTERFACE_MODES,
+     std::size(TEMPERATURE_INTERFACE_MODES),
+     TEMPERATURE_INTERFACE_PRESETS,
+     std::size(TEMPERATURE_INTERFACE_PRESETS),
+     TEMPERATURE_INTERFACE_OBSERVED,
+     std::size(TEMPERATURE_INTERFACE_OBSERVED),
+     nullptr,
+     0,
+     nullptr,
+     0},
+    {DeviceType::HEAT_PUMP,
+     0,
+     HeatingControlPath::TEMPERATURE_EXECUTE,
+     {/*target_temperature=*/true, /*current_temperature=*/false, /*action=*/false, /*window_sensor=*/false,
+      /*open_window_detection=*/false, /*mode_observed=*/false},
+     HEATING_ALIAS_MP_PREFIX,
+     TEMPERATURE_VISUAL_MIN_C,
+     TEMPERATURE_VISUAL_MAX_C,
+     NO_FP,
+     /*fixed_range=*/true,
+     HEAT_PUMP_MODES,
+     std::size(HEAT_PUMP_MODES),
+     HEAT_PUMP_PRESETS,
+     std::size(HEAT_PUMP_PRESETS),
+     HEAT_PUMP_OBSERVED,
+     std::size(HEAT_PUMP_OBSERVED),
+     nullptr,
+     0,
+     nullptr,
+     0},
     {DeviceType::ELECTRICAL_HEATER,
      0,
      HeatingControlPath::HEATING_LEVEL,
      {/*target_temperature=*/false, /*current_temperature=*/false, /*action=*/false, /*window_sensor=*/false,
-      /*open_window_detection=*/false},
+      /*open_window_detection=*/false, /*mode_observed=*/true},
+     HEATING_LEVEL_MP_PREFIX,
+     0.0F,
+     0.0F,
+     NO_FP,
+     /*fixed_range=*/false,
      LEVEL_HEATER_MODES,
      std::size(LEVEL_HEATER_MODES),
      LEVEL_HEATER_PRESETS,
@@ -109,7 +216,12 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
      1,
      HeatingControlPath::PRIVATE_REGISTERS,
      {/*target_temperature=*/true, /*current_temperature=*/true, /*action=*/true, /*window_sensor=*/true,
-      /*open_window_detection=*/true},
+      /*open_window_detection=*/true, /*mode_observed=*/true},
+     0,
+     HEATING_TEMP_MIN_C,
+     HEATING_TEMP_MAX_C,
+     NO_FP,
+     /*fixed_range=*/false,
      SETPOINT_HEATER_MODES,
      std::size(SETPOINT_HEATER_MODES),
      SETPOINT_HEATER_PRESETS,
@@ -134,7 +246,11 @@ const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype) {
 
 const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype) {
   const HeatingProfile *profile = find_exact_profile(type, subtype);
-  return profile != nullptr || subtype == 0 ? profile : find_exact_profile(type, 0);
+  if (profile != nullptr || subtype == 0)
+    return profile;
+  // A subtype the type table names on its own (the Atlantic heat pumps, 22/1 and 22/2) is a different
+  // device from the type's own row and must not inherit its profile; only an unnamed subtype does.
+  return find_exact_device_type_info(type, subtype) == nullptr ? find_exact_profile(type, 0) : nullptr;
 }
 
 bool device_uses_heating_registers(DeviceType type, uint8_t subtype) {
@@ -145,6 +261,28 @@ bool device_uses_heating_registers(DeviceType type, uint8_t subtype) {
 bool device_uses_heating_levels(DeviceType type, uint8_t subtype) {
   const HeatingProfile *profile = find_heating_profile(type, subtype);
   return profile != nullptr && profile->path == HeatingControlPath::HEATING_LEVEL;
+}
+
+bool device_uses_heating_temperature(DeviceType type, uint8_t subtype) {
+  const HeatingProfile *profile = find_heating_profile(type, subtype);
+  return profile != nullptr && profile->path == HeatingControlPath::TEMPERATURE_EXECUTE;
+}
+
+bool encode_temperature_main_parameter(float celsius, float min_c, float max_c, uint16_t &main_parameter) {
+  if (!std::isfinite(celsius) || !std::isfinite(min_c) || !std::isfinite(max_c) || !(max_c > min_c))
+    return false;
+  const float steps = std::round((celsius - min_c) / (max_c - min_c) * static_cast<float>(HEATING_TEMPERATURE_MP_SPAN));
+  main_parameter = static_cast<uint16_t>(std::clamp(steps, 0.0F, static_cast<float>(HEATING_TEMPERATURE_MP_SPAN)));
+  return true;
+}
+
+bool decode_temperature_main_parameter(uint16_t main_parameter, float min_c, float max_c, float &celsius) {
+  if (main_parameter > HEATING_TEMPERATURE_MP_SPAN || !std::isfinite(min_c) || !std::isfinite(max_c) ||
+      !(max_c > min_c))
+    return false;
+  celsius =
+      min_c + (static_cast<float>(main_parameter) / static_cast<float>(HEATING_TEMPERATURE_MP_SPAN) * (max_c - min_c));
+  return true;
 }
 
 bool decode_heating_level(uint16_t main_parameter, uint8_t &level) {

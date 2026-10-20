@@ -1,0 +1,13 @@
+# expect-error: must be below max_temperature
+# covers: climate._validate_temperature_range
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+climate:
+  - platform: home_io_control
+    name: "Thermostat"
+    io_device_id: "4D5E6F"
+    io_device_type: heating_temperature_interface
+    min_temperature: 40
+    max_temperature: 10

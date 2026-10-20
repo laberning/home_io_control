@@ -12,8 +12,8 @@
 > This component deliberately does not synthesize either — each `heating_control` call sends
 > exactly one write. Field testers: please report whether a bare `set_temperature` takes effect.
 
-The `climate:` entity drives two kinds of electrical heater, and what its card offers follows the
-heater kind. A heater with an adjustable setpoint (node type 52, subtype 1) is driven over its
+The `climate:` entity drives electrical heaters, a heating temperature interface and a generic heat pump,
+and what its card offers follows the device kind. A heater with an adjustable setpoint (node type 52, subtype 1) is driven over its
 private register protocol (`CMD_WRITE_PRIVATE`, 0x20): the hub reads and writes registers such as the
 setpoint, the mode and the room temperature, and the entity shows what the heater reports. A plain
 electrical heater (node type 52, subtype 0) is commanded with heating levels in the standard EXECUTE
@@ -23,8 +23,8 @@ shape of a register read's reply is confirmed only for writes so far (see
 heating-level control of the plain heater is experimental too, with no hardware confirmation yet (see
 [ADR 0055](../adr/0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md)).
 
-Other heating devices (the heating temperature interface, exterior heating, heat pumps) have no
-profile yet, so a `climate:` entity bound to one of them (by raw type value) fails at boot with a log
+Other heating devices (exterior heating is a [fan](fan.md); the Atlantic heat pump and boiler) have no
+profile, so a `climate:` entity bound to one of them (by raw type value) fails at boot with a log
 line saying so. Register-protocol support is unconfirmed on hardware until a test is reported in
 [issue #165](https://github.com/laberning/home_io_control/issues/165). Scan Paired Devices and
 Discover & Pair print a ready-to-paste `climate:` block for either kind.
@@ -72,6 +72,48 @@ What the card shows for each heater kind:
   heater's panel appears after a reboot.
 - The `home` / `away` presets of a heater with an adjustable setpoint write a register that cannot be
   read back, so they show the last command.
+
+## Heating temperature interface and heat pump
+
+Experimental and untested: no capture or hardware report exists for either. A heating temperature
+interface (node type 14, `io_device_type: heating_temperature_interface`) and a generic heat pump
+(node type 22, subtype 0, `io_device_type: heat_pump`) carry a temperature or a named setpoint in the
+standard EXECUTE's main parameter, and report it in the ordinary status read. The Atlantic heat pump
+and boiler subtypes (22/1, 22/2) have a different protocol and are not supported.
+
+| | Heating temperature interface | Heat pump |
+|---|---|---|
+| Modes | `off`, `heat` (manual), `auto` | `off`, `heat` |
+| Presets | `comfort`, `eco`; custom `Secured` | `comfort`, `eco`; custom `Setback`, `Halted` |
+| Target temperature | 5.0–30.0 °C, 0.5 °C step | 5.0–30.0 °C, 0.5 °C step |
+| Current temperature, action | None: nothing in the protocol this entity reads carries one | None |
+| Temperature range on the wire | −40 to +80 °C, assumed; `min_temperature:` / `max_temperature:` override it | −40 to +80 °C, fixed |
+| Companion entities | None | None |
+
+- A setpoint is sent as a temperature in the main parameter. A thermostat's setpoint also carries the
+  manual mode; a heat pump's setpoint carries nothing else.
+- `comfort`, `eco` and the other presets select the device's own named setpoints. This entity does not
+  write those setpoints.
+- On a thermostat, `heat` sends the current target temperature (it needs one: set a target first, or
+  wait for the first status read), `auto` selects the comfort setpoint in auto mode, and `off` switches
+  it off. On a heat pump, `heat` selects the comfort setpoint with the on state and `off` switches it
+  off. There is no cooling.
+- The card shows the setpoint or preset from the device's status read, a few seconds after each command.
+  The mode is the last command, because nothing reads it back; before any command a device that reports
+  a setpoint is shown as heating.
+- `min_temperature:` and `max_temperature:` (each −50 to +100 °C, minimum below maximum) are the range a
+  thermostat encodes its temperature over, not the range of the card. They are accepted on a
+  `heating_temperature_interface` only.
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Thermostat"
+    io_device_id: "6F7092"
+    io_device_type: "heating_temperature_interface"
+    min_temperature: -30   # optional: the range the thermostat encodes over
+    max_temperature: 70
+```
 
 ## Companion entities
 
