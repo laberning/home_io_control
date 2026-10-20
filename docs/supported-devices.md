@@ -114,7 +114,7 @@ before pairing; the [device page](devices/simu-t35-bhz.md#check-the-motor-first)
 
 | Device | Status | Evidence |
 |---|---|---|
-| **AGILIA IO electric radiator** (Atlantic, display model) | ⚠️ Partial — pairs with Discover & Pair in its display's pairing mode ("Connectivité" → "Connexion"): it answers discovery as a remote controller and refuses a pushed key with `COMMAND_UNKNOWN`, so `pairing_key_transfer: auto` pulls its key, which it proves. A roll-call under that key finds the heater at the next address up, as an electrical heater with an adjustable setpoint (type 52, subtype 1); the log prints a ready-to-paste `climate:` block with its `system_key:`, and the experimental `climate:` platform drives it and reads back the room temperature, setpoint, mode and whether the heater is heating (experimental). Each radiator has its own key, set per device with `system_key:`. Control from the hub not yet tested | Corpus `atlantic_agilia_pairing_key_transfer_command_unknown`, issue #165 |
+| **AGILIA IO electric radiator** (Atlantic, display model) | ✅ Confirmed on three radiators — Discover & Pair from the display's "Paramètres" → "Connectivité" → "Connexion" menu, target temperature, Off / Heat / Auto / `Program`, room temperature and heating / idle, all read back. Each radiator hands over its own key, and its heater sits one address above the node that pairs. `home` / `away` and the window entities are not tested yet. Step-by-step: [Atlantic AGILIA IO](devices/atlantic-agilia-io.md) | Heltec V3 / SX1262, issue #165; corpus `atlantic_agilia_*` (pairing, roll-call, register reads and writes) |
 | **Atlantic Thermor-style climate/heating actuator** | 🔍 Traffic captured only — the `climate:` platform is built against it but has never run on hardware | Corpus `atlantic_thermor_exchange_write_private_param` |
 | **Honeywell, Hörmann, Assa Abloy, Niko, WindowMaster, Renson, CIAT, Secuyou, Overkiz, Atlantic Group** | Untested — these are names the schema accepts, not devices anyone has reported | Only `somfy` and `velux` have a verified 1W wire profile |
 
@@ -192,7 +192,7 @@ device are marked experimental.
 | `0x1D` | bioclimatic pergola | | Cover |
 | `0x1E` | siren | | Not supported yet |
 | `0x33` | domestic hot water | | Not supported yet |
-| `0x34` | electrical heater | 1 with adjustable setpoint | Climate: subtype 1 over private registers with read-back, a Window sensor and an Open Window Detection switch (experimental, unconfirmed on hardware); the plain heater (subtype 0) with heating levels (experimental, untested) |
+| `0x34` | electrical heater | 1 with adjustable setpoint | Climate: subtype 1 over private registers with read-back, confirmed on the [Atlantic AGILIA IO](devices/atlantic-agilia-io.md), with a Window sensor and an Open Window Detection switch (both experimental); the plain heater (subtype 0) with heating levels (experimental, untested) |
 | `0x35` | heat recovery ventilation | | Not supported yet |
 | `0xFF` | central house control | | Not supported yet |
 | `0x3F0` | test and evaluation | | Not supported yet |
@@ -222,7 +222,7 @@ vendor.
 
 ## Device pages
 
-Six devices have enough evidence behind them to be worth a page of their own.
+Seven devices have enough evidence behind them to be worth a page of their own.
 
 <!-- doxygen-subpages -->
 - [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md)
@@ -231,6 +231,7 @@ Six devices have enough evidence behind them to be worth a page of their own.
 - [Somfy RS100 IO](devices/somfy-rs100.md)
 - [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md)
 - [SIMU T3.5 E BHz DC solar shutter motor](devices/simu-t35-bhz.md)
+- [Atlantic AGILIA IO electric radiator](devices/atlantic-agilia-io.md)
 <!-- /doxygen-subpages -->
 
 ## Getting your device added

@@ -663,7 +663,11 @@ void IOHomeControlComponent::set_device_temperature_range(const std::string &dev
 
 bool IOHomeControlComponent::exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request,
                                                IoFrame &response, uint8_t max_tries) {
-  ESP_LOGI(detail::TAG, "Sending heating %s to device %s", label, device_id.c_str());
+  // A read and a write of the same register share the label, so the log names which one it was: a
+  // read-back that fails after an acknowledged write must not read as a refused write.
+  const bool is_read = request.data_len > 1 && request.data[1] == HEATING_DIRECTION_GET;
+  const char *direction = is_read ? "read" : "write";
+  ESP_LOGI(detail::TAG, "Sending heating %s %s to device %s", direction, label, device_id.c_str());
 
   const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
   const bool got_reply = outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
@@ -694,7 +698,7 @@ bool IOHomeControlComponent::exchange_heating_(const std::string &device_id, con
 
   if (!acknowledged) {
     this->log_exchange_debug_(device_id.c_str());
-    ESP_LOGW(detail::TAG, "Heating %s not acknowledged by device %s (no CMD_WRITE_PRIVATE_ACK)", label,
+    ESP_LOGW(detail::TAG, "Heating %s %s: no CMD_WRITE_PRIVATE_ACK from device %s", direction, label,
              device_id.c_str());
     return false;
   }
@@ -703,7 +707,7 @@ bool IOHomeControlComponent::exchange_heating_(const std::string &device_id, con
   // registers nothing decodes (`power_on`, `midnight_sync`).
   char ack_payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
   bytes_to_hex(response.data, response.data_len, ack_payload_hex, sizeof(ack_payload_hex));
-  ESP_LOGD(detail::TAG, "heating %s ACK payload: %s", label, ack_payload_hex);
+  ESP_LOGD(detail::TAG, "heating %s %s ACK payload: %s", direction, label, ack_payload_hex);
   return true;
 }
 
@@ -735,7 +739,12 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
 
   IoFrame response;
   // A write is something the user waits on: the full retry budget.
-  return this->exchange_heating_(device_id, heating_function_name(fn), request, response, EXCHANGE_RETRY_COUNT);
+  if (!this->exchange_heating_(device_id, heating_function_name(fn), request, response, EXCHANGE_RETRY_COUNT))
+    return false;
+  // The regulator answers the new setpoint or mode only after a while: poll the heater again soon, so
+  // heating / idle catches up without waiting a whole poll interval.
+  this->schedule_heating_poll_(device_id, HEATING_POST_WRITE_POLL_DELAY_MS);
+  return true;
 }
 
 bool IOHomeControlComponent::read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
@@ -940,7 +949,14 @@ void IOHomeControlComponent::queue_request_device_name(const std::string &device
 /// Flushes any pending status/name poll operations (which would consume time
 /// during the device's limited pairing window) and pushes discovery to the
 /// front of the queue. Duplicate requests are suppressed.
-void IOHomeControlComponent::queue_discover_and_pair() { this->op_queue_.enqueue_discover_and_pair(); }
+void IOHomeControlComponent::queue_discover_and_pair() {
+  if (this->last_pairing_end_ms_ != 0 && millis() - this->last_pairing_end_ms_ < PAIRING_STALE_PRESS_MS) {
+    ESP_LOGW(detail::TAG, "Discover & Pair pressed while the previous attempt was running: ignored. Put the device "
+                          "back into pairing mode and press again.");
+    return;
+  }
+  this->op_queue_.enqueue_discover_and_pair();
+}
 
 std::string IOHomeControlComponent::describe_last_commander(const IoDevice &dev) const {
   return detail::describe_last_commander(dev, this->node_id_);

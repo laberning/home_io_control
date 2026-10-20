@@ -44,6 +44,9 @@ enum class PairingAdviceCode : uint8_t {
   PULLED_KEY_RECEIVED,         ///< The pull got a different key that the device proved, and a roll-call
                                ///< under it found no registrable device (outcome KEY_RECEIVED). Says to
                                ///< put the key into the controlling entity's `system_key:`.
+  HUB_KEY_NO_RESPONDER,        ///< The pull returned the hub's own key from a node no platform drives, and no
+                               ///< device that holds it answered (outcome HUB_KEY_RETURNED). Says to run Scan
+                               ///< Paired Devices.
 };
 
 /// @brief One piece of advice, with the node/RSSI it pertains to (if any).

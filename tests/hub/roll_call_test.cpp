@@ -58,7 +58,7 @@ TEST(PulledKeyReport, OneBannerFramesEveryResponderBlock) {
   EXPECT_EQ(count_of(report, "  climate:\n"), 2u);
   EXPECT_NE(report.find("io_device_id: \"B6BDFC\""), std::string::npos);
   EXPECT_NE(report.find("io_device_id: \"B6BDFD\""), std::string::npos);
-  EXPECT_NE(report.find("found 2 devices"), std::string::npos);
+  EXPECT_NE(report.find("2 devices that hold it answered"), std::string::npos);
   EXPECT_NE(report.find("key check value " + detail::format_key_check_value(PULLED_KEY)), std::string::npos);
   EXPECT_NE(report.find("END OF DEVICE KEY REPORT"), std::string::npos);
 }
@@ -103,6 +103,25 @@ TEST(PulledKeyReport, AKnownResponderIsReportedAsKnownWithoutASnippet) {
   EXPECT_NE(report.find("[known]"), std::string::npos);
   EXPECT_EQ(report.find("io_device_id"), std::string::npos);
   EXPECT_NE(report.find("fix its system_key:"), std::string::npos) << "its YAML does not use the pulled key";
+}
+
+TEST(PulledKeyReport, ADeviceAnEarlierPairingRegisteredStillGetsItsBlock) {
+  // It is controllable until reboot, but only its block in the YAML keeps it.
+  ScanState state{};
+  const uint8_t src[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
+  add_reply(state, src, 0x0D, 0x01);
+  DeviceRegistry registry;
+  IoDevice earlier{};
+  memcpy(earlier.node_id, src, NODE_ID_SIZE);
+  earlier.type = DeviceType::ELECTRICAL_HEATER;
+  earlier.subtype = 1;
+  earlier.registered_by_pairing = true;
+  registry.put("B6BDFC", earlier);
+
+  const std::string report = build_pulled_key_report(report_info(), state, registry);
+
+  EXPECT_NE(report.find("[unknown]"), std::string::npos) << report;
+  EXPECT_NE(report.find("io_device_id: \"B6BDFC\""), std::string::npos) << report;
 }
 
 TEST(HubKeyPullReport, ListsTheResponderBlocksWithoutAKeyOrABanner) {

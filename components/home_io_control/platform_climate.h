@@ -19,11 +19,17 @@
 /// entity deliberately does NOT use the OptimisticState overlay (ADR 0030) — there is never a
 /// prediction to keep apart from an observation (ADR 0054, ADR 0055).
 ///
-/// @todo The reply shape of a register read and the heating-level EXECUTE are unconfirmed against real
-///       hardware; confirm with a capture from an Atlantic radiator
-///       ([issue #165](https://github.com/laberning/home_io_control/issues/165)) and a plain heater.
+/// The register path is confirmed on an Atlantic AGILIA IO radiator: setpoint and mode writes, their
+/// read-back, and the poll's room temperature and regulator readings
+/// ([issue #165](https://github.com/laberning/home_io_control/issues/165), corpus
+/// tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml).
 ///
-/// @warning Unvalidated on hardware. See docs/configuration/climate.md's experimental banner.
+/// @todo The heating-level and temperature EXECUTE paths, and the presence write behind the Home / Away
+///       presets, are unconfirmed on hardware; confirm with a capture from a plain heater, a heating
+///       temperature interface or a heat pump.
+///
+/// @warning The EXECUTE-commanded profiles are unvalidated on hardware. See
+///          docs/configuration/climate.md.
 
 #include "esphome/components/climate/climate.h"
 #include "esphome/core/component.h"

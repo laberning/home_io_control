@@ -76,6 +76,13 @@ inline constexpr size_t POSITION_TEXT_BUFFER_SIZE = 16;  ///< Buffer for formatt
 inline constexpr uint8_t LR1121_FLASH_WARN_BLOCKING_MAX_CS = 255;
 #endif
 
+/// @brief How long after a pairing attempt ends a Discover & Pair press counts as made during it.
+///
+/// Pairing blocks loop() for up to about 20 s, so a press made meanwhile is handled a few milliseconds
+/// after the attempt ends (issue #165: the queued second attempt found nothing, the radiator had left
+/// its pairing mode). A press a person makes after reading the result comes seconds later.
+static constexpr uint32_t PAIRING_STALE_PRESS_MS = 1000;
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -655,7 +662,9 @@ class IOHomeControlComponent : public Component,
   /// poll backoff). A CMD_WRITE_PRIVATE_ACK (0x21) reply is success; anything else (including
   /// CMD_ERROR_RESP) is failure. The exchange still feeds the device-agnostic Last Contact /
   /// Exchange Failures link-health sensors. The ack carries no state: a caller that wants the
-  /// value the heater now holds reads it back with read_heating_register().
+  /// value the heater now holds reads it back with read_heating_register(). An acknowledged write
+  /// also moves the heater's next poll to HEATING_POST_WRITE_POLL_DELAY_MS from now, so the regulator
+  /// state (heating / idle) follows the change.
   /// @param device_id Target device ID (hex string).
   /// @param fn Heating function to send.
   /// @param value Function-specific value (degrees C, a HeatingMode as float, 0/1, or ignored) —
@@ -749,6 +758,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   virtual void queue_request_device_name(const std::string &device_id);
   /// Queue a pairing operation; executed in loop() when radio idle.
+  ///
+  /// A press handled within PAIRING_STALE_PRESS_MS of the end of an attempt is dropped with a log
+  /// line: pairing blocks loop(), so a press made while it ran is only handled once it ends, when the
+  /// device has usually left its pairing mode.
   virtual void queue_discover_and_pair();
   /// @brief Entry point for the "Scan Paired Devices" button: run the roll-call and publish its
   /// report to the log and the Home Assistant result event, exactly as the native API action does.
@@ -1236,6 +1249,8 @@ class IOHomeControlComponent : public Component,
   // --- Runtime state ---
   bool initialized_{false};
   bool busy_{false};
+  /// millis() when the last pairing attempt ended; 0 before the first one (see queue_discover_and_pair()).
+  uint32_t last_pairing_end_ms_{0};
   bool radio_test_mode_{false};  ///< When true, loop() is suspended for loopback testing.
   TuningConfig tuning_{};        ///< Runtime tuning overrides.
   DeviceRegistry registry_;

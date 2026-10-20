@@ -313,6 +313,37 @@ TEST(HubOperations, SendHeatingCommandAcceptsClimateDeviceAndSendsExactBytes) {
   EXPECT_EQ(tx[14], 0x00) << "trailing literal constant";
 }
 
+TEST(HubOperations, AnAcknowledgedHeatingWritePollsTheHeaterAgainSoon) {
+  // Heating / idle only shows in the regulator register, which the poll reads (issue #165).
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
+  IoFrame resp = build_write_private_ack(comp.node_id_);
+  radio.queue_rx(test::make_rx_packet(resp));
+
+  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
+
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS);
+}
+
+TEST(HubOperations, AnUnacknowledgedHeatingWriteSchedulesNoExtraPoll) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 1;
+
+  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
+  EXPECT_NE(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+}
+
 TEST(HubOperations, SendHeatingCommandRejectsNonClimateDevice) {
   TestableComponent comp;
   MockRadio radio;

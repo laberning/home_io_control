@@ -1,0 +1,79 @@
+id: atlantic_agilia_exchange_setpoint_and_off_read_back
+description: >
+  The first commands from Home Assistant to an Atlantic AGILIA IO radiator's heater (B6BDFC, type 52
+  subtype 1): set the comfort setpoint to 17.5 C, then switch the heater off. Each write is an
+  authenticated CMD_WRITE_PRIVATE (0x20) `0C 61 01 <reg> <value>`, acknowledged by CMD_WRITE_PRIVATE_ACK
+  (0x21) echoing the whole write, and the hub reads the register straight back (`0C 60 01 <reg>`),
+  which returns the value just written. The reporter watched the radiator's display follow both
+  commands.
+
+  Setpoint register 0x0103 holds tenths of a degree, little-endian (0x00AF = 17.5 C); mode register
+  0x0100 value 4 is off. The challenge frames (0x3C from the radiator 37-41 ms after each 0x20, our
+  0x3D with preamble 8) were masked in the reporter's log and are omitted.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model), radiator 1: heater B6BDFC"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main after the heater support merge"
+  date: 2026-10-20
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 00 B6 BD FC 60 F8 23 20 0C 61 01 03 AF 00"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20), write register 0x0103 = 0x00AF (17.5 C), preamble 48"
+  - dir: rx
+    t_ms: 71
+    freq: 868950000
+    hex: "8E 00 60 F8 23 B6 BD FC 21 0C 61 01 03 AF 00"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE_ACK(0x21), echoes the write"
+  - dir: tx
+    t_ms: 78
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 03"
+    crc: absent
+    note: "read register 0x0103 back"
+  - dir: rx
+    t_ms: 150
+    freq: 868950000
+    hex: "8E 00 60 F8 23 B6 BD FC 21 0C 60 01 03 AF 00"
+    crc: absent
+    note: "17.5 C, the value just written"
+  - dir: tx
+    t_ms: 20480
+    freq: 868950000
+    hex: "4D 00 B6 BD FC 60 F8 23 20 0C 61 01 00 04"
+    crc: absent
+    note: "write register 0x0100 (mode) = 4 (off)"
+  - dir: rx
+    t_ms: 20546
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 61 01 00 04"
+    crc: absent
+    note: "ack echoes the write"
+  - dir: tx
+    t_ms: 20559
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 00"
+    crc: absent
+    note: "read register 0x0100 back"
+  - dir: rx
+    t_ms: 20627
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 60 01 00 04"
+    crc: absent
+    note: "mode 4 (off); the climate entity shows Off"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

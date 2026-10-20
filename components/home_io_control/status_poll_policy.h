@@ -40,6 +40,14 @@ static constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS = 5000;
 /// Interval between regular polls of a heater (its `status_poll_interval` overrides it). Slow on
 /// purpose: a heater's state moves over minutes, and a poll costs one exchange per register.
 static constexpr uint32_t HEATING_POLL_DEFAULT_INTERVAL_MS = 300000;
+
+/// @brief Delay of the extra heater poll after a register write the heater acknowledged.
+///
+/// The write is read back at once, but whether the heater now heats shows only in its regulator
+/// register, which the regular poll reads. Without this extra poll the card's heating / idle trails a
+/// setpoint change by up to one poll interval, and longer when a poll fails (issue #165). The
+/// regular cadence restarts from this poll.
+static constexpr uint32_t HEATING_POST_WRITE_POLL_DELAY_MS = 45000;
 /// Delay before polling after overheard remote traffic.
 static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
 /// Hold queued background polls back for this long after any 1W frame, so a poll the hub itself

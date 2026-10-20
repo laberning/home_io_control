@@ -1009,7 +1009,8 @@ static std::string build_scan_report(const ScanState &state, DeviceRegistry &reg
   uint8_t unknown_count = 0;
   for (uint8_t i = 0; i < state.count; i++) {
     const std::string device_id = node_id_to_string(state.responders[i].src);
-    const IoDevice *registered = registry.get(device_id);
+    // A device a pairing added in this boot still needs its block, so it counts as unknown here.
+    const IoDevice *registered = registry.get_declared(device_id);
     const uint8_t slot = state.responders[i].key_slot;
     const RollCallReplyKeys reply_keys{keys[slot].data(), keys[0].data(), slot != 0};
     const RollCallKeyDisplay display = reveal_keys ? RollCallKeyDisplay::BANNERED : RollCallKeyDisplay::HIDDEN;

@@ -34,6 +34,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::tuning_;
   using IOHomeControlComponent::exchange_engine_;
   using IOHomeControlComponent::pairing_telemetry_;
+  using IOHomeControlComponent::registry_;
 
   RecentOneWayPairingSighting recent_oneway_pairing_sighting_{};
   test::TestablePairingEngine pairing_engine_{
@@ -407,6 +408,45 @@ TEST(PairingKeyPull, WrongChallengeAnswerLeavesTheKeyUnproven) {
   EXPECT_EQ(0, memcmp(comp.system_key_, key_before, AES_KEY_SIZE));
 }
 
+TEST(PairingKeyPull, ALostProofIsChallengedAgain) {
+  // Radiator 3 in issue #165: one 0x3D lost on air failed the attempt; the next press paired.
+  test_rng::reset();
+  test_rng::enqueue_bytes(PULL_CHALLENGE, HMAC_SIZE);
+  test_rng::enqueue_bytes(VERIFY_CHALLENGE, HMAC_SIZE);
+  test_rng::enqueue_bytes(VERIFY_CHALLENGE, HMAC_SIZE);
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx_silence();
+  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));
+
+  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);
+  EXPECT_EQ(sent_commands(radio),
+            (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ, CMD_CHALLENGE_REQ}));
+  test_rng::reset();
+}
+
+TEST(PairingKeyPull, AWrongProofIsNotChallengedAgain) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
+  const uint8_t unrelated_key[AES_KEY_SIZE] = {0x77};
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, unrelated_key)));
+
+  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
+  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ}))
+      << "a 0x3D that does not verify proves the device lacks the key; asking again cannot change that";
+}
+
 TEST(PairingKeyPull, RefusalEndsThePull) {
   TestableComponent comp;
   MockRadio radio;
@@ -514,6 +554,48 @@ void queue_proven_pull(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE], const 
 
 std::string key_hex(const uint8_t key[AES_KEY_SIZE]) { return detail::format_key_hex(key); }
 
+constexpr uint8_t HEATER_ID[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
+
+/// Queue the heater's roll-call reply behind the direct probe of its address: the radio stays silent
+/// until the roll-call's first 0x2A goes out. Before it go 0x28, 0x2C, 0x38, the 0x3C that proves a
+/// foreign key, and three unanswered 0x20 probe tries.
+void queue_roll_call_reply_after_probe(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE], bool foreign_key) {
+  const int sends_before_roll_call = foreign_key ? 7 : 6;
+  radio.queue_rx_hold_until_sent(sends_before_roll_call + 1);
+  radio.queue_rx(to_packet(heater_roll_call_reply(dst)));
+}
+
+/// A frame from the heater at the address after the pairing node.
+IoFrame heater_frame(const uint8_t dst[NODE_ID_SIZE], uint8_t cmd, const uint8_t *data, uint8_t len) {
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  set_dst(f, dst);
+  set_src(f, HEATER_ID);
+  set_cmd(f, cmd, data, len);
+  return f;
+}
+
+constexpr uint8_t HEATER_CHALLENGE[HMAC_SIZE] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26};
+
+/// Queue the heater answering the probe: its challenge, then its maximum setpoint (28.0 C), as in
+/// tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml.
+void queue_heater_answers_probe(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE]) {
+  radio.queue_rx(to_packet(heater_frame(dst, CMD_CHALLENGE_REQ, HEATER_CHALLENGE, HMAC_SIZE)));
+  const uint8_t max_setpoint[] = {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01};
+  radio.queue_rx(to_packet(heater_frame(dst, CMD_WRITE_PRIVATE_ACK, max_setpoint, sizeof(max_setpoint))));
+}
+
+/// The frames we sent with command `cmd`, parsed.
+std::vector<IoFrame> sent_frames_of(const MockRadio &radio, uint8_t cmd) {
+  std::vector<IoFrame> frames;
+  for (const auto &raw : radio.get_sent_data()) {
+    IoFrame frame{};
+    if (parse(raw.data(), static_cast<uint8_t>(raw.size()), frame) && frame.cmd == cmd)
+      frames.push_back(frame);
+  }
+  return frames;
+}
+
 }  // namespace
 
 TEST(PairingKeyPullFlow, ARemoteControllerThatRefusesThePullNeverGetsThePushSuggestion) {
@@ -540,7 +622,7 @@ TEST(PairingKeyPullFlow, AutoPullsAnAgiliaThenRegistersTheHeaterWithItsKey) {
   MockRadio radio;
   setup(comp, radio);
   queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
-  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_)));
+  queue_roll_call_reply_after_probe(radio, comp.node_id_, /*foreign_key=*/true);
 
   EXPECT_TRUE(comp.discover_and_pair());
 
@@ -590,7 +672,7 @@ TEST(PairingKeyPullFlow, LastPairingResultCarriesNoKey) {
   MockRadio radio;
   setup(comp, radio);
   queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
-  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_)));
+  queue_roll_call_reply_after_probe(radio, comp.node_id_, /*foreign_key=*/true);
 
   ASSERT_TRUE(comp.discover_and_pair());
 
@@ -621,7 +703,9 @@ TEST(PairingKeyPullFlow, AResponderOfATypeWithoutAPlatformIsNotRegistered) {
   MockRadio radio;
   setup(comp, radio);
   queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
-  // Type 22 subtype 1 (packed 05 81): the Atlantic heat pump, which no platform drives yet.
+  // Type 22 subtype 1 (packed 05 81): the Atlantic heat pump, which no platform drives yet. The probe of
+  // the next address finds nothing, so the reply waits for the roll-call.
+  radio.queue_rx_hold_until_sent(8);
   radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_, 0x05, 0x81)));
 
   EXPECT_FALSE(comp.discover_and_pair());
@@ -643,6 +727,90 @@ TEST(PairingKeyPullFlow, AResponderTheRegistryAlreadyKnowsKeepsItsRecord) {
 
   EXPECT_FALSE(comp.discover_and_pair()) << "nothing new was registered";
   EXPECT_FALSE(comp.get_device("B6BDFC")->has_system_key) << "the YAML record is left alone";
+  EXPECT_TRUE(sent_frames_of(radio, CMD_WRITE_PRIVATE).empty()) << "a device the YAML declares is not probed";
+}
+
+// ============================================================================
+// Pull -> direct read of the heater at the next address (no roll-call)
+// ============================================================================
+
+TEST(PairingKeyPullFlow, AnAgiliaHeaterThatAnswersTheProbeIsRegisteredWithoutARollCall) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  queue_heater_answers_probe(radio, comp.node_id_);
+
+  EXPECT_TRUE(comp.discover_and_pair());
+
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+  const IoDevice *heater = comp.get_device("B6BDFC");
+  ASSERT_NE(heater, nullptr);
+  EXPECT_EQ(heater->type, DeviceType::ELECTRICAL_HEATER);
+  EXPECT_EQ(heater->subtype, SUBTYPE_HEATER_WITH_SETPOINT);
+  ASSERT_TRUE(heater->has_system_key);
+  EXPECT_EQ(0, memcmp(heater->system_key, OTHER_KEY, AES_KEY_SIZE));
+  EXPECT_TRUE(heater->registered_by_pairing);
+  EXPECT_TRUE(sent_frames_of(radio, CMD_DISCOVER_SPE_REQ).empty()) << "the probe found it: no roll-call";
+
+  const std::vector<IoFrame> reads = sent_frames_of(radio, CMD_WRITE_PRIVATE);
+  ASSERT_EQ(reads.size(), 1u);
+  EXPECT_EQ(0, memcmp(reads[0].dst, HEATER_ID, NODE_ID_SIZE)) << "the address after the pairing node";
+  const uint8_t max_setpoint_read[] = {0x0C, 0x60, 0x01, 0x02};
+  ASSERT_EQ(reads[0].data_len, sizeof(max_setpoint_read));
+  EXPECT_EQ(0, memcmp(reads[0].data, max_setpoint_read, sizeof(max_setpoint_read)));
+
+  const std::vector<IoFrame> answers = sent_frames_of(radio, CMD_CHALLENGE_RESP);
+  ASSERT_EQ(answers.size(), 1u);
+  uint8_t expected[HMAC_SIZE];
+  ASSERT_TRUE(challenge_resp_hmac(reads[0], HEATER_CHALLENGE, OTHER_KEY, expected));
+  EXPECT_EQ(0, memcmp(answers[0].data, expected, HMAC_SIZE)) << "the probe is signed with the pulled key";
+}
+
+TEST(PairingKeyPullFlow, AHubKeyPullFindsTheHeaterByTheProbe) {
+  // The radiator-1 case of issue #165, where the roll-call stayed silent.
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, test::TEST_SYSTEM_KEY);
+  queue_heater_answers_probe(radio, comp.node_id_);
+
+  EXPECT_TRUE(comp.discover_and_pair());
+
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+  const IoDevice *heater = comp.get_device("B6BDFC");
+  ASSERT_NE(heater, nullptr);
+  EXPECT_FALSE(heater->has_system_key) << "it holds the hub key";
+  EXPECT_EQ(comp.get_device("B6BDFB"), nullptr);
+  EXPECT_TRUE(sent_frames_of(radio, CMD_DISCOVER_SPE_REQ).empty());
+}
+
+TEST(PairingKeyPullFlow, ARemoteControllerOfAnotherMakerIsNotProbed) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  // The AGILIA discovery reply with manufacturer 2 (Somfy) instead of 12.
+  const uint8_t payload[] = {0xFF, 0xC0, 0xB6, 0xBD, 0xFB, 0x02, 0xCC, 0x00, 0x00};
+  IoFrame reply{};
+  init_frame(reply, true, true, true, false);
+  set_dst(reply, comp.node_id_);
+  set_src(reply, DEVICE_ID);
+  set_cmd(reply, CMD_DISCOVER_RESP, payload, sizeof(payload));
+  radio.queue_rx(to_packet(reply));
+  IoFrame ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(ack, DEVICE_ID, comp.node_id_));
+  radio.queue_rx(to_packet(ack));
+  const IoFrame key_reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
+  radio.queue_rx(to_packet(key_reply));
+  radio.queue_rx(to_packet(proof_frame(comp.node_id_, key_reply, OTHER_KEY)));
+
+  comp.discover_and_pair();
+
+  EXPECT_TRUE(sent_frames_of(radio, CMD_WRITE_PRIVATE).empty());
+  EXPECT_EQ(sent_frames_of(radio, CMD_DISCOVER_SPE_REQ).size(), 6u) << "the roll-call is the only search";
 }
 
 TEST(PairingKeyPullFlow, AHubKeyPullFromARemoteControllerRollCallsForTheDevicesHoldingIt) {
@@ -651,7 +819,7 @@ TEST(PairingKeyPullFlow, AHubKeyPullFromARemoteControllerRollCallsForTheDevicesH
   MockRadio radio;
   setup(comp, radio);
   queue_proven_pull(radio, comp.node_id_, test::TEST_SYSTEM_KEY);
-  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_)));
+  queue_roll_call_reply_after_probe(radio, comp.node_id_, /*foreign_key=*/false);
 
   EXPECT_TRUE(comp.discover_and_pair());
 
@@ -675,17 +843,50 @@ TEST(PairingKeyPullFlow, AHubKeyPullFromARemoteControllerRollCallsForTheDevicesH
   EXPECT_EQ(signed_with_hub_key, 6u);
 }
 
-TEST(PairingKeyPullFlow, AHubKeyPullWithNothingAnsweringKeepsThePairedNoPlatformPath) {
+TEST(PairingKeyPullFlow, AHubKeyPullWithNothingAnsweringRegistersNothingAndSaysToScan) {
+  // tests/corpus/captures/pairing/atlantic_agilia_pairing_key_pull_own_key_heater_silent.yaml: the
+  // radiator hands back the hub key and its heater stays silent through the roll-call.
   RngGuard rng;
   TestableComponent comp;
   MockRadio radio;
   setup(comp, radio);
   queue_proven_pull(radio, comp.node_id_, test::TEST_SYSTEM_KEY);
 
+  EXPECT_FALSE(comp.discover_and_pair());
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::HUB_KEY_RETURNED);
+  EXPECT_EQ(comp.get_device("B6BDFB"), nullptr) << "the pairing node cannot be controlled, so it is not registered";
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+  const std::vector<uint8_t> cmds = sent_commands(radio);
+  EXPECT_EQ(std::count(cmds.begin(), cmds.end(), CMD_SET_CONFIG1), 0) << "the node refuses SetConfig1";
+  const std::string result = comp.pairing_telemetry().result_sensor_string();
+  EXPECT_NE(result.find("outcome=hub_key_returned"), std::string::npos) << result;
+  EXPECT_NE(result.find("hub_key_no_responder"), std::string::npos) << result;
+}
+
+TEST(PairingKeyPullFlow, ADeviceAnEarlierPairingRegisteredIsRegisteredAgain) {
+  // Radiator 3 in issue #165: an earlier attempt in the same boot had registered the heater, so the
+  // next one reported it as known, printed no block and ended as key_received.
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  IoDevice earlier{};
+  const uint8_t heater_id[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
+  memcpy(earlier.node_id, heater_id, NODE_ID_SIZE);
+  earlier.type = DeviceType::ELECTRICAL_HEATER;
+  earlier.subtype = 1;
+  earlier.registered_by_pairing = true;
+  comp.registry_.put("B6BDFC", earlier);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  queue_roll_call_reply_after_probe(radio, comp.node_id_, /*foreign_key=*/true);
+
   EXPECT_TRUE(comp.discover_and_pair());
   EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
-  EXPECT_NE(comp.get_device("B6BDFB"), nullptr) << "the pairing node is registered as before";
-  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+  const IoDevice *heater = comp.get_device("B6BDFC");
+  ASSERT_NE(heater, nullptr);
+  ASSERT_TRUE(heater->has_system_key);
+  EXPECT_EQ(0, memcmp(heater->system_key, OTHER_KEY, AES_KEY_SIZE));
+  EXPECT_TRUE(heater->registered_by_pairing);
 }
 
 TEST(PairingKeyPullFlow, AHubKeyPullFromAnActuatorTakesThePairedPathWithoutARollCall) {

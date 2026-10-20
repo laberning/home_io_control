@@ -9,6 +9,8 @@
 #include "hub_pairing.h"
 #include "hub_internal.h"
 
+#include <algorithm>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -23,6 +25,8 @@ bool IOHomeControlComponent::discover_and_pair() {
   this->busy_ = true;
   bool const ok = this->pairing_engine_.discover_and_pair();
   this->busy_ = false;
+  // Never 0, so "no attempt yet" stays distinguishable (see queue_discover_and_pair()).
+  this->last_pairing_end_ms_ = std::max<uint32_t>(millis(), 1);
   // Only fire once an attempt actually ran (telemetry was populated) — not on the early-return
   // guard above, which would otherwise republish stale telemetry from a previous attempt.
   if (this->pairing_result_callback_)

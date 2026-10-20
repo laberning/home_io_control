@@ -47,6 +47,19 @@ IoDevice *DeviceRegistry::get(const std::string &device_id) {
   return (it != devices_.end()) ? &it->second : nullptr;
 }
 
+IoDevice *DeviceRegistry::get_declared(const std::string &device_id) {
+  auto it = devices_.find(device_id);
+  return (it != devices_.end() && !it->second.registered_by_pairing) ? &it->second : nullptr;
+}
+
+bool DeviceRegistry::remove_registered_by_pairing(const std::string &device_id) {
+  auto it = devices_.find(device_id);
+  if (it == devices_.end() || !it->second.registered_by_pairing)
+    return false;
+  devices_.erase(it);
+  return true;
+}
+
 void DeviceRegistry::set_dimmable(const std::string &device_id, bool dimmable) {
   if (IoDevice *dev = this->get(device_id))
     dev->dimmable = dimmable;

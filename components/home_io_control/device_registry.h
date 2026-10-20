@@ -66,6 +66,19 @@ class DeviceRegistry {
   /// @return Pointer to the stored IoDevice, or nullptr when not found.
   [[nodiscard]] IoDevice *get(const std::string &device_id);
 
+  /// Retrieve a device the YAML declares, ignoring one a pairing added in this boot.
+  ///
+  /// A device a pairing registered (IoDevice::registered_by_pairing) is controllable until reboot but
+  /// still needs its YAML block, so roll-call reports treat it as unknown and a later pairing may
+  /// replace its record.
+  /// @return Pointer to the stored IoDevice, or nullptr when not found or added by a pairing.
+  [[nodiscard]] IoDevice *get_declared(const std::string &device_id);
+
+  /// Remove a device a pairing added in this boot. A device the YAML declares is never removed.
+  /// @param device_id Hexadecimal node ID string.
+  /// @return true when a record was removed.
+  bool remove_registered_by_pairing(const std::string &device_id);
+
   /// Set a device's `dimmable` flag (see IoDevice::dimmable). No-op when the device is unknown.
   /// Called by platform_light.cpp's setup() right after registration, since `dimmable` is a
   /// light-platform YAML choice, not something add()'s shared cover/light/switch/lock signature

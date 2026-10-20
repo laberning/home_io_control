@@ -640,7 +640,8 @@ Atlantic AGILIA IO radiator in its display's pairing mode answers discovery as a
 and refuses a pushed key with `COMMAND_UNKNOWN`, so `auto` pulls it (issue #165).
 
 The device's answer to the challenge is a 6-byte code, and only the right key produces it, so a
-match proves the key. The log shows one `Key pull check` line with the key's *key check value*:
+match proves the key. The hub challenges up to three times while no answer comes back; an answer
+that does not match ends the pull. The log shows one `Key pull check` line with the key's *key check value*:
 six hex digits that identify a key without revealing it, so the line is safe to post. Two attempts
 with the same check value mean the device kept its key; two devices with the same check value
 share one key.
@@ -648,13 +649,14 @@ share one key.
 What happens next depends on that check:
 
 - The device sent the hub's own key: it is paired, and the log prints the usual YAML snippet. If the
-  node that answered has no platform of its own (an AGILIA's remote-controller node), the hub first
-  runs a roll-call under the hub key, registers the devices that answer with a platform, and prints
-  their blocks, which need no `system_key:` because they use the hub key.
-- The device sent a different key and proved it: the hub runs a roll-call under that key (about
-  13 seconds) and registers every device that answers and has a platform, carrying the pulled key as
-  its own until you reboot. For an AGILIA that is the heater at the next address up, not the node
-  that handed the key over. The log prints one report, framed by a single `DO NOT SHARE IT` banner,
+  node that answered has no platform of its own (an AGILIA's remote-controller node), the hub looks
+  for the devices that hold the hub key, registers the ones with a platform, and prints their blocks,
+  which need no `system_key:` because they use the hub key. When it finds none, the attempt ends as
+  `hub_key_returned`, nothing is registered, and the advisor reports `hub_key_no_responder`: press
+  Scan Paired Devices.
+- The device sent a different key and proved it: the hub looks for the devices that hold that key
+  and registers every one that has a platform, carrying the pulled key as its own until you reboot.
+  For an AGILIA that is the heater at the next address up, not the node that handed the key over. The log prints one report, framed by a single `DO NOT SHARE IT` banner,
   with a paste-ready block per device that includes `system_key:`. The attempt ends as `paired` when
   at least one device was registered. With no device registered it ends as `key_received`, the log
   prints the key once, and the advisor reports `pulled_key_received`. The key appears in the device
@@ -665,7 +667,14 @@ What happens next depends on that check:
 A device that answers the key request with an error does not hand out its key: the advisor
 reports `key_pull_not_offered`. Set `pairing_key_transfer: push` to pair it the usual way.
 
-Pulling is proven on one device so far: an Atlantic AGILIA IO radiator hands over its key and proves it (issue #165).
+To look for the devices that hold a pulled key, the hub first reads the address one above an
+Atlantic remote-controller node directly: one authenticated read of the heater's maximum setpoint.
+An Atlantic radiator's heater answers that read reliably but a roll-call only now and then. When the
+read gets no answer, or the node is not an Atlantic remote controller, the hub runs a roll-call
+under the key instead (about 13 seconds). See
+[ADR 0058](../adr/0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md).
+
+Pulling is proven on three Atlantic AGILIA IO radiators, each of which hands over its own key and proves it (issue #165, [Atlantic AGILIA IO](../devices/atlantic-agilia-io.md)).
 
 ### Reading pairing results without the tuning UI
 

@@ -26,6 +26,10 @@ namespace home_io_control {
 /// The subtype is defined that way in the public VELUX KLF 200 API specification (Appendix 2).
 static constexpr uint8_t SUBTYPE_MAIN_PARAMETER_ONLY = 58;
 
+/// @brief Subtype of the electrical heater (node type 52) with an adjustable setpoint, the one driven
+/// over the private register protocol (proto_heating.h).
+static constexpr uint8_t SUBTYPE_HEATER_WITH_SETPOINT = 1;
+
 /// @brief Bit flags carried by a DeviceTypeInfo row.
 namespace device_type_flags {
 /// Type rows only: the type's identifier is accepted by the YAML `io_device_type` key

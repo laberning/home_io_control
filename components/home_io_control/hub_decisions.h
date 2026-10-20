@@ -533,6 +533,42 @@ inline uint32_t heating_poll_timer_id(const uint8_t node_id[NODE_ID_SIZE]) {
   return HEATING_POLL_TIMER_ID_TAG | (remote_poll_timer_id(node_id) & ~REMOTE_POLL_TIMER_ID_TAG);
 }
 
+// === Pairing: the device behind a pairing node ===
+
+/// @brief Does a pairing node that answered discovery this way control a heater at the next address?
+///
+/// An Atlantic radiator in its display's pairing mode answers discovery as a remote controller (node
+/// type 1023), hands over its key, and is controlled at the next node address up: three AGILIA IO
+/// radiators follow this (issue #165,
+/// tests/corpus/captures/pairing/atlantic_agilia_pairing_key_pull_heater_rollcall.yaml). The heater
+/// answers a roll-call only now and then, so the pairing asks that address directly first.
+/// @param type Node type the pairing node answered discovery with.
+/// @param manufacturer Manufacturer byte of that discovery reply (0 when the reply carried none).
+/// @return true for an Atlantic remote-controller node.
+inline bool pairing_node_has_heater_at_next_address(DeviceType type, uint8_t manufacturer) {
+  return type == DeviceType::REMOTE_CONTROLLER && manufacturer == MANUFACTURER_ATLANTIC_GROUP;
+}
+
+/// @brief The node address one above `node`, as a 24-bit number (`B6BDFB` -> `B6BDFC`).
+///
+/// A carry into the higher bytes (`xxxxFF`) is computed as plain arithmetic; no radiator with such an
+/// address has been seen, so whether the device counts the same way is unconfirmed.
+/// @param node Address to count from.
+/// @param[out] next The next address; untouched when `false` is returned.
+/// @return false for `FFFFFF`, which has no next address.
+inline bool next_node_id(const uint8_t node[NODE_ID_SIZE], uint8_t next[NODE_ID_SIZE]) {
+  uint8_t up[NODE_ID_SIZE];
+  memcpy(up, node, NODE_ID_SIZE);
+  // Count up from the last byte; a byte that wraps to 0 carries into the one before it.
+  for (size_t i = NODE_ID_SIZE; i-- > 0;) {
+    if (++up[i] != 0) {
+      memcpy(next, up, NODE_ID_SIZE);
+      return true;
+    }
+  }
+  return false;  // FFFFFF wrapped to 000000.
+}
+
 // === Rain limitation ===
 
 /// @brief Which evidence path labelled a device as limited by rain.

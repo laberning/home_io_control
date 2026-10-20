@@ -512,6 +512,9 @@ struct IoDevice {
                                  ///< exchange with it uses `system_key` below instead of the hub's key.
   uint8_t system_key[AES_KEY_SIZE]{};  ///< The device's own key; meaningful only when `has_system_key`. Key material:
                                        ///< never logged outside a bannered report block.
+  bool registered_by_pairing{false};   ///< Added by a pairing in this boot, not declared in YAML. The record is
+                                       ///< lost at reboot, so reports still print its YAML block, and a later
+                                       ///< pairing may replace it (DeviceRegistry::get_declared()).
 };
 
 /// @brief Record that a device is (believed to be) travelling right now.

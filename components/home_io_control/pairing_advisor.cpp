@@ -141,6 +141,10 @@ void append_key_step_advice(const PairingTelemetry &telemetry, PairingAdvice out
     add(PairingAdviceCode::PULLED_KEY_RECEIVED);
     return;
   }
+  if (outcome == PairingOutcome::HUB_KEY_RETURNED) {
+    add(PairingAdviceCode::HUB_KEY_NO_RESPONDER);
+    return;
+  }
   if (outcome != PairingOutcome::KEY_EXCHANGE_FAILED && outcome != PairingOutcome::KEY_TRANSFER_REFUSED)
     return;
   if (telemetry.key_pull_attempted()) {
@@ -202,6 +206,8 @@ const char *pairing_advice_code_name(PairingAdviceCode code) {
       return "key_pull_unproven";
     case PairingAdviceCode::PULLED_KEY_RECEIVED:
       return "pulled_key_received";
+    case PairingAdviceCode::HUB_KEY_NO_RESPONDER:
+      return "hub_key_no_responder";
     case PairingAdviceCode::NONE:
     default:
       return "none";
@@ -278,6 +284,14 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
                "it. Put the key into the `system_key:` of the entity that controls the device, flash, then run Scan "
                "Paired Devices: the log prints its config block. Each device of this kind keeps its own key, so "
                "pull each one and compare the key check values.",
+               node_id_to_string(advice.subject_node).c_str());
+      return std::string(buf);
+    case PairingAdviceCode::HUB_KEY_NO_RESPONDER:
+      snprintf(buf, sizeof(buf),
+               "Device %s already holds this hub's key, but no device that holds it answered. The node that "
+               "pairs is not always the one to control (an Atlantic radiator's heater sits at the next address). "
+               "Press Scan Paired Devices, and again if nothing answers: it prints the YAML block of each device "
+               "that holds the key.",
                node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::NONE:

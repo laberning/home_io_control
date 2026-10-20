@@ -33,6 +33,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::busy_;
+  using IOHomeControlComponent::last_pairing_end_ms_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
@@ -821,6 +822,24 @@ TEST(PairingHelpers, QueueDiscoverAndPair_NoDuplicates) {
       count++;
   }
   EXPECT_EQ(count, 1) << "should not queue duplicate discovery requests";
+}
+
+TEST(PairingHelpers, QueueDiscoverAndPair_DropsAPressMadeDuringTheLastAttempt) {
+  // Pairing blocks loop(), so a press made while it ran is handled right after it ends (issue #165).
+  esphome::test_clock::ManualClock clock(20000);
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  comp.last_pairing_end_ms_ = esphome::millis();
+
+  comp.queue_discover_and_pair();
+  EXPECT_EQ(comp.op_queue_.size(), 0u) << "a press handled straight after an attempt is dropped";
+
+  esphome::test_clock::advance_ms(PAIRING_STALE_PRESS_MS);
+  comp.queue_discover_and_pair();
+  ASSERT_EQ(comp.op_queue_.size(), 1u) << "a press made after reading the result is queued";
+  EXPECT_EQ(comp.op_queue_.front().type, PendingOperationType::DISCOVER_AND_PAIR);
 }
 
 // ============================================================================

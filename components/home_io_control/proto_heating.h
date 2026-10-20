@@ -6,9 +6,11 @@
 ///
 /// A heater with an adjustable setpoint (node type 52, subtype 1) exposes its state as 16-bit
 /// registers `0x01xx`, read with `0C 60 01 <reg>` and written with `0C 61 01 <reg> <value>`; the
-/// device answers with CMD_WRITE_PRIVATE_ACK (0x21) echoing the header, followed by the value
-/// (corpus `atlantic_thermor_exchange_write_private_param`, `synthetic_exchange_heating_*`). Values are
-/// little-endian.
+/// device answers with CMD_WRITE_PRIVATE_ACK (0x21) echoing the header, followed by the value. Values
+/// are little-endian. An Atlantic AGILIA IO radiator answers every read and write this way
+/// (tests/corpus/captures/exchange/atlantic_agilia_exchange_{status_read,setpoint_and_off_read_back,mode_read_back}.yaml,
+/// pinned by corpus_heating_test.cpp); see also
+/// tests/corpus/captures/exchange/atlantic_thermor_exchange_write_private_param.yaml.
 ///
 /// One descriptor table (`HEATING_FUNCTIONS` in the .cpp) lists every register this component
 /// uses: its access (read-only, read/write, write-only) and how its value is encoded. The same row
@@ -16,12 +18,9 @@
 /// exactly once. This module is pure: it does not touch a device record or the radio —
 /// proto_commands.h's create_write_private() frames a payload.
 ///
-/// @todo The exact shape of the 0x21 reply to a *read* (header echo followed by the value) is
-///       confirmed only for the write ack in the corpus. Confirm it against a captured read from
-///       real hardware ([issue #165](https://github.com/laberning/home_io_control/issues/165)).
-///
-/// No hardware is available for this family; the experimental banner lives in
-/// docs/configuration/climate.md.
+/// Confirmed on that radiator: the setpoint, mode (all four writable values), room temperature,
+/// regulator and maximum-setpoint registers. The presence register has not been written on hardware,
+/// and the window and open-window-detection registers have only been read at rest.
 
 #include "proto_frame.h"
 
@@ -74,8 +73,9 @@ constexpr float HEATING_TEMP_MIN_C = 7.0F;
 /// @brief Highest setpoint this codec will encode.
 ///
 /// The setpoint register is a 16-bit little-endian value in tenths of a degree; 28.0 °C (`18 01`) is
-/// the ceiling Atlantic radiator manuals document and the value a device reports in its maximum
-/// setpoint register. The encoding above 25.5 °C is unverified on hardware.
+/// the ceiling Atlantic radiator manuals document and the value an AGILIA IO radiator reports in its
+/// maximum setpoint register (tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml).
+/// No setpoint above 25.5 °C (a non-zero high byte) has been written on hardware yet.
 constexpr float HEATING_TEMP_MAX_C = 28.0F;
 
 /// @brief Largest payload any function produces: a set of a 16-bit value (4-byte header + 2 value bytes).
