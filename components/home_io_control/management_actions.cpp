@@ -862,6 +862,10 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
     result.message = "device is not a climate device";
     return result;
   }
+  if (!device_uses_heating_registers(dev->type, dev->subtype)) {
+    result.message = "device is commanded with heating levels, not private registers";
+    return result;
+  }
 
   // Snapshot any pre-existing CMD_ERROR_RESP code so a stale one (e.g. an old wind lockout from a
   // different command) is not misattributed to this send.

@@ -38,7 +38,7 @@ enum ClimateAction : uint8_t {
   CLIMATE_ACTION_DEFROSTING = 7,
 };
 
-enum ClimateFeatureFlags : uint32_t {
+enum ClimateFeature : uint32_t {
   CLIMATE_SUPPORTS_CURRENT_TEMPERATURE = 1 << 0,
   CLIMATE_SUPPORTS_ACTION = 1 << 5,
 };
@@ -143,6 +143,9 @@ class Climate {
   ClimateTraits get_traits() { return this->traits(); }
 
   void set_supported_custom_presets(std::initializer_list<const char *> presets) {
+    this->supported_custom_presets_.assign(presets.begin(), presets.end());
+  }
+  void set_supported_custom_presets(const std::vector<const char *> &presets) {
     this->supported_custom_presets_.assign(presets.begin(), presets.end());
   }
   const std::vector<std::string> &get_supported_custom_presets() const { return this->supported_custom_presets_; }

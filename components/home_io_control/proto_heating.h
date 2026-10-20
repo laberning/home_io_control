@@ -51,11 +51,12 @@ enum class HeatingFunction : uint8_t {
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
 enum class HeatingMode : uint8_t {
-  AUTO = 0x00,      ///< Automatic mode; the device manages the setpoint itself.
-  MANUAL = 0x01,    ///< Manual mode; follows the last written setpoint.
-  PROG = 0x02,      ///< Program mode; the device runs its own stored weekly schedule.
-  EXTERNAL = 0x03,  ///< Setpoint comes from an external controller. Readable, never written by this component.
-  OFF = 0x04,       ///< Off / standby.
+  AUTO = 0x00,               ///< Automatic mode; the device manages the setpoint itself.
+  MANUAL = 0x01,             ///< Manual mode; follows the last written setpoint.
+  PROG = 0x02,               ///< Program mode; the device runs its own stored weekly schedule.
+  EXTERNAL_SETPOINT = 0x03,  ///< Setpoint comes from an external controller. Readable, never written by this
+                             ///< component. Not named EXTERNAL: the Arduino core defines that as a macro.
+  OFF = 0x04,                ///< Off / standby.
 };
 
 /// @brief Regulator states of the regulator register (HeatingFunction::REGULATOR_STATE).
@@ -169,18 +170,28 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
 /// Every field starts as "never read" (NaN, or -1 for the byte registers). Only a decoded reply
 /// changes a field, so what an entity shows from here is observed, never predicted.
 struct HeatingReadings {
-  float room_temperature_c{NAN};  ///< Measured room temperature; NaN until read or on a sensor fault.
-  float setpoint_c{NAN};          ///< Comfort setpoint as the heater holds it; NaN until read.
-  float max_setpoint_c{NAN};      ///< Highest setpoint the heater accepts; NaN until read.
-  int16_t mode{-1};               ///< HeatingMode value; -1 until read.
-  int16_t regulator{-1};          ///< HeatingRegulatorState value; -1 until read.
-  int16_t window_open{-1};        ///< 0 closed / 1 open; -1 until read.
+  float room_temperature_c{NAN};      ///< Measured room temperature; NaN until read or on a sensor fault.
+  float setpoint_c{NAN};              ///< Comfort setpoint as the heater holds it; NaN until read.
+  float max_setpoint_c{NAN};          ///< Highest setpoint the heater accepts; NaN until read.
+  int16_t mode{-1};                   ///< HeatingMode value; -1 until read.
+  int16_t regulator{-1};              ///< HeatingRegulatorState value; -1 until read.
+  int16_t window_open{-1};            ///< 0 closed / 1 open; -1 until read.
+  int16_t open_window_detection{-1};  ///< 1 detection on / 0 off; -1 until read.
+  int16_t level{-1};                  ///< Heating level (low byte of the main parameter) of a heater that is
+                                      ///< commanded with levels; -1 until a status reply carried one. Set by
+                                      ///< the hub's status path, not by store().
 
   /// @brief Fold one decoded register value into the readings.
   /// @param fn Register the value was read from.
   /// @param value Value as returned by decode_heating_reply().
   /// @return true when `fn` is a register the readings hold (and the field was set).
   bool store(HeatingFunction fn, float value);
+
+  /// @brief Has this register been read yet?
+  /// @param fn Register.
+  /// @return true when the readings hold a value for `fn`; false for "never read" and for a function
+  ///         the readings do not hold.
+  [[nodiscard]] bool has(HeatingFunction fn) const;
 };
 
 }  // namespace home_io_control

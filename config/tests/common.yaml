@@ -164,9 +164,15 @@ switch:
 
 climate:
   # Experimental heating/climate platform (CMD_WRITE_PRIVATE 0x20). It drives an electrical
-  # heater with an adjustable setpoint: io_device_type electrical_heater, io_subtype 1.
+  # heater with an adjustable setpoint (io_subtype 1) and the plain electrical heater (io_subtype 0).
   - platform: home_io_control
     name: "Test Heating"
     io_device_id: "FEEB22"
     io_device_type: "electrical_heater"
     io_subtype: 1
+  # The plain electrical heater is commanded with heating levels (io_subtype 0).
+  - platform: home_io_control
+    name: "Test Plain Heating"
+    io_device_id: "FEEB23"
+    io_device_type: "electrical_heater"
+    io_subtype: 0

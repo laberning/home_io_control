@@ -42,9 +42,10 @@ held.
    made needs no withdrawal.
 
 4. **The hub polls the heater.** A climate entity gets a status poll, default every five minutes
-   (`status_poll_interval`, at least 60 s), plus one poll shortly after boot. A poll reads the room
-   temperature, setpoint, mode and regulator state — four exchanges, stopping at the first failure
-   — and the maximum setpoint until it has been read once. A failed poll moves its retry onto the
+   (`status_poll_interval`, at least 60 s), plus one poll shortly after boot. A poll reads the registers of the
+   heater's profile (ADR 0055) — room temperature, setpoint, mode, regulator state and window sensor —
+   stopping at the first failure, and the maximum setpoint and the detection setting until each has
+   been read once. A failed poll moves its retry onto the
    `StatusPollPolicy` backoff ladder, and the regular cadence continues either way.
 
 5. **A write is confirmed by a read.** After an accepted mode or setpoint write the entity reads
@@ -66,7 +67,7 @@ capability predicate gating every entry point, no use of `execute_request_and_up
 - **Predict the setpoint and withdraw it on a failed read-back.** Rejected: a heater that does not
   answer reads is exactly the case where the prediction would be wrong and stay on screen.
 - **Poll at the cover cadence.** Rejected: a heater's state moves over minutes, and each poll costs
-  four exchanges of airtime.
+  one exchange per register.
 
 ## Consequences
 

@@ -129,16 +129,15 @@ bool device_supports_status_requests(DeviceType type);
 /// @return true for lock devices.
 bool device_supports_lock_control(DeviceType type);
 
-/// @brief Does this device support 2W climate/heating control (CMD_WRITE_PRIVATE 0x20)?
+/// @brief Can a climate entity drive this device?
 ///
-/// The single capability gate for the heating send path and the climate entity: true exactly
-/// when the table row for (type, subtype) is a climate-class row that a platform drives, which is
-/// the electrical heater with an adjustable setpoint (type 52, subtype 1). The heating payloads are
-/// that device's private registers; the other heating types are driven with the standard EXECUTE.
-/// There is deliberately no per-vendor branch anywhere downstream.
+/// True exactly when a heating profile exists for (type, subtype) (proto_heating_profiles.h): the
+/// electrical heater with an adjustable setpoint (52/1, private registers) and the plain electrical
+/// heater (52/0, heating levels). This only says a climate entity may bind; whether the private
+/// register protocol may be sent to the device is device_uses_heating_registers().
 /// @param type Device type.
 /// @param subtype Device subtype.
-/// @return true for climate-class devices the climate platform can drive.
+/// @return true for devices that have a heating profile.
 bool device_supports_climate_control(DeviceType type, uint8_t subtype);
 
 /// @brief Does this device type support tilt (slat angle) control?

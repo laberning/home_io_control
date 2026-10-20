@@ -4,6 +4,8 @@
 
 #include "proto_device_model.h"
 
+#include "proto_heating_profiles.h"
+
 #include "proto_constants.h"
 #include "proto_device_types.h"
 
@@ -182,7 +184,7 @@ bool device_supports_lock_control(DeviceType type) {
 }
 
 bool device_supports_climate_control(DeviceType type, uint8_t subtype) {
-  return device_capability_class(type, subtype) == DeviceCapabilityClass::CLIMATE && device_has_platform(type, subtype);
+  return find_heating_profile(type, subtype) != nullptr;
 }
 
 bool device_supports_status_requests(DeviceType type) {

@@ -32,6 +32,7 @@
 #include "proto_codecs.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
+#include "proto_heating_profiles.h"
 #include "radio_interface.h"
 #include "tuning_config.h"
 #include "hub_exchange.h"
@@ -654,6 +655,15 @@ class IOHomeControlComponent : public Component,
   ///        see encode_heating_payload().
   /// @return true only if the device answered with CMD_WRITE_PRIVATE_ACK.
   virtual bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value);
+  /// @brief Set the heating level of a heater that is commanded with levels (the plain electrical heater).
+  ///
+  /// A main-parameter-only EXECUTE through the execute-family funnel; the settle poll that follows
+  /// reads the level back with the ordinary status read, and the climate entity shows that reading.
+  /// Experimental: unconfirmed on hardware.
+  /// @param device_id Target device ID (hex string).
+  /// @param level Heating level low byte (heating_level::*).
+  /// @return true when the device accepted the command.
+  virtual bool set_heating_level(const std::string &device_id, uint8_t level);
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   ///
   /// Same gate, frame builder and exchange bookkeeping as send_heating_command(); a reply that

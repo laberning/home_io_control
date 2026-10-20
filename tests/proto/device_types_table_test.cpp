@@ -129,7 +129,8 @@ TEST(DeviceTypesTable, DiagnosticAndYamlFormsPrintTheFullTypeValue) {
 
 TEST(DeviceTypesTable, PlatformNameFollowsTheRowNotTheType) {
   EXPECT_STREQ(device_platform_name(DeviceType::ELECTRICAL_HEATER, 1), "climate");
-  EXPECT_EQ(device_platform_name(DeviceType::ELECTRICAL_HEATER, 0), nullptr);
+  EXPECT_STREQ(device_platform_name(DeviceType::ELECTRICAL_HEATER, 0), "climate");
+  EXPECT_EQ(device_platform_name(DeviceType::HEAT_PUMP, 0), nullptr);
   EXPECT_STREQ(device_platform_name(DeviceType::ROLLER_SHUTTER, 1), "cover");
   EXPECT_STREQ(device_platform_name(DeviceType::LIGHT, 58), "light");
   EXPECT_STREQ(device_platform_name(DeviceType::ON_OFF_SWITCH, 2), "switch");
@@ -204,8 +205,14 @@ TEST(DeviceTypesTable, SnippetCarriesTheDeviceKeyOnlyWhenOneIsGiven) {
       << "the key also rides in the shape used when the device withheld its type";
 }
 
-TEST(DeviceTypesTable, PlainHeaterAndRemoteControllerGetNoSnippet) {
-  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 0, "AABBCC", true, false, false).empty());
+TEST(DeviceTypesTable, PlainHeaterGetsAClimateSnippet) {
+  const std::string snippet = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 0, "AABBCC", true, false, false);
+  EXPECT_NE(snippet.find("  climate:\n"), std::string::npos) << snippet;
+  EXPECT_NE(snippet.find("io_subtype: 0"), std::string::npos) << snippet;
+}
+
+TEST(DeviceTypesTable, HeatPumpAndRemoteControllerGetNoSnippet) {
+  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::HEAT_PUMP, 0, "AABBCC", true, false, false).empty());
   EXPECT_TRUE(build_device_yaml_snippet(DeviceType::REMOTE_CONTROLLER, 0, "AABBCC", true, false, false).empty());
 }
 

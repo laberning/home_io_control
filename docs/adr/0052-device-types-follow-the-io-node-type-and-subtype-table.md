@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0052 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted, superseded in part by [ADR 0055](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md) (the plain electrical heater has a climate profile) · **Recorded:** 2026-10
 
 ## Context
 

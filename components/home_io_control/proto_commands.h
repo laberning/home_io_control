@@ -134,6 +134,22 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
                                    bool force_open_priority = false);
 
+/// @brief Highest heating level low byte create_execute_heating_level() will frame (the secured level).
+static constexpr uint8_t HEATING_LEVEL_MAX = 0x3F;
+
+/// @brief Build a main-parameter-only EXECUTE (0x00) that sets a heater's heating level.
+///
+/// Same 6-byte shape as create_execute_main_parameter(), with the heating level in the main
+/// parameter (high byte HEATING_LEVEL_MP_PREFIX, low byte the level; see proto_heating_profiles.h).
+/// Experimental: unconfirmed on hardware until a capture or a reporter's heater confirms it.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param level Heating level low byte (heating_level::*).
+/// @return true on success; false for a level above HEATING_LEVEL_MAX.
+bool create_execute_heating_level(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t level);
+
 /// @brief Build a CMD_PRIVATE (0x03) request for an arbitrary function ID.
 ///
 /// function_id = 0x06 (battery-status) or 0x09 (battery-state) is reported elsewhere to read the

@@ -621,8 +621,8 @@ TEST(PairingKeyPullFlow, AResponderOfATypeWithoutAPlatformIsNotRegistered) {
   MockRadio radio;
   setup(comp, radio);
   queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
-  // Type 52 subtype 0 (packed 0D 00): the plain electrical heater, which no platform drives yet.
-  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_, 0x0D, 0x00)));
+  // Type 22 subtype 0 (packed 05 80): the heat pump, which no platform drives yet.
+  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_, 0x05, 0x80)));
 
   EXPECT_FALSE(comp.discover_and_pair());
   EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::KEY_RECEIVED);

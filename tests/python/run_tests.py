@@ -262,6 +262,35 @@ def hub_entity_ids_are_declared_at_validation_time():
         assert id_key not in off, f"{suffix} declared although its flag is off"
 
 
+@case()
+def heater_window_companions_are_declared_at_validation_time():
+    """The window sensor and detection switch of a heater that has them get their IDs while the
+    schema validates (ESPHome 2026.x sizes its component vector from the IDs known by then); a
+    heater kind without them, or one declared without a type, gets none."""
+    from esphome.const import CONF_ID, CONF_NAME
+    from esphome.core import ID
+    from esphome.components.home_io_control import climate as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    def config(device_type=None, subtype=None):
+        cfg = {CONF_ID: ID("living", is_declaration=True), CONF_NAME: "Living"}
+        if device_type is not None:
+            cfg["io_device_type"] = device_type
+        if subtype is not None:
+            cfg["io_subtype"] = subtype
+        return cfg
+
+    heater = v.DEVICE_TYPE_OPTIONS["electrical_heater"]
+    with_window = c._inject_companion_ids(config(heater, 1))
+    assert with_window[c.CONF_WINDOW_SENSOR_ID].id == "living_window_sensor"
+    assert with_window[c.CONF_WINDOW_SENSOR_ID].is_declaration
+    assert with_window[c.CONF_WINDOW_DETECTION_SWITCH_ID].id == "living_window_detection_switch"
+    for cfg in (config(heater, 0), config(heater), config(), config(v.DEVICE_TYPE_OPTIONS["roller_shutter"], 1)):
+        out = c._inject_companion_ids(cfg)
+        assert c.CONF_WINDOW_SENSOR_ID not in out, cfg
+        assert c.CONF_WINDOW_DETECTION_SWITCH_ID not in out, cfg
+
+
 def _raise_firmware_error(**_kwargs):
     from esphome.components.home_io_control import lr1121_firmware
 

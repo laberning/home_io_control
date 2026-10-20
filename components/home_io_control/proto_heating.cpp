@@ -265,9 +265,35 @@ bool HeatingReadings::store(HeatingFunction fn, float value) {
     case HeatingFunction::WINDOW_OPEN:
       this->window_open = static_cast<int16_t>(value);
       return true;
+    case HeatingFunction::SET_OPEN_WINDOW_DETECTION:
+      this->open_window_detection = static_cast<int16_t>(value);
+      return true;
     case HeatingFunction::POWER_ON:
     case HeatingFunction::SET_PRESENCE:
+    case HeatingFunction::MIDNIGHT_SYNC:
+      return false;
+  }
+  return false;
+}
+
+bool HeatingReadings::has(HeatingFunction fn) const {
+  switch (fn) {
+    case HeatingFunction::ROOM_TEMPERATURE:
+      return !std::isnan(this->room_temperature_c);
+    case HeatingFunction::SET_TEMPERATURE:
+      return !std::isnan(this->setpoint_c);
+    case HeatingFunction::MAX_SETPOINT:
+      return !std::isnan(this->max_setpoint_c);
+    case HeatingFunction::SET_MODE:
+      return this->mode >= 0;
+    case HeatingFunction::REGULATOR_STATE:
+      return this->regulator >= 0;
+    case HeatingFunction::WINDOW_OPEN:
+      return this->window_open >= 0;
     case HeatingFunction::SET_OPEN_WINDOW_DETECTION:
+      return this->open_window_detection >= 0;
+    case HeatingFunction::POWER_ON:
+    case HeatingFunction::SET_PRESENCE:
     case HeatingFunction::MIDNIGHT_SYNC:
       return false;
   }

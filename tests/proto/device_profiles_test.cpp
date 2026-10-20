@@ -45,12 +45,12 @@ TEST(DeviceProfile, LockControlSupportedForLocksOnly) {
   EXPECT_FALSE(device_supports_lock_control(DeviceType::LIGHT)) << "light should not report lock control";
 }
 
-TEST(DeviceProfile, ClimateControlSupportedForTheAdjustableSetpointHeaterOnly) {
+TEST(DeviceProfile, ClimateControlSupportedForTheTwoElectricalHeaters) {
   EXPECT_TRUE(device_supports_climate_control(DeviceType::ELECTRICAL_HEATER, 1))
-      << "the electrical heater with an adjustable setpoint is the device the heating payloads fit";
-  EXPECT_FALSE(device_supports_climate_control(DeviceType::ELECTRICAL_HEATER, 0))
-      << "the plain electrical heater is driven with the standard EXECUTE, which no platform sends yet";
-  EXPECT_FALSE(device_supports_climate_control(DeviceType::ELECTRICAL_HEATER, 3))
+      << "the electrical heater with an adjustable setpoint has a register profile";
+  EXPECT_TRUE(device_supports_climate_control(DeviceType::ELECTRICAL_HEATER, 0))
+      << "the plain electrical heater has a heating-level profile";
+  EXPECT_TRUE(device_supports_climate_control(DeviceType::ELECTRICAL_HEATER, 3))
       << "an unnamed subtype falls back to the plain heater";
   EXPECT_FALSE(device_supports_climate_control(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0));
   EXPECT_FALSE(device_supports_climate_control(DeviceType::EXTERIOR_HEATING, 0));

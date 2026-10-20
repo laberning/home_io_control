@@ -43,3 +43,8 @@ climate:
     status_poll_interval: 60s
     # A device that keeps a key of its own (ADR 0053); any device-bound platform takes it.
     system_key: "FEDCBA9876543210FEDCBA9876543210"
+  - platform: home_io_control
+    name: "Plain Heater"
+    io_device_id: "5E6F70"
+    io_device_type: electrical_heater
+    io_subtype: 0

@@ -66,7 +66,7 @@ TEST(PulledKeyReport, OneBannerFramesEveryResponderBlock) {
 TEST(PulledKeyReport, AResponderWithoutAPlatformGetsTheNotSupportedLineAndTheKey) {
   ScanState state{};
   const uint8_t src[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
-  add_reply(state, src, 0x0D, 0x00);  // 52/0: the plain electrical heater
+  add_reply(state, src, 0x05, 0x80);  // 22/0: the heat pump
   DeviceRegistry registry;
 
   const std::string report = build_pulled_key_report(report_info(), state, registry);

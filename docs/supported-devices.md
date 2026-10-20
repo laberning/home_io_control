@@ -191,7 +191,7 @@ device are marked experimental.
 | `0x1D` | bioclimatic pergola | | Cover |
 | `0x1E` | siren | | Not supported yet |
 | `0x33` | domestic hot water | | Not supported yet |
-| `0x34` | electrical heater | 1 with adjustable setpoint | Climate for subtype 1 (experimental, unconfirmed on hardware); the plain heater is not supported yet |
+| `0x34` | electrical heater | 1 with adjustable setpoint | Climate: subtype 1 over private registers with read-back, a Window sensor and an Open Window Detection switch (experimental, unconfirmed on hardware); the plain heater (subtype 0) with heating levels (experimental, untested) |
 | `0x35` | heat recovery ventilation | | Not supported yet |
 | `0xFF` | central house control | | Not supported yet |
 | `0x3F0` | test and evaluation | | Not supported yet |

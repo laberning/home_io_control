@@ -4,6 +4,8 @@
 
 #include "proto_commands.h"
 
+#include "proto_heating_profiles.h"
+
 #include "proto_constants.h"
 #include "proto_crypto.h"
 
@@ -130,6 +132,17 @@ constexpr uint8_t STATUS_UPDATE_ACK_PAYLOAD[] = {0x05, 0x00};
 constexpr uint8_t SET_CONFIG1_STATUS_BROADCAST_PAYLOAD[] = {0xE0, 0x10, 0x0A, 0x08, 0x00};
 /// Identify-request parameter byte (data[1] of the CMD_IDENTIFY payload).
 constexpr uint8_t IDENTIFY_PARAMETER = 0xFF;
+
+/// @brief Frame a main-parameter-only EXECUTE: originator, ACEI, the two main-parameter bytes, and
+/// both functional-parameter indicator bytes zero. Shared by the position and heating-level builders.
+bool build_main_parameter_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t acei,
+                                  uint8_t main_high, uint8_t main_low) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, acei, main_high, main_low, 0x00, 0x00};
+  return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+}
 
 /// @brief Build the standard 8-byte position payload shared by create_execute_position() and
 /// create_force_open() — identical except for the ACEI byte.
@@ -348,18 +361,16 @@ bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t
                                    bool force_open_priority) {
   if (position > POSITION_PERCENT_MAX)
     return false;
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
-  // Same 6-byte shape as the STOP/FAVORITE special form: both functional-parameter indicator bytes
-  // are zero, so the device is asked about the main parameter only.
-  const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR,
-                                                         force_open_priority ? EXECUTE_ACEI_FORCE_OPEN : EXECUTE_ACEI,
-                                                         static_cast<uint8_t>(POSITION_WIRE_SCALE * position),
-                                                         0x00,
-                                                         0x00,
-                                                         0x00};
-  return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+  return build_main_parameter_execute(f, own, dst, low_power,
+                                      force_open_priority ? EXECUTE_ACEI_FORCE_OPEN : EXECUTE_ACEI,
+                                      static_cast<uint8_t>(POSITION_WIRE_SCALE * position), 0x00);
+}
+
+/// Build a heating-level execute frame (0x00). See proto_commands.h.
+bool create_execute_heating_level(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t level) {
+  if (level > HEATING_LEVEL_MAX)
+    return false;
+  return build_main_parameter_execute(f, own, dst, low_power, EXECUTE_ACEI, HEATING_LEVEL_MP_PREFIX, level);
 }
 
 /// Build a 1W position execute frame (CMD 0x00) targeting a device class. See proto_commands.h

@@ -125,9 +125,10 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     {DeviceType::DOMESTIC_HOT_WATER, 0, "domestic_hot_water", CAP_NONE, 0},
 
-    // The heating payloads (proto_heating.h) fit the electrical heater with an adjustable setpoint
-    // only; the plain electrical heater is driven with the standard EXECUTE, which no platform sends yet.
-    {DeviceType::ELECTRICAL_HEATER, 0, "electrical_heater", CAP_CLIMATE, YAML_SELECTABLE},
+    // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
+    // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private
+    // registers (proto_heating.h).
+    {DeviceType::ELECTRICAL_HEATER, 0, "electrical_heater", CAP_CLIMATE, SELECTABLE_PLATFORM},
     {DeviceType::ELECTRICAL_HEATER, 1, "with adjustable setpoint", CAP_CLIMATE, SUBTYPE_PLATFORM},
 
     {DeviceType::HEAT_RECOVERY_VENTILATION, 0, "heat_recovery_ventilation", CAP_NONE, 0},

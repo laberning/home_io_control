@@ -1,4 +1,5 @@
 #include "hub_internal.h"
+#include "proto_heating_profiles.h"
 
 #include "hub_decisions.h"
 #include "proto_commands.h"
@@ -140,6 +141,18 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
   return settle_delay_ms(policy.get_interval(id), /*hint_delay_ms=*/0, /*cap_for_stop=*/false);
 }
 
+/// @brief Does a status reply's flags byte say the device is at rest?
+///
+/// A heater has no motion, so a heating-level heater is always at rest whatever its flags byte says:
+/// the movement settle loop (follow-up polls while "moving") must never run for it, and what that
+/// byte holds on a heater is unconfirmed. Every other device reports it in STATUS_STOPPED.
+/// @param dev Device the reply came from.
+/// @param flags The reply's stopped-flags byte.
+/// @return true when the device is at rest.
+bool reports_stopped(const IoDevice &dev, uint8_t flags) {
+  return device_uses_heating_levels(dev.type, dev.subtype) || (flags & STATUS_STOPPED) != 0;
+}
+
 /// @brief Apply a private-response frame to the device record.
 /// @param id Device ID for policy lookup.
 /// @param dev Device record to update.
@@ -153,7 +166,7 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
 /// status poll a few seconds later) remains the source of truth for target/current in that case.
 void apply_private_response_status(const std::string &id, IoDevice &dev, const IoFrame &frame, StatusPollPolicy &policy,
                                    bool trust_position = true) {
-  const bool reported_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
+  const bool reported_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   if (trust_position) {
@@ -198,7 +211,7 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
 /// @param policy Poll policy for scheduling follow-up polls.
 void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const IoFrame &frame,
                                      StatusPollPolicy &policy) {
-  dev.is_stopped = (frame.data[STATUS_STOPPED_FLAGS_OFFSET] & STATUS_STOPPED) != 0;
+  dev.is_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
   dev.last_status = millis();
   decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
   track_motion_evidence(dev, !dev.is_stopped, dev.last_status);
@@ -209,6 +222,25 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
   }
 
   policy.set_next_update(id, dev.last_status + compute_status_update_delay_ms(dev, policy, id));
+}
+
+/// @brief Record the heating level a heater's status reply carries as its current main parameter.
+/// @param id Device ID for the log line.
+/// @param dev Device record to update; devices not commanded with heating levels are left alone.
+/// @param frame A reply to a status poll (the layout of a reply to an EXECUTE follows the request).
+void apply_heating_level(const std::string &id, IoDevice &dev, const IoFrame &frame) {
+  if (!device_uses_heating_levels(dev.type, dev.subtype))
+    return;
+  const auto current = static_cast<uint16_t>((frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET] << 8U) |
+                                             frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET + 1]);
+  uint8_t level = 0;
+  if (!decode_heating_level(current, level)) {
+    ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating level", id.c_str(), current);
+    return;
+  }
+  if (dev.heating.level != static_cast<int16_t>(level))
+    ESP_LOGI(detail::TAG, "Device %s: heating level 0x%02X", id.c_str(), level);
+  dev.heating.level = level;
 }
 
 /// @brief Record the coarse battery level a status payload carries, logging a change.
@@ -397,6 +429,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
       // Same reason as the record above: only a reply to a status poll is a status report.
       apply_battery_state(id, dev, frame);
+      apply_heating_level(id, dev, frame);
     }
     detail::clear_command_result(dev);
     detail::log_status_update(id, dev);

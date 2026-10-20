@@ -41,6 +41,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::poll_policy_;
+  using IOHomeControlComponent::poll_heating_device_;
   using IOHomeControlComponent::schedule_status_poll_;
   using IOHomeControlComponent::tuning_;
 };
@@ -486,7 +487,7 @@ TEST(HubOperations, ReadHeatingRegisterRejectsWhatItCannotRead) {
   EXPECT_TRUE(cover_radio.get_sent_data().empty());
 }
 
-TEST(HubOperations, HeaterPollReadsFourRegistersThenTheMaximumOnce) {
+TEST(HubOperations, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnce) {
   TestableComponent comp;
   MockRadio radio;
   auto *dev = make_heater(comp, radio);
@@ -497,31 +498,39 @@ TEST(HubOperations, HeaterPollReadsFourRegistersThenTheMaximumOnce) {
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x00, 0x01})));  // manual
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x17, 0x02})));  // heating
   radio.queue_rx(
+      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x0E, 0x01})));  // window open
+  radio.queue_rx(
       test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01})));  // 28.0 C
+  radio.queue_rx(
+      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x06, 0x01})));  // detection on
 
   EXPECT_TRUE(comp.request_device_status("ABC123")) << "a heater is polled over its registers, not with 0x03";
 
-  ASSERT_EQ(radio.get_sent_data().size(), 5u);
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x02};
-  for (size_t i = 0; i < 5; i++)
+  ASSERT_EQ(radio.get_sent_data().size(), 7u);
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x02, 0x06};
+  for (size_t i = 0; i < 7; i++)
     EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
   EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
   EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.5F);
   EXPECT_EQ(dev->heating.mode, 1);
   EXPECT_EQ(dev->heating.regulator, 2);
+  EXPECT_EQ(dev->heating.window_open, 1);
   EXPECT_FLOAT_EQ(dev->heating.max_setpoint_c, 28.0F);
+  EXPECT_EQ(dev->heating.open_window_detection, 1);
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()))
       << "a good poll closes its retry window";
 
-  // The maximum is a property of the heater: the next poll does not ask again.
+  // The maximum and the detection setting are read once: the next poll asks for the five registers only.
   const size_t sent_before = radio.get_sent_data().size();
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x59, 0x06})));
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00})));
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x00, 0x01})));
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x17, 0x01})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x0E, 0x00})));
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 4u);
+  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 5u);
   EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 16.25F);
+  EXPECT_EQ(dev->heating.window_open, 0);
 }
 
 TEST(HubOperations, HeaterPollStopsAtTheFirstFailureAndBacksOff) {
@@ -567,6 +576,138 @@ TEST(HubOperations, HeaterCadenceTimerHasItsOwnIdAndARemotePollDoesNotCancelIt) 
   comp.schedule_status_poll_("ABC123", 2000);
   EXPECT_EQ(comp.last_timeout_id_, decisions::remote_poll_timer_id(node));
   EXPECT_NE(comp.last_timeout_id_, decisions::heating_poll_timer_id(node));
+}
+
+// === Heating-level heater (52/0) ===
+
+namespace {
+
+IoDevice *make_level_heater(TestableComponent &comp, MockRadio &radio) {
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  EXPECT_NE(dev, nullptr);
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 0;
+  return dev;
+}
+
+// A 0x04 status reply whose current main parameter is `mp`.
+IoFrame build_level_status_response(const uint8_t dst[3], uint16_t mp, uint8_t flags = STATUS_STOPPED) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  const uint8_t payload[8] = {STATUS_STOPPED,
+                              0x00,
+                              static_cast<uint8_t>(mp >> 8U),
+                              static_cast<uint8_t>(mp),
+                              static_cast<uint8_t>(mp >> 8U),
+                              static_cast<uint8_t>(mp),
+                              0x00,
+                              0x00};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+  return f;
+}
+
+}  // namespace
+
+TEST(HubOperations, ALevelHeaterGetsNoRegisterFrameFromAnyEntryPoint) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_level_heater(comp, radio);
+
+  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5F));
+  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0F));
+  EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+  EXPECT_FALSE(comp.poll_heating_device_("ABC123"));
+  EXPECT_TRUE(radio.get_sent_data().empty())
+      << "no CMD_WRITE_PRIVATE frame for a heater that takes the standard EXECUTE";
+}
+
+TEST(HubOperations, ALevelHeaterIsPolledWithTheStatusReadAndItsLevelIsStored) {
+  TestableComponent comp;
+  MockRadio radio;
+  auto *dev = make_level_heater(comp, radio);
+  radio.queue_rx(test::make_rx_packet(
+      build_level_status_response(comp.node_id_, heating_level_main_parameter(heating_level::ECO))));
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  EXPECT_EQ(radio.get_sent_data().front()[8], CMD_PRIVATE) << "the ordinary 0x03 status read, not a register read";
+  EXPECT_EQ(dev->heating.level, heating_level::ECO);
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id)) << "the heater cadence is armed";
+}
+
+TEST(HubOperations, AStatusMainParameterThatIsNotALevelLeavesTheLevelUnread) {
+  TestableComponent comp;
+  MockRadio radio;
+  auto *dev = make_level_heater(comp, radio);
+  radio.queue_rx(test::make_rx_packet(build_level_status_response(comp.node_id_, 0xC800)));
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(dev->heating.level, -1);
+}
+
+TEST(HubOperations, AFailedLevelHeaterPollMovesOntoTheRetryLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_level_heater(comp, radio);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubOperations, SetHeatingLevelSendsTheLevelInTheMainParameter) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_level_heater(comp, radio);
+  radio.queue_rx(test::make_rx_packet(
+      build_level_status_response(comp.node_id_, heating_level_main_parameter(heating_level::COMFORT))));
+
+  EXPECT_TRUE(comp.set_heating_level("ABC123", heating_level::COMFORT));
+
+  ASSERT_GE(radio.get_sent_data().size(), 1u);
+  const auto &tx = radio.get_sent_data().front();
+  EXPECT_EQ(tx[8], CMD_EXECUTE);
+  EXPECT_EQ(tx[11], 0xFC) << "main parameter high byte";
+  EXPECT_EQ(tx[12], heating_level::COMFORT);
+}
+
+TEST(HubOperations, ALevelHeaterIsNeverInTheMovementSettleLoop) {
+  TestableComponent comp;
+  MockRadio radio;
+  auto *dev = make_level_heater(comp, radio);
+  // Both replies say "moving" (no STATUS_STOPPED bit); a heater has no motion, so that must not
+  // start a series of follow-up polls.
+  const uint16_t mp = heating_level_main_parameter(heating_level::COMFORT);
+  radio.queue_rx(test::make_rx_packet(build_level_status_response(comp.node_id_, mp, /*flags=*/0x00)));
+
+  EXPECT_TRUE(comp.set_heating_level("ABC123", heating_level::COMFORT));
+  EXPECT_TRUE(dev->is_stopped) << "the heater is at rest whatever its flags byte says";
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "exactly one read-back poll is scheduled";
+
+  radio.queue_rx(test::make_rx_packet(build_level_status_response(comp.node_id_, mp, /*flags=*/0x00)));
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(dev->heating.level, heating_level::COMFORT);
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "the read-back ends the settle loop";
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubOperations, SetHeatingLevelRefusesARegisterHeaterAndACover) {
+  TestableComponent heater;
+  MockRadio heater_radio;
+  make_heater(heater, heater_radio);  // 52/1
+  EXPECT_FALSE(heater.set_heating_level("ABC123", heating_level::COMFORT));
+  EXPECT_TRUE(heater_radio.get_sent_data().empty());
+
+  TestableComponent cover;
+  MockRadio cover_radio;
+  setup_cover_component(cover, cover_radio);
+  EXPECT_FALSE(cover.set_heating_level("ABC123", heating_level::COMFORT));
+  EXPECT_TRUE(cover_radio.get_sent_data().empty());
 }
 
 // ========================================================================================

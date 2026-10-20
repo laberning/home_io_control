@@ -38,7 +38,7 @@ static constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS = 600000;
 /// Delay before the first post-boot status request from an entity.
 static constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS = 5000;
 /// Interval between regular polls of a heater (its `status_poll_interval` overrides it). Slow on
-/// purpose: a heater's state moves over minutes, and a poll costs four exchanges.
+/// purpose: a heater's state moves over minutes, and a poll costs one exchange per register.
 static constexpr uint32_t HEATING_POLL_DEFAULT_INTERVAL_MS = 300000;
 /// Delay before polling after overheard remote traffic.
 static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;

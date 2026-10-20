@@ -200,6 +200,23 @@ DEVICE_TYPE_OPTIONS = {
     "electrical_heater": 0x34,
 }
 
+# Heating profiles (proto_heating_profiles.cpp) that have a window sensor and an open-window
+# detection switch, as {io_device_type name: io_subtype}. climate.py generates those two companions
+# for exactly these devices; tests/sync/heating_profile_sync_test.cpp keeps the table in step with
+# the C++ profile features.
+HEATING_WINDOW_PROFILES = {
+    "electrical_heater": 1,
+}
+
+
+def heating_profile_has_window(device_type, subtype):
+    """True when the heating profile of (io_device_type value, io_subtype) has the window companions."""
+    return any(
+        DEVICE_TYPE_OPTIONS[name] == device_type and profile_subtype == subtype
+        for name, profile_subtype in HEATING_WINDOW_PROFILES.items()
+    )
+
+
 # Device-type names that were renamed. Each maps to the message the validator raises, so a config
 # that still uses one fails with the name to switch to rather than a generic "unknown name".
 RENAMED_DEVICE_TYPES = {

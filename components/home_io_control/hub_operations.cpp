@@ -3,6 +3,7 @@
 #include "hub_decisions.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
+#include "proto_heating_profiles.h"
 
 #include <cmath>
 #include <algorithm>
@@ -429,8 +430,9 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
     return false;
   }
 
-  // A heater has no 0x03 status: its state is a handful of private registers.
-  if (device_supports_climate_control(dev->type, dev->subtype))
+  // A heater with private registers has no 0x03 status: its state is a handful of registers.
+  const HeatingProfile *heating = find_heating_profile(dev->type, dev->subtype);
+  if (heating != nullptr && heating->path == HeatingControlPath::PRIVATE_REGISTERS)
     return this->poll_heating_device_(device_id);
 
   IoFrame request;
@@ -447,6 +449,10 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   // the one chance to catch a duty-cycled receiver, and the poll confirming an accepted STOP — see
   // decisions::scheduled_poll_max_tries(). A one-off poll with no ladder behind it keeps the full
   // retry budget.
+  // A heating-level heater is polled on the heater cadence with the same status read; its failure
+  // ladder needs a tracking window, which a cover only has after a command.
+  if (heating != nullptr && !this->poll_policy_.is_tracking_active(device_id, millis()))
+    this->begin_status_poll_tracking_(device_id, 0);
   const bool scheduler_managed = this->poll_policy_.is_tracking_active(device_id, millis());
   const uint32_t retry_after_fail_ms = scheduler_managed ? STATUS_RETRY_AFTER_FAIL_MS : 0;
   const uint8_t max_tries =
@@ -454,7 +460,13 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
                                                               this->poll_policy_.get_auth_poll_failures(device_id),
                                                               this->poll_policy_.take_stop_settle(device_id))
                         : EXCHANGE_RETRY_COUNT;
-  return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
+  const bool ok = this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
+  if (heating != nullptr) {
+    // The regular cadence continues whatever this poll found, as for a register heater.
+    const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
+    this->schedule_heating_poll_(device_id, configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS);
+  }
+  return ok;
 }
 
 bool IOHomeControlComponent::request_device_limitation(const std::string &device_id) {
@@ -589,6 +601,17 @@ bool IOHomeControlComponent::set_lock_state(const std::string &device_id, bool l
   return this->set_device_position(device_id, locked ? BINARY_ENTITY_OFF_POSITION : BINARY_ENTITY_ON_POSITION);
 }
 
+bool IOHomeControlComponent::set_heating_level(const std::string &device_id, uint8_t level) {
+  // The same funnel as the other execute-family operations: gate, frame, exchange, and a settle poll
+  // that reads the level back (see arm_execute_confirmation_poll_()).
+  return this->run_execute_operation_(
+      device_id, {"heating level", false},
+      [](const IoDevice &d) { return device_uses_heating_levels(d.type, d.subtype); }, "heating-level climate device",
+      [this, level](IoFrame &request, const IoDevice &d) {
+        return create_execute_heating_level(request, this->node_id_, d.node_id, d.low_power, level);
+      });
+}
+
 bool IOHomeControlComponent::exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request,
                                                IoFrame &response, uint8_t max_tries) {
   ESP_LOGI(detail::TAG, "Sending heating %s to device %s", label, device_id.c_str());
@@ -641,8 +664,8 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
     return false;
 
   // Capability gate: only via the predicate, never an inline device-type or vendor list.
-  if (!device_supports_climate_control(dev->type, dev->subtype)) {
-    detail::log_rejected_operation(device_id, *dev, "heating command", "climate device");
+  if (!device_uses_heating_registers(dev->type, dev->subtype)) {
+    detail::log_rejected_operation(device_id, *dev, "heating command", "heater with private registers");
     return false;
   }
 
@@ -672,8 +695,8 @@ bool IOHomeControlComponent::read_heating_register(const std::string &device_id,
   if (dev == nullptr || !this->initialized_)
     return false;
 
-  if (!device_supports_climate_control(dev->type, dev->subtype)) {
-    detail::log_rejected_operation(device_id, *dev, "heating read", "climate device");
+  if (!device_uses_heating_registers(dev->type, dev->subtype)) {
+    detail::log_rejected_operation(device_id, *dev, "heating read", "heater with private registers");
     return false;
   }
 
@@ -718,13 +741,12 @@ bool IOHomeControlComponent::read_heating_register(const std::string &device_id,
 }
 
 bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) {
-  // Registers one poll reads, in the order the entity needs them. The room temperature leads: it is
-  // the value a user looks at, so a poll that dies half-way still delivered it.
-  static constexpr HeatingFunction POLL_REGISTERS[] = {HeatingFunction::ROOM_TEMPERATURE,
-                                                       HeatingFunction::SET_TEMPERATURE, HeatingFunction::SET_MODE,
-                                                       HeatingFunction::REGULATOR_STATE};
   const IoDevice *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
+    return false;
+  // The registers one poll reads come from the device's profile, so there is no per-device list here.
+  const HeatingProfile *profile = find_heating_profile(dev->type, dev->subtype);
+  if (profile == nullptr || profile->path != HeatingControlPath::PRIVATE_REGISTERS)
     return false;
 
   // The failure ladder lives in StatusPollPolicy and only runs inside a tracking window. Open one
@@ -739,18 +761,20 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
                                                                 this->poll_policy_.get_auth_poll_failures(device_id));
 
   bool ok = true;
-  for (const HeatingFunction fn : POLL_REGISTERS) {
-    if (!this->read_heating_register(device_id, fn, nullptr, max_tries)) {
+  for (size_t i = 0; i < profile->poll_register_count; i++) {
+    if (!this->read_heating_register(device_id, profile->poll_registers[i], nullptr, max_tries)) {
       ok = false;
       break;
     }
   }
 
-  // The maximum setpoint is a fixed property of the heater: read it until it has been read once.
-  // A miss here is not a poll failure; the next poll asks again.
-  dev = this->get_device(device_id);
-  if (ok && dev != nullptr && std::isnan(dev->heating.max_setpoint_c))
-    this->read_heating_register(device_id, HeatingFunction::MAX_SETPOINT, nullptr, max_tries);
+  // Properties and settings that rarely change are read until they have been read once. A miss here
+  // is not a poll failure; the next poll asks again.
+  for (size_t i = 0; ok && i < profile->boot_register_count; i++) {
+    dev = this->get_device(device_id);
+    if (dev != nullptr && !dev->heating.has(profile->boot_registers[i]))
+      this->read_heating_register(device_id, profile->boot_registers[i], nullptr, max_tries);
+  }
 
   if (ok) {
     this->poll_policy_.clear(device_id);

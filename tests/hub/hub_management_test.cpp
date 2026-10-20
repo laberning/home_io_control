@@ -666,6 +666,22 @@ TEST(HubManagement, HeatingControlRejectsInvalidPresence) {
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
+TEST(HubManagement, HeatingControlSendsNothingToAHeatingLevelHeater) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::ELECTRICAL_HEATER;
+  dev->subtype = 0;
+  for (const char *function : {"power_on", "set_mode", "window_open"}) {
+    const auto result = component.heating_control("ABC123", function, "auto");
+    EXPECT_FALSE(result.success) << function;
+    EXPECT_EQ(result.message, "device is commanded with heating levels, not private registers") << function;
+  }
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
 TEST(HubManagement, HeatingControlRejectsInvalidOpenWindowDetection) {
   TestableManagementComponent component;
   MockRadio radio;
@@ -1523,14 +1539,14 @@ TEST(HubManagement, ScanPairedDevicesTypeWithoutPlatformIsReportedAsNotSupported
   MockRadio radio;
   setup_component(component, radio);
 
-  // Type 52 subtype 0 (the plain electrical heater): recognised and named, but no platform drives it.
-  const uint8_t payload[] = {0x0D, 0x00, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
+  // Type 22 subtype 0 (the heat pump): recognised and named, but no platform drives it.
+  const uint8_t payload[] = {0x05, 0x80, 0x41, 0x5C, 0xE5, 0x0C, 0xCC, 0x07, 0xEB};
   const uint8_t src[3] = {0x41, 0x5C, 0xE5};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
   const auto result = component.scan_paired_devices();
   ASSERT_TRUE(result.success);
-  EXPECT_NE(result.message.find("electrical heater"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("heat pump"), std::string::npos) << result.message;
   EXPECT_NE(result.message.find("not supported yet"), std::string::npos) << result.message;
   EXPECT_EQ(result.message.find("io_device_id"), std::string::npos) << "no snippet for a type without a platform";
 }

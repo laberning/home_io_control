@@ -29,10 +29,18 @@ class MockHubClimate : public test::MockPlatformHubBase {
   bool send_result{true};
   /// Registers read through read_heating_register(), in order.
   std::vector<HeatingFunction> reads;
+  /// Heating levels sent through set_heating_level(), in order.
+  std::vector<uint8_t> levels;
+  bool level_result{true};
   /// The try cap each read was asked with.
   std::vector<uint8_t> read_tries;
   /// What the heater answers a read with; a register not listed here does not answer.
   std::map<HeatingFunction, float> read_replies;
+
+  bool set_heating_level(const std::string & /*device_id*/, uint8_t level) override {
+    this->levels.push_back(level);
+    return this->level_result;
+  }
 
   bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
                              uint8_t max_tries) override {
@@ -226,15 +234,18 @@ TEST(PlatformClimate, NonClimateDeviceBindingIsRejectedInSetup) {
 
 TEST(PlatformClimate, ClimateTypeWithoutAPlatformIsRejectedInSetup) {
   MockHubClimate hub;
-  // A heater without the adjustable-setpoint subtype and a heating interface are climate-class
-  // types, but the heating payloads fit neither.
-  IOHomeClimate plain_heater = make_bound_climate(hub, DeviceType::ELECTRICAL_HEATER, 0);
-  plain_heater.setup();
-  EXPECT_TRUE(plain_heater.is_failed()) << "an electrical heater without io_subtype: 1 is not driven by this entity";
+  // A heat pump and a heating interface are climate-class types with no heating profile yet.
+  IOHomeClimate heat_pump = make_bound_climate(hub, DeviceType::HEAT_PUMP, 0);
+  heat_pump.setup();
+  EXPECT_TRUE(heat_pump.is_failed()) << "a heat pump has no heating profile";
 
   IOHomeClimate interface = make_bound_climate(hub, DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
   interface.setup();
   EXPECT_TRUE(interface.is_failed());
+
+  IOHomeClimate plain_heater = make_bound_climate(hub, DeviceType::ELECTRICAL_HEATER, 0);
+  plain_heater.setup();
+  EXPECT_FALSE(plain_heater.is_failed()) << "the plain electrical heater is driven with heating levels";
 }
 
 TEST(PlatformClimate, SystemKeyOptionReachesTheRegisteredDevice) {
@@ -357,7 +368,7 @@ TEST(PlatformClimate, ObservedModesMapToHvacModesAndTheProgramPreset) {
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
   EXPECT_FALSE(entity.has_custom_preset()) << "leaving program mode drops the Program preset";
 
-  deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::EXTERNAL); });
+  deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::EXTERNAL_SETPOINT); });
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "an external setpoint is shown as heat";
 
   deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::OFF); });
@@ -496,4 +507,199 @@ TEST(PlatformClimate, SetupPollsTheHeaterLikeTheOtherPlatforms) {
   entity.set_status_poll_interval(120000);
   entity.setup();
   EXPECT_EQ(hub.poll_policy_.get_interval("ABC123"), 120000u);
+}
+
+// ========================================================================================
+// Traits come from the heating profile
+// ========================================================================================
+
+namespace {
+
+std::vector<ClimateMode> supported_modes(const ClimateTraits &traits) {
+  std::vector<ClimateMode> modes;
+  for (const ClimateMode mode : {CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT_COOL, CLIMATE_MODE_COOL, CLIMATE_MODE_HEAT,
+                                 CLIMATE_MODE_FAN_ONLY, CLIMATE_MODE_DRY, CLIMATE_MODE_AUTO}) {
+    if (traits.supports_mode(mode))
+      modes.push_back(mode);
+  }
+  return modes;
+}
+
+std::vector<ClimatePreset> supported_presets(const ClimateTraits &traits) {
+  std::vector<ClimatePreset> presets;
+  for (const ClimatePreset preset :
+       {CLIMATE_PRESET_NONE, CLIMATE_PRESET_HOME, CLIMATE_PRESET_AWAY, CLIMATE_PRESET_BOOST, CLIMATE_PRESET_COMFORT,
+        CLIMATE_PRESET_ECO, CLIMATE_PRESET_SLEEP, CLIMATE_PRESET_ACTIVITY}) {
+    if (traits.supports_preset(preset))
+      presets.push_back(preset);
+  }
+  return presets;
+}
+
+IOHomeClimate make_level_climate(MockHubClimate &hub) {
+  return make_bound_climate(hub, DeviceType::ELECTRICAL_HEATER, 0);
+}
+
+}  // namespace
+
+TEST(PlatformClimate, SetpointHeaterTraitsAreExactlyTheProfile) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();
+  const ClimateTraits traits = entity.traits();
+
+  EXPECT_EQ(supported_modes(traits),
+            (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT, CLIMATE_MODE_AUTO}));
+  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_HOME, CLIMATE_PRESET_AWAY}));
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Program"}));
+  EXPECT_TRUE(traits.get_supports_current_temperature());
+  EXPECT_TRUE(traits.get_supports_action());
+}
+
+TEST(PlatformClimate, LevelHeaterTraitsAreExactlyTheProfile) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+  ASSERT_FALSE(entity.is_failed());
+  const ClimateTraits traits = entity.traits();
+
+  EXPECT_EQ(supported_modes(traits), (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT}));
+  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_AWAY, CLIMATE_PRESET_BOOST,
+                                                                   CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}));
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Comfort -1", "Comfort -2", "Secured"}));
+  EXPECT_FALSE(traits.get_supports_current_temperature()) << "a level heater reports no temperature";
+  EXPECT_FALSE(traits.get_supports_action());
+}
+
+TEST(PlatformClimate, ATypeNotKnownYetOffersOnlyOff) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub, DeviceType::UNKNOWN, 0);
+  entity.setup();
+  EXPECT_EQ(supported_modes(entity.traits()), (std::vector<ClimateMode>{CLIMATE_MODE_OFF}));
+
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  EXPECT_TRUE(hub.calls.empty());
+  EXPECT_TRUE(hub.levels.empty());
+}
+
+// ========================================================================================
+// Heating-level control path
+// ========================================================================================
+
+TEST(PlatformClimate, LevelHeaterModesSendLevelsAndNeverRegisters) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+
+  perform_mode(entity, CLIMATE_MODE_OFF);
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+
+  EXPECT_EQ(hub.levels, (std::vector<uint8_t>{heating_level::OFF, heating_level::COMFORT}));
+  EXPECT_TRUE(hub.calls.empty()) << "no register write for a heater commanded with levels";
+  EXPECT_TRUE(hub.reads.empty()) << "the hub's settle poll reads the level, not the entity";
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "the commanded mode stands in until a level has been read";
+}
+
+TEST(PlatformClimate, LevelHeaterPresetsSendTheirLevels) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+
+  for (const ClimatePreset preset :
+       {CLIMATE_PRESET_AWAY, CLIMATE_PRESET_ECO, CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_BOOST}) {
+    auto call = entity.make_call();
+    call.set_preset(preset);
+    call.perform();
+  }
+  for (const char *name : {"Comfort -1", "Comfort -2"}) {
+    auto call = entity.make_call();
+    call.set_preset(std::string(name));
+    call.perform();
+  }
+
+  EXPECT_EQ(hub.levels, (std::vector<uint8_t>{heating_level::FROST_PROTECTION, heating_level::ECO,
+                                              heating_level::COMFORT, heating_level::BOOST,
+                                              heating_level::COMFORT_MINUS_1, heating_level::COMFORT_MINUS_2}));
+  EXPECT_EQ(entity.get_custom_preset(), "Comfort -2");
+}
+
+TEST(PlatformClimate, TheSecuredPresetIsShownButNeverCommanded) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+
+  auto call = entity.make_call();
+  call.set_preset(std::string("Secured"));
+  call.perform();
+  EXPECT_TRUE(hub.levels.empty());
+  EXPECT_FALSE(entity.has_custom_preset());
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_level::SECURED; });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+  EXPECT_EQ(entity.get_custom_preset(), "Secured");
+}
+
+TEST(PlatformClimate, ALevelHeaterIgnoresATargetTemperature) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+  auto call = entity.make_call();
+  call.set_target_temperature(21.0F);
+  call.perform();
+  EXPECT_TRUE(hub.calls.empty());
+  EXPECT_TRUE(hub.levels.empty());
+  EXPECT_EQ(entity.publish_count_, 0);
+}
+
+TEST(PlatformClimate, AFailedLevelWriteShowsNothing) {
+  MockHubClimate hub;
+  hub.level_result = false;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  EXPECT_EQ(hub.levels.size(), 1u);
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
+  EXPECT_EQ(entity.publish_count_, 0);
+}
+
+TEST(PlatformClimate, ObservedLevelsDriveModeAndPreset) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_level::ECO; });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO);
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_level::COMFORT_MINUS_1; });
+  EXPECT_EQ(entity.get_custom_preset(), "Comfort -1");
+  EXPECT_FALSE(entity.preset.has_value()) << "a custom preset replaces the standard one";
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_level::BOOST; });
+  EXPECT_FALSE(entity.has_custom_preset());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_level::OFF; });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
+  EXPECT_FALSE(entity.preset.has_value());
+  EXPECT_FALSE(entity.has_custom_preset());
+
+  const int published = entity.publish_count_;
+  deliver_readings(hub, [](HeatingReadings &r) { r.level = 0x20; });  // a level nobody defined
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
+  EXPECT_EQ(entity.publish_count_, published);
+}
+
+TEST(PlatformClimate, ALevelHeaterNeverShowsAnActionOrTemperature) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.level = heating_level::COMFORT;
+    r.room_temperature_c = 20.0F;  // not part of this profile; must not leak onto the card
+    r.regulator = 2;
+  });
+  EXPECT_TRUE(std::isnan(entity.current_temperature));
+  EXPECT_EQ(entity.action, CLIMATE_ACTION_OFF);
 }
