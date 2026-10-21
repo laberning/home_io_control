@@ -1,0 +1,50 @@
+id: atlantic_agilia_exchange_presence_write
+description: >
+  Home Assistant's home and away presets sent to an Atlantic AGILIA IO radiator's heater (B6BDFC, type
+  52 subtype 1) while the radiator is in AUTO. Each preset is an authenticated CMD_WRITE_PRIVATE (0x20)
+  `0C 61 01 10 <value>` to register 0x0110 (presence: 1 = someone is in the room, 0 = nobody), and the
+  heater acknowledges each with a CMD_WRITE_PRIVATE_ACK (0x21) echoing the whole write at the first
+  try. The radiator's display shows no change when either arrives, which matches the radiator's manual:
+  in AUTO an absence lowers the working temperature only after half an hour.
+
+  The challenge frames (0x3C from the heater 30 ms after each 0x20, our 0x3D with preamble 8) were
+  masked in the reporter's log and are omitted.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model), radiator 1: heater B6BDFC"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with the direct heater read after a key pull"
+  date: 2026-10-21
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4D 00 B6 BD FC 60 F8 23 20 0C 61 01 10 01"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20), write register 0x0110 (presence) = 1 (home), preamble 48"
+  - dir: rx
+    t_ms: 69
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 61 01 10 01"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE_ACK(0x21), echoes the write. rssi -47"
+  - dir: tx
+    t_ms: 14746
+    freq: 868950000
+    hex: "4D 00 B6 BD FC 60 F8 23 20 0C 61 01 10 00"
+    crc: absent
+    note: "write register 0x0110 (presence) = 0 (away)"
+  - dir: rx
+    t_ms: 14814
+    freq: 868950000
+    hex: "8D 00 60 F8 23 B6 BD FC 21 0C 61 01 10 00"
+    crc: absent
+    note: "ack echoes the write"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

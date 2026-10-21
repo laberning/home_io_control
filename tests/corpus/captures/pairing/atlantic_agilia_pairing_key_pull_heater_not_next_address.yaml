@@ -1,0 +1,152 @@
+id: atlantic_agilia_pairing_key_pull_heater_not_next_address
+description: >
+  A Discover & Pair of an Atlantic AGILIA IO radiator right after the reporter deleted all its
+  connections from the radiator's Expert menu. Before the reset this radiator paired as B6BDFB with
+  its heater at B6BDFC; afterwards it answers discovery as D6BC6C (node type FF C0, 1023, remote
+  controller) and hands over a new key (key check value 3D05C0, proven by its 0x3D). The hub reads the
+  maximum-setpoint register of D6BC6D, the pairing address + 1, and gets no answer in three tries, so
+  it runs a roll-call under the pulled key. The heater answers it from F519DD, an address unrelated to
+  the pairing node, as type 52 subtype 1 (electrical heater with an adjustable setpoint, Atlantic,
+  always alive), in two of the six attempts. The hub registers F519DD and prints its climate block; the
+  reporter flashed it and controls the radiator through F519DD. The whole attempt took 21.1 s.
+
+  Only the first 0x2B carries expectations: the roll-call replay suite expects one reply per device per
+  capture, and the later frames are kept for the timing. The 0x32 (16-byte encrypted key), our 0x3C and
+  the radiator's 0x3D were masked in the reporter's log and are omitted; the notes say where they sat.
+  Timestamps are the hub's own pairing-attempt summary offsets, rebased to the first 0x28; each 0x2B is
+  placed at the offset after its 0x2A that the hub logged. The 0x2A frames carry a MAC under the
+  radiator's key, which is not recoverable from them; the key itself is in no frame here.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model), radiator 1 after a connection reset: pairing node D6BC6C, heater F519DD"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with the direct heater read after a key pull"
+  date: 2026-10-21
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B 60 F8 23 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28) to 00003B, preamble 1024, attempt 1/3: no answer"
+  - dir: tx
+    t_ms: 2232
+    freq: 868950000
+    hex: "C8 00 00 00 3B 60 F8 23 28"
+    crc: absent
+    note: "0x28 attempt 2/3: no answer"
+  - dir: tx
+    t_ms: 4465
+    freq: 868950000
+    hex: "C8 00 00 00 3B 60 F8 23 28"
+    crc: absent
+    note: "0x28 attempt 3/3"
+  - dir: rx
+    t_ms: 5521
+    freq: 868250000
+    hex: "D1 00 60 F8 23 D6 BC 6C 29 FF C0 D6 BC 6C 0C CC 00 00"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29) from D6BC6C: node type FF C0 = 1023 (remote controller), backbone D6BC6C, manufacturer 12 (Atlantic Group), flags 0xCC. A new address: this radiator answered as B6BDFB before the reset. rssi -45"
+  - dir: tx
+    t_ms: 5557
+    freq: 868950000
+    hex: "48 00 D6 BC 6C 60 F8 23 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), preamble 48"
+  - dir: rx
+    t_ms: 5571
+    freq: 868950000
+    hex: "88 00 60 F8 23 D6 BC 6C 2D"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM_ACK(0x2D), 14 ms after the 0x2C. rssi -48"
+  - dir: tx
+    t_ms: 5904
+    freq: 868950000
+    hex: "4E 04 D6 BC 6C 60 F8 23 38 2B E9 F0 75 CE 44"
+    crc: absent
+    note: "cmd=LAUNCH_KEY_TRANSFER(0x38), preamble 48. The radiator answered at t=5921 with KEY_TRANSFER(0x32, 18 04, 16 bytes masked); we challenged it at t=5940 (0x3C, masked) and its 0x3D (8E 00, masked) verified under the decrypted key: key check value 3D05C0, a new key (it was A91125 before the reset)."
+  - dir: tx
+    t_ms: 5982
+    freq: 868950000
+    hex: "4C 00 D6 BC 6D 60 F8 23 20 0C 60 01 02"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20) to D6BC6D (pairing node + 1), read register 0x0102 (maximum setpoint), try 1/3: no first response within 400 ms"
+  - dir: tx
+    t_ms: 6659
+    freq: 868950000
+    hex: "4C 00 D6 BC 6D 60 F8 23 20 0C 60 01 02"
+    crc: absent
+    note: "read try 2/3: no answer"
+  - dir: tx
+    t_ms: 7336
+    freq: 868950000
+    hex: "4C 00 D6 BC 6D 60 F8 23 20 0C 60 01 02"
+    crc: absent
+    note: "read try 3/3: no answer; the hub falls back to a roll-call under the pulled key"
+  - dir: tx
+    t_ms: 7973
+    freq: 868950000
+    hex: "D4 30 00 00 3B 60 F8 23 2A C2 5C F4 FB 3C B6 FF C7 C3 71 60 05"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_REQ(0x2A) under the pulled key, attempt 1/6 (low-power pass, CTRL1 0x30), preamble 1024: no reply"
+  - dir: tx
+    t_ms: 10207
+    freq: 868250000
+    hex: "D4 30 00 00 3B 60 F8 23 2A EF D6 B7 19 2D D9 A9 23 E9 80 A3 4E"
+    crc: absent
+    note: "0x2A attempt 2/6 (low-power pass): no reply"
+  - dir: tx
+    t_ms: 12442
+    freq: 869850000
+    hex: "D4 30 00 00 3B 60 F8 23 2A 01 7D AD CF AD E6 4B 37 68 91 D7 5C"
+    crc: absent
+    note: "0x2A attempt 3/6 (low-power pass): no reply"
+  - dir: tx
+    t_ms: 14475
+    freq: 868950000
+    hex: "D4 00 00 00 3B 60 F8 23 2A 7E D2 70 4D 49 B8 EB 1A 15 7D 07 2D"
+    crc: absent
+    note: "0x2A attempt 4/6 (always-alive pass, CTRL1 0x00, preamble 48)"
+  - dir: rx
+    t_ms: 15085
+    freq: 869850000
+    hex: "D1 00 60 F8 23 F5 19 DD 2B 0D 01 F5 19 DD 0C CC 3F 80"
+    crc: absent
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from F519DD: type 0x34 (52, electrical heater), subtype 1, backbone F519DD, Atlantic, flags 0xCC. Not the pairing address + 1. +610 ms, received on 869.85 MHz. rssi -41"
+  - dir: tx
+    t_ms: 16506
+    freq: 868250000
+    hex: "D4 00 00 00 3B 60 F8 23 2A FC 13 D9 9C 31 C3 01 93 13 D8 EF BF"
+    crc: absent
+    note: "0x2A attempt 5/6 (always-alive pass): no reply"
+  - dir: tx
+    t_ms: 18540
+    freq: 869850000
+    hex: "D4 00 00 00 3B 60 F8 23 2A 50 83 53 F9 CA 7B 1F F7 52 0C 20 97"
+    crc: absent
+    note: "0x2A attempt 6/6 (always-alive pass)"
+  - dir: rx
+    t_ms: 19478
+    freq: 868250000
+    hex: "D1 00 60 F8 23 F5 19 DD 2B 0D 01 F5 19 DD 0C CC 3F 84"
+    crc: absent
+    note: "0x2B from F519DD again, +938 ms, on 868.25 MHz. The last two bytes advance by one per second (3F 80 -> 3F 84 over 4.4 s). rssi -40"
+expect:
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x38, start: true, end: false, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2A, start: true, end: true, protocol: 2w}
+    - {cmd: 0x2B, start: true, end: true, protocol: 2w}

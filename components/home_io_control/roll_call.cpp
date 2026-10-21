@@ -249,7 +249,7 @@ std::string build_hub_key_pull_report(const PulledKeyReportInfo &info, const Sca
   std::string report = "Device " + info.pairing_device_id + " (" + format_device_kind(info.type, info.subtype) + ", " +
                        format_device_ids(info.type, info.subtype) +
                        ") answered the key pull with this hub's own key. " + std::to_string(state.count) + " device" +
-                       (state.count == 1 ? "" : "s") + " that hold it answered:\n";
+                       (state.count == 1 ? " that holds" : "s that hold") + " it answered:\n";
   const RollCallReplyKeys keys{info.hub_key, info.hub_key, false};
   for (uint8_t i = 0; i < state.count; i++) {
     const std::string device_id = node_id_to_string(state.responders[i].src);
@@ -276,8 +276,8 @@ std::string build_pulled_key_report(const PulledKeyReportInfo &info, const ScanS
               "    system_key: \"" +
               key_hex + "\"\n";
   } else {
-    report += std::to_string(state.count) + " device" + (state.count == 1 ? "" : "s") +
-              " that hold it answered. Paste a block per device:\n";
+    report += std::to_string(state.count) + " device" + (state.count == 1 ? " that holds" : "s that hold") +
+              " it answered. Paste a block per device:\n";
     const RollCallReplyKeys keys{info.key, info.hub_key, true};
     for (uint8_t i = 0; i < state.count; i++) {
       const std::string device_id = node_id_to_string(state.responders[i].src);

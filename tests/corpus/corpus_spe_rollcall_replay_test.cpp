@@ -59,10 +59,12 @@ constexpr ExpectedResponder EXPECTED_RESPONDERS[] = {
     // velux_klr300: ATT class 2 / 3, power-save low-power, backbone 00 00 00.
     {{0x15, 0x5D, 0x81}, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_VELUX, 0x8D, {0x00, 0x00, 0x00}},
     {{0x56, 0x22, 0x92}, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_VELUX, 0xCD, {0x00, 0x00, 0x00}},
-    // atlantic_agilia: the heater of each radiator, one address above the node that paired; electrical
-    // heater with an adjustable setpoint, ATT class 3, always alive, backbone == src.
+    // atlantic_agilia: the heater of each radiator, one address above the node that paired on a radiator
+    // as delivered; electrical heater with an adjustable setpoint, ATT class 3, always alive, backbone == src.
     {{0xB6, 0xBD, 0xFC}, DeviceType::ELECTRICAL_HEATER, 1, MANUFACTURER_ATLANTIC_GROUP, 0xCC, {0xB6, 0xBD, 0xFC}},
     {{0x98, 0x61, 0x11}, DeviceType::ELECTRICAL_HEATER, 1, MANUFACTURER_ATLANTIC_GROUP, 0xCC, {0x98, 0x61, 0x11}},
+    // The same radiator as B6BDFC after a connection reset: its heater moved to an unrelated address.
+    {{0xF5, 0x19, 0xDD}, DeviceType::ELECTRICAL_HEATER, 1, MANUFACTURER_ATLANTIC_GROUP, 0xCC, {0xF5, 0x19, 0xDD}},
 };
 
 const ExpectedResponder *find_expected_responder(const uint8_t src[NODE_ID_SIZE]) {

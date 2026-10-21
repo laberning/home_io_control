@@ -55,11 +55,11 @@ home_io_control:
 Some devices keep a key of their own and refuse a pushed one. An Atlantic AGILIA IO radiator in its
 display's pairing mode answers discovery as a remote controller, so `pairing_key_transfer: auto`
 (the default, see [Radio tuning](configuration/tuning.md#pairing_key_transfer)) pulls its key
-instead of pushing yours. After the device proves the key, the hub calls a roll-call under it and
-logs one report between a `DEVICE KEY RECEIVED -- DO NOT SHARE IT` line and an
-`END OF DEVICE KEY REPORT` line. For an AGILIA the roll-call finds the heater at the next address
-up; [Atlantic AGILIA IO](devices/atlantic-agilia-io.md#pairing-a-radiator) has the radiator's menu
-steps. Each device gets a paste-ready block that includes its own `system_key:`:
+instead of pushing yours. After the device proves the key, the hub reads the address after the
+pairing node, where an AGILIA's heater usually sits, and runs a roll-call under the key when that read
+gets no answer. It logs one report between a `DEVICE KEY RECEIVED -- DO NOT SHARE IT` line and an
+`END OF DEVICE KEY REPORT` line. [Atlantic AGILIA IO](devices/atlantic-agilia-io.md#pairing-a-radiator)
+has the radiator's menu steps. Each device gets a paste-ready block that includes its own `system_key:`:
 
 ```
   climate:
@@ -139,7 +139,7 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; 
 |-------|---------|
 | `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, `key_transfer_refused` (the device answered the key with an error, see the advisor), `key_received` (a key pull got a different key and the device proved it, but no device that holds it could be registered; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)), or `hub_key_returned` (a key pull got the hub's own key from a node no platform drives, and no device that holds the key answered). |
 | `phase` | The furthest stage the pairing state machine reached. |
-| `node` / `type` | The paired device's node ID and type, or `-` if nothing was paired. |
+| `node` / `type` | The node ID and type of the device that answered discovery, or `-` if nothing was paired. After a key pull this is the node that handed the key over; an AGILIA's heater appears only in the log report. |
 | `attempts` | Number of discovery command retries sent. |
 | `lbt` | Listen-before-talk retries consumed across the whole attempt; a channel-busy indicator. |
 | `dur_ms` | Attempt duration in milliseconds. |

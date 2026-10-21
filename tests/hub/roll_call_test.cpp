@@ -63,6 +63,17 @@ TEST(PulledKeyReport, OneBannerFramesEveryResponderBlock) {
   EXPECT_NE(report.find("END OF DEVICE KEY REPORT"), std::string::npos);
 }
 
+TEST(PulledKeyReport, OneResponderIsCountedInTheSingular) {
+  ScanState state{};
+  const uint8_t heater[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
+  add_reply(state, heater, 0x0D, 0x01);  // 52/1
+  DeviceRegistry registry;
+
+  const std::string report = build_pulled_key_report(report_info(), state, registry);
+
+  EXPECT_NE(report.find("1 device that holds it answered"), std::string::npos);
+}
+
 TEST(PulledKeyReport, AResponderWithoutAPlatformGetsTheNotSupportedLineAndTheKey) {
   ScanState state{};
   const uint8_t src[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
@@ -135,6 +146,7 @@ TEST(HubKeyPullReport, ListsTheResponderBlocksWithoutAKeyOrABanner) {
   const std::string report = build_hub_key_pull_report(info, state, registry);
 
   EXPECT_NE(report.find("answered the key pull with this hub's own key"), std::string::npos);
+  EXPECT_NE(report.find("1 device that holds it answered"), std::string::npos);
   EXPECT_NE(report.find("  climate:\n"), std::string::npos);
   EXPECT_NE(report.find("io_device_id: \"B6BDFC\""), std::string::npos);
   EXPECT_EQ(report.find("system_key"), std::string::npos) << "the device uses the hub key";

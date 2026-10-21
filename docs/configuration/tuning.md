@@ -656,7 +656,7 @@ What happens next depends on that check:
   Scan Paired Devices.
 - The device sent a different key and proved it: the hub looks for the devices that hold that key
   and registers every one that has a platform, carrying the pulled key as its own until you reboot.
-  For an AGILIA that is the heater at the next address up, not the node that handed the key over. The log prints one report, framed by a single `DO NOT SHARE IT` banner,
+  For an AGILIA that is the heater, usually at the next address up, not the node that handed the key over. The log prints one report, framed by a single `DO NOT SHARE IT` banner,
   with a paste-ready block per device that includes `system_key:`. The attempt ends as `paired` when
   at least one device was registered. With no device registered it ends as `key_received`, the log
   prints the key once, and the advisor reports `pulled_key_received`. The key appears in the device

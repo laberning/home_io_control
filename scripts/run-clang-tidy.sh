@@ -111,7 +111,17 @@ sed -e "$RESPONSE_FILE_INLINE_EXPR" \
     -e 's/ -fstrict-volatile-bitfields//g' \
     -e 's/ -freorder-blocks//g' \
     -e 's/ -fno-jump-tables//g' \
+    -e 's/ -Winvalid-pch//g' \
+    -e 's/ -include [^ ]*cmake_pch\.hxx[^ ]*//g' \
   "$COMPILE_DB" > "$RAW_DB"
+
+# CMake's precompiled header: newer ESPHome images build the ESP-IDF project with a GCC PCH and add
+# `-Winvalid-pch -include .../cmake_pch.hxx` to every compile command. Clang rejects the GCC `.gch`
+# next to it (clang-diagnostic-ignored-gch), then reads the header as text and fails on its
+# `/config/...` include, a container path the rewrite below never sees because it sits inside the
+# file. The prefix header only speeds the build up, so both flags are dropped above. The database
+# also holds the command that builds the PCH itself; the reduction to project sources below drops
+# it, and the check after that reduction catches a new spelling of the flag.
 
 # Translate Docker paths to host paths
 HOST_CONFIG_DIR="$REPO_ROOT/config"
@@ -183,6 +193,12 @@ echo "==> Reducing compile_commands.json to project sources..."
     ' "$RAW_DB"
   printf ']\n'
 } > "$FILTERED_DB"
+
+if grep -q 'cmake_pch' "$FILTERED_DB"; then
+  echo "ERROR: a project compile command still references cmake_pch after filtering:"
+  grep -o -m1 -E '.{60}cmake_pch.{20}' "$FILTERED_DB" || true
+  exit 1
+fi
 
 RETAINED_COUNT=$(grep -c '"file": "' "$FILTERED_DB" || true)
 echo "Retained ${RETAINED_COUNT} project translation units"

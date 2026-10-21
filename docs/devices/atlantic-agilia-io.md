@@ -16,22 +16,49 @@ platform; see [Heating and climate](../configuration/climate.md) for every optio
 | Room temperature | ✅ Confirmed |
 | Heating / idle | ✅ Confirmed; follows a change from Home Assistant at the poll 45 seconds later, other changes at the regular poll (every 5 minutes by default) |
 | Maximum setpoint | ✅ Confirmed — the radiator reports 28.0 °C |
-| `home` / `away` presets | ❓ Not tested yet |
-| `Window` sensor and `Open Window Detection` switch | ⚠️ Both read back (window closed, detection on); opening a window and switching detection off are not tested yet |
+| `home` / `away` presets | ⚠️ The radiator acknowledges both; no visible change on the display yet (in AUTO, the manual describes a gradual reduction after half an hour away) |
+| `Window` sensor | ✅ Confirmed — turns on when a window near the radiator is opened |
+| `Open Window Detection` switch | ⚠️ Reads back the radiator's setting; switching detection off from Home Assistant is not tested yet |
+
+## Modes in Home Assistant
+
+The radiator has three operating modes, described in its
+[installation manual](https://www.atlanticheat.co.uk/assets/uploads/general/Agilia_IO_Digital_Installation_Manual_no-lines.pdf).
+Home Assistant has no mode for a weekly program, so the program mode appears as `auto` with the
+`Program` preset:
+
+| Radiator display | Home Assistant |
+|---|---|
+| BASIC — holds the set temperature, smart functions off | `heat` |
+| AUTO — learns when the room is used and adjusts the temperature | `auto`, no preset |
+| PROG — follows the radiator's weekly program | `auto` with the `Program` preset |
+| Off | `off` |
+
+Choosing the `Program` preset switches the radiator to PROG; choosing `heat` or `off` leaves it.
+The weekly program itself is edited on the radiator.
 
 ## How a radiator appears on the radio
 
-Each radiator answers as two io-homecontrol nodes, one address apart:
+Each radiator answers as two io-homecontrol nodes:
 
 - The **pairing node** answers Discover & Pair. It presents itself as a remote controller (node type
   1023), refuses a key from the hub, and hands over its own key instead.
-- The **heater** sits at the next address up (pairing node + 1). It is an electrical heater with an
-  adjustable setpoint (node type 52, subtype 1), and it is the node your `climate:` entry controls.
+- The **heater** is an electrical heater with an adjustable setpoint (node type 52, subtype 1), and
+  it is the node your `climate:` entry controls. On a radiator as delivered it sits at the next
+  address up (pairing node + 1).
 
-All three radiators follow this pattern, and each has a key of its own. The hub handles both points
-for you: Discover & Pair pulls the key, reads the heater at the next address under that key, and
-prints a block for the heater with that key in it. If the heater does not answer that read, the hub
-looks for it with a roll-call instead.
+Each radiator has a key of its own. The hub handles both points for you: Discover & Pair pulls the
+key, reads the heater at the next address under that key, and prints a block for the heater with
+that key in it. If the heater does not answer that read, the hub looks for it with a roll-call
+instead, which takes about 20 seconds.
+
+## Resetting a radiator's connections
+
+The radiator's Expert menu (hold both arrow keys for more than 3 seconds) can delete all its
+connections. That gives the radiator a new key and new addresses for both nodes, and the new heater
+address is unrelated to the new pairing address. Your existing `climate:` entry for it stops working: pair
+the radiator again and replace the entry with the new block. The hub finds the heater with its
+roll-call, so this pairing takes about 20 seconds.
 
 ## Pairing a radiator
 
@@ -84,7 +111,7 @@ climate:
     system_key: !secret bedroom_radiator_key
 ```
 
-`io_device_id` is the heater's address, the pairing address + 1, as the printed block shows it. Give
+`io_device_id` is the heater's address as the printed block shows it. Give
 every radiator its own entry with its own `system_key:`.
 
 ## Known quirks

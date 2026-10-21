@@ -565,6 +565,13 @@ void queue_roll_call_reply_after_probe(MockRadio &radio, const uint8_t dst[NODE_
   radio.queue_rx(to_packet(heater_roll_call_reply(dst)));
 }
 
+/// Queue `reply` behind the direct probe of a foreign-key pull, as queue_roll_call_reply_after_probe().
+void queue_roll_call_reply_after_probe(MockRadio &radio, const IoFrame &reply) {
+  constexpr int SENDS_BEFORE_ROLL_CALL = 7;
+  radio.queue_rx_hold_until_sent(SENDS_BEFORE_ROLL_CALL + 1);
+  radio.queue_rx(to_packet(reply));
+}
+
 /// A frame from the heater at the address after the pairing node.
 IoFrame heater_frame(const uint8_t dst[NODE_ID_SIZE], uint8_t cmd, const uint8_t *data, uint8_t len) {
   IoFrame f{};
@@ -766,6 +773,32 @@ TEST(PairingKeyPullFlow, AnAgiliaHeaterThatAnswersTheProbeIsRegisteredWithoutARo
   uint8_t expected[HMAC_SIZE];
   ASSERT_TRUE(challenge_resp_hmac(reads[0], HEATER_CHALLENGE, OTHER_KEY, expected));
   EXPECT_EQ(0, memcmp(answers[0].data, expected, HMAC_SIZE)) << "the probe is signed with the pulled key";
+}
+
+TEST(PairingKeyPullFlow, AHeaterAwayFromTheNextAddressIsFoundByTheRollCall) {
+  // As in tests/corpus/captures/pairing/atlantic_agilia_pairing_key_pull_heater_not_next_address.yaml:
+  // after a connection reset the heater answers at an address unrelated to the pairing node.
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  constexpr uint8_t MOVED_HEATER[NODE_ID_SIZE] = {0xF5, 0x19, 0xDD};
+  IoFrame reply = heater_roll_call_reply(comp.node_id_);
+  set_src(reply, MOVED_HEATER);
+  memcpy(reply.data + 2, MOVED_HEATER, NODE_ID_SIZE);  // the backbone repeats the source
+  queue_roll_call_reply_after_probe(radio, reply);
+
+  EXPECT_TRUE(comp.discover_and_pair());
+
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+  const IoDevice *heater = comp.get_device("F519DD");
+  ASSERT_NE(heater, nullptr);
+  EXPECT_EQ(heater->type, DeviceType::ELECTRICAL_HEATER);
+  ASSERT_TRUE(heater->has_system_key);
+  EXPECT_EQ(0, memcmp(heater->system_key, OTHER_KEY, AES_KEY_SIZE));
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr) << "the silent next address is not registered";
+  EXPECT_EQ(sent_frames_of(radio, CMD_WRITE_PRIVATE).size(), 3u) << "three tries at the next address first";
 }
 
 TEST(PairingKeyPullFlow, AHubKeyPullFindsTheHeaterByTheProbe) {
