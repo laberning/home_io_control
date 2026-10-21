@@ -1,0 +1,89 @@
+id: atlantic_agilia_pairing_key_pull_heater_direct_read
+description: >
+  A Discover & Pair of an Atlantic AGILIA IO radiator that finds its heater with one register read
+  instead of a roll-call. The radiator is in its display's pairing mode ("Connectivité" ->
+  "Connexion") and answers the third discovery request from B6BDFB as node type FF C0 (1023, remote
+  controller), so the hub pulls the key: our 0x38 draws a 0x32 holding the radiator's own key, and the
+  radiator's 0x3D to our 0x3C proves it (key check value A91125, the same as two earlier pulls of this
+  radiator). The hub then reads the maximum-setpoint register of B6BDFC, the pairing address + 1, under
+  that key. The heater challenges the read and answers 28.0 C, so the hub registers B6BDFC and prints
+  its climate block without a roll-call. The whole attempt took 6.2 s.
+
+  The 0x32 (16-byte encrypted key), our 0x3C and the radiator's 0x3D during the pull, and the heater's
+  0x3C and our 0x3D during the read, were masked in the reporter's log and are omitted; the notes say
+  where they sat. Timestamps are the hub's own pairing-attempt summary offsets, rebased to the first
+  0x28; the 0x21 is placed 73 ms after the 0x20, as the log lines show.
+source:
+  device: "Atlantic AGILIA IO electric radiator (display model), radiator 1: pairing node B6BDFB, heater B6BDFC"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with the direct heater read after a key pull"
+  date: 2026-10-21
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/165"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "C8 00 00 00 3B 60 F8 23 28"
+    crc: absent
+    note: "cmd=DISCOVER_REQ(0x28) to 00003B, preamble 1024, attempt 1/3: no answer"
+  - dir: tx
+    t_ms: 2231
+    freq: 868950000
+    hex: "C8 00 00 00 3B 60 F8 23 28"
+    crc: absent
+    note: "0x28 attempt 2/3: no answer"
+  - dir: tx
+    t_ms: 4462
+    freq: 868950000
+    hex: "C8 00 00 00 3B 60 F8 23 28"
+    crc: absent
+    note: "0x28 attempt 3/3"
+  - dir: rx
+    t_ms: 5150
+    freq: 868250000
+    hex: "D1 00 60 F8 23 B6 BD FB 29 FF C0 B6 BD FB 0C CC 00 00"
+    crc: absent
+    note: "cmd=DISCOVER_RESP(0x29) from B6BDFB: node type FF C0 = 1023 (remote controller), backbone B6BDFB, manufacturer 12 (Atlantic Group), flags 0xCC (turnaround 40 ms, always alive). rssi -41"
+  - dir: tx
+    t_ms: 5189
+    freq: 868950000
+    hex: "48 00 B6 BD FB 60 F8 23 2C"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM(0x2C), preamble 48"
+  - dir: rx
+    t_ms: 5203
+    freq: 868950000
+    hex: "88 00 60 F8 23 B6 BD FB 2D"
+    crc: absent
+    note: "cmd=DISCOVER_CONFIRM_ACK(0x2D), 14 ms after the 0x2C. rssi -44"
+  - dir: tx
+    t_ms: 5535
+    freq: 868950000
+    hex: "4E 04 B6 BD FB 60 F8 23 38 E4 C2 14 7B AA 64"
+    crc: absent
+    note: "cmd=LAUNCH_KEY_TRANSFER(0x38), START, CTRL1 bit 2 set, six random bytes, preamble 48. The radiator answered at t=5554 with KEY_TRANSFER(0x32, 18 04, 16 bytes masked); we challenged it at t=5570 (0x3C, preamble 8, masked) and its 0x3D (8E 00, masked) verified under the decrypted key: key check value A91125."
+  - dir: tx
+    t_ms: 5614
+    freq: 868950000
+    hex: "4C 00 B6 BD FC 60 F8 23 20 0C 60 01 02"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20) to B6BDFC (pairing node + 1), read register 0x0102 (maximum setpoint), under the pulled key, preamble 48. The heater challenged it (0x3C 0E 00, masked) and we answered with a 0x3D (0E 20, preamble 8, masked)."
+  - dir: rx
+    t_ms: 5687
+    freq: 868950000
+    hex: "8E 00 60 F8 23 B6 BD FC 21 0C 60 01 02 18 01"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE_ACK(0x21): register 0x0102 = 0x0118 = 28.0 C. The hub registers B6BDFC as an electrical heater with an adjustable setpoint and runs no roll-call."
+expect:
+  frames:
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x28, start: true, end: true, protocol: 2w}
+    - {cmd: 0x29, start: true, end: true, protocol: 2w, classification: DISCOVERY_ACCEPT}
+    - {cmd: 0x2C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x2D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x38, start: true, end: false, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

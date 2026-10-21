@@ -17,7 +17,9 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
+#include <utility>
 #include <cstring>
 #include <string>
 
@@ -141,12 +143,31 @@ TEST(CorpusHeating, EveryWritableModeIsTheEncodedWriteAndReadsBack) {
   EXPECT_EQ(value_of(atlantic_agilia_exchange_mode_read_back_frame11_bytes, HeatingFunction::SET_MODE), MODE_PROG);
 }
 
+// === Presence ===
+
+TEST(CorpusHeating, HomeAndAwayAreTheEncodedPresenceWritesAndAreAcknowledged) {
+  using namespace corpus;
+  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_presence_write_frame0_bytes, HeatingFunction::SET_PRESENCE, 1.0F));
+  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_presence_write_frame2_bytes, HeatingFunction::SET_PRESENCE, 0.0F));
+  // The acknowledgement echoes the whole write.
+  for (const auto &[request, ack] : {std::pair{frame_of(atlantic_agilia_exchange_presence_write_frame0_bytes),
+                                               frame_of(atlantic_agilia_exchange_presence_write_frame1_bytes)},
+                                     std::pair{frame_of(atlantic_agilia_exchange_presence_write_frame2_bytes),
+                                               frame_of(atlantic_agilia_exchange_presence_write_frame3_bytes)}}) {
+    EXPECT_EQ(ack.cmd, CMD_WRITE_PRIVATE_ACK);
+    ASSERT_EQ(ack.data_len, request.data_len);
+    EXPECT_EQ(memcmp(ack.data, request.data, request.data_len), 0);
+  }
+}
+
 // === Who answers what during pairing ===
 
 TEST(CorpusHeating, PairingNodeAnswersDiscoveryAsARemoteController) {
   using namespace corpus;
   for (const IoFrame &frame : {frame_of(atlantic_agilia_pairing_key_pull_heater_rollcall_frame1_bytes),
-                               frame_of(atlantic_agilia_pairing_key_pull_own_key_heater_silent_frame1_bytes)}) {
+                               frame_of(atlantic_agilia_pairing_key_pull_own_key_heater_silent_frame1_bytes),
+                               frame_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame3_bytes),
+                               frame_of(atlantic_agilia_pairing_key_pull_heater_not_next_address_frame3_bytes)}) {
     ASSERT_EQ(frame.cmd, CMD_DISCOVER_RESP);
     IoDevice device{};
     std::string device_id;
@@ -155,4 +176,48 @@ TEST(CorpusHeating, PairingNodeAnswersDiscoveryAsARemoteController) {
     EXPECT_EQ(device.subtype, 0) << device_id;
     EXPECT_EQ(info.manufacturer, MANUFACTURER_ATLANTIC_GROUP) << device_id;
   }
+}
+
+// === The heater behind the pairing node ===
+
+namespace {
+
+/// The node ID one above `node`, as the hub's direct heater read computes it.
+std::array<uint8_t, NODE_ID_SIZE> next_address(const uint8_t node[NODE_ID_SIZE]) {
+  const uint32_t value = (static_cast<uint32_t>(node[0]) << 16) | (static_cast<uint32_t>(node[1]) << 8) | node[2];
+  const uint32_t next = value + 1;
+  return {static_cast<uint8_t>(next >> 16), static_cast<uint8_t>(next >> 8), static_cast<uint8_t>(next)};
+}
+
+}  // namespace
+
+TEST(CorpusHeating, TheDirectReadIsTheMaximumSetpointReadOfTheNextAddress) {
+  using namespace corpus;
+  const IoFrame discovery = frame_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame3_bytes);
+  const IoFrame read = frame_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame7_bytes);
+  EXPECT_TRUE(
+      is_read_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame7_bytes, HeatingFunction::MAX_SETPOINT));
+  const auto heater = next_address(discovery.src);
+  EXPECT_EQ(memcmp(read.dst, heater.data(), NODE_ID_SIZE), 0) << node_id_to_string(read.dst);
+  EXPECT_FLOAT_EQ(
+      value_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame8_bytes, HeatingFunction::MAX_SETPOINT), 28.0F);
+}
+
+TEST(CorpusHeating, AfterAConnectionResetTheHeaterIsNotAtTheNextAddress) {
+  using namespace corpus;
+  const IoFrame discovery = frame_of(atlantic_agilia_pairing_key_pull_heater_not_next_address_frame3_bytes);
+  const auto next = next_address(discovery.src);
+  // The direct read goes to the next address and gets no answer ...
+  const IoFrame read = frame_of(atlantic_agilia_pairing_key_pull_heater_not_next_address_frame7_bytes);
+  EXPECT_EQ(memcmp(read.dst, next.data(), NODE_ID_SIZE), 0) << node_id_to_string(read.dst);
+  // ... and the heater answers the roll-call from an unrelated address.
+  const IoFrame reply = frame_of(atlantic_agilia_pairing_key_pull_heater_not_next_address_frame14_bytes);
+  ASSERT_EQ(reply.cmd, CMD_DISCOVER_SPE_RESP);
+  EXPECT_NE(memcmp(reply.src, next.data(), NODE_ID_SIZE), 0);
+  IoDevice device{};
+  std::string device_id;
+  decode_discovery_response(reply, device, device_id);
+  EXPECT_EQ(device_id, "F519DD");
+  EXPECT_EQ(device.type, DeviceType::ELECTRICAL_HEATER);
+  EXPECT_EQ(device.subtype, 1);
 }
