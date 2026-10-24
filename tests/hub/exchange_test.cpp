@@ -3549,6 +3549,59 @@ TEST(Exchange, LbtSwitchedOffSendsWithoutACheck) {
   EXPECT_FALSE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value());
 }
 
+// Only a frame that opens a session (CTRL0 START) is checked; one without START answers within a
+// session and goes out at once (ADR 0045, issue #178: a single 5 ms back-off before a 0x3D lost the
+// exchange on an OXIMO 50 io).
+TEST(Exchange, LbtSkippedForAFrameWithoutStart) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  RecordingTransmitObserver observer;
+  comp.exchange_engine_.set_transmit_observer(&observer);
+  radio.set_rssi_default(-50);  // busy on every check
+
+  IoFrame continuation{};
+  create_execute_position(continuation, comp.node_id_, test::DST_ID, false, 100);
+  continuation.ctrl0 &= static_cast<uint8_t>(~CTRL0_START);
+  ASSERT_FALSE(is_start(continuation));
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(continuation, FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_EQ(radio.get_send_count(), 1);
+  EXPECT_TRUE(radio.rssi_read_freqs().empty()) << "no channel reading for a frame without START";
+  EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 0u);
+  EXPECT_TRUE(observer.lbt_defers.empty());
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+  EXPECT_FALSE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value());
+}
+
+TEST(Exchange, LbtChecksTheRequestButNotThe0x3DOfAnAuthenticatedExchange) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  radio.set_rssi_default(-50);  // busy on every check
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  uint8_t chal_data[HMAC_SIZE] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+  radio.queue_rx(to_rx_packet(build_challenge(test::DST_ID, comp.node_id_, chal_data)));
+  radio.queue_rx(to_rx_packet(build_status_response(test::DST_ID, comp.node_id_)));
+
+  IoFrame response{};
+  ASSERT_EQ(comp.send_and_receive_(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+
+  const uint8_t checks = comp.tuning_.lbt_max_retries;
+  ASSERT_GT(checks, 0u);
+  EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, checks) << "only the request's checks are counted";
+  EXPECT_EQ(radio.rssi_read_freqs().size(), checks) << "the 0x3D takes no reading";
+  ASSERT_EQ(radio.get_sent_data().size(), 2u) << "request + 0x3D";
+  IoFrame sent{};
+  const auto &raw = radio.get_sent_data()[1];
+  ASSERT_TRUE(parse(raw.data(), static_cast<uint8_t>(raw.size()), sent));
+  EXPECT_EQ(sent.cmd, CMD_CHALLENGE_RESP);
+  ASSERT_EQ(radio.get_tx_configs().size(), 2u);
+  EXPECT_FALSE(radio.get_tx_configs()[1].cca_threshold_dbm.has_value());
+}
+
 // ============================================================================
 // Per-device system keys (ADR 0053)
 // ============================================================================

@@ -149,7 +149,7 @@ your device may differ.
 | `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
 | `low_power_wake_preamble` | both | `1024` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
-| `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before a frame is sent without one. |
+| `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before the first frame of an exchange is sent without one. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` / `0x0001BB` / `0x0001BF` | Address the discovery frames are sent to. The last two are lighting-class addresses — see below. |
@@ -405,9 +405,11 @@ wake-up preamble on every try to a `low_power:` device.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 
-Listen-Before-Talk: right before transmitting, the radio measures the channel the frame is about to
-go out on and sends only if it is quieter than the threshold. The hub retries up to *max_retries*
-times, 5 ms apart, then transmits anyway. When the idle receiver is on another channel, the radio
+Listen-Before-Talk: right before transmitting the first frame of an exchange, the radio measures
+the channel the frame is about to go out on and sends only if it is quieter than the threshold.
+The hub retries up to *max_retries* times, 5 ms apart, then transmits anyway. Frames that answer
+within an exchange, such as the challenge response, go out at once without the check: the device
+is waiting for them, and some devices give up after a single 5 ms delay (issue #178). When the idle receiver is on another channel, the radio
 first retunes to the transmit channel and waits about a millisecond for the reading to settle
 ([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). Loosen them when
 transmissions are delayed on a channel that only *looks* busy. The threshold applies to the signal

@@ -266,9 +266,10 @@ static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;
 static constexpr uint32_t RAIN_EVIDENCE_HOLD_MS = 2UL * 60UL * 60UL * 1000UL;
 
 /// Listen-before-talk (LBT) parameters for ETSI EN 300 220 compliance.
-/// Before transmitting, the radio checks that the channel RSSI is below the
-/// threshold. If the channel is busy, TX is deferred by LBT_RETRY_DELAY_MS
-/// up to LBT_MAX_RETRIES times.
+/// Before transmitting a frame that opens a session (START set), the radio checks
+/// that the channel RSSI is below the threshold. If the channel is busy, TX is
+/// deferred by LBT_RETRY_DELAY_MS up to LBT_MAX_RETRIES times. A frame without
+/// START answers within a session and is sent at once, unchecked.
 static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -90;  ///< Channel-free threshold (ETSI: ≤ -90 dBm)
 static constexpr uint8_t LBT_MAX_RETRIES = 5;           ///< Max carrier-sense attempts before TX anyway
 static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT checks (≥ 5ms per ETSI)

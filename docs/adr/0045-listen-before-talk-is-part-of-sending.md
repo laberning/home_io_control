@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0045 -->
 
-**Status:** Accepted · **Recorded:** 2026-09
+**Status:** Accepted, amended 2026-10 (see [Amendment](#amendment-only-a-frame-that-opens-a-session-is-checked)) · **Recorded:** 2026-09
 
 ## Context
 
@@ -57,3 +57,37 @@ immediately before sending, which not every radio arrangement allows.
   `send_packet()`, and it remains available for diagnostics.
 - **A radio that can only check the channel as part of a send is covered by the same contract**,
   since the engine never asks for a separate reading.
+
+## Amendment: only a frame that opens a session is checked
+
+**Recorded:** 2026-10. Issue #178: a wired Somfy OXIMO 50 io roller shutter on a Heltec V2
+(SX1276). Across the reporter's four logs, every challenge response (`0x3D`) that listen-before-talk
+held back by at least one back-off got no final reply (25 of 25), and every one sent without a
+delay got one (33 of 33). A single 5 ms back-off was enough to lose the exchange. Back-offs before
+the command itself did no harm: the shutter still answered with its challenge.
+
+The device's window is device-specific. The corpus capture
+`somfy_awning_exchange_open_lbt_contention_sx1276` shows a Somfy Sunea io awning answering a `0x3D`
+that was held back by four to five back-offs. A strict receiver is enough to break the exchange,
+on any chip, since the policy lives in `transmit_frame()`.
+
+The check cannot help a frame that answers within a session. The peer has just transmitted on
+this channel and is listening there for the answer, and after the last busy result the frame
+goes out anyway. So the check can only delay the answer, possibly past the peer's window.
+
+**Decision.** `transmit_frame()` checks the channel only for a frame with the CTRL0 START bit set,
+the frame that opens a session. A frame without START goes out at once with no `cca_threshold_dbm`,
+on the channel its caller names. The session's opening frame was checked by whoever sent it. The
+frame builders already set START this way: every command, discovery, key-init and broadcast
+request carries it, and the `0x3D`, an inbound `0x3C`, the key transfer `0x32` and the in-session
+acknowledgements do not. The rule needs no per-call-site flag and no new tunable. It is the same
+signal `tx_wake_for()` already reads ([ADR 0044](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)).
+
+**Consequences.**
+
+- `lbt_max_retries` and `lbt_rssi_threshold_dbm` now govern only session-opening frames. Raising
+  the threshold is no longer needed to keep a `0x3D` from being delayed.
+- `lbt_retries` and the transmit observer's deferral events count only those frames.
+- A busy opening frame still waits up to `lbt_max_retries` back-offs and is then sent anyway.
+  Whether a request should instead fail, or move to another channel, is a separate decision. It
+  needs the busy readings on the SX1276 after a strong received frame to be measured first.

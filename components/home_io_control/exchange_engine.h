@@ -237,8 +237,10 @@ class ExchangeEngine {
   // Infrastructure delegated from the hub
   // -------------------------------------------------------------------------
 
-  /// Transmit a raw IoFrame with the given preamble length, listening before talk on the TX
-  /// channel itself (the radio checks it inside send_packet(); see RadioTxConfig::cca_threshold_dbm).
+  /// Transmit a raw IoFrame with the given preamble length. A frame that opens a session (CTRL0
+  /// START) listens before talk on the TX channel itself (the radio checks it inside send_packet();
+  /// see RadioTxConfig::cca_threshold_dbm); a frame without START answers within a session and goes
+  /// out at once, unchecked (ADR 0045).
   /// @param frame    Frame to transmit.
   /// @param freq     RF frequency in Hz.
   /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a

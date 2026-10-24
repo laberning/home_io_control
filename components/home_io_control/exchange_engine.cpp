@@ -196,10 +196,15 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   // Listen before talk: up to lbt_max_retries sends that the radio makes only if the TX channel is
   // clear, measured by the driver on that channel right before transmitting; after the last busy
   // result, one send without the check, so a noisy channel delays a frame but never drops it.
+  // Only a frame that opens a session (CTRL0 START) is checked. A frame without START answers one
+  // the peer has just sent and is listening for on this channel for only a few tens of ms, so it
+  // goes out at once: a 5 ms back-off already loses the exchange on some receivers (issue #178),
+  // and the frame that opened the session was checked by whoever sent it (ADR 0045).
+  const uint8_t lbt_checks = is_start(frame) ? this->tuning_->lbt_max_retries : 0;
   RadioTxConfig tx_config = tx_config_for(frame, freq, preamble);
   TxResult result;
   for (uint8_t lbt = 0;; lbt++) {
-    if (lbt < this->tuning_->lbt_max_retries) {
+    if (lbt < lbt_checks) {
       tx_config.cca_threshold_dbm = this->tuning_->lbt_rssi_threshold_dbm;
     } else {
       tx_config.cca_threshold_dbm.reset();
@@ -208,7 +213,7 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
     if (result.status != TxResult::Status::CHANNEL_BUSY)
       break;
     ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm on %" PRIu32 " Hz), retry %u/%u", result.cca_level_dbm, freq, lbt + 1,
-             this->tuning_->lbt_max_retries);
+             lbt_checks);
     this->counters_.lbt_retries++;
     if (this->transmit_observer_ != nullptr)
       this->transmit_observer_->on_lbt_defer(result.cca_level_dbm);
