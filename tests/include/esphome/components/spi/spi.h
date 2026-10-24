@@ -19,6 +19,10 @@ class SPIDeviceBase {
   void write_byte(uint8_t data) { (void) data; }
   uint8_t read_byte() { return 0; }
   void spi_setup() {}
+
+ protected:
+  // The real SPIClient::parent_ is null until an spi: bus is wired in; hub setup() checks it.
+  void *parent_{nullptr};
 };
 
 template<BitOrder B, ClockPolarity CP, ClockPhase CH, DataRate D> class SPIDevice : public SPIDeviceBase {};

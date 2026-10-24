@@ -739,6 +739,27 @@ void RadioSX1262::set_mode_rx() {
   this->write_opcode_(SX1262_SET_RX, rx_continuous, sizeof(rx_continuous));
 }
 
+bool RadioSX1262::transmit_test_signal(TestSignal signal, uint32_t freq_hz, uint32_t duration_ms) {
+  if (this->is_failed())
+    return false;
+  this->set_mode_standby();
+  this->set_frequency_register(freq_hz);
+  this->clear_irq_status(0xFFFFFFFF);
+  this->apply_tx_modulation_workaround_();
+  this->fem_set_tx_mode_();
+  this->write_opcode_(signal == TestSignal::CARRIER ? SX1262_SET_TX_CONTINUOUS_WAVE : SX1262_SET_TX_INFINITE_PREAMBLE,
+                      nullptr, 0);
+  // Neither command ends by itself: the chip transmits until it is told to stop, so the wait is ours. Feed the
+  // watchdog meanwhile; a long signal must not reset the board.
+  const uint32_t start = millis();
+  while (millis() - start < duration_ms) {
+    App.feed_wdt();
+    delay(1);
+  }
+  this->set_mode_standby();
+  return true;
+}
+
 // === Front-end module mode control ===
 
 bool RadioSX1262::fem_tx_active_level_() const { return this->fem_profile_ != FemProfile::XY16P35; }

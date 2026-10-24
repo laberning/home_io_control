@@ -1,0 +1,134 @@
+## 868 MHz bench reference radio — a Heltec WiFi LoRa32 V3 (SX1262) driven over the ESPHome native API.
+##
+## Used by scripts/bench/ref868.py against a Kite XIAO nRF52840 + Wio-SX1262 on the bench: it sends
+## a frame the Kite should receive, and it listens (with IOHOME_FRAME_LOG, so every received frame is
+## logged with its frequency and bytes) for what the Kite sends. The SX1262 driver here is the one
+## the hub ships with, so a frame it sends is on air what a hub sends.
+##
+## Actions (API, no entities, nothing bound to a real device):
+##   tx_frame(freq_hz, preamble, hex)  send the io frame `hex` (without CRC) behind `preamble` bytes
+##   rx_listen(freq_hz)                tune and receive; received frames show up in the log
+##   rx_stop()                         back to standby
+##   carrier(freq_hz, ms)              an unmodulated carrier for `ms` (SetTxContinuousWave)
+##   tx_preamble_only(freq_hz, ms)     the modulated preamble alone for `ms` (SetTxInfinitePreamble)
+## The last two block for their duration (RadioDriver::transmit_test_signal()), then the radio is in standby.
+##
+## Flash it only on a board Lars names for the bench: it replaces that board's hub (the V3 configs
+## share a device name).
+
+esphome:
+  name: bench868-ref-v3
+  friendly_name: Bench 868 reference V3
+  build_flags:
+    - -DIOHOME_FRAME_LOG
+
+# Board SPI bus + radio pinout — single source of truth in config/boards/.
+packages:
+  board: !include boards/heltec-v3.yaml
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+  actions:
+    - action: tx_frame
+      variables:
+        freq_hz: int
+        preamble: int
+        hex: string
+      then:
+        - lambda: |-
+            using namespace esphome::home_io_control;
+            auto *radio = id(hioc)->get_radio();
+            if (radio == nullptr) {
+              ESP_LOGE("bench868", "radio not initialised");
+              return;
+            }
+            uint8_t frame[RADIO_PACKET_BUFFER_SIZE];
+            size_t len = 0;
+            for (size_t i = 0; i + 1 < hex.size() && len < sizeof(frame); i += 2)
+              frame[len++] = (uint8_t) strtoul(hex.substr(i, 2).c_str(), nullptr, 16);
+            RadioTxConfig cfg;
+            cfg.freq_hz = (uint32_t) freq_hz;
+            cfg.preamble_len = (uint16_t) preamble;
+            id(hioc)->set_radio_test_mode(true);
+            bool ok = radio->send_packet(frame, (uint8_t) len, cfg).sent();
+            ESP_LOGI("bench868", "TX freq=%d preamble=%d len=%u at_ms=%u result=%s", freq_hz, preamble,
+                     (unsigned) len, (unsigned) millis(), ok ? "OK" : "FAILED");
+            radio->change_frequency((uint32_t) freq_hz);
+            radio->set_mode_rx();
+    - action: carrier
+      variables:
+        freq_hz: int
+        ms: int
+      then:
+        - lambda: |-
+            using namespace esphome::home_io_control;
+            id(hioc)->set_radio_test_mode(true);
+            ESP_LOGI("bench868", "CARRIER start freq=%d ms=%d at_ms=%u", freq_hz, ms, (unsigned) millis());
+            bool ok = id(hioc)->get_radio()->transmit_test_signal(TestSignal::CARRIER, (uint32_t) freq_hz, (uint32_t) ms);
+            ESP_LOGI("bench868", "CARRIER end result=%s at_ms=%u", ok ? "OK" : "FAILED", (unsigned) millis());
+    - action: tx_preamble_only
+      variables:
+        freq_hz: int
+        ms: int
+      then:
+        - lambda: |-
+            using namespace esphome::home_io_control;
+            id(hioc)->set_radio_test_mode(true);
+            ESP_LOGI("bench868", "PREAMBLE start freq=%d ms=%d at_ms=%u", freq_hz, ms, (unsigned) millis());
+            bool ok = id(hioc)->get_radio()->transmit_test_signal(TestSignal::PREAMBLE, (uint32_t) freq_hz, (uint32_t) ms);
+            ESP_LOGI("bench868", "PREAMBLE end result=%s at_ms=%u", ok ? "OK" : "FAILED", (unsigned) millis());
+    - action: rx_listen
+      variables:
+        freq_hz: int
+      then:
+        - lambda: |-
+            id(hioc)->set_radio_test_mode(true);
+            auto *radio = id(hioc)->get_radio();
+            radio->change_frequency((uint32_t) freq_hz);
+            radio->set_mode_rx();
+            id(listening) = true;
+            ESP_LOGI("bench868", "RX listening freq=%d at_ms=%u", freq_hz, (unsigned) millis());
+    - action: rx_stop
+      then:
+        - lambda: |-
+            id(listening) = false;
+            id(hioc)->get_radio()->set_mode_standby();
+            ESP_LOGI("bench868", "RX stopped at_ms=%u", (unsigned) millis());
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+# Phantom identity: the frames of the bench carry this source id and no real device is addressed.
+home_io_control:
+  id: hioc
+  node_id: "C0FFEE"
+  system_key: "00112233445566778899AABBCCDDEEFF"
+
+globals:
+  - id: listening
+    type: bool
+    initial_value: 'false'
+
+# While listening, drain the radio so every received frame reaches the frame log.
+interval:
+  - interval: 5ms
+    then:
+      - lambda: |-
+          if (!id(listening))
+            return;
+          esphome::home_io_control::RadioRxPacket packet;
+          id(hioc)->get_radio()->check_for_packet(packet);

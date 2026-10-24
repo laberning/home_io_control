@@ -63,6 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import protolib  # noqa: E402
 from protolib import cmd_name, ctrl0_implied_length, is_end, is_oneway, is_start, parse_log  # noqa: E402
 from naming import id_naming_problem, phase_of_id  # noqa: E402  (dependency-free, safe to import)
+import validate  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -137,9 +138,15 @@ def render_expect_frame_yaml(frame) -> "str | None":
             f"end: {str(is_end(ctrl0)).lower()}, protocol: {protocol}}}  # PROPOSED — verify before commit")
 
 
-def build_yaml(args, frames, key_mode: str, node_map: "dict[str, str] | None") -> str:
+def build_yaml(args, frames, key_mode: str, node_map: "dict[str, str] | None",
+               capture_fields: "list[str] | None" = None, render_frame=render_frame_yaml) -> str:
+    """The capture YAML for `frames`. `capture_fields` are extra top-level lines placed before
+    `frames:` (a 2.4 GHz capture's `phy` and `psdu_header`), and `render_frame` renders one frame
+    (ingest_2g4.py adds `t_us` and `wake_train`); both default to the 868 shape.
+    """
     unverified_count = sum(1 for f in frames if f.unverified)
-    description = args.description or f"Scaffolded from {args.input} by ingest.py — TODO: describe the scenario."
+    tool = Path(sys.argv[0]).name
+    description = args.description or f"Scaffolded from {args.input} by {tool} — TODO: describe the scenario."
 
     lines = [
         f"id: {args.id}",
@@ -157,8 +164,9 @@ def build_yaml(args, frames, key_mode: str, node_map: "dict[str, str] | None") -
     if node_map:
         lines.append("node_map:")
         lines.extend(f"  {role}: {yaml_quote(node_id)}" for node_id, role in node_map.items())
+    lines.extend(capture_fields or [])
     lines.append("frames:")
-    lines.extend(render_frame_yaml(frame) for frame in frames)
+    lines.extend(render_frame(frame) for frame in frames)
 
     expect_lines = [line for line in (render_expect_frame_yaml(f) for f in frames) if line is not None]
     if expect_lines:
@@ -322,49 +330,54 @@ def _set_frame_raw(frame, new_non_crc_bytes: bytes) -> None:
     frame.hex_bytes = " ".join(f"{b:02X}" for b in new_raw)
 
 
-def rekey_hmac_frames(frames, real_key: bytes, corpus_key: bytes) -> int:
-    """Verify + rewrite every 0x3C/0x3D authenticated-exchange HMAC. Hard aborts (does not
-    silently skip) on the first frame whose captured HMAC does not verify under the real key —
-    a mismatch means either the wrong key was supplied or the capture is corrupted/mis-copied,
-    and either way the corpus must not silently accept it.
-    """
-    rewritten = 0
-    for origin, challenge, response in protolib.find_challenge_response_triples(frames):
-        parts = protolib.hmac_parts(origin, challenge, response)
+def rekey_2w_frames(frames, real_key: bytes, corpus_key: bytes) -> "tuple[int, int]":
+    """Verify + rewrite every 2W crypto-bearing frame: 0x32 key transfers (push and pull),
+    self-authenticated 0x2A frames and 0x3C/0x3D HMACs. Returns (hmac_count, transfer_count).
 
+    Order matters: a 0x3D can authenticate a 0x32 (a key pull ends with the receiver challenging
+    the 0x32 it got), so every HMAC is verified under the real key over the bytes as captured,
+    then the key transfers are rewritten, and only then is each HMAC recomputed over its (now
+    re-keyed) transcript. The one entry point for ingest.py --rekey and rekey_capture.py.
+    """
+    triples = protolib.find_challenge_response_triples(frames)
+    for origin, challenge, response in triples:
+        parts = protolib.hmac_parts(origin, challenge, response)
         if not protolib.verify_hmac(parts.transcript, parts.hmac, parts.challenge, real_key):
             raise RekeyError(
                 f"HMAC verification FAILED against the real key (fingerprint sha256={key_fingerprint(real_key)}) "
                 f"for challenge-response frame {response.raw().hex().upper()} — wrong key, mis-copied bytes, or a "
                 "corrupted capture. Aborting; nothing was written.")
 
+    transfer_count = rekey_key_transfer_frames(frames, real_key, corpus_key)
+    hmac_count = rekey_self_authenticated_frames(frames, real_key, corpus_key)
+
+    for origin, challenge, response in triples:
+        parts = protolib.hmac_parts(origin, challenge, response)
         new_hmac = protolib.create_hmac(parts.transcript, parts.challenge, corpus_key)
         new_response = protolib.non_crc_bytes(response)[:protolib.FRAME_MIN_SIZE] + new_hmac
         _set_frame_raw(response, new_response)
-        rewritten += 1
-    return rewritten
+    return hmac_count + len(triples), transfer_count
 
 
 def rekey_key_transfer_frames(frames, real_key: bytes, corpus_key: bytes) -> int:
-    """Verify + rewrite every 0x32 key-transfer payload. This is the security-critical path:
-    a raw, un-re-keyed 0x32 payload leaks the real system key to anyone who can
-    decrypt it with the public TRANSFER_KEY, so this function either produces a payload that
-    decrypts to the *corpus* key, or aborts before writing anything.
+    """Verify + rewrite every 0x32 key-transfer payload, pushed or pulled
+    (protolib.find_key_transfers()). This is the security-critical path: a raw, un-re-keyed 0x32
+    payload leaks the real system key to anyone who can decrypt it with the public TRANSFER_KEY,
+    so this function either produces a payload that decrypts to the *corpus* key, or aborts
+    before writing anything.
     """
     rewritten = 0
-    for key_init, challenge, transfer in protolib.find_key_transfer_triples(frames):
-        parts = protolib.key_transfer_parts(key_init, challenge, transfer)
-
-        decrypted = protolib.crypt_key(parts.key_init_cmd, parts.challenge, parts.encrypted_payload)
+    for transfer in protolib.find_key_transfers(frames):
+        decrypted = protolib.crypt_key(transfer.iv_data, transfer.challenge, transfer.encrypted_payload)
         if decrypted != real_key:
             raise RekeyError(
                 f"key-transfer payload does NOT decrypt to the real key (fingerprint sha256="
-                f"{key_fingerprint(real_key)}) for frame {transfer.raw().hex().upper()} — aborting; "
+                f"{key_fingerprint(real_key)}) for frame {transfer.transfer.raw().hex().upper()} — aborting; "
                 "nothing was written. Never commit this capture un-re-keyed.")
 
-        new_encrypted = protolib.crypt_key(parts.key_init_cmd, parts.challenge, corpus_key)
-        new_transfer = protolib.non_crc_bytes(transfer)[:protolib.FRAME_MIN_SIZE] + new_encrypted
-        _set_frame_raw(transfer, new_transfer)
+        new_encrypted = protolib.crypt_key(transfer.iv_data, transfer.challenge, corpus_key)
+        new_transfer = protolib.non_crc_bytes(transfer.transfer)[:protolib.FRAME_MIN_SIZE] + new_encrypted
+        _set_frame_raw(transfer.transfer, new_transfer)
         rewritten += 1
     return rewritten
 
@@ -478,6 +491,14 @@ def assert_no_key_leakage(frames, real_key: bytes) -> None:
                 f"frame={raw.hex().upper()}")
 
 
+def has_2w_crypto(frames) -> bool:
+    """True when any frame's bytes derive from the 2W system key: a 0x3C/0x3D HMAC, a 0x32 key
+    transfer or a self-authenticated frame. Such a capture is re-keyed before it is committed.
+    """
+    return bool(protolib.find_key_transfers(frames) or protolib.find_challenge_response_triples(frames)
+                or protolib.find_self_authenticated_frames(frames))
+
+
 def apply_rekey(frames, args) -> "tuple[bytes, list[str], dict[str, str]]":
     """Run the full --rekey pipeline in place on `frames`. Returns (real_key, warnings,
     node_map) — the caller uses the returned key only for log messages (fingerprint only, never
@@ -494,20 +515,16 @@ def apply_rekey(frames, args) -> "tuple[bytes, list[str], dict[str, str]]":
     corpus_key = protolib.CORPUS_SYSTEM_KEY
     remap, roles = parse_remap_args(args.remap, args.role)
 
-    has_2w_crypto = bool(protolib.find_key_transfer_triples(frames) or
-                         protolib.find_challenge_response_triples(frames) or
-                         protolib.find_self_authenticated_frames(frames))
+    needs_system_key = has_2w_crypto(frames)
     has_oneway = bool(protolib.find_oneway_add_controller_frames(frames) or
                       protolib.find_oneway_remove_controller_frames(frames))
 
-    real_key = resolve_system_key(args) if has_2w_crypto else None
+    real_key = resolve_system_key(args) if needs_system_key else None
     real_oneway_key = resolve_oneway_key(args) if has_oneway else None
 
     summary_parts = []
-    if has_2w_crypto:
-        hmac_count = rekey_hmac_frames(frames, real_key, corpus_key)
-        hmac_count += rekey_self_authenticated_frames(frames, real_key, corpus_key)
-        transfer_count = rekey_key_transfer_frames(frames, real_key, corpus_key)
+    if needs_system_key:
+        hmac_count, transfer_count = rekey_2w_frames(frames, real_key, corpus_key)
         summary_parts.append(f"{hmac_count} HMAC frame(s), {transfer_count} key-transfer frame(s) under real "
                              f"system key (fingerprint sha256={key_fingerprint(real_key)})")
     if has_oneway:
@@ -533,24 +550,42 @@ def apply_rekey(frames, args) -> "tuple[bytes, list[str], dict[str, str]]":
     return real_key, warnings, node_map
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def add_capture_args(parser: argparse.ArgumentParser) -> None:
+    """The input, provenance and output arguments every ingester takes (this one, ingest_2g4.py).
+    The allowed values come from validate.py, so an ingester never offers one validation rejects.
+    """
     parser.add_argument("input", help="log file to parse, or '-' for stdin")
     parser.add_argument("--id", required=True, help="capture id (globally unique across the corpus)")
     parser.add_argument("--device", required=True, help="free-text device description")
-    parser.add_argument("--captured-with", default="other",
-                        choices=["sx1276", "sx1262", "lr1121", "other", "synthetic"])
-    parser.add_argument(
-        "--origin",
-        required=True,
-        choices=["own-hardware", "github-issue", "synthetic-bootstrap", "reference-material"],
-    )
+    parser.add_argument("--captured-with", default="other", choices=sorted(validate.ALLOWED_CAPTURED_WITH))
+    parser.add_argument("--origin", required=True, choices=sorted(validate.ALLOWED_ORIGINS))
     parser.add_argument("--issue", default=None, help="issue URL, e.g. https://github.com/.../issues/27")
     parser.add_argument("--date", required=True, help="YYYY-MM-DD")
     parser.add_argument("--firmware", default=None)
     parser.add_argument("--description", default=None, help="free-text scenario summary")
     parser.add_argument("-o", "--output", default=None,
                         help="output capture YAML path (default: tests/corpus/captures/<phase>/<id>.yaml)")
+
+
+def default_output_path(capture_id: str) -> Path:
+    """Where a capture with this id lives in the corpus: tests/corpus/captures/<phase>/<id>.yaml."""
+    return REPO_ROOT / "tests" / "corpus" / "captures" / phase_of_id(capture_id) / f"{capture_id}.yaml"
+
+
+def git_could_commit(path: Path) -> bool:
+    """True when `path` is inside this repo and not git-ignored, i.e. one `git add` from a commit."""
+    try:
+        resolved = path.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        return False
+    ignored = subprocess.run(["git", "check-ignore", str(resolved)], cwd=REPO_ROOT, capture_output=True, text=True,
+                             check=False)
+    return ignored.returncode != 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_capture_args(parser)
     parser.add_argument("--rekey", action="store_true",
                         help="verify captured crypto against the real key and rewrite it under the corpus key")
     parser.add_argument("--system-key-from", default=None,
@@ -587,10 +622,7 @@ def main() -> int:
         key_mode = "corpus"
 
     rendered = build_yaml(args, frames, key_mode, node_map)
-    if args.output:
-        output_path = Path(args.output)
-    else:
-        output_path = REPO_ROOT / "tests" / "corpus" / "captures" / phase_of_id(args.id) / f"{args.id}.yaml"
+    output_path = Path(args.output) if args.output else default_output_path(args.id)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered, encoding="utf-8")
     unverified_count = sum(1 for f in frames if f.unverified)

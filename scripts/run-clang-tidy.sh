@@ -279,6 +279,8 @@ if [ ${#FILES_ARRAY[@]} -eq 0 ]; then
 fi
 
 HEADER_FILTER='(^|.*/)components/home_io_control/.*'
+# The generated header of a Bridle release (scripts/bridle-update.sh) is not linted here.
+EXCLUDE_HEADER_FILTER='(^|.*/)radio_bridle_enums\.h$'
 JOBS="${CLANG_TIDY_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)}"
 
 filter_tidy_output() {
@@ -319,6 +321,7 @@ if command -v "$RUN_CLANG_TIDY" >/dev/null 2>&1; then
     -p "$(dirname "$FILTERED_DB")" \
     -j "$JOBS" \
     -header-filter "$HEADER_FILTER" \
+    -exclude-header-filter "$EXCLUDE_HEADER_FILTER" \
     -use-color \
     -quiet \
     "${CLANG_TIDY_EXTRA[@]}" 2>&1 | filter_tidy_output
@@ -331,6 +334,7 @@ else
   "$CLANG_TIDY" \
     -p "$(dirname "$FILTERED_DB")" \
     --header-filter "$HEADER_FILTER" \
+    --exclude-header-filter "$EXCLUDE_HEADER_FILTER" \
     --use-color \
     "${CLANG_TIDY_EXTRA[@]}" \
     "${FILES_ARRAY[@]}"

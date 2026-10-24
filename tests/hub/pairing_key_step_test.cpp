@@ -35,6 +35,8 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::exchange_engine_;
   using IOHomeControlComponent::pairing_telemetry_;
   using IOHomeControlComponent::registry_;
+  using IOHomeControlComponent::management_actions_;
+  using IOHomeControlComponent::busy_;
 
   RecentOneWayPairingSighting recent_oneway_pairing_sighting_{};
   test::TestablePairingEngine pairing_engine_{
@@ -1043,4 +1045,178 @@ TEST(PairingKeyAdvice, ReceivedKeySaysHowToUseIt) {
   EXPECT_NE(message.find("system_key:"), std::string::npos);
   EXPECT_NE(message.find("found no device"), std::string::npos);
   EXPECT_NE(message.find("Scan Paired Devices"), std::string::npos);
+}
+
+// ============================================================================
+// The pull_key action: the pull and its proof, nothing else
+// ============================================================================
+
+TEST(PullKeyAction, AProvenKeyIsPrintedInTheLogOnlyAndNothingElseIsTransmitted) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  const size_t devices_before = comp.registry_.size();
+  uint8_t key_before[AES_KEY_SIZE];
+  memcpy(key_before, comp.system_key_, AES_KEY_SIZE);
+
+  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));
+
+  const auto result = comp.management_actions_.pull_key("b6bdfb");
+  EXPECT_TRUE(result.success);
+  EXPECT_TRUE(result.verified);
+  EXPECT_EQ(result.device_id, "B6BDFB");
+  const std::string key_hex = detail::format_key_hex(OTHER_KEY);
+  EXPECT_NE(result.log_message.find(key_hex), std::string::npos) << "the device log gets the key";
+  EXPECT_NE(result.log_message.find(detail::format_key_check_value(OTHER_KEY)), std::string::npos);
+  EXPECT_EQ(result.message.find(key_hex), std::string::npos) << "the Home Assistant event never carries the key";
+  EXPECT_NE(result.message.find("system_key:"), std::string::npos);
+  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ}))
+      << "no discovery, roll-call or record read: nothing is sent after the proof";
+  EXPECT_EQ(comp.registry_.size(), devices_before) << "nothing is registered";
+  EXPECT_EQ(0, memcmp(comp.system_key_, key_before, AES_KEY_SIZE)) << "the hub keeps its key";
+  EXPECT_EQ(comp.pairing_telemetry_.outcome(), PairingOutcome::KEY_RECEIVED);
+  EXPECT_TRUE(comp.pairing_telemetry_.key_pull_only());
+  EXPECT_NE(comp.pairing_telemetry_.result_sensor_string().find("pull_key_proven"), std::string::npos);
+}
+
+TEST(PullKeyAction, AControllerThatSharesTheHubKeyIsReportedAsSuch) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, comp.system_key_)));
+
+  const auto result = comp.management_actions_.pull_key("B6BDFB");
+  EXPECT_TRUE(result.success);
+  EXPECT_FALSE(result.verified);
+  EXPECT_TRUE(result.log_message.empty()) << "no key is printed for the hub's own key";
+  EXPECT_NE(result.message.find("already shares this hub's key"), std::string::npos);
+  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER}));
+  EXPECT_NE(comp.pairing_telemetry_.result_sensor_string().find("pull_key_own_key"), std::string::npos);
+}
+
+TEST(PullKeyAction, ARefusalEndsTheActionAndSaysToStartCopySystem) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  const auto result = comp.management_actions_.pull_key("B6BDFB");
+  EXPECT_FALSE(result.success);
+  EXPECT_TRUE(result.has_result_code);
+  EXPECT_EQ(result.result_code, RESULT_COMMAND_UNKNOWN);
+  EXPECT_NE(result.message.find("Copy system"), std::string::npos);
+  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER})) << "no retry after a refusal";
+  EXPECT_NE(comp.pairing_telemetry_.result_sensor_string().find("pull_key_refused"), std::string::npos);
+}
+
+TEST(PullKeyAction, SilenceIsRetriedAndThenReportedWithTheSameAdvice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+
+  const auto result = comp.management_actions_.pull_key("B6BDFB");
+  EXPECT_FALSE(result.success);
+  EXPECT_FALSE(result.has_result_code);
+  EXPECT_NE(result.message.find("sent no key"), std::string::npos);
+  EXPECT_NE(result.message.find("Copy system"), std::string::npos);
+  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>(EXCHANGE_RETRY_COUNT, CMD_LAUNCH_KEY_TRANSFER)));
+  EXPECT_NE(comp.pairing_telemetry_.result_sensor_string().find("pull_key_unanswered"), std::string::npos);
+}
+
+TEST(PullKeyAction, AKeyTheControllerDoesNotProveIsNotPrinted) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
+  const uint8_t unrelated_key[AES_KEY_SIZE] = {0x77};
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, unrelated_key)));
+
+  const auto result = comp.management_actions_.pull_key("B6BDFB");
+  EXPECT_FALSE(result.success);
+  EXPECT_TRUE(result.log_message.empty());
+  EXPECT_NE(result.message.find("did not prove"), std::string::npos);
+  EXPECT_EQ(result.message.find(detail::format_key_hex(OTHER_KEY)), std::string::npos);
+}
+
+TEST(PullKeyAction, ARefusedRequestTransmitsNothing) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+
+  const auto malformed = comp.management_actions_.pull_key("B6BD");
+  EXPECT_FALSE(malformed.success);
+  EXPECT_NE(malformed.message.find("6 hexadecimal"), std::string::npos);
+
+  const auto own = comp.management_actions_.pull_key(node_id_to_string(comp.node_id_));
+  EXPECT_FALSE(own.success);
+  EXPECT_NE(own.message.find("own node ID"), std::string::npos);
+
+  comp.busy_ = true;
+  const auto busy = comp.management_actions_.pull_key("B6BDFB");
+  comp.busy_ = false;
+  EXPECT_FALSE(busy.success);
+  EXPECT_NE(busy.message.find("in progress"), std::string::npos);
+
+  comp.initialized_ = false;
+  const auto uninitialized = comp.management_actions_.pull_key("B6BDFB");
+  EXPECT_FALSE(uninitialized.success);
+  EXPECT_EQ(uninitialized.message, "hub is not initialized");
+
+  EXPECT_TRUE(sent_commands(radio).empty());
+}
+
+TEST(PullKeyAction, TheRetriesFollowTheBandsGapAndStopAtTheWorstCaseItReports) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  const uint8_t controller[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFB};
+  const uint32_t worst_case_ms = comp.pairing_engine_.pull_key_worst_case_ms(controller);
+  EXPECT_GE(worst_case_ms, EXCHANGE_RETRY_COUNT * PAIRING_KEY_PULL_REPLY_TIMEOUT_MS);
+}
+
+TEST(PairingKeyAdvice, StandalonePullHasItsOwnCodes) {
+  struct Case {
+    PairingOutcome outcome;
+    bool refusal;
+    bool unproven;
+    advisor::PairingAdviceCode expected;
+    const char *name;
+  };
+  const Case cases[] = {
+      {PairingOutcome::KEY_RECEIVED, false, false, advisor::PairingAdviceCode::PULL_KEY_PROVEN, "pull_key_proven"},
+      {PairingOutcome::HUB_KEY_RETURNED, false, false, advisor::PairingAdviceCode::PULL_KEY_OWN_KEY,
+       "pull_key_own_key"},
+      {PairingOutcome::KEY_TRANSFER_REFUSED, true, false, advisor::PairingAdviceCode::PULL_KEY_REFUSED,
+       "pull_key_refused"},
+      {PairingOutcome::KEY_EXCHANGE_FAILED, false, false, advisor::PairingAdviceCode::PULL_KEY_UNANSWERED,
+       "pull_key_unanswered"},
+      {PairingOutcome::KEY_EXCHANGE_FAILED, false, true, advisor::PairingAdviceCode::KEY_PULL_UNPROVEN,
+       "key_pull_unproven"},
+  };
+  for (const Case &c : cases) {
+    PairingTelemetry telemetry;
+    telemetry.begin();
+    telemetry.set_key_pull_only();
+    telemetry.set_key_pull_attempted();
+    telemetry.set_discovered_device(DEVICE_ID, DeviceType::REMOTE_CONTROLLER);
+    if (c.refusal)
+      telemetry.set_key_refusal(RESULT_COMMAND_UNKNOWN);
+    if (c.unproven)
+      telemetry.set_key_pull_unproven();
+    telemetry.set_outcome(c.outcome);
+    advisor::PairingAdvice out[advisor::PAIRING_ADVICE_MAX];
+    const uint8_t n = advise(telemetry, out);
+    ASSERT_GE(n, 1u) << c.name;
+    EXPECT_EQ(out[n - 1].code, c.expected) << c.name;
+    EXPECT_STREQ(advisor::pairing_advice_code_name(out[n - 1].code), c.name);
+    const std::string message = advisor::pairing_advice_message(out[n - 1]);
+    EXPECT_FALSE(message.empty()) << c.name;
+    EXPECT_EQ(message.find("roll-call"), std::string::npos) << c.name << ": no search was made";
+  }
 }

@@ -28,6 +28,8 @@ point at the right line of the committed file.
   4. Link rewriting -- a small table (see `rewrite_links`):
        * `](docs/x.md#f)` (a README link across the source -> staged boundary)
          becomes `](build/docs/x.md#f)`.
+       * A `docs/` page's link out of `docs/` into a staged page elsewhere
+         (`](../README.md)`) loses the `docs/` level the staging removed (`](README.md)`).
        * `[text](https://<pages-site>/group__<g>.html)` -- a GitHub-friendly
          absolute link to one of this project's own API group pages -- becomes
          doxygen's own `\ref <g> "text"`. (A bare relative `x.html` link does
@@ -37,13 +39,14 @@ point at the right line of the committed file.
 Transforms 2-4 act outside fenced code blocks only.
 
 Output paths mirror the source tree with a leading `docs/` removed:
-  README.md         -> build/docs/README.md
-  docs/foo.md       -> build/docs/foo.md
-  docs/adr/0001.md  -> build/docs/adr/0001.md
+  README.md              -> build/docs/README.md
+  docs/foo.md            -> build/docs/foo.md
+  docs/adr/0001.md       -> build/docs/adr/0001.md
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -74,6 +77,9 @@ PAGES_BASE_URL = "https://laberning.github.io/home_io_control/"
 
 # transform 4a: README links that cross the docs/ -> build/docs/ staging boundary.
 _BOUNDARY_LINK_RE = re.compile(r"\]\(docs/([^)]+\.md(?:#[^)]*)?)\)")
+
+# Any relative Markdown link target (4b resolves it against the page).
+_REL_LINK_RE = re.compile(r"\]\((?!https?://|mailto:|#)([^)#\s]+)((?:#[^)]*)?)\)")
 
 # transform 4b: a GitHub-friendly absolute link to one of our own API group pages,
 # turned back into doxygen's \ref. group__hioc__protocol.html -> \ref hioc_protocol.
@@ -236,10 +242,28 @@ def _group_link_to_ref(m: re.Match) -> str:
     return rf'\ref {group} "{text}"'
 
 
-def rewrite_links(content: str) -> str:
+def staged_link(src: Path, target: str) -> str | None:
+    """Transform 4b for one relative link target of `src`: the target to write in the staged
+    copy, or None when no rule applies. check-docs-links.py asks the same question, so a link it
+    accepts is one the staging rewrites."""
+    resolved = (src.parent / target).resolve()
+    sources = set(_sources())
+    docs_dir = REPO_ROOT / "docs"
+    in_docs = docs_dir in src.parents
+    if in_docs and resolved in sources and docs_dir not in resolved.parents:
+        return os.path.relpath(_dest_path(resolved), _dest_path(src).parent)          # 4b
+    return None
+
+
+def rewrite_links(content: str, src: Path) -> str:
     content = sub_outside_fences(_BOUNDARY_LINK_RE, r"](build/docs/\1)", content)
     content = sub_outside_fences(_GROUP_LINK_RE, _group_link_to_ref, content)
-    return content
+
+    def _relative(m: re.Match) -> str:
+        new = staged_link(src, m.group(1))
+        return m.group(0) if new is None else f"]({new}{m.group(2)})"
+
+    return sub_outside_fences(_REL_LINK_RE, _relative, content)
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +301,7 @@ def stage(src: Path) -> str:
     staged = highlight_yaml(staged)
     staged = inject_label(staged, src)
     staged = generate_subpages(staged, src)
-    staged = rewrite_links(staged)
+    staged = rewrite_links(staged, src)
 
     if staged.count("\n") != raw.count("\n"):
         sys.exit(

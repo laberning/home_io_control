@@ -1,0 +1,49 @@
+id: velux_skylight_blind_exchange_execute_answer_46ms_2g4
+description: >
+  A bench tool sends an authenticated EXECUTE (originator 1, ACEI 0x63, main parameter 0x0000, open) as node C0FFEE to a VELUX skylight blind 516B10, behind the long wake train. The blind challenges it (0x3C); the bench tool answers with the 0x3D exactly 46 ms after the challenge's last bit (the answer is timed by the co-processor, tx.t_main_us), and the blind accepts it and sends the short 0x04. 46 ms is the longest answer delay at which this blind was seen to accept; at 47 ms it ignores the answer (the sibling capture). The request, its train and the answer are the bench tool's commanded ones, the challenge and the 0x04 are received. The 0x3D is re-keyed to the corpus key.
+source:
+  device: "A bench tool on a Kite nRF52840 (Maser228) sending as node C0FFEE to a VELUX skylight blind 516B10 on 2.4 GHz, the same installation as the KLR 200 4D84A6, heard and sent through Kite's Bridle link"
+  captured_with: other
+  firmware: "0.0.0-dev+g587526f"
+  date: 2026-10-13
+  origin: contributor
+  issue: null
+key: corpus
+phy: io_2g4
+psdu_header: "01 69 6F"
+t_us_stamp: {at: sfd, resolution_us: 1}
+frames:
+  - dir: tx
+    t_us: 510036
+    wake_train: {frames_captured: 510, first_counter: 509, last_counter: 0, first_t_us: 0, last_t_us: 509000}
+    freq: 2450000000
+    hex: "50 20 51 6B 10 C0 FF EE 00 01 63 00 00 80 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+  - dir: rx
+    t_us: 513248
+    freq: 2450000000
+    hex: "0E 00 C0 FF EE 51 6B 10 3C FC C7 6A 9C C3 BE"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_us: 560080
+    freq: 2450000000
+    hex: "0E 00 51 6B 10 C0 FF EE 3D FA EF BB E3 47 2B"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_us: 563303
+    freq: 2450000000
+    hex: "90 00 C0 FF EE 51 6B 10 04 54 60 00 00 80 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

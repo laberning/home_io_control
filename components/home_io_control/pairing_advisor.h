@@ -44,6 +44,14 @@ enum class PairingAdviceCode : uint8_t {
   PULLED_KEY_RECEIVED,         ///< The pull got a different key that the device proved, and a roll-call
                                ///< under it found no registrable device (outcome KEY_RECEIVED). Says to
                                ///< put the key into the controlling entity's `system_key:`.
+  PULL_KEY_PROVEN,             ///< The standalone key pull got a different key that the controller proved
+                               ///< (outcome KEY_RECEIVED, telemetry key_pull_only()). Says to put the key into
+                               ///< `system_key:`; no search for devices was made.
+  PULL_KEY_OWN_KEY,            ///< The standalone key pull returned the hub's own key: the controller already
+                               ///< shares this hub's key (outcome HUB_KEY_RETURNED).
+  PULL_KEY_REFUSED,            ///< The controller answered the standalone key pull with CMD_ERROR_RESP, usually
+                               ///< because it is not in "Copy system" mode.
+  PULL_KEY_UNANSWERED,         ///< The controller sent no key at all to the standalone key pull.
   HUB_KEY_NO_RESPONDER,        ///< The pull returned the hub's own key from a node no platform drives, and no
                                ///< device that holds it answered (outcome HUB_KEY_RETURNED). Says to run Scan
                                ///< Paired Devices.

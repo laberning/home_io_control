@@ -430,6 +430,9 @@ struct IoDevice {
                                          ///< directed frames set CTRL1_LOW_POWER and use the long wake-up preamble.
                                          ///< A protocol-reported class exists (discovery Multi Information Byte) but
                                          ///< is surfaced through the pairing/scan snippet, never applied at runtime.
+  bool low_power_set{false};             ///< True when the configuration declared `low_power:` for this device; when
+                                         ///< false, `low_power` holds the radio driver's band default
+                                         ///< (RadioDriver::low_power_by_default()).
   bool dimmable{false};                  ///< True for a LIGHT-class device configured `dimmable: true` in YAML.
                                          ///< Set from platform_light.cpp's YAML config via
                                          ///< DeviceRegistry::set_dimmable(), purely for accurate profile-name

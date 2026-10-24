@@ -200,7 +200,7 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   TxResult result;
   for (uint8_t lbt = 0;; lbt++) {
     if (lbt < this->tuning_->lbt_max_retries) {
-      tx_config.cca_threshold_dbm = this->tuning_->lbt_rssi_threshold_dbm;
+      tx_config.cca_threshold_dbm = radio->lbt_threshold_dbm(*this->tuning_);
     } else {
       tx_config.cca_threshold_dbm.reset();
     }
@@ -221,6 +221,16 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   if (this->transmit_observer_ != nullptr)
     this->transmit_observer_->on_transmit(frame, tx_config, len);
   return true;
+}
+
+uint32_t ExchangeEngine::try_frequency_(uint32_t fixed_freq, uint8_t try_index) const {
+  return decisions::retry_frequency((*this->radio_ptr_)->retries_rotate_channel(), fixed_freq,
+                                    this->last_answered_freq_, try_index);
+}
+
+uint32_t ExchangeEngine::first_response_window_ms_(const IoFrame &request) const {
+  return is_start(request) ? (*this->radio_ptr_)->start_response_wait_ms(*this->tuning_)
+                           : this->tuning_->exchange_response_wait_ms;
 }
 
 uint32_t ExchangeEngine::tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16_t preamble) const {
@@ -369,21 +379,24 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   }
   const uint32_t exchange_begin_ms = millis();
   uint8_t unconfirmed_tries = 0;  // tries that ended challenged but never closed
+  const uint32_t retry_gap_ms = (*this->radio_ptr_)->retry_gap_ms(*this->tuning_);
 
   for (uint8_t tries = 0; tries < tries_allowed; tries++) {
     exchange::OutboundExchangeContext context;
     context.try_index = tries + 1;
-    context.wait_ms =
-        is_start(request) ? this->tuning_->exchange_start_response_wait_ms : this->tuning_->exchange_response_wait_ms;
+    context.wait_ms = this->first_response_window_ms_(request);
     context.state = exchange::OutboundExchangeState::TX_REQUEST;
+    // Every frame of this try (request, 0x3D, follow-ups) goes out on this channel, and the reply
+    // is held on it.
+    const uint32_t try_freq = this->try_frequency_(freq, tries);
 
     if (tries > 0) {
       // The retry count is a maximum, not a promise: don't start a try whose transmission would
       // end past the budget. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command
       // from blocking the ESPHome loop for the full retries x (transmission + response window)
       // product.
-      if (!this->try_fits_budget_(millis() - exchange_begin_ms, EXCHANGE_RETRY_DELAY_MS,
-                                  this->tx_time_ms_(request, freq, preamble_plan.for_try(context.try_index)))) {
+      if (!this->try_fits_budget_(millis() - exchange_begin_ms, retry_gap_ms,
+                                  this->tx_time_ms_(request, try_freq, preamble_plan.for_try(context.try_index)))) {
         this->record_debug("retry_budget_exhausted", tries, false);
         ESP_LOGI(TAG, "Exchange budget exhausted after %u tries for cmd=%s(0x%02X) (%" PRIu32 " of %u ms)", tries,
                  command_name(request.cmd), request.cmd, millis() - exchange_begin_ms,
@@ -391,7 +404,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
         break;
       }
       App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
+      delay(retry_gap_ms);
       this->counters_.retransmits++;
     }
 
@@ -401,7 +414,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     context.request_preamble = preamble_plan.for_try(context.try_index);
     context.target_last_seen_ms = preamble_plan.last_seen_ms;
     this->debug_.last_try_preamble = context.request_preamble;
-    if (!this->transmit_request_(request, freq, context.request_preamble, context))
+    if (!this->transmit_request_(request, try_freq, context.request_preamble, context))
       continue;
 
     context.state = exchange::OutboundExchangeState::WAIT_FIRST_RESPONSE;
@@ -409,6 +422,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     auto first_disp = this->wait_for_first_response_(request, context);
     if (first_disp == decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED)
       continue;
+    this->last_answered_freq_ = try_freq;  // the device heard this channel: the next exchange starts here
     if (first_disp == decisions::ExchangeFirstResponseDisposition::COMPLETE_DIRECT) {
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_direct", context.try_index, false);
@@ -423,7 +437,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       return ExchangeOutcome::SUCCESS_WITH_RESPONSE;
     }
 
-    if (!this->handle_authentication_(request, freq, context))
+    if (!this->handle_authentication_(request, try_freq, context))
       continue;
 
     context.state = exchange::OutboundExchangeState::WAIT_FINAL_RESPONSE;
@@ -444,9 +458,10 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_auth_unconfirmed", context.try_index, true);
       unconfirmed_tries++;
-      const uint8_t further_tries = this->tries_after_unconfirmed_(
-          request, unconfirmed_tries, context.try_index, millis() - exchange_begin_ms,
-          this->tx_time_ms_(request, freq, preamble_plan.for_try(context.try_index + 1)));
+      const uint8_t further_tries =
+          this->tries_after_unconfirmed_(request, unconfirmed_tries, context.try_index, millis() - exchange_begin_ms,
+                                         this->tx_time_ms_(request, this->try_frequency_(freq, tries + 1),
+                                                           preamble_plan.for_try(context.try_index + 1)));
       if (further_tries == 0)
         return ExchangeOutcome::SUCCESS_UNCONFIRMED;
       tries_allowed = std::min<uint8_t>(tries_allowed, tries + 1 + further_tries);
@@ -610,15 +625,30 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
   char age[TRY_AGE_BUFFER_SIZE];
   format_try_age(ctx, age);
-  ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%" PRIu32 " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s",
-           ctx.try_index, ctx.first_response_ms - ctx.try_start_ms, request.cmd, request.data_len, ctx.request_preamble,
-           age);
 
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
   // answer_challenge() covers both the 0x3D build and its transmit as one step, so a failure here
   // does not distinguish which of the two failed.
-  if (!this->answer_challenge(request, ctx.rx, freq)) {
+  const bool answered = this->answer_challenge(request, ctx.rx, freq);
+  // Logged after the 0x3D is on its way: the device accepts the answer only for a short while after
+  // its challenge (about 46 ms on 2.4 GHz), and a log line before the transmission spends that time.
+  // challenge_to_answer_ms runs from the 0x3C's arrival to the end of the 0x3D's transmission, so it
+  // includes the 0x3D's airtime (about 1 ms on 2.4 GHz).
+  const uint32_t answer_ms = millis() - ctx.first_response_ms;
+  ESP_LOGI(TAG,
+           "Auth challenge try=%d wait_ms=%" PRIu32 " challenge_to_answer_ms=%" PRIu32
+           " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s",
+           ctx.try_index, ctx.first_response_ms - ctx.try_start_ms, answer_ms, request.cmd, request.data_len,
+           ctx.request_preamble, age);
+  if (decisions::challenge_answer_is_slow(answer_ms)) {
+    ESP_LOGW(TAG,
+             "0x3D sent %" PRIu32
+             " ms after the 0x3C arrived (warning above %u ms): a channel check or a busy loop held "
+             "the answer back, and the device may have stopped waiting",
+             answer_ms, static_cast<unsigned>(decisions::CHALLENGE_ANSWER_WARN_MS));
+  }
+  if (!answered) {
     ctx.state = exchange::OutboundExchangeState::FAILED;
     this->record_debug("auth_response_failed", ctx.try_index, true);
     return false;
@@ -659,7 +689,7 @@ uint8_t ExchangeEngine::tries_after_unconfirmed_(const IoFrame &request, uint8_t
   // Stretch the ordinary retry gap the loop is about to wait to the longer re-send gap, so a device
   // still busy acting on the first copy has finished before the re-send reaches it.
   App.feed_wdt();
-  delay(UNCONFIRMED_EXECUTE_RESEND_DELAY_MS - EXCHANGE_RETRY_DELAY_MS);
+  delay(UNCONFIRMED_EXECUTE_RESEND_DELAY_MS - (*this->radio_ptr_)->retry_gap_ms(*this->tuning_));
   // The re-send is the only further copy of a CMD_EXECUTE: if it goes unanswered altogether, the
   // ordinary failure retry must not add a third one to a device that already has the command.
   return UNCONFIRMED_EXECUTE_MAX_RESENDS;

@@ -242,6 +242,39 @@ static constexpr uint16_t LR1121_POST_TX_SETTLE_US = SX1262_POST_TX_SETTLE_US;
 /// its own literal rather than an alias.
 static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = 7;
 
+/// Per-channel dwell while a 2.4 GHz radio behind a serial link hops across channels.
+///
+/// The dwell of a rotating listen must cover what a retune costs before the radio hears anything.
+/// For 2.4 GHz that is the UART time of the `rx_on` command (12 bytes: 0.12 ms at 1 Mbaud, 1.04 ms at
+/// 115200) and the co-processor's retune and radio ramp-up (about 0.14 ms on the nRF52 radio the
+/// reference co-processor uses); the hub does not wait for the `ack`. That is about 0.3 ms at 1 Mbaud
+/// and 1.2 ms at the slowest rate. 2 ms leaves the co-processor's scheduling roughly seven times the 1 Mbaud figure
+/// in margin and is still short enough to sweep all three channels in 6 ms. Whether a 2.4 GHz
+/// broadcast reply needs a longer dwell is not yet measured.
+static constexpr uint16_t IO2G4_HOP_DWELL_MS = 2;
+
+/// Reply window for a start frame on 2.4 GHz, counted after the transmission ends (ms).
+///
+/// A 2.4 GHz device answers on the request's channel within a few milliseconds of the request's
+/// last frame, so a window of a few tens of milliseconds already holds every measured reply with
+/// room for the co-processor link. A short window is what lets a retry on another channel follow
+/// a silent try quickly.
+static constexpr uint16_t IO2G4_EXCHANGE_START_RESPONSE_WAIT_MS = 60;
+
+/// Pause between the tries of one 2.4 GHz exchange (ms). The device is either awake after the
+/// wake-up train or it is not; waiting longer does not change which, and a retry moves to another
+/// channel anyway.
+static constexpr uint16_t IO2G4_EXCHANGE_RETRY_GAP_MS = 50;
+
+/// Clear-channel threshold for a 2.4 GHz transmission, in dBm.
+///
+/// IEEE 802.15.4 energy-detect CCA treats a channel as busy at most 10 dB above the receiver
+/// sensitivity of the PHY, which is -85 dBm for 2.4 GHz O-QPSK, so -75 dBm is the most permissive
+/// value the standard allows; Nordic's 802.15.4 driver defaults to the same. The 868 MHz default
+/// of -90 dBm would defer to almost any Wi-Fi traffic in the band. A busy result costs at most
+/// `LBT_MAX_RETRIES` x `LBT_RETRY_DELAY_MS` before the frame is sent anyway.
+static constexpr int16_t IO2G4_LBT_RSSI_THRESHOLD_DBM = -75;
+
 /// Default directed start preamble for drivers built on the shared software PHY (SX1262, LR1121).
 ///
 /// 48 bytes rather than the protocol's documented 32. Measured: on a Somfy Izymo dimmer an SX1262
@@ -250,6 +283,11 @@ static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = 7;
 /// the shared PHY rather than the chip, the link or the device, so the compensation belongs with
 /// the PHY. The cause of the shortfall is not identified; see ADR 0042.
 static constexpr uint16_t SOFT_PHY_START_PREAMBLE = 48;
+
+/// Longest wake-up preamble `low_power_wake_preamble` accepts (bytes): what a radio behind a serial link
+/// must be able to send, so the Bridle driver refuses a co-processor whose radio caps a preamble below it.
+/// Pinned against the option's maximum in `tuning.py` by `tests/sync/`.
+static constexpr uint16_t LOW_POWER_WAKE_PREAMBLE_MAX = 4096;
 
 /// @brief All runtime tunable parameters for pairing and radio diagnostics.
 ///
@@ -283,7 +321,13 @@ struct TuningConfig {
   uint16_t lr1121_response_preamble{LR1121_RESPONSE_PREAMBLE};             ///< LR1121 response preamble in bytes.
   uint16_t lr1121_post_tx_settle_us{LR1121_POST_TX_SETTLE_US};             ///< Delay after LR1121 TX before RX (µs).
   uint16_t lr1121_discovery_hop_slice_ms{
-      LR1121_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while LR1121 discovery hops.
+      LR1121_DISCOVERY_HOP_SLICE_MS};               ///< Per-channel dwell while LR1121 discovery hops.
+  uint16_t io2g4_hop_dwell_ms{IO2G4_HOP_DWELL_MS};  ///< Per-channel dwell while a 2.4 GHz radio hops (ms).
+  int16_t io2g4_lbt_rssi_threshold_dbm{
+      IO2G4_LBT_RSSI_THRESHOLD_DBM};  ///< Channel-free threshold for a 2.4 GHz transmission (dBm).
+  uint16_t io2g4_exchange_start_response_wait_ms{
+      IO2G4_EXCHANGE_START_RESPONSE_WAIT_MS};                         ///< Reply window for a 2.4 GHz start frame (ms).
+  uint16_t io2g4_exchange_retry_gap_ms{IO2G4_EXCHANGE_RETRY_GAP_MS};  ///< Gap between 2.4 GHz tries (ms).
   uint16_t cold_broadcast_reply_preamble{
       COLD_BROADCAST_REPLY_PREAMBLE};  ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
   uint16_t normal_start_preamble{

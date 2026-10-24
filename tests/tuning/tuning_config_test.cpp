@@ -33,6 +33,12 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_EQ(cfg.normal_start_preamble, 32);
   EXPECT_EQ(cfg.lbt_max_retries, 5);
   EXPECT_EQ(cfg.lbt_rssi_threshold_dbm, -90);
+  // 2.4 GHz: 802.15.4's energy-detect limit (-85 dBm sensitivity + 10 dB) and a dwell well above
+  // one retune.
+  EXPECT_EQ(cfg.io2g4_lbt_rssi_threshold_dbm, -75);
+  EXPECT_EQ(cfg.io2g4_hop_dwell_ms, 2);
+  EXPECT_EQ(cfg.io2g4_exchange_start_response_wait_ms, 60);
+  EXPECT_EQ(cfg.io2g4_exchange_retry_gap_ms, 50);
   ASSERT_EQ(cfg.pairing_discovery_commands.size(), 1);
   EXPECT_EQ(static_cast<uint8_t>(cfg.pairing_discovery_commands[0]), 0x28);
   EXPECT_TRUE(cfg.pairing_discovery_destination_auto);

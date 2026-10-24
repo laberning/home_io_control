@@ -576,3 +576,45 @@ TEST(DeviceRegistry, RangeForIterationAllowsMutation) {
   EXPECT_EQ(reg.get("111AAA")->position, 42);
   EXPECT_EQ(reg.get("222BBB")->position, 42);
 }
+
+// --- the radio band's low_power default ---
+
+TEST(DeviceRegistry, BandDefaultAppliesToDevicesThatDeclareNoClass) {
+  DeviceRegistry reg;
+  reg.add("AAAAAA");  // registered before the driver exists, as the YAML devices are
+  DeviceConfig declared_false;
+  declared_false.low_power_set = true;
+  reg.add("BBBBBB", declared_false);
+
+  reg.set_low_power_default(true);
+
+  EXPECT_TRUE(reg.get("AAAAAA")->low_power) << "an undeclared device takes the band default";
+  EXPECT_FALSE(reg.get("AAAAAA")->low_power_set);
+  EXPECT_FALSE(reg.get("BBBBBB")->low_power) << "an explicit low_power: false always wins";
+  EXPECT_TRUE(reg.get("BBBBBB")->low_power_set);
+}
+
+TEST(DeviceRegistry, BandDefaultAlsoReachesDevicesRegisteredLater) {
+  DeviceRegistry reg;
+  reg.set_low_power_default(true);
+
+  reg.add("CCCCCC");
+  IoDevice paired{};
+  EXPECT_TRUE(hex_to_bytes("DDDDDD", paired.node_id, NODE_ID_SIZE));
+  reg.put("DDDDDD", paired);
+  DeviceConfig declared_true;
+  declared_true.low_power = true;
+  declared_true.low_power_set = true;
+  reg.add("EEEEEE", declared_true);
+
+  EXPECT_TRUE(reg.get("CCCCCC")->low_power);
+  EXPECT_TRUE(reg.get("DDDDDD")->low_power) << "a paired or scanned device gets it too";
+  EXPECT_TRUE(reg.get("EEEEEE")->low_power);
+}
+
+TEST(DeviceRegistry, WithoutABandDefaultNothingChanges) {
+  DeviceRegistry reg;
+  reg.set_low_power_default(false);
+  reg.add("FFFFFF");
+  EXPECT_FALSE(reg.get("FFFFFF")->low_power);
+}

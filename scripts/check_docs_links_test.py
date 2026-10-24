@@ -87,15 +87,26 @@ def test_label_and_subpages_are_fence_aware() -> None:
 
 
 def test_link_rewrites() -> None:
+    readme = sd.REPO_ROOT / "README.md"
     check(
-        sd.rewrite_links("[a](docs/home_io_control.md#x)") == "[a](build/docs/home_io_control.md#x)",
+        sd.rewrite_links("[a](docs/home_io_control.md#x)", readme) == "[a](build/docs/home_io_control.md#x)",
         "README docs/ -> build/docs/ boundary rewrite",
     )
     grp = "[Protocol](https://laberning.github.io/home_io_control/group__hioc__protocol.html)"
-    check(sd.rewrite_links(grp) == r'\ref hioc_protocol "Protocol"', "group-page URL -> \\ref")
+    check(sd.rewrite_links(grp, readme) == r'\ref hioc_protocol "Protocol"', "group-page URL -> \\ref")
     fenced = "```\n[a](docs/x.md)\n```\n[b](docs/x.md)\n"
-    r = sd.rewrite_links(fenced)
+    r = sd.rewrite_links(fenced, readme)
     check("```\n[a](docs/x.md)\n```" in r and "[b](build/docs/x.md)" in r, "rewrite skips fences")
+
+
+def test_links_out_of_docs() -> None:
+    R = sd.REPO_ROOT
+    overview = R / "docs" / "architecture_overview.md"
+    check(sd.rewrite_links("[s](../README.md#x)", overview) == "[s](README.md#x)",
+          "a docs/ page's link to the README loses the docs/ level")
+    adr = R / "docs" / "adr" / "0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md"
+    check(sd.rewrite_links("[s](../../README.md)", adr) == "[s](../README.md)", "the same from docs/adr/ keeps one level")
+    check(sd.staged_link(overview, "adr/README.md") is None, "docs/ -> docs/ links need no rewrite")
 
 
 def test_dest_path() -> None:

@@ -35,6 +35,8 @@ struct DeviceConfig {
   bool battery_entities{false};          ///< `battery: true` declared: the battery entities exist for this device.
   bool has_system_key{false};            ///< `system_key:` declared: the device keeps a key of its own.
   uint8_t system_key[AES_KEY_SIZE]{};    ///< That key; meaningful only when `has_system_key`. Never logged.
+  bool low_power_set{false};             ///< `low_power:` declared: `low_power` is the user's choice and the
+                                         ///< driver's band default never replaces it, `true` or `false`.
 };
 
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.
@@ -78,6 +80,14 @@ class DeviceRegistry {
   /// @param device_id Hexadecimal node ID string.
   /// @return true when a record was removed.
   bool remove_registered_by_pairing(const std::string &device_id);
+
+  /// Set the `low_power` class of every device whose configuration did not declare one, now and for
+  /// every device registered or put later (pairing, scans, actions).
+  ///
+  /// The hub calls this once the radio driver exists; devices the YAML declares register before
+  /// that. A device with IoDevice::low_power_set keeps its own value.
+  /// @param low_power RadioDriver::low_power_by_default().
+  void set_low_power_default(bool low_power);
 
   /// Set a device's `dimmable` flag (see IoDevice::dimmable). No-op when the device is unknown.
   /// Called by platform_light.cpp's setup() right after registration, since `dimmable` is a
@@ -209,6 +219,10 @@ class DeviceRegistry {
 
  private:
   std::map<std::string, IoDevice> devices_;
+  bool default_low_power_{false};  ///< Applied to devices with no declared class (set_low_power_default()).
+
+  /// Give @p device the band's `low_power` default unless it declares a class or already is low-power.
+  void apply_low_power_default_(IoDevice &device) const;
   std::vector<DeviceUpdateCallback> callbacks_;
   std::map<std::string, std::vector<std::string>> linked_remotes_;
   std::map<DeviceType, std::vector<std::string>> linked_remote_classes_;

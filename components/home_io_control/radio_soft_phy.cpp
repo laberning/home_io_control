@@ -232,9 +232,10 @@ uint8_t soft_phy_raw_bytes_for_frame(uint8_t frame_len) {
   return (uint8_t) ((bits + 7) / 8);
 }
 
-uint32_t io868_tx_air_time_us(uint16_t preamble_len, uint8_t frame_len) {
-  return soft_phy_air_time_us((uint32_t) preamble_len + IO868_SYNC_WORD_BYTES +
-                              soft_phy_raw_bytes_for_frame(frame_len));
+uint32_t io868_tx_air_time_us(uint16_t preamble_len, uint8_t frame_len, uint8_t preamble_bits_per_byte) {
+  const uint64_t preamble_bits = static_cast<uint64_t>(preamble_len) * preamble_bits_per_byte;
+  const uint64_t coded_bytes = IO868_SYNC_WORD_BYTES + soft_phy_raw_bytes_for_frame(frame_len);
+  return soft_phy_air_time_bits_us(preamble_bits + (coded_bytes * BITS_PER_BYTE));
 }
 
 uint8_t soft_phy_peek_frame_length(const uint8_t *raw, uint8_t raw_len) {

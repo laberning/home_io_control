@@ -1,0 +1,23 @@
+# expect-error: recover_oneway_key: is not available with bridle_band io_2g4
+# covers: hub_validators.final_validate_no_oneway_on_io_2g4
+# One-way frames have never been seen on 2.4 GHz, so a one-way transmit setting is a configuration error there.
+packages:
+  common: !include ../_common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+uart:
+  id: kite_uart
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 1000000
+  rx_buffer_size: 2048
+
+home_io_control:
+  radio_type: bridle
+  uart_id: kite_uart
+  rst_pin: 4
+  recover_oneway_key: true

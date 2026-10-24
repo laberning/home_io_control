@@ -49,7 +49,9 @@ entities appear under the device's **Configuration** section, grouped into `Radi
    ```yaml
    logger:
      level: DEBUG
-     # Or keep the global level higher and raise only these tags:
+     # Quieter alternative: compile DEBUG in, start at INFO, and raise only these tags.
+     # A tag cannot be more verbose than the global `level`, so `level` must stay DEBUG.
+     # initial_level: INFO
      # logs:
      #   home_io_control: DEBUG
      #   home_io_control.exchange: DEBUG
@@ -149,6 +151,8 @@ your device may differ.
 | `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
 | `low_power_wake_preamble` | both | `1024` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
+| `io2g4_exchange_start_response_wait_ms` | 2.4 GHz bridge | `60` | 20–400 ms | How long to listen for a reply to a start frame, counted after the request ends. See [2.4 GHz retries](#io2g4_exchange_start_response_wait_ms--io2g4_exchange_retry_gap_ms). |
+| `io2g4_exchange_retry_gap_ms` | 2.4 GHz bridge | `50` | 0–250 ms | Pause between the tries of one command on 2.4 GHz. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before a frame is sent without one. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -237,6 +241,16 @@ as soon as the reply lands, see
 [ADR 0013](../adr/0013-blocking-exchange-on-the-esphome-loop.md)), and a
 failure costs this window once per retry. Raise it for a stubborn device; lower it if slow failures
 are worse for you than missed commands.
+
+#### `io2g4_exchange_start_response_wait_ms` / `io2g4_exchange_retry_gap_ms`
+
+The 2.4 GHz counterparts of `exchange_start_response_wait_ms` and the retry gap, read only with
+`radio_type: bridle` and `bridle_band: io_2g4`. A 2.4 GHz device answers on the channel of the
+request 2–4 ms after the request ends, so the reply window is short, and a silent try is followed
+by a retry on another channel rather than a long wait: the first try uses the channel that last
+carried an answer (2450 MHz after boot), the next tries the other two in a fixed order. A try
+behind the long wake-up train takes about 510 ms, so three tries at the defaults take about 1.9 s
+and fit `exchange_total_budget_ms`. The 868 MHz bands are not affected.
 
 #### `exchange_total_budget_ms`
 

@@ -50,7 +50,7 @@ sequence:
       device_id: "FEEB1E"
 ```
 
-Every action except `scan_paired_devices` takes `device_id`: the 6-hex-character IO-Homecontrol device ID — the same value you set as `io_device_id` in the entity's YAML, and the same ID the pairing log prints. This is the protocol-level actuator ID, **not** the Home Assistant entity ID. `scan_paired_devices` takes no `data:` at all — it isn't aimed at one device.
+Every action except `scan_paired_devices` and `pull_key` takes `device_id`: the 6-hex-character IO-Homecontrol device ID — the same value you set as `io_device_id` in the entity's YAML, and the same ID the pairing log prints. This is the protocol-level actuator ID, **not** the Home Assistant entity ID. `scan_paired_devices` takes no `data:` at all — it isn't aimed at one device — and `pull_key` takes `controller_id`, the node ID of a controller rather than a device on this hub.
 
 ## Result events
 
@@ -108,6 +108,33 @@ Queued through the same dispatch path as the cover entity and its buttons (capab
 action: esphome.hioc_heltec_v2_force_open_device
 data:
   device_id: "FEEB1E"
+```
+
+## `pull_key`
+
+Fields: `controller_id` (required, 6 hex digits — not a device on this hub but the controller to take the key from).
+
+> [!NOTE]
+> This action is experimental. The pull it runs is confirmed on an Atlantic AGILIA radiator
+> through Discover & Pair; this standalone form has not yet been confirmed against a 2.4 GHz
+> VELUX remote.
+
+Asks the controller for its system key, takes the key it sends and proves it by challenging the controller under that key. It does no discovery, no roll-call and no record reads, and it registers nothing: the hub transmits nothing after the proof. A proven key is printed in the device log with its key check value, inside a DO-NOT-SHARE banner; the Home Assistant event and the Last Pairing Result sensor carry the check value only. It works on every band.
+
+Start "Copy system" on the controller first and run the action within the window (about two minutes). To find the controller's ID, press a button on it and read the `Heard a request from` line in the log. The action blocks the hub for at most the time its first log line states, a few seconds on 2.4 GHz.
+
+| Result | What it means |
+|---|---|
+| `success: true`, `verified: true` | The controller sent a key that differs from the hub's and proved it holds it. Put it in `system_key:` and add the devices by their IDs — see [Key extraction](../key-extraction.md#pull-the-key-from-a-velux-remote-24-ghz). |
+| `success: true`, `verified: false` | The controller already shares this hub's key. |
+| `success: false` | The controller refused (`result_code` says why), sent no key, or sent a key it did not prove, which is never printed. |
+
+The action refuses, without transmitting, for an ID that is not 6 hex digits, for the hub's own ID, and while another radio operation runs.
+
+```yaml
+action: esphome.hioc_heltec_v2_pull_key
+data:
+  controller_id: "A1B2C3"
 ```
 
 ## See also

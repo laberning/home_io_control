@@ -13,6 +13,7 @@
 #include "entity_helpers.h"
 #include "hub_core.h"
 #include "log_helpers.h"
+#include "pairing_engine.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
 #include "roll_call.h"
@@ -28,6 +29,7 @@
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <cinttypes>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -48,6 +50,7 @@ constexpr const char *MANAGEMENT_ACTION_RENAME_DEVICE = "rename_device";
 constexpr const char *MANAGEMENT_ACTION_IDENTIFY_DEVICE = "identify_device";
 constexpr const char *MANAGEMENT_ACTION_FORCE_OPEN_DEVICE = "force_open_device";
 constexpr const char *MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES = "scan_paired_devices";
+constexpr const char *MANAGEMENT_ACTION_PULL_KEY = "pull_key";
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_POSITION = "oneway_set_position";
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_REMOVE_CONTROLLER = "oneway_remove_controller";
 constexpr const char *MANAGEMENT_ACTION_PROBE_DEVICE = "probe_device";
@@ -527,13 +530,14 @@ static bool parse_heating_arguments(const std::string &function, const std::stri
 // --- ManagementActions ---
 
 ManagementActions::ManagementActions(const uint8_t *node_id, const uint8_t *system_key, const TuningConfig *tuning,
-                                     ExchangeEngine &engine, DeviceRegistry &registry, const bool *initialized,
-                                     IOHomeControlComponent *hub)
+                                     ExchangeEngine &engine, DeviceRegistry &registry, PairingEngine &pairing,
+                                     const bool *initialized, IOHomeControlComponent *hub)
     : node_id_(node_id),
       system_key_(system_key),
       tuning_(tuning),
       engine_(engine),
       registry_(registry),
+      pairing_(pairing),
       initialized_(initialized),
       hub_(hub) {}
 
@@ -602,6 +606,10 @@ void ManagementActions::register_actions() {
          this->api_probe_sweep(r.args[0].string_.str(), r.args[1].string_.str(), r.args[2].string_.str(),
                                r.args[3].string_.str());
        }},
+      {MANAGEMENT_ACTION_PULL_KEY,
+       {"controller_id"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) { this->api_pull_key(r.args[0].string_.str()); }},
   };
 
   // The two probe actions are registered only when diagnostic_probes: true was set in YAML, so the
@@ -906,6 +914,63 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
 }
 
 void ManagementActions::api_scan_paired_devices() { publish_result(scan_paired_devices()); }
+
+void ManagementActions::api_pull_key(const std::string &controller_id) {
+  publish_result(pull_key(controller_id));
+  hub_->notify_pairing_result();  // the pull is recorded like a pairing attempt: refresh Last Pairing Result
+}
+
+ManagementActionResult ManagementActions::pull_key(const std::string &controller_id) {
+  const std::string normalized_id = normalize_device_id_argument(controller_id);
+  ManagementActionResult result = make_management_result(MANAGEMENT_ACTION_PULL_KEY, normalized_id);
+  if (!*initialized_) {
+    result.message = "hub is not initialized";
+    return result;
+  }
+  uint8_t controller[NODE_ID_SIZE]{};
+  if (!hex_to_bytes(normalized_id, controller, NODE_ID_SIZE)) {
+    result.message = "controller ID must be exactly 6 hexadecimal characters";
+    return result;
+  }
+  if (memcmp(controller, node_id_, NODE_ID_SIZE) == 0) {
+    result.message = "that is this hub's own node ID; give the ID of the controller to pull the key from";
+    return result;
+  }
+  if (hub_->radio_busy()) {
+    result.message = "a radio operation (pairing or a scan) is in progress; run the action again once it finishes";
+    return result;
+  }
+
+  const uint32_t worst_case_ms = pairing_.pull_key_worst_case_ms(controller);
+  ESP_LOGI(detail::TAG, "Key pull action: asking %s for its key; this blocks the hub for at most about %" PRIu32 " ms",
+           normalized_id.c_str(), worst_case_ms);
+  const PairingEngine::PullKeyReport report = pairing_.pull_key_from(controller);
+  result.message = report.message;
+  result.has_result_code = report.has_refusal_code;
+  result.result_code = report.refusal_code;
+  switch (report.outcome) {
+    case PairingEngine::PullKeyOutcome::PROVEN:
+      result.success = true;
+      result.verified = true;  // the controller's own 0x3D proved the key
+      result.log_message = report.log_report;
+      result.message = "key received and proven; it is printed in the device log, not here. " + result.message;
+      break;
+    case PairingEngine::PullKeyOutcome::OWN_KEY:
+      result.success = true;
+      result.message = "the controller already shares this hub's key. " + result.message;
+      break;
+    case PairingEngine::PullKeyOutcome::REFUSED:
+      result.message = "the controller refused the key request. " + result.message;
+      break;
+    case PairingEngine::PullKeyOutcome::UNPROVEN:
+      result.message = "the controller sent a key it did not prove, so it was not used. " + result.message;
+      break;
+    case PairingEngine::PullKeyOutcome::SILENT:
+      result.message = "the controller sent no key. " + result.message;
+      break;
+  }
+  return result;
+}
 
 void ManagementActions::api_oneway_set_position(const std::string &controller_id, const std::string &position) {
   // device_id carries the controller-identity handle: 1W addresses a class, so there is no device

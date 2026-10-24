@@ -68,6 +68,13 @@ jobs:
       - run: pip install --user pyyaml
       - run: make corpus-validate
 
+  # The committed Bridle headers and the wheel pin are the release BRIDLE_VERSION names (no network).
+  bridle-check:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: make bridle-check
+
   docs-link-check:
     runs-on: ubuntu-26.04
     steps:
@@ -100,6 +107,10 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libgtest-dev
       - run: pip install --user pyyaml
       - run: make unit-test
+      # Lints the Bridle traces those tests wrote (Bridle specification section 12.1); depends on unit-test.
+      - run: make bridle-trace-check
+      # Compiles the full-stack suite; running it needs a Bridle simulator (make fullstack BRIDLE_SIM=...).
+      - run: make fullstack-build
 
   py-test:
     runs-on: ubuntu-26.04

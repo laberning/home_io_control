@@ -78,6 +78,7 @@ hardware bring-up.
 | LilyGO T-Beam 1W SX1262 | SX1262 | Untested | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | Use `fem: xy16p35`, `vfem_pin: 40` ("LDO EN"), `fem_pa_pin: 21` ("LoRa Ctrl") — per LilyGO's own T-Beam 1W SX1262 docs and schematic; see [Front-end module (FEM) support](#front-end-module-fem-support) below. TCXO control voltage not yet confirmed; do not build from this row until a board package ships |
 | Heltec WiFi LoRa32 V4.2 | SX1262 | Untested | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: gc1109`; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) |
 | Heltec WiFi LoRa32 V4.3 | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: kct8103l`; also covers the `heltec_v4_r8` variant; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) |
+| ESP32-C3 SuperMini + XIAO nRF52840 with Wio-SX1262 (Kite co-processor) | SX1262 behind a UART | Untested | `uart:` `tx_pin: 21`, `rx_pin: 20` (placeholders) | `radio_type: bridle`, `uart_id`, `rst_pin: 10`, `bridle_band: io_868` | Not validated against a real device: on a bench its transmissions decode on a Heltec V3 and it receives the V3's frames, but no io-homecontrol device has answered through it; matches [boards/esp32c3-supermini-868.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/esp32c3-supermini-868.yaml); see [ADR 0048](adr/0048-io-868-over-bridle.md) |
 | Any other ESP32 + SX1276/SX1262/LR1121 | Any | Untested | Board-specific | Board-specific | Use the chip pinout and set the appropriate `sx1276`, `sx1262`, or `lr1121` `radio_type` |
 
 GPIO5 (`clk_pin` on the classic-ESP32 boards above) and GPIO3 (`miso_pin` on the ESP32-S3 T3-S3
@@ -210,6 +211,10 @@ command set.
   a different part, wired the other way round from the V4.3's, so the V4.3 result does not carry
   over. The board package and the FEM switching logic are complete; prefer the V3 or the V4.3
   until a field report lands.
+- **ESP32-C3 SuperMini with a Kite co-processor** (`radio_type: bridle`): the co-processor counts one or
+  two link errors (`link_err` in its `stats`) each time the host boots, and none while the host runs. The
+  count does not grow after the host's handshake, so a `link_err` that stays constant between two `stats`
+  is healthy; one that rises while the hub runs is not.
 - **V2 / V3 clones** (non-Heltec boards with the same silkscreen and pin map) are common and
   generally work if the SPI and radio pins match the corresponding row above — treat them as
   `Untested` until confirmed.

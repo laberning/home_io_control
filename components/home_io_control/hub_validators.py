@@ -16,13 +16,32 @@ import logging
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_CS_PIN, CONF_DEVICE_ID
+import esphome.final_validate as fv
+from esphome.components.spi import CONF_SPI_ID
+from esphome.const import CONF_BAUD_RATE, CONF_CS_PIN, CONF_DEVICE_ID, CONF_RX_BUFFER_SIZE, CONF_UART_ID
 
+from .tuning import (
+    CONF_COLD_BROADCAST_REPLY_PREAMBLE,
+    CONF_LR1121_RESPONSE_PREAMBLE,
+    CONF_NORMAL_START_PREAMBLE,
+    CONF_SX1262_POST_TX_SETTLE_US,
+    CONF_SX1262_RESPONSE_PREAMBLE,
+    CONF_SX1276_RESPONSE_PREAMBLE,
+    CONF_TUNING,
+)
 from .hub_names import (
+    CONF_BRIDLE_BAND,
+    CONF_BUSY_PIN,
+    CONF_DIO0_PIN,
+    CONF_DIO1_PIN,
+    CONF_DIO4_PIN,
+    CONF_TCXO_VOLTAGE,
     CONF_FEM,
     CONF_FEM_EN_PIN,
     CONF_FEM_PA_PIN,
+    CONF_ONEWAY_CONTROLLERS,
     CONF_RADIO_TYPE,
+    CONF_RECOVER_ONEWAY_KEY,
     CONF_TX_POWER,
     CONF_VFEM_PIN,
     MIN_RAIN_SENSOR_POLL_INTERVAL_MS,
@@ -42,12 +61,49 @@ RADIO_TYPE_OPTIONS = {
     "sx1276": "sx1276",
     "sx1262": "sx1262",
     "lr1121": "lr1121",
+    "bridle": "bridle",
 }
 
 # Radio types whose chip sits on the SPI bus, so the hub registers as an SPI device for them and
-# needs its chip-select pin. Every radio type is one today; a radio reached some other way is
-# left out of this set.
+# needs its chip-select pin. A radio reached some other way (`bridle`: a co-processor behind a
+# UART) is left out of this set.
 SPI_RADIO_TYPES = frozenset({"sx1276", "sx1262", "lr1121"})
+
+# `bridle_band` values: the PHY profile asked of a Bridle co-processor.
+BRIDLE_BANDS = ("io_2g4", "io_868")
+
+# UART speeds a Bridle co-processor is spoken to at: the spec's 1 Mbaud by default, and the lower rates
+# the spec allows a port to offer as a build option (both sides must be set to the same rate, which the
+# protocol cannot negotiate, or the co-processor answers nothing).
+BRIDLE_BAUD_RATE = 1000000
+BRIDLE_REDUCED_BAUD_RATES = (115200, 230400, 460800, 921600)
+BRIDLE_BAUD_RATES = (*BRIDLE_REDUCED_BAUD_RATES, BRIDLE_BAUD_RATE)
+# The slowest link a 2.4 GHz band may use (Bridle specification §2.1): another controller's wake train puts a
+# frame on the air every millisecond, and each one reaches the hub as a frame_start and an rx event, about 36 bytes,
+# which 230400 baud cannot carry in a millisecond, so the co-processor's event queue overflows.
+BRIDLE_802154_MIN_BAUD_RATE = 460800
+# Receive buffer that holds a burst of frames between two loop() passes at 1 Mbaud (100 bytes/ms).
+BRIDLE_MIN_RX_BUFFER = 1024
+
+# The `tx_power` range of the SPI radios (unchanged) and of a bridge (dBm, as the protocol's s8 and
+# real 2.4 GHz radios allow; the co-processor clamps it to its radio and reports what it applied).
+SPI_TX_POWER_RANGE = (0, 22)
+SPI_TX_POWER_DEFAULT = 17
+BRIDLE_TX_POWER_RANGE = (-40, 22)
+
+# Tuning keys of an SPI radio's own timing that a bridge cannot honour: the co-processor owns the
+# turnaround after a transmission (it waits for its own radio), so the host's value has no effect over
+# a bridge whatever the band.
+_TUNING_NO_EFFECT_OVER_A_BRIDGE_KEYS = (CONF_SX1262_POST_TX_SETTLE_US,)
+
+# Tuning keys that only mean something to an 868 MHz radio: preamble lengths.
+_TUNING_868_ONLY_KEYS = (
+    CONF_SX1262_RESPONSE_PREAMBLE,
+    CONF_SX1276_RESPONSE_PREAMBLE,
+    CONF_LR1121_RESPONSE_PREAMBLE,
+    CONF_COLD_BROADCAST_REPLY_PREAMBLE,
+    CONF_NORMAL_START_PREAMBLE,
+)
 
 # 0-based voltage enum shared verbatim by the SX1262 SetDIO3AsTCXOCtrl and LR1121 SetTcxoMode
 # commands (0x00 = 1.6 V .. 0x07 = 3.3 V; Semtech SX1261/2 datasheet Table 13-35). Both drivers
@@ -110,17 +166,143 @@ FEM_TX_POWER_MAX_QUIET = {
 }
 
 
+# Keys that belong to a chip on the SPI bus (or to a front-end around one) and mean nothing to a
+# co-processor behind a UART. `tcxo_voltage` and `pa_pin` carry schema defaults, so only the keys
+# without one can be rejected by their presence.
+_BRIDLE_REJECTED_KEYS = (CONF_CS_PIN, CONF_BUSY_PIN, CONF_DIO0_PIN, CONF_DIO1_PIN, CONF_DIO4_PIN, CONF_TCXO_VOLTAGE)
+
+
 def validate_radio_transport(config):
-    """Require the SPI device keys for a radio on the SPI bus. The schema takes them as optional
-    (``spi.spi_device_schema(False, ...)``) so that the requirement follows ``radio_type`` here,
-    in one place, rather than being hard-wired into the schema for every radio."""
+    """Require the keys of the way the radio is reached. The schema takes them all as optional
+    (``spi.spi_device_schema(False, ...)``, ``uart_id``) so that the requirement follows
+    ``radio_type`` here, in one place, rather than being hard-wired into the schema for every radio.
+
+    An SPI radio needs its chip-select pin. A Bridle co-processor needs the UART it is wired to,
+    takes none of the chip keys.
+    """
     radio_type = config[CONF_RADIO_TYPE]
-    if radio_type in SPI_RADIO_TYPES and CONF_CS_PIN not in config:
+    if radio_type in SPI_RADIO_TYPES:
+        if CONF_UART_ID in config:
+            raise cv.Invalid(
+                f"uart_id: only applies to radio_type: bridle, not {radio_type}", path=[CONF_UART_ID]
+            )
+        if CONF_CS_PIN not in config:
+            raise cv.Invalid(
+                f"radio_type: {radio_type} is an SPI radio and needs cs_pin: (its chip-select GPIO); "
+                "a board package in config/boards/ sets it for you",
+                path=[CONF_CS_PIN],
+            )
+        return config
+
+    if CONF_UART_ID not in config:
         raise cv.Invalid(
-            f"radio_type: {radio_type} is an SPI radio and needs cs_pin: (its chip-select GPIO); "
-            "a board package in config/boards/ sets it for you",
-            path=[CONF_CS_PIN],
+            "radio_type: bridle needs uart_id: (the uart: block the co-processor is wired to)",
+            path=[CONF_UART_ID],
         )
+    for key in _BRIDLE_REJECTED_KEYS:
+        if key in config:
+            raise cv.Invalid(
+                f"{key}: does not apply to radio_type: bridle -- the radio is a co-processor behind "
+                "the UART, and its board settings belong to its firmware",
+                path=[key],
+            )
+    # spi_device_schema() generates an spi_id whatever the radio; without an spi: bus it would fail
+    # validation, and a UART radio registers no SPI device.
+    config.pop(CONF_SPI_ID, None)
+    tuning = config.get(CONF_TUNING, {})
+    band = config.get(CONF_BRIDLE_BAND, "io_2g4")
+    if band == "io_2g4":
+        for key in _TUNING_868_ONLY_KEYS:
+            if key in tuning:
+                _LOGGER.warning(
+                    "tuning: %s has no effect with bridle_band io_2g4: 2.4 GHz has no preamble to lengthen", key
+                )
+    for key in _TUNING_NO_EFFECT_OVER_A_BRIDGE_KEYS:
+        if key in tuning:
+            _LOGGER.warning(
+                "tuning: %s has no effect with radio_type: bridle: the co-processor owns the turnaround after a "
+                "transmission",
+                key,
+            )
+    return config
+
+
+def validate_tx_power(config):
+    """Give ``tx_power`` its per-radio default and range. The SPI radios keep their 0…22 range and
+    default 17 (a PA setting whose meaning differs per chip); a bridge takes any dBm value the
+    protocol allows and, when it is unset, leaves the power to the radio, which knows its own
+    maximum. Runs before ``validate_fem``, which reads the filled-in value."""
+    radio_type = config[CONF_RADIO_TYPE]
+    if radio_type not in SPI_RADIO_TYPES:
+        return config
+    power = config.get(CONF_TX_POWER, SPI_TX_POWER_DEFAULT)
+    low, high = SPI_TX_POWER_RANGE
+    if not low <= power <= high:
+        raise cv.Invalid(
+            f"tx_power: {power} is outside {low}..{high} for radio_type: {radio_type}", path=[CONF_TX_POWER]
+        )
+    config[CONF_TX_POWER] = power
+    return config
+
+
+def final_validate_bridle_uart(config):
+    """Check the UART a Bridle co-processor is wired to, which only the whole config can show:
+    a rate the co-processor can be built for (1 Mbaud unless it is built for a lower one), at least
+    BRIDLE_802154_MIN_BAUD_RATE for the 2.4 GHz band, and a receive buffer that holds the frames of a burst between two loop() passes."""
+    if config[CONF_RADIO_TYPE] != "bridle":
+        return config
+    full_config = fv.full_config.get()
+    uart_path = full_config.get_path_for_id(config[CONF_UART_ID])[:-1]
+    uart_config = full_config.get_config_for_path(uart_path)
+    baud = uart_config[CONF_BAUD_RATE]
+    if baud not in BRIDLE_BAUD_RATES:
+        raise cv.Invalid(
+            f"the UART for radio_type: bridle must run at {BRIDLE_BAUD_RATE} baud (or "
+            f"one of {', '.join(str(rate) for rate in BRIDLE_REDUCED_BAUD_RATES)} for a co-processor built "
+            f"for it), not {baud}",
+            path=[CONF_UART_ID],
+        )
+    if config.get(CONF_BRIDLE_BAND, "io_2g4") == "io_2g4" and baud < BRIDLE_802154_MIN_BAUD_RATE:
+        raise cv.Invalid(
+            f"bridle_band io_2g4 needs the UART at {BRIDLE_802154_MIN_BAUD_RATE} baud or more, not {baud}: "
+            "another controller's wake train sends a frame every millisecond, and a slower link cannot pass "
+            "them on, so the co-processor drops frames",
+            path=[CONF_UART_ID],
+        )
+    if baud != BRIDLE_BAUD_RATE:
+        _LOGGER.warning(
+            "uart at %d baud: the Bridle co-processor must be built for that speed, or it answers nothing",
+            baud,
+        )
+    if uart_config.get(CONF_RX_BUFFER_SIZE, 0) < BRIDLE_MIN_RX_BUFFER:
+        _LOGGER.warning(
+            "uart rx_buffer_size below %d bytes: at %d baud a loop() pass can leave more than that "
+            "unread, and frames are lost. Set rx_buffer_size: %d on the uart",
+            BRIDLE_MIN_RX_BUFFER,
+            baud,
+            BRIDLE_MIN_RX_BUFFER,
+        )
+    return config
+
+
+def final_validate_no_oneway_on_io_2g4(config):
+    """Refuse one-way transmit on the 2.4 GHz band.
+
+    No one-way frame has ever been seen on 2.4 GHz, so `oneway_controllers:` and
+    `recover_oneway_key:` would transmit frames no receiver there is known to act on. A clear
+    configuration error is better than a command that silently does nothing. Receiving one-way
+    frames (`linked_remotes:`, `exposed_senders:`) stays allowed.
+    """
+    if config[CONF_RADIO_TYPE] != "bridle" or config.get(CONF_BRIDLE_BAND, "io_2g4") != "io_2g4":
+        return config
+    for key in (CONF_ONEWAY_CONTROLLERS, CONF_RECOVER_ONEWAY_KEY):
+        if config.get(key):
+            raise cv.Invalid(
+                f"{key}: is not available with bridle_band io_2g4: one-way frames have never been seen "
+                "on 2.4 GHz, so a one-way command would go out and nothing would act on it. "
+                "Remove it, or use a 868 MHz radio for one-way devices",
+                path=[key],
+            )
     return config
 
 

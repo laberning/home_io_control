@@ -223,6 +223,8 @@ struct PulledKeyReportInfo {
   uint8_t subtype;                ///< Its subtype from discovery.
   const uint8_t *key;             ///< The pulled key (AES_KEY_SIZE bytes) it proved it holds.
   const uint8_t *hub_key;         ///< The hub's own key.
+  bool searched{true};            ///< False when no device search was made (the standalone key pull): the report then
+                                  ///< gives the key once and does not claim a roll-call found nothing.
 };
 
 /// @brief Build the report for a pull that returned the hub's own key from a node no platform drives.

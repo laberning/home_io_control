@@ -62,7 +62,10 @@ class DeviceBoundEntity {
   /// CTRL1_LOW_POWER and use the long wake-up preamble; an always-alive device (the default) gets
   /// neither. Radio property of the device, shared by all four platforms.
   /// @param low_power True for a battery/solar or otherwise sleeping receiver; default false.
-  void set_low_power(bool low_power) { this->low_power_ = low_power; }
+  void set_low_power(bool low_power) {
+    this->low_power_ = low_power;
+    this->low_power_set_ = true;
+  }
   /// @brief Give this device a system key of its own (`system_key:` in YAML).
   /// @details Every exchange with the device then uses this key instead of the hub's. The key is
   /// validated as 32 hex characters at config time, so a parse failure here leaves the device on the
@@ -91,6 +94,7 @@ class DeviceBoundEntity {
                                 std::function<void(const std::string &, const IoDevice &)> on_update) {
     DeviceConfig config{this->device_type_, this->subtype_,         inverted, this->optimistic_state_, this->silent_,
                         this->low_power_,   this->battery_entities_};
+    config.low_power_set = this->low_power_set_;
     config.has_system_key = this->has_system_key_;
     if (this->has_system_key_)
       memcpy(config.system_key, this->system_key_, AES_KEY_SIZE);
@@ -130,6 +134,7 @@ class DeviceBoundEntity {
   bool optimistic_state_{true};
   bool silent_{false};
   bool low_power_{false};
+  bool low_power_set_{false};  ///< `low_power:` was in YAML; otherwise the driver's band default applies.
   bool battery_entities_{false};
   bool has_system_key_{false};
   uint8_t system_key_[AES_KEY_SIZE]{};  ///< Key material: never logged.

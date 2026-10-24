@@ -8,7 +8,7 @@
 /// (Python stays the single source of truth, same mechanism as device_type_sync_test.cpp) and
 /// pins:
 ///   - the voltage rungs are 0-based and contiguous, 1_6V..3_3V -> 0x00..0x07 in order;
-///   - 1_8V == DEFAULT_TCXO_VOLTAGE_SETTING_1P8V == 0x02 (the schema default);
+///   - 1_8V == DEFAULT_TCXO_VOLTAGE_SETTING_1P8V == 0x02 (the default to_code() supplies);
 ///   - NONE == TCXO_VOLTAGE_NONE (0xFF), the bare-crystal sentinel;
 ///   - no non-sentinel code exceeds the chips' 3-bit field;
 ///   - tcxo_voltage_label(), which the config dump prints, names every code the way its YAML key

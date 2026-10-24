@@ -1105,22 +1105,30 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   ESP_LOGW(TAG, "Key pull: asking %s for its key", context.device_id.c_str());
   uint8_t challenge[HMAC_SIZE];
   bool got_key = false;
+  // The same channel rule as an exchange: a rotating band starts on the channel that last carried an
+  // answer and moves on with every silent try; the proof goes out where the key came from.
+  const bool rotate = radio_()->retries_rotate_channel();
+  const uint32_t retry_gap_ms = radio_()->retry_gap_ms(*tuning_);
+  uint32_t pull_freq = FREQ_CH2;
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT && !got_key && !context.key_refused; tries++) {
     if (tries > 0) {
       App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
+      delay(retry_gap_ms);
     }
+    pull_freq = decisions::retry_frequency(rotate, FREQ_CH2, engine_.last_answered_freq(), tries);
     context.state = pairing::PairingState::TX_KEY_PULL;
     engine_.record_debug(pairing_stage_name(context.state), tries + 1, false);
     this->telemetry_.set_phase(context.state);
     // Fresh random bytes per try: the IV of the device's answer is built from the request it answers.
     crypto::generate_challenge(challenge);
     if (!create_launch_key_transfer(context.req, node_id_, context.device.node_id, challenge) ||
-        !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble_(context.req)))
+        !engine_.transmit_frame(context.req, pull_freq, pairing_start_preamble_(context.req)))
       continue;
     context.state = pairing::PairingState::WAIT_KEY_PULL_REPLY;
     this->telemetry_.set_phase(context.state);
     got_key = wait_for_pulled_key_(context);
+    if (got_key)
+      engine_.set_last_answered_freq(pull_freq);
     if (!got_key && !context.key_refused) {
       ESP_LOGI(TAG, "Key pull try %u: no key transfer (0x32) from %s within %" PRIu32 " ms", tries + 1,
                context.device_id.c_str(), PAIRING_KEY_PULL_REPLY_TIMEOUT_MS);
@@ -1153,10 +1161,10 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   while (challenges < EXCHANGE_RETRY_COUNT && proof == ExchangeEngine::ChallengeResult::NO_ANSWER) {
     if (challenges > 0) {
       App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
+      delay(retry_gap_ms);
     }
     challenges++;
-    proof = engine_.challenge_sender(context.rx, FREQ_CH2, key);
+    proof = engine_.challenge_sender(context.rx, pull_freq, key);
   }
   if (proof == ExchangeEngine::ChallengeResult::VERIFIED) {
     ESP_LOGI(TAG, "Key pull check: %s -> key check value %s, proven by its 0x3D", context.device_id.c_str(),
@@ -1178,6 +1186,73 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
              context.device_id.c_str(), check_value.c_str(), challenges);
   }
   return KeyPullResult::FAILED;
+}
+
+uint32_t PairingEngine::pull_key_worst_case_ms(const uint8_t controller[NODE_ID_SIZE]) {
+  IoFrame request{};
+  uint8_t challenge[HMAC_SIZE]{};
+  uint32_t transmit_ms = 0;
+  if (create_launch_key_transfer(request, node_id_, controller, challenge))
+    transmit_ms = engine_.transmit_time_ms(request, FREQ_CH2, pairing_start_preamble_(request));
+  const uint32_t gap_ms = radio_()->retry_gap_ms(*tuning_);
+  const uint32_t pull_ms = EXCHANGE_RETRY_COUNT * (transmit_ms + PAIRING_KEY_PULL_REPLY_TIMEOUT_MS + gap_ms);
+  const uint32_t proof_ms = EXCHANGE_RETRY_COUNT * (tuning_->exchange_response_wait_ms + gap_ms);
+  return pull_ms + proof_ms;
+}
+
+PairingEngine::PullKeyReport PairingEngine::pull_key_from(const uint8_t controller[NODE_ID_SIZE]) {
+  this->telemetry_.begin();
+  this->telemetry_.set_key_pull_only();
+  this->telemetry_.set_key_pull_attempted();
+  this->engine_.set_transmit_observer(&this->telemetry_);
+
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, controller, NODE_ID_SIZE);
+  context.device.type = DeviceType::REMOTE_CONTROLLER;
+  context.device_id = node_id_to_string(controller);
+  this->telemetry_.set_discovered_device(controller, context.device.type);
+
+  PullKeyReport report;
+  const KeyPullResult pulled = run_key_pull_phase_(context);
+  PairingOutcome outcome = PairingOutcome::KEY_EXCHANGE_FAILED;
+  switch (pulled) {
+    case KeyPullResult::OTHER_KEY: {
+      report.outcome = PullKeyOutcome::PROVEN;
+      outcome = PairingOutcome::KEY_RECEIVED;
+      // The device log gets the key with its banner; the event and the pairing summary keep to the check value.
+      const ScanState none{};
+      const PulledKeyReportInfo info{context.device_id,  context.device.type, context.device.subtype,
+                                     context.pulled_key, system_key_,         /*searched=*/false};
+      report.log_report = build_pulled_key_report(info, none, registry_);
+      break;
+    }
+    case KeyPullResult::OUR_KEY:
+      report.outcome = PullKeyOutcome::OWN_KEY;
+      outcome = PairingOutcome::HUB_KEY_RETURNED;
+      break;
+    case KeyPullResult::FAILED:
+      if (context.key_refused) {
+        report.outcome = PullKeyOutcome::REFUSED;
+        report.has_refusal_code = true;
+        report.refusal_code = context.key_refusal_code;
+        outcome = PairingOutcome::KEY_TRANSFER_REFUSED;
+      } else {
+        report.outcome = this->telemetry_.key_pull_unproven() ? PullKeyOutcome::UNPROVEN : PullKeyOutcome::SILENT;
+      }
+      break;
+  }
+  memset(context.pulled_key, 0, AES_KEY_SIZE);
+  context.has_pulled_key = false;
+  this->finish_pairing_attempt_(outcome);
+
+  advisor::PairingAdvice advice[advisor::PAIRING_ADVICE_MAX];
+  const uint8_t advice_count = advisor::analyze_pairing_telemetry(this->telemetry_, this->node_id_, advice);
+  for (uint8_t i = 0; i < advice_count; i++) {
+    if (!report.message.empty())
+      report.message += ' ';
+    report.message += advisor::pairing_advice_message(advice[i]);
+  }
+  return report;
 }
 
 void PairingEngine::finish_pairing_attempt_(PairingOutcome outcome) {

@@ -17,6 +17,11 @@
 #include "radio_sx1276.h"
 #include "radio_sx1262.h"
 #include "radio_lr1121.h"
+#ifdef IOHOME_BRIDLE
+#include "radio_bridle.h"
+#include "radio_io2g4_phy.h"
+#include "radio_io868_gfsk_phy.h"
+#endif
 #include "tuning_config.h"
 #include "tuning_registry.h"
 
@@ -94,7 +99,10 @@ void IOHomeControlComponent::setup() {
       callback(report);
   });
 
-  this->spi_setup();
+  // A UART-attached radio (bridle) has no spi: bus, so there is no SPI parent to register with;
+  // SPIClient::spi_setup() would dereference it.
+  if (this->parent_ != nullptr)
+    this->spi_setup();
 
   const char *chip_name_for_log = nullptr;
   this->radio_ = this->select_and_construct_radio_(&chip_name_for_log);
@@ -139,6 +147,7 @@ void IOHomeControlComponent::setup() {
   this->register_management_actions_();
   this->exchange_engine_.reset_hop_timestamp();
   this->resolve_start_preamble_default_();
+  this->registry_.set_low_power_default(this->radio_->low_power_by_default());
   this->apply_tuning_to_radio_();
   if (this->tuning_.active) {
     std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
@@ -148,9 +157,9 @@ void IOHomeControlComponent::setup() {
 }
 
 // See the declaration in hub_core.h for the full contract. `radio_type_` is one of "lr1121",
-// "sx1262", or "sx1276" — the YAML schema requires the field and validates it against exactly
-// those three values, so the fallthrough below is unreachable in a config-driven build and
-// exists only to fail loudly rather than guess if this method is ever called some other way.
+// "sx1262", "sx1276" or (in a build configured for it) "bridle" — the YAML schema requires the
+// field and validates it against exactly those values, so the fallthrough below is unreachable in a config-driven build
+// and exists only to fail loudly rather than guess if this method is ever called some other way.
 RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **chip_name_out) {
   if (this->radio_type_ == "lr1121") {
     *chip_name_out = "LR1121";
@@ -191,6 +200,27 @@ RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **ch
       ESP_LOGE(detail::TAG, "Failed to allocate SX1276 radio driver");
     return radio;
   }
+
+#ifdef IOHOME_BRIDLE
+  if (this->radio_type_ == "bridle") {
+    *chip_name_out = "Bridle";
+    if (!this->uart_stream_.has_uart()) {
+      ESP_LOGE(detail::TAG, "radio_type: bridle requires uart_id (the UART the co-processor is wired to)");
+      return nullptr;
+    }
+    // The one place that names a band's profile: everything above RadioDriver is band-agnostic.
+    const bridle::BridlePhy &phy = this->bridle_band_ == "io_868"
+                                       ? static_cast<const bridle::BridlePhy &>(bridle::io868_gfsk_phy())
+                                       : static_cast<const bridle::BridlePhy &>(bridle::io2g4_phy());
+    auto *radio = new (std::nothrow) RadioBridle(&this->uart_stream_, phy, this->rst_pin_, this->bridle_tx_power_dbm_);
+    if (radio == nullptr) {
+      ESP_LOGE(detail::TAG, "Failed to allocate Bridle radio driver");
+      return nullptr;
+    }
+    radio->set_trace(this->bridle_trace_);
+    return radio;
+  }
+#endif
 
   *chip_name_out = "unknown";
   ESP_LOGE(detail::TAG, "Unrecognized radio_type '%s'", this->radio_type_.c_str());
@@ -381,18 +411,16 @@ void IOHomeControlComponent::loop() {
 
   // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
   // loop() every ~16-30ms. This is acceptable for a controller: a directed start frame to a
-  // low-power target still goes out with LONG_PREAMBLE (1024 bytes ≈ 218 ms airtime), long enough
-  // to be detected regardless of channel alignment; a start frame to an always-alive target uses
-  // the shorter normal_start_preamble (default 32 bytes), which such a receiver hears fine. This
-  // coarse idle hop causes no exchange to miss its channel either way, because every TX retunes
-  // explicitly to a named channel before sending. Precise hopping would only matter for a passive
-  // receiver scanning for unsolicited frames. A radio that scans the hop channels by itself
-  // (RadioDriver::run_idle_scan()) takes the idle pass over and the host does not hop.
-  // Diagnostics build flag: park the receiver on one channel instead of hopping. A hopping monitor
-  // is on any given channel roughly a third of the time, so "the capture never shows frame X" is
-  // weak evidence — locking to the channel under study makes an absence mean something. Define it
-  // to the channel in Hz, e.g. -DIOHOME_LOCK_CHANNEL_HZ=868950000 for CH2, the command channel.
-  // Only useful for a passive monitor: a hub that cannot hop will miss replies on other channels.
+  // low-power target still goes out with LONG_PREAMBLE (1024 bytes ≈ 218 ms airtime, ≈ 272 ms on the SX1276), long
+  // enough to be detected regardless of channel alignment; a start frame to an always-alive target uses the shorter
+  // normal_start_preamble (default 32 bytes), which such a receiver hears fine. This coarse idle hop causes no exchange
+  // to miss its channel either way, because every TX retunes explicitly to a named channel before sending. Precise
+  // hopping would only matter for a passive receiver scanning for unsolicited frames. A radio that scans the hop
+  // channels by itself (RadioDriver::run_idle_scan()) takes the idle pass over and the host does not hop. Diagnostics
+  // build flag: park the receiver on one channel instead of hopping. A hopping monitor is on any given channel roughly
+  // a third of the time, so "the capture never shows frame X" is weak evidence — locking to the channel under study
+  // makes an absence mean something. Define it to the channel in Hz, e.g. -DIOHOME_LOCK_CHANNEL_HZ=868950000 for CH2,
+  // the command channel. Only useful for a passive monitor: a hub that cannot hop will miss replies on other channels.
 #ifdef IOHOME_LOCK_CHANNEL_HZ
   if (!this->busy_ && this->radio_ != nullptr && this->radio_->get_current_freq() != IOHOME_LOCK_CHANNEL_HZ)
     this->radio_->change_frequency(IOHOME_LOCK_CHANNEL_HZ);
@@ -431,11 +459,32 @@ void IOHomeControlComponent::loop() {
   }
 }
 
+#ifdef IOHOME_BRIDLE
+void IOHomeControlComponent::dump_bridle_config_() {
+  ESP_LOGCONFIG(detail::TAG, "  Co-processor link: UART%s, band %s, trace %s",
+                this->uart_stream_.has_uart() ? "" : " (missing)", this->bridle_band_.c_str(),
+                this->bridle_trace_ ? "on" : "off");
+  if (this->bridle_tx_power_dbm_.has_value()) {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: %d dBm requested", *this->bridle_tx_power_dbm_);
+  } else {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: the radio's maximum");
+  }
+}
+#endif
+
 void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "IO-Homecontrol:");
   ESP_LOGCONFIG(detail::TAG, "  Node ID: %s", this->node_id_str_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.c_str());
+#ifdef IOHOME_BRIDLE
+  if (this->radio_type_ == "bridle") {
+    this->dump_bridle_config_();
+  } else {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+  }
+#else
   ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+#endif
   // Printed for every board, from the dump rather than from setup(): the value decides whether a
   // directed start frame is heard at all, it is chip-dependent (ADR 0042), and a reporter's pasted
   // log is usually captured after boot, where setup()'s output is already gone.
@@ -467,6 +516,12 @@ void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "  Low-power wake belief: %s",
                 this->tuning_.low_power_wake_belief ? "on" : "off (tuning: low_power_wake_belief: false)");
   ESP_LOGCONFIG(detail::TAG, "  Devices: %zu", this->registry_.size());
+  // A device that does not declare `low_power:` takes the radio band's default; say which devices
+  // got which, so a posted log shows the class each exchange used and where it came from.
+  for (const auto &entry : this->registry_) {
+    ESP_LOGCONFIG(detail::TAG, "    - %s low_power: %s (%s)", entry.first.c_str(), YESNO(entry.second.low_power),
+                  entry.second.low_power_set ? "from the configuration" : "radio band default");
+  }
   if (this->registry_.linked_remote_count() > 0) {
     ESP_LOGCONFIG(detail::TAG, "  Linked Remotes: %zu", this->registry_.linked_remote_count());
     this->registry_.for_each_linked_remote([](const std::string &remote_id, const std::vector<std::string> &devices) {

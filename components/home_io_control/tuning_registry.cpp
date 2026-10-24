@@ -18,7 +18,7 @@
 namespace esphome {
 namespace home_io_control {
 
-// === Numeric parameters (20) ===================================================
+// === Numeric parameters (22) ===================================================
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
@@ -41,6 +41,20 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
     {"lr1121_discovery_hop_slice_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.lr1121_discovery_hop_slice_ms); },
      [](TuningConfig &t, float v) { t.lr1121_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
+    // false: read live through Io2g4Phy (RadioBridle::hop_dwell_ms()), never cached by apply_tuning().
+    {"io2g4_hop_dwell_ms", [](const TuningConfig &t) { return static_cast<float>(t.io2g4_hop_dwell_ms); },
+     [](TuningConfig &t, float v) { t.io2g4_hop_dwell_ms = static_cast<uint16_t>(v); }, false},
+    // false: both read live through Io2g4Phy (RadioBridle::start_response_wait_ms()/retry_gap_ms()).
+    {"io2g4_exchange_start_response_wait_ms",
+     [](const TuningConfig &t) { return static_cast<float>(t.io2g4_exchange_start_response_wait_ms); },
+     [](TuningConfig &t, float v) { t.io2g4_exchange_start_response_wait_ms = static_cast<uint16_t>(v); }, false},
+    {"io2g4_exchange_retry_gap_ms",
+     [](const TuningConfig &t) { return static_cast<float>(t.io2g4_exchange_retry_gap_ms); },
+     [](TuningConfig &t, float v) { t.io2g4_exchange_retry_gap_ms = static_cast<uint16_t>(v); }, false},
+    // false: read live through Io2g4Phy (RadioBridle::lbt_threshold_dbm()), like lbt_rssi_threshold_dbm.
+    {"io2g4_lbt_rssi_threshold_dbm",
+     [](const TuningConfig &t) { return static_cast<float>(t.io2g4_lbt_rssi_threshold_dbm); },
+     [](TuningConfig &t, float v) { t.io2g4_lbt_rssi_threshold_dbm = static_cast<int16_t>(v); }, false},
     // false: unlike sx1262/sx1276/lr1121_response_preamble, this field is not chip-specific and
     // is never cached into a radio driver via apply_tuning() — key_extraction_responder.cpp reads it
     // straight out of TuningConfig at TX time, the same way the *_discovery_hop_slice_ms fields

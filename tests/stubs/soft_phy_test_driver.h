@@ -57,6 +57,9 @@ template<class Base> class TestableSoftPhy : public Base {
   /// no such method.
   [[nodiscard]] bool fem_tx_active_level_for_test() const { return this->fem_tx_active_level_(); }
 
+  /// Latch the driver's sticky failure, as a fatal fault would.
+  void fail_for_test(const char *reason) { this->fail_(reason); }
+
   /// Run the chip's per-packet capture (the code that reads the packet-tied RSSI) without the RX
   /// state machine around it. The caller queues the chip's packet-status response first.
   void fill_capture_for_test() { this->fill_capture_info(true, 0, 0, 0, nullptr, 0, nullptr, 0); }

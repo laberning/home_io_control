@@ -13,6 +13,7 @@
 #include "proto_timing.h"
 #include "tuning_config.h"
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -106,6 +107,33 @@ class SpiAccess {
   virtual uint8_t spi_read() = 0;
 };
 
+/// @brief Abstract byte-stream interface for radios reached over a serial link.
+///
+/// The counterpart of @ref SpiAccess for a radio behind a UART (or any reliable, in-order byte
+/// stream): the driver reads and writes bytes without depending on the ESPHome UART framework,
+/// and host tests replace the link with a scripted double. The component that owns the link
+/// implements it.
+/// @ingroup hioc_radio
+class ByteStreamAccess {
+ public:
+  /// The line rate of the Bridle UART the spec fixes (§2.1), in baud.
+  static constexpr uint32_t DEFAULT_BAUD_RATE = 1000000;
+
+  virtual ~ByteStreamAccess() = default;
+  /// Bytes that can be read now without waiting.
+  [[nodiscard]] virtual size_t available() = 0;
+  /// Read up to `max` of the bytes that are available; never waits.
+  /// @return Bytes copied into `buf` (0 when none are available).
+  virtual size_t read(uint8_t *buf, size_t max) = 0;
+  /// Queue `n` bytes for sending. May return before they have left the link; see @ref flush.
+  virtual void write(const uint8_t *buf, size_t n) = 0;
+  /// Block until every queued byte has left the link.
+  virtual void flush() = 0;
+  /// The link's line rate in baud (8N1: ten bit times a byte). A driver derives the UART time of
+  /// its commands from it. @ref DEFAULT_BAUD_RATE unless the stream knows better.
+  [[nodiscard]] virtual uint32_t baud_rate() const { return DEFAULT_BAUD_RATE; }
+};
+
 /// Configuration for transmitting a packet: carrier frequency, preamble length, wake-up level and
 /// clear-channel check.
 struct RadioTxConfig {
@@ -118,6 +146,12 @@ struct RadioTxConfig {
   /// symbol, is below this level (dBm); otherwise send_packet() reports CHANNEL_BUSY and sends
   /// nothing. Unset: send without a check.
   std::optional<int16_t> cca_threshold_dbm;
+};
+
+/// A signal a bench can ask a radio for that is no io frame (RadioDriver::transmit_test_signal()).
+enum class TestSignal : uint8_t {
+  CARRIER,   ///< An unmodulated carrier.
+  PREAMBLE,  ///< The modulated preamble alone, with no sync word and no payload.
 };
 
 /// What send_packet() did with a frame.
@@ -280,6 +314,51 @@ class RadioDriver {
   /// @return Dwell length in milliseconds.
   [[nodiscard]] virtual uint16_t hop_dwell_ms(const TuningConfig &tuning) const = 0;
 
+  /// @brief The energy level below which the driver's band treats a channel as clear before a
+  /// transmission.
+  ///
+  /// The exchange engine hands this to @ref RadioTxConfig::cca_threshold_dbm on every checked
+  /// send. The default is the hub's user-facing @ref TuningConfig::lbt_rssi_threshold_dbm; a
+  /// driver whose band has another clear-channel limit overrides this instead of reading a
+  /// second hub key.
+  /// @param tuning Current tuning configuration.
+  /// @return Threshold in dBm; a measured level at or above it means the channel is busy.
+  [[nodiscard]] virtual int16_t lbt_threshold_dbm(const TuningConfig &tuning) const {
+    return tuning.lbt_rssi_threshold_dbm;
+  }
+
+  /// @brief Whether the band's devices are duty-cycled receivers unless configured otherwise.
+  ///
+  /// The hub applies this as the `low_power` class of every device whose configuration leaves it
+  /// unset: directed start frames then set CTRL1_LOW_POWER and carry the band's wake-up. An
+  /// explicit `low_power:` always wins.
+  /// @return true when a device with no declared class is treated as low-power.
+  [[nodiscard]] virtual bool low_power_by_default() const { return false; }
+
+  /// @brief How long the exchange engine waits for the reply to a start frame, counted after the
+  /// transmission ends.
+  /// @param tuning Current tuning configuration.
+  /// @return Window in milliseconds; the default is the hub's user-facing
+  ///         @ref TuningConfig::exchange_start_response_wait_ms.
+  [[nodiscard]] virtual uint32_t start_response_wait_ms(const TuningConfig &tuning) const {
+    return tuning.exchange_start_response_wait_ms;
+  }
+
+  /// @brief Pause between the tries of one exchange.
+  /// @param tuning Current tuning configuration.
+  /// @return Gap in milliseconds; the default is the protocol's EXCHANGE_RETRY_DELAY_MS.
+  [[nodiscard]] virtual uint32_t retry_gap_ms([[maybe_unused]] const TuningConfig &tuning) const {
+    return EXCHANGE_RETRY_DELAY_MS;
+  }
+
+  /// @brief Whether a retry of an exchange moves to another channel.
+  ///
+  /// A band whose devices answer on the channel of the request and whose channels fade
+  /// independently returns true: the retry starts on the last channel that worked, then tries the
+  /// others in a fixed order.
+  /// @return true when retries rotate the channel; the default is false (every try on one channel).
+  [[nodiscard]] virtual bool retries_rotate_channel() const { return false; }
+
   /// @brief Whether the chip re-enters RX fast enough after a TX to catch an
   /// immediate reply through the standard exchange wait.
   ///
@@ -314,6 +393,16 @@ class RadioDriver {
 
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
+
+  /// Transmit a bench test signal for `duration_ms` and return to standby. For measurements a frame cannot
+  /// give (a bare carrier, a preamble of a known length): never called by the hub itself, only by a
+  /// bench configuration that has set `set_radio_test_mode(true)`. Blocks for the duration. The default
+  /// offers nothing.
+  /// @param signal What to transmit.
+  /// @param freq_hz Carrier frequency in Hz.
+  /// @param duration_ms How long the signal is on air, in ms.
+  /// @return true if the signal was sent; false if this driver cannot send it or the radio refused.
+  virtual bool transmit_test_signal(TestSignal signal, uint32_t freq_hz, uint32_t duration_ms) { return false; }
 
   /// Switch to continuous receive mode.
   virtual void set_mode_rx() = 0;

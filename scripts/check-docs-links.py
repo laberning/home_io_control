@@ -97,10 +97,10 @@ def _is_gitignored(path: Path) -> bool:
 
 
 def _is_published_path(md: Path) -> bool:
-    """A doc that ships to the generated site: README, or anything under docs/."""
-    if md == REPO_ROOT / "README.md":
-        return True
-    return DOCS_DIR in md.parents
+    """A doc that ships to the generated site: one stage-docs.py stages (one definition of what
+    ships), or any Markdown under docs/ -- the latter so a docs/ page missing from SOURCE_GLOBS is
+    reported by check A instead of escaping every published-doc rule."""
+    return md in stage_docs._sources() or DOCS_DIR in md.parents
 
 
 def _heading_slugs(text: str) -> set[str]:
@@ -265,6 +265,7 @@ def check_published_docs(errors: list[str]) -> None:
                 resolved in src_set                                   # another published doc
                 or in_cpp_tree                                        # C++ tree, doxygen resolves it
                 or stage_docs._BOUNDARY_LINK_RE.search(f"]({link})")  # README docs/ -> build/docs/ rewrite
+                or stage_docs.staged_link(src, target) is not None    # rewritten by stage-docs (4b)
             )
             if not ok:
                 what = "directory" if resolved.is_dir() else "file"

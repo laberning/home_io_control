@@ -560,6 +560,19 @@ static void log_overheard_limitation_read(const IoFrame &frame) {
   }
 }
 
+void IOHomeControlComponent::log_heard_controller_(const IoFrame &frame) {
+  const bool is_request = (frame.ctrl0 & CTRL0_START) != 0 && (frame.ctrl0 & CTRL0_END) == 0;
+  if (!is_request || memcmp(frame.src, this->node_id_, NODE_ID_SIZE) == 0)
+    return;
+  const std::string src_id = node_id_to_string(frame.src);
+  if (this->registry_.get(src_id) != nullptr)
+    return;  // one of our own devices, not a controller
+  if (!this->heard_sources_.should_log(frame.src, millis()))
+    return;
+  ESP_LOGI(detail::TAG, "Heard a request from %s: %s(0x%02X) to %s", src_id.c_str(), command_name(frame.cmd), frame.cmd,
+           node_id_to_string(frame.dst).c_str());
+}
+
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
   IoFrame frame;
   if (!parse(packet.data, packet.len, frame)) {
@@ -637,6 +650,11 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     this->schedule_device_polls_(target_devices, is_stop ? 0 : REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
     return;
   }
+
+  // A request overheard on air: say who sent it, so a user can press a button on a remote and read
+  // its node ID for the pull_key action. Each source at most once per HeardSourceLog::INTERVAL_MS,
+  // so a neighbour's controller polling its devices does not fill the log.
+  this->log_heard_controller_(frame);
 
   // Limitation reads between other parties (a KLF 200 polling a window) are only rendered, so a
   // passive monitor's log shows what they asked and answered. Nothing is applied -- the sender's

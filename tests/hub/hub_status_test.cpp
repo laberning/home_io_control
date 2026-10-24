@@ -5,6 +5,8 @@
 #include "esphome/core/application.h"
 #include "esphome/core/component.h"
 
+#include "corpus_generated.h"
+#include "corpus_test_helpers.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
@@ -257,6 +259,67 @@ TEST(HubStatus, RemoteActivityWithoutConfiguredIntervalArmsTrackedSettlePolling)
 
   EXPECT_NE(comp.poll_policy_.get_next_update("054E17"), 0u)
       << "a moving poll response after remote activity should schedule a hint-driven follow-up poll";
+}
+
+// ============================================================================
+// Replies of a real 2.4 GHz blind to the hub's own status read
+// ============================================================================
+// The 0x04 a blind sent to the hub's status read (`03 00 00`, START + LOW_POWER), from the corpus: at rest at
+// 47 % (velux_skylight_blind_statuspoll_hub_request_resting_2g4) and the first reply of a blind setting off for the
+// closed limit, 3 % and 70 s to go (velux_skylight_blind_statuspoll_hub_request_setting_off_2g4). Byte 1 is 0x60,
+// bytes 6-7 are the remaining travel in seconds.
+
+namespace {
+
+/// The last `rx` frame of the capture named `id`, as the hub would parse it.
+IoFrame blind_reply(const char *id) {
+  const corpus::CorpusCapture *capture = corpus_test::capture_by_id(id);
+  EXPECT_NE(capture, nullptr) << id;
+  IoFrame reply{};
+  if (capture == nullptr)
+    return reply;
+  for (uint8_t i = 0; i < capture->frame_count; i++)
+    if (!capture->frames[i].tx)
+      reply = corpus_test::parse_capture_frame(capture->frames[i]);
+  return reply;
+}
+
+const char *const BLIND_RESTING_REPLY = "velux_skylight_blind_statuspoll_hub_request_resting_2g4";
+const char *const BLIND_SETTING_OFF_REPLY = "velux_skylight_blind_statuspoll_hub_request_setting_off_2g4";
+
+}  // namespace
+
+TEST(HubStatus, ARestingBlindsRealStatusReplyDecodesAsStoppedAtItsPosition) {
+  esphome::test_clock::ManualClock clock;
+  const test::DecodedStatus status(blind_reply(BLIND_RESTING_REPLY), "516B10");
+
+  ASSERT_NE(status.device, nullptr);
+  EXPECT_TRUE(status.device->is_stopped);
+  EXPECT_NEAR(status.device->position, 47.06f, 0.05f) << "0x5E1F of 0xC800";
+  EXPECT_NEAR(status.device->target, status.device->position, 0.2f)
+      << "a blind at rest reports target = current within the tolerance";
+}
+
+TEST(HubStatus, ASettingOffBlindsRealStatusReplyDecodesAsMovingWithItsHint) {
+  esphome::test_clock::ManualClock clock;
+  // The hint can only shorten the delay (settle_delay_ms), so a configured interval above it is what lets
+  // the 70 s of the reply show.
+  const test::DecodedStatus status(blind_reply(BLIND_SETTING_OFF_REPLY), "516B10", 120000);
+
+  ASSERT_NE(status.device, nullptr);
+  EXPECT_FALSE(status.device->is_stopped);
+  EXPECT_FLOAT_EQ(status.device->target, 100.0f);
+  EXPECT_NEAR(status.device->position, 3.03f, 0.05f) << "0x060E of 0xC800";
+  EXPECT_EQ(status.next_poll_delay_ms(), 71000u) << "70 s remaining plus the 1 s the hub adds";
+}
+
+TEST(HubStatus, ASettingOffBlindsHintIsCappedByTheDefaultSettleDelayWithoutAConfiguredInterval) {
+  esphome::test_clock::ManualClock clock;
+  const test::DecodedStatus status(blind_reply(BLIND_SETTING_OFF_REPLY), "516B10");
+
+  ASSERT_NE(status.device, nullptr);
+  EXPECT_EQ(status.next_poll_delay_ms(), DEFAULT_SETTLE_POLL_DELAY_MS)
+      << "a device hint may shorten the settle delay, never stretch it (ADR 0017)";
 }
 
 TEST(HubStatus, RemoteActivity_UnregisteredDevice_NoTrigger) {

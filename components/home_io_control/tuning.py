@@ -37,6 +37,10 @@ CONF_COLD_BROADCAST_REPLY_PREAMBLE = "cold_broadcast_reply_preamble"
 CONF_NORMAL_START_PREAMBLE = "normal_start_preamble"
 CONF_LBT_MAX_RETRIES = "lbt_max_retries"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
+CONF_IO2G4_HOP_DWELL_MS = "io2g4_hop_dwell_ms"
+CONF_IO2G4_LBT_RSSI_THRESHOLD_DBM = "io2g4_lbt_rssi_threshold_dbm"
+CONF_IO2G4_EXCHANGE_START_RESPONSE_WAIT_MS = "io2g4_exchange_start_response_wait_ms"
+CONF_IO2G4_EXCHANGE_RETRY_GAP_MS = "io2g4_exchange_retry_gap_ms"
 CONF_LOW_POWER_WAKE_BELIEF = "low_power_wake_belief"
 CONF_LOW_POWER_WAKE_PREAMBLE = "low_power_wake_preamble"
 CONF_EXCHANGE_START_RESPONSE_WAIT_MS = "exchange_start_response_wait_ms"
@@ -225,6 +229,10 @@ UI_NAMES = {
     CONF_NORMAL_START_PREAMBLE: "Radio Normal Start Preamble",
     CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
+    CONF_IO2G4_HOP_DWELL_MS: "Radio 2.4 GHz Hop Dwell",
+    CONF_IO2G4_LBT_RSSI_THRESHOLD_DBM: "Radio 2.4 GHz LBT RSSI Threshold",
+    CONF_IO2G4_EXCHANGE_START_RESPONSE_WAIT_MS: "Radio 2.4 GHz Start Response Wait",
+    CONF_IO2G4_EXCHANGE_RETRY_GAP_MS: "Radio 2.4 GHz Retry Gap",
     CONF_LOW_POWER_WAKE_BELIEF: "Radio Low Power Wake Belief",
     CONF_LOW_POWER_WAKE_PREAMBLE: "Radio Low Power Wake Preamble",
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: "Exchange Start Response Wait",
@@ -295,6 +303,15 @@ _NUMBER_PARAMS = {
     CONF_LOW_POWER_WAKE_PREAMBLE: (1024, 4096, 64, "B"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
+    # The 2.4 GHz counterparts. The threshold's ceiling is 802.15.4's own limit for an energy-detect
+    # channel check (-75 dBm) plus room to loosen it; the dwell's floor is a single millisecond,
+    # the resolution of the loop that consumes it.
+    CONF_IO2G4_HOP_DWELL_MS: (1, 200, 1, "ms"),
+    CONF_IO2G4_LBT_RSSI_THRESHOLD_DBM: (-95, -50, 1, "dBm"),
+    # A 2.4 GHz device answers 2-4 ms after the request ends, so the reply window is short; the
+    # floor still covers the co-processor link's latency, the ceiling is the 868 MHz default.
+    CONF_IO2G4_EXCHANGE_START_RESPONSE_WAIT_MS: (20, 400, 10, "ms"),
+    CONF_IO2G4_EXCHANGE_RETRY_GAP_MS: (0, 250, 10, "ms"),
     # Ceilings are generous because the right value is a property of the target device, not of
     # the radio: measured RS100 solar reply latencies reach ~3 s (see RESPONSE_START_WAIT_MS).
     # Every millisecond here is loop-blocking time on a *failed* exchange only (ADR 0013).

@@ -151,14 +151,95 @@ def manufacturer_takes_a_name_or_a_byte():
 
 
 @case("hub_validators.validate_radio_transport")
-def spi_radio_needs_its_chip_select_pin():
+def radio_transport_keys_follow_the_radio_type():
     from esphome.components.home_io_control import hub_validators as v
 
-    # Every radio type reaches its chip over SPI today; a new one has to be placed deliberately.
-    assert set(v.RADIO_TYPE_OPTIONS) == set(v.SPI_RADIO_TYPES)
+    # Every radio type but the Bridle bridge sits on the SPI bus; a new one has to be placed deliberately.
+    assert set(v.RADIO_TYPE_OPTIONS) - set(v.SPI_RADIO_TYPES) == {"bridle"}
     with_cs = {"radio_type": "sx1262", "cs_pin": 8}
     assert v.validate_radio_transport(with_cs) is with_cs
     expect_invalid(v.validate_radio_transport, {"radio_type": "lr1121"}, "radio_type: lr1121 is an SPI radio")
+    expect_invalid(
+        v.validate_radio_transport, {"radio_type": "sx1276", "cs_pin": 18, "uart_id": "u"}, "only applies to radio_type: bridle"
+    )
+    expect_invalid(v.validate_radio_transport, {"radio_type": "bridle"}, "radio_type: bridle needs uart_id")
+    for key in ("cs_pin", "busy_pin", "dio0_pin", "dio1_pin", "dio4_pin", "tcxo_voltage"):
+        expect_invalid(
+            v.validate_radio_transport, {"radio_type": "bridle", "uart_id": "u", key: 1}, f"{key}: does not apply"
+        )
+    bridge = {"radio_type": "bridle", "uart_id": "u", "spi_id": "generated"}
+    assert "spi_id" not in v.validate_radio_transport(bridge), "the generated spi_id is dropped"
+
+
+def warnings_of(validator, config):
+    """The warnings `validator` logs for `config` (which it must accept): a warning is not a rejection."""
+    import logging
+
+    from esphome.components.home_io_control import hub_validators as v
+
+    records = []
+
+    class Catch(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = Catch()
+    v._LOGGER.addHandler(handler)
+    try:
+        assert validator(config) is config, "a warning, not a rejection"
+    finally:
+        v._LOGGER.removeHandler(handler)
+    return records
+
+
+@case()
+def a_2g4_bridge_warns_about_tuning_keys_that_only_an_868_radio_uses():
+    from esphome.components.home_io_control import hub_validators as v
+
+    bridge = {"radio_type": "bridle", "uart_id": "u", "tuning": {"normal_start_preamble": 32, "lbt_max_retries": 3}}
+    records = warnings_of(v.validate_radio_transport, bridge)
+    assert len(records) == 1 and "normal_start_preamble has no effect" in records[0], records
+    assert "io_2g4" in records[0], records
+
+
+@case()
+def an_868_bridge_does_not_warn_about_preamble_keys_it_uses():
+    from esphome.components.home_io_control import hub_validators as v
+
+    tuning = {"normal_start_preamble": 32, "sx1262_response_preamble": 12, "lbt_max_retries": 3}
+    bridge = {"radio_type": "bridle", "uart_id": "u", "bridle_band": "io_868", "tuning": tuning}
+    assert warnings_of(v.validate_radio_transport, bridge) == []
+
+
+@case()
+def a_bridge_of_either_band_warns_that_the_post_tx_settle_is_the_co_processors():
+    from esphome.components.home_io_control import hub_validators as v
+
+    for band in ("io_2g4", "io_868"):
+        bridge = {"radio_type": "bridle", "uart_id": "u", "bridle_band": band,
+                  "tuning": {"sx1262_post_tx_settle_us": 600}}
+        records = warnings_of(v.validate_radio_transport, bridge)
+        assert len(records) == 1 and "sx1262_post_tx_settle_us has no effect with radio_type: bridle" in records[0], (
+            band, records)
+
+
+@case()
+def the_bridle_bands_are_the_two_the_host_has_a_profile_for():
+    from esphome.components.home_io_control import hub_validators as v
+
+    assert v.BRIDLE_BANDS == ("io_2g4", "io_868")
+
+
+@case("hub_validators.validate_tx_power")
+def tx_power_is_per_radio():
+    from esphome.components.home_io_control import hub_validators as v
+
+    assert v.validate_tx_power({"radio_type": "sx1276"})["tx_power"] == 17, "the SPI default"
+    assert v.validate_tx_power({"radio_type": "sx1262", "tx_power": 3})["tx_power"] == 3
+    expect_invalid(v.validate_tx_power, {"radio_type": "sx1262", "tx_power": -5}, "outside 0..22 for radio_type: sx1262")
+    unset = v.validate_tx_power({"radio_type": "bridle"})
+    assert "tx_power" not in unset, "a bridge leaves the power to its radio"
+    assert v.validate_tx_power({"radio_type": "bridle", "tx_power": -20})["tx_power"] == -20
 
 
 @case("hub_validators._validate_min_interval")

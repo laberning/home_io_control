@@ -1,0 +1,34 @@
+# Board pinout — ESP32-C3 SuperMini as a Bridle host (radio co-processor behind a UART).
+#
+# Single source of truth for this board's UART link and reset line. Consumed via `packages:` by
+# config/esp32c3-supermini-*.yaml. There is no SPI bus: the radio lives on the Kite co-processor
+# and is spoken to with the Bridle protocol.
+#
+# PLACEHOLDER PINS — revisit once the Kite radio hardware is wired up. Chosen so that:
+#  * the logger runs on the native USB (USB_SERIAL_JTAG), leaving UART0 free for the Kite link;
+#  * TX/RX are the board's default UART0 pins (GPIO21 = TX, GPIO20 = RX);
+#  * rst_pin avoids the strapping pins (GPIO2, GPIO8, GPIO9).
+#
+# baud_rate is the spec's 1 Mbaud. A Kite built with KITE_UART_BAUD=N runs another rate (460800 or 921600 on
+# this 2.4 GHz band, which needs at least 460800); set the same N here, or the host reports a co-processor that
+# never answers.
+
+esp32:
+  variant: esp32c3
+  framework:
+    type: esp-idf
+
+uart:
+  id: kite_uart
+  tx_pin: 21
+  rx_pin: 20
+  baud_rate: 1000000
+  rx_buffer_size: 1024
+
+home_io_control:
+  radio_type: bridle
+  uart_id: kite_uart
+  rst_pin: 10
+  bridle_band: io_2g4
+  bridle_trace: true
+  tx_power: 4

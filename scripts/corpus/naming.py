@@ -11,7 +11,7 @@ Kept in sync with `tests/corpus/README.md` "Naming convention"; `validate.py` en
 #                name get/set) + 0x3C/0x3D + ack. Also a bare 0x3C/0x3D loopback.
 #   statuspoll — a 0x03 -> 0x04 position poll (plain form), challenged or not.
 #   probe      — a diagnostic read: 0x03 at a non-default function id / extended form,
-#                0x0C (private2), or 0x54-0x58.
+#                0x0C (private2), 0x54-0x58, or a 0x4A/0x4B record read.
 #   pairing    — 0x31/0x32/0x33 key exchange, either role (key extraction included).
 #   discovery  — 0x28/0x29, 0x2A/0x2B roll-call, 0x2E/0x2F alt-discovery.
 #   oneway     — 1W transmit / overheard traffic (0x00/0x20 with no 2W challenge).
@@ -32,6 +32,7 @@ SUBJECTS = frozenset({
     "somfy_oximo40", "somfy_pergola_louver", "somfy_rs100", "somfy_smoove", "somfy_sunilus", "somfy_tahoma",
     "synthetic", "tilt_cover", "unidentified_1w_remote",
     "velux_kig300", "velux_kli310", "velux_kli313", "velux_klf200", "velux_klr200", "velux_klr300", "velux_kux100",
+    "velux_skylight_blind",
     "velux_ssl",
     "velux_window", "wisniowski_moto1000",
 })

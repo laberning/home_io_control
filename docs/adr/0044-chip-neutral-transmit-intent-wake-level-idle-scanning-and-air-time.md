@@ -73,8 +73,11 @@ three decisions were left implicit in them:
   after the budget anyway. The timed corpus replays pass unchanged.
 - **The re-send of an unconfirmed movement command is held to the same rule**, so it too needs room
   for its own transmission.
-- **The estimate is a model, not a measurement.** For a 1024-byte preamble it gives about 218 ms of
-  air time; the bench measurement per chip is still to be recorded, and the model is corrected if
-  they differ by more than a few percent.
+- **The estimate is a model, checked against the chips.** For a 1024-byte preamble it gives about
+  218 ms of air time. The bench measured the time from entering TX to the TX-done interrupt: the
+  SX1262 on a Heltec V3 and the LR1121 on a T3S3 match the model within about 1.4 ms at 1024, 2048
+  and 4096 preamble bytes, while the SX1276 on a Heltec V2 takes 1.25 times as long per preamble
+  byte (10 bit times, 260 µs; a LONG try is about 272 ms), so its driver passes
+  `SX1276_PREAMBLE_BITS_PER_BYTE` to the shared model.
 - **Every new driver must state its air time** (the virtual has no default), which is deliberate:
   the budget rule is only as honest as the estimate behind it.

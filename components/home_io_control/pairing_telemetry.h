@@ -168,6 +168,9 @@ class PairingTelemetry : public TransmitObserver {
   void set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], DeviceType node_type);
   /// Record that this attempt pulled the key (0x38) instead of pushing it (0x31/0x32).
   void set_key_pull_attempted() { this->key_pull_attempted_ = true; }
+  /// Record that this attempt is the standalone key pull (no discovery, no search for devices), so
+  /// the advice speaks of the controller to pull from rather than a device in pairing mode.
+  void set_key_pull_only() { this->key_pull_only_ = true; }
   /// Record that a pulled key could not be verified: the device sent a 0x32, but no 0x3D that
   /// verifies under the key it carries.
   void set_key_pull_unproven() { this->key_pull_unproven_ = true; }
@@ -220,6 +223,8 @@ class PairingTelemetry : public TransmitObserver {
   [[nodiscard]] uint8_t key_refusal_code() const { return this->key_refusal_code_; }
   /// @return true if this attempt pulled the key instead of pushing it.
   [[nodiscard]] bool key_pull_attempted() const { return this->key_pull_attempted_; }
+  /// @return true if this attempt was the standalone key pull.
+  [[nodiscard]] bool key_pull_only() const { return this->key_pull_only_; }
   /// @return true if this attempt's pull received a key that the device did not prove.
   [[nodiscard]] bool key_pull_unproven() const { return this->key_pull_unproven_; }
   /// @return true if discovery accepted a device this attempt.
@@ -269,6 +274,7 @@ class PairingTelemetry : public TransmitObserver {
   uint8_t key_refusal_code_{0};
   bool key_pull_attempted_{false};
   bool key_pull_unproven_{false};
+  bool key_pull_only_{false};
   bool has_discovered_device_{false};
   uint8_t discovered_node_id_[NODE_ID_SIZE]{};
   DeviceType discovered_node_type_{DeviceType::UNKNOWN};

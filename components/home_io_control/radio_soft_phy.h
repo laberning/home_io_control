@@ -72,15 +72,22 @@ static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
 /// Microseconds in a second, for the air-time arithmetic below.
 static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
 
+/// @brief On-air time in microseconds for `bits` bit periods at the protocol's line rate.
+///
+/// One bit is 1 / 38400 s = 26.04 µs. Computed as an integer division rounded *up*, so the result
+/// never falls short of the true air time and a caller that waits on it never reads the chip's
+/// buffer early. The numerator is 64-bit: in 32 bits it would wrap above 536 bytes' worth of
+/// bits, and a 1024-byte wake-up preamble is a real transmission length.
+constexpr uint32_t soft_phy_air_time_bits_us(uint64_t bits) {
+  const uint64_t bit_periods = bits * SOFT_PHY_US_PER_SECOND;
+  return static_cast<uint32_t>((bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS);
+}
+
 /// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.
 ///
-/// One byte is 8 / 38400 s = 208.333 µs. Computed as an integer division rounded *up*, so the
-/// result never falls short of a whole byte's air time and a caller that waits on it never reads
-/// the chip's buffer early. The numerator is 64-bit: in 32 bits it would wrap above 536 bytes, and
-/// a 1024-byte wake-up preamble is a real transmission length.
+/// One byte is 8 / 38400 s = 208.333 µs; see soft_phy_air_time_bits_us() for the rounding.
 constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
-  const uint64_t bit_periods = static_cast<uint64_t>(raw_bytes) * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
-  return static_cast<uint32_t>((bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS);
+  return soft_phy_air_time_bits_us(static_cast<uint64_t>(raw_bytes) * BITS_PER_BYTE);
 }
 
 /// Sync word bytes on air after the preamble (`55 FF 33` on the SX1276, the UART-coded equivalent
@@ -91,11 +98,14 @@ static constexpr uint16_t IO868_SYNC_WORD_BYTES = 3;
 /// each byte of the latter a 10-bit UART cell, at the protocol's line rate.
 ///
 /// The same line coding applies to every 868 MHz chip (the SX1276's IoHomeOn coder and the
-/// software PHY produce the same waveform), so every 868 driver's `tx_air_time_us()` is this.
+/// software PHY produce the same waveform), so every 868 driver's `tx_air_time_us()` is this; the
+/// one chip-specific part is how long a preamble byte takes (`preamble_bits_per_byte`).
 /// @param preamble_len Preamble length in bytes.
 /// @param frame_len    Frame length in bytes, without the CRC.
+/// @param preamble_bits_per_byte Bit times one preamble byte takes on air. 8 on the software PHY;
+///        the SX1276 sends 10 (see `SX1276_PREAMBLE_BITS_PER_BYTE`).
 /// @return Air time in microseconds, rounded up.
-uint32_t io868_tx_air_time_us(uint16_t preamble_len, uint8_t frame_len);
+uint32_t io868_tx_air_time_us(uint16_t preamble_len, uint8_t frame_len, uint8_t preamble_bits_per_byte = BITS_PER_BYTE);
 
 /// @brief Recover a frame's total length from the very first UART cell of a reception.
 ///

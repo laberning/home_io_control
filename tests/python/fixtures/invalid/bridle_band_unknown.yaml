@@ -1,0 +1,21 @@
+# expect-error: Unknown value 'io_900', valid options are 'io_2g4', 'io_868'
+# bridle_band names a band the host has a profile for: io_2g4 or io_868.
+packages:
+  common: !include ../_common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+uart:
+  id: kite_uart
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 1000000
+
+home_io_control:
+  radio_type: bridle
+  uart_id: kite_uart
+  rst_pin: 4
+  bridle_band: io_900

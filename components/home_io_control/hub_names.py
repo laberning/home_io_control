@@ -31,6 +31,10 @@ CONF_SYSTEM_KEY = "system_key"
 CONF_TX_POWER = "tx_power"
 CONF_PA_PIN = "pa_pin"
 CONF_RADIO_TYPE = "radio_type"
+# The 2.4 GHz (or, later, 868 MHz) PHY profile a `radio_type: bridle` co-processor is asked for, and
+# whether every Bridle message is logged as a trace line (the recording format of session replay).
+CONF_BRIDLE_BAND = "bridle_band"
+CONF_BRIDLE_TRACE = "bridle_trace"
 CONF_FEM_EN_PIN = "fem_en_pin"
 CONF_VFEM_PIN = "vfem_pin"
 CONF_FEM_PA_PIN = "fem_pa_pin"

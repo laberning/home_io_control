@@ -49,8 +49,8 @@ id = <subject>_<phase>[_<scenario>][_<chip>]
     `0x50`/`0x52` name get/set) + `0x3C`/`0x3D` + ack. Also a bare `0x3C`/`0x3D` loopback.
   - **`statuspoll`** — a `0x03` → `0x04` **plain** position poll, challenged or not.
   - **`probe`** — a **diagnostic** read: `0x03` at a non-default function id / the extended
-    form, `0x0C` (private2), or `0x54`–`0x58`. (`0x50`/`0x52` name is a user-facing op →
-    `exchange`, not `probe`.)
+    form, `0x0C` (private2), `0x54`–`0x58`, or a `0x4A`/`0x4B` record read. (`0x50`/`0x52` name
+    is a user-facing op → `exchange`, not `probe`.)
   - **`pairing`** — `0x31`/`0x32`/`0x33` key exchange, either role; key extraction is pairing
     seen from the device side and goes in `scenario`.
   - **`discovery`** — `0x28`/`0x29`, `0x2A`/`0x2B` roll-call, `0x2E`/`0x2F` alt-discovery.
@@ -91,7 +91,7 @@ source:
   captured_with: sx1262                    # sx1276 | sx1262 | lr1121 | other | synthetic (radio chip)
   firmware: "2026.6 / commit f981dce"              # best effort, optional
   date: 2026-07-06
-  origin: own-hardware                # own-hardware | github-issue | reference-material | synthetic-bootstrap
+  origin: own-hardware                # own-hardware | github-issue | contributor | reference-material | synthetic-bootstrap
   issue: null                          # e.g. "https://github.com/.../issues/42", else null
 key: corpus            # corpus = HMAC/key-transfer bytes verify under the public corpus key
                        # unknown = raw community capture, crypto not verifiable
@@ -133,7 +133,7 @@ expect:                              # deliberately sparse — only assert what 
 - `id` (string, required): globally unique. `validate.py`/`build.py` hard-fail on duplicates.
 - `description` (string, required): what the scenario is and why it's here.
 - `source.*`: provenance metadata, enforced by `validate.py`. Required: `origin` (one of
-  `own-hardware`, `github-issue`, `synthetic-bootstrap`, `reference-material` — see
+  `own-hardware`, `github-issue`, `contributor`, `synthetic-bootstrap`, `reference-material` — see
   `docs/adr/0023-reference-material-as-a-corpus-origin.md` for what each one means), `captured_with` (one of `sx1276`,
   `sx1262`, `lr1121`, `other`, `synthetic` — the **radio chip**, not the board model; `build.py` reads this
   unconditionally to pick a chip-mock in `corpus_exchange_replay_test.cpp`, which today only
@@ -145,7 +145,7 @@ expect:                              # deliberately sparse — only assert what 
   there is no originating discussion, e.g. synthetic-bootstrap captures).
 - `key` (required): `corpus` or `unknown`. See "Key hygiene" below — this is a promise the file
   makes, and `validate.py` enforces it cryptographically: every `key: corpus` capture's 0x3C/0x3D
-  HMACs and 0x31/0x3C/0x32 key-transfer payloads must verify under the public corpus key.
+  HMACs and 0x32 key-transfer payloads must verify under the public corpus key.
 - `node_map` (optional): role -> remapped node ID, only present if a capture's
   `--remap` was used at ingest. Node IDs are **not** treated as secret (see "Key hygiene" below)
   so most captures — own-hardware or community — keep the node IDs as captured and omit this
@@ -190,6 +190,94 @@ expect:                              # deliberately sparse — only assert what 
     into device state. Only a status-poll reply is long enough and positioned right to trip the
     `reported_tilt` check, so don't set this expectation on an EXECUTE-ack capture even if its
     bytes happen to satisfy the length/selector test.
+
+### 2.4 GHz captures (`phy: io_2g4`)
+
+The 2.4 GHz io-homecontrol variant carries the same io frames as 868 MHz, inside 802.15.4 PSDUs:
+the header `01 69 6F`, the io frame without its io CRC, and the 802.15.4 FCS (CRC-16/KERMIT, the
+same algorithm as the io CRC). The corpus stores the io frame, so every frame, crypto, decode and
+classification suite runs on a 2.4 GHz capture unchanged; the rest is metadata:
+
+```yaml
+phy: io_2g4                      # capture level; omitted = io_868, so no 868 capture changes
+psdu_header: "01 69 6F"          # required with io_2g4
+t_us_stamp: {at: sfd, resolution_us: 1}   # optional: what t_us marks and its tick
+frames:
+  - dir: tx
+    t_us: 4884                   # µs, rebased to the log's first stamp; never mixed with t_ms
+    wake_train: {frames_captured: 3, first_counter: 3, last_counter: 0, first_t_us: 0, last_t_us: 2931}
+    freq: 2450000000             # an io channel: 2425, 2450 or 2475 MHz (802.15.4 ch 15/20/25)
+    hex: "52 20 11 22 33 AA BB CC 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent                  # always: the io CRC is not on air at 2.4 GHz
+```
+
+- The PSDU is not stored: it is `psdu_header` + `hex` + an FCS the ingester has checked, and a
+  re-keyed frame would need a new FCS anyway.
+- `t_us` is what the capturing tool stamped, so only differences within a capture carry meaning.
+  `t_us_stamp` says what the stamp marks (`at`: `frame_end`, the last bit, as a sniffer stamps, or
+  `sfd`, as a Bridle co-processor stamps a received frame) and the clock's tick (`resolution_us`: 1
+  for a co-processor's 1 MHz clock, 977 for a clock that advances at 1 024 Hz). Absent, it is
+  `frame_end` on a 31 µs tick. The wake-train test sizes its tolerances from it. A capture uses
+  `t_us` or `t_ms`, never both, and `t_us` and `t_us_stamp` belong to `io_2g4` captures only.
+- `wake_train` folds the wake frames (`00` + a 16-bit counter counting down to 0) onto the START
+  frame they precede: the first and last counter seen and how many frames were captured, plus the
+  first and last frame's `t_us` when the frame has one. A counter the sniffer missed shows as
+  `frames_captured` below the counter span; `last_counter` is always 0.
+  The train reaches the C++ tests as `CorpusFrame::has_wake_train` and its fields, which
+  `corpus_io2g4_wake_train_test.cpp` checks against `Io2g4Phy::tx_shape()`.
+- The exchange replay (`corpus_exchange_replay_test.cpp`) runs a `phy: io_2g4` capture over the
+  Bridle driver on a scripted 2.4 GHz co-processor (`corpus_test::make_stand_in()` picks the radio
+  stand-in by `phy`), with the capture's air frequency mapped to the hub's logical channel
+  (`corpus_test::logical_freq()`). Its origin frame's `wake_train` is checked against the wake-up
+  level the hub asked for. The pairing replay models 868 MHz radios only and skips such a capture by
+  name (`corpus_test::pairing_replay_skip_reason()`).
+- A capture stamped in `t_us` (or `t_ms`) replays on its own timeline: each reply arrives its
+  captured gap after the send it answers, measured from the main frame's start.
+
+`scripts/corpus/ingest_2g4.py` turns a sniffer log (`[<t_us>] <channel>: <PSDU hex>` per line), or
+with `--from-trace --window FROM:TO` a Bridle trace of a Kite listen session, into such a capture:
+it checks every FCS and header, folds the wake trains, and sets `dir` from `--tx-node`. With `--with-tx` the trace's
+transmissions are frames too: a bench tool's requests and answers, read from each `tx` command and its `tx_done`, with a
+commanded strobe as the wake train in front of the frame (a controller's own train comes from a sniffer). A `--window` counts
+seconds from the first frame of the trace: the first received frame, whatever its FCS, or with `--with-tx` the first frame sent if that is earlier. A capture with 2W crypto is written outside the repo and re-keyed with
+`rekey_capture.py`; one without can go straight into the corpus.
+
+### Bridle sessions (`tests/corpus/sessions/`)
+
+A session fixture is one recorded conversation between the hub's driver and a Bridle co-processor
+(the [Bridle protocol](https://github.com/laberning/bridle/blob/bridle-v0.6.0/README.md)), in the recording format of that package (`session.schema.yaml`,
+[specification §12.1](https://github.com/laberning/bridle/blob/bridle-v0.6.0/README.md#121-traces-and-session-recordings)). It is not a golden-frame capture: it holds the link's messages, and a host test
+replays it (`corpus_bridle_session_replay_test.cpp`) by playing every recorded co-processor message
+back at its recorded gap after the command it followed, and comparing each command the driver sends
+with the recorded one by type and body.
+
+- **Naming.** `filename == id`, `bridle_<layer>_<scenario>.yaml`.
+- **Provenance.** Every fixture carries a `source` block. Most have origin `synthetic-bootstrap`: the
+  driver talking to a scripted stand-in, recorded from a named host test (`source.recorded_by`). They pin
+  the driver's own command sequence, so a changed command shows as a playback difference; they show
+  nothing a real co-processor does. `bridle_868_hardware_phantom_exchanges` has origin `own-hardware`: the
+  trace of the bench host over a real XIAO nRF52840 with a Wio-SX1262 (boot, then four exchanges to
+  phantom devices that never answer), built with `bridle-session from-log`. Received frames are left out of
+  it, so no other radio's traffic is in the repository; the only trace of the band is a preamble
+  heard and dropped (`frame_start`, `rx_abort`), which carries a time and a frequency and no bytes. Its
+  replay shows that the driver and the engine send what they sent on the bench. Any other recording from
+  real hardware (`own-hardware`, `contributor`) gets its own review.
+- **Protocol versions.** A recording of a real co-processor is migrated to a later protocol version with
+  `bridle-session migrate`, which records what it did in the file's `migrated` block, and never re-recorded; a trace is
+  first turned into a recording with the package of the release it was taken with
+  ([specification §12.1](https://github.com/laberning/bridle/blob/bridle-v0.6.0/README.md#121-traces-and-session-recordings)).
+  The playback test skips by name a recording the driver's version rule refuses and fails a separate check while any
+  is left, so a recording that needs migrating cannot go unnoticed.
+- **Regeneration.** `make bridle-sessions-regen` re-records all fixtures from the tests that write
+  them (`scripts/regen-bridle-sessions.py` lists the tests; a hardware recording is not regenerated). A
+  regenerated fixture passes its replay
+  by construction, so review the diff of every file it changes before committing it. Regenerate when
+  the driver's commands change on purpose, or when the protocol version moves (a recording carries
+  the version it was made with).
+- **Checks.** `make corpus-validate` validates each fixture against the session schema and its own hex (`bridle-session validate`) and lints it against the specification's session rules (`bridle-session check`); `make bridle-trace-check` lints the traces the
+  unit tests write while they run (`HIOC_BRIDLE_TRACE_DIR`, set for the default variant only).
+- **Keys.** A fixture may carry only keys already public in this repository (the corpus key or the
+  host tests' key); `make key-material-scan` stays green.
 
 ### Raw bytes are immutable
 
@@ -256,8 +344,8 @@ per-capture review reasoning recorded in the change) confirms each expectation b
 
 `validate.py` recomputes and verifies crypto for every capture, independent of what its `key:`
 field claims:
-- `key: corpus` captures: every 0x3C/0x3D HMAC must verify, and every 0x31/0x3C/0x32
-  key-transfer payload must decrypt, under the public corpus key
+- `key: corpus` captures: every 0x3C/0x3D HMAC must verify, and every 0x32 key-transfer
+  payload must decrypt, under the public corpus key
   (`scripts/corpus/protolib.py :: CORPUS_SYSTEM_KEY`, mirroring
   `tests/support/test_helpers.h :: TEST_SYSTEM_KEY`). HMACs count in both directions: usually
   the controller answers a device's challenge (`tx` 0x3D), but a device answering a
@@ -272,7 +360,13 @@ field claims:
   shape; only add one there once a capture verifies under a known key.
 - **Any** capture, regardless of `key:` mode, containing a 0x32 key-transfer frame whose
   payload does not decrypt to the corpus key is a hard validation failure — this is the safety
-  net that stops an un-re-keyed raw pairing capture from ever being committed.
+  net that stops an un-re-keyed raw pairing capture from ever being committed. A key is either
+  **pushed** (`0x31` → `0x3C` → `0x32`: the IV is built from the `0x31` command byte and the
+  `0x3C` challenge) or **pulled** (`0x38` carrying a challenge → `0x32` from the other party:
+  the IV is built from the whole `0x38` body, as a KLR 200 does it), and
+  `scripts/corpus/protolib.py :: find_key_transfers()` places both. A `0x32` it cannot place,
+  because the frames it was masked with are missing, fails too: it cannot be shown to hold the
+  corpus key.
 
 Cross-language agreement between this Python port and the real C++ implementation is pinned by
 known-answer vectors: `scripts/corpus/tests/data/crypto_kat.yaml` and the hardcoded vectors in
@@ -383,7 +477,10 @@ Add `expect.exchange` when a capture is one complete exchange, and check that it
 
    `rekey_capture.py` also takes `--system-key-from` for a capture that has **no** 0x32 to recover
    a key from — an own-hardware exchange whose only crypto is a 0x3D HMAC, hand-assembled from a
-   log rather than piped through `ingest.py`. Same pre-commit rule: run it before the capture is
+   log rather than piped through `ingest.py`. For a contributor's exchange whose key only appears
+   in a separate key-transfer capture of the same installation, `--system-key-from-capture
+   RAW.yaml` recovers it from that capture instead, in memory, under the same "not committable"
+   rule for both inputs. Same pre-commit rule: run it before the capture is
    ever committed. A wrong key aborts before writing anything (the captured HMAC must verify
    first), so a mistyped path cannot corrupt a capture. Prose is never rewritten, so the tool
    prints a reminder if the file still says something like "HMAC not verifiable" after the bytes

@@ -50,7 +50,7 @@ static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
 
 /// Default for `TuningConfig::normal_start_preamble` — the preamble in front of a directed *start*
 /// frame whose target is **not** a low-power / duty-cycled device (`CTRL1_LOW_POWER` clear). An
-/// always-listening receiver does not need the ~213 ms `LONG_PREAMBLE` wake-up burst, and some
+/// always-listening receiver does not need the ~213 ms (SX1276: ~272 ms) `LONG_PREAMBLE` wake-up burst, and some
 /// receivers never lock onto one that long; a normal start frame gets this shorter preamble
 /// instead, matching what a reference hub sends to an always-alive device.
 ///

@@ -816,3 +816,47 @@ TEST(PairingNextAddress, NextNodeIdCountsUpAsOneTwentyFourBitNumber) {
   const uint8_t last[NODE_ID_SIZE] = {0xFF, 0xFF, 0xFF};
   EXPECT_FALSE(decisions::next_node_id(last, next));
 }
+
+// === Retry channel and challenge timing ===
+
+TEST(DecisionsRetryFrequency, AFixedBandKeepsTheRequestedChannelOnEveryTry) {
+  for (uint8_t t = 0; t < 3; t++)
+    EXPECT_EQ(decisions::retry_frequency(false, FREQ_CH2, FREQ_CH3, t), FREQ_CH2);
+}
+
+TEST(DecisionsRetryFrequency, ARotatingBandStartsOnTheLastGoodChannelAndWalksTheOthersInOrder) {
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, FREQ_CH2, 0), FREQ_CH2);
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, FREQ_CH2, 1), FREQ_CH3);
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, FREQ_CH2, 2), FREQ_CH1);
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, FREQ_CH1, 0), FREQ_CH1);
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, FREQ_CH1, 1), FREQ_CH2);
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, FREQ_CH3, 1), FREQ_CH1);
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, FREQ_CH3, 2), FREQ_CH2);
+}
+
+TEST(DecisionsRetryFrequency, AnUnknownLastGoodChannelCountsAsChannel2) {
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, 0, 0), FREQ_CH2);
+  EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, 123456, 1), FREQ_CH3);
+}
+
+TEST(DecisionsChallengeAnswer, IsSlowOnlyAboveThirtyMilliseconds) {
+  EXPECT_FALSE(decisions::challenge_answer_is_slow(29));
+  EXPECT_FALSE(decisions::challenge_answer_is_slow(30));
+  EXPECT_TRUE(decisions::challenge_answer_is_slow(31));
+}
+
+TEST(DecisionsHeardSourceLog, EachSourceIsNamedOncePerIntervalAndANewOneReplacesTheOldest) {
+  using esphome::home_io_control::decisions::HeardSourceLog;
+  HeardSourceLog log;
+  const uint8_t ids[5][3] = {{1, 0, 0}, {2, 0, 0}, {3, 0, 0}, {4, 0, 0}, {5, 0, 0}};
+  EXPECT_TRUE(log.should_log(ids[0], 1000));
+  EXPECT_FALSE(log.should_log(ids[0], 2000)) << "the same source again within the interval";
+  EXPECT_TRUE(log.should_log(ids[1], 2000)) << "another source is named at once";
+  EXPECT_FALSE(log.should_log(ids[0], 3000)) << "two alternating sources do not defeat the limit";
+  EXPECT_TRUE(log.should_log(ids[0], 1000 + HeardSourceLog::INTERVAL_MS));
+  for (int i = 1; i < 4; i++)
+    EXPECT_TRUE(log.should_log(ids[i + 1], 1000 + HeardSourceLog::INTERVAL_MS + i));
+  // Five sources, four slots: the one named longest ago (ids[1], at 2000) made room for ids[4].
+  EXPECT_TRUE(log.should_log(ids[1], 1000 + HeardSourceLog::INTERVAL_MS + 10));
+  EXPECT_FALSE(log.should_log(ids[4], 1000 + HeardSourceLog::INTERVAL_MS + 11));
+}

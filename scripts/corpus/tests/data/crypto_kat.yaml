@@ -24,3 +24,7 @@ vectors:
     description: 14 bytes of data (longer than the 8-byte IV prefix; extra bytes only feed the checksum)
     data: "20 02 03 05 04 00 08 AF C0 B8 12 1F 73 A2"
     hmac: "83 C3 C2 0D FF F8"
+# A key pull's 0x32 payload: `key` masked by crypt_key() with the 0x38 frame as IV data (its command
+# byte + `challenge`) and `challenge` as the challenge. Pinned by the same value in
+# tests/corpus/corpus_crypto_test.cpp :: CorpusCryptoKat.PullKeyTransferMatchesPythonPort.
+pull_key_transfer: "A0 FE D5 59 17 5A 3F 5B E9 F0 5F 07 6A 98 86 B8"

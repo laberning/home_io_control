@@ -112,6 +112,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::radio_failure_reason_;
+  using IOHomeControlComponent::select_and_construct_radio_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
   using IOHomeControlComponent::tuning_;
@@ -163,6 +164,27 @@ class RxTestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::last_1w_activity_ms_;
 };
 
+/// A device's final answer to a command: a 2W end frame with a 6-byte private response payload.
+inline IoFrame build_status_response(const uint8_t src[3], const uint8_t dst[3], uint8_t data_len = 6) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);  // 2W, end frame
+  set_dst(f, dst);
+  set_src(f, src);
+  uint8_t payload[6] = {0};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, data_len);
+  return f;
+}
+
+/// A device's 0x3C challenge with the given 6 random bytes.
+inline IoFrame build_challenge(const uint8_t src[3], const uint8_t dst[3], const uint8_t challenge[6]) {
+  IoFrame f{};
+  init_frame(f, true, false, false, false);
+  set_dst(f, dst);
+  set_src(f, src);
+  set_cmd(f, CMD_CHALLENGE_REQ, challenge, 6);
+  return f;
+}
+
 /// Build a RadioRxPacket from a constructed IoFrame.
 inline RadioRxPacket make_rx_packet(const IoFrame &frame) {
   RadioRxPacket pkt{};
@@ -183,6 +205,36 @@ inline void setup_rx_test_component(RxTestableComponent &comp, MockRadio &radio)
   comp.radio_ = &radio;
   comp.add_device("054E17");
 }
+
+/// A hub that has been fed one status reply from a registered device, and what it decoded and scheduled.
+///
+/// The poll policy gets the given interval and a tracking window that ends later than any device hint, so the
+/// delay the reply itself asks for is what `next_poll_delay_ms()` shows (a hint can only shorten the settle
+/// delay, never stretch it). Needs an active ManualClock.
+struct DecodedStatus {
+  RxTestableComponent comp;
+  MockRadio unused_radio;
+  IoDevice *device{nullptr};
+  std::string id;
+
+  /// @param response The device's reply, as the hub's receive path hands it to update_device_status_().
+  /// @param device_id The registered device's node id (the reply's source), six hex digits.
+  /// @param interval_ms The configured poll interval; 0 = none, so the default settle delay applies.
+  DecodedStatus(const IoFrame &response, const std::string &device_id, uint32_t interval_ms = 0) : id(device_id) {
+    setup_rx_test_component(comp, unused_radio);
+    comp.add_device(id);
+    comp.poll_policy_.set_interval(id, interval_ms);
+    comp.poll_policy_.begin_tracking(id, TRACKING_WINDOW_MS, esphome::test_clock::peek_ms());
+    comp.update_device_status_(response);
+    device = comp.get_device(id);
+  }
+  /// From the reply's arrival to the next status poll the hub scheduled.
+  [[nodiscard]] uint32_t next_poll_delay_ms() const {
+    return comp.poll_policy_.get_next_update(id) - device->last_status;
+  }
+
+  static constexpr uint32_t TRACKING_WINDOW_MS = 600000;
+};
 
 /// Pack a device type/subtype pair into the shared 2-byte metadata layout (used by GetInfo2Resp
 /// and discovery-response frames).

@@ -55,7 +55,8 @@ home_io_control:
 - `system_key` (Required): 16-byte installation key as exactly 32 hexadecimal characters.
 - `tx_power` (Optional, default: `17`): Radio transmit power, `0` to `22`.
 - `pa_pin` (Optional, default: `BOOST`): SX1276 PA path. Valid values are `BOOST` and `RFO`.
-- `radio_type` (Required): The radio chip fitted to your board. Valid values are `sx1276`, `sx1262`, and `lr1121` — see [Hardware](../hardware.md).
+- `radio_type` (Required): The radio chip fitted to your board. Valid values are `sx1276`, `sx1262`, `lr1121` and `bridle` — see [Hardware](../hardware.md).
+- `uart_id`, `bridle_band` (`radio_type: bridle` only): a radio co-processor that speaks the Bridle protocol behind a UART instead of a chip on an SPI bus (the boards are on [Hardware](../hardware.md)). `uart_id` names the `uart:` block it is wired to (1 Mbaud unless the co-processor was built for another rate, and at least 460 800 baud on `io_2g4`, where another controller's wake train sends a frame every millisecond; `rx_buffer_size` at least 1024), `rst_pin` its reset line. `bridle_band` (default `io_2g4`) is the band: `io_2g4` is io-homecontrol on 2.4 GHz over 802.15.4, `io_868` is io-homecontrol on 868 MHz over a `gfsk_raw` radio (a XIAO nRF52840 with a Wio-SX1262). On `io_868` the preamble tuning keys (`normal_start_preamble`, `sx1262_response_preamble` and the like) apply; on `io_2g4` they have no effect and the build warns. `sx1262_post_tx_settle_us` has no effect on either band, because the co-processor does the turnaround. See [ADR 0048](../adr/0048-io-868-over-bridle.md). On `io_2g4`, retries move to another channel with a short reply window and gap (see [`io2g4_exchange_start_response_wait_ms`](tuning.md#io2g4_exchange_start_response_wait_ms--io2g4_exchange_retry_gap_ms)), and one-way transmit is not available: `oneway_controllers:` and `recover_oneway_key:` are refused at validation, because no one-way frame has been seen on 2.4 GHz. Receiving one-way frames (`linked_remotes:`, `exposed_senders:`) still works.
 - `fem_en_pin` (Optional): Front-end module enable pin (chip enable / CSD) for boards with an external RF front-end. Required by `fem: gc1109`/`fem: kct8103l`; not used by `fem: xy16p35` (that part has no such pin).
 - `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end. Required whenever `fem:` is set to a profile other than `none`.
 - `fem_pa_pin` (Optional): Front-end module mode-select pin for boards with an external RF front-end — CPS on a GC1109, CTX on a KCT8103L (active-HIGH during TX on both); the LNA-control pin on an XY16P35 (active-LOW during TX — the inverse sense). Required whenever `fem:` is set to a profile other than `none`. `fem:` never fills this pin in — set it explicitly, per your board package.
@@ -94,7 +95,10 @@ the same set of keys. Platform-specific options are documented on each platform'
   note below.
 - `low_power` (Optional): Marks a battery or solar device, which changes how the hub addresses it
   on the radio. Set this on solar and battery actuators; leaving it off on such a device is a
-  common cause of a hub that pairs but then hears nothing back.
+  common cause of a hub that pairs but then hears nothing back. When you leave it out, the radio
+  decides: it defaults to `true` on `bridle_band: io_2g4`, where a blind at rest ignores a command
+  that does not carry the low-power flag, and to `false` on every other radio. An explicit
+  `low_power: false` always wins; the config dump lists each device's value and where it came from.
 - `linked_remotes` (Optional): 1W remotes or device classes whose presses should update this
   entity's state. See [Linked remotes and sender events](remotes.md).
 - `system_key` (Optional): A 32-character hex key this one device keeps of its own. Every exchange

@@ -148,7 +148,8 @@ class ExchangeEngine {
   ///
   /// The engine owns the TX-complete instant and the received packet; the caller cannot
   /// reconstruct either on its own (its own `millis()` taken before the call would include the
-  /// transmit itself — up to ~213 ms for a LONG_PREAMBLE start frame — and skew latency figures).
+  /// transmit itself — up to ~213 ms (SX1262) or ~272 ms (SX1276) for a LONG_PREAMBLE start frame — and skew latency
+  /// figures).
   struct BroadcastReplyInfo {
     int16_t rssi_dbm{0};      ///< RSSI of this reply (from the radio's last capture).
     uint32_t rx_freq_hz{0};   ///< Channel the reply was received on (RadioRxPacket::freq_hz).
@@ -298,6 +299,19 @@ class ExchangeEngine {
 
   /// Reset the hop-timer (called after radio init in hub setup()).
   void reset_hop_timestamp();
+
+  /// How long the radio spends transmitting `frame` with `preamble` on `freq`, in whole milliseconds
+  /// (0 for a frame that does not serialize). Lets a caller state how long an operation blocks.
+  [[nodiscard]] uint32_t transmit_time_ms(const IoFrame &frame, uint32_t freq, uint16_t preamble) const {
+    return this->tx_time_ms_(frame, freq, preamble);
+  }
+
+  /// The channel the next exchange of a channel-rotating band starts on, and the one a retry
+  /// rotates from (RadioDriver::retries_rotate_channel()); an exchange that is answered sets it.
+  /// @param freq One of the three channels.
+  void set_last_answered_freq(uint32_t freq) { this->last_answered_freq_ = freq; }
+  /// @return The channel the last answered exchange used (FREQ_CH2 before any).
+  [[nodiscard]] uint32_t last_answered_freq() const { return this->last_answered_freq_; }
 
   // -------------------------------------------------------------------------
   // Transmit observer
@@ -488,6 +502,14 @@ class ExchangeEngine {
 
   // --- Transmission shape and the exchange budget ---------------------------
 
+  /// The channel try `try_index` (0-based) of an exchange transmits on: `fixed_freq` on a band that
+  /// keeps one channel, the rotation of decisions::retry_frequency() on a band that rotates.
+  [[nodiscard]] uint32_t try_frequency_(uint32_t fixed_freq, uint8_t try_index) const;
+
+  /// How long to listen for the first reply to `request`: the band's window for a start frame, the
+  /// hub's continuation window otherwise.
+  [[nodiscard]] uint32_t first_response_window_ms_(const IoFrame &request) const;
+
   /// The radio's estimate of how long transmitting `frame` on `freq` with `preamble` takes, in
   /// whole milliseconds rounded up; 0 for a frame that does not serialize (it is never sent).
   [[nodiscard]] uint32_t tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16_t preamble) const;
@@ -583,6 +605,9 @@ class ExchangeEngine {
 
   // --- Engine state --------------------------------------------------------
 
+  /// Channel the last exchange was answered on; a rotating band (RadioDriver::retries_rotate_channel())
+  /// starts its next exchange here. FREQ_CH2 until a device answers.
+  uint32_t last_answered_freq_{FREQ_CH2};
   uint32_t last_hop_us_{0};  ///< Timestamp of the last channel hop (µs, from micros()).
   DebugInfo debug_{};        ///< Snapshot updated throughout each exchange attempt.
   Counters counters_{};      ///< Free-running counters; see counters()/reset_counters().

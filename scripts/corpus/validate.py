@@ -11,18 +11,22 @@ Checks every capture YAML under tests/corpus/captures/**/*.yaml:
   * CRC-CCITT (poly 0x1021 reversed = 0x8408, init 0x0000) matches the trailing 2 bytes where
     `crc: present` — ported from crc_ccitt() in proto_frame.cpp;
   * duplicate `id` across the whole corpus is a hard error;
+  * `phy: io_2g4` captures carry their PSDU header, `crc: absent`, io 2.4 GHz channel
+    frequencies, `t_us` times and well-formed `wake_train`s; no capture mixes `t_ms` and `t_us`
+    (tests/corpus/README.md "2.4 GHz captures");
   * `expect.*` keys are restricted to the set build.py actually consumes, and `expect.frames`
     cannot have more entries than were captured — both are otherwise silently accepted by
     build.py's dict.get()/index-bounded lookups, defeating the "expectations are
     human-verified" rule (see tests/corpus/README.md).
 
-`key: corpus` cryptographic promises are enforced: every 0x3C/0x3D HMAC and 0x31/0x3C/0x32
-key-transfer payload in a `key: corpus` capture must verify/decrypt correctly under the public
-corpus key (protolib.CORPUS_SYSTEM_KEY, mirroring tests/support/test_helpers.h ::
-TEST_SYSTEM_KEY). Independently of `key:`, ANY capture (any key mode) containing a 0x32
-key-transfer frame whose payload does not decrypt to the corpus key is a hard failure — this is
-the safety net that stops an un-re-keyed raw pairing capture (which would leak a real system
-key) from ever being committed, regardless of what its `key:` field claims.
+`key: corpus` cryptographic promises are enforced: every 0x3C/0x3D HMAC in a `key: corpus`
+capture must verify under the public corpus key (protolib.CORPUS_SYSTEM_KEY, mirroring
+tests/support/test_helpers.h :: TEST_SYSTEM_KEY). Independently of `key:`, ANY capture (any key
+mode) containing a 0x32 key-transfer frame — pushed (0x31/0x3C/0x32) or pulled (0x38/0x32) — whose
+payload does not decrypt to the corpus key, or that cannot be decrypted because its preceding
+frames are missing, is a hard failure — this is the safety net that stops an un-re-keyed raw
+pairing capture (which would leak a real system key) from ever being committed, regardless of what
+its `key:` field claims.
 
 The same two-tier treatment applies to 1W: a CMD_ONEWAY_ADD_CONTROLLER (0x30) frame's `enc_key`
 directly encodes recoverable key material (wrapped only under the public TRANSFER_KEY, same as
@@ -41,7 +45,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build import CLASSIFICATION_ENUM  # noqa: E402
+from build import CLASSIFICATION_ENUM, DEFAULT_PHY, PHY_ENUM  # noqa: E402
 from naming import PHASES, id_naming_problem, phase_of_id  # noqa: E402,F401
 import protolib  # noqa: E402
 from protolib import CTRL0_LENGTH_MASK, FRAME_MAX_SIZE, FRAME_MIN_SIZE, HMAC_SIZE, crc_ccitt  # noqa: E402
@@ -51,7 +55,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CAPTURES_DIR = REPO_ROOT / "tests" / "corpus" / "captures"
 
 ALLOWED_KEY_MODES = {"corpus", "unknown"}
-ALLOWED_ORIGINS = {"own-hardware", "github-issue", "synthetic-bootstrap", "reference-material"}
+ALLOWED_ORIGINS = {"own-hardware", "github-issue", "contributor", "synthetic-bootstrap", "reference-material"}
 # Mirrors ingest.py's --captured-with choices — build.py hard-requires source.captured_with
 # (render_capture() reads capture["source"]["captured_with"] unconditionally) but validate.py
 # didn't check it was present, so a hand-edited or older capture missing it passed validation
@@ -59,6 +63,15 @@ ALLOWED_ORIGINS = {"own-hardware", "github-issue", "synthetic-bootstrap", "refer
 ALLOWED_CAPTURED_WITH = {"sx1276", "sx1262", "lr1121", "other", "synthetic"}
 ALLOWED_DIRS = {"tx", "rx"}
 ALLOWED_CRC = {"present", "absent"}
+# `phy` (capture level, default io_868): the band a capture's frames were on. io_2g4 frames are the
+# same io frames, carried in 802.15.4 PSDUs, so every frame check applies to them unchanged.
+ALLOWED_PHYS = set(PHY_ENUM)
+WAKE_TRAIN_REQUIRED_KEYS = {"frames_captured", "first_counter", "last_counter"}
+WAKE_TRAIN_TIME_KEYS = {"first_t_us", "last_t_us"}
+# What a timed io_2g4 capture's `t_us` stamps mean (`t_us_stamp:`): the instant in the frame it refers to
+# and the clock's tick. build.py hands both to the C++ tests, which size their tolerances from them.
+STAMP_AT_VALUES = {"frame_end", "sfd"}
+STAMP_KEYS = {"at", "resolution_us"}
 
 
 def check_names_and_citations(seen_ids: dict) -> list:
@@ -248,6 +261,82 @@ def validate_frame(frame: dict, index: int, capture_id: str) -> None:
         )
 
 
+def validate_wake_train(frame: dict, context: str) -> None:
+    """A 2.4 GHz wake train folded onto the START frame it precedes (tests/corpus/README.md)."""
+    train = frame["wake_train"]
+    require(isinstance(train, dict), f"{context}: wake_train must be a mapping")
+    require_known_keys(train, WAKE_TRAIN_REQUIRED_KEYS | WAKE_TRAIN_TIME_KEYS, f"{context}: wake_train")
+    missing = WAKE_TRAIN_REQUIRED_KEYS - train.keys()
+    require(not missing, f"{context}: wake_train lacks {sorted(missing)}")
+    require(all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in train.values()),
+            f"{context}: wake_train values must be non-negative integers")
+    raw = parse_hex(frame["hex"], context)
+    require(protolib.is_start(raw[0]), f"{context}: a wake train precedes a START frame, and this frame is not one")
+    require(train["last_counter"] == 0,
+            f"{context}: wake_train.last_counter is {train['last_counter']}, but a train counts down to 0 before the "
+            "frame it wakes the receiver for")
+    span = train["first_counter"] - train["last_counter"] + 1
+    require(1 <= train["frames_captured"] <= span,
+            f"{context}: wake_train.frames_captured {train['frames_captured']} does not fit counters "
+            f"{train['first_counter']}..{train['last_counter']} ({span} frames)")
+    times = WAKE_TRAIN_TIME_KEYS & train.keys()
+    require(bool(times) == ("t_us" in frame),
+            f"{context}: wake_train carries first_t_us/last_t_us exactly when its frame carries t_us")
+    if times:
+        require(times == WAKE_TRAIN_TIME_KEYS, f"{context}: wake_train needs both first_t_us and last_t_us")
+        require(train["first_t_us"] <= train["last_t_us"] <= frame["t_us"],
+                f"{context}: wake_train times must satisfy first_t_us <= last_t_us <= the frame's t_us")
+
+
+def validate_stamp(data: dict, capture_id: str) -> None:
+    """The optional capture-level `t_us_stamp: {at, resolution_us}` of a timed io_2g4 capture."""
+    stamp = data["t_us_stamp"]
+    require(isinstance(stamp, dict), f"{capture_id}: t_us_stamp must be a mapping")
+    require_known_keys(stamp, STAMP_KEYS, f"{capture_id}: t_us_stamp")
+    require(STAMP_KEYS <= stamp.keys(), f"{capture_id}: t_us_stamp needs {sorted(STAMP_KEYS)}")
+    require(stamp["at"] in STAMP_AT_VALUES, f"{capture_id}: t_us_stamp.at must be one of {sorted(STAMP_AT_VALUES)}")
+    require(isinstance(stamp["resolution_us"], int) and not isinstance(stamp["resolution_us"], bool)
+            and stamp["resolution_us"] >= 1, f"{capture_id}: t_us_stamp.resolution_us must be a positive integer")
+    require(any("t_us" in frame for frame in data["frames"]), f"{capture_id}: t_us_stamp describes t_us, which no frame has")
+
+
+def validate_phy(data: dict, capture_id: str) -> None:
+    """Band-specific rules: io_2g4 carries its PSDU header, no io CRC, io channel frequencies,
+    µs timestamps and folded wake trains; io_868 carries none of the 2.4 GHz fields.
+    """
+    phy = data.get("phy", DEFAULT_PHY)
+    require(phy in ALLOWED_PHYS, f"{capture_id}: phy must be one of {sorted(ALLOWED_PHYS)}, got {phy!r}")
+    frames = data["frames"]
+    has_t_ms = any("t_ms" in frame for frame in frames)
+    has_t_us = any("t_us" in frame for frame in frames)
+    require(not (has_t_ms and has_t_us), f"{capture_id}: frames mix t_ms and t_us; a capture uses one time base")
+    if phy == DEFAULT_PHY:
+        require("psdu_header" not in data, f"{capture_id}: psdu_header belongs to phy: io_2g4 captures only")
+        require("t_us_stamp" not in data, f"{capture_id}: t_us_stamp belongs to phy: io_2g4 captures only")
+        for index, frame in enumerate(frames):
+            for key in ("t_us", "wake_train"):
+                require(key not in frame, f"{capture_id} frame[{index}]: {key} belongs to phy: io_2g4 captures only")
+        return
+
+    header = protolib.IO_2G4_PSDU_HEADER
+    require(parse_hex(str(data.get("psdu_header", "")), f"{capture_id}: psdu_header") == header,
+            f"{capture_id}: an io_2g4 capture needs psdu_header: \"{header.hex(' ').upper()}\"")
+    require(not has_t_ms, f"{capture_id}: io_2g4 frames are timed in t_us, not t_ms")
+    if "t_us_stamp" in data:
+        validate_stamp(data, capture_id)
+    for index, frame in enumerate(frames):
+        context = f"{capture_id} frame[{index}]"
+        require(frame["crc"] == "absent", f"{context}: io_2g4 frames carry no io CRC on air, so crc must be absent")
+        freq = frame.get("freq", 0)
+        require(freq == 0 or freq in protolib.IO_2G4_FREQS_HZ,
+                f"{context}: freq {freq} is not an io 2.4 GHz channel {sorted(protolib.IO_2G4_FREQS_HZ)}")
+        if "t_us" in frame:
+            require(isinstance(frame["t_us"], int) and frame["t_us"] >= 0,
+                    f"{context}: t_us must be a non-negative integer")
+        if "wake_train" in frame:
+            validate_wake_train(frame, context)
+
+
 def require_known_keys(mapping: dict, allowed: set, context: str) -> None:
     unknown = set(mapping.keys()) - allowed
     require(not unknown, f"{context}: unknown key(s) {sorted(unknown)}; expected one of {sorted(allowed)}")
@@ -327,24 +416,32 @@ def validate_crypto(data: dict, capture_id: str) -> None:
     """
     frames = [_non_crc_raw_frame(frame) for frame in data["frames"]]
 
-    for key_init, challenge, transfer in protolib.find_key_transfer_triples(frames):
-        challenge_raw = challenge.raw()
-        transfer_raw = transfer.raw()
+    transfers = protolib.find_key_transfers(frames)
+    for transfer in transfers:
         require(
-            len(challenge_raw) >= FRAME_MIN_SIZE + protolib.HMAC_SIZE,
-            f"{capture_id}: 0x3C challenge frame preceding a 0x32 key-transfer is shorter than expected",
-        )
-        require(
-            len(transfer_raw) >= FRAME_MIN_SIZE + protolib.AES_KEY_SIZE,
+            len(protolib.non_crc_bytes(transfer.transfer)) >= FRAME_MIN_SIZE + protolib.AES_KEY_SIZE,
             f"{capture_id}: 0x32 key-transfer frame payload is shorter than {protolib.AES_KEY_SIZE} bytes",
         )
-        parts = protolib.key_transfer_parts(key_init, challenge, transfer)
-        decrypted = protolib.crypt_key(parts.key_init_cmd, parts.challenge, parts.encrypted_payload)
+        require(
+            len(transfer.challenge) == protolib.HMAC_SIZE,
+            f"{capture_id}: the challenge a 0x32 key-transfer is masked with is shorter than expected",
+        )
+        decrypted = protolib.crypt_key(transfer.iv_data, transfer.challenge, transfer.encrypted_payload)
         require(
             decrypted == protolib.CORPUS_SYSTEM_KEY,
             f"{capture_id}: SECURITY: a 0x32 key-transfer frame's payload does not decrypt to the public "
-            "corpus key — this capture must be re-keyed (scripts/corpus/ingest.py --rekey) before it can "
-            "ever be committed; committing it as-is would leak whatever real key it currently encodes",
+            "corpus key — this capture must be re-keyed (scripts/corpus/ingest.py --rekey or rekey_capture.py) "
+            "before it can ever be committed; committing it as-is would leak whatever real key it currently encodes",
+        )
+    # A 0x32 neither finder can place (its 0x31/0x3C or 0x38 was not captured) can't be checked
+    # above, so it can't be proven not to hold a real key: refuse it rather than let it through.
+    placed = {id(transfer.transfer) for transfer in transfers}
+    for frame in frames:
+        require(
+            protolib.frame_cmd(frame) != protolib.CMD_KEY_TRANSFER or id(frame) in placed,
+            f"{capture_id}: SECURITY: a 0x32 key-transfer frame has no preceding 0x31/0x3C (push) or 0x38 "
+            "(pull) to decrypt it with, so it cannot be shown to hold the corpus key — include the frames it "
+            "was masked with, or leave the 0x32 out of the capture",
         )
 
     # Same severity as the 0x32 check above, same reason: enc_key directly encodes recoverable key
@@ -445,7 +542,10 @@ def unreplayed_capture_warning(data: dict, phase: str) -> "str | None":
     return f"{data['id']}: {phase} capture has tx frames but no expect.exchange, so no replay suite runs it"
 
 
-def validate_capture(data: dict, path: Path) -> str:
+def validate_capture(data: dict, path: Path, check_crypto: bool = True) -> str:
+    """Validate one capture; returns its id. `check_crypto=False` skips validate_crypto(), for an
+    ingester checking the shape of a capture that still holds real key material before re-keying.
+    """
     for field in ("id", "description", "source", "key", "frames"):
         require(field in data, f"{path}: missing required top-level field '{field}'")
 
@@ -472,11 +572,13 @@ def validate_capture(data: dict, path: Path) -> str:
     require(isinstance(frames, list) and len(frames) > 0, f"{capture_id}: 'frames' must be a non-empty list")
     for index, frame in enumerate(frames):
         validate_frame(frame, index, capture_id)
+    validate_phy(data, capture_id)
 
     if "expect" in data:
         validate_expect(data["expect"], len(frames), capture_id)
 
-    validate_crypto(data, capture_id)
+    if check_crypto:
+        validate_crypto(data, capture_id)
 
     return capture_id
 

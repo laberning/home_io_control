@@ -32,6 +32,9 @@ static constexpr uint8_t SX1262_SET_STANDBY = 0x80;
 static constexpr uint8_t SX1262_SET_RX = 0x82;
 static constexpr uint8_t SX1262_SET_TX = 0x83;
 static constexpr uint8_t SX1262_SET_RF_FREQUENCY = 0x86;
+static constexpr uint8_t SX1262_SET_TX_CONTINUOUS_WAVE = 0xD1;  ///< SetTxContinuousWave: an unmodulated carrier.
+static constexpr uint8_t SX1262_SET_TX_INFINITE_PREAMBLE =
+    0xD2;  ///< SetTxInfinitePreamble: the preamble, until standby.
 static constexpr uint8_t SX1262_SET_RX_TX_FALLBACK_MODE = 0x93;
 static constexpr uint8_t SX1262_WRITE_BUFFER = 0x0E;
 static constexpr uint8_t SX1262_READ_BUFFER = 0x1E;
@@ -218,6 +221,12 @@ class RadioSX1262 : public SoftPhyDriverBase {
   void set_mode_rx() override;
   /// @copydoc RadioDriver::set_mode_standby
   void set_mode_standby() override;
+  /// @copydoc RadioDriver::transmit_test_signal
+  ///
+  /// Uses SetTxContinuousWave and SetTxInfinitePreamble, the chip's own test commands; the infinite preamble is
+  /// the GFSK preamble of the modulation the driver last configured. The front end is switched to transmit for
+  /// the duration and back to receive after it.
+  bool transmit_test_signal(TestSignal signal, uint32_t freq_hz, uint32_t duration_ms) override;
   [[nodiscard]] const char *chip_name() const override { return "sx1262"; }
   /// @brief Dump the FEM profile and its antenna-power estimate (nothing without a FEM).
   void dump_front_end() override;

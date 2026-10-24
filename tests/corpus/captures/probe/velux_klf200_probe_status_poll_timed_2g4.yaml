@@ -1,0 +1,40 @@
+id: velux_klf200_probe_status_poll_timed_2g4
+description: >
+  A timed 2.4 GHz io-homecontrol capture of a complete long wake train: the VELUX KLF 200 (82E900)
+  sends an unauthenticated 0x03 status read with function 0x01 to device 0565E7 as a LOW_POWER START
+  on channel 20, behind 510 wake frames (counters 509 .. 0, all heard); the device answers with a 0x04
+  and no challenge.
+
+  Timing: t_us is the SFD time on the 1 MHz clock of a Kite co-processor listening on the channel,
+  so differences are good to 1 us. The wake frames come 1000 us apart (999 to 1001 us, except the
+  first interval of 976 us); the START frame's SFD follows the last wake frame's by 1036 us, and the
+  reply's SFD follows the request's by 3266 us.
+source:
+  device: "VELUX KLF 200 82E900 polling VELUX device 0565E7 on 2.4 GHz, heard by Kite on an nRF52840 Feather (Maser228)"
+  captured_with: other
+  firmware: "0.0.0-dev+gba21ebf"
+  date: 2026-10-05
+  origin: contributor
+  issue: null
+key: unknown
+phy: io_2g4
+psdu_header: "01 69 6F"
+t_us_stamp: {at: sfd, resolution_us: 1}
+frames:
+  - dir: tx
+    t_us: 510011
+    wake_train: {frames_captured: 510, first_counter: 509, last_counter: 0, first_t_us: 0, last_t_us: 508975}
+    freq: 2450000000
+    hex: "52 20 05 65 E7 82 E9 00 03 01 FE 01 01 01 01 01 01 01 00"
+    crc: absent
+    note: "0x03 function 0x01, START, CTRL1 LOW_POWER"
+  - dir: rx
+    t_us: 513277
+    freq: 2450000000
+    hex: "90 00 82 E9 00 05 65 E7 04 2D 60 00 00 80 00 00 00"
+    crc: absent
+    note: "END; unauthenticated 0x04, no challenge"
+expect:
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

@@ -90,24 +90,8 @@ class TestableComponent : public IOHomeControlComponent {
 
 // --- Frame builders ---------------------------------------------------------
 
-static IoFrame build_status_response(const uint8_t src[3], const uint8_t dst[3], uint8_t data_len = 6) {
-  IoFrame f{};
-  init_frame(f, true, false, true, false);  // 2W, end frame
-  set_dst(f, dst);
-  set_src(f, src);
-  uint8_t payload[6] = {0};
-  set_cmd(f, CMD_PRIVATE_RESP, payload, data_len);
-  return f;
-}
-
-static IoFrame build_challenge(const uint8_t src[3], const uint8_t dst[3], const uint8_t challenge[6]) {
-  IoFrame f{};
-  init_frame(f, true, false, false, false);
-  set_dst(f, dst);
-  set_src(f, src);
-  set_cmd(f, CMD_CHALLENGE_REQ, challenge, 6);
-  return f;
-}
+using test::build_challenge;
+using test::build_status_response;
 
 static IoFrame build_error_response(const uint8_t src[3], const uint8_t dst[3], uint8_t result) {
   IoFrame f{};
@@ -3517,6 +3501,33 @@ TEST(Exchange, LbtBusyOnEveryCheckSendsOnceWithoutIt) {
   EXPECT_EQ(radio.rssi_read_freqs().size(), checks) << "the forced send takes no reading";
   ASSERT_EQ(radio.get_tx_configs().size(), 1u);
   EXPECT_FALSE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value()) << "the last send is forced";
+}
+
+namespace {
+
+/// A radio whose band has its own clear-channel limit, the way a driver overrides
+/// RadioDriver::lbt_threshold_dbm().
+class OwnLbtThresholdMockRadio : public MockRadio {
+ public:
+  static constexpr int16_t THRESHOLD_DBM = -75;
+  int16_t lbt_threshold_dbm(const TuningConfig &) const override { return THRESHOLD_DBM; }
+};
+
+}  // namespace
+
+TEST(Exchange, LbtThresholdComesFromTheDriver) {
+  TestableComponent comp;
+  OwnLbtThresholdMockRadio radio;
+  wire_observer_rig(comp, radio);
+  ASSERT_NE(comp.tuning_.lbt_rssi_threshold_dbm, OwnLbtThresholdMockRadio::THRESHOLD_DBM);
+
+  IoFrame request{};
+  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(radio.get_tx_configs()[0].cca_threshold_dbm, OwnLbtThresholdMockRadio::THRESHOLD_DBM)
+      << "the engine asks the driver, not the hub key";
 }
 
 TEST(Exchange, LbtFailedSendIsNotRetried) {

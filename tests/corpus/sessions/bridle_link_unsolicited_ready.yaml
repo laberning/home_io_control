@@ -1,0 +1,255 @@
+protocol: '0.6'
+header:
+  host_version: null
+  firmware_version: fake-0.0
+  board: fake-board
+  chip_id: nrf52840
+  proto: '0.6'
+  reset_cause: pin
+  radios:
+  - radio: 0
+    chip: nrf52840
+    profiles:
+      ieee802154_oqpsk_250k: true
+    band_min_hz: 2400000000
+    band_max_hz: 2483500000
+    tx_power_min_dbm: -40
+    tx_power_max_dbm: 8
+    max_payload: 125
+    max_preamble_bytes: 0
+    strobe_jitter_us: 2
+    caps:
+      strobe: true
+      scheduled_tx: true
+      rx_scan: true
+      cca: true
+source:
+  origin: synthetic-bootstrap
+  recorded_by: host test RadioBridleLink.AnUnsolicitedReadyReconfiguresWithoutAnotherResetPulse
+  description: 'The co-processor reboots in the middle of a session: an unsolicited ready with reset cause
+    watchdog, and the driver configures the event mask and the radio again.'
+messages:
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 8000000006010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f0000000401100501011629
+  msg_type: ready
+  seq: 0
+  fields:
+    cmd_seq: 0
+    proto_major: 0
+    proto_minor: 6
+    chip_id: nrf52840
+    caps: {}
+    info:
+    - id: fw_version
+      value: fake-0.0
+    - id: board
+      value: fake-board
+    - id: radio
+      value:
+        radio: 0
+        chip: nrf52840
+        profiles:
+          ieee802154_oqpsk_250k: true
+        band_min_hz: 2400000000
+        band_max_hz: 2483500000
+        tx_power_min_dbm: -40
+        tx_power_max_dbm: 8
+        max_payload: 125
+        max_preamble_bytes: 0
+        strobe_jitter_us: 2
+        caps:
+          strobe: true
+          scheduled_tx: true
+          rx_scan: true
+          cca: true
+    - id: rx_queue_depth
+      value: 16
+    - id: reset_cause
+      value: pin
+- dir: host_to_coproc
+  host_ms: 100020
+  hex: 0201ff03010f8bc8
+  msg_type: set_params
+  seq: 1
+  fields:
+    radio: 255
+    params:
+    - id: event_mask
+      value:
+        frame_start: true
+        crc_error_rx: true
+        rx_abort: true
+        log: true
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 810101ff03010f3edd
+  msg_type: params_ack
+  seq: 1
+  fields:
+    cmd_seq: 1
+    radio: 255
+    applied:
+    - id: event_mask
+      value:
+        frame_start: true
+        crc_error_rx: true
+        rx_abort: true
+        log: true
+- dir: host_to_coproc
+  host_ms: 100020
+  hex: 02020004010001015602010808a6
+  msg_type: set_params
+  seq: 2
+  fields:
+    radio: 0
+    params:
+    - id: phy_profile
+      value: ieee802154_oqpsk_250k
+    - id: sfd
+      value: 86
+    - id: tx_power_dbm
+      value: 8
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: '810202000401000101560201080765'
+  msg_type: params_ack
+  seq: 2
+  fields:
+    cmd_seq: 2
+    radio: 0
+    applied:
+    - id: phy_profile
+      value: ieee802154_oqpsk_250k
+    - id: sfd
+      value: 86
+    - id: tx_power_dbm
+      value: 8
+- dir: host_to_coproc
+  host_ms: 100020
+  hex: 03030080080892001ca1
+  msg_type: rx_on
+  seq: 3
+  fields:
+    radio: 0
+    freq_hz: 2450000000
+    force: false
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 820303a7a1
+  msg_type: ack
+  seq: 3
+  fields:
+    cmd_seq: 3
+- dir: coproc_to_host
+  host_ms: 100025
+  hex: 8000000006010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f0000000401100501028d1b
+  msg_type: ready
+  seq: 0
+  fields:
+    cmd_seq: 0
+    proto_major: 0
+    proto_minor: 6
+    chip_id: nrf52840
+    caps: {}
+    info:
+    - id: fw_version
+      value: fake-0.0
+    - id: board
+      value: fake-board
+    - id: radio
+      value:
+        radio: 0
+        chip: nrf52840
+        profiles:
+          ieee802154_oqpsk_250k: true
+        band_min_hz: 2400000000
+        band_max_hz: 2483500000
+        tx_power_min_dbm: -40
+        tx_power_max_dbm: 8
+        max_payload: 125
+        max_preamble_bytes: 0
+        strobe_jitter_us: 2
+        caps:
+          strobe: true
+          scheduled_tx: true
+          rx_scan: true
+          cca: true
+    - id: rx_queue_depth
+      value: 16
+    - id: reset_cause
+      value: watchdog
+- dir: host_to_coproc
+  host_ms: 100030
+  hex: 0204ff03010fdfee
+  msg_type: set_params
+  seq: 4
+  fields:
+    radio: 255
+    params:
+    - id: event_mask
+      value:
+        frame_start: true
+        crc_error_rx: true
+        rx_abort: true
+        log: true
+- dir: coproc_to_host
+  host_ms: 100035
+  hex: 810104ff03010f6afb
+  msg_type: params_ack
+  seq: 1
+  fields:
+    cmd_seq: 4
+    radio: 255
+    applied:
+    - id: event_mask
+      value:
+        frame_start: true
+        crc_error_rx: true
+        rx_abort: true
+        log: true
+- dir: host_to_coproc
+  host_ms: 100035
+  hex: 020500040100010156020108ee06
+  msg_type: set_params
+  seq: 5
+  fields:
+    radio: 0
+    params:
+    - id: phy_profile
+      value: ieee802154_oqpsk_250k
+    - id: sfd
+      value: 86
+    - id: tx_power_dbm
+      value: 8
+- dir: coproc_to_host
+  host_ms: 100040
+  hex: 81020500040100010156020108e1c5
+  msg_type: params_ack
+  seq: 2
+  fields:
+    cmd_seq: 5
+    radio: 0
+    applied:
+    - id: phy_profile
+      value: ieee802154_oqpsk_250k
+    - id: sfd
+      value: 86
+    - id: tx_power_dbm
+      value: 8
+- dir: host_to_coproc
+  host_ms: 100040
+  hex: 0306008008089200bf51
+  msg_type: rx_on
+  seq: 6
+  fields:
+    radio: 0
+    freq_hz: 2450000000
+    force: false
+- dir: coproc_to_host
+  host_ms: 100040
+  hex: 8203060af6
+  msg_type: ack
+  seq: 3
+  fields:
+    cmd_seq: 6

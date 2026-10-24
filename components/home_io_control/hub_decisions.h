@@ -452,6 +452,89 @@ struct TargetEvidence {
   return wake_preamble;
 }
 
+/// Time after a `0x3C` arrives beyond which the `0x3D` answer is reported as late (ms). A 2.4 GHz
+/// device accepts an answer up to about 46 ms after its challenge; 30 ms leaves headroom for the
+/// airtime and the radio link.
+static constexpr uint32_t CHALLENGE_ANSWER_WARN_MS = 30;
+
+/// True when the `0x3D` left more than CHALLENGE_ANSWER_WARN_MS after the `0x3C` arrived.
+[[nodiscard]] inline bool challenge_answer_is_slow(uint32_t challenge_to_answer_ms) {
+  return challenge_to_answer_ms > CHALLENGE_ANSWER_WARN_MS;
+}
+
+/// The channel one try of an exchange transmits on.
+///
+/// A band that rotates retries starts on the last channel that carried an answer, then walks the
+/// others in the fixed order CH1 -> CH2 -> CH3 -> CH1, so three tries cover all three channels
+/// whichever one the exchange begins on. A band that does not rotate keeps `fixed_freq` on every try.
+/// @param rotate     RadioDriver::retries_rotate_channel().
+/// @param fixed_freq Channel the caller asked for; used on every try when @p rotate is false.
+/// @param last_good  Channel the last answered exchange used; a value that is not one of the three
+///                   channels counts as FREQ_CH2.
+/// @param try_index  0-based try number.
+[[nodiscard]] inline uint32_t retry_frequency(bool rotate, uint32_t fixed_freq, uint32_t last_good, uint8_t try_index) {
+  if (!rotate)
+    return fixed_freq;
+  static constexpr uint32_t ORDER[] = {FREQ_CH1, FREQ_CH2, FREQ_CH3};
+  static constexpr size_t CHANNEL_COUNT = sizeof(ORDER) / sizeof(ORDER[0]);
+  size_t start = 1;  // FREQ_CH2
+  for (size_t i = 0; i < CHANNEL_COUNT; i++) {
+    if (ORDER[i] == last_good)
+      start = i;
+  }
+  return ORDER[(start + try_index) % CHANNEL_COUNT];
+}
+
+/// Which overheard request sources to name in the log, so a user can read a controller's node ID without the
+/// log repeating a busy neighbour's controller on every request: each of the last SLOTS sources is named at
+/// most once per INTERVAL_MS. Pure: the caller passes the clock.
+class HeardSourceLog {
+ public:
+  /// How long a source stays quiet in the log after it was named (ms).
+  static constexpr uint32_t INTERVAL_MS = 600000;
+  /// Sources remembered at once; a new one replaces the one named longest ago.
+  static constexpr size_t SLOTS = 4;
+
+  /// True when @p node_id should be named now (and records that it was), false while it was named within
+  /// INTERVAL_MS.
+  bool should_log(const uint8_t node_id[NODE_ID_SIZE], uint32_t now_ms) {
+    Slot *target = nullptr;
+    for (Slot &slot : this->slots_) {
+      if (slot.used && memcmp(slot.node_id, node_id, NODE_ID_SIZE) == 0) {
+        if (now_ms - slot.logged_ms < INTERVAL_MS)
+          return false;
+        target = &slot;
+        break;
+      }
+    }
+    if (target == nullptr) {
+      // A free slot, else the one named longest ago.
+      target = &this->slots_[0];
+      for (Slot &slot : this->slots_) {
+        if (!slot.used) {
+          target = &slot;
+          break;
+        }
+        if (now_ms - slot.logged_ms > now_ms - target->logged_ms)
+          target = &slot;
+      }
+    }
+    memcpy(target->node_id, node_id, NODE_ID_SIZE);
+    target->logged_ms = now_ms;
+    target->used = true;
+    return true;
+  }
+
+ private:
+  /// One remembered source.
+  struct Slot {
+    uint8_t node_id[NODE_ID_SIZE]{};  ///< The source's node ID.
+    uint32_t logged_ms{0};            ///< When it was last named.
+    bool used{false};                 ///< The slot holds a source.
+  };
+  Slot slots_[SLOTS]{};
+};
+
 /// Lowercase name of a belief for log lines.
 [[nodiscard]] inline const char *wake_belief_name(WakeBelief belief) {
   switch (belief) {

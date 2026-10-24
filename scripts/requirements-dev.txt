@@ -1,0 +1,5 @@
+# Dev tools for the Bridle checks, the bench scripts, the corpus tools and the fuzz seeds: the Bridle wheel
+# (pinned by scripts/bridle-update.sh, which keeps the other lines), which brings its direct dependencies (pinned),
+# and what the corpus tools import besides.
+cryptography==46.0.5
+bridle-protocol @ https://github.com/laberning/bridle/releases/download/bridle-v0.6.0/bridle_protocol-0.6.0-py3-none-any.whl#sha256=e600d6c632de367b236294e9fd2c68eb5f2f8dcac61d3fd6e970fa0f0107640a

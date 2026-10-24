@@ -1,0 +1,55 @@
+# Compile test for `radio_type: bridle` on the 868 MHz band (`bridle_band: io_868`, `gfsk_raw`).
+#
+# Standalone rather than `<<: !include common.yaml`: common.yaml declares an spi: bus and SX1276
+# pins, and a bridge has neither. The sibling test-esp32-bridle.yaml covers io_2g4; this one
+# proves the other band's host PHY compiles in.
+substitutions:
+  device_name: test-bridle-868
+
+esphome:
+  name: ${device_name}
+  merge_warnings: false
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-ssid"
+  password: "test12345"
+
+api:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+uart:
+  id: kite_uart
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 1000000
+  rx_buffer_size: 1024
+
+home_io_control:
+  radio_type: bridle
+  uart_id: kite_uart
+  rst_pin: 4
+  bridle_band: io_868
+  bridle_trace: true
+  tx_power: 4
+  node_id: C0FFEE
+  system_key: 0123456789ABCDEF0123456789ABCDEF
+  discover_and_pair_button: true
+
+cover:
+  - platform: home_io_control
+    name: "Test Cover"
+    io_device_id: "FEEB1E"
+    device_class: awning
+    io_device_type: "vertical_exterior_awning"

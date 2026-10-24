@@ -1,0 +1,21 @@
+# expect-error: must run at 1000000 baud
+# covers: hub_validators.final_validate_bridle_uart
+# The co-processor speaks 1 Mbaud (or 115200 to 921600 when built for it): another speed reads garbage.
+packages:
+  common: !include ../_common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+uart:
+  id: kite_uart
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 57600
+
+home_io_control:
+  radio_type: bridle
+  uart_id: kite_uart
+  rst_pin: 4

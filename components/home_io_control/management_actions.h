@@ -26,6 +26,7 @@ namespace home_io_control {
 
 // Forward declarations — full definitions included only in management_actions.cpp.
 class IOHomeControlComponent;
+class PairingEngine;
 struct TuningConfig;
 
 /// Result of a hub-level management action such as rename.
@@ -86,10 +87,11 @@ class ManagementActions {
   ///                     to decide which passes to run.
   /// @param engine       Shared exchange engine for radio transactions.
   /// @param registry     Device registry for device lookups.
+  /// @param pairing      Pairing engine; only pull_key() uses it, for the key pull and its proof.
   /// @param initialized  Pointer to the hub's initialized flag.
   /// @param hub          Hub pointer for ESPHome API calls and public hub methods.
   ManagementActions(const uint8_t *node_id, const uint8_t *system_key, const TuningConfig *tuning,
-                    ExchangeEngine &engine, DeviceRegistry &registry, const bool *initialized,
+                    ExchangeEngine &engine, DeviceRegistry &registry, PairingEngine &pairing, const bool *initialized,
                     IOHomeControlComponent *hub);
 
   /// Non-copyable — stores references and pointers into hub member addresses.
@@ -245,6 +247,24 @@ class ManagementActions {
   /// scheduled `loop()` ticks so no single blocking unit approaches 2550 ms — not done here.
   /// @return Structured result whose `message` is the full report.
   ManagementActionResult scan_paired_devices();
+
+  /// Native API callback: pull a controller's key and publish the result as a HA event.
+  void api_pull_key(const std::string &controller_id);
+
+  /// @brief Pull the system key from a controller and prove it (the `pull_key` action).
+  ///
+  /// The hub asks the controller for its key (0x38), takes the controller's 0x32 and proves the key by
+  /// challenging it, exactly as the pull inside Discover & Pair does, but with no discovery, no
+  /// roll-call and no record reads, and nothing is registered or stored. The route for a 2.4 GHz VELUX
+  /// remote in "Copy system" mode; it works on any band. A proven key is printed in the device log
+  /// with its key check value (the event carries the check value only). Refused with a result of its
+  /// own for an uninitialized hub, an id that is not 6 hex digits, the hub's own id, and while another
+  /// radio operation runs. Blocks the loop for at most PairingEngine::pull_key_worst_case_ms(), which
+  /// the action's first log line states.
+  /// @param controller_id Node id of the controller, 6 hex digits (case-insensitive).
+  /// @return Structured result: `success` for a proven or already-shared key; `message` says what
+  ///         happened and what to do next, without key material.
+  ManagementActionResult pull_key(const std::string &controller_id);
 
   /// Native API callback: run a single diagnostic probe and publish the result as a HA event.
   void api_probe_device(const std::string &device_id, const std::string &probe, const std::string &index);
@@ -408,6 +428,7 @@ class ManagementActions {
   const TuningConfig *tuning_;
   ExchangeEngine &engine_;
   DeviceRegistry &registry_;
+  PairingEngine &pairing_;
   const bool *initialized_;
   IOHomeControlComponent *hub_;
 };

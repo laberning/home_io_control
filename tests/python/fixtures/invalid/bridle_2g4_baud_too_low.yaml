@@ -1,0 +1,21 @@
+# expect-error: bridle_band io_2g4 needs the UART at 460800 baud or more
+# covers: hub_validators.final_validate_bridle_uart
+# A rate the co-processor can be built for, but too slow for the events of another controller's wake train.
+packages:
+  common: !include ../_common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+uart:
+  id: kite_uart
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 230400
+
+home_io_control:
+  radio_type: bridle
+  uart_id: kite_uart
+  rst_pin: 4

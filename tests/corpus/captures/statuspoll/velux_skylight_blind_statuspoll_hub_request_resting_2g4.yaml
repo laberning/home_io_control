@@ -1,0 +1,45 @@
+id: velux_skylight_blind_statuspoll_hub_request_resting_2g4
+description: >
+  The Home IO Control hub's own status read (03 00 00, START and LOW_POWER, behind the long wake train) sent by a bench tool to a VELUX skylight blind resting at 47 %. The first try draws no reply; the second is answered with a 14-byte 0x04: stopped (flags 05), constant 60, target 5E00 and current 5E1F (47.0 % and 47.1 %), remaining travel 1 s, last commander 4D84A6, then 01 00 00. The reply's SFD follows the request's end by about 2.7 ms. The request and train are the bench tool's commanded ones (the trace holds the command and the co-processor's tx_done), the reply is received.
+source:
+  device: "A bench tool on a Kite nRF52840 (Maser228) sending as node C0FFEE to a VELUX skylight blind 516B10 on 2.4 GHz, the same installation as the KLR 200 4D84A6, heard and sent through Kite's Bridle link"
+  captured_with: other
+  firmware: "0.0.0-dev+g587526f"
+  date: 2026-10-13
+  origin: contributor
+  issue: null
+key: unknown
+phy: io_2g4
+psdu_header: "01 69 6F"
+t_us_stamp: {at: sfd, resolution_us: 1}
+frames:
+  - dir: tx
+    t_us: 510036
+    wake_train: {frames_captured: 510, first_counter: 509, last_counter: 0, first_t_us: 0, last_t_us: 509000}
+    freq: 2450000000
+    hex: "4B 20 51 6B 10 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: tx
+    t_us: 3083829
+    wake_train: {frames_captured: 510, first_counter: 509, last_counter: 0, first_t_us: 2573793, last_t_us: 3082793}
+    freq: 2450000000
+    hex: "4B 20 51 6B 10 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_us: 3087088
+    freq: 2450000000
+    hex: "96 00 C0 FF EE 51 6B 10 04 05 60 5E 00 5E 1F 00 01 4D 84 A6 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+expect:
+  exchange:
+    kind: status_poll
+    outcome: success
+  frames:
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: COMPLETE_DIRECT}
+  device:
+    reported_position: 47

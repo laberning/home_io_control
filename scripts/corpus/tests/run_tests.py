@@ -5,11 +5,14 @@ Stdlib `assert`-based, no pytest — mirrors scripts/check-tuning-sync.py's depe
 style. Fixtures under scripts/corpus/tests/data/ are trimmed excerpts of real on-air logs
 (plus one synthetic mangled paste exercising the fallback tier).
 
-Run via `python3 scripts/corpus/tests/run_tests.py`; wired into `make corpus-validate`.
+Run via `build/tools/venv/bin/python scripts/corpus/tests/run_tests.py` (`make tools`); wired into `make corpus-validate`.
 Exits non-zero with a description of the first failure.
 """
 
+import argparse
+import contextlib
 import copy
+import io
 import subprocess
 import sys
 import tempfile
@@ -23,10 +26,12 @@ SCRIPTS_DIR = REPO_ROOT / "scripts" / "corpus"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
+from bridle import bridle as bridle_module  # noqa: E402  (the trace tests build Bridle messages)
 import build as build_module  # noqa: E402
 import ingest as ingest_module  # noqa: E402
 import protolib  # noqa: E402
 import rekey_capture as rekey_capture_module  # noqa: E402
+import ingest_2g4 as ingest_2g4_module  # noqa: E402
 import validate as validate_module  # noqa: E402
 
 
@@ -429,6 +434,10 @@ def test_crypto_kat_vectors_match_cpp() -> None:
         expected_hmac = bytes.fromhex(vector["hmac"].replace(" ", ""))
         got = protolib.create_hmac(data, challenge, key)
         assert got == expected_hmac, f"{vector['name']}: got {got.hex().upper()}, expected {expected_hmac.hex().upper()}"
+    pull_iv = bytes([protolib.CMD_LAUNCH_KEY_TRANSFER]) + challenge
+    expected_pull = bytes.fromhex(kat["pull_key_transfer"].replace(" ", ""))
+    got = protolib.crypt_key(pull_iv, challenge, key)
+    assert got == expected_pull, f"pull_key_transfer: got {got.hex().upper()}, expected {expected_pull.hex().upper()}"
 
 
 # --- --rekey pipeline self-tests -------------------------------------------------------------
@@ -611,8 +620,7 @@ def test_rekey_capture_recovers_key_from_capture_and_rewrites_text() -> None:
     recovered = rekey_capture_module.recover_system_key(frames)
     assert recovered == real_key, "the key must be recovered from the capture's own 0x32 payload"
 
-    hmac_count = ingest_module.rekey_hmac_frames(frames, recovered, protolib.CORPUS_SYSTEM_KEY)
-    transfer_count = ingest_module.rekey_key_transfer_frames(frames, recovered, protolib.CORPUS_SYSTEM_KEY)
+    hmac_count, transfer_count = ingest_module.rekey_2w_frames(frames, recovered, protolib.CORPUS_SYSTEM_KEY)
     assert (hmac_count, transfer_count) == (1, 1), f"expected 1 HMAC + 1 key-transfer rewrite, got {hmac_count}/{transfer_count}"
 
     rendered, changed = rekey_capture_module.rewrite_text(text, frames, original_hex)
@@ -644,7 +652,7 @@ def test_rekey_capture_refuses_already_rekeyed_and_keyless_captures() -> None:
         rekey_capture_module.recover_system_key(_build_synthetic_exchange(bytes([0xA5] * 16)))
         raise AssertionError("expected RekeyError on a capture with no key-transfer frame")
     except ingest_module.RekeyError as exc:
-        assert "no 0x31/0x3C/0x32 key-transfer triple" in str(exc), exc
+        assert "no key transfer" in str(exc), exc
 
 
 def test_rekey_capture_refuses_committable_input() -> None:
@@ -671,7 +679,7 @@ def test_rekey_capture_explicit_key_for_capture_without_key_transfer() -> None:
     """
     real_key = bytes([0x77] * 16)
     frames = _build_synthetic_exchange(real_key)
-    assert not protolib.find_key_transfer_triples(frames), "fixture must have no 0x32 to recover from"
+    assert not protolib.find_key_transfers(frames), "fixture must have no 0x32 to recover from"
 
     key_path = _write_fake_key_file(real_key)
     try:
@@ -679,7 +687,7 @@ def test_rekey_capture_explicit_key_for_capture_without_key_transfer() -> None:
         assert resolved == real_key
         assert "key file" in how
 
-        count = ingest_module.rekey_hmac_frames(frames, resolved, protolib.CORPUS_SYSTEM_KEY)
+        count, _ = ingest_module.rekey_2w_frames(frames, resolved, protolib.CORPUS_SYSTEM_KEY)
         assert count == 1
         rewritten = frames[2].raw()[protolib.FRAME_MIN_SIZE:protolib.FRAME_MIN_SIZE + protolib.HMAC_SIZE]
         transcript = bytes([0x00, 0x01, 0x02, 0x03])
@@ -799,6 +807,397 @@ def test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key() -> None
         pass
 
 
+# --- Pull key transfers (0x38 -> 0x32) ----------------------------------------------------------
+
+
+_PULL_CHALLENGE = bytes([0x31, 0x6E, 0x71, 0xBB, 0x01, 0x49])
+
+
+def _synthetic_pull_frames(real_key: bytes) -> "list[protolib.RawFrame]":
+    """A key pull as seen on 2.4 GHz io: the new remote sends 0x38 with a challenge, the key
+    holder answers with the masked key (IV seeded with the 0x38 frame), then the new remote
+    challenges that 0x32 and the holder answers with a 0x3D over it. All under `real_key`.
+    """
+    launch = _make_raw_frame("tx", 0x40, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, protolib.CMD_LAUNCH_KEY_TRANSFER,
+                             _PULL_CHALLENGE)
+    masked = protolib.crypt_key(bytes([protolib.CMD_LAUNCH_KEY_TRANSFER]) + _PULL_CHALLENGE, _PULL_CHALLENGE,
+                                real_key)
+    transfer = _make_raw_frame("rx", 0x00, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, protolib.CMD_KEY_TRANSFER, masked)
+    challenge_bytes = bytes([0xA6, 0x3D, 0x20, 0xCD, 0xC8, 0x0F])
+    challenge = _make_raw_frame("tx", 0x00, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, protolib.CMD_CHALLENGE_REQ,
+                                challenge_bytes)
+    hmac = protolib.create_hmac(bytes([protolib.CMD_KEY_TRANSFER]) + masked, challenge_bytes, real_key)
+    response = _make_raw_frame("rx", 0x80, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, protolib.CMD_CHALLENGE_RESP, hmac)
+    return [launch, transfer, challenge, response]
+
+
+def _capture_dict(frames: "list[protolib.RawFrame]", key: str) -> dict:
+    return {"key": key, "frames": [{"dir": f.direction, "hex": f.hex_bytes, "crc": "absent"} for f in frames]}
+
+
+def _capture_yaml(frames: "list[protolib.RawFrame]", capture_id: str) -> str:
+    frame_yaml = "".join(f'  - dir: {f.direction}\n    hex: "{f.hex_bytes.upper()}"\n    crc: absent\n'
+                         for f in frames)
+    return (f"id: {capture_id}\n"
+            "description: >\n  pre-re-key self-test fixture\n"
+            "source:\n  device: \"self-test fixture\"\n  captured_with: other\n  firmware: null\n"
+            "  date: 2026-09-28\n  origin: reference-material\n  issue: null\n"
+            "key: unknown\n"
+            "frames:\n" + frame_yaml)
+
+
+def test_find_key_transfers_places_push_and_pull() -> None:
+    real_key = bytes([0x42] * 16)
+    pull = _synthetic_pull_frames(real_key)
+    transfers = protolib.find_key_transfers(pull)
+    assert len(transfers) == 1 and transfers[0].transfer is pull[1], "the 0x32 must pair with its 0x38"
+    assert transfers[0].iv_data == bytes([protolib.CMD_LAUNCH_KEY_TRANSFER]) + _PULL_CHALLENGE
+    assert protolib.crypt_key(*transfers[0][1:]) == real_key
+
+    # A 0x38 in the same direction as the 0x32 is not its request, and a 0x3C in between makes it a push.
+    same_dir = [pull[0], _make_raw_frame("tx", 0x00, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID,
+                                         protolib.CMD_KEY_TRANSFER, bytes(16))]
+    assert not protolib.find_key_transfers(same_dir)
+    push = rekey_capture_module.load_frames(yaml.safe_load(_synthetic_pairing_capture_yaml(real_key)))
+    assert [t.iv_data for t in protolib.find_key_transfers(push)] == [bytes([protolib.CMD_KEY_INIT])]
+
+
+def test_validate_rejects_unrekeyed_pull_transfer() -> None:
+    """The security finding behind pull support: a raw pull capture used to pass validation with
+    its real key recoverable. It must now fail regardless of `key:`, and pass once re-keyed.
+    """
+    real_key = bytes([0x5A] * 16)
+    frames = _synthetic_pull_frames(real_key)
+    _assert_validation_fails_crypto(_capture_dict(frames, "unknown"), "SECURITY")
+
+    hmac_count, transfer_count = ingest_module.rekey_2w_frames(frames, real_key, protolib.CORPUS_SYSTEM_KEY)
+    assert (hmac_count, transfer_count) == (1, 1), f"got {hmac_count}/{transfer_count}"
+    # The 0x3D authenticates the 0x32, so it must verify over the *re-keyed* 0x32.
+    validate_module.validate_crypto(_capture_dict(frames, "corpus"), "self_test_pull")  # must not raise
+    assert frames[0].hex_bytes == _synthetic_pull_frames(real_key)[0].hex_bytes, "the 0x38 challenge is data"
+
+
+def test_validate_rejects_unplaceable_key_transfer() -> None:
+    """A 0x32 without the frames it was masked with can't be decrypted, so can't be proven safe."""
+    lone = _make_raw_frame("rx", 0x00, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, protolib.CMD_KEY_TRANSFER,
+                           bytes(range(16)))
+    _assert_validation_fails_crypto(_capture_dict([lone], "unknown"), "no preceding")
+
+
+def test_rekey_capture_key_from_other_capture() -> None:
+    """--system-key-from-capture: an exchange with only a 0x3C/0x3D takes its key from a raw pull
+    capture of the same installation. The key never reaches the output or the console.
+    """
+    real_key = bytes([0x6B] * 15 + [0x02])
+    scratch = REPO_ROOT / "build" / "corpus"
+    scratch.mkdir(parents=True, exist_ok=True)
+    pull_path = scratch / "_test_raw_key_pull.yaml"
+    pull_path.write_text(_capture_yaml(_synthetic_pull_frames(real_key), "self_test_pull"), encoding="utf-8")
+    exchange_text = _capture_yaml(_build_synthetic_exchange(real_key), "self_test_exchange")
+    try:
+        frames = rekey_capture_module.load_frames(yaml.safe_load(exchange_text))
+        original_hex = [f.hex_bytes for f in frames]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            key, how = rekey_capture_module.resolve_key(frames, None, str(pull_path))
+        assert key == real_key and str(pull_path) in how
+        assert real_key.hex() not in out.getvalue().lower()
+        ingest_module.rekey_2w_frames(frames, key, protolib.CORPUS_SYSTEM_KEY)
+        rendered, _ = rekey_capture_module.rewrite_text(exchange_text, frames, original_hex)
+        rekey_capture_module.assert_output_is_clean(rendered, yaml.safe_load(rendered), real_key)  # must not raise
+
+        for bad in ((str(pull_path), str(pull_path)), (None, str(REPO_ROOT / "README.md"))):
+            try:
+                rekey_capture_module.resolve_key(frames, *bad)
+                raise AssertionError(f"expected RekeyError for key sources {bad}")
+            except ingest_module.RekeyError:
+                pass
+    finally:
+        pull_path.unlink(missing_ok=True)
+
+
+# --- 2.4 GHz captures (phy: io_2g4) and ingest_2g4.py ----------------------------------------
+
+
+def _ingest_2g4_args(**overrides) -> SimpleNamespace:
+    args = dict(input="sniffer_2g4_synthetic.txt", id="velux_klr200_statuspoll_self_test", device="self-test",
+                captured_with="other", origin="own-hardware", issue=None, date="2026-09-28", firmware=None,
+                description="self-test", output=None, tx_node="AABBCC")
+    args.update(overrides)
+    return SimpleNamespace(**args)
+
+
+def _io_2g4_capture() -> dict:
+    """The synthetic sniffer log as ingest_2g4.py renders it, loaded as a dict."""
+    rendered, _ = ingest_2g4_module.build_capture(_ingest_2g4_args(), _read("sniffer_2g4_synthetic.txt"))
+    return yaml.safe_load(rendered)
+
+
+def test_ingest_2g4_folds_trains_and_strips_the_psdu() -> None:
+    data = _io_2g4_capture()
+    assert data["phy"] == "io_2g4" and data["psdu_header"] == "01 69 6F"
+    request, reply = data["frames"]
+    assert (request["dir"], reply["dir"]) == ("tx", "rx"), "direction is relative to --tx-node"
+    assert request["hex"].startswith("52 20 11 22 33 AA BB CC 03"), "the PSDU header must be stripped"
+    assert request["crc"] == "absent" and request["freq"] == 2_450_000_000
+    assert request["wake_train"] == {"frames_captured": 3, "first_counter": 3, "last_counter": 0,
+                                     "first_t_us": 0, "last_t_us": 2931}, request["wake_train"]
+    assert (request["t_us"], reply["t_us"]) == (4884, 7814), "times are rebased to the log's first frame"
+    validate_module.validate_capture(data, Path("<self-test>"))  # must not raise
+
+
+def test_ingest_2g4_rejects_damaged_logs() -> None:
+    text = _read("sniffer_2g4_synthetic.txt")
+    request_line = next(line for line in text.splitlines() if " 52 20 " in line)
+    cases = {
+        "FCS": text.replace(request_line, request_line[:-2] + "00"),
+        "not a sniffer PSDU line": text + "garbage\n",
+        "ends inside a wake train": text + "1009000 20: 00 00 00 00 00\n",
+        "mixes timestamped": text + "20: 00 00 00 00 00\n",
+        "do not count down": text.replace("1001954 20: 00 00 01 89 11", "1001954 20: 00 00 03 9B 32"),
+    }
+    for needle, damaged in cases.items():
+        try:
+            ingest_2g4_module.build_capture(_ingest_2g4_args(), damaged)
+            raise AssertionError(f"expected SnifferLogError containing {needle!r}")
+        except ingest_2g4_module.SnifferLogError as exc:
+            assert needle in str(exc), f"expected {needle!r} in: {exc}"
+
+
+def test_validate_io_2g4_rules() -> None:
+    def mutated(edit) -> dict:
+        data = _io_2g4_capture()
+        edit(data)
+        return data
+
+    _assert_validation_fails(mutated(lambda d: d.update(phy="io_5g")), "phy must be one of")
+    _assert_validation_fails(mutated(lambda d: d.pop("psdu_header")), "psdu_header")
+    _assert_validation_fails(mutated(lambda d: d["frames"][0].update(freq=2_430_000_000)), "not an io 2.4 GHz channel")
+    _assert_validation_fails(mutated(lambda d: d["frames"][1].update(t_ms=3)), "mix t_ms and t_us")
+    _assert_validation_fails(mutated(lambda d: d["frames"][0]["wake_train"].update(last_counter=1)), "counts down to 0")
+    _assert_validation_fails(mutated(lambda d: d["frames"][0]["wake_train"].update(frames_captured=5)), "does not fit")
+    _assert_validation_fails(mutated(lambda d: d["frames"][0]["wake_train"].pop("last_t_us")), "both first_t_us")
+    _assert_validation_fails(mutated(lambda d: d["frames"][0]["wake_train"].update(speed=1)), "unknown key")
+    _assert_validation_fails(mutated(lambda d: d["frames"][1].update(wake_train=d["frames"][0]["wake_train"])),
+                             "not one")
+
+    def as_crc_present(d):
+        frame = d["frames"][1]
+        raw = bytes.fromhex(frame["hex"].replace(" ", ""))
+        crc = protolib.crc_ccitt(raw)
+        frame.update(hex=(raw + bytes([crc & 0xFF, crc >> 8])).hex(" "), crc="present")
+    _assert_validation_fails(mutated(as_crc_present), "crc must be absent")
+
+    _assert_validation_fails(mutated(lambda d: d.update(t_us_stamp={"at": "sfd"})), "needs ['at', 'resolution_us']")
+    _assert_validation_fails(mutated(lambda d: d.update(t_us_stamp={"at": "preamble", "resolution_us": 1})),
+                             "t_us_stamp.at must be one of")
+    _assert_validation_fails(mutated(lambda d: d.update(t_us_stamp={"at": "sfd", "resolution_us": 0})),
+                             "resolution_us must be a positive integer")
+    _assert_validation_fails(mutated(lambda d: d.update(t_us_stamp={"at": "sfd", "resolution_us": 1, "x": 1})),
+                             "unknown key")
+    _assert_validation_fails(mutated(lambda d: [f.pop("t_us") for f in d["frames"]] and
+                                     [f.pop("wake_train", None) for f in d["frames"]] and
+                                     d.update(t_us_stamp={"at": "sfd", "resolution_us": 1})),
+                             "which no frame has")
+    validate_module.validate_capture(mutated(lambda d: d.update(t_us_stamp={"at": "sfd", "resolution_us": 1})),
+                                     Path("<self-test>"))  # a complete stamp is accepted
+
+    # The 2.4 GHz fields do not belong on an 868 capture.
+    for field, value in (("psdu_header", "01 69 6F"), ("t_us_stamp", {"at": "sfd", "resolution_us": 1})):
+        data = _valid_capture_dict()
+        data[field] = value
+        _assert_validation_fails(data, "phy: io_2g4 captures only")
+    data = _valid_capture_dict()
+    data["frames"][0]["t_us"] = 5
+    _assert_validation_fails(data, "phy: io_2g4 captures only")
+
+
+def _bridle_trace_of(sniffer_log: str, extra: "list[tuple[int, str, str]]" = ()) -> str:
+    """A Bridle trace (spec §12.1) holding one `rx` event per line of `sniffer_log`, on channel 20 with a good
+    FCS, plus `extra` events as (t_us, crc state, payload hex). It starts with the host's `hello`, as a trace does."""
+    lines = ["[bridle] > 1000 " + bridle_module.frame(bridle_module.MSG_TYPE["hello"], 0, b"")[0].hex()]
+    events = [(int(line.split()[0]), "ok", "".join(line.split(":")[1].split())) for line in sniffer_log.splitlines()
+              if line[:1].isdigit()] + list(extra)
+    for seq, (t_us, crc, payload) in enumerate(events, start=1):
+        fields = {"radio": 0, "t_us": t_us, "freq_hz": 2_450_000_000, "rssi_dbm": -60, "lqi": 200, "crc": crc,
+                  "payload": payload}
+        message = bridle_module.frame(bridle_module.MSG_TYPE["rx"], seq, bridle_module.encode_body("rx", fields))[0]
+        lines.append(f"[bridle] < {1000 + seq} {message.hex()}")
+    return "\n".join(lines) + "\n"
+
+
+def test_ingest_2g4_reads_a_bridle_trace() -> None:
+    sniffer = _read("sniffer_2g4_synthetic.txt")
+    trace = _bridle_trace_of(sniffer, extra=[(9_000_000, "bad", "00000000")])
+    log = ingest_2g4_module.trace_to_sniffer_log(trace)
+    assert log.splitlines()[0] == "1000000 20: 00 00 03 9B 32", "bytes in the sniffer log's layout, FCS kept"
+    assert len(log.splitlines()) == 5, "the frame with a bad FCS is left out"
+    data = yaml.safe_load(ingest_2g4_module.build_capture(_ingest_2g4_args(), log, ingest_2g4_module.TRACE_STAMP)[0])
+    assert data["t_us_stamp"] == {"at": "sfd", "resolution_us": 1}
+    assert data["frames"][0]["wake_train"]["frames_captured"] == 3
+    validate_module.validate_capture(data, Path("<self-test>"))
+
+    # A window counts seconds from the first received frame, its end excluded: the first three frames, or nothing.
+    first = ingest_2g4_module.trace_to_sniffer_log(trace, (0.0, 0.003))
+    assert first.splitlines() == log.splitlines()[:3]
+    try:
+        ingest_2g4_module.trace_to_sniffer_log(trace, (50.0, 60.0))
+        raise AssertionError("an empty window must be refused")
+    except ingest_2g4_module.SnifferLogError as exc:
+        assert "no received frame" in str(exc)
+
+    # `t_us` is a u32: times across its wrap stay increasing.
+    wrapped = _bridle_trace_of("4294966000 20: 00 00 03 9B 32\n700 20: 00 00 01 89 11\n")
+    stamps = [int(line.split()[0]) for line in ingest_2g4_module.trace_to_sniffer_log(wrapped).splitlines()]
+    assert stamps[1] - stamps[0] == 1996, stamps
+
+
+def test_ingest_2g4_window_counts_from_the_first_frame_of_the_trace_even_with_a_bad_fcs() -> None:
+    sniffer = _read("sniffer_2g4_synthetic.txt")
+    trace = _bridle_trace_of(sniffer, extra=[(999_000, "bad", "00000000")])  # 1 ms before the first good frame
+    # The window starts at the bad frame, so the first good frame sits 1 ms in: a window of 0.5 ms holds nothing.
+    try:
+        ingest_2g4_module.trace_to_sniffer_log(trace, (0.0, 0.0005))
+        raise AssertionError("the window counts from the first frame, the bad one included")
+    except ingest_2g4_module.SnifferLogError as exc:
+        assert "no received frame" in str(exc)
+    assert len(ingest_2g4_module.trace_to_sniffer_log(trace, (0.0, 0.0015)).splitlines()) >= 1
+
+
+def _bridle_trace_with_a_transmission(strobe_late: int = 0) -> str:
+    """A Bridle trace with the host's `tx` of an io frame behind a 3-frame strobe, its `tx_done` (reporting
+    `strobe_late` late strobe frames), and one `rx` reply."""
+    io_frame = bytes.fromhex("4B 20 51 6B 10 C0 FF EE 03 03 00 00")
+    strobe = {"count": 3, "period_ns": 1_000_000, "main_gap_ns": 1_036_000, "counter_offset": 1, "counter_width": 2,
+              "counter_unit_ns": 1_000_000, "counter_adjust": -1, "template": "000000"}
+    tx = {"radio": 0, "freq_hz": 2_450_000_000, "then_rx": True, "strobe": strobe,
+          "payload": (protolib.IO_2G4_PSDU_HEADER + io_frame).hex()}
+    done = {"cmd_seq": 6, "radio": 0, "t_main_start_us": 1_000_000, "t_main_end_us": 1_000_900, "strobe_sent": 3,
+            "strobe_late": strobe_late}
+    reply_body = bytes.fromhex("96 00 C0 FF EE 51 6B 10 04 05 60 5E 00 5E 1F 00 01 4D 84 A6 01 00 00")
+    psdu = protolib.IO_2G4_PSDU_HEADER + reply_body
+    psdu += protolib.crc_ccitt(psdu).to_bytes(2, "little")
+    rx = {"radio": 0, "t_us": 1_003_300, "freq_hz": 2_450_000_000, "rssi_dbm": -60, "lqi": 200, "crc": "ok",
+          "payload": psdu.hex()}
+    frame = bridle_module.frame
+    return "\n".join([
+        "[bridle] > 1000 " + frame(bridle_module.MSG_TYPE["hello"], 0, b"")[0].hex(),
+        "[bridle] > 2000 " + frame(bridle_module.MSG_TYPE["tx"], 6, bridle_module.encode_body("tx", tx))[0].hex(),
+        "[bridle] < 3000 " + frame(bridle_module.MSG_TYPE["tx_done"], 4, bridle_module.encode_body("tx_done", done))[0].hex(),
+        "[bridle] < 4000 " + frame(bridle_module.MSG_TYPE["rx"], 5, bridle_module.encode_body("rx", rx))[0].hex(),
+    ]) + "\n"
+
+
+def test_ingest_2g4_reads_the_hosts_transmissions_with_their_commanded_train() -> None:
+    trace = _bridle_trace_with_a_transmission()
+    received_only = ingest_2g4_module.trace_to_sniffer_log(trace)
+    assert len(received_only.splitlines()) == 1, "without --with-tx only the received frame is read"
+
+    log = ingest_2g4_module.trace_to_sniffer_log(trace, with_tx=True).splitlines()
+    assert len(log) == 5, "three strobe frames, the main frame and the reply"
+    stamps = [int(line.split()[0]) for line in log]
+    assert stamps == sorted(stamps), "in time order"
+    # Strobe frame i starts main_gap + (count - 1 - i) x period before the main frame; the stamp is its SFD's end.
+    assert stamps[:3] == [1_000_000 - 1036 - 2000 + 160, 1_000_000 - 1036 - 1000 + 160, 1_000_000 - 1036 + 160]
+    assert stamps[3] == 1_000_000 + 160, "the main frame's stamp is its start plus the preamble and SFD"
+    assert " 20: 00 00 02 " in log[0], "the first strobe frame carries counter 2"
+    data = yaml.safe_load(ingest_2g4_module.build_capture(
+        _ingest_2g4_args(tx_node="C0FFEE"), "\n".join(log) + "\n", ingest_2g4_module.TRACE_STAMP)[0])
+    first = data["frames"][0]
+    assert first["dir"] == "tx" and first["wake_train"]["first_counter"] == 2 and first["wake_train"]["last_counter"] == 0
+    assert first["wake_train"]["frames_captured"] == 3
+    assert data["frames"][1]["dir"] == "rx"
+    validate_module.validate_capture(data, Path("<self-test>"))
+
+    # A window counts from the first frame kept, so a request and its reply can be cut out together.
+    cut = ingest_2g4_module.trace_to_sniffer_log(trace, (0.0, 0.0035), with_tx=True).splitlines()
+    assert len(cut) == 4, "the train and the request, not the reply"
+
+
+def test_ingest_2g4_refuses_a_train_with_late_strobe_frames() -> None:
+    try:
+        ingest_2g4_module.trace_to_sniffer_log(_bridle_trace_with_a_transmission(strobe_late=1), with_tx=True)
+        raise AssertionError("a late strobe must be refused")
+    except ingest_2g4_module.SnifferLogError as exc:
+        assert "late strobe" in str(exc)
+
+
+def test_ingest_2g4_parses_a_window() -> None:
+    assert ingest_2g4_module.parse_window("143.5:144.2") == (143.5, 144.2)
+    for bad in ("143.5", "a:b", "5:5", "6:5"):
+        try:
+            ingest_2g4_module.parse_window(bad)
+            raise AssertionError(f"{bad!r} must be refused")
+        except argparse.ArgumentTypeError:
+            pass
+
+
+def test_ieee802154_channel_of_freq_hz_inverts_the_channel_table() -> None:
+    assert [protolib.ieee802154_channel_of_freq_hz(protolib.ieee802154_channel_freq_hz(c)) for c in range(11, 27)] == \
+        list(range(11, 27))
+    for freq in (2_402_000_000, 2_407_000_000, 2_485_000_000, 868_250_000):
+        try:
+            protolib.ieee802154_channel_of_freq_hz(freq)
+            raise AssertionError(f"{freq} is no channel centre")
+        except ValueError:
+            pass
+
+
+def test_build_emits_phy_and_t_us() -> None:
+    data = _io_2g4_capture()
+    _, request = build_module.render_frame("s", 0, data["frames"][0], {})
+    # t_us, then the wake train (frames_captured, first and last counter, and its stamps)
+    assert request.rstrip("},").endswith("true, 4884u, true, 3u, 3u, 0u, true, 0u, 2931u"), request
+    _, no_train = build_module.render_frame("s", 0, {**data["frames"][0], "wake_train": None}, {})
+    assert no_train.rstrip("},").endswith("true, 4884u, false, 0u, 0u, 0u, false, 0u, 0u"), no_train
+    _, untimed = build_module.render_frame(
+        "s", 0, {**data["frames"][0], "wake_train": {"frames_captured": 8, "first_counter": 7, "last_counter": 0}}, {}
+    )
+    assert untimed.rstrip("},").endswith("true, 8u, 7u, 0u, false, 0u, 0u"), untimed
+    _, capture_init = build_module.render_capture(data)
+    assert capture_init.rstrip("},").endswith("Phy::IO_2G4, false, 31u"), "stamps default to frame end, 31 us"
+    stamped = {**data, "t_us_stamp": {"at": "sfd", "resolution_us": 1}}
+    _, stamped_init = build_module.render_capture(stamped)
+    assert stamped_init.rstrip("},").endswith("Phy::IO_2G4, true, 1u"), stamped_init
+    _, legacy = build_module.render_capture(_valid_capture_dict())
+    assert legacy.rstrip("},").endswith("Phy::IO_868, false, 31u"), "a capture without phy is io_868"
+
+
+def test_ingest_2g4_keeps_real_key_crypto_out_of_the_repo() -> None:
+    """A sniffed exchange with a 0x3C/0x3D is under a real key: the corpus path is refused."""
+    def line(t_us: int, body: bytes) -> str:
+        crc = protolib.crc_ccitt(body)
+        return f"{t_us} 20: {(body + bytes([crc & 0xFF, crc >> 8])).hex(' ')}"
+
+    header = protolib.IO_2G4_PSDU_HEADER
+    origin = _make_raw_frame("tx", 0x40, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, 0x00, bytes([1, 2, 3])).raw()
+    challenge = _make_raw_frame("rx", 0x00, _REKEY_CONTROLLER_ID, _REKEY_DEVICE_ID, protolib.CMD_CHALLENGE_REQ,
+                                bytes(6)).raw()
+    response = _make_raw_frame("tx", 0x00, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, protolib.CMD_CHALLENGE_RESP,
+                               bytes(6)).raw()
+    log = "\n".join(line(t, header + body) for t, body in ((0, origin), (2000, challenge), (4000, response)))
+    log_path = REPO_ROOT / "build" / "corpus" / "_test_sniffer_2g4.txt"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(log + "\n", encoding="utf-8")
+    argv = ["ingest_2g4.py", str(log_path), "--tx-node", _REKEY_CONTROLLER_ID.hex(), "--id",
+            "velux_klr200_exchange_self_test", "--device", "self-test", "--origin", "own-hardware", "--date",
+            "2026-09-28"]
+    committable = ingest_module.default_output_path("velux_klr200_exchange_self_test")
+    old_argv = sys.argv
+    try:
+        sys.argv = argv
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            assert ingest_2g4_module.main() == 1, "a committable output path must be refused"
+        assert "refusing to write" in err.getvalue() and not committable.exists()
+        sys.argv = argv + ["-o", str(log_path.with_suffix(".yaml"))]
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert ingest_2g4_module.main() == 0, "a git-ignored output path is fine"
+    finally:
+        sys.argv = old_argv
+        log_path.unlink(missing_ok=True)
+        log_path.with_suffix(".yaml").unlink(missing_ok=True)
+
+
 TESTS = [
     test_clean_io_capture_sx1262,
     test_io_frame_legacy_dedup_and_no_cmd_field,
@@ -835,6 +1234,21 @@ TESTS = [
     test_validate_enforces_self_authenticated_hmac_for_key_corpus,
     test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key,
     test_io_frame_only_retry_not_merged,
+    test_find_key_transfers_places_push_and_pull,
+    test_validate_rejects_unrekeyed_pull_transfer,
+    test_validate_rejects_unplaceable_key_transfer,
+    test_rekey_capture_key_from_other_capture,
+    test_ingest_2g4_folds_trains_and_strips_the_psdu,
+    test_ingest_2g4_rejects_damaged_logs,
+    test_validate_io_2g4_rules,
+    test_build_emits_phy_and_t_us,
+    test_ingest_2g4_reads_a_bridle_trace,
+    test_ingest_2g4_parses_a_window,
+    test_ingest_2g4_window_counts_from_the_first_frame_of_the_trace_even_with_a_bad_fcs,
+    test_ingest_2g4_reads_the_hosts_transmissions_with_their_commanded_train,
+    test_ingest_2g4_refuses_a_train_with_late_strobe_frames,
+    test_ieee802154_channel_of_freq_hz_inverts_the_channel_table,
+    test_ingest_2g4_keeps_real_key_crypto_out_of_the_repo,
 ]
 
 

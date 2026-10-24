@@ -13,6 +13,10 @@ After setup, run `make check` to verify the full toolchain.
 
 ```bash
 sudo apt-get update && sudo apt-get install -y clang-format clang-tidy yamllint libgtest-dev
+# The Bridle tools (session linter, bench scripts) come from a pinned wheel that `make tools` installs into
+# build/tools/venv; while the Bridle release is private pass BRIDLE_WHEEL=<wheel>, or build it in a sibling
+# ../bridle checkout (`make release`), whose dist/ is used when it holds the pinned wheel
+sudo apt-get install -y python3-venv
 # Optional: for API documentation generation
 sudo apt-get install graphviz python3-pygments
 ```
@@ -21,7 +25,6 @@ sudo apt-get install graphviz python3-pygments
 
 ```bash
 brew install clang-format llvm yamllint googletest
-
 # Optional: for API documentation generation
 brew install graphviz pygments
 ```
@@ -37,6 +40,11 @@ Host tests live in one directory per layer: `tests/proto/`, `tests/radio/`, `tes
 the golden-frame corpus, `tests/sync/` checks that C++ and Python tables agree, and `tests/harness/`
 tests the host stubs themselves. Put a new `*_test.cpp` in the directory of the code it tests; the
 Makefile finds it there. Any compiler warning fails the host build.
+
+`tests/fullstack/` is the exception: its tests need a Bridle simulator, a program that speaks the
+[simulator control channel](https://github.com/laberning/bridle/blob/bridle-v0.6.0/README.md#111-simulator-control-channel) of the Bridle specification and has an 802.15.4 radio. `make fullstack`
+builds and runs them against the simulator that `BRIDLE_SIM` names, and `make unit-test` does not build
+them. Kite's simulator is one: `make -C ../kite sim` builds it as `../kite/build/sim/kite-sim`.
 
 ```bash
 # Run host-based Google Test unit tests (no ESP32 needed)
@@ -58,6 +66,12 @@ make check
 # Check the host-test ESPHome stubs against the real ESPHome headers (in the container; part of lint)
 make stub-sync
 
+# Check that the committed Bridle headers and the wheel pin match BRIDLE_VERSION (part of lint)
+make bridle-check
+
+# Take a newer Bridle release (see scripts/bridle-update.sh)
+scripts/bridle-update.sh bridle-v0.6.0
+
 # Validate the golden-frame corpus (schema, CRC, crypto — see tests/corpus/README.md)
 make corpus-validate
 
@@ -68,6 +82,11 @@ make corpus-gen
 # (time-boxed, FUZZ_TIME seconds, default 60; not part of `make check`, runs weekly in CI)
 make fuzz-frame
 make fuzz-soft-phy
+
+# Full-stack tests: the hub's exchange engine over the Bridle driver and a simulated co-processor,
+# with an emulated blind answering on the simulated air. Not part of `make check`; CI only compiles
+# them (make fullstack-build)
+make fullstack BRIDLE_SIM=../kite/build/sim/kite-sim
 
 # Clean stale build caches for config/tests/*.yaml (fixes confusing linker errors after
 # adding a new .cpp under components/home_io_control/)

@@ -32,7 +32,10 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
     dev.inverted = true;
   dev.optimistic_state = cfg.optimistic_state;
   dev.silent = cfg.silent;
+  // A `true` is a declaration wherever it comes from, so the config dump never calls it the band's default.
+  dev.low_power_set = cfg.low_power_set || cfg.low_power;
   dev.low_power = cfg.low_power;
+  this->apply_low_power_default_(dev);
   dev.battery_entities = cfg.battery_entities;
   dev.has_system_key = cfg.has_system_key;
   if (cfg.has_system_key)
@@ -40,7 +43,23 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   devices_[device_id] = dev;
 }
 
-void DeviceRegistry::put(const std::string &device_id, IoDevice device) { devices_[device_id] = device; }
+void DeviceRegistry::put(const std::string &device_id, IoDevice device) {
+  this->apply_low_power_default_(device);
+  devices_[device_id] = device;
+}
+
+void DeviceRegistry::set_low_power_default(bool low_power) {
+  default_low_power_ = low_power;
+  for (auto &entry : devices_)
+    this->apply_low_power_default_(entry.second);
+}
+
+void DeviceRegistry::apply_low_power_default_(IoDevice &device) const {
+  // A `true` from anywhere (YAML, a discovery that reported the class) stands; only a flag nobody set
+  // to true and nobody declared takes the band's default.
+  if (!device.low_power_set && !device.low_power)
+    device.low_power = default_low_power_;
+}
 
 IoDevice *DeviceRegistry::get(const std::string &device_id) {
   auto it = devices_.find(device_id);

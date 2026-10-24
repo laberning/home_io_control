@@ -1,0 +1,185 @@
+protocol: '0.6'
+header:
+  host_version: null
+  firmware_version: fake-0.0
+  board: fake-board
+  chip_id: nrf52840
+  proto: '0.6'
+  reset_cause: pin
+  radios:
+  - radio: 0
+    chip: nrf52840
+    profiles:
+      ieee802154_oqpsk_250k: true
+    band_min_hz: 2400000000
+    band_max_hz: 2483500000
+    tx_power_min_dbm: -40
+    tx_power_max_dbm: 8
+    max_payload: 125
+    max_preamble_bytes: 0
+    strobe_jitter_us: 2
+    caps:
+      strobe: true
+      scheduled_tx: true
+      rx_scan: true
+      cca: true
+  - radio: 1
+    chip: sx1262
+    profiles:
+      gfsk_raw: true
+    band_min_hz: 863000000
+    band_max_hz: 870000000
+    tx_power_min_dbm: -9
+    tx_power_max_dbm: 22
+    max_payload: 147
+    max_preamble_bytes: 8191
+    strobe_jitter_us: 0
+    caps:
+      rx_scan: true
+      cca: true
+source:
+  origin: synthetic-bootstrap
+  recorded_by: host test RadioBridle868.TheBootHandshakeWithADualBandCoprocessorConfiguresItsGfskRadio
+  description: 'Boot handshake with the dual-band co-processor (802.15.4 as radio 0, gfsk_raw as radio
+    1) and the configuration of the 868 MHz radio: profile, modem, sync word, rx_len, detector, sync timeout.'
+messages:
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 8000000006010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f00000003180100010200c05570338025db33f71693ff1f00000c00000004011005010181a8
+  msg_type: ready
+  seq: 0
+  fields:
+    cmd_seq: 0
+    proto_major: 0
+    proto_minor: 6
+    chip_id: nrf52840
+    caps: {}
+    info:
+    - id: fw_version
+      value: fake-0.0
+    - id: board
+      value: fake-board
+    - id: radio
+      value:
+        radio: 0
+        chip: nrf52840
+        profiles:
+          ieee802154_oqpsk_250k: true
+        band_min_hz: 2400000000
+        band_max_hz: 2483500000
+        tx_power_min_dbm: -40
+        tx_power_max_dbm: 8
+        max_payload: 125
+        max_preamble_bytes: 0
+        strobe_jitter_us: 2
+        caps:
+          strobe: true
+          scheduled_tx: true
+          rx_scan: true
+          cca: true
+    - id: radio
+      value:
+        radio: 1
+        chip: sx1262
+        profiles:
+          gfsk_raw: true
+        band_min_hz: 863000000
+        band_max_hz: 870000000
+        tx_power_min_dbm: -9
+        tx_power_max_dbm: 22
+        max_payload: 147
+        max_preamble_bytes: 8191
+        strobe_jitter_us: 0
+        caps:
+          rx_scan: true
+          cca: true
+    - id: rx_queue_depth
+      value: 16
+    - id: reset_cause
+      value: pin
+- dir: host_to_coproc
+  host_ms: 100020
+  hex: 0201ff03010f8bc8
+  msg_type: set_params
+  seq: 1
+  fields:
+    radio: 255
+    params:
+    - id: event_mask
+      value:
+        frame_start: true
+        crc_error_rx: true
+        rx_abort: true
+        log: true
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 810101ff03010f3edd
+  msg_type: params_ack
+  seq: 1
+  fields:
+    cmd_seq: 1
+    radio: 255
+    applied:
+    - id: event_mask
+      value:
+        frame_start: true
+        crc_error_rx: true
+        rx_abort: true
+        log: true
+- dir: host_to_coproc
+  host_ms: 100020
+  hex: 0202010401010704009600000804004b00000904e8e400000a01040b0357fd990c01300d01100e0490d00300020116c2b3
+  msg_type: set_params
+  seq: 2
+  fields:
+    radio: 1
+    params:
+    - id: phy_profile
+      value: gfsk_raw
+    - id: bitrate_bps
+      value: 38400
+    - id: fdev_hz
+      value: 19200
+    - id: rx_bw_hz
+      value: 58600
+    - id: pulse_shape
+      value: gaussian_bt_1_0
+    - id: sync_word
+      value: 57fd99
+    - id: rx_len
+      value: 48
+    - id: preamble_detect_bits
+      value: 16
+    - id: sync_timeout_us
+      value: 250000
+    - id: tx_power_dbm
+      value: 22
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 810202010401010704009600000804004b00000904e8e400000a01040b0357fd990c01300d01100e0490d00300020116ef79
+  msg_type: params_ack
+  seq: 2
+  fields:
+    cmd_seq: 2
+    radio: 1
+    applied:
+    - id: phy_profile
+      value: gfsk_raw
+    - id: bitrate_bps
+      value: 38400
+    - id: fdev_hz
+      value: 19200
+    - id: rx_bw_hz
+      value: 58600
+    - id: pulse_shape
+      value: gaussian_bt_1_0
+    - id: sync_word
+      value: 57fd99
+    - id: rx_len
+      value: 48
+    - id: preamble_detect_bits
+      value: 16
+    - id: sync_timeout_us
+      value: 250000
+    - id: tx_power_dbm
+      value: 22

@@ -86,6 +86,42 @@ KeyTransferFrames find_key_transfer_frames(const corpus::CorpusCapture *capture)
   return found;
 }
 
+/// One key *pull*: a CMD_LAUNCH_KEY_TRANSFER (0x38) carrying a 6-byte challenge, answered by the
+/// other party's 0x32 with the masked key. Same pairing rule as protolib.find_pull_key_transfers():
+/// the nearest preceding 0x38 sent the other way, with no 0x3C or earlier 0x32 in between.
+struct PullKeyTransferFrames {
+  const corpus::CorpusFrame *launch{nullptr};
+  const corpus::CorpusFrame *transfer{nullptr};
+};
+
+std::vector<PullKeyTransferFrames> find_pull_key_transfer_frames(const corpus::CorpusCapture *capture) {
+  std::vector<PullKeyTransferFrames> found;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const corpus::CorpusFrame &transfer = capture->frames[i];
+    if (corpus_test::parse_capture_frame(transfer).cmd != CMD_KEY_TRANSFER)
+      continue;
+    for (int j = i - 1; j >= 0; j--) {
+      const corpus::CorpusFrame &candidate = capture->frames[j];
+      const uint8_t cmd = corpus_test::parse_capture_frame(candidate).cmd;
+      if (cmd == CMD_LAUNCH_KEY_TRANSFER && candidate.tx != transfer.tx)
+        found.push_back({&candidate, &transfer});
+      if (cmd == CMD_LAUNCH_KEY_TRANSFER || cmd == CMD_CHALLENGE_REQ || cmd == CMD_KEY_TRANSFER)
+        break;
+    }
+  }
+  return found;
+}
+
+/// Unmasks a pulled key with crypto::crypt_key(): the IV data is the whole 0x38 frame body
+/// (command byte + challenge) and the challenge is the 0x38's payload. Test-only: the hub never
+/// pulls a key, so production code has no counterpart.
+bool unmask_pulled_key(const IoFrame &launch, const uint8_t masked[AES_KEY_SIZE], uint8_t out[AES_KEY_SIZE]) {
+  uint8_t iv_data[1 + HMAC_SIZE];
+  iv_data[0] = launch.cmd;
+  std::memcpy(iv_data + 1, launch.data, HMAC_SIZE);
+  return crypto::crypt_key(iv_data, sizeof(iv_data), launch.data, masked, out);
+}
+
 /// A CMD_DISCOVER_SPE_REQ (0x2A) carrying its own challenge and HMAC: [6-byte challenge | 6-byte HMAC].
 bool is_self_authenticated_frame(const IoFrame &parsed) {
   return parsed.cmd == CMD_DISCOVER_SPE_REQ && parsed.data_len == HMAC_SIZE * 2;
@@ -115,6 +151,13 @@ std::vector<const corpus::CorpusCapture *> pairing_corpus_captures() {
       return false;
     const KeyTransferFrames frames = find_key_transfer_frames(cap);
     return frames.transfer != nullptr;
+  });
+}
+
+/// Captures that promise `key: corpus` and contain at least one pulled key transfer (0x38/0x32).
+std::vector<const corpus::CorpusCapture *> pull_key_transfer_captures() {
+  return corpus_test::captures_where([](const corpus::CorpusCapture *cap) {
+    return cap->key == corpus::KeyMode::CORPUS && !find_pull_key_transfer_frames(cap).empty();
   });
 }
 
@@ -228,6 +271,28 @@ TEST_P(CorpusCryptoKeyTransfer, KeyTransferDecryptsToCorpusKey) {
       << "key-transfer payload does not decrypt to the corpus key";
 }
 
+/// Pulled key transfers (0x38 -> 0x32): every one in a `key: corpus` capture unmasks to the corpus
+/// key through the C++ crypt_key(), mirroring validate.py's unconditional check of the same frames
+/// (protolib.find_key_transfers()), so the two crypto ports cannot drift apart on this shape.
+class CorpusCryptoPullKeyTransfer : public ::testing::TestWithParam<const corpus::CorpusCapture *> {};
+
+TEST_P(CorpusCryptoPullKeyTransfer, PulledKeyDecryptsToCorpusKey) {
+  const corpus::CorpusCapture *capture = GetParam();
+  SCOPED_TRACE(::testing::Message() << "capture=" << capture->id);
+
+  for (const PullKeyTransferFrames &pull : find_pull_key_transfer_frames(capture)) {
+    const IoFrame launch = corpus_test::parse_capture_frame(*pull.launch);
+    const IoFrame transfer = corpus_test::parse_capture_frame(*pull.transfer);
+    ASSERT_EQ(launch.data_len, HMAC_SIZE) << "0x38 payload must be exactly one challenge";
+    ASSERT_EQ(transfer.data_len, AES_KEY_SIZE) << "0x32 key-transfer payload must be exactly AES_KEY_SIZE bytes";
+
+    uint8_t recovered_key[AES_KEY_SIZE] = {0};
+    ASSERT_TRUE(unmask_pulled_key(launch, transfer.data, recovered_key));
+    EXPECT_EQ(std::memcmp(recovered_key, test::TEST_SYSTEM_KEY, AES_KEY_SIZE), 0)
+        << "pulled key-transfer payload does not decrypt to the corpus key";
+  }
+}
+
 /// Self-authenticated frames (design: one frame carrying a whole challenge-response). A
 /// CMD_DISCOVER_SPE_REQ (0x2A) payload is [6-byte challenge | 6-byte HMAC over the command byte
 /// alone] — no 0x3C/0x3D round trip, which is what lets it be broadcast. Asserts the real C++
@@ -310,6 +375,10 @@ INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoSelfAuthenticated,
                          ::testing::ValuesIn(self_authenticated_captures()), corpus_test::capture_name_generator);
 INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoKeyTransfer, ::testing::ValuesIn(pairing_corpus_captures()),
                          corpus_test::capture_name_generator);
+INSTANTIATE_TEST_SUITE_P(CorpusCrypto, CorpusCryptoPullKeyTransfer, ::testing::ValuesIn(pull_key_transfer_captures()),
+                         corpus_test::capture_name_generator);
+// No capture holds a pull yet, so the suite may be empty; the KAT below still pins the shape.
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CorpusCryptoPullKeyTransfer);
 
 /// Cross-language known-answer vectors, hardcoded here and in
 /// scripts/corpus/tests/data/crypto_kat.yaml — both generated from this same C++
@@ -335,4 +404,24 @@ TEST(CorpusCryptoKat, CppVectorsMatchPythonPort) {
 
   ASSERT_TRUE(crypto::create_hmac(kat3_data, sizeof(kat3_data), test::TEST_CHALLENGE, test::TEST_SYSTEM_KEY, hmac));
   EXPECT_EQ(std::memcmp(hmac, kat3_hmac, HMAC_SIZE), 0) << "kat3 mismatch";
+}
+
+/// The pull shape's cross-language vector: the corpus key masked for a 0x38 carrying TEST_CHALLENGE
+/// must give the bytes pinned in scripts/corpus/tests/data/crypto_kat.yaml :: pull_key_transfer, which
+/// scripts/corpus/tests/run_tests.py checks against the Python port. Unmasking them gives the key back.
+TEST(CorpusCryptoKat, PullKeyTransferMatchesPythonPort) {
+  const uint8_t expected[AES_KEY_SIZE] = {0xA0, 0xFE, 0xD5, 0x59, 0x17, 0x5A, 0x3F, 0x5B,
+                                          0xE9, 0xF0, 0x5F, 0x07, 0x6A, 0x98, 0x86, 0xB8};
+  IoFrame launch{};
+  launch.cmd = CMD_LAUNCH_KEY_TRANSFER;
+  std::memcpy(launch.data, test::TEST_CHALLENGE, HMAC_SIZE);
+  launch.data_len = HMAC_SIZE;
+
+  uint8_t masked[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(unmask_pulled_key(launch, test::TEST_SYSTEM_KEY, masked));
+  EXPECT_EQ(std::memcmp(masked, expected, AES_KEY_SIZE), 0) << "C++ and Python pull masks differ";
+
+  uint8_t recovered[AES_KEY_SIZE] = {0};
+  ASSERT_TRUE(unmask_pulled_key(launch, masked, recovered));
+  EXPECT_EQ(std::memcmp(recovered, test::TEST_SYSTEM_KEY, AES_KEY_SIZE), 0);
 }

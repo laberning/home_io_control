@@ -36,6 +36,8 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | Tries ordered by per-device evidence (short first only while believed travelling, then the wake-up preamble; a silent exchange spends the evidence; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch, `low_power_wake_preamble` length |
 | [0044](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md) | Chip-neutral transmit intent | Every transmission carries its wake level; a driver may scan idle channels by itself; a try starts only if its transmission ends inside the exchange budget |
 | [0045](0045-listen-before-talk-is-part-of-sending.md) | Listen-before-talk is part of sending | The radio checks the transmit channel inside `send_packet()`, retuning first when the idle receiver is elsewhere; the engine keeps the retry policy |
+| [0047](0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md) | Home IO Control drives a Bridle co-processor as one more radio driver | `RadioBridle` with the band behind `BridlePhy`, a non-blocking supervised link that goes down rather than failed, and Bridle sources compiled only when `radio_type: bridle` is configured |
+| [0048](0048-io-868-over-bridle.md) | 868 MHz io-homecontrol over a Bridle `gfsk_raw` radio | `Io868GfskPhy` beside `Io2g4Phy`: the host UART-codes the frame, the co-processor sees bytes; selected by `bridle_band: io_868` |
 
 ### Behavior
 
@@ -150,6 +152,8 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0043: An unconfirmed movement command is re-sent once to a device that normally confirms](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md)
 - [ADR 0044: Chip-neutral transmit intent: wake level, idle scanning and air time](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)
 - [ADR 0045: Listen-before-talk is part of sending](0045-listen-before-talk-is-part-of-sending.md)
+- [ADR 0047: Home IO Control drives a Bridle co-processor as one more radio driver](0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md)
+- [ADR 0048: 868 MHz io-homecontrol over a Bridle `gfsk_raw` radio](0048-io-868-over-bridle.md)
 - [ADR 0049: A rain limitation is derived from observed status, never predicted](0049-a-rain-limitation-is-derived-from-observed-status-never-predicted.md)
 - [ADR 0050: Rain is read by an opt-in limitation poll](0050-rain-is-read-by-an-opt-in-limitation-poll.md)
 - [ADR 0051: Pairing reads the key refusal and checks an unconfirmed key](0051-pairing-reads-the-key-refusal-and-checks-an-unconfirmed-key.md)

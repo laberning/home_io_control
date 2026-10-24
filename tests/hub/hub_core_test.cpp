@@ -150,6 +150,45 @@ TEST(HubCore, SetupReportsAMissingRequiredPinAsNoDriver) {
   EXPECT_NE(comp.radio_failure_reason_.find("sx1276"), std::string::npos) << comp.radio_failure_reason_;
 }
 
+namespace {
+/// A UART bus with nothing behind it: enough for the composition root to see a parent.
+class DeadUart : public esphome::uart::UARTComponent {
+ public:
+  void write_array(const uint8_t *, size_t) override {}
+  bool read_array(uint8_t *, size_t) override { return false; }
+  size_t available() override { return 0; }
+  esphome::uart::UARTFlushResult flush() override { return esphome::uart::UARTFlushResult::UART_FLUSH_RESULT_SUCCESS; }
+};
+}  // namespace
+
+TEST(HubCore, RadioTypeBridleBuildsTheBridleDriverOverTheConfiguredUart) {
+  MockPin rst;
+  DeadUart uart;
+  TestableHubComponent comp;
+  comp.set_radio_type("bridle");
+  comp.set_rst_pin(&rst);
+  comp.set_uart_parent(&uart);
+  const char *chip = nullptr;
+
+  RadioDriver *radio = comp.select_and_construct_radio_(&chip);
+
+  ASSERT_NE(radio, nullptr);
+  EXPECT_STREQ(radio->chip_name(), "bridle");
+  EXPECT_STREQ(chip, "Bridle");
+  delete radio;
+}
+
+TEST(HubCore, RadioTypeBridleWithoutAUartBuildsNoDriver) {
+  TestableHubComponent comp;
+  configure_hub_for_setup(comp, "bridle");
+
+  comp.setup();
+
+  EXPECT_TRUE(comp.is_failed());
+  EXPECT_EQ(comp.radio_, nullptr);
+  EXPECT_NE(comp.radio_failure_reason_.find("bridle"), std::string::npos) << comp.radio_failure_reason_;
+}
+
 TEST(HubCore, SetupKeepsTheDriversOwnReasonWhenInitFails) {
   // The hub's SPI stub reads back zeros, so the SX1276 version check fails inside the real driver.
   MockPin rst, dio0, dio4;

@@ -1,0 +1,56 @@
+id: velux_klr200_exchange_execute_open_2g4
+description: >
+  The first authenticated 2W exchange captured on the 2.4 GHz io-homecontrol variant (802.15.4
+  O-QPSK, SFD 0x56, channel 15). A US VELUX KLR 200 (4D84A6) sends a LOW_POWER START EXECUTE to
+  device 516B10 (originator 1, ACEI 0x63, main parameter 0x0000 = position 0 %, open) after a
+  long wake train; the device challenges it, the remote answers, the device acknowledges with a
+  short 0x04. Every frame is an EU io frame byte for byte: the 802.15.4 PSDU adds only the
+  01 69 6F header and the FCS, and the HMAC covers the frame from its command byte, so the header
+  is not authenticated.
+
+  The sniffer missed wake frames (the contributor posted 13 frames of counters 509 .. 0) and
+  logged no timestamps. The captured 0x3D verified under the installation's own key, recovered from a key
+  pull captured on the same system a day later (0x38 challenge, 0x32 masked key); the frame was
+  then re-keyed to the public corpus key. That key pull logged payloads only (no addresses or CTRL
+  bytes), so it is not a capture here.
+source:
+  device: "US VELUX KLR 200 (4D84A6) commanding VELUX device 516B10 on 2.4 GHz, sniffed with an nRF52840 Feather 802.15.4 sniffer (Maser228)"
+  captured_with: other
+  firmware: null
+  date: 2026-09-26
+  origin: contributor
+  issue: null
+key: corpus
+phy: io_2g4
+psdu_header: "01 69 6F"
+frames:
+  - dir: tx
+    wake_train: {frames_captured: 13, first_counter: 509, last_counter: 0}
+    freq: 2425000000
+    hex: "50 20 51 6B 10 4D 84 A6 00 01 63 00 00 80 00 00 00"
+    crc: absent
+    note: "EXECUTE, START, CTRL1 LOW_POWER; the wake train before it ends at counter 0"
+  - dir: rx
+    freq: 2425000000
+    hex: "0E 00 4D 84 A6 51 6B 10 3C 6F 6D 64 07 1E F4"
+    crc: absent
+    note: "challenge 6F 6D 64 07 1E F4, on the request's channel"
+  - dir: tx
+    freq: 2425000000
+    hex: "0E 00 51 6B 10 4D 84 A6 3D 82 01 A2 DE B8 15"
+    crc: absent
+    note: "HMAC over 00 01 63 00 00 80 00 00 00, re-keyed to the corpus key"
+  - dir: rx
+    freq: 2425000000
+    hex: "90 00 4D 84 A6 51 6B 10 04 54 60 00 00 80 00 00 00"
+    crc: absent
+    note: "END; short 0x04 acknowledgement"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

@@ -1,0 +1,22 @@
+# expect-error: cs_pin: does not apply to radio_type: bridle
+# covers: hub_validators.validate_radio_transport
+# A co-processor behind a UART has no chip-select; a leftover SPI key is a wiring mistake.
+packages:
+  common: !include ../_common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+uart:
+  id: kite_uart
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 1000000
+
+home_io_control:
+  radio_type: bridle
+  uart_id: kite_uart
+  rst_pin: 4
+  cs_pin: 5

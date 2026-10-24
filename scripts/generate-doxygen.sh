@@ -180,7 +180,15 @@ echo ""
 echo "==> Generating API docs..."
 rm -rf "$OUTPUT_DIR/html"
 rm -f "$OUTPUT_DIR"/*.tag
-"$DOXYGEN_CMD" Doxyfile
+# Doxyfile sets QUIET and WARN_AS_ERROR with the warnings in a log file: without this, a failing run
+# prints nothing at all. Show the log, so the reason is in the terminal and in CI.
+WARN_LOG="build/doxygen-warnings.log"
+rm -f "$WARN_LOG"
+if ! "$DOXYGEN_CMD" Doxyfile; then
+  echo "ERROR: doxygen failed. Its warnings ($WARN_LOG):" >&2
+  if [ -s "$WARN_LOG" ]; then cat "$WARN_LOG" >&2; else echo "  (none logged: see the doxygen output above)" >&2; fi
+  exit 1
+fi
 
 # === Crawl the generated site for broken links ===
 # scripts/check-docs-links.py checks the source tree (GitHub render); this checks the built

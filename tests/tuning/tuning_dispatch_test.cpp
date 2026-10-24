@@ -59,6 +59,12 @@ TEST(TuningDispatch, NumberUpdatesEachParameter) {
   comp.update_tuning_number("lbt_rssi_threshold_dbm", -45);
   EXPECT_EQ(comp.tuning_.lbt_rssi_threshold_dbm, -45);
 
+  comp.update_tuning_number("io2g4_hop_dwell_ms", 4);
+  EXPECT_EQ(comp.tuning_.io2g4_hop_dwell_ms, 4);
+
+  comp.update_tuning_number("io2g4_lbt_rssi_threshold_dbm", -80);
+  EXPECT_EQ(comp.tuning_.io2g4_lbt_rssi_threshold_dbm, -80);
+
   comp.update_tuning_number("pairing_discovery_wait_ms", 3000);
   EXPECT_EQ(comp.tuning_.pairing_discovery_wait_ms, 3000);
 

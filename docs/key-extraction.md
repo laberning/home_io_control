@@ -63,6 +63,27 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
    [Pairing](pairing.md#scan-paired-devices). Every device that trusts the recovered key answers
    with a ready-to-paste snippet, so nothing has to be paired.
 
+## Pull the key from a VELUX remote (2.4 GHz)
+
+On 2.4 GHz, a VELUX KLR 200 gives its system key to another KLR 200 that joins its system with "Copy system". A Home IO Control hub tries to take the part of that second remote. The `pull_key` action asks the remote for its key and proves the key by challenging the remote under it. It needs the remote's node ID and nothing else: no discovery, no search for devices.
+
+> [!NOTE]
+> This route is experimental. It runs the same key pull that Discover & Pair uses, without the discovery; whether a KLR 200 in "Copy system" answers it from a hub has not yet been confirmed on a real remote.
+
+1. Press a button on the KLR 200 and read the `Heard a request from` line in the hub's log. It shows the remote's node ID.
+2. Start "Copy system" on the remote.
+3. Run the `pull_key` action with that ID within about two minutes, from Developer Tools → Actions:
+
+```yaml
+action: esphome.hioc_heltec_v2_pull_key
+data:
+  controller_id: "A1B2C3"
+```
+
+4. Read the device log. A proven key is printed with its key check value; put it into `system_key:` (keep it in `secrets.yaml`) and add each device of the installation by its ID.
+
+If the remote refuses or sends no key, start "Copy system" again and rerun the action. The full action reference, with the results it reports, is on [Home Assistant actions](configuration/actions.md#pull_key).
+
 ## Known limitations
 
 - **The recovered key is not verified for you.** Nothing reads it back, so control a device with

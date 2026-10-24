@@ -78,6 +78,13 @@ static constexpr uint8_t MODE_MASK = 0x07;
 /// for bitrate, frequency deviation, and carrier frequency.
 static constexpr uint32_t FXOSC = 32000000U;
 
+/// Bit times one preamble byte takes on air on the SX1276, with the bit rate programmed to 38400 bps:
+/// 10, not the 8 of the software PHY chips. Measured on a Heltec V2 as the time from entering TX to the
+/// TX-done interrupt, at 1024, 2048 and 4096 preamble bytes: 260.3 µs per byte (1.25 times the 208.3 µs
+/// that 8 bits would take) with the frame bytes at the modelled rate, so a LONG try takes about 272 ms,
+/// not 219 ms. The SX1262 measured on a Heltec V3 matches the 8-bit model.
+static constexpr uint8_t SX1276_PREAMBLE_BITS_PER_BYTE = 10;
+
 // ============================================================================
 // SX1276 Radio Driver
 // ============================================================================
@@ -148,9 +155,10 @@ class RadioSX1276 : public RadioDriver {
   /// exchange wait — validated by real-hardware pairing on this driver.
   [[nodiscard]] bool has_fast_tx_rx_turnaround() const override { return true; }
   /// @brief Transmit time (SX1276): the preamble, sync word and the IoHomeOn-coded frame at the
-  /// protocol line rate — the same waveform the software PHY produces.
+  /// protocol line rate — the same waveform the software PHY produces, except that a preamble byte
+  /// takes `SX1276_PREAMBLE_BITS_PER_BYTE` bit times on this chip.
   [[nodiscard]] uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
-    return io868_tx_air_time_us(cfg.preamble_len, len);
+    return io868_tx_air_time_us(cfg.preamble_len, len, SX1276_PREAMBLE_BITS_PER_BYTE);
   }
   // `SX1276_RESPONSE_PREAMBLE` below is a code span, not \ref: doxygen 1.18 can't resolve \ref
   // to it in a whole-project build (details in proto_sizes.h). Autolinking still links it.

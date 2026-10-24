@@ -173,14 +173,35 @@ TEST(RadioSX1276, InitFailsOnWrongVersion) {
 }
 
 /// The IoHomeOn coder produces the same waveform as the software PHY, so the budget estimate is the
-/// shared 868 model.
-TEST(RadioSX1276, TxAirTimeIsTheIo868Model) {
+/// shared 868 model, with the SX1276's measured preamble byte time.
+TEST(RadioSX1276, TxAirTimeIsTheIo868ModelWithTheChipsPreambleByteTime) {
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
   RadioTxConfig cfg{};
   cfg.preamble_len = LONG_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13, SX1276_PREAMBLE_BITS_PER_BYTE));
+}
+
+/// Pinned to the bench (Heltec V2, TX mode to TX-done, 12-byte frames): the chip took 271.1 ms at 1024
+/// preamble bytes, 537.7 ms at 2048 and 1070.8 ms at 4096, within about 1 ms of repeat readings. The
+/// estimate may not fall short of the air time (a try is only started if it ends inside the budget)
+/// and stays within a millisecond of it.
+TEST(RadioSX1276, TxAirTimeMatchesTheMeasuredLongTries) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  struct Case {
+    uint16_t preamble;
+    uint32_t measured_us;
+  };
+  for (const Case &c : {Case{1024, 271140}, Case{2048, 537680}, Case{4096, 1070800}}) {
+    RadioTxConfig cfg{};
+    cfg.preamble_len = c.preamble;
+    uint32_t const estimate = radio.tx_air_time_us(12, cfg);
+    EXPECT_GE(estimate + 200, c.measured_us) << "preamble " << c.preamble << ": the estimate falls short";
+    EXPECT_LE(estimate, c.measured_us + 1000) << "preamble " << c.preamble << ": the estimate is too long";
+  }
 }
 
 TEST(RadioSX1276, InitProgramsValidatedConfiguration) {

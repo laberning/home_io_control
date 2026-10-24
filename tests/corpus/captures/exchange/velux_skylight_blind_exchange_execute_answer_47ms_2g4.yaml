@@ -1,0 +1,42 @@
+id: velux_skylight_blind_exchange_execute_answer_47ms_2g4
+description: >
+  The same exchange as the sibling capture with a 46 ms answer, but the bench tool starts its 0x3D 47 ms after the challenge's last bit. The blind ignores it: no 0x04 follows, and the capture ends with the unanswered 0x3D. Together the pair puts this blind's answer window between 46 and 47 ms; it is one blind under bench conditions, not a property of every device. The request, its train and the answer are the bench tool's commanded ones, the challenge is received. The 0x3D is re-keyed to the corpus key.
+source:
+  device: "A bench tool on a Kite nRF52840 (Maser228) sending as node C0FFEE to a VELUX skylight blind 516B10 on 2.4 GHz, the same installation as the KLR 200 4D84A6, heard and sent through Kite's Bridle link"
+  captured_with: other
+  firmware: "0.0.0-dev+g587526f"
+  date: 2026-10-13
+  origin: contributor
+  issue: null
+key: corpus
+phy: io_2g4
+psdu_header: "01 69 6F"
+t_us_stamp: {at: sfd, resolution_us: 1}
+frames:
+  - dir: tx
+    t_us: 510036
+    wake_train: {frames_captured: 510, first_counter: 509, last_counter: 0, first_t_us: 0, last_t_us: 509000}
+    freq: 2450000000
+    hex: "50 20 51 6B 10 C0 FF EE 00 01 63 00 00 80 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+  - dir: rx
+    t_us: 513241
+    freq: 2450000000
+    hex: "0E 00 C0 FF EE 51 6B 10 3C E6 D4 81 7C D5 05"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_us: 561073
+    freq: 2450000000
+    hex: "0E 00 51 6B 10 C0 FF EE 3D B4 F2 27 08 9F 4B"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: failure
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}

@@ -1,0 +1,62 @@
+id: velux_klr200_probe_copy_remote_record_reads_2g4
+description: >
+  Part of a 2.4 GHz "copy remote" session between two US VELUX KLR 200 remotes on channel 20:
+  the factory-reset remote E6FF27 reads records 09, 08 and 07 from the paired remote 4D84A6 with
+  0x4A (data 10 00 nn), each request a START after a wake train, and 4D84A6 answers each with an
+  END 0x4B that echoes the request and adds 18 bytes; record 07 holds 00 00 0C 00 and the name
+  "Kitchen" in UTF-16LE. No challenge: the reads are unauthenticated between these remotes.
+
+  The contributor posted a fragment: the first train has only its last 3 frames (counters 2 .. 0),
+  the log carries no timestamps, and the session's other frames are not in it.
+source:
+  device: "US VELUX KLR 200 (E6FF27, factory-reset) reading records from KLR 200 4D84A6 on 2.4 GHz, sniffed with an nRF52840 Feather 802.15.4 sniffer (Maser228)"
+  captured_with: other
+  firmware: null
+  date: 2026-09-26
+  origin: contributor
+  issue: null
+key: unknown
+phy: io_2g4
+psdu_header: "01 69 6F"
+frames:
+  - dir: tx
+    wake_train: {frames_captured: 3, first_counter: 2, last_counter: 0}
+    freq: 2450000000
+    hex: "4B 00 4D 84 A6 E6 FF 27 4A 10 00 09"
+    crc: absent
+    note: "0x4A record read, START"
+  - dir: rx
+    freq: 2450000000
+    hex: "9D 00 E6 FF 27 4D 84 A6 4B 10 00 09 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+    crc: absent
+    note: "0x4B record, END"
+  - dir: tx
+    wake_train: {frames_captured: 8, first_counter: 7, last_counter: 0}
+    freq: 2450000000
+    hex: "4B 00 4D 84 A6 E6 FF 27 4A 10 00 08"
+    crc: absent
+    note: "0x4A record read, START"
+  - dir: rx
+    freq: 2450000000
+    hex: "9D 00 E6 FF 27 4D 84 A6 4B 10 00 08 00 00 00 00 00 00 00 00 00 00 00 00 04 04 00 00 00 01"
+    crc: absent
+    note: "0x4B record, END"
+  - dir: tx
+    wake_train: {frames_captured: 8, first_counter: 7, last_counter: 0}
+    freq: 2450000000
+    hex: "4B 00 4D 84 A6 E6 FF 27 4A 10 00 07"
+    crc: absent
+    note: "0x4A record read, START"
+  - dir: rx
+    freq: 2450000000
+    hex: "9D 00 E6 FF 27 4D 84 A6 4B 10 00 07 00 00 0C 00 4B 00 69 00 74 00 63 00 68 00 65 00 6E 00"
+    crc: absent
+    note: "0x4B record, END"
+expect:
+  frames:
+    - {cmd: 0x4A, start: true, end: false, protocol: 2w}
+    - {cmd: 0x4B, start: false, end: true, protocol: 2w}
+    - {cmd: 0x4A, start: true, end: false, protocol: 2w}
+    - {cmd: 0x4B, start: false, end: true, protocol: 2w}
+    - {cmd: 0x4A, start: true, end: false, protocol: 2w}
+    - {cmd: 0x4B, start: false, end: true, protocol: 2w}

@@ -25,6 +25,7 @@ CTRL0_END = 0x80
 CTRL0_START = 0x40
 CTRL0_PROTOCOL_1W = 0x20
 CTRL0_LENGTH_MASK = 0x1F
+CTRL1_LOW_POWER = 0x20  # mirrors proto_frame.h :: CTRL1_LOW_POWER: the device sleeps between listens, so it needs a wake-up
 
 # --- Mirrors components/home_io_control/proto_frame.cpp :: crc_ccitt() ----------------------
 CRC_POLYNOMIAL_REVERSED = 0x8408
@@ -81,14 +82,49 @@ def is_oneway(ctrl0: int) -> bool:
     return bool(ctrl0 & CTRL0_PROTOCOL_1W)
 
 
+# --- 2.4 GHz io-homecontrol (802.15.4 O-QPSK framing) ------------------------------------------
+# An io frame travels as an 802.15.4 PSDU: this 3-byte header ("\x01io"), the io frame (CTRL0 ...
+# data, no io CRC) and the 802.15.4 FCS, which is CRC-16/KERMIT, i.e. crc_ccitt() above, over
+# header + io frame, low byte first. Wake frames carry no header: `00` + a big-endian 16-bit
+# counter that counts down to 0 before the frame they wake the receiver for.
+IO_2G4_PSDU_HEADER = bytes([0x01, 0x69, 0x6F])
+IO_2G4_WAKE_FRAME_LEN = 3
+# io channels 1..3 on 2.4 GHz are 802.15.4 channels 15, 20 and 25.
+IO_2G4_CHANNELS = (15, 20, 25)
+
+
+def ieee802154_channel_freq_hz(channel: int) -> int:
+    """Centre frequency of 2.4 GHz 802.15.4 channel 11..26: 2405 MHz + 5 MHz per channel."""
+    if not 11 <= channel <= 26:
+        raise ValueError(f"802.15.4 channel {channel} is outside 11..26")
+    return 2_405_000_000 + 5_000_000 * (channel - 11)
+
+
+def ieee802154_channel_of_freq_hz(freq_hz: int) -> int:
+    """Inverse of ieee802154_channel_freq_hz(); raises ValueError for a frequency that is no channel centre."""
+    channel, remainder = divmod(freq_hz - 2_405_000_000, 5_000_000)
+    channel += 11
+    if remainder != 0 or not 11 <= channel <= 26:
+        raise ValueError(f"{freq_hz} Hz is not the centre of an 802.15.4 channel 11..26")
+    return channel
+
+
+IO_2G4_FREQS_HZ = frozenset(ieee802154_channel_freq_hz(ch) for ch in IO_2G4_CHANNELS)
+
+
 # --- Mirrors components/home_io_control/proto_constants.h :: CMD_* values needed by the
 # --rekey pipeline (ingest.py) to locate challenge/response and key-init/key-transfer pairs.
 CMD_ONEWAY_ADD_CONTROLLER = 0x30
 CMD_ONEWAY_REMOVE = 0x39
 CMD_KEY_INIT = 0x31
 CMD_KEY_TRANSFER = 0x32
+CMD_LAUNCH_KEY_TRANSFER = 0x38
 CMD_CHALLENGE_REQ = 0x3C
 CMD_CHALLENGE_RESP = 0x3D
+CMD_EXECUTE = 0x00
+CMD_PRIVATE = 0x03
+CMD_PRIVATE_RESP = 0x04
+CMD_ERROR_RESP = 0xFE
 CMD_DISCOVER_SPE_REQ = 0x2A
 
 # Commands that authenticate themselves in a single frame — payload = [challenge(6) | HMAC(6)],
@@ -327,12 +363,12 @@ OneWayRemoveControllerParts = namedtuple("OneWayRemoveControllerParts", ["data",
 def find_oneway_add_controller_frames(frames):
     """Locate CMD_ONEWAY_ADD_CONTROLLER (0x30) frames. No surrounding context needed -- the
     key-wrap and optional MAC trailer live entirely in one frame."""
-    return [f for f in frames if _frame_cmd(f) == CMD_ONEWAY_ADD_CONTROLLER]
+    return [f for f in frames if frame_cmd(f) == CMD_ONEWAY_ADD_CONTROLLER]
 
 
 def find_oneway_remove_controller_frames(frames):
     """Locate CMD_ONEWAY_REMOVE (0x39) frames."""
-    return [f for f in frames if _frame_cmd(f) == CMD_ONEWAY_REMOVE]
+    return [f for f in frames if frame_cmd(f) == CMD_ONEWAY_REMOVE]
 
 
 def oneway_add_controller_parts(frame) -> OneWayAddControllerParts:
@@ -380,7 +416,8 @@ def oneway_remove_controller_parts(frame) -> OneWayRemoveControllerParts:
 CORPUS_SYSTEM_KEY = bytes([0xDE, 0xCA, 0xFC, 0x0F, 0xFE, 0xE0, 0xFF, 0x1C, 0xEB, 0xAD, 0xBE, 0xEF, 0xF0, 0x0D, 0xBA, 0x11])
 
 
-def _frame_cmd(frame) -> "int | None":
+def frame_cmd(frame) -> "int | None":
+    """The command byte of a frame (anything with `.raw()`), or None for a frame too short to have one."""
     raw = frame.raw()
     return raw[8] if len(raw) >= FRAME_MIN_SIZE else None
 
@@ -405,7 +442,7 @@ def find_challenge_response_triples(frames):
     """
     triples = []
     for i, frame in enumerate(frames):
-        if _frame_cmd(frame) != CMD_CHALLENGE_RESP:
+        if frame_cmd(frame) != CMD_CHALLENGE_RESP:
             continue
         responder_dir = frame.direction
         challenger_dir = "rx" if responder_dir == "tx" else "tx"
@@ -413,7 +450,7 @@ def find_challenge_response_triples(frames):
         origin = None
         for j in range(i - 1, -1, -1):
             candidate = frames[j]
-            cmd = _frame_cmd(candidate)
+            cmd = frame_cmd(candidate)
             if cmd is None:
                 continue
             if challenge is None and candidate.direction == challenger_dir and cmd == CMD_CHALLENGE_REQ:
@@ -429,18 +466,18 @@ def find_challenge_response_triples(frames):
 
 def find_key_transfer_triples(frames):
     """Locate (key_init_tx, challenge_rx, transfer_tx) triples for 0x31/0x3C/0x32 pairing
-    key-exchange sequences — mirrors create_key_transfer()'s IV (proto_commands.cpp: data is
-    just the KEY_INIT frame's single cmd byte, not a full transcript).
+    key-exchange sequences (a key *push*) — mirrors create_key_transfer()'s IV
+    (proto_commands.cpp: data is just the KEY_INIT frame's single cmd byte, not a full transcript).
     """
     triples = []
     for i, frame in enumerate(frames):
-        if frame.direction != "tx" or _frame_cmd(frame) != CMD_KEY_TRANSFER:
+        if frame.direction != "tx" or frame_cmd(frame) != CMD_KEY_TRANSFER:
             continue
         challenge = None
         key_init = None
         for j in range(i - 1, -1, -1):
             candidate = frames[j]
-            cmd = _frame_cmd(candidate)
+            cmd = frame_cmd(candidate)
             if cmd is None:
                 continue
             if challenge is None and candidate.direction == "rx" and cmd == CMD_CHALLENGE_REQ:
@@ -452,6 +489,64 @@ def find_key_transfer_triples(frames):
         if challenge is not None and key_init is not None:
             triples.append((key_init, challenge, frame))
     return triples
+
+
+def find_pull_key_transfers(frames):
+    """Locate (launch, transfer) pairs for 0x38/0x32 key *pulls*: the party that wants the key
+    sends CMD_LAUNCH_KEY_TRANSFER (0x38) carrying a 6-byte challenge, and the key holder answers
+    with the masked key in a 0x32 (seen on 2.4 GHz io between two VELUX KLR 200 remotes, where
+    our crypt_key() recovers a key the rest of that installation's HMACs verify under).
+
+    The 0x32 is paired with the nearest preceding 0x38 sent the other way, provided no 0x3C
+    challenge or earlier 0x32 lies in between (either would make it a push, or a different
+    transfer). Direction is only relative, so this works whichever party the capture calls `tx`.
+    """
+    pairs = []
+    for i, frame in enumerate(frames):
+        if frame_cmd(frame) != CMD_KEY_TRANSFER:
+            continue
+        for j in range(i - 1, -1, -1):
+            cmd = frame_cmd(frames[j])
+            if cmd == CMD_LAUNCH_KEY_TRANSFER and frames[j].direction != frame.direction:
+                pairs.append((frames[j], frame))
+            if cmd in (CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ, CMD_KEY_TRANSFER):
+                break
+    return pairs
+
+
+KeyTransfer = namedtuple("KeyTransfer", ["transfer", "iv_data", "challenge", "encrypted_payload"])
+KeyTransfer.__doc__ = """One 0x32 key transfer with crypt_key()'s inputs: the payload decrypts (and a
+key encrypts) as crypt_key(iv_data, challenge, encrypted_payload). `transfer` is the 0x32 frame."""
+
+
+def find_key_transfers(frames) -> "list[KeyTransfer]":
+    """Every 0x32 key transfer whose masking the capture determines, push and pull alike, in frame
+    order. The one list validate.py, ingest.py --rekey and rekey_capture.py all work from, so a
+    new transfer shape is taught to all three at once.
+
+    - Push (0x31/0x3C/0x32, create_key_transfer()): IV data is the 0x31's command byte alone,
+      the challenge is the 0x3C's payload.
+    - Pull (0x38/0x32): IV data is the 0x38's command byte plus its payload, and that payload is
+      also the challenge.
+    """
+    found = []
+    for key_init, challenge, transfer in find_key_transfer_triples(frames):
+        challenge_raw = non_crc_bytes(challenge)
+        found.append(KeyTransfer(transfer, non_crc_bytes(key_init)[8:9],
+                                 challenge_raw[FRAME_MIN_SIZE:FRAME_MIN_SIZE + HMAC_SIZE],
+                                 _transfer_payload(transfer)))
+    for launch, transfer in find_pull_key_transfers(frames):
+        launch_raw = non_crc_bytes(launch)
+        launch_challenge = launch_raw[FRAME_MIN_SIZE:FRAME_MIN_SIZE + HMAC_SIZE]
+        found.append(KeyTransfer(transfer, launch_raw[8:9] + launch_challenge, launch_challenge,
+                                 _transfer_payload(transfer)))
+    order = {id(frame): i for i, frame in enumerate(frames)}
+    return sorted(found, key=lambda kt: order[id(kt.transfer)])
+
+
+def _transfer_payload(transfer) -> bytes:
+    raw = non_crc_bytes(transfer)
+    return raw[FRAME_MIN_SIZE:FRAME_MIN_SIZE + AES_KEY_SIZE]
 
 
 def non_crc_bytes(frame) -> bytes:
@@ -477,7 +572,7 @@ def find_self_authenticated_frames(frames):
     """
     found = []
     for frame in frames:
-        cmd = _frame_cmd(frame)
+        cmd = frame_cmd(frame)
         if cmd not in SELF_AUTHENTICATED_COMMANDS:
             continue
         payload = non_crc_bytes(frame)[FRAME_MIN_SIZE:]
@@ -496,7 +591,6 @@ def self_auth_parts(frame) -> "tuple[bytes, bytes, bytes]":
 
 
 HmacParts = namedtuple("HmacParts", ["transcript", "challenge", "hmac"])
-KeyTransferParts = namedtuple("KeyTransferParts", ["key_init_cmd", "challenge", "encrypted_payload"])
 
 
 def hmac_parts(origin, challenge, response) -> HmacParts:
@@ -512,19 +606,6 @@ def hmac_parts(origin, challenge, response) -> HmacParts:
     chal_bytes = challenge_raw[FRAME_MIN_SIZE:FRAME_MIN_SIZE + HMAC_SIZE]
     hmac = response_raw[FRAME_MIN_SIZE:FRAME_MIN_SIZE + HMAC_SIZE]
     return HmacParts(transcript, chal_bytes, hmac)
-
-
-def key_transfer_parts(key_init, challenge, transfer) -> KeyTransferParts:
-    """Slices a (key_init, challenge, transfer) 0x31/0x3C/0x32 triple (as found by
-    find_key_transfer_triples()) into crypt_key()'s inputs — see hmac_parts() docstring.
-    """
-    key_init_raw = non_crc_bytes(key_init)
-    challenge_raw = non_crc_bytes(challenge)
-    transfer_raw = non_crc_bytes(transfer)
-    key_init_cmd = key_init_raw[8:9]
-    chal_bytes = challenge_raw[FRAME_MIN_SIZE:FRAME_MIN_SIZE + HMAC_SIZE]
-    encrypted_payload = transfer_raw[FRAME_MIN_SIZE:FRAME_MIN_SIZE + AES_KEY_SIZE]
-    return KeyTransferParts(key_init_cmd, chal_bytes, encrypted_payload)
 
 
 class RawFrame:

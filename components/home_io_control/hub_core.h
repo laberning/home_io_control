@@ -53,7 +53,11 @@
 // Lr1121FirmwareUpdater so lr1121_firmware_decisions.h and radio_lr1121_firmware_updater.h are
 // NOT pulled into hub_core.h — that header weight stays in the collaborator's .cpp alone.
 #include "lr1121_firmware_update_controller.h"
+#ifdef IOHOME_BRIDLE
+#include "hub_uart_stream.h"
+#endif
 #include <map>
+#include <optional>
 #include <vector>
 #include <functional>
 
@@ -106,7 +110,8 @@ class IOHomeControlComponent : public Component,
       : exchange_engine_(&radio_, node_id_, system_key_, &tuning_),
         pairing_engine_(&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_, pairing_telemetry_,
                         recent_oneway_pairing_sighting_),
-        management_actions_(node_id_, system_key_, &tuning_, exchange_engine_, registry_, &initialized_, this),
+        management_actions_(node_id_, system_key_, &tuning_, exchange_engine_, registry_, pairing_engine_,
+                            &initialized_, this),
         // Capturing `this` is safe here: the callback is only ever invoked from send_burst(),
         // long after construction. It injects the *ability* to transmit rather than a reference
         // to whichever collaborator currently owns the radio. `&tuning_` is read per burst
@@ -228,7 +233,18 @@ class IOHomeControlComponent : public Component,
   void set_tx_power(uint8_t power) { this->tx_power_ = power; }
   /// Set PA boost pin configuration.
   void set_pa_pin(uint8_t pa_pin) { this->pa_pin_ = pa_pin; }
-  /// Set radio type ("sx1276", "sx1262", or "lr1121"); required by the YAML schema.
+#ifdef IOHOME_BRIDLE
+  /// Attach the UART bus a `radio_type: bridle` co-processor is reached over (`uart_id:` in YAML).
+  void set_uart_parent(uart::UARTComponent *parent) { this->uart_stream_.set_uart_parent(parent); }
+  /// Set the requested TX power in dBm, which may be negative; leaving it unset asks the co-processor's
+  /// radio for its own maximum (`radio_type: bridle` only).
+  void set_tx_power_dbm(int8_t power) { this->bridle_tx_power_dbm_ = power; }
+  /// Log every Bridle message as a trace line (`bridle_trace:` in YAML).
+  void set_bridle_trace(bool enabled) { this->bridle_trace_ = enabled; }
+  /// Set the band the co-processor is asked for, "io_2g4" or "io_868" (`bridle_band:` in YAML).
+  void set_bridle_band(const std::string &band) { this->bridle_band_ = band; }
+#endif
+  /// Set radio type ("sx1276", "sx1262", "lr1121" or "bridle"); required by the YAML schema.
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
   /// Set the SX1262/LR1121 TCXO control-voltage code (0-based, `TCXO_VOLTAGE_OPTIONS` in
   /// `hub_validators.py`: `1_6V`=0x00 .. `3_3V`=0x07), or `TCXO_VOLTAGE_NONE` (0xFF) for a board with a
@@ -407,6 +423,17 @@ class IOHomeControlComponent : public Component,
 
   /// @return The telemetry recorded for the most recent (or in-progress) pairing attempt.
   [[nodiscard]] const PairingTelemetry &pairing_telemetry() const { return this->pairing_telemetry_; }
+
+  /// @return true while a blocking radio operation (pairing, a scan, a 1W burst) runs; a native API
+  ///         action that would start another refuses with a result of its own.
+  [[nodiscard]] bool radio_busy() const { return this->busy_; }
+
+  /// Invoke the pairing-result callback, as after a pairing attempt; for an action that records its
+  /// attempt in the pairing telemetry (the key pull).
+  void notify_pairing_result() {
+    if (this->pairing_result_callback_)
+      this->pairing_result_callback_();
+  }
 
   /// Register a callback invoked once, right after every `discover_and_pair()` attempt
   /// completes — used by the "Last Pairing Result" text sensor to publish a fresh value.
@@ -855,6 +882,12 @@ class IOHomeControlComponent : public Component,
   /// @param packet Raw radio packet containing a parsed IoFrame.
   void process_received_packet_(const RadioRxPacket &packet);
 
+  /// Log the node ID of the sender of an overheard request (not one of ours, not our own): how a user
+  /// reads a controller's ID for the `pull_key` action. Each source at most once per
+  /// decisions::HeardSourceLog::INTERVAL_MS.
+  /// @param frame The parsed frame.
+  void log_heard_controller_(const IoFrame &frame);
+
   /// True while the key-extraction responder is mid-attempt and still within its bounded CH2-hold
   /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
   /// — kept on the hub because defer_background_poll_() and tests/hub/hub_core_test.cpp reach it here,
@@ -1236,7 +1269,15 @@ class IOHomeControlComponent : public Component,
   // --- Configuration (from YAML) ---
   std::string node_id_str_;
   std::string system_key_str_;
-  std::string radio_type_;  ///< "sx1276", "sx1262", or "lr1121"; required by the YAML schema.
+  std::string radio_type_;  ///< "sx1276", "sx1262", "lr1121" or "bridle"; required by the YAML schema.
+#ifdef IOHOME_BRIDLE
+  /// dump_config() lines of a Bridle bridge: its UART, band, trace switch and requested TX power.
+  void dump_bridle_config_();
+  HubUartStream uart_stream_;                  ///< The byte stream to a Bridle co-processor.
+  std::optional<int8_t> bridle_tx_power_dbm_;  ///< Requested TX power; unset = the radio's maximum.
+  bool bridle_trace_{false};                   ///< `bridle_trace:` — log every Bridle message.
+  std::string bridle_band_{"io_2g4"};          ///< `bridle_band:` — "io_2g4" or "io_868"; picks the PHY profile.
+#endif
   /// Why setup() gave up on the radio, or empty. Printed by dump_config so log clients that connect
   /// after boot see the cause, not only ESPHome's generic "marked FAILED" line.
   std::string radio_failure_reason_;
@@ -1251,8 +1292,9 @@ class IOHomeControlComponent : public Component,
   bool busy_{false};
   /// millis() when the last pairing attempt ended; 0 before the first one (see queue_discover_and_pair()).
   uint32_t last_pairing_end_ms_{0};
-  bool radio_test_mode_{false};  ///< When true, loop() is suspended for loopback testing.
-  TuningConfig tuning_{};        ///< Runtime tuning overrides.
+  decisions::HeardSourceLog heard_sources_;  ///< Which overheard request sources log_heard_controller_() names.
+  bool radio_test_mode_{false};              ///< When true, loop() is suspended for loopback testing.
+  TuningConfig tuning_{};                    ///< Runtime tuning overrides.
   DeviceRegistry registry_;
   /// 1W sender node IDs (remotes or sensors) allowed to fire the sender HA event
   /// (`add_exposed_sender`). Config-time list (populated once from YAML), not a per-frame allocation.

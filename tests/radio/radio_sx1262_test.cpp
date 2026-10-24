@@ -489,3 +489,59 @@ TEST(Sx1262DeviceErrorDecoder, TinyBufferStaysNulTerminatedWithoutOverflow) {
   EXPECT_EQ(buf[sizeof(buf) - 1], '\0') << "must never write past the caller's buffer";
   EXPECT_LT(std::string(buf).size(), sizeof(buf));
 }
+
+// ============================================================================
+// Bench test signals (RadioDriver::transmit_test_signal)
+// ============================================================================
+
+TEST(RadioSX1262TestSignal, ACarrierIsTunedThenSentThenTheRadioGoesBackToStandby) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
+  ASSERT_TRUE(radio.init());
+  const size_t before = spi.transactions().size();
+
+  ASSERT_TRUE(radio.transmit_test_signal(TestSignal::CARRIER, FREQ_CH2, 5));
+
+  const auto &txs = spi.transactions();
+  int frequency = -1, carrier = -1, last_standby = -1;
+  for (size_t i = before; i < txs.size(); i++) {
+    if (txs[i].empty())
+      continue;
+    if (txs[i][0] == SX1262_SET_RF_FREQUENCY && frequency < 0)
+      frequency = static_cast<int>(i);
+    if (txs[i][0] == SX1262_SET_TX_CONTINUOUS_WAVE)
+      carrier = static_cast<int>(i);
+    if (txs[i][0] == SX1262_SET_STANDBY)
+      last_standby = static_cast<int>(i);
+  }
+  ASSERT_GE(carrier, 0) << "SetTxContinuousWave was not issued";
+  EXPECT_LT(frequency, carrier) << "the carrier is tuned before it is switched on";
+  EXPECT_GT(last_standby, carrier) << "the radio is put back into standby afterwards";
+  EXPECT_EQ(txs[carrier].size(), 1u) << "the command takes no parameters";
+  EXPECT_EQ(count_tx_with_opcode(spi, SX1262_SET_TX_INFINITE_PREAMBLE), 0);
+}
+
+TEST(RadioSX1262TestSignal, APreambleUsesTheInfinitePreambleCommandAndWaitsTheDuration) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
+  ASSERT_TRUE(radio.init());
+  const uint32_t start = esphome::millis();
+
+  ASSERT_TRUE(radio.transmit_test_signal(TestSignal::PREAMBLE, FREQ_CH3, 40));
+
+  EXPECT_GE(esphome::millis() - start, 40u) << "the signal stays on air for the duration";
+  EXPECT_EQ(count_tx_with_opcode(spi, SX1262_SET_TX_INFINITE_PREAMBLE), 1);
+  EXPECT_EQ(count_tx_with_opcode(spi, SX1262_SET_TX_CONTINUOUS_WAVE), 0);
+}
+
+TEST(RadioSX1262TestSignal, AFailedRadioSendsNothing) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
+  radio.fail_for_test("test");
+  const size_t before = spi.transactions().size();
+  EXPECT_FALSE(radio.transmit_test_signal(TestSignal::CARRIER, FREQ_CH2, 1));
+  EXPECT_EQ(spi.transactions().size(), before);
+}

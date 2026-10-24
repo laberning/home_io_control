@@ -108,6 +108,42 @@ class PairingEngine {
   PairingEngine(const PairingEngine &) = delete;
   PairingEngine &operator=(const PairingEngine &) = delete;
 
+  /// @brief What pull_key_from() ended with.
+  enum class PullKeyOutcome : uint8_t {
+    PROVEN,    ///< The controller sent a key that differs from the hub's and proved it holds it.
+    OWN_KEY,   ///< The controller sent the hub's own key: it already shares this hub's key.
+    REFUSED,   ///< The controller answered the key request with CMD_ERROR_RESP.
+    UNPROVEN,  ///< The controller sent a key but no 0x3D that verifies under it; the key is not printed.
+    SILENT,    ///< The controller sent no key.
+  };
+
+  /// @brief What pull_key_from() reports to its caller.
+  struct PullKeyReport {
+    PullKeyOutcome outcome{PullKeyOutcome::SILENT};  ///< How the pull ended.
+    bool has_refusal_code{false};                    ///< True when `refusal_code` holds a CMD_ERROR_RESP byte.
+    uint8_t refusal_code{0};                         ///< The controller's refusal, for REFUSED.
+    std::string message;                             ///< Outcome and advice, safe for the Home Assistant event.
+    std::string log_report;                          ///< For PROVEN only: the device-log report that carries the key.
+  };
+
+  /// @brief Pull the system key from a controller and prove it, without discovery, roll-call or
+  /// record reads.
+  ///
+  /// Runs run_key_pull_phase_() for a controller whose node id the caller knows (a VELUX remote in
+  /// "Copy system" mode, for one): 0x38, its 0x32, then our 0x3C against its 0x3D. A proven key is
+  /// printed in `log_report` with its key check value and is never stored or registered; the hub
+  /// transmits nothing after the proof. The attempt is recorded in the pairing telemetry and advice
+  /// like a pairing, so the Last Pairing Result sensor shows it.
+  /// @param controller Node id of the controller to pull from (NODE_ID_SIZE bytes).
+  /// @return The outcome with its advice; see PullKeyReport.
+  /// \todo Confirm on a real VELUX 2.4 GHz remote in "Copy system" mode.
+  PullKeyReport pull_key_from(const uint8_t controller[NODE_ID_SIZE]);
+
+  /// @brief Longest time pull_key_from() blocks the loop, in milliseconds.
+  /// @param controller Node id the pull would address (its request frame sets the transmit time).
+  /// @return Tries x (transmit + reply window + gap), plus the proof's challenges.
+  [[nodiscard]] uint32_t pull_key_worst_case_ms(const uint8_t controller[NODE_ID_SIZE]);
+
   /// Discover and pair a device currently in pairing mode (three-phase orchestrator).
   /// @return true if all three phases completed successfully; false otherwise.
   bool discover_and_pair();
