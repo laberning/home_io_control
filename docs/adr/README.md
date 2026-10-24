@@ -35,7 +35,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0039](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md) | Pairing sends a discover-confirm (0x2C) and tolerates no answer | Universal `pairing_discover_confirm` mode (`skip`/`send`/`send_with_ack`); the step never fails the attempt; try 2 alone rotates channels (deviates from ADR 0028) |
 | [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | Tries ordered by per-device evidence (short first only while believed travelling, then the wake-up preamble; a silent exchange spends the evidence; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch, `low_power_wake_preamble` length |
 | [0044](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md) | Chip-neutral transmit intent | Every transmission carries its wake level; a driver may scan idle channels by itself; a try starts only if its transmission ends inside the exchange budget |
-| [0045](0045-listen-before-talk-is-part-of-sending.md) | Listen-before-talk is part of sending | The radio checks the transmit channel inside `send_packet()`, retuning first when the idle receiver is elsewhere; the engine keeps the retry policy |
+| [0045](0045-listen-before-talk-is-part-of-sending.md) | Listen-before-talk is part of sending | The radio checks the transmit channel inside `send_packet()`, retuning first when the idle receiver is elsewhere; the engine keeps the retry policy and, since the 2026-10 amendment, checks only frames with START set |
 
 ### Behavior
 
