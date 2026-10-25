@@ -422,9 +422,10 @@ pairing noticeably. Raising the threshold (less sensitive) or lowering the retry
 hub transmit through that.
 
 > [!WARNING]
-> **Regulatory note:** the `-90` dBm / ≥5 ms defaults follow the 868 MHz band's listen-before-talk
-> rules. Loosening them is acceptable for a brief experiment but should not be left in a
-> production configuration.
+> **Keep the defaults in a permanent configuration.** The `-90` dBm threshold and the 5 ms back-off
+> keep the hub from starting an exchange over traffic it can hear. A higher threshold or fewer
+> retries make it transmit over other devices on the band, and depending on your country's rules
+> for the 868 MHz band that may not be allowed. Loosen them for a brief experiment only.
 
 ### Pairing protocol — in detail
 
