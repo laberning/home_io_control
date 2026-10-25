@@ -62,7 +62,36 @@ TEST(StatusPollPolicy, BackoffLadderAuthShapedFailures) {
   EXPECT_EQ(b2, STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS);
 
   uint32_t b3 = policy.on_exchange_failed("DEV", true, T0);
-  EXPECT_EQ(b3, STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS);
+  EXPECT_EQ(b3, STATUS_AUTH_RETRY_AFTER_FAIL_STEP3_MS);
+
+  uint32_t b4 = policy.on_exchange_failed("DEV", true, T0);
+  EXPECT_EQ(b4, STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS);
+}
+
+// A single lost closing reply (the device challenged, then switched its motor off and never
+// answered, issue #178) waits no longer than a silent miss; only a repeat backs off far.
+TEST(StatusPollPolicy, FirstAuthShapedFailureWaitsNoLongerThanASilentOne) {
+  StatusPollPolicy auth;
+  StatusPollPolicy silent;
+  for (StatusPollPolicy *policy : {&auth, &silent}) {
+    policy->set_interval("DEV", 1000);
+    policy->begin_tracking("DEV", 0, T0);
+  }
+
+  EXPECT_EQ(auth.on_exchange_failed("DEV", true, T0), silent.on_exchange_failed("DEV", false, T0));
+  EXPECT_GT(auth.on_exchange_failed("DEV", true, T0), silent.on_exchange_failed("DEV", false, T0))
+      << "a repeated challenge-seen miss (a wrong key) backs off further than repeated silence";
+}
+
+TEST(StatusPollPolicy, SuccessBetweenAuthShapedFailuresRestartsTheQuickRetry) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 1000);
+  policy.begin_tracking("DEV", 0, T0);
+
+  policy.on_exchange_failed("DEV", true, T0);
+  policy.clear_failure_streaks("DEV");  // the 5 s retry answered
+  EXPECT_EQ(policy.on_exchange_failed("DEV", true, T0), STATUS_AUTH_RETRY_AFTER_FAIL_MS)
+      << "the next end-of-travel miss is again a first miss";
 }
 
 // ============================================================================

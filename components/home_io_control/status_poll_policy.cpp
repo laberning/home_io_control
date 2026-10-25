@@ -4,6 +4,8 @@
 
 #include "status_poll_policy.h"
 
+#include <array>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -136,23 +138,27 @@ std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {
   return std::nullopt;
 }
 
+namespace {
+
+/// The two backoff ladders, one delay per consecutive failure; the last entry repeats.
+constexpr std::array<uint32_t, 5> SILENT_RETRY_LADDER_MS{
+    STATUS_RETRY_AFTER_FAIL_MS, STATUS_RETRY_AFTER_FAIL_STEP2_MS, STATUS_RETRY_AFTER_FAIL_STEP3_MS,
+    STATUS_RETRY_AFTER_FAIL_STEP4_MS, STATUS_RETRY_AFTER_FAIL_MAX_MS};
+constexpr std::array<uint32_t, 4> AUTH_RETRY_LADDER_MS{
+    STATUS_AUTH_RETRY_AFTER_FAIL_MS, STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS, STATUS_AUTH_RETRY_AFTER_FAIL_STEP3_MS,
+    STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS};
+
+/// The delay for the @p consecutive_failures-th failure in a row (0 is read as 1) on @p ladder.
+template<size_t N> uint32_t ladder_step(const std::array<uint32_t, N> &ladder, uint8_t consecutive_failures) {
+  const size_t index = consecutive_failures <= 1 ? 0 : consecutive_failures - 1;
+  return ladder[std::min(index, N - 1)];
+}
+
+}  // namespace
+
 uint32_t StatusPollPolicy::retry_delay_ms(uint8_t consecutive_failures, bool auth_like) {
-  if (auth_like) {
-    if (consecutive_failures <= 1)
-      return STATUS_AUTH_RETRY_AFTER_FAIL_MS;
-    if (consecutive_failures == 2)
-      return STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS;
-    return STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS;
-  }
-  if (consecutive_failures <= 1)
-    return STATUS_RETRY_AFTER_FAIL_MS;
-  if (consecutive_failures == 2)
-    return STATUS_RETRY_AFTER_FAIL_STEP2_MS;
-  if (consecutive_failures == 3)
-    return STATUS_RETRY_AFTER_FAIL_STEP3_MS;
-  if (consecutive_failures == 4)
-    return STATUS_RETRY_AFTER_FAIL_STEP4_MS;
-  return STATUS_RETRY_AFTER_FAIL_MAX_MS;
+  return auth_like ? ladder_step(AUTH_RETRY_LADDER_MS, consecutive_failures)
+                   : ladder_step(SILENT_RETRY_LADDER_MS, consecutive_failures);
 }
 
 }  // namespace home_io_control
