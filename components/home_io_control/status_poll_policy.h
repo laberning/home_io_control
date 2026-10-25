@@ -27,9 +27,17 @@ static constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MAX_MS =
 /// @}
 
 /// @name Background-poll retry delays after auth-shaped failures (0x3C challenge seen)
+///
+/// A device that challenges the poll is awake and heard it. A single such miss is usually a
+/// closing reply lost while the device switched its load — on a cover, the motor stopping at the
+/// end of its travel (issue #178) — so the first retry waits no longer than after a silent miss.
+/// Only a repeated one, which is what a wrong key looks like, backs off far: there every further
+/// try is a full authenticated exchange that cannot succeed.
 /// @{
-static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MS = 30000;  ///< First retry after a challenge-seen failure.
-static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS = 120000;  ///< Second retry.
+static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MS =
+    STATUS_RETRY_AFTER_FAIL_MS;  ///< First retry after a challenge-seen failure.
+static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS = 30000;   ///< Second retry.
+static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP3_MS = 120000;  ///< Third retry.
 static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS = 300000;  ///< Steady-state after repeated auth failures.
 /// @}
 

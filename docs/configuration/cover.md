@@ -191,6 +191,7 @@ lambda: |-
 - The favorite command is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow, because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh. The hub polls only while a command or overheard remote activity suggests the device is still moving, and stops once the device reports a stable state or the bounded polling window expires. Many devices report a settle hint in their status replies, and the next poll comes after **min(device hint, configured interval)**, so the interval is a ceiling: a device can shorten it but never stretch it. Without the key, the hint drives the cadence directly (3 s when there is none). The hint and the chosen delay are visible at debug log level.
 - After a STOP the settle poll is capped at about 1 s regardless of interval or hint, so Home Assistant gets the resting position quickly even if the device was mid-travel.
+- A poll that gets no answer is retried after about 5 s, whatever the interval, and after longer delays if it keeps failing. A motor can drop its reply at the moment it stops at the end of its travel, so the final position can show up a few seconds late (issue #178).
 - Unsolicited `0x71` device status updates are always applied to the entity state and extend settle polling while the device is still moving.
 
 ## See also

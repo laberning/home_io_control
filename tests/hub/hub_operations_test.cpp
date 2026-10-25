@@ -1449,7 +1449,7 @@ TEST(HubOperations, ExchangeTimeoutIncrementsFailureCountersOnce) {
       << "attempts from both timed-out exchanges should accumulate";
 }
 
-TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
+TEST(HubOperations, RequestDeviceStatusAuthFailureTakesTheAuthBackoff) {
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
@@ -1476,7 +1476,7 @@ TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
   EXPECT_TRUE(comp.exchange_engine_.get_debug().saw_challenge)
       << "exchange debug should preserve that a challenge happened even if later retries time out";
   EXPECT_GE(delay, STATUS_AUTH_RETRY_AFTER_FAIL_MS - 1000)
-      << "auth-shaped failures should back off more than plain silence";
+      << "first auth-shaped failure should use the configured auth backoff";
   EXPECT_LE(delay, STATUS_AUTH_RETRY_AFTER_FAIL_MS + 1000)
       << "first auth-shaped failure should use the configured auth backoff";
   EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u)
@@ -2222,7 +2222,7 @@ TEST(HubOperations, CommandAuthenticatedWithoutFinalResponseCountsAsSuccess) {
 TEST(HubOperations, StatusPollAuthenticatedWithoutFinalResponseStillFails) {
   // The mirror image, and the reason the distinction exists: a status poll's entire purpose is the
   // payload. Authenticating and then hearing nothing answers no question, so it stays a failure
-  // and keeps the aggressive auth-shaped backoff.
+  // and takes the auth-shaped backoff.
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);

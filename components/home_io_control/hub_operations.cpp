@@ -173,8 +173,8 @@ IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_recor
   //     silence was an anomaly (decisions::retry_after_unconfirmed_accept_is_safe()), and the
   //     confirmation poll corrects the state if the device did not act;
   //   - a status poll or a name read exists to obtain a payload. Getting none means the question
-  //     went unanswered, so it stays a failure and keeps the aggressive auth-shaped poll backoff
-  //     that exists for precisely this shape of miss.
+  //     went unanswered, so it stays a failure and takes the auth-shaped poll backoff: a quick
+  //     retry the first time, a long one when it repeats (StatusPollPolicy::retry_delay_ms()).
   const bool unconfirmed_counts_as_success = request.cmd == CMD_EXECUTE;
 
   // Recorded once, here, for every outcome — deliberately above the split below, because the rule

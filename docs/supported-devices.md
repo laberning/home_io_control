@@ -37,6 +37,8 @@ match.
 | **Sunea IO 70/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
 | **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
 | **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
+| **OXIMO io roller shutter motor** | `roller_shutter` | ✅ Confirmed — open, close, stop, position | 2W pairing | — | Two motors on one Heltec V2 / SX1276 hub, issue #178 |
+| **OXIMO 50 io roller shutter motor** (wired) | `roller_shutter` | ✅ Confirmed — open, close, stop, position | 2W pairing | — | Heltec V2 / SX1276, issue #178. Advertises a 5 ms turnaround and drops the exchange when the hub answers its challenge even 5 ms late |
 | **Izymo IO dimmer** | `light` | ✅ Confirmed, including dimming | Discover & Pair, including repeated reset-and-repair cycles | `dimmable: true` | 39 corpus captures; the `light:` platform's hardware validation |
 | **J406 IO shutter motor** | `exterior_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: exterior_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard`, "J406io Protect" is the same, works too |
 | **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | on a Heltec V3.2 / SX1262 |
