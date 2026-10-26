@@ -163,15 +163,21 @@ struct NamedPosition {
   DeviceFeatures feature;   ///< The bit a device needs to accept it.
   uint16_t main_parameter;  ///< Value sent as the EXECUTE main parameter.
   CoverCommand command;     ///< The command that sends it.
-  const char *name;         ///< cover_command_name() of the command ("FAVORITE", "VENT").
+  const char *name;         ///< cover_command_name() of the command ("FAVORITE", "VENT", "PEDESTRIAN", "PARTIAL").
 };
 
 /// @brief The named positions.
-/// @details Adding one is a bit (with its evidence), a row here, a CoverCommand value, the rows that
+/// @details PEDESTRIAN and PARTIAL are experimental: their values rest on no public source, a motor
+///          without the position refuses them (PARAMETER_UNKNOWN) and nothing moves.
+///          \todo Confirm 0xD807 on a real gate opener and 0xD809 on a real garage opener.
+///          Adding one is a bit (with its evidence), a row here, a CoverCommand value, the rows that
 ///          have it in the type table, and a companion button in the Python codegen.
 inline constexpr NamedPosition NAMED_POSITIONS[] = {
     {device_feature::FAVORITE, main_parameter_of(POS_FAVORITE), CoverCommand::FAVORITE, "FAVORITE"},
     {device_feature::VENT, main_parameter_of(POS_FAVORITE, POS_VENT_MODIFIER), CoverCommand::VENT, "VENT"},
+    {device_feature::PEDESTRIAN, main_parameter_of(POS_FAVORITE, POS_PEDESTRIAN_MODIFIER), CoverCommand::PEDESTRIAN,
+     "PEDESTRIAN"},
+    {device_feature::PARTIAL, main_parameter_of(POS_FAVORITE, POS_PARTIAL_MODIFIER), CoverCommand::PARTIAL, "PARTIAL"},
 };
 
 /// @brief The named position a command sends.

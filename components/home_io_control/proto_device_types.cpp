@@ -15,6 +15,8 @@ using device_feature::EXTENDED_POSITION_FRAME;
 using device_feature::FAVORITE;
 using device_feature::INVERTED;
 using device_feature::LEVELS;
+using device_feature::PARTIAL;
+using device_feature::PEDESTRIAN;
 using device_feature::TILT;
 using device_feature::VENT;
 using device_feature::WINDOW_COMPANIONS;
@@ -64,7 +66,13 @@ constexpr DeviceFeatures WINDOW = COVER | VENT;
 /// garage opener of issue #163 refuses the favourite alias with PARAMETER_UNKNOWN (corpus capture
 /// wisniowski_moto1000_exchange_execute_parameter_unknown); that rests on one device of this type,
 /// so it is applied to the whole family.
-constexpr DeviceFeatures GARAGE = device_feature::MAIN_PARAMETER_ONLY | LEVELS;
+/// It also carries PARTIAL, the Partial Position button (0xD809).
+/// \todo Confirm on a real garage opener that 0xD809 opens it to a partial position (experimental).
+constexpr DeviceFeatures GARAGE = device_feature::MAIN_PARAMETER_ONLY | LEVELS | PARTIAL;
+/// Gate opener: a positionable cover that also carries PEDESTRIAN, the Pedestrian Position button
+/// (0xD807).
+/// \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position (experimental).
+constexpr DeviceFeatures GATE = COVER | PEDESTRIAN;
 /// On/off command in the 8-byte frame: a plain light, a switch, a lock.
 constexpr DeviceFeatures BINARY_COMMAND = EXTENDED_POSITION_FRAME;
 /// Light whose brightness is controllable (the 6/1 and 6/2 rows).
@@ -112,12 +120,12 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::LIGHT, SUBTYPE_MAIN_PARAMETER_ONLY, "on/off only", CAP_LIGHT, SUBTYPE_PLATFORM,
      main_parameter_only_variant(BINARY_COMMAND)},
 
-    {DeviceType::GATE_OPENER, 0, "gate_opener", CAP_COVER, SELECTABLE_PLATFORM, COVER},
+    {DeviceType::GATE_OPENER, 0, "gate_opener", CAP_COVER, SELECTABLE_PLATFORM, GATE},
     // \todo Confirm on a real 7/58 gate opener that intermediate positions are refused and whether the
     //       favourite is accepted; inferred from the shared subtype-58 definition and the 5/58 opener of
     //       issue #163 (experimental).
     {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, "open/close only", CAP_COVER, SUBTYPE_PLATFORM,
-     main_parameter_only_variant(COVER)},
+     main_parameter_only_variant(GATE)},
 
     {DeviceType::ROLLING_DOOR_OPENER, 0, "rolling_door_opener", CAP_COVER, SELECTABLE_PLATFORM, COVER},
 

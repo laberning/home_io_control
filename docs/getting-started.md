@@ -227,7 +227,7 @@ that exact value.
 Declaring `io_device_type` is worth doing even though it is optional. It is what enables
 type-specific behaviour: a `vertical_exterior_awning` gets a `Patio Awning Favorite Position` button, a
 `window_opener` also gets a Ventilation Position button, and families such as horizontal awnings
-get their direction inverted automatically. A garage opener gets no Favorite Position button, and
+get their direction inverted automatically. A garage opener gets no Favorite Position button but an experimental Partial Position one, a gate opener gets an experimental Pedestrian Position button (both disabled by default), and
 an opener of subtype 58 is an open/close/stop cover without a slider (see
 [Covers that only open and close](configuration/cover.md#covers-that-only-open-and-close)).
 These entities are generated at compile time, so a type learned later over the radio cannot add them.

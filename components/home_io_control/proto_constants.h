@@ -403,6 +403,18 @@ static constexpr uint8_t POS_FORCE_OPEN = 0x64;
 /// but ventilation sets the secondary byte (main[1]) to 0x03 while favorite leaves it 0x00.
 static constexpr uint8_t POS_VENT_MODIFIER = 0x03;
 
+/// @brief Modifier byte for the pedestrian-position command (POS_FAVORITE main byte, as for ventilation).
+/// Sent by the Pedestrian Position button on gate openers.
+/// \todo Confirm on a real gate opener that main=0xD8, modifier=0x07 opens it to a pedestrian position
+///       (experimental).
+static constexpr uint8_t POS_PEDESTRIAN_MODIFIER = 0x07;
+
+/// @brief Modifier byte for the partial-position command (POS_FAVORITE main byte, as for ventilation).
+/// Sent by the Partial Position button on garage openers.
+/// \todo Confirm on a real garage opener that main=0xD8, modifier=0x09 opens it to a partial position
+///       (experimental).
+static constexpr uint8_t POS_PARTIAL_MODIFIER = 0x09;
+
 /// @brief Scale factor between a 0-100 percent position and its CMD_EXECUTE main-byte wire value.
 ///
 /// Percent 0-100 maps to wire 0-200 (wire = percent * POSITION_WIRE_SCALE), leaving 201-255 free

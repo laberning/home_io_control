@@ -59,6 +59,8 @@ CONF_BATTERY_SENSOR_ID = "_battery_sensor_id"
 # Internal config keys for the cover-only companion button IDs (injected by post-validator).
 CONF_FAVORITE_BUTTON_ID = "_favorite_button_id"
 CONF_VENT_BUTTON_ID = "_vent_button_id"
+CONF_PARTIAL_BUTTON_ID = "_partial_button_id"
+CONF_PEDESTRIAN_BUTTON_ID = "_pedestrian_button_id"
 
 IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component)
 IOHomeCoverSilentSwitch = home_io_control_ns.class_(
@@ -88,6 +90,10 @@ CoverCommand = home_io_control_ns.enum("CoverCommand", is_class=True)
 NAMED_POSITION_BUTTONS = {
     "FAVORITE": (CONF_FAVORITE_BUTTON_ID, "favorite_button", "Favorite Position", False),
     "VENT": (CONF_VENT_BUTTON_ID, "vent_button", "Ventilation Position", False),
+    # Experimental: no public source for the values, so both buttons start disabled and the user
+    # enables them in Home Assistant.
+    "PEDESTRIAN": (CONF_PEDESTRIAN_BUTTON_ID, "pedestrian_button", "Pedestrian Position", True),
+    "PARTIAL": (CONF_PARTIAL_BUTTON_ID, "partial_button", "Partial Position", True),
 }
 
 

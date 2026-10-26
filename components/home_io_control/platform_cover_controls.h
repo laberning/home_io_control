@@ -26,18 +26,24 @@ namespace home_io_control {
 
 /// @brief Button entity that sends one non-positional cover command on press.
 ///
-/// One class covers both companions the cover platform generates: codegen calls set_command()
-/// with CoverCommand::FAVORITE for the favorite/"My"-position button (position-capable device
-/// types) and CoverCommand::VENT for the ventilation button (window-type devices —
-/// WINDOW_OPENER, VENTILATION_POINT — where the vent command moves the actuator to a predefined
-/// partially-open position suitable for air exchange). The press path, the parent/device guards
-/// and the log wording are identical for both; only the command byte differs.
+/// One class covers every companion the cover platform generates from NAMED_POSITIONS: codegen
+/// calls set_command() with CoverCommand::FAVORITE for the favorite/"My"-position button
+/// (position-capable device types), CoverCommand::VENT for the ventilation button (window-type
+/// devices — WINDOW_OPENER, VENTILATION_POINT — where the vent command moves the actuator to a
+/// predefined partially-open position suitable for air exchange), CoverCommand::PARTIAL for the
+/// Partial Position button (garage openers) and CoverCommand::PEDESTRIAN for the Pedestrian
+/// Position button (gate openers). The press path, the parent/device guards and the log wording
+/// are identical for all of them; only the command byte differs.
+/// \todo Confirm on a real garage opener that PARTIAL (0xD809) and on a real gate opener that
+///       PEDESTRIAN (0xD807) move the motor to that position (experimental; the buttons are
+///       disabled by default).
 /// @ingroup hioc_platforms
 class IOHomeCoverCommandButton : public button::Button, public Component, public DeviceBoundCompanion {
  public:
   /// @brief Set which cover command a press sends.
   /// @param command CoverCommand::FAVORITE for the favorite-position companion,
-  ///        CoverCommand::VENT for the ventilation companion.
+  ///        CoverCommand::VENT for the ventilation companion, CoverCommand::PARTIAL or
+  ///        CoverCommand::PEDESTRIAN for the experimental partial / pedestrian companions.
   void set_command(CoverCommand command) { this->command_ = command; }
 
   /// @brief Initialize the generated button.

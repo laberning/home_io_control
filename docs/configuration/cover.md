@@ -35,7 +35,7 @@ The keys every entity platform shares — `name`, `io_device_id`, `io_device_typ
 
 ## Companion entities
 
-Beyond the diagnostic companions every platform generates, covers add up to six more:
+Beyond the diagnostic companions every platform generates, covers add up to eight more:
 
 - **`<Cover Name> Favorite Position`** — a button, generated for any cover with a declared
   position-capable `io_device_type` except garage openers, whose motors refuse the favorite
@@ -44,6 +44,9 @@ Beyond the diagnostic companions every platform generates, covers add up to six 
 - **`<Cover Name> Ventilation Position`** — a second button, for covers with `io_device_type` set
   to `window_opener` or `ventilation_point`. It moves the actuator to a predefined partially-open
   position suitable for air exchange.
+- **`<Cover Name> Partial Position`** (garage openers) and **`<Cover Name> Pedestrian Position`**
+  (gate openers) — experimental buttons, disabled by default: enable them in Home Assistant before
+  you use them. See [Partial and pedestrian position buttons](cover.md#partial-and-pedestrian-position-buttons).
 - **`<Cover Name> Silent Operation`** — a switch, generated only when `silent:` is declared.
 - **`<Cover Name> Rain sensor`** — a binary sensor with device class `moisture`, generated only
   when `rain_sensor_poll_interval:` is declared. See [Polling for rain](cover.md#polling-for-rain).
@@ -79,6 +82,17 @@ door does not move (issue #163, corpus
 Subtype 58 on a gate opener or a swinging shutter is inferred from the garage opener's behaviour
 and the shared subtype definition, so it is experimental: the Favorite Position button stays and
 is sent, and a motor without a favorite position answers `PARAMETER_UNKNOWN` and does not move.
+
+## Partial and pedestrian position buttons
+
+A garage opener (`io_device_type: garage_opener`, subtype 0 or 58) gets a `Partial Position`
+button, and a gate opener (`gate_opener`, subtype 0 or 58) gets a `Pedestrian Position` button
+(experimental). Both are created disabled: enable them under the entity's settings in Home Assistant.
+
+A press sends that named position to the motor. A motor that has no such position refuses it with
+`PARAMETER_UNKNOWN` before authenticating, and nothing moves, as for the favorite position in
+issue #163. The hub sends these two on 2W only, never from a one-way controller, and, like the
+favorite position, never repeats one that went unanswered.
 
 ## Polling for rain
 

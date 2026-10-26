@@ -317,9 +317,10 @@ def cover_named_position_buttons_follow_the_declared_kind():
     assert buttons(types["roller_shutter"]) == {"FAVORITE"}
     assert buttons(types["window_opener"]) == {"FAVORITE", "VENT"}
     assert buttons(types["window_opener"], 58) == {"FAVORITE", "VENT"}, "named positions survive subtype 58"
-    assert buttons(types["garage_opener"]) == set(), "a garage opener refuses the favourite (issue #163)"
-    assert buttons(types["garage_opener"], 58) == set()
-    assert buttons(types["gate_opener"], 58) == {"FAVORITE"}, "7/58 inherits its family's favourite"
+    assert buttons(types["garage_opener"]) == {"PARTIAL"}, "a garage opener refuses the favourite (issue #163)"
+    assert buttons(types["garage_opener"], 58) == {"PARTIAL"}, "5/58 inherits its family's partial position"
+    assert buttons(types["gate_opener"]) == {"FAVORITE", "PEDESTRIAN"}
+    assert buttons(types["gate_opener"], 58) == {"FAVORITE", "PEDESTRIAN"}, "7/58 inherits its family's buttons"
     assert buttons(types["swinging_shutter"], 58) == {"FAVORITE"}, "24/58 inherits its family's favourite"
     assert buttons(types["light"]) == set()
     assert buttons(types["unknown"]) == set()
@@ -337,6 +338,21 @@ def cover_named_position_buttons_follow_the_declared_kind():
     assert out[c.CONF_FAVORITE_BUTTON_ID].is_declaration
     assert c.NAMED_POSITION_BUTTONS["FAVORITE"][2] == "Favorite Position"
     assert c.NAMED_POSITION_BUTTONS["VENT"][2] == "Ventilation Position"
+
+    # The experimental positions: pinned ids and names, disabled until the user enables them.
+    out = c._inject_companion_ids(config(types["garage_opener"]))
+    assert out[c.CONF_PARTIAL_BUTTON_ID].id == "living_partial_button"
+    assert c.CONF_PEDESTRIAN_BUTTON_ID not in out and c.CONF_FAVORITE_BUTTON_ID not in out
+    out = c._inject_companion_ids(config(types["gate_opener"]))
+    assert out[c.CONF_PEDESTRIAN_BUTTON_ID].id == "living_pedestrian_button"
+    assert c.CONF_PARTIAL_BUTTON_ID not in out
+    assert c.NAMED_POSITION_BUTTONS["PARTIAL"][2] == "Partial Position"
+    assert c.NAMED_POSITION_BUTTONS["PEDESTRIAN"][2] == "Pedestrian Position"
+    for key in ("FAVORITE", "VENT"):
+        assert c.NAMED_POSITION_BUTTONS[key][3] is False
+    for key in ("PARTIAL", "PEDESTRIAN"):
+        assert c.NAMED_POSITION_BUTTONS[key][3] is True, "experimental buttons start disabled"
+    assert not buttons(types["roller_shutter"]) & {"PARTIAL", "PEDESTRIAN"}
 
 
 @case("platform_common.require_feature")

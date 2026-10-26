@@ -16,7 +16,7 @@
 ///     open). Never hardcode "0 = open" in caller code without checking inversion first.
 ///   - Use create_execute_position() for numeric positions (0–100).
 ///   - Use create_execute_command() for named commands: CoverCommand::STOP,
-///     CoverCommand::FAVORITE, CoverCommand::VENT.
+///     CoverCommand::FAVORITE, CoverCommand::VENT, CoverCommand::PEDESTRIAN, CoverCommand::PARTIAL.
 ///   - Use create_force_open() for CoverCommand::FORCE_OPEN — it takes the target "fully open"
 ///     position explicitly rather than assuming 0
 ///   - The Home Assistant layer maps HA's 1.0=open/0.0=closed to the IO scale via
@@ -79,6 +79,8 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 ///   - STOP:       main=0xD2, modifier=0x00
 ///   - FAVORITE:   main=0xD8, modifier=0x00
 ///   - VENT:       main=0xD8, modifier=0x03
+///   - PEDESTRIAN: main=0xD8, modifier=0x07 (experimental, gate openers)
+///   - PARTIAL:    main=0xD8, modifier=0x09 (experimental, garage openers)
 ///
 /// This cleanly separates "move to position X" from "execute named action"
 /// without overloading a single numeric parameter.
@@ -93,7 +95,7 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// @param cmd Named command to execute (STOP or a named position).
 /// @return true on success; false for invalid/unsupported command.
 /// @param silent Use the silent (slower) travel profile. Honoured for FAVORITE only — STOP has no
-///        travel speed, and nothing has been captured for VENT.
+///        travel speed, and nothing has been captured for the other named positions.
 bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd,
                             bool silent = false);
 
@@ -273,7 +275,8 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 
 /// @brief Build a 1W named-command execute frame (CMD 0x00) targeting a device class.
 ///
-/// Covers three of CoverCommand's values — STOP, FAVORITE, VENT. FORCE_OPEN is not handled here:
+/// Covers three of CoverCommand's values — STOP, FAVORITE, VENT; PARTIAL and PEDESTRIAN have no 1W
+/// encoding and return false like FORCE_OPEN. FORCE_OPEN is not handled here:
 /// the only wire code this project has for that label, POS_FORCE_OPEN (main=0x64), was
 /// hardware-tested as an outbound CMD_EXECUTE command and found to move a real device to 50%
 /// open, not bypass anything (see POS_FORCE_OPEN in proto_constants.h). There is no known 1W

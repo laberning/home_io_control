@@ -32,6 +32,8 @@ constexpr DeviceFeatures LV = feature::LEVELS;
 constexpr DeviceFeatures TI = feature::TILT;
 constexpr DeviceFeatures FAV = feature::FAVORITE;
 constexpr DeviceFeatures VENT = feature::VENT;
+constexpr DeviceFeatures PAR = feature::PARTIAL;
+constexpr DeviceFeatures PED = feature::PEDESTRIAN;
 constexpr DeviceFeatures EXT = feature::EXTENDED_POSITION_FRAME;
 constexpr DeviceFeatures WIN = feature::WINDOW_COMPANIONS;
 constexpr DeviceFeatures INV = feature::INVERTED;
@@ -46,14 +48,14 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::VERTICAL_EXTERIOR_AWNING, 0, LV | FAV | EXT},
     {DeviceType::WINDOW_OPENER, 0, LV | FAV | VENT | EXT},
     {DeviceType::WINDOW_OPENER, 1, LV | FAV | VENT | EXT},
-    {DeviceType::GARAGE_OPENER, 0, MPO | LV},
-    {DeviceType::GARAGE_OPENER, 58, MPO},
+    {DeviceType::GARAGE_OPENER, 0, MPO | LV | PAR},
+    {DeviceType::GARAGE_OPENER, 58, MPO | PAR},
     {DeviceType::LIGHT, 0, EXT},
     {DeviceType::LIGHT, 1, LV | EXT},
     {DeviceType::LIGHT, 2, LV | EXT},
     {DeviceType::LIGHT, 58, MPO},
-    {DeviceType::GATE_OPENER, 0, LV | FAV | EXT},
-    {DeviceType::GATE_OPENER, 58, MPO | FAV},
+    {DeviceType::GATE_OPENER, 0, LV | FAV | PED | EXT},
+    {DeviceType::GATE_OPENER, 58, MPO | FAV | PED},
     {DeviceType::ROLLING_DOOR_OPENER, 0, LV | FAV | EXT},
     {DeviceType::LOCK, 0, EXT},
     {DeviceType::LOCK, 1, EXT},
@@ -214,6 +216,10 @@ TEST(DeviceAcceptsMainParameter, ANamedPositionNeedsItsOwnBit) {
   }
   EXPECT_FALSE(device_accepts_main_parameter(feature::VENT, 0xD800)) << "the favourite is not the ventilation bit";
   EXPECT_FALSE(device_accepts_main_parameter(feature::FAVORITE, 0xD803));
+  EXPECT_TRUE(device_accepts_main_parameter(feature::PARTIAL, 0xD809));
+  EXPECT_TRUE(device_accepts_main_parameter(feature::PEDESTRIAN, 0xD807));
+  EXPECT_FALSE(device_accepts_main_parameter(feature::PEDESTRIAN, 0xD809)) << "each bit owns its own value";
+  EXPECT_FALSE(device_accepts_main_parameter(feature::PARTIAL, 0xD807));
 }
 
 TEST(DeviceAcceptsMainParameter, AnUnknownOrReservedValueIsNeverAccepted) {

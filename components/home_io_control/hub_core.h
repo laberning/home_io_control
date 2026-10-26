@@ -345,7 +345,8 @@ class IOHomeControlComponent : public Component,
   /// obeyed. The "Last 1W Command" diagnostic reports what was *transmitted*, which is the only
   /// half of that the hub can know.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
-  /// @param cmd Named command (STOP, FAVORITE, VENT, FORCE_OPEN).
+  /// @param cmd Named command (STOP, FAVORITE, VENT, FORCE_OPEN); PARTIAL and PEDESTRIAN have no 1W
+  ///        encoding and are not transmitted.
   void send_oneway_command(const std::string &controller_id, CoverCommand cmd) {
     this->op_queue_.enqueue_oneway_command(controller_id, cmd);
   }
@@ -716,10 +717,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired position (0–100).
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
-  /// @brief Queue an async named command (STOP, FAVORITE, VENT, FORCE_OPEN); returns immediately,
-  /// executed in loop().
+  /// @brief Queue an async named command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN);
+  /// returns immediately, executed in loop(). PARTIAL and PEDESTRIAN are experimental.
   ///
-  /// Existing entity/button callers (cover, favorite button, vent button) intentionally ignore
+  /// Existing entity/button callers (cover, favorite, vent, partial and pedestrian buttons) intentionally ignore
   /// the return value — they always target a known, already-registered device. It exists so
   /// force_open_device() can report enqueue rejection distinctly from a queued-but-not-yet-run
   /// command.
@@ -1059,7 +1060,8 @@ class IOHomeControlComponent : public Component,
                               const std::function<bool(const IoDevice &)> &accepts, const char *rejection_profile,
                               const std::function<bool(IoFrame &, const IoDevice &)> &build);
 
-  /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.
+  /// Execute a named device command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN) via the
+  /// authenticated exchange.
   /// A named position (NAMED_POSITIONS) goes out only to a device whose features include its bit.
   /// @param device_id Target device ID.
   /// @param cmd Named command to execute.

@@ -56,6 +56,8 @@ const std::vector<uint8_t> CLOSE_SHORT = {0x01, 0x63, 0xC8, 0x00, 0x00, 0x00};
 const std::vector<uint8_t> STOP_SHORT = {0x01, 0x63, 0xD2, 0x00, 0x00, 0x00};
 const std::vector<uint8_t> FAVORITE_SHORT = {0x01, 0x63, 0xD8, 0x00, 0x00, 0x00};
 const std::vector<uint8_t> VENT_SHORT = {0x01, 0x63, 0xD8, 0x03, 0x00, 0x00};
+const std::vector<uint8_t> PEDESTRIAN_SHORT = {0x01, 0x63, 0xD8, 0x07, 0x00, 0x00};
+const std::vector<uint8_t> PARTIAL_SHORT = {0x01, 0x63, 0xD8, 0x09, 0x00, 0x00};
 
 }  // namespace
 
@@ -96,8 +98,8 @@ TEST(HubDeviceFeatures, GarageOpener5_58SendsOpenCloseAndStopAsTheShortFrame) {
   EXPECT_EQ(first_sent_payload(stop_radio), STOP_SHORT);
 }
 
-TEST(HubDeviceFeatures, GarageOpener5_58RefusesFavouriteAndVentByTheirBits) {
-  for (const CoverCommand command : {CoverCommand::FAVORITE, CoverCommand::VENT}) {
+TEST(HubDeviceFeatures, GarageOpener5_58RefusesFavouriteVentAndPedestrianByTheirBits) {
+  for (const CoverCommand command : {CoverCommand::FAVORITE, CoverCommand::VENT, CoverCommand::PEDESTRIAN}) {
     TestableComponent comp;
     MockRadio radio;
     setup_kind(comp, radio, DeviceType::GARAGE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY);
@@ -163,6 +165,47 @@ TEST(HubDeviceFeatures, AVentPositionIsSentOnlyToAKindWithTheVentBit) {
   setup_kind(shutter, shutter_radio, DeviceType::ROLLER_SHUTTER, 0);
   EXPECT_FALSE(shutter.execute_device_command_("ABC123", CoverCommand::VENT));
   EXPECT_TRUE(shutter_radio.get_sent_data().empty());
+}
+
+// ============================================================================
+// Partial and pedestrian positions (experimental: no public source; a motor without the position
+// refuses it with PARAMETER_UNKNOWN, as the favourite is refused in issue #163)
+// ============================================================================
+
+TEST(HubDeviceFeatures, GarageOpenersSendThePartialPositionAndRefuseThePedestrianPosition) {
+  for (const uint8_t subtype : {uint8_t{0}, SUBTYPE_MAIN_PARAMETER_ONLY}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_kind(comp, radio, DeviceType::GARAGE_OPENER, subtype);
+    comp.execute_device_command_("ABC123", CoverCommand::PARTIAL);
+    EXPECT_EQ(first_sent_payload(radio), PARTIAL_SHORT) << "subtype " << static_cast<int>(subtype);
+  }
+}
+
+TEST(HubDeviceFeatures, GateOpenersSendThePedestrianPositionAndRefuseThePartialPosition) {
+  for (const uint8_t subtype : {uint8_t{0}, SUBTYPE_MAIN_PARAMETER_ONLY}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_kind(comp, radio, DeviceType::GATE_OPENER, subtype);
+    comp.execute_device_command_("ABC123", CoverCommand::PEDESTRIAN);
+    EXPECT_EQ(first_sent_payload(radio), PEDESTRIAN_SHORT) << "subtype " << static_cast<int>(subtype);
+
+    TestableComponent refused;
+    MockRadio refused_radio;
+    setup_kind(refused, refused_radio, DeviceType::GATE_OPENER, subtype);
+    EXPECT_FALSE(refused.execute_device_command_("ABC123", CoverCommand::PARTIAL));
+    EXPECT_TRUE(refused_radio.get_sent_data().empty());
+  }
+}
+
+TEST(HubDeviceFeatures, ARollerShutterRefusesThePartialAndPedestrianPositions) {
+  for (const CoverCommand command : {CoverCommand::PARTIAL, CoverCommand::PEDESTRIAN}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_kind(comp, radio, DeviceType::ROLLER_SHUTTER, 0);
+    EXPECT_FALSE(comp.execute_device_command_("ABC123", command)) << cover_command_name(command);
+    EXPECT_TRUE(radio.get_sent_data().empty()) << cover_command_name(command);
+  }
 }
 
 TEST(HubDeviceFeatures, ARollerShutterKeepsItsSliderAndItsFavourite) {

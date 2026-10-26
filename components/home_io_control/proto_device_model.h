@@ -258,11 +258,15 @@ enum class CoverCommand : uint8_t {
                    ///< and environmental limits (confirmed on real hardware to move correctly;
                    ///< bypassing an active lock is still unconfirmed — see create_force_open()
                    ///< in proto_commands.cpp).
+  PARTIAL = 4,     ///< Move to the partial position (garage openers); experimental.
+                   ///< \todo Confirm on a real garage opener that 0xD809 opens it to a partial position.
+  PEDESTRIAN = 5,  ///< Move to the pedestrian position (gate openers); experimental.
+                   ///< \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position.
 };
 
 /// @brief Get a human-readable name for a CoverCommand.
 /// @param cmd The cover command to name.
-/// @return Null-terminated string such as "STOP", "FAVORITE", or "VENT".
+/// @return Null-terminated string such as "STOP", "FAVORITE", "VENT", "PARTIAL" or "PEDESTRIAN".
 const char *cover_command_name(CoverCommand cmd);
 
 /// @brief What the hub's latest minimum-limitation read says about a rain-protection limit.

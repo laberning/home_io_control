@@ -50,7 +50,7 @@ match.
 | **Sunea SCR 40 io** | — | ✅ Confirmed — open, close, position | Discover & Pair | — | Pergola kit, alongside a White LED Receiver io; keeps working at `sx1262_rx_bandwidth: 156.2`. Heltec V3 / SX1262, issue #143 |
 | **Awning actuator (IO Vertical)** | `vertical_exterior_awning` | ✅ Confirmed for discovery | Discover & Pair | — | Corpus `somfy_awning_discovery_lab_response` |
 | **RS100 IO / RS100 Solar** | `vertical_exterior_awning` / `roller_shutter` | ⚠️ Partial — pairing needs a retried key exchange | Discover & Pair, retried | `low_power: true` | 7 corpus captures including both a success and a key-transfer stall |
-| **MOTO 1000 io garage drive** (sold by Wisniowski) | `garage_opener` | 📣 Reported — Discover & Pair, status, linked remotes, open, close and STOP work; the opener refuses percent positions and the favorite position | Discover & Pair | `io_device_type: garage_opener`, `low_power: true` | Heltec V3 / SX1262, issue #163. The cover shows open, close and stop and no slider (declare `io_subtype: 58`). The regular position frame and a 50 % position are refused with `PARAMETER_UNKNOWN` (corpus `wisniowski_moto1000_exchange_execute_parameter_unknown`, `wisniowski_moto1000_exchange_execute_partial_position_refused`); garage openers get the shorter frame, and no Favorite Position button |
+| **MOTO 1000 io garage drive** (sold by Wisniowski) | `garage_opener` | 📣 Reported — Discover & Pair, status, linked remotes, open, close and STOP work; the opener refuses percent positions and the favorite position | Discover & Pair | `io_device_type: garage_opener`, `low_power: true` | Heltec V3 / SX1262, issue #163. The cover shows open, close and stop and no slider (declare `io_subtype: 58`). The regular position frame and a 50 % position are refused with `PARAMETER_UNKNOWN` (corpus `wisniowski_moto1000_exchange_execute_parameter_unknown`, `wisniowski_moto1000_exchange_execute_partial_position_refused`); garage openers get the shorter frame, and no Favorite Position button; the Partial Position button (experimental, disabled by default) sends a named position the motor may refuse, see [details](configuration/cover.md#partial-and-pedestrian-position-buttons) |
 | **Oximo 40 Solar tubular motor** | `roller_shutter` | 🔍 Traffic captured only | — | `low_power: true` | Corpus `somfy_oximo40_statuspoll_sx1262`, issue #45 |
 | **Sunea IO screen** | `vertical_exterior_awning` | 🔍 Traffic captured only | — | — | Corpus `somfy_awning_exchange_priority_level_sx1276` — a directed priority-level query from a real TaHoma Switch |
 | **Tilt-capable blind/shutter** | tilt-capable cover | ✅ Confirmed for tilt control | — | — | 8 corpus captures |
@@ -169,9 +169,9 @@ device are marked experimental.
 | `0x02` | roller shutter | 1 with adjustable slats, 2 with projection | Cover |
 | `0x03` | vertical exterior awning | | Cover |
 | `0x04` | window opener | 1 with integrated rain sensor | Cover, with a ventilation position |
-| `0x05` | garage opener | 58 open/close only | Cover: percent positions on subtype 0, open / close / stop only on subtype 58; no favorite position (issue #163) |
+| `0x05` | garage opener | 58 open/close only | Cover: percent positions on subtype 0, open / close / stop only on subtype 58; no favorite position (issue #163); Partial Position button (experimental) |
 | `0x06` | light | 1 dimmable RGB (experimental), 2 tunable white (experimental), 58 on/off only | Light; subtypes 1 and 2 control brightness only (experimental) |
-| `0x07` | gate opener | 58 open/close only (experimental) | Cover; subtype 58 shows open / close / stop only (experimental) |
+| `0x07` | gate opener | 58 open/close only (experimental) | Cover; subtype 58 shows open / close / stop only (experimental); Pedestrian Position button (experimental) |
 | `0x08` | rolling door opener | | Cover |
 | `0x09` | lock | 1 window lock (experimental), 2 car controller (experimental) | Lock (experimental); subtype 2 not supported yet |
 | `0x0A` | vertical interior blind | | Cover without tilt (experimental) |
