@@ -250,7 +250,8 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
   auto outcome =
       engine_.listen(spec, context.packet, context.resp, [&](const IoFrame *parsed, const RadioRxPacket &packet) {
         saw_any = true;
-        ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
+        ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len,
+                 radio_()->air_frequency_hz(packet.freq_hz));
         if (parsed == nullptr) {
           ESP_LOGD(TAG, "Key confirm wait: parse failed");
           return ReplyDisposition::IGNORE;
@@ -532,8 +533,8 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
 
     if (disposition == decisions::PairingDiscoverConfirmDisposition::ACK) {
       ESP_LOGI(TAG, "Discover confirm: 0x2D from %s on freq=%" PRIu32 " after %" PRIu32 " ms (try %u/%u)",
-               context.device_id.c_str(), context.packet.freq_hz, millis() - wait_start_ms, try_index,
-               PAIRING_DISCOVER_CONFIRM_TRIES);
+               context.device_id.c_str(), radio_()->air_frequency_hz(context.packet.freq_hz), millis() - wait_start_ms,
+               try_index, PAIRING_DISCOVER_CONFIRM_TRIES);
       result = pairing::DiscoverConfirmResult::ACKED;
       break;
     }
@@ -620,7 +621,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   // known-plaintext/known-ciphertext pair under the system key (see redaction.h). The generic
   // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
   ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%d", context.rx.data_len,
-           context.packet.freq_hz, radio_()->get_last_capture().rssi_dbm);
+           radio_()->air_frequency_hz(context.packet.freq_hz), radio_()->get_last_capture().rssi_dbm);
 
   bool key_ok = transfer_key_and_wait_confirm_(context);
   // Fast-turnaround radios catch the 0x33 through the standard exchange wait inside the helper

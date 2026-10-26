@@ -324,6 +324,21 @@ TEST(RadioBridle, TheChannelIsMappedToItsAirFrequencyButKeptLogicalInTheDriver) 
   EXPECT_EQ(rig.radio.get_current_freq(), FREQ_CH3);
 }
 
+TEST(RadioBridle, LogLinesGetTheAirFrequencyOfAChannel) {
+  Rig rig;
+  rig.start();
+  EXPECT_EQ(rig.radio.air_frequency_hz(FREQ_CH1), 2425000000u);
+  EXPECT_EQ(rig.radio.air_frequency_hz(FREQ_CH2), 2450000000u);
+  EXPECT_EQ(rig.radio.air_frequency_hz(FREQ_CH3), 2475000000u);
+  EXPECT_EQ(rig.radio.air_frequency_hz(2450000000u), 2450000000u)
+      << "a value that is not a channel comes back unchanged";
+}
+
+TEST(RadioDriver, AirFrequencyDefaultsToTheChannelValue) {
+  MockRadio radio;
+  EXPECT_EQ(radio.air_frequency_hz(FREQ_CH2), FREQ_CH2);
+}
+
 TEST(RadioBridle, CcaIsRequestedOnlyWithAThresholdAndTheCapability) {
   {
     Rig rig;
@@ -461,7 +476,7 @@ TEST(RadioBridle, AirTimeEstimateGrowsWithTheCommandsUartTimeAtALowerRate) {
 
 // === Receive ===
 
-TEST(RadioBridle, AReceivedFrameArrivesWithItsLogicalChannelAndCapture) {
+TEST(RadioBridle, AReceivedFrameArrivesWithItsLogicalChannelAndTheCaptureWithItsAirFrequency) {
   Rig rig;
   rig.start();
   listen_on(rig);
@@ -478,7 +493,7 @@ TEST(RadioBridle, AReceivedFrameArrivesWithItsLogicalChannelAndCapture) {
   EXPECT_TRUE(cap.rx_done);
   EXPECT_FALSE(cap.crc_error);
   EXPECT_EQ(cap.rssi_dbm, -71);
-  EXPECT_EQ(cap.freq_hz, FREQ_CH3);
+  EXPECT_EQ(cap.freq_hz, 2475000000u);  // what the io_capture log line prints
   EXPECT_EQ(cap.frame_len, 12);
   EXPECT_EQ(cap.reported_len, p.size());
 }

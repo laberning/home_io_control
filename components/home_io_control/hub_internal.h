@@ -270,17 +270,18 @@ inline void normalize_stopped_state(IoDevice &dev) {
 
 /// @brief Update per-device link-health stats from the radio's last capture.
 ///
-/// Called for every frame whose `src` is a registered device, regardless of command type or
+/// Called for the frames whose `src` is a registered device, regardless of command type or
 /// whether that command's own payload was well-formed — any such frame is real evidence the
 /// device is reachable and at this signal strength. The call sites cover every way such a frame
 /// arrives: update_device_status_() (inbound status path), exchange_and_record_()'s
 /// explicit-refusal branch (a CMD_ERROR_RESP reply to our own request, which returns before
 /// reaching the status path), and its failure branch when a 0x3C challenge was seen (the device
-/// transmitted, even though the exchange did not complete). Always stamps `last_seen_ms`; only
-/// touches the RSSI fields when `radio` is non-null and its last capture is valid (real drivers
-/// always populate a valid capture before a frame is handed off, but tests calling this path
-/// directly without a radio, or without exercising RX through it, must not crash or fabricate
-/// an RSSI).
+/// transmitted, even though the exchange did not complete), and handle_overheard_status_() (a status
+/// frame the device sent another controller; its content is never applied, ADR 0022). A device's
+/// 0x3C/0x3D in another controller's exchange is dropped before any of these and does not stamp.
+/// Always stamps `last_seen_ms`; only touches the RSSI fields when `radio` is non-null and its last capture is valid
+/// (real drivers always populate a valid capture before a frame is handed off, but tests calling this path directly
+/// without a radio, or without exercising RX through it, must not crash or fabricate an RSSI).
 /// @param dev Device that sent the frame.
 /// @param radio Radio driver to read the last capture from; may be nullptr.
 inline void update_link_health(IoDevice &dev, RadioDriver *radio) {

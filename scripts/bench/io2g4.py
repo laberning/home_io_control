@@ -6,7 +6,8 @@
     io2g4.py execute --port P --dst NODE (--open | --close | --stop | --position PCT)
                      [--src NODE] [--key-file FILE] [--tries N] [--answer-delay-ms MS] [--lp-on-response]
                      [--wake long|short] [--freq HZ] [--trace FILE]
-    io2g4.py respond --port P --node NODE [--key-file FILE] [--seconds N] [--answer-window-ms MS]
+    io2g4.py respond --port P --node NODE [--key-file FILE] [--seconds N] [--answer-window-ms MS] [--scan]
+    (every command also takes --tx-power-dbm DBM)
                      [--state resting|moving] [--position PCT] [--travel-s SECONDS] [--freq HZ] [--trace FILE]
 
 The commands send three kinds of frame between them, and nothing else: no pairing, no key transfer.
@@ -41,6 +42,8 @@ The commands send three kinds of frame between them, and nothing else: no pairin
   It is for a bench with two boards and for the tests of this tool. It prints, for every status read, the time from the end of the request to the start of the reply (the bench's, not the blind's: a blind needs about 2.8 ms), and for every frame addressed to it, the wake frames that
   preceded it and its CTRL1, and for every 0x3D the time from the end of its 0x3C to the start of the 0x3D;
   `--answer-window-ms W` ignores a 0x3D that starts later than that, as a real device would.
+  `--scan` listens on all three channels (the idle scan a 2.4 GHz host runs) and answers on the channel each
+  request came in on, so a host's retries on another channel reach it; without it the stand-in hears `--freq` only.
 
 Every command refuses a co-processor of another protocol version, and a long wait sends a `get_stats` at least every 25 s so
 the co-processor's host link is not taken over (Bridle specification §2.1, §7).
@@ -479,8 +482,21 @@ def is_wake_frame(fields: Mapping) -> bool:
     return fields["crc"] == "ok" and len(bytes.fromhex(fields["payload"])) == WAKE_FRAME_BYTES + air.FCS_BYTES
 
 
+# The idle scan a 2.4 GHz host runs (spec vector `rx_scan_io_idle`): all three channels, 1.5 ms each, held 8 ms on
+# a frame start.
+SCAN_FREQS_HZ = (bridle.CH15, bridle.CH20, bridle.CH25)
+SCAN_DWELL_US, SCAN_HOLD_US = 1500, 8000
+# How long a scanning stand-in stays on the channel of its last transmission before it scans again: long enough for
+# the rest of an exchange (the 0x3D comes a few ms after the 0x3C), short against the hub's retry gap.
+RESCAN_AFTER_S = 0.1
+
+
 class Responder:
     """A stand-in for a device with the node id `node` and the system key `key`.
+
+    With `scan`, it listens on all three channels as a real device does (Kite's `rx_scan`) and answers on the
+    channel the request came in on, so a host's retries on another channel reach it; after its own transmission it
+    stays on that channel for RESCAN_AFTER_S, then scans again. Without, it listens and answers on `freq_hz` only.
 
     Answers a status read with a 0x04; challenges an EXECUTE with a random 0x3C and acknowledges a correct
     0x3D with a 0x04, and stays silent for a wrong one. With `answer_window_ms`, a 0x3D that starts later than
@@ -489,8 +505,12 @@ class Responder:
 
     def __init__(self, peer: conformance.Peer, radio: dict, freq_hz: int, node: bytes, key: bytes, out,
                  random_bytes=os.urandom, answer_window_ms: float | None = None, state: str = "resting",
-                 position_pct: float = DEFAULT_RESPONDER_POSITION, travel_s: float = DEFAULT_TRAVEL_S):
+                 position_pct: float = DEFAULT_RESPONDER_POSITION, travel_s: float = DEFAULT_TRAVEL_S,
+                 scan: bool = False):
         self.peer, self.radio, self.freq_hz, self.node, self.key, self.out = peer, radio, freq_hz, node, key, out
+        self.scan = scan
+        self.reply_freq_hz = freq_hz  # the channel the last request to us came in on (scan) or `freq_hz`
+        self.rescan_at: float | None = None  # the host's clock when a scanning stand-in resumes its scan
         self.random_bytes, self.answer_window_ms = random_bytes, answer_window_ms
         self.state, self.position_pct = state, position_pct  # what the hub's status reads are answered with
         self.travel_s = travel_s  # a full travel, for a moving state
@@ -501,9 +521,17 @@ class Responder:
         self.challenge_end: dict[bytes, int] = {}  # controller -> co-processor time our 0x3C ended
         self.wakes = 0  # wake frames heard since the last io frame
 
+    def start_scan(self) -> None:
+        """Scan the three channels (a scanning stand-in only); the ack is not waited for."""
+        self.rescan_at = None
+        self.peer.send("rx_scan", {"radio": self.radio["radio"], "dwell_us": SCAN_DWELL_US, "hold_us": SCAN_HOLD_US,
+                                   "freqs_hz": list(SCAN_FREQS_HZ)})
+
     def step(self, wait_s: float = 0.0) -> None:
         """Answer what has arrived, after waiting at most `wait_s` for something to."""
         benchkit.keep_alive(self.peer)  # a long listen must not lose the host link (spec §7)
+        if self.scan and self.rescan_at is not None and self.peer.clock() >= self.rescan_at:
+            self.start_scan()
         first = self.peer.receive(wait_s) if wait_s else None
         for message in ([first] if first else []) + self.peer.take():
             if message.name == "tx_done" and message.fields["cmd_seq"] in self.challenge_seq:
@@ -522,7 +550,11 @@ class Responder:
                 continue
             wakes, self.wakes = self.wakes, 0
             if frame.dst == self.node:
-                print(f"heard {frame.cmd:#04x} from {frame.src.hex().upper()}: CTRL1 {frame.raw[1]:#04x}, "
+                channel = ""
+                if self.scan:
+                    self.reply_freq_hz = message.fields.get("freq_hz", self.freq_hz)
+                    channel = f" on {self.reply_freq_hz} Hz"
+                print(f"heard {frame.cmd:#04x} from {frame.src.hex().upper()}{channel}: CTRL1 {frame.raw[1]:#04x}, "
                       f"after {wakes} wake frames", file=self.out)
                 self.handle(frame)
 
@@ -567,11 +599,15 @@ class Responder:
     def send(self, cmd: int, dst: bytes, data: bytes, end: bool = False) -> int:
         """Transmit a frame without waiting for it (`step()` goes on taking in events); returns the command's seq."""
         frame = build_frame(cmd, dst, self.node, data, end=end)
-        return self.peer.send("tx", tx_fields(self.radio, self.freq_hz, frame))
+        if self.scan:
+            self.rescan_at = self.peer.clock() + RESCAN_AFTER_S
+        return self.peer.send("tx", tx_fields(self.radio, self.reply_freq_hz, frame))
 
     def run(self, seconds: float) -> None:
         """Serve until `seconds` have passed (0: until Ctrl-C)."""
         deadline = self.peer.clock() + seconds if seconds else None
+        if self.scan:
+            self.start_scan()
         try:
             while deadline is None or self.peer.clock() < deadline:
                 self.step(0.05)
@@ -665,6 +701,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--freq", type=int, default=bridle.CH20, help="Hz, a channel centre (default channel 20)")
         p.add_argument("--sfd", type=lambda s: int(s, 0), default=DEFAULT_SFD, help="start-of-frame delimiter (default 0x56)")
         p.add_argument("--key", dest="refused_key", help=argparse.SUPPRESS)  # refused, see main()
+        p.add_argument("--tx-power-dbm", type=int, metavar="DBM",
+                       help="the radio's TX power, set after the spec vector's (default: the vector's 8 dBm); a "
+                            "lower value stands in for a distant device without moving the board")
     poll_parser, execute_parser, respond_parser = sub.choices["poll"], sub.choices["execute"], sub.choices["respond"]
     poll_parser.add_argument("--dst", type=node_id, required=True, help="the device's node id (6 hex digits)")
     poll_parser.add_argument("--src", type=node_id, required=True,
@@ -702,10 +741,23 @@ def build_parser() -> argparse.ArgumentParser:
                                 help=f"how long a full travel takes, for --state moving (default {DEFAULT_TRAVEL_S:g})")
     respond_parser.add_argument("--answer-window-ms", type=milliseconds, metavar="MS",
                                 help="ignore an answer that starts later than this after the challenge ended (default: no limit)")
+    respond_parser.add_argument("--scan", action="store_true",
+                                help="listen on all three channels and answer on the request's (a host's retries on "
+                                     "other channels then reach the stand-in); default: --freq only")
     respond_parser.add_argument("--seconds", type=float, default=0.0, help="stop after this long (default: Ctrl-C)")
     for p in (execute_parser, respond_parser):
         p.add_argument("--key-file", type=Path, help=f"a file holding the system key (else the variable {KEY_ENV})")
     return parser
+
+
+def set_tx_power(peer: conformance.Peer, radio: dict, dbm: int, out) -> None:
+    """Set the radio's TX power and print what the co-processor applied (it clamps to the radio's range)."""
+    params = [{"id": "tx_power_dbm", "value": dbm}]
+    ack, errors = peer.request("set_params", {"radio": radio["radio"], "params": params}, "params_ack")
+    if ack is None or errors:
+        raise BenchError(f"set_params tx_power_dbm refused: {[e.fields for e in errors] or 'no answer'}")
+    applied = next((p["value"] for p in ack.fields.get("applied", []) if p.get("id") == "tx_power_dbm"), dbm)
+    print(f"TX power {applied} dBm (asked {dbm})", file=out)
 
 
 def run_command(peer: conformance.Peer, args: argparse.Namespace, key: bytes | None, out) -> int:
@@ -716,13 +768,16 @@ def run_command(peer: conformance.Peer, args: argparse.Namespace, key: bytes | N
     listening = args.command == "respond"
     benchkit.set_up(peer, radio, args.sfd, args.freq, listen=listening,
                     event_mask={"crc_error_rx": True, "frame_start": listening})
+    if args.tx_power_dbm is not None:
+        set_tx_power(peer, radio, args.tx_power_dbm, out)
     if args.command == "poll":
         return poll(peer, radio, args, out)
     if args.command == "execute":
         return execute(peer, radio, args, key, out)
-    print(f"answering as {args.node.hex().upper()} on {args.freq} Hz; Ctrl-C to stop", file=out)
+    where = "on 2425/2450/2475 MHz (scanning)" if args.scan else f"on {args.freq} Hz"
+    print(f"answering as {args.node.hex().upper()} {where}; Ctrl-C to stop", file=out)
     Responder(peer, radio, args.freq, args.node, key, out, answer_window_ms=args.answer_window_ms,
-              state=args.state, position_pct=args.position, travel_s=args.travel_s).run(args.seconds)
+              state=args.state, position_pct=args.position, travel_s=args.travel_s, scan=args.scan).run(args.seconds)
     return EXIT_OK
 
 

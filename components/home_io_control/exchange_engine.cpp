@@ -207,8 +207,8 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
     result = radio->send_packet(buf, len, tx_config);
     if (result.status != TxResult::Status::CHANNEL_BUSY)
       break;
-    ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm on %" PRIu32 " Hz), retry %u/%u", result.cca_level_dbm, freq, lbt + 1,
-             this->tuning_->lbt_max_retries);
+    ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm on %" PRIu32 " Hz), retry %u/%u", result.cca_level_dbm,
+             radio->air_frequency_hz(freq), lbt + 1, this->tuning_->lbt_max_retries);
     this->counters_.lbt_retries++;
     if (this->transmit_observer_ != nullptr)
       this->transmit_observer_->on_lbt_defer(result.cca_level_dbm);
@@ -304,14 +304,14 @@ bool frame_is_challenge_response(const IoFrame &frame) { return frame.cmd == CMD
 /// fixes: a device that never transmitted needs a longer wait or a link check, while one that
 /// transmits noise this layer can't decode needs the RX bandwidth or framing looked at. Redacted
 /// through the same helper as every other frame log, so an unparsable frame can't leak key material
-/// by being unrecognisable (see ADR 0011).
-void log_unparsable_frame(const char *stage, int tries, const RadioRxPacket &packet) {
+/// by being unrecognisable (see ADR 0011). `radio` names the frequency on air (RadioDriver::air_frequency_hz()).
+void log_unparsable_frame(const RadioDriver *radio, const char *stage, int tries, const RadioRxPacket &packet) {
   // The *fact* that a frame failed to parse stays unconditional — it is a real fault worth
   // surfacing to someone who never enables a debug flag. The raw bytes only help someone already
   // debugging the PHY, and a noisy channel can produce several of these a minute, so they sit
   // behind the frame-log flag with the rest of that detail.
   ESP_LOGW(TAG, "%s try=%d: %u bytes did not parse as a frame on %" PRIu32 " Hz", stage, tries, packet.len,
-           packet.freq_hz);
+           radio->air_frequency_hz(packet.freq_hz));
 #ifdef IOHOME_FRAME_LOG
   char hex[FRAME_LOG_HEX_BUFFER_SIZE];
   render_frame_hex_redacted(packet.data, packet.len, hex, sizeof(hex));
@@ -589,7 +589,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
     if (parsed == nullptr) {
       this->record_debug("first_parse_fail", ctx.try_index, false);
       this->counters_.parse_failures++;
-      log_unparsable_frame("Unparsable first response", ctx.try_index, pkt);
+      log_unparsable_frame(*this->radio_ptr_, "Unparsable first response", ctx.try_index, pkt);
       return ReplyDisposition::IGNORE;
     }
     disp = decisions::classify_exchange_first_response(request, *parsed);
@@ -716,7 +716,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
     if (parsed == nullptr) {
       this->record_debug("final_parse_fail", ctx.try_index, true);
       this->counters_.parse_failures++;
-      log_unparsable_frame("Unparsable final response", ctx.try_index, pkt);
+      log_unparsable_frame(*this->radio_ptr_, "Unparsable final response", ctx.try_index, pkt);
       return ReplyDisposition::IGNORE;
     }
     if (is_valid_final_response(*parsed, request))

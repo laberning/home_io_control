@@ -888,6 +888,16 @@ class IOHomeControlComponent : public Component,
   /// @param frame The parsed frame.
   void log_heard_controller_(const IoFrame &frame);
 
+  /// Handle a status frame (CMD_PRIVATE_RESP, or a CMD_STATUS_UPDATE not addressed to us) that one of our
+  /// devices sent to another controller, or a CMD_PRIVATE_RESP to us outside an exchange. Its content is never applied
+  /// (ADR 0022), but the frame is real evidence the device is on air, so it stamps link health (last contact, RSSI).
+  /// Logged at INFO once per device per decisions::HeardSourceLog::INTERVAL_MS, otherwise at DEBUG: where remotes are
+  /// 2W (every 2.4 GHz VELUX remote, a TaHoma or KLF 200 sharing a device) this happens on every press and every
+  /// gateway poll, so it is normal traffic rather than a fault. A reply to us is logged at DEBUG only.
+  /// @param frame The parsed frame.
+  /// @param len Serialized length, for the DEBUG line.
+  void handle_overheard_status_(const IoFrame &frame, uint8_t len);
+
   /// True while the key-extraction responder is mid-attempt and still within its bounded CH2-hold
   /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
   /// — kept on the hub because defer_background_poll_() and tests/hub/hub_core_test.cpp reach it here,
@@ -1293,8 +1303,10 @@ class IOHomeControlComponent : public Component,
   /// millis() when the last pairing attempt ended; 0 before the first one (see queue_discover_and_pair()).
   uint32_t last_pairing_end_ms_{0};
   decisions::HeardSourceLog heard_sources_;  ///< Which overheard request sources log_heard_controller_() names.
-  bool radio_test_mode_{false};              ///< When true, loop() is suspended for loopback testing.
-  TuningConfig tuning_{};                    ///< Runtime tuning overrides.
+  /// Which of our devices log_overheard_status_() names when they answer another controller.
+  decisions::HeardSourceLog overheard_status_sources_;
+  bool radio_test_mode_{false};  ///< When true, loop() is suspended for loopback testing.
+  TuningConfig tuning_{};        ///< Runtime tuning overrides.
   DeviceRegistry registry_;
   /// 1W sender node IDs (remotes or sensors) allowed to fire the sender HA event
   /// (`add_exposed_sender`). Config-time list (populated once from YAML), not a per-frame allocation.

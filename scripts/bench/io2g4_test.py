@@ -207,6 +207,99 @@ def io_commands_sent(board) -> list[int]:
     return cmds
 
 
+class TxPower(unittest.TestCase):
+    def test_a_lower_tx_power_is_set_after_the_vector_and_reported(self):
+        world = fake_world.World()
+        stand_in(world)
+        code, out, err, _ = _run(world, "poll", "--dst", DEVICE.hex(), "--src", "82E900", "--repeat", "1",
+                                 "--tx-power-dbm", "-11")
+        self.assertEqual((code, err), (io2g4.EXIT_OK, ""), out)
+        powers = [p["value"] for name, fields in world.dut.received if name == "set_params"
+                  for p in fields["params"] if p["id"] == "tx_power_dbm"]
+        self.assertEqual(powers[-1], -11, powers)
+        self.assertIn("TX power -12 dBm (asked -11)", out, "the radio's step, as the co-processor applied it")
+
+    def test_without_the_option_only_the_vectors_power_is_sent(self):
+        world = fake_world.World()
+        stand_in(world)
+        _, out, _, _ = _run(world, "poll", "--dst", DEVICE.hex(), "--src", "82E900", "--repeat", "1")
+        powers = [p["value"] for name, fields in world.dut.received if name == "set_params"
+                  for p in fields["params"] if p["id"] == "tx_power_dbm"]
+        self.assertEqual(powers, [8])
+        self.assertNotIn("TX power", out)
+
+
+class FakeLink:
+    """Just enough of a conformance.Peer for the Responder: records what is sent, serves queued messages."""
+
+    def __init__(self):
+        self.now, self.sent, self.queue, self.last_command_at, self.seq = 0.0, [], [], 0.0, 0
+
+    def clock(self):
+        return self.now
+
+    def send(self, name, fields, seq=None):
+        self.seq += 1
+        self.sent.append((name, fields))
+        self.last_command_at = self.now
+        return self.seq
+
+    def take(self):
+        out, self.queue = self.queue, []
+        return out
+
+    def receive(self, wait_s):
+        return None
+
+
+def rx_message(freq_hz, frame):
+    """An `rx` event carrying the io `frame` (as build_frame() returns it) on `freq_hz`."""
+    payload = io2g4.psdu_of(frame) + b"\x00\x00"  # the FCS; `crc` below says it was good
+    fields = {"radio": 0, "t_us": 1000, "freq_hz": freq_hz, "rssi_dbm": -60, "lqi": 0, "crc": "ok",
+              "payload": payload.hex()}
+    return conformance.Message("rx", 0, fields, 0.0)
+
+
+class Scan(unittest.TestCase):
+    def setUp(self):
+        self.link = FakeLink()
+        self.device = io2g4.Responder(self.link, {"radio": 0}, bridle.CH20, DEVICE, KEY, io.StringIO(), scan=True)
+
+    def test_a_scanning_stand_in_starts_with_the_hosts_idle_scan(self):
+        self.device.start_scan()
+        name, fields = self.link.sent[-1]
+        self.assertEqual(name, "rx_scan")
+        self.assertEqual((fields["dwell_us"], fields["hold_us"], fields["freqs_hz"]),
+                         (1500, 8000, [bridle.CH15, bridle.CH20, bridle.CH25]))
+
+    def test_it_answers_on_the_channel_the_request_came_in_on(self):
+        request = io2g4.status_request(DEVICE, bytes.fromhex("BE0001"), hub=True)
+        self.link.queue.append(rx_message(bridle.CH25, request))
+        self.device.step()
+        tx = [fields for name, fields in self.link.sent if name == "tx"]
+        self.assertEqual(len(tx), 1)
+        self.assertEqual(tx[0]["freq_hz"], bridle.CH25)
+
+    def test_after_its_own_transmission_it_scans_again_once_the_exchange_had_time(self):
+        request = io2g4.status_request(DEVICE, bytes.fromhex("BE0001"), hub=True)
+        self.link.queue.append(rx_message(bridle.CH15, request))
+        self.device.step()
+        self.link.now += io2g4.RESCAN_AFTER_S / 2
+        self.device.step()
+        self.assertNotIn("rx_scan", [name for name, _ in self.link.sent], "too early: the exchange may go on")
+        self.link.now += io2g4.RESCAN_AFTER_S
+        self.device.step()
+        self.assertEqual([name for name, _ in self.link.sent].count("rx_scan"), 1)
+
+    def test_without_scan_it_answers_on_its_frequency(self):
+        device = io2g4.Responder(self.link, {"radio": 0}, bridle.CH20, DEVICE, KEY, io.StringIO())
+        request = io2g4.status_request(DEVICE, bytes.fromhex("BE0001"), hub=True)
+        self.link.queue.append(rx_message(bridle.CH25, request))
+        device.step()
+        tx = [fields for name, fields in self.link.sent if name == "tx"]
+        self.assertEqual(tx[0]["freq_hz"], bridle.CH20)
+
+
 class Poll(unittest.TestCase):
     ARGS = ("poll", "--dst", DEVICE.hex(), "--src", "82E900")
 

@@ -147,6 +147,9 @@ class RadioBridle : public RadioDriver {
   /// Records the frequency of an idle radio. A receiving radio gets an `rx_on` for a new frequency; a scanning
   /// one gets it for any, which ends the scan.
   void change_frequency(uint32_t freq_hz) override;
+  /// The band profile's frequency for one of the hub's channels (2425/2450/2475 MHz on `io_2g4`); any
+  /// other value comes back unchanged.
+  [[nodiscard]] uint32_t air_frequency_hz(uint32_t channel_hz) const override;
   /// `rx_on` on the current frequency; ends a scan.
   void set_mode_rx() override;
   /// `idle`; a frame being received is dropped without an `rx_abort`.

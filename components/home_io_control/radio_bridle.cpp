@@ -683,8 +683,10 @@ bool RadioBridle::decode_entry_(const RxEntry &entry, RadioRxPacket &packet) {
   uint32_t const freq = logical != 0 ? logical : entry.freq_hz;
   uint8_t frame[RADIO_PACKET_BUFFER_SIZE];
   UnwrapResult const result = this->phy_.unwrap(entry.data, entry.len, entry.crc, frame, sizeof(frame));
+  // The packet carries the logical channel the hub works with; the capture, which only logs read, keeps
+  // the frequency the frame was received on, so a 2.4 GHz frame never logs as 868 MHz.
   auto capture = [&](const uint8_t *io_frame, uint8_t io_len) {
-    this->populate_capture_base_(false, freq, entry.rssi_dbm, entry.data,
+    this->populate_capture_base_(false, entry.freq_hz, entry.rssi_dbm, entry.data,
                                  std::min<uint8_t>(entry.len, RADIO_PACKET_BUFFER_SIZE), io_frame, io_len);
     this->last_capture_.rx_done = true;
     this->last_capture_.reported_len = entry.len;
@@ -789,6 +791,11 @@ bool RadioBridle::reception_in_progress() {
 }
 
 // === Tuning and modes ===
+
+uint32_t RadioBridle::air_frequency_hz(uint32_t channel_hz) const {
+  bool const is_channel = channel_hz == FREQ_CH1 || channel_hz == FREQ_CH2 || channel_hz == FREQ_CH3;
+  return is_channel ? this->phy_.air_freq_hz(channel_hz) : channel_hz;
+}
 
 void RadioBridle::change_frequency(uint32_t freq_hz) {
   bool const changed = freq_hz != this->current_freq_;

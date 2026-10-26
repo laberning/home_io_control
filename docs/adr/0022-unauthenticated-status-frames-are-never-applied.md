@@ -52,10 +52,18 @@ The third option. The frame's content is never applied, and nothing is scheduled
 
 ```cpp
 if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE) {
-  detail::log_frame_issue(this, "rx", "unauthenticated_status_ignored", frame, packet.len);
+  this->handle_overheard_status_(frame, packet.len);
   return;
 }
 ```
+
+`handle_overheard_status_()` applies none of the frame's content. For a registered device it stamps
+link health (last contact and RSSI), which describe the frame's reception rather than what it
+claims, and it logs the frame at INFO once per device per ten minutes and at DEBUG otherwise. Where
+remotes are two-way (every VELUX remote on 2.4 GHz, a TaHoma or KLF 200 sharing a device on 868 MHz)
+each remote press and each gateway poll draws such frames, so they are normal traffic, not a fault.
+The device's state still comes from the hub's own poll, which the remote's request already
+scheduled through the remote-activity branch.
 
 ## Consequences
 
@@ -71,6 +79,9 @@ if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE) {
 - The cost lands entirely on the narrow multi-controller-sharing-a-device scenario: this hub's
   own view of a shared device's position now only updates via its own regular, authenticated
   polling cadence, not instantly from overhearing another controller's exchange.
+- A spoofed frame can make a device's last contact and RSSI look fresh. Neither feeds a decision
+  (the wake-up preamble choice reads only moving evidence), and a replayed capture could do the
+  same to any receiver, so these values were never proof of life.
 - Regression-pinned by `HubStatus.UnauthenticatedForeign{PrivateResponse,StatusUpdate}DoesNotUpdateDeviceState`
   (hub_status_test.cpp) — both verified to fail against the prior code before this change landed.
 - `authenticate_request_()` remains exactly as expensive and exactly as used as before — this

@@ -394,6 +394,15 @@ class RadioDriver {
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
 
+  /// @brief The frequency on air for one of the hub's channels, for log lines.
+  ///
+  /// The hub names its three channels by the FREQ_CH1 … FREQ_CH3 values. A driver whose band puts
+  /// them elsewhere on air overrides this so that a log line shows where a frame really went; the
+  /// hub never tunes by it. The default returns the value unchanged.
+  /// @param channel_hz One of the hub's channel values (anything else comes back unchanged).
+  /// @return The frequency on air in Hz.
+  [[nodiscard]] virtual uint32_t air_frequency_hz(uint32_t channel_hz) const { return channel_hz; }
+
   /// Transmit a bench test signal for `duration_ms` and return to standby. For measurements a frame cannot
   /// give (a bare carrier, a preamble of a known length): never called by the hub itself, only by a
   /// bench configuration that has set `set_radio_test_mode(true)`. Blocks for the duration. The default

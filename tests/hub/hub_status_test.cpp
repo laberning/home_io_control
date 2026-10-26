@@ -1371,6 +1371,90 @@ TEST(HubStatus, UnauthenticatedForeignStatusUpdateDoesNotUpdateDeviceState) {
   EXPECT_TRUE(dev->is_stopped) << "unauthenticated foreign status update must not change is_stopped from its default";
 }
 
+// An overheard status frame is not applied, but it is evidence the device is on air: it stamps link
+// health, and its log line goes through its own once-per-interval limiter (INFO once, then DEBUG), since
+// where remotes are 2W every remote press draws several of them.
+
+namespace {
+
+/// A CMD_PRIVATE_RESP from the registered blind 115DD1 to the remote 4D84A6, as overheard on 2.4 GHz.
+IoFrame overheard_blind_reply() {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);  // 2W, end frame
+  const uint8_t src[3] = {0x11, 0x5D, 0xD1};
+  const uint8_t dst[3] = {0x4D, 0x84, 0xA6};
+  set_src(f, src);
+  set_dst(f, dst);
+  const uint8_t payload[6] = {0x05, 0x60, 0x1D, 0xEC, 0x00, 0x00};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+  return f;
+}
+
+}  // namespace
+
+TEST(HubStatus, AnOverheardStatusReplyStampsLinkHealthButNotState) {
+  esphome::test_clock::ManualClock clock;
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.add_device("115DD1");
+  radio.set_last_capture_rssi(-84);
+
+  RadioRxPacket pkt = make_rx_packet(overheard_blind_reply());
+  ASSERT_GT(pkt.len, 0);
+  comp.process_received_packet_(pkt);
+
+  auto *dev = comp.get_device("115DD1");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->last_seen_ms, esphome::test_clock::peek_ms()) << "an overheard reply is a sign of life";
+  EXPECT_EQ(dev->last_rssi_dbm, -84);
+  EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "its content is still never applied (ADR 0022)";
+}
+
+TEST(HubStatus, AnOverheardStatusReplyTakesTheInfoLineOncePerDevice) {
+  esphome::test_clock::ManualClock clock;
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.add_device("115DD1");
+  const uint8_t blind[3] = {0x11, 0x5D, 0xD1};
+
+  RadioRxPacket pkt = make_rx_packet(overheard_blind_reply());
+  comp.process_received_packet_(pkt);
+  EXPECT_FALSE(comp.overheard_status_sources_.should_log(blind, esphome::test_clock::peek_ms()))
+      << "the first overheard reply used the device's INFO line; the next ones log at DEBUG";
+}
+
+TEST(HubStatus, AStatusReplyFromAnUnknownDeviceIsNotNamedAtInfo) {
+  esphome::test_clock::ManualClock clock;
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  const uint8_t blind[3] = {0x11, 0x5D, 0xD1};
+
+  RadioRxPacket pkt = make_rx_packet(overheard_blind_reply());
+  comp.process_received_packet_(pkt);
+  EXPECT_TRUE(comp.overheard_status_sources_.should_log(blind, esphome::test_clock::peek_ms()))
+      << "a neighbour's device is not ours to report";
+}
+
+TEST(HubStatus, ALateReplyToUsDoesNotTakeTheOverheardInfoLine) {
+  esphome::test_clock::ManualClock clock;
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.add_device("115DD1");
+  const uint8_t blind[3] = {0x11, 0x5D, 0xD1};
+
+  IoFrame f = overheard_blind_reply();
+  set_dst(f, comp.node_id_);
+  RadioRxPacket pkt = make_rx_packet(f);
+  comp.process_received_packet_(pkt);
+  EXPECT_NE(comp.get_device("115DD1")->last_seen_ms, 0u);
+  EXPECT_TRUE(comp.overheard_status_sources_.should_log(blind, esphome::test_clock::peek_ms()))
+      << "a reply addressed to us is not 'another controller'";
+}
+
 // ============================================================================
 // Derived rain limitation — dev.limited_by_rain, from the status replies a VELUX window sends
 // (issue #98). The payloads are the dry / rain-closing / rain-at-rest replies a reporter pasted
