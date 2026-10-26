@@ -213,7 +213,6 @@ This example is a cover — see [Configuration](configuration/index.md) for the 
 cover:
   - platform: home_io_control
     name: "Patio Awning"
-    device_class: awning        # from the log
     io_device_id: "FEEB1E"      # from the log
     io_device_type: "vertical_exterior_awning"    # from the log
     io_subtype: 0               # from the log

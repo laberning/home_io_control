@@ -355,6 +355,47 @@ def cover_named_position_buttons_follow_the_declared_kind():
     assert not buttons(types["roller_shutter"]) & {"PARTIAL", "PEDESTRIAN"}
 
 
+@case()
+def cover_gets_its_kinds_default_device_class():
+    """A declared kind gets its Home Assistant class unless the YAML sets one (even ""); a cover with
+    no declared type, or a kind with no default, gets none. The table is checked against the cover
+    kinds, ESPHome's classes and the table on the cover docs page."""
+    import re
+    from esphome.const import CONF_DEVICE_CLASS
+    from esphome.components.cover import DEVICE_CLASSES
+    from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    types = v.DEVICE_TYPE_OPTIONS
+
+    def classed(device_type=None, **extra):
+        cfg = dict(extra)
+        if device_type is not None:
+            cfg["io_device_type"] = device_type
+        return c._default_device_class(cfg).get(CONF_DEVICE_CLASS)
+
+    assert classed(types["garage_opener"]) == "garage"
+    assert classed(types["garage_opener"], device_class="door") == "door", "an explicit class wins"
+    assert classed(types["garage_opener"], device_class="") == "", "an explicit empty class is kept"
+    assert classed() is None, "no declared type, no class"
+    assert classed(types["bioclimatic_pergola"]) is None
+    assert classed(0x14) is None, "a raw type with no name has no default"
+
+    for kind, device_class in v.DEFAULT_COVER_DEVICE_CLASS.items():
+        assert kind in types, kind
+        assert v.DEVICE_FEATURES.get(kind, 0) & v.FEATURE_LEVELS, f"{kind} is not a cover kind"
+        assert device_class in DEVICE_CLASSES, device_class
+
+    # The docs table is the same mapping, one row per class with the kinds that share it.
+    page = (REPO / "docs" / "configuration" / "cover.md").read_text(encoding="utf-8")
+    section = page.split("## Home Assistant device class", 1)[1].split("\n## ", 1)[0]
+    documented = {}
+    for kinds, device_class in re.findall(r"^\|\s*(`[^|]+`)\s*\|\s*`([a-z]+)`\s*\|$", section, re.M):
+        for kind in re.findall(r"`([a-z_]+)`", kinds):
+            documented[kind] = device_class
+    assert documented == v.DEFAULT_COVER_DEVICE_CLASS, "docs/configuration/cover.md device class table"
+
+
 @case("platform_common.require_feature")
 def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
     """`silent:` needs a kind that takes a travel-speed parameter; `dimmable: true` needs a light that

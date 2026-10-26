@@ -9,7 +9,6 @@ cover:
   - platform: home_io_control
     id: patio_awning
     name: "Patio Awning"
-    device_class: awning
     io_device_id: "FEEB1E"
     io_device_type: "vertical_exterior_awning"
     invert_position: true
@@ -31,7 +30,27 @@ The keys every entity platform shares — `name`, `io_device_id`, `io_device_typ
 - `silent` (Optional): Move at the manufacturer app's "silent operation" speed — slower and quieter. Only a kind that takes a travel-speed parameter accepts it: config validation rejects `silent:` on garage openers, on interior venetian blinds, on dual roller shutters and on any device of subtype 58, and its message says to remove the key. On an interior venetian blind the first functional parameter is the slat orientation and on a dual roller shutter it is the upper curtain, so neither takes a speed there (experimental, see [Interior venetian blinds and dual roller shutters](cover.md#interior-venetian-blinds-and-dual-roller-shutters)). It selects the protocol's slow travel profile on position moves and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and ventilation and tilt because nothing has been captured for them yet — they keep their existing payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key also generates a `<Cover Name> Silent Operation` switch so the profile can be changed at runtime; the YAML value is the boot state. Omit the key entirely and no switch is created.
 - `rain_sensor_poll_interval` (Optional): Ask the device how far its own rain protection lets it open, once per interval, and report the answer as a binary sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Declaring it generates a `<Cover Name> Rain sensor` binary sensor. Validated on VELUX windows with a wired rain sensor; a Somfy Sunea awning answers the request with a reply this project cannot read as an opening limit, so the sensor stays without state there. Read [Polling for rain](cover.md#polling-for-rain) before choosing an interval, because every poll uses transmit time that the hub shares with everything else it sends.
 - `battery` (Optional, default: `false`): Report the battery level a battery or solar device includes in its status replies. Generates a `<Cover Name> Battery Low` binary sensor and a `<Cover Name> Battery` text sensor. It sends nothing extra over the radio. See [Battery level](cover.md#battery-level).
-- All standard options from the ESPHome cover base schema also apply, including `id`, `device_class`, `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
+- All standard options from the ESPHome cover base schema also apply, including `id`, `device_class` (see [Home Assistant device class](cover.md#home-assistant-device-class)), `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
+
+## Home Assistant device class
+
+A cover that declares `io_device_type` and no `device_class:` gets the class of its kind, so Home
+Assistant shows the matching icon and wording. Set `device_class:` yourself to override it, or
+`device_class: ""` for none.
+
+| `io_device_type` | Default `device_class` |
+|---|---|
+| `garage_opener` | `garage` |
+| `gate_opener` | `gate` |
+| `rolling_door_opener` | `door` |
+| `window_opener`, `sliding_window` | `window` |
+| `roller_shutter`, `dual_roller_shutter`, `swinging_shutter` | `shutter` |
+| `interior_venetian_blind`, `exterior_venetian_blind`, `louvre_blind` | `blind` |
+| `vertical_interior_blind` | `shade` |
+| `curtain_track` | `curtain` |
+| `horizontal_awning`, `vertical_exterior_awning` | `awning` |
+
+Every other kind, including `bioclimatic_pergola`, has no default class.
 
 ## Companion entities
 

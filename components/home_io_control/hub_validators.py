@@ -17,7 +17,19 @@ import logging
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_CS_PIN, CONF_DEVICE_ID
+from esphome.const import (
+    CONF_CS_PIN,
+    CONF_DEVICE_ID,
+    DEVICE_CLASS_AWNING,
+    DEVICE_CLASS_BLIND,
+    DEVICE_CLASS_CURTAIN,
+    DEVICE_CLASS_DOOR,
+    DEVICE_CLASS_GARAGE,
+    DEVICE_CLASS_GATE,
+    DEVICE_CLASS_SHADE,
+    DEVICE_CLASS_SHUTTER,
+    DEVICE_CLASS_WINDOW,
+)
 
 from .hub_names import (
     CONF_FEM,
@@ -202,6 +214,27 @@ DEVICE_TYPE_OPTIONS = {
     "sliding_window": 0x1B,
     "bioclimatic_pergola": 0x1D,
     "electrical_heater": 0x34,
+}
+
+# The Home Assistant device class a cover of each declared kind gets when its YAML sets no
+# `device_class:` (cover.py injects it; an explicit value, including "", wins). Python-only: no C++
+# code reads a device class. A kind whose class would be a guess has no entry.
+DEFAULT_COVER_DEVICE_CLASS = {
+    "garage_opener": DEVICE_CLASS_GARAGE,
+    "gate_opener": DEVICE_CLASS_GATE,
+    "rolling_door_opener": DEVICE_CLASS_DOOR,
+    "window_opener": DEVICE_CLASS_WINDOW,
+    "sliding_window": DEVICE_CLASS_WINDOW,
+    "roller_shutter": DEVICE_CLASS_SHUTTER,
+    "dual_roller_shutter": DEVICE_CLASS_SHUTTER,
+    "swinging_shutter": DEVICE_CLASS_SHUTTER,
+    "interior_venetian_blind": DEVICE_CLASS_BLIND,
+    "exterior_venetian_blind": DEVICE_CLASS_BLIND,
+    "louvre_blind": DEVICE_CLASS_BLIND,
+    "vertical_interior_blind": DEVICE_CLASS_SHADE,
+    "curtain_track": DEVICE_CLASS_CURTAIN,
+    "horizontal_awning": DEVICE_CLASS_AWNING,
+    "vertical_exterior_awning": DEVICE_CLASS_AWNING,
 }
 
 # === Device capability bits ===

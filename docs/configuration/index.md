@@ -183,7 +183,6 @@ home_io_control:
 cover:
   - platform: home_io_control
     name: "Awning"
-    device_class: awning
     io_device_id: "FEEB1E"
     io_device_type: "vertical_exterior_awning"
     io_subtype: 0

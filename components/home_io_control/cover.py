@@ -12,6 +12,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import binary_sensor, button, cover, switch, text_sensor
 from esphome.const import (
+    CONF_DEVICE_CLASS,
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_NAME,
@@ -24,9 +25,11 @@ from esphome.core import ID
 
 from . import home_io_control_ns
 from .hub_validators import (
+    DEFAULT_COVER_DEVICE_CLASS,
     FEATURE_EXTENDED_POSITION_FRAME,
     NAMED_POSITION_FEATURES,
     device_features,
+    device_type_name,
     validate_rain_sensor_poll_interval,
 )
 from .platform_common import (
@@ -102,6 +105,16 @@ def _declared_features(config):
     if CONF_DEVICE_TYPE not in config:
         return 0
     return device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0))
+
+
+def _default_device_class(config):
+    """Give a cover that declares io_device_type and sets no `device_class:` the kind's Home
+    Assistant class; an explicit value, including "", is kept."""
+    if CONF_DEVICE_CLASS not in config and CONF_DEVICE_TYPE in config:
+        default = DEFAULT_COVER_DEVICE_CLASS.get(device_type_name(config[CONF_DEVICE_TYPE]))
+        if default is not None:
+            config[CONF_DEVICE_CLASS] = default
+    return config
 
 
 def _require_silent_kind(config):
@@ -207,6 +220,7 @@ CONFIG_SCHEMA = cv.All(
     .extend({cv.Optional(CONF_BATTERY): cv.boolean})
     .extend({cv.Optional(CONF_OPTIMISTIC_STATE, default=True): cv.boolean})
     .extend(cv.COMPONENT_SCHEMA),
+    _default_device_class,
     _require_silent_kind,
     _inject_companion_ids,
 )
