@@ -46,14 +46,14 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::VERTICAL_EXTERIOR_AWNING, 0, LV | FAV | EXT},
     {DeviceType::WINDOW_OPENER, 0, LV | FAV | VENT | EXT},
     {DeviceType::WINDOW_OPENER, 1, LV | FAV | VENT | EXT},
-    {DeviceType::GARAGE_OPENER, 0, MPO | LV | FAV},
-    {DeviceType::GARAGE_OPENER, 58, MPO | LV | FAV},
+    {DeviceType::GARAGE_OPENER, 0, MPO | LV},
+    {DeviceType::GARAGE_OPENER, 58, MPO},
     {DeviceType::LIGHT, 0, EXT},
     {DeviceType::LIGHT, 1, LV | EXT},
     {DeviceType::LIGHT, 2, LV | EXT},
     {DeviceType::LIGHT, 58, MPO},
     {DeviceType::GATE_OPENER, 0, LV | FAV | EXT},
-    {DeviceType::GATE_OPENER, 58, MPO | LV | FAV},
+    {DeviceType::GATE_OPENER, 58, MPO | FAV},
     {DeviceType::ROLLING_DOOR_OPENER, 0, LV | FAV | EXT},
     {DeviceType::LOCK, 0, EXT},
     {DeviceType::LOCK, 1, EXT},
@@ -82,7 +82,7 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::INTRUSION_ALARM, 0, 0},
     {DeviceType::SWINGING_SHUTTER, 0, LV | FAV | EXT},
     {DeviceType::SWINGING_SHUTTER, 1, LV | FAV | EXT},
-    {DeviceType::SWINGING_SHUTTER, 58, MPO | LV | FAV},
+    {DeviceType::SWINGING_SHUTTER, 58, MPO | FAV},
     {DeviceType::SLIDING_WINDOW, 0, LV | FAV | EXT},
     {DeviceType::SLIDING_WINDOW, 1, LV | FAV | EXT},
     {DeviceType::ZONE_CONTROL, 0, 0},
@@ -259,6 +259,19 @@ TEST(NamedPositions, EachCommandFindsItsEntryAndOthersFindNone) {
 
   EXPECT_EQ(find_named_position(CoverCommand::STOP), nullptr);
   EXPECT_EQ(find_named_position(CoverCommand::FORCE_OPEN), nullptr);
+}
+
+TEST(NamedPositions, ACommandMainParameterIsStopOrANamedPositionAndNothingElse) {
+  uint16_t main_parameter = 0;
+  ASSERT_TRUE(command_main_parameter(CoverCommand::STOP, main_parameter));
+  EXPECT_EQ(main_parameter, 0xD200);
+  for (const NamedPosition &named : NAMED_POSITIONS) {
+    ASSERT_TRUE(command_main_parameter(named.command, main_parameter)) << named.name;
+    EXPECT_EQ(main_parameter, named.main_parameter) << named.name;
+  }
+  main_parameter = 0x1234;
+  EXPECT_FALSE(command_main_parameter(CoverCommand::FORCE_OPEN, main_parameter));
+  EXPECT_EQ(main_parameter, 0x1234) << "a refused command leaves the value alone";
 }
 
 TEST(NamedPositions, EntryNamesAreWhatCoverCommandNameReturns) {

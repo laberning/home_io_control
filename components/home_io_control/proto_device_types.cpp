@@ -45,17 +45,11 @@ constexpr DeviceFeatures COVER = LEVELS | FAVORITE | EXTENDED_POSITION_FRAME;
 constexpr DeviceFeatures COVER_TILTING = COVER | TILT;
 /// Window opener: a cover with the secured ventilation position.
 constexpr DeviceFeatures WINDOW = COVER | VENT;
-/// Garage opener: percent positions in the main parameter only (issue #163).
-/// \todo The garage opener of issue #163 refuses the favourite alias with PARAMETER_UNKNOWN: remove
-///       FAVORITE from this word.
-constexpr DeviceFeatures GARAGE = device_feature::MAIN_PARAMETER_ONLY | LEVELS | FAVORITE;
-/// Subtype-58 garage opener, gate opener and swinging shutter: main parameter only, though they
-/// still offer a slider and the favourite.
-/// \todo The 5/58 garage opener of issue #163 refuses percent positions with PARAMETER_UNKNOWN, so
-///       these rows should be main_parameter_only_variant() of their family; confirm the same on a
-///       real 7/58 gate opener and a real 24/58 swinging shutter (inferred from the shared subtype-58
-///       definition).
-constexpr DeviceFeatures SLIDER_58_COVER = device_feature::MAIN_PARAMETER_ONLY | LEVELS | FAVORITE;
+/// Garage opener: percent positions in the main parameter only, and no favourite position. The
+/// garage opener of issue #163 refuses the favourite alias with PARAMETER_UNKNOWN (corpus capture
+/// wisniowski_moto1000_exchange_execute_parameter_unknown); that rests on one device of this type,
+/// so it is applied to the whole family.
+constexpr DeviceFeatures GARAGE = device_feature::MAIN_PARAMETER_ONLY | LEVELS;
 /// On/off command in the 8-byte frame: a plain light, a switch, a lock.
 constexpr DeviceFeatures BINARY_COMMAND = EXTENDED_POSITION_FRAME;
 /// Light whose brightness is controllable (the 6/1 and 6/2 rows).
@@ -74,7 +68,7 @@ constexpr size_t TYPE_HEX_BUFFER_SIZE = 24;  ///< "unknown type 0x3FF" plus marg
 ///
 /// Rows that no capture or report has confirmed yet are experimental; the 6/1 and 6/2 light rows are
 /// unproven on hardware: \todo Confirm 6/1 and 6/2 accept the brightness EXECUTE on a real device.
-/// \todo Confirm the 15/2, 9/1, 9/2, 22/x, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
+/// \todo Confirm the 15/2, 9/1, 9/2, 22/x, 7/58, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
 constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::UNKNOWN, 0, "unknown", CAP_NONE, YAML_SELECTABLE, 0},
 
@@ -91,8 +85,10 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     // Every garage opener takes the main parameter only (issue #163); subtype 58 does so on any type.
     {DeviceType::GARAGE_OPENER, 0, "garage_opener", CAP_COVER, SELECTABLE_PLATFORM, GARAGE},
-    {DeviceType::GARAGE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, "position only", CAP_COVER, SUBTYPE_PLATFORM,
-     SLIDER_58_COVER},
+    // Subtype 58 offers open, close and stop only: the 5/58 garage opener of issue #163 refuses a 50 %
+    // position with PARAMETER_UNKNOWN (corpus capture wisniowski_moto1000_exchange_execute_partial_position_refused).
+    {DeviceType::GARAGE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, "open/close only", CAP_COVER, SUBTYPE_PLATFORM,
+     main_parameter_only_variant(GARAGE)},
 
     {DeviceType::LIGHT, 0, "light", CAP_LIGHT, SELECTABLE_PLATFORM, BINARY_COMMAND},
     {DeviceType::LIGHT, 1, "dimmable RGB", CAP_LIGHT, SUBTYPE_PLATFORM, DIMMABLE_LIGHT},
@@ -101,8 +97,11 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
      main_parameter_only_variant(BINARY_COMMAND)},
 
     {DeviceType::GATE_OPENER, 0, "gate_opener", CAP_COVER, SELECTABLE_PLATFORM, COVER},
-    {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, "position only", CAP_COVER, SUBTYPE_PLATFORM,
-     SLIDER_58_COVER},
+    // \todo Confirm on a real 7/58 gate opener that intermediate positions are refused and whether the
+    //       favourite is accepted; inferred from the shared subtype-58 definition and the 5/58 opener of
+    //       issue #163 (experimental).
+    {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, "open/close only", CAP_COVER, SUBTYPE_PLATFORM,
+     main_parameter_only_variant(COVER)},
 
     {DeviceType::ROLLING_DOOR_OPENER, 0, "rolling_door_opener", CAP_COVER, SELECTABLE_PLATFORM, COVER},
 
@@ -155,8 +154,11 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     {DeviceType::SWINGING_SHUTTER, 0, "swinging_shutter", CAP_COVER, SELECTABLE_PLATFORM, COVER},
     {DeviceType::SWINGING_SHUTTER, 1, "with independent leaves", CAP_COVER, SUBTYPE_PLATFORM, COVER},
-    {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY, "position only", CAP_COVER, SUBTYPE_PLATFORM,
-     SLIDER_58_COVER},
+    // \todo Confirm on a real 24/58 swinging shutter that the favourite is accepted and percent positions
+    //       are refused; inferred from the shared subtype-58 definition and the 5/58 opener of issue #163
+    //       (experimental).
+    {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY, "open/close only", CAP_COVER, SUBTYPE_PLATFORM,
+     main_parameter_only_variant(COVER)},
 
     {DeviceType::SLIDING_WINDOW, 0, "sliding_window", CAP_COVER, SELECTABLE_PLATFORM, COVER},
     {DeviceType::SLIDING_WINDOW, 1, "with lock", CAP_COVER, SUBTYPE_PLATFORM, COVER},

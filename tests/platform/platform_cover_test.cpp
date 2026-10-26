@@ -682,12 +682,13 @@ TEST(PlatformCover, UnknownPositionNotPublished) {
 
   cover.setup();
 
+  cover.position = 0.25f;  // a position published earlier
   IoDevice dev{};
   dev.position = UNKNOWN_POSITION;
   dev.is_stopped = true;
   hub.trigger_device_update("ABC123", dev);
 
-  EXPECT_FLOAT_EQ(cover.position, 0.0f) << "UNKNOWN_POSITION from device should not update HA position";
+  EXPECT_FLOAT_EQ(cover.position, 0.25f) << "UNKNOWN_POSITION from device should not update HA position";
 }
 
 // ============================================================================
@@ -857,4 +858,148 @@ TEST(PlatformCover, WithheldPositionWithNoLastKnownStaysIdle) {
   hub.trigger_device_update("ABC123", moving);
 
   EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
+
+// ============================================================================
+// Discrete covers: a device without intermediate positions (issue #163)
+// ============================================================================
+
+namespace {
+
+/// A cover bound to a garage opener of subtype 58, which takes open, close and stop only.
+void make_discrete_cover(MockHub &hub, TestableCover &cover) {
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_device_type(DeviceType::GARAGE_OPENER);
+  cover.set_subtype(SUBTYPE_MAIN_PARAMETER_ONLY);
+  cover.setup();
+}
+
+/// A status report from that opener: `position` IO percent (or UNKNOWN_POSITION), at rest.
+IoDevice discrete_report(float position) {
+  IoDevice dev{};
+  dev.type = DeviceType::GARAGE_OPENER;
+  dev.subtype = SUBTYPE_MAIN_PARAMETER_ONLY;
+  dev.position = position;
+  dev.is_stopped = true;
+  return dev;
+}
+
+}  // namespace
+
+TEST(PlatformCoverDiscrete, TraitsHaveNoSliderAndAssumeStateButKeepStop) {
+  MockHub hub;
+  TestableCover cover;
+  make_discrete_cover(hub, cover);
+
+  const CoverTraits traits = cover.get_traits();
+  EXPECT_FALSE(traits.get_supports_position()) << "open/close/stop only, so no slider";
+  EXPECT_TRUE(traits.get_is_assumed_state())
+      << "keeps Open and Close enabled in Home Assistant while the cover shows open";
+  EXPECT_FALSE(traits.get_supports_tilt());
+  EXPECT_FALSE(cover.supports_intermediate_positions());
+}
+
+TEST(PlatformCoverDiscrete, ACoverWithIntermediatePositionsKeepsItsSliderAndReportsRealState) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_device_type(DeviceType::ROLLER_SHUTTER);
+  cover.setup();
+
+  const CoverTraits traits = cover.get_traits();
+  EXPECT_TRUE(traits.get_supports_position());
+  EXPECT_FALSE(traits.get_is_assumed_state());
+}
+
+TEST(PlatformCoverDiscrete, ACoverBeforeItsDeviceIsRegisteredTakesItsTraitsFromTheDeclaredKind) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_device_type(DeviceType::GARAGE_OPENER);
+  cover.set_subtype(SUBTYPE_MAIN_PARAMETER_ONLY);
+
+  EXPECT_FALSE(cover.get_traits().get_supports_position());
+
+  TestableCover undeclared;
+  undeclared.set_parent(&hub);
+  undeclared.set_device_id("DEF456");
+  EXPECT_TRUE(undeclared.get_traits().get_supports_position()) << "an undeclared cover keeps its slider";
+}
+
+TEST(PlatformCoverDiscrete, ItShowsClosedOnlyWhenTheDeviceReportsFullyClosed) {
+  MockHub hub;
+  TestableCover cover;
+  make_discrete_cover(hub, cover);
+
+  hub.trigger_device_update("ABC123", discrete_report(100.0f));
+  EXPECT_FLOAT_EQ(cover.position, COVER_CLOSED);
+
+  hub.trigger_device_update("ABC123", discrete_report(0.0f));
+  EXPECT_FLOAT_EQ(cover.position, COVER_OPEN);
+
+  hub.trigger_device_update("ABC123", discrete_report(50.0f));
+  EXPECT_FLOAT_EQ(cover.position, COVER_OPEN) << "a door not reported closed is not closed";
+}
+
+TEST(PlatformCoverDiscrete, AnInvertedDiscreteCoverIsClosedAtIoZero) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_invert_position(true);
+  make_discrete_cover(hub, cover);
+
+  hub.trigger_device_update("ABC123", discrete_report(0.0f));
+  EXPECT_FLOAT_EQ(cover.position, COVER_CLOSED);
+
+  hub.trigger_device_update("ABC123", discrete_report(100.0f));
+  EXPECT_FLOAT_EQ(cover.position, COVER_OPEN);
+}
+
+// Issue #163: after a mid-travel stop the opener reports an unknown position (04 80 D4 00 00 00,
+// position 0xD400). The cover that showed closed before the move must show open, not keep closed.
+TEST(PlatformCoverDiscrete, AnUnknownPositionAfterAStopFromClosedShowsOpen) {
+  MockHub hub;
+  TestableCover cover;
+  make_discrete_cover(hub, cover);
+
+  hub.trigger_device_update("ABC123", discrete_report(100.0f));
+  ASSERT_FLOAT_EQ(cover.position, COVER_CLOSED);
+
+  hub.trigger_device_update("ABC123", discrete_report(UNKNOWN_POSITION));
+  EXPECT_FLOAT_EQ(cover.position, COVER_OPEN);
+}
+
+TEST(PlatformCoverDiscrete, AMoveFromAnUnknownPositionShowsIdleUntilTheFirstReport) {
+  MockHub hub;
+  TestableCover cover;
+  make_discrete_cover(hub, cover);
+
+  hub.trigger_device_update("ABC123", discrete_report(UNKNOWN_POSITION));
+
+  CoverCall call(&cover);
+  call.set_position(COVER_OPEN);  // IO 0
+  cover.control(call);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE) << "no start point, so no direction";
+
+  hub.trigger_device_update("ABC123", discrete_report(0.0f));
+  EXPECT_FLOAT_EQ(cover.position, COVER_OPEN);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
+
+TEST(PlatformCoverDiscrete, OpenAndCloseQueueTheBinaryPositions) {
+  MockHub hub;
+  TestableCover cover;
+  make_discrete_cover(hub, cover);
+
+  CoverCall close(&cover);
+  close.set_position(COVER_CLOSED);
+  cover.control(close);
+  EXPECT_EQ(hub.last_set_position(), 100u);
+
+  CoverCall open(&cover);
+  open.set_position(COVER_OPEN);
+  cover.control(open);
+  EXPECT_EQ(hub.last_set_position(), 0u);
 }

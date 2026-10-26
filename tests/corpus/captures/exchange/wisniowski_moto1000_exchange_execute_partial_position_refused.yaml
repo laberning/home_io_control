@@ -1,0 +1,34 @@
+id: wisniowski_moto1000_exchange_execute_partial_position_refused
+description: >
+  The same Wisniowski garage opener (Somfy "MOTO 1000 io" drive) refuses a 50 % position, even in the
+  short main-parameter-only form (data 01 63 64 00 00 00, main parameter 0x6400, no functional
+  parameters), with ERROR_RESP 0x28 straight away, without a challenge: result code 5,
+  RESULT_PARAMETER_UNKNOWN. The door was closed and did not move. Open (0), close (0xC800) and stop
+  (0xD200) are the main-parameter values this drive accepts, so a cover for it offers no position
+  slider (issue #163).
+source:
+  device: "Wisniowski garage door opener, Somfy MOTO 1000 io drive (garage_opener, subtype 58)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-10-18
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/163"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    hex: "4E 20 8D 76 33 A9 DB EC 00 01 63 64 00 00 00"
+    crc: absent
+    note: "EXECUTE position 50 % (main parameter 0x6400, no functional parameters), START, CTRL1_LOW_POWER; the log shows no CRC"
+  - dir: rx
+    t_ms: 240
+    hex: "89 00 A9 DB EC 8D 76 33 FE 28"
+    crc: absent
+    note: "ERROR_RESP, result 0x28 = PARAMETER_UNKNOWN (code 5, state 0), no challenge first. Timing from the log line stamps (TX line to RX line), so it includes the TX airtime."
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w, classification: ACCEPT}

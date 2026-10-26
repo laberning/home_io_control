@@ -28,7 +28,7 @@ The keys every entity platform shares — `name`, `io_device_id`, `io_device_typ
 
 - `invert_position` (Optional): Explicitly override the open/close position mapping. When omitted, the controller uses the learned device profile and automatically inverts families such as horizontal awnings once their type is known.
 - `optimistic_state` (Optional, default: `true`): Show the requested position/movement direction immediately in Home Assistant — for both HA-issued commands (open/close/set-position/stop) and commands from a linked 1W remote — instead of waiting for the confirming poll or device response. The confirming poll/response always still runs and is the source of truth; optimistic state is a UX bridge only. Set `false` for a device where you don't want HA to show assumed movement, for example one with an unreliable RF link where a stale optimistic state could be misleading.
-- `silent` (Optional): Move at the manufacturer app's "silent operation" speed — slower and quieter. It selects the protocol's slow travel profile on position moves and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and ventilation and tilt because nothing has been captured for them yet — they keep their existing payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key also generates a `<Cover Name> Silent Operation` switch so the profile can be changed at runtime; the YAML value is the boot state. Omit the key entirely and no switch is created.
+- `silent` (Optional): Move at the manufacturer app's "silent operation" speed — slower and quieter. Only a kind that takes a travel-speed parameter accepts it: config validation rejects `silent:` on garage openers and on any device of subtype 58, and its message says to remove the key. It selects the protocol's slow travel profile on position moves and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and ventilation and tilt because nothing has been captured for them yet — they keep their existing payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key also generates a `<Cover Name> Silent Operation` switch so the profile can be changed at runtime; the YAML value is the boot state. Omit the key entirely and no switch is created.
 - `rain_sensor_poll_interval` (Optional): Ask the device how far its own rain protection lets it open, once per interval, and report the answer as a binary sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Declaring it generates a `<Cover Name> Rain sensor` binary sensor. Validated on VELUX windows with a wired rain sensor; a Somfy Sunea awning answers the request with a reply this project cannot read as an opening limit, so the sensor stays without state there. Read [Polling for rain](cover.md#polling-for-rain) before choosing an interval, because every poll uses transmit time that the hub shares with everything else it sends.
 - `battery` (Optional, default: `false`): Report the battery level a battery or solar device includes in its status replies. Generates a `<Cover Name> Battery Low` binary sensor and a `<Cover Name> Battery` text sensor. It sends nothing extra over the radio. See [Battery level](cover.md#battery-level).
 - All standard options from the ESPHome cover base schema also apply, including `id`, `device_class`, `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
@@ -38,7 +38,9 @@ The keys every entity platform shares — `name`, `io_device_id`, `io_device_typ
 Beyond the diagnostic companions every platform generates, covers add up to six more:
 
 - **`<Cover Name> Favorite Position`** — a button, generated for any cover with a declared
-  position-capable `io_device_type`. It sends the protocol's favorite or My-position command.
+  position-capable `io_device_type` except garage openers, whose motors refuse the favorite
+  command (issue #163). It sends the protocol's favorite or My-position command. A motor with no
+  favorite position refuses the command before authenticating, and nothing moves.
 - **`<Cover Name> Ventilation Position`** — a second button, for covers with `io_device_type` set
   to `window_opener` or `ventilation_point`. It moves the actuator to a predefined partially-open
   position suitable for air exchange.
@@ -53,7 +55,30 @@ Assistant device as the cover itself.
 
 Generating them is compile-time only. If `io_device_type` is omitted and learned later from radio
 traffic, the controller can still operate the cover normally, but it cannot add new ESPHome
-entities at runtime after boot. The same applies to the diagnostic sensors.
+entities at runtime after boot, and it cannot drop the position slider of a device that only opens
+and closes. The same applies to the diagnostic sensors. Declare `io_device_type` and `io_subtype`
+as the paste-ready YAML from [Discover & Pair](../pairing.md#discover--pair) prints them.
+
+## Covers that only open and close
+
+Garage openers, gate openers and swinging shutters of subtype 58 take open, close and stop and
+nothing in between: a 50 % position gets the refusal `PARAMETER_UNKNOWN` from the motor, and the
+door does not move (issue #163, corpus
+`wisniowski_moto1000_exchange_execute_partial_position_refused`). For these kinds the cover:
+
+- shows open, close and stop and no position slider, and sends open and close in the short
+  main-parameter frame;
+- shows closed only when the device reports fully closed, and open for every other report. A door
+  stopped half-way reports an unknown position, so it shows open;
+- is an assumed-state cover, so Home Assistant keeps both the Open and the Close button enabled
+  whatever state the cover shows;
+- refuses a position between open and closed from a lambda or an action, without sending it, and
+  logs why;
+- has no Favorite Position button when it is a garage opener, and takes no `silent:` key.
+
+Subtype 58 on a gate opener or a swinging shutter is inferred from the garage opener's behaviour
+and the shared subtype definition, so it is experimental: the Favorite Position button stays and
+is sent, and a motor without a favorite position answers `PARAMETER_UNKNOWN` and does not move.
 
 ## Polling for rain
 

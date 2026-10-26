@@ -72,9 +72,10 @@ namespace home_io_control {
 bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
                              bool silent = false);
 
-/// @brief Build a named-command execute frame (0x00) for STOP, FAVORITE, or VENT.
+/// @brief Build a named-command execute frame (0x00) for STOP or a named position.
 ///
-/// Each maps to a specific wire encoding in the 6-byte special CMD_EXECUTE payload:
+/// The named positions are the entries of NAMED_POSITIONS (proto_device_types.h); each maps to a
+/// specific wire encoding in the 6-byte special CMD_EXECUTE payload:
 ///   - STOP:       main=0xD2, modifier=0x00
 ///   - FAVORITE:   main=0xD8, modifier=0x00
 ///   - VENT:       main=0xD8, modifier=0x03
@@ -82,14 +83,14 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 /// This cleanly separates "move to position X" from "execute named action"
 /// without overloading a single numeric parameter.
 ///
-/// FORCE_OPEN is NOT handled here — see create_force_open() instead. Unlike these three, it
+/// FORCE_OPEN is NOT handled here — see create_force_open() instead. Unlike these, it
 /// needs a device-specific "fully open" wire position (0 or 100 depending on inversion), which
 /// this generic dispatch has no way to supply; passing CoverCommand::FORCE_OPEN returns false.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
 /// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
-/// @param cmd Named command to execute (STOP, FAVORITE, or VENT).
+/// @param cmd Named command to execute (STOP or a named position).
 /// @return true on success; false for invalid/unsupported command.
 /// @param silent Use the silent (slower) travel profile. Honoured for FAVORITE only — STOP has no
 ///        travel speed, and nothing has been captured for VENT.

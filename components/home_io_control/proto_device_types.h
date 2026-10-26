@@ -185,6 +185,26 @@ inline const NamedPosition *find_named_position(CoverCommand command) {
   return nullptr;
 }
 
+/// @brief The main parameter a named command sends.
+/// @details STOP is the one command that is a main-parameter value without being a named position;
+///          every other value comes from NAMED_POSITIONS. The frame builders for 2W and 1W both read
+///          their bytes here, so a value is written down once.
+/// @param command Cover command.
+/// @param main_parameter Receives the value on success.
+/// @return true for STOP and for every command in NAMED_POSITIONS; false for any other command
+///         (FORCE_OPEN is built from a position, not from a named value).
+inline bool command_main_parameter(CoverCommand command, uint16_t &main_parameter) {
+  if (command == CoverCommand::STOP) {
+    main_parameter = MAIN_PARAMETER_STOP;
+    return true;
+  }
+  const NamedPosition *named = find_named_position(command);
+  if (named == nullptr)
+    return false;
+  main_parameter = named->main_parameter;
+  return true;
+}
+
 /// @brief True when a device with these features accepts this main-parameter value in an EXECUTE.
 /// @details Open (0x0000), closed (0xC800) and stop (0xD200) always; 0x0001-0xC7FF only with LEVELS;
 ///          a named position only with its bit; anything else never.

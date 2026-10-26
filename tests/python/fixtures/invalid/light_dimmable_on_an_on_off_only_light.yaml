@@ -1,0 +1,13 @@
+# expect-error: remove dimmable:
+# covers: platform_common.require_feature
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+light:
+  - platform: home_io_control
+    name: "Relay"
+    io_device_id: "1A2B3C"
+    io_device_type: light
+    io_subtype: 58
+    dimmable: true

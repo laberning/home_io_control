@@ -227,15 +227,18 @@ that exact value.
 Declaring `io_device_type` is worth doing even though it is optional. It is what enables
 type-specific behaviour: a `vertical_exterior_awning` gets a `Patio Awning Favorite Position` button, a
 `window_opener` also gets a Ventilation Position button, and families such as horizontal awnings
-get their direction inverted automatically. These entities are generated at compile time, so a type
-learned later over the radio cannot add them.
+get their direction inverted automatically. A garage opener gets no Favorite Position button, and
+an opener of subtype 58 is an open/close/stop cover without a slider (see
+[Covers that only open and close](configuration/cover.md#covers-that-only-open-and-close)).
+These entities are generated at compile time, so a type learned later over the radio cannot add them.
 
 A few additional options worth knowing about:
 
 - **`low_power: true`** — set this on a solar or battery actuator. Leaving it off on such a device
   is a common reason a hub pairs successfully and then hears nothing back.
 - **`invert_position: true`** — if open and closed come out backwards.
-- **`silent: true`** — move at the manufacturer app's quieter, slower speed.
+- **`silent: true`** — move at the manufacturer app's quieter, slower speed. Only kinds that take a
+  travel-speed parameter accept it; config validation says so for the others.
 - **`rain_sensor_poll_interval: 15min`** — on a VELUX window with a wired rain sensor, adds a Rain
   sensor binary sensor; see [Polling for rain](configuration/cover.md#polling-for-rain).
 

@@ -32,7 +32,7 @@ light:
 ### Configuration variables:
 
 - `io_device_type` (Optional): Use the named value `light` when known, or a raw integer such as `0x06` if you are working from a pairing log that reports a not-yet-exposed alias.
-- `dimmable` (Optional, default `false`): Expose brightness control (`ColorMode::BRIGHTNESS`) instead of on/off only. The protocol has no machine-readable signal for whether a given light device actually supports intermediate positions, so this is an explicit opt-in — leave it unset for binary-only devices. Brightness is applied instantly (no client-side fade) by default, since ESPHome's default 1 s transition would otherwise send a stream of superseding radio commands over the device's round trip; override `default_transition_length` in YAML if you want a fade anyway.
+- `dimmable` (Optional, default `false`): Expose brightness control (`ColorMode::BRIGHTNESS`) instead of on/off only. The protocol has no machine-readable signal for whether a given light device actually supports intermediate positions, so this is an explicit opt-in — leave it unset for binary-only devices. A light declared with `io_subtype: 58` is on/off only (VELUX KLF 200 API specification, Appendix 2), so config validation rejects `dimmable: true` on it and tells you to remove the key. Brightness is applied instantly (no client-side fade) by default, since ESPHome's default 1 s transition would otherwise send a stream of superseding radio commands over the device's round trip; override `default_transition_length` in YAML if you want a fade anyway.
 - All standard options from the ESPHome light schema also apply.
 
 ### Notes

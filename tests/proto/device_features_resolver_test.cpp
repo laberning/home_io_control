@@ -113,8 +113,17 @@ TEST(ResolveDeviceFeatures, ResolvingAgainAfterTheKindChangesFollowsTheNewKind) 
   EXPECT_TRUE(has_feature(dev.features, feature::TILT));
 }
 
+TEST(DeviceOperationProfileName, ACoverWithoutIntermediatePositionsIsDiscrete) {
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::GARAGE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY), "cover_discrete");
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY), "cover_discrete");
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY),
+               "cover_discrete");
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::GARAGE_OPENER, 0), "cover_position")
+      << "a garage opener of subtype 0 keeps percent positions";
+}
+
 TEST(DeviceOperationProfileName, ACoverIsTiltingOnlyWhereItsKindHasASlatAngle) {
   EXPECT_STREQ(device_operation_profile_name(DeviceType::EXTERIOR_VENETIAN_BLIND, 0), "cover_position_tilt");
   EXPECT_STREQ(device_operation_profile_name(DeviceType::EXTERIOR_VENETIAN_BLIND, SUBTYPE_MAIN_PARAMETER_ONLY),
-               "cover_position");
+               "cover_discrete");
 }

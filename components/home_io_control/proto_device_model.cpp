@@ -64,14 +64,12 @@ const char *cover_command_name(CoverCommand cmd) {
   switch (cmd) {
     case CoverCommand::STOP:
       return "STOP";
-    case CoverCommand::FAVORITE:
-      return "FAVORITE";
-    case CoverCommand::VENT:
-      return "VENT";
     case CoverCommand::FORCE_OPEN:
       return "FORCE_OPEN";
-    default:
-      return "UNKNOWN_COVER_CMD";
+    default: {
+      const NamedPosition *named = find_named_position(cmd);
+      return named != nullptr ? named->name : "UNKNOWN_COVER_CMD";
+    }
   }
 }
 
@@ -199,14 +197,20 @@ bool device_supports_climate_control(DeviceType type, uint8_t subtype) {
   return find_heating_profile(type, subtype) != nullptr;
 }
 
-bool device_supports_status_requests(DeviceType type) {
+bool device_takes_execute_position(DeviceType type) {
   return device_supports_position_control(type) || device_supports_binary_control(type) ||
          device_supports_lock_control(type) || device_supports_heat_level_control(type);
 }
 
+bool device_supports_status_requests(DeviceType type) { return device_takes_execute_position(type); }
+
 const char *device_operation_profile_name(DeviceType type, uint8_t subtype) {
-  if (device_supports_position_control(type))
-    return has_feature(device_features(type, subtype), device_feature::TILT) ? "cover_position_tilt" : "cover_position";
+  if (device_supports_position_control(type)) {
+    const DeviceFeatures features = device_features(type, subtype);
+    if (!has_feature(features, device_feature::LEVELS))
+      return "cover_discrete";
+    return has_feature(features, device_feature::TILT) ? "cover_position_tilt" : "cover_position";
+  }
   if (device_supports_binary_control(type))
     return "binary_on_off";
 

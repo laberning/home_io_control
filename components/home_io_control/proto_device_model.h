@@ -122,9 +122,16 @@ bool device_supports_position_control(DeviceType type);
 /// @return true for lights and switches.
 bool device_supports_binary_control(DeviceType type);
 
-/// @brief Does this device type support status request commands (0x03)?
+/// @brief Does this device type take position EXECUTEs (a percent, on / off, or stop in the main
+/// parameter)?
 /// @param type Device type.
-/// @return true for covers, binary devices, and lock devices.
+/// @return true for covers, lights, switches, locks and heat-level heaters.
+bool device_takes_execute_position(DeviceType type);
+
+/// @brief Does this device type support status request commands (0x03)?
+/// @details Every kind that takes position EXECUTEs reports its state with a status request.
+/// @param type Device type.
+/// @return true exactly where device_takes_execute_position() is.
 bool device_supports_status_requests(DeviceType type);
 
 /// @brief Does this device type support binary lock/unlock control via execute commands?
@@ -180,8 +187,9 @@ void encode_packed_device_type(DeviceType type, uint8_t subtype, uint8_t &type_m
 /// @brief Human‑readable operation profile name for a device kind.
 /// Used for logging and diagnostics.
 /// @param type Device type.
-/// @param subtype Device subtype; a cover is "cover_position_tilt" only when its (type, subtype) has a slat angle.
-/// @return String such as "cover_position", "cover_position_tilt", "binary_on_off", "lock", etc.
+/// @param subtype Device subtype; a cover is "cover_position_tilt" only when its (type, subtype) has a slat
+///        angle, and "cover_discrete" when it has no intermediate positions.
+/// @return String such as "cover_position", "cover_position_tilt", "cover_discrete", "binary_on_off", "lock", etc.
 const char *device_operation_profile_name(DeviceType type, uint8_t subtype);
 
 /// @brief Human-readable device type string for diagnostics, including the raw numeric value.

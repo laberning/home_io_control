@@ -106,7 +106,7 @@ TEST(DeviceTypesTable, KindNamesFollowTypeCommaSubtype) {
   EXPECT_EQ(format_device_kind(DeviceType::ELECTRICAL_HEATER, 1), "electrical heater, with adjustable setpoint");
   EXPECT_EQ(format_device_kind(DeviceType::ELECTRICAL_HEATER, 0), "electrical heater");
   EXPECT_EQ(format_device_kind(DeviceType::ROLLER_SHUTTER, 2), "roller shutter, with projection");
-  EXPECT_EQ(format_device_kind(DeviceType::GARAGE_OPENER, 58), "garage opener, position only");
+  EXPECT_EQ(format_device_kind(DeviceType::GARAGE_OPENER, 58), "garage opener, open/close only");
   EXPECT_EQ(format_device_kind(DeviceType::ROLLER_SHUTTER, 33), "roller shutter, subtype 33")
       << "a subtype without a name prints its number";
   EXPECT_EQ(format_device_kind(DeviceType::LOCK, 1), "window lock") << "a standalone name is not appended";
@@ -295,14 +295,32 @@ TEST(DeviceTypesTableFeatures, AnExplicitSubtype58RowIsTheVariantOfItsTypeRow) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
     if (row.subtype != SUBTYPE_MAIN_PARAMETER_ONLY)
       return;
-    // These three still offer a slider and the favourite, so their word is not the plain variant.
-    const bool slider_58 = row.type == DeviceType::GARAGE_OPENER || row.type == DeviceType::GATE_OPENER ||
-                           row.type == DeviceType::SWINGING_SHUTTER;
-    if (slider_58)
-      return;
     EXPECT_EQ(row.features, main_parameter_only_variant(device_features(row.type, 0)))
         << format_device_ids(row.type, row.subtype);
   });
+}
+
+TEST(DeviceTypesTableFeatures, GarageOpenerRowsHaveNoFavourite) {
+  // Issue #163: the garage opener refuses the favourite alias.
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.type == DeviceType::GARAGE_OPENER) {
+      EXPECT_FALSE(has_feature(row.features, device_feature::FAVORITE)) << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableFeatures, NamedPositionValuesAreUniqueAboveTheClosedPositionAndOwnOneBitEach) {
+  DeviceFeatures bits_seen = 0;
+  for (const NamedPosition &named : NAMED_POSITIONS) {
+    EXPECT_GT(named.main_parameter, MAIN_PARAMETER_CLOSED) << named.name;
+    EXPECT_EQ(bits_seen & named.feature, 0u) << named.name << ": the bit is in more than one entry";
+    bits_seen |= named.feature;
+    for (const NamedPosition &other : NAMED_POSITIONS) {
+      if (&other != &named) {
+        EXPECT_NE(other.main_parameter, named.main_parameter) << named.name << " and " << other.name;
+      }
+    }
+  }
 }
 
 TEST(DeviceTypesTable, TheSnippetSuggestsInvertedAndDimmableFromTheKindsFeatures) {

@@ -42,7 +42,8 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 
   /// @brief Return the traits object describing this cover's capabilities.
-  /// @return CoverTraits configured for position, stop, and optional tilt.
+  /// @return CoverTraits configured for position (with intermediate positions only), stop, optional
+  ///         tilt, and assumed state for a cover that is only open or closed.
   cover::CoverTraits get_traits() override;
 
   /// @brief Enable or disable position inversion.
@@ -55,6 +56,9 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   /// @brief Opt this cover into the periodic rain sensor poll (from YAML `rain_sensor_poll_interval`).
   /// @param interval_ms Poll interval in milliseconds; zero (the default) means no poll.
   void set_rain_sensor_poll_interval(uint32_t interval_ms) { this->rain_sensor_poll_interval_ms_ = interval_ms; }
+  /// @brief Query whether this device takes intermediate positions (a slider) or only open / close / stop.
+  /// @return true if the device has device_feature::LEVELS.
+  [[nodiscard]] bool supports_intermediate_positions() const;
   /// @brief Query whether this device supports tilt (slat angle) control.
   /// @return true if the device has device_feature::TILT.
   [[nodiscard]] bool supports_tilt() const;

@@ -24,6 +24,7 @@ from esphome.core import ID
 
 from . import home_io_control_ns
 from .hub_validators import (
+    FEATURE_EXTENDED_POSITION_FRAME,
     NAMED_POSITION_FEATURES,
     device_features,
     validate_rain_sensor_poll_interval,
@@ -35,6 +36,7 @@ from .platform_common import (
     inherit_esphome_device,
     inject_companion_sensor_ids,
     platform_schema_extension,
+    require_feature,
     wire_device_binding,
     CONF_IO_DEVICE_ID,
     CONF_DEVICE_TYPE,
@@ -94,6 +96,18 @@ def _declared_features(config):
     if CONF_DEVICE_TYPE not in config:
         return 0
     return device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0))
+
+
+def _require_silent_kind(config):
+    """Reject `silent:` on a declared kind that takes no travel-speed parameter."""
+    require_feature(
+        config,
+        CONF_SILENT,
+        CONF_SILENT in config,
+        required=FEATURE_EXTENDED_POSITION_FRAME,
+        reason="this device takes no travel-speed parameter; remove silent:",
+    )
+    return config
 
 
 def silent_switch_name(config):
@@ -187,6 +201,7 @@ CONFIG_SCHEMA = cv.All(
     .extend({cv.Optional(CONF_BATTERY): cv.boolean})
     .extend({cv.Optional(CONF_OPTIMISTIC_STATE, default=True): cv.boolean})
     .extend(cv.COMPONENT_SCHEMA),
+    _require_silent_kind,
     _inject_companion_ids,
 )
 

@@ -507,7 +507,9 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired position, 0–100 (open→closed). Named commands (STOP, FAVORITE,
   ///        VENT) go through execute_device_command_()/create_execute_command() instead.
-  /// @return true if device acknowledged; false on timeout or radio error.
+  /// @return true if device acknowledged; false on timeout or radio error, or when the device's
+  ///         features do not accept the value (an intermediate position on a device without
+  ///         device_feature::LEVELS): nothing is sent and the optimistic target is withdrawn.
   virtual bool set_device_position(const std::string &device_id, uint8_t position);
   /// Send a tilt command to a tilt‑capable cover.
   /// @param device_id Target device ID.
@@ -1058,9 +1060,11 @@ class IOHomeControlComponent : public Component,
                               const std::function<bool(IoFrame &, const IoDevice &)> &build);
 
   /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.
+  /// A named position (NAMED_POSITIONS) goes out only to a device whose features include its bit.
   /// @param device_id Target device ID.
   /// @param cmd Named command to execute.
-  /// @return true if device acknowledged; false otherwise.
+  /// @return true if device acknowledged; false otherwise, including a named position the device's
+  ///         features lack (nothing is sent).
   bool execute_device_command_(const std::string &device_id, CoverCommand cmd);
   /// Shared bookkeeping for every 1W transmit: mark the radio busy for the duration of `send`,
   /// then record it as 1W activity so background polls back off for it exactly as they do for a

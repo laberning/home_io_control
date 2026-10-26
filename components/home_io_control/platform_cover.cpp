@@ -13,6 +13,10 @@ static const char *const TAG = "home_io_control.cover";
 
 namespace {
 
+/// IO position of a fully closed (non-inverted) device and of a fully open one.
+constexpr float IO_POSITION_CLOSED = 100.0F;
+constexpr float IO_POSITION_OPEN = 0.0F;
+
 /// Movement direction implied by travelling from one IO position toward another.
 ///
 /// One rule for every direction question this entity asks, so the inversion handling and the
@@ -46,11 +50,20 @@ void IOHomeCover::setup() {
 
 cover::CoverTraits IOHomeCover::get_traits() {
   auto traits = cover::CoverTraits();
-  traits.set_supports_position(true);  // Slider in HA UI
-  traits.set_supports_stop(true);      // Stop button in HA UI
+  // A device without intermediate positions (a garage opener of subtype 58, say) gets open / close /
+  // stop and no slider. It also gets assumed state: Home Assistant disables Open on a position-less
+  // cover that shows open and Close on one that shows closed, and this cover shows open for every
+  // position that is not fully closed, so a door stopped half-way would otherwise offer no Open.
+  const bool levels = this->supports_intermediate_positions();
+  traits.set_supports_position(levels);  // Slider in HA UI
+  traits.set_supports_stop(true);        // Stop button in HA UI
   traits.set_supports_tilt(this->supports_tilt());
-  traits.set_is_assumed_state(false);  // We hopefully get real feedback from the device
+  traits.set_is_assumed_state(!levels);  // A discrete cover is open or closed; anything between is a guess
   return traits;
+}
+
+bool IOHomeCover::supports_intermediate_positions() const {
+  return has_feature(this->device_features_(DeviceCapabilityClass::COVER), device_feature::LEVELS);
 }
 
 bool IOHomeCover::supports_tilt() const {
@@ -144,7 +157,14 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
   const bool eff_stopped = effective_is_stopped(dev);
   const float eff_target = effective_target(dev);
 
-  if (dev.position != UNKNOWN_POSITION) {
+  if (!this->supports_intermediate_positions()) {
+    // Open or closed, nothing between: closed only when the device reports fully closed (IO 100,
+    // or IO 0 when inverted); every other report, an unknown one included, shows open. A door
+    // stopped mid-travel reports an unknown position (issue #163) and is not closed. Written for
+    // every report, because an unknown one must not leave the last state standing.
+    const float closed_position = invert ? IO_POSITION_OPEN : IO_POSITION_CLOSED;
+    this->position = dev.position == closed_position ? cover::COVER_CLOSED : cover::COVER_OPEN;
+  } else if (dev.position != UNKNOWN_POSITION) {
     // Convert IO position (0-100) back to HA position (0.0-1.0)
     float ha_pos;
     if (invert) {

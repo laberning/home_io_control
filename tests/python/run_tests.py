@@ -317,7 +317,10 @@ def cover_named_position_buttons_follow_the_declared_kind():
     assert buttons(types["roller_shutter"]) == {"FAVORITE"}
     assert buttons(types["window_opener"]) == {"FAVORITE", "VENT"}
     assert buttons(types["window_opener"], 58) == {"FAVORITE", "VENT"}, "named positions survive subtype 58"
-    assert buttons(types["garage_opener"], 58) == {"FAVORITE"}, "the garage family still has the favourite"
+    assert buttons(types["garage_opener"]) == set(), "a garage opener refuses the favourite (issue #163)"
+    assert buttons(types["garage_opener"], 58) == set()
+    assert buttons(types["gate_opener"], 58) == {"FAVORITE"}, "7/58 inherits its family's favourite"
+    assert buttons(types["swinging_shutter"], 58) == {"FAVORITE"}, "24/58 inherits its family's favourite"
     assert buttons(types["light"]) == set()
     assert buttons(types["unknown"]) == set()
     assert buttons() == set(), "a cover with no declared type gets none"
@@ -334,6 +337,51 @@ def cover_named_position_buttons_follow_the_declared_kind():
     assert out[c.CONF_FAVORITE_BUTTON_ID].is_declaration
     assert c.NAMED_POSITION_BUTTONS["FAVORITE"][2] == "Favorite Position"
     assert c.NAMED_POSITION_BUTTONS["VENT"][2] == "Ventilation Position"
+
+
+@case("platform_common.require_feature")
+def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
+    """`silent:` needs a kind that takes a travel-speed parameter; `dimmable: true` needs a light that
+    is not on/off only. A config that declares no kind, or a kind with the feature, passes."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import light as l
+
+    t = v.DEVICE_TYPE_OPTIONS
+
+    def silent(device_type=None, subtype=None):
+        cfg = {c.CONF_SILENT: True}
+        if device_type is not None:
+            cfg["io_device_type"] = t[device_type]
+        if subtype is not None:
+            cfg["io_subtype"] = subtype
+        return cfg
+
+    assert c._require_silent_kind(silent()) == silent(), "no declared kind: nothing says what the device takes"
+    c._require_silent_kind(silent("roller_shutter"))
+    c._require_silent_kind({"io_device_type": t["garage_opener"]})  # `silent:` not declared at all
+    for kind in (("garage_opener", None), ("garage_opener", 58), ("gate_opener", 58), ("swinging_shutter", 58)):
+        try:
+            c._require_silent_kind(silent(*kind))
+            raise AssertionError(f"silent was accepted on {kind}")
+        except cv.Invalid as err:
+            assert "remove silent:" in str(err) and "travel-speed" in str(err), str(err)
+
+    def dimmable(device_type, subtype=None, value=True):
+        cfg = {l.CONF_DIMMABLE: value, "io_device_type": t[device_type]}
+        if subtype is not None:
+            cfg["io_subtype"] = subtype
+        return cfg
+
+    l._require_dimmable_kind(dimmable("light"))  # 6/0: `dimmable:` decides, the Izymo dims
+    l._require_dimmable_kind(dimmable("light", 1))
+    l._require_dimmable_kind(dimmable("light", 58, value=False))
+    try:
+        l._require_dimmable_kind(dimmable("light", 58))
+        raise AssertionError("dimmable was accepted on an on/off-only light")
+    except cv.Invalid as err:
+        assert "remove dimmable:" in str(err) and "on/off only" in str(err), str(err)
 
 
 @case()
