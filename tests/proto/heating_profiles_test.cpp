@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 using namespace esphome::home_io_control;
 
 namespace {
@@ -69,8 +71,9 @@ TEST(HeatingProfiles, SetpointHeaterOffersTheCardItsRegistersCanDrive) {
   EXPECT_TRUE(p.features.target_temperature);
   EXPECT_TRUE(p.features.current_temperature);
   EXPECT_TRUE(p.features.action);
-  EXPECT_TRUE(p.features.window_sensor);
-  EXPECT_TRUE(p.features.open_window_detection);
+  EXPECT_TRUE(std::find(p.poll_registers, p.poll_registers + p.poll_register_count, HeatingFunction::WINDOW_OPEN) !=
+              p.poll_registers + p.poll_register_count)
+      << "the window sensor is polled with every read";
 
   ASSERT_EQ(p.mode_count, 3u);
   EXPECT_EQ(p.modes[0].hvac, HeatingHvacMode::OFF);
@@ -120,8 +123,6 @@ TEST(HeatingProfiles, PlainHeaterOffersLevelsAsModesAndPresets) {
   EXPECT_FALSE(p.features.target_temperature);
   EXPECT_FALSE(p.features.current_temperature);
   EXPECT_FALSE(p.features.action);
-  EXPECT_FALSE(p.features.window_sensor);
-  EXPECT_FALSE(p.features.open_window_detection);
   EXPECT_EQ(p.poll_register_count, 0u) << "a level heater is polled with the status read";
 
   ASSERT_EQ(p.mode_count, 2u);

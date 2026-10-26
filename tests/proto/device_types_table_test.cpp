@@ -7,6 +7,8 @@
 #include "proto_device_types.h"
 #include "proto_heating_profiles.h"
 
+#include <algorithm>
+
 #include "device_table_walk.h"
 #include "test_helpers.h"
 
@@ -326,11 +328,17 @@ TEST(DeviceTypesTableFeatures, TiltNamedPositionsAndInversionBelongToCoverRowsOn
   });
 }
 
-TEST(DeviceTypesTableFeatures, WindowCompanionsAreExactlyWhereTheHeatingProfileHasBothWindowEntities) {
-  test::for_each_table_row([](const DeviceTypeInfo &row) {
+TEST(DeviceTypesTableFeatures,
+     WindowCompanionsAreExactlyWhereTheHeatingProfilePollsTheWindowAndOffersTheDetectionSwitch) {
+  const auto contains = [](const HeatingFunction *list, size_t count, HeatingFunction fn) {
+    return std::find(list, list + count, fn) != list + count;
+  };
+  test::for_each_table_row([&contains](const DeviceTypeInfo &row) {
     const HeatingProfile *profile = find_heating_profile(row.type, row.subtype);
     const bool profile_has_window =
-        profile != nullptr && profile->features.window_sensor && profile->features.open_window_detection;
+        profile != nullptr &&
+        contains(profile->poll_registers, profile->poll_register_count, HeatingFunction::WINDOW_OPEN) &&
+        contains(profile->boot_registers, profile->boot_register_count, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
     EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), profile_has_window)
         << format_device_ids(row.type, row.subtype);
   });
@@ -348,5 +356,16 @@ TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsTheNegationOfMainParame
     EXPECT_EQ(has_feature(row.features, device_feature::EXTENDED_POSITION_FRAME),
               sends_position && !has_feature(row.features, device_feature::MAIN_PARAMETER_ONLY))
         << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTableFeatures, EveryRowWithCapabilitiesHasAYamlSelectableType) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.features == 0)
+      return;
+    const DeviceTypeInfo *type_row = find_exact_device_type_info(row.type, 0);
+    ASSERT_NE(type_row, nullptr) << format_device_ids(row.type, row.subtype);
+    EXPECT_NE(type_row->flags & device_type_flags::YAML_SELECTABLE, 0u)
+        << format_device_ids(row.type, row.subtype) << ": the Python mirror can only name a YAML-selectable type";
   });
 }

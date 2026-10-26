@@ -291,6 +291,105 @@ def heater_window_companions_are_declared_at_validation_time():
         assert c.CONF_WINDOW_DETECTION_SWITCH_ID not in out, cfg
 
 
+@case()
+def cover_named_position_buttons_follow_the_declared_kind():
+    """A cover gets one companion button per named position its declared kind has, with the entity
+    ids and names Home Assistant already knows; a kind without the bit, a raw type with no row
+    (including the ventilation point, which is not a cover) and a cover with no declared type get none."""
+    from esphome.const import CONF_ID, CONF_NAME
+    from esphome.core import ID
+    from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    def config(device_type=None, subtype=None):
+        cfg = {CONF_ID: ID("living", is_declaration=True), CONF_NAME: "Living"}
+        if device_type is not None:
+            cfg["io_device_type"] = device_type
+        if subtype is not None:
+            cfg["io_subtype"] = subtype
+        return cfg
+
+    def buttons(device_type=None, subtype=None):
+        out = c._inject_companion_ids(config(device_type, subtype))
+        return {key for key, (config_key, *_rest) in c.NAMED_POSITION_BUTTONS.items() if config_key in out}
+
+    types = v.DEVICE_TYPE_OPTIONS
+    assert buttons(types["roller_shutter"]) == {"FAVORITE"}
+    assert buttons(types["window_opener"]) == {"FAVORITE", "VENT"}
+    assert buttons(types["window_opener"], 58) == {"FAVORITE", "VENT"}, "named positions survive subtype 58"
+    assert buttons(types["garage_opener"], 58) == {"FAVORITE"}, "the garage family still has the favourite"
+    assert buttons(types["light"]) == set()
+    assert buttons(types["unknown"]) == set()
+    assert buttons() == set(), "a cover with no declared type gets none"
+    assert buttons(0x14) == set(), "a raw ventilation point is not a cover and has no ventilation button"
+
+    assert set(c.NAMED_POSITION_BUTTONS) == set(v.NAMED_POSITION_FEATURES)
+    for key in c.NAMED_POSITION_BUTTONS:
+        getattr(c.CoverCommand, key)  # every key names a CoverCommand value
+
+    # Home Assistant entity ids and names depend on these.
+    out = c._inject_companion_ids(config(types["window_opener"]))
+    assert out[c.CONF_FAVORITE_BUTTON_ID].id == "living_favorite_button"
+    assert out[c.CONF_VENT_BUTTON_ID].id == "living_vent_button"
+    assert out[c.CONF_FAVORITE_BUTTON_ID].is_declaration
+    assert c.NAMED_POSITION_BUTTONS["FAVORITE"][2] == "Favorite Position"
+    assert c.NAMED_POSITION_BUTTONS["VENT"][2] == "Ventilation Position"
+
+
+@case()
+def device_features_fall_back_like_the_cpp_lookup():
+    """The Python mirror answers the exact row, else the main-parameter-only variant at subtype 58,
+    else the type's row; a node type YAML has no name for has no row."""
+    from esphome.components.home_io_control import hub_validators as v
+
+    t = v.DEVICE_TYPE_OPTIONS
+    roller = v.device_features(t["roller_shutter"])
+    assert v.device_features(t["roller_shutter"], 9) == roller, "an unnamed subtype takes the type row"
+    assert v.device_features(t["roller_shutter"], 58) == v.FEATURE_MAIN_PARAMETER_ONLY | v.FEATURE_FAVORITE
+    assert v.device_features(t["interior_venetian_blind"], 58) & v.FEATURE_TILT == 0
+    assert v.device_features(t["window_opener"], 58) & v.FEATURE_VENT
+    assert v.device_features(t["lock"], 2) == 0, "an explicit subtype row beats the type row, even at zero"
+    assert v.device_features(t["lock"], 1) == v.FEATURE_EXTENDED_POSITION_FRAME
+    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS
+    assert v.device_features(t["electrical_heater"], 0) == 0
+    assert v.device_features(0x14) == 0, "a raw type with no name has no capabilities"
+    assert v.device_features(0x14, 58) == v.FEATURE_MAIN_PARAMETER_ONLY
+
+
+@case("platform_common.require_feature")
+def feature_gated_keys_are_rejected_for_a_kind_without_the_feature():
+    """require_feature() names the key, the kind and what to do; it passes when the config declares
+    no kind, the key is inactive, or the kind has the feature."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as p
+
+    t = v.DEVICE_TYPE_OPTIONS
+    silent_gate = dict(required=v.FEATURE_EXTENDED_POSITION_FRAME, reason="remove silent:")
+
+    p.require_feature({}, "silent", True, **silent_gate)  # no declared kind: nothing says what it is
+    p.require_feature({"io_device_type": t["garage_opener"]}, "silent", False, **silent_gate)
+    p.require_feature({"io_device_type": t["roller_shutter"]}, "silent", True, **silent_gate)
+    try:
+        p.require_feature({"io_device_type": t["garage_opener"]}, "silent", True, **silent_gate)
+        raise AssertionError("silent was accepted on a garage opener")
+    except cv.Invalid as err:
+        assert "silent" in str(err) and "garage_opener" in str(err) and "remove silent:" in str(err), str(err)
+    try:
+        p.require_feature({"io_device_type": t["roller_shutter"], "io_subtype": 58}, "silent", True, **silent_gate)
+        raise AssertionError("silent was accepted on subtype 58")
+    except cv.Invalid as err:
+        assert "io_subtype 58" in str(err), str(err)
+
+    on_off_only = dict(forbidden=v.FEATURE_MAIN_PARAMETER_ONLY, reason="remove dimmable:")
+    p.require_feature({"io_device_type": t["light"]}, "dimmable", True, **on_off_only)
+    try:
+        p.require_feature({"io_device_type": t["light"], "io_subtype": 58}, "dimmable", True, **on_off_only)
+        raise AssertionError("dimmable was accepted on an on/off-only light")
+    except cv.Invalid as err:
+        assert "dimmable" in str(err) and "remove dimmable:" in str(err), str(err)
+
+
 def _raise_firmware_error(**_kwargs):
     from esphome.components.home_io_control import lr1121_firmware
 

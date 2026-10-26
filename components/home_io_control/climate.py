@@ -22,7 +22,11 @@ from esphome.const import (
 from esphome.core import ID
 
 from . import home_io_control_ns
-from .hub_validators import DEVICE_TYPE_OPTIONS, heating_profile_has_window
+from .hub_validators import (
+    DEVICE_TYPE_OPTIONS,
+    FEATURE_WINDOW_COMPANIONS,
+    device_features,
+)
 from .platform_common import (
     companion_entity_name,
     companion_id_base,
@@ -56,12 +60,13 @@ CONF_WINDOW_DETECTION_SWITCH_ID = "_window_detection_switch_id"
 def _has_window_companions(config):
     """True when the declared heater kind has a window sensor and a detection switch.
 
-    The kind is the declared io_device_type/io_subtype (subtype 0 when omitted), the same key the
-    C++ heating profile uses. A heater declared without a type gets no companions: nothing at
-    validation time says what it is.
+    The kind is the declared io_device_type/io_subtype (subtype 0 when omitted); the answer is
+    the WINDOW_COMPANIONS bit of its table row. A heater declared without a type gets no companions:
+    nothing at validation time says what it is.
     """
-    return CONF_DEVICE_TYPE in config and heating_profile_has_window(
-        config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0)
+    return CONF_DEVICE_TYPE in config and bool(
+        device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0))
+        & FEATURE_WINDOW_COMPANIONS
     )
 
 

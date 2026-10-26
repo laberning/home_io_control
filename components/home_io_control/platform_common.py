@@ -46,7 +46,7 @@ from . import (
     validate_status_poll_interval,
 )
 from .hub_names import CONF_SYSTEM_KEY
-from .hub_validators import validate_system_key
+from .hub_validators import device_features, device_type_name, validate_system_key
 
 # Shared YAML config keys used by every device-bound platform.
 # Named CONF_IO_DEVICE_ID (not CONF_DEVICE_ID) to stay distinct from ESPHome's own
@@ -221,6 +221,27 @@ def platform_schema_extension():
         # (ADR 0053). Same validator as the hub's system_key; `!secret` works as for any string.
         cv.Optional(CONF_SYSTEM_KEY): validate_system_key,
     }
+
+
+def require_feature(config, key, active, *, required=0, forbidden=0, reason):
+    """Reject a YAML key the declared device kind cannot use.
+
+    One gate for every feature-dependent key. It only fires when the config declares
+    ``io_device_type`` (without a kind nothing says what the device can do), ``active`` is true
+    (the caller decides, because keys differ: ``silent:`` is active by presence, ``dimmable:``
+    only when true), and the kind's capability word lacks a ``required`` bit or has a
+    ``forbidden`` one. ``reason`` says what to do about it.
+    """
+    if not active or CONF_DEVICE_TYPE not in config:
+        return
+    device_type = config[CONF_DEVICE_TYPE]
+    subtype = config.get(CONF_SUBTYPE, 0)
+    features = device_features(device_type, subtype)
+    if (features & required) == required and (features & forbidden) == 0:
+        return
+    name = device_type_name(device_type) or f"0x{device_type:02X}"
+    kind = name if subtype == 0 else f"{name} (io_subtype {subtype})"
+    raise cv.Invalid(f"{key} is not available on {kind}: {reason}")
 
 
 async def wire_device_binding(var, parent, config):
