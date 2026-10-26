@@ -40,7 +40,7 @@ constexpr uint8_t PRIVATE_RESP_CURRENT_OFFSET = 4;
 // Mirrors EXTENDED_TILT_RESPONSE_MIN_DATA_LEN / EXTENDED_TILT_SELECTOR_OFFSET / EXTENDED_TILT_MSB_OFFSET /
 // EXTENDED_TILT_LSB_OFFSET in hub_status.cpp — same file-local-constant situation as the position offsets
 // above. Only a status-poll reply (not our own EXECUTE-tilt ack) is long enough to carry this extended
-// block; hub_status.cpp additionally gates on device_supports_tilt(dev.type), which this codec-layer test
+// block; hub_status.cpp additionally gates on device_feature::TILT, which this codec-layer test
 // has no device record to check, so it relies on the capture author only setting reported_tilt on frames
 // that are genuinely status-poll replies (see tests/corpus/README.md).
 constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN = 15;

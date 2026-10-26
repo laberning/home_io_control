@@ -13,7 +13,7 @@
 /// The conversion is: ha_position = 1.0 - (io_position / 100.0)
 ///
 /// @warning Some device types (e.g., horizontal awnings) have inverted position mapping
-///          by default (see default_inverted_for_type() in proto_frame.h). The invert
+///          by default (device_feature::INVERTED). The invert
 ///          flag flips the HA↔IO conversion accordingly. Ensure the device's actual
 ///          behavior matches the mapping, or set invert_position accordingly.
 
@@ -56,7 +56,7 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   /// @param interval_ms Poll interval in milliseconds; zero (the default) means no poll.
   void set_rain_sensor_poll_interval(uint32_t interval_ms) { this->rain_sensor_poll_interval_ms_ = interval_ms; }
   /// @brief Query whether this device supports tilt (slat angle) control.
-  /// @return true if the YAML‑declared device type is tilt‑capable.
+  /// @return true if the device has device_feature::TILT.
   [[nodiscard]] bool supports_tilt() const;
 
  protected:

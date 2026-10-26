@@ -1,98 +1,126 @@
-/// @file device_features_parity_test.cpp
-/// @brief The capability bits of the node-type table against the type-keyed helpers they replace,
-///        and the value checks, named-position table and undeclared-kind defaults beside them.
+/// @file device_features_test.cpp
+/// @brief The capability word of every node-type table row as a literal expectation, the lookup
+///        fallbacks, the resolver, the value checks, the named-position table and the undeclared-kind
+///        defaults.
 /// @ingroup hioc_protocol
 
 #include "proto_commands.h"
 #include "proto_device_features.h"
 #include "proto_device_model.h"
 #include "proto_device_types.h"
-#include "proto_heating_profiles.h"
 
 #include "device_table_walk.h"
 #include "test_helpers.h"
 
-#include <set>
-#include <utility>
+#include <vector>
 
 using namespace esphome::home_io_control;
 namespace feature = esphome::home_io_control::device_feature;
 
 namespace {
 
-/// Every (type, subtype) the parity checks visit: each table row, plus subtypes 0 and 58 of every
-/// type that has a row, since the lookup answers those without a row of their own.
-std::set<std::pair<DeviceType, uint8_t>> kinds_under_test() {
-  std::set<std::pair<DeviceType, uint8_t>> kinds;
-  test::for_each_table_row([&kinds](const DeviceTypeInfo &row) {
-    kinds.emplace(row.type, row.subtype);
-    kinds.emplace(row.type, 0);
-    kinds.emplace(row.type, SUBTYPE_MAIN_PARAMETER_ONLY);
-  });
-  return kinds;
-}
+/// One expected table row: the kind and the whole capability word it states.
+struct ExpectedRow {
+  DeviceType type;
+  uint8_t subtype;
+  DeviceFeatures features;
+};
 
-std::string kind_label(DeviceType type, uint8_t subtype) { return format_device_ids(type, subtype); }
+// Shorthand for the words below.
+constexpr DeviceFeatures MPO = feature::MAIN_PARAMETER_ONLY;
+constexpr DeviceFeatures LV = feature::LEVELS;
+constexpr DeviceFeatures TI = feature::TILT;
+constexpr DeviceFeatures FAV = feature::FAVORITE;
+constexpr DeviceFeatures VENT = feature::VENT;
+constexpr DeviceFeatures EXT = feature::EXTENDED_POSITION_FRAME;
+constexpr DeviceFeatures WIN = feature::WINDOW_COMPANIONS;
+constexpr DeviceFeatures INV = feature::INVERTED;
 
-/// Types whose type-only device_supports_tilt() answers true.
-bool is_tilting_type(DeviceType type) {
-  return type == DeviceType::INTERIOR_VENETIAN_BLIND || type == DeviceType::VERTICAL_INTERIOR_BLIND ||
-         type == DeviceType::EXTERIOR_VENETIAN_BLIND || type == DeviceType::LOUVRE_BLIND;
-}
+/// Every row of the table. A row missing here, or listed with another word, fails the test below.
+const std::vector<ExpectedRow> EXPECTED_ROWS = {
+    {DeviceType::UNKNOWN, 0, 0},
+    {DeviceType::INTERIOR_VENETIAN_BLIND, 0, LV | FAV | TI | EXT},
+    {DeviceType::ROLLER_SHUTTER, 0, LV | FAV | EXT},
+    {DeviceType::ROLLER_SHUTTER, 1, LV | FAV | EXT},
+    {DeviceType::ROLLER_SHUTTER, 2, LV | FAV | EXT},
+    {DeviceType::VERTICAL_EXTERIOR_AWNING, 0, LV | FAV | EXT},
+    {DeviceType::WINDOW_OPENER, 0, LV | FAV | VENT | EXT},
+    {DeviceType::WINDOW_OPENER, 1, LV | FAV | VENT | EXT},
+    {DeviceType::GARAGE_OPENER, 0, MPO | LV | FAV},
+    {DeviceType::GARAGE_OPENER, 58, MPO | LV | FAV},
+    {DeviceType::LIGHT, 0, EXT},
+    {DeviceType::LIGHT, 1, LV | EXT},
+    {DeviceType::LIGHT, 2, LV | EXT},
+    {DeviceType::LIGHT, 58, MPO},
+    {DeviceType::GATE_OPENER, 0, LV | FAV | EXT},
+    {DeviceType::GATE_OPENER, 58, MPO | LV | FAV},
+    {DeviceType::ROLLING_DOOR_OPENER, 0, LV | FAV | EXT},
+    {DeviceType::LOCK, 0, EXT},
+    {DeviceType::LOCK, 1, EXT},
+    {DeviceType::LOCK, 2, 0},
+    {DeviceType::VERTICAL_INTERIOR_BLIND, 0, LV | FAV | TI | EXT},
+    {DeviceType::SECURE_CONFIGURATION_DEVICE, 0, 0},
+    {DeviceType::BEACON, 0, 0},
+    {DeviceType::DUAL_ROLLER_SHUTTER, 0, LV | FAV | EXT},
+    {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, 0},
+    {DeviceType::ON_OFF_SWITCH, 0, EXT},
+    {DeviceType::ON_OFF_SWITCH, 2, EXT},
+    {DeviceType::HORIZONTAL_AWNING, 0, LV | FAV | EXT | INV},
+    {DeviceType::HORIZONTAL_AWNING, 1, LV | FAV | EXT | INV},
+    {DeviceType::EXTERIOR_VENETIAN_BLIND, 0, LV | FAV | TI | EXT},
+    {DeviceType::LOUVRE_BLIND, 0, LV | FAV | TI | EXT},
+    {DeviceType::CURTAIN_TRACK, 0, LV | FAV | EXT},
+    {DeviceType::VENTILATION_POINT, 0, 0},
+    {DeviceType::VENTILATION_POINT, 1, 0},
+    {DeviceType::VENTILATION_POINT, 2, 0},
+    {DeviceType::VENTILATION_POINT, 3, 0},
+    {DeviceType::EXTERIOR_HEATING, 0, MPO | LV},
+    {DeviceType::EXTERIOR_HEATING, 58, MPO},
+    {DeviceType::HEAT_PUMP, 0, 0},
+    {DeviceType::HEAT_PUMP, 1, 0},
+    {DeviceType::HEAT_PUMP, 2, 0},
+    {DeviceType::INTRUSION_ALARM, 0, 0},
+    {DeviceType::SWINGING_SHUTTER, 0, LV | FAV | EXT},
+    {DeviceType::SWINGING_SHUTTER, 1, LV | FAV | EXT},
+    {DeviceType::SWINGING_SHUTTER, 58, MPO | LV | FAV},
+    {DeviceType::SLIDING_WINDOW, 0, LV | FAV | EXT},
+    {DeviceType::SLIDING_WINDOW, 1, LV | FAV | EXT},
+    {DeviceType::ZONE_CONTROL, 0, 0},
+    {DeviceType::BIOCLIMATIC_PERGOLA, 0, LV | FAV | EXT},
+    {DeviceType::SIREN, 0, 0},
+    {DeviceType::DOMESTIC_HOT_WATER, 0, 0},
+    {DeviceType::ELECTRICAL_HEATER, 0, 0},
+    {DeviceType::ELECTRICAL_HEATER, 1, WIN},
+    {DeviceType::HEAT_RECOVERY_VENTILATION, 0, 0},
+    {DeviceType::CENTRAL_HOUSE_CONTROL, 0, 0},
+    {DeviceType::TEST_AND_EVALUATION, 0, 0},
+    {DeviceType::REMOTE_CONTROLLER, 0, 0},
+    {DeviceType::REMOTE_CONTROLLER, 2, 0},
+    {DeviceType::REMOTE_CONTROLLER, 3, 0},
+    {DeviceType::REMOTE_CONTROLLER, 4, 0},
+    {DeviceType::REMOTE_CONTROLLER, 5, 0},
+};
 
 }  // namespace
 
 // ============================================================================
-// Parity with the helpers the bits replace
+// The table, row by row
 // ============================================================================
 
-TEST(DeviceFeaturesParity, EveryTypeKeyedHelperAgreesWithTheRowBits) {
-  for (const auto &[type, subtype] : kinds_under_test()) {
-    SCOPED_TRACE(kind_label(type, subtype));
-    const DeviceFeatures bits = device_features(type, subtype);
-
-    // Known difference: a subtype-58 variant has no functional parameters, so it has no slat angle,
-    // where the type-only helper still answers for the whole type (KLF 200 Appendix 2).
-    const bool tilt_expected = device_supports_tilt(type) && subtype != SUBTYPE_MAIN_PARAMETER_ONLY;
-    EXPECT_EQ(has_feature(bits, feature::TILT), tilt_expected);
-    if (is_tilting_type(type) && subtype == SUBTYPE_MAIN_PARAMETER_ONLY) {
-      EXPECT_TRUE(device_supports_tilt(type)) << "the listed difference: the type-only helper says yes at 58";
+TEST(DeviceFeaturesTable, EveryRowStatesTheExpectedWord) {
+  size_t rows_seen = 0;
+  test::for_each_table_row([&rows_seen](const DeviceTypeInfo &row) {
+    rows_seen++;
+    bool listed = false;
+    for (const ExpectedRow &expected : EXPECTED_ROWS) {
+      if (expected.type == row.type && expected.subtype == row.subtype) {
+        listed = true;
+        EXPECT_EQ(row.features, expected.features) << format_device_ids(row.type, row.subtype);
+      }
     }
-
-    EXPECT_EQ(has_feature(bits, feature::VENT), device_supports_vent(type));
-    EXPECT_EQ(has_feature(bits, feature::INVERTED), default_inverted_for_type(type));
-    EXPECT_EQ(has_feature(bits, feature::MAIN_PARAMETER_ONLY), device_takes_main_parameter_only(type, subtype));
-
-    if (type == DeviceType::LIGHT) {
-      EXPECT_EQ(has_feature(bits, feature::LEVELS), device_light_is_brightness_only(type, subtype));
-    }
-    // The fan platform offers speeds on every exterior-heating subtype except 58.
-    if (type == DeviceType::EXTERIOR_HEATING) {
-      EXPECT_EQ(has_feature(bits, feature::LEVELS), subtype != SUBTYPE_MAIN_PARAMETER_ONLY);
-    }
-
-    const HeatingProfile *profile = find_heating_profile(type, subtype);
-    EXPECT_EQ(has_feature(bits, feature::WINDOW_COMPANIONS), profile != nullptr && profile->features.window_sensor);
-  }
-}
-
-TEST(DeviceFeaturesParity, ExtendedPositionFrameIsTheNegationOfMainParameterOnlyWhereAPositionIsSent) {
-  for (const auto &[type, subtype] : kinds_under_test()) {
-    SCOPED_TRACE(kind_label(type, subtype));
-    if (!device_has_platform(type, subtype))
-      continue;
-    const DeviceCapabilityClass capability = device_capability_class(type, subtype);
-    const bool sends_position =
-        capability == DeviceCapabilityClass::COVER || capability == DeviceCapabilityClass::LIGHT ||
-        capability == DeviceCapabilityClass::SWITCH || capability == DeviceCapabilityClass::LOCK ||
-        capability == DeviceCapabilityClass::HEATER_LEVEL;
-    const DeviceFeatures bits = device_features(type, subtype);
-    if (sends_position) {
-      EXPECT_EQ(has_feature(bits, feature::EXTENDED_POSITION_FRAME), !device_takes_main_parameter_only(type, subtype));
-    } else {
-      EXPECT_FALSE(has_feature(bits, feature::EXTENDED_POSITION_FRAME));
-    }
-  }
+    EXPECT_TRUE(listed) << format_device_ids(row.type, row.subtype) << " is in the table but not in this test";
+  });
+  EXPECT_EQ(rows_seen, EXPECTED_ROWS.size()) << "a row listed here is missing from the table";
 }
 
 // ============================================================================

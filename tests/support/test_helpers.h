@@ -29,6 +29,14 @@ const uint8_t TEST_SYSTEM_KEY[16] = {0xDE, 0xCA, 0xFC, 0x0F, 0xFE, 0xE0, 0xFF, 0
                                      0xEB, 0xAD, 0xBE, 0xEF, 0xF0, 0x0D, 0xBA, 0x11};
 
 // Build a standard execute command frame (start frame, not end) for the given position (0-100).
+/// Give a stored device a kind and resolve its features, as the registry and the INFO2 path do.
+/// Writing `type` / `subtype` directly leaves the features of the previous kind in place.
+inline void set_kind(IoDevice &dev, DeviceType type, uint8_t subtype = 0) {
+  dev.type = type;
+  dev.subtype = subtype;
+  resolve_device_features(dev);
+}
+
 inline IoFrame make_execute(uint8_t position) {
   IoFrame frame{};
   create_execute_position(frame, OWN_ID, DST_ID, true, position);
@@ -228,7 +236,7 @@ class MockPlatformHubBase : public IOHomeControlComponent {
   void queue_set_switch_state(const std::string &, bool) override {}
   void queue_set_lock_state(const std::string &, bool) override {}
 
-  // add_device/get_device/set_device_dimmable/register_device_callback/apply_optimistic_* are
+  // add_device/get_device/register_device_callback/apply_optimistic_* are
   // deliberately NOT overridden — the base implements them as one-line delegations to the real
   // DeviceRegistry, so inheriting them tests production code instead of a parallel copy. This
   // mock previously kept its own std::map and reimplemented that logic; it diverged silently the

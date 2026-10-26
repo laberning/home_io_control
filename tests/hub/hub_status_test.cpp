@@ -78,7 +78,7 @@ TEST(HubStatus, StoppedFlagMismatchKeepsDeviceMoving) {
 // §7.7 — a trusted status observation supersedes the position prediction.
 TEST(HubStatus, TrustedStatusObservationSupersedesPositionPrediction) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
@@ -105,7 +105,7 @@ TEST(HubStatus, TrustedStatusObservationSupersedesPositionPrediction) {
 // §7.8 — a trusted extended status observation supersedes the tilt prediction.
 TEST(HubStatus, TrustedExtendedStatusObservationSupersedesTiltPrediction) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
   auto *dev = comp.get_device("ABC123");
@@ -132,7 +132,7 @@ TEST(HubStatus, TrustedExtendedStatusObservationSupersedesTiltPrediction) {
 // §7.9 — regression guard: an execute ack decoded with trust_position=false clears *nothing*.
 TEST(HubStatus, ExecuteAckWithoutTrustedPositionSupersedesNothing) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
   ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
   auto *dev = comp.get_device("ABC123");
@@ -160,7 +160,7 @@ TEST(HubStatus, ExecuteAckWithoutTrustedPositionSupersedesNothing) {
 // §7.10 — an unsolicited 0x71 supersedes the position prediction but leaves the tilt prediction standing.
 TEST(HubStatus, UnsolicitedStatusUpdateSupersedesPositionButNotTilt) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
   ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
   auto *dev = comp.get_device("ABC123");
@@ -570,7 +570,7 @@ TEST(HubStatus, GetInfo2RespUpdatesDeviceType) {
 
 TEST(HubStatus, GetInfo2RespDoesNotOverwriteDeclaredType) {
   TestableHubComponent comp;
-  comp.add_device("054E17", {DeviceType::VERTICAL_EXTERIOR_AWNING, 7, false});
+  comp.add_device("054E17", {DeviceType::VERTICAL_EXTERIOR_AWNING, 7});
 
   IoFrame f{};
   init_frame(f, true, false, true, false);
@@ -588,6 +588,63 @@ TEST(HubStatus, GetInfo2RespDoesNotOverwriteDeclaredType) {
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::VERTICAL_EXTERIOR_AWNING) << "INFO2 must not overwrite a YAML-declared device type";
   EXPECT_EQ(dev->subtype, 7u) << "INFO2 must not overwrite a YAML-declared subtype";
+}
+
+namespace {
+
+/// An INFO2 response from "054E17" carrying the given kind.
+IoFrame make_info2_response(DeviceType type, uint8_t subtype) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[12] = {0};
+  encode_device_metadata(type, subtype, &payload[10]);
+  set_cmd(f, CMD_GET_INFO2_RESP, payload, sizeof(payload));
+  return f;
+}
+
+}  // namespace
+
+TEST(HubStatus, GetInfo2RespResolvesTheFeaturesOfTheLearnedKind) {
+  TestableHubComponent comp;
+  comp.add_device("054E17", {.entity_class = DeviceCapabilityClass::COVER});
+
+  comp.update_device_status_(make_info2_response(DeviceType::EXTERIOR_VENETIAN_BLIND, 0));
+
+  const IoDevice *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->features, device_features(DeviceType::EXTERIOR_VENETIAN_BLIND, 0));
+  EXPECT_TRUE(has_feature(dev->features, device_feature::TILT));
+}
+
+TEST(HubStatus, GetInfo2RespTeachesAnInvertedKindItsDefaultDirection) {
+  TestableHubComponent comp;
+  comp.add_device("054E17", {.entity_class = DeviceCapabilityClass::COVER});
+
+  comp.update_device_status_(make_info2_response(DeviceType::HORIZONTAL_AWNING, 0));
+
+  EXPECT_TRUE(comp.get_device("054E17")->inverted);
+}
+
+TEST(HubStatus, AnExplicitInvertPositionFalseSurvivesALearnedInvertedKind) {
+  TestableHubComponent comp;
+  comp.add_device("054E17", {.entity_class = DeviceCapabilityClass::COVER, .invert_override = false});
+
+  comp.update_device_status_(make_info2_response(DeviceType::HORIZONTAL_AWNING, 0));
+
+  EXPECT_FALSE(comp.get_device("054E17")->inverted) << "the YAML `invert_position: false` outranks the kind's default";
+}
+
+TEST(HubStatus, ALearnedSubtype58CoverHasNoTilt) {
+  TestableHubComponent comp;
+  comp.add_device("054E17", {.entity_class = DeviceCapabilityClass::COVER});
+
+  comp.update_device_status_(make_info2_response(DeviceType::EXTERIOR_VENETIAN_BLIND, SUBTYPE_MAIN_PARAMETER_ONLY));
+
+  EXPECT_FALSE(has_feature(comp.get_device("054E17")->features, device_feature::TILT));
 }
 
 TEST(HubStatus, ErrorRespDoesNotMutateTrackedPosition) {
@@ -940,7 +997,7 @@ TEST(HubStatus, TiltBlockIsNotMistakenForALastCommandParameter) {
   // decoder already owns, and the tilt value must still decode correctly alongside the
   // (different-offset) commander/originator.
   TestableHubComponent comp;
-  comp.add_device("51C001", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  comp.add_device("51C001", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
 
   IoFrame f{};
   init_frame(f, true, false, false, false);
@@ -1034,7 +1091,7 @@ TEST(HubStatus, DescribePredictionNamesADivergingMotion) {
 // not the whole story.
 TEST(HubStatus, DescribePredictionFlagsTheIssue95ExecuteAckScenario) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 100.0f));
 
   IoFrame frame{};

@@ -1,4 +1,5 @@
 #include "platform_cover_controls.h"
+#include "proto_device_types.h"
 
 #include "hub_core.h"
 
@@ -55,7 +56,7 @@ class VentButtonMockHub : public test::MockPlatformHubBase {
 
 TEST(PlatformCoverVentButton, PressQueuesVentCommand) {
   VentButtonMockHub hub;
-  hub.add_device("ABC123", {DeviceType::WINDOW_OPENER, 0, false});
+  hub.add_device("ABC123", {DeviceType::WINDOW_OPENER, 0});
 
   TestableIOHomeCoverVentButton button;
   button.set_parent(&hub);
@@ -96,19 +97,27 @@ TEST(PlatformCoverVentButton, PressIsSafeWhenParentNull) {
 }
 
 // ========================================================================================
-// device_supports_vent() tests
+// Ventilation position (device_feature::VENT) tests
 // ========================================================================================
 
-TEST(DeviceProfile, VentSupportedForWindowTypes) {
-  EXPECT_TRUE(device_supports_vent(DeviceType::WINDOW_OPENER)) << "window opener should support vent";
-  EXPECT_TRUE(device_supports_vent(DeviceType::VENTILATION_POINT)) << "ventilation point should support vent";
+TEST(DeviceProfile, VentSupportedForWindowOpeners) {
+  EXPECT_TRUE(has_feature(device_features(DeviceType::WINDOW_OPENER, 0), device_feature::VENT))
+      << "window opener should support vent";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::VENTILATION_POINT, 0), device_feature::VENT))
+      << "a ventilation point is not a cover, so it offers no ventilation position";
 }
 
 TEST(DeviceProfile, VentNotSupportedForOtherTypes) {
-  EXPECT_FALSE(device_supports_vent(DeviceType::ROLLER_SHUTTER)) << "roller shutter should not support vent";
-  EXPECT_FALSE(device_supports_vent(DeviceType::VERTICAL_EXTERIOR_AWNING)) << "awning should not support vent";
-  EXPECT_FALSE(device_supports_vent(DeviceType::LIGHT)) << "light should not support vent";
-  EXPECT_FALSE(device_supports_vent(DeviceType::INTERIOR_VENETIAN_BLIND)) << "venetian blind should not support vent";
-  EXPECT_FALSE(device_supports_vent(DeviceType::GARAGE_OPENER)) << "garage opener should not support vent";
-  EXPECT_FALSE(device_supports_vent(DeviceType::UNKNOWN)) << "unknown should not support vent";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::ROLLER_SHUTTER, 0), device_feature::VENT))
+      << "roller shutter should not support vent";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::VERTICAL_EXTERIOR_AWNING, 0), device_feature::VENT))
+      << "awning should not support vent";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::LIGHT, 0), device_feature::VENT))
+      << "light should not support vent";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0), device_feature::VENT))
+      << "venetian blind should not support vent";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::GARAGE_OPENER, 0), device_feature::VENT))
+      << "garage opener should not support vent";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::UNKNOWN, 0), device_feature::VENT))
+      << "unknown should not support vent";
 }

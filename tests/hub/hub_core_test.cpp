@@ -80,7 +80,7 @@ TEST(HubCore, AddDeviceStoresDeclaredMetadata) {
   comp.initialized_ = true;
   comp.radio_ = new MockRadio();
 
-  comp.add_device("ABC123", {DeviceType::HORIZONTAL_AWNING, 5, true});
+  comp.add_device("ABC123", {.type = DeviceType::HORIZONTAL_AWNING, .subtype = 5, .invert_override = true});
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::HORIZONTAL_AWNING) << "declared device type should be stored";
@@ -220,7 +220,7 @@ TEST(HubCore, LoopQueuesSettlePollWithoutConfiguredInterval) {
   comp.add_device("ABC123");
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::HORIZONTAL_AWNING;
+  test::set_kind(*dev, DeviceType::HORIZONTAL_AWNING);
   // begin_tracking arms the deadline; then set_next_update simulates a hint-scheduled poll becoming due.
   uint32_t const now = esphome::millis();
   comp.poll_policy_.begin_tracking("ABC123", 0, now);

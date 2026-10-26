@@ -473,27 +473,20 @@ class IOHomeControlComponent : public Component,
 
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (undeclared/legacy path).
-  /// Type, subtype, inverted, and optimistic_state default to UNKNOWN / 0 / false / true; use the
+  /// Type, subtype and optimistic_state default to UNKNOWN / 0 / true, with no overrides; use the
   /// `DeviceConfig` overload when metadata comes from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
   virtual void add_device(const std::string &device_id);
   /// Add a device to the registry with full metadata from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
-  /// @param cfg Device type/subtype/inversion/optimistic-state metadata.
+  /// @param cfg Device type/subtype/overrides/optimistic-state metadata.
   virtual void add_device(const std::string &device_id, const DeviceConfig &cfg);
   /// Retrieve a device by ID; returns nullptr if not found.
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
   virtual IoDevice *get_device(const std::string &device_id);
-  /// Set a device's `dimmable` flag (see IoDevice::dimmable). Called by platform_light.cpp's
-  /// setup(), not folded into add_device() since it's a light-only YAML choice. No-op if the
-  /// device isn't registered.
-  /// @param device_id Hexadecimal node ID string.
-  /// @param dimmable New value for IoDevice::dimmable.
-  virtual void set_device_dimmable(const std::string &device_id, bool dimmable);
-
   /// Select a device's travel profile at runtime (see IOHomeCoverSilentSwitch).
-  /// Virtual for the same reason as set_device_dimmable: platform tests substitute a mock registry.
+  /// Virtual so platform tests can substitute a mock registry.
   /// @param device_id Hexadecimal node ID string.
   /// @param silent    True to send position moves in "silent operation" (slower) mode.
   virtual void set_device_silent(const std::string &device_id, bool silent);

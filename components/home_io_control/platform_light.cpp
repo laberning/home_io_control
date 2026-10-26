@@ -14,14 +14,11 @@ static const char *const TAG = "home_io_control.light";
 void IOHomeLight::setup() {
   // Lights need the shared device registry so discovery/status handling can find their node
   // metadata the same way covers do; the delayed initial poll matches the cover path.
-  this->register_device_binding_(this, /*inverted=*/false, [this](const std::string &id, const IoDevice &dev) {
-    this->on_device_update_(id, dev);
-  });
-  // `dimmable` is a light-only YAML choice, not part of the shared add_device() signature every
-  // platform calls above — stamp it onto the now-registered device separately so profile-name
-  // logging (see hub_operations.cpp's operation_profile_name()) can tell a dimmable light from a
-  // plain binary one.
-  this->parent_->set_device_dimmable(this->device_id_, this->dimmable_);
+  // `dimmable` is a light-only YAML choice; it travels in the device declaration so the registry can
+  // resolve the light's levels from it.
+  this->register_device_binding_(
+      this, DeviceCapabilityClass::LIGHT, std::nullopt,
+      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); }, this->dimmable_);
 }
 
 light::LightTraits IOHomeLight::get_traits() {

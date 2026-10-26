@@ -6,6 +6,8 @@
 
 #include "device_registry.h"
 
+#include "proto_device_types.h"
+
 #include "esphome/core/hal.h"
 
 #include <gtest/gtest.h>
@@ -29,7 +31,7 @@ TEST(DeviceRegistry, AddAndGetReturnsDevice) {
 
 TEST(DeviceRegistry, AddWithMetadataStoresFields) {
   DeviceRegistry reg;
-  reg.add("AABBCC", {DeviceType::VERTICAL_EXTERIOR_AWNING, 2, true});
+  reg.add("AABBCC", {.type = DeviceType::VERTICAL_EXTERIOR_AWNING, .subtype = 2, .invert_override = true});
   IoDevice *dev = reg.get("AABBCC");
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::VERTICAL_EXTERIOR_AWNING);
@@ -94,7 +96,7 @@ TEST(DeviceRegistry, AddStoresNodeIdBytes) {
 TEST(DeviceRegistry, DuplicateAddIsIgnored) {
   DeviceRegistry reg;
   reg.add("ABC123");
-  reg.add("ABC123", {DeviceType::VERTICAL_EXTERIOR_AWNING, 5, true});
+  reg.add("ABC123", {.type = DeviceType::VERTICAL_EXTERIOR_AWNING, .subtype = 5, .invert_override = true});
   IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::UNKNOWN);  // first registration wins
@@ -112,22 +114,60 @@ TEST(DeviceRegistry, GetReturnsNullptrForUnknownId) {
   EXPECT_EQ(reg.get("FFFFFF"), nullptr);
 }
 
-TEST(DeviceRegistry, SetDimmableUpdatesRegisteredDevice) {
+TEST(DeviceRegistry, AddResolvesTheDeclaredKindsFeatures) {
   DeviceRegistry reg;
-  reg.add("AABBCC", {DeviceType::LIGHT, 0, false});
-  EXPECT_FALSE(reg.get("AABBCC")->dimmable) << "dimmable defaults to false";
-
-  reg.set_dimmable("AABBCC", true);
-  EXPECT_TRUE(reg.get("AABBCC")->dimmable);
-
-  reg.set_dimmable("AABBCC", false);
-  EXPECT_FALSE(reg.get("AABBCC")->dimmable);
+  reg.add("AABBCC", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
+  const IoDevice *dev = reg.get("AABBCC");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->features, device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0));
+  EXPECT_TRUE(has_feature(dev->features, device_feature::TILT));
 }
 
-TEST(DeviceRegistry, SetDimmableOnUnknownDeviceIsNoop) {
+TEST(DeviceRegistry, ADimmableLightDeclaredInTheConfigHasLevels) {
   DeviceRegistry reg;
-  reg.set_dimmable("FFFFFF", true);  // must not crash
-  EXPECT_EQ(reg.get("FFFFFF"), nullptr);
+  reg.add("AABBCC", {.type = DeviceType::LIGHT, .subtype = 0, .entity_class = DeviceCapabilityClass::LIGHT});
+  reg.add("DDEEFF",
+          {.type = DeviceType::LIGHT, .subtype = 0, .entity_class = DeviceCapabilityClass::LIGHT, .dimmable = true});
+  EXPECT_FALSE(has_feature(reg.get("AABBCC")->features, device_feature::LEVELS)) << "dimmable defaults to false";
+  EXPECT_TRUE(has_feature(reg.get("DDEEFF")->features, device_feature::LEVELS));
+}
+
+TEST(DeviceRegistry, AnExplicitInversionOverridesTheKindsDefault) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", {DeviceType::HORIZONTAL_AWNING, 0});
+  reg.add("DDEEFF", {.type = DeviceType::HORIZONTAL_AWNING, .subtype = 0, .invert_override = false});
+  reg.add("112233", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0, .invert_override = true});
+  EXPECT_TRUE(reg.get("AABBCC")->inverted) << "a horizontal awning is inverted by default";
+  EXPECT_FALSE(reg.get("DDEEFF")->inverted) << "`invert_position: false` wins over the default";
+  EXPECT_TRUE(reg.get("112233")->inverted);
+}
+
+TEST(DeviceRegistry, PutResolvesTheStoredRecordsFeatures) {
+  DeviceRegistry reg;
+  IoDevice paired{};
+  paired.type = DeviceType::HORIZONTAL_AWNING;
+  paired.subtype = 0;
+  reg.put("AABBCC", paired);
+  EXPECT_TRUE(reg.get("AABBCC")->inverted);
+  EXPECT_EQ(reg.get("AABBCC")->features, device_features(DeviceType::HORIZONTAL_AWNING, 0));
+}
+
+TEST(DeviceRegistry, PutKeepsTheYamlOverridesOfTheRecordItReplaces) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::UNKNOWN,
+                     .subtype = 0,
+                     .entity_class = DeviceCapabilityClass::LIGHT,
+                     .invert_override = true,
+                     .dimmable = true});
+  IoDevice paired{};
+  paired.type = DeviceType::LIGHT;
+  paired.subtype = 0;
+  reg.put("AABBCC", paired);
+  const IoDevice *dev = reg.get("AABBCC");
+  EXPECT_TRUE(dev->inverted);
+  EXPECT_TRUE(dev->dimmable);
+  EXPECT_EQ(dev->entity_class, DeviceCapabilityClass::LIGHT);
+  EXPECT_TRUE(has_feature(dev->features, device_feature::LEVELS));
 }
 
 TEST(DeviceRegistry, SizeReflectsRegistrationCount) {
@@ -267,7 +307,7 @@ TEST(DeviceRegistry, ForEachLinkedRemoteVisitsAllEntries) {
 // §7.1 — apply_optimistic_target() writes only the overlay.
 TEST(DeviceRegistry, ApplyOptimisticTargetSetsOverlayAndLeavesObservationUntouched) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
 
   EXPECT_TRUE(reg.apply_optimistic_target("ABC123", 75.0f));
 
@@ -287,7 +327,7 @@ TEST(DeviceRegistry, ApplyOptimisticTargetSetsOverlayAndLeavesObservationUntouch
 TEST(DeviceRegistry, OptimisticPredictionsDoNotStampMovingEvidence) {
   esphome::test_clock::ManualClock clock(5000);
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
 
   ASSERT_TRUE(reg.apply_optimistic_target("ABC123", 75.0f));
   EXPECT_EQ(reg.get("ABC123")->last_moving_evidence_ms, 0u) << "a prediction is not evidence of movement";
@@ -300,7 +340,7 @@ TEST(DeviceRegistry, OptimisticPredictionsDoNotStampMovingEvidence) {
 // particular without discarding a wire-reported target that happens to be present.
 TEST(DeviceRegistry, ApplyOptimisticStopPredictsStoppedAndLeavesObservationUntouched) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
 
   IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
@@ -323,7 +363,7 @@ TEST(DeviceRegistry, ApplyOptimisticStopPredictsStoppedAndLeavesObservationUntou
 // §7.3 — apply_optimistic_tilt() writes only the overlay, leaving a wire-reported slat angle intact.
 TEST(DeviceRegistry, ApplyOptimisticTiltSetsOverlayAndLeavesObservationUntouched) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
 
   IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
@@ -353,7 +393,7 @@ TEST(DeviceRegistry, ApplyOptimisticStopOnUnknownDeviceReturnsFalseWithoutCrashi
 
 TEST(DeviceRegistry, ApplyOptimisticTiltNoOpForNonTiltDevice) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
 
   EXPECT_FALSE(reg.apply_optimistic_tilt("ABC123", 83.0f)) << "a roller shutter rejects the tilt command anyway; "
                                                               "showing an angle no poll will ever confirm is worse "
@@ -372,7 +412,7 @@ TEST(DeviceRegistry, ApplyOptimisticTiltOnUnknownDeviceReturnsFalseWithoutCrashi
 
 TEST(DeviceRegistry, OptimisticNoOpWhenOptimisticStateDisabled) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
+  reg.add("ABC123", {.type = DeviceType::INTERIOR_VENETIAN_BLIND, .subtype = 0, .optimistic_state = false});
 
   EXPECT_FALSE(reg.apply_optimistic_target("ABC123", 75.0f));
   EXPECT_FALSE(reg.apply_optimistic_stop("ABC123"));
@@ -390,7 +430,7 @@ TEST(DeviceRegistry, OptimisticNoOpWhenOptimisticStateDisabled) {
 // §7.4 — rollback_optimistic() withdraws every axis and is idempotent.
 TEST(DeviceRegistry, RollbackOptimisticWithdrawsBothAxesThenNoOps) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   reg.apply_optimistic_target("ABC123", 75.0f);
   reg.apply_optimistic_tilt("ABC123", 83.0f);
 
@@ -409,7 +449,7 @@ TEST(DeviceRegistry, RollbackOptimisticWithdrawsBothAxesThenNoOps) {
 // §7.5 — rollback on an optimistic_state:false device is a no-op (overlay never filled).
 TEST(DeviceRegistry, RollbackOptimisticOnOptimisticDisabledDeviceReturnsFalse) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false});
+  reg.add("ABC123", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0, .optimistic_state = false});
   reg.apply_optimistic_target("ABC123", 75.0f);  // no-op
 
   EXPECT_FALSE(reg.rollback_optimistic("ABC123"));
@@ -419,7 +459,7 @@ TEST(DeviceRegistry, RollbackOptimisticOnOptimisticDisabledDeviceReturnsFalse) {
 // travelling, and one that reports nothing mid-travel has no observation that carries the direction.
 TEST(DeviceRegistry, RollbackOfRestorableStopRestoresReplacedMovement) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
   ASSERT_TRUE(reg.apply_optimistic_target("ABC123", 100.0f));
   ASSERT_TRUE(reg.apply_optimistic_stop("ABC123", /*restorable=*/true));
   ASSERT_TRUE(reg.apply_optimistic_stop("ABC123", /*restorable=*/true))
@@ -442,7 +482,7 @@ TEST(DeviceRegistry, RollbackOfRestorableStopRestoresReplacedMovement) {
 // unrelated rollback can never resurrect the old movement.
 TEST(DeviceRegistry, ReplacedMovementIsForgottenWhenNoLongerRestorable) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  reg.add("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
   IoDevice *dev = reg.get("ABC123");
   ASSERT_NE(dev, nullptr);
 
@@ -485,7 +525,7 @@ TEST(DeviceRegistry, ReplacedMovementIsForgottenWhenNoLongerRestorable) {
 // failed command does.
 TEST(DeviceRegistry, NonStopFailureDoesNotRestoreMovementAStopReplaced) {
   DeviceRegistry reg;
-  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  reg.add("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   reg.apply_optimistic_target("ABC123", 100.0f);
   reg.apply_optimistic_stop("ABC123", /*restorable=*/true);
   reg.apply_optimistic_tilt("ABC123", 50.0f);

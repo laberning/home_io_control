@@ -224,8 +224,8 @@ struct DiscoveryResponseInfo {
 ///
 /// Pure: no logging, no side effects. Extended fields (manufacturer, flags, timestamp) are
 /// returned rather than logged so each caller can present them its own way. Sets
-/// `device.node_id`/`type`/`subtype`/`inverted`/`position`/`target`/`is_stopped` and
-/// `device_id` exactly as a discovery reply implies: type/subtype and inversion come from the
+/// `device.node_id`/`type`/`subtype`/`position`/`target`/`is_stopped` and
+/// `device_id` exactly as a discovery reply implies: type/subtype come from the
 /// packed metadata bytes when present, position/target default to the unknown sentinel, and
 /// the device is assumed stopped. Every field read is guarded on `frame.data_len`, so a short
 /// or truncated payload degrades gracefully instead of reading past the end.

@@ -29,8 +29,6 @@ std::string format_device_type_hex(DeviceType type) {
 
 }  // namespace
 
-bool default_inverted_for_type(DeviceType type) { return type == DeviceType::HORIZONTAL_AWNING; }
-
 const char *rain_sensor_state_name(RainSensorState state) {
   switch (state) {
     case RainSensorState::UNKNOWN:
@@ -206,106 +204,9 @@ bool device_supports_status_requests(DeviceType type) {
          device_supports_lock_control(type) || device_supports_heat_level_control(type);
 }
 
-bool device_supports_tilt(DeviceType type) {
-  // No default: every DeviceType is listed so -Wswitch catches any new one (error in the host
-  // unit build, warning in the firmware build), forcing an explicit tilt/vent decision.
-  switch (type) {
-    case DeviceType::INTERIOR_VENETIAN_BLIND:
-    case DeviceType::VERTICAL_INTERIOR_BLIND:
-    case DeviceType::EXTERIOR_VENETIAN_BLIND:
-    case DeviceType::LOUVRE_BLIND:
-      return true;
-    case DeviceType::UNKNOWN:
-    case DeviceType::ROLLER_SHUTTER:
-    case DeviceType::VERTICAL_EXTERIOR_AWNING:
-    case DeviceType::WINDOW_OPENER:
-    case DeviceType::GARAGE_OPENER:
-    case DeviceType::LIGHT:
-    case DeviceType::GATE_OPENER:
-    case DeviceType::ROLLING_DOOR_OPENER:
-    case DeviceType::LOCK:
-    case DeviceType::SECURE_CONFIGURATION_DEVICE:
-    case DeviceType::BEACON:
-    case DeviceType::DUAL_ROLLER_SHUTTER:
-    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
-    case DeviceType::ON_OFF_SWITCH:
-    case DeviceType::HORIZONTAL_AWNING:
-    case DeviceType::CURTAIN_TRACK:
-    case DeviceType::VENTILATION_POINT:
-    case DeviceType::EXTERIOR_HEATING:
-    case DeviceType::HEAT_PUMP:
-    case DeviceType::INTRUSION_ALARM:
-    case DeviceType::SWINGING_SHUTTER:
-    case DeviceType::SLIDING_WINDOW:
-    case DeviceType::ZONE_CONTROL:
-    case DeviceType::BIOCLIMATIC_PERGOLA:
-    case DeviceType::SIREN:
-    case DeviceType::DOMESTIC_HOT_WATER:
-    case DeviceType::ELECTRICAL_HEATER:
-    case DeviceType::HEAT_RECOVERY_VENTILATION:
-    case DeviceType::CENTRAL_HOUSE_CONTROL:
-    case DeviceType::TEST_AND_EVALUATION:
-    case DeviceType::REMOTE_CONTROLLER:
-      return false;
-  }
-  return false;
-}
-
-bool device_takes_main_parameter_only(DeviceType type, uint8_t subtype) {
-  if (subtype == SUBTYPE_MAIN_PARAMETER_ONLY)
-    return true;
-  const DeviceTypeInfo *row = find_device_type_info(type, subtype);
-  return row != nullptr && (row->flags & device_type_flags::MAIN_PARAMETER_ONLY) != 0;
-}
-
-bool device_supports_vent(DeviceType type) {
-  // No default: every DeviceType is listed so -Wswitch catches any new one (error in the host
-  // unit build, warning in the firmware build), forcing an explicit tilt/vent decision.
-  switch (type) {
-    case DeviceType::WINDOW_OPENER:
-    case DeviceType::VENTILATION_POINT:
-      return true;
-    case DeviceType::UNKNOWN:
-    case DeviceType::INTERIOR_VENETIAN_BLIND:
-    case DeviceType::ROLLER_SHUTTER:
-    case DeviceType::VERTICAL_EXTERIOR_AWNING:
-    case DeviceType::GARAGE_OPENER:
-    case DeviceType::LIGHT:
-    case DeviceType::GATE_OPENER:
-    case DeviceType::ROLLING_DOOR_OPENER:
-    case DeviceType::LOCK:
-    case DeviceType::VERTICAL_INTERIOR_BLIND:
-    case DeviceType::SECURE_CONFIGURATION_DEVICE:
-    case DeviceType::BEACON:
-    case DeviceType::DUAL_ROLLER_SHUTTER:
-    case DeviceType::HEATING_TEMPERATURE_INTERFACE:
-    case DeviceType::ON_OFF_SWITCH:
-    case DeviceType::HORIZONTAL_AWNING:
-    case DeviceType::EXTERIOR_VENETIAN_BLIND:
-    case DeviceType::LOUVRE_BLIND:
-    case DeviceType::CURTAIN_TRACK:
-    case DeviceType::EXTERIOR_HEATING:
-    case DeviceType::HEAT_PUMP:
-    case DeviceType::INTRUSION_ALARM:
-    case DeviceType::SWINGING_SHUTTER:
-    case DeviceType::SLIDING_WINDOW:
-    case DeviceType::ZONE_CONTROL:
-    case DeviceType::BIOCLIMATIC_PERGOLA:
-    case DeviceType::SIREN:
-    case DeviceType::DOMESTIC_HOT_WATER:
-    case DeviceType::ELECTRICAL_HEATER:
-    case DeviceType::HEAT_RECOVERY_VENTILATION:
-    case DeviceType::CENTRAL_HOUSE_CONTROL:
-    case DeviceType::TEST_AND_EVALUATION:
-    case DeviceType::REMOTE_CONTROLLER:
-      return false;
-  }
-  return false;
-}
-
-const char *device_operation_profile_name(DeviceType type) {
+const char *device_operation_profile_name(DeviceType type, uint8_t subtype) {
   if (device_supports_position_control(type))
-    return device_supports_tilt(type) ? "cover_position_tilt" : "cover_position";
+    return has_feature(device_features(type, subtype), device_feature::TILT) ? "cover_position_tilt" : "cover_position";
   if (device_supports_binary_control(type))
     return "binary_on_off";
 
@@ -331,6 +232,29 @@ const char *device_operation_profile_name(DeviceType type) {
   return "unknown";
 }
 
+void resolve_device_features(IoDevice &dev) {
+  const DeviceCapabilityClass entity_class = dev.entity_class != DeviceCapabilityClass::UNKNOWN
+                                                 ? dev.entity_class
+                                                 : device_capability_class(dev.type, dev.subtype);
+  DeviceFeatures features;
+  if (dev.type == DeviceType::UNKNOWN || find_exact_device_type_info(dev.type, 0) == nullptr) {
+    features = undeclared_kind_features(entity_class);
+    if (dev.subtype == SUBTYPE_MAIN_PARAMETER_ONLY)
+      features = main_parameter_only_variant(features);
+  } else {
+    features = device_features(dev.type, dev.subtype);
+  }
+  // `dimmable:` has a schema default of false, so it decides a light's levels outright; the row's
+  // LEVELS only drives the paste-ready snippet and the on/off-only rejection.
+  if (entity_class == DeviceCapabilityClass::LIGHT) {
+    features &= static_cast<DeviceFeatures>(~device_feature::LEVELS);
+    if (dev.dimmable && !has_feature(features, device_feature::MAIN_PARAMETER_ONLY))
+      features |= device_feature::LEVELS;
+  }
+  dev.features = features;
+  dev.inverted = dev.invert_override.value_or(has_feature(features, device_feature::INVERTED));
+}
+
 std::string format_device_type_diagnostic(DeviceType type) {
   const char *name = device_type_name(type);
   std::string raw = format_device_type_hex(type);
@@ -349,8 +273,7 @@ std::string format_device_type_for_yaml(DeviceType type) {
 }
 
 std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
-                                      bool metadata_complete, bool inverted, bool low_power,
-                                      const std::string &system_key_hex) {
+                                      bool metadata_complete, bool low_power, const std::string &system_key_hex) {
   // A device that self-reported POWER_SAVE_LOW_POWER needs `low_power: true` so directed commands
   // wake it with the long preamble — emit it in both snippet shapes, since a low-power device that
   // also withheld its type is exactly the case a user most needs told.
@@ -376,9 +299,11 @@ std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const st
     return "";
 
   std::string extra_lines;
-  if (device_capability_class(type, subtype) == DeviceCapabilityClass::COVER && inverted)
+  const DeviceFeatures features = device_features(type, subtype);
+  if (has_feature(features, device_feature::INVERTED))
     extra_lines += "    invert_position: true\n";
-  if (device_light_is_brightness_only(type, subtype))
+  if (device_capability_class(type, subtype) == DeviceCapabilityClass::LIGHT &&
+      has_feature(features, device_feature::LEVELS))
     extra_lines += "    dimmable: true\n";
   extra_lines += low_power_line;
   extra_lines += system_key_line;

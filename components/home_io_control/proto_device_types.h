@@ -6,7 +6,7 @@
 ///
 /// One row per (node type, subtype) the project knows by name. Every per-type fact that is not a
 /// bare number — the lowercase identifier, the YAML selectability, the capability class, whether a
-/// platform can drive the device yet, and the behaviour flags — is read from that table, so there is
+/// platform can drive the device yet, and the capability bits — is read from that table, so there is
 /// exactly one place to add a type or a subtype. A lookup falls back from (type, subtype) to
 /// (type, 0) to "not in the table".
 ///
@@ -40,14 +40,9 @@ static constexpr uint8_t YAML_SELECTABLE = 1U << 0U;
 /// An ESPHome platform of the row's capability class can drive this (type, subtype). Rows without
 /// it are reported as "not supported yet" and get no paste-ready YAML.
 static constexpr uint8_t HAS_PLATFORM = 1U << 1U;
-/// Movement commands carry the main parameter only (no functional-parameter block), see
-/// device_takes_main_parameter_only().
-static constexpr uint8_t MAIN_PARAMETER_ONLY = 1U << 2U;
-/// Light rows only: brightness is the only controllable property (no colour, no colour temperature).
-static constexpr uint8_t BRIGHTNESS_ONLY = 1U << 3U;
 /// Subtype rows only: `name` already is the complete description ("window lock") and is printed
 /// alone, instead of being appended to the type's name ("roller shutter, with projection").
-static constexpr uint8_t STANDALONE_NAME = 1U << 4U;
+static constexpr uint8_t STANDALONE_NAME = 1U << 2U;
 }  // namespace device_type_flags
 
 /// @brief One row of the node-type / subtype table.
@@ -92,12 +87,6 @@ const char *device_platform_name(DeviceType type, uint8_t subtype);
 /// @param subtype Subtype.
 /// @return The resolved row's class, or DeviceCapabilityClass::UNKNOWN when the type is not in the table.
 DeviceCapabilityClass device_capability_class(DeviceType type, uint8_t subtype);
-
-/// @brief Is this light limited to brightness (no colour, no colour temperature)?
-/// @param type Node type.
-/// @param subtype Subtype.
-/// @return true when the resolved row carries device_type_flags::BRIGHTNESS_ONLY.
-bool device_light_is_brightness_only(DeviceType type, uint8_t subtype);
 
 /// @brief Capability bits of a (type, subtype).
 /// @details The exact row; else, for subtype SUBTYPE_MAIN_PARAMETER_ONLY, main_parameter_only_variant()

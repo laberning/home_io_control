@@ -13,6 +13,7 @@
 #include "proto_sizes.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace esphome {
@@ -156,33 +157,6 @@ bool device_has_no_motion(DeviceType type, uint8_t subtype);
 /// @return true for devices that have a heating profile.
 bool device_supports_climate_control(DeviceType type, uint8_t subtype);
 
-/// @brief Does this device type support tilt (slat angle) control?
-/// @param type Device type.
-/// @return true for interior venetian blinds, vertical interior blinds, exterior venetian blinds
-///         and louvre blinds.
-bool device_supports_tilt(DeviceType type);
-
-/// @brief Does this device type support the ventilation position command?
-///
-/// The ventilation command moves window-type actuators to a predefined
-/// partially-open position suitable for air exchange without fully opening.
-/// @param type Device type.
-/// @return true for WINDOW_OPENER and VENTILATION_POINT.
-bool device_supports_vent(DeviceType type);
-
-/// @brief Does this device take movement commands as the main parameter only?
-///
-/// True for every garage opener: a Wisniowski / Somfy MOTO 1000 io refuses the functional-parameter
-/// block of the regular position execute (the travel-speed profile roller motors use) and the
-/// "favourite" alias with RESULT_PARAMETER_UNKNOWN, and accepts a frame without them (issue #163).
-/// True for subtype 58 of any node type too: the public KLF 200 API specification defines it as the
-/// position-only variant. Other gate and rolling-door openers may behave the same but have no field
-/// report yet, so they keep the regular frame.
-/// @param type Device type.
-/// @param subtype Device subtype.
-/// @return true if movement must use create_execute_main_parameter() and FAVORITE is unsupported.
-bool device_takes_main_parameter_only(DeviceType type, uint8_t subtype);
-
 /// @brief Decode the 10-bit node type from two packed metadata bytes.
 /// @param type_msb First metadata byte.
 /// @param type_subtype Second metadata byte containing the remaining type bits and subtype.
@@ -203,11 +177,12 @@ uint8_t decode_packed_device_subtype(uint8_t type_subtype);
 /// @param type_subtype Output: second metadata byte (top 2 type bits + 6-bit subtype).
 void encode_packed_device_type(DeviceType type, uint8_t subtype, uint8_t &type_msb, uint8_t &type_subtype);
 
-/// @brief Human‑readable operation profile name for a device type.
+/// @brief Human‑readable operation profile name for a device kind.
 /// Used for logging and diagnostics.
 /// @param type Device type.
+/// @param subtype Device subtype; a cover is "cover_position_tilt" only when its (type, subtype) has a slat angle.
 /// @return String such as "cover_position", "cover_position_tilt", "binary_on_off", "lock", etc.
-const char *device_operation_profile_name(DeviceType type);
+const char *device_operation_profile_name(DeviceType type, uint8_t subtype);
 
 /// @brief Human-readable device type string for diagnostics, including the raw numeric value.
 /// @param type Device type.
@@ -226,11 +201,12 @@ std::string format_device_type_for_yaml(DeviceType type);
 ///
 /// With `metadata_complete == false`, the type/subtype are unknown, so the returned snippet
 /// uses a `<cover|light|switch|lock>` platform placeholder and a commented-out
-/// `io_device_type` explanation; `type`, `subtype`, and `inverted` are ignored in this case.
+/// `io_device_type` explanation; `type` and `subtype` are ignored in this case.
 ///
 /// With `metadata_complete == true`, the snippet names the concrete ESPHome platform for
-/// `type` and fills in `io_subtype`, `invert_position: true` for an inverted cover and
-/// `dimmable: true` for a brightness-only light subtype. If the (type, subtype) has no ESPHome
+/// `type` and fills in `io_subtype`, `invert_position: true` for a kind inverted by default and
+/// `dimmable: true` for a light subtype with intermediate levels (device_feature::INVERTED and
+/// device_feature::LEVELS of the kind). If the (type, subtype) has no ESPHome
 /// platform yet (device_has_platform() in proto_device_types.h), an empty string is returned
 /// instead — the caller decides what to say when there's no snippet to show.
 ///
@@ -246,8 +222,6 @@ std::string format_device_type_for_yaml(DeviceType type);
 /// @param subtype Decoded device subtype; only used when `metadata_complete` is true.
 /// @param device_id Hex device ID string (e.g. "38B4A1").
 /// @param metadata_complete Whether the discovery response included type/subtype metadata.
-/// @param inverted Whether the device's open/close positions are swapped; only used when
-///        `metadata_complete` is true and `type` is a cover.
 /// @param low_power Whether the device self-reported a low-power / duty-cycled class; emits
 ///        `low_power: true` when set, in both snippet shapes.
 /// @param system_key_hex The device's own system key as 32 hex characters, or empty when it uses the
@@ -256,7 +230,7 @@ std::string format_device_type_for_yaml(DeviceType type);
 /// @return Multi-line YAML snippet, or an empty string when `metadata_complete` is true but
 ///         the (type, subtype) maps to no ESPHome platform.
 std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
-                                      bool metadata_complete, bool inverted, bool low_power,
+                                      bool metadata_complete, bool low_power,
                                       const std::string &system_key_hex = std::string());
 
 // ============================================================================
@@ -420,29 +394,36 @@ struct IoDevice {
   float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
   float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.
   bool is_stopped{true};                 ///< True if device is not moving.
-  bool inverted{false};                  ///< True if open/close positions are swapped (e.g., horizontal awning).
-  bool silent{false};                    ///< True to send position moves with the reference hub's "silent
-                                         ///< operation" extended block, which makes the motor travel more
-                                         ///< slowly. Like `inverted`/`dimmable` this is a YAML-declared
-                                         ///< preference, not a protocol-reported fact — nothing on the wire
-                                         ///< tells us whether a device is in that mode.
-  bool optimistic_state{true};           ///< True if `target` may be set ahead of a confirming poll/response.
-  bool low_power{false};                 ///< YAML-declared: this target is a low-power / duty-cycled receiver, so
-                                         ///< directed frames set CTRL1_LOW_POWER and use the long wake-up preamble.
-                                         ///< A protocol-reported class exists (discovery Multi Information Byte) but
-                                         ///< is surfaced through the pairing/scan snippet, never applied at runtime.
-  bool dimmable{false};                  ///< True for a LIGHT-class device configured `dimmable: true` in YAML.
-                                         ///< Set from platform_light.cpp's YAML config via
-                                         ///< DeviceRegistry::set_dimmable(), purely for accurate profile-name
-                                         ///< logging. Light subtype 58 (0x01BA) is defined as on/off only
-                                         ///< (VELUX KLF 200 API v3.18, App. 2); the discovery subtype is
-                                         ///< not consulted for this flag yet.
-  uint8_t last_result_code{0};           ///< Last CMD_ERROR_RESP result byte (0 = none recorded). See
-                                ///< command_result_name()/is_limitation_result() in proto_constants.h. Cleared by
-                                ///< the next successful status/command reply for this device. Note: 0 is also the
-                                ///< real RESULT_UNKNOWN_STATUS_REPLY wire value, so that specific explicit reply is
-                                ///< indistinguishable here from "nothing recorded yet" — a known, accepted tradeoff.
-  uint32_t last_result_at_ms{0};              ///< millis() timestamp of last_result_code, 0 when none recorded.
+  DeviceFeatures features{0};            ///< What this device can do, resolved by resolve_device_features(). Every
+                                         ///< capability check on a registered device reads this word.
+  DeviceCapabilityClass entity_class{
+      DeviceCapabilityClass::UNKNOWN};  ///< Class of the entity that declared the
+                                        ///< device; UNKNOWN for a device no entity declared (the type's class then
+                                        ///< applies). Resolver input.
+  std::optional<bool> invert_override = std::nullopt;  ///< YAML `invert_position:` when declared; wins over the kind's
+                                                       ///< default. Resolver input.
+  bool inverted{false};           ///< True if open/close positions are swapped (e.g., horizontal awning).
+                                  ///< Resolved: `invert_override`, else device_feature::INVERTED.
+  bool silent{false};             ///< True to send position moves with the reference hub's "silent
+                                  ///< operation" extended block, which makes the motor travel more
+                                  ///< slowly. Like `inverted`/`dimmable` this is a YAML-declared
+                                  ///< preference, not a protocol-reported fact — nothing on the wire
+                                  ///< tells us whether a device is in that mode.
+  bool optimistic_state{true};    ///< True if `target` may be set ahead of a confirming poll/response.
+  bool low_power{false};          ///< YAML-declared: this target is a low-power / duty-cycled receiver, so
+                                  ///< directed frames set CTRL1_LOW_POWER and use the long wake-up preamble.
+                                  ///< A protocol-reported class exists (discovery Multi Information Byte) but
+                                  ///< is surfaced through the pairing/scan snippet, never applied at runtime.
+  bool dimmable{false};           ///< YAML-declared `dimmable: true` of a LIGHT entity. Resolver input: it
+                                  ///< alone decides a light's device_feature::LEVELS (unless the kind is main
+                                  ///< parameter only; light subtype 58 is on/off only, VELUX KLF 200 API v3.18,
+                                  ///< App. 2).
+  uint8_t last_result_code{0};    ///< Last CMD_ERROR_RESP result byte (0 = none recorded). See
+                                  ///< command_result_name()/is_limitation_result() in proto_constants.h. Cleared by
+                                  ///< the next successful status/command reply for this device. Note: 0 is also the
+                                  ///< real RESULT_UNKNOWN_STATUS_REPLY wire value, so that specific explicit reply is
+                                  ///< indistinguishable here from "nothing recorded yet" — a known, accepted tradeoff.
+  uint32_t last_result_at_ms{0};  ///< millis() timestamp of last_result_code, 0 when none recorded.
   uint8_t last_commander[NODE_ID_SIZE]{};     ///< Node ID of the controller that last commanded this device, as
                                               ///< reported verbatim by the device in its own status payload. All
                                               ///< zeroes until a status reply carrying the record has been decoded
@@ -518,6 +499,19 @@ struct IoDevice {
                                        ///< pairing may replace it (DeviceRegistry::get_declared()).
 };
 
+/// @brief Resolve a device's capability bits and inversion from its kind and its YAML overrides.
+/// @details The one place a device's features are decided. The base is the (type, subtype) row
+///          (device_features()); a kind with no row, or an undeclared one, takes
+///          undeclared_kind_features() of the declaring entity's class (the type's own class when no
+///          entity declared the device), made main-parameter-only at subtype 58 like any other kind.
+///          A light's LEVELS then come from the YAML `dimmable:` flag alone, and never on a kind that
+///          takes the main parameter only. `inverted` is the YAML override, else the kind's default.
+///          Called wherever a record gets or changes its kind: DeviceRegistry::add() and put(), and
+///          when a status reply teaches an undeclared device its type.
+/// @param dev Device to resolve; reads type, subtype, entity_class, dimmable and invert_override and
+///        writes features and inverted.
+void resolve_device_features(IoDevice &dev);
+
 /// @brief Record that a device is (believed to be) travelling right now.
 ///
 /// With clear_moving_evidence(), one of the two writers of IoDevice::last_moving_evidence_ms.
@@ -586,11 +580,6 @@ inline bool effective_is_stopped(const IoDevice &dev) {
       return dev.is_stopped;
   }
 }
-
-/// @brief Determine whether a device type has inverted position mapping by default.
-/// @param type Device type.
-/// @return true for horizontal awnings; false otherwise.
-bool default_inverted_for_type(DeviceType type);
 
 /// @brief Decode target/current position values from a status frame.
 /// @param target_raw 16‑bit raw target value.

@@ -208,7 +208,7 @@ TEST(PlatformCover, LearnedInversionAppliesWhenNoOverrideIsConfigured) {
   IoDevice dev{};
   dev.position = 75.0f;
   dev.is_stopped = true;
-  dev.inverted = true;
+  dev.type = DeviceType::HORIZONTAL_AWNING;  // the type learned from radio metadata is inverted by default
   hub.trigger_device_update("ABC123", dev);
 
   EXPECT_FLOAT_EQ(cover.position, 0.75f)
@@ -293,7 +293,7 @@ TEST(PlatformCover, ExplicitInvertFalseOverridesLearnedInversion) {
   IoDevice dev{};
   dev.position = 75.0f;
   dev.is_stopped = true;
-  dev.inverted = true;
+  dev.type = DeviceType::HORIZONTAL_AWNING;  // the type learned from radio metadata is inverted by default
   hub.trigger_device_update("ABC123", dev);
 
   EXPECT_FLOAT_EQ(cover.position, 0.25f)
@@ -331,7 +331,7 @@ TEST(PlatformCover, ControlSetPositionAppliesOptimisticTargetImmediately) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
 
   CoverCall call(&cover);
   call.set_position(0.25);  // HA 0.25 open -> IO 75 (non-inverted)
@@ -351,7 +351,7 @@ TEST(PlatformCover, ControlStopClearsOptimisticTargetImmediately) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
   auto *seed = hub.get_device("ABC123");
   ASSERT_NE(seed, nullptr);
   seed->target = 50.0f;                          // a genuine wire-reported target the STOP must not discard
@@ -377,7 +377,7 @@ TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTargetImmedia
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);  // tilt-capable, required for the combined branch
-  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
 
   CoverCall call(&cover);
   call.set_position(0.25);  // HA 0.25 open -> IO 75 (non-inverted)
@@ -402,7 +402,7 @@ TEST(PlatformCover, ControlSetTiltAppliesOptimisticTiltImmediately) {
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);
-  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
 
   CoverCall call(&cover);
   call.set_tilt(0.83f);
@@ -424,7 +424,7 @@ TEST(PlatformCover, ControlCombinedPositionAndTiltAppliesOptimisticTiltToo) {
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);
-  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
 
   CoverCall call(&cover);
   call.set_position(0.25);
@@ -446,7 +446,7 @@ TEST(PlatformCover, ControlSetTiltRespectsOptimisticStateFalse) {
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
   cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);
-  hub.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false, /*optimistic_state=*/false});
+  hub.add_device("ABC123", {.type = DeviceType::INTERIOR_VENETIAN_BLIND, .subtype = 0, .optimistic_state = false});
 
   CoverCall call(&cover);
   call.set_tilt(0.83f);
@@ -463,7 +463,7 @@ TEST(PlatformCover, ControlRespectsOptimisticStateFalse) {
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  hub.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false, /*optimistic_state=*/false});
+  hub.add_device("ABC123", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0, .optimistic_state = false});
 
   CoverCall call(&cover);
   call.set_position(0.25);

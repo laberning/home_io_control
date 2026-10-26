@@ -93,9 +93,9 @@ inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t p
 
 /// @brief Can this device accept a tilt command?
 /// @param dev IoDevice to check.
-/// @return true only if device type is known to support tilt.
+/// @return true only if the device has device_feature::TILT.
 inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
-  return dev.type != DeviceType::UNKNOWN && device_supports_tilt(dev.type);
+  return has_feature(dev.features, device_feature::TILT);
 }
 
 // ============================================================================
@@ -111,7 +111,7 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
                                    const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
            device_id.c_str(), device_type_name(dev.type), static_cast<unsigned>(dev.type),
-           device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
+           device_capability_class_name(dev.type), device_operation_profile_name(dev.type, dev.subtype), expected);
 }
 
 /// @brief Log a frame‑level issue (unregistered endpoints, unsupported commands).

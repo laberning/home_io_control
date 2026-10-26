@@ -18,9 +18,7 @@ using device_feature::LEVELS;
 using device_feature::TILT;
 using device_feature::VENT;
 using device_feature::WINDOW_COMPANIONS;
-using device_type_flags::BRIGHTNESS_ONLY;
 using device_type_flags::HAS_PLATFORM;
-using device_type_flags::MAIN_PARAMETER_ONLY;
 using device_type_flags::STANDALONE_NAME;
 using device_type_flags::YAML_SELECTABLE;
 
@@ -92,13 +90,13 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::WINDOW_OPENER, 1, "with integrated rain sensor", CAP_COVER, SUBTYPE_PLATFORM, WINDOW},
 
     // Every garage opener takes the main parameter only (issue #163); subtype 58 does so on any type.
-    {DeviceType::GARAGE_OPENER, 0, "garage_opener", CAP_COVER, SELECTABLE_PLATFORM | MAIN_PARAMETER_ONLY, GARAGE},
+    {DeviceType::GARAGE_OPENER, 0, "garage_opener", CAP_COVER, SELECTABLE_PLATFORM, GARAGE},
     {DeviceType::GARAGE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, "position only", CAP_COVER, SUBTYPE_PLATFORM,
      SLIDER_58_COVER},
 
     {DeviceType::LIGHT, 0, "light", CAP_LIGHT, SELECTABLE_PLATFORM, BINARY_COMMAND},
-    {DeviceType::LIGHT, 1, "dimmable RGB", CAP_LIGHT, SUBTYPE_PLATFORM | BRIGHTNESS_ONLY, DIMMABLE_LIGHT},
-    {DeviceType::LIGHT, 2, "tunable white", CAP_LIGHT, SUBTYPE_PLATFORM | BRIGHTNESS_ONLY, DIMMABLE_LIGHT},
+    {DeviceType::LIGHT, 1, "dimmable RGB", CAP_LIGHT, SUBTYPE_PLATFORM, DIMMABLE_LIGHT},
+    {DeviceType::LIGHT, 2, "tunable white", CAP_LIGHT, SUBTYPE_PLATFORM, DIMMABLE_LIGHT},
     {DeviceType::LIGHT, SUBTYPE_MAIN_PARAMETER_ONLY, "on/off only", CAP_LIGHT, SUBTYPE_PLATFORM,
      main_parameter_only_variant(BINARY_COMMAND)},
 
@@ -135,16 +133,15 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     {DeviceType::CURTAIN_TRACK, 0, "curtain_track", CAP_COVER, SELECTABLE_PLATFORM, COVER},
 
-    {DeviceType::VENTILATION_POINT, 0, "ventilation_point", CAP_SWITCH, 0, VENT},
-    {DeviceType::VENTILATION_POINT, 1, "air inlet", CAP_SWITCH, 0, VENT},
-    {DeviceType::VENTILATION_POINT, 2, "air transfer", CAP_SWITCH, 0, VENT},
-    {DeviceType::VENTILATION_POINT, 3, "air outlet", CAP_SWITCH, 0, VENT},
+    {DeviceType::VENTILATION_POINT, 0, "ventilation_point", CAP_SWITCH, 0, 0},
+    {DeviceType::VENTILATION_POINT, 1, "air inlet", CAP_SWITCH, 0, 0},
+    {DeviceType::VENTILATION_POINT, 2, "air transfer", CAP_SWITCH, 0, 0},
+    {DeviceType::VENTILATION_POINT, 3, "air outlet", CAP_SWITCH, 0, 0},
 
     // Exterior heating takes a heat level in the position field (a fan entity), not a setpoint. Every
     // exterior heater gets the main parameter only: its first functional parameter is not a cover's, and
     // a guessed block is what issue #163 showed to cost a refusal.
-    {DeviceType::EXTERIOR_HEATING, 0, "exterior_heating", CAP_HEATER_LEVEL, SELECTABLE_PLATFORM | MAIN_PARAMETER_ONLY,
-     HEAT_LEVEL_DEVICE},
+    {DeviceType::EXTERIOR_HEATING, 0, "exterior_heating", CAP_HEATER_LEVEL, SELECTABLE_PLATFORM, HEAT_LEVEL_DEVICE},
     {DeviceType::EXTERIOR_HEATING, SUBTYPE_MAIN_PARAMETER_ONLY, "on/off only", CAP_HEATER_LEVEL, SUBTYPE_PLATFORM,
      main_parameter_only_variant(HEAT_LEVEL_DEVICE)},
 
@@ -239,11 +236,6 @@ const char *device_platform_name(DeviceType type, uint8_t subtype) {
 DeviceCapabilityClass device_capability_class(DeviceType type, uint8_t subtype) {
   const DeviceTypeInfo *row = find_device_type_info(type, subtype);
   return row != nullptr ? row->capability : DeviceCapabilityClass::UNKNOWN;
-}
-
-bool device_light_is_brightness_only(DeviceType type, uint8_t subtype) {
-  const DeviceTypeInfo *row = find_device_type_info(type, subtype);
-  return row != nullptr && (row->flags & BRIGHTNESS_ONLY) != 0;
 }
 
 DeviceFeatures device_features(DeviceType type, uint8_t subtype) {

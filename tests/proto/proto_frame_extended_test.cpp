@@ -1,4 +1,5 @@
 #include "proto_frame.h"
+#include "proto_device_types.h"
 
 #include "test_helpers.h"
 
@@ -183,12 +184,16 @@ TEST(ProtoFrame, EncodeDeviceNamePayloadRejectsMalformedUtf8) {
 // ========================================================================================
 
 TEST(ProtoFrame, DefaultInvertedForType) {
-  EXPECT_TRUE(default_inverted_for_type(DeviceType::HORIZONTAL_AWNING)) << "horizontal awnings should be inverted";
-  EXPECT_FALSE(default_inverted_for_type(DeviceType::ROLLER_SHUTTER)) << "roller shutters should not be inverted";
-  EXPECT_FALSE(default_inverted_for_type(DeviceType::VERTICAL_EXTERIOR_AWNING))
+  EXPECT_TRUE(has_feature(device_features(DeviceType::HORIZONTAL_AWNING, 0), device_feature::INVERTED))
+      << "horizontal awnings should be inverted";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::ROLLER_SHUTTER, 0), device_feature::INVERTED))
+      << "roller shutters should not be inverted";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::VERTICAL_EXTERIOR_AWNING, 0), device_feature::INVERTED))
       << "standard awnings should not be inverted";
-  EXPECT_FALSE(default_inverted_for_type(DeviceType::LIGHT)) << "lights should not be inverted";
-  EXPECT_FALSE(default_inverted_for_type(DeviceType::ON_OFF_SWITCH)) << "switches should not be inverted";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::LIGHT, 0), device_feature::INVERTED))
+      << "lights should not be inverted";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::ON_OFF_SWITCH, 0), device_feature::INVERTED))
+      << "switches should not be inverted";
 }
 
 // ========================================================================================

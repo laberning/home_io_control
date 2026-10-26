@@ -5,6 +5,7 @@
 #include "proto_codecs.h"
 #include "proto_device_model.h"
 #include "proto_device_types.h"
+#include "proto_heating_profiles.h"
 
 #include "device_table_walk.h"
 #include "test_helpers.h"
@@ -160,25 +161,30 @@ TEST(DeviceTypesTable, CapabilityClassIsSubtypeAware) {
 }
 
 TEST(DeviceTypesTable, MainParameterOnlyForSubtype58OfAnyTypeAndEveryGarageOpener) {
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::GARAGE_OPENER, 58));
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::GATE_OPENER, 58));
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::EXTERIOR_HEATING, 58));
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::EXTERIOR_HEATING, 0)) << "every exterior heater";
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::SWINGING_SHUTTER, 58));
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::ROLLER_SHUTTER, 58))
+  const auto main_parameter_only = [](DeviceType type, uint8_t subtype) {
+    return has_feature(device_features(type, subtype), device_feature::MAIN_PARAMETER_ONLY);
+  };
+  EXPECT_TRUE(main_parameter_only(DeviceType::GARAGE_OPENER, 58));
+  EXPECT_TRUE(main_parameter_only(DeviceType::GATE_OPENER, 58));
+  EXPECT_TRUE(main_parameter_only(DeviceType::EXTERIOR_HEATING, 58));
+  EXPECT_TRUE(main_parameter_only(DeviceType::EXTERIOR_HEATING, 0)) << "every exterior heater";
+  EXPECT_TRUE(main_parameter_only(DeviceType::SWINGING_SHUTTER, 58));
+  EXPECT_TRUE(main_parameter_only(DeviceType::ROLLER_SHUTTER, 58))
       << "subtype 58 is defined on every type, with or without a row of its own";
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::GARAGE_OPENER, 0)) << "the issue #163 behaviour stays";
-  EXPECT_FALSE(device_takes_main_parameter_only(DeviceType::ROLLER_SHUTTER, 0));
-  EXPECT_FALSE(device_takes_main_parameter_only(DeviceType::GATE_OPENER, 0));
-  EXPECT_FALSE(device_takes_main_parameter_only(DeviceType::SWINGING_SHUTTER, 1));
+  EXPECT_TRUE(main_parameter_only(DeviceType::GARAGE_OPENER, 0)) << "the issue #163 behaviour stays";
+  EXPECT_FALSE(main_parameter_only(DeviceType::ROLLER_SHUTTER, 0));
+  EXPECT_FALSE(main_parameter_only(DeviceType::GATE_OPENER, 0));
+  EXPECT_FALSE(main_parameter_only(DeviceType::SWINGING_SHUTTER, 1));
 }
 
-TEST(DeviceTypesTable, BrightnessOnlyLightsAreTheRgbAndTunableWhiteSubtypes) {
-  EXPECT_TRUE(device_light_is_brightness_only(DeviceType::LIGHT, 1));
-  EXPECT_TRUE(device_light_is_brightness_only(DeviceType::LIGHT, 2));
-  EXPECT_FALSE(device_light_is_brightness_only(DeviceType::LIGHT, 0));
-  EXPECT_FALSE(device_light_is_brightness_only(DeviceType::LIGHT, 58));
-  EXPECT_FALSE(device_light_is_brightness_only(DeviceType::ROLLER_SHUTTER, 1));
+TEST(DeviceTypesTable, DimmableLightRowsAreTheRgbAndTunableWhiteSubtypes) {
+  const auto has_levels = [](DeviceType type, uint8_t subtype) {
+    return has_feature(device_features(type, subtype), device_feature::LEVELS);
+  };
+  EXPECT_TRUE(has_levels(DeviceType::LIGHT, 1));
+  EXPECT_TRUE(has_levels(DeviceType::LIGHT, 2));
+  EXPECT_FALSE(has_levels(DeviceType::LIGHT, 0)) << "the plain light row leaves levels to `dimmable:`";
+  EXPECT_FALSE(has_levels(DeviceType::LIGHT, 58));
 }
 
 // ============================================================================
@@ -187,8 +193,7 @@ TEST(DeviceTypesTable, BrightnessOnlyLightsAreTheRgbAndTunableWhiteSubtypes) {
 
 TEST(DeviceTypesTable, HeaterWithSetpointGetsAClimateSnippet) {
   const std::string snippet = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC",
-                                                        /*metadata_complete=*/true, /*inverted=*/false,
-                                                        /*low_power=*/false);
+                                                        /*metadata_complete=*/true, /*low_power=*/false);
   EXPECT_NE(snippet.find("  climate:\n"), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_device_type: \"electrical_heater\""), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_subtype: 1"), std::string::npos) << snippet;
@@ -197,29 +202,27 @@ TEST(DeviceTypesTable, HeaterWithSetpointGetsAClimateSnippet) {
 
 TEST(DeviceTypesTable, SnippetCarriesTheDeviceKeyOnlyWhenOneIsGiven) {
   const std::string key = "00112233445566778899AABBCCDDEEFF";
-  const std::string keyed =
-      build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false, false, key);
+  const std::string keyed = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false, key);
   EXPECT_NE(keyed.find("    system_key: \"" + key + "\"\n"), std::string::npos) << keyed;
   EXPECT_NE(keyed.find("io_subtype: 1"), std::string::npos);
 
-  const std::string plain = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false, false);
+  const std::string plain = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false);
   EXPECT_EQ(plain.find("system_key"), std::string::npos);
 
-  const std::string no_metadata = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "AABBCC", false, false, false, key);
+  const std::string no_metadata = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "AABBCC", false, false, key);
   EXPECT_NE(no_metadata.find("system_key: \"" + key + "\""), std::string::npos)
       << "the key also rides in the shape used when the device withheld its type";
 }
 
 TEST(DeviceTypesTable, PlainHeaterGetsAClimateSnippet) {
-  const std::string snippet = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 0, "AABBCC", true, false, false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 0, "AABBCC", true, false);
   EXPECT_NE(snippet.find("  climate:\n"), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_subtype: 0"), std::string::npos) << snippet;
 }
 
 TEST(DeviceTypesTable, ExteriorHeatingGetsAFanSnippetForBothSubtypes) {
   for (const uint8_t subtype : {0, 58}) {
-    const std::string snippet =
-        build_device_yaml_snippet(DeviceType::EXTERIOR_HEATING, subtype, "AABBCC", true, false, false);
+    const std::string snippet = build_device_yaml_snippet(DeviceType::EXTERIOR_HEATING, subtype, "AABBCC", true, false);
     EXPECT_NE(snippet.find("  fan:\n"), std::string::npos) << snippet;
     EXPECT_NE(snippet.find("io_device_type: \"exterior_heating\""), std::string::npos) << snippet;
     EXPECT_NE(snippet.find("io_subtype: " + std::to_string(subtype)), std::string::npos) << snippet;
@@ -227,25 +230,25 @@ TEST(DeviceTypesTable, ExteriorHeatingGetsAFanSnippetForBothSubtypes) {
 }
 
 TEST(DeviceTypesTable, HeatPumpAndRemoteControllerGetNoSnippet) {
-  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::HEAT_PUMP, 1, "AABBCC", true, false, false).empty());
-  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::REMOTE_CONTROLLER, 0, "AABBCC", true, false, false).empty());
+  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::HEAT_PUMP, 1, "AABBCC", true, false).empty());
+  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::REMOTE_CONTROLLER, 0, "AABBCC", true, false).empty());
 }
 
 TEST(DeviceTypesTable, BrightnessOnlyLightSnippetSetsDimmable) {
-  const std::string rgb = build_device_yaml_snippet(DeviceType::LIGHT, 1, "AABBCC", true, false, false);
+  const std::string rgb = build_device_yaml_snippet(DeviceType::LIGHT, 1, "AABBCC", true, false);
   EXPECT_NE(rgb.find("  light:\n"), std::string::npos) << rgb;
   EXPECT_NE(rgb.find("dimmable: true"), std::string::npos) << rgb;
 
-  const std::string onoff = build_device_yaml_snippet(DeviceType::LIGHT, 58, "AABBCC", true, false, false);
+  const std::string onoff = build_device_yaml_snippet(DeviceType::LIGHT, 58, "AABBCC", true, false);
   EXPECT_NE(onoff.find("  light:\n"), std::string::npos) << onoff;
   EXPECT_EQ(onoff.find("dimmable"), std::string::npos) << onoff;
 
-  const std::string plain = build_device_yaml_snippet(DeviceType::LIGHT, 0, "AABBCC", true, false, false);
+  const std::string plain = build_device_yaml_snippet(DeviceType::LIGHT, 0, "AABBCC", true, false);
   EXPECT_EQ(plain.find("dimmable"), std::string::npos) << plain;
 }
 
 TEST(DeviceTypesTable, UnnamedSubtypeOfACoverStillGetsACoverSnippet) {
-  const std::string snippet = build_device_yaml_snippet(DeviceType::ROLLER_SHUTTER, 33, "AABBCC", true, false, false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::ROLLER_SHUTTER, 33, "AABBCC", true, false);
   EXPECT_NE(snippet.find("  cover:\n"), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_subtype: 33"), std::string::npos) << snippet;
 }
@@ -296,6 +299,54 @@ TEST(DeviceTypesTableFeatures, AnExplicitSubtype58RowIsTheVariantOfItsTypeRow) {
     if (slider_58)
       return;
     EXPECT_EQ(row.features, main_parameter_only_variant(device_features(row.type, 0)))
+        << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTable, TheSnippetSuggestsInvertedAndDimmableFromTheKindsFeatures) {
+  EXPECT_NE(
+      build_device_yaml_snippet(DeviceType::HORIZONTAL_AWNING, 0, "AABBCC", true, false).find("invert_position: true"),
+      std::string::npos);
+  EXPECT_NE(build_device_yaml_snippet(DeviceType::LIGHT, 1, "AABBCC", true, false).find("dimmable: true"),
+            std::string::npos);
+  EXPECT_EQ(build_device_yaml_snippet(DeviceType::LIGHT, 0, "AABBCC", true, false).find("dimmable"), std::string::npos);
+  EXPECT_EQ(build_device_yaml_snippet(DeviceType::LIGHT, 58, "AABBCC", true, false).find("dimmable"),
+            std::string::npos);
+  EXPECT_EQ(build_device_yaml_snippet(DeviceType::ROLLER_SHUTTER, 0, "AABBCC", true, false).find("invert_position"),
+            std::string::npos);
+}
+
+TEST(DeviceTypesTableFeatures, TiltNamedPositionsAndInversionBelongToCoverRowsOnly) {
+  const DeviceFeatures cover_only = device_feature::TILT | device_feature::FAVORITE | device_feature::VENT |
+                                    device_feature::PARTIAL | device_feature::PEDESTRIAN | device_feature::INVERTED;
+  test::for_each_table_row([cover_only](const DeviceTypeInfo &row) {
+    if ((row.features & cover_only) != 0) {
+      EXPECT_EQ(row.capability, DeviceCapabilityClass::COVER) << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableFeatures, WindowCompanionsAreExactlyWhereTheHeatingProfileHasBothWindowEntities) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    const HeatingProfile *profile = find_heating_profile(row.type, row.subtype);
+    const bool profile_has_window =
+        profile != nullptr && profile->features.window_sensor && profile->features.open_window_detection;
+    EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), profile_has_window)
+        << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsTheNegationOfMainParameterOnlyWhereAPositionIsSent) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (!device_has_platform(row.type, row.subtype))
+      return;
+    const DeviceCapabilityClass capability = row.capability;
+    const bool sends_position =
+        capability == DeviceCapabilityClass::COVER || capability == DeviceCapabilityClass::LIGHT ||
+        capability == DeviceCapabilityClass::SWITCH || capability == DeviceCapabilityClass::LOCK ||
+        capability == DeviceCapabilityClass::HEATER_LEVEL;
+    EXPECT_EQ(has_feature(row.features, device_feature::EXTENDED_POSITION_FRAME),
+              sends_position && !has_feature(row.features, device_feature::MAIN_PARAMETER_ONLY))
         << format_device_ids(row.type, row.subtype);
   });
 }

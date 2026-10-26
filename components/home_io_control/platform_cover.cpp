@@ -34,11 +34,11 @@ cover::CoverOperation operation_toward(bool invert, float from_io_position, floa
 }  // namespace
 
 void IOHomeCover::setup() {
-  // Covers compute their initial inversion from the explicit YAML override or the device-type
-  // default; the rest of the registration ritual is shared with the other entity types.
-  const bool initial_invert = this->invert_explicit_ ? this->invert_ : default_inverted_for_type(this->device_type_);
+  // A cover passes its explicit YAML inversion; without one the kind's default applies. The rest of
+  // the registration ritual is shared with the other entity types.
   this->register_device_binding_(
-      this, initial_invert, [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
+      this, DeviceCapabilityClass::COVER, this->invert_explicit_ ? std::optional<bool>(this->invert_) : std::nullopt,
+      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
   // After the registration above: the hub only schedules a poll for a registered device.
   if (this->rain_sensor_poll_interval_ms_ != 0)
     this->parent_->set_device_rain_poll_interval(this->device_id_, this->rain_sensor_poll_interval_ms_);
@@ -54,7 +54,7 @@ cover::CoverTraits IOHomeCover::get_traits() {
 }
 
 bool IOHomeCover::supports_tilt() const {
-  return this->device_type_ != DeviceType::UNKNOWN && device_supports_tilt(this->device_type_);
+  return has_feature(this->device_features_(DeviceCapabilityClass::COVER), device_feature::TILT);
 }
 
 bool IOHomeCover::effective_invert_() const {

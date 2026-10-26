@@ -35,14 +35,15 @@ void IOHomeFan::setup() {
     this->mark_failed();
     return;
   }
-  this->register_device_binding_(this, /*inverted=*/false, [this](const std::string &id, const IoDevice &dev) {
-    this->on_device_update_(id, dev);
-  });
+  this->register_device_binding_(
+      this, DeviceCapabilityClass::HEATER_LEVEL, std::nullopt,
+      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
 }
 
 fan::FanTraits IOHomeFan::get_traits() {
-  // Every exterior heater is sent the main parameter only, but only subtype 58 is on/off with no level.
-  const bool has_level = this->subtype_ != SUBTYPE_MAIN_PARAMETER_ONLY;
+  // Every exterior heater is sent the main parameter only, but only the on/off kind has no level.
+  const bool has_level =
+      has_feature(this->device_features_(DeviceCapabilityClass::HEATER_LEVEL), device_feature::LEVELS);
   return fan::FanTraits(/*oscillation=*/false, /*speed=*/has_level, /*direction=*/false, HEAT_STEPS);
 }
 
