@@ -25,6 +25,7 @@ void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t ini
   t.next_update = (initial_delay_ms == 0) ? 0 : (now + initial_delay_ms);
   t.status_poll_failures = 0;
   t.auth_poll_failures = 0;
+  t.moving_poll_misses = 0;
   t.stop_settle = false;
 }
 
@@ -37,6 +38,7 @@ void StatusPollPolicy::clear(const std::string &device_id) {
   t.poll_deadline = 0;
   t.status_poll_failures = 0;
   t.auth_poll_failures = 0;
+  t.moving_poll_misses = 0;
   t.stop_settle = false;
   // interval_ms is configuration — NOT cleared; remains set for future tracking cycles.
 }
@@ -63,13 +65,28 @@ bool StatusPollPolicy::is_tracking_active(const std::string &device_id, uint32_t
   return t.poll_deadline != 0 && now <= t.poll_deadline;
 }
 
-uint32_t StatusPollPolicy::on_exchange_failed(const std::string &device_id, bool auth_like, uint32_t now) {
+uint32_t StatusPollPolicy::on_exchange_failed(const std::string &device_id, bool auth_like, uint32_t now,
+                                              bool device_moving) {
   auto it = tracking_.find(device_id);
   if (it == tracking_.end())
     return 0;
   PollTracking &t = it->second;
   // A one-off poll of an untracked device fails here too; only a window that was open can run out.
   const bool was_tracking = t.poll_deadline != 0;
+
+  // A device believed travelling keeps its normal cadence for its first misses rather than leave a
+  // gap (MOVING_POLL_MISSES_SKIPPED), but never waits longer than the ladder's first step would.
+  // Only a miss outside a failure streak is skipped: a streak already runs the ladder.
+  if (device_moving && t.moving_poll_misses < MOVING_POLL_MISSES_SKIPPED && t.status_poll_failures == 0 &&
+      t.auth_poll_failures == 0 && is_tracking_active(device_id, now)) {
+    const uint32_t delay_ms =
+        std::min(settle_delay_ms(t.interval_ms, 0, /*cap_for_stop=*/false), STATUS_RETRY_AFTER_FAIL_MS);
+    if (now + delay_ms <= t.poll_deadline) {
+      t.moving_poll_misses++;
+      t.next_update = now + delay_ms;
+      return delay_ms;
+    }
+  }
 
   uint32_t backoff_ms;
   if (auth_like) {
@@ -101,6 +118,7 @@ void StatusPollPolicy::clear_failure_streaks(const std::string &device_id) {
     return;
   it->second.status_poll_failures = 0;
   it->second.auth_poll_failures = 0;
+  it->second.moving_poll_misses = 0;
 }
 
 void StatusPollPolicy::mark_stop_settle(const std::string &device_id) {
@@ -126,6 +144,11 @@ uint8_t StatusPollPolicy::get_status_poll_failures(const std::string &device_id)
 uint8_t StatusPollPolicy::get_auth_poll_failures(const std::string &device_id) const {
   auto it = tracking_.find(device_id);
   return (it != tracking_.end()) ? it->second.auth_poll_failures : 0;
+}
+
+uint8_t StatusPollPolicy::get_moving_poll_misses(const std::string &device_id) const {
+  auto it = tracking_.find(device_id);
+  return (it != tracking_.end()) ? it->second.moving_poll_misses : 0;
 }
 
 std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {

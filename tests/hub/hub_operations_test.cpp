@@ -1443,6 +1443,175 @@ TEST(HubOperations, ExchangeTimeoutIncrementsFailureCountersOnce) {
       << "attempts from both timed-out exchanges should accumulate";
 }
 
+// Issue #178: a cover polled every second while it travels lost single frames, and each loss left
+// a 5 s gap in its position. A poll of a device the hub believes is moving skips its first misses
+// at the configured interval; the ladder starts only on the third miss in a row.
+TEST(HubOperations, RequestDeviceStatusMissWhileMovingKeepsTheConfiguredInterval) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;  // the last report said moving
+
+  for (uint8_t miss = 1; miss <= MOVING_POLL_MISSES_SKIPPED; miss++) {
+    EXPECT_FALSE(comp.request_device_status("ABC123"));
+    EXPECT_NEAR(comp.poll_policy_.get_next_update("ABC123") - esphome::millis(), 2000u, 100u) << "miss " << +miss;
+    EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u)
+        << "a skipped miss is not a ladder failure, so the next poll stays a single try";
+  }
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  const uint32_t delay = comp.poll_policy_.get_next_update("ABC123") - esphome::millis();
+  EXPECT_GE(delay, STATUS_RETRY_AFTER_FAIL_MS - 1000) << "the third miss in a row enters the ladder";
+  EXPECT_LE(delay, STATUS_RETRY_AFTER_FAIL_MS + 1000);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+// After two skipped misses the next poll is still dispatched as a single try, and an answer resets
+// the skipped misses.
+TEST(HubOperations, RequestDeviceStatusAfterSkippedMissesIsASingleTryAndAnAnswerResets) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  for (uint8_t miss = 1; miss <= MOVING_POLL_MISSES_SKIPPED; miss++)
+    EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_FALSE(comp.request_device_status("ABC123"));  // the third poll
+  EXPECT_EQ(comp.exchange_engine_.get_debug().max_tries, SCHEDULED_POLL_MAX_TRIES)
+      << "skipped misses are not ladder failures, so the poll after them stays a single try";
+
+  comp.poll_policy_.clear_failure_streaks("ABC123");
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+}
+
+// A cover at rest backs off from its first miss, through the hub path too.
+TEST(HubOperations, RequestDeviceStatusMissAtRestTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  ASSERT_TRUE(comp.get_device("ABC123")->is_stopped);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+// A cover that reported STOPPED off its target and awaits the confirming poll is at rest: its miss
+// takes the ladder, whose next slot grants the full tries.
+TEST(HubOperations, RequestDeviceStatusMissWhileSettlingTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+  dev->stop_candidate.target = 100.0f;
+  dev->stop_candidate.position = 40.0f;
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+// The poll confirming an accepted STOP has the full tries; when all of them fail it takes the
+// ladder even if the hub still believes the cover moves (optimistic overlay off).
+TEST(HubOperations, RequestDeviceStatusStopSettleMissTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  comp.poll_policy_.mark_stop_settle("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+// A device without motion (a heat-level heater polled with the same status read) is never skipped.
+TEST(HubOperations, RequestDeviceStatusMissOfADeviceWithoutMotionTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::EXTERIOR_HEATING);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  dev->is_stopped = false;
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+}
+
+// An explicit refusal is an answer, not a lost frame: it keeps the ladder while moving.
+TEST(HubOperations, RequestDeviceStatusRefusalWhileMovingTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  IoFrame resp = build_error_response(comp.node_id_, RESULT_LIMITATION_BY_WIND);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+TEST(HubOperations, RequestDeviceStatusChallengedMissWhileMovingKeepsTheConfiguredInterval) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_TRUE(comp.exchange_engine_.get_debug().saw_challenge);
+  EXPECT_NEAR(comp.poll_policy_.get_next_update("ABC123") - esphome::millis(), 2000u, 100u)
+      << "a lost closing reply mid-travel keeps the cadence too";
+  EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 0u);
+}
+
 TEST(HubOperations, RequestDeviceStatusAuthFailureTakesTheAuthBackoff) {
   TestableComponent comp;
   MockRadio radio;

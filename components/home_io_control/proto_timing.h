@@ -190,7 +190,9 @@ static constexpr uint8_t SCHEDULED_POLL_MAX_TRIES = 1;
 ///
 /// Counted in consecutive silent failures already recorded when the poll is dispatched, so 0 is the
 /// post-command settle poll and 1..3 are the ~5 s / ~15 s / ~30 s ladder slots after it — roughly
-/// t+8 s to t+53 s, spanning every cover travel time this project has measured. An auth-shaped
+/// t+8 s to t+53 s, spanning every cover travel time this project has measured. For a device
+/// believed travelling the ladder, and so this band, starts only after its first
+/// MOVING_POLL_MISSES_SKIPPED misses, which keep the normal cadence. An auth-shaped
 /// streak is excluded entirely: a device that answers with a 0x3C challenge is awake, so extra
 /// tries buy no wake-up, and an auth try is the most expensive shape the engine runs.
 static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE = 1;

@@ -329,10 +329,16 @@ void IOHomeControlComponent::set_device_rain_poll_interval(const std::string &de
   this->rain_poll_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
 }
 
-void IOHomeControlComponent::schedule_background_poll_backoff_(const std::string &device_id, bool auth_like) {
+void IOHomeControlComponent::schedule_background_poll_backoff_(const std::string &device_id, bool auth_like,
+                                                               bool device_moving) {
   uint32_t const now = millis();
-  uint32_t const backoff_ms = this->poll_policy_.on_exchange_failed(device_id, auth_like, now);
-  if (backoff_ms > 0) {
+  uint8_t const skipped_before = this->poll_policy_.get_moving_poll_misses(device_id);
+  uint32_t const backoff_ms = this->poll_policy_.on_exchange_failed(device_id, auth_like, now, device_moving);
+  if (backoff_ms > 0 && this->poll_policy_.get_moving_poll_misses(device_id) > skipped_before) {
+    ESP_LOGD(TAG, "Status poll miss for moving device %s skipped (%u of %u): next poll in %" PRIu32 " ms",
+             device_id.c_str(), this->poll_policy_.get_moving_poll_misses(device_id), MOVING_POLL_MISSES_SKIPPED,
+             backoff_ms);
+  } else if (backoff_ms > 0) {
     ESP_LOGD(TAG,
              "Background status poll backoff for device %s: delay=%" PRIu32
              " ms auth_like=%s status_failures=%u auth_failures=%u",
