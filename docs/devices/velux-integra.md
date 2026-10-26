@@ -103,7 +103,6 @@ home_io_control:
 cover:
   - platform: home_io_control
     name: "Roof Window"
-    device_class: window
     io_device_id: "6544C6"
     io_device_type: "window_opener"
     io_subtype: 0

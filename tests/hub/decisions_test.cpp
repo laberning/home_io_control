@@ -512,6 +512,10 @@ void build_favorite(IoFrame &f) {
   create_execute_command(f, test::OWN_ID, test::DST_ID, false, CoverCommand::FAVORITE);
 }
 void build_vent(IoFrame &f) { create_execute_command(f, test::OWN_ID, test::DST_ID, false, CoverCommand::VENT); }
+void build_partial(IoFrame &f) { create_execute_command(f, test::OWN_ID, test::DST_ID, false, CoverCommand::PARTIAL); }
+void build_pedestrian(IoFrame &f) {
+  create_execute_command(f, test::OWN_ID, test::DST_ID, false, CoverCommand::PEDESTRIAN);
+}
 void build_tilt(IoFrame &f) { create_execute_tilt(f, test::OWN_ID, test::DST_ID, false, 30); }
 void build_status_poll(IoFrame &f) { create_get_status(f, test::OWN_ID, test::DST_ID, false); }
 
@@ -524,6 +528,9 @@ TEST(Decisions, RepeatableExecuteExcludesOnlyTheStoredPositionSelector) {
   EXPECT_FALSE(decisions::is_repeatable_execute(execute_frame(build_favorite)))
       << "a second \"My\" can stop the move the first one started";
   EXPECT_FALSE(decisions::is_repeatable_execute(execute_frame(build_vent))) << "vent uses the same selector";
+  EXPECT_FALSE(decisions::is_repeatable_execute(execute_frame(build_partial)))
+      << "partial uses the same selector, so a second copy is not sent";
+  EXPECT_FALSE(decisions::is_repeatable_execute(execute_frame(build_pedestrian))) << "pedestrian likewise";
   EXPECT_FALSE(decisions::is_repeatable_execute(execute_frame(build_status_poll))) << "not an EXECUTE at all";
 }
 

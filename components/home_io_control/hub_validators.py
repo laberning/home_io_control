@@ -8,7 +8,8 @@
 ## tables, and the validators for node IDs, system keys, device IDs, linked remotes and
 ## status-poll intervals that the hub schema and the platform modules share.
 ##
-## DEVICE_TYPE_OPTIONS, MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
+## DEVICE_TYPE_OPTIONS, DEVICE_FEATURES (with the FEATURE_* bits, KIND_EXPERIMENTAL and
+## NAMED_POSITION_FEATURES), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
 ## FEM_TX_POWER_MAX_QUIET mirror C++ tables; the ``tests/sync/`` host tests and
 ## ``make yaml-emitter-sync`` read them from this file by name.
 
@@ -16,7 +17,19 @@ import logging
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_CS_PIN, CONF_DEVICE_ID
+from esphome.const import (
+    CONF_CS_PIN,
+    CONF_DEVICE_ID,
+    DEVICE_CLASS_AWNING,
+    DEVICE_CLASS_BLIND,
+    DEVICE_CLASS_CURTAIN,
+    DEVICE_CLASS_DOOR,
+    DEVICE_CLASS_GARAGE,
+    DEVICE_CLASS_GATE,
+    DEVICE_CLASS_SHADE,
+    DEVICE_CLASS_SHUTTER,
+    DEVICE_CLASS_WINDOW,
+)
 
 from .hub_names import (
     CONF_FEM,
@@ -203,21 +216,141 @@ DEVICE_TYPE_OPTIONS = {
     "electrical_heater": 0x34,
 }
 
-# Heating profiles (proto_heating_profiles.cpp) that have a window sensor and an open-window
-# detection switch, as {io_device_type name: io_subtype}. climate.py generates those two companions
-# for exactly these devices; tests/sync/heating_profile_sync_test.cpp keeps the table in step with
-# the C++ profile features.
-HEATING_WINDOW_PROFILES = {
-    "electrical_heater": 1,
+# The Home Assistant device class a cover of each declared kind gets when its YAML sets no
+# `device_class:` (cover.py injects it; an explicit value, including "", wins). Python-only: no C++
+# code reads a device class. A kind whose class would be a guess has no entry.
+DEFAULT_COVER_DEVICE_CLASS = {
+    "garage_opener": DEVICE_CLASS_GARAGE,
+    "gate_opener": DEVICE_CLASS_GATE,
+    "rolling_door_opener": DEVICE_CLASS_DOOR,
+    "window_opener": DEVICE_CLASS_WINDOW,
+    "sliding_window": DEVICE_CLASS_WINDOW,
+    "roller_shutter": DEVICE_CLASS_SHUTTER,
+    "dual_roller_shutter": DEVICE_CLASS_SHUTTER,
+    "swinging_shutter": DEVICE_CLASS_SHUTTER,
+    "interior_venetian_blind": DEVICE_CLASS_BLIND,
+    "exterior_venetian_blind": DEVICE_CLASS_BLIND,
+    "louvre_blind": DEVICE_CLASS_BLIND,
+    "vertical_interior_blind": DEVICE_CLASS_SHADE,
+    "curtain_track": DEVICE_CLASS_CURTAIN,
+    "horizontal_awning": DEVICE_CLASS_AWNING,
+    "vertical_exterior_awning": DEVICE_CLASS_AWNING,
 }
 
+# === Device capability bits ===
+#
+# Python's mirror of the capability word each node-type table row carries (proto_device_features.h,
+# proto_device_types.cpp), so the codegen can decide which companions and keys a declared kind has.
+# The C++ table is authoritative; tests/sync/device_features_sync_test.cpp checks every bit value and
+# the whole word of every (type, subtype). Literals only: the sync test parses this file and reads no
+# expressions.
+FEATURE_MAIN_PARAMETER_ONLY = 0x0001
+FEATURE_LEVELS = 0x0002
+FEATURE_TILT = 0x0004
+FEATURE_FAVORITE = 0x0008
+FEATURE_VENT = 0x0010
+FEATURE_PARTIAL = 0x0020
+FEATURE_PEDESTRIAN = 0x0040
+FEATURE_EXTENDED_POSITION_FRAME = 0x0080
+FEATURE_WINDOW_COMPANIONS = 0x0100
+FEATURE_INVERTED = 0x0200
+# Not a capability: Python's copy of the row's EXPERIMENTAL identity flag (device_type_flags in
+# proto_device_types.h), carried in bit 15 of the same word so there is one table and one sync test.
+# Set on a kind no capture or report has confirmed on a real device.
+KIND_EXPERIMENTAL = 0x8000
 
-def heating_profile_has_window(device_type, subtype):
-    """True when the heating profile of (io_device_type value, io_subtype) has the window companions."""
-    return any(
-        DEVICE_TYPE_OPTIONS[name] == device_type and profile_subtype == subtype
-        for name, profile_subtype in HEATING_WINDOW_PROFILES.items()
-    )
+# The capability word of each row whose type has a YAML name, keyed "<name>" for subtype 0 and
+# "<name>/<subtype>" otherwise. A row with no capability is left out, except a subtype row under a
+# type that has capabilities (without its explicit zero the lookup would give it the type's word) and
+# an experimental row (its word is KIND_EXPERIMENTAL at least).
+DEVICE_FEATURES = {
+    "interior_venetian_blind": 0x000E,  # LEVELS TILT FAVORITE
+    "roller_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "roller_shutter/1": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "roller_shutter/2": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "vertical_exterior_awning": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "window_opener": 0x009A,  # LEVELS FAVORITE VENT EXTENDED_POSITION_FRAME
+    "window_opener/1": 0x009A,  # LEVELS FAVORITE VENT EXTENDED_POSITION_FRAME
+    "garage_opener": 0x0023,  # MAIN_PARAMETER_ONLY LEVELS PARTIAL
+    "garage_opener/58": 0x0021,  # MAIN_PARAMETER_ONLY PARTIAL
+    "light": 0x0080,  # EXTENDED_POSITION_FRAME
+    "light/1": 0x8082,  # KIND_EXPERIMENTAL LEVELS EXTENDED_POSITION_FRAME  # LEVELS EXTENDED_POSITION_FRAME
+    "light/2": 0x8082,  # KIND_EXPERIMENTAL LEVELS EXTENDED_POSITION_FRAME  # LEVELS EXTENDED_POSITION_FRAME
+    "light/58": 0x0001,  # MAIN_PARAMETER_ONLY
+    "gate_opener": 0x00CA,  # LEVELS FAVORITE PEDESTRIAN EXTENDED_POSITION_FRAME
+    "gate_opener/58": 0x8049,  # KIND_EXPERIMENTAL MAIN_PARAMETER_ONLY FAVORITE PEDESTRIAN
+    "rolling_door_opener": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "lock": 0x0080,  # EXTENDED_POSITION_FRAME
+    "lock/1": 0x8080,  # KIND_EXPERIMENTAL EXTENDED_POSITION_FRAME
+    "lock/2": 0x8000,  # KIND_EXPERIMENTAL; car controller: no capability of the lock family
+    "vertical_interior_blind": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "dual_roller_shutter": 0x000A,  # LEVELS FAVORITE
+    "on_off_switch": 0x0080,  # EXTENDED_POSITION_FRAME
+    "on_off_switch/2": 0x8080,  # KIND_EXPERIMENTAL EXTENDED_POSITION_FRAME
+    "horizontal_awning": 0x028A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME INVERTED
+    "horizontal_awning/1": 0x028A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME INVERTED
+    "exterior_venetian_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
+    "louvre_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
+    "curtain_track": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "exterior_heating": 0x0003,  # MAIN_PARAMETER_ONLY LEVELS
+    "exterior_heating/58": 0x0001,  # MAIN_PARAMETER_ONLY
+    "heat_pump/1": 0x8000,  # KIND_EXPERIMENTAL
+    "heat_pump/2": 0x8000,  # KIND_EXPERIMENTAL
+    "swinging_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "swinging_shutter/1": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "swinging_shutter/58": 0x8009,  # KIND_EXPERIMENTAL MAIN_PARAMETER_ONLY FAVORITE
+    "sliding_window": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "sliding_window/1": 0x808A,  # KIND_EXPERIMENTAL LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "bioclimatic_pergola": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "electrical_heater/1": 0x0100,  # WINDOW_COMPANIONS
+}
+
+# The named positions (proto_device_types.h NAMED_POSITIONS), keyed by the CoverCommand name
+# cover_command_name() returns. Each companion button of cover.py is created from the bit here.
+NAMED_POSITION_FEATURES = {
+    "FAVORITE": 0x0008,
+    "VENT": 0x0010,
+    "PEDESTRIAN": 0x0040,
+    "PARTIAL": 0x0020,
+}
+
+# Subtype that marks a device taking the main parameter only, on any node type.
+SUBTYPE_MAIN_PARAMETER_ONLY = 58
+
+_DEVICE_TYPE_NAMES = {value: name for name, value in DEVICE_TYPE_OPTIONS.items()}
+
+
+def device_type_name(device_type):
+    """The io_device_type name of a node type value, or None for one YAML has no name for."""
+    return _DEVICE_TYPE_NAMES.get(device_type)
+
+
+def device_features(device_type, subtype=0):
+    """The capability word of (io_device_type value, io_subtype), as the C++ device_features() answers.
+
+    The exact row; else, for subtype 58, the main-parameter-only variant of the type's row (of no
+    capabilities when the type has none); else the type's own row. A node type YAML has no name for
+    (a raw value) has no row here, so it has no capabilities beyond the subtype-58 rule.
+    """
+    name = device_type_name(device_type)
+    if name is not None:
+        exact = DEVICE_FEATURES.get(name if subtype == 0 else f"{name}/{subtype}")
+        if exact is not None:
+            return exact
+    base = DEVICE_FEATURES.get(name, 0) if name is not None else 0
+    if subtype == SUBTYPE_MAIN_PARAMETER_ONLY:
+        cleared = FEATURE_LEVELS | FEATURE_TILT | FEATURE_EXTENDED_POSITION_FRAME
+        return (base & ~cleared) | FEATURE_MAIN_PARAMETER_ONLY
+    return base
+
+
+def kind_is_experimental(device_type, subtype=0):
+    """True when no capture or report has confirmed (io_device_type value, io_subtype) on a real device.
+
+    Reads KIND_EXPERIMENTAL from the same word as the capabilities, so it follows the same fallback as
+    device_features(); a type row is never experimental, so a subtype with no row of its own is not.
+    """
+    return bool(device_features(device_type, subtype) & KIND_EXPERIMENTAL)
 
 
 # Device-type names that were renamed. Each maps to the message the validator raises, so a config

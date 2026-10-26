@@ -1,4 +1,5 @@
 #include "hub_decisions.h"
+#include "proto_device_types.h"
 #include "proto_frame.h"
 
 #include "test_helpers.h"
@@ -100,45 +101,49 @@ TEST(ProtocolBoundary, IsExchangeInternalCommand_ZeroNotInternal) {
 }
 
 // ========================================================================================
-// Device support queries: device_supports_tilt
-// doxygen: "true for venetian blinds, blinds, external venetian blinds, louvre blinds"
-// device_supports_tilt is in proto_frame.h (doxygen) / proto_frame.cpp (impl)
+// Tilt support (device_feature::TILT of the node-type table row)
+// the venetian blinds, vertical interior blinds, exterior venetian blinds and louvre blinds
 // ========================================================================================
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_VenetianBlind) {
-  EXPECT_TRUE(device_supports_tilt(DeviceType::INTERIOR_VENETIAN_BLIND))
+  EXPECT_TRUE(has_feature(device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0), device_feature::TILT))
       << "INTERIOR_VENETIAN_BLIND should support tilt";
 }
 
-TEST(ProtocolBoundary, DeviceSupportsTilt_Blind) {
-  EXPECT_TRUE(device_supports_tilt(DeviceType::VERTICAL_INTERIOR_BLIND))
-      << "VERTICAL_INTERIOR_BLIND should support tilt (covered by doxygen list)";
+TEST(ProtocolBoundary, DeviceSupportsNoTilt_VerticalInteriorBlind) {
+  // VELUX KLF 200 API specification, Appendix 2 lists no slat parameter for type 10.
+  EXPECT_FALSE(has_feature(device_features(DeviceType::VERTICAL_INTERIOR_BLIND, 0), device_feature::TILT))
+      << "VERTICAL_INTERIOR_BLIND has no slat angle";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_ExternalVenetianBlind) {
-  EXPECT_TRUE(device_supports_tilt(DeviceType::EXTERIOR_VENETIAN_BLIND))
+  EXPECT_TRUE(has_feature(device_features(DeviceType::EXTERIOR_VENETIAN_BLIND, 0), device_feature::TILT))
       << "EXTERIOR_VENETIAN_BLIND should support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_LouvreBlind) {
-  EXPECT_TRUE(device_supports_tilt(DeviceType::LOUVRE_BLIND)) << "LOUVRE_BLIND should support tilt";
+  EXPECT_TRUE(has_feature(device_features(DeviceType::LOUVRE_BLIND, 0), device_feature::TILT))
+      << "LOUVRE_BLIND should support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_RollerShutterNotTilt) {
-  EXPECT_FALSE(device_supports_tilt(DeviceType::ROLLER_SHUTTER)) << "ROLLER_SHUTTER must NOT support tilt";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::ROLLER_SHUTTER, 0), device_feature::TILT))
+      << "ROLLER_SHUTTER must NOT support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_AwningNotTilt) {
-  EXPECT_FALSE(device_supports_tilt(DeviceType::VERTICAL_EXTERIOR_AWNING))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::VERTICAL_EXTERIOR_AWNING, 0), device_feature::TILT))
       << "VERTICAL_EXTERIOR_AWNING must NOT support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_LightNotTilt) {
-  EXPECT_FALSE(device_supports_tilt(DeviceType::LIGHT)) << "LIGHT must NOT support tilt";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::LIGHT, 0), device_feature::TILT))
+      << "LIGHT must NOT support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_UnknownNotTilt) {
-  EXPECT_FALSE(device_supports_tilt(DeviceType::UNKNOWN)) << "UNKNOWN must NOT support tilt";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::UNKNOWN, 0), device_feature::TILT))
+      << "UNKNOWN must NOT support tilt";
 }
 
 // ========================================================================================
@@ -220,12 +225,13 @@ TEST(ProtocolBoundary, DeviceCapabilityClass_PergolaIsPlainPositionCover) {
   // The louvres move on the main parameter (0x0000 open, 0xC800 closed).
   EXPECT_EQ(device_capability_class(DeviceType::BIOCLIMATIC_PERGOLA), DeviceCapabilityClass::COVER)
       << "BIOCLIMATIC_PERGOLA must be classified as COVER";
-  EXPECT_FALSE(device_supports_tilt(DeviceType::BIOCLIMATIC_PERGOLA))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0), device_feature::TILT))
       << "BIOCLIMATIC_PERGOLA louvres move on the main parameter";
-  EXPECT_FALSE(device_supports_vent(DeviceType::BIOCLIMATIC_PERGOLA));
-  EXPECT_FALSE(default_inverted_for_type(DeviceType::BIOCLIMATIC_PERGOLA)) << "0x0000 is open, as for a vertical cover";
+  EXPECT_FALSE(has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0), device_feature::VENT));
+  EXPECT_FALSE(has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0), device_feature::INVERTED))
+      << "0x0000 is open, as for a vertical cover";
   EXPECT_STREQ(yaml_device_type_name(DeviceType::BIOCLIMATIC_PERGOLA), "bioclimatic_pergola");
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::BIOCLIMATIC_PERGOLA), "cover_position");
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::BIOCLIMATIC_PERGOLA, 0), "cover_position");
 }
 
 TEST(ProtocolBoundary, IsKnownDeviceType_HandlesTheNonContiguousEnum) {
@@ -244,21 +250,21 @@ TEST(ProtocolBoundary, IsKnownDeviceType_HandlesTheNonContiguousEnum) {
 // ========================================================================================
 
 TEST(ProtocolBoundary, DeviceOperationProfileName_Lock) {
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::LOCK), "lock")
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::LOCK, 0), "lock")
       << "LOCK device type should have 'lock' operation profile";
 }
 
 TEST(ProtocolBoundary, DeviceOperationProfileName_Beacon) {
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::BEACON), "beacon")
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::BEACON, 0), "beacon")
       << "BEACON device type should have 'beacon' operation profile";
 }
 
 TEST(ProtocolBoundary, DeviceOperationProfileName_IntrusionAlarm) {
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::INTRUSION_ALARM), "sensor")
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::INTRUSION_ALARM, 0), "sensor")
       << "INTRUSION_ALARM device type should have 'sensor' operation profile";
 }
 
 TEST(ProtocolBoundary, DeviceOperationProfileName_HeatingInterface) {
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::HEATING_TEMPERATURE_INTERFACE), "climate")
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0), "climate")
       << "HEATING_TEMPERATURE_INTERFACE device type should have 'climate' operation profile";
 }

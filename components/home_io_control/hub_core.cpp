@@ -349,10 +349,6 @@ void IOHomeControlComponent::add_device(const std::string &device_id, const Devi
 
 IoDevice *IOHomeControlComponent::get_device(const std::string &device_id) { return this->registry_.get(device_id); }
 
-void IOHomeControlComponent::set_device_dimmable(const std::string &device_id, bool dimmable) {
-  this->registry_.set_dimmable(device_id, dimmable);
-}
-
 void IOHomeControlComponent::set_device_silent(const std::string &device_id, bool silent) {
   this->registry_.set_silent(device_id, silent);
 }

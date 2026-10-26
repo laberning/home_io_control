@@ -155,13 +155,11 @@ struct HeatingObservedState {
 
 /// @brief Companion entities and traits a profile has.
 struct HeatingProfileFeatures {
-  bool target_temperature;     ///< The card has a setpoint.
-  bool current_temperature;    ///< The card shows a measured temperature.
-  bool action;                 ///< The card shows heating / idle.
-  bool window_sensor;          ///< A Window binary sensor exists (0x010E).
-  bool open_window_detection;  ///< An open-window-detection switch exists (0x0106).
-  bool mode_observed;          ///< A device reading decides the card's mode; false when the mode is the
-                               ///< last command (nothing reads it back).
+  bool target_temperature;   ///< The card has a setpoint.
+  bool current_temperature;  ///< The card shows a measured temperature.
+  bool action;               ///< The card shows heating / idle.
+  bool mode_observed;        ///< A device reading decides the card's mode; false when the mode is the
+                             ///< last command (nothing reads it back).
 };
 
 /// @brief One heater kind.

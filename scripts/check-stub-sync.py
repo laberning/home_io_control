@@ -75,7 +75,27 @@ ROWS = (
     ),
     Row("core/application.h", "core/application.h", "Application", methods=("feed_wdt", "safe_reboot")),
     Row("core/preferences.h", "core/preference_backend.h", "ESPPreferenceObject", methods=("save", "load")),
-    Row("components/cover/cover.h", "components/cover/cover.h", "Cover", methods=("control", "get_traits", "publish_state")),
+    Row(
+        "components/cover/cover.h",
+        "components/cover/cover.h",
+        "Cover",
+        methods=("control", "get_traits", "publish_state"),
+        members=("position",),
+    ),
+    Row(
+        "components/cover/cover.h",
+        "components/cover/cover_traits.h",
+        "CoverTraits",
+        methods=(
+            "set_supports_position",
+            "get_supports_position",
+            "set_supports_tilt",
+            "get_supports_tilt",
+            "set_supports_stop",
+            "set_is_assumed_state",
+            "get_is_assumed_state",
+        ),
+    ),
     Row(
         "components/light/light_output.h",
         "components/light/light_output.h",

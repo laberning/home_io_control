@@ -85,10 +85,15 @@ the same set of keys. Platform-specific options are documented on each platform'
 - `io_device_id` (Required): The device's 3-byte address, as exactly 6 hexadecimal characters. If
   you do not know it yet, use the Discover & Pair button — see [Pairing](../pairing.md).
 - `io_device_type` (Optional): The device's IO-Homecontrol type, named (`vertical_exterior_awning`) or raw (`0x11`).
-  Declaring it is what enables type-specific behaviour such as the Favorite Position button and
-  automatic direction inversion. The full list of names is in
+  Declaring it is what enables type-specific behaviour such as the Favorite Position button
+  (not on garage openers), automatic direction inversion and the open/close-only cover of a
+  subtype 58 opener; see [Covers that only open and close](cover.md#covers-that-only-open-and-close). The full list of names is in
   [Supported devices](../supported-devices.md). A declared type is authoritative: the hub may
   learn a type from the radio when none is declared, but never overwrites a declared one.
+  A kind that no capture or report has confirmed on a real device is marked "(experimental)" in
+  [Node types and subtypes](../supported-devices.md#node-types-and-subtypes); declaring one logs a
+  warning when the config is built that links to
+  [Reporting unsupported devices](../contributing.md#reporting-unsupported-devices).
 - `io_subtype` (Optional): The device's subtype, `0`–`63`.
 - `status_poll_interval` (Optional): Follow-up poll cadence while movement is expected. See the
   note below.
@@ -182,7 +187,6 @@ home_io_control:
 cover:
   - platform: home_io_control
     name: "Awning"
-    device_class: awning
     io_device_id: "FEEB1E"
     io_device_type: "vertical_exterior_awning"
     io_subtype: 0
@@ -190,7 +194,8 @@ cover:
 ```
 
 With `io_device_type: "vertical_exterior_awning"`, the example above also generates an `Awning Favorite Position`
-button automatically.
+button automatically; which companion buttons a cover gets is listed under
+[Covers](cover.md).
 
 ## Working configs in this repo
 

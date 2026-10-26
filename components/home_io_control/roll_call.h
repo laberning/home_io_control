@@ -43,7 +43,6 @@ struct ScanResponder {
   uint8_t src[NODE_ID_SIZE];  ///< Responder's node ID; also the dedup key.
   DeviceType type;            ///< Decoded device type.
   uint8_t subtype;            ///< Decoded device subtype.
-  bool inverted;              ///< Decoded position-inversion flag.
   int16_t rssi_dbm;           ///< RSSI of the reply that produced this entry.
   uint8_t manufacturer;       ///< Raw manufacturer ID; name via manufacturer_name().
   uint8_t flags;              ///< Multi Information Byte; decode with DISCOVERY_FLAGS_* masks.

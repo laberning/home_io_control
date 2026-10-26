@@ -68,26 +68,31 @@ const char *position_command_action(const IoDevice &dev, uint8_t position) {
 
 /// @brief Return the effective profile label for a device's "Sending ... (profile=...)" logs.
 /// @param dev Device receiving the command.
-/// @return "dimmable_light" for a LIGHT-class device with IoDevice::dimmable set (a YAML choice
-///         the wire protocol has no signal for, so device_operation_profile_name() alone can't
-///         know it); device_operation_profile_name(dev.type) for every other device.
+/// @return "dimmable_light" for a LIGHT-class device with device_feature::LEVELS (the YAML `dimmable:`
+///         choice, which the wire protocol has no signal for); device_operation_profile_name() for
+///         every other device.
 const char *operation_profile_name(const IoDevice &dev) {
-  if (dev.dimmable && device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT)
+  if (has_feature(dev.features, device_feature::LEVELS) &&
+      device_capability_class(dev.type, dev.subtype) == DeviceCapabilityClass::LIGHT)
     return "dimmable_light";
-  return device_operation_profile_name(dev.type);
+  return device_operation_profile_name(dev.type, dev.subtype);
 }
 
 /// @brief Return the accepted entity/profile label for rejected execute-position logs.
 /// @param dev Device the command was rejected for.
 /// @param position Requested execute position.
-/// @return Expected profile label for detail::log_rejected_operation().
+/// @return Expected profile label for detail::log_rejected_operation(); names the missing feature
+///         when the device only lacks intermediate positions.
 const char *position_rejection_profile(const IoDevice &dev, uint8_t position) {
-  // A LIGHT-class device only reaches rejection for a genuinely out-of-range value (dimmable
-  // lights already accept the full 0-100 span in known_device_accepts_execute_position()) — the
-  // fix there isn't "needs cover_position", it's "needs a value in 0-100".
+  // A LIGHT-class device only reaches rejection for a genuinely out-of-range value or, without
+  // `dimmable:`, an intermediate one — the fix there isn't "needs cover_position", it's "needs a
+  // value in 0-100" (or `dimmable: true`).
   if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT ||
       device_capability_class(dev.type) == DeviceCapabilityClass::HEATER_LEVEL)
     return "0-100";
+  if (!has_feature(dev.features, device_feature::LEVELS) && position != POS_STOP &&
+      !detail::is_binary_entity_position(position))
+    return "cover with intermediate positions (LEVELS feature)";
   return detail::is_binary_entity_position(position) ? "cover_position or binary_on_off" : "cover_position";
 }
 
@@ -364,40 +369,41 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
       [position](const IoDevice &d) { return detail::known_device_accepts_execute_position(d, position); },
       position_rejection_profile(*dev, position),
       [this, position](IoFrame &request, const IoDevice &d) {
-        if (device_takes_main_parameter_only(d.type, d.subtype))
+        if (!has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME))
           return create_execute_main_parameter(request, this->node_id_, d.node_id, d.low_power, position);
         return create_execute_position(request, this->node_id_, d.node_id, d.low_power, position, d.silent);
       });
 }
 
 bool IOHomeControlComponent::execute_device_command_(const std::string &device_id, CoverCommand cmd) {
+  // A named position (favourite, ventilation) goes out only to a device whose features include its
+  // bit; a motor without it would answer PARAMETER_UNKNOWN (issue #163), so the command is refused
+  // here, through the same rejection and rollback path as a position.
+  const NamedPosition *named = find_named_position(cmd);
+  char expected[EXECUTE_ACTION_BUF_SIZE] = "cover entity";
+  if (named != nullptr)
+    snprintf(expected, sizeof(expected), "cover with %s position", named->name);
   return this->run_execute_operation_(
       device_id, {cover_command_name(cmd), cmd == CoverCommand::STOP},
-      [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::COVER); },
-      "cover entity",
-      [this, cmd, &device_id](IoFrame &request, const IoDevice &d) {
-        if (device_takes_main_parameter_only(d.type, d.subtype)) {
-          // These devices refuse the favourite alias (issue #163: RESULT_PARAMETER_UNKNOWN), so
-          // say so here instead of sending a frame that can only be refused.
-          if (cmd == CoverCommand::FAVORITE || cmd == CoverCommand::VENT) {
-            ESP_LOGW(detail::TAG, "Device %s: %s is not supported on this device (%s)", device_id.c_str(),
-                     cover_command_name(cmd), format_device_kind(d.type, d.subtype).c_str());
-            return false;
-          }
-          if (cmd == CoverCommand::FORCE_OPEN) {
-            return create_execute_main_parameter(
-                request, this->node_id_, d.node_id, d.low_power,
-                d.inverted ? FORCE_OPEN_WIRE_POSITION_INVERTED : FORCE_OPEN_WIRE_POSITION,
-                /*force_open_priority=*/true);
-          }
-        }
+      [named](const IoDevice &d) {
+        return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::COVER) &&
+               (named == nullptr || device_accepts_main_parameter(d.features, named->main_parameter));
+      },
+      expected,
+      [this, cmd](IoFrame &request, const IoDevice &d) {
         // FORCE_OPEN needs the device's own wire-scale "fully open" position (0, or 100 for an
         // IoDevice::inverted device such as a horizontal awning) — create_execute_command() has no
-        // device access to resolve that, so it is built separately here where d is in scope.
-        return cmd == CoverCommand::FORCE_OPEN
-                   ? create_force_open(request, this->node_id_, d.node_id, d.low_power,
-                                       d.inverted ? FORCE_OPEN_WIRE_POSITION_INVERTED : FORCE_OPEN_WIRE_POSITION)
-                   : create_execute_command(request, this->node_id_, d.node_id, d.low_power, cmd, d.silent);
+        // device access to resolve that, so it is built separately here where d is in scope. The
+        // silent profile is a functional parameter, so only a device with the extended frame gets it.
+        if (cmd != CoverCommand::FORCE_OPEN) {
+          return create_execute_command(request, this->node_id_, d.node_id, d.low_power, cmd,
+                                        d.silent && has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME));
+        }
+        const uint8_t open_position = d.inverted ? FORCE_OPEN_WIRE_POSITION_INVERTED : FORCE_OPEN_WIRE_POSITION;
+        return has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME)
+                   ? create_force_open(request, this->node_id_, d.node_id, d.low_power, open_position)
+                   : create_execute_main_parameter(request, this->node_id_, d.node_id, d.low_power, open_position,
+                                                   /*force_open_priority=*/true);
       });
 }
 
@@ -443,7 +449,7 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   IoFrame request;
   // Tilt-capable covers need the extended 0x03200100 status request so the response includes
   // the reliable 16-byte tilt block. Other devices stay on the shorter generic request.
-  bool const request_ok = device_supports_tilt(dev->type)
+  bool const request_ok = has_feature(dev->features, device_feature::TILT)
                               ? create_get_status_tilt(request, this->node_id_, dev->node_id, dev->low_power)
                               : create_get_status(request, this->node_id_, dev->node_id, dev->low_power);
   if (!request_ok)

@@ -83,7 +83,7 @@ void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_of
   // A decoded position is the observation this prediction existed to stand in for.
   dev.optimistic.clear_position();
 
-  if (allow_tilt_from_extended_response && device_supports_tilt(dev.type) &&
+  if (allow_tilt_from_extended_response && has_feature(dev.features, device_feature::TILT) &&
       frame.data_len >= EXTENDED_TILT_RESPONSE_MIN_DATA_LEN &&
       frame.data[EXTENDED_TILT_SELECTOR_OFFSET] == STATUS_TILT_SELECTOR) {
     uint16_t const tilt_raw = (frame.data[EXTENDED_TILT_MSB_OFFSET] << 8) | frame.data[EXTENDED_TILT_LSB_OFFSET];
@@ -282,8 +282,7 @@ void apply_info2_response(IoDevice &dev, const IoFrame &frame) {
 
   dev.type = decode_packed_device_type(frame.data[GET_INFO2_TYPE_OFFSET], frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
   dev.subtype = decode_packed_device_subtype(frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
-  if (default_inverted_for_type(dev.type))
-    dev.inverted = true;
+  resolve_device_features(dev);
 }
 
 /// @brief Apply a name response frame to the device record.
@@ -510,7 +509,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     apply_info2_response(dev, frame);
     ESP_LOGI(detail::TAG, "Device %s: type=%s (%u) class=%s profile=%s subtype=%u", id.c_str(),
              device_type_name(dev.type), static_cast<unsigned>(dev.type), device_capability_class_name(dev.type),
-             device_operation_profile_name(dev.type), dev.subtype);
+             device_operation_profile_name(dev.type, dev.subtype), dev.subtype);
     if (type_was_unknown && dev.type != DeviceType::UNKNOWN) {
       ESP_LOGI(detail::TAG,
                "Device %s: type learned at runtime, not declared in YAML — add `%s` to skip "

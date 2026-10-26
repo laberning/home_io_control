@@ -444,6 +444,16 @@ TEST(OneWayCommands, NamedCommandsDecodeBackToTheirIntent) {
   }
 }
 
+TEST(OneWayCommands, PartialAndPedestrianHaveNoOneWayEncoding) {
+  // They are named positions for 2W; 1W keeps its STOP / FAVORITE / VENT allowlist.
+  for (const CoverCommand cmd : {CoverCommand::PARTIAL, CoverCommand::PEDESTRIAN}) {
+    IoFrame frame{};
+    EXPECT_FALSE(
+        create_1w_execute_command(frame, SOMFY_REMOTE_SRC, DeviceType::GATE_OPENER, cmd, 42, test::TEST_SYSTEM_KEY))
+        << cover_command_name(cmd);
+  }
+}
+
 TEST(OneWayCommands, PositionsDecodeBackToTheSamePercentage) {
   for (uint8_t position = 0; position <= 100; position += 5) {
     // 50 is skipped deliberately, not because the builder gets it wrong: main0 == POS_FORCE_OPEN

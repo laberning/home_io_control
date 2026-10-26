@@ -130,8 +130,9 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
 
 /// True for a CMD_EXECUTE that has the same effect sent twice as sent once. Every EXECUTE this hub
 /// sends names an absolute target (a position, open/close, STOP, a tilt angle, a light level)
-/// except the stored-position selector POS_FAVORITE, used by favourite and vent: on a Somfy motor
-/// "My" while moving means stop, so a second copy can undo what the first one started.
+/// except the stored-position selector POS_FAVORITE, used by favourite, vent, partial and pedestrian
+/// (every NAMED_POSITIONS entry): on a Somfy motor "My" while moving means stop, so a
+/// second copy can undo what the first one started.
 /// @param request Outbound request frame.
 [[nodiscard]] inline bool is_repeatable_execute(const IoFrame &request) {
   return request.cmd == CMD_EXECUTE && request.data_len > EXECUTE_MAIN_BYTE_OFFSET &&

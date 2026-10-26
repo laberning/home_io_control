@@ -393,7 +393,7 @@ TEST(HubManagement, ForceOpenDeviceRejectsNonCoverDevice) {
   setup_component(component, radio);
   auto *dev = component.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::LIGHT;
+  test::set_kind(*dev, DeviceType::LIGHT);
 
   const auto result = component.force_open_device("ABC123");
   EXPECT_FALSE(result.success);
@@ -557,8 +557,7 @@ static IoFrame make_write_private_ack(const uint8_t dst[3]) {
 static void make_climate_device(TestableManagementComponent &component) {
   auto *dev = component.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
 }
 
 TEST(HubManagement, HeatingControlRejectsUnknownDevice) {
@@ -624,7 +623,7 @@ TEST(HubManagement, HeatingControlRejectsNonClimateDevice) {
   setup_component(component, radio);  // ABC123 defaults to no type (UNKNOWN)
   auto *dev = component.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ROLLER_SHUTTER;
+  test::set_kind(*dev, DeviceType::ROLLER_SHUTTER);
   const auto result = component.heating_control("ABC123", "power_on", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device is not a climate device");
@@ -672,8 +671,7 @@ TEST(HubManagement, HeatingControlSendsNothingToAHeatingLevelHeater) {
   setup_component(component, radio);
   auto *dev = component.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 0;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0);
   for (const char *function : {"power_on", "set_mode", "window_open"}) {
     const auto result = component.heating_control("ABC123", function, "auto");
     EXPECT_FALSE(result.success) << function;
@@ -1595,8 +1593,8 @@ TEST(HubManagement, ScanPairedDevicesCarriesInversionAndRssiIntoTheReport) {
   setup_component(component, radio);
   radio.set_last_capture_rssi(-73);
 
-  // HORIZONTAL_AWNING (type 0x04) is the one type default_inverted_for_type() reports as
-  // inverted, and it is unregistered here so the report includes its YAML block.
+  // HORIZONTAL_AWNING (type 0x04) is the one type inverted by default (device_feature::INVERTED),
+  // and it is unregistered here so the report includes its YAML block.
   const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2, 0x02, 0xCC, 0xFC, 0x03};
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));

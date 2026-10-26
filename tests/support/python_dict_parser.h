@@ -9,7 +9,7 @@
 /// checks (scripts/check-tuning-sync.py, scripts/check-yaml-emitters.py, both `make lint`); see
 /// any sync test's file header for the fuller note on why both forms are kept.
 ///
-/// Five public functions:
+/// Seven public functions:
 ///  - parse_python_uint8_dict(path, dict_name): a top-level `NAME = { "key": 0xNN, ... }` dict
 ///    (string-keyed, int-valued) -- used for MANUFACTURER_OPTIONS, DEVICE_TYPE_OPTIONS,
 ///    TCXO_VOLTAGE_OPTIONS, FEM_TX_POWER_MAX_QUIET and PA_PIN_OPTIONS (device_type_sync_test.cpp,
@@ -27,6 +27,10 @@
 ///  - parse_python_uint8_assignments(path, prefix): bare module-level `<prefix>NAME = 0xNN`
 ///    Python assignments -- used for protolib.py's rekey-pipeline CMD_* mirror
 ///    (opcode_name_sync_test.cpp).
+///  - parse_python_uint16_dict(path, dict_name) and parse_python_uint16_assignments(path, prefix):
+///    the two-byte forms of the first and last, used for the capability word mirror (DEVICE_FEATURES,
+///    NAMED_POSITION_FEATURES, FEATURE_*; device_features_sync_test.cpp). Every one-byte and
+///    two-byte form shares one parse_uint_or_fail(max).
 ///
 /// The two dict-shaped parsers share one scan loop (parse_python_dict_entries(), below) rather
 /// than being two near-identical copies -- that duplication bug pattern is exactly what this
@@ -65,23 +69,39 @@ inline std::ifstream open_source_or_fail(const char *path) {
   return file;
 }
 
-/// Parse `text` as a C/Python-style unsigned integer literal (decimal or `0x`-prefixed hex), the
-/// same as `std::stoul(text, nullptr, 0)`. `stoul`'s prefix parsing only tolerates *trailing*
-/// garbage after a valid leading numeral -- leading garbage before the numeral (e.g. a comment
-/// buffered ahead of a value) makes it throw `std::invalid_argument`, which would otherwise
-/// escape a sync test's body as an opaque, undiagnosable crash. This wraps that call so a
-/// malformed value instead becomes a normal, actionable test failure naming the source `path` and
-/// the constant/entry (`context`) being parsed.
+/// Parse `text` as a C/Python-style unsigned integer literal (decimal or `0x`-prefixed hex) no
+/// larger than `max`, the same as `std::stoul(text, nullptr, 0)` plus the range check. `stoul`'s prefix
+/// parsing only tolerates *trailing* garbage after a valid leading numeral -- leading garbage before
+/// the numeral (e.g. a comment buffered ahead of a value) makes it throw `std::invalid_argument`,
+/// which would otherwise escape a sync test's body as an opaque, undiagnosable crash. This wraps that
+/// call so a malformed or too-large value instead becomes a normal, actionable test failure naming
+/// the source `path` and the constant/entry (`context`) being parsed.
 /// @return The parsed value, or 0 (with an ADD_FAILURE already recorded) if `text` could not be
-///         parsed as an integer literal.
-inline uint8_t parse_uint8_or_fail(const std::string &text, const char *path, const std::string &context) {
+///         parsed as an integer literal or exceeds `max`.
+inline unsigned long parse_uint_or_fail(const std::string &text, const char *path, const std::string &context,
+                                        unsigned long max) {
   try {
-    return static_cast<uint8_t>(std::stoul(text, nullptr, 0));
+    const unsigned long value = std::stoul(text, nullptr, 0);
+    if (value > max) {
+      ADD_FAILURE() << "'" << text << "' for " << context << " in " << path << " exceeds " << max;
+      return 0;
+    }
+    return value;
   } catch (const std::exception &e) {
     ADD_FAILURE() << "Cannot parse '" << text << "' as an integer for " << context << " in " << path << ": "
                   << e.what();
     return 0;
   }
+}
+
+/// parse_uint_or_fail() for a one-byte value.
+inline uint8_t parse_uint8_or_fail(const std::string &text, const char *path, const std::string &context) {
+  return static_cast<uint8_t>(parse_uint_or_fail(text, path, context, UINT8_MAX));
+}
+
+/// parse_uint_or_fail() for a two-byte value.
+inline uint16_t parse_uint16_or_fail(const std::string &text, const char *path, const std::string &context) {
+  return static_cast<uint16_t>(parse_uint_or_fail(text, path, context, UINT16_MAX));
 }
 
 /// Trim a raw dict value/key token: a trailing `#`-prefixed comment (consistent with how
@@ -184,6 +204,14 @@ inline std::map<std::string, uint8_t> parse_python_uint8_dict(const char *path, 
   std::map<std::string, uint8_t> result;
   for (const auto &[key, value] : detail::parse_python_dict_entries(path, dict_name))
     result[key] = detail::parse_uint8_or_fail(value, path, std::string(dict_name) + "[\"" + key + "\"]");
+  return result;
+}
+
+/// parse_python_uint8_dict() for two-byte values -- e.g. DEVICE_FEATURES, NAMED_POSITION_FEATURES.
+inline std::map<std::string, uint16_t> parse_python_uint16_dict(const char *path, const char *dict_name) {
+  std::map<std::string, uint16_t> result;
+  for (const auto &[key, value] : detail::parse_python_dict_entries(path, dict_name))
+    result[key] = detail::parse_uint16_or_fail(value, path, std::string(dict_name) + "[\"" + key + "\"]");
   return result;
 }
 
@@ -319,23 +347,19 @@ inline std::map<std::string, uint8_t> parse_cpp_uint8_constants(const char *path
   return entries;
 }
 
-/// Parse every bare module-level `<prefix>NAME = 0xNN` assignment out of a Python source file.
-///
-/// Deliberately strict: the assignment must start at column 0 (so a same-named local inside a
-/// function body cannot match) and the value must be a bare hex/int literal (no expressions, no
-/// references to other names) -- this is meant for small, hand-curated constant mirrors such as
-/// protolib.py's `--rekey` pipeline constants, not general Python assignment parsing.
-/// @param path Path to the Python source file, relative to the project root.
-/// @param prefix The constant name prefix, e.g. "CMD_".
-/// @return name (prefix stripped) -> value map; empty (with a test failure already recorded via
-///         EXPECT_TRUE) if `path` could not be opened.
-inline std::map<std::string, uint8_t> parse_python_uint8_assignments(const char *path, const char *prefix) {
-  std::ifstream file = detail::open_source_or_fail(path);
+namespace detail {
+
+/// Core of the module-level assignment parsers: every `<prefix>NAME = <literal>` at column 0, with
+/// the literal text parsed by `parse_literal(text, path, context)`.
+template<typename Value, typename ParseLiteral>
+std::map<std::string, Value> parse_python_assignments(const char *path, const char *prefix,
+                                                      ParseLiteral parse_literal) {
+  std::ifstream file = open_source_or_fail(path);
   if (!file.is_open())
     return {};
 
   const std::string decl_prefix(prefix);
-  std::map<std::string, uint8_t> entries;
+  std::map<std::string, Value> entries;
   std::string line;
 
   while (std::getline(file, line)) {
@@ -358,7 +382,7 @@ inline std::map<std::string, uint8_t> parse_python_uint8_assignments(const char 
     auto hash = val_str.find('#');
     if (hash != std::string::npos)
       val_str = val_str.substr(0, hash);
-    val_str = detail::trim_ws(val_str);
+    val_str = trim_ws(val_str);
     if (val_str.empty())
       continue;
 
@@ -373,9 +397,30 @@ inline std::map<std::string, uint8_t> parse_python_uint8_assignments(const char 
     if (!is_literal)
       continue;
 
-    entries[name] = detail::parse_uint8_or_fail(val_str, path, decl_prefix + name);
+    entries[name] = parse_literal(val_str, path, decl_prefix + name);
   }
   return entries;
+}
+
+}  // namespace detail
+
+/// Parse every bare module-level `<prefix>NAME = 0xNN` assignment out of a Python source file.
+///
+/// Deliberately strict: the assignment must start at column 0 (so a same-named local inside a
+/// function body cannot match) and the value must be a bare hex/int literal (no expressions, no
+/// references to other names) -- this is meant for small, hand-curated constant mirrors such as
+/// protolib.py's `--rekey` pipeline constants, not general Python assignment parsing.
+/// @param path Path to the Python source file, relative to the project root.
+/// @param prefix The constant name prefix, e.g. "CMD_".
+/// @return name (prefix stripped) -> value map; empty (with a test failure already recorded via
+///         EXPECT_TRUE) if `path` could not be opened.
+inline std::map<std::string, uint8_t> parse_python_uint8_assignments(const char *path, const char *prefix) {
+  return detail::parse_python_assignments<uint8_t>(path, prefix, detail::parse_uint8_or_fail);
+}
+
+/// parse_python_uint8_assignments() for two-byte values -- the FEATURE_* bits in hub_validators.py.
+inline std::map<std::string, uint16_t> parse_python_uint16_assignments(const char *path, const char *prefix) {
+  return detail::parse_python_assignments<uint16_t>(path, prefix, detail::parse_uint16_or_fail);
 }
 
 }  // namespace test

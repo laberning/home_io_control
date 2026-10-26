@@ -345,7 +345,8 @@ class IOHomeControlComponent : public Component,
   /// obeyed. The "Last 1W Command" diagnostic reports what was *transmitted*, which is the only
   /// half of that the hub can know.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
-  /// @param cmd Named command (STOP, FAVORITE, VENT, FORCE_OPEN).
+  /// @param cmd Named command (STOP, FAVORITE, VENT, FORCE_OPEN); PARTIAL and PEDESTRIAN have no 1W
+  ///        encoding and are not transmitted.
   void send_oneway_command(const std::string &controller_id, CoverCommand cmd) {
     this->op_queue_.enqueue_oneway_command(controller_id, cmd);
   }
@@ -473,27 +474,20 @@ class IOHomeControlComponent : public Component,
 
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (undeclared/legacy path).
-  /// Type, subtype, inverted, and optimistic_state default to UNKNOWN / 0 / false / true; use the
+  /// Type, subtype and optimistic_state default to UNKNOWN / 0 / true, with no overrides; use the
   /// `DeviceConfig` overload when metadata comes from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
   virtual void add_device(const std::string &device_id);
   /// Add a device to the registry with full metadata from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
-  /// @param cfg Device type/subtype/inversion/optimistic-state metadata.
+  /// @param cfg Device type/subtype/overrides/optimistic-state metadata.
   virtual void add_device(const std::string &device_id, const DeviceConfig &cfg);
   /// Retrieve a device by ID; returns nullptr if not found.
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
   virtual IoDevice *get_device(const std::string &device_id);
-  /// Set a device's `dimmable` flag (see IoDevice::dimmable). Called by platform_light.cpp's
-  /// setup(), not folded into add_device() since it's a light-only YAML choice. No-op if the
-  /// device isn't registered.
-  /// @param device_id Hexadecimal node ID string.
-  /// @param dimmable New value for IoDevice::dimmable.
-  virtual void set_device_dimmable(const std::string &device_id, bool dimmable);
-
   /// Select a device's travel profile at runtime (see IOHomeCoverSilentSwitch).
-  /// Virtual for the same reason as set_device_dimmable: platform tests substitute a mock registry.
+  /// Virtual so platform tests can substitute a mock registry.
   /// @param device_id Hexadecimal node ID string.
   /// @param silent    True to send position moves in "silent operation" (slower) mode.
   virtual void set_device_silent(const std::string &device_id, bool silent);
@@ -514,7 +508,9 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired position, 0–100 (open→closed). Named commands (STOP, FAVORITE,
   ///        VENT) go through execute_device_command_()/create_execute_command() instead.
-  /// @return true if device acknowledged; false on timeout or radio error.
+  /// @return true if device acknowledged; false on timeout or radio error, or when the device's
+  ///         features do not accept the value (an intermediate position on a device without
+  ///         device_feature::LEVELS): nothing is sent and the optimistic target is withdrawn.
   virtual bool set_device_position(const std::string &device_id, uint8_t position);
   /// Send a tilt command to a tilt‑capable cover.
   /// @param device_id Target device ID.
@@ -721,10 +717,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired position (0–100).
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
-  /// @brief Queue an async named command (STOP, FAVORITE, VENT, FORCE_OPEN); returns immediately,
-  /// executed in loop().
+  /// @brief Queue an async named command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN);
+  /// returns immediately, executed in loop(). PARTIAL and PEDESTRIAN are experimental.
   ///
-  /// Existing entity/button callers (cover, favorite button, vent button) intentionally ignore
+  /// Existing entity/button callers (cover, favorite, vent, partial and pedestrian buttons) intentionally ignore
   /// the return value — they always target a known, already-registered device. It exists so
   /// force_open_device() can report enqueue rejection distinctly from a queued-but-not-yet-run
   /// command.
@@ -1064,10 +1060,13 @@ class IOHomeControlComponent : public Component,
                               const std::function<bool(const IoDevice &)> &accepts, const char *rejection_profile,
                               const std::function<bool(IoFrame &, const IoDevice &)> &build);
 
-  /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.
+  /// Execute a named device command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN) via the
+  /// authenticated exchange.
+  /// A named position (NAMED_POSITIONS) goes out only to a device whose features include its bit.
   /// @param device_id Target device ID.
   /// @param cmd Named command to execute.
-  /// @return true if device acknowledged; false otherwise.
+  /// @return true if device acknowledged; false otherwise, including a named position the device's
+  ///         features lack (nothing is sent).
   bool execute_device_command_(const std::string &device_id, CoverCommand cmd);
   /// Shared bookkeeping for every 1W transmit: mark the radio busy for the duration of `send`,
   /// then record it as 1W activity so background polls back off for it exactly as they do for a

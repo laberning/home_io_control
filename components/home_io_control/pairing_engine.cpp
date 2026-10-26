@@ -367,7 +367,6 @@ bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &cont
 /// Decodes node ID, device type, subtype, and the extended fields (manufacturer, backbone,
 /// Multi Information Byte) via decode_discovery_response(), then emits pairing's diagnostic log
 /// lines for whichever extended fields the payload actually included.
-/// The inversion flag is derived from the type via `default_inverted_for_type()`.
 DiscoveryResponseInfo PairingEngine::parse_device_from_discovery(const IoFrame &frame, IoDevice &device,
                                                                  std::string &device_id) {
   const DiscoveryResponseInfo info = decode_discovery_response(frame, device, device_id);
@@ -402,12 +401,18 @@ DiscoveryResponseInfo PairingEngine::parse_device_from_discovery(const IoFrame &
 
 // --- Phase helpers ---
 
+/// Suffix for a log line that names a device kind no capture or report has confirmed on a real device.
+static const char *experimental_note(DeviceType type, uint8_t subtype) {
+  return device_is_experimental(type, subtype) ? " (experimental)" : "";
+}
+
 /// Log what discovery accepted: the device kind, and a warning when it answered as a remote controller.
 static void log_discovered_device(const pairing::PairingContext &context) {
   if (context.discovery_metadata_complete) {
-    ESP_LOGI(TAG, "Discovery: device %s: %s (%s)%s", context.device_id.c_str(),
+    ESP_LOGI(TAG, "Discovery: device %s: %s (%s)%s%s", context.device_id.c_str(),
              format_device_kind(context.device.type, context.device.subtype).c_str(),
              format_device_ids(context.device.type, context.device.subtype).c_str(),
+             experimental_note(context.device.type, context.device.subtype),
              device_has_platform(context.device.type, context.device.subtype) ? "" : " (not supported yet)");
   }
   if (context.device.type == DeviceType::REMOTE_CONTROLLER) {
@@ -747,9 +752,9 @@ bool PairingEngine::discover_and_pair() {
 
   const std::string type_diag = format_device_type_diagnostic(context.device.type);
   const std::string type_yaml = format_device_type_for_yaml(context.device.type);
-  const std::string snippet = build_device_yaml_snippet(context.device.type, context.device.subtype, context.device_id,
-                                                        context.discovery_metadata_complete, context.device.inverted,
-                                                        context.discovery_low_power);
+  const std::string snippet =
+      build_device_yaml_snippet(context.device.type, context.device.subtype, context.device_id,
+                                context.discovery_metadata_complete, context.discovery_low_power);
 
   if (snippet.empty()) {
     // metadata_complete is true here (build_device_yaml_snippet() never returns empty for
@@ -790,8 +795,9 @@ bool PairingEngine::discover_and_pair() {
     return true;
   }
 
-  ESP_LOGI(TAG, "Device %s paired successfully! Add this to your YAML:\n%s", context.device_id.c_str(),
-           snippet.c_str());
+  ESP_LOGI(TAG, "Device %s (%s%s) paired successfully! Add this to your YAML:\n%s", context.device_id.c_str(),
+           format_device_kind(context.device.type, context.device.subtype).c_str(),
+           experimental_note(context.device.type, context.device.subtype), snippet.c_str());
 
   if (yaml_device_type_name(context.device.type) == nullptr) {
     ESP_LOGW(TAG,
@@ -962,7 +968,6 @@ uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
     memcpy(device.node_id, responder.src, NODE_ID_SIZE);
     device.type = responder.type;
     device.subtype = responder.subtype;
-    device.inverted = responder.inverted;
     device.low_power = responder.has_extended && discovery_power_save_mode(responder.flags) == POWER_SAVE_LOW_POWER;
     device.has_system_key = device_key;
     if (device_key)
@@ -1035,7 +1040,6 @@ bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext 
   memcpy(responder.src, heater, NODE_ID_SIZE);
   responder.type = DeviceType::ELECTRICAL_HEATER;
   responder.subtype = SUBTYPE_HEATER_WITH_SETPOINT;
-  responder.inverted = false;
   responder.rssi_dbm = rssi;
   responder.manufacturer = context.discovery_manufacturer;
   responder.flags = 0;

@@ -365,11 +365,9 @@ DiscoveryResponseInfo decode_discovery_response(const IoFrame &frame, IoDevice &
   if (info.metadata_complete) {
     device.type = decode_packed_device_type(frame.data[0], frame.data[1]);
     device.subtype = decode_packed_device_subtype(frame.data[1]);
-    device.inverted = default_inverted_for_type(device.type);
   } else {
     device.type = DeviceType::UNKNOWN;
     device.subtype = 0;
-    device.inverted = false;
   }
   device.position = UNKNOWN_POSITION;
   device.target = UNKNOWN_POSITION;

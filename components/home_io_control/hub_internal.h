@@ -13,6 +13,7 @@
 #include "log_frame.h"
 #include "log_helpers.h"
 #include "proto_codecs.h"
+#include "proto_device_types.h"
 
 #include "esphome/core/log.h"
 
@@ -70,32 +71,25 @@ inline bool known_device_supports_status_requests(const IoDevice &dev) {
 }
 
 /// @brief Can this device accept an execute (position) command?
-/// Checks capability and, for unknown types, allows binary positions for light/switch.
+/// The device's entity class must have an EXECUTE position path (cover, light, switch, lock, heater
+/// level; a device not yet typed passes), and the main parameter the position maps to must be one
+/// its features accept: open, close and stop always, a percent only with LEVELS
+/// (device_accepts_main_parameter()). A light's LEVELS come from its `dimmable:` key, a switch or
+/// lock never has them, so they stay binary.
 /// @param dev IoDevice to check.
-/// @param position Position value being sent.
-/// @return true if operation is appropriate for this device type.
+/// @param position Position value being sent (percent, or POS_STOP).
+/// @return true if operation is appropriate for this device.
 inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t position) {
-  if (dev.type == DeviceType::UNKNOWN)
-    return true;
-  if (device_supports_position_control(dev.type))
-    return true;
-  // Dimmable lights (platform_light.cpp's dimmable: true) send arbitrary 0-100 IO positions, not
-  // just the two binary extremes — accept the full range for LIGHT here and trust the entity
-  // layer to only ever send binary values for a non-dimmable light. SWITCH and LOCK have no
-  // continuous concept, so they stay restricted to the binary encoding below.
-  // A heater with a heat level (exterior heating) sends the full 0-100 span as a fan's speed.
-  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT ||
-      device_capability_class(dev.type) == DeviceCapabilityClass::HEATER_LEVEL)
-    return position <= BINARY_ENTITY_OFF_POSITION;
-  return is_binary_entity_position(position) &&
-         (device_supports_binary_control(dev.type) || device_supports_lock_control(dev.type));
+  if (dev.type != DeviceType::UNKNOWN && !device_takes_execute_position(dev.type))
+    return false;
+  return device_accepts_main_parameter(dev.features, position_main_parameter(position));
 }
 
 /// @brief Can this device accept a tilt command?
 /// @param dev IoDevice to check.
-/// @return true only if device type is known to support tilt.
+/// @return true only if the device has device_feature::TILT.
 inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
-  return dev.type != DeviceType::UNKNOWN && device_supports_tilt(dev.type);
+  return has_feature(dev.features, device_feature::TILT);
 }
 
 // ============================================================================
@@ -111,7 +105,7 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
                                    const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
            device_id.c_str(), device_type_name(dev.type), static_cast<unsigned>(dev.type),
-           device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
+           device_capability_class_name(dev.type), device_operation_profile_name(dev.type, dev.subtype), expected);
 }
 
 /// @brief Log a frame‑level issue (unregistered endpoints, unsupported commands).

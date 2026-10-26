@@ -14,9 +14,9 @@ static const char *const TAG = "home_io_control.lock";
 
 void IOHomeLock::setup() {
   // Locks participate in the same shared registry and callback fan-out as the other entity types.
-  this->register_device_binding_(this, /*inverted=*/false, [this](const std::string &id, const IoDevice &dev) {
-    this->on_device_update_(id, dev);
-  });
+  this->register_device_binding_(
+      this, DeviceCapabilityClass::LOCK, std::nullopt,
+      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
 
   this->traits.set_assumed_state(false);
   this->traits.set_requires_code(false);

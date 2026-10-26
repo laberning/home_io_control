@@ -95,7 +95,7 @@ on its own means the device is not hearing the hub. Unconfirmed Exchanges rising
 hears the hub's request, and then either the hub's answer to its challenge or the device's closing
 reply gets lost. The two cases need different fixes, and a movement command that ends this way may
 not have been carried out. If the device has answered a movement command with a closing reply
-before, the hub sends that command once more, a little over a second later. Favourite and ventilation are
+before, the hub sends that command once more, a little over a second later. Named positions (favourite, ventilation, partial and pedestrian) are
 never repeated, because a second one can undo the first. If the repeat goes unanswered too, the hub
 still counts the command as delivered. That makes this sensor the only place it shows up. If the
 repeat is answered, the command ends confirmed and this sensor does not count it. The log line
