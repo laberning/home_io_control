@@ -401,12 +401,18 @@ DiscoveryResponseInfo PairingEngine::parse_device_from_discovery(const IoFrame &
 
 // --- Phase helpers ---
 
+/// Suffix for a log line that names a device kind no capture or report has confirmed on a real device.
+static const char *experimental_note(DeviceType type, uint8_t subtype) {
+  return device_is_experimental(type, subtype) ? " (experimental)" : "";
+}
+
 /// Log what discovery accepted: the device kind, and a warning when it answered as a remote controller.
 static void log_discovered_device(const pairing::PairingContext &context) {
   if (context.discovery_metadata_complete) {
-    ESP_LOGI(TAG, "Discovery: device %s: %s (%s)%s", context.device_id.c_str(),
+    ESP_LOGI(TAG, "Discovery: device %s: %s (%s)%s%s", context.device_id.c_str(),
              format_device_kind(context.device.type, context.device.subtype).c_str(),
              format_device_ids(context.device.type, context.device.subtype).c_str(),
+             experimental_note(context.device.type, context.device.subtype),
              device_has_platform(context.device.type, context.device.subtype) ? "" : " (not supported yet)");
   }
   if (context.device.type == DeviceType::REMOTE_CONTROLLER) {
@@ -789,8 +795,9 @@ bool PairingEngine::discover_and_pair() {
     return true;
   }
 
-  ESP_LOGI(TAG, "Device %s paired successfully! Add this to your YAML:\n%s", context.device_id.c_str(),
-           snippet.c_str());
+  ESP_LOGI(TAG, "Device %s (%s%s) paired successfully! Add this to your YAML:\n%s", context.device_id.c_str(),
+           format_device_kind(context.device.type, context.device.subtype).c_str(),
+           experimental_note(context.device.type, context.device.subtype), snippet.c_str());
 
   if (yaml_device_type_name(context.device.type) == nullptr) {
     ESP_LOGW(TAG,

@@ -18,6 +18,7 @@ from .platform_common import (
     inject_companion_sensor_ids,
     platform_schema_extension,
     require_feature,
+    warn_if_experimental_kind,
     wire_device_binding,
     CONF_HOME_IO_CONTROL_ID,
 )
@@ -78,7 +79,9 @@ def _validate(config):
     return schema(config)
 
 
-CONFIG_SCHEMA = cv.All(_validate, _require_dimmable_kind, _inject_companion_ids)
+CONFIG_SCHEMA = cv.All(
+    _validate, _require_dimmable_kind, warn_if_experimental_kind, _inject_companion_ids
+)
 
 
 async def to_code(config):

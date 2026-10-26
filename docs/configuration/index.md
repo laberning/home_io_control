@@ -90,6 +90,10 @@ the same set of keys. Platform-specific options are documented on each platform'
   subtype 58 opener; see [Covers that only open and close](cover.md#covers-that-only-open-and-close). The full list of names is in
   [Supported devices](../supported-devices.md). A declared type is authoritative: the hub may
   learn a type from the radio when none is declared, but never overwrites a declared one.
+  A kind that no capture or report has confirmed on a real device is marked "(experimental)" in
+  [Node types and subtypes](../supported-devices.md#node-types-and-subtypes); declaring one logs a
+  warning when the config is built that links to
+  [Reporting unsupported devices](../contributing.md#reporting-unsupported-devices).
 - `io_subtype` (Optional): The device's subtype, `0`–`63`.
 - `status_poll_interval` (Optional): Follow-up poll cadence while movement is expected. See the
   note below.

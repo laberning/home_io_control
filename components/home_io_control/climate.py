@@ -34,6 +34,7 @@ from .platform_common import (
     inherit_esphome_device,
     inject_companion_sensor_ids,
     platform_schema_extension,
+    warn_if_experimental_kind,
     wire_device_binding,
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
@@ -149,6 +150,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(cv.COMPONENT_SCHEMA),
     _validate_climate_poll_interval,
     _validate_temperature_range,
+    warn_if_experimental_kind,
     _inject_companion_ids,
 )
 

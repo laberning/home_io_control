@@ -467,12 +467,65 @@ def device_features_fall_back_like_the_cpp_lookup():
         assert v.device_features(t[short_frame]) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, short_frame
     assert v.device_features(t["vertical_interior_blind"]) & v.FEATURE_TILT == 0
     assert v.device_features(t["window_opener"], 58) & v.FEATURE_VENT
-    assert v.device_features(t["lock"], 2) == 0, "an explicit subtype row beats the type row, even at zero"
-    assert v.device_features(t["lock"], 1) == v.FEATURE_EXTENDED_POSITION_FRAME
+    capability = ~v.KIND_EXPERIMENTAL  # the experimental marker is not a capability
+    assert v.device_features(t["lock"], 2) & capability == 0, "an explicit subtype row beats the type row, even at zero"
+    assert v.device_features(t["lock"], 1) & capability == v.FEATURE_EXTENDED_POSITION_FRAME
     assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS
     assert v.device_features(t["electrical_heater"], 0) == 0
     assert v.device_features(0x14) == 0, "a raw type with no name has no capabilities"
     assert v.device_features(0x14, 58) == v.FEATURE_MAIN_PARAMETER_ONLY
+
+
+@case()
+def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_time():
+    """An experimental kind (no capture or report confirms it on a real device) carries
+    KIND_EXPERIMENTAL; declaring one logs one warning that names the kind and the reporting page,
+    and a confirmed kind, a declared kind of a confirmed type and a config with no kind log nothing."""
+    import logging
+
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as p
+
+    t = v.DEVICE_TYPE_OPTIONS
+    assert v.KIND_EXPERIMENTAL == 0x8000
+    assert v.kind_is_experimental(t["gate_opener"], 58)
+    assert v.kind_is_experimental(t["swinging_shutter"], 58)
+    assert v.kind_is_experimental(t["light"], 1)
+    assert v.kind_is_experimental(t["heat_pump"], 2), "a row with no capability is marked by the flag alone"
+    assert not v.kind_is_experimental(t["garage_opener"], 58), "5/58 is confirmed by issue #163"
+    assert not v.kind_is_experimental(t["gate_opener"])
+    assert not v.kind_is_experimental(t["sliding_window"], 9), "a subtype with no row behaves like its type"
+    assert not v.kind_is_experimental(0x14), "a raw type with no name"
+    for unflagged in ("interior_venetian_blind", "vertical_interior_blind", "dual_roller_shutter"):
+        assert not v.kind_is_experimental(t[unflagged]), f"{unflagged}: its behaviour is experimental, not its identity"
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    def warnings_for(config):
+        capture = Capture()
+        p._LOGGER.addHandler(capture)
+        try:
+            assert p.warn_if_experimental_kind(config) is config, "a post-validator returns its config"
+        finally:
+            p._LOGGER.removeHandler(capture)
+        return capture.messages
+
+    messages = warnings_for({"io_device_type": t["gate_opener"], "io_subtype": 58})
+    assert len(messages) == 1, messages
+    assert "gate_opener (io_subtype 58)" in messages[0]
+    assert "not yet confirmed on a real device" in messages[0]
+    assert "contributing.html#reporting-unsupported-devices" in messages[0]
+    assert len(warnings_for({"io_device_type": t["light"], "io_subtype": 2})) == 1
+
+    assert warnings_for({"io_device_type": t["garage_opener"], "io_subtype": 58}) == []
+    assert warnings_for({"io_device_type": t["roller_shutter"]}) == []
+    assert warnings_for({}) == [], "no declared kind: nothing says what the device is"
 
 
 @case("platform_common.require_feature")

@@ -20,6 +20,7 @@ using device_feature::PEDESTRIAN;
 using device_feature::TILT;
 using device_feature::VENT;
 using device_feature::WINDOW_COMPANIONS;
+using device_type_flags::EXPERIMENTAL;
 using device_type_flags::HAS_PLATFORM;
 using device_type_flags::STANDALONE_NAME;
 using device_type_flags::YAML_SELECTABLE;
@@ -35,6 +36,8 @@ constexpr DeviceCapabilityClass CAP_HEATER_LEVEL = DeviceCapabilityClass::HEATER
 constexpr uint8_t SELECTABLE_PLATFORM =
     YAML_SELECTABLE | HAS_PLATFORM;                 ///< Type row that YAML can name and a platform drives.
 constexpr uint8_t SUBTYPE_PLATFORM = HAS_PLATFORM;  ///< Subtype row a platform drives.
+constexpr uint8_t EXPERIMENTAL_SUBTYPE_PLATFORM =
+    HAS_PLATFORM | EXPERIMENTAL;  ///< Subtype row a platform drives that no capture or report confirms.
 
 // === Feature words ===
 //
@@ -89,8 +92,12 @@ constexpr size_t TYPE_HEX_BUFFER_SIZE = 24;  ///< "unknown type 0x3FF" plus marg
 /// The capability class is the entity family the device would map to, so a type with a class but no
 /// platform (ventilation point, heating interface) is a statement about the device, not a promise.
 ///
-/// Rows that no capture or report has confirmed yet are experimental; the 6/1 and 6/2 light rows are
-/// unproven on hardware: \todo Confirm 6/1 and 6/2 accept the brightness EXECUTE on a real device.
+/// Rows that no capture or report has confirmed yet carry device_type_flags::EXPERIMENTAL: the 6/1,
+/// 6/2, 7/58, 9/1, 9/2, 15/2, 22/1, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows. Discovery and pairing
+/// log them as experimental and the codegen warns when a config declares one. The flag leaves with the
+/// \todo that names a row once a capture or a reporter confirms it. Rows 1, 10 and 13 are not flagged:
+/// their changed behaviour is experimental, their identity is not.
+/// \todo Confirm 6/1 and 6/2 accept the brightness EXECUTE on a real device.
 /// \todo Confirm the 15/2, 9/1, 9/2, 22/x, 7/58, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
 constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::UNKNOWN, 0, "unknown", CAP_NONE, YAML_SELECTABLE, 0},
@@ -115,8 +122,8 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
      main_parameter_only_variant(GARAGE)},
 
     {DeviceType::LIGHT, 0, "light", CAP_LIGHT, SELECTABLE_PLATFORM, BINARY_COMMAND},
-    {DeviceType::LIGHT, 1, "dimmable RGB", CAP_LIGHT, SUBTYPE_PLATFORM, DIMMABLE_LIGHT},
-    {DeviceType::LIGHT, 2, "tunable white", CAP_LIGHT, SUBTYPE_PLATFORM, DIMMABLE_LIGHT},
+    {DeviceType::LIGHT, 1, "dimmable RGB", CAP_LIGHT, EXPERIMENTAL_SUBTYPE_PLATFORM, DIMMABLE_LIGHT},
+    {DeviceType::LIGHT, 2, "tunable white", CAP_LIGHT, EXPERIMENTAL_SUBTYPE_PLATFORM, DIMMABLE_LIGHT},
     {DeviceType::LIGHT, SUBTYPE_MAIN_PARAMETER_ONLY, "on/off only", CAP_LIGHT, SUBTYPE_PLATFORM,
      main_parameter_only_variant(BINARY_COMMAND)},
 
@@ -124,14 +131,14 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // \todo Confirm on a real 7/58 gate opener that intermediate positions are refused and whether the
     //       favourite is accepted; inferred from the shared subtype-58 definition and the 5/58 opener of
     //       issue #163 (experimental).
-    {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, "open/close only", CAP_COVER, SUBTYPE_PLATFORM,
+    {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, "open/close only", CAP_COVER, EXPERIMENTAL_SUBTYPE_PLATFORM,
      main_parameter_only_variant(GATE)},
 
     {DeviceType::ROLLING_DOOR_OPENER, 0, "rolling_door_opener", CAP_COVER, SELECTABLE_PLATFORM, COVER},
 
     {DeviceType::LOCK, 0, "lock", CAP_LOCK, SELECTABLE_PLATFORM, BINARY_COMMAND},
-    {DeviceType::LOCK, 1, "window lock", CAP_LOCK, SUBTYPE_PLATFORM | STANDALONE_NAME, BINARY_COMMAND},
-    {DeviceType::LOCK, 2, "car controller", CAP_NONE, STANDALONE_NAME, 0},
+    {DeviceType::LOCK, 1, "window lock", CAP_LOCK, EXPERIMENTAL_SUBTYPE_PLATFORM | STANDALONE_NAME, BINARY_COMMAND},
+    {DeviceType::LOCK, 2, "car controller", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, 0},
 
     {DeviceType::VERTICAL_INTERIOR_BLIND, 0, "vertical_interior_blind", CAP_COVER, SELECTABLE_PLATFORM,
      VERTICAL_INTERIOR},
@@ -146,7 +153,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
      0},
 
     {DeviceType::ON_OFF_SWITCH, 0, "on_off_switch", CAP_SWITCH, SELECTABLE_PLATFORM, BINARY_COMMAND},
-    {DeviceType::ON_OFF_SWITCH, 2, "micromodule", CAP_SWITCH, SUBTYPE_PLATFORM, BINARY_COMMAND},
+    {DeviceType::ON_OFF_SWITCH, 2, "micromodule", CAP_SWITCH, EXPERIMENTAL_SUBTYPE_PLATFORM, BINARY_COMMAND},
 
     {DeviceType::HORIZONTAL_AWNING, 0, "horizontal_awning", CAP_COVER, SELECTABLE_PLATFORM, COVER | INVERTED},
     {DeviceType::HORIZONTAL_AWNING, 1, "rail-guided pergola", CAP_COVER, SUBTYPE_PLATFORM, COVER | INVERTED},
@@ -172,8 +179,8 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::HEAT_PUMP, 0, "heat_pump", CAP_CLIMATE, SELECTABLE_PLATFORM, 0},
     // The two Atlantic profiles use a different private register family from the electrical
     // heater's, so the heating payloads must not be sent to them: no climate class.
-    {DeviceType::HEAT_PUMP, 1, "heat pump (Atlantic)", CAP_NONE, STANDALONE_NAME, 0},
-    {DeviceType::HEAT_PUMP, 2, "boiler (Atlantic)", CAP_NONE, STANDALONE_NAME, 0},
+    {DeviceType::HEAT_PUMP, 1, "heat pump (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, 0},
+    {DeviceType::HEAT_PUMP, 2, "boiler (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, 0},
 
     {DeviceType::INTRUSION_ALARM, 0, "intrusion_alarm", DeviceCapabilityClass::SENSOR, YAML_SELECTABLE, 0},
 
@@ -182,11 +189,11 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // \todo Confirm on a real 24/58 swinging shutter that the favourite is accepted and percent positions
     //       are refused; inferred from the shared subtype-58 definition and the 5/58 opener of issue #163
     //       (experimental).
-    {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY, "open/close only", CAP_COVER, SUBTYPE_PLATFORM,
-     main_parameter_only_variant(COVER)},
+    {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY, "open/close only", CAP_COVER,
+     EXPERIMENTAL_SUBTYPE_PLATFORM, main_parameter_only_variant(COVER)},
 
     {DeviceType::SLIDING_WINDOW, 0, "sliding_window", CAP_COVER, SELECTABLE_PLATFORM, COVER},
-    {DeviceType::SLIDING_WINDOW, 1, "with lock", CAP_COVER, SUBTYPE_PLATFORM, COVER},
+    {DeviceType::SLIDING_WINDOW, 1, "with lock", CAP_COVER, EXPERIMENTAL_SUBTYPE_PLATFORM, COVER},
 
     {DeviceType::ZONE_CONTROL, 0, "zone_control", CAP_NONE, 0, 0},
 
@@ -209,10 +216,10 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::TEST_AND_EVALUATION, 0, "test_and_evaluation", CAP_NONE, 0, 0},
 
     {DeviceType::REMOTE_CONTROLLER, 0, "remote_controller", CAP_NONE, 0, 0},
-    {DeviceType::REMOTE_CONTROLLER, 2, "Keygo", CAP_NONE, 0, 0},
-    {DeviceType::REMOTE_CONTROLLER, 3, "Izymo", CAP_NONE, 0, 0},
-    {DeviceType::REMOTE_CONTROLLER, 4, "public frame", CAP_NONE, 0, 0},
-    {DeviceType::REMOTE_CONTROLLER, 5, "V500", CAP_NONE, 0, 0},
+    {DeviceType::REMOTE_CONTROLLER, 2, "Keygo", CAP_NONE, EXPERIMENTAL, 0},
+    {DeviceType::REMOTE_CONTROLLER, 3, "Izymo", CAP_NONE, EXPERIMENTAL, 0},
+    {DeviceType::REMOTE_CONTROLLER, 4, "public frame", CAP_NONE, EXPERIMENTAL, 0},
+    {DeviceType::REMOTE_CONTROLLER, 5, "V500", CAP_NONE, EXPERIMENTAL, 0},
 };
 
 }  // namespace
@@ -258,6 +265,11 @@ const char *device_platform_name(DeviceType type, uint8_t subtype) {
       return nullptr;
   }
   return nullptr;
+}
+
+bool device_is_experimental(DeviceType type, uint8_t subtype) {
+  const DeviceTypeInfo *row = find_exact_device_type_info(type, subtype);
+  return row != nullptr && (row->flags & device_type_flags::EXPERIMENTAL) != 0;
 }
 
 DeviceCapabilityClass device_capability_class(DeviceType type, uint8_t subtype) {

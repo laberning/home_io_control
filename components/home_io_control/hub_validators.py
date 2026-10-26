@@ -8,8 +8,8 @@
 ## tables, and the validators for node IDs, system keys, device IDs, linked remotes and
 ## status-poll intervals that the hub schema and the platform modules share.
 ##
-## DEVICE_TYPE_OPTIONS, DEVICE_FEATURES (with the FEATURE_* bits and NAMED_POSITION_FEATURES),
-## MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
+## DEVICE_TYPE_OPTIONS, DEVICE_FEATURES (with the FEATURE_* bits, KIND_EXPERIMENTAL and
+## NAMED_POSITION_FEATURES), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
 ## FEM_TX_POWER_MAX_QUIET mirror C++ tables; the ``tests/sync/`` host tests and
 ## ``make yaml-emitter-sync`` read them from this file by name.
 
@@ -254,10 +254,15 @@ FEATURE_PEDESTRIAN = 0x0040
 FEATURE_EXTENDED_POSITION_FRAME = 0x0080
 FEATURE_WINDOW_COMPANIONS = 0x0100
 FEATURE_INVERTED = 0x0200
+# Not a capability: Python's copy of the row's EXPERIMENTAL identity flag (device_type_flags in
+# proto_device_types.h), carried in bit 15 of the same word so there is one table and one sync test.
+# Set on a kind no capture or report has confirmed on a real device.
+KIND_EXPERIMENTAL = 0x8000
 
 # The capability word of each row whose type has a YAML name, keyed "<name>" for subtype 0 and
 # "<name>/<subtype>" otherwise. A row with no capability is left out, except a subtype row under a
-# type that has capabilities: without its explicit zero the lookup would give it the type's word.
+# type that has capabilities (without its explicit zero the lookup would give it the type's word) and
+# an experimental row (its word is KIND_EXPERIMENTAL at least).
 DEVICE_FEATURES = {
     "interior_venetian_blind": 0x000E,  # LEVELS TILT FAVORITE
     "roller_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
@@ -269,19 +274,19 @@ DEVICE_FEATURES = {
     "garage_opener": 0x0023,  # MAIN_PARAMETER_ONLY LEVELS PARTIAL
     "garage_opener/58": 0x0021,  # MAIN_PARAMETER_ONLY PARTIAL
     "light": 0x0080,  # EXTENDED_POSITION_FRAME
-    "light/1": 0x0082,  # LEVELS EXTENDED_POSITION_FRAME
-    "light/2": 0x0082,  # LEVELS EXTENDED_POSITION_FRAME
+    "light/1": 0x8082,  # KIND_EXPERIMENTAL LEVELS EXTENDED_POSITION_FRAME  # LEVELS EXTENDED_POSITION_FRAME
+    "light/2": 0x8082,  # KIND_EXPERIMENTAL LEVELS EXTENDED_POSITION_FRAME  # LEVELS EXTENDED_POSITION_FRAME
     "light/58": 0x0001,  # MAIN_PARAMETER_ONLY
     "gate_opener": 0x00CA,  # LEVELS FAVORITE PEDESTRIAN EXTENDED_POSITION_FRAME
-    "gate_opener/58": 0x0049,  # MAIN_PARAMETER_ONLY FAVORITE PEDESTRIAN
+    "gate_opener/58": 0x8049,  # KIND_EXPERIMENTAL MAIN_PARAMETER_ONLY FAVORITE PEDESTRIAN
     "rolling_door_opener": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "lock": 0x0080,  # EXTENDED_POSITION_FRAME
-    "lock/1": 0x0080,  # EXTENDED_POSITION_FRAME
-    "lock/2": 0x0000,  # car controller: no capability of the lock family
+    "lock/1": 0x8080,  # KIND_EXPERIMENTAL EXTENDED_POSITION_FRAME
+    "lock/2": 0x8000,  # KIND_EXPERIMENTAL; car controller: no capability of the lock family
     "vertical_interior_blind": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "dual_roller_shutter": 0x000A,  # LEVELS FAVORITE
     "on_off_switch": 0x0080,  # EXTENDED_POSITION_FRAME
-    "on_off_switch/2": 0x0080,  # EXTENDED_POSITION_FRAME
+    "on_off_switch/2": 0x8080,  # KIND_EXPERIMENTAL EXTENDED_POSITION_FRAME
     "horizontal_awning": 0x028A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME INVERTED
     "horizontal_awning/1": 0x028A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME INVERTED
     "exterior_venetian_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
@@ -289,11 +294,13 @@ DEVICE_FEATURES = {
     "curtain_track": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "exterior_heating": 0x0003,  # MAIN_PARAMETER_ONLY LEVELS
     "exterior_heating/58": 0x0001,  # MAIN_PARAMETER_ONLY
+    "heat_pump/1": 0x8000,  # KIND_EXPERIMENTAL
+    "heat_pump/2": 0x8000,  # KIND_EXPERIMENTAL
     "swinging_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "swinging_shutter/1": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "swinging_shutter/58": 0x0009,  # MAIN_PARAMETER_ONLY FAVORITE
+    "swinging_shutter/58": 0x8009,  # KIND_EXPERIMENTAL MAIN_PARAMETER_ONLY FAVORITE
     "sliding_window": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "sliding_window/1": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "sliding_window/1": 0x808A,  # KIND_EXPERIMENTAL LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "bioclimatic_pergola": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "electrical_heater/1": 0x0100,  # WINDOW_COMPANIONS
 }
@@ -335,6 +342,15 @@ def device_features(device_type, subtype=0):
         cleared = FEATURE_LEVELS | FEATURE_TILT | FEATURE_EXTENDED_POSITION_FRAME
         return (base & ~cleared) | FEATURE_MAIN_PARAMETER_ONLY
     return base
+
+
+def kind_is_experimental(device_type, subtype=0):
+    """True when no capture or report has confirmed (io_device_type value, io_subtype) on a real device.
+
+    Reads KIND_EXPERIMENTAL from the same word as the capabilities, so it follows the same fallback as
+    device_features(); a type row is never experimental, so a subtype with no row of its own is not.
+    """
+    return bool(device_features(device_type, subtype) & KIND_EXPERIMENTAL)
 
 
 # Device-type names that were renamed. Each maps to the message the validator raises, so a config

@@ -74,6 +74,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is deprecated, not deleted outright |
 | [0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) | Device types follow the IO node-type and subtype table | A 16-bit `DeviceType` and one (type, subtype) table drive names, entity class, platform and behaviour flags; six YAML names change and the old ones fail with the replacement |
 | [0053](0053-a-device-may-carry-its-own-system-key.md) | A device may carry its own system key | An optional `system_key:` on any device entity; the exchange engine picks the key per frame from the peer's node, falling back to the hub key; Scan Paired Devices sweeps once per distinct key |
+| [0059](0059-device-capabilities-come-from-the-type-table.md) | Device capabilities come from the type table | One capability word per (type, subtype) row, resolved once per device; the subtype-58 rule is one function; named positions are one table; the Python mirror is sync-tested; keys a kind cannot use fail validation; unconfirmed kinds are marked experimental and warned about |
 
 ### Security
 
@@ -160,6 +161,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0056: Exterior heating is a fan entity](0056-exterior-heating-is-a-fan-entity.md)
 - [ADR 0057: Temperature setpoints travel in the main parameter](0057-temperature-setpoints-travel-in-the-main-parameter.md)
 - [ADR 0058: Pairing reads the heater behind an Atlantic pairing node directly](0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md)
+- [ADR 0059: Device capabilities come from the type table](0059-device-capabilities-come-from-the-type-table.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0052 -->
 
-**Status:** Accepted, superseded in part by [ADR 0055](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md) (the plain electrical heater has a climate profile) · **Recorded:** 2026-10
+**Status:** Accepted, superseded in part by [ADR 0055](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md) (the plain electrical heater has a climate profile), amended by [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (capabilities are a word on the row) · **Recorded:** 2026-10
 
 ## Context
 
@@ -45,14 +45,14 @@ exterior) or the construction (roller) that distinguishes the type.
   field is ten bits wide drops higher bits explicitly.
 - One table (`proto_device_types.cpp`) has a row per (type, subtype). A row carries the lowercase
   identifier (type rows) or a description (subtype rows), the capability class, and flags: YAML
-  selectable, has a platform, main parameter only, brightness only, standalone name. A lookup falls
+  selectable, has a platform, standalone name, experimental, and the capability word of [ADR 0059](0059-device-capabilities-come-from-the-type-table.md). A lookup falls
   back from (type, subtype) to (type, 0). The identifier, the YAML name, the capability class and
   the platform name all read from it.
 - Discovery, the pairing summary and Scan Paired Devices print `<type>, <subtype>` (for example
   `electrical heater, with adjustable setpoint`), or `subtype N` when the subtype has no name. A
   type without a platform prints `not supported yet` and gets no paste-ready YAML.
-- Behaviour keys on the row. `device_takes_main_parameter_only(type, subtype)` is true for subtype 58
-  and for every garage opener. `device_supports_climate_control(type, subtype)` is true exactly for
+- Behaviour keys on the row. Its capability word says that subtype 58 and every garage opener take the
+  main parameter only ([ADR 0059](0059-device-capabilities-come-from-the-type-table.md)). `device_supports_climate_control(type, subtype)` is true exactly for
   type 52 subtype 1. Lights of subtype 1 and 2 are brightness-only (their snippet sets `dimmable:`);
   those rows are experimental until a capture confirms them.
 - Six YAML names change to the public type names: `secure_configuration_device` (type 11, no

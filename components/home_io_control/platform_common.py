@@ -13,6 +13,8 @@
 ## cover's ``invert_position`` option, and the cover's favorite/vent companion
 ## buttons — deliberately stay in the platform files.
 
+import logging
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor, text_sensor
@@ -46,7 +48,20 @@ from . import (
     validate_status_poll_interval,
 )
 from .hub_names import CONF_SYSTEM_KEY
-from .hub_validators import device_features, device_type_name, validate_system_key
+from .hub_validators import (
+    device_features,
+    device_type_name,
+    kind_is_experimental,
+    validate_system_key,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+# The published page that tells a user how to report a device; the anchor is the one the docs site
+# generates for the "Reporting unsupported devices" heading of the contributing page.
+REPORTING_DEVICES_URL = (
+    "https://laberning.github.io/home_io_control/contributing.html#reporting-unsupported-devices"
+)
 
 # Shared YAML config keys used by every device-bound platform.
 # Named CONF_IO_DEVICE_ID (not CONF_DEVICE_ID) to stay distinct from ESPHome's own
@@ -223,6 +238,32 @@ def platform_schema_extension():
     }
 
 
+def _kind_label(device_type, subtype):
+    """The declared kind as a user wrote it: the io_device_type name (or hex value) and, when set, io_subtype."""
+    name = device_type_name(device_type) or f"0x{device_type:02X}"
+    return name if subtype == 0 else f"{name} (io_subtype {subtype})"
+
+
+def warn_if_experimental_kind(config):
+    """Warn, without rejecting, that the declared kind is not yet confirmed on a real device.
+
+    A post-validator for every device-bound platform. The config is legal and still transmits, so
+    this logs one warning (the pattern of the other warn-only validators) that names the kind and
+    points at the page for reporting a result. A config that declares no kind passes silently.
+    """
+    if CONF_DEVICE_TYPE in config:
+        device_type = config[CONF_DEVICE_TYPE]
+        subtype = config.get(CONF_SUBTYPE, 0)
+        if kind_is_experimental(device_type, subtype):
+            _LOGGER.warning(
+                "home_io_control: %s is not yet confirmed on a real device, so it may not behave as "
+                "described. If you try it, please report the result: %s",
+                _kind_label(device_type, subtype),
+                REPORTING_DEVICES_URL,
+            )
+    return config
+
+
 def require_feature(config, key, active, *, required=0, forbidden=0, reason):
     """Reject a YAML key the declared device kind cannot use.
 
@@ -239,9 +280,7 @@ def require_feature(config, key, active, *, required=0, forbidden=0, reason):
     features = device_features(device_type, subtype)
     if (features & required) == required and (features & forbidden) == 0:
         return
-    name = device_type_name(device_type) or f"0x{device_type:02X}"
-    kind = name if subtype == 0 else f"{name} (io_subtype {subtype})"
-    raise cv.Invalid(f"{key} is not available on {kind}: {reason}")
+    raise cv.Invalid(f"{key} is not available on {_kind_label(device_type, subtype)}: {reason}")
 
 
 async def wire_device_binding(var, parent, config):

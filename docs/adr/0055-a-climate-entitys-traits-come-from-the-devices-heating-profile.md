@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0055 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (point 6: the window companions read a capability bit) · **Recorded:** 2026-10
 
 ## Context
 
@@ -46,10 +46,11 @@ may bind" can no longer also mean "the private register protocol may be sent".
    tracking window for the failure ladder, and the heater cadence timer (own timer id, ADR 0054).
 
 6. **Companion entities follow the declared kind.** The window sensor and the open-window-detection
-   switch exist for profiles whose features say so. ESPHome sizes its component vector before
+   switch exist for kinds whose row has the `WINDOW_COMPANIONS` bit. ESPHome sizes its component vector before
    `to_code()` runs, so `climate.py` declares their IDs during validation from the declared
-   `io_device_type` and `io_subtype`, using one small table (`HEATING_WINDOW_PROFILES`) that a sync
-   test keeps equal to the profile features. A heater declared without a type gets no companions.
+   `io_device_type` and `io_subtype`, from that bit
+   ([ADR 0059](0059-device-capabilities-come-from-the-type-table.md)), which the sync test of the
+   Python mirror keeps equal to the C++ table. A heater declared without a type gets no companions.
 
 ## Considered
 
@@ -72,4 +73,4 @@ may bind" can no longer also mean "the private register protocol may be sent".
 - The open-window-detection setting is read once, at the first poll, so a change at the heater's
   panel appears after a reboot.
 - Adding a heater kind is a profile row, a type-table row with a platform, and, if it has the window
-  companions, a line in `HEATING_WINDOW_PROFILES`.
+  companions, the `WINDOW_COMPANIONS` bit on its type-table row.

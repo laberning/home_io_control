@@ -43,6 +43,11 @@ static constexpr uint8_t HAS_PLATFORM = 1U << 1U;
 /// Subtype rows only: `name` already is the complete description ("window lock") and is printed
 /// alone, instead of being appended to the type's name ("roller shutter, with projection").
 static constexpr uint8_t STANDALONE_NAME = 1U << 2U;
+/// Subtype rows only: no capture or report has confirmed this kind on a real device, so what the
+/// row says is inferred. Discovery and pairing log it as experimental, the codegen warns when a
+/// config declares it (hub_validators.py `KIND_EXPERIMENTAL` is Python's copy of this flag), and
+/// the node-type table in the published docs marks it. A type row (subtype 0) is never experimental.
+static constexpr uint8_t EXPERIMENTAL = 1U << 3U;
 }  // namespace device_type_flags
 
 /// @brief One row of the node-type / subtype table.
@@ -79,6 +84,13 @@ bool device_has_platform(DeviceType type, uint8_t subtype);
 /// @param subtype Subtype.
 /// @return "cover", "light", "switch", "lock", "climate" or "fan", or nullptr when no platform drives it yet.
 const char *device_platform_name(DeviceType type, uint8_t subtype);
+
+/// @brief Is this (type, subtype) a kind no capture or report has confirmed on a real device?
+/// @param type Node type.
+/// @param subtype Subtype.
+/// @return true when the exact row carries device_type_flags::EXPERIMENTAL; a subtype with no row of
+///         its own is not experimental, because it behaves like its (confirmed) type.
+bool device_is_experimental(DeviceType type, uint8_t subtype);
 
 /// @brief Capability class of a (type, subtype), subtype-aware.
 /// @details device_capability_class(DeviceType) answers for the type alone; this overload lets a

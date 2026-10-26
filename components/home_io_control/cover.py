@@ -40,6 +40,7 @@ from .platform_common import (
     inject_companion_sensor_ids,
     platform_schema_extension,
     require_feature,
+    warn_if_experimental_kind,
     wire_device_binding,
     CONF_IO_DEVICE_ID,
     CONF_DEVICE_TYPE,
@@ -222,6 +223,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(cv.COMPONENT_SCHEMA),
     _default_device_class,
     _require_silent_kind,
+    warn_if_experimental_kind,
     _inject_companion_ids,
 )
 

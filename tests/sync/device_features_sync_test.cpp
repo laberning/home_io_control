@@ -1,7 +1,7 @@
 /// @file device_features_sync_test.cpp
 /// @brief Verifies that the Python mirror of the capability word (hub_validators.py `FEATURE_*`,
-///        `DEVICE_FEATURES`, `NAMED_POSITION_FEATURES`) agrees with the C++ node-type table, bit for
-///        bit and row for row, preventing C++/Python drift.
+///        `KIND_EXPERIMENTAL`, `DEVICE_FEATURES`, `NAMED_POSITION_FEATURES`) agrees with the C++
+///        node-type table, bit for bit and row for row, preventing C++/Python drift.
 ///
 /// The C++ table (proto_device_types.cpp) is authoritative; the test parses hub_validators.py at
 /// runtime, like the other sync tests (see device_type_sync_test.cpp and python_dict_parser.h).
@@ -24,6 +24,9 @@ namespace {
 
 constexpr const char *VALIDATORS = "components/home_io_control/hub_validators.py";
 
+/// Bit 15 of the mirrored word: Python's copy of device_type_flags::EXPERIMENTAL.
+constexpr DeviceFeatures KIND_EXPERIMENTAL_BIT = 1U << 15U;
+
 /// Every capability bit, by the name its Python constant carries after the `FEATURE_` prefix. Listed
 /// by hand: a bit added to proto_device_features.h and missing here (and in Python) fails the
 /// bit-by-bit check below.
@@ -39,6 +42,16 @@ const std::map<std::string, DeviceFeatures> CPP_FEATURE_BITS = {
     {"WINDOW_COMPANIONS", device_feature::WINDOW_COMPANIONS},
     {"INVERTED", device_feature::INVERTED},
 };
+
+/// The word Python keeps for a row: the capability bits plus bit 15 for the row's EXPERIMENTAL flag.
+/// A type YAML cannot name (a remote controller) has no Python entry at all, so its rows mirror
+/// nothing: nothing declares such a type in a config.
+DeviceFeatures mirrored_word(DeviceType type, uint8_t subtype) {
+  const DeviceTypeInfo *type_row = find_exact_device_type_info(type, 0);
+  const bool yaml_named = type_row != nullptr && (type_row->flags & device_type_flags::YAML_SELECTABLE) != 0;
+  const bool experimental = yaml_named && device_is_experimental(type, subtype);
+  return static_cast<DeviceFeatures>(device_features(type, subtype) | (experimental ? KIND_EXPERIMENTAL_BIT : 0U));
+}
 
 /// hub_validators.device_features() re-implemented over the parsed tables, so the test checks the
 /// data, not a second copy of the lookup in another language.
@@ -86,7 +99,7 @@ TEST(DeviceFeaturesSync, TheWholeWordOfEveryRowAgrees) {
     kinds.emplace(row.type, SUBTYPE_MAIN_PARAMETER_ONLY);
   });
   for (const auto &[type, subtype] : kinds) {
-    EXPECT_EQ(python_features(type_values, table, type, subtype), device_features(type, subtype))
+    EXPECT_EQ(python_features(type_values, table, type, subtype), mirrored_word(type, subtype))
         << format_device_ids(type, subtype);
   }
 }
@@ -101,8 +114,39 @@ TEST(DeviceFeaturesSync, EveryPythonEntryNamesARealRowOfAYamlType) {
     ASSERT_TRUE(type_values.count(name)) << key << ": " << name << " is not a DEVICE_TYPE_OPTIONS name";
     const DeviceTypeInfo *row = find_exact_device_type_info(static_cast<DeviceType>(type_values.at(name)), subtype);
     ASSERT_NE(row, nullptr) << key << " names no C++ row";
-    EXPECT_EQ(row->features, word) << key;
+    EXPECT_EQ(mirrored_word(row->type, row->subtype), word) << key;
   }
+}
+
+TEST(DeviceFeaturesSync, EveryRowThatHasCapabilitiesOrIsExperimentalHasAnEntryWhenItsTypeIsYamlNamed) {
+  const auto type_values = test::parse_python_uint8_dict(VALIDATORS, "DEVICE_TYPE_OPTIONS");
+  const auto table = test::parse_python_uint16_dict(VALIDATORS, "DEVICE_FEATURES");
+  test::for_each_table_row([&](const DeviceTypeInfo &row) {
+    const bool experimental = (row.flags & device_type_flags::EXPERIMENTAL) != 0;
+    if (row.features == 0 && !experimental)
+      return;
+    const DeviceTypeInfo *type_row = find_exact_device_type_info(row.type, 0);
+    ASSERT_NE(type_row, nullptr) << format_device_ids(row.type, row.subtype);
+    // A type YAML cannot name (a remote controller) has no entry: nothing declares it in a config.
+    if ((type_row->flags & device_type_flags::YAML_SELECTABLE) == 0)
+      return;
+    std::string name;
+    for (const auto &[candidate, value] : type_values) {
+      if (value == static_cast<uint8_t>(row.type))
+        name = candidate;
+    }
+    ASSERT_FALSE(name.empty()) << format_device_ids(row.type, row.subtype);
+    const std::string key = row.subtype == 0 ? name : name + "/" + std::to_string(row.subtype);
+    EXPECT_TRUE(table.count(key)) << key << " is missing from DEVICE_FEATURES";
+  });
+}
+
+TEST(DeviceFeaturesSync, TheExperimentalMarkerIsBit15AndNoFeatureBitUsesIt) {
+  const auto kind = test::parse_python_uint16_assignments(VALIDATORS, "KIND_");
+  ASSERT_TRUE(kind.count("EXPERIMENTAL")) << "KIND_EXPERIMENTAL is missing from hub_validators.py";
+  EXPECT_EQ(kind.at("EXPERIMENTAL"), KIND_EXPERIMENTAL_BIT);
+  for (const auto &[name, bit] : CPP_FEATURE_BITS)
+    EXPECT_EQ(bit & KIND_EXPERIMENTAL_BIT, 0u) << name << " collides with the experimental marker";
 }
 
 TEST(DeviceFeaturesSync, NamedPositionFeaturesAreTheCppNamedPositions) {

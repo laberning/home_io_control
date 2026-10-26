@@ -8,6 +8,8 @@
 #include "proto_heating_profiles.h"
 
 #include <algorithm>
+#include <set>
+#include <utility>
 
 #include "device_table_walk.h"
 #include "test_helpers.h"
@@ -389,4 +391,59 @@ TEST(DeviceTypesTableFeatures, EveryRowWithCapabilitiesHasAYamlSelectableType) {
     EXPECT_NE(type_row->flags & device_type_flags::YAML_SELECTABLE, 0u)
         << format_device_ids(row.type, row.subtype) << ": the Python mirror can only name a YAML-selectable type";
   });
+}
+
+// ============================================================================
+// The experimental marker
+// ============================================================================
+
+TEST(DeviceTypesTableExperimental, ExactlyTheRowsNoCaptureOrReportConfirmsAreFlagged) {
+  // The \todo list on DEVICE_TYPE_TABLE. Rows 1, 10 and 13 are absent on purpose: their changed
+  // behaviour is experimental, their identity is not.
+  const std::set<std::pair<DeviceType, uint8_t>> expected = {
+      {DeviceType::LIGHT, 1},
+      {DeviceType::LIGHT, 2},
+      {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY},
+      {DeviceType::LOCK, 1},
+      {DeviceType::LOCK, 2},
+      {DeviceType::ON_OFF_SWITCH, 2},
+      {DeviceType::HEAT_PUMP, 1},
+      {DeviceType::HEAT_PUMP, 2},
+      {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY},
+      {DeviceType::SLIDING_WINDOW, 1},
+      {DeviceType::REMOTE_CONTROLLER, 2},
+      {DeviceType::REMOTE_CONTROLLER, 3},
+      {DeviceType::REMOTE_CONTROLLER, 4},
+      {DeviceType::REMOTE_CONTROLLER, 5},
+  };
+  std::set<std::pair<DeviceType, uint8_t>> flagged;
+  test::for_each_table_row([&flagged](const DeviceTypeInfo &row) {
+    if ((row.flags & device_type_flags::EXPERIMENTAL) != 0)
+      flagged.emplace(row.type, row.subtype);
+  });
+  EXPECT_EQ(flagged, expected);
+}
+
+TEST(DeviceTypesTableExperimental, NoTypeRowIsExperimental) {
+  // The Python mirror falls back from a subtype to its type's word, so a type row that carried the
+  // marker would leak it onto every subtype.
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.subtype == 0) {
+      EXPECT_EQ(row.flags & device_type_flags::EXPERIMENTAL, 0u) << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableExperimental, TheLookupFlagsOnlyAnExactRow) {
+  EXPECT_TRUE(device_is_experimental(DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY));
+  EXPECT_TRUE(device_is_experimental(DeviceType::LIGHT, 1));
+  EXPECT_FALSE(device_is_experimental(DeviceType::GARAGE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY))
+      << "5/58 is confirmed by issue #163";
+  EXPECT_FALSE(device_is_experimental(DeviceType::GATE_OPENER, 0));
+  EXPECT_FALSE(device_is_experimental(DeviceType::SLIDING_WINDOW, 9)) << "a subtype with no row behaves like its type";
+  EXPECT_FALSE(device_is_experimental(static_cast<DeviceType>(26), 0)) << "a type the table does not know";
+  for (const DeviceType unflagged :
+       {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::VERTICAL_INTERIOR_BLIND, DeviceType::DUAL_ROLLER_SHUTTER}) {
+    EXPECT_FALSE(device_is_experimental(unflagged, 0)) << "its behaviour is experimental, not its identity";
+  }
 }

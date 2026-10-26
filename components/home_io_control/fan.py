@@ -16,6 +16,7 @@ from .platform_common import (
     create_companion_sensors,
     inject_companion_sensor_ids,
     platform_schema_extension,
+    warn_if_experimental_kind,
     wire_device_binding,
     CONF_HOME_IO_CONTROL_ID,
 )
@@ -35,6 +36,7 @@ CONFIG_SCHEMA = cv.All(
     fan.fan_schema(IOHomeFan, default_restore_mode="NO_RESTORE")
     .extend(platform_schema_extension())
     .extend(cv.COMPONENT_SCHEMA),
+    warn_if_experimental_kind,
     _inject_companion_ids,
 )
 

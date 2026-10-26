@@ -161,7 +161,7 @@ every type: such a device takes position commands without the functional-paramet
 
 Types marked "not supported yet" are recognised and named, but no platform drives them, so
 discovery reports them and prints no YAML. Subtype names that have not been confirmed on a real
-device are marked experimental.
+device are marked experimental; declaring one in YAML logs a warning when the config is built.
 
 | Type | Name | Named subtypes | Support |
 |---|---|---|---|
@@ -179,7 +179,7 @@ device are marked experimental.
 | `0x0C` | beacon | | Not supported yet |
 | `0x0D` | dual roller shutter | | Cover; short position frame, no `silent:` (experimental, [details](configuration/cover.md#interior-venetian-blinds-and-dual-roller-shutters)) |
 | `0x0E` | heating temperature interface | | Climate with a setpoint, off / heat / auto and comfort / eco / secured presets (experimental, untested); see [Heating and climate](configuration/climate.md#heating-temperature-interface-and-heat-pump) |
-| `0x0F` | on/off switch | 2 micromodule (experimental) | Switch (experimental) |
+| `0x0F` | on off switch | 2 micromodule (experimental) | Switch (experimental) |
 | `0x10` | horizontal awning | 1 rail-guided pergola | Cover, direction inverted |
 | `0x11` | exterior venetian blind | | Cover with tilt |
 | `0x12` | louvre blind | | Cover with tilt |
@@ -198,7 +198,7 @@ device are marked experimental.
 | `0x35` | heat recovery ventilation | | Not supported yet |
 | `0xFF` | central house control | | Not supported yet |
 | `0x3F0` | test and evaluation | | Not supported yet |
-| `0x3FF` | remote controller | 2 Keygo, 3 Izymo, 4 public frame, 5 V500 (all experimental) | Not supported yet; see [pairing](pairing.md) for devices that answer discovery as a remote controller |
+| `0x3FF` | remote controller | 2 Keygo (experimental), 3 Izymo (experimental), 4 public frame (experimental), 5 V500 (experimental) | Not supported yet; see [pairing](pairing.md) for devices that answer discovery as a remote controller |
 
 ### Named manufacturers
 
