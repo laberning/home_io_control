@@ -8,6 +8,7 @@
 /// decoders, cover commands, position/tilt report decoding and the IoDevice
 /// runtime struct. The per-(type, subtype) names and flags live in the table in proto_device_types.h.
 
+#include "proto_device_features.h"
 #include "proto_heating.h"
 #include "proto_sizes.h"
 

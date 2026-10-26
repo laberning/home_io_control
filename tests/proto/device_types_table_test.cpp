@@ -6,6 +6,7 @@
 #include "proto_device_model.h"
 #include "proto_device_types.h"
 
+#include "device_table_walk.h"
 #include "test_helpers.h"
 
 using namespace esphome::home_io_control;
@@ -247,4 +248,54 @@ TEST(DeviceTypesTable, UnnamedSubtypeOfACoverStillGetsACoverSnippet) {
   const std::string snippet = build_device_yaml_snippet(DeviceType::ROLLER_SHUTTER, 33, "AABBCC", true, false, false);
   EXPECT_NE(snippet.find("  cover:\n"), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_subtype: 33"), std::string::npos) << snippet;
+}
+
+// ============================================================================
+// Capability-bit invariants
+// ============================================================================
+
+TEST(DeviceTypesTableFeatures, TiltImpliesLevels) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (has_feature(row.features, device_feature::TILT)) {
+      EXPECT_TRUE(has_feature(row.features, device_feature::LEVELS)) << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableFeatures, MainParameterOnlyHasNeitherTiltNorTheExtendedPositionFrame) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (!has_feature(row.features, device_feature::MAIN_PARAMETER_ONLY))
+      return;
+    EXPECT_FALSE(has_feature(row.features, device_feature::TILT)) << format_device_ids(row.type, row.subtype);
+    EXPECT_FALSE(has_feature(row.features, device_feature::EXTENDED_POSITION_FRAME))
+        << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTableFeatures, ASubtypeRowKeepsItsTypesCapabilityClassUnlessItHasNone) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.subtype == 0 || row.capability == DeviceCapabilityClass::UNKNOWN)
+      return;
+    EXPECT_EQ(row.capability, device_capability_class(row.type, 0)) << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTableFeatures, NoRowUsesBit15) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    EXPECT_EQ(row.features & (1U << 15U), 0u) << "bit 15 is the Python mirror's experimental marker";
+  });
+}
+
+TEST(DeviceTypesTableFeatures, AnExplicitSubtype58RowIsTheVariantOfItsTypeRow) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.subtype != SUBTYPE_MAIN_PARAMETER_ONLY)
+      return;
+    // These three still offer a slider and the favourite, so their word is not the plain variant.
+    const bool slider_58 = row.type == DeviceType::GARAGE_OPENER || row.type == DeviceType::GATE_OPENER ||
+                           row.type == DeviceType::SWINGING_SHUTTER;
+    if (slider_58)
+      return;
+    EXPECT_EQ(row.features, main_parameter_only_variant(device_features(row.type, 0)))
+        << format_device_ids(row.type, row.subtype);
+  });
 }
