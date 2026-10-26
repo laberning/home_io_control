@@ -362,7 +362,7 @@ TEST(DeviceTypesTableFeatures,
   });
 }
 
-TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsTheNegationOfMainParameterOnlyWhereAPositionIsSent) {
+TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsOnlyOnRowsThatSendAPositionAndAreNotMainParameterOnly) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
     if (!device_has_platform(row.type, row.subtype))
       return;
@@ -371,9 +371,12 @@ TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsTheNegationOfMainParame
         capability == DeviceCapabilityClass::COVER || capability == DeviceCapabilityClass::LIGHT ||
         capability == DeviceCapabilityClass::SWITCH || capability == DeviceCapabilityClass::LOCK ||
         capability == DeviceCapabilityClass::HEATER_LEVEL;
-    EXPECT_EQ(has_feature(row.features, device_feature::EXTENDED_POSITION_FRAME),
-              sends_position && !has_feature(row.features, device_feature::MAIN_PARAMETER_ONLY))
-        << format_device_ids(row.type, row.subtype);
+    // One direction only: a row may send the short form without being main-parameter-only (the interior
+    // venetian blind and dual roller shutter, whose functional parameter 1 is not a speed).
+    if (has_feature(row.features, device_feature::EXTENDED_POSITION_FRAME)) {
+      EXPECT_TRUE(sends_position && !has_feature(row.features, device_feature::MAIN_PARAMETER_ONLY))
+          << format_device_ids(row.type, row.subtype);
+    }
   });
 }
 

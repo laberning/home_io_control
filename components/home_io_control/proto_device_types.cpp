@@ -43,6 +43,21 @@ constexpr uint8_t SUBTYPE_PLATFORM = HAS_PLATFORM;  ///< Subtype row a platform 
 constexpr DeviceFeatures COVER = LEVELS | FAVORITE | EXTENDED_POSITION_FRAME;
 /// Cover with an adjustable slat angle.
 constexpr DeviceFeatures COVER_TILTING = COVER | TILT;
+/// Interior venetian blind (type 1): functional parameter 1 is the slat orientation, not a travel
+/// speed (VELUX KLF 200 API specification, Appendix 2), so positions go out in the 6-byte form
+/// without EXTENDED_POSITION_FRAME; tilt stays on functional parameter 3.
+/// \todo Confirm on a real two-way interior venetian blind that the 6-byte position frame moves it and
+///       that the tilt frame on functional parameter 3 still orients the slats (experimental).
+constexpr DeviceFeatures INTERIOR_VENETIAN = LEVELS | FAVORITE | TILT;
+/// Dual roller shutter (type 13): functional parameter 1 is the upper curtain and the speed is
+/// parameter 4 (VELUX KLF 200 API specification, Appendix 2), so positions go out in the 6-byte form.
+/// \todo Confirm on a real two-way dual roller shutter that the 6-byte position frame moves both
+///       curtains and that a position needs no functional parameter (experimental).
+constexpr DeviceFeatures DUAL_SHUTTER = LEVELS | FAVORITE;
+/// Vertical interior blind (type 10): the KLF 200 parameter table lists no slat parameter for it
+/// (VELUX KLF 200 API specification, Appendix 2), so it is a plain cover.
+/// \todo Confirm on a real two-way vertical interior blind that it has no slat angle (experimental).
+constexpr DeviceFeatures VERTICAL_INTERIOR = COVER;
 /// Window opener: a cover with the secured ventilation position.
 constexpr DeviceFeatures WINDOW = COVER | VENT;
 /// Garage opener: percent positions in the main parameter only, and no favourite position. The
@@ -72,7 +87,8 @@ constexpr size_t TYPE_HEX_BUFFER_SIZE = 24;  ///< "unknown type 0x3FF" plus marg
 constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::UNKNOWN, 0, "unknown", CAP_NONE, YAML_SELECTABLE, 0},
 
-    {DeviceType::INTERIOR_VENETIAN_BLIND, 0, "interior_venetian_blind", CAP_COVER, SELECTABLE_PLATFORM, COVER_TILTING},
+    {DeviceType::INTERIOR_VENETIAN_BLIND, 0, "interior_venetian_blind", CAP_COVER, SELECTABLE_PLATFORM,
+     INTERIOR_VENETIAN},
 
     {DeviceType::ROLLER_SHUTTER, 0, "roller_shutter", CAP_COVER, SELECTABLE_PLATFORM, COVER},
     {DeviceType::ROLLER_SHUTTER, 1, "with adjustable slats", CAP_COVER, SUBTYPE_PLATFORM, COVER},
@@ -109,13 +125,14 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::LOCK, 1, "window lock", CAP_LOCK, SUBTYPE_PLATFORM | STANDALONE_NAME, BINARY_COMMAND},
     {DeviceType::LOCK, 2, "car controller", CAP_NONE, STANDALONE_NAME, 0},
 
-    {DeviceType::VERTICAL_INTERIOR_BLIND, 0, "vertical_interior_blind", CAP_COVER, SELECTABLE_PLATFORM, COVER_TILTING},
+    {DeviceType::VERTICAL_INTERIOR_BLIND, 0, "vertical_interior_blind", CAP_COVER, SELECTABLE_PLATFORM,
+     VERTICAL_INTERIOR},
 
     {DeviceType::SECURE_CONFIGURATION_DEVICE, 0, "secure_configuration_device", CAP_NONE, 0, 0},
 
     {DeviceType::BEACON, 0, "beacon", DeviceCapabilityClass::BEACON, 0, 0},
 
-    {DeviceType::DUAL_ROLLER_SHUTTER, 0, "dual_roller_shutter", CAP_COVER, SELECTABLE_PLATFORM, COVER},
+    {DeviceType::DUAL_ROLLER_SHUTTER, 0, "dual_roller_shutter", CAP_COVER, SELECTABLE_PLATFORM, DUAL_SHUTTER},
 
     {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, "heating_temperature_interface", CAP_CLIMATE, SELECTABLE_PLATFORM,
      0},

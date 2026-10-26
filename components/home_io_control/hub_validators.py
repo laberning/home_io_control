@@ -226,7 +226,7 @@ FEATURE_INVERTED = 0x0200
 # "<name>/<subtype>" otherwise. A row with no capability is left out, except a subtype row under a
 # type that has capabilities: without its explicit zero the lookup would give it the type's word.
 DEVICE_FEATURES = {
-    "interior_venetian_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
+    "interior_venetian_blind": 0x000E,  # LEVELS TILT FAVORITE
     "roller_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "roller_shutter/1": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "roller_shutter/2": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
@@ -245,8 +245,8 @@ DEVICE_FEATURES = {
     "lock": 0x0080,  # EXTENDED_POSITION_FRAME
     "lock/1": 0x0080,  # EXTENDED_POSITION_FRAME
     "lock/2": 0x0000,  # car controller: no capability of the lock family
-    "vertical_interior_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
-    "dual_roller_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "vertical_interior_blind": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "dual_roller_shutter": 0x000A,  # LEVELS FAVORITE
     "on_off_switch": 0x0080,  # EXTENDED_POSITION_FRAME
     "on_off_switch/2": 0x0080,  # EXTENDED_POSITION_FRAME
     "horizontal_awning": 0x028A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME INVERTED

@@ -165,7 +165,7 @@ device are marked experimental.
 
 | Type | Name | Named subtypes | Support |
 |---|---|---|---|
-| `0x01` | interior venetian blind | | Cover with tilt |
+| `0x01` | interior venetian blind | | Cover with tilt; short position frame, no `silent:` (experimental, [details](configuration/cover.md#interior-venetian-blinds-and-dual-roller-shutters)) |
 | `0x02` | roller shutter | 1 with adjustable slats, 2 with projection | Cover |
 | `0x03` | vertical exterior awning | | Cover |
 | `0x04` | window opener | 1 with integrated rain sensor | Cover, with a ventilation position |
@@ -174,10 +174,10 @@ device are marked experimental.
 | `0x07` | gate opener | 58 open/close only (experimental) | Cover; subtype 58 shows open / close / stop only (experimental) |
 | `0x08` | rolling door opener | | Cover |
 | `0x09` | lock | 1 window lock (experimental), 2 car controller (experimental) | Lock (experimental); subtype 2 not supported yet |
-| `0x0A` | vertical interior blind | | Cover with tilt |
+| `0x0A` | vertical interior blind | | Cover without tilt (experimental) |
 | `0x0B` | secure configuration device | | Not supported yet |
 | `0x0C` | beacon | | Not supported yet |
-| `0x0D` | dual roller shutter | | Cover |
+| `0x0D` | dual roller shutter | | Cover; short position frame, no `silent:` (experimental, [details](configuration/cover.md#interior-venetian-blinds-and-dual-roller-shutters)) |
 | `0x0E` | heating temperature interface | | Climate with a setpoint, off / heat / auto and comfort / eco / secured presets (experimental, untested); see [Heating and climate](configuration/climate.md#heating-temperature-interface-and-heat-pump) |
 | `0x0F` | on/off switch | 2 micromodule (experimental) | Switch (experimental) |
 | `0x10` | horizontal awning | 1 rail-guided pergola | Cover, direction inverted |

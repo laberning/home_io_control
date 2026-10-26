@@ -3158,3 +3158,61 @@ TEST(HubOperations, ASilentMoveToAnUnsilentableKindUsesTheShortFrame) {
   EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x00, 0x00, 0x00, 0x00}))
       << "the silent profile is a functional parameter, which a main-parameter-only device does not take";
 }
+
+TEST(HubOperations, InteriorVenetianAndDualShutterPositionsUseTheShortFrameEvenWhenSilent) {
+  // VELUX KLF 200 API specification, Appendix 2: functional parameter 1 is the slat orientation on type 1 and
+  // the upper curtain on type 13, not a travel speed, so neither takes the 8-byte form or `silent:`.
+  for (const DeviceType type : {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::DUAL_ROLLER_SHUTTER}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_declared_component(comp, radio, {.type = type, .silent = true});
+
+    comp.set_device_position("ABC123", 50);
+    EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x00, 0x00}))
+        << static_cast<unsigned>(type);
+  }
+}
+
+TEST(HubOperations, InteriorVenetianAndDualShutterForceOpenUsesTheShortFrameAtForcePriority) {
+  for (const DeviceType type : {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::DUAL_ROLLER_SHUTTER}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_declared_component(comp, radio, {.type = type});
+
+    comp.execute_device_command_("ABC123", CoverCommand::FORCE_OPEN);
+    EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x03, 0x00, 0x00, 0x00, 0x00}))
+        << static_cast<unsigned>(type);
+  }
+}
+
+TEST(HubOperations, ARollerShutterStillSendsTheEightByteFrameAndItsSilentProfile) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.type = DeviceType::ROLLER_SHUTTER});
+
+  comp.set_device_position("ABC123", 50);
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}));
+}
+
+TEST(HubOperations, AnInteriorVenetianBlindKeepsTheTiltFrameOnFunctionalParameterThree) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.type = DeviceType::INTERIOR_VENETIAN_BLIND});
+
+  comp.set_device_tilt("ABC123", 25);  // no device answers; the sent frame is what is asserted
+  const std::vector<uint8_t> payload = first_sent_payload(radio);
+  ASSERT_EQ(payload.size(), 8u);
+  EXPECT_EQ(payload[2], POS_UNKNOWN) << "tilt leaves the main position alone";
+  EXPECT_EQ(payload[4], STATUS_TILT_SELECTOR);
+  EXPECT_EQ(payload[5], 0x96) << "25 % open is 75 % closed, 0x9600";
+}
+
+TEST(HubOperations, AVerticalInteriorBlindHasNoTilt) {
+  // VELUX KLF 200 API specification, Appendix 2: type 10 lists no slat parameter.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.type = DeviceType::VERTICAL_INTERIOR_BLIND});
+
+  EXPECT_FALSE(comp.set_device_tilt("ABC123", 50));
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}

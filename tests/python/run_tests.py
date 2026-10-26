@@ -360,8 +360,17 @@ def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
 
     assert c._require_silent_kind(silent()) == silent(), "no declared kind: nothing says what the device takes"
     c._require_silent_kind(silent("roller_shutter"))
+    c._require_silent_kind(silent("exterior_venetian_blind"))
     c._require_silent_kind({"io_device_type": t["garage_opener"]})  # `silent:` not declared at all
-    for kind in (("garage_opener", None), ("garage_opener", 58), ("gate_opener", 58), ("swinging_shutter", 58)):
+    kinds = (
+        ("interior_venetian_blind", None),
+        ("dual_roller_shutter", None),
+        ("garage_opener", None),
+        ("garage_opener", 58),
+        ("gate_opener", 58),
+        ("swinging_shutter", 58),
+    )
+    for kind in kinds:
         try:
             c._require_silent_kind(silent(*kind))
             raise AssertionError(f"silent was accepted on {kind}")
@@ -395,6 +404,11 @@ def device_features_fall_back_like_the_cpp_lookup():
     assert v.device_features(t["roller_shutter"], 9) == roller, "an unnamed subtype takes the type row"
     assert v.device_features(t["roller_shutter"], 58) == v.FEATURE_MAIN_PARAMETER_ONLY | v.FEATURE_FAVORITE
     assert v.device_features(t["interior_venetian_blind"], 58) & v.FEATURE_TILT == 0
+    # VELUX KLF 200 API specification, Appendix 2: types 1 and 13 take the short position frame, type 10 has no slat.
+    assert v.device_features(t["interior_venetian_blind"]) & v.FEATURE_TILT
+    for short_frame in ("interior_venetian_blind", "dual_roller_shutter"):
+        assert v.device_features(t[short_frame]) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, short_frame
+    assert v.device_features(t["vertical_interior_blind"]) & v.FEATURE_TILT == 0
     assert v.device_features(t["window_opener"], 58) & v.FEATURE_VENT
     assert v.device_features(t["lock"], 2) == 0, "an explicit subtype row beats the type row, even at zero"
     assert v.device_features(t["lock"], 1) == v.FEATURE_EXTENDED_POSITION_FRAME

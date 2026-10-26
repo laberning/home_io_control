@@ -110,9 +110,10 @@ TEST(ProtocolBoundary, DeviceSupportsTilt_VenetianBlind) {
       << "INTERIOR_VENETIAN_BLIND should support tilt";
 }
 
-TEST(ProtocolBoundary, DeviceSupportsTilt_Blind) {
-  EXPECT_TRUE(has_feature(device_features(DeviceType::VERTICAL_INTERIOR_BLIND, 0), device_feature::TILT))
-      << "VERTICAL_INTERIOR_BLIND should support tilt (covered by doxygen list)";
+TEST(ProtocolBoundary, DeviceSupportsNoTilt_VerticalInteriorBlind) {
+  // VELUX KLF 200 API specification, Appendix 2 lists no slat parameter for type 10.
+  EXPECT_FALSE(has_feature(device_features(DeviceType::VERTICAL_INTERIOR_BLIND, 0), device_feature::TILT))
+      << "VERTICAL_INTERIOR_BLIND has no slat angle";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_ExternalVenetianBlind) {

@@ -39,7 +39,7 @@ constexpr DeviceFeatures INV = feature::INVERTED;
 /// Every row of the table. A row missing here, or listed with another word, fails the test below.
 const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::UNKNOWN, 0, 0},
-    {DeviceType::INTERIOR_VENETIAN_BLIND, 0, LV | FAV | TI | EXT},
+    {DeviceType::INTERIOR_VENETIAN_BLIND, 0, LV | FAV | TI},
     {DeviceType::ROLLER_SHUTTER, 0, LV | FAV | EXT},
     {DeviceType::ROLLER_SHUTTER, 1, LV | FAV | EXT},
     {DeviceType::ROLLER_SHUTTER, 2, LV | FAV | EXT},
@@ -58,10 +58,10 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::LOCK, 0, EXT},
     {DeviceType::LOCK, 1, EXT},
     {DeviceType::LOCK, 2, 0},
-    {DeviceType::VERTICAL_INTERIOR_BLIND, 0, LV | FAV | TI | EXT},
+    {DeviceType::VERTICAL_INTERIOR_BLIND, 0, LV | FAV | EXT},
     {DeviceType::SECURE_CONFIGURATION_DEVICE, 0, 0},
     {DeviceType::BEACON, 0, 0},
-    {DeviceType::DUAL_ROLLER_SHUTTER, 0, LV | FAV | EXT},
+    {DeviceType::DUAL_ROLLER_SHUTTER, 0, LV | FAV},
     {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, 0},
     {DeviceType::ON_OFF_SWITCH, 0, EXT},
     {DeviceType::ON_OFF_SWITCH, 2, EXT},

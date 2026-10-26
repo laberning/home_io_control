@@ -28,7 +28,7 @@ The keys every entity platform shares — `name`, `io_device_id`, `io_device_typ
 
 - `invert_position` (Optional): Explicitly override the open/close position mapping. When omitted, the controller uses the learned device profile and automatically inverts families such as horizontal awnings once their type is known.
 - `optimistic_state` (Optional, default: `true`): Show the requested position/movement direction immediately in Home Assistant — for both HA-issued commands (open/close/set-position/stop) and commands from a linked 1W remote — instead of waiting for the confirming poll or device response. The confirming poll/response always still runs and is the source of truth; optimistic state is a UX bridge only. Set `false` for a device where you don't want HA to show assumed movement, for example one with an unreliable RF link where a stale optimistic state could be misleading.
-- `silent` (Optional): Move at the manufacturer app's "silent operation" speed — slower and quieter. Only a kind that takes a travel-speed parameter accepts it: config validation rejects `silent:` on garage openers and on any device of subtype 58, and its message says to remove the key. It selects the protocol's slow travel profile on position moves and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and ventilation and tilt because nothing has been captured for them yet — they keep their existing payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key also generates a `<Cover Name> Silent Operation` switch so the profile can be changed at runtime; the YAML value is the boot state. Omit the key entirely and no switch is created.
+- `silent` (Optional): Move at the manufacturer app's "silent operation" speed — slower and quieter. Only a kind that takes a travel-speed parameter accepts it: config validation rejects `silent:` on garage openers, on interior venetian blinds, on dual roller shutters and on any device of subtype 58, and its message says to remove the key. On an interior venetian blind the first functional parameter is the slat orientation and on a dual roller shutter it is the upper curtain, so neither takes a speed there (experimental, see [Interior venetian blinds and dual roller shutters](cover.md#interior-venetian-blinds-and-dual-roller-shutters)). It selects the protocol's slow travel profile on position moves and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and ventilation and tilt because nothing has been captured for them yet — they keep their existing payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key also generates a `<Cover Name> Silent Operation` switch so the profile can be changed at runtime; the YAML value is the boot state. Omit the key entirely and no switch is created.
 - `rain_sensor_poll_interval` (Optional): Ask the device how far its own rain protection lets it open, once per interval, and report the answer as a binary sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Declaring it generates a `<Cover Name> Rain sensor` binary sensor. Validated on VELUX windows with a wired rain sensor; a Somfy Sunea awning answers the request with a reply this project cannot read as an opening limit, so the sensor stays without state there. Read [Polling for rain](cover.md#polling-for-rain) before choosing an interval, because every poll uses transmit time that the hub shares with everything else it sends.
 - `battery` (Optional, default: `false`): Report the battery level a battery or solar device includes in its status replies. Generates a `<Cover Name> Battery Low` binary sensor and a `<Cover Name> Battery` text sensor. It sends nothing extra over the radio. See [Battery level](cover.md#battery-level).
 - All standard options from the ESPHome cover base schema also apply, including `id`, `device_class`, `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
@@ -176,13 +176,24 @@ What to expect:
 ## Tilt
 
 When `io_device_type` is declared as a tilt-capable type — `interior_venetian_blind`,
-`exterior_venetian_blind`, `vertical_interior_blind`, or `louvre_blind` — the cover entity automatically exposes a
+`exterior_venetian_blind`, or `louvre_blind` — the cover entity automatically exposes a
 tilt slider in Home Assistant.
 
 Tilt-only commands keep the current position unchanged. When Home Assistant sends both a position
 and a tilt value at once (via `cover.control` with both fields), they go to the device in a single
 atomic command, so the cover reaches the desired position and slat angle without a race between two
 sequential exchanges.
+
+A vertical interior blind (`vertical_interior_blind`) has no slat parameter in the VELUX KLF 200 API
+specification, Appendix 2, so it is a plain cover without a tilt slider (experimental).
+
+## Interior venetian blinds and dual roller shutters
+
+(Experimental.) The VELUX KLF 200 API specification, Appendix 2 uses the first functional parameter for
+the slat orientation of an interior venetian blind and for the upper curtain of a dual roller shutter,
+not for a travel speed. The hub therefore sends position and force-open commands to both kinds in the
+short form that carries the main parameter only, and refuses `silent:` for them at config time. The
+interior venetian blind keeps its tilt slider. No two-way device of either kind has confirmed this yet.
 
 ## Position and state
 
