@@ -12,6 +12,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace esphome {
 namespace home_io_control {
@@ -166,8 +167,19 @@ class StatusPollPolicy {
   /// Clears expired tracking entries as a side effect. Returns nullopt if nothing is due.
   [[nodiscard]] std::optional<std::string> pop_due_device(uint32_t now);
 
+  // --- Tracking that ran out ---
+  /// Return and consume a device whose polling window ended without the device being reported at
+  /// rest: the window expired with a poll still pending (pop_due_device()), or the failure ladder no
+  /// longer fits in it (on_exchange_failed()). An explicit clear() — a stopped report, a failed
+  /// build — is not "ran out" and is never returned. Returns nullopt when there is none.
+  [[nodiscard]] std::optional<std::string> pop_ended_device();
+
  private:
   std::map<std::string, PollTracking> tracking_;
+  std::vector<std::string> ended_;  ///< Devices whose window ran out, for pop_ended_device(); no duplicates.
+
+  /// Record that a device's window ran out, once.
+  void note_ended_(const std::string &device_id);
 
   /// Compute retry delay from failure count and failure class.
   static uint32_t retry_delay_ms(uint8_t consecutive_failures, bool auth_like);

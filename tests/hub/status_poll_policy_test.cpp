@@ -357,3 +357,56 @@ TEST(SettleDelay, StopCapIsShorterThanDefault) {
   EXPECT_LT(STOP_SETTLE_POLL_CAP_MS, DEFAULT_SETTLE_POLL_DELAY_MS)
       << "STOP must settle faster than a normal move in every scenario";
 }
+
+// ============================================================================
+// Tracking that ran out (pop_ended_device)
+// ============================================================================
+
+TEST(StatusPollPolicy, PopEndedDeviceReportsALadderThatNoLongerFits) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  // Late in the window: no backoff fits before the deadline any more.
+  const uint32_t late = T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS - 1;
+  ASSERT_EQ(policy.on_exchange_failed("DEV", false, late), 0u);
+
+  EXPECT_EQ(policy.pop_ended_device(), std::optional<std::string>("DEV"));
+  EXPECT_EQ(policy.pop_ended_device(), std::nullopt) << "consumed once";
+}
+
+TEST(StatusPollPolicy, PopEndedDeviceReportsAWindowThatExpiredWithAPollPending) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.set_next_update("DEV", T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS + 1000);
+
+  EXPECT_EQ(policy.pop_due_device(T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS + 2000), std::nullopt)
+      << "the poll past the deadline is dropped";
+  EXPECT_EQ(policy.pop_ended_device(), std::optional<std::string>("DEV"));
+}
+
+TEST(StatusPollPolicy, PopEndedDeviceIgnoresAnExplicitClear) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.clear("DEV");
+
+  EXPECT_EQ(policy.pop_ended_device(), std::nullopt) << "a stopped report ended it, nothing ran out";
+}
+
+TEST(StatusPollPolicy, PopEndedDeviceIgnoresAFailedPollOfAnUntrackedDevice) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 2000);
+  ASSERT_EQ(policy.on_exchange_failed("DEV", false, T0), 0u);
+
+  EXPECT_EQ(policy.pop_ended_device(), std::nullopt) << "no window was open, so none ran out";
+}
+
+TEST(StatusPollPolicy, PopEndedDeviceListsADeviceOnce) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  const uint32_t late = T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS - 1;
+  ASSERT_EQ(policy.on_exchange_failed("DEV", false, late), 0u);
+  policy.begin_tracking("DEV", 0, late);
+  ASSERT_EQ(policy.on_exchange_failed("DEV", false, late + MAX_TRACKED_STATUS_POLL_WINDOW_MS - 1), 0u);
+
+  EXPECT_EQ(policy.pop_ended_device(), std::optional<std::string>("DEV"));
+  EXPECT_EQ(policy.pop_ended_device(), std::nullopt);
+}

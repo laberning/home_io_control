@@ -674,6 +674,33 @@ TEST(PlatformCover, StoppedDeviceReturnsToIdleOperation) {
   EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE) << "stopped updates should return the cover to idle";
 }
 
+TEST(PlatformCover, DeviceAtRestOffItsTargetIsIdle) {
+  // A cover the hub has accepted as at rest a little short of its target (issue #151): the
+  // remaining target/position gap must not turn into a direction.
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+
+  cover.setup();
+
+  IoDevice moving{};
+  moving.position = 10.0f;
+  moving.target = 0.0f;
+  moving.is_stopped = false;
+  hub.trigger_device_update("ABC123", moving);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
+
+  IoDevice at_rest{};
+  at_rest.position = 0.23f;
+  at_rest.target = 0.0f;
+  at_rest.is_stopped = true;
+  hub.trigger_device_update("ABC123", at_rest);
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+  EXPECT_NEAR(cover.position, 0.9977f, 1e-4f) << "the reported position is shown, not rounded to the end";
+}
+
 TEST(PlatformCover, UnknownPositionNotPublished) {
   MockHub hub;
   TestableCover cover;

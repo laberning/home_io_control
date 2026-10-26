@@ -903,6 +903,11 @@ class IOHomeControlComponent : public Component,
   /// @param device_id ID of the device to poll.
   /// @param initial_delay_ms Delay before the first follow-up poll.
   void begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms);
+  /// Settle every device whose polling window ran out (StatusPollPolicy::pop_ended_device()).
+  /// A device still settling — its last report said "stopped" off its target and the confirming
+  /// poll never came back — is taken as at rest there: with no poll left, the device's own flag
+  /// stands. Any other device is left as it is.
+  void settle_ended_status_tracking_();
   /// Arm the confirming poll that follows a command, because a CMD_EXECUTE reply is never trusted
   /// for position (see update_device_status_()'s trust_position parameter) and therefore leaves the
   /// hub with no idea where the device actually is. Re-arms the bounded tracking window rather than

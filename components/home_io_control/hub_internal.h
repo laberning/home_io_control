@@ -245,17 +245,18 @@ inline std::map<std::string, std::string> build_sender_event_data(const OneWayFr
 // Status normalization helpers
 // ============================================================================
 
-/// @brief Normalize stopped state: some devices briefly report stopped before target/current converge.
+/// @brief Normalize the stopped flag of an execute ack against the last observed target and position.
 ///
-/// Deliberately reads and writes observed fields only — never effective_*(). Its job is "the device
-/// said stopped but its own reported target and current disagree", a statement about observations;
-/// feeding it a prediction would push a guess back into an observed field. On the execute-ack path
-/// (`trust_position = false`) `dev.target` does not hold the commanded value, so this function does
-/// not use it to flip `is_stopped` back to false — effective_is_stopped() owns that.
+/// Used only on the execute-ack path (`trust_position = false`), whose own position bytes are not
+/// decoded: a "stopped" ack is read as moving while the last *trusted* target and position still
+/// disagree. Trusted reports go through decisions::classify_stopped_report() instead, which
+/// accepts a cover resting off its target once a second report agrees.
+///
+/// Deliberately reads and writes observed fields only — never effective_*(). On the execute-ack
+/// path `dev.target` does not hold the commanded value, so this function does not use it to flip
+/// `is_stopped` back to false — effective_is_stopped() owns that.
 /// @param dev Device record to update (may clear is_stopped if positions differ).
 inline void normalize_stopped_state(IoDevice &dev) {
-  // Some devices briefly report STATUS_STOPPED before current and target have numerically
-  // converged. Keep the device in the moving state until the decoded values are effectively equal.
   if (dev.is_stopped && dev.target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION &&
       !has_reached_target_position(dev.target, dev.position)) {
     dev.is_stopped = false;
@@ -441,6 +442,34 @@ inline std::string describe_battery(const IoDevice &dev) {
   return std::string(" battery=") + battery_state_name(dev.battery);
 }
 
+/// @brief True while a device that reported stopped off its target waits for the confirming poll.
+///
+/// The hub handles it as moving until decisions::classify_stopped_report() confirms the stop.
+/// @param dev Device record to read.
+inline bool is_settling(const IoDevice &dev) { return !dev.is_stopped && dev.stop_candidate.armed(); }
+
+/// @brief True when the remembered off-target stop is the device's last trusted report.
+///
+/// Then the gap between `dev.target` and `dev.position` is a rest the hub has seen reported, not a
+/// movement, and normalize_stopped_state() must not read it as one.
+/// @param dev Device record to read.
+inline bool stop_candidate_matches_observation(const IoDevice &dev) {
+  return dev.stop_candidate.armed() && has_reached_target_position(dev.stop_candidate.target, dev.target) &&
+         has_reached_target_position(dev.stop_candidate.position, dev.position);
+}
+
+/// @brief Name the device's observed movement state for the status line.
+///
+/// "settling" is a device that reported stopped off its target and waits for the confirming poll
+/// (decisions::classify_stopped_report()); it is still handled as moving.
+/// @param dev Device record to read.
+/// @return "stopped", "settling" or "moving".
+inline const char *describe_motion(const IoDevice &dev) {
+  if (dev.is_stopped)
+    return "stopped";
+  return is_settling(dev) ? "settling" : "moving";
+}
+
 /// @brief Log a concise status‑update line used by inbound handlers.
 ///
 /// The position/target/motion fields report what the device observed — never a hub prediction. A
@@ -450,7 +479,7 @@ inline std::string describe_battery(const IoDevice &dev) {
 /// @param suffix Optional suffix added after the state string (e.g., " (status update)").
 inline void log_status_update(const std::string &id, const IoDevice &dev, const char *suffix = "") {
   ESP_LOGI(TAG, "Device %s: position=%s target=%s %s%s%s%s", id.c_str(), format_position(dev.position).c_str(),
-           format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving", describe_battery(dev).c_str(),
+           format_position(dev.target).c_str(), describe_motion(dev), describe_battery(dev).c_str(),
            describe_prediction(dev).c_str(), suffix);
 }
 

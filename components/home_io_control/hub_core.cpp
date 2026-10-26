@@ -414,6 +414,10 @@ void IOHomeControlComponent::loop() {
   }
 #endif
 
+  // A window that ran out ends a settling device's wait for its confirming poll. Radio-free, so
+  // not held back by busy_.
+  this->settle_ended_status_tracking_();
+
   // Periodic status polling
   if (!this->busy_) {
     auto due = this->poll_policy_.pop_due_device(millis());

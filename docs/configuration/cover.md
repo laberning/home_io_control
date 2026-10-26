@@ -247,6 +247,11 @@ interior venetian blind keeps its tilt slider. No two-way device of either kind 
   cover stopped, and a failed tilt withdraws its predicted slat angle. With `optimistic_state: false` there is no assumed movement
   to revert. The refusal itself shows up in the `Active Issue` sensor — see
   [Diagnostic entities](../diagnostic-entities.md).
+- **A cover that stops a little off its target goes idle one status poll later.** Some motors
+  report "stopped" a fraction of a percent short of where they were sent, for example a VELUX SSL
+  at an end stop ([issue #151](https://github.com/laberning/home_io_control/issues/151)). The hub
+  polls once more, and when the device reports the same place again, the cover shows idle at the
+  position the device reports. The position is never rounded to the target.
 
 A lambda that respects the position contract:
 
