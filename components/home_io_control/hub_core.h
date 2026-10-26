@@ -1105,7 +1105,10 @@ class IOHomeControlComponent : public Component,
   /// Apply backoff after a failed background status poll and log the result.
   /// @param device_id Target device ID.
   /// @param auth_like True when the failed exchange saw a 0x3C challenge.
-  void schedule_background_poll_backoff_(const std::string &device_id, bool auth_like);
+  /// @param device_moving True when the failed request was a single-try status poll of a device
+  ///        the hub believes is travelling; its first misses keep the normal cadence
+  ///        (StatusPollPolicy::on_exchange_failed()).
+  void schedule_background_poll_backoff_(const std::string &device_id, bool auth_like, bool device_moving = false);
   /// @brief The exchange every heating frame shares: send on the command channel, record the
   /// outcome (exchange counters, link health, error result code), notify the entities and report
   /// whether the device answered with CMD_WRITE_PRIVATE_ACK.

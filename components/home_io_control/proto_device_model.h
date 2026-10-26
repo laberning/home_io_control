@@ -424,6 +424,8 @@ struct IoDevice {
   float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.
   bool is_stopped{true};                 ///< True if device is not moving.
   StopCandidate stop_candidate{};        ///< Last off-target "stopped" report, to confirm the next one.
+  bool reports_remaining_time{false};    ///< The device has sent a nonzero remaining time in a status reply, so
+                                         ///< its zero means "about to stop" rather than "not provided".
   DeviceFeatures features{0};            ///< What this device can do, resolved by resolve_device_features(). Every
                                          ///< capability check on a registered device reads this word.
   DeviceCapabilityClass entity_class{

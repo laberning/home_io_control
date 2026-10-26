@@ -179,7 +179,8 @@ IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_recor
   //     confirmation poll corrects the state if the device did not act;
   //   - a status poll or a name read exists to obtain a payload. Getting none means the question
   //     went unanswered, so it stays a failure and takes the auth-shaped poll backoff: a quick
-  //     retry the first time, a long one when it repeats (StatusPollPolicy::retry_delay_ms()).
+  //     retry the first time, a long one when it repeats (StatusPollPolicy::retry_delay_ms()); a
+  //     poll of a moving device skips its first misses at the normal cadence first.
   const bool unconfirmed_counts_as_success = request.cmd == CMD_EXECUTE;
 
   // Recorded once, here, for every outcome — deliberately above the split below, because the rule
@@ -205,8 +206,17 @@ IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_recor
         detail::update_link_health(*dev, this->radio_);
       this->notify_device_update_(device_id);
     }
-    if (retry_after_fail_ms != 0)
-      this->schedule_background_poll_backoff_(device_id, dbg.saw_challenge);
+    if (retry_after_fail_ms != 0) {
+      // A single-try poll of a device the hub believes is travelling lost one frame: it keeps the
+      // normal cadence before the backoff ladder starts (MOVING_POLL_MISSES_SKIPPED). A device that
+      // reported STOPPED off its target and awaits the confirming poll is at rest, not travelling,
+      // and a poll that already had several tries keeps the ladder.
+      const IoDevice *dev = this->registry_.get(device_id);
+      const bool device_moving = request.cmd == CMD_PRIVATE && options.max_tries == SCHEDULED_POLL_MAX_TRIES &&
+                                 dev != nullptr && !effective_is_stopped(*dev) && !detail::is_settling(*dev) &&
+                                 !device_has_no_motion(dev->type, dev->subtype);
+      this->schedule_background_poll_backoff_(device_id, dbg.saw_challenge, device_moving);
+    }
     this->log_exchange_debug_(device_id.c_str());
     if (warn_on_no_response) {
       ESP_LOGW(detail::TAG, "Command 0x%02X failed for device %s: no valid response (stage=%s tries=%u)", request.cmd,

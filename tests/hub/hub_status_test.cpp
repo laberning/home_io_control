@@ -73,6 +73,97 @@ IoFrame make_status_reply(bool stopped, uint16_t target_raw, uint16_t current_ra
 
 }  // namespace
 
+namespace {
+
+/// A 0x04 from ABC123 that says moving (target 100 %, current 50 %) with @p remaining_s at bytes 6-7.
+IoFrame make_moving_reply(uint16_t remaining_s) {
+  IoFrame frame = make_status_reply(false, 0xC800, 0x6400);
+  frame.data[6] = static_cast<uint8_t>(remaining_s >> 8);
+  frame.data[7] = static_cast<uint8_t>(remaining_s & 0xFF);
+  return frame;
+}
+
+/// Feed @p frame to a tracked ABC123 (no configured interval) and return the scheduled delay.
+uint32_t next_poll_delay_after(TestableHubComponent &comp, const IoFrame &frame, bool trust_position = true) {
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.poll_policy_.set_next_update("ABC123", 0);
+  comp.update_device_status_(frame, trust_position);
+  return comp.poll_policy_.get_next_update("ABC123") - esphome::millis();
+}
+
+}  // namespace
+
+// --- remaining travel time (status reply bytes 6-7) -------------------------------------------
+
+TEST(HubStatus, RemainingTimeIsReadAsTwoBytes) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.set_device_status_poll_interval("ABC123", 400000);
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0x0100)), 256000u + 1000u)
+      << "256 s left: byte 6 is the high byte of the count";
+}
+
+TEST(HubStatus, RemainingTimePlusASecondShortensTheDefaultDelay) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(1)), 2000u);
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(10)), DEFAULT_SETTLE_POLL_DELAY_MS)
+      << "a long remaining time never stretches the default";
+}
+
+// Corpus: a Somfy Izymo answers an EXECUTE with `06 00` at bytes 6-7, a tilt ack with `8D 00`.
+// The bytes of a command's reply are not a remaining time.
+TEST(HubStatus, RemainingTimeIsIgnoredInTheReplyToACommand) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(1), /*trust_position=*/false), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0x0600), /*trust_position=*/false),
+            DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_FALSE(comp.get_device("ABC123")->reports_remaining_time)
+      << "a command's reply never teaches the hub that the device counts down";
+}
+
+TEST(HubStatus, AllBitsSetMeansNoRemainingTime) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0xFFFF)), DEFAULT_SETTLE_POLL_DELAY_MS);
+}
+
+// Issue #178: a Somfy cover counts down and reports 0 in its last second of travel.
+TEST(HubStatus, ZeroFromADeviceThatCountsDownMeansAboutToStop) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  next_poll_delay_after(comp, make_moving_reply(3));
+  EXPECT_TRUE(comp.get_device("ABC123")->reports_remaining_time);
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0)), 1000u);
+}
+
+// A device that has never sent a count gets the default cadence from a 0: it may not provide one.
+TEST(HubStatus, ZeroFromADeviceThatNeverCountsIsNoRemainingTime) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0)), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_FALSE(comp.get_device("ABC123")->reports_remaining_time);
+}
+
+// A STOPPED off target waits the default delay for its confirming poll, even from a device that
+// counts down: classify_stopped_report() relies on that gap to tell a slow motor start from rest.
+TEST(HubStatus, ZeroInAStoppedReportKeepsTheDefaultDelay) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  next_poll_delay_after(comp, make_moving_reply(3));
+  ASSERT_TRUE(comp.get_device("ABC123")->reports_remaining_time);
+  EXPECT_EQ(next_poll_delay_after(comp, make_status_reply(true, 0xC800, 0x6400)), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_STREQ(detail::describe_motion(*comp.get_device("ABC123")), "settling");
+}
+
 TEST(HubStatus, StoppedOffTargetWithAFollowUpPollSettlesOnce) {
   esphome::test_clock::ManualClock clock(50000);
   TestableHubComponent comp;
@@ -1215,7 +1306,7 @@ TEST(HubStatus, ShortPrivateResponseLeavesTheRecordUntouched) {
   // tests/corpus/captures/exchange/tilt_cover_exchange_close_ack_six_byte_no_hint.yaml's 6-byte
   // payload, applied with trust_position=true (the default) to isolate the >= 12 length guard
   // from the trust_position gate pinned above: a real device can send a short reply to a
-  // *trusted* request too (e.g. a status poll from a device that omits the settle hint), and the
+  // *trusted* request too (e.g. a status poll from a device that omits the remaining time), and the
   // guard must reject the record without also rejecting the position decode it shares a branch
   // with.
   TestableHubComponent comp;

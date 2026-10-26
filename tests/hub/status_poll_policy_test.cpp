@@ -95,6 +95,102 @@ TEST(StatusPollPolicy, SuccessBetweenAuthShapedFailuresRestartsTheQuickRetry) {
 }
 
 // ============================================================================
+// Misses of a moving device (issue #178)
+// ============================================================================
+
+// A cover that answered a moment ago lost one frame: the next poll keeps the cadence, the failure
+// streaks stay untouched (so the next poll stays a single try), and only the third miss in a row
+// enters the ladder.
+TEST(StatusPollPolicy, MovingDeviceSkipsItsFirstMissesAtTheConfiguredInterval) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 1000);
+  policy.begin_tracking("DEV", 0, T0);
+
+  for (uint8_t miss = 1; miss <= MOVING_POLL_MISSES_SKIPPED; miss++) {
+    EXPECT_EQ(policy.on_exchange_failed("DEV", false, T0, /*device_moving=*/true), 1000u) << "miss " << +miss;
+    EXPECT_EQ(policy.get_next_update("DEV"), T0 + 1000u);
+    EXPECT_EQ(policy.get_moving_poll_misses("DEV"), miss);
+    EXPECT_EQ(policy.get_status_poll_failures("DEV"), 0u);
+    EXPECT_EQ(policy.get_auth_poll_failures("DEV"), 0u);
+  }
+
+  EXPECT_EQ(policy.on_exchange_failed("DEV", false, T0, /*device_moving=*/true), STATUS_RETRY_AFTER_FAIL_MS)
+      << "a third miss in a row is no longer a lost frame: the ladder takes over";
+  EXPECT_EQ(policy.get_status_poll_failures("DEV"), 1u);
+}
+
+TEST(StatusPollPolicy, MovingDeviceWithoutIntervalSkipsAtTheDefaultSettleDelay) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  EXPECT_EQ(policy.on_exchange_failed("DEV", false, T0, /*device_moving=*/true), DEFAULT_SETTLE_POLL_DELAY_MS);
+}
+
+TEST(StatusPollPolicy, MovingDeviceSkipsAChallengeSeenMissToo) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 1000);
+  policy.begin_tracking("DEV", 0, T0);
+  EXPECT_EQ(policy.on_exchange_failed("DEV", true, T0, /*device_moving=*/true), 1000u);
+  EXPECT_EQ(policy.get_auth_poll_failures("DEV"), 0u);
+  policy.on_exchange_failed("DEV", true, T0, true);
+  EXPECT_EQ(policy.on_exchange_failed("DEV", true, T0, true), STATUS_AUTH_RETRY_AFTER_FAIL_MS)
+      << "a wrong key fails every poll and still reaches the auth ladder, two polls later";
+}
+
+TEST(StatusPollPolicy, DeviceAtRestBacksOffFromTheFirstMiss) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 1000);
+  policy.begin_tracking("DEV", 0, T0);
+  EXPECT_EQ(policy.on_exchange_failed("DEV", false, T0, /*device_moving=*/false), STATUS_RETRY_AFTER_FAIL_MS);
+  EXPECT_EQ(policy.get_moving_poll_misses("DEV"), 0u);
+}
+
+TEST(StatusPollPolicy, AnAnswerOrANewCycleResetsTheSkippedMisses) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 1000);
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_exchange_failed("DEV", false, T0, true);
+  policy.on_exchange_failed("DEV", false, T0, true);
+  policy.clear_failure_streaks("DEV");  // the next poll answered
+  EXPECT_EQ(policy.get_moving_poll_misses("DEV"), 0u);
+  EXPECT_EQ(policy.on_exchange_failed("DEV", false, T0, true), 1000u);
+
+  policy.begin_tracking("DEV", 0, T0);  // a new command
+  EXPECT_EQ(policy.get_moving_poll_misses("DEV"), 0u);
+  policy.on_exchange_failed("DEV", false, T0, true);
+  policy.clear("DEV");
+  EXPECT_EQ(policy.get_moving_poll_misses("DEV"), 0u);
+}
+
+TEST(StatusPollPolicy, MovingMissNeverWaitsLongerThanTheLadderWould) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 10000);
+  policy.begin_tracking("DEV", 0, T0);
+  EXPECT_EQ(policy.on_exchange_failed("DEV", false, T0, /*device_moving=*/true), STATUS_RETRY_AFTER_FAIL_MS);
+  EXPECT_EQ(policy.get_moving_poll_misses("DEV"), 1u) << "still a skipped miss, only sooner than the interval";
+}
+
+// A miss that arrives while a failure streak already runs (the device missed a poll at rest, then a
+// status update said it moves) stays on the ladder: the streak is what grants the band's tries.
+TEST(StatusPollPolicy, MovingMissDuringAFailureStreakStaysOnTheLadder) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 1000);
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_exchange_failed("DEV", false, T0, /*device_moving=*/false);
+  EXPECT_EQ(policy.on_exchange_failed("DEV", false, T0, /*device_moving=*/true), STATUS_RETRY_AFTER_FAIL_STEP2_MS);
+  EXPECT_EQ(policy.get_moving_poll_misses("DEV"), 0u);
+}
+
+TEST(StatusPollPolicy, MovingMissNeverStretchesTheTrackingWindow) {
+  StatusPollPolicy policy;
+  policy.set_interval("DEV", 1000);
+  policy.begin_tracking("DEV", 0, T0);
+  const uint32_t late = T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS - 500;
+  EXPECT_EQ(policy.on_exchange_failed("DEV", false, late, /*device_moving=*/true), 0u)
+      << "a skip that would land past the window falls through to the ladder, which ends tracking";
+  EXPECT_EQ(policy.pop_ended_device(), std::optional<std::string>("DEV"));
+}
+
+// ============================================================================
 // Failure class switching resets the opposite streak
 // ============================================================================
 
