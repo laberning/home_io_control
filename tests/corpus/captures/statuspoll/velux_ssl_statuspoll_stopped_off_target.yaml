@@ -1,0 +1,63 @@
+id: velux_ssl_statuspoll_stopped_off_target
+description: >
+  Status-poll replies (0x04, 23 bytes) from two VELUX SSL solar roller shutters that come to rest
+  a little off their end target and say so: the STOPPED flag is set (state 0x05) while current and
+  target differ by 119 and 171 raw (0.23 % and 0.33 %). Issue #151 (@Kai9555), logged by the
+  reporter's own hub 7A3F21 (soft-PHY radio, IOHOME_FRAME_LOG, current main on 2026-10-26), all on
+  868.95 MHz. F06E93 after an open repeats the same reply on every poll (frames 0 and 2, 10 s
+  apart). FFD95B approaches its open target (frame 1, moving) and lands exactly on it (frame 3);
+  after a close it rests 171 raw short of closed (frames 4 and 5, 9 s apart). The polls these answer are in the log too and are left
+  out here. t_ms are from the log line timestamps, relative to 09:14:59.157.
+source:
+  device: "VELUX SSL solar roller shutters F06E93 ('Badezimmer OG') and FFD95B ('Kinderzimmer'), paired two-way to the reporter's hub 7A3F21"
+  captured_with: sx1262
+  firmware: "main (2026-10-26)"
+  date: 2026-10-26
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/151"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "96 00 7A 3F 21 F0 6E 93 04 05 60 00 00 00 77 00 00 7A 3F 21 01 00 00"
+    crc: absent
+    note: "F06E93 after an open: state 0x05 (stopped), battery full (0x60), target 0x0000, current 0x0077 = 119 raw off target; last command from this hub, originator 0x01"
+  - dir: rx
+    t_ms: 1157
+    freq: 868950000
+    hex: "96 00 7A 3F 21 FF D9 5B 04 04 60 00 00 00 5C 00 01 7A 3F 21 01 00 00"
+    crc: absent
+    note: "FFD95B on its way open: state 0x04 (moving), target 0x0000, current 0x005C, time hint 1 s"
+  - dir: rx
+    t_ms: 10081
+    freq: 868950000
+    hex: "96 00 7A 3F 21 F0 6E 93 04 05 60 00 00 00 77 00 00 7A 3F 21 01 00 00"
+    crc: absent
+    note: "F06E93, next answered poll: byte-identical, so the shutter is at rest 119 raw off target"
+  - dir: rx
+    t_ms: 10629
+    freq: 868950000
+    hex: "96 00 7A 3F 21 FF D9 5B 04 05 60 00 00 00 00 00 00 7A 3F 21 01 00 00"
+    crc: absent
+    note: "FFD95B at rest exactly on its open target: state 0x05, target = current = 0x0000"
+  - dir: rx
+    t_ms: 86019
+    freq: 868950000
+    hex: "96 00 7A 3F 21 FF D9 5B 04 05 60 C8 00 C7 55 00 00 7A 3F 21 01 00 00"
+    crc: absent
+    note: "FFD95B after a close: state 0x05 (stopped), target 0xC800, current 0xC755 = 171 raw short of closed"
+  - dir: rx
+    t_ms: 95020
+    freq: 868950000
+    hex: "96 00 7A 3F 21 FF D9 5B 04 05 60 C8 00 C7 55 00 00 7A 3F 21 01 00 00"
+    crc: absent
+    note: "FFD95B, next answered poll: byte-identical, at rest 171 raw short of closed"
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

@@ -49,26 +49,277 @@ TEST(HubStatus, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
   EXPECT_TRUE(dev->is_stopped) << "matching normalized target/current should remain stopped";
 }
 
-TEST(HubStatus, StoppedFlagMismatchKeepsDeviceMoving) {
-  TestableHubComponent comp;
-  comp.add_device("ABC123");
+namespace {
 
+/// A trusted 0x04 status reply from ABC123: STATUS_STOPPED or moving, target and current raw.
+IoFrame make_status_reply(bool stopped, uint16_t target_raw, uint16_t current_raw) {
   IoFrame frame{};
   init_frame(frame, true, false, false, false);
   uint8_t own[3] = {0xC0, 0xFF, 0xEE};
   uint8_t device[3] = {0xAB, 0xC1, 0x23};
   set_dst(frame, own);
   set_src(frame, device);
-  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0x64, 0x00, 0x00, 0x00};
-  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  uint8_t payload[8] = {static_cast<uint8_t>(stopped ? STATUS_STOPPED : 0x00),
+                        0x00,
+                        static_cast<uint8_t>(target_raw >> 8),
+                        static_cast<uint8_t>(target_raw & 0xFF),
+                        static_cast<uint8_t>(current_raw >> 8),
+                        static_cast<uint8_t>(current_raw & 0xFF),
+                        0x00,
+                        0x00};
+  EXPECT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  return frame;
+}
 
-  comp.update_device_status_(frame);
+}  // namespace
+
+TEST(HubStatus, StoppedOffTargetWithAFollowUpPollSettlesOnce) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->target, 100.0f);
+  EXPECT_FLOAT_EQ(dev->position, 50.0f);
+  EXPECT_FALSE(dev->is_stopped) << "the first off-target stopped report waits for one more poll";
+  EXPECT_TRUE(dev->stop_candidate.armed());
+  EXPECT_STREQ(detail::describe_motion(*dev), "settling");
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis())) << "the confirming poll is still due";
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubStatus, SecondIdenticalStoppedOffTargetReportIsAtRestAndEndsPolling) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  esphome::test_clock::advance_ms(3000);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->is_stopped) << "two reports at the same place: at rest off target";
+  EXPECT_TRUE(dev->stop_candidate.armed()) << "kept, so a later poll at the same place confirms at once";
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis())) << "nothing left to poll for";
+}
+
+TEST(HubStatus, StoppedOffTargetThatMovesOnKeepsTracking) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  esphome::test_clock::advance_ms(3000);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x7800));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->is_stopped) << "a changed position means it was not at rest: settle again";
+  EXPECT_FLOAT_EQ(dev->stop_candidate.position, 60.0f) << "the newer report is the one to confirm";
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubStatus, SettlingDeviceWhoseConfirmingPollNeverComesBackIsAtRest) {
+  // The confirming poll goes unanswered until the failure ladder no longer fits in the window: the
+  // device's last word was "stopped", so it stands rather than leaving the cover moving for good.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(detail::is_settling(*dev));
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+  ASSERT_EQ(comp.poll_policy_.on_exchange_failed("ABC123", false, esphome::millis()), 0u);
+  comp.settle_ended_status_tracking_();
+
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FALSE(detail::is_settling(*dev));
+  EXPECT_EQ(notified, 1) << "the cover is told, so it goes idle";
+}
+
+TEST(HubStatus, SettlingDeviceWhoseConfirmingPollFallsPastTheWindowIsAtRest) {
+  // A long configured interval puts the confirming poll after the tracking deadline, so it is
+  // dropped instead of sent; the device's own "stopped" then stands.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.poll_policy_.set_interval("ABC123", 60000);
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS - 30000);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(detail::is_settling(*dev));
+
+  esphome::test_clock::advance_ms(61000);
+  EXPECT_EQ(comp.poll_policy_.pop_due_device(esphome::millis()), std::nullopt) << "past the deadline: dropped";
+  comp.settle_ended_status_tracking_();
+
+  EXPECT_TRUE(dev->is_stopped);
+}
+
+TEST(HubStatus, EndedTrackingLeavesAMovingDeviceAlone) {
+  // Only a settling device has a "stopped" of its own to fall back on; a device last seen moving is
+  // not this function's business.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+  ASSERT_EQ(comp.poll_policy_.on_exchange_failed("ABC123", false, esphome::millis()), 0u);
+  comp.settle_ended_status_tracking_();
+
+  EXPECT_FALSE(comp.get_device("ABC123")->is_stopped);
+}
+
+TEST(HubStatus, StoppedOffTargetWithoutAFollowUpPollIsAtRest) {
+  // Nothing tracks the device (e.g. an untracked one-off poll), so nothing would ever confirm the
+  // report: reading it as moving would leave the cover moving for good.
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_FLOAT_EQ(dev->target, 100.0f) << "valid target should decode to 100 percent";
   EXPECT_FLOAT_EQ(dev->position, 50.0f) << "valid current should decode to 50 percent";
-  EXPECT_FALSE(dev->is_stopped) << "stopped flag should be overridden when target and current are still far apart";
+  EXPECT_TRUE(dev->is_stopped) << "the device's own flag stands when no poll can confirm it";
+}
+
+TEST(HubStatus, MovingReportForgetsTheStopCandidate) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->stop_candidate.armed());
+  EXPECT_STREQ(detail::describe_motion(*dev), "moving");
+}
+
+TEST(HubStatus, StopAckOnACoverAtRestOffTargetDoesNotSetItMovingAgain) {
+  // A STOP pressed on a cover already accepted at rest off its target: its ack ("stopped") is held
+  // against that accepted rest, and the settle poll reporting the same place confirms at once, so
+  // the cover never shows a direction again.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(dev->is_stopped);
+
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0x0000, 0x0000), /*trust_position=*/false);
+  EXPECT_TRUE(dev->is_stopped) << "the ack's stale positions are the rest already accepted";
+  comp.begin_status_poll_tracking_("ABC123", 0);  // the command path re-arms the window
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  EXPECT_TRUE(dev->is_stopped) << "same place again: no settling round";
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubStatus, FirstReportAfterACommandToANewTargetDoesNotConfirmAnOldStop) {
+  // At rest off target, then sent to 0 %: a motor that has not started yet answers "stopped, target
+  // 0 %, current 50 %". The remembered stop had target 100 %, so it cannot confirm this one.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400), /*trust_position=*/false);
+  // The "stopped" ack ends the window; the command path re-arms it (arm_execute_confirmation_poll_()).
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0x0000, 0x6400));
+
+  EXPECT_FALSE(comp.get_device("ABC123")->is_stopped) << "settling: the next poll shows whether it moves";
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubStatus, HeaterReplyWithSetpointAndReadingApartIsNeverSettling) {
+  // A heater's target and current are a setpoint and a reading; their gap is no movement, so the
+  // settle loop must not run for it.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0);  // heating-level heater: no motion
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FALSE(dev->stop_candidate.armed());
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubStatus, UnsolicitedStatusUpdateStoppedOffTargetSettlesThenConfirms) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+  comp.begin_status_poll_tracking_("054E17", 0);
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // Stopped, target [5..6] = 0xC800 (100 %), current [7..8] = 0xC755 (171 raw short).
+  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC7, 0x55, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->is_stopped) << "settling on the 0x71 path too";
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("054E17", esphome::millis()));
+
+  comp.update_device_status_(f);
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("054E17", esphome::millis()));
+}
+
+TEST(HubStatus, SettlingReportClearsMovingEvidence) {
+  // At rest a VELUX SSL hears only the wake-up preamble, so the confirming poll must lead with it:
+  // the wake belief follows the device's "stopped", not the hub's "settling" (issue #151).
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  ASSERT_FALSE(dev->is_stopped);
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u);
 }
 
 // ============================================================================

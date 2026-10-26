@@ -396,6 +396,23 @@ struct OptimisticState {
   void clear_tilt() { tilt = UNKNOWN_POSITION; }
 };
 
+/// @brief The last "stopped" report a device sent away from its own target, kept to confirm the next.
+///
+/// A cover can come to rest a little off its target and say so (a VELUX SSL 119-171 raw short of
+/// an end stop, a Somfy pergola 378-479 raw off an intermediate target; corpus
+/// velux_ssl_statuspoll_stopped_off_target and somfy_pergola_louver_statuspoll_replies_sx1262).
+/// A second report naming the same target and the same current position confirms the device is
+/// at rest there (decisions::classify_stopped_report()). Observed values only, never a prediction.
+struct StopCandidate {
+  float target{UNKNOWN_POSITION};    ///< Target the device reported with the off-target "stopped".
+  float position{UNKNOWN_POSITION};  ///< Current position it reported with it.
+
+  /// @brief True when a report is remembered.
+  [[nodiscard]] bool armed() const { return target != UNKNOWN_POSITION && position != UNKNOWN_POSITION; }
+  /// @brief Forget the remembered report.
+  void clear() { *this = {}; }
+};
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -406,6 +423,7 @@ struct IoDevice {
   float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
   float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.
   bool is_stopped{true};                 ///< True if device is not moving.
+  StopCandidate stop_candidate{};        ///< Last off-target "stopped" report, to confirm the next one.
   DeviceFeatures features{0};            ///< What this device can do, resolved by resolve_device_features(). Every
                                          ///< capability check on a registered device reads this word.
   DeviceCapabilityClass entity_class{

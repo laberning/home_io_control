@@ -136,6 +136,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::update_device_status_;
   using IOHomeControlComponent::notify_device_update_;
   using IOHomeControlComponent::begin_status_poll_tracking_;
+  using IOHomeControlComponent::settle_ended_status_tracking_;
   using IOHomeControlComponent::send_and_receive_;
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::authenticate_request_;

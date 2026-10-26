@@ -67,6 +67,46 @@ constexpr uint32_t PRIVATE_RESPONSE_HINT_SCALE_MS = 1000;  ///< Private-response
 constexpr uint32_t PRIVATE_RESPONSE_HINT_BIAS_MS =
     1000;  ///< Observed devices need an extra second beyond the hint value.
 
+/// @brief Turn a decoded report's STOPPED flag into the hub's movement state.
+///
+/// Runs on every trusted report (a reply to a status poll, a device-originated status update).
+/// `dev.is_stopped` holds the report's own flag on entry and the verdict on return; see
+/// decisions::classify_stopped_report() for the rule. A cover that comes to rest off its target
+/// reads moving for one more poll, then stopped, instead of moving for good.
+/// @param id Device ID, for the log line.
+/// @param dev Device record, with this report's target and position already decoded.
+/// @param follow_up_possible A tracked follow-up poll will run.
+void settle_stopped_report(const std::string &id, IoDevice &dev, bool follow_up_possible) {
+  decisions::StoppedReportInput in;
+  in.reported_stopped = dev.is_stopped;
+  in.target = dev.target;
+  in.position = dev.position;
+  in.candidate = dev.stop_candidate;
+  in.follow_up_possible = follow_up_possible;
+  in.has_motion = !device_has_no_motion(dev.type, dev.subtype);
+  const decisions::StoppedReport verdict = decisions::classify_stopped_report(in);
+  if (verdict == decisions::StoppedReport::SETTLING) {
+    ESP_LOGD(detail::TAG, "Device %s: reports stopped at %.2f%%, target %.2f%%: confirming with one more poll",
+             id.c_str(), static_cast<double>(dev.position), static_cast<double>(dev.target));
+  } else if (verdict == decisions::StoppedReport::STOPPED_CONFIRMED && follow_up_possible) {
+    // Only inside a tracked poll chain, where it ends the settle: an untracked poll of a device
+    // resting at the same place confirms on every report and would log each time.
+    ESP_LOGD(detail::TAG, "Device %s: stopped at %.2f%% again, target %.2f%%: at rest off target", id.c_str(),
+             static_cast<double>(dev.position), static_cast<double>(dev.target));
+  } else if (verdict == decisions::StoppedReport::STOPPED_UNCONFIRMABLE) {
+    ESP_LOGD(detail::TAG,
+             "Device %s: reports stopped at %.2f%%, target %.2f%%, no poll to confirm by: taken as at rest", id.c_str(),
+             static_cast<double>(dev.position), static_cast<double>(dev.target));
+  }
+  if (decisions::stopped_report_keeps_candidate(verdict)) {
+    dev.stop_candidate.target = dev.target;
+    dev.stop_candidate.position = dev.position;
+  } else {
+    dev.stop_candidate.clear();
+  }
+  dev.is_stopped = decisions::stopped_report_at_rest(verdict);
+}
+
 /// @brief Decode the shared target/current position fields used by private response and status‑update frames.
 /// Different frame types use different byte offsets, but the normalization policy is identical once offsets known.
 /// @param dev Device record to update.
@@ -74,12 +114,14 @@ constexpr uint32_t PRIVATE_RESPONSE_HINT_BIAS_MS =
 /// @param target_offset Byte offset of target MSB within frame.data.
 /// @param current_offset Byte offset of current MSB within frame.data.
 /// @param allow_tilt_from_extended_response If true and frame is extended, decode tilt from the extended tilt bytes.
+/// @param id Device ID, for the settle log line.
+/// @param follow_up_possible A tracked follow-up poll will run; see settle_stopped_report().
 void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_offset, uint8_t current_offset,
-                          bool allow_tilt_from_extended_response) {
+                          bool allow_tilt_from_extended_response, const std::string &id, bool follow_up_possible) {
   uint16_t const tgt = (frame.data[target_offset] << 8) | frame.data[target_offset + 1];
   uint16_t const cur = (frame.data[current_offset] << 8) | frame.data[current_offset + 1];
   decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
-  detail::normalize_stopped_state(dev);
+  settle_stopped_report(id, dev, follow_up_possible);
   // A decoded position is the observation this prediction existed to stand in for.
   dev.optimistic.clear_position();
 
@@ -172,17 +214,24 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   if (trust_position) {
-    decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true);
-  } else {
+    decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true, id,
+                         policy.is_tracking_active(id, dev.last_status));
+  } else if (!detail::stop_candidate_matches_observation(dev)) {
+    // An ack's own position bytes are not decoded, so it is held against the last trusted report.
+    // When that report is a stop the hub already accepted off target, the gap is not movement. The
+    // candidate stays: the first poll after the command compares targets, so a report from before
+    // a command to a new target can never confirm one after it.
     detail::normalize_stopped_state(dev);
   }
-  // On the execute-ack path (trust_position == false) dev.target/position are stale, so the
-  // normalized is_stopped can read "moving" for a device that just reported stopped. The evidence
-  // therefore follows the device's own flag there. It matters for the ack to a STOP: a VELUX SSL
+  // The wake belief follows the device's own flag, not the hub's verdict. On the execute-ack path
+  // (trust_position == false) dev.target/position are stale, so the normalized is_stopped can read
+  // "moving" for a device that just reported stopped. It matters for the ack to a STOP: a VELUX SSL
   // still reports "moving" while it winds down, and in that state it ignores the wake-up preamble,
   // so the settle poll after the STOP must lead short. A move's ack is overridden anyway:
-  // run_execute_operation_() stamps the evidence once the move is accepted, after this runs.
-  track_motion_evidence(dev, trust_position ? !dev.is_stopped : !reported_stopped, dev.last_status);
+  // run_execute_operation_() stamps the evidence once the move is accepted, after this runs. On a
+  // trusted report a settling device has said "stopped": at rest a VELUX SSL hears only the wake-up
+  // preamble, so the confirming poll must lead with it (issue #151).
+  track_motion_evidence(dev, !reported_stopped, dev.last_status);
 
   if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
@@ -213,10 +262,13 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
 /// @param policy Poll policy for scheduling follow-up polls.
 void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const IoFrame &frame,
                                      StatusPollPolicy &policy) {
-  dev.is_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
+  const bool reported_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
+  dev.is_stopped = reported_stopped;
   dev.last_status = millis();
-  decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
-  track_motion_evidence(dev, !dev.is_stopped, dev.last_status);
+  decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false, id,
+                       policy.is_tracking_active(id, dev.last_status));
+  // The device's own flag, as on the poll path (apply_private_response_status()).
+  track_motion_evidence(dev, !reported_stopped, dev.last_status);
 
   if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
@@ -301,6 +353,19 @@ void IOHomeControlComponent::begin_status_poll_tracking_(const std::string &devi
   if (this->get_device(device_id) == nullptr)
     return;
   this->poll_policy_.begin_tracking(device_id, initial_delay_ms, millis());
+}
+
+void IOHomeControlComponent::settle_ended_status_tracking_() {
+  while (const auto ended = this->poll_policy_.pop_ended_device()) {
+    IoDevice *dev = this->registry_.get(*ended);
+    if (dev == nullptr || !detail::is_settling(*dev))
+      continue;
+    dev->is_stopped = true;
+    ESP_LOGD(detail::TAG, "Device %s: no poll left to confirm its stop at %.2f%%, target %.2f%%: taken as at rest",
+             ended->c_str(), static_cast<double>(dev->position), static_cast<double>(dev->target));
+    detail::log_status_update(*ended, *dev);
+    this->notify_device_update_(*ended);
+  }
 }
 
 void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id, uint32_t delay_ms) {

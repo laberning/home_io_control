@@ -823,3 +823,90 @@ TEST(PairingNextAddress, NextNodeIdCountsUpAsOneTwentyFourBitNumber) {
   const uint8_t last[NODE_ID_SIZE] = {0xFF, 0xFF, 0xFF};
   EXPECT_FALSE(decisions::next_node_id(last, next));
 }
+
+// ========================================================================================
+// Stopped reports (issue #151)
+// ========================================================================================
+
+namespace {
+
+/// A report at 30 % with target 0 %, far enough off to need confirming.
+decisions::StoppedReportInput off_target_report(StopCandidate candidate, bool follow_up_possible = true) {
+  return {true, 0.0f, 30.0f, candidate, follow_up_possible};
+}
+
+StopCandidate candidate_at(float target, float position) {
+  StopCandidate c;
+  c.target = target;
+  c.position = position;
+  return c;
+}
+
+}  // namespace
+
+TEST(Decisions, StoppedReportMovingFlagIsMovingWhateverThePositions) {
+  EXPECT_EQ(decisions::classify_stopped_report({false, 0.0f, 0.0f, candidate_at(0.0f, 0.0f), true}),
+            decisions::StoppedReport::MOVING);
+}
+
+TEST(Decisions, StoppedReportOnTargetIsStopped) {
+  EXPECT_EQ(decisions::classify_stopped_report({true, 50.0f, 50.1f, {}, true}), decisions::StoppedReport::STOPPED)
+      << "within STATUS_POS_TOLERANCE_RAW counts as on target";
+}
+
+TEST(Decisions, StoppedReportWithoutPositionsToCompareIsStopped) {
+  EXPECT_EQ(decisions::classify_stopped_report({true, UNKNOWN_POSITION, 30.0f, {}, true}),
+            decisions::StoppedReport::STOPPED);
+  EXPECT_EQ(decisions::classify_stopped_report({true, 30.0f, UNKNOWN_POSITION, {}, true}),
+            decisions::StoppedReport::STOPPED);
+}
+
+TEST(Decisions, FirstOffTargetStoppedReportSettles) {
+  EXPECT_EQ(decisions::classify_stopped_report(off_target_report({})), decisions::StoppedReport::SETTLING);
+}
+
+TEST(Decisions, RepeatedOffTargetStoppedReportIsConfirmed) {
+  EXPECT_EQ(decisions::classify_stopped_report(off_target_report(candidate_at(0.0f, 30.0f))),
+            decisions::StoppedReport::STOPPED_CONFIRMED);
+}
+
+TEST(Decisions, OffTargetStoppedReportAtAnotherPositionDoesNotConfirm) {
+  EXPECT_EQ(decisions::classify_stopped_report(off_target_report(candidate_at(0.0f, 40.0f))),
+            decisions::StoppedReport::SETTLING)
+      << "a device that moved between the two reports was not at rest";
+}
+
+TEST(Decisions, OffTargetStoppedReportWithANewTargetDoesNotConfirm) {
+  // At rest off target at 30 % (target 100 %), then commanded to 0 %: a motor that has not started
+  // yet answers "stopped, target 0 %, current 30 %". The old report must not confirm it.
+  EXPECT_EQ(decisions::classify_stopped_report(off_target_report(candidate_at(100.0f, 30.0f))),
+            decisions::StoppedReport::SETTLING);
+}
+
+TEST(Decisions, OffTargetStoppedReportWithNoFollowUpPollIsTakenAsAtRest) {
+  EXPECT_EQ(decisions::classify_stopped_report(off_target_report({}, /*follow_up_possible=*/false)),
+            decisions::StoppedReport::STOPPED_UNCONFIRMABLE);
+}
+
+TEST(Decisions, StoppedReportVerdictsMapToRestAndCandidate) {
+  using decisions::StoppedReport;
+  EXPECT_FALSE(decisions::stopped_report_at_rest(StoppedReport::MOVING));
+  EXPECT_FALSE(decisions::stopped_report_at_rest(StoppedReport::SETTLING));
+  EXPECT_TRUE(decisions::stopped_report_at_rest(StoppedReport::STOPPED));
+  EXPECT_TRUE(decisions::stopped_report_at_rest(StoppedReport::STOPPED_CONFIRMED));
+  EXPECT_TRUE(decisions::stopped_report_at_rest(StoppedReport::STOPPED_UNCONFIRMABLE));
+
+  EXPECT_FALSE(decisions::stopped_report_keeps_candidate(StoppedReport::MOVING));
+  EXPECT_FALSE(decisions::stopped_report_keeps_candidate(StoppedReport::STOPPED));
+  EXPECT_TRUE(decisions::stopped_report_keeps_candidate(StoppedReport::SETTLING));
+  EXPECT_TRUE(decisions::stopped_report_keeps_candidate(StoppedReport::STOPPED_CONFIRMED))
+      << "kept so a later poll at the same place confirms at once";
+  EXPECT_TRUE(decisions::stopped_report_keeps_candidate(StoppedReport::STOPPED_UNCONFIRMABLE));
+}
+
+TEST(Decisions, StoppedReportOfADeviceWithoutMotionIsStopped) {
+  decisions::StoppedReportInput in = off_target_report({});
+  in.has_motion = false;
+  EXPECT_EQ(decisions::classify_stopped_report(in), decisions::StoppedReport::STOPPED)
+      << "a heater's setpoint/reading gap is no movement";
+}

@@ -4,6 +4,7 @@
 
 #include "status_poll_policy.h"
 
+#include <algorithm>
 #include <array>
 
 namespace esphome {
@@ -67,6 +68,8 @@ uint32_t StatusPollPolicy::on_exchange_failed(const std::string &device_id, bool
   if (it == tracking_.end())
     return 0;
   PollTracking &t = it->second;
+  // A one-off poll of an untracked device fails here too; only a window that was open can run out.
+  const bool was_tracking = t.poll_deadline != 0;
 
   uint32_t backoff_ms;
   if (auth_like) {
@@ -86,6 +89,8 @@ uint32_t StatusPollPolicy::on_exchange_failed(const std::string &device_id, bool
     return backoff_ms;
   }
 
+  if (was_tracking)
+    note_ended_(device_id);
   clear(device_id);
   return 0;
 }
@@ -129,6 +134,8 @@ std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {
     if (t.next_update == 0 || now <= t.next_update)
       continue;
     if (!is_tracking_active(pair.first, now)) {
+      if (t.poll_deadline != 0)
+        note_ended_(pair.first);
       clear(pair.first);
       continue;
     }
@@ -136,6 +143,19 @@ std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {
     return pair.first;
   }
   return std::nullopt;
+}
+
+std::optional<std::string> StatusPollPolicy::pop_ended_device() {
+  if (ended_.empty())
+    return std::nullopt;
+  std::string id = ended_.front();
+  ended_.erase(ended_.begin());
+  return id;
+}
+
+void StatusPollPolicy::note_ended_(const std::string &device_id) {
+  if (std::find(ended_.begin(), ended_.end(), device_id) == ended_.end())
+    ended_.push_back(device_id);
 }
 
 namespace {
