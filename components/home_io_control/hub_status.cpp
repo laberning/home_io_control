@@ -5,6 +5,7 @@
 #include "proto_commands.h"
 
 #include <cinttypes>
+#include <optional>
 
 /// @file hub_status.cpp
 /// @brief Inbound status handling and passive receive-side state updates.
@@ -28,9 +29,9 @@ namespace home_io_control {
 
 namespace {
 
-constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 6;     ///< Minimum payload length for 0x04 position-bearing replies.
-                                                         ///< Bytes 0–5 (stopped flag + target + current) are mandatory;
-                                                         ///< byte 7 (settle hint) is optional and checked separately.
+/// Minimum payload length for 0x04 position-bearing replies: bytes 0-5 (stopped flag, target,
+/// current) are mandatory; bytes 6-7 (remaining time) are optional and checked separately.
+constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 6;
 constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for 0x71 device-initiated updates.
 constexpr uint8_t GET_NAME_RESPONSE_MIN_DATA_LEN = 1;    ///< Minimum payload length for 0x51 name-bearing replies.
 constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload length for 0x57 type/subtype metadata.
@@ -39,13 +40,14 @@ constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
     15;  ///< Minimum payload length for tilt-capable extended status replies.
 constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;  ///< Byte containing STATUS_STOPPED.
 constexpr uint8_t STATUS_BATTERY_OFFSET = 1;  ///< Byte holding STATUS_BATTERY_MASK, the same in 0x04 and 0x71 payloads.
-constexpr uint8_t PRIVATE_RESPONSE_DELAY_HINT_OFFSET = 7;  ///< Coarse follow-up delay hint byte in many 0x04 replies.
+constexpr uint8_t PRIVATE_RESPONSE_REMAINING_TIME_OFFSET =
+    6;  ///< MSB of the 16-bit remaining travel time (seconds) in a status reply (0x04 to a 0x03 poll).
 // A 0x04 payload does not describe its own layout — which fields these offsets name depends on
 // the request that drew the reply, and only the caller knows that. A reply to a tilt EXECUTE puts
 // the tilt selector 0x20 at offset 4 and a 16-bit slat angle at 5..6, straddling the bytes a
 // reply to a status poll uses for the current position (4..5). Do not try to recover the
 // difference by sniffing the payload: 0x20 is also a perfectly legal current-position MSB (raw
-// 0x2000-0x20FF is 16.0%-16.5%), and a tilt ack is 8 bytes like any hint-carrying position reply,
+// 0x2000-0x20FF is 16.0%-16.5%), and a tilt ack is 8 bytes like a status reply carrying the remaining time,
 // so neither a `data[4] == STATUS_TILT_SELECTOR` test nor a length test can separate them — the
 // first would blank real readings from any cover resting near 16%. The request-derived
 // `trust_position` parameter on update_device_status_() is the discriminator, and the only
@@ -60,12 +62,12 @@ constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;    ///< Packed type low bi
 constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;    ///< Selector byte announcing extended tilt payload.
 constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;         ///< Tilt-position MSB within extended replies.
 constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;         ///< Tilt-position LSB within extended replies.
-constexpr uint8_t PRIVATE_RESPONSE_HINT_UNUSED = 0xFF;  ///< Value used by devices that do not expose a follow-up timer.
-constexpr uint8_t PRIVATE_RESPONSE_HINT_ZERO =
-    0x00;  ///< Value treated as invalid or uninformative for follow-up timing.
-constexpr uint32_t PRIVATE_RESPONSE_HINT_SCALE_MS = 1000;  ///< Private-response delay hint is expressed in seconds.
-constexpr uint32_t PRIVATE_RESPONSE_HINT_BIAS_MS =
-    1000;  ///< Observed devices need an extra second beyond the hint value.
+constexpr uint8_t PRIVATE_RESPONSE_REMAINING_TIME_MIN_DATA_LEN =
+    8;  ///< A status reply shorter than this (a 6-byte VELUX reply) carries no remaining time.
+constexpr uint16_t PRIVATE_RESPONSE_REMAINING_TIME_NONE = 0xFFFF;    ///< All bits set: no remaining time provided.
+constexpr uint32_t PRIVATE_RESPONSE_REMAINING_TIME_SCALE_MS = 1000;  ///< The remaining time counts in seconds.
+constexpr uint32_t PRIVATE_RESPONSE_REMAINING_TIME_BIAS_MS =
+    1000;  ///< Observed covers come to rest up to about a second after the count runs out (issue #178).
 
 /// @brief Turn a decoded report's STOPPED flag into the hub's movement state.
 ///
@@ -146,30 +148,46 @@ void track_motion_evidence(IoDevice &dev, bool moving, uint32_t now_ms) {
   }
 }
 
+/// @brief Decode the remaining travel time of a status reply.
+///
+/// A 0x04 answering a status poll carries the device's remaining travel time in seconds at bytes
+/// 6-7 (big-endian), after status, functional-parameter indicator, target and current position:
+/// the order of the "main info" status answer in the VELUX KLF 200 API.
+/// The 0x04 answering a command (EXECUTE) has a request-dependent layout: there those bytes hold
+/// something else (`06 00` from a Somfy Izymo, a tilt block's `8D 00`), so they are read only when
+/// the reply's position is trusted, i.e. on a status-poll reply.
+/// @param frame The private response frame.
+/// @param trust_position True for a status-poll reply (see apply_private_response_status()).
+/// @return The remaining time in seconds, or nullopt when the reply carries none.
+std::optional<uint16_t> decode_remaining_time_s(const IoFrame &frame, bool trust_position) {
+  if (!trust_position || frame.data_len < PRIVATE_RESPONSE_REMAINING_TIME_MIN_DATA_LEN)
+    return std::nullopt;
+  const uint16_t remaining = (frame.data[PRIVATE_RESPONSE_REMAINING_TIME_OFFSET] << 8) |
+                             frame.data[PRIVATE_RESPONSE_REMAINING_TIME_OFFSET + 1];
+  if (remaining == PRIVATE_RESPONSE_REMAINING_TIME_NONE)
+    return std::nullopt;
+  return remaining;
+}
+
 /// @brief Compute the delay before the next status poll for a private‑response device.
 /// @param dev Device record.
-/// @param frame The private response frame (may contain a coarse retry hint in byte 7).
+/// @param remaining_s Usable remaining travel time in seconds (nullopt when there is none).
 /// @param policy Policy used to look up the configured poll interval.
 /// @param id Device ID for policy lookup.
 /// @return Delay in milliseconds, or 0 if the device is stopped.
-uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame, const StatusPollPolicy &policy,
-                                           const std::string &id) {
+uint32_t compute_private_response_delay_ms(const IoDevice &dev, std::optional<uint16_t> remaining_s,
+                                           const StatusPollPolicy &policy, const std::string &id) {
   if (effective_is_stopped(dev))
     return 0;
-
-  // Private responses carry a coarse follow‑up timer in byte 7 on many devices. Decode it here
-  // (0 = absent) and let settle_delay_ms() reconcile it with the configured interval and default.
-  // Some devices omit byte 7 entirely (data_len == 6); treat those as hint-absent.
-  uint32_t hint_delay_ms = 0;
-  if (frame.data_len > PRIVATE_RESPONSE_DELAY_HINT_OFFSET &&
-      frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_UNUSED &&
-      frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_ZERO) {
-    hint_delay_ms = (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS) +
-                    PRIVATE_RESPONSE_HINT_BIAS_MS;
-  }
+  // The remaining time plus a second is when the device should be at rest; settle_delay_ms()
+  // reconciles it with the configured interval and the default (it can only shorten them).
+  const uint32_t remaining_delay_ms =
+      remaining_s.has_value()
+          ? (*remaining_s * PRIVATE_RESPONSE_REMAINING_TIME_SCALE_MS) + PRIVATE_RESPONSE_REMAINING_TIME_BIAS_MS
+          : 0;
   // A private response is the shared reply to both polls (0x03) and commands (0x00); it carries no
   // marker for STOP, so the STOP cap is applied by the command path, not here.
-  return settle_delay_ms(policy.get_interval(id), hint_delay_ms, /*cap_for_stop=*/false);
+  return settle_delay_ms(policy.get_interval(id), remaining_delay_ms, /*cap_for_stop=*/false);
 }
 
 /// @brief Compute the delay before the next status poll for a device‑originated status update.
@@ -180,8 +198,8 @@ uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &f
 uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPolicy &policy, const std::string &id) {
   if (effective_is_stopped(dev))
     return 0;
-  // Device-originated updates carry no follow-up hint and are never STOP replies.
-  return settle_delay_ms(policy.get_interval(id), /*hint_delay_ms=*/0, /*cap_for_stop=*/false);
+  // Device-originated updates carry no remaining time and are never STOP replies.
+  return settle_delay_ms(policy.get_interval(id), /*remaining_delay_ms=*/0, /*cap_for_stop=*/false);
 }
 
 /// @brief Does a status reply's flags byte say the device is at rest?
@@ -233,20 +251,27 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   // preamble, so the confirming poll must lead with it (issue #151).
   track_motion_evidence(dev, !reported_stopped, dev.last_status);
 
+  // A zero remaining time means "about to stop" only in a report that says moving, from a device
+  // that has sent a count before: a counting cover reports 0 in its last second of travel (issue
+  // #178), while a device that has never sent a count may simply not provide one, and would
+  // otherwise be polled every second. A "stopped" report keeps the default delay, which is what a
+  // STOPPED off target needs before its confirming poll (decisions::classify_stopped_report()).
+  std::optional<uint16_t> remaining_s = decode_remaining_time_s(frame, trust_position);
+  if (remaining_s.has_value() && *remaining_s != 0)
+    dev.reports_remaining_time = true;
+  if (remaining_s.has_value() && *remaining_s == 0 && (reported_stopped || !dev.reports_remaining_time))
+    remaining_s.reset();
+
   if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
     return;
   }
 
-  uint32_t const delay_ms = compute_private_response_delay_ms(dev, frame, policy, id);
-  const bool hint_present = frame.data_len > PRIVATE_RESPONSE_DELAY_HINT_OFFSET;
-  const uint8_t hint_byte =
-      hint_present ? frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] : PRIVATE_RESPONSE_HINT_UNUSED;
-  const bool has_hint =
-      hint_present && hint_byte != PRIVATE_RESPONSE_HINT_UNUSED && hint_byte != PRIVATE_RESPONSE_HINT_ZERO;
-  ESP_LOGD(
-      detail::TAG, "Device %s: next status poll in %" PRIu32 " ms (device hint=%s, configured interval=%" PRIu32 " ms)",
-      id.c_str(), delay_ms, has_hint ? std::to_string(hint_byte).append("s").c_str() : "none", policy.get_interval(id));
+  uint32_t const delay_ms = compute_private_response_delay_ms(dev, remaining_s, policy, id);
+  ESP_LOGD(detail::TAG,
+           "Device %s: next status poll in %" PRIu32 " ms (remaining time=%s, configured interval=%" PRIu32 " ms)",
+           id.c_str(), delay_ms, remaining_s.has_value() ? std::to_string(*remaining_s).append("s").c_str() : "none",
+           policy.get_interval(id));
   uint32_t const new_deadline = dev.last_status + delay_ms;
   uint32_t const existing_deadline = policy.get_next_update(id);
   // Don't push the deadline forward — only move it earlier. This prevents repeated command

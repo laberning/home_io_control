@@ -74,3 +74,13 @@ directly per ADR 0005.
 - Settling and periodic monitoring stay distinct: resolving a settle delay
   never turns a device into a periodic poller. Ongoing monitoring after rest
   remains opt-in via the configured interval.
+
+## Amendment: the hint is the remaining travel time
+
+**Recorded:** 2026-10. The device's value is its remaining travel time in seconds, bytes 6-7 (big-endian) of the 0x04
+answer to a status poll, the field order of the "main info" status answer in the public VELUX
+KLF 200 API. The hub reads it only from status-poll replies, because the reply to a command uses
+those bytes for other data (a Somfy Izymo acknowledges an EXECUTE with `06 00` there). The delay is
+the remaining time plus one second. A count of 0 in a report that says moving, from a device that
+has sent a count before, means the device is about to stop: the next poll comes after about one
+second (issue #178). The decision above is unchanged: the value only ever shortens the delay.

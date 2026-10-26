@@ -83,19 +83,19 @@ static constexpr uint32_t ONEWAY_QUIET_PERIOD_MS = 700;
 static constexpr uint32_t ONEWAY_POLL_DEFER_CAP_MS = 5000;
 
 /// Default follow-up settle-poll delay used while a device may still be moving, when no explicit
-/// poll interval is configured (interval_ms == 0). Short on purpose so hint-less devices are
+/// poll interval is configured (interval_ms == 0). Short on purpose so devices without a remaining time are
 /// re-checked promptly and the motion-tracking loop terminates soon after the device comes to rest.
 static constexpr uint32_t DEFAULT_SETTLE_POLL_DELAY_MS = 3000;
 /// Upper bound on the settle-poll delay after a STOP command. STOP should confirm the resting
 /// position quickly, so it always settles faster than a normal move, regardless of the configured
-/// interval or device hint.
+/// interval or remaining time.
 static constexpr uint32_t STOP_SETTLE_POLL_CAP_MS = 1000;
 
 /// @brief Resolve the follow-up settle-poll delay while a device may still be moving.
 ///
 /// This is the single source of truth for the motion-tracking cadence. The delay is the configured
 /// @p interval_ms, or DEFAULT_SETTLE_POLL_DELAY_MS when no interval is configured (interval_ms == 0).
-/// A device-provided byte-7 hint (@p hint_delay_ms, 0 when absent) and a STOP command
+/// The device's remaining travel time plus a margin (@p remaining_delay_ms, 0 when absent) and a STOP command
 /// (@p cap_for_stop) may only shorten the delay, never lengthen it.
 ///
 /// Note: this resolves the *settle* delay only — it is intentionally independent of whether a
@@ -104,10 +104,10 @@ static constexpr uint32_t STOP_SETTLE_POLL_CAP_MS = 1000;
 /// every device into a periodic poller.
 ///
 /// @return Settle delay in milliseconds (always non-zero).
-[[nodiscard]] inline uint32_t settle_delay_ms(uint32_t interval_ms, uint32_t hint_delay_ms, bool cap_for_stop) {
+[[nodiscard]] inline uint32_t settle_delay_ms(uint32_t interval_ms, uint32_t remaining_delay_ms, bool cap_for_stop) {
   uint32_t delay = (interval_ms != 0) ? interval_ms : DEFAULT_SETTLE_POLL_DELAY_MS;
-  if (hint_delay_ms != 0)
-    delay = std::min(delay, hint_delay_ms);
+  if (remaining_delay_ms != 0)
+    delay = std::min(delay, remaining_delay_ms);
   if (cap_for_stop)
     delay = std::min(delay, STOP_SETTLE_POLL_CAP_MS);
   return delay;
@@ -116,7 +116,7 @@ static constexpr uint32_t STOP_SETTLE_POLL_CAP_MS = 1000;
 /// @brief Per-device poll scheduling state.
 struct PollTracking {
   uint32_t interval_ms{0};    ///< Configured follow-up poll interval (0 = no configured cadence; delays fall back to
-                              ///< device hint / default settle delay).
+                              ///< remaining time / default settle delay).
   uint32_t next_update{0};    ///< Absolute millis() timestamp for the next poll; 0 = idle.
   uint32_t poll_deadline{0};  ///< Hard stop for bounded follow-up polling.
   uint8_t status_poll_failures{0};  ///< Consecutive background poll failures (silent — no reply).
@@ -142,7 +142,7 @@ class StatusPollPolicy {
   // --- Tracking lifecycle ---
   /// Begin bounded follow-up polling after a command or remote activity.
   /// Sets a deadline regardless of whether a configured interval exists; interval-0 devices use
-  /// device-hinted or default settle delays computed at response time.
+  /// remaining-time or default settle delays computed at response time.
   void begin_tracking(const std::string &device_id, uint32_t initial_delay_ms, uint32_t now);
   /// Stop all polling for a device and reset failure counts. Preserves interval_ms.
   void clear(const std::string &device_id);
@@ -157,7 +157,7 @@ class StatusPollPolicy {
   ///
   /// When @p device_moving is true, no failure streak is running and fewer than
   /// MOVING_POLL_MISSES_SKIPPED misses in a row have been skipped, the miss is skipped instead: the
-  /// next poll keeps the normal cadence (settle_delay_ms() without a device hint, at most
+  /// next poll keeps the normal cadence (settle_delay_ms() without a remaining time, at most
   /// STATUS_RETRY_AFTER_FAIL_MS) and the failure streaks are left alone.
   /// @param device_id Device whose poll failed.
   /// @param auth_like True when the failed exchange saw a 0x3C challenge.

@@ -58,13 +58,13 @@ static IoFrame build_status_response(const uint8_t dst[3]) {
   return f;
 }
 
-static IoFrame build_moving_status_response(const uint8_t dst[3], uint8_t delay_hint_seconds) {
+static IoFrame build_moving_status_response(const uint8_t dst[3], uint8_t remaining_s) {
   IoFrame f{};
   init_frame(f, true, false, true, false);
   uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
   set_dst(f, dst);
   set_src(f, device_node_id);
-  uint8_t payload[8] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, delay_hint_seconds};
+  uint8_t payload[8] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, remaining_s};  // bytes 6-7: remaining time
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
   return f;
 }
@@ -1764,7 +1764,7 @@ TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalUsesTrackedSettleP
   EXPECT_NE(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
       << "commands without a configured interval should still start bounded tracked polling";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u)
-      << "moving execute replies should schedule a follow-up poll driven by the device hint";
+      << "moving execute replies should schedule a follow-up poll at the default settle cadence";
 }
 
 TEST(HubOperations, StopCommandArmsTrackedPollingToConfirmRestingPosition) {
@@ -1805,7 +1805,7 @@ TEST(HubOperations, StopCommandWithMovingReplySchedulesShortSettlePoll) {
   MockRadio radio;
   setup_cover_component(comp, radio);
 
-  IoFrame resp = build_moving_status_response(comp.node_id_, 0xFF);  // hint=unused → motion-tracking default
+  IoFrame resp = build_moving_status_response(comp.node_id_, 0xFF);  // an execute ack: bytes 6-7 ignored → default
   uint8_t raw[64];
   uint8_t raw_len = serialize(resp, raw, sizeof(raw));
   RadioRxPacket pkt{};
@@ -2764,7 +2764,7 @@ TEST(HubOperations, StopAckThatReportsMovingKeepsTheSettlePollShortFirst) {
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   note_moving_evidence(*dev, esphome::millis());
-  queue_frame(radio, build_moving_status_response(comp.node_id_, /*delay_hint_seconds=*/0));
+  queue_frame(radio, build_moving_status_response(comp.node_id_, /*remaining_s=*/0));
 
   ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
   EXPECT_NE(dev->last_moving_evidence_ms, 0u) << "the motor said it is still moving";
@@ -2826,7 +2826,7 @@ TEST(HubOperations, DecodedStatusTracksMovingEvidence) {
   ASSERT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u);
 
-  queue_frame(radio, build_moving_status_response(comp.node_id_, /*delay_hint_seconds=*/5));
+  queue_frame(radio, build_moving_status_response(comp.node_id_, /*remaining_s=*/5));
   ASSERT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_NE(dev->last_moving_evidence_ms, 0u) << "a decoded 'not stopped' status is evidence of travel";
 
