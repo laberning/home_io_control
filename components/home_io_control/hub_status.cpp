@@ -383,11 +383,30 @@ void IOHomeControlComponent::begin_status_poll_tracking_(const std::string &devi
 void IOHomeControlComponent::settle_ended_status_tracking_() {
   while (const auto ended = this->poll_policy_.pop_ended_device()) {
     IoDevice *dev = this->registry_.get(*ended);
-    if (dev == nullptr || !detail::is_settling(*dev))
+    if (dev == nullptr)
       continue;
+    if (detail::is_settling(*dev)) {
+      // The device's own last word was "stopped"; nothing is left to confirm it.
+      ESP_LOGD(detail::TAG, "Device %s: no poll left to confirm its stop at %.2f%%, target %.2f%%: taken as at rest",
+               ended->c_str(), static_cast<double>(dev->position), static_cast<double>(dev->target));
+    } else if (!effective_is_stopped(*dev) && detail::known_device_reports_motion_through_status(*dev)) {
+      // The device was last seen (or commanded) moving and no report has followed; with no poll left
+      // the cover would show movement for good. Position and target stay as last reported.
+      if (dev->position == UNKNOWN_POSITION) {
+        ESP_LOGI(detail::TAG, "Device %s: no status report since its move; shown at rest at an unknown position",
+                 ended->c_str());
+      } else {
+        ESP_LOGI(detail::TAG, "Device %s: no status report since its move; shown at rest at %.0f%%", ended->c_str(),
+                 static_cast<double>(dev->position));
+      }
+      dev->optimistic.clear_position();
+      // A resting device needs the wake-up preamble again, so the next request must not assume the
+      // device is still awake from the movement.
+      clear_moving_evidence(*dev);
+    } else {
+      continue;
+    }
     dev->is_stopped = true;
-    ESP_LOGD(detail::TAG, "Device %s: no poll left to confirm its stop at %.2f%%, target %.2f%%: taken as at rest",
-             ended->c_str(), static_cast<double>(dev->position), static_cast<double>(dev->target));
     detail::log_status_update(*ended, *dev);
     this->notify_device_update_(*ended);
   }
@@ -402,8 +421,10 @@ void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id,
   uint8_t node_id[NODE_ID_SIZE];
   if (!hex_to_bytes(device_id, node_id, NODE_ID_SIZE))
     return;  // malformed device_id: every caller passes one already validated by the registry
-  this->set_timeout(decisions::remote_poll_timer_id(node_id), delay_ms,
-                    [this, device_id]() { this->queue_request_device_status(device_id); });
+  this->set_timeout(decisions::remote_poll_timer_id(node_id), delay_ms, [this, device_id]() {
+    this->poll_policy_.on_remote_poll_ran(device_id);
+    this->queue_request_device_status(device_id);
+  });
 }
 
 void IOHomeControlComponent::schedule_heating_poll_(const std::string &device_id, uint32_t delay_ms) {
@@ -421,11 +442,67 @@ void IOHomeControlComponent::schedule_device_polls_(const std::vector<std::strin
   }
 }
 
-void IOHomeControlComponent::schedule_linked_remote_polls_(const std::string &remote_id, uint32_t delay_ms) {
-  const std::vector<std::string> *linked = this->registry_.linked_devices(remote_id);
-  if (linked == nullptr)
+void IOHomeControlComponent::act_on_foreign_frame_(const std::string &device_id, ForeignFrameKind kind,
+                                                   const std::string &controller, uint8_t cmd) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr)
     return;
-  this->schedule_device_polls_(*linked, delay_ms);
+  const uint32_t now = millis();
+  const char *what = kind == ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER ? "challenge" : command_name(cmd);
+  switch (this->poll_policy_.on_foreign_frame(device_id, kind, controller, cmd, now, dev->last_status)) {
+    case ForeignAction::ARM:
+      ESP_LOGD(detail::TAG, "rx remote_activity device=%s controller=%s %s(0x%02X): scheduling status poll",
+               device_id.c_str(), controller.c_str(), what, cmd);
+      this->begin_status_poll_tracking_(device_id, 0);
+      this->schedule_status_poll_(device_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+      break;
+    case ForeignAction::PUSH_PENDING:
+      ESP_LOGD(detail::TAG, "rx remote_activity device=%s controller=%s %s(0x%02X): poll pending, pushed out",
+               device_id.c_str(), controller.c_str(), what, cmd);
+      this->schedule_status_poll_(device_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+      break;
+    case ForeignAction::IGNORE:
+      ESP_LOGD(detail::TAG, "rx remote_activity device=%s controller=%s %s(0x%02X): %s, no poll", device_id.c_str(),
+               controller.c_str(), what, cmd,
+               kind == ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER
+                   ? "answers a heard read"
+                   : "a read, and the device was read in the last 10 min");
+      break;
+  }
+}
+
+void IOHomeControlComponent::note_foreign_challenge_(const IoFrame &frame) {
+  // A registered device challenging another controller: a write whose request frame was missed
+  // looks exactly like this, so the policy decides whether it warrants a poll.
+  if (frame.cmd != CMD_CHALLENGE_REQ || memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0)
+    return;
+  const std::string challenger = node_id_to_string(frame.src);
+  if (this->get_device(challenger) == nullptr)
+    return;
+  this->act_on_foreign_frame_(challenger, ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER, node_id_to_string(frame.dst),
+                              frame.cmd);
+}
+
+bool IOHomeControlComponent::act_on_overheard_request_(const IoFrame &frame) {
+  // Another controller's frame to a registered device (e.g. a gateway commanding a shutter we also
+  // control). Our own frames are never foreign.
+  const std::string dst_id = node_id_to_string(frame.dst);
+  if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
+    this->act_on_foreign_frame_(dst_id, ForeignFrameKind::REQUEST_TO_DEVICE, node_id_to_string(frame.src), frame.cmd);
+    return true;
+  }
+
+  // A linked 2W controller whose commands target a device at an address we don't have registered.
+  // 1W remotes are handled before this, via the CTRL0_PROTOCOL_1W check.
+  const std::string src_id = node_id_to_string(frame.src);
+  const std::vector<std::string> *linked = this->registry_.linked_devices(src_id);
+  if (linked == nullptr)
+    return false;
+  // Copied: the helper may call back into code that touches the registry.
+  const std::vector<std::string> devices = *linked;
+  for (const auto &device_id : devices)
+    this->act_on_foreign_frame_(device_id, ForeignFrameKind::REQUEST_TO_DEVICE, src_id, frame.cmd);
+  return true;
 }
 
 std::vector<std::string> IOHomeControlComponent::resolve_1w_target_devices_(const OneWayFrameInfo &info,
@@ -672,7 +749,10 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // Exchange-internal frames (0x3C challenge request, 0x3D challenge response) belonging to
   // *another* controller's authenticated exchange carry no extractable status data for a passive
   // observer — skip silently. They remain visible in io_capture (stage=parse_ok).
+  // A registered device's challenge to another controller may still warrant a poll of our own
+  // (note_foreign_challenge_()); its content is never applied.
   if (decisions::is_exchange_internal_command(frame.cmd)) {
+    this->note_foreign_challenge_(frame);
     return;
   }
 
@@ -763,30 +843,10 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     return;
   }
 
-  // Check if this frame targets one of our registered devices (e.g., a physical remote
-  // commanding a shutter we also control). If so, schedule a status poll after 2 seconds
-  // to pick up the resulting position change. The timeout name includes the device ID so
-  // repeated remote activity resets the timer rather than stacking redundant polls.
-  // The 2-second delay gives the device time to complete the exchange and start moving.
-  const std::string dst_id = node_id_to_string(frame.dst);
-  if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
-    ESP_LOGD(detail::TAG, "rx remote_activity src=%s dst=%s cmd=%s(0x%02X), scheduling status poll",
-             node_id_to_string(frame.src).c_str(), dst_id.c_str(), command_name(frame.cmd), frame.cmd);
-    this->begin_status_poll_tracking_(dst_id, 0);
-    this->schedule_status_poll_(dst_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+  // A frame of another controller to one of our registered devices, or from a linked 2W
+  // controller: act_on_overheard_request_() decides whether it warrants a poll of our own.
+  if (this->act_on_overheard_request_(frame))
     return;
-  }
-
-  // Check if the frame source is a linked remote using 2W protocol (e.g., a 2W controller
-  // whose commands target a device at an address we don't have registered). 1W remotes are
-  // already handled above via the CTRL0_PROTOCOL_1W check.
-  const std::string src_id = node_id_to_string(frame.src);
-  if (this->registry_.linked_devices(src_id) != nullptr) {
-    ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s cmd=%s(0x%02X), scheduling status poll",
-             src_id.c_str(), command_name(frame.cmd), frame.cmd);
-    this->schedule_linked_remote_polls_(src_id);
-    return;
-  }
 
   detail::log_frame_issue(this, "rx", "unhandled_cmd", frame, packet.len);
 

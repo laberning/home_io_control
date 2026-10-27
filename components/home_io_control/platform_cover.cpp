@@ -168,16 +168,16 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
     // Convert IO position (0-100) back to HA position (0.0-1.0)
     float ha_pos;
     if (invert) {
-      ha_pos = dev.position / 100.0F;
+      ha_pos = detail::whole_percent(dev.position) / 100.0F;
     } else {
-      ha_pos = 1.0F - (dev.position / 100.0F);
+      ha_pos = 1.0F - (detail::whole_percent(dev.position) / 100.0F);
     }
 
     this->position = ha_pos;
   }
 
   if (this->supports_tilt() && eff_tilt != UNKNOWN_POSITION) {
-    this->tilt = eff_tilt / 100.0F;
+    this->tilt = detail::whole_percent(eff_tilt) / 100.0F;
   }
 
   // Determine movement direction for the HA UI animation

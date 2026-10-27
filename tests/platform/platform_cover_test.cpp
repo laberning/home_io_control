@@ -197,6 +197,52 @@ TEST(PlatformCover, DeviceUpdateToHAPosition) {
   EXPECT_FLOAT_EQ(cover.position, 0.75f) << "with invert=true, IO position 75% should map to HA 0.75";
 }
 
+TEST(PlatformCover, PositionIsPublishedInWholePercent) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice dev{};
+  dev.is_stopped = true;
+  auto publish = [&](float io) {
+    dev.position = io;
+    hub.trigger_device_update("ABC123", dev);
+    return cover.position;
+  };
+
+  cover.set_invert_position(false);
+  EXPECT_EQ(publish(99.68f), 0.0f) << "99.68% closed must read exactly closed (issue #151)";
+  EXPECT_EQ(publish(0.25f), 1.0f);
+  EXPECT_NEAR(publish(60.0f), 0.40f, 1e-6f);
+  EXPECT_NEAR(publish(98.0f), 0.02f, 1e-6f);
+  EXPECT_NEAR(publish(99.4f), 0.01f, 1e-6f);
+
+  cover.set_invert_position(true);
+  EXPECT_EQ(publish(99.68f), 1.0f);
+  EXPECT_EQ(publish(0.3f), 0.0f);
+}
+
+TEST(PlatformCover, TiltIsPublishedInWholePercent) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_device_type(DeviceType::INTERIOR_VENETIAN_BLIND);  // tilt-capable
+  hub.add_device("ABC123");
+  hub.get_device("ABC123")->type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  cover.setup();
+
+  IoDevice dev{};
+  dev.type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  dev.position = 50.0f;
+  dev.tilt = 49.7f;
+  dev.is_stopped = true;
+  hub.trigger_device_update("ABC123", dev);
+  EXPECT_NEAR(cover.tilt, 0.50f, 1e-6f);
+}
+
 TEST(PlatformCover, LearnedInversionAppliesWhenNoOverrideIsConfigured) {
   MockHub hub;
   TestableCover cover;
@@ -692,13 +738,13 @@ TEST(PlatformCover, DeviceAtRestOffItsTargetIsIdle) {
   ASSERT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
 
   IoDevice at_rest{};
-  at_rest.position = 0.23f;
+  at_rest.position = 2.6f;
   at_rest.target = 0.0f;
   at_rest.is_stopped = true;
   hub.trigger_device_update("ABC123", at_rest);
 
   EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
-  EXPECT_NEAR(cover.position, 0.9977f, 1e-4f) << "the reported position is shown, not rounded to the end";
+  EXPECT_NEAR(cover.position, 0.97f, 1e-6f) << "the reported position is shown (whole percent), not rounded to the end";
 }
 
 TEST(PlatformCover, UnknownPositionNotPublished) {
@@ -969,6 +1015,15 @@ TEST(PlatformCoverDiscrete, ItShowsClosedOnlyWhenTheDeviceReportsFullyClosed) {
 
   hub.trigger_device_update("ABC123", discrete_report(50.0f));
   EXPECT_FLOAT_EQ(cover.position, COVER_OPEN) << "a door not reported closed is not closed";
+}
+
+TEST(PlatformCoverDiscrete, ADoorJustShortOfClosedIsNotRoundedToClosed) {
+  MockHub hub;
+  TestableCover cover;
+  make_discrete_cover(hub, cover);
+
+  hub.trigger_device_update("ABC123", discrete_report(99.68f));
+  EXPECT_FLOAT_EQ(cover.position, COVER_OPEN) << "only an exact closed report shows closed on an open/close-only cover";
 }
 
 TEST(PlatformCoverDiscrete, AnInvertedDiscreteCoverIsClosedAtIoZero) {

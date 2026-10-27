@@ -48,6 +48,15 @@ inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
 /// @return Rounded 0-100 percent.
 inline uint8_t round_percent(float fraction) { return static_cast<uint8_t>(std::lround(fraction * 100.0F)); }
 
+/// @brief Round an IO percent (0-100) to a whole number, for publishing to HA.
+///
+/// HA shows `round(position * 100)` but calls a cover closed only at exactly 0.0, so a cover resting
+/// at 99.68 % closed would show "0 %" and "open" at once (issue #151). Publishing whole percent
+/// keeps the displayed number and the open/closed state in agreement.
+/// @param io_percent IO percent in [0.0, 100.0].
+/// @return The same percent rounded to the nearest whole number.
+inline float whole_percent(float io_percent) { return std::round(io_percent); }
+
 // ============================================================================
 // Last-command record rendering
 // ============================================================================

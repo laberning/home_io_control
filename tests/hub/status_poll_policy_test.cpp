@@ -6,6 +6,8 @@
 
 #include "status_poll_policy.h"
 
+#include "proto_constants.h"
+
 #include <gtest/gtest.h>
 
 #include <optional>
@@ -505,4 +507,131 @@ TEST(StatusPollPolicy, PopEndedDeviceListsADeviceOnce) {
 
   EXPECT_EQ(policy.pop_ended_device(), std::optional<std::string>("DEV"));
   EXPECT_EQ(policy.pop_ended_device(), std::nullopt);
+}
+
+// ============================================================================
+// Overheard foreign traffic
+// ============================================================================
+
+namespace {
+constexpr ForeignFrameKind REQ = ForeignFrameKind::REQUEST_TO_DEVICE;
+constexpr ForeignFrameKind CHAL = ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER;
+constexpr uint8_t READ_CMD = 0x03;  // any non-write command
+}  // namespace
+
+TEST(StatusPollPolicyForeign, WriteArms) {
+  StatusPollPolicy p;
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", CMD_EXECUTE, T0, T0), ForeignAction::ARM);
+  p.on_remote_poll_ran("DEV");
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", CMD_ACTIVATE_MODE, T0 + 5000, T0), ForeignAction::ARM);
+  p.on_remote_poll_ran("DEV");
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", CMD_WRITE_PRIVATE, T0 + 10000, T0), ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, ReadArmsFirstTimeThenNotWithinResyncThenAgain) {
+  StatusPollPolicy p;
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0, 0), ForeignAction::ARM) << "first read polls";
+  p.on_remote_poll_ran("DEV");
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0 + FOREIGN_READ_RESYNC_MS - 1, 0), ForeignAction::IGNORE);
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0 + FOREIGN_READ_RESYNC_MS, 0), ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, ReadArmsRightAfterBoot) {
+  StatusPollPolicy p;
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, 0, 0), ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, RecentAuthenticatedStatusSuppressesRead) {
+  StatusPollPolicy p;
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0, T0 - 1000), ForeignAction::IGNORE);
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0, T0 - FOREIGN_READ_RESYNC_MS), ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, WriteOrChallengeArmedPollDoesNotStampTheReadAttempt) {
+  StatusPollPolicy p;
+  ASSERT_EQ(p.on_foreign_frame("DEV", REQ, "A", CMD_EXECUTE, T0, 0), ForeignAction::ARM);
+  p.on_remote_poll_ran("DEV");
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0 + 5000, 0), ForeignAction::ARM) << "no read stamp yet";
+}
+
+TEST(StatusPollPolicyForeign, ChallengeAfterHeardReadWithinWindowIsIgnored) {
+  StatusPollPolicy p;
+  p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0, T0);  // suppressed read, still recorded
+  EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "A", CMD_CHALLENGE_REQ, T0 + 3, T0), ForeignAction::IGNORE);
+}
+
+TEST(StatusPollPolicyForeign, ChallengeAfterHeardWriteArms) {
+  StatusPollPolicy p;
+  p.on_foreign_frame("DEV", REQ, "A", CMD_EXECUTE, T0, T0);
+  p.on_remote_poll_ran("DEV");
+  EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "A", CMD_CHALLENGE_REQ, T0 + 3, T0), ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, ChallengeWithNoHeardRequestArms) {
+  StatusPollPolicy p;
+  EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "A", CMD_CHALLENGE_REQ, T0, T0), ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, ChallengeAfterAnOlderReadArms) {
+  StatusPollPolicy p;
+  p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0, T0);
+  EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "A", CMD_CHALLENGE_REQ, T0 + FOREIGN_CHALLENGE_AFTER_REQUEST_MS + 1, T0),
+            ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, ReadFromAnotherControllerDoesNotSuppressTheChallenge) {
+  StatusPollPolicy p;
+  p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0, T0);
+  EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "B", CMD_CHALLENGE_REQ, T0 + 3, T0), ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, ChallengeDoesNotUpdateTheRequestRecord) {
+  StatusPollPolicy p;
+  p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0, T0);
+  p.on_foreign_frame("DEV", CHAL, "B", CMD_CHALLENGE_REQ, T0 + 3, T0);  // arms
+  p.on_remote_poll_ran("DEV");
+  EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "A", CMD_CHALLENGE_REQ, T0 + 50, T0), ForeignAction::IGNORE)
+      << "A's read is still the last request";
+}
+
+TEST(StatusPollPolicyForeign, PendingPushesOnAnyFrame) {
+  StatusPollPolicy p;
+  ASSERT_EQ(p.on_foreign_frame("DEV", REQ, "A", CMD_EXECUTE, T0, T0), ForeignAction::ARM);
+  EXPECT_TRUE(p.is_remote_poll_pending("DEV", T0 + 100));
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0 + 1000, T0), ForeignAction::PUSH_PENDING);
+  EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "A", CMD_CHALLENGE_REQ, T0 + 2500, T0), ForeignAction::PUSH_PENDING)
+      << "the first push moved the due time out to T0+3000";
+  p.on_remote_poll_ran("DEV");
+  EXPECT_FALSE(p.is_remote_poll_pending("DEV", T0 + 2600));
+}
+
+TEST(StatusPollPolicyForeign, PendingExpiresByItselfWhenTheRanSignalIsLost) {
+  StatusPollPolicy p;
+  ASSERT_EQ(p.on_foreign_frame("DEV", REQ, "A", CMD_EXECUTE, T0, T0), ForeignAction::ARM);
+  const uint32_t due = T0 + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS;
+  EXPECT_TRUE(p.is_remote_poll_pending("DEV", due + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS));
+  EXPECT_FALSE(p.is_remote_poll_pending("DEV", due + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS + 1));
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", CMD_EXECUTE, due + 10000, T0), ForeignAction::ARM);
+}
+
+TEST(StatusPollPolicyForeign, SurvivesTrackingLifecycle) {
+  StatusPollPolicy p;
+  ASSERT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0, 0), ForeignAction::ARM);
+  p.on_remote_poll_ran("DEV");
+  p.begin_tracking("DEV", 0, T0 + 10);
+  p.clear("DEV");
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, T0 + 20, 0), ForeignAction::IGNORE)
+      << "the read stamp is not reset by tracking";
+}
+
+TEST(StatusPollPolicyForeign, MillisWrapAround) {
+  StatusPollPolicy p;
+  const uint32_t before_wrap = 0xFFFFFFFFu - 50;
+  ASSERT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, before_wrap, 0), ForeignAction::ARM);
+  EXPECT_TRUE(p.is_remote_poll_pending("DEV", before_wrap + 100)) << "due time wraps";
+  p.on_remote_poll_ran("DEV");
+  EXPECT_EQ(p.on_foreign_frame("DEV", REQ, "A", READ_CMD, before_wrap + 1000, 0), ForeignAction::IGNORE)
+      << "1 s after, across the wrap";
+  EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "A", CMD_CHALLENGE_REQ, before_wrap + 1000 + 50, 0), ForeignAction::IGNORE)
+      << "challenge 50 ms after a read, across the wrap";
 }

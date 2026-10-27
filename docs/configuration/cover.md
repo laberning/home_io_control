@@ -251,7 +251,13 @@ interior venetian blind keeps its tilt slider. No two-way device of either kind 
   report "stopped" a fraction of a percent short of where they were sent, for example a VELUX SSL
   at an end stop ([issue #151](https://github.com/laberning/home_io_control/issues/151)). The hub
   polls once more, and when the device reports the same place again, the cover shows idle at the
-  position the device reports. The position is never rounded to the target.
+  position the device reports. Position and tilt are published in whole percent, as Home Assistant
+  shows them, so a cover that rests at 99.7 % closed shows closed. A cover stopped elsewhere keeps
+  its position; it is never rounded to the target.
+- **A cover whose device goes quiet after a move goes idle once the hub stops polling.** If the
+  device never reports again after a move, the cover shows idle at the last position it reported
+  when the hub gives up polling, about 7 to 8 minutes after the move. The hub retries a missed poll
+  at growing gaps and stops once the next gap would end more than 10 minutes after the move.
 
 A lambda that respects the position contract:
 
@@ -269,6 +275,7 @@ lambda: |-
 
 - The favorite command is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow, because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh. The hub polls only while a command or overheard remote activity suggests the device is still moving, and stops once the device reports a stable state or the bounded polling window expires. Many devices report their remaining travel time in seconds in their status replies, and the next poll comes after **min(remaining time + 1 s, configured interval)**, so the interval is a ceiling: a device can shorten it but never stretch it. Without `status_poll_interval`, the ceiling is 3 s. When a device that counts down reports 0 s left, the next poll comes about 1 s later, so the resting position shows up promptly. The remaining time and the chosen delay are visible at debug log level.
+- The hub reads a device itself after another controller moved or changed it, and at most every 10 minutes after another controller only read it. A status read changes nothing on the device; a write, or a challenge that follows no heard read, does. A gateway that polls its devices in the background therefore costs the device one extra read per 10 minutes at most, and still lets the cover pick up a change the hub did not hear, such as a rain closure or a button on the motor.
 - After a STOP the settle poll is capped at about 1 s regardless of interval or hint, so Home Assistant gets the resting position quickly even if the device was mid-travel.
 - While the cover is moving, the hub does not back off when a poll gets no answer: the next poll comes at the usual cadence, at most 5 s later. Only a third miss in a row is retried after about 5 s, and after longer delays if it keeps failing. A poll of a cover at rest backs off from the first miss. A motor can drop its reply at the moment it stops at the end of its travel, so the final position can show up a poll later than expected (issue #178).
 - Unsolicited `0x71` device status updates are always applied to the entity state and extend settle polling while the device is still moving.

@@ -910,3 +910,10 @@ TEST(Decisions, StoppedReportOfADeviceWithoutMotionIsStopped) {
   EXPECT_EQ(decisions::classify_stopped_report(in), decisions::StoppedReport::STOPPED)
       << "a heater's setpoint/reading gap is no movement";
 }
+
+TEST(Decisions, OverheardCommandWritesOnlyForTheWriteCommands) {
+  for (int cmd = 0; cmd <= 0xFF; ++cmd) {
+    const bool expected = cmd == CMD_EXECUTE || cmd == CMD_ACTIVATE_MODE || cmd == CMD_WRITE_PRIVATE;
+    EXPECT_EQ(decisions::overheard_command_writes(static_cast<uint8_t>(cmd)), expected) << "cmd " << cmd;
+  }
+}

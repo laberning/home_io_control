@@ -4,6 +4,8 @@
 
 #include "status_poll_policy.h"
 
+#include "hub_decisions.h"
+
 #include <algorithm>
 #include <array>
 
@@ -149,6 +151,72 @@ uint8_t StatusPollPolicy::get_auth_poll_failures(const std::string &device_id) c
 uint8_t StatusPollPolicy::get_moving_poll_misses(const std::string &device_id) const {
   auto it = tracking_.find(device_id);
   return (it != tracking_.end()) ? it->second.moving_poll_misses : 0;
+}
+
+namespace {
+/// Stamp value for "now": millis() == 0 would read as "never", so it is nudged to 1.
+uint32_t stamp(uint32_t now) { return now == 0 ? 1 : now; }
+/// True when @p t is 0 (never) or at least @p span_ms old (wrap-safe).
+bool older_than(uint32_t now, uint32_t t, uint32_t span_ms) { return t == 0 || now - t >= span_ms; }
+}  // namespace
+
+bool StatusPollPolicy::is_remote_poll_pending(const std::string &device_id, uint32_t now) const {
+  auto it = foreign_.find(device_id);
+  if (it == foreign_.end() || it->second.pending_due_ms == 0)
+    return false;
+  // Wrap-safe: before the due time `now - due` is a huge unsigned value (a negative distance), so
+  // it is still pending; more than the delay past the due time means the "ran" signal was lost.
+  const uint32_t since_due = now - it->second.pending_due_ms;
+  return since_due > INT32_MAX || since_due <= REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS;
+}
+
+void StatusPollPolicy::on_remote_poll_ran(const std::string &device_id) {
+  auto it = foreign_.find(device_id);
+  if (it != foreign_.end())
+    it->second.pending_due_ms = 0;
+}
+
+ForeignAction StatusPollPolicy::on_foreign_frame(const std::string &device_id, ForeignFrameKind kind,
+                                                 const std::string &controller, uint8_t cmd, uint32_t now,
+                                                 uint32_t last_status_ms) {
+  ForeignTraffic &f = foreign_[device_id];
+  const bool pending = is_remote_poll_pending(device_id, now);
+  const ForeignTraffic before = f;
+
+  if (kind == ForeignFrameKind::REQUEST_TO_DEVICE) {
+    f.last_request_cmd = cmd;
+    f.last_request_from = controller;
+    f.last_request_ms = stamp(now);
+  }
+
+  if (pending) {
+    f.pending_due_ms = stamp(now + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+    return ForeignAction::PUSH_PENDING;
+  }
+
+  bool arm;
+  if (kind == ForeignFrameKind::REQUEST_TO_DEVICE) {
+    if (decisions::overheard_command_writes(cmd)) {
+      arm = true;
+    } else {
+      arm = older_than(now, last_status_ms, FOREIGN_READ_RESYNC_MS) &&
+            older_than(now, f.last_read_poll_ms, FOREIGN_READ_RESYNC_MS);
+      if (arm)
+        f.last_read_poll_ms = stamp(now);
+    }
+  } else {
+    // A challenge answers the request just before it: ignore it only when that request, from this
+    // same controller, was a read.
+    const bool follows_read = before.last_request_ms != 0 && before.last_request_from == controller &&
+                              now - before.last_request_ms <= FOREIGN_CHALLENGE_AFTER_REQUEST_MS &&
+                              !decisions::overheard_command_writes(before.last_request_cmd);
+    arm = !follows_read;
+  }
+
+  if (!arm)
+    return ForeignAction::IGNORE;
+  f.pending_due_ms = stamp(now + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+  return ForeignAction::ARM;
 }
 
 std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {

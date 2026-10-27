@@ -5,10 +5,12 @@
 #include "esphome/core/application.h"
 #include "esphome/core/component.h"
 
+#include "corpus_test_helpers.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
 #include <cstring>
+#include <map>
 
 using namespace esphome::home_io_control;
 using test::encode_device_metadata;
@@ -261,20 +263,126 @@ TEST(HubStatus, SettlingDeviceWhoseConfirmingPollFallsPastTheWindowIsAtRest) {
   EXPECT_TRUE(dev->is_stopped);
 }
 
-TEST(HubStatus, EndedTrackingLeavesAMovingDeviceAlone) {
-  // Only a settling device has a "stopped" of its own to fall back on; a device last seen moving is
-  // not this function's business.
+// Runs the tracking window out with a failed poll and settles what ended.
+static void end_tracking_window(TestableHubComponent &comp, const std::string &id) {
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+  ASSERT_EQ(comp.poll_policy_.on_exchange_failed(id, false, esphome::millis()), 0u);
+  comp.settle_ended_status_tracking_();
+}
+
+TEST(HubStatus, EndedTrackingTakesAMovingDeviceAsAtRest) {
+  // The device last reported "moving" and every poll since failed: with no poll left the cover would
+  // show movement for good, so it is shown at rest at the last reported position.
   esphome::test_clock::ManualClock clock(50000);
   TestableHubComponent comp;
   comp.add_device("ABC123");
   comp.begin_status_poll_tracking_("ABC123", 0);
   comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  const float position = dev->position;
+  const float target = dev->target;
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
 
-  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS);
-  ASSERT_EQ(comp.poll_policy_.on_exchange_failed("ABC123", false, esphome::millis()), 0u);
-  comp.settle_ended_status_tracking_();
+  end_tracking_window(comp, "ABC123");
 
-  EXPECT_FALSE(comp.get_device("ABC123")->is_stopped);
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FLOAT_EQ(dev->position, position) << "the last reported position stands";
+  EXPECT_FLOAT_EQ(dev->target, target);
+  EXPECT_EQ(notified, 1) << "the cover is told, so it goes idle";
+}
+
+TEST(HubStatus, EndedTrackingTakesAHubCommandedMoveAsAtRest) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = true;
+  dev->optimistic.target = 0.0f;
+  dev->optimistic.motion = OptimisticState::Motion::MOVING;
+  ASSERT_FALSE(effective_is_stopped(*dev));
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "the prediction is withdrawn";
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::NONE);
+  EXPECT_EQ(notified, 1);
+}
+
+TEST(HubStatus, EndedTrackingClearsTheMovingEvidenceSoTheNextRequestWakesTheDevice) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+  ASSERT_NE(dev->last_moving_evidence_ms, 0u);
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a resting device is read as asleep again";
+}
+
+TEST(HubStatus, EndedTrackingLeavesADeviceThatReportedStoppedAlone) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0xC800));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(dev->is_stopped);
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_EQ(notified, 0) << "nothing changed, nobody is told";
+}
+
+TEST(HubStatus, EndedTrackingLeavesAHeaterAlone) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::HEAT_PUMP;
+  dev->is_stopped = false;
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_FALSE(dev->is_stopped);
+  EXPECT_EQ(notified, 0);
+}
+
+TEST(HubStatus, EndedTrackingLeavesAHeatLevelHeaterAlone) {
+  // An exterior heater takes its heat level in the position field but never moves.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::EXTERIOR_HEATING;
+  dev->is_stopped = false;
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_FALSE(dev->is_stopped);
+  EXPECT_EQ(notified, 0);
 }
 
 TEST(HubStatus, StoppedOffTargetWithoutAFollowUpPollIsAtRest) {
@@ -2032,4 +2140,208 @@ TEST(HubStatus, StatusLineNamesAMissingLevelOnlyWhenBatteryEntitiesAreDeclared) 
 
   dev.battery_entities = true;
   EXPECT_EQ(detail::describe_battery(dev), " battery=not_reported");
+}
+
+// ============================================================================
+// Overheard traffic from other controllers: when the hub polls (hub_status.cpp)
+// ============================================================================
+
+namespace {
+
+constexpr uint32_t FOREIGN_T0 = 50000;
+constexpr uint8_t FOREIGN_REMOTE[3] = {0x43, 0x44, 0xE3};  ///< Another controller.
+constexpr uint8_t FOREIGN_DEVICE[3] = {0x05, 0x4E, 0x17};  ///< The registered device "054E17".
+
+/// A hub with one registered device on a manual clock, fed frames of another controller.
+struct ForeignTrafficRig {
+  esphome::test_clock::ManualClock clock{FOREIGN_T0};
+  RxTestableComponent comp;
+  MockRadio radio;
+
+  ForeignTrafficRig() { setup_rx_test_component(comp, radio); }
+
+  /// Feed one frame `from` -> `to` carrying `cmd` (a 2W start frame).
+  void hear(const uint8_t *from, const uint8_t *to, uint8_t cmd) {
+    IoFrame f{};
+    init_frame(f, true, true, false, false);
+    set_src(f, from);
+    set_dst(f, to);
+    set_cmd(f, cmd);
+    comp.process_received_packet_(make_rx_packet(f));
+  }
+  void controller_sends(uint8_t cmd) { hear(FOREIGN_REMOTE, FOREIGN_DEVICE, cmd); }
+  void device_challenges(const uint8_t *controller) { hear(FOREIGN_DEVICE, controller, CMD_CHALLENGE_REQ); }
+
+  /// Move time to `abs_ms`, firing due timers, and return how many status polls were queued since
+  /// the last call.
+  size_t polls_until(uint32_t abs_ms) {
+    esphome::test_scheduler::run_until(abs_ms);
+    size_t n = 0;
+    while (auto op = comp.op_queue_.pop()) {
+      if (op->type == PendingOperationType::REQUEST_STATUS)
+        n++;
+    }
+    return n;
+  }
+};
+
+}  // namespace
+
+TEST(HubStatusForeign, AReadPollsOnceThenNotForTenMinutes) {
+  ForeignTrafficRig r;
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2000), 1u) << "the first read after boot polls";
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 60000), 0u);
+  esphome::test_clock::set_ms(FOREIGN_T0 + FOREIGN_READ_RESYNC_MS - 1);
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + FOREIGN_READ_RESYNC_MS + 5000), 0u) << "still inside the 10 minutes";
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + FOREIGN_READ_RESYNC_MS + 10000), 1u) << "10 minutes after the first poll";
+}
+
+TEST(HubStatusForeign, AnExecutePollsTwoSecondsAfterTheLastFrame) {
+  ForeignTrafficRig r;
+  r.controller_sends(CMD_EXECUTE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 1000), 0u);
+  r.controller_sends(CMD_EXECUTE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2999), 0u) << "the second frame moved the poll out";
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 3000), 1u);
+  // A write always polls, even right after a poll and with a fresh status.
+  r.comp.get_device("054E17")->last_status = esphome::millis();
+  r.controller_sends(CMD_EXECUTE);
+  EXPECT_EQ(r.polls_until(esphome::millis() + 2000), 1u);
+}
+
+TEST(HubStatusForeign, AnExecuteThenTwoReadsPollsAfterTheLastReadAndRestartsTrackingOnce) {
+  ForeignTrafficRig r;
+  r.controller_sends(CMD_EXECUTE);
+  const uint32_t deadline = r.comp.poll_policy_.get_poll_deadline("054E17");
+  ASSERT_NE(deadline, 0u);
+  esphome::test_scheduler::run_until(FOREIGN_T0 + 500);
+  r.controller_sends(CMD_PRIVATE);
+  esphome::test_scheduler::run_until(FOREIGN_T0 + 1000);
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.comp.poll_policy_.get_poll_deadline("054E17"), deadline) << "the reads did not restart tracking";
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2999), 0u);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 3000), 1u) << "2 s after the last read, one poll";
+}
+
+TEST(HubStatusForeign, AMissedExecuteWhoseChallengeIsHeardPolls) {
+  ForeignTrafficRig r;
+  r.comp.get_device("054E17")->last_status = esphome::millis();  // a read alone would not poll now
+  r.device_challenges(FOREIGN_REMOTE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2000), 1u);
+}
+
+TEST(HubStatusForeign, AReadFollowedByItsChallengeDoesNotPoll) {
+  ForeignTrafficRig r;
+  r.comp.get_device("054E17")->last_status = esphome::millis();
+  r.controller_sends(CMD_PRIVATE);
+  esphome::test_clock::advance_ms(3);
+  r.device_challenges(FOREIGN_REMOTE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 5000), 0u);
+  EXPECT_EQ(r.comp.poll_policy_.get_poll_deadline("054E17"), 0u) << "no tracking was begun";
+}
+
+TEST(HubStatusForeign, AChallengeAddressedToThisHubChangesNothing) {
+  ForeignTrafficRig r;
+  const uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  r.device_challenges(own);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 5000), 0u);
+  EXPECT_EQ(r.comp.poll_policy_.get_poll_deadline("054E17"), 0u);
+}
+
+TEST(HubStatusForeign, AnIgnoredReadLeavesTrackingAndFailureCountsAlone) {
+  ForeignTrafficRig r;
+  r.comp.poll_policy_.begin_tracking("054E17", 0, esphome::millis());
+  ASSERT_GT(r.comp.poll_policy_.on_exchange_failed("054E17", false, esphome::millis()), 0u);
+  r.comp.get_device("054E17")->last_status = esphome::millis();
+  const uint32_t deadline = r.comp.poll_policy_.get_poll_deadline("054E17");
+  const uint32_t next = r.comp.poll_policy_.get_next_update("054E17");
+  esphome::test_clock::advance_ms(1000);
+
+  r.controller_sends(CMD_PRIVATE);
+
+  EXPECT_EQ(r.comp.poll_policy_.get_poll_deadline("054E17"), deadline);
+  EXPECT_EQ(r.comp.poll_policy_.get_next_update("054E17"), next);
+  EXPECT_EQ(r.comp.poll_policy_.get_status_poll_failures("054E17"), 1u);
+  EXPECT_TRUE(r.comp.last_timeout_name_.empty() || r.comp.op_queue_.empty());
+}
+
+TEST(HubStatusForeign, ALinked2WControllerFollowsTheSameRule) {
+  ForeignTrafficRig r;
+  const uint8_t linked[3] = {0x9D, 0x60, 0x85};
+  const uint8_t elsewhere[3] = {0xAA, 0xBB, 0xCC};  // an address this hub has not registered
+  r.comp.add_linked_remote("9D6085", "054E17");
+  r.hear(linked, elsewhere, CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2000), 1u) << "the first read polls";
+  r.hear(linked, elsewhere, CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 6000), 0u) << "a second read inside 10 minutes does not";
+  r.hear(linked, elsewhere, CMD_EXECUTE);
+  EXPECT_EQ(r.polls_until(esphome::millis() + 2000), 1u) << "a write does";
+}
+
+TEST(HubStatusForeign, KlfStyleRoundRobinPollsEachDeviceOncePerTenMinutes) {
+  // The recorded gateway reads nine devices in turn for 24 minutes. Each device is polled by this
+  // hub at most once per 10 minutes, not once per read.
+  const auto *capture = corpus_test::capture_by_id("velux_klf200_statuspoll_roundrobin_868_sx1262");
+  ASSERT_NE(capture, nullptr);
+  esphome::test_clock::ManualClock clock{FOREIGN_T0};
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  const uint8_t hub_node[3] = {0x11, 0x22, 0x33};  // the capture's gateway is C0FFEE
+  std::memcpy(comp.node_id_, hub_node, 3);
+
+  struct Seen {
+    uint32_t first_ms{0};
+    uint32_t last_ms{0};
+    size_t reads{0};
+    size_t polls{0};
+  };
+  std::map<std::string, Seen> seen;
+  size_t reads = 0;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const corpus::CorpusFrame &cf = capture->frames[i];
+    IoFrame frame = corpus_test::parse_capture_frame(cf);
+    if (frame.cmd != CMD_PRIVATE)
+      continue;
+    const std::string device = node_id_to_string(frame.dst);
+    if (comp.get_device(device) == nullptr)
+      comp.add_device(device);
+    const uint32_t at = FOREIGN_T0 + cf.t_ms;
+    esphome::test_scheduler::run_until(at);
+    while (auto op = comp.op_queue_.pop()) {
+      if (op->type == PendingOperationType::REQUEST_STATUS)
+        seen[op->device_id].polls++;
+    }
+    RadioRxPacket pkt{};
+    pkt.len = corpus_test::wire_len(cf);
+    std::memcpy(pkt.data, cf.bytes, pkt.len);
+    pkt.freq_hz = cf.freq_hz;
+    comp.process_received_packet_(pkt);
+    Seen &s = seen[device];
+    if (s.reads == 0)
+      s.first_ms = cf.t_ms;
+    s.last_ms = cf.t_ms;
+    s.reads++;
+    reads++;
+  }
+  esphome::test_scheduler::run_until(FOREIGN_T0 + 25 * 60 * 1000);
+  while (auto op = comp.op_queue_.pop()) {
+    if (op->type == PendingOperationType::REQUEST_STATUS)
+      seen[op->device_id].polls++;
+  }
+
+  ASSERT_GE(seen.size(), 9u);
+  size_t polls = 0;
+  for (const auto &entry : seen) {
+    const Seen &s = entry.second;
+    EXPECT_GE(s.polls, 1u) << entry.first << " is polled after its first read";
+    EXPECT_LE(s.polls, (s.last_ms - s.first_ms) / FOREIGN_READ_RESYNC_MS + 1u)
+        << entry.first << ": at most one poll per 10 minutes";
+    polls += s.polls;
+  }
+  EXPECT_LT(polls * 5, reads) << "far fewer polls than reads";
 }

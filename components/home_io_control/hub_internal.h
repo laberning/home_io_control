@@ -70,6 +70,17 @@ inline bool known_device_supports_status_requests(const IoDevice &dev) {
          device_supports_climate_control(dev.type, dev.subtype);
 }
 
+/// @brief Does the device report its movement through status replies?
+/// Covers, lights, switches and locks do: their 0x04 reply says whether they are travelling. A
+/// heater never moves (device_has_no_motion()), whether it takes a heat level in the position field
+/// or is driven over its register protocol. A device not yet typed passes.
+/// @param dev IoDevice to check.
+/// @return true if the device takes execute positions and can move, or is UNKNOWN.
+inline bool known_device_reports_motion_through_status(const IoDevice &dev) {
+  return dev.type == DeviceType::UNKNOWN ||
+         (device_takes_execute_position(dev.type) && !device_has_no_motion(dev.type, dev.subtype));
+}
+
 /// @brief Can this device accept an execute (position) command?
 /// The device's entity class must have an EXECUTE position path (cover, light, switch, lock, heater
 /// level; a device not yet typed passes), and the main parameter the position maps to must be one
