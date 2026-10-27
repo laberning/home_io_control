@@ -58,7 +58,7 @@ TEST(PlatformFan, FullRangeFanHasAHundredSpeedSteps) {
 
 TEST(PlatformFan, TheMainParameterOnlyFrameDoesNotTakeTheLevelAway) {
   // 21/0 is sent the main parameter only like 21/58, but it still has a heat level to set.
-  ASSERT_TRUE(device_takes_main_parameter_only(DeviceType::EXTERIOR_HEATING, 0));
+  ASSERT_TRUE(has_feature(device_features(DeviceType::EXTERIOR_HEATING, 0), device_feature::MAIN_PARAMETER_ONLY));
   MockHubFan hub;
   EXPECT_TRUE(make_fan(hub, 0).get_traits().supports_speed());
 }

@@ -638,6 +638,27 @@ TEST(ProtoCommands, CreateExecuteCommandFavorite) {
   EXPECT_EQ(frame.data[5], 0x00);
 }
 
+// Experimental named positions (no public source): the bytes are POS_FAVORITE plus a modifier.
+TEST(ProtoCommands, CreateExecuteCommandPartialAndPedestrianUseTheirModifiers) {
+  IoFrame partial{};
+  ASSERT_TRUE(create_execute_command(partial, test::OWN_ID, test::DST_ID, false, CoverCommand::PARTIAL));
+  EXPECT_EQ(partial.cmd, CMD_EXECUTE);
+  EXPECT_EQ(partial.data_len, 6);
+  EXPECT_EQ(std::vector<uint8_t>(partial.data, partial.data + 6),
+            (std::vector<uint8_t>{0x01, 0x63, 0xD8, 0x09, 0x00, 0x00}));
+
+  IoFrame pedestrian{};
+  ASSERT_TRUE(create_execute_command(pedestrian, test::OWN_ID, test::DST_ID, false, CoverCommand::PEDESTRIAN));
+  EXPECT_EQ(pedestrian.data_len, 6);
+  EXPECT_EQ(std::vector<uint8_t>(pedestrian.data, pedestrian.data + 6),
+            (std::vector<uint8_t>{0x01, 0x63, 0xD8, 0x07, 0x00, 0x00}));
+
+  // The silent profile belongs to the favourite alone; these stay the plain 6-byte form.
+  IoFrame silent{};
+  ASSERT_TRUE(create_execute_command(silent, test::OWN_ID, test::DST_ID, false, CoverCommand::PARTIAL, true));
+  EXPECT_EQ(silent.data_len, 6);
+}
+
 TEST(ProtoCommands, CreateExecuteCommandVent) {
   IoFrame frame{};
   ASSERT_TRUE(create_execute_command(frame, test::OWN_ID, test::DST_ID, true, CoverCommand::VENT))
@@ -709,6 +730,8 @@ TEST(ProtoCommands, CoverCommandNameLookup) {
   EXPECT_STREQ(cover_command_name(CoverCommand::STOP), "STOP");
   EXPECT_STREQ(cover_command_name(CoverCommand::FAVORITE), "FAVORITE");
   EXPECT_STREQ(cover_command_name(CoverCommand::VENT), "VENT");
+  EXPECT_STREQ(cover_command_name(CoverCommand::PARTIAL), "PARTIAL");
+  EXPECT_STREQ(cover_command_name(CoverCommand::PEDESTRIAN), "PEDESTRIAN");
   EXPECT_STREQ(cover_command_name(CoverCommand::FORCE_OPEN), "FORCE_OPEN");
 }
 

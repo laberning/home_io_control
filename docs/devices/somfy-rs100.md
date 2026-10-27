@@ -30,7 +30,6 @@ switch to [key extraction](../key-extraction.md).
 cover:
   - platform: home_io_control
     name: "Terrace Awning"
-    device_class: awning
     io_device_id: "…"
     io_device_type: "vertical_exterior_awning"
     io_subtype: 0

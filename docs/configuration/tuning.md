@@ -153,7 +153,7 @@ your device may differ.
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
 | `io2g4_exchange_start_response_wait_ms` | 2.4 GHz bridge | `60` | 20–400 ms | How long to listen for a reply to a start frame, counted after the request ends. See [2.4 GHz retries](#io2g4_exchange_start_response_wait_ms--io2g4_exchange_retry_gap_ms). |
 | `io2g4_exchange_retry_gap_ms` | 2.4 GHz bridge | `50` | 0–250 ms | Pause between the tries of one command on 2.4 GHz. |
-| `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before a frame is sent without one. |
+| `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before the first frame of an exchange is sent without one. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` / `0x0001BB` / `0x0001BF` | Address the discovery frames are sent to. The last two are lighting-class addresses — see below. |
@@ -419,9 +419,11 @@ wake-up preamble on every try to a `low_power:` device.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 
-Listen-Before-Talk: right before transmitting, the radio measures the channel the frame is about to
-go out on and sends only if it is quieter than the threshold. The hub retries up to *max_retries*
-times, 5 ms apart, then transmits anyway. When the idle receiver is on another channel, the radio
+Listen-Before-Talk: right before transmitting the first frame of an exchange, the radio measures
+the channel the frame is about to go out on and sends only if it is quieter than the threshold.
+The hub retries up to *max_retries* times, 5 ms apart, then transmits anyway. Frames that answer
+within an exchange, such as the challenge response, go out at once without the check: the device
+is waiting for them, and some devices give up after a single 5 ms delay (issue #178). When the idle receiver is on another channel, the radio
 first retunes to the transmit channel and waits about a millisecond for the reading to settle
 ([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). Loosen them when
 transmissions are delayed on a channel that only *looks* busy. The threshold applies to the signal
@@ -434,9 +436,10 @@ pairing noticeably. Raising the threshold (less sensitive) or lowering the retry
 hub transmit through that.
 
 > [!WARNING]
-> **Regulatory note:** the `-90` dBm / ≥5 ms defaults follow the 868 MHz band's listen-before-talk
-> rules. Loosening them is acceptable for a brief experiment but should not be left in a
-> production configuration.
+> **Keep the defaults in a permanent configuration.** The `-90` dBm threshold and the 5 ms back-off
+> keep the hub from starting an exchange over traffic it can hear. A higher threshold or fewer
+> retries make it transmit over other devices on the band, and depending on your country's rules
+> for the 868 MHz band that may not be allowed. Loosen them for a brief experiment only.
 
 ### Pairing protocol — in detail
 

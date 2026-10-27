@@ -372,6 +372,277 @@ def heater_window_companions_are_declared_at_validation_time():
         assert c.CONF_WINDOW_DETECTION_SWITCH_ID not in out, cfg
 
 
+@case()
+def cover_named_position_buttons_follow_the_declared_kind():
+    """A cover gets one companion button per named position its declared kind has, with the entity
+    ids and names Home Assistant already knows; a kind without the bit, a raw type with no row
+    (including the ventilation point, which is not a cover) and a cover with no declared type get none."""
+    from esphome.const import CONF_ID, CONF_NAME
+    from esphome.core import ID
+    from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    def config(device_type=None, subtype=None):
+        cfg = {CONF_ID: ID("living", is_declaration=True), CONF_NAME: "Living"}
+        if device_type is not None:
+            cfg["io_device_type"] = device_type
+        if subtype is not None:
+            cfg["io_subtype"] = subtype
+        return cfg
+
+    def buttons(device_type=None, subtype=None):
+        out = c._inject_companion_ids(config(device_type, subtype))
+        return {key for key, (config_key, *_rest) in c.NAMED_POSITION_BUTTONS.items() if config_key in out}
+
+    types = v.DEVICE_TYPE_OPTIONS
+    assert buttons(types["roller_shutter"]) == {"FAVORITE"}
+    assert buttons(types["window_opener"]) == {"FAVORITE", "VENT"}
+    assert buttons(types["window_opener"], 58) == {"FAVORITE", "VENT"}, "named positions survive subtype 58"
+    assert buttons(types["garage_opener"]) == {"PARTIAL"}, "a garage opener refuses the favourite (issue #163)"
+    assert buttons(types["garage_opener"], 58) == {"PARTIAL"}, "5/58 inherits its family's partial position"
+    assert buttons(types["gate_opener"]) == {"FAVORITE", "PEDESTRIAN"}
+    assert buttons(types["gate_opener"], 58) == {"FAVORITE", "PEDESTRIAN"}, "7/58 inherits its family's buttons"
+    assert buttons(types["swinging_shutter"], 58) == {"FAVORITE"}, "24/58 inherits its family's favourite"
+    assert buttons(types["light"]) == set()
+    assert buttons(types["unknown"]) == set()
+    assert buttons() == set(), "a cover with no declared type gets none"
+    assert buttons(0x14) == set(), "a raw ventilation point is not a cover and has no ventilation button"
+
+    assert set(c.NAMED_POSITION_BUTTONS) == set(v.NAMED_POSITION_FEATURES)
+    for key in c.NAMED_POSITION_BUTTONS:
+        getattr(c.CoverCommand, key)  # every key names a CoverCommand value
+
+    # Home Assistant entity ids and names depend on these.
+    out = c._inject_companion_ids(config(types["window_opener"]))
+    assert out[c.CONF_FAVORITE_BUTTON_ID].id == "living_favorite_button"
+    assert out[c.CONF_VENT_BUTTON_ID].id == "living_vent_button"
+    assert out[c.CONF_FAVORITE_BUTTON_ID].is_declaration
+    assert c.NAMED_POSITION_BUTTONS["FAVORITE"][2] == "Favorite Position"
+    assert c.NAMED_POSITION_BUTTONS["VENT"][2] == "Ventilation Position"
+
+    # The experimental positions: pinned ids and names, disabled until the user enables them.
+    out = c._inject_companion_ids(config(types["garage_opener"]))
+    assert out[c.CONF_PARTIAL_BUTTON_ID].id == "living_partial_button"
+    assert c.CONF_PEDESTRIAN_BUTTON_ID not in out and c.CONF_FAVORITE_BUTTON_ID not in out
+    out = c._inject_companion_ids(config(types["gate_opener"]))
+    assert out[c.CONF_PEDESTRIAN_BUTTON_ID].id == "living_pedestrian_button"
+    assert c.CONF_PARTIAL_BUTTON_ID not in out
+    assert c.NAMED_POSITION_BUTTONS["PARTIAL"][2] == "Partial Position"
+    assert c.NAMED_POSITION_BUTTONS["PEDESTRIAN"][2] == "Pedestrian Position"
+    for key in ("FAVORITE", "VENT"):
+        assert c.NAMED_POSITION_BUTTONS[key][3] is False
+    for key in ("PARTIAL", "PEDESTRIAN"):
+        assert c.NAMED_POSITION_BUTTONS[key][3] is True, "experimental buttons start disabled"
+    assert not buttons(types["roller_shutter"]) & {"PARTIAL", "PEDESTRIAN"}
+
+
+@case()
+def cover_gets_its_kinds_default_device_class():
+    """A declared kind gets its Home Assistant class unless the YAML sets one (even ""); a cover with
+    no declared type, or a kind with no default, gets none. The table is checked against the cover
+    kinds, ESPHome's classes and the table on the cover docs page."""
+    import re
+    from esphome.const import CONF_DEVICE_CLASS
+    from esphome.components.cover import DEVICE_CLASSES
+    from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    types = v.DEVICE_TYPE_OPTIONS
+
+    def classed(device_type=None, **extra):
+        cfg = dict(extra)
+        if device_type is not None:
+            cfg["io_device_type"] = device_type
+        return c._default_device_class(cfg).get(CONF_DEVICE_CLASS)
+
+    assert classed(types["garage_opener"]) == "garage"
+    assert classed(types["garage_opener"], device_class="door") == "door", "an explicit class wins"
+    assert classed(types["garage_opener"], device_class="") == "", "an explicit empty class is kept"
+    assert classed() is None, "no declared type, no class"
+    assert classed(types["bioclimatic_pergola"]) is None
+    assert classed(0x14) is None, "a raw type with no name has no default"
+
+    for kind, device_class in v.DEFAULT_COVER_DEVICE_CLASS.items():
+        assert kind in types, kind
+        assert v.DEVICE_FEATURES.get(kind, 0) & v.FEATURE_LEVELS, f"{kind} is not a cover kind"
+        assert device_class in DEVICE_CLASSES, device_class
+
+    # The docs table is the same mapping, one row per class with the kinds that share it.
+    page = (REPO / "docs" / "configuration" / "cover.md").read_text(encoding="utf-8")
+    section = page.split("## Home Assistant device class", 1)[1].split("\n## ", 1)[0]
+    documented = {}
+    for kinds, device_class in re.findall(r"^\|\s*(`[^|]+`)\s*\|\s*`([a-z]+)`\s*\|$", section, re.M):
+        for kind in re.findall(r"`([a-z_]+)`", kinds):
+            documented[kind] = device_class
+    assert documented == v.DEFAULT_COVER_DEVICE_CLASS, "docs/configuration/cover.md device class table"
+
+
+@case("platform_common.require_feature")
+def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
+    """`silent:` needs a kind that takes a travel-speed parameter; `dimmable: true` needs a light that
+    is not on/off only. A config that declares no kind, or a kind with the feature, passes."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import light as l
+
+    t = v.DEVICE_TYPE_OPTIONS
+
+    def silent(device_type=None, subtype=None):
+        cfg = {c.CONF_SILENT: True}
+        if device_type is not None:
+            cfg["io_device_type"] = t[device_type]
+        if subtype is not None:
+            cfg["io_subtype"] = subtype
+        return cfg
+
+    assert c._require_silent_kind(silent()) == silent(), "no declared kind: nothing says what the device takes"
+    c._require_silent_kind(silent("roller_shutter"))
+    c._require_silent_kind(silent("exterior_venetian_blind"))
+    c._require_silent_kind({"io_device_type": t["garage_opener"]})  # `silent:` not declared at all
+    kinds = (
+        ("interior_venetian_blind", None),
+        ("dual_roller_shutter", None),
+        ("garage_opener", None),
+        ("garage_opener", 58),
+        ("gate_opener", 58),
+        ("swinging_shutter", 58),
+    )
+    for kind in kinds:
+        try:
+            c._require_silent_kind(silent(*kind))
+            raise AssertionError(f"silent was accepted on {kind}")
+        except cv.Invalid as err:
+            assert "remove silent:" in str(err) and "travel-speed" in str(err), str(err)
+
+    def dimmable(device_type, subtype=None, value=True):
+        cfg = {l.CONF_DIMMABLE: value, "io_device_type": t[device_type]}
+        if subtype is not None:
+            cfg["io_subtype"] = subtype
+        return cfg
+
+    l._require_dimmable_kind(dimmable("light"))  # 6/0: `dimmable:` decides, the Izymo dims
+    l._require_dimmable_kind(dimmable("light", 1))
+    l._require_dimmable_kind(dimmable("light", 58, value=False))
+    try:
+        l._require_dimmable_kind(dimmable("light", 58))
+        raise AssertionError("dimmable was accepted on an on/off-only light")
+    except cv.Invalid as err:
+        assert "remove dimmable:" in str(err) and "on/off only" in str(err), str(err)
+
+
+@case()
+def device_features_fall_back_like_the_cpp_lookup():
+    """The Python mirror answers the exact row, else the main-parameter-only variant at subtype 58,
+    else the type's row; a node type YAML has no name for has no row."""
+    from esphome.components.home_io_control import hub_validators as v
+
+    t = v.DEVICE_TYPE_OPTIONS
+    roller = v.device_features(t["roller_shutter"])
+    assert v.device_features(t["roller_shutter"], 9) == roller, "an unnamed subtype takes the type row"
+    assert v.device_features(t["roller_shutter"], 58) == v.FEATURE_MAIN_PARAMETER_ONLY | v.FEATURE_FAVORITE
+    assert v.device_features(t["interior_venetian_blind"], 58) & v.FEATURE_TILT == 0
+    # VELUX KLF 200 API specification, Appendix 2: types 1 and 13 take the short position frame, type 10 has no slat.
+    assert v.device_features(t["interior_venetian_blind"]) & v.FEATURE_TILT
+    for short_frame in ("interior_venetian_blind", "dual_roller_shutter"):
+        assert v.device_features(t[short_frame]) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, short_frame
+    assert v.device_features(t["vertical_interior_blind"]) & v.FEATURE_TILT == 0
+    assert v.device_features(t["window_opener"], 58) & v.FEATURE_VENT
+    capability = ~v.KIND_EXPERIMENTAL  # the experimental marker is not a capability
+    assert v.device_features(t["lock"], 2) & capability == 0, "an explicit subtype row beats the type row, even at zero"
+    assert v.device_features(t["lock"], 1) & capability == v.FEATURE_EXTENDED_POSITION_FRAME
+    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS
+    assert v.device_features(t["electrical_heater"], 0) == 0
+    assert v.device_features(0x14) == 0, "a raw type with no name has no capabilities"
+    assert v.device_features(0x14, 58) == v.FEATURE_MAIN_PARAMETER_ONLY
+
+
+@case()
+def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_time():
+    """An experimental kind (no capture or report confirms it on a real device) carries
+    KIND_EXPERIMENTAL; declaring one logs one warning that names the kind and the reporting page,
+    and a confirmed kind, a declared kind of a confirmed type and a config with no kind log nothing."""
+    import logging
+
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as p
+
+    t = v.DEVICE_TYPE_OPTIONS
+    assert v.KIND_EXPERIMENTAL == 0x8000
+    assert v.kind_is_experimental(t["gate_opener"], 58)
+    assert v.kind_is_experimental(t["swinging_shutter"], 58)
+    assert v.kind_is_experimental(t["light"], 1)
+    assert v.kind_is_experimental(t["heat_pump"], 2), "a row with no capability is marked by the flag alone"
+    assert not v.kind_is_experimental(t["garage_opener"], 58), "5/58 is confirmed by issue #163"
+    assert not v.kind_is_experimental(t["gate_opener"])
+    assert not v.kind_is_experimental(t["sliding_window"], 9), "a subtype with no row behaves like its type"
+    assert not v.kind_is_experimental(0x14), "a raw type with no name"
+    for unflagged in ("interior_venetian_blind", "vertical_interior_blind", "dual_roller_shutter"):
+        assert not v.kind_is_experimental(t[unflagged]), f"{unflagged}: its behaviour is experimental, not its identity"
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    def warnings_for(config):
+        capture = Capture()
+        p._LOGGER.addHandler(capture)
+        try:
+            assert p.warn_if_experimental_kind(config) is config, "a post-validator returns its config"
+        finally:
+            p._LOGGER.removeHandler(capture)
+        return capture.messages
+
+    messages = warnings_for({"io_device_type": t["gate_opener"], "io_subtype": 58})
+    assert len(messages) == 1, messages
+    assert "gate_opener (io_subtype 58)" in messages[0]
+    assert "not yet confirmed on a real device" in messages[0]
+    assert "contributing.html#reporting-unsupported-devices" in messages[0]
+    assert len(warnings_for({"io_device_type": t["light"], "io_subtype": 2})) == 1
+
+    assert warnings_for({"io_device_type": t["garage_opener"], "io_subtype": 58}) == []
+    assert warnings_for({"io_device_type": t["roller_shutter"]}) == []
+    assert warnings_for({}) == [], "no declared kind: nothing says what the device is"
+
+
+@case("platform_common.require_feature")
+def feature_gated_keys_are_rejected_for_a_kind_without_the_feature():
+    """require_feature() names the key, the kind and what to do; it passes when the config declares
+    no kind, the key is inactive, or the kind has the feature."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as p
+
+    t = v.DEVICE_TYPE_OPTIONS
+    silent_gate = dict(required=v.FEATURE_EXTENDED_POSITION_FRAME, reason="remove silent:")
+
+    p.require_feature({}, "silent", True, **silent_gate)  # no declared kind: nothing says what it is
+    p.require_feature({"io_device_type": t["garage_opener"]}, "silent", False, **silent_gate)
+    p.require_feature({"io_device_type": t["roller_shutter"]}, "silent", True, **silent_gate)
+    try:
+        p.require_feature({"io_device_type": t["garage_opener"]}, "silent", True, **silent_gate)
+        raise AssertionError("silent was accepted on a garage opener")
+    except cv.Invalid as err:
+        assert "silent" in str(err) and "garage_opener" in str(err) and "remove silent:" in str(err), str(err)
+    try:
+        p.require_feature({"io_device_type": t["roller_shutter"], "io_subtype": 58}, "silent", True, **silent_gate)
+        raise AssertionError("silent was accepted on subtype 58")
+    except cv.Invalid as err:
+        assert "io_subtype 58" in str(err), str(err)
+
+    on_off_only = dict(forbidden=v.FEATURE_MAIN_PARAMETER_ONLY, reason="remove dimmable:")
+    p.require_feature({"io_device_type": t["light"]}, "dimmable", True, **on_off_only)
+    try:
+        p.require_feature({"io_device_type": t["light"], "io_subtype": 58}, "dimmable", True, **on_off_only)
+        raise AssertionError("dimmable was accepted on an on/off-only light")
+    except cv.Invalid as err:
+        assert "dimmable" in str(err) and "remove dimmable:" in str(err), str(err)
+
+
 def _raise_firmware_error(**_kwargs):
     from esphome.components.home_io_control import lr1121_firmware
 

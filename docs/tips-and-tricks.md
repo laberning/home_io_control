@@ -27,7 +27,7 @@ cover:
 
 - Declare each sub-device once under `esphome: devices:`, then reference its `id:` from the
   entity's `device_id:`.
-- Every companion entity the platform generates — the favorite and ventilation buttons, the silent
+- Every companion entity the platform generates — the favorite, ventilation, partial and pedestrian buttons (the last two are experimental and disabled by default), the silent
   operation switch, the rain sensor and the diagnostic sensors — inherits the parent entity's sub-device.
 - **Give the entity an empty name.** Home Assistant displays an entity as
   `<device name> <entity name>`, so a device and an entity both called "Patio Awning" show up as

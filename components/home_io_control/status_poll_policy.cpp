@@ -4,6 +4,11 @@
 
 #include "status_poll_policy.h"
 
+#include "hub_decisions.h"
+
+#include <algorithm>
+#include <array>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -22,6 +27,7 @@ void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t ini
   t.next_update = (initial_delay_ms == 0) ? 0 : (now + initial_delay_ms);
   t.status_poll_failures = 0;
   t.auth_poll_failures = 0;
+  t.moving_poll_misses = 0;
   t.stop_settle = false;
 }
 
@@ -34,6 +40,7 @@ void StatusPollPolicy::clear(const std::string &device_id) {
   t.poll_deadline = 0;
   t.status_poll_failures = 0;
   t.auth_poll_failures = 0;
+  t.moving_poll_misses = 0;
   t.stop_settle = false;
   // interval_ms is configuration — NOT cleared; remains set for future tracking cycles.
 }
@@ -60,11 +67,28 @@ bool StatusPollPolicy::is_tracking_active(const std::string &device_id, uint32_t
   return t.poll_deadline != 0 && now <= t.poll_deadline;
 }
 
-uint32_t StatusPollPolicy::on_exchange_failed(const std::string &device_id, bool auth_like, uint32_t now) {
+uint32_t StatusPollPolicy::on_exchange_failed(const std::string &device_id, bool auth_like, uint32_t now,
+                                              bool device_moving) {
   auto it = tracking_.find(device_id);
   if (it == tracking_.end())
     return 0;
   PollTracking &t = it->second;
+  // A one-off poll of an untracked device fails here too; only a window that was open can run out.
+  const bool was_tracking = t.poll_deadline != 0;
+
+  // A device believed travelling keeps its normal cadence for its first misses rather than leave a
+  // gap (MOVING_POLL_MISSES_SKIPPED), but never waits longer than the ladder's first step would.
+  // Only a miss outside a failure streak is skipped: a streak already runs the ladder.
+  if (device_moving && t.moving_poll_misses < MOVING_POLL_MISSES_SKIPPED && t.status_poll_failures == 0 &&
+      t.auth_poll_failures == 0 && is_tracking_active(device_id, now)) {
+    const uint32_t delay_ms =
+        std::min(settle_delay_ms(t.interval_ms, 0, /*cap_for_stop=*/false), STATUS_RETRY_AFTER_FAIL_MS);
+    if (now + delay_ms <= t.poll_deadline) {
+      t.moving_poll_misses++;
+      t.next_update = now + delay_ms;
+      return delay_ms;
+    }
+  }
 
   uint32_t backoff_ms;
   if (auth_like) {
@@ -84,6 +108,8 @@ uint32_t StatusPollPolicy::on_exchange_failed(const std::string &device_id, bool
     return backoff_ms;
   }
 
+  if (was_tracking)
+    note_ended_(device_id);
   clear(device_id);
   return 0;
 }
@@ -94,6 +120,7 @@ void StatusPollPolicy::clear_failure_streaks(const std::string &device_id) {
     return;
   it->second.status_poll_failures = 0;
   it->second.auth_poll_failures = 0;
+  it->second.moving_poll_misses = 0;
 }
 
 void StatusPollPolicy::mark_stop_settle(const std::string &device_id) {
@@ -121,12 +148,85 @@ uint8_t StatusPollPolicy::get_auth_poll_failures(const std::string &device_id) c
   return (it != tracking_.end()) ? it->second.auth_poll_failures : 0;
 }
 
+uint8_t StatusPollPolicy::get_moving_poll_misses(const std::string &device_id) const {
+  auto it = tracking_.find(device_id);
+  return (it != tracking_.end()) ? it->second.moving_poll_misses : 0;
+}
+
+namespace {
+/// Stamp value for "now": millis() == 0 would read as "never", so it is nudged to 1.
+uint32_t stamp(uint32_t now) { return now == 0 ? 1 : now; }
+/// True when @p t is 0 (never) or at least @p span_ms old (wrap-safe).
+bool older_than(uint32_t now, uint32_t t, uint32_t span_ms) { return t == 0 || now - t >= span_ms; }
+}  // namespace
+
+bool StatusPollPolicy::is_remote_poll_pending(const std::string &device_id, uint32_t now) const {
+  auto it = foreign_.find(device_id);
+  if (it == foreign_.end() || it->second.pending_due_ms == 0)
+    return false;
+  // Wrap-safe: before the due time `now - due` is a huge unsigned value (a negative distance), so
+  // it is still pending; more than the delay past the due time means the "ran" signal was lost.
+  const uint32_t since_due = now - it->second.pending_due_ms;
+  return since_due > INT32_MAX || since_due <= REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS;
+}
+
+void StatusPollPolicy::on_remote_poll_ran(const std::string &device_id) {
+  auto it = foreign_.find(device_id);
+  if (it != foreign_.end())
+    it->second.pending_due_ms = 0;
+}
+
+ForeignAction StatusPollPolicy::on_foreign_frame(const std::string &device_id, ForeignFrameKind kind,
+                                                 const std::string &controller, uint8_t cmd, uint32_t now,
+                                                 uint32_t last_status_ms) {
+  ForeignTraffic &f = foreign_[device_id];
+  const bool pending = is_remote_poll_pending(device_id, now);
+  const ForeignTraffic before = f;
+
+  if (kind == ForeignFrameKind::REQUEST_TO_DEVICE) {
+    f.last_request_cmd = cmd;
+    f.last_request_from = controller;
+    f.last_request_ms = stamp(now);
+  }
+
+  if (pending) {
+    f.pending_due_ms = stamp(now + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+    return ForeignAction::PUSH_PENDING;
+  }
+
+  bool arm;
+  if (kind == ForeignFrameKind::REQUEST_TO_DEVICE) {
+    if (decisions::overheard_command_writes(cmd)) {
+      arm = true;
+    } else {
+      arm = older_than(now, last_status_ms, FOREIGN_READ_RESYNC_MS) &&
+            older_than(now, f.last_read_poll_ms, FOREIGN_READ_RESYNC_MS);
+      if (arm)
+        f.last_read_poll_ms = stamp(now);
+    }
+  } else {
+    // A challenge answers the request just before it: ignore it only when that request, from this
+    // same controller, was a read.
+    const bool follows_read = before.last_request_ms != 0 && before.last_request_from == controller &&
+                              now - before.last_request_ms <= FOREIGN_CHALLENGE_AFTER_REQUEST_MS &&
+                              !decisions::overheard_command_writes(before.last_request_cmd);
+    arm = !follows_read;
+  }
+
+  if (!arm)
+    return ForeignAction::IGNORE;
+  f.pending_due_ms = stamp(now + REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+  return ForeignAction::ARM;
+}
+
 std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {
   for (auto &pair : tracking_) {
     PollTracking &t = pair.second;
     if (t.next_update == 0 || now <= t.next_update)
       continue;
     if (!is_tracking_active(pair.first, now)) {
+      if (t.poll_deadline != 0)
+        note_ended_(pair.first);
       clear(pair.first);
       continue;
     }
@@ -136,23 +236,40 @@ std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {
   return std::nullopt;
 }
 
+std::optional<std::string> StatusPollPolicy::pop_ended_device() {
+  if (ended_.empty())
+    return std::nullopt;
+  std::string id = ended_.front();
+  ended_.erase(ended_.begin());
+  return id;
+}
+
+void StatusPollPolicy::note_ended_(const std::string &device_id) {
+  if (std::find(ended_.begin(), ended_.end(), device_id) == ended_.end())
+    ended_.push_back(device_id);
+}
+
+namespace {
+
+/// The two backoff ladders, one delay per consecutive failure; the last entry repeats.
+constexpr std::array<uint32_t, 5> SILENT_RETRY_LADDER_MS{
+    STATUS_RETRY_AFTER_FAIL_MS, STATUS_RETRY_AFTER_FAIL_STEP2_MS, STATUS_RETRY_AFTER_FAIL_STEP3_MS,
+    STATUS_RETRY_AFTER_FAIL_STEP4_MS, STATUS_RETRY_AFTER_FAIL_MAX_MS};
+constexpr std::array<uint32_t, 4> AUTH_RETRY_LADDER_MS{
+    STATUS_AUTH_RETRY_AFTER_FAIL_MS, STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS, STATUS_AUTH_RETRY_AFTER_FAIL_STEP3_MS,
+    STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS};
+
+/// The delay for the @p consecutive_failures-th failure in a row (0 is read as 1) on @p ladder.
+template<size_t N> uint32_t ladder_step(const std::array<uint32_t, N> &ladder, uint8_t consecutive_failures) {
+  const size_t index = consecutive_failures <= 1 ? 0 : consecutive_failures - 1;
+  return ladder[std::min(index, N - 1)];
+}
+
+}  // namespace
+
 uint32_t StatusPollPolicy::retry_delay_ms(uint8_t consecutive_failures, bool auth_like) {
-  if (auth_like) {
-    if (consecutive_failures <= 1)
-      return STATUS_AUTH_RETRY_AFTER_FAIL_MS;
-    if (consecutive_failures == 2)
-      return STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS;
-    return STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS;
-  }
-  if (consecutive_failures <= 1)
-    return STATUS_RETRY_AFTER_FAIL_MS;
-  if (consecutive_failures == 2)
-    return STATUS_RETRY_AFTER_FAIL_STEP2_MS;
-  if (consecutive_failures == 3)
-    return STATUS_RETRY_AFTER_FAIL_STEP3_MS;
-  if (consecutive_failures == 4)
-    return STATUS_RETRY_AFTER_FAIL_STEP4_MS;
-  return STATUS_RETRY_AFTER_FAIL_MAX_MS;
+  return auth_like ? ladder_step(AUTH_RETRY_LADDER_MS, consecutive_failures)
+                   : ladder_step(SILENT_RETRY_LADDER_MS, consecutive_failures);
 }
 
 }  // namespace home_io_control

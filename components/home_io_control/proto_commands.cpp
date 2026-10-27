@@ -8,6 +8,7 @@
 
 #include "proto_constants.h"
 #include "proto_crypto.h"
+#include "proto_device_types.h"
 
 #include <array>
 #include <cstring>
@@ -303,32 +304,19 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
 
-/// Build a named-command execute frame (0x00) for STOP, FAVORITE, or VENT.
+/// Build a named-command execute frame (0x00) for STOP or a named position (NAMED_POSITIONS).
 ///
-/// FORCE_OPEN is deliberately not handled here — unlike these three, it needs to know the
+/// FORCE_OPEN is deliberately not handled here — unlike these, it needs to know the
 /// device's wire-scale "fully open" position (0 or 100 depending on IoDevice::inverted, e.g.
 /// horizontal awnings), which this builder has no way to know. Use create_force_open() instead;
 /// see its comments for why.
 bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd,
                             bool silent) {
-  uint8_t main_byte = 0;
-  uint8_t modifier_byte = 0;
-  switch (cmd) {
-    case CoverCommand::STOP:
-      main_byte = POS_STOP;
-      modifier_byte = 0x00;
-      break;
-    case CoverCommand::FAVORITE:
-      main_byte = POS_FAVORITE;
-      modifier_byte = 0x00;
-      break;
-    case CoverCommand::VENT:
-      main_byte = POS_FAVORITE;
-      modifier_byte = POS_VENT_MODIFIER;
-      break;
-    default:
-      return false;
-  }
+  uint16_t main_parameter = 0;
+  if (!command_main_parameter(cmd, main_parameter))
+    return false;
+  const auto main_byte = static_cast<uint8_t>(main_parameter >> BITS_PER_BYTE);
+  const auto modifier_byte = static_cast<uint8_t>(main_parameter & MAIN_PARAMETER_LOW_BYTE_MASK);
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
@@ -442,22 +430,15 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, CoverCommand cmd,
                                uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE], uint8_t acei,
                                bool broadcast_all) {
-  uint8_t main0 = 0;
-  uint8_t main1 = 0;
-  switch (cmd) {
-    case CoverCommand::STOP:
-      main0 = POS_STOP;
-      break;
-    case CoverCommand::FAVORITE:
-      main0 = POS_FAVORITE;
-      break;
-    case CoverCommand::VENT:
-      main0 = POS_FAVORITE;
-      main1 = POS_VENT_MODIFIER;
-      break;
-    default:
-      return false;
-  }
+  // 1W has no partial or pedestrian encoding, so only these three commands are sent, whatever
+  // NAMED_POSITIONS lists.
+  if (cmd != CoverCommand::STOP && cmd != CoverCommand::FAVORITE && cmd != CoverCommand::VENT)
+    return false;
+  uint16_t main_parameter = 0;
+  if (!command_main_parameter(cmd, main_parameter))
+    return false;
+  const auto main0 = static_cast<uint8_t>(main_parameter >> BITS_PER_BYTE);
+  const auto main1 = static_cast<uint8_t>(main_parameter & MAIN_PARAMETER_LOW_BYTE_MASK);
   return build_1w_execute(f, src, target_type, main0, main1, sequence, controller_key, acei, broadcast_all);
 }
 

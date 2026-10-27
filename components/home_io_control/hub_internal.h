@@ -13,6 +13,7 @@
 #include "log_frame.h"
 #include "log_helpers.h"
 #include "proto_codecs.h"
+#include "proto_device_types.h"
 
 #include "esphome/core/log.h"
 
@@ -69,33 +70,37 @@ inline bool known_device_supports_status_requests(const IoDevice &dev) {
          device_supports_climate_control(dev.type, dev.subtype);
 }
 
-/// @brief Can this device accept an execute (position) command?
-/// Checks capability and, for unknown types, allows binary positions for light/switch.
+/// @brief Does the device report its movement through status replies?
+/// Covers, lights, switches and locks do: their 0x04 reply says whether they are travelling. A
+/// heater never moves (device_has_no_motion()), whether it takes a heat level in the position field
+/// or is driven over its register protocol. A device not yet typed passes.
 /// @param dev IoDevice to check.
-/// @param position Position value being sent.
-/// @return true if operation is appropriate for this device type.
+/// @return true if the device takes execute positions and can move, or is UNKNOWN.
+inline bool known_device_reports_motion_through_status(const IoDevice &dev) {
+  return dev.type == DeviceType::UNKNOWN ||
+         (device_takes_execute_position(dev.type) && !device_has_no_motion(dev.type, dev.subtype));
+}
+
+/// @brief Can this device accept an execute (position) command?
+/// The device's entity class must have an EXECUTE position path (cover, light, switch, lock, heater
+/// level; a device not yet typed passes), and the main parameter the position maps to must be one
+/// its features accept: open, close and stop always, a percent only with LEVELS
+/// (device_accepts_main_parameter()). A light's LEVELS come from its `dimmable:` key, a switch or
+/// lock never has them, so they stay binary.
+/// @param dev IoDevice to check.
+/// @param position Position value being sent (percent, or POS_STOP).
+/// @return true if operation is appropriate for this device.
 inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t position) {
-  if (dev.type == DeviceType::UNKNOWN)
-    return true;
-  if (device_supports_position_control(dev.type))
-    return true;
-  // Dimmable lights (platform_light.cpp's dimmable: true) send arbitrary 0-100 IO positions, not
-  // just the two binary extremes — accept the full range for LIGHT here and trust the entity
-  // layer to only ever send binary values for a non-dimmable light. SWITCH and LOCK have no
-  // continuous concept, so they stay restricted to the binary encoding below.
-  // A heater with a heat level (exterior heating) sends the full 0-100 span as a fan's speed.
-  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT ||
-      device_capability_class(dev.type) == DeviceCapabilityClass::HEATER_LEVEL)
-    return position <= BINARY_ENTITY_OFF_POSITION;
-  return is_binary_entity_position(position) &&
-         (device_supports_binary_control(dev.type) || device_supports_lock_control(dev.type));
+  if (dev.type != DeviceType::UNKNOWN && !device_takes_execute_position(dev.type))
+    return false;
+  return device_accepts_main_parameter(dev.features, position_main_parameter(position));
 }
 
 /// @brief Can this device accept a tilt command?
 /// @param dev IoDevice to check.
-/// @return true only if device type is known to support tilt.
+/// @return true only if the device has device_feature::TILT.
 inline bool known_device_accepts_execute_tilt(const IoDevice &dev) {
-  return dev.type != DeviceType::UNKNOWN && device_supports_tilt(dev.type);
+  return has_feature(dev.features, device_feature::TILT);
 }
 
 // ============================================================================
@@ -111,7 +116,7 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
                                    const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
            device_id.c_str(), device_type_name(dev.type), static_cast<unsigned>(dev.type),
-           device_capability_class_name(dev.type), device_operation_profile_name(dev.type), expected);
+           device_capability_class_name(dev.type), device_operation_profile_name(dev.type, dev.subtype), expected);
 }
 
 /// @brief Log a frame‑level issue (unregistered endpoints, unsupported commands).
@@ -251,17 +256,18 @@ inline std::map<std::string, std::string> build_sender_event_data(const OneWayFr
 // Status normalization helpers
 // ============================================================================
 
-/// @brief Normalize stopped state: some devices briefly report stopped before target/current converge.
+/// @brief Normalize the stopped flag of an execute ack against the last observed target and position.
 ///
-/// Deliberately reads and writes observed fields only — never effective_*(). Its job is "the device
-/// said stopped but its own reported target and current disagree", a statement about observations;
-/// feeding it a prediction would push a guess back into an observed field. On the execute-ack path
-/// (`trust_position = false`) `dev.target` does not hold the commanded value, so this function does
-/// not use it to flip `is_stopped` back to false — effective_is_stopped() owns that.
+/// Used only on the execute-ack path (`trust_position = false`), whose own position bytes are not
+/// decoded: a "stopped" ack is read as moving while the last *trusted* target and position still
+/// disagree. Trusted reports go through decisions::classify_stopped_report() instead, which
+/// accepts a cover resting off its target once a second report agrees.
+///
+/// Deliberately reads and writes observed fields only — never effective_*(). On the execute-ack
+/// path `dev.target` does not hold the commanded value, so this function does not use it to flip
+/// `is_stopped` back to false — effective_is_stopped() owns that.
 /// @param dev Device record to update (may clear is_stopped if positions differ).
 inline void normalize_stopped_state(IoDevice &dev) {
-  // Some devices briefly report STATUS_STOPPED before current and target have numerically
-  // converged. Keep the device in the moving state until the decoded values are effectively equal.
   if (dev.is_stopped && dev.target != UNKNOWN_POSITION && dev.position != UNKNOWN_POSITION &&
       !has_reached_target_position(dev.target, dev.position)) {
     dev.is_stopped = false;
@@ -448,6 +454,34 @@ inline std::string describe_battery(const IoDevice &dev) {
   return std::string(" battery=") + battery_state_name(dev.battery);
 }
 
+/// @brief True while a device that reported stopped off its target waits for the confirming poll.
+///
+/// The hub handles it as moving until decisions::classify_stopped_report() confirms the stop.
+/// @param dev Device record to read.
+inline bool is_settling(const IoDevice &dev) { return !dev.is_stopped && dev.stop_candidate.armed(); }
+
+/// @brief True when the remembered off-target stop is the device's last trusted report.
+///
+/// Then the gap between `dev.target` and `dev.position` is a rest the hub has seen reported, not a
+/// movement, and normalize_stopped_state() must not read it as one.
+/// @param dev Device record to read.
+inline bool stop_candidate_matches_observation(const IoDevice &dev) {
+  return dev.stop_candidate.armed() && has_reached_target_position(dev.stop_candidate.target, dev.target) &&
+         has_reached_target_position(dev.stop_candidate.position, dev.position);
+}
+
+/// @brief Name the device's observed movement state for the status line.
+///
+/// "settling" is a device that reported stopped off its target and waits for the confirming poll
+/// (decisions::classify_stopped_report()); it is still handled as moving.
+/// @param dev Device record to read.
+/// @return "stopped", "settling" or "moving".
+inline const char *describe_motion(const IoDevice &dev) {
+  if (dev.is_stopped)
+    return "stopped";
+  return is_settling(dev) ? "settling" : "moving";
+}
+
 /// @brief Log a concise status‑update line used by inbound handlers.
 ///
 /// The position/target/motion fields report what the device observed — never a hub prediction. A
@@ -457,7 +491,7 @@ inline std::string describe_battery(const IoDevice &dev) {
 /// @param suffix Optional suffix added after the state string (e.g., " (status update)").
 inline void log_status_update(const std::string &id, const IoDevice &dev, const char *suffix = "") {
   ESP_LOGI(TAG, "Device %s: position=%s target=%s %s%s%s%s", id.c_str(), format_position(dev.position).c_str(),
-           format_position(dev.target).c_str(), dev.is_stopped ? "stopped" : "moving", describe_battery(dev).c_str(),
+           format_position(dev.target).c_str(), describe_motion(dev), describe_battery(dev).c_str(),
            describe_prediction(dev).c_str(), suffix);
 }
 

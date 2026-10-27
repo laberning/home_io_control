@@ -12,10 +12,13 @@ from esphome.components import light
 from esphome.const import CONF_DEFAULT_TRANSITION_LENGTH, CONF_OUTPUT_ID
 
 from . import home_io_control_ns
+from .hub_validators import FEATURE_MAIN_PARAMETER_ONLY
 from .platform_common import (
     create_companion_sensors,
     inject_companion_sensor_ids,
     platform_schema_extension,
+    require_feature,
+    warn_if_experimental_kind,
     wire_device_binding,
     CONF_HOME_IO_CONTROL_ID,
 )
@@ -32,6 +35,18 @@ CONF_DIMMABLE = "dimmable"
 def _inject_companion_ids(config):
     # Light reads its entity ID from CONF_OUTPUT_ID rather than CONF_ID.
     return inject_companion_sensor_ids(config, CONF_OUTPUT_ID)
+
+
+def _require_dimmable_kind(config):
+    """Reject `dimmable: true` on a declared light kind that is on/off only (subtype 58)."""
+    require_feature(
+        config,
+        CONF_DIMMABLE,
+        config[CONF_DIMMABLE],
+        forbidden=FEATURE_MAIN_PARAMETER_ONLY,
+        reason="this light is on/off only (KLF 200 Appendix 2); remove dimmable:",
+    )
+    return config
 
 
 def _validate(config):
@@ -64,7 +79,9 @@ def _validate(config):
     return schema(config)
 
 
-CONFIG_SCHEMA = cv.All(_validate, _inject_companion_ids)
+CONFIG_SCHEMA = cv.All(
+    _validate, _require_dimmable_kind, warn_if_experimental_kind, _inject_companion_ids
+)
 
 
 async def to_code(config):

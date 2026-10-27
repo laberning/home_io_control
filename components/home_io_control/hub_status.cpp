@@ -5,6 +5,7 @@
 #include "proto_commands.h"
 
 #include <cinttypes>
+#include <optional>
 
 /// @file hub_status.cpp
 /// @brief Inbound status handling and passive receive-side state updates.
@@ -28,9 +29,9 @@ namespace home_io_control {
 
 namespace {
 
-constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 6;     ///< Minimum payload length for 0x04 position-bearing replies.
-                                                         ///< Bytes 0–5 (stopped flag + target + current) are mandatory;
-                                                         ///< byte 7 (settle hint) is optional and checked separately.
+/// Minimum payload length for 0x04 position-bearing replies: bytes 0-5 (stopped flag, target,
+/// current) are mandatory; bytes 6-7 (remaining time) are optional and checked separately.
+constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 6;
 constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for 0x71 device-initiated updates.
 constexpr uint8_t GET_NAME_RESPONSE_MIN_DATA_LEN = 1;    ///< Minimum payload length for 0x51 name-bearing replies.
 constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload length for 0x57 type/subtype metadata.
@@ -39,13 +40,14 @@ constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
     15;  ///< Minimum payload length for tilt-capable extended status replies.
 constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;  ///< Byte containing STATUS_STOPPED.
 constexpr uint8_t STATUS_BATTERY_OFFSET = 1;  ///< Byte holding STATUS_BATTERY_MASK, the same in 0x04 and 0x71 payloads.
-constexpr uint8_t PRIVATE_RESPONSE_DELAY_HINT_OFFSET = 7;  ///< Coarse follow-up delay hint byte in many 0x04 replies.
+constexpr uint8_t PRIVATE_RESPONSE_REMAINING_TIME_OFFSET =
+    6;  ///< MSB of the 16-bit remaining travel time (seconds) in a status reply (0x04 to a 0x03 poll).
 // A 0x04 payload does not describe its own layout — which fields these offsets name depends on
 // the request that drew the reply, and only the caller knows that. A reply to a tilt EXECUTE puts
 // the tilt selector 0x20 at offset 4 and a 16-bit slat angle at 5..6, straddling the bytes a
 // reply to a status poll uses for the current position (4..5). Do not try to recover the
 // difference by sniffing the payload: 0x20 is also a perfectly legal current-position MSB (raw
-// 0x2000-0x20FF is 16.0%-16.5%), and a tilt ack is 8 bytes like any hint-carrying position reply,
+// 0x2000-0x20FF is 16.0%-16.5%), and a tilt ack is 8 bytes like a status reply carrying the remaining time,
 // so neither a `data[4] == STATUS_TILT_SELECTOR` test nor a length test can separate them — the
 // first would blank real readings from any cover resting near 16%. The request-derived
 // `trust_position` parameter on update_device_status_() is the discriminator, and the only
@@ -60,12 +62,52 @@ constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;    ///< Packed type low bi
 constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;    ///< Selector byte announcing extended tilt payload.
 constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;         ///< Tilt-position MSB within extended replies.
 constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;         ///< Tilt-position LSB within extended replies.
-constexpr uint8_t PRIVATE_RESPONSE_HINT_UNUSED = 0xFF;  ///< Value used by devices that do not expose a follow-up timer.
-constexpr uint8_t PRIVATE_RESPONSE_HINT_ZERO =
-    0x00;  ///< Value treated as invalid or uninformative for follow-up timing.
-constexpr uint32_t PRIVATE_RESPONSE_HINT_SCALE_MS = 1000;  ///< Private-response delay hint is expressed in seconds.
-constexpr uint32_t PRIVATE_RESPONSE_HINT_BIAS_MS =
-    1000;  ///< Observed devices need an extra second beyond the hint value.
+constexpr uint8_t PRIVATE_RESPONSE_REMAINING_TIME_MIN_DATA_LEN =
+    8;  ///< A status reply shorter than this (a 6-byte VELUX reply) carries no remaining time.
+constexpr uint16_t PRIVATE_RESPONSE_REMAINING_TIME_NONE = 0xFFFF;    ///< All bits set: no remaining time provided.
+constexpr uint32_t PRIVATE_RESPONSE_REMAINING_TIME_SCALE_MS = 1000;  ///< The remaining time counts in seconds.
+constexpr uint32_t PRIVATE_RESPONSE_REMAINING_TIME_BIAS_MS =
+    1000;  ///< Observed covers come to rest up to about a second after the count runs out (issue #178).
+
+/// @brief Turn a decoded report's STOPPED flag into the hub's movement state.
+///
+/// Runs on every trusted report (a reply to a status poll, a device-originated status update).
+/// `dev.is_stopped` holds the report's own flag on entry and the verdict on return; see
+/// decisions::classify_stopped_report() for the rule. A cover that comes to rest off its target
+/// reads moving for one more poll, then stopped, instead of moving for good.
+/// @param id Device ID, for the log line.
+/// @param dev Device record, with this report's target and position already decoded.
+/// @param follow_up_possible A tracked follow-up poll will run.
+void settle_stopped_report(const std::string &id, IoDevice &dev, bool follow_up_possible) {
+  decisions::StoppedReportInput in;
+  in.reported_stopped = dev.is_stopped;
+  in.target = dev.target;
+  in.position = dev.position;
+  in.candidate = dev.stop_candidate;
+  in.follow_up_possible = follow_up_possible;
+  in.has_motion = !device_has_no_motion(dev.type, dev.subtype);
+  const decisions::StoppedReport verdict = decisions::classify_stopped_report(in);
+  if (verdict == decisions::StoppedReport::SETTLING) {
+    ESP_LOGD(detail::TAG, "Device %s: reports stopped at %.2f%%, target %.2f%%: confirming with one more poll",
+             id.c_str(), static_cast<double>(dev.position), static_cast<double>(dev.target));
+  } else if (verdict == decisions::StoppedReport::STOPPED_CONFIRMED && follow_up_possible) {
+    // Only inside a tracked poll chain, where it ends the settle: an untracked poll of a device
+    // resting at the same place confirms on every report and would log each time.
+    ESP_LOGD(detail::TAG, "Device %s: stopped at %.2f%% again, target %.2f%%: at rest off target", id.c_str(),
+             static_cast<double>(dev.position), static_cast<double>(dev.target));
+  } else if (verdict == decisions::StoppedReport::STOPPED_UNCONFIRMABLE) {
+    ESP_LOGD(detail::TAG,
+             "Device %s: reports stopped at %.2f%%, target %.2f%%, no poll to confirm by: taken as at rest", id.c_str(),
+             static_cast<double>(dev.position), static_cast<double>(dev.target));
+  }
+  if (decisions::stopped_report_keeps_candidate(verdict)) {
+    dev.stop_candidate.target = dev.target;
+    dev.stop_candidate.position = dev.position;
+  } else {
+    dev.stop_candidate.clear();
+  }
+  dev.is_stopped = decisions::stopped_report_at_rest(verdict);
+}
 
 /// @brief Decode the shared target/current position fields used by private response and status‑update frames.
 /// Different frame types use different byte offsets, but the normalization policy is identical once offsets known.
@@ -74,16 +116,18 @@ constexpr uint32_t PRIVATE_RESPONSE_HINT_BIAS_MS =
 /// @param target_offset Byte offset of target MSB within frame.data.
 /// @param current_offset Byte offset of current MSB within frame.data.
 /// @param allow_tilt_from_extended_response If true and frame is extended, decode tilt from the extended tilt bytes.
+/// @param id Device ID, for the settle log line.
+/// @param follow_up_possible A tracked follow-up poll will run; see settle_stopped_report().
 void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_offset, uint8_t current_offset,
-                          bool allow_tilt_from_extended_response) {
+                          bool allow_tilt_from_extended_response, const std::string &id, bool follow_up_possible) {
   uint16_t const tgt = (frame.data[target_offset] << 8) | frame.data[target_offset + 1];
   uint16_t const cur = (frame.data[current_offset] << 8) | frame.data[current_offset + 1];
   decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
-  detail::normalize_stopped_state(dev);
+  settle_stopped_report(id, dev, follow_up_possible);
   // A decoded position is the observation this prediction existed to stand in for.
   dev.optimistic.clear_position();
 
-  if (allow_tilt_from_extended_response && device_supports_tilt(dev.type) &&
+  if (allow_tilt_from_extended_response && has_feature(dev.features, device_feature::TILT) &&
       frame.data_len >= EXTENDED_TILT_RESPONSE_MIN_DATA_LEN &&
       frame.data[EXTENDED_TILT_SELECTOR_OFFSET] == STATUS_TILT_SELECTOR) {
     uint16_t const tilt_raw = (frame.data[EXTENDED_TILT_MSB_OFFSET] << 8) | frame.data[EXTENDED_TILT_LSB_OFFSET];
@@ -104,30 +148,46 @@ void track_motion_evidence(IoDevice &dev, bool moving, uint32_t now_ms) {
   }
 }
 
+/// @brief Decode the remaining travel time of a status reply.
+///
+/// A 0x04 answering a status poll carries the device's remaining travel time in seconds at bytes
+/// 6-7 (big-endian), after status, functional-parameter indicator, target and current position:
+/// the order of the "main info" status answer in the VELUX KLF 200 API.
+/// The 0x04 answering a command (EXECUTE) has a request-dependent layout: there those bytes hold
+/// something else (`06 00` from a Somfy Izymo, a tilt block's `8D 00`), so they are read only when
+/// the reply's position is trusted, i.e. on a status-poll reply.
+/// @param frame The private response frame.
+/// @param trust_position True for a status-poll reply (see apply_private_response_status()).
+/// @return The remaining time in seconds, or nullopt when the reply carries none.
+std::optional<uint16_t> decode_remaining_time_s(const IoFrame &frame, bool trust_position) {
+  if (!trust_position || frame.data_len < PRIVATE_RESPONSE_REMAINING_TIME_MIN_DATA_LEN)
+    return std::nullopt;
+  const uint16_t remaining = (frame.data[PRIVATE_RESPONSE_REMAINING_TIME_OFFSET] << 8) |
+                             frame.data[PRIVATE_RESPONSE_REMAINING_TIME_OFFSET + 1];
+  if (remaining == PRIVATE_RESPONSE_REMAINING_TIME_NONE)
+    return std::nullopt;
+  return remaining;
+}
+
 /// @brief Compute the delay before the next status poll for a private‑response device.
 /// @param dev Device record.
-/// @param frame The private response frame (may contain a coarse retry hint in byte 7).
+/// @param remaining_s Usable remaining travel time in seconds (nullopt when there is none).
 /// @param policy Policy used to look up the configured poll interval.
 /// @param id Device ID for policy lookup.
 /// @return Delay in milliseconds, or 0 if the device is stopped.
-uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &frame, const StatusPollPolicy &policy,
-                                           const std::string &id) {
+uint32_t compute_private_response_delay_ms(const IoDevice &dev, std::optional<uint16_t> remaining_s,
+                                           const StatusPollPolicy &policy, const std::string &id) {
   if (effective_is_stopped(dev))
     return 0;
-
-  // Private responses carry a coarse follow‑up timer in byte 7 on many devices. Decode it here
-  // (0 = absent) and let settle_delay_ms() reconcile it with the configured interval and default.
-  // Some devices omit byte 7 entirely (data_len == 6); treat those as hint-absent.
-  uint32_t hint_delay_ms = 0;
-  if (frame.data_len > PRIVATE_RESPONSE_DELAY_HINT_OFFSET &&
-      frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_UNUSED &&
-      frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] != PRIVATE_RESPONSE_HINT_ZERO) {
-    hint_delay_ms = (frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] * PRIVATE_RESPONSE_HINT_SCALE_MS) +
-                    PRIVATE_RESPONSE_HINT_BIAS_MS;
-  }
+  // The remaining time plus a second is when the device should be at rest; settle_delay_ms()
+  // reconciles it with the configured interval and the default (it can only shorten them).
+  const uint32_t remaining_delay_ms =
+      remaining_s.has_value()
+          ? (*remaining_s * PRIVATE_RESPONSE_REMAINING_TIME_SCALE_MS) + PRIVATE_RESPONSE_REMAINING_TIME_BIAS_MS
+          : 0;
   // A private response is the shared reply to both polls (0x03) and commands (0x00); it carries no
   // marker for STOP, so the STOP cap is applied by the command path, not here.
-  return settle_delay_ms(policy.get_interval(id), hint_delay_ms, /*cap_for_stop=*/false);
+  return settle_delay_ms(policy.get_interval(id), remaining_delay_ms, /*cap_for_stop=*/false);
 }
 
 /// @brief Compute the delay before the next status poll for a device‑originated status update.
@@ -138,8 +198,8 @@ uint32_t compute_private_response_delay_ms(const IoDevice &dev, const IoFrame &f
 uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPolicy &policy, const std::string &id) {
   if (effective_is_stopped(dev))
     return 0;
-  // Device-originated updates carry no follow-up hint and are never STOP replies.
-  return settle_delay_ms(policy.get_interval(id), /*hint_delay_ms=*/0, /*cap_for_stop=*/false);
+  // Device-originated updates carry no remaining time and are never STOP replies.
+  return settle_delay_ms(policy.get_interval(id), /*remaining_delay_ms=*/0, /*cap_for_stop=*/false);
 }
 
 /// @brief Does a status reply's flags byte say the device is at rest?
@@ -172,32 +232,46 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   if (trust_position) {
-    decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true);
-  } else {
+    decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true, id,
+                         policy.is_tracking_active(id, dev.last_status));
+  } else if (!detail::stop_candidate_matches_observation(dev)) {
+    // An ack's own position bytes are not decoded, so it is held against the last trusted report.
+    // When that report is a stop the hub already accepted off target, the gap is not movement. The
+    // candidate stays: the first poll after the command compares targets, so a report from before
+    // a command to a new target can never confirm one after it.
     detail::normalize_stopped_state(dev);
   }
-  // On the execute-ack path (trust_position == false) dev.target/position are stale, so the
-  // normalized is_stopped can read "moving" for a device that just reported stopped. The evidence
-  // therefore follows the device's own flag there. It matters for the ack to a STOP: a VELUX SSL
+  // The wake belief follows the device's own flag, not the hub's verdict. On the execute-ack path
+  // (trust_position == false) dev.target/position are stale, so the normalized is_stopped can read
+  // "moving" for a device that just reported stopped. It matters for the ack to a STOP: a VELUX SSL
   // still reports "moving" while it winds down, and in that state it ignores the wake-up preamble,
   // so the settle poll after the STOP must lead short. A move's ack is overridden anyway:
-  // run_execute_operation_() stamps the evidence once the move is accepted, after this runs.
-  track_motion_evidence(dev, trust_position ? !dev.is_stopped : !reported_stopped, dev.last_status);
+  // run_execute_operation_() stamps the evidence once the move is accepted, after this runs. On a
+  // trusted report a settling device has said "stopped": at rest a VELUX SSL hears only the wake-up
+  // preamble, so the confirming poll must lead with it (issue #151).
+  track_motion_evidence(dev, !reported_stopped, dev.last_status);
+
+  // A zero remaining time means "about to stop" only in a report that says moving, from a device
+  // that has sent a count before: a counting cover reports 0 in its last second of travel (issue
+  // #178), while a device that has never sent a count may simply not provide one, and would
+  // otherwise be polled every second. A "stopped" report keeps the default delay, which is what a
+  // STOPPED off target needs before its confirming poll (decisions::classify_stopped_report()).
+  std::optional<uint16_t> remaining_s = decode_remaining_time_s(frame, trust_position);
+  if (remaining_s.has_value() && *remaining_s != 0)
+    dev.reports_remaining_time = true;
+  if (remaining_s.has_value() && *remaining_s == 0 && (reported_stopped || !dev.reports_remaining_time))
+    remaining_s.reset();
 
   if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
     return;
   }
 
-  uint32_t const delay_ms = compute_private_response_delay_ms(dev, frame, policy, id);
-  const bool hint_present = frame.data_len > PRIVATE_RESPONSE_DELAY_HINT_OFFSET;
-  const uint8_t hint_byte =
-      hint_present ? frame.data[PRIVATE_RESPONSE_DELAY_HINT_OFFSET] : PRIVATE_RESPONSE_HINT_UNUSED;
-  const bool has_hint =
-      hint_present && hint_byte != PRIVATE_RESPONSE_HINT_UNUSED && hint_byte != PRIVATE_RESPONSE_HINT_ZERO;
-  ESP_LOGD(
-      detail::TAG, "Device %s: next status poll in %" PRIu32 " ms (device hint=%s, configured interval=%" PRIu32 " ms)",
-      id.c_str(), delay_ms, has_hint ? std::to_string(hint_byte).append("s").c_str() : "none", policy.get_interval(id));
+  uint32_t const delay_ms = compute_private_response_delay_ms(dev, remaining_s, policy, id);
+  ESP_LOGD(detail::TAG,
+           "Device %s: next status poll in %" PRIu32 " ms (remaining time=%s, configured interval=%" PRIu32 " ms)",
+           id.c_str(), delay_ms, remaining_s.has_value() ? std::to_string(*remaining_s).append("s").c_str() : "none",
+           policy.get_interval(id));
   uint32_t const new_deadline = dev.last_status + delay_ms;
   uint32_t const existing_deadline = policy.get_next_update(id);
   // Don't push the deadline forward — only move it earlier. This prevents repeated command
@@ -213,10 +287,13 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
 /// @param policy Poll policy for scheduling follow-up polls.
 void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const IoFrame &frame,
                                      StatusPollPolicy &policy) {
-  dev.is_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
+  const bool reported_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
+  dev.is_stopped = reported_stopped;
   dev.last_status = millis();
-  decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false);
-  track_motion_evidence(dev, !dev.is_stopped, dev.last_status);
+  decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false, id,
+                       policy.is_tracking_active(id, dev.last_status));
+  // The device's own flag, as on the poll path (apply_private_response_status()).
+  track_motion_evidence(dev, !reported_stopped, dev.last_status);
 
   if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
     policy.clear(id);
@@ -282,8 +359,7 @@ void apply_info2_response(IoDevice &dev, const IoFrame &frame) {
 
   dev.type = decode_packed_device_type(frame.data[GET_INFO2_TYPE_OFFSET], frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
   dev.subtype = decode_packed_device_subtype(frame.data[GET_INFO2_TYPE_SUBTYPE_OFFSET]);
-  if (default_inverted_for_type(dev.type))
-    dev.inverted = true;
+  resolve_device_features(dev);
 }
 
 /// @brief Apply a name response frame to the device record.
@@ -304,6 +380,38 @@ void IOHomeControlComponent::begin_status_poll_tracking_(const std::string &devi
   this->poll_policy_.begin_tracking(device_id, initial_delay_ms, millis());
 }
 
+void IOHomeControlComponent::settle_ended_status_tracking_() {
+  while (const auto ended = this->poll_policy_.pop_ended_device()) {
+    IoDevice *dev = this->registry_.get(*ended);
+    if (dev == nullptr)
+      continue;
+    if (detail::is_settling(*dev)) {
+      // The device's own last word was "stopped"; nothing is left to confirm it.
+      ESP_LOGD(detail::TAG, "Device %s: no poll left to confirm its stop at %.2f%%, target %.2f%%: taken as at rest",
+               ended->c_str(), static_cast<double>(dev->position), static_cast<double>(dev->target));
+    } else if (!effective_is_stopped(*dev) && detail::known_device_reports_motion_through_status(*dev)) {
+      // The device was last seen (or commanded) moving and no report has followed; with no poll left
+      // the cover would show movement for good. Position and target stay as last reported.
+      if (dev->position == UNKNOWN_POSITION) {
+        ESP_LOGI(detail::TAG, "Device %s: no status report since its move; shown at rest at an unknown position",
+                 ended->c_str());
+      } else {
+        ESP_LOGI(detail::TAG, "Device %s: no status report since its move; shown at rest at %.0f%%", ended->c_str(),
+                 static_cast<double>(dev->position));
+      }
+      dev->optimistic.clear_position();
+      // A resting device needs the wake-up preamble again, so the next request must not assume the
+      // device is still awake from the movement.
+      clear_moving_evidence(*dev);
+    } else {
+      continue;
+    }
+    dev->is_stopped = true;
+    detail::log_status_update(*ended, *dev);
+    this->notify_device_update_(*ended);
+  }
+}
+
 void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id, uint32_t delay_ms) {
   // Keyed by the device's node address (decisions::remote_poll_timer_id()), not by a per-device
   // name string: Component::set_timeout(const char*, ...) stores the caller's pointer rather than
@@ -313,8 +421,10 @@ void IOHomeControlComponent::schedule_status_poll_(const std::string &device_id,
   uint8_t node_id[NODE_ID_SIZE];
   if (!hex_to_bytes(device_id, node_id, NODE_ID_SIZE))
     return;  // malformed device_id: every caller passes one already validated by the registry
-  this->set_timeout(decisions::remote_poll_timer_id(node_id), delay_ms,
-                    [this, device_id]() { this->queue_request_device_status(device_id); });
+  this->set_timeout(decisions::remote_poll_timer_id(node_id), delay_ms, [this, device_id]() {
+    this->poll_policy_.on_remote_poll_ran(device_id);
+    this->queue_request_device_status(device_id);
+  });
 }
 
 void IOHomeControlComponent::schedule_heating_poll_(const std::string &device_id, uint32_t delay_ms) {
@@ -332,11 +442,67 @@ void IOHomeControlComponent::schedule_device_polls_(const std::vector<std::strin
   }
 }
 
-void IOHomeControlComponent::schedule_linked_remote_polls_(const std::string &remote_id, uint32_t delay_ms) {
-  const std::vector<std::string> *linked = this->registry_.linked_devices(remote_id);
-  if (linked == nullptr)
+void IOHomeControlComponent::act_on_foreign_frame_(const std::string &device_id, ForeignFrameKind kind,
+                                                   const std::string &controller, uint8_t cmd) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr)
     return;
-  this->schedule_device_polls_(*linked, delay_ms);
+  const uint32_t now = millis();
+  const char *what = kind == ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER ? "challenge" : command_name(cmd);
+  switch (this->poll_policy_.on_foreign_frame(device_id, kind, controller, cmd, now, dev->last_status)) {
+    case ForeignAction::ARM:
+      ESP_LOGD(detail::TAG, "rx remote_activity device=%s controller=%s %s(0x%02X): scheduling status poll",
+               device_id.c_str(), controller.c_str(), what, cmd);
+      this->begin_status_poll_tracking_(device_id, 0);
+      this->schedule_status_poll_(device_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+      break;
+    case ForeignAction::PUSH_PENDING:
+      ESP_LOGD(detail::TAG, "rx remote_activity device=%s controller=%s %s(0x%02X): poll pending, pushed out",
+               device_id.c_str(), controller.c_str(), what, cmd);
+      this->schedule_status_poll_(device_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+      break;
+    case ForeignAction::IGNORE:
+      ESP_LOGD(detail::TAG, "rx remote_activity device=%s controller=%s %s(0x%02X): %s, no poll", device_id.c_str(),
+               controller.c_str(), what, cmd,
+               kind == ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER
+                   ? "answers a heard read"
+                   : "a read, and the device was read in the last 10 min");
+      break;
+  }
+}
+
+void IOHomeControlComponent::note_foreign_challenge_(const IoFrame &frame) {
+  // A registered device challenging another controller: a write whose request frame was missed
+  // looks exactly like this, so the policy decides whether it warrants a poll.
+  if (frame.cmd != CMD_CHALLENGE_REQ || memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0)
+    return;
+  const std::string challenger = node_id_to_string(frame.src);
+  if (this->get_device(challenger) == nullptr)
+    return;
+  this->act_on_foreign_frame_(challenger, ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER, node_id_to_string(frame.dst),
+                              frame.cmd);
+}
+
+bool IOHomeControlComponent::act_on_overheard_request_(const IoFrame &frame) {
+  // Another controller's frame to a registered device (e.g. a gateway commanding a shutter we also
+  // control). Our own frames are never foreign.
+  const std::string dst_id = node_id_to_string(frame.dst);
+  if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
+    this->act_on_foreign_frame_(dst_id, ForeignFrameKind::REQUEST_TO_DEVICE, node_id_to_string(frame.src), frame.cmd);
+    return true;
+  }
+
+  // A linked 2W controller whose commands target a device at an address we don't have registered.
+  // 1W remotes are handled before this, via the CTRL0_PROTOCOL_1W check.
+  const std::string src_id = node_id_to_string(frame.src);
+  const std::vector<std::string> *linked = this->registry_.linked_devices(src_id);
+  if (linked == nullptr)
+    return false;
+  // Copied: the helper may call back into code that touches the registry.
+  const std::vector<std::string> devices = *linked;
+  for (const auto &device_id : devices)
+    this->act_on_foreign_frame_(device_id, ForeignFrameKind::REQUEST_TO_DEVICE, src_id, frame.cmd);
+  return true;
 }
 
 std::vector<std::string> IOHomeControlComponent::resolve_1w_target_devices_(const OneWayFrameInfo &info,
@@ -510,7 +676,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
     apply_info2_response(dev, frame);
     ESP_LOGI(detail::TAG, "Device %s: type=%s (%u) class=%s profile=%s subtype=%u", id.c_str(),
              device_type_name(dev.type), static_cast<unsigned>(dev.type), device_capability_class_name(dev.type),
-             device_operation_profile_name(dev.type), dev.subtype);
+             device_operation_profile_name(dev.type, dev.subtype), dev.subtype);
     if (type_was_unknown && dev.type != DeviceType::UNKNOWN) {
       ESP_LOGI(detail::TAG,
                "Device %s: type learned at runtime, not declared in YAML — add `%s` to skip "
@@ -587,9 +753,10 @@ void IOHomeControlComponent::handle_overheard_status_(const IoFrame &frame, uint
   // exchange gave up), so it has its own wording.
   const bool to_us = memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0;
   if (!to_us && this->overheard_status_sources_.should_log(frame.src, millis())) {
-    ESP_LOGI(detail::TAG,
-             "Device %s answered another controller (%s): %s(0x%02X) not applied, this hub reads the state itself",
-             src_id.c_str(), dst_id.c_str(), command_name(frame.cmd), frame.cmd);
+    ESP_LOGI(
+        detail::TAG,
+        "Device %s answered another controller (%s): %s(0x%02X) not applied, only this hub's own reads set its state",
+        src_id.c_str(), dst_id.c_str(), command_name(frame.cmd), frame.cmd);
     return;
   }
   ESP_LOGD(detail::TAG, "rx %s cmd=%s(0x%02X) src=%s dst=%s len=%u data_len=%u not applied",
@@ -620,7 +787,10 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // Exchange-internal frames (0x3C challenge request, 0x3D challenge response) belonging to
   // *another* controller's authenticated exchange carry no extractable status data for a passive
   // observer — skip silently. They remain visible in io_capture (stage=parse_ok).
+  // A registered device's challenge to another controller may still warrant a poll of our own
+  // (note_foreign_challenge_()); its content is never applied.
   if (decisions::is_exchange_internal_command(frame.cmd)) {
+    this->note_foreign_challenge_(frame);
     return;
   }
 
@@ -711,36 +881,17 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     // controller sharing a device, or an attacker who knows the device's node ID -- node IDs
     // travel in the clear, see README.md's "Reporting Unsupported Devices"). Nothing here proves
     // the frame's source currently holds the system key, so its content is never applied -- see
-    // ADR 0022. State goes stale until this hub's own next poll corrects it: the request that drew this
-    // reply already scheduled one (the remote-activity branch below).
+    // ADR 0022. The frame only stamps the device's link health (handle_overheard_status_()); whether
+    // the request that drew it warrants a poll of our own was decided when that request was heard
+    // (act_on_overheard_request_()).
     this->handle_overheard_status_(frame, packet.len);
     return;
   }
 
-  // Check if this frame targets one of our registered devices (e.g., a physical remote
-  // commanding a shutter we also control). If so, schedule a status poll after 2 seconds
-  // to pick up the resulting position change. The timeout name includes the device ID so
-  // repeated remote activity resets the timer rather than stacking redundant polls.
-  // The 2-second delay gives the device time to complete the exchange and start moving.
-  const std::string dst_id = node_id_to_string(frame.dst);
-  if (this->get_device(dst_id) != nullptr && memcmp(frame.src, this->node_id_, NODE_ID_SIZE) != 0) {
-    ESP_LOGD(detail::TAG, "rx remote_activity src=%s dst=%s cmd=%s(0x%02X), scheduling status poll",
-             node_id_to_string(frame.src).c_str(), dst_id.c_str(), command_name(frame.cmd), frame.cmd);
-    this->begin_status_poll_tracking_(dst_id, 0);
-    this->schedule_status_poll_(dst_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+  // A frame of another controller to one of our registered devices, or from a linked 2W
+  // controller: act_on_overheard_request_() decides whether it warrants a poll of our own.
+  if (this->act_on_overheard_request_(frame))
     return;
-  }
-
-  // Check if the frame source is a linked remote using 2W protocol (e.g., a 2W controller
-  // whose commands target a device at an address we don't have registered). 1W remotes are
-  // already handled above via the CTRL0_PROTOCOL_1W check.
-  const std::string src_id = node_id_to_string(frame.src);
-  if (this->registry_.linked_devices(src_id) != nullptr) {
-    ESP_LOGD(detail::TAG, "rx remote_activity (linked) remote=%s cmd=%s(0x%02X), scheduling status poll",
-             src_id.c_str(), command_name(frame.cmd), frame.cmd);
-    this->schedule_linked_remote_polls_(src_id);
-    return;
-  }
 
   detail::log_frame_issue(this, "rx", "unhandled_cmd", frame, packet.len);
 

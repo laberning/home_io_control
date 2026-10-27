@@ -1,0 +1,12 @@
+# expect-error: remove silent:
+# covers: platform_common.require_feature
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+cover:
+  - platform: home_io_control
+    name: "Blind"
+    io_device_id: "8D7633"
+    io_device_type: interior_venetian_blind
+    silent: true

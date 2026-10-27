@@ -188,7 +188,7 @@ messages:
     payload: 384014448966445554cd1e511225991155533429317f88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db0025
 - dir: host_to_coproc
   host_ms: 100045
-  hex: 060400f01fcb33090800a616384091155533511225995e46304ce75256d31c417fff36b1
+  hex: 060400f01fcb3301080016384091155533511225995e46304ce75256d31c417fffafc4
   msg_type: tx
   seq: 4
   fields:
@@ -196,7 +196,6 @@ messages:
     freq_hz: 868950000
     then_rx: true
     preamble_bytes: 8
-    cca_threshold_dbm: -90
     payload: 384091155533511225995e46304ce75256d31c417fff
 - dir: coproc_to_host
   host_ms: 100052

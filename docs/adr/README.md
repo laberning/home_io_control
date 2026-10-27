@@ -35,7 +35,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0039](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md) | Pairing sends a discover-confirm (0x2C) and tolerates no answer | Universal `pairing_discover_confirm` mode (`skip`/`send`/`send_with_ack`); the step never fails the attempt; try 2 alone rotates channels (deviates from ADR 0028) |
 | [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | Tries ordered by per-device evidence (short first only while believed travelling, then the wake-up preamble; a silent exchange spends the evidence; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch, `low_power_wake_preamble` length |
 | [0044](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md) | Chip-neutral transmit intent | Every transmission carries its wake level; a driver may scan idle channels by itself; a try starts only if its transmission ends inside the exchange budget |
-| [0045](0045-listen-before-talk-is-part-of-sending.md) | Listen-before-talk is part of sending | The radio checks the transmit channel inside `send_packet()`, retuning first when the idle receiver is elsewhere; the engine keeps the retry policy |
+| [0045](0045-listen-before-talk-is-part-of-sending.md) | Listen-before-talk is part of sending | The radio checks the transmit channel inside `send_packet()`, retuning first when the idle receiver is elsewhere; the engine keeps the retry policy and, since the 2026-10 amendment, checks only frames with START set |
 | [0047](0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md) | Home IO Control drives a Bridle co-processor as one more radio driver | `RadioBridle` with the band behind `BridlePhy`, a non-blocking supervised link that goes down rather than failed, and Bridle sources compiled only when `radio_type: bridle` is configured |
 | [0048](0048-io-868-over-bridle.md) | 868 MHz io-homecontrol over a Bridle `gfsk_raw` radio | `Io868GfskPhy` beside `Io2g4Phy`: the host UART-codes the frame, the co-processor sees bytes; selected by `bridle_band: io_868` |
 
@@ -76,6 +76,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is deprecated, not deleted outright |
 | [0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) | Device types follow the IO node-type and subtype table | A 16-bit `DeviceType` and one (type, subtype) table drive names, entity class, platform and behaviour flags; six YAML names change and the old ones fail with the replacement |
 | [0053](0053-a-device-may-carry-its-own-system-key.md) | A device may carry its own system key | An optional `system_key:` on any device entity; the exchange engine picks the key per frame from the peer's node, falling back to the hub key; Scan Paired Devices sweeps once per distinct key |
+| [0059](0059-device-capabilities-come-from-the-type-table.md) | Device capabilities come from the type table | One capability word per (type, subtype) row, resolved once per device; the subtype-58 rule is one function; named positions are one table; the Python mirror is sync-tested; keys a kind cannot use fail validation; unconfirmed kinds are marked experimental and warned about |
 
 ### Security
 
@@ -164,6 +165,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0056: Exterior heating is a fan entity](0056-exterior-heating-is-a-fan-entity.md)
 - [ADR 0057: Temperature setpoints travel in the main parameter](0057-temperature-setpoints-travel-in-the-main-parameter.md)
 - [ADR 0058: Pairing reads the heater behind an Atlantic pairing node directly](0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md)
+- [ADR 0059: Device capabilities come from the type table](0059-device-capabilities-come-from-the-type-table.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

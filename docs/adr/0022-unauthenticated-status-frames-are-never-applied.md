@@ -82,6 +82,9 @@ scheduled through the remote-activity branch.
 - A spoofed frame can make a device's last contact and RSSI look fresh. Neither feeds a decision
   (the wake-up preamble choice reads only moving evidence), and a replayed capture could do the
   same to any receiver, so these values were never proof of life.
+- The hub's own poll after overheard traffic is limited to what changes a device: a heard write,
+  or a device challenge that follows no heard read, arms it; a heard read arms it at most every
+  10 minutes per device. Spoofed reads therefore induce at most one poll per device per 10 minutes.
 - Regression-pinned by `HubStatus.UnauthenticatedForeign{PrivateResponse,StatusUpdate}DoesNotUpdateDeviceState`
   (hub_status_test.cpp) — both verified to fail against the prior code before this change landed.
 - `authenticate_request_()` remains exactly as expensive and exactly as used as before — this

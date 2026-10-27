@@ -28,7 +28,11 @@ do when yours is not there.
 - **Tilt control** for venetian-style blinds, exposed automatically for tilt-capable device types.
 - **Light control**, binary or dimmable.
 - **Favorite / My and ventilation buttons**, generated automatically for the device types that
-  support them.
+  support them (not for garage openers, which refuse the favorite command). Garage openers get an
+  experimental Partial Position button and gate openers an experimental Pedestrian Position button,
+  both disabled by default.
+- **Open/close-only covers** for subtype 58 garage openers, gate openers and swinging shutters:
+  open, close and stop, no position slider.
 - **Device discovery and pairing** from a Home Assistant button, with a machine-readable
   "Last Pairing Result" diagnostic and a plain-language advisor when an attempt fails.
 - **Key extraction from an existing installation** — emulate an unpaired device so your current

@@ -5,7 +5,13 @@
 #include "proto_codecs.h"
 #include "proto_device_model.h"
 #include "proto_device_types.h"
+#include "proto_heating_profiles.h"
 
+#include <algorithm>
+#include <set>
+#include <utility>
+
+#include "device_table_walk.h"
 #include "test_helpers.h"
 
 using namespace esphome::home_io_control;
@@ -102,7 +108,7 @@ TEST(DeviceTypesTable, KindNamesFollowTypeCommaSubtype) {
   EXPECT_EQ(format_device_kind(DeviceType::ELECTRICAL_HEATER, 1), "electrical heater, with adjustable setpoint");
   EXPECT_EQ(format_device_kind(DeviceType::ELECTRICAL_HEATER, 0), "electrical heater");
   EXPECT_EQ(format_device_kind(DeviceType::ROLLER_SHUTTER, 2), "roller shutter, with projection");
-  EXPECT_EQ(format_device_kind(DeviceType::GARAGE_OPENER, 58), "garage opener, position only");
+  EXPECT_EQ(format_device_kind(DeviceType::GARAGE_OPENER, 58), "garage opener, open/close only");
   EXPECT_EQ(format_device_kind(DeviceType::ROLLER_SHUTTER, 33), "roller shutter, subtype 33")
       << "a subtype without a name prints its number";
   EXPECT_EQ(format_device_kind(DeviceType::LOCK, 1), "window lock") << "a standalone name is not appended";
@@ -159,25 +165,30 @@ TEST(DeviceTypesTable, CapabilityClassIsSubtypeAware) {
 }
 
 TEST(DeviceTypesTable, MainParameterOnlyForSubtype58OfAnyTypeAndEveryGarageOpener) {
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::GARAGE_OPENER, 58));
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::GATE_OPENER, 58));
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::EXTERIOR_HEATING, 58));
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::EXTERIOR_HEATING, 0)) << "every exterior heater";
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::SWINGING_SHUTTER, 58));
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::ROLLER_SHUTTER, 58))
+  const auto main_parameter_only = [](DeviceType type, uint8_t subtype) {
+    return has_feature(device_features(type, subtype), device_feature::MAIN_PARAMETER_ONLY);
+  };
+  EXPECT_TRUE(main_parameter_only(DeviceType::GARAGE_OPENER, 58));
+  EXPECT_TRUE(main_parameter_only(DeviceType::GATE_OPENER, 58));
+  EXPECT_TRUE(main_parameter_only(DeviceType::EXTERIOR_HEATING, 58));
+  EXPECT_TRUE(main_parameter_only(DeviceType::EXTERIOR_HEATING, 0)) << "every exterior heater";
+  EXPECT_TRUE(main_parameter_only(DeviceType::SWINGING_SHUTTER, 58));
+  EXPECT_TRUE(main_parameter_only(DeviceType::ROLLER_SHUTTER, 58))
       << "subtype 58 is defined on every type, with or without a row of its own";
-  EXPECT_TRUE(device_takes_main_parameter_only(DeviceType::GARAGE_OPENER, 0)) << "the issue #163 behaviour stays";
-  EXPECT_FALSE(device_takes_main_parameter_only(DeviceType::ROLLER_SHUTTER, 0));
-  EXPECT_FALSE(device_takes_main_parameter_only(DeviceType::GATE_OPENER, 0));
-  EXPECT_FALSE(device_takes_main_parameter_only(DeviceType::SWINGING_SHUTTER, 1));
+  EXPECT_TRUE(main_parameter_only(DeviceType::GARAGE_OPENER, 0)) << "the issue #163 behaviour stays";
+  EXPECT_FALSE(main_parameter_only(DeviceType::ROLLER_SHUTTER, 0));
+  EXPECT_FALSE(main_parameter_only(DeviceType::GATE_OPENER, 0));
+  EXPECT_FALSE(main_parameter_only(DeviceType::SWINGING_SHUTTER, 1));
 }
 
-TEST(DeviceTypesTable, BrightnessOnlyLightsAreTheRgbAndTunableWhiteSubtypes) {
-  EXPECT_TRUE(device_light_is_brightness_only(DeviceType::LIGHT, 1));
-  EXPECT_TRUE(device_light_is_brightness_only(DeviceType::LIGHT, 2));
-  EXPECT_FALSE(device_light_is_brightness_only(DeviceType::LIGHT, 0));
-  EXPECT_FALSE(device_light_is_brightness_only(DeviceType::LIGHT, 58));
-  EXPECT_FALSE(device_light_is_brightness_only(DeviceType::ROLLER_SHUTTER, 1));
+TEST(DeviceTypesTable, DimmableLightRowsAreTheRgbAndTunableWhiteSubtypes) {
+  const auto has_levels = [](DeviceType type, uint8_t subtype) {
+    return has_feature(device_features(type, subtype), device_feature::LEVELS);
+  };
+  EXPECT_TRUE(has_levels(DeviceType::LIGHT, 1));
+  EXPECT_TRUE(has_levels(DeviceType::LIGHT, 2));
+  EXPECT_FALSE(has_levels(DeviceType::LIGHT, 0)) << "the plain light row leaves levels to `dimmable:`";
+  EXPECT_FALSE(has_levels(DeviceType::LIGHT, 58));
 }
 
 // ============================================================================
@@ -186,8 +197,7 @@ TEST(DeviceTypesTable, BrightnessOnlyLightsAreTheRgbAndTunableWhiteSubtypes) {
 
 TEST(DeviceTypesTable, HeaterWithSetpointGetsAClimateSnippet) {
   const std::string snippet = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC",
-                                                        /*metadata_complete=*/true, /*inverted=*/false,
-                                                        /*low_power=*/false);
+                                                        /*metadata_complete=*/true, /*low_power=*/false);
   EXPECT_NE(snippet.find("  climate:\n"), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_device_type: \"electrical_heater\""), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_subtype: 1"), std::string::npos) << snippet;
@@ -196,29 +206,27 @@ TEST(DeviceTypesTable, HeaterWithSetpointGetsAClimateSnippet) {
 
 TEST(DeviceTypesTable, SnippetCarriesTheDeviceKeyOnlyWhenOneIsGiven) {
   const std::string key = "00112233445566778899AABBCCDDEEFF";
-  const std::string keyed =
-      build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false, false, key);
+  const std::string keyed = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false, key);
   EXPECT_NE(keyed.find("    system_key: \"" + key + "\"\n"), std::string::npos) << keyed;
   EXPECT_NE(keyed.find("io_subtype: 1"), std::string::npos);
 
-  const std::string plain = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false, false);
+  const std::string plain = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 1, "AABBCC", true, false);
   EXPECT_EQ(plain.find("system_key"), std::string::npos);
 
-  const std::string no_metadata = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "AABBCC", false, false, false, key);
+  const std::string no_metadata = build_device_yaml_snippet(DeviceType::UNKNOWN, 0, "AABBCC", false, false, key);
   EXPECT_NE(no_metadata.find("system_key: \"" + key + "\""), std::string::npos)
       << "the key also rides in the shape used when the device withheld its type";
 }
 
 TEST(DeviceTypesTable, PlainHeaterGetsAClimateSnippet) {
-  const std::string snippet = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 0, "AABBCC", true, false, false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::ELECTRICAL_HEATER, 0, "AABBCC", true, false);
   EXPECT_NE(snippet.find("  climate:\n"), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_subtype: 0"), std::string::npos) << snippet;
 }
 
 TEST(DeviceTypesTable, ExteriorHeatingGetsAFanSnippetForBothSubtypes) {
   for (const uint8_t subtype : {0, 58}) {
-    const std::string snippet =
-        build_device_yaml_snippet(DeviceType::EXTERIOR_HEATING, subtype, "AABBCC", true, false, false);
+    const std::string snippet = build_device_yaml_snippet(DeviceType::EXTERIOR_HEATING, subtype, "AABBCC", true, false);
     EXPECT_NE(snippet.find("  fan:\n"), std::string::npos) << snippet;
     EXPECT_NE(snippet.find("io_device_type: \"exterior_heating\""), std::string::npos) << snippet;
     EXPECT_NE(snippet.find("io_subtype: " + std::to_string(subtype)), std::string::npos) << snippet;
@@ -226,25 +234,216 @@ TEST(DeviceTypesTable, ExteriorHeatingGetsAFanSnippetForBothSubtypes) {
 }
 
 TEST(DeviceTypesTable, HeatPumpAndRemoteControllerGetNoSnippet) {
-  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::HEAT_PUMP, 1, "AABBCC", true, false, false).empty());
-  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::REMOTE_CONTROLLER, 0, "AABBCC", true, false, false).empty());
+  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::HEAT_PUMP, 1, "AABBCC", true, false).empty());
+  EXPECT_TRUE(build_device_yaml_snippet(DeviceType::REMOTE_CONTROLLER, 0, "AABBCC", true, false).empty());
 }
 
 TEST(DeviceTypesTable, BrightnessOnlyLightSnippetSetsDimmable) {
-  const std::string rgb = build_device_yaml_snippet(DeviceType::LIGHT, 1, "AABBCC", true, false, false);
+  const std::string rgb = build_device_yaml_snippet(DeviceType::LIGHT, 1, "AABBCC", true, false);
   EXPECT_NE(rgb.find("  light:\n"), std::string::npos) << rgb;
   EXPECT_NE(rgb.find("dimmable: true"), std::string::npos) << rgb;
 
-  const std::string onoff = build_device_yaml_snippet(DeviceType::LIGHT, 58, "AABBCC", true, false, false);
+  const std::string onoff = build_device_yaml_snippet(DeviceType::LIGHT, 58, "AABBCC", true, false);
   EXPECT_NE(onoff.find("  light:\n"), std::string::npos) << onoff;
   EXPECT_EQ(onoff.find("dimmable"), std::string::npos) << onoff;
 
-  const std::string plain = build_device_yaml_snippet(DeviceType::LIGHT, 0, "AABBCC", true, false, false);
+  const std::string plain = build_device_yaml_snippet(DeviceType::LIGHT, 0, "AABBCC", true, false);
   EXPECT_EQ(plain.find("dimmable"), std::string::npos) << plain;
 }
 
 TEST(DeviceTypesTable, UnnamedSubtypeOfACoverStillGetsACoverSnippet) {
-  const std::string snippet = build_device_yaml_snippet(DeviceType::ROLLER_SHUTTER, 33, "AABBCC", true, false, false);
+  const std::string snippet = build_device_yaml_snippet(DeviceType::ROLLER_SHUTTER, 33, "AABBCC", true, false);
   EXPECT_NE(snippet.find("  cover:\n"), std::string::npos) << snippet;
   EXPECT_NE(snippet.find("io_subtype: 33"), std::string::npos) << snippet;
+}
+
+// ============================================================================
+// Capability-bit invariants
+// ============================================================================
+
+TEST(DeviceTypesTableFeatures, TiltImpliesLevels) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (has_feature(row.features, device_feature::TILT)) {
+      EXPECT_TRUE(has_feature(row.features, device_feature::LEVELS)) << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableFeatures, MainParameterOnlyHasNeitherTiltNorTheExtendedPositionFrame) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (!has_feature(row.features, device_feature::MAIN_PARAMETER_ONLY))
+      return;
+    EXPECT_FALSE(has_feature(row.features, device_feature::TILT)) << format_device_ids(row.type, row.subtype);
+    EXPECT_FALSE(has_feature(row.features, device_feature::EXTENDED_POSITION_FRAME))
+        << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTableFeatures, ASubtypeRowKeepsItsTypesCapabilityClassUnlessItHasNone) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.subtype == 0 || row.capability == DeviceCapabilityClass::UNKNOWN)
+      return;
+    EXPECT_EQ(row.capability, device_capability_class(row.type, 0)) << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTableFeatures, NoRowUsesBit15) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    EXPECT_EQ(row.features & (1U << 15U), 0u) << "bit 15 is the Python mirror's experimental marker";
+  });
+}
+
+TEST(DeviceTypesTableFeatures, AnExplicitSubtype58RowIsTheVariantOfItsTypeRow) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.subtype != SUBTYPE_MAIN_PARAMETER_ONLY)
+      return;
+    EXPECT_EQ(row.features, main_parameter_only_variant(device_features(row.type, 0)))
+        << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTableFeatures, GarageOpenerRowsHaveNoFavourite) {
+  // Issue #163: the garage opener refuses the favourite alias.
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.type == DeviceType::GARAGE_OPENER) {
+      EXPECT_FALSE(has_feature(row.features, device_feature::FAVORITE)) << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableFeatures, NamedPositionValuesAreUniqueAboveTheClosedPositionAndOwnOneBitEach) {
+  DeviceFeatures bits_seen = 0;
+  for (const NamedPosition &named : NAMED_POSITIONS) {
+    EXPECT_GT(named.main_parameter, MAIN_PARAMETER_CLOSED) << named.name;
+    EXPECT_EQ(bits_seen & named.feature, 0u) << named.name << ": the bit is in more than one entry";
+    bits_seen |= named.feature;
+    for (const NamedPosition &other : NAMED_POSITIONS) {
+      if (&other != &named) {
+        EXPECT_NE(other.main_parameter, named.main_parameter) << named.name << " and " << other.name;
+      }
+    }
+  }
+}
+
+TEST(DeviceTypesTable, TheSnippetSuggestsInvertedAndDimmableFromTheKindsFeatures) {
+  EXPECT_NE(
+      build_device_yaml_snippet(DeviceType::HORIZONTAL_AWNING, 0, "AABBCC", true, false).find("invert_position: true"),
+      std::string::npos);
+  EXPECT_NE(build_device_yaml_snippet(DeviceType::LIGHT, 1, "AABBCC", true, false).find("dimmable: true"),
+            std::string::npos);
+  EXPECT_EQ(build_device_yaml_snippet(DeviceType::LIGHT, 0, "AABBCC", true, false).find("dimmable"), std::string::npos);
+  EXPECT_EQ(build_device_yaml_snippet(DeviceType::LIGHT, 58, "AABBCC", true, false).find("dimmable"),
+            std::string::npos);
+  EXPECT_EQ(build_device_yaml_snippet(DeviceType::ROLLER_SHUTTER, 0, "AABBCC", true, false).find("invert_position"),
+            std::string::npos);
+}
+
+TEST(DeviceTypesTableFeatures, TiltNamedPositionsAndInversionBelongToCoverRowsOnly) {
+  const DeviceFeatures cover_only = device_feature::TILT | device_feature::FAVORITE | device_feature::VENT |
+                                    device_feature::PARTIAL | device_feature::PEDESTRIAN | device_feature::INVERTED;
+  test::for_each_table_row([cover_only](const DeviceTypeInfo &row) {
+    if ((row.features & cover_only) != 0) {
+      EXPECT_EQ(row.capability, DeviceCapabilityClass::COVER) << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableFeatures,
+     WindowCompanionsAreExactlyWhereTheHeatingProfilePollsTheWindowAndOffersTheDetectionSwitch) {
+  const auto contains = [](const HeatingFunction *list, size_t count, HeatingFunction fn) {
+    return std::find(list, list + count, fn) != list + count;
+  };
+  test::for_each_table_row([&contains](const DeviceTypeInfo &row) {
+    const HeatingProfile *profile = find_heating_profile(row.type, row.subtype);
+    const bool profile_has_window =
+        profile != nullptr &&
+        contains(profile->poll_registers, profile->poll_register_count, HeatingFunction::WINDOW_OPEN) &&
+        contains(profile->boot_registers, profile->boot_register_count, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
+    EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), profile_has_window)
+        << format_device_ids(row.type, row.subtype);
+  });
+}
+
+TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsOnlyOnRowsThatSendAPositionAndAreNotMainParameterOnly) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (!device_has_platform(row.type, row.subtype))
+      return;
+    const DeviceCapabilityClass capability = row.capability;
+    const bool sends_position =
+        capability == DeviceCapabilityClass::COVER || capability == DeviceCapabilityClass::LIGHT ||
+        capability == DeviceCapabilityClass::SWITCH || capability == DeviceCapabilityClass::LOCK ||
+        capability == DeviceCapabilityClass::HEATER_LEVEL;
+    // One direction only: a row may send the short form without being main-parameter-only (the interior
+    // venetian blind and dual roller shutter, whose functional parameter 1 is not a speed).
+    if (has_feature(row.features, device_feature::EXTENDED_POSITION_FRAME)) {
+      EXPECT_TRUE(sends_position && !has_feature(row.features, device_feature::MAIN_PARAMETER_ONLY))
+          << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableFeatures, EveryRowWithCapabilitiesHasAYamlSelectableType) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.features == 0)
+      return;
+    const DeviceTypeInfo *type_row = find_exact_device_type_info(row.type, 0);
+    ASSERT_NE(type_row, nullptr) << format_device_ids(row.type, row.subtype);
+    EXPECT_NE(type_row->flags & device_type_flags::YAML_SELECTABLE, 0u)
+        << format_device_ids(row.type, row.subtype) << ": the Python mirror can only name a YAML-selectable type";
+  });
+}
+
+// ============================================================================
+// The experimental marker
+// ============================================================================
+
+TEST(DeviceTypesTableExperimental, ExactlyTheRowsNoCaptureOrReportConfirmsAreFlagged) {
+  // The \todo list on DEVICE_TYPE_TABLE. Rows 1, 10 and 13 are absent on purpose: their changed
+  // behaviour is experimental, their identity is not.
+  const std::set<std::pair<DeviceType, uint8_t>> expected = {
+      {DeviceType::LIGHT, 1},
+      {DeviceType::LIGHT, 2},
+      {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY},
+      {DeviceType::LOCK, 1},
+      {DeviceType::LOCK, 2},
+      {DeviceType::ON_OFF_SWITCH, 2},
+      {DeviceType::HEAT_PUMP, 1},
+      {DeviceType::HEAT_PUMP, 2},
+      {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY},
+      {DeviceType::SLIDING_WINDOW, 1},
+      {DeviceType::REMOTE_CONTROLLER, 2},
+      {DeviceType::REMOTE_CONTROLLER, 3},
+      {DeviceType::REMOTE_CONTROLLER, 4},
+      {DeviceType::REMOTE_CONTROLLER, 5},
+  };
+  std::set<std::pair<DeviceType, uint8_t>> flagged;
+  test::for_each_table_row([&flagged](const DeviceTypeInfo &row) {
+    if ((row.flags & device_type_flags::EXPERIMENTAL) != 0)
+      flagged.emplace(row.type, row.subtype);
+  });
+  EXPECT_EQ(flagged, expected);
+}
+
+TEST(DeviceTypesTableExperimental, NoTypeRowIsExperimental) {
+  // The Python mirror falls back from a subtype to its type's word, so a type row that carried the
+  // marker would leak it onto every subtype.
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.subtype == 0) {
+      EXPECT_EQ(row.flags & device_type_flags::EXPERIMENTAL, 0u) << format_device_ids(row.type, row.subtype);
+    }
+  });
+}
+
+TEST(DeviceTypesTableExperimental, TheLookupFlagsOnlyAnExactRow) {
+  EXPECT_TRUE(device_is_experimental(DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY));
+  EXPECT_TRUE(device_is_experimental(DeviceType::LIGHT, 1));
+  EXPECT_FALSE(device_is_experimental(DeviceType::GARAGE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY))
+      << "5/58 is confirmed by issue #163";
+  EXPECT_FALSE(device_is_experimental(DeviceType::GATE_OPENER, 0));
+  EXPECT_FALSE(device_is_experimental(DeviceType::SLIDING_WINDOW, 9)) << "a subtype with no row behaves like its type";
+  EXPECT_FALSE(device_is_experimental(static_cast<DeviceType>(26), 0)) << "a type the table does not know";
+  for (const DeviceType unflagged :
+       {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::VERTICAL_INTERIOR_BLIND, DeviceType::DUAL_ROLLER_SHUTTER}) {
+    EXPECT_FALSE(device_is_experimental(unflagged, 0)) << "its behaviour is experimental, not its identity";
+  }
 }

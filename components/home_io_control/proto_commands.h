@@ -16,7 +16,7 @@
 ///     open). Never hardcode "0 = open" in caller code without checking inversion first.
 ///   - Use create_execute_position() for numeric positions (0–100).
 ///   - Use create_execute_command() for named commands: CoverCommand::STOP,
-///     CoverCommand::FAVORITE, CoverCommand::VENT.
+///     CoverCommand::FAVORITE, CoverCommand::VENT, CoverCommand::PEDESTRIAN, CoverCommand::PARTIAL.
 ///   - Use create_force_open() for CoverCommand::FORCE_OPEN — it takes the target "fully open"
 ///     position explicitly rather than assuming 0
 ///   - The Home Assistant layer maps HA's 1.0=open/0.0=closed to the IO scale via
@@ -72,27 +72,30 @@ namespace home_io_control {
 bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
                              bool silent = false);
 
-/// @brief Build a named-command execute frame (0x00) for STOP, FAVORITE, or VENT.
+/// @brief Build a named-command execute frame (0x00) for STOP or a named position.
 ///
-/// Each maps to a specific wire encoding in the 6-byte special CMD_EXECUTE payload:
+/// The named positions are the entries of NAMED_POSITIONS (proto_device_types.h); each maps to a
+/// specific wire encoding in the 6-byte special CMD_EXECUTE payload:
 ///   - STOP:       main=0xD2, modifier=0x00
 ///   - FAVORITE:   main=0xD8, modifier=0x00
 ///   - VENT:       main=0xD8, modifier=0x03
+///   - PEDESTRIAN: main=0xD8, modifier=0x07 (experimental, gate openers)
+///   - PARTIAL:    main=0xD8, modifier=0x09 (experimental, garage openers)
 ///
 /// This cleanly separates "move to position X" from "execute named action"
 /// without overloading a single numeric parameter.
 ///
-/// FORCE_OPEN is NOT handled here — see create_force_open() instead. Unlike these three, it
+/// FORCE_OPEN is NOT handled here — see create_force_open() instead. Unlike these, it
 /// needs a device-specific "fully open" wire position (0 or 100 depending on inversion), which
 /// this generic dispatch has no way to supply; passing CoverCommand::FORCE_OPEN returns false.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
 /// @param low_power True if target is battery/solar‑powered (sets CTRL1_LOW_POWER).
-/// @param cmd Named command to execute (STOP, FAVORITE, or VENT).
+/// @param cmd Named command to execute (STOP or a named position).
 /// @return true on success; false for invalid/unsupported command.
 /// @param silent Use the silent (slower) travel profile. Honoured for FAVORITE only — STOP has no
-///        travel speed, and nothing has been captured for VENT.
+///        travel speed, and nothing has been captured for the other named positions.
 bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd,
                             bool silent = false);
 
@@ -122,7 +125,7 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// For devices that refuse the block create_execute_position() appends. A Wisniowski / Somfy
 /// MOTO 1000 io garage opener answers that block with RESULT_PARAMETER_UNKNOWN before any
 /// challenge, accepts a 6-byte STOP, and is opened by its own 1W remote with exactly this shape
-/// (`01 43 00 00 00 00`, issue #163). See device_takes_main_parameter_only().
+/// (`01 43 00 00 00 00`, issue #163). Sent to devices without device_feature::EXTENDED_POSITION_FRAME.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
@@ -272,7 +275,8 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 
 /// @brief Build a 1W named-command execute frame (CMD 0x00) targeting a device class.
 ///
-/// Covers three of CoverCommand's values — STOP, FAVORITE, VENT. FORCE_OPEN is not handled here:
+/// Covers three of CoverCommand's values — STOP, FAVORITE, VENT; PARTIAL and PEDESTRIAN have no 1W
+/// encoding and return false like FORCE_OPEN. FORCE_OPEN is not handled here:
 /// the only wire code this project has for that label, POS_FORCE_OPEN (main=0x64), was
 /// hardware-tested as an outbound CMD_EXECUTE command and found to move a real device to 50%
 /// open, not bypass anything (see POS_FORCE_OPEN in proto_constants.h). There is no known 1W
@@ -549,8 +553,7 @@ bool create_write_private(IoFrame &f, const uint8_t *own, const uint8_t *dst, bo
 /// @param tilt_percent 0 = fully closed, 100 = fully open.
 /// @note This uses the same command (0x00) as position control but with a different
 ///       payload format indicating a tilt operation. The receiver infers tilt from
-///       the payload structure. Only devices that advertise tilt support (see
-///       device_supports_tilt in proto_frame.h) will honor this.
+///       the payload structure. Only devices with device_feature::TILT will honor this.
 /// @return true on success.
 bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t tilt_percent);
 

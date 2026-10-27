@@ -7,15 +7,22 @@
 namespace esphome {
 namespace cover {
 
+static constexpr float COVER_OPEN = 1.0f;
+static constexpr float COVER_CLOSED = 0.0f;
+
 struct CoverTraits {
-  void set_supports_position(bool supports) { (void) supports; }
+  void set_supports_position(bool supports) { supports_position_ = supports; }
   void set_supports_stop(bool stop) { (void) stop; }
   void set_supports_tilt(bool tilt) { supports_tilt_ = tilt; }
-  void set_is_assumed_state(bool assumed) { (void) assumed; }
+  void set_is_assumed_state(bool assumed) { is_assumed_state_ = assumed; }
+  bool get_supports_position() const { return supports_position_; }
   bool get_supports_tilt() const { return supports_tilt_; }
+  bool get_is_assumed_state() const { return is_assumed_state_; }
 
  private:
+  bool supports_position_{false};
   bool supports_tilt_{false};
+  bool is_assumed_state_{false};
 };
 
 enum CoverOperation {
@@ -30,7 +37,7 @@ class Cover {
   virtual void control(const class CoverCall &call) = 0;
   virtual CoverTraits get_traits() = 0;
 
-  float position{0.0f};
+  float position{COVER_OPEN};  // the real class starts open
   float tilt{0.0f};
   CoverOperation current_operation{COVER_OPERATION_IDLE};
   void publish_state() {}  // no-op
@@ -63,9 +70,6 @@ class CoverCall {
 };
 
 #define LOG_COVER(prefix, type, obj) ((void) 0)
-
-static constexpr float COVER_OPEN = 1.0f;
-static constexpr float COVER_CLOSED = 0.0f;
 
 }  // namespace cover
 }  // namespace esphome

@@ -361,7 +361,8 @@ class IOHomeControlComponent : public Component,
   /// obeyed. The "Last 1W Command" diagnostic reports what was *transmitted*, which is the only
   /// half of that the hub can know.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
-  /// @param cmd Named command (STOP, FAVORITE, VENT, FORCE_OPEN).
+  /// @param cmd Named command (STOP, FAVORITE, VENT, FORCE_OPEN); PARTIAL and PEDESTRIAN have no 1W
+  ///        encoding and are not transmitted.
   void send_oneway_command(const std::string &controller_id, CoverCommand cmd) {
     this->op_queue_.enqueue_oneway_command(controller_id, cmd);
   }
@@ -500,27 +501,20 @@ class IOHomeControlComponent : public Component,
 
   // --- Device management (called by platform entities during setup) ---
   /// Add a device to the registry by device ID only (undeclared/legacy path).
-  /// Type, subtype, inverted, and optimistic_state default to UNKNOWN / 0 / false / true; use the
+  /// Type, subtype and optimistic_state default to UNKNOWN / 0 / true, with no overrides; use the
   /// `DeviceConfig` overload when metadata comes from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
   virtual void add_device(const std::string &device_id);
   /// Add a device to the registry with full metadata from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
-  /// @param cfg Device type/subtype/inversion/optimistic-state metadata.
+  /// @param cfg Device type/subtype/overrides/optimistic-state metadata.
   virtual void add_device(const std::string &device_id, const DeviceConfig &cfg);
   /// Retrieve a device by ID; returns nullptr if not found.
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
   virtual IoDevice *get_device(const std::string &device_id);
-  /// Set a device's `dimmable` flag (see IoDevice::dimmable). Called by platform_light.cpp's
-  /// setup(), not folded into add_device() since it's a light-only YAML choice. No-op if the
-  /// device isn't registered.
-  /// @param device_id Hexadecimal node ID string.
-  /// @param dimmable New value for IoDevice::dimmable.
-  virtual void set_device_dimmable(const std::string &device_id, bool dimmable);
-
   /// Select a device's travel profile at runtime (see IOHomeCoverSilentSwitch).
-  /// Virtual for the same reason as set_device_dimmable: platform tests substitute a mock registry.
+  /// Virtual so platform tests can substitute a mock registry.
   /// @param device_id Hexadecimal node ID string.
   /// @param silent    True to send position moves in "silent operation" (slower) mode.
   virtual void set_device_silent(const std::string &device_id, bool silent);
@@ -541,7 +535,9 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired position, 0–100 (open→closed). Named commands (STOP, FAVORITE,
   ///        VENT) go through execute_device_command_()/create_execute_command() instead.
-  /// @return true if device acknowledged; false on timeout or radio error.
+  /// @return true if device acknowledged; false on timeout or radio error, or when the device's
+  ///         features do not accept the value (an intermediate position on a device without
+  ///         device_feature::LEVELS): nothing is sent and the optimistic target is withdrawn.
   virtual bool set_device_position(const std::string &device_id, uint8_t position);
   /// Send a tilt command to a tilt‑capable cover.
   /// @param device_id Target device ID.
@@ -748,10 +744,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired position (0–100).
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
-  /// @brief Queue an async named command (STOP, FAVORITE, VENT, FORCE_OPEN); returns immediately,
-  /// executed in loop().
+  /// @brief Queue an async named command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN);
+  /// returns immediately, executed in loop(). PARTIAL and PEDESTRIAN are experimental.
   ///
-  /// Existing entity/button callers (cover, favorite button, vent button) intentionally ignore
+  /// Existing entity/button callers (cover, favorite, vent, partial and pedestrian buttons) intentionally ignore
   /// the return value — they always target a known, already-registered device. It exists so
   /// force_open_device() can report enqueue rejection distinctly from a queued-but-not-yet-run
   /// command.
@@ -950,6 +946,11 @@ class IOHomeControlComponent : public Component,
   /// @param device_id ID of the device to poll.
   /// @param initial_delay_ms Delay before the first follow-up poll.
   void begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms);
+  /// Settle every device whose polling window ran out (StatusPollPolicy::pop_ended_device()).
+  /// A device still settling — its last report said "stopped" off its target and the confirming
+  /// poll never came back — is taken as at rest there: with no poll left, the device's own flag
+  /// stands. Any other device is left as it is.
+  void settle_ended_status_tracking_();
   /// Arm the confirming poll that follows a command, because a CMD_EXECUTE reply is never trusted
   /// for position (see update_device_status_()'s trust_position parameter) and therefore leaves the
   /// hub with no idea where the device actually is. Re-arms the bounded tracking window rather than
@@ -961,7 +962,7 @@ class IOHomeControlComponent : public Component,
   ///        STOP_SETTLE_POLL_CAP_MS instead of the normal settle cadence.
   void arm_execute_confirmation_poll_(const std::string &device_id, bool for_stop);
   /// Schedule status polls for a fixed list of devices (shared by the id-linked and
-  /// class-linked 1W paths, and by schedule_linked_remote_polls_()).
+  /// class-linked 1W paths).
   /// @param device_ids Devices to poll.
   /// @param delay_ms Poll delay in milliseconds.
   void schedule_device_polls_(const std::vector<std::string> &device_ids, uint32_t delay_ms);
@@ -983,13 +984,26 @@ class IOHomeControlComponent : public Component,
                                                             this->last_1w_activity_ms_, millis(),
                                                             ONEWAY_QUIET_PERIOD_MS, ONEWAY_POLL_DEFER_CAP_MS);
   }
-  /// Schedule status polls for all devices associated with a linked remote.
-  /// @param remote_id Source node ID of the remote.
-  /// @param delay_ms Poll delay; default REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS. A STOP intent
-  ///        passes 0 (position settles immediately, no need to wait out the usual travel-time
-  ///        assumption behind the default delay).
-  void schedule_linked_remote_polls_(const std::string &remote_id,
-                                     uint32_t delay_ms = REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+  /// Decide, and act on, what a frame of another controller means for one registered device: a
+  /// heard write, or a device challenge that follows no heard read, arms a tracked poll; any other
+  /// frame arms one only if the device was not read recently (StatusPollPolicy::on_foreign_frame());
+  /// while such a poll is pending the frame only pushes its timer out. A frame that arms nothing
+  /// changes neither the tracking window nor the failure streaks.
+  /// @param device_id Registered device the frame concerns.
+  /// @param kind Request to the device, or the device's challenge to another controller.
+  /// @param controller The other controller's node ID (request source, or challenge destination).
+  /// @param cmd Command of the heard frame.
+  void act_on_foreign_frame_(const std::string &device_id, ForeignFrameKind kind, const std::string &controller,
+                             uint8_t cmd);
+  /// Hand a registered device's challenge (0x3C) to another controller to act_on_foreign_frame_().
+  /// A challenge addressed to this hub, from an unregistered node, or a 0x3D is left alone.
+  /// @param frame An exchange-internal frame (is_exchange_internal_command()).
+  void note_foreign_challenge_(const IoFrame &frame);
+  /// Hand another controller's frame to act_on_foreign_frame_(): per the registered device it is
+  /// addressed to, or per device linked to its source when that is a linked 2W controller.
+  /// @param frame A parsed 2W frame that is not a status reply.
+  /// @return true when the frame was another controller's request and has been handled.
+  bool act_on_overheard_request_(const IoFrame &frame);
   /// Resolve the set of devices a 1W frame should affect: devices linked to the sending remote
   /// by node ID, plus — when the frame targets a typed broadcast (e.g. "all awnings") — devices
   /// linked to that device class, deduplicated so a device linked both ways is touched once.
@@ -1107,10 +1121,13 @@ class IOHomeControlComponent : public Component,
                               const std::function<bool(const IoDevice &)> &accepts, const char *rejection_profile,
                               const std::function<bool(IoFrame &, const IoDevice &)> &build);
 
-  /// Execute a named device command (STOP, FAVORITE, VENT, FORCE_OPEN) via the authenticated exchange.
+  /// Execute a named device command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN) via the
+  /// authenticated exchange.
+  /// A named position (NAMED_POSITIONS) goes out only to a device whose features include its bit.
   /// @param device_id Target device ID.
   /// @param cmd Named command to execute.
-  /// @return true if device acknowledged; false otherwise.
+  /// @return true if device acknowledged; false otherwise, including a named position the device's
+  ///         features lack (nothing is sent).
   bool execute_device_command_(const std::string &device_id, CoverCommand cmd);
   /// Shared bookkeeping for every 1W transmit: mark the radio busy for the duration of `send`,
   /// then record it as 1W activity so background polls back off for it exactly as they do for a
@@ -1144,7 +1161,10 @@ class IOHomeControlComponent : public Component,
   /// Apply backoff after a failed background status poll and log the result.
   /// @param device_id Target device ID.
   /// @param auth_like True when the failed exchange saw a 0x3C challenge.
-  void schedule_background_poll_backoff_(const std::string &device_id, bool auth_like);
+  /// @param device_moving True when the failed request was a single-try status poll of a device
+  ///        the hub believes is travelling; its first misses keep the normal cadence
+  ///        (StatusPollPolicy::on_exchange_failed()).
+  void schedule_background_poll_backoff_(const std::string &device_id, bool auth_like, bool device_moving = false);
   /// @brief The exchange every heating frame shares: send on the command channel, record the
   /// outcome (exchange counters, link health, error result code), notify the entities and report
   /// whether the device answered with CMD_WRITE_PRIVATE_ACK.

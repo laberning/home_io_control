@@ -182,6 +182,27 @@ TEST(ExchangeOverBridle, ExecuteWithChallengeIsAnsweredAndTheStatusReplyEndsIt) 
             ExchangeOutcome::SUCCESS_WITH_RESPONSE);
 }
 
+// The challenge answer goes out at once on 2.4 GHz too, even next to a busy channel: the device listens
+// for it on this channel for only a few tens of ms, and the request that opened the exchange was checked.
+TEST(ExchangeOverBridle, TheChallengeAnswerGoesOutWithoutAChannelCheckWhileTheRequestHadOne) {
+  Rig<OverBridle> rig;
+  auto &bridge = static_cast<BridleStandIn &>(*rig.radio);
+  bridge.coprocessor().queue_channel_level_dbm(-100);  // the request's check finds the channel clear,
+  bridge.coprocessor().set_channel_level_dbm(-40);     // every later check finds it busy
+  rig.challenge(CHALLENGE);
+  rig.final_reply();
+  IoFrame response{};
+  ASSERT_EQ(rig.engine.send_and_receive(bridle_runs::execute_request(false), response, FREQ_CH2),
+            ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+
+  RecordedTxs txs(bridge.coprocessor());
+  ASSERT_EQ(txs.decoded.size(), 2u) << "the request, then the answer to the challenge";
+  EXPECT_TRUE(txs.decoded[0].cca) << "the request opens the exchange: checked";
+  EXPECT_EQ(txs.decoded[0].cca_threshold_dbm, rig.driver->lbt_threshold_dbm(rig.tuning));
+  EXPECT_FALSE(txs.decoded[1].cca) << "the challenge answer continues the exchange: never checked";
+  EXPECT_EQ(rig.engine.counters().lbt_retries, 0u);
+}
+
 // Source of the session fixture bridle_exchange_long_strobe.
 TEST(ExchangeOverBridle, TheStartFrameToALowPowerDeviceGetsTheLongTrainAndItsContinuationsNone) {
   Rig<OverBridle> rig;

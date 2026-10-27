@@ -86,10 +86,15 @@ the same set of keys. Platform-specific options are documented on each platform'
 - `io_device_id` (Required): The device's 3-byte address, as exactly 6 hexadecimal characters. If
   you do not know it yet, use the Discover & Pair button — see [Pairing](../pairing.md).
 - `io_device_type` (Optional): The device's IO-Homecontrol type, named (`vertical_exterior_awning`) or raw (`0x11`).
-  Declaring it is what enables type-specific behaviour such as the Favorite Position button and
-  automatic direction inversion. The full list of names is in
+  Declaring it is what enables type-specific behaviour such as the Favorite Position button
+  (not on garage openers), automatic direction inversion and the open/close-only cover of a
+  subtype 58 opener; see [Covers that only open and close](cover.md#covers-that-only-open-and-close). The full list of names is in
   [Supported devices](../supported-devices.md). A declared type is authoritative: the hub may
   learn a type from the radio when none is declared, but never overwrites a declared one.
+  A kind that no capture or report has confirmed on a real device is marked "(experimental)" in
+  [Node types and subtypes](../supported-devices.md#node-types-and-subtypes); declaring one logs a
+  warning when the config is built that links to
+  [Reporting unsupported devices](../contributing.md#reporting-unsupported-devices).
 - `io_subtype` (Optional): The device's subtype, `0`–`63`.
 - `status_poll_interval` (Optional): Follow-up poll cadence while movement is expected. See the
   note below.
@@ -135,7 +140,7 @@ Unconfirmed Exchanges, Last Commanded By and Last Command Source.
 - Some boards route the SPI bus through an ESP32 strapping pin (GPIO5's `clk_pin` on classic ESP32, GPIO3's `miso_pin` on ESP32-S3). ESPHome refuses to reuse a strapping pin as a plain GPIO unless you set `ignore_strapping_warning: true` on that pin's expanded schema, e.g. `clk_pin: {number: 5, ignore_strapping_warning: true}`. The Heltec V3 used in this page's examples needs none of this; see [Hardware](../hardware.md#all-supported-boards) for the boards that do.
 - SX1276 uses a different interrupt pin set (`dio0_pin`/`dio4_pin`) than SX1262/LR1121 (`dio1_pin`/`busy_pin`, shared — LR1121 reuses the same two keys, with `dio1_pin` carrying its DIO9 line). Only configure the pins for the radio you actually have.
 - User control commands (position, STOP, tilt, light/switch/lock state) are prioritized over background status polls in the operation queue. A queued status poll for the same device is dropped when a control command arrives, since the command reply provides fresher state. An in-flight exchange cannot be interrupted, so the worst-case latency is one full exchange (~1–3 s) regardless of the queue.
-- If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected entry. Without it, the hub polls after commands and overheard remote activity at the device-reported settle hint (fallback 3 s) until the device reports a stable state or the bounded 10-minute window expires. With it, the hub uses min(device hint, configured interval) — the device can shorten your interval but never stretch it. A STOP command always confirms the resting position within ~1 s regardless. Either way polling stops once the device settles. The minimum is `500ms`.
+- If a device does not emit unsolicited status updates on its own, set `status_poll_interval` on the affected entry. Without it, the hub polls after commands and after overheard changes by another controller (a command, or a read at most every 10 minutes) at the device-reported remaining travel time plus 1 s (fallback 3 s) until the device reports a stable state or the bounded 10-minute window expires. With it, the hub uses min(remaining time + 1 s, configured interval) — the device can shorten your interval but never stretch it. A STOP command always confirms the resting position within ~1 s regardless. Either way polling stops once the device settles. The minimum is `500ms`.
 
 ## A complete example
 
@@ -186,7 +191,6 @@ home_io_control:
 cover:
   - platform: home_io_control
     name: "Awning"
-    device_class: awning
     io_device_id: "FEEB1E"
     io_device_type: "vertical_exterior_awning"
     io_subtype: 0
@@ -194,7 +198,8 @@ cover:
 ```
 
 With `io_device_type: "vertical_exterior_awning"`, the example above also generates an `Awning Favorite Position`
-button automatically.
+button automatically; which companion buttons a cover gets is listed under
+[Covers](cover.md).
 
 ## Working configs in this repo
 

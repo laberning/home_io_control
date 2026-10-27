@@ -32,7 +32,6 @@ Sunea has ever been paired to a TaHoma or Connexoon, start there rather than wit
 cover:
   - platform: home_io_control
     name: "Patio Awning"
-    device_class: awning
     io_device_id: "30E1F2"
     io_device_type: "vertical_exterior_awning"
     io_subtype: 0

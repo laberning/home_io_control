@@ -58,13 +58,13 @@ static IoFrame build_status_response(const uint8_t dst[3]) {
   return f;
 }
 
-static IoFrame build_moving_status_response(const uint8_t dst[3], uint8_t delay_hint_seconds) {
+static IoFrame build_moving_status_response(const uint8_t dst[3], uint8_t remaining_s) {
   IoFrame f{};
   init_frame(f, true, false, true, false);
   uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
   set_dst(f, dst);
   set_src(f, device_node_id);
-  uint8_t payload[8] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, delay_hint_seconds};
+  uint8_t payload[8] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, remaining_s};  // bytes 6-7: remaining time
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
   return f;
 }
@@ -132,7 +132,8 @@ static IoFrame build_challenge_request(const uint8_t src[3], const uint8_t dst[3
 }
 
 // Setup a component with one registered cover device
-static void setup_cover_component(TestableComponent &comp, MockRadio &radio) {
+/// Initialise the component and register "ABC123" from `config`, as an entity's setup() would.
+static void setup_declared_component(TestableComponent &comp, MockRadio &radio, const DeviceConfig &config) {
   comp.node_id_[0] = 0xC0;
   comp.node_id_[1] = 0xFF;
   comp.node_id_[2] = 0xEE;
@@ -141,10 +142,14 @@ static void setup_cover_component(TestableComponent &comp, MockRadio &radio) {
   std::memcpy(comp.system_key_, key, AES_KEY_SIZE);
   comp.initialized_ = true;
   comp.radio_ = &radio;
-  comp.add_device("ABC123");
+  comp.add_device("ABC123", config);
+}
+
+static void setup_cover_component(TestableComponent &comp, MockRadio &radio) {
+  setup_declared_component(comp, radio, DeviceConfig{});
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ROLLER_SHUTTER;
+  test::set_kind(*dev, DeviceType::ROLLER_SHUTTER);
 }
 
 }  // namespace
@@ -187,7 +192,7 @@ TEST(HubOperations, SetDevicePositionRejectedForLight) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::LIGHT;
+  test::set_kind(*dev, DeviceType::LIGHT);
 
   bool ok = comp.set_device_position("ABC123", 50);
   EXPECT_FALSE(ok) << "set_device_position should reject mid position for light device";
@@ -199,7 +204,7 @@ TEST(HubOperations, LightBinaryPositionExchangeFails) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::LIGHT;
+  test::set_kind(*dev, DeviceType::LIGHT);
 
   bool ok = comp.set_device_position("ABC123", 0);
   EXPECT_FALSE(ok) << "set_device_position fails because send_and_receive_ gets no response";
@@ -211,7 +216,7 @@ TEST(HubOperations, SetLockStateSuccess) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::LOCK;
+  test::set_kind(*dev, DeviceType::LOCK);
 
   IoFrame resp = build_status_response(comp.node_id_);
   uint8_t raw[64];
@@ -232,7 +237,7 @@ TEST(HubOperations, SetLockStateRejectsLightDevice) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::LIGHT;
+  test::set_kind(*dev, DeviceType::LIGHT);
 
   EXPECT_FALSE(comp.set_lock_state("ABC123", true)) << "non-lock devices should be rejected by lock entity gating";
 }
@@ -261,8 +266,7 @@ TEST(HubOperations, HeatingCommandAuthenticatedWithoutFinalResponseIsCountedToo)
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
 
   // Only the challenge — no closing reply.
   IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
@@ -286,8 +290,7 @@ TEST(HubOperations, SendHeatingCommandAcceptsClimateDeviceAndSendsExactBytes) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
 
   IoFrame resp = build_write_private_ack(comp.node_id_);
   uint8_t raw[64];
@@ -320,8 +323,7 @@ TEST(HubOperations, AnAcknowledgedHeatingWritePollsTheHeaterAgainSoon) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
   IoFrame resp = build_write_private_ack(comp.node_id_);
   radio.queue_rx(test::make_rx_packet(resp));
 
@@ -337,8 +339,7 @@ TEST(HubOperations, AnUnacknowledgedHeatingWriteSchedulesNoExtraPoll) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
 
   EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
   EXPECT_NE(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
@@ -360,8 +361,7 @@ TEST(HubOperations, SendHeatingCommandRejectsOutOfRangeTemperature) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
 
   EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 28.1f));
   EXPECT_TRUE(radio.get_sent_data().empty()) << "an unencodable value must not transmit";
@@ -373,8 +373,7 @@ TEST(HubOperations, SendHeatingCommandFailsWithoutAnyReply) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
 
   // No reply queued -> exchange times out -> not acknowledged.
   EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0f));
@@ -388,8 +387,7 @@ static bool run_heating_command_with_reply(const std::function<IoFrame(const uin
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   EXPECT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
 
   IoFrame resp = build_reply(comp.node_id_);
   uint8_t raw[64];
@@ -466,8 +464,7 @@ IoDevice *make_heater(TestableComponent &comp, MockRadio &radio) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   EXPECT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 1;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
   return dev;
 }
 
@@ -617,8 +614,7 @@ IoDevice *make_level_heater(TestableComponent &comp, MockRadio &radio) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   EXPECT_NE(dev, nullptr);
-  dev->type = DeviceType::ELECTRICAL_HEATER;
-  dev->subtype = 0;
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0);
   return dev;
 }
 
@@ -735,8 +731,7 @@ IoDevice *make_exterior_heater(TestableComponent &comp, MockRadio &radio, uint8_
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   EXPECT_NE(dev, nullptr);
-  dev->type = DeviceType::EXTERIOR_HEATING;
-  dev->subtype = subtype;
+  test::set_kind(*dev, DeviceType::EXTERIOR_HEATING, subtype);
   return dev;
 }
 
@@ -883,8 +878,7 @@ IoDevice *make_temperature_heater(TestableComponent &comp, MockRadio &radio, Dev
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   EXPECT_NE(dev, nullptr);
-  dev->type = type;
-  dev->subtype = 0;
+  test::set_kind(*dev, type, 0);
   return dev;
 }
 
@@ -1242,7 +1236,7 @@ TEST(HubOperations, RequestDeviceStatusAcceptsLockDevice) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::LOCK;
+  test::set_kind(*dev, DeviceType::LOCK);
 
   IoFrame resp = build_status_response(comp.node_id_);
   uint8_t raw[64];
@@ -1449,7 +1443,176 @@ TEST(HubOperations, ExchangeTimeoutIncrementsFailureCountersOnce) {
       << "attempts from both timed-out exchanges should accumulate";
 }
 
-TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
+// Issue #178: a cover polled every second while it travels lost single frames, and each loss left
+// a 5 s gap in its position. A poll of a device the hub believes is moving skips its first misses
+// at the configured interval; the ladder starts only on the third miss in a row.
+TEST(HubOperations, RequestDeviceStatusMissWhileMovingKeepsTheConfiguredInterval) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;  // the last report said moving
+
+  for (uint8_t miss = 1; miss <= MOVING_POLL_MISSES_SKIPPED; miss++) {
+    EXPECT_FALSE(comp.request_device_status("ABC123"));
+    EXPECT_NEAR(comp.poll_policy_.get_next_update("ABC123") - esphome::millis(), 2000u, 100u) << "miss " << +miss;
+    EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u)
+        << "a skipped miss is not a ladder failure, so the next poll stays a single try";
+  }
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  const uint32_t delay = comp.poll_policy_.get_next_update("ABC123") - esphome::millis();
+  EXPECT_GE(delay, STATUS_RETRY_AFTER_FAIL_MS - 1000) << "the third miss in a row enters the ladder";
+  EXPECT_LE(delay, STATUS_RETRY_AFTER_FAIL_MS + 1000);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+// After two skipped misses the next poll is still dispatched as a single try, and an answer resets
+// the skipped misses.
+TEST(HubOperations, RequestDeviceStatusAfterSkippedMissesIsASingleTryAndAnAnswerResets) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  for (uint8_t miss = 1; miss <= MOVING_POLL_MISSES_SKIPPED; miss++)
+    EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_FALSE(comp.request_device_status("ABC123"));  // the third poll
+  EXPECT_EQ(comp.exchange_engine_.get_debug().max_tries, SCHEDULED_POLL_MAX_TRIES)
+      << "skipped misses are not ladder failures, so the poll after them stays a single try";
+
+  comp.poll_policy_.clear_failure_streaks("ABC123");
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+}
+
+// A cover at rest backs off from its first miss, through the hub path too.
+TEST(HubOperations, RequestDeviceStatusMissAtRestTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  ASSERT_TRUE(comp.get_device("ABC123")->is_stopped);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+// A cover that reported STOPPED off its target and awaits the confirming poll is at rest: its miss
+// takes the ladder, whose next slot grants the full tries.
+TEST(HubOperations, RequestDeviceStatusMissWhileSettlingTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+  dev->stop_candidate.target = 100.0f;
+  dev->stop_candidate.position = 40.0f;
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+// The poll confirming an accepted STOP has the full tries; when all of them fail it takes the
+// ladder even if the hub still believes the cover moves (optimistic overlay off).
+TEST(HubOperations, RequestDeviceStatusStopSettleMissTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  comp.poll_policy_.mark_stop_settle("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+// A device without motion (a heat-level heater polled with the same status read) is never skipped.
+TEST(HubOperations, RequestDeviceStatusMissOfADeviceWithoutMotionTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::EXTERIOR_HEATING);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  dev->is_stopped = false;
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+}
+
+// An explicit refusal is an answer, not a lost frame: it keeps the ladder while moving.
+TEST(HubOperations, RequestDeviceStatusRefusalWhileMovingTakesTheLadder) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  IoFrame resp = build_error_response(comp.node_id_, RESULT_LIMITATION_BY_WIND);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.poll_policy_.get_moving_poll_misses("ABC123"), 0u);
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+TEST(HubOperations, RequestDeviceStatusChallengedMissWhileMovingKeepsTheConfiguredInterval) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.set_device_status_poll_interval("ABC123", 2000);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  IoFrame challenge = build_challenge_request(dev->node_id, comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(challenge, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_TRUE(comp.exchange_engine_.get_debug().saw_challenge);
+  EXPECT_NEAR(comp.poll_policy_.get_next_update("ABC123") - esphome::millis(), 2000u, 100u)
+      << "a lost closing reply mid-travel keeps the cadence too";
+  EXPECT_EQ(comp.poll_policy_.get_auth_poll_failures("ABC123"), 0u);
+}
+
+TEST(HubOperations, RequestDeviceStatusAuthFailureTakesTheAuthBackoff) {
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
@@ -1476,7 +1639,7 @@ TEST(HubOperations, RequestDeviceStatusAuthFailureBacksOffAggressively) {
   EXPECT_TRUE(comp.exchange_engine_.get_debug().saw_challenge)
       << "exchange debug should preserve that a challenge happened even if later retries time out";
   EXPECT_GE(delay, STATUS_AUTH_RETRY_AFTER_FAIL_MS - 1000)
-      << "auth-shaped failures should back off more than plain silence";
+      << "first auth-shaped failure should use the configured auth backoff";
   EXPECT_LE(delay, STATUS_AUTH_RETRY_AFTER_FAIL_MS + 1000)
       << "first auth-shaped failure should use the configured auth backoff";
   EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u)
@@ -1601,7 +1764,7 @@ TEST(HubOperations, SetDevicePositionWithoutConfiguredIntervalUsesTrackedSettleP
   EXPECT_NE(comp.poll_policy_.get_poll_deadline("ABC123"), 0u)
       << "commands without a configured interval should still start bounded tracked polling";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u)
-      << "moving execute replies should schedule a follow-up poll driven by the device hint";
+      << "moving execute replies should schedule a follow-up poll at the default settle cadence";
 }
 
 TEST(HubOperations, StopCommandArmsTrackedPollingToConfirmRestingPosition) {
@@ -1642,7 +1805,7 @@ TEST(HubOperations, StopCommandWithMovingReplySchedulesShortSettlePoll) {
   MockRadio radio;
   setup_cover_component(comp, radio);
 
-  IoFrame resp = build_moving_status_response(comp.node_id_, 0xFF);  // hint=unused → motion-tracking default
+  IoFrame resp = build_moving_status_response(comp.node_id_, 0xFF);  // an execute ack: bytes 6-7 ignored → default
   uint8_t raw[64];
   uint8_t raw_len = serialize(resp, raw, sizeof(raw));
   RadioRxPacket pkt{};
@@ -1762,7 +1925,8 @@ TEST(HubOperations, ForceOpenSendsPositionHundredForInvertedDevice) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->inverted = true;
+  dev->invert_override = true;
+  resolve_device_features(*dev);
 
   IoFrame resp = build_status_response(comp.node_id_);
   uint8_t raw[64];
@@ -1876,7 +2040,7 @@ TEST(HubOperations, TiltExecuteReplyTiltBlockIsNotDecodedAsPosition) {
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;  // supports tilt
+  test::set_kind(*dev, DeviceType::INTERIOR_VENETIAN_BLIND);  // supports tilt
   dev->target = 77.0F;
   dev->position = 88.0F;
   // The angle the entity layer already applied optimistically for this very command
@@ -1995,7 +2159,7 @@ TEST(HubOperations, QueueDevicePositionRejectedForLight) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::LIGHT;
+  test::set_kind(*dev, DeviceType::LIGHT);
 
   comp.queue_set_device_position("ABC123", 50);
   EXPECT_TRUE(comp.op_queue_.empty()) << "non-cover device should be rejected in queue check";
@@ -2031,7 +2195,7 @@ TEST(HubOperations, ProcessPendingLockOperationDispatchesLockCommand) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::LOCK;
+  test::set_kind(*dev, DeviceType::LOCK);
 
   IoFrame resp = build_status_response(comp.node_id_);
   uint8_t raw[64];
@@ -2069,7 +2233,7 @@ TEST(HubOperations, CoalescePositionThenTilt) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;  // supports tilt
+  test::set_kind(*dev, DeviceType::INTERIOR_VENETIAN_BLIND);  // supports tilt
 
   // Queue position first, then tilt for the same device
   comp.queue_set_device_position("ABC123", 50);
@@ -2089,7 +2253,7 @@ TEST(HubOperations, CoalesceTiltThenPosition) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  test::set_kind(*dev, DeviceType::INTERIOR_VENETIAN_BLIND);
 
   // Queue tilt first, then position for the same device
   comp.queue_set_device_tilt("ABC123", 80);
@@ -2109,13 +2273,13 @@ TEST(HubOperations, NoCoalesceForDifferentDevices) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  test::set_kind(*dev, DeviceType::INTERIOR_VENETIAN_BLIND);
 
   // Register a second tilt-capable device
   comp.add_device("DEF456");
   auto *dev2 = comp.get_device("DEF456");
   ASSERT_NE(dev2, nullptr);
-  dev2->type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  test::set_kind(*dev2, DeviceType::INTERIOR_VENETIAN_BLIND);
 
   // Queue position for one device, tilt for another — should NOT coalesce
   comp.queue_set_device_position("ABC123", 50);
@@ -2134,7 +2298,7 @@ TEST(HubOperations, NoCoalescePositionWithPosition) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  test::set_kind(*dev, DeviceType::INTERIOR_VENETIAN_BLIND);
 
   // Queue two positions — should not coalesce (no tilt involved)
   comp.queue_set_device_position("ABC123", 50);
@@ -2151,7 +2315,7 @@ TEST(HubOperations, NoCoalesceTiltWithTilt) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  test::set_kind(*dev, DeviceType::INTERIOR_VENETIAN_BLIND);
 
   // Queue two tilts — should not coalesce (no position involved)
   comp.queue_set_device_tilt("ABC123", 50);
@@ -2168,7 +2332,7 @@ TEST(HubOperations, CoalesceDoesNotAffectOtherPendingOps) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  test::set_kind(*dev, DeviceType::INTERIOR_VENETIAN_BLIND);
 
   // Queue a status request for a different device, then position + tilt for the target.
   // The status poll for "ABC123" would be dropped, but "OTHER"'s poll should survive.
@@ -2222,7 +2386,7 @@ TEST(HubOperations, CommandAuthenticatedWithoutFinalResponseCountsAsSuccess) {
 TEST(HubOperations, StatusPollAuthenticatedWithoutFinalResponseStillFails) {
   // The mirror image, and the reason the distinction exists: a status poll's entire purpose is the
   // payload. Authenticating and then hearing nothing answers no question, so it stays a failure
-  // and keeps the aggressive auth-shaped backoff.
+  // and takes the auth-shaped backoff.
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
@@ -2409,7 +2573,7 @@ TEST(HubOperations, ProfileGuardRejectionRollsBackOptimisticPrediction) {
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 40.0f));
-  dev->type = DeviceType::LIGHT;  // the cover-position guard now rejects a mid position
+  test::set_kind(*dev, DeviceType::LIGHT);  // the cover-position guard now rejects a mid position
 
   EXPECT_FALSE(comp.set_device_position("ABC123", 50));
   EXPECT_TRUE(dev->optimistic.empty()) << "a guard rejection is still a command that will not happen";
@@ -2490,8 +2654,8 @@ TEST(HubOperations, FailedTiltCommandRollsBackOptimisticTilt) {
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->type = DeviceType::INTERIOR_VENETIAN_BLIND;  // tilt-capable
-  dev->tilt = 15.0f;                                // a real angle from an earlier poll
+  test::set_kind(*dev, DeviceType::INTERIOR_VENETIAN_BLIND);  // tilt-capable
+  dev->tilt = 15.0f;                                          // a real angle from an earlier poll
   ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 80.0f));
   ASSERT_FLOAT_EQ(effective_tilt(*dev), 80.0f);
 
@@ -2510,7 +2674,7 @@ TEST(HubOperations, QueueTimeGuardRejectionRollsBackOptimisticPrediction) {
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 40.0f));
-  dev->type = DeviceType::LIGHT;  // the queued cover-position guard now rejects
+  test::set_kind(*dev, DeviceType::LIGHT);  // the queued cover-position guard now rejects
 
   comp.queue_set_device_position("ABC123", 50);
   EXPECT_TRUE(dev->optimistic.empty()) << "a queue-time guard rejection withdraws the prediction too";
@@ -2600,7 +2764,7 @@ TEST(HubOperations, StopAckThatReportsMovingKeepsTheSettlePollShortFirst) {
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   note_moving_evidence(*dev, esphome::millis());
-  queue_frame(radio, build_moving_status_response(comp.node_id_, /*delay_hint_seconds=*/0));
+  queue_frame(radio, build_moving_status_response(comp.node_id_, /*remaining_s=*/0));
 
   ASSERT_TRUE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
   EXPECT_NE(dev->last_moving_evidence_ms, 0u) << "the motor said it is still moving";
@@ -2662,7 +2826,7 @@ TEST(HubOperations, DecodedStatusTracksMovingEvidence) {
   ASSERT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u);
 
-  queue_frame(radio, build_moving_status_response(comp.node_id_, /*delay_hint_seconds=*/5));
+  queue_frame(radio, build_moving_status_response(comp.node_id_, /*remaining_s=*/5));
   ASSERT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_NE(dev->last_moving_evidence_ms, 0u) << "a decoded 'not stopped' status is evidence of travel";
 
@@ -3045,7 +3209,7 @@ std::vector<uint8_t> first_sent_payload(const MockRadio &radio) {
 
 void make_garage(TestableComponent &comp, MockRadio &radio) {
   setup_cover_component(comp, radio);
-  comp.get_device("ABC123")->type = DeviceType::GARAGE_OPENER;
+  test::set_kind(*comp.get_device("ABC123"), DeviceType::GARAGE_OPENER);
 }
 
 }  // namespace
@@ -3105,4 +3269,119 @@ TEST(HubOperations, GarageOpenerForceOpenUsesMainParameterAtForcePriority) {
   EXPECT_EQ(payload[2], 0x00) << "fully open";
   EXPECT_EQ(payload[4], 0x00);
   EXPECT_EQ(payload[5], 0x00);
+}
+
+// ========================================================================================
+// Capability bits decide the frame shape (device_feature::EXTENDED_POSITION_FRAME)
+// ========================================================================================
+
+TEST(HubOperations, AnUndeclaredCoverKeepsTheSliderTheLongFrameAndTheFavourite) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.entity_class = DeviceCapabilityClass::COVER});
+  const IoDevice *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->type, DeviceType::UNKNOWN);
+
+  comp.set_device_position("ABC123", 50);
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}))
+      << "a cover that has not learned its type still gets a slider position in the 8-byte form";
+
+  MockRadio favourite_radio;
+  TestableComponent favourite_comp;
+  setup_declared_component(favourite_comp, favourite_radio, {.entity_class = DeviceCapabilityClass::COVER});
+  favourite_comp.execute_device_command_("ABC123", CoverCommand::FAVORITE);
+  EXPECT_EQ(first_sent_payload(favourite_radio), (std::vector<uint8_t>{0x01, 0x63, 0xD8, 0x00, 0x00, 0x00}));
+}
+
+TEST(HubOperations, AnUndeclaredSwitchOrLockStillSendsZeroAndHundredInTheLongFrame) {
+  for (const DeviceCapabilityClass entity_class : {DeviceCapabilityClass::SWITCH, DeviceCapabilityClass::LOCK}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_declared_component(comp, radio, {.entity_class = entity_class});
+
+    comp.set_device_position("ABC123", 100);
+    EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0xC8, 0x00, 0x80, 0xD8, 0x06, 0x00}));
+  }
+}
+
+TEST(HubOperations, ASubtype58CoverHasNoTiltBecauseItTakesTheMainParameterOnly) {
+  // VELUX KLF 200 API specification, Appendix 2: subtype 58 is main parameter only, so no slat angle.
+  for (const DeviceType type : {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::VERTICAL_INTERIOR_BLIND,
+                                DeviceType::EXTERIOR_VENETIAN_BLIND, DeviceType::LOUVRE_BLIND}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_declared_component(comp, radio, {.type = type, .subtype = SUBTYPE_MAIN_PARAMETER_ONLY});
+
+    EXPECT_FALSE(comp.set_device_tilt("ABC123", 50)) << static_cast<unsigned>(type);
+    EXPECT_TRUE(radio.get_sent_data().empty());
+  }
+}
+
+TEST(HubOperations, ASilentMoveToAnUnsilentableKindUsesTheShortFrame) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.type = DeviceType::GARAGE_OPENER, .silent = true});
+
+  comp.set_device_position("ABC123", 0);
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x00, 0x00, 0x00, 0x00}))
+      << "the silent profile is a functional parameter, which a main-parameter-only device does not take";
+}
+
+TEST(HubOperations, InteriorVenetianAndDualShutterPositionsUseTheShortFrameEvenWhenSilent) {
+  // VELUX KLF 200 API specification, Appendix 2: functional parameter 1 is the slat orientation on type 1 and
+  // the upper curtain on type 13, not a travel speed, so neither takes the 8-byte form or `silent:`.
+  for (const DeviceType type : {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::DUAL_ROLLER_SHUTTER}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_declared_component(comp, radio, {.type = type, .silent = true});
+
+    comp.set_device_position("ABC123", 50);
+    EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x00, 0x00}))
+        << static_cast<unsigned>(type);
+  }
+}
+
+TEST(HubOperations, InteriorVenetianAndDualShutterForceOpenUsesTheShortFrameAtForcePriority) {
+  for (const DeviceType type : {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::DUAL_ROLLER_SHUTTER}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_declared_component(comp, radio, {.type = type});
+
+    comp.execute_device_command_("ABC123", CoverCommand::FORCE_OPEN);
+    EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x03, 0x00, 0x00, 0x00, 0x00}))
+        << static_cast<unsigned>(type);
+  }
+}
+
+TEST(HubOperations, ARollerShutterStillSendsTheEightByteFrameAndItsSilentProfile) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.type = DeviceType::ROLLER_SHUTTER});
+
+  comp.set_device_position("ABC123", 50);
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}));
+}
+
+TEST(HubOperations, AnInteriorVenetianBlindKeepsTheTiltFrameOnFunctionalParameterThree) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.type = DeviceType::INTERIOR_VENETIAN_BLIND});
+
+  comp.set_device_tilt("ABC123", 25);  // no device answers; the sent frame is what is asserted
+  const std::vector<uint8_t> payload = first_sent_payload(radio);
+  ASSERT_EQ(payload.size(), 8u);
+  EXPECT_EQ(payload[2], POS_UNKNOWN) << "tilt leaves the main position alone";
+  EXPECT_EQ(payload[4], STATUS_TILT_SELECTOR);
+  EXPECT_EQ(payload[5], 0x96) << "25 % open is 75 % closed, 0x9600";
+}
+
+TEST(HubOperations, AVerticalInteriorBlindHasNoTilt) {
+  // VELUX KLF 200 API specification, Appendix 2: type 10 lists no slat parameter.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.type = DeviceType::VERTICAL_INTERIOR_BLIND});
+
+  EXPECT_FALSE(comp.set_device_tilt("ABC123", 50));
+  EXPECT_TRUE(radio.get_sent_data().empty());
 }

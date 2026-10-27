@@ -13,6 +13,7 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,16 +28,21 @@ using DeviceUpdateCallback = std::function<void(const std::string &device_id, co
 struct DeviceConfig {
   DeviceType type{DeviceType::UNKNOWN};  ///< Device type from YAML declaration.
   uint8_t subtype{0};                    ///< Device subtype byte.
-  bool inverted{false};                  ///< Position-inversion flag.
-  bool optimistic_state{true};           ///< Whether `apply_optimistic_target`/`apply_optimistic_stop` may fire.
-  bool silent{false};                    ///< Send position moves in "silent operation" (slower) mode.
-  bool low_power{false};                 ///< Target is a low-power / duty-cycled receiver: directed frames set
-                                         ///< CTRL1_LOW_POWER and use the long wake-up preamble.
-  bool battery_entities{false};          ///< `battery: true` declared: the battery entities exist for this device.
-  bool has_system_key{false};            ///< `system_key:` declared: the device keeps a key of its own.
-  uint8_t system_key[AES_KEY_SIZE]{};    ///< That key; meaningful only when `has_system_key`. Never logged.
-  bool low_power_set{false};             ///< `low_power:` declared: `low_power` is the user's choice and the
-                                         ///< driver's band default never replaces it, `true` or `false`.
+  DeviceCapabilityClass entity_class{
+      DeviceCapabilityClass::UNKNOWN};  ///< Class of the declaring entity; decides
+                                        ///< the features of a kind the type table does not know.
+  std::optional<bool> invert_override =
+      std::nullopt;                    ///< YAML `invert_position:` when declared; the kind's default otherwise.
+  bool dimmable{false};                ///< YAML `dimmable: true` of a light.
+  bool optimistic_state{true};         ///< Whether `apply_optimistic_target`/`apply_optimistic_stop` may fire.
+  bool silent{false};                  ///< Send position moves in "silent operation" (slower) mode.
+  bool low_power{false};               ///< Target is a low-power / duty-cycled receiver: directed frames set
+                                       ///< CTRL1_LOW_POWER and use the long wake-up preamble.
+  bool battery_entities{false};        ///< `battery: true` declared: the battery entities exist for this device.
+  bool has_system_key{false};          ///< `system_key:` declared: the device keeps a key of its own.
+  uint8_t system_key[AES_KEY_SIZE]{};  ///< That key; meaningful only when `has_system_key`. Never logged.
+  bool low_power_set{false};           ///< `low_power:` declared: `low_power` is the user's choice and the
+                                       ///< driver's band default never replaces it, `true` or `false`.
 };
 
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.
@@ -47,7 +53,7 @@ struct DeviceConfig {
 /// @ingroup hioc_hub
 class DeviceRegistry {
  public:
-  /// Register a device by ID with default metadata (UNKNOWN type, subtype 0, not inverted).
+  /// Register a device by ID with default metadata (UNKNOWN type, subtype 0, no overrides).
   /// No-op when @p device_id is already registered.  Warns and returns when the hex string is invalid.
   /// @param device_id Hexadecimal node ID string (e.g. "ABC123").
   void add(const std::string &device_id);
@@ -55,11 +61,14 @@ class DeviceRegistry {
   /// Register a device with full YAML-derived metadata.
   /// No-op when @p device_id is already registered.  Warns and returns when the hex string is invalid.
   /// @param device_id Hexadecimal node ID string.
-  /// @param cfg       Device type/subtype/inversion/optimistic-state metadata.
+  /// The record's features are resolved from the declared kind and overrides (resolve_device_features()).
+  /// @param cfg       Device type/subtype/overrides/optimistic-state metadata.
   void add(const std::string &device_id, const DeviceConfig &cfg);
 
   /// Insert or overwrite a device entry without deduplication or hex-validation checks.
-  /// Used by the pairing flow which already validated the device during discovery.
+  /// Used by the pairing flow which already validated the device during discovery. A record already
+  /// stored under the ID hands its YAML overrides (entity class, `invert_position:`, `dimmable:`) to
+  /// the new one, and the new record's features are resolved before it is stored.
   /// @param device_id Hexadecimal node ID string.
   /// @param device    Fully-built device to store.
   void put(const std::string &device_id, IoDevice device);
@@ -89,16 +98,8 @@ class DeviceRegistry {
   /// @param low_power RadioDriver::low_power_by_default().
   void set_low_power_default(bool low_power);
 
-  /// Set a device's `dimmable` flag (see IoDevice::dimmable). No-op when the device is unknown.
-  /// Called by platform_light.cpp's setup() right after registration, since `dimmable` is a
-  /// light-platform YAML choice, not something add()'s shared cover/light/switch/lock signature
-  /// should carry for every entity type.
-  /// @param device_id Device to update.
-  /// @param dimmable  New value for IoDevice::dimmable.
-  void set_dimmable(const std::string &device_id, bool dimmable);
-
-  /// Select a device's travel profile. Like set_dimmable() this is a declared preference with no
-  /// protocol readback — nothing on the wire reports which profile a device is in.
+  /// Select a device's travel profile. A declared preference with no protocol readback — nothing on
+  /// the wire reports which profile a device is in.
   /// @param device_id Hexadecimal node ID string.
   /// @param silent    True to send position moves in "silent operation" (slower) mode.
   void set_silent(const std::string &device_id, bool silent);

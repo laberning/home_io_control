@@ -1,4 +1,5 @@
 #include "proto_device_model.h"
+#include "proto_device_types.h"
 #include "hub_decisions.h"
 
 #include "test_helpers.h"
@@ -71,13 +72,13 @@ TEST(DeviceProfile, StatusRequestsSupportedForControllableDevices) {
 }
 
 TEST(DeviceProfile, OperationProfileNames) {
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::VERTICAL_EXTERIOR_AWNING), "cover_position")
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::VERTICAL_EXTERIOR_AWNING, 0), "cover_position")
       << "awning profile should match";
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::INTERIOR_VENETIAN_BLIND), "cover_position_tilt")
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::INTERIOR_VENETIAN_BLIND, 0), "cover_position_tilt")
       << "venetian blind profile should include tilt";
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::LIGHT), "binary_on_off") << "light profile should match";
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::ON_OFF_SWITCH), "binary_on_off")
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::LIGHT, 0), "binary_on_off") << "light profile should match";
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::ON_OFF_SWITCH, 0), "binary_on_off")
       << "switch profile should match";
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::LOCK), "lock") << "lock profile should match";
-  EXPECT_STREQ(device_operation_profile_name(DeviceType::UNKNOWN), "unknown") << "unknown profile should match";
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::LOCK, 0), "lock") << "lock profile should match";
+  EXPECT_STREQ(device_operation_profile_name(DeviceType::UNKNOWN, 0), "unknown") << "unknown profile should match";
 }

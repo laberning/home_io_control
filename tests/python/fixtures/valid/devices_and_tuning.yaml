@@ -18,10 +18,18 @@ cover:
     rain_sensor_poll_interval: 15min
     battery: true
 
+  # An open/close-only opener: no slider, no favourite button, `silent:` would be refused.
+  - platform: home_io_control
+    name: "Garage"
+    io_device_id: "8D7633"
+    io_device_type: garage_opener
+    io_subtype: 58
+
 light:
   - platform: home_io_control
     name: "Dimmer"
     io_device_id: "1A2B3C"
+    io_device_type: light
     dimmable: true
 
 switch:

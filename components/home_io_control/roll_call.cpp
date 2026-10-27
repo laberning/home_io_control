@@ -39,7 +39,6 @@ ScanAddResult add_scan_responder(ScanResponder *responders, uint8_t &count, uint
   memcpy(new_entry.src, frame.src, NODE_ID_SIZE);
   new_entry.type = device.type;
   new_entry.subtype = device.subtype;
-  new_entry.inverted = device.inverted;
   new_entry.rssi_dbm = rssi_dbm;
   new_entry.manufacturer = info.manufacturer;
   new_entry.flags = info.flags;
@@ -194,8 +193,8 @@ std::string unknown_responder_block(const ScanResponder &responder, const std::s
                                     RollCallKeyDisplay display, bool low_power) {
   const bool with_key = key != nullptr && display != RollCallKeyDisplay::HIDDEN;
   const std::string snippet =
-      build_device_yaml_snippet(responder.type, responder.subtype, device_id, responder.metadata_complete,
-                                responder.inverted, low_power, with_key ? detail::format_key_hex(key) : std::string());
+      build_device_yaml_snippet(responder.type, responder.subtype, device_id, responder.metadata_complete, low_power,
+                                with_key ? detail::format_key_hex(key) : std::string());
   if (snippet.empty()) {
     if (key != nullptr && display == RollCallKeyDisplay::PLAIN) {
       return "    not supported yet. Its system_key, for when support lands: \"" + detail::format_key_hex(key) + "\"\n";

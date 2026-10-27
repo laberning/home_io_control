@@ -11,6 +11,7 @@
 #include "stubs/radio_test_common.h"
 
 #include <cstring>
+#include <map>
 
 using namespace esphome::home_io_control;
 using test::encode_device_metadata;
@@ -51,26 +52,474 @@ TEST(HubStatus, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
   EXPECT_TRUE(dev->is_stopped) << "matching normalized target/current should remain stopped";
 }
 
-TEST(HubStatus, StoppedFlagMismatchKeepsDeviceMoving) {
-  TestableHubComponent comp;
-  comp.add_device("ABC123");
+namespace {
 
+/// A trusted 0x04 status reply from ABC123: STATUS_STOPPED or moving, target and current raw.
+IoFrame make_status_reply(bool stopped, uint16_t target_raw, uint16_t current_raw) {
   IoFrame frame{};
   init_frame(frame, true, false, false, false);
   uint8_t own[3] = {0xC0, 0xFF, 0xEE};
   uint8_t device[3] = {0xAB, 0xC1, 0x23};
   set_dst(frame, own);
   set_src(frame, device);
-  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0x64, 0x00, 0x00, 0x00};
-  ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  uint8_t payload[8] = {static_cast<uint8_t>(stopped ? STATUS_STOPPED : 0x00),
+                        0x00,
+                        static_cast<uint8_t>(target_raw >> 8),
+                        static_cast<uint8_t>(target_raw & 0xFF),
+                        static_cast<uint8_t>(current_raw >> 8),
+                        static_cast<uint8_t>(current_raw & 0xFF),
+                        0x00,
+                        0x00};
+  EXPECT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  return frame;
+}
 
-  comp.update_device_status_(frame);
+}  // namespace
+
+namespace {
+
+/// A 0x04 from ABC123 that says moving (target 100 %, current 50 %) with @p remaining_s at bytes 6-7.
+IoFrame make_moving_reply(uint16_t remaining_s) {
+  IoFrame frame = make_status_reply(false, 0xC800, 0x6400);
+  frame.data[6] = static_cast<uint8_t>(remaining_s >> 8);
+  frame.data[7] = static_cast<uint8_t>(remaining_s & 0xFF);
+  return frame;
+}
+
+/// Feed @p frame to a tracked ABC123 (no configured interval) and return the scheduled delay.
+uint32_t next_poll_delay_after(TestableHubComponent &comp, const IoFrame &frame, bool trust_position = true) {
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.poll_policy_.set_next_update("ABC123", 0);
+  comp.update_device_status_(frame, trust_position);
+  return comp.poll_policy_.get_next_update("ABC123") - esphome::millis();
+}
+
+}  // namespace
+
+// --- remaining travel time (status reply bytes 6-7) -------------------------------------------
+
+TEST(HubStatus, RemainingTimeIsReadAsTwoBytes) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.set_device_status_poll_interval("ABC123", 400000);
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0x0100)), 256000u + 1000u)
+      << "256 s left: byte 6 is the high byte of the count";
+}
+
+TEST(HubStatus, RemainingTimePlusASecondShortensTheDefaultDelay) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(1)), 2000u);
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(10)), DEFAULT_SETTLE_POLL_DELAY_MS)
+      << "a long remaining time never stretches the default";
+}
+
+// Corpus: a Somfy Izymo answers an EXECUTE with `06 00` at bytes 6-7, a tilt ack with `8D 00`.
+// The bytes of a command's reply are not a remaining time.
+TEST(HubStatus, RemainingTimeIsIgnoredInTheReplyToACommand) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(1), /*trust_position=*/false), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0x0600), /*trust_position=*/false),
+            DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_FALSE(comp.get_device("ABC123")->reports_remaining_time)
+      << "a command's reply never teaches the hub that the device counts down";
+}
+
+TEST(HubStatus, AllBitsSetMeansNoRemainingTime) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0xFFFF)), DEFAULT_SETTLE_POLL_DELAY_MS);
+}
+
+// Issue #178: a Somfy cover counts down and reports 0 in its last second of travel.
+TEST(HubStatus, ZeroFromADeviceThatCountsDownMeansAboutToStop) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  next_poll_delay_after(comp, make_moving_reply(3));
+  EXPECT_TRUE(comp.get_device("ABC123")->reports_remaining_time);
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0)), 1000u);
+}
+
+// A device that has never sent a count gets the default cadence from a 0: it may not provide one.
+TEST(HubStatus, ZeroFromADeviceThatNeverCountsIsNoRemainingTime) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  EXPECT_EQ(next_poll_delay_after(comp, make_moving_reply(0)), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_FALSE(comp.get_device("ABC123")->reports_remaining_time);
+}
+
+// A STOPPED off target waits the default delay for its confirming poll, even from a device that
+// counts down: classify_stopped_report() relies on that gap to tell a slow motor start from rest.
+TEST(HubStatus, ZeroInAStoppedReportKeepsTheDefaultDelay) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  next_poll_delay_after(comp, make_moving_reply(3));
+  ASSERT_TRUE(comp.get_device("ABC123")->reports_remaining_time);
+  EXPECT_EQ(next_poll_delay_after(comp, make_status_reply(true, 0xC800, 0x6400)), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_STREQ(detail::describe_motion(*comp.get_device("ABC123")), "settling");
+}
+
+TEST(HubStatus, StoppedOffTargetWithAFollowUpPollSettlesOnce) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->target, 100.0f);
+  EXPECT_FLOAT_EQ(dev->position, 50.0f);
+  EXPECT_FALSE(dev->is_stopped) << "the first off-target stopped report waits for one more poll";
+  EXPECT_TRUE(dev->stop_candidate.armed());
+  EXPECT_STREQ(detail::describe_motion(*dev), "settling");
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis())) << "the confirming poll is still due";
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubStatus, SecondIdenticalStoppedOffTargetReportIsAtRestAndEndsPolling) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  esphome::test_clock::advance_ms(3000);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->is_stopped) << "two reports at the same place: at rest off target";
+  EXPECT_TRUE(dev->stop_candidate.armed()) << "kept, so a later poll at the same place confirms at once";
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis())) << "nothing left to poll for";
+}
+
+TEST(HubStatus, StoppedOffTargetThatMovesOnKeepsTracking) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  esphome::test_clock::advance_ms(3000);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x7800));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->is_stopped) << "a changed position means it was not at rest: settle again";
+  EXPECT_FLOAT_EQ(dev->stop_candidate.position, 60.0f) << "the newer report is the one to confirm";
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubStatus, SettlingDeviceWhoseConfirmingPollNeverComesBackIsAtRest) {
+  // The confirming poll goes unanswered until the failure ladder no longer fits in the window: the
+  // device's last word was "stopped", so it stands rather than leaving the cover moving for good.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(detail::is_settling(*dev));
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+  ASSERT_EQ(comp.poll_policy_.on_exchange_failed("ABC123", false, esphome::millis()), 0u);
+  comp.settle_ended_status_tracking_();
+
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FALSE(detail::is_settling(*dev));
+  EXPECT_EQ(notified, 1) << "the cover is told, so it goes idle";
+}
+
+TEST(HubStatus, SettlingDeviceWhoseConfirmingPollFallsPastTheWindowIsAtRest) {
+  // A long configured interval puts the confirming poll after the tracking deadline, so it is
+  // dropped instead of sent; the device's own "stopped" then stands.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.poll_policy_.set_interval("ABC123", 60000);
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS - 30000);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(detail::is_settling(*dev));
+
+  esphome::test_clock::advance_ms(61000);
+  EXPECT_EQ(comp.poll_policy_.pop_due_device(esphome::millis()), std::nullopt) << "past the deadline: dropped";
+  comp.settle_ended_status_tracking_();
+
+  EXPECT_TRUE(dev->is_stopped);
+}
+
+// Runs the tracking window out with a failed poll and settles what ended.
+static void end_tracking_window(TestableHubComponent &comp, const std::string &id) {
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+  ASSERT_EQ(comp.poll_policy_.on_exchange_failed(id, false, esphome::millis()), 0u);
+  comp.settle_ended_status_tracking_();
+}
+
+TEST(HubStatus, EndedTrackingTakesAMovingDeviceAsAtRest) {
+  // The device last reported "moving" and every poll since failed: with no poll left the cover would
+  // show movement for good, so it is shown at rest at the last reported position.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  const float position = dev->position;
+  const float target = dev->target;
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FLOAT_EQ(dev->position, position) << "the last reported position stands";
+  EXPECT_FLOAT_EQ(dev->target, target);
+  EXPECT_EQ(notified, 1) << "the cover is told, so it goes idle";
+}
+
+TEST(HubStatus, EndedTrackingTakesAHubCommandedMoveAsAtRest) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = true;
+  dev->optimistic.target = 0.0f;
+  dev->optimistic.motion = OptimisticState::Motion::MOVING;
+  ASSERT_FALSE(effective_is_stopped(*dev));
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_TRUE(effective_is_stopped(*dev)) << "the prediction is withdrawn";
+  EXPECT_EQ(dev->optimistic.motion, OptimisticState::Motion::NONE);
+  EXPECT_EQ(notified, 1);
+}
+
+TEST(HubStatus, EndedTrackingClearsTheMovingEvidenceSoTheNextRequestWakesTheDevice) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+  ASSERT_NE(dev->last_moving_evidence_ms, 0u);
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a resting device is read as asleep again";
+}
+
+TEST(HubStatus, EndedTrackingLeavesADeviceThatReportedStoppedAlone) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0xC800));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(dev->is_stopped);
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_EQ(notified, 0) << "nothing changed, nobody is told";
+}
+
+TEST(HubStatus, EndedTrackingLeavesAHeaterAlone) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::HEAT_PUMP;
+  dev->is_stopped = false;
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_FALSE(dev->is_stopped);
+  EXPECT_EQ(notified, 0);
+}
+
+TEST(HubStatus, EndedTrackingLeavesAHeatLevelHeaterAlone) {
+  // An exterior heater takes its heat level in the position field but never moves.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->type = DeviceType::EXTERIOR_HEATING;
+  dev->is_stopped = false;
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  int notified = 0;
+  comp.register_device_callback([&](const std::string &, const IoDevice &) { notified++; });
+
+  end_tracking_window(comp, "ABC123");
+
+  EXPECT_FALSE(dev->is_stopped);
+  EXPECT_EQ(notified, 0);
+}
+
+TEST(HubStatus, StoppedOffTargetWithoutAFollowUpPollIsAtRest) {
+  // Nothing tracks the device (e.g. an untracked one-off poll), so nothing would ever confirm the
+  // report: reading it as moving would leave the cover moving for good.
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   EXPECT_FLOAT_EQ(dev->target, 100.0f) << "valid target should decode to 100 percent";
   EXPECT_FLOAT_EQ(dev->position, 50.0f) << "valid current should decode to 50 percent";
-  EXPECT_FALSE(dev->is_stopped) << "stopped flag should be overridden when target and current are still far apart";
+  EXPECT_TRUE(dev->is_stopped) << "the device's own flag stands when no poll can confirm it";
+}
+
+TEST(HubStatus, MovingReportForgetsTheStopCandidate) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->stop_candidate.armed());
+  EXPECT_STREQ(detail::describe_motion(*dev), "moving");
+}
+
+TEST(HubStatus, StopAckOnACoverAtRestOffTargetDoesNotSetItMovingAgain) {
+  // A STOP pressed on a cover already accepted at rest off its target: its ack ("stopped") is held
+  // against that accepted rest, and the settle poll reporting the same place confirms at once, so
+  // the cover never shows a direction again.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_TRUE(dev->is_stopped);
+
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0x0000, 0x0000), /*trust_position=*/false);
+  EXPECT_TRUE(dev->is_stopped) << "the ack's stale positions are the rest already accepted";
+  comp.begin_status_poll_tracking_("ABC123", 0);  // the command path re-arms the window
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  EXPECT_TRUE(dev->is_stopped) << "same place again: no settling round";
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubStatus, FirstReportAfterACommandToANewTargetDoesNotConfirmAnOldStop) {
+  // At rest off target, then sent to 0 %: a motor that has not started yet answers "stopped, target
+  // 0 %, current 50 %". The remembered stop had target 100 %, so it cannot confirm this one.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400), /*trust_position=*/false);
+  // The "stopped" ack ends the window; the command path re-arms it (arm_execute_confirmation_poll_()).
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(true, 0x0000, 0x6400));
+
+  EXPECT_FALSE(comp.get_device("ABC123")->is_stopped) << "settling: the next poll shows whether it moves";
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubStatus, HeaterReplyWithSetpointAndReadingApartIsNeverSettling) {
+  // A heater's target and current are a setpoint and a reading; their gap is no movement, so the
+  // settle loop must not run for it.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0);  // heating-level heater: no motion
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FALSE(dev->stop_candidate.armed());
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubStatus, UnsolicitedStatusUpdateStoppedOffTargetSettlesThenConfirms) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+  comp.begin_status_poll_tracking_("054E17", 0);
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  // Stopped, target [5..6] = 0xC800 (100 %), current [7..8] = 0xC755 (171 raw short).
+  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC7, 0x55, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->is_stopped) << "settling on the 0x71 path too";
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("054E17", esphome::millis()));
+
+  comp.update_device_status_(f);
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("054E17", esphome::millis()));
+}
+
+TEST(HubStatus, SettlingReportClearsMovingEvidence) {
+  // At rest a VELUX SSL hears only the wake-up preamble, so the confirming poll must lead with it:
+  // the wake belief follows the device's "stopped", not the hub's "settling" (issue #151).
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  note_moving_evidence(*dev, esphome::millis());
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  ASSERT_FALSE(dev->is_stopped);
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u);
 }
 
 // ============================================================================
@@ -80,7 +529,7 @@ TEST(HubStatus, StoppedFlagMismatchKeepsDeviceMoving) {
 // §7.7 — a trusted status observation supersedes the position prediction.
 TEST(HubStatus, TrustedStatusObservationSupersedesPositionPrediction) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
@@ -107,7 +556,7 @@ TEST(HubStatus, TrustedStatusObservationSupersedesPositionPrediction) {
 // §7.8 — a trusted extended status observation supersedes the tilt prediction.
 TEST(HubStatus, TrustedExtendedStatusObservationSupersedesTiltPrediction) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
   auto *dev = comp.get_device("ABC123");
@@ -134,7 +583,7 @@ TEST(HubStatus, TrustedExtendedStatusObservationSupersedesTiltPrediction) {
 // §7.9 — regression guard: an execute ack decoded with trust_position=false clears *nothing*.
 TEST(HubStatus, ExecuteAckWithoutTrustedPositionSupersedesNothing) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
   ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
   auto *dev = comp.get_device("ABC123");
@@ -162,7 +611,7 @@ TEST(HubStatus, ExecuteAckWithoutTrustedPositionSupersedesNothing) {
 // §7.10 — an unsolicited 0x71 supersedes the position prediction but leaves the tilt prediction standing.
 TEST(HubStatus, UnsolicitedStatusUpdateSupersedesPositionButNotTilt) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  comp.add_device("ABC123", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 25.0f));
   ASSERT_TRUE(comp.apply_optimistic_tilt("ABC123", 70.0f));
   auto *dev = comp.get_device("ABC123");
@@ -633,7 +1082,7 @@ TEST(HubStatus, GetInfo2RespUpdatesDeviceType) {
 
 TEST(HubStatus, GetInfo2RespDoesNotOverwriteDeclaredType) {
   TestableHubComponent comp;
-  comp.add_device("054E17", {DeviceType::VERTICAL_EXTERIOR_AWNING, 7, false});
+  comp.add_device("054E17", {DeviceType::VERTICAL_EXTERIOR_AWNING, 7});
 
   IoFrame f{};
   init_frame(f, true, false, true, false);
@@ -651,6 +1100,63 @@ TEST(HubStatus, GetInfo2RespDoesNotOverwriteDeclaredType) {
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->type, DeviceType::VERTICAL_EXTERIOR_AWNING) << "INFO2 must not overwrite a YAML-declared device type";
   EXPECT_EQ(dev->subtype, 7u) << "INFO2 must not overwrite a YAML-declared subtype";
+}
+
+namespace {
+
+/// An INFO2 response from "054E17" carrying the given kind.
+IoFrame make_info2_response(DeviceType type, uint8_t subtype) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[12] = {0};
+  encode_device_metadata(type, subtype, &payload[10]);
+  set_cmd(f, CMD_GET_INFO2_RESP, payload, sizeof(payload));
+  return f;
+}
+
+}  // namespace
+
+TEST(HubStatus, GetInfo2RespResolvesTheFeaturesOfTheLearnedKind) {
+  TestableHubComponent comp;
+  comp.add_device("054E17", {.entity_class = DeviceCapabilityClass::COVER});
+
+  comp.update_device_status_(make_info2_response(DeviceType::EXTERIOR_VENETIAN_BLIND, 0));
+
+  const IoDevice *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->features, device_features(DeviceType::EXTERIOR_VENETIAN_BLIND, 0));
+  EXPECT_TRUE(has_feature(dev->features, device_feature::TILT));
+}
+
+TEST(HubStatus, GetInfo2RespTeachesAnInvertedKindItsDefaultDirection) {
+  TestableHubComponent comp;
+  comp.add_device("054E17", {.entity_class = DeviceCapabilityClass::COVER});
+
+  comp.update_device_status_(make_info2_response(DeviceType::HORIZONTAL_AWNING, 0));
+
+  EXPECT_TRUE(comp.get_device("054E17")->inverted);
+}
+
+TEST(HubStatus, AnExplicitInvertPositionFalseSurvivesALearnedInvertedKind) {
+  TestableHubComponent comp;
+  comp.add_device("054E17", {.entity_class = DeviceCapabilityClass::COVER, .invert_override = false});
+
+  comp.update_device_status_(make_info2_response(DeviceType::HORIZONTAL_AWNING, 0));
+
+  EXPECT_FALSE(comp.get_device("054E17")->inverted) << "the YAML `invert_position: false` outranks the kind's default";
+}
+
+TEST(HubStatus, ALearnedSubtype58CoverHasNoTilt) {
+  TestableHubComponent comp;
+  comp.add_device("054E17", {.entity_class = DeviceCapabilityClass::COVER});
+
+  comp.update_device_status_(make_info2_response(DeviceType::EXTERIOR_VENETIAN_BLIND, SUBTYPE_MAIN_PARAMETER_ONLY));
+
+  EXPECT_FALSE(has_feature(comp.get_device("054E17")->features, device_feature::TILT));
 }
 
 TEST(HubStatus, ErrorRespDoesNotMutateTrackedPosition) {
@@ -970,7 +1476,7 @@ TEST(HubStatus, ShortPrivateResponseLeavesTheRecordUntouched) {
   // tests/corpus/captures/exchange/tilt_cover_exchange_close_ack_six_byte_no_hint.yaml's 6-byte
   // payload, applied with trust_position=true (the default) to isolate the >= 12 length guard
   // from the trust_position gate pinned above: a real device can send a short reply to a
-  // *trusted* request too (e.g. a status poll from a device that omits the settle hint), and the
+  // *trusted* request too (e.g. a status poll from a device that omits the remaining time), and the
   // guard must reject the record without also rejecting the position decode it shares a branch
   // with.
   TestableHubComponent comp;
@@ -1003,7 +1509,7 @@ TEST(HubStatus, TiltBlockIsNotMistakenForALastCommandParameter) {
   // decoder already owns, and the tilt value must still decode correctly alongside the
   // (different-offset) commander/originator.
   TestableHubComponent comp;
-  comp.add_device("51C001", {DeviceType::INTERIOR_VENETIAN_BLIND, 0, false});
+  comp.add_device("51C001", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
 
   IoFrame f{};
   init_frame(f, true, false, false, false);
@@ -1097,7 +1603,7 @@ TEST(HubStatus, DescribePredictionNamesADivergingMotion) {
 // not the whole story.
 TEST(HubStatus, DescribePredictionFlagsTheIssue95ExecuteAckScenario) {
   TestableHubComponent comp;
-  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0, false});
+  comp.add_device("ABC123", {DeviceType::ROLLER_SHUTTER, 0});
   ASSERT_TRUE(comp.apply_optimistic_target("ABC123", 100.0f));
 
   IoFrame frame{};
@@ -1780,4 +2286,208 @@ TEST(HubStatus, StatusLineNamesAMissingLevelOnlyWhenBatteryEntitiesAreDeclared) 
 
   dev.battery_entities = true;
   EXPECT_EQ(detail::describe_battery(dev), " battery=not_reported");
+}
+
+// ============================================================================
+// Overheard traffic from other controllers: when the hub polls (hub_status.cpp)
+// ============================================================================
+
+namespace {
+
+constexpr uint32_t FOREIGN_T0 = 50000;
+constexpr uint8_t FOREIGN_REMOTE[3] = {0x43, 0x44, 0xE3};  ///< Another controller.
+constexpr uint8_t FOREIGN_DEVICE[3] = {0x05, 0x4E, 0x17};  ///< The registered device "054E17".
+
+/// A hub with one registered device on a manual clock, fed frames of another controller.
+struct ForeignTrafficRig {
+  esphome::test_clock::ManualClock clock{FOREIGN_T0};
+  RxTestableComponent comp;
+  MockRadio radio;
+
+  ForeignTrafficRig() { setup_rx_test_component(comp, radio); }
+
+  /// Feed one frame `from` -> `to` carrying `cmd` (a 2W start frame).
+  void hear(const uint8_t *from, const uint8_t *to, uint8_t cmd) {
+    IoFrame f{};
+    init_frame(f, true, true, false, false);
+    set_src(f, from);
+    set_dst(f, to);
+    set_cmd(f, cmd);
+    comp.process_received_packet_(make_rx_packet(f));
+  }
+  void controller_sends(uint8_t cmd) { hear(FOREIGN_REMOTE, FOREIGN_DEVICE, cmd); }
+  void device_challenges(const uint8_t *controller) { hear(FOREIGN_DEVICE, controller, CMD_CHALLENGE_REQ); }
+
+  /// Move time to `abs_ms`, firing due timers, and return how many status polls were queued since
+  /// the last call.
+  size_t polls_until(uint32_t abs_ms) {
+    esphome::test_scheduler::run_until(abs_ms);
+    size_t n = 0;
+    while (auto op = comp.op_queue_.pop()) {
+      if (op->type == PendingOperationType::REQUEST_STATUS)
+        n++;
+    }
+    return n;
+  }
+};
+
+}  // namespace
+
+TEST(HubStatusForeign, AReadPollsOnceThenNotForTenMinutes) {
+  ForeignTrafficRig r;
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2000), 1u) << "the first read after boot polls";
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 60000), 0u);
+  esphome::test_clock::set_ms(FOREIGN_T0 + FOREIGN_READ_RESYNC_MS - 1);
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + FOREIGN_READ_RESYNC_MS + 5000), 0u) << "still inside the 10 minutes";
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + FOREIGN_READ_RESYNC_MS + 10000), 1u) << "10 minutes after the first poll";
+}
+
+TEST(HubStatusForeign, AnExecutePollsTwoSecondsAfterTheLastFrame) {
+  ForeignTrafficRig r;
+  r.controller_sends(CMD_EXECUTE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 1000), 0u);
+  r.controller_sends(CMD_EXECUTE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2999), 0u) << "the second frame moved the poll out";
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 3000), 1u);
+  // A write always polls, even right after a poll and with a fresh status.
+  r.comp.get_device("054E17")->last_status = esphome::millis();
+  r.controller_sends(CMD_EXECUTE);
+  EXPECT_EQ(r.polls_until(esphome::millis() + 2000), 1u);
+}
+
+TEST(HubStatusForeign, AnExecuteThenTwoReadsPollsAfterTheLastReadAndRestartsTrackingOnce) {
+  ForeignTrafficRig r;
+  r.controller_sends(CMD_EXECUTE);
+  const uint32_t deadline = r.comp.poll_policy_.get_poll_deadline("054E17");
+  ASSERT_NE(deadline, 0u);
+  esphome::test_scheduler::run_until(FOREIGN_T0 + 500);
+  r.controller_sends(CMD_PRIVATE);
+  esphome::test_scheduler::run_until(FOREIGN_T0 + 1000);
+  r.controller_sends(CMD_PRIVATE);
+  EXPECT_EQ(r.comp.poll_policy_.get_poll_deadline("054E17"), deadline) << "the reads did not restart tracking";
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2999), 0u);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 3000), 1u) << "2 s after the last read, one poll";
+}
+
+TEST(HubStatusForeign, AMissedExecuteWhoseChallengeIsHeardPolls) {
+  ForeignTrafficRig r;
+  r.comp.get_device("054E17")->last_status = esphome::millis();  // a read alone would not poll now
+  r.device_challenges(FOREIGN_REMOTE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2000), 1u);
+}
+
+TEST(HubStatusForeign, AReadFollowedByItsChallengeDoesNotPoll) {
+  ForeignTrafficRig r;
+  r.comp.get_device("054E17")->last_status = esphome::millis();
+  r.controller_sends(CMD_PRIVATE);
+  esphome::test_clock::advance_ms(3);
+  r.device_challenges(FOREIGN_REMOTE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 5000), 0u);
+  EXPECT_EQ(r.comp.poll_policy_.get_poll_deadline("054E17"), 0u) << "no tracking was begun";
+}
+
+TEST(HubStatusForeign, AChallengeAddressedToThisHubChangesNothing) {
+  ForeignTrafficRig r;
+  const uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  r.device_challenges(own);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 5000), 0u);
+  EXPECT_EQ(r.comp.poll_policy_.get_poll_deadline("054E17"), 0u);
+}
+
+TEST(HubStatusForeign, AnIgnoredReadLeavesTrackingAndFailureCountsAlone) {
+  ForeignTrafficRig r;
+  r.comp.poll_policy_.begin_tracking("054E17", 0, esphome::millis());
+  ASSERT_GT(r.comp.poll_policy_.on_exchange_failed("054E17", false, esphome::millis()), 0u);
+  r.comp.get_device("054E17")->last_status = esphome::millis();
+  const uint32_t deadline = r.comp.poll_policy_.get_poll_deadline("054E17");
+  const uint32_t next = r.comp.poll_policy_.get_next_update("054E17");
+  esphome::test_clock::advance_ms(1000);
+
+  r.controller_sends(CMD_PRIVATE);
+
+  EXPECT_EQ(r.comp.poll_policy_.get_poll_deadline("054E17"), deadline);
+  EXPECT_EQ(r.comp.poll_policy_.get_next_update("054E17"), next);
+  EXPECT_EQ(r.comp.poll_policy_.get_status_poll_failures("054E17"), 1u);
+  EXPECT_TRUE(r.comp.last_timeout_name_.empty() || r.comp.op_queue_.empty());
+}
+
+TEST(HubStatusForeign, ALinked2WControllerFollowsTheSameRule) {
+  ForeignTrafficRig r;
+  const uint8_t linked[3] = {0x9D, 0x60, 0x85};
+  const uint8_t elsewhere[3] = {0xAA, 0xBB, 0xCC};  // an address this hub has not registered
+  r.comp.add_linked_remote("9D6085", "054E17");
+  r.hear(linked, elsewhere, CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 2000), 1u) << "the first read polls";
+  r.hear(linked, elsewhere, CMD_PRIVATE);
+  EXPECT_EQ(r.polls_until(FOREIGN_T0 + 6000), 0u) << "a second read inside 10 minutes does not";
+  r.hear(linked, elsewhere, CMD_EXECUTE);
+  EXPECT_EQ(r.polls_until(esphome::millis() + 2000), 1u) << "a write does";
+}
+
+TEST(HubStatusForeign, KlfStyleRoundRobinPollsEachDeviceOncePerTenMinutes) {
+  // The recorded gateway reads nine devices in turn for 24 minutes. Each device is polled by this
+  // hub at most once per 10 minutes, not once per read.
+  const auto *capture = corpus_test::capture_by_id("velux_klf200_statuspoll_roundrobin_868_sx1262");
+  ASSERT_NE(capture, nullptr);
+  esphome::test_clock::ManualClock clock{FOREIGN_T0};
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  const uint8_t hub_node[3] = {0x11, 0x22, 0x33};  // the capture's gateway is C0FFEE
+  std::memcpy(comp.node_id_, hub_node, 3);
+
+  struct Seen {
+    uint32_t first_ms{0};
+    uint32_t last_ms{0};
+    size_t reads{0};
+    size_t polls{0};
+  };
+  std::map<std::string, Seen> seen;
+  size_t reads = 0;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    const corpus::CorpusFrame &cf = capture->frames[i];
+    IoFrame frame = corpus_test::parse_capture_frame(cf);
+    if (frame.cmd != CMD_PRIVATE)
+      continue;
+    const std::string device = node_id_to_string(frame.dst);
+    if (comp.get_device(device) == nullptr)
+      comp.add_device(device);
+    const uint32_t at = FOREIGN_T0 + cf.t_ms;
+    esphome::test_scheduler::run_until(at);
+    while (auto op = comp.op_queue_.pop()) {
+      if (op->type == PendingOperationType::REQUEST_STATUS)
+        seen[op->device_id].polls++;
+    }
+    RadioRxPacket pkt{};
+    pkt.len = corpus_test::wire_len(cf);
+    std::memcpy(pkt.data, cf.bytes, pkt.len);
+    pkt.freq_hz = cf.freq_hz;
+    comp.process_received_packet_(pkt);
+    Seen &s = seen[device];
+    if (s.reads == 0)
+      s.first_ms = cf.t_ms;
+    s.last_ms = cf.t_ms;
+    s.reads++;
+    reads++;
+  }
+  esphome::test_scheduler::run_until(FOREIGN_T0 + 25 * 60 * 1000);
+  while (auto op = comp.op_queue_.pop()) {
+    if (op->type == PendingOperationType::REQUEST_STATUS)
+      seen[op->device_id].polls++;
+  }
+
+  ASSERT_GE(seen.size(), 9u);
+  size_t polls = 0;
+  for (const auto &entry : seen) {
+    const Seen &s = entry.second;
+    EXPECT_GE(s.polls, 1u) << entry.first << " is polled after its first read";
+    EXPECT_LE(s.polls, (s.last_ms - s.first_ms) / FOREIGN_READ_RESYNC_MS + 1u)
+        << entry.first << ": at most one poll per 10 minutes";
+    polls += s.polls;
+  }
+  EXPECT_LT(polls * 5, reads) << "far fewer polls than reads";
 }

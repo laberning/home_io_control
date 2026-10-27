@@ -28,8 +28,9 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   }
   dev.type = cfg.type;
   dev.subtype = cfg.subtype;
-  if (cfg.inverted)
-    dev.inverted = true;
+  dev.entity_class = cfg.entity_class;
+  dev.invert_override = cfg.invert_override;
+  dev.dimmable = cfg.dimmable;
   dev.optimistic_state = cfg.optimistic_state;
   dev.silent = cfg.silent;
   // A `true` is a declaration wherever it comes from, so the config dump never calls it the band's default.
@@ -40,10 +41,18 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   dev.has_system_key = cfg.has_system_key;
   if (cfg.has_system_key)
     memcpy(dev.system_key, cfg.system_key, AES_KEY_SIZE);
+  resolve_device_features(dev);
   devices_[device_id] = dev;
 }
 
 void DeviceRegistry::put(const std::string &device_id, IoDevice device) {
+  const auto existing = devices_.find(device_id);
+  if (existing != devices_.end()) {
+    device.entity_class = existing->second.entity_class;
+    device.invert_override = existing->second.invert_override;
+    device.dimmable = existing->second.dimmable;
+  }
+  resolve_device_features(device);
   this->apply_low_power_default_(device);
   devices_[device_id] = device;
 }
@@ -77,11 +86,6 @@ bool DeviceRegistry::remove_registered_by_pairing(const std::string &device_id) 
     return false;
   devices_.erase(it);
   return true;
-}
-
-void DeviceRegistry::set_dimmable(const std::string &device_id, bool dimmable) {
-  if (IoDevice *dev = this->get(device_id))
-    dev->dimmable = dimmable;
 }
 
 void DeviceRegistry::set_silent(const std::string &device_id, bool silent) {
@@ -161,12 +165,11 @@ bool DeviceRegistry::apply_optimistic_tilt(const std::string &device_id, float t
   auto it = devices_.find(device_id);
   if (it == devices_.end() || !it->second.optimistic_state)
     return false;
-  // Type-gated here rather than at the call sites so every present and future caller is safe:
+  // Feature-gated here rather than at the call sites so every present and future caller is safe:
   // showing an angle the device will never report back would be a lie the next poll cannot
-  // correct. This admits exactly the devices whose tilt command is accepted — the command gate
-  // known_device_accepts_execute_tilt() is this same predicate plus an UNKNOWN-type check that
-  // device_supports_tilt() already fails — so the two cannot disagree about a given device.
-  if (!device_supports_tilt(it->second.type))
+  // correct. This is the same bit known_device_accepts_execute_tilt() reads, so the two cannot
+  // disagree about a given device.
+  if (!has_feature(it->second.features, device_feature::TILT))
     return false;
   if (it->second.tilt == UNKNOWN_POSITION) {
     ESP_LOGD(TAG, "Device %s: optimistic tilt=%.0f (last reported tilt=unknown)", device_id.c_str(), tilt_percent);

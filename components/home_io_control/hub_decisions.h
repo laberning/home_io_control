@@ -77,6 +77,14 @@ enum class PairingKeyConfirmDisposition : uint8_t {
 /// devices on the network, but contain only ephemeral cryptographic data.
 inline bool is_exchange_internal_command(uint8_t cmd) { return cmd == CMD_CHALLENGE_REQ || cmd == CMD_CHALLENGE_RESP; }
 
+/// Returns true for the commands that write to a device: an execute, a mode activation or a private
+/// register write. A heard write changes the device's state, so this hub's view of it is stale; a heard
+/// read (any other command) changes nothing on the device. Deliberately a short list of writes rather
+/// than a list of reads, so an unknown command counts as a read.
+inline bool overheard_command_writes(uint8_t cmd) {
+  return cmd == CMD_EXECUTE || cmd == CMD_ACTIVATE_MODE || cmd == CMD_WRITE_PRIVATE;
+}
+
 // == Utility: endpoint matching ==
 
 /// Check if two frames have identical src/dst node IDs.
@@ -130,8 +138,9 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
 
 /// True for a CMD_EXECUTE that has the same effect sent twice as sent once. Every EXECUTE this hub
 /// sends names an absolute target (a position, open/close, STOP, a tilt angle, a light level)
-/// except the stored-position selector POS_FAVORITE, used by favourite and vent: on a Somfy motor
-/// "My" while moving means stop, so a second copy can undo what the first one started.
+/// except the stored-position selector POS_FAVORITE, used by favourite, vent, partial and pedestrian
+/// (every NAMED_POSITIONS entry): on a Somfy motor "My" while moving means stop, so a
+/// second copy can undo what the first one started.
 /// @param request Outbound request frame.
 [[nodiscard]] inline bool is_repeatable_execute(const IoFrame &request) {
   return request.cmd == CMD_EXECUTE && request.data_len > EXECUTE_MAIN_BYTE_OFFSET &&
@@ -741,6 +750,75 @@ static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RA
   if (status.parameter_id != LIMITATION_PARAM_MP)
     return RainSensorState::UNKNOWN;
   return rain_state_from_minimum_limit(status.value_raw);
+}
+
+// === Stopped reports ===
+
+/// @brief What the hub makes of one status report's movement state.
+enum class StoppedReport : uint8_t {
+  MOVING,                 ///< The device reports itself moving.
+  STOPPED,                ///< Stopped on its target (within STATUS_POS_TOLERANCE_RAW), or with no
+                          ///< known target or position to compare.
+  STOPPED_CONFIRMED,      ///< Stopped off its target, as in the remembered report: at rest there.
+  STOPPED_UNCONFIRMABLE,  ///< Stopped off its target and no follow-up poll will run, so the
+                          ///< device's own flag stands.
+  SETTLING,               ///< Stopped off its target for the first time: treated as moving until
+                          ///< the next report confirms it.
+};
+
+/// @brief One decoded status report, plus what the hub remembers and whether it will poll again.
+struct StoppedReportInput {
+  bool reported_stopped{true};       ///< The report's STATUS_STOPPED flag (reports_stopped()).
+  float target{UNKNOWN_POSITION};    ///< Decoded target, or UNKNOWN_POSITION.
+  float position{UNKNOWN_POSITION};  ///< Decoded current position, or UNKNOWN_POSITION.
+  StopCandidate candidate{};         ///< The last off-target "stopped" report, if any.
+  bool follow_up_possible{false};    ///< A tracked follow-up poll will run (StatusPollPolicy is tracking).
+  bool has_motion{true};             ///< False for a device without motion (device_has_no_motion()): a
+                                     ///< heater's target and current are a setpoint and a reading, and
+                                     ///< their difference is no movement.
+};
+
+/// @brief Decide whether a "stopped" report means at rest.
+///
+/// A cover can come to rest off its target and report STOPPED there (corpus captures named on
+/// StopCandidate). The device's flag is trusted once two reports agree on the same target
+/// and the same current position; the first such report keeps the device "moving" for one more
+/// poll. Comparing the target as well keeps a device safe that answers "stopped" with a newly
+/// commanded target before its motor starts: the report before the command had the old target,
+/// so it can never confirm. With no follow-up poll to confirm by, the device's flag stands, or the
+/// device would read moving with nothing left to correct it.
+///
+/// Known bound: a device that answers "stopped, new target, old position" on two polls in a row
+/// before its motor starts (a start delay longer than one settle poll, about 3 s) is taken as at
+/// rest and polling ends. No captured device does this.
+/// @param in The report and the hub's memory of the previous one.
+/// @return The verdict; stopped_report_at_rest() says whether it means at rest.
+[[nodiscard]] inline StoppedReport classify_stopped_report(const StoppedReportInput &in) {
+  if (!in.reported_stopped)
+    return StoppedReport::MOVING;
+  if (!in.has_motion || in.target == UNKNOWN_POSITION || in.position == UNKNOWN_POSITION ||
+      has_reached_target_position(in.target, in.position))
+    return StoppedReport::STOPPED;
+  if (in.candidate.armed() && has_reached_target_position(in.candidate.target, in.target) &&
+      has_reached_target_position(in.candidate.position, in.position))
+    return StoppedReport::STOPPED_CONFIRMED;
+  if (!in.follow_up_possible)
+    return StoppedReport::STOPPED_UNCONFIRMABLE;
+  return StoppedReport::SETTLING;
+}
+
+/// @brief True when a verdict means the device is at rest.
+[[nodiscard]] inline bool stopped_report_at_rest(StoppedReport report) {
+  return report != StoppedReport::MOVING && report != StoppedReport::SETTLING;
+}
+
+/// @brief True when a verdict leaves an off-target report to remember for the next one.
+///
+/// Kept after a confirmation too, so a later poll that finds the device still resting at the same
+/// place confirms at once instead of settling again.
+[[nodiscard]] inline bool stopped_report_keeps_candidate(StoppedReport report) {
+  return report == StoppedReport::STOPPED_CONFIRMED || report == StoppedReport::STOPPED_UNCONFIRMABLE ||
+         report == StoppedReport::SETTLING;
 }
 
 }  // namespace decisions

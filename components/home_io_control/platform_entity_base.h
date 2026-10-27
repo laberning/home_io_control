@@ -27,6 +27,7 @@
 #include <cinttypes>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -88,12 +89,26 @@ class DeviceBoundEntity {
   /// entity's update callback, and schedules the delayed initial status request — in the exact
   /// order every entity used before.
   /// @param self The entity itself; used for set_timeout(), since DeviceBoundEntity is not a Component.
-  /// @param inverted Initial inversion flag passed to add_device (covers compute it; others pass false).
+  /// @param entity_class Capability class of the registering entity; decides the features of a device
+  ///        whose kind the type table does not know.
+  /// @param invert_override The YAML `invert_position:` when declared (covers only), else nullopt so the
+  ///        kind's default applies.
   /// @param on_update The entity's device-update callback.
-  void register_device_binding_(Component *self, bool inverted,
-                                std::function<void(const std::string &, const IoDevice &)> on_update) {
-    DeviceConfig config{this->device_type_, this->subtype_,         inverted, this->optimistic_state_, this->silent_,
-                        this->low_power_,   this->battery_entities_};
+  /// @param dimmable The YAML `dimmable: true` of a light; false for every other entity.
+  void register_device_binding_(Component *self, DeviceCapabilityClass entity_class,
+                                std::optional<bool> invert_override,
+                                std::function<void(const std::string &, const IoDevice &)> on_update,
+                                bool dimmable = false) {
+    DeviceConfig config;
+    config.type = this->device_type_;
+    config.subtype = this->subtype_;
+    config.entity_class = entity_class;
+    config.invert_override = invert_override;
+    config.dimmable = dimmable;
+    config.optimistic_state = this->optimistic_state_;
+    config.silent = this->silent_;
+    config.low_power = this->low_power_;
+    config.battery_entities = this->battery_entities_;
     config.low_power_set = this->low_power_set_;
     config.has_system_key = this->has_system_key_;
     if (this->has_system_key_)
@@ -106,6 +121,22 @@ class DeviceBoundEntity {
     // through `self`. App.scheduler.set_timeout is the public entry point set_timeout wraps.
     App.scheduler.set_timeout(self, "init_status", INITIAL_STATUS_REQUEST_DELAY_MS,
                               [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+  }
+
+  /// @brief What this entity's device can do: the registered device's features, or, before it is
+  /// registered, the features its declared kind resolves to.
+  /// @param entity_class Capability class of the asking entity.
+  [[nodiscard]] DeviceFeatures device_features_(DeviceCapabilityClass entity_class) const {
+    if (this->parent_ != nullptr) {
+      if (const IoDevice *dev = this->parent_->get_device(this->device_id_))
+        return dev->features;
+    }
+    IoDevice declared{};
+    declared.type = this->device_type_;
+    declared.subtype = this->subtype_;
+    declared.entity_class = entity_class;
+    resolve_device_features(declared);
+    return declared.features;
   }
 
   /// @brief Shared inbound-update guard for binary endpoints.

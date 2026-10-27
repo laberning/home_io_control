@@ -36,21 +36,21 @@ TEST(HubInternal, BinaryEntityPositionMidRejected) {
 
 TEST(HubInternal, KnownDeviceMatchesEntityClass) {
   IoDevice cover_dev{};
-  cover_dev.type = DeviceType::ROLLER_SHUTTER;
+  test::set_kind(cover_dev, DeviceType::ROLLER_SHUTTER);
   EXPECT_TRUE(detail::known_device_matches_entity_class(cover_dev, DeviceCapabilityClass::COVER))
       << "roller shutter should match COVER class";
   EXPECT_FALSE(detail::known_device_matches_entity_class(cover_dev, DeviceCapabilityClass::LIGHT))
       << "roller shutter should NOT match LIGHT class";
 
   IoDevice light_dev{};
-  light_dev.type = DeviceType::LIGHT;
+  test::set_kind(light_dev, DeviceType::LIGHT);
   EXPECT_TRUE(detail::known_device_matches_entity_class(light_dev, DeviceCapabilityClass::LIGHT))
       << "light should match LIGHT class";
   EXPECT_FALSE(detail::known_device_matches_entity_class(light_dev, DeviceCapabilityClass::COVER))
       << "light should NOT match COVER class";
 
   IoDevice unknown_dev{};
-  unknown_dev.type = DeviceType::UNKNOWN;
+  test::set_kind(unknown_dev, DeviceType::UNKNOWN);
   EXPECT_TRUE(detail::known_device_matches_entity_class(unknown_dev, DeviceCapabilityClass::COVER))
       << "UNKNOWN type should match any class";
   EXPECT_TRUE(detail::known_device_matches_entity_class(unknown_dev, DeviceCapabilityClass::LIGHT))
@@ -59,65 +59,98 @@ TEST(HubInternal, KnownDeviceMatchesEntityClass) {
 
 TEST(HubInternal, KnownDeviceAcceptsExecutePosition) {
   IoDevice cover_dev{};
-  cover_dev.type = DeviceType::ROLLER_SHUTTER;
+  test::set_kind(cover_dev, DeviceType::ROLLER_SHUTTER);
   EXPECT_TRUE(detail::known_device_accepts_execute_position(cover_dev, 50)) << "cover should accept position commands";
   EXPECT_TRUE(detail::known_device_accepts_execute_position(cover_dev, 0)) << "cover should accept binary ON position";
   EXPECT_TRUE(detail::known_device_accepts_execute_position(cover_dev, 100))
       << "cover should accept binary OFF position";
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(cover_dev, POS_STOP)) << "cover should accept STOP";
+  EXPECT_FALSE(detail::known_device_accepts_execute_position(cover_dev, 101)) << "a position above 100 is no position";
 
-  IoDevice light_dev{};
-  light_dev.type = DeviceType::LIGHT;
-  EXPECT_TRUE(detail::known_device_accepts_execute_position(light_dev, 50))
-      << "light should accept mid-range position (dimmable lights send arbitrary 0-100)";
-  EXPECT_TRUE(detail::known_device_accepts_execute_position(light_dev, 0)) << "light should accept binary ON position";
-  EXPECT_TRUE(detail::known_device_accepts_execute_position(light_dev, 100))
-      << "light should accept binary OFF position";
-  EXPECT_FALSE(detail::known_device_accepts_execute_position(light_dev, POS_STOP))
-      << "light should reject the cover-only STOP marker (out of the 0-100 range)";
+  IoDevice dimmable_light{};
+  dimmable_light.dimmable = true;
+  test::set_kind(dimmable_light, DeviceType::LIGHT);
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(dimmable_light, 50))
+      << "a dimmable light accepts mid-range position";
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(dimmable_light, 0));
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(dimmable_light, 100));
+  EXPECT_FALSE(detail::known_device_accepts_execute_position(dimmable_light, 101));
+
+  IoDevice onoff_light{};
+  test::set_kind(onoff_light, DeviceType::LIGHT);
+  EXPECT_FALSE(detail::known_device_accepts_execute_position(onoff_light, 50))
+      << "a light not declared dimmable has no intermediate brightness";
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(onoff_light, 0)) << "light should accept binary ON";
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(onoff_light, 100)) << "light should accept binary OFF";
 
   IoDevice lock_dev{};
-  lock_dev.type = DeviceType::LOCK;
+  test::set_kind(lock_dev, DeviceType::LOCK);
   EXPECT_FALSE(detail::known_device_accepts_execute_position(lock_dev, 50)) << "lock should reject mid-range position";
   EXPECT_TRUE(detail::known_device_accepts_execute_position(lock_dev, 0)) << "lock should accept unlock position";
   EXPECT_TRUE(detail::known_device_accepts_execute_position(lock_dev, 100)) << "lock should accept lock position";
 
-  IoDevice unknown_dev{};
-  unknown_dev.type = DeviceType::UNKNOWN;
-  EXPECT_TRUE(detail::known_device_accepts_execute_position(unknown_dev, 50))
-      << "UNKNOWN type should accept any position";
+  IoDevice heater_dev{};
+  test::set_kind(heater_dev, DeviceType::HEAT_PUMP);
+  EXPECT_FALSE(detail::known_device_accepts_execute_position(heater_dev, 0))
+      << "a climate device has no EXECUTE position path";
+
+  IoDevice undeclared_cover{};
+  undeclared_cover.entity_class = DeviceCapabilityClass::COVER;
+  test::set_kind(undeclared_cover, DeviceType::UNKNOWN);
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(undeclared_cover, 50))
+      << "an undeclared cover keeps its slider until the type is learned";
+
+  IoDevice untyped_dev{};
+  test::set_kind(untyped_dev, DeviceType::UNKNOWN);
+  EXPECT_TRUE(detail::known_device_accepts_execute_position(untyped_dev, 0));
+  EXPECT_FALSE(detail::known_device_accepts_execute_position(untyped_dev, 50))
+      << "a device with no kind and no entity takes open, close and stop only";
+}
+
+// Issue #163: a garage opener of subtype 58 refuses a 50 % position with PARAMETER_UNKNOWN.
+TEST(HubInternal, ADiscreteCoverAcceptsOpenCloseAndStopOnly) {
+  for (const DeviceType type : {DeviceType::GARAGE_OPENER, DeviceType::GATE_OPENER, DeviceType::SWINGING_SHUTTER}) {
+    IoDevice dev{};
+    test::set_kind(dev, type, SUBTYPE_MAIN_PARAMETER_ONLY);
+    EXPECT_TRUE(detail::known_device_accepts_execute_position(dev, 0)) << +static_cast<uint8_t>(type);
+    EXPECT_TRUE(detail::known_device_accepts_execute_position(dev, 100)) << +static_cast<uint8_t>(type);
+    EXPECT_TRUE(detail::known_device_accepts_execute_position(dev, POS_STOP)) << +static_cast<uint8_t>(type);
+    EXPECT_FALSE(detail::known_device_accepts_execute_position(dev, 50)) << +static_cast<uint8_t>(type);
+    EXPECT_FALSE(detail::known_device_accepts_execute_position(dev, 1)) << +static_cast<uint8_t>(type);
+  }
 }
 
 TEST(HubInternal, KnownDeviceAcceptsTilt) {
   IoDevice tilt_dev{};
-  tilt_dev.type = DeviceType::INTERIOR_VENETIAN_BLIND;
+  test::set_kind(tilt_dev, DeviceType::INTERIOR_VENETIAN_BLIND);
   EXPECT_TRUE(detail::known_device_accepts_execute_tilt(tilt_dev)) << "venetian blind should accept tilt commands";
 
   IoDevice no_tilt_dev{};
-  no_tilt_dev.type = DeviceType::ROLLER_SHUTTER;
+  test::set_kind(no_tilt_dev, DeviceType::ROLLER_SHUTTER);
   EXPECT_FALSE(detail::known_device_accepts_execute_tilt(no_tilt_dev))
       << "roller shutter should not accept tilt commands";
 
   IoDevice unknown_dev{};
-  unknown_dev.type = DeviceType::UNKNOWN;
+  test::set_kind(unknown_dev, DeviceType::UNKNOWN);
   EXPECT_FALSE(detail::known_device_accepts_execute_tilt(unknown_dev))
       << "UNKNOWN type should not accept tilt commands";
 }
 
 TEST(HubInternal, KnownDeviceSupportsStatusRequests) {
   IoDevice cover_dev{};
-  cover_dev.type = DeviceType::ROLLER_SHUTTER;
+  test::set_kind(cover_dev, DeviceType::ROLLER_SHUTTER);
   EXPECT_TRUE(detail::known_device_supports_status_requests(cover_dev)) << "cover should support status requests";
 
   IoDevice light_dev{};
-  light_dev.type = DeviceType::LIGHT;
+  test::set_kind(light_dev, DeviceType::LIGHT);
   EXPECT_TRUE(detail::known_device_supports_status_requests(light_dev)) << "light should support status requests";
 
   IoDevice lock_dev{};
-  lock_dev.type = DeviceType::LOCK;
+  test::set_kind(lock_dev, DeviceType::LOCK);
   EXPECT_TRUE(detail::known_device_supports_status_requests(lock_dev)) << "lock should support status requests";
 
   IoDevice unknown_dev{};
-  unknown_dev.type = DeviceType::UNKNOWN;
+  test::set_kind(unknown_dev, DeviceType::UNKNOWN);
   EXPECT_TRUE(detail::known_device_supports_status_requests(unknown_dev))
       << "UNKNOWN type should support status requests";
 }

@@ -172,14 +172,13 @@ messages:
     payload: 01696f0e001122334455663c1122334455667a23
 - dir: host_to_coproc
   host_ms: 100531
-  hex: 06040080080892090000b51201696f0e204455661122333d8c90ce256dc6643d
+  hex: 060400800808920100001201696f0e204455661122333d8c90ce256dc69c3f
   msg_type: tx
   seq: 4
   fields:
     radio: 0
     freq_hz: 2450000000
     then_rx: true
-    cca_threshold_dbm: -75
     payload: 01696f0e204455661122333d8c90ce256dc6
 - dir: coproc_to_host
   host_ms: 100532
