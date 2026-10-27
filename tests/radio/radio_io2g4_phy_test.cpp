@@ -221,6 +221,11 @@ TEST(RadioIo2g4Phy, TheRadioNeedsTheProfileTheSfdAndTheBandOfAllThreeChannels) {
   ASSERT_TRUE(find_tlv(w.span(), static_cast<uint8_t>(ParamId::SFD), value));
   ASSERT_EQ(value.size, 1u);
   EXPECT_EQ(value.data[0], 0x56);
+  // rx_min_psdu is the bound unwrap() calls TOO_SHORT.
+  ASSERT_TRUE(find_tlv(w.span(), static_cast<uint8_t>(ParamId::RX_MIN_PSDU), value));
+  ASSERT_EQ(value.size, 1u);
+  EXPECT_EQ(value.data[0], IO2G4_MIN_PSDU_SIZE);
+  EXPECT_EQ(IO2G4_MIN_PSDU_SIZE, 14u);
 
   auto radio = [](uint32_t lo, uint32_t hi, uint32_t caps) {
     RadioDescriptor d = FakeCoprocessor::reference_802154_radio(0);

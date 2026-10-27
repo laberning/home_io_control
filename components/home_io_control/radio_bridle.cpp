@@ -70,15 +70,49 @@ void RadioBridle::trace_message_(TraceDirection direction, const uint8_t *msg, s
   }
 }
 
-void RadioBridle::drain_() {
+bool RadioBridle::drain_() {
   uint8_t buf[DRAIN_CHUNK];
+  this->draining_ = true;
+  this->drain_start_us_ = micros();
+  bool emptied = true;
   size_t n;
-  while ((n = this->stream_->read(buf, sizeof(buf))) > 0) {
+  while (true) {
+    // Between reads only: a chunk already read is routed completely, so no byte is lost across a cut.
+    if (micros() - this->drain_start_us_ >= DRAIN_BUDGET_US) {
+      emptied = false;
+      break;
+    }
+    n = this->stream_->read(buf, sizeof(buf));
+    if (n == 0)
+      break;
     for (size_t i = 0; i < n; i++) {
       if (this->deframer_.feed(buf[i]) == Deframer::Event::MESSAGE)
         this->route_(this->deframer_.message(), this->deframer_.message_size());
     }
   }
+  this->draining_ = false;
+  this->drain_cut_ = !emptied;
+  if (!emptied) {
+    this->drains_cut_++;
+    uint32_t const now = millis();
+    if (!this->cut_warned_ || now - this->last_cut_warn_ms_ >= DRAIN_CUT_WARN_INTERVAL_MS) {
+      this->cut_warned_ = true;
+      this->last_cut_warn_ms_ = now;
+      ESP_LOGW(TAG, "co-processor messages arrive faster than the hub handles them; is bridle_trace on?");
+    }
+  }
+  return emptied;
+}
+
+bool RadioBridle::wait_expired_(uint32_t start_ms, uint32_t timeout_ms) const {
+  uint32_t const elapsed = millis() - start_ms;
+  if (elapsed < timeout_ms)
+    return false;
+  return !this->drain_cut_ || elapsed >= timeout_ms + DRAIN_TIMEOUT_GRACE_MS;
+}
+
+bool RadioBridle::host_backlog_() const {
+  return this->drain_cut_ || (this->draining_ && micros() - this->drain_start_us_ >= DRAIN_BUDGET_US);
 }
 
 void RadioBridle::note_event_counter_(const Message &m) {
@@ -99,7 +133,9 @@ void RadioBridle::note_event_counter_(const Message &m) {
       this->gap_count_--;
     }
     this->gap_times_ms_[this->gap_count_++] = now;
-    if (this->gap_count_ == GAP_LIMIT && now - this->gap_times_ms_[0] <= GAP_WINDOW_MS && this->link_running()) {
+    // A gap seen while the host is behind is the UART buffer overflowing, which more resyncs cannot cure.
+    if (this->gap_count_ == GAP_LIMIT && now - this->gap_times_ms_[0] <= GAP_WINDOW_MS && this->link_running() &&
+        !this->host_backlog_()) {
       this->gap_count_ = 0;
       this->begin_resync_("repeated event-counter gaps", false);
     }
@@ -109,7 +145,6 @@ void RadioBridle::note_event_counter_(const Message &m) {
 
 void RadioBridle::route_(const uint8_t *msg, size_t len) {
   this->trace_message_(TraceDirection::COPROC_TO_HOST, msg, len);
-  this->last_rx_ms_ = millis();
   Message m;
   if (decode_message(msg, len, m) != DecodeStatus::OK) {
     ESP_LOGW(TAG, "dropping a co-processor message of type 0x%02X that does not fit its layout", msg[0]);
@@ -153,10 +188,7 @@ void RadioBridle::route_reply_(const Message &m, const uint8_t *msg, size_t len,
   if (const auto *stats = std::get_if<Stats>(&m.body)) {
     if (this->hb_pending_ && stats->cmd_seq == this->hb_seq_) {
       this->hb_pending_ = false;  // the co-processor answered: the link is alive
-      if (stats->present > Stats::LOG_DROPPED) {
-        this->log_dropped_ = stats->counters[Stats::LOG_DROPPED];
-        this->have_stats_ = true;
-      }
+      this->keep_heartbeat_stats_(*stats);
       return;
     }
   }
@@ -255,7 +287,7 @@ RadioBridle::Wait RadioBridle::await_(uint8_t seq, MsgType expected, uint32_t ti
   uint32_t const start = millis();
   while (!this->await_done_) {
     this->drain_();
-    if (this->await_done_ || millis() - start >= timeout_ms || this->link_lost_())
+    if (this->await_done_ || this->wait_expired_(start, timeout_ms) || this->link_lost_())
       break;
     App.feed_wdt();
   }
@@ -272,7 +304,8 @@ uint8_t RadioBridle::send_pending_(const Body &body, PendingKind kind) {
     // Replies leave in command order, so the head's reply frees a slot; a head that stays unanswered is
     // a lost link, like a missing tx_done.
     uint32_t const start = millis();
-    while (this->pending_count_ == PENDING_DEPTH && millis() - start < ACK_TIMEOUT_MS && this->link_running()) {
+    while (this->pending_count_ == PENDING_DEPTH && !this->wait_expired_(start, ACK_TIMEOUT_MS) &&
+           this->link_running()) {
       this->drain_();
       App.feed_wdt();
     }
@@ -364,7 +397,6 @@ bool RadioBridle::init() {
   if (!this->configure_())
     return false;
   this->link_ = Link::RUNNING;
-  this->last_rx_ms_ = millis();
   this->last_command_sent_ms_ = millis();
   return true;
 }
@@ -654,8 +686,9 @@ void RadioBridle::on_rx_(const Rx &rx) {
     this->oversize_dropped_++;
     return;
   }
-  // A frame that cannot be an io frame (the strobe frames of a wake-up train are 3 bytes) never
-  // reaches the FIFO: a burst of them must not push a real frame out.
+  // A frame that cannot be an io frame (the strobe frames of a wake-up train are 5 bytes with their FCS; the
+  // co-processor drops them already, this covers one it let through) never reaches the FIFO: a burst of them must not
+  // push a real frame out.
   uint8_t scratch[RADIO_PACKET_BUFFER_SIZE];
   if (this->phy_.unwrap(rx.payload.data, rx.payload.size, rx.crc, scratch, sizeof(scratch)).status ==
       UnwrapResult::Status::TOO_SHORT) {
@@ -757,7 +790,7 @@ bool RadioBridle::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
     if (timeout_ms == 0)
       break;
     App.feed_wdt();
-  } while (millis() - start < timeout_ms);
+  } while (!this->wait_expired_(start, timeout_ms));
   return false;
 }
 
@@ -955,7 +988,6 @@ void RadioBridle::finish_resync_() {
   this->clear_reception_in_progress_();
   this->fifo_count_ = 0;
   this->fifo_head_ = 0;
-  this->last_rx_ms_ = millis();
   this->set_link_(Link::RUNNING, "link restored");
 }
 
@@ -1001,12 +1033,15 @@ void RadioBridle::supervise_running_() {
     this->ready_pending_ = true;  // the WAIT_READY step takes it
     return;
   }
-  if (this->pending_count_ > 0 && now - this->pending_[0].sent_ms >= ACK_TIMEOUT_MS) {
+  // Replies waiting unread behind a cut drain are not missing: the reply timeouts wait for a drain that
+  // empties the stream.
+  bool const behind = this->drain_cut_;
+  if (!behind && this->pending_count_ > 0 && now - this->pending_[0].sent_ms >= ACK_TIMEOUT_MS) {
     this->begin_resync_("no ack for an unawaited command", false);
     return;
   }
   if (this->hb_pending_) {
-    if (now - this->hb_sent_ms_ >= HEARTBEAT_REPLY_MS) {
+    if (!behind && now - this->hb_sent_ms_ >= HEARTBEAT_REPLY_MS) {
       this->hb_pending_ = false;
       this->begin_resync_("no answer to the heartbeat", false);
     }
@@ -1102,6 +1137,18 @@ void RadioBridle::supervise_down_() {
 
 // === Diagnostics ===
 
+void RadioBridle::keep_heartbeat_stats_(const Stats &stats) {
+  // A co-processor that predates a counter sends a shorter body; a counter it did not send is not shown.
+  if (stats.present > Stats::LOG_DROPPED) {
+    this->log_dropped_ = stats.counters[Stats::LOG_DROPPED];
+    this->have_stats_ = true;
+  }
+  if (stats.present > Stats::RX_SHORT) {
+    this->rx_short_ = stats.counters[Stats::RX_SHORT];
+    this->have_rx_short_ = true;
+  }
+}
+
 void RadioBridle::dump_debug() {
   ESP_LOGCONFIG(TAG, "  Bridle co-processor: %s, firmware %s", this->board_, this->fw_version_);
   ESP_LOGCONFIG(TAG, "    Protocol %u.%u, radio %u (chip 0x%04X), payload limit %u, caps 0x%08" PRIX32, PROTO_MAJOR,
@@ -1113,8 +1160,13 @@ void RadioBridle::dump_debug() {
     ESP_LOGCONFIG(TAG, "    Co-processor RX queue: %u events", this->ready_info_.rx_queue_depth);
   ESP_LOGCONFIG(TAG, "    Reset cause: %u", static_cast<unsigned>(this->ready_info_.reset_cause));
   ESP_LOGCONFIG(TAG, "    Link: %s, resyncs: %" PRIu32, link_name(this->link_), this->resyncs_);
+  ESP_LOGCONFIG(TAG, "    Drains cut short at their time budget: %" PRIu32, this->drains_cut_);
   if (this->have_stats_)
     ESP_LOGCONFIG(TAG, "    Log events dropped by the co-processor: %" PRIu32, this->log_dropped_);
+  if (this->have_rx_short_) {
+    ESP_LOGCONFIG(TAG, "    Frames the co-processor dropped as too short (as of the last heartbeat): %" PRIu32,
+                  this->rx_short_);
+  }
   ESP_LOGCONFIG(TAG, "    Link errors: %" PRIu32 " (bad COBS %" PRIu32 ", CRC %" PRIu32 ", length %" PRIu32 ")",
                 this->deframer_.counters().total(), this->deframer_.counters().bad_cobs,
                 this->deframer_.counters().bad_crc, this->deframer_.counters().bad_length);

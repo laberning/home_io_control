@@ -846,6 +846,115 @@ TEST(DecisionsRetryFrequency, AnUnknownLastGoodChannelCountsAsChannel2) {
   EXPECT_EQ(decisions::retry_frequency(true, FREQ_CH2, 123456, 1), FREQ_CH3);
 }
 
+// === First try away from the hub's own Wi-Fi ===
+
+namespace {
+/// The 2.4 GHz air frequencies of the three logical channels.
+uint32_t air_2g4(uint32_t channel) {
+  return channel == FREQ_CH1 ? 2425000000u : channel == FREQ_CH3 ? 2475000000u : 2450000000u;
+}
+/// 868 MHz radios put a logical channel on the air as itself.
+uint32_t air_868(uint32_t channel) { return channel; }
+}  // namespace
+
+TEST(DecisionsWifiChannel, CentresOfAllThirteenChannelsAndChannelFourteen) {
+  for (int32_t channel = 1; channel <= 13; channel++)
+    EXPECT_EQ(decisions::wifi_channel_centre_hz(channel), (2407u + 5u * channel) * 1000000u) << channel;
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(1), 2412000000u);
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(13), 2472000000u);
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(14), 2484000000u);
+}
+
+TEST(DecisionsWifiChannel, ZeroAndOutOfRangeChannelsHaveNoCentre) {
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(0), 0u);
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(-1), 0u);
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(15), 0u);
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(36), 0u);
+}
+
+TEST(DecisionsFirstTry, KeepsTheLastGoodChannelWhenWifiIsAbsentOrFarAway) {
+  for (const uint32_t last : {FREQ_CH1, FREQ_CH2, FREQ_CH3}) {
+    EXPECT_EQ(decisions::first_try_frequency(last, 0, air_2g4), last) << "no Wi-Fi: today's rule";
+    // Wi-Fi channel 1 (2412 MHz): 2450 is 38 MHz away, 2475 further; 2425 is 13 MHz away and inside.
+    if (last != FREQ_CH1) {
+      EXPECT_EQ(decisions::first_try_frequency(last, decisions::wifi_channel_centre_hz(1), air_2g4), last);
+    }
+  }
+}
+
+TEST(DecisionsFirstTry, MovesOffAChannelInsideTheGuardToTheFarthestOne) {
+  // Wi-Fi channel 8 (2447 MHz) sits 3 MHz from 2450: CH2 moves; CH1 is 22 MHz away, CH3 28 MHz.
+  EXPECT_EQ(decisions::first_try_frequency(FREQ_CH2, decisions::wifi_channel_centre_hz(8), air_2g4), FREQ_CH3);
+  // Wi-Fi channel 9 (2452 MHz): CH1 is 27 MHz away, CH3 23 MHz, so the pick flips to CH1.
+  EXPECT_EQ(decisions::first_try_frequency(FREQ_CH2, decisions::wifi_channel_centre_hz(9), air_2g4), FREQ_CH1);
+  // Wi-Fi channel 13 (2472 MHz) covers CH3 (3 MHz) and CH2 (22 MHz is outside), so CH3 moves to the farthest, CH1.
+  EXPECT_EQ(decisions::first_try_frequency(FREQ_CH3, decisions::wifi_channel_centre_hz(13), air_2g4), FREQ_CH1);
+  // Wi-Fi channel 1 (2412 MHz) covers CH1 (13 MHz): the farthest is CH3.
+  EXPECT_EQ(decisions::first_try_frequency(FREQ_CH1, decisions::wifi_channel_centre_hz(1), air_2g4), FREQ_CH3);
+}
+
+TEST(DecisionsFirstTry, TheGuardIsFifteenMegahertzExclusive) {
+  // 2450 MHz against a centre exactly 15 MHz away is outside; 1 Hz closer is inside.
+  EXPECT_FALSE(decisions::within_wifi_guard(2450000000u, 2435000000u));
+  EXPECT_FALSE(decisions::within_wifi_guard(2450000000u, 2465000000u));
+  EXPECT_TRUE(decisions::within_wifi_guard(2450000000u, 2435000001u));
+  EXPECT_TRUE(decisions::within_wifi_guard(2450000000u, 2464999999u));
+  EXPECT_FALSE(decisions::within_wifi_guard(2450000000u, 0));
+}
+
+TEST(DecisionsFirstTry, AnUnknownLastGoodChannelCountsAsChannel2) {
+  EXPECT_EQ(decisions::first_try_frequency(0, 0, air_2g4), FREQ_CH2);
+  EXPECT_EQ(decisions::first_try_frequency(123456, decisions::wifi_channel_centre_hz(8), air_2g4), FREQ_CH3);
+}
+
+TEST(DecisionsFirstTry, A868MhzBandIsNeverMovedWhateverTheWifiChannel) {
+  for (int32_t channel = 0; channel <= 14; channel++)
+    for (const uint32_t last : {FREQ_CH1, FREQ_CH2, FREQ_CH3})
+      EXPECT_EQ(decisions::first_try_frequency(last, decisions::wifi_channel_centre_hz(channel), air_868), last);
+}
+
+TEST(DecisionsExchangeTryFrequency, RetriesRotateFromTheChannelTryZeroUsed) {
+  const uint32_t avoid = decisions::wifi_channel_centre_hz(8);  // CH2 inside the guard, try 0 moves to CH3
+  EXPECT_EQ(decisions::exchange_try_frequency(true, FREQ_CH2, FREQ_CH2, avoid, air_2g4, 0), FREQ_CH3);
+  EXPECT_EQ(decisions::exchange_try_frequency(true, FREQ_CH2, FREQ_CH2, avoid, air_2g4, 1), FREQ_CH1);
+  EXPECT_EQ(decisions::exchange_try_frequency(true, FREQ_CH2, FREQ_CH2, avoid, air_2g4, 2), FREQ_CH2);
+}
+
+TEST(DecisionsExchangeTryFrequency, ThreeTriesVisitAllThreeChannelsWhateverTheWifiChannel) {
+  for (int32_t wifi = 0; wifi <= 14; wifi++) {
+    for (const uint32_t last : {FREQ_CH1, FREQ_CH2, FREQ_CH3}) {
+      std::set<uint32_t> visited;
+      for (uint8_t t = 0; t < 3; t++)
+        visited.insert(decisions::exchange_try_frequency(true, FREQ_CH2, last, decisions::wifi_channel_centre_hz(wifi),
+                                                         air_2g4, t));
+      EXPECT_EQ(visited.size(), 3u) << "wifi " << wifi << " last " << last;
+    }
+  }
+}
+
+TEST(DecisionsExchangeTryFrequency, WithoutWifiItIsRetryFrequency) {
+  for (const uint32_t last : {FREQ_CH1, FREQ_CH2, FREQ_CH3})
+    for (uint8_t t = 0; t < 3; t++) {
+      EXPECT_EQ(decisions::exchange_try_frequency(true, FREQ_CH2, last, 0, air_2g4, t),
+                decisions::retry_frequency(true, FREQ_CH2, last, t));
+      EXPECT_EQ(
+          decisions::exchange_try_frequency(false, FREQ_CH2, last, decisions::wifi_channel_centre_hz(8), air_2g4, t),
+          FREQ_CH2);
+    }
+}
+
+TEST(DecisionsClearWifiChannels, NamesTheLowestAndHighestChannelThatKeepTheDefaultClear) {
+  int32_t lowest = 0;
+  int32_t highest = 0;
+  ASSERT_TRUE(decisions::clear_wifi_channels(2450000000u, lowest, highest));
+  EXPECT_EQ(lowest, 1);    // 2412: 38 MHz away
+  EXPECT_EQ(highest, 13);  // 2472: 22 MHz away
+  // 2425 MHz is covered by channels 1..6 (2412..2437 are within 15 MHz: 2412 is 13 away, 2437 is 12 away).
+  ASSERT_TRUE(decisions::clear_wifi_channels(2425000000u, lowest, highest));
+  EXPECT_EQ(highest, 13);
+  EXPECT_GT(lowest, 1);
+}
+
 TEST(DecisionsChallengeAnswer, IsSlowOnlyAboveThirtyMilliseconds) {
   EXPECT_FALSE(decisions::challenge_answer_is_slow(29));
   EXPECT_FALSE(decisions::challenge_answer_is_slow(30));

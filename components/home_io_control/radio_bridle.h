@@ -16,11 +16,16 @@
 /// `ACK_TIMEOUT_MS` is a lost link. A refusal undoes the driver's optimistic state only while its command
 /// is still the newest receive-state command, and is not retried before `SCAN_RETRY_MS`.
 ///
-/// Receiving. One private drain (`drain_`) reads every byte the stream holds, deframes it and
+/// Receiving. One private drain (`drain_`) reads the stream chunk by chunk, deframes it and
 /// routes each message: a reply to the command awaiting it, a received frame into a small FIFO,
 /// `frame_start`/`rx_abort` into the reception state, `log` into the ESPHome log. Every getter
 /// and every wait loop drains first, so the UART's receive buffer never has to hold more than one
-/// `loop()` pass.
+/// `loop()` pass. A drain stops reading once it has spent `DRAIN_BUDGET_US` (checked between chunk
+/// reads only; a chunk already read is routed completely) so the loop task returns however much a
+/// message costs, and the rest waits for the next drain. Waits honour that unread input: a timeout is
+/// declared only after a drain that emptied the stream (or `DRAIN_TIMEOUT_GRACE_MS` past the
+/// deadline), and the link supervision's reply timeouts and the event-counter resync stand down while
+/// the last drain was cut short, since a backlog on the host is not a fault of the link.
 ///
 /// Ordering (spec §6). When `tx_done` of our own `tx` is routed, the FIFO is emptied: every `rx`
 /// before it arrived before or during the transmission, which a half-duplex radio would have
@@ -76,6 +81,16 @@ class RadioBridle : public RadioDriver {
   static constexpr size_t TEXT_CAP = 40;
   /// Bytes read from the stream at a time by the drain.
   static constexpr size_t DRAIN_CHUNK = 64;
+  /// Longest time one drain spends reading before it returns (µs). The hub's loop must return whatever
+  /// a message costs: a busy neighbour can make the co-processor report a message per millisecond, and
+  /// handling each one (a trace line blocks on the log UART) must not hold the loop task past the task
+  /// watchdog. The budget is checked between reads, so one chunk of messages may overshoot it.
+  static constexpr uint32_t DRAIN_BUDGET_US = 10000;
+  /// How far past its deadline a wait keeps draining while input is still unread before it times out
+  /// regardless, so a stream that never ends cannot hold a wait forever: two budgets.
+  static constexpr uint32_t DRAIN_TIMEOUT_GRACE_MS = 2 * DRAIN_BUDGET_US / 1000;
+  /// Least time between two warnings that drains are being cut short.
+  static constexpr uint32_t DRAIN_CUT_WARN_INTERVAL_MS = 60000;
   /// Room for the TLVs of one configuration command: the 868 MHz profile's eleven take 48 bytes with the
   /// profile and the TX power.
   static constexpr size_t CONFIG_TLV_CAP = 64;
@@ -229,8 +244,16 @@ class RadioBridle : public RadioDriver {
   bool on_pending_reply_(const bridle::Message &m, uint8_t seq);
   /// A refused pending command: log it once per code and undo the optimistic state where it applies.
   void on_pending_refused_(const PendingCommand &cmd, const bridle::Error &error);
-  /// Read everything the stream holds and route it.
-  void drain_();
+  /// Read the stream and route what it holds, until it is empty or `DRAIN_BUDGET_US` is spent. Sets
+  /// `drain_cut_` to the result.
+  /// @return true when the stream was emptied, false when the drain was cut short with input unread.
+  bool drain_();
+  /// Whether a wait that started at `start_ms` and may last `timeout_ms` has run out: the deadline has
+  /// passed and either the last drain emptied the stream or `DRAIN_TIMEOUT_GRACE_MS` has also passed.
+  [[nodiscard]] bool wait_expired_(uint32_t start_ms, uint32_t timeout_ms) const;
+  /// Whether messages are queuing up on the host: the last drain was cut short, or the running one has
+  /// spent its budget. A gap in the event counter then comes from the host falling behind.
+  [[nodiscard]] bool host_backlog_() const;
   /// drain_() plus link supervision. Every public entry the hub calls on an idle or waiting pass
   /// uses this, so the periodic work of the link (heartbeat, resync, the down retry) needs no timer
   /// of its own.
@@ -278,6 +301,8 @@ class RadioBridle : public RadioDriver {
 
   /// A lost link: reset the co-processor and configure it again, one step per poll.
   void begin_resync_(const char *why, bool skip_reset);
+  /// Keep the counters a heartbeat's `stats` reply carries for `dump_debug()`.
+  void keep_heartbeat_stats_(const bridle::Stats &stats);
   void set_link_(Link state, const char *why);
   void attempt_failed_(const char *why);
   void finish_resync_();
@@ -349,7 +374,12 @@ class RadioBridle : public RadioDriver {
   // Link supervision.
   Link link_{Link::INIT};
   bool trace_{false};
-  uint32_t last_rx_ms_{0};            ///< When the co-processor last sent anything.
+  bool drain_cut_{false};             ///< The last drain stopped at its budget with input unread.
+  bool draining_{false};              ///< A drain is running (for host_backlog_()).
+  uint32_t drain_start_us_{0};        ///< micros() at the start of the running drain.
+  uint32_t drains_cut_{0};            ///< Drains cut short, for dump_debug().
+  uint32_t last_cut_warn_ms_{0};      ///< millis() of the last cut-short warning.
+  bool cut_warned_{false};            ///< A cut-short warning was logged (last_cut_warn_ms_ is valid).
   uint32_t last_command_sent_ms_{0};  ///< When the host last sent any command: the co-processor's claim clock.
   /// Protocol major version the co-processor reported in its last accepted `ready`.
   uint8_t coproc_major_{bridle::PROTO_MAJOR};
@@ -373,6 +403,8 @@ class RadioBridle : public RadioDriver {
   uint32_t resyncs_{0};
   uint32_t log_dropped_{0};  ///< Last `stats.log_dropped` a heartbeat returned.
   bool have_stats_{false};
+  uint32_t rx_short_{0};  ///< Last `stats.rx_short` a heartbeat returned: refreshed with each `get_stats` reply.
+  bool have_rx_short_{false};
 
   // Counters for dump_debug().
   uint32_t dropped_before_tx_done_{0};

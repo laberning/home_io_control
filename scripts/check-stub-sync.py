@@ -130,6 +130,12 @@ ROWS = (
         methods=("set_uart_parent", "write_array", "read_array", "available", "flush"),
         members=("parent_",),
     ),
+    Row(
+        "components/wifi/wifi_component.h",
+        "components/wifi/wifi_component.h",
+        "WiFiComponent",
+        methods=("is_connected", "get_wifi_channel"),
+    ),
     Row("components/fan/fan.h", "components/fan/fan.h", "Fan", methods=("control", "get_traits", "publish_state")),
     Row("components/button/button.h", "components/button/button.h", "Button", methods=("press_action",)),
     Row("components/sensor/sensor.h", "components/sensor/sensor.h", "Sensor", methods=("publish_state",)),

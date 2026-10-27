@@ -126,6 +126,10 @@ void FakeCoprocessor::inject_rx(uint32_t freq_hz, const std::vector<uint8_t> &pa
                                 uint8_t radio) {
   if (radio >= radios_.size() || radios_[radio].mode == Mode::IDLE)
     return;  // a radio that is not receiving reports nothing
+  if (payload.size() < radios_[radio].rx_min_psdu) {
+    rx_short_++;  // dropped before any event, as the co-processor does (spec §4 `rx_min_psdu`)
+    return;
+  }
   if (crc == CrcState::BAD && (event_mask_ & event_mask::CRC_ERROR_RX) == 0)
     return;
   Rx rx;
@@ -530,6 +534,7 @@ void FakeCoprocessor::handle_(const Message &msg) {
     stats.counters[Stats::TX_OK] = tx_ok_;
     stats.counters[Stats::LINK_ERR] = deframer_.counters().total();
     stats.counters[Stats::UPTIME_MS] = static_cast<uint32_t>(now_us() / 1000);
+    stats.counters[Stats::RX_SHORT] = rx_short_;
     queue_(stats, now_us());
   } else if (const auto *scan = std::get_if<RxScan>(&msg.body)) {
     if (RadioState *r = radio_of(scan->radio)) {
@@ -600,6 +605,7 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
           staged.profile_set = true;
           staged.profile = static_cast<PhyProfile>(value.data[0]);
           staged.sfd_set = false;  // setting the profile resets the profile params
+          staged.rx_min_psdu = 0;
           staged.gfsk_set = 0;
           out.add(id, value.data, value.size);
           break;
@@ -616,6 +622,18 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
           return;
         }
         staged.sfd_set = true;
+        out.add(id, value.data, value.size);
+        break;
+      case ParamId::RX_MIN_PSDU:
+        if (!staged.profile_set || staged.profile != PhyProfile::IEEE802154_OQPSK_250K) {
+          refuse(ErrorCode::UNSUPPORTED, id);
+          return;
+        }
+        if (value.size != 1 || value.data[0] > 127) {
+          refuse(ErrorCode::PARAM_RANGE, id);
+          return;
+        }
+        staged.rx_min_psdu = value.data[0];
         out.add(id, value.data, value.size);
         break;
       case ParamId::BITRATE_BPS:

@@ -6,9 +6,9 @@
 
 namespace bridle {
 
-/// Protocol version this header was generated for (`-protocol-version` 0.6).
+/// Protocol version this header was generated for (`-protocol-version` 0.7).
 static constexpr uint8_t PROTO_MAJOR = 0;
-static constexpr uint8_t PROTO_MINOR = 6;
+static constexpr uint8_t PROTO_MINOR = 7;
 
 /// The largest decoded message: msg_type, seq, body and CRC.
 static constexpr size_t MAX_DECODED_BYTES = 255;
@@ -193,6 +193,7 @@ enum class ParamId : uint8_t {
   RX_LEN = 0x0C,  ///< u8: bytes captured after the sync word, 1…`max_payload`. Required.
   PREAMBLE_DETECT_BITS = 0x0D,  ///< u8: preamble bits the radio needs before it looks for the sync word (8, 16, 24 or 32), fewer than the sync word has; a radio answers `param_range` for a value that is not. Default 8.
   SYNC_TIMEOUT_US = 0x0E,  ///< u32: after a preamble is detected, how long to wait for the sync word before `rx_abort(no_sync_after_preamble)`. 0 = the longest wait the radio supports, at least 1 s, so longer than any preamble it sends (a chip that cannot see a preamble end has no better bound). Default 0.
+  RX_MIN_PSDU = 0x0F,  ///< u8, 0…127 (a larger value is `param_range`): a received frame whose PHR length (the PSDU length including the FCS) is below this produces no `frame_start`, `rx` or `rx_abort`, whatever `event_mask` says, and is counted in `stats.rx_short`; it still counts as a frame for `rx_scan` (§3.1). Default 0: every frame is reported.
 };
 
 /// .ksy enum `info_id`.

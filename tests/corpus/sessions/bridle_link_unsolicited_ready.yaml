@@ -1,10 +1,10 @@
-protocol: '0.6'
+protocol: '0.7'
 header:
   host_version: null
   firmware_version: fake-0.0
   board: fake-board
   chip_id: nrf52840
-  proto: '0.6'
+  proto: '0.7'
   reset_cause: pin
   radios:
   - radio: 0
@@ -31,13 +31,13 @@ source:
 messages:
 - dir: coproc_to_host
   host_ms: 100020
-  hex: 8000000006010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f0000000401100501011629
+  hex: 8000000007010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f000000040110050101aa5e
   msg_type: ready
   seq: 0
   fields:
     cmd_seq: 0
     proto_major: 0
-    proto_minor: 6
+    proto_minor: 7
     chip_id: nrf52840
     caps: {}
     info:
@@ -98,7 +98,7 @@ messages:
         log: true
 - dir: host_to_coproc
   host_ms: 100020
-  hex: 02020004010001015602010808a6
+  hex: 0202000401000101560f010e0201088063
   msg_type: set_params
   seq: 2
   fields:
@@ -108,11 +108,13 @@ messages:
       value: ieee802154_oqpsk_250k
     - id: sfd
       value: 86
+    - id: rx_min_psdu
+      value: 14
     - id: tx_power_dbm
       value: 8
 - dir: coproc_to_host
   host_ms: 100020
-  hex: '810202000401000101560201080765'
+  hex: 810202000401000101560f010e02010885c9
   msg_type: params_ack
   seq: 2
   fields:
@@ -123,6 +125,8 @@ messages:
       value: ieee802154_oqpsk_250k
     - id: sfd
       value: 86
+    - id: rx_min_psdu
+      value: 14
     - id: tx_power_dbm
       value: 8
 - dir: host_to_coproc
@@ -143,13 +147,13 @@ messages:
     cmd_seq: 3
 - dir: coproc_to_host
   host_ms: 100025
-  hex: 8000000006010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f0000000401100501028d1b
+  hex: 8000000007010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f000000040110050102316c
   msg_type: ready
   seq: 0
   fields:
     cmd_seq: 0
     proto_major: 0
-    proto_minor: 6
+    proto_minor: 7
     chip_id: nrf52840
     caps: {}
     info:
@@ -210,7 +214,7 @@ messages:
         log: true
 - dir: host_to_coproc
   host_ms: 100035
-  hex: 020500040100010156020108ee06
+  hex: 0205000401000101560f010e0201080713
   msg_type: set_params
   seq: 5
   fields:
@@ -220,11 +224,13 @@ messages:
       value: ieee802154_oqpsk_250k
     - id: sfd
       value: 86
+    - id: rx_min_psdu
+      value: 14
     - id: tx_power_dbm
       value: 8
 - dir: coproc_to_host
   host_ms: 100040
-  hex: 81020500040100010156020108e1c5
+  hex: 810205000401000101560f010e02010802b9
   msg_type: params_ack
   seq: 2
   fields:
@@ -235,6 +241,8 @@ messages:
       value: ieee802154_oqpsk_250k
     - id: sfd
       value: 86
+    - id: rx_min_psdu
+      value: 14
     - id: tx_power_dbm
       value: 8
 - dir: host_to_coproc

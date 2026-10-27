@@ -146,6 +146,9 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::last_1w_activity_ms_;
   using IOHomeControlComponent::first_1w_activity_ms_;
   using IOHomeControlComponent::defer_background_poll_;
+  using IOHomeControlComponent::log_wifi_coexistence_hint_;
+  using IOHomeControlComponent::wifi_centre_hz;
+  using IOHomeControlComponent::wifi_hint_done_;
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   // The LR1121 feature moved to the Lr1121FirmwareUpdateController collaborator (F5). Its state
   // and describe_*/debug_lines are reached through comp.lr1121_firmware_update_.<x>; the hub keeps

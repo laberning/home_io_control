@@ -696,3 +696,112 @@ TEST(RadioBridleLink, TheHeartbeatsLogDroppedCounterIsKeptForTheDump) {
   EXPECT_EQ(rig.radio.log_dropped(), 0u);
   rig.radio.dump_debug();
 }
+
+// === Bounded link reads ===
+
+namespace {
+
+/// A rig whose trace sink blocks for 10 ms per line, as a 115 200-baud log UART does. The stream hands the
+/// driver 20 bytes per read, about one message.
+struct BacklogRig : Rig {
+  BacklogRig() {
+    radio.set_trace(true);
+    radio.on_trace_line = [] { esphome::test_clock::advance_ms(10); };
+    stream.set_bytes_per_read(20);
+  }
+  /// Queue `count` log events, each one a traced message on the link.
+  void log_backlog(int count) {
+    for (int i = 0; i < count; i++)
+      cp.inject_log(LogLevel::INFO, "x");
+  }
+  size_t traced_from_coprocessor() const {
+    return static_cast<size_t>(std::count_if(radio.trace_lines.begin(), radio.trace_lines.end(),
+                                             [](const std::string &l) { return l.find(" < ") != std::string::npos; }));
+  }
+};
+
+}  // namespace
+
+TEST(RadioBridleLink, APassReturnsWithinTheDrainBudgetPlusOneChunkWhateverTheBacklogCosts) {
+  BacklogRig rig;
+  rig.log_backlog(40);  // 400 ms of trace lines if read in one go
+  uint64_t const took_us = rig.pass();
+  EXPECT_LE(took_us, RadioBridle::DRAIN_BUDGET_US + 4 * 10000u) << "budget plus the messages of one chunk";
+  EXPECT_GT(rig.stream.queued(), 0u) << "the rest waits for the next pass";
+  EXPECT_EQ(rig.radio.drains_cut(), 1u);
+}
+
+TEST(RadioBridleLink, NothingIsLostAcrossCutDrains) {
+  BacklogRig rig;
+  size_t const before = rig.traced_from_coprocessor();
+  rig.log_backlog(40);
+  for (int i = 0; i < 100 && rig.traced_from_coprocessor() - before < 40; i++)
+    rig.pass();
+  rig.pass();
+  EXPECT_EQ(rig.stream.queued(), 0u);
+  EXPECT_EQ(rig.traced_from_coprocessor() - before, 40u) << "every message was routed once";
+  EXPECT_EQ(rig.radio.counter_gaps(), 0u);
+  EXPECT_GT(rig.radio.drains_cut(), 1u);
+}
+
+TEST(RadioBridleLink, AReplyBehindATracedBacklogIsRepliedNotTimedOut) {
+  BacklogRig rig;
+  rig.radio.set_mode_rx();
+  rig.pass();
+  rig.log_backlog(3);  // 30 ms: past the 20 ms rssi timeout, inside timeout plus grace
+  rig.cp.set_rssi_dbm(-70);
+  EXPECT_EQ(rig.radio.read_rssi(), -70);
+}
+
+TEST(RadioBridleLink, AHeartbeatReplyBehindABacklogCausesNoResync) {
+  BacklogRig rig;
+  rig.advance_ms(30500);
+  rig.log_backlog(40);
+  uint32_t const resyncs = rig.radio.resyncs();
+  rig.pass();  // sends the heartbeat behind the backlog
+  ASSERT_EQ(rig.commands(MsgType::GET_STATS), 1u);
+  for (int i = 0; i < 100; i++)
+    rig.pass();
+  EXPECT_TRUE(rig.running());
+  EXPECT_EQ(rig.radio.resyncs(), resyncs);
+}
+
+TEST(RadioBridleLink, EventCounterGapsWhileDrainsAreCutDoNotResync) {
+  BacklogRig rig;
+  for (int round = 0; round < 3; round++) {
+    rig.log_backlog(20);
+    rig.cp.skip_event_counter(2);
+    rig.cp.inject_log(LogLevel::INFO, "y");
+    for (int i = 0; i < 100; i++)
+      rig.pass();
+  }
+  EXPECT_EQ(rig.radio.counter_gaps(), 3u) << "each gap is still counted and warned about";
+  EXPECT_TRUE(rig.running());
+  EXPECT_EQ(rig.reset.pulse_starts_us.size(), 1u) << "only the start-up pulse";
+}
+
+TEST(RadioBridleLink, ABacklogThatDoesNotEndStillTimesOutAtTheGraceCap) {
+  BacklogRig rig;
+  rig.radio.set_mode_rx();
+  rig.pass();
+  rig.log_backlog(300);  // three seconds of trace lines: the reply behind them cannot arrive in time
+  uint64_t const start = Rig::now();
+  EXPECT_EQ(rig.radio.read_rssi(), RadioBridle::RSSI_NONE_DBM);
+  uint64_t const took_us = Rig::now() - start;
+  EXPECT_GE(took_us, 1000u * RadioBridle::RSSI_TIMEOUT_MS);
+  EXPECT_LE(took_us, 1000u * (RadioBridle::RSSI_TIMEOUT_MS + RadioBridle::DRAIN_TIMEOUT_GRACE_MS) + 100000u);
+}
+
+TEST(RadioBridleLink, AFullPendingTableWaitsForAHeadReplyBehindATracedBacklog) {
+  BacklogRig rig;
+  rig.radio.set_mode_rx();
+  rig.pass();
+  // The acks sit behind 50 traced messages: the head's ack is read just past ACK_TIMEOUT_MS, inside the grace.
+  rig.log_backlog(50);
+  uint32_t const resyncs = rig.radio.resyncs();
+  for (size_t i = 0; i < RadioBridle::PENDING_DEPTH + 1; i++)
+    rig.radio.change_frequency(i % 2 == 0 ? FREQ_CH3 : FREQ_CH1);
+  EXPECT_TRUE(rig.running());
+  EXPECT_EQ(rig.radio.resyncs(), resyncs);
+  EXPECT_EQ(rig.commands(MsgType::RX_ON), RadioBridle::PENDING_DEPTH + 2) << "every command went out";
+}

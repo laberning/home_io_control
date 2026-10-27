@@ -3,6 +3,7 @@
 #include "radio_interface.h"
 #include "proto_frame.h"
 #include "esphome/core/component.h"
+#include "esphome/components/wifi/wifi_component.h"
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -23,6 +24,81 @@ using test::TestableHubComponent;
 // ========================================================================================
 // Device management tests
 // ========================================================================================
+
+// === Wi-Fi coexistence hint ===
+
+namespace {
+/// A radio whose air frequencies are the 2.4 GHz io channels, as the Bridle io_2g4 profile's are.
+class Air2g4Radio : public MockRadio {
+ public:
+  [[nodiscard]] uint32_t air_frequency_hz(uint32_t channel_hz) const override {
+    return channel_hz == FREQ_CH1 ? 2425000000u : channel_hz == FREQ_CH3 ? 2475000000u : 2450000000u;
+  }
+};
+
+/// Points the stubbed Wi-Fi singleton at a connected component on `channel` for the test's duration.
+struct WifiGuard {
+  esphome::wifi::WiFiComponent component;
+  esphome::wifi::WiFiComponent *saved = esphome::wifi::global_wifi_component;
+  explicit WifiGuard(int32_t channel, bool connected = true) {
+    component.connected_ = connected;
+    component.channel_ = channel;
+    esphome::wifi::global_wifi_component = &component;
+  }
+  ~WifiGuard() { esphome::wifi::global_wifi_component = saved; }
+};
+}  // namespace
+
+TEST(HubWifiHint, FiresOnceWhenTheDefaultChannelIsInsideTheGuard) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  WifiGuard wifi(8);
+  EXPECT_TRUE(comp.log_wifi_coexistence_hint_());
+  EXPECT_TRUE(comp.wifi_hint_done_);
+}
+
+TEST(HubWifiHint, StaysSilentWhenTheDefaultChannelIsClearOfWifi) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  WifiGuard wifi(1);
+  EXPECT_FALSE(comp.log_wifi_coexistence_hint_());
+  EXPECT_TRUE(comp.wifi_hint_done_) << "decided once, not evaluated again";
+}
+
+TEST(HubWifiHint, WaitsForWifiToConnect) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  {
+    WifiGuard wifi(8, false);
+    EXPECT_FALSE(comp.log_wifi_coexistence_hint_());
+    EXPECT_FALSE(comp.wifi_hint_done_);
+  }
+  EXPECT_FALSE(comp.log_wifi_coexistence_hint_()) << "no Wi-Fi component at all";
+  EXPECT_FALSE(comp.wifi_hint_done_);
+  WifiGuard wifi(8);
+  EXPECT_TRUE(comp.log_wifi_coexistence_hint_());
+}
+
+TEST(HubWifiHint, NeverFiresOnA868MhzRadio) {
+  TestableHubComponent comp;
+  MockRadio radio;  // air frequency = logical channel (868 MHz)
+  comp.radio_ = &radio;
+  for (int32_t channel = 1; channel <= 14; channel++) {
+    comp.wifi_hint_done_ = false;
+    WifiGuard wifi(channel);
+    EXPECT_FALSE(comp.log_wifi_coexistence_hint_()) << channel;
+  }
+}
+
+TEST(HubWifiHint, TheHubGivesTheEngineTheWifiCentre) {
+  TestableHubComponent comp;
+  EXPECT_EQ(comp.wifi_centre_hz(), 0u);
+  WifiGuard wifi(6);
+  EXPECT_EQ(comp.wifi_centre_hz(), 2437000000u);
+}
 
 TEST(HubCore, DeviceAddAndLookup) {
   TestableHubComponent comp;

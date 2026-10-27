@@ -362,7 +362,8 @@ UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_HOMEASSISTANT_SERVICES \
 			 -DIOHOME_LR1121_FIRMWARE_UPDATE \
 			 -DIOHOME_LR1121_BOOTLOADER_UPDATE \
-			 -DIOHOME_BRIDLE
+			 -DIOHOME_BRIDLE \
+			 -DUSE_WIFI
 
 # Regenerates build/corpus/corpus_generated.h from tests/corpus/captures/**/*.yaml.
 # see tests/corpus/README.md.

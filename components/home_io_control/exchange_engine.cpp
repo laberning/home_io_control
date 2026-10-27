@@ -228,9 +228,12 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   return true;
 }
 
-uint32_t ExchangeEngine::try_frequency_(uint32_t fixed_freq, uint8_t try_index) const {
-  return decisions::retry_frequency((*this->radio_ptr_)->retries_rotate_channel(), fixed_freq,
-                                    this->last_answered_freq_, try_index);
+uint32_t ExchangeEngine::try_frequency(uint32_t fixed_freq, uint8_t try_index) const {
+  const RadioDriver *radio = *this->radio_ptr_;
+  const uint32_t avoid_hz = this->avoid_frequency_provider_ ? this->avoid_frequency_provider_() : 0;
+  return decisions::exchange_try_frequency(
+      radio->retries_rotate_channel(), fixed_freq, this->last_answered_freq_, avoid_hz,
+      [radio](uint32_t channel) { return radio->air_frequency_hz(channel); }, try_index);
 }
 
 uint32_t ExchangeEngine::first_response_window_ms_(const IoFrame &request) const {
@@ -393,7 +396,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     context.state = exchange::OutboundExchangeState::TX_REQUEST;
     // Every frame of this try (request, 0x3D, follow-ups) goes out on this channel, and the reply
     // is held on it.
-    const uint32_t try_freq = this->try_frequency_(freq, tries);
+    const uint32_t try_freq = this->try_frequency(freq, tries);
 
     if (tries > 0) {
       // The retry count is a maximum, not a promise: don't start a try whose transmission would
@@ -465,7 +468,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       unconfirmed_tries++;
       const uint8_t further_tries =
           this->tries_after_unconfirmed_(request, unconfirmed_tries, context.try_index, millis() - exchange_begin_ms,
-                                         this->tx_time_ms_(request, this->try_frequency_(freq, tries + 1),
+                                         this->tx_time_ms_(request, this->try_frequency(freq, tries + 1),
                                                            preamble_plan.for_try(context.try_index + 1)));
       if (further_tries == 0)
         return ExchangeOutcome::SUCCESS_UNCONFIRMED;

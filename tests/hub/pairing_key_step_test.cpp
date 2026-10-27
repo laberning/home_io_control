@@ -347,6 +347,36 @@ TEST(PairingKeyPull, RecoverKeyRoundTrip) {
   EXPECT_EQ(0, memcmp(out, OTHER_KEY, AES_KEY_SIZE));
 }
 
+namespace {
+/// A MockRadio that rotates retries over three channels in the 2.4 GHz band, as the Bridle io_2g4 driver does.
+class RotatingRadio2g4 : public MockRadio {
+ public:
+  [[nodiscard]] bool retries_rotate_channel() const override { return true; }
+  [[nodiscard]] uint32_t air_frequency_hz(uint32_t channel_hz) const override {
+    return channel_hz == FREQ_CH1 ? 2425000000u : channel_hz == FREQ_CH3 ? 2475000000u : 2450000000u;
+  }
+};
+}  // namespace
+
+TEST(PairingKeyPull, TheFirstPullLeavesTheHubsWifiChannelAndTheRetriesCoverTheRest) {
+  RngGuard rng;
+  TestableComponent comp;
+  RotatingRadio2g4 radio;
+  setup(comp, radio);
+  comp.exchange_engine_.set_avoid_frequency_provider([] { return decisions::wifi_channel_centre_hz(8); });
+  pairing::PairingContext context = context_for_device();
+
+  comp.pairing_engine_.run_key_pull_phase_(context);  // silent device: every try goes out
+
+  std::vector<uint32_t> channels;
+  for (const auto &config : radio.get_tx_configs())
+    channels.push_back(config.freq_hz);
+  ASSERT_GE(channels.size(), 3u);
+  EXPECT_EQ(channels[0], FREQ_CH3) << "2450 MHz is inside the Wi-Fi guard";
+  EXPECT_EQ(channels[1], FREQ_CH1);
+  EXPECT_EQ(channels[2], FREQ_CH2);
+}
+
 TEST(PairingKeyPull, DeviceSendingOurKeyIsPaired) {
   RngGuard rng;
   TestableComponent comp;

@@ -156,6 +156,7 @@ class IOHomeControlComponent : public Component,
       out = decisions::target_evidence(*dev);
       return true;
     });
+    this->exchange_engine_.set_avoid_frequency_provider([]() { return wifi_centre_hz(); });
     this->exchange_engine_.set_device_key_provider([this](const uint8_t *node) -> const uint8_t * {
       const IoDevice *dev = this->registry_.get(node_id_to_string(node));
       return dev != nullptr && dev->has_system_key ? dev->system_key : nullptr;
@@ -1318,6 +1319,24 @@ class IOHomeControlComponent : public Component,
   uint8_t tcxo_voltage_{DEFAULT_TCXO_VOLTAGE_SETTING_1P8V};  ///< SX1262/LR1121 TCXO voltage setting (default 1.8 V)
 
   // --- Runtime state ---
+  /// Primary channel of the Wi-Fi the hub is connected to, 0 when there is none (Wi-Fi not built in, not
+  /// connected).
+  [[nodiscard]] static int32_t wifi_channel();
+
+  /// Centre frequency in Hz of the Wi-Fi channel the hub is connected on, 0 when there is no Wi-Fi
+  /// (not built in, not connected, channel unknown). The engine keeps its first try off this frequency.
+  [[nodiscard]] static uint32_t wifi_centre_hz();
+
+  /// Logs the Wi-Fi coexistence hint at most once, after Wi-Fi has connected: when the radio's default first
+  /// channel lies within decisions::WIFI_CHANNEL_GUARD_HZ of the hub's Wi-Fi channel, one INFO line names the
+  /// conflict, the channel exchanges start on instead, and the Wi-Fi channels that keep the default clear.
+  /// The ESP sees only its primary 20 MHz channel; an access point on 40 MHz is wider than the guard. A radio
+  /// whose air frequencies are never near 2.4 GHz never produces the line.
+  /// @return true when the line was logged on this call.
+  bool log_wifi_coexistence_hint_();
+
+  bool wifi_hint_done_{false};  ///< The hint is evaluated until Wi-Fi has a channel, then never again.
+
   bool initialized_{false};
   bool busy_{false};
   /// millis() when the last pairing attempt ended; 0 before the first one (see queue_discover_and_pair()).

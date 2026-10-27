@@ -336,6 +336,26 @@ class ExchangeEngine {
   /// @return false when the destination is not a registered device (no evidence to give).
   using TargetEvidenceProvider = std::function<bool(const uint8_t *dst, decisions::TargetEvidence &out)>;
 
+  /// Source of the Wi-Fi centre frequency to keep away from, in Hz (0 = none), read on every call to
+  /// try_frequency().
+  using AvoidFrequencyProvider = std::function<uint32_t()>;
+
+  /// Install the source of the frequency the hub's own Wi-Fi occupies. The hub reads the Wi-Fi stack; the
+  /// engine only moves the first try of an exchange off a channel that lies within
+  /// decisions::WIFI_CHANNEL_GUARD_HZ of it. Without a provider no channel is avoided.
+  /// @param provider Centre of the hub's Wi-Fi channel in Hz (decisions::wifi_channel_centre_hz()), or an
+  ///                 empty function to detach.
+  void set_avoid_frequency_provider(AvoidFrequencyProvider provider) {
+    this->avoid_frequency_provider_ = std::move(provider);
+  }
+
+  /// The channel try `try_index` (0-based) of an exchange the hub opens transmits on: `fixed_freq` on a band
+  /// that keeps one channel; on a band that rotates, the last answered channel (moved off the hub's Wi-Fi
+  /// when it lies inside the guard) for try 0 and the rotation of decisions::retry_frequency() from there for
+  /// the retries. Only the first frame of an exchange is placed this way; in-session frames and answers to a
+  /// device's own frames keep the channel they arrived on.
+  [[nodiscard]] uint32_t try_frequency(uint32_t fixed_freq, uint8_t try_index) const;
+
   /// Install the source of per-target evidence. Installed once, when the hub is constructed. The
   /// provider only looks evidence up; every decision drawn from it stays in the engine — the wake
   /// belief (decisions::wake_belief(), gated by the `low_power_wake_belief` tuning switch) and the
@@ -504,10 +524,6 @@ class ExchangeEngine {
 
   // --- Transmission shape and the exchange budget ---------------------------
 
-  /// The channel try `try_index` (0-based) of an exchange transmits on: `fixed_freq` on a band that
-  /// keeps one channel, the rotation of decisions::retry_frequency() on a band that rotates.
-  [[nodiscard]] uint32_t try_frequency_(uint32_t fixed_freq, uint8_t try_index) const;
-
   /// How long to listen for the first reply to `request`: the band's window for a start frame, the
   /// hub's continuation window otherwise.
   [[nodiscard]] uint32_t first_response_window_ms_(const IoFrame &request) const;
@@ -602,6 +618,7 @@ class ExchangeEngine {
   const TuningConfig *tuning_;                       ///< Hub's live TuningConfig (read on every LBT check).
   TransmitObserver *transmit_observer_{nullptr};     ///< Non-owning; see set_transmit_observer().
   TargetEvidenceProvider target_evidence_provider_;  ///< See set_target_evidence_provider().
+  AvoidFrequencyProvider avoid_frequency_provider_;  ///< See set_avoid_frequency_provider().
   DeviceKeyProvider device_key_provider_;            ///< See set_device_key_provider().
   WakeEvidenceSpentHandler wake_evidence_spent_handler_;  ///< See set_wake_evidence_spent_handler().
 

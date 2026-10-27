@@ -494,6 +494,105 @@ static constexpr uint32_t CHALLENGE_ANSWER_WARN_MS = 30;
   return ORDER[(start + try_index) % CHANNEL_COUNT];
 }
 
+// === First try away from the hub's own Wi-Fi ===
+
+/// Half-width, in Hz, of the band around a Wi-Fi channel's centre that an exchange avoids: half of a
+/// 20 MHz Wi-Fi channel (10 MHz, 11 MHz with the transmit mask's skirt) plus 4 MHz of margin. The ESP
+/// sees only its primary 20 MHz channel; an access point on 40 MHz is wider than this.
+static constexpr uint32_t WIFI_CHANNEL_GUARD_HZ = 15000000;
+
+/// Highest 2.4 GHz Wi-Fi channel on the regular 5 MHz raster (channel 14 is the Japan-only exception).
+static constexpr int32_t WIFI_LAST_REGULAR_CHANNEL = 13;
+/// Wi-Fi channel 14, which sits off the raster.
+static constexpr int32_t WIFI_CHANNEL_14 = 14;
+/// Centre of Wi-Fi channel 0 on the raster, in MHz; channel n is centred at this + 5 n.
+static constexpr uint32_t WIFI_RASTER_ORIGIN_MHZ = 2407;
+/// Spacing of regular 2.4 GHz Wi-Fi channel centres, in MHz.
+static constexpr uint32_t WIFI_RASTER_STEP_MHZ = 5;
+/// Centre of Wi-Fi channel 14, in Hz.
+static constexpr uint32_t WIFI_CHANNEL_14_CENTRE_HZ = 2484000000U;
+/// Hz per MHz.
+static constexpr uint32_t HZ_PER_MHZ = 1000000U;
+
+/// Centre frequency of a 2.4 GHz Wi-Fi channel: 2407 MHz + 5 MHz per channel for 1..13, 2484 MHz for 14.
+/// @param channel Primary Wi-Fi channel number, as the Wi-Fi stack reports it.
+/// @return The centre in Hz, or 0 for 0 or any number outside 1..14 (not connected, 5 GHz, unknown): 0
+///         means "no Wi-Fi to avoid".
+[[nodiscard]] inline uint32_t wifi_channel_centre_hz(int32_t channel) {
+  if (channel >= 1 && channel <= WIFI_LAST_REGULAR_CHANNEL)
+    return (WIFI_RASTER_ORIGIN_MHZ + WIFI_RASTER_STEP_MHZ * static_cast<uint32_t>(channel)) * HZ_PER_MHZ;
+  if (channel == WIFI_CHANNEL_14)
+    return WIFI_CHANNEL_14_CENTRE_HZ;
+  return 0;
+}
+
+/// |a - b| for unsigned frequencies, without wrapping.
+[[nodiscard]] inline uint32_t frequency_distance_hz(uint32_t a, uint32_t b) { return a > b ? a - b : b - a; }
+
+/// True when @p air_hz lies within WIFI_CHANNEL_GUARD_HZ of the Wi-Fi centre @p avoid_hz (0 = no Wi-Fi).
+/// An 868 MHz air frequency is never within the guard of a 2.4 GHz centre, so no band check is needed.
+[[nodiscard]] inline bool within_wifi_guard(uint32_t air_hz, uint32_t avoid_hz) {
+  return avoid_hz != 0 && frequency_distance_hz(air_hz, avoid_hz) < WIFI_CHANNEL_GUARD_HZ;
+}
+
+/// The channel an exchange opens on: the channel that last carried an answer, unless its air frequency
+/// lies within the guard of the hub's own Wi-Fi channel; then the channel whose air frequency is farthest
+/// from it. Devices listen on all three channels and answer on the one they were asked on, so any channel
+/// is a valid first try. Equal distances resolve to the first of FREQ_CH1, FREQ_CH2, FREQ_CH3.
+/// @param last_good  Channel the last answered exchange used; a value that is not one of the three
+///                   channels counts as FREQ_CH2.
+/// @param avoid_hz   Centre of the hub's Wi-Fi channel in Hz, 0 for none (wifi_channel_centre_hz()).
+/// @param air_hz_of  Callable mapping a logical channel to its air frequency (RadioDriver::air_frequency_hz()).
+template<class AirHzOf>
+[[nodiscard]] inline uint32_t first_try_frequency(uint32_t last_good, uint32_t avoid_hz, AirHzOf air_hz_of) {
+  static constexpr uint32_t ORDER[] = {FREQ_CH1, FREQ_CH2, FREQ_CH3};
+  if (last_good != FREQ_CH1 && last_good != FREQ_CH2 && last_good != FREQ_CH3)
+    last_good = FREQ_CH2;
+  if (!within_wifi_guard(air_hz_of(last_good), avoid_hz))
+    return last_good;
+  uint32_t best = ORDER[0];
+  uint32_t best_distance = frequency_distance_hz(air_hz_of(ORDER[0]), avoid_hz);
+  for (const uint32_t channel : ORDER) {
+    const uint32_t distance = frequency_distance_hz(air_hz_of(channel), avoid_hz);
+    if (distance > best_distance) {  // strictly greater: the first of equals stays
+      best = channel;
+      best_distance = distance;
+    }
+  }
+  return best;
+}
+
+/// The channel one try of an exchange the hub opens transmits on: retry_frequency() rotating from the
+/// channel try 0 actually used (first_try_frequency()), so three tries still cover all three channels when
+/// try 0 moved away from the last good one. A band that does not rotate keeps @p fixed_freq.
+/// @param rotate     RadioDriver::retries_rotate_channel().
+/// @param fixed_freq Channel the caller asked for; used on every try when @p rotate is false.
+/// @param last_good  Channel the last answered exchange used.
+/// @param avoid_hz   Centre of the hub's Wi-Fi channel in Hz, 0 for none.
+/// @param air_hz_of  Callable mapping a logical channel to its air frequency.
+/// @param try_index  0-based try number.
+template<class AirHzOf>
+[[nodiscard]] inline uint32_t exchange_try_frequency(bool rotate, uint32_t fixed_freq, uint32_t last_good,
+                                                     uint32_t avoid_hz, AirHzOf air_hz_of, uint8_t try_index) {
+  return retry_frequency(rotate, fixed_freq, first_try_frequency(last_good, avoid_hz, air_hz_of), try_index);
+}
+
+/// The lowest and highest Wi-Fi channel (1..13) whose guard band does not cover @p air_hz, for the hint that
+/// tells a user which Wi-Fi channel keeps the hub's default first io channel clear.
+/// @return false when no channel qualifies; otherwise @p lowest / @p highest are filled.
+[[nodiscard]] inline bool clear_wifi_channels(uint32_t air_hz, int32_t &lowest, int32_t &highest) {
+  bool found = false;
+  for (int32_t channel = 1; channel <= WIFI_LAST_REGULAR_CHANNEL; channel++) {
+    if (within_wifi_guard(air_hz, wifi_channel_centre_hz(channel)))
+      continue;
+    if (!found)
+      lowest = channel;
+    highest = channel;
+    found = true;
+  }
+  return found;
+}
+
 /// Which overheard request sources to name in the log, so a user can read a controller's node ID without the
 /// log repeating a busy neighbour's controller on every request: each of the last SLOTS sources is named at
 /// most once per INTERVAL_MS. Pure: the caller passes the clock.

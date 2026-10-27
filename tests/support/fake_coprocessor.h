@@ -126,6 +126,7 @@ class FakeCoprocessor {
   /// The RSSI a `get_rssi` reports while the radio receives.
   void set_rssi_dbm(int8_t rssi) { rssi_dbm_ = rssi; }
   /// Queue a received frame (payload including FCS) for `radio` at the current time plus `delay_us`.
+  /// A frame shorter than the radio's `rx_min_psdu` is counted in `stats.rx_short` and reported as nothing.
   /// Events the host has not enabled (`frame_start`, a bad-CRC `rx`, `rx_abort`) are dropped, as a
   /// real co-processor does.
   void inject_rx(uint32_t freq_hz, const std::vector<uint8_t> &payload,
@@ -210,7 +211,8 @@ class FakeCoprocessor {
     esphome::home_io_control::bridle::PhyProfile profile{
         esphome::home_io_control::bridle::PhyProfile::IEEE802154_OQPSK_250K};
     bool sfd_set{false};
-    uint8_t gfsk_set{0};  ///< Which of the four required `gfsk_raw` params were set since the profile: bits 0-3.
+    uint8_t rx_min_psdu{0};  ///< Frames with a shorter PSDU (FCS included) are dropped and counted in `rx_short`.
+    uint8_t gfsk_set{0};     ///< Which of the four required `gfsk_raw` params were set since the profile: bits 0-3.
     uint32_t freq_hz{0};
     Mode mode{Mode::IDLE};
     int8_t tx_power_dbm{0};
@@ -280,6 +282,7 @@ class FakeCoprocessor {
   uint64_t tx_busy_until_us_{0};
   uint32_t set_params_during_tx_{0};
   uint32_t tx_ok_{0};
+  uint32_t rx_short_{0};  ///< Frames dropped for being shorter than `rx_min_psdu`.
   struct Rejection {
     uint8_t type;
     esphome::home_io_control::bridle::ErrorCode code;

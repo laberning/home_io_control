@@ -88,6 +88,9 @@ class TestableRadioBridle : public esphome::home_io_control::RadioBridle {
   }
 
   std::vector<std::string> trace_lines;  ///< Every `[bridle]` line the driver emitted.
+  /// Called after every emitted trace line: a test makes it advance the manual clock to model a log
+  /// UART that blocks for the time a line takes to send.
+  std::function<void()> on_trace_line;
 
   // === Opened up for assertions ===
 
@@ -113,12 +116,20 @@ class TestableRadioBridle : public esphome::home_io_control::RadioBridle {
   [[nodiscard]] uint32_t short_frames() const { return short_frames_; }
   [[nodiscard]] uint32_t strobe_late_total() const { return strobe_late_total_; }
   [[nodiscard]] uint32_t counter_gaps() const { return counter_gaps_; }
+  [[nodiscard]] uint32_t drains_cut() const { return drains_cut_; }
+  [[nodiscard]] uint32_t resyncs() const { return resyncs_; }
   [[nodiscard]] bool have_stats() const { return have_stats_; }
   [[nodiscard]] uint32_t log_dropped() const { return log_dropped_; }
+  [[nodiscard]] bool have_rx_short() const { return have_rx_short_; }
+  [[nodiscard]] uint32_t rx_short() const { return rx_short_; }
   [[nodiscard]] uint32_t stale_replies() const { return stale_replies_; }
 
  protected:
-  void emit_trace_line(const char *line) override { trace_lines.emplace_back(line); }
+  void emit_trace_line(const char *line) override {
+    trace_lines.emplace_back(line);
+    if (on_trace_line)
+      on_trace_line();
+  }
 
  private:
   void write_trace_file_() {

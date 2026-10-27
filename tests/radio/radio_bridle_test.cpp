@@ -111,10 +111,11 @@ TEST(RadioBridle, ConfigurationCommandsGoOutInTheSpecifiedOrder) {
   std::vector<uint8_t> ids;
   while (r.next(id, v))
     ids.push_back(id);
-  ASSERT_EQ(ids.size(), 3u);
+  ASSERT_EQ(ids.size(), 4u);
   EXPECT_EQ(ids[0], static_cast<uint8_t>(ParamId::PHY_PROFILE)) << "the profile first: it resets the profile params";
   EXPECT_EQ(ids[1], static_cast<uint8_t>(ParamId::SFD));
-  EXPECT_EQ(ids[2], static_cast<uint8_t>(ParamId::TX_POWER_DBM));
+  EXPECT_EQ(ids[2], static_cast<uint8_t>(ParamId::RX_MIN_PSDU)) << "after the profile, which resets it";
+  EXPECT_EQ(ids[3], static_cast<uint8_t>(ParamId::TX_POWER_DBM));
   EXPECT_EQ(rig.cp.event_mask(), 0x0F);
 }
 
@@ -551,7 +552,26 @@ TEST(RadioBridle, AnOversizePayloadIsDroppedAndCounted) {
   EXPECT_EQ(rig.radio.oversize_dropped(), 1u);
 }
 
-TEST(RadioBridle, WakeTrainFramesAreSkippedAndTheFrameBehindThemIsDelivered) {
+TEST(RadioBridle, TheCoprocessorIsToldToDropFramesTooShortForAnIoFrame) {
+  Rig rig;
+  rig.start();
+  uint8_t value = 0;
+  bool found = false;
+  for (const auto &c : rig.commands_of<SetParams>(MsgType::SET_PARAMS)) {
+    TlvReader in(c.second.tlvs);
+    uint8_t id;
+    ByteSpan v;
+    while (in.next(id, v))
+      if (id == static_cast<uint8_t>(ParamId::RX_MIN_PSDU) && v.size == 1) {
+        found = true;
+        value = v.data[0];
+      }
+  }
+  ASSERT_TRUE(found);
+  EXPECT_EQ(value, IO2G4_MIN_PSDU_SIZE);
+}
+
+TEST(RadioBridle, AStrobeOfShortFramesGivesTheHostNoEventAndTheFrameBehindItIsDelivered) {
   Rig rig;
   rig.start();
   listen_on(rig);
@@ -561,7 +581,25 @@ TEST(RadioBridle, WakeTrainFramesAreSkippedAndTheFrameBehindThemIsDelivered) {
   RadioRxPacket packet;
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_EQ(packet.data[0], 0x50);
-  EXPECT_EQ(rig.radio.short_frames(), 8u);
+  EXPECT_EQ(rig.radio.short_frames(), 0u) << "the co-processor dropped them; none reached the host";
+  EXPECT_FALSE(rig.radio.check_for_packet(packet));
+}
+
+TEST(RadioBridle, TheRxShortCounterOfTheHeartbeatIsKeptForTheDump) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  for (int i = 0; i < 5; i++)
+    rig.cp.inject_rx(2450000000u, {0x00, 0x00, static_cast<uint8_t>(i), 0xAA, 0xBB});
+  EXPECT_FALSE(rig.radio.have_rx_short());
+  Rig::advance_to(Rig::now() + 30100 * 1000ull);
+  RadioRxPacket packet;
+  rig.radio.check_for_packet(packet);
+  Rig::advance_to(Rig::now() + 50 * 1000ull);
+  rig.radio.check_for_packet(packet);
+  EXPECT_TRUE(rig.radio.have_rx_short());
+  EXPECT_EQ(rig.radio.rx_short(), 5u);
+  rig.radio.dump_debug();
 }
 
 TEST(RadioBridle, TheFifoDropsTheOldestWhenFull) {

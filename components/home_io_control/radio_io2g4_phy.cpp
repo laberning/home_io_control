@@ -20,9 +20,6 @@ namespace esphome::home_io_control::bridle {
 
 namespace {
 
-/// Smallest PSDU that can hold an io frame: header, the shortest frame, the FCS.
-constexpr size_t MIN_PSDU_SIZE = IO2G4_PSDU_HEADER_SIZE + FRAME_MIN_SIZE + IO2G4_FCS_SIZE;
-
 /// Ceiling division of nanoseconds into microseconds.
 constexpr uint64_t NS_PER_US = 1000;
 constexpr uint64_t ns_to_us_ceil(uint64_t ns) { return (ns + NS_PER_US - 1) / NS_PER_US; }
@@ -32,6 +29,11 @@ constexpr uint64_t ns_to_us_ceil(uint64_t ns) { return (ns + NS_PER_US - 1) / NS
 void Io2g4Phy::write_params(TlvWriter &params, const TuningConfig & /*tuning*/) const {
   // The SFD is what tells io-homecontrol frames from standard 802.15.4 traffic.
   params.add_u8(static_cast<uint8_t>(ParamId::SFD), IO2G4_SFD);
+  // The strobe frames of a wake-up train (about one per millisecond for half a second) are shorter than
+  // any io frame; the co-processor drops them instead of reporting each one over the host link. Like every
+  // profile param it returns to its default with `phy_profile`, so it is sent on every configuration.
+  // Protocol 0.x accepts only a co-processor of the host's own minor version, which carries this param.
+  params.add_u8(static_cast<uint8_t>(ParamId::RX_MIN_PSDU), static_cast<uint8_t>(IO2G4_MIN_PSDU_SIZE));
 }
 
 bool Io2g4Phy::radio_fits(const RadioDescriptor &radio) const {
@@ -80,7 +82,7 @@ size_t Io2g4Phy::wrap(const uint8_t *frame, uint8_t len, uint8_t *out, size_t ca
 
 UnwrapResult Io2g4Phy::unwrap(const uint8_t *payload, size_t len, CrcState crc, uint8_t *out, size_t cap) const {
   UnwrapResult result;
-  if (len < MIN_PSDU_SIZE) {
+  if (len < IO2G4_MIN_PSDU_SIZE) {
     result.status = UnwrapResult::Status::TOO_SHORT;
     return result;
   }

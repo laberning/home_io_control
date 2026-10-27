@@ -240,6 +240,7 @@ struct Stats {
     LINK_ERR,
     UPTIME_MS,
     LOG_DROPPED,
+    RX_SHORT,  ///< Frames shorter than the radio's `rx_min_psdu`, dropped without an event.
     COUNT
   };
   uint8_t cmd_seq{0};

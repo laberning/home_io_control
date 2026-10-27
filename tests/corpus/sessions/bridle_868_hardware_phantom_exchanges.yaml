@@ -1,10 +1,10 @@
-protocol: '0.6'
+protocol: '0.7'
 header:
   host_version: null
   firmware_version: 0.0.0-dev+g1ba8ce2
   board: xiao-nrf52840-sx1262
   chip_id: nrf52840
-  proto: '0.6'
+  proto: '0.7'
   reset_cause: soft
   radios:
   - radio: 0
@@ -49,7 +49,8 @@ migrated:
   from: '0.5'
   steps:
   - 0.5->0.6
-  tool: bridle-protocol 0.6.0
+  - 0.6->0.7
+  tool: bridle-protocol 0.7.0
   original_sha256: b015924331d1dbf82c7f3966974eede0b97e63ceb36e74053a4d70072125b4c9
 messages:
 - dir: coproc_to_host
@@ -80,13 +81,13 @@ messages:
   fields: {}
 - dir: coproc_to_host
   host_ms: 2099
-  hex: 803b0100060100050000000112302e302e302d6465762b673162613863653202147869616f2d6e726635323834302d737831323632031800010001004063598f00ccd193d8087d000005000f00000003180100010200c05570338025db33f71693ff1f00000c00000004011b0501030ba2
+  hex: 803b0100070100050000000112302e302e302d6465762b673162613863653202147869616f2d6e726635323834302d737831323632031800010001004063598f00ccd193d8087d000005000f00000003180100010200c05570338025db33f71693ff1f00000c00000004011b050103c070
   msg_type: ready
   seq: 59
   fields:
     cmd_seq: 1
     proto_major: 0
-    proto_minor: 6
+    proto_minor: 7
     chip_id: nrf52840
     caps:
       bootloader: true

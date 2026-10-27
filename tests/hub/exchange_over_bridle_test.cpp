@@ -372,6 +372,61 @@ TEST(ExchangeOverBridle, WithoutATraceDirectoryNothingIsTracedOrWritten) {
 
 // === Retry policy: the band decides the channel, the window and the gap ===
 
+// === First try away from the hub's own Wi-Fi ===
+
+TEST(ExchangeWifiAvoidance, TheFirstTryLeavesAChannelInsideTheWifiGuardAndTheRetriesCoverTheRest) {
+  Rig<OverBridle> rig;
+  rig.engine.set_avoid_frequency_provider([] { return decisions::wifi_channel_centre_hz(8); });  // 2447 MHz
+  rig.radio->queue_rx_silence(2);  // deaf on the first two tries
+  rig.final_reply();
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, false);
+  IoFrame response{};
+  ASSERT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+
+  const auto &configs = rig.radio->tx_configs();
+  ASSERT_EQ(configs.size(), 3u);
+  EXPECT_EQ(configs[0].freq_hz, FREQ_CH3) << "the default 2450 MHz is inside the Wi-Fi guard";
+  EXPECT_EQ(configs[1].freq_hz, FREQ_CH1) << "the retries rotate from the channel try 0 used";
+  EXPECT_EQ(configs[2].freq_hz, FREQ_CH2) << "so the three tries cover all three channels";
+}
+
+TEST(ExchangeWifiAvoidance, ALastGoodChannelOutsideTheGuardIsKept) {
+  Rig<OverBridle> rig;
+  rig.engine.set_avoid_frequency_provider([] { return decisions::wifi_channel_centre_hz(1); });  // 2412 MHz
+  rig.final_reply();
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, false);
+  IoFrame response{};
+  ASSERT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_EQ(rig.radio->tx_configs()[0].freq_hz, FREQ_CH2);
+}
+
+TEST(ExchangeWifiAvoidance, NoWifiOrNoProviderKeepsTheDefaultChannel) {
+  for (const bool with_provider : {false, true}) {
+    Rig<OverBridle> rig;
+    if (with_provider)
+      rig.engine.set_avoid_frequency_provider([] { return decisions::wifi_channel_centre_hz(0); });
+    rig.final_reply();
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, false);
+    IoFrame response{};
+    ASSERT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+    EXPECT_EQ(rig.radio->tx_configs()[0].freq_hz, FREQ_CH2);
+  }
+}
+
+TEST(ExchangeWifiAvoidance, A868MhzBridgeIsUnaffected) {
+  Rig<OverBridle868> rig;
+  rig.engine.set_avoid_frequency_provider([] { return decisions::wifi_channel_centre_hz(8); });
+  rig.final_reply();
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, false);
+  IoFrame response{};
+  ASSERT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_EQ(rig.radio->tx_configs()[0].freq_hz, FREQ_CH2);
+}
+
 TEST(ExchangeRetryPolicy, A2g4RetryMovesToAnotherChannelAndTheNextExchangeStartsWhereItWasAnswered) {
   Rig<OverBridle> rig;
   rig.radio->queue_rx_silence(1);  // deaf on the first channel

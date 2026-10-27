@@ -18,6 +18,7 @@
 
 #ifdef IOHOME_BRIDLE
 
+#include "proto_sizes.h"
 #include "radio_bridle_phy.h"
 
 namespace esphome::home_io_control::bridle {
@@ -33,6 +34,13 @@ static constexpr uint8_t IO2G4_PSDU_HEADER[3] = {0x01, 0x69, 0x6F};
 static constexpr size_t IO2G4_PSDU_HEADER_SIZE = sizeof(IO2G4_PSDU_HEADER);
 /// Bytes of the 802.15.4 frame check sequence the radio appends and checks.
 static constexpr size_t IO2G4_FCS_SIZE = 2;
+/// Smallest PSDU that can hold an io frame: header, the shortest frame (9 bytes), the FCS. A shorter
+/// frame (the 5-byte frames of a wake-up strobe) is never an io frame: `unwrap()` calls it `TOO_SHORT`,
+/// and the co-processor is asked (`rx_min_psdu`) not to report it at all.
+static constexpr size_t IO2G4_MIN_PSDU_SIZE = IO2G4_PSDU_HEADER_SIZE + FRAME_MIN_SIZE + IO2G4_FCS_SIZE;
+/// Largest `rx_min_psdu` the co-processor accepts: the PHR's range (a longer value is `param_range`).
+static constexpr size_t IO2G4_MAX_RX_MIN_PSDU = 127;
+static_assert(IO2G4_MIN_PSDU_SIZE <= IO2G4_MAX_RX_MIN_PSDU, "rx_min_psdu is at most 127");
 
 /// The three channels of a 2.4 GHz io network: 802.15.4 channels 15, 20 and 25. Captured
 /// exchanges ran on 15 and 20 and receivers scan all three, so no channel has a special role.

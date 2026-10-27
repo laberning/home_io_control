@@ -1110,9 +1110,9 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   ESP_LOGW(TAG, "Key pull: asking %s for its key", context.device_id.c_str());
   uint8_t challenge[HMAC_SIZE];
   bool got_key = false;
-  // The same channel rule as an exchange: a rotating band starts on the channel that last carried an
-  // answer and moves on with every silent try; the proof goes out where the key came from.
-  const bool rotate = radio_()->retries_rotate_channel();
+  // The same channel rule as an exchange (ExchangeEngine::try_frequency()): a rotating band starts on the
+  // channel that last carried an answer, off the hub's own Wi-Fi, and moves on with every silent try; the
+  // proof goes out where the key came from.
   const uint32_t retry_gap_ms = radio_()->retry_gap_ms(*tuning_);
   uint32_t pull_freq = FREQ_CH2;
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT && !got_key && !context.key_refused; tries++) {
@@ -1120,7 +1120,7 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
       App.feed_wdt();
       delay(retry_gap_ms);
     }
-    pull_freq = decisions::retry_frequency(rotate, FREQ_CH2, engine_.last_answered_freq(), tries);
+    pull_freq = engine_.try_frequency(FREQ_CH2, tries);
     context.state = pairing::PairingState::TX_KEY_PULL;
     engine_.record_debug(pairing_stage_name(context.state), tries + 1, false);
     this->telemetry_.set_phase(context.state);

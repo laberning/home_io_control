@@ -26,6 +26,9 @@
 #include "tuning_registry.h"
 
 #include "esphome/core/helpers.h"
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
 
 #include <array>
 #include <cinttypes>
@@ -391,9 +394,46 @@ void IOHomeControlComponent::set_device_silent(const std::string &device_id, boo
 
 // === Main loop ===
 
+int32_t IOHomeControlComponent::wifi_channel() {
+#ifdef USE_WIFI
+  wifi::WiFiComponent *wifi_component = wifi::global_wifi_component;
+  if (wifi_component == nullptr || !wifi_component->is_connected())
+    return 0;
+  return wifi_component->get_wifi_channel();
+#else
+  return 0;
+#endif
+}
+
+uint32_t IOHomeControlComponent::wifi_centre_hz() { return decisions::wifi_channel_centre_hz(wifi_channel()); }
+
+bool IOHomeControlComponent::log_wifi_coexistence_hint_() {
+  const uint32_t centre_hz = wifi_centre_hz();
+  if (centre_hz == 0 || this->radio_ == nullptr)
+    return false;  // Wi-Fi not connected yet: look again on a later loop
+  this->wifi_hint_done_ = true;
+  const auto air_hz_of = [this](uint32_t channel) { return this->radio_->air_frequency_hz(channel); };
+  const uint32_t default_air_hz = air_hz_of(FREQ_CH2);  // the channel exchanges start on before any answer
+  if (!decisions::within_wifi_guard(default_air_hz, centre_hz))
+    return false;
+  const uint32_t first_air_hz = air_hz_of(decisions::first_try_frequency(FREQ_CH2, centre_hz, air_hz_of));
+  int32_t lowest = 0;
+  int32_t highest = 0;
+  if (!decisions::clear_wifi_channels(default_air_hz, lowest, highest))
+    return false;
+  ESP_LOGI(detail::TAG,
+           "Wi-Fi channel %" PRId32 " is close to io channel %" PRIu32 " MHz; the hub starts exchanges on %" PRIu32
+           " MHz; Wi-Fi channel %" PRId32 " or %" PRId32 " keeps the Wi-Fi away from io traffic",
+           wifi_channel(), default_air_hz / decisions::HZ_PER_MHZ, first_air_hz / decisions::HZ_PER_MHZ, lowest,
+           highest);
+  return true;
+}
+
 void IOHomeControlComponent::loop() {
   if (!this->initialized_)
     return;
+  if (!this->wifi_hint_done_)
+    this->log_wifi_coexistence_hint_();
   if (this->radio_test_mode_)
     return;
 

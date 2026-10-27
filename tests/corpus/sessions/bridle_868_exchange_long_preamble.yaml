@@ -1,10 +1,10 @@
-protocol: '0.6'
+protocol: '0.7'
 header:
   host_version: null
   firmware_version: fake-0.0
   board: fake-board
   chip_id: nrf52840
-  proto: '0.6'
+  proto: '0.7'
   reset_cause: pin
   radios:
   - radio: 0
@@ -29,13 +29,13 @@ source:
 messages:
 - dir: coproc_to_host
   host_ms: 100020
-  hex: 8000000006010000000000010866616b652d302e30020a66616b652d626f61726403180000010200c05570338025db33f71693ff1f00000c0000000401100501015f2c
+  hex: 8000000007010000000000010866616b652d302e30020a66616b652d626f61726403180000010200c05570338025db33f71693ff1f00000c000000040110050101e35b
   msg_type: ready
   seq: 0
   fields:
     cmd_seq: 0
     proto_major: 0
-    proto_minor: 6
+    proto_minor: 7
     chip_id: nrf52840
     caps: {}
     info:

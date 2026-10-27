@@ -2,4 +2,4 @@
 # (pinned by scripts/bridle-update.sh, which keeps the other lines), which brings its direct dependencies (pinned),
 # and what the corpus tools import besides.
 cryptography==46.0.5
-bridle-protocol @ https://github.com/laberning/bridle/releases/download/bridle-v0.6.0/bridle_protocol-0.6.0-py3-none-any.whl#sha256=e600d6c632de367b236294e9fd2c68eb5f2f8dcac61d3fd6e970fa0f0107640a
+bridle-protocol @ https://github.com/laberning/bridle/releases/download/bridle-v0.7.0/bridle_protocol-0.7.0-py3-none-any.whl#sha256=0ddd5052d448cec60bdf7a4b4dc1cb5db13c3d0595b5c7796cc927bebad7fca5
