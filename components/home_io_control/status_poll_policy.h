@@ -69,6 +69,15 @@ static constexpr uint32_t HEATING_POLL_DEFAULT_INTERVAL_MS = 300000;
 static constexpr uint32_t HEATING_POST_WRITE_POLL_DELAY_MS = 45000;
 /// Delay before polling after overheard remote traffic.
 static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
+/// How long a device's authenticated status or this hub's own read-triggered poll keeps a further
+/// overheard read from triggering another poll (0 = never polled, so the first read polls). Covers
+/// have no background poll, so a read by another controller is the cue that something the hub did not
+/// hear (a rain closure, a local button) may have changed.
+static constexpr uint32_t FOREIGN_READ_RESYNC_MS = 600000;
+/// A device challenges a request 2.5-3.3 ms after it; 100 ms is far above that and far below the next
+/// request. A challenge within this window of a heard request from the same controller answers that
+/// request; a challenge with no such request means the request frame was missed.
+static constexpr uint32_t FOREIGN_CHALLENGE_AFTER_REQUEST_MS = 100;
 /// Hold queued background polls back for this long after any 1W frame, so a poll the hub itself
 /// scheduled does not occupy the (half-duplex) radio while the remote is still transmitting.
 /// Comfortably longer than the ~160ms reliability burst; short enough to barely shift poll timing
@@ -124,6 +133,32 @@ struct PollTracking {
   uint8_t moving_poll_misses{0};    ///< Consecutive failed polls of a moving device skipped so far (see
                                     ///< MOVING_POLL_MISSES_SKIPPED); not counted in the two streaks above.
   bool stop_settle{false};          ///< The next poll confirms an accepted STOP (see STOP_SETTLE_POLL_TRIES).
+};
+
+/// @brief What an overheard frame of another controller is.
+enum class ForeignFrameKind : uint8_t {
+  REQUEST_TO_DEVICE,         ///< Another controller's command to a registered device.
+  DEVICE_CHALLENGE_TO_OTHER  ///< A registered device's challenge (0x3C) addressed to another controller.
+};
+
+/// @brief What the hub does about an overheard foreign frame.
+enum class ForeignAction : uint8_t {
+  IGNORE,        ///< Nothing: no poll, no tracking change.
+  ARM,           ///< Schedule a poll REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS from now and begin tracking.
+  PUSH_PENDING,  ///< A poll armed by foreign traffic is pending: move its timer out, change nothing else.
+};
+
+/// @brief Per-device bookkeeping of overheard foreign traffic.
+///
+/// Kept apart from PollTracking: it is not part of the polling window's lifecycle, so
+/// begin_tracking() and clear() never reset it. Timestamps are millis() values, 0 = never; all
+/// comparisons use unsigned `now - t`, which stays correct across a millis() wrap.
+struct ForeignTraffic {
+  uint8_t last_request_cmd{0};    ///< Command of the last request heard to this device.
+  std::string last_request_from;  ///< Controller that sent it (frame source); empty = none heard.
+  uint32_t last_request_ms{0};    ///< When it was heard; 0 = never.
+  uint32_t last_read_poll_ms{0};  ///< When a read last armed a poll; 0 = never.
+  uint32_t pending_due_ms{0};     ///< When the armed poll is due; 0 = none pending.
 };
 
 /// @brief Per-hub poll scheduling and failure-backoff policy.
@@ -190,6 +225,30 @@ class StatusPollPolicy {
   /// Clears expired tracking entries as a side effect. Returns nullopt if nothing is due.
   [[nodiscard]] std::optional<std::string> pop_due_device(uint32_t now);
 
+  // --- Overheard foreign traffic ---
+  /// Decide what an overheard frame of another controller means for this device.
+  ///
+  /// Order: a pending foreign-armed poll answers first (PUSH_PENDING for any frame, timer pushed
+  /// out); a request that writes ARMs; any other request ARMs only when neither @p last_status_ms
+  /// nor the last read-triggered poll is younger than FOREIGN_READ_RESYNC_MS (0 = never, so the first
+  /// read polls); a challenge is IGNOREd when the last request heard from the same controller was
+  /// within FOREIGN_CHALLENGE_AFTER_REQUEST_MS and not a write, otherwise it ARMs. Every request
+  /// updates the last-request record; a challenge does not. ARM and PUSH_PENDING set the pending due
+  /// time; an ARM from a read stamps the read-poll time.
+  /// @param device_id Registered device the frame concerns.
+  /// @param kind Request to the device, or the device's challenge to another controller.
+  /// @param controller The other controller: the request's source, or the challenge's destination.
+  /// @param cmd Command of the frame.
+  /// @param now Current millis().
+  /// @param last_status_ms millis() of the device's last authenticated status; 0 = never.
+  ForeignAction on_foreign_frame(const std::string &device_id, ForeignFrameKind kind, const std::string &controller,
+                                 uint8_t cmd, uint32_t now, uint32_t last_status_ms);
+  /// The poll armed by foreign traffic ran (or was dropped): nothing is pending any more.
+  void on_remote_poll_ran(const std::string &device_id);
+  /// True while a poll armed by foreign traffic is pending. A pending poll whose signal was lost
+  /// expires by itself once @p now is more than REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS past its due time.
+  [[nodiscard]] bool is_remote_poll_pending(const std::string &device_id, uint32_t now) const;
+
   // --- Tracking that ran out ---
   /// Return and consume a device whose polling window ended without the device being reported at
   /// rest: the window expired with a poll still pending (pop_due_device()), or the failure ladder no
@@ -199,6 +258,7 @@ class StatusPollPolicy {
 
  private:
   std::map<std::string, PollTracking> tracking_;
+  std::map<std::string, ForeignTraffic> foreign_;  ///< Overheard-traffic state, outside the tracking lifecycle.
   std::vector<std::string> ended_;  ///< Devices whose window ran out, for pop_ended_device(); no duplicates.
 
   /// Record that a device's window ran out, once.

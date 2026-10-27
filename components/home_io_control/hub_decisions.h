@@ -77,6 +77,14 @@ enum class PairingKeyConfirmDisposition : uint8_t {
 /// devices on the network, but contain only ephemeral cryptographic data.
 inline bool is_exchange_internal_command(uint8_t cmd) { return cmd == CMD_CHALLENGE_REQ || cmd == CMD_CHALLENGE_RESP; }
 
+/// Returns true for the commands that write to a device: an execute, a mode activation or a private
+/// register write. A heard write changes the device's state, so this hub's view of it is stale; a heard
+/// read (any other command) changes nothing on the device. Deliberately a short list of writes rather
+/// than a list of reads, so an unknown command counts as a read.
+inline bool overheard_command_writes(uint8_t cmd) {
+  return cmd == CMD_EXECUTE || cmd == CMD_ACTIVATE_MODE || cmd == CMD_WRITE_PRIVATE;
+}
+
 // == Utility: endpoint matching ==
 
 /// Check if two frames have identical src/dst node IDs.

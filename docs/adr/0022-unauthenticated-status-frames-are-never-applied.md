@@ -71,6 +71,9 @@ if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE) {
 - The cost lands entirely on the narrow multi-controller-sharing-a-device scenario: this hub's
   own view of a shared device's position now only updates via its own regular, authenticated
   polling cadence, not instantly from overhearing another controller's exchange.
+- The hub's own poll after overheard traffic is limited to what changes a device: a heard write,
+  or a device challenge that follows no heard read, arms it; a heard read arms it at most every
+  10 minutes per device. Spoofed reads therefore induce at most one poll per device per 10 minutes.
 - Regression-pinned by `HubStatus.UnauthenticatedForeign{PrivateResponse,StatusUpdate}DoesNotUpdateDeviceState`
   (hub_status_test.cpp) — both verified to fail against the prior code before this change landed.
 - `authenticate_request_()` remains exactly as expensive and exactly as used as before — this

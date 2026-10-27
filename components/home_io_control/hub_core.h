@@ -919,7 +919,7 @@ class IOHomeControlComponent : public Component,
   ///        STOP_SETTLE_POLL_CAP_MS instead of the normal settle cadence.
   void arm_execute_confirmation_poll_(const std::string &device_id, bool for_stop);
   /// Schedule status polls for a fixed list of devices (shared by the id-linked and
-  /// class-linked 1W paths, and by schedule_linked_remote_polls_()).
+  /// class-linked 1W paths).
   /// @param device_ids Devices to poll.
   /// @param delay_ms Poll delay in milliseconds.
   void schedule_device_polls_(const std::vector<std::string> &device_ids, uint32_t delay_ms);
@@ -941,13 +941,26 @@ class IOHomeControlComponent : public Component,
                                                             this->last_1w_activity_ms_, millis(),
                                                             ONEWAY_QUIET_PERIOD_MS, ONEWAY_POLL_DEFER_CAP_MS);
   }
-  /// Schedule status polls for all devices associated with a linked remote.
-  /// @param remote_id Source node ID of the remote.
-  /// @param delay_ms Poll delay; default REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS. A STOP intent
-  ///        passes 0 (position settles immediately, no need to wait out the usual travel-time
-  ///        assumption behind the default delay).
-  void schedule_linked_remote_polls_(const std::string &remote_id,
-                                     uint32_t delay_ms = REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
+  /// Decide, and act on, what a frame of another controller means for one registered device: a
+  /// heard write, or a device challenge that follows no heard read, arms a tracked poll; any other
+  /// frame arms one only if the device was not read recently (StatusPollPolicy::on_foreign_frame());
+  /// while such a poll is pending the frame only pushes its timer out. A frame that arms nothing
+  /// changes neither the tracking window nor the failure streaks.
+  /// @param device_id Registered device the frame concerns.
+  /// @param kind Request to the device, or the device's challenge to another controller.
+  /// @param controller The other controller's node ID (request source, or challenge destination).
+  /// @param cmd Command of the heard frame.
+  void act_on_foreign_frame_(const std::string &device_id, ForeignFrameKind kind, const std::string &controller,
+                             uint8_t cmd);
+  /// Hand a registered device's challenge (0x3C) to another controller to act_on_foreign_frame_().
+  /// A challenge addressed to this hub, from an unregistered node, or a 0x3D is left alone.
+  /// @param frame An exchange-internal frame (is_exchange_internal_command()).
+  void note_foreign_challenge_(const IoFrame &frame);
+  /// Hand another controller's frame to act_on_foreign_frame_(): per the registered device it is
+  /// addressed to, or per device linked to its source when that is a linked 2W controller.
+  /// @param frame A parsed 2W frame that is not a status reply.
+  /// @return true when the frame was another controller's request and has been handled.
+  bool act_on_overheard_request_(const IoFrame &frame);
   /// Resolve the set of devices a 1W frame should affect: devices linked to the sending remote
   /// by node ID, plus — when the frame targets a typed broadcast (e.g. "all awnings") — devices
   /// linked to that device class, deduplicated so a device linked both ways is touched once.
