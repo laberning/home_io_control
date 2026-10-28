@@ -415,6 +415,19 @@ class IOHomeControlComponent : public Component,
   /// @param cb Callable with no arguments.
   void set_pairing_result_callback(std::function<void()> cb) { this->pairing_result_callback_ = std::move(cb); }
 
+  /// @return How many device events record_device_event_() has recorded since boot.
+  [[nodiscard]] uint32_t device_event_count() const { return this->device_event_count_; }
+
+  /// @return The most recent device event rendered as `#<n> t=<uptime s> <SRC> <cmd> <payload hex>`,
+  /// or an empty string before the first one. The counter makes a repeated identical report a new
+  /// value, which Home Assistant's history needs (it records state changes only).
+  [[nodiscard]] const std::string &last_device_event() const { return this->last_device_event_; }
+
+  /// Register a callback invoked after every recorded device event, used by the "Last Device Event"
+  /// text sensor. Single-slot, mirrors set_pairing_result_callback().
+  /// @param cb Callable with no arguments.
+  void set_device_event_callback(std::function<void()> cb) { this->device_event_callback_ = std::move(cb); }
+
   /// @brief Arm or disarm the "Recover System Key" (key extraction) responder.
   ///
   /// Thin forwarder to the KeyExtractionResponder collaborator (key_extraction_responder.h).
@@ -851,6 +864,22 @@ class IOHomeControlComponent : public Component,
   /// @param packet Raw radio packet containing a parsed IoFrame.
   void process_received_packet_(const RadioRxPacket &packet);
 
+  /// Record @p frame as a device event when it qualifies: its source is a registered device and it is
+  /// either a CMD_SET_CONFIG1_RESP (the frame a subscription is expected to produce), or any frame
+  /// that reached the unhandled-command fallback while `diagnostic_probes` is on.
+  /// @param frame The received frame.
+  /// @param reached_unhandled_fallback True from the fallback after every other handler declined.
+  /// @return true when the frame was recorded.
+  bool record_if_device_event_(const IoFrame &frame, bool reached_unhandled_fallback);
+
+  /// Record a frame from a registered device that nothing else here handles: log it raw, count it,
+  /// and publish it on the "Last Device Event" sensor. The frame is unauthenticated data (ADR 0022):
+  /// it is never answered, never transmitted to and never applied to the device record, whatever it
+  /// claims to carry. Logs at INFO with `diagnostic_probes: true` and at DEBUG otherwise, since a
+  /// subscription outlives the build that made it and must not fill a normal build's log.
+  /// @param frame The received frame; its source is a registered device.
+  void record_device_event_(const IoFrame &frame);
+
   /// True while the key-extraction responder is mid-attempt and still within its bounded CH2-hold
   /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
   /// — kept on the hub because defer_background_poll_() and tests/hub/hub_core_test.cpp reach it here,
@@ -1017,6 +1046,15 @@ class IOHomeControlComponent : public Component,
     uint32_t retry_after_fail_ms;  ///< If non-zero, drives the status-poll backoff and failure streaks.
     uint8_t max_tries;             ///< Transmit-attempt cap forwarded to send_and_receive_().
   };
+
+  /// send_and_receive_() on the command channel, except that a device event (0x70) taken as the reply
+  /// is recorded (record_device_event_()) and the request asked once more; a second event in a row,
+  /// or one answering an EXECUTE that is not safe to repeat, ends it as FAILED.
+  /// @param request Outbound request frame.
+  /// @param response Filled with the reply on SUCCESS_WITH_RESPONSE; never a 0x70 then.
+  /// @param max_tries Try budget per send, as for send_and_receive_().
+  /// @return The exchange outcome.
+  ExchangeOutcome exchange_past_device_event_(const IoFrame &request, IoFrame &response, uint8_t max_tries);
 
   /// Run one authenticated request/response exchange on the standard command channel and record
   /// its outcome: exchange-outcome and timeout counters, link health, challenge-seen handling,
@@ -1279,6 +1317,10 @@ class IOHomeControlComponent : public Component,
   std::vector<std::string> exposed_senders_;
   /// Invoked once after every pairing attempt completes; see set_pairing_result_callback().
   std::function<void()> pairing_result_callback_;
+  /// Device events recorded since boot, the last one's text and its subscriber; see record_device_event_().
+  uint32_t device_event_count_{0};
+  std::string last_device_event_;
+  std::function<void()> device_event_callback_;
   /// Whether diagnostic probes (ManagementActions::probe_device()/probe_sweep()) are enabled.
   /// False by default so a build that didn't opt in via `diagnostic_probes: true` never sends an
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().

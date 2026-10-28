@@ -662,6 +662,33 @@ bool create_limitation_status_read(IoFrame &f, const uint8_t *own, const uint8_t
   return set_cmd(f, CMD_LIMITATION_STATUS_REQ, d, sizeof(d));
 }
 
+namespace {
+
+/// Shared body of the (un)subscribe builders: `<action> <event hi> <event lo>`, event id allowlisted.
+bool create_event_subscription(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t action, uint16_t event_id,
+                               bool low_power) {
+  if (event_id != EVENT_BATTERY_LEVEL_CHANGE && event_id != EVENT_LOCAL_SENSOR)
+    return false;
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  // The event id follows the action byte, big-endian.
+  const uint8_t d[3] = {action, static_cast<uint8_t>(event_id >> 8), static_cast<uint8_t>(event_id & 0xFF)};
+  return set_cmd(f, CMD_SUBSCRIBE_EVENT, d, sizeof(d));
+}
+
+}  // namespace
+
+/// Build the subscribe request (see the header for the allowlist).
+bool create_subscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint16_t event_id, bool low_power) {
+  return create_event_subscription(f, own, dst, EVENT_SUBSCRIPTION_SUBSCRIBE, event_id, low_power);
+}
+
+/// Build the unsubscribe request (see the header: the action value is untested).
+bool create_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint16_t event_id, bool low_power) {
+  return create_event_subscription(f, own, dst, EVENT_SUBSCRIPTION_UNSUBSCRIBE, event_id, low_power);
+}
+
 /// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
 bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
   return create_get_status_extended(f, own, dst, low_power, STATUS_TILT_SELECTOR, 0x01);

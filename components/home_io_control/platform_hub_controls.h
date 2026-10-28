@@ -2,7 +2,7 @@
 
 /// @file platform_hub_controls.h
 /// @brief Hub-level control entities: the discovery button, the scan-paired-devices button, the
-/// two arming switches, and the pairing-result diagnostic text sensor.
+/// two arming switches, and the pairing-result and device-event diagnostic text sensors.
 /// @ingroup hioc_platforms
 ///
 /// These act on the hub as a whole and have no device to bind to (HubBoundEntity), and are
@@ -171,6 +171,30 @@ class IOHomePairingResultTextSensor : public text_sensor::TextSensor, public Com
  protected:
   /// @brief Publish the latest pairing telemetry result string.
   void on_pairing_result_();
+};
+
+/// @brief Diagnostic text sensor that publishes IOHomeControlComponent::last_device_event() after
+/// every recorded device event.
+///
+/// Only created with `diagnostic_probes: true`. The value is unauthenticated raw data from a
+/// registered device, shown for diagnosis and never applied to device state (ADR 0022). Nothing is
+/// published before the first event of this boot.
+/// @ingroup hioc_platforms
+class IOHomeDeviceEventTextSensor : public text_sensor::TextSensor, public Component, public HubBoundEntity {
+ public:
+  /// @brief Register the device-event callback.
+  void setup() override;
+
+  /// @brief Dump text-sensor configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+
+ protected:
+  /// @brief Publish the hub's latest recorded device event.
+  void on_device_event_();
 };
 
 }  // namespace home_io_control

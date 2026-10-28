@@ -2150,10 +2150,10 @@ TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
 
   const auto result = component.probe_device("ABC123", "unknown4a", "0");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(
-      result.message,
-      "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
-      "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, or limitation)");
+  EXPECT_EQ(result.message,
+            "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
+            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, limitation, "
+            "subscribe_event, or unsubscribe_event)");
   EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
                                            "not by looping until this flag stops it";
 }
@@ -2578,10 +2578,10 @@ TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
 
   const auto result = component.probe_sweep("ABC123", "unknown4a", "0", "5");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(
-      result.message,
-      "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
-      "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, or limitation)");
+  EXPECT_EQ(result.message,
+            "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
+            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, limitation, "
+            "subscribe_event, or unsubscribe_event)");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an invalid probe name must not enter the per-index loop at all: " << result.message;
 }
@@ -2627,4 +2627,197 @@ TEST(HubManagement, ProbeSweepRejectsUnregisteredDeviceWithoutLooping) {
   EXPECT_EQ(result.message, "device is not registered on this hub");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an unregistered device must not enter the per-index loop at all: " << result.message;
+}
+
+// --- subscribe_event: the one probe that changes device state (ADR 0060) ---------------------
+
+namespace {
+
+/// A frame from the probe device with command 0x70, the one a subscribed device is expected to send.
+IoFrame make_device_event_frame(const uint8_t dst[3]) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  set_dst(frame, dst);
+  set_src(frame, PROBE_DEVICE_NODE_ID);
+  const uint8_t payload[4] = {0x20, 0x05, 0x06, 0x2A};
+  set_cmd(frame, CMD_SET_CONFIG1_RESP, payload, sizeof(payload));
+  return frame;
+}
+
+}  // namespace
+
+TEST(HubManagement, ProbeDeviceSubscribeEventSendsTheAllowlistedEventForEachIndex) {
+  struct Case {
+    const char *index;
+    uint8_t hi;
+    uint8_t lo;
+  };
+  for (const Case &c : {Case{"0", 0x20, 0x01}, Case{"1", 0x20, 0x05}, Case{"0x01", 0x20, 0x05}}) {
+    SCOPED_TRACE(c.index);
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+    const auto result = component.probe_device("ABC123", "subscribe_event", c.index);
+    ASSERT_TRUE(result.success) << result.message;
+    ASSERT_FALSE(radio.get_sent_data().empty());
+    EXPECT_EQ(sent_frame_bytes(radio, 0),
+              (std::vector<uint8_t>{0x4B, 0x00, 0xAB, 0xC1, 0x23, 0xC0, 0xFF, 0xEE, 0x73, 0x01, c.hi, c.lo}));
+  }
+}
+
+TEST(HubManagement, ProbeDeviceSubscribeEventRejectsEveryOtherIndexWithoutTransmitting) {
+  // 0x2001 / 0x2005 typed as an index, or any value past 1, must never reach the radio.
+  for (const char *index : {"2", "0x2001", "0x2005", "255", "", "x"}) {
+    SCOPED_TRACE(index);
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+
+    const auto result = component.probe_device("ABC123", "subscribe_event", index);
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(radio.get_sent_data().empty());
+  }
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  EXPECT_EQ(component.probe_device("ABC123", "subscribe_event", "2").message,
+            "probe \"subscribe_event\" takes index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)");
+}
+
+TEST(HubManagement, ProbeDeviceSubscribeEventIsRefusedWithoutDiagnosticProbes) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.probe_device("ABC123", "subscribe_event", "1");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "diagnostic probes are not enabled; set diagnostic_probes: true in YAML");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, ProbeDeviceSubscribeEventIsRefusedWhileTheDeviceMoves) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->is_stopped = false;
+
+  const auto result = component.probe_device("ABC123", "subscribe_event", "1");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device is moving; refusing to probe mid-transaction");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, ProbeDeviceSubscribeEventNeverReachesAnUnpairedDevice) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_device("123456", "subscribe_event", "1");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device is not registered on this hub");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, ProbeDeviceUnsubscribeEventSendsActionZeroForTheAllowlistedEvent) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  const auto result = component.probe_device("ABC123", "unsubscribe_event", "1");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(sent_frame_bytes(radio, 0),
+            (std::vector<uint8_t>{0x4B, 0x00, 0xAB, 0xC1, 0x23, 0xC0, 0xFF, 0xEE, 0x73, 0x00, 0x20, 0x05}));
+}
+
+TEST(HubManagement, ProbeDeviceUnsubscribeEventRejectsOtherIndicesAndCannotBeSwept) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  EXPECT_FALSE(component.probe_device("ABC123", "unsubscribe_event", "2").success);
+  EXPECT_FALSE(component.probe_device("ABC123", "unsubscribe_event", "0x2005").success);
+  EXPECT_EQ(component.probe_sweep("ABC123", "unsubscribe_event", "0", "1").message,
+            "probe \"unsubscribe_event\" cannot be swept; use probe_device");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, ProbeSweepRefusesSubscribeEvent) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "subscribe_event", "0", "1");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "probe \"subscribe_event\" cannot be swept; use probe_device");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, ProbeDeviceSubscribeEventDecodesAnErrorCode) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  const auto result = component.probe_device("ABC123", "subscribe_event", "1");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.response_cmd, CMD_ERROR_RESP);
+  EXPECT_NE(result.message.find("[" + std::string(command_result_name(RESULT_COMMAND_UNKNOWN)) + ": "),
+            std::string::npos)
+      << result.message;
+}
+
+TEST(HubManagement, ProbeDeviceSubscribeEventReportsA0x70ReplyRawAndNeverAppliesIt) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->position = 42.0F;
+  dev->target = 42.0F;
+  dev->is_stopped = true;
+  const auto battery_before = dev->battery;
+  radio.queue_rx(frame_to_packet(make_device_event_frame(component.node_id_)));
+
+  const auto result = component.probe_device("ABC123", "subscribe_event", "1");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.response_cmd, CMD_SET_CONFIG1_RESP);
+  EXPECT_NE(result.message.find("SET_CONFIG1_RESP"), std::string::npos) << result.message;
+  EXPECT_FLOAT_EQ(dev->position, 42.0F);
+  EXPECT_FLOAT_EQ(dev->target, 42.0F);
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_EQ(dev->battery, battery_before);
+}
+
+TEST(HubManagement, ProbeDeviceSubscribeEventAcceptedWithoutAReplyIsReportedAndSentOnce) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  const uint8_t challenge[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  IoFrame chal{};
+  init_frame(chal, true, false, false, false);
+  set_dst(chal, component.node_id_);
+  set_src(chal, PROBE_DEVICE_NODE_ID);
+  set_cmd(chal, CMD_CHALLENGE_REQ, challenge, sizeof(challenge));
+  radio.queue_rx(frame_to_packet(chal));  // challenged, then silence
+
+  const auto result = component.probe_device("ABC123", "subscribe_event", "1");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device accepted the probe request but sent no response");
+  EXPECT_EQ(radio.get_send_count(), 2) << "the subscribe once, plus our challenge answer";
 }

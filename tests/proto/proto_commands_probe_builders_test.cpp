@@ -182,6 +182,65 @@ TEST(ProtoCommandsProbeBuilders, LimitationStatusReadSetsLowPowerFlagOnRequest) 
   EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) == 0);
 }
 
+TEST(ProtoCommandsProbeBuilders, SubscribeEventBuildsBothAllowlistedEvents) {
+  IoFrame frame{};
+  const uint8_t own[3] = {0x97, 0xDE, 0x1A};
+  const uint8_t dst[3] = {0x51, 0xE3, 0x03};
+  struct Case {
+    uint16_t event;
+    uint8_t hi;
+    uint8_t lo;
+  };
+  for (const Case &c : {Case{EVENT_BATTERY_LEVEL_CHANGE, 0x20, 0x01}, Case{EVENT_LOCAL_SENSOR, 0x20, 0x05}}) {
+    ASSERT_TRUE(create_subscribe_event(frame, own, dst, c.event, /*low_power=*/false));
+    uint8_t bytes[64] = {0};
+    const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+    // CTRL0 0x4B = start+end, 2W, 3 data bytes; CTRL1 0x00 = mains class.
+    const std::vector<uint8_t> expected = {0x4B, 0x00, 0x51, 0xE3, 0x03, 0x97, 0xDE, 0x1A, 0x73, 0x01, c.hi, c.lo};
+    ASSERT_EQ(len, expected.size());
+    EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+  }
+}
+
+TEST(ProtoCommandsProbeBuilders, SubscribeEventSetsLowPowerFlag) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_subscribe_event(frame, test::OWN_ID, test::DST_ID, EVENT_LOCAL_SENSOR, true));
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0);
+  ASSERT_TRUE(create_subscribe_event(frame, test::OWN_ID, test::DST_ID, EVENT_LOCAL_SENSOR, false));
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) == 0);
+}
+
+TEST(ProtoCommandsProbeBuilders, SubscribeEventRefusesEveryIdOutsideTheAllowlist) {
+  IoFrame frame{};
+  for (const uint16_t event : {0x0000, 0x2000, 0x2002, 0x2004, 0x2006, 0x1001, 0xFFFF}) {
+    EXPECT_FALSE(create_subscribe_event(frame, test::OWN_ID, test::DST_ID, event, false))
+        << "event 0x" << std::hex << event;
+  }
+}
+
+TEST(ProtoCommandsProbeBuilders, UnsubscribeEventClearsTheActionByte) {
+  IoFrame frame{};
+  const uint8_t own[3] = {0x97, 0xDE, 0x1A};
+  const uint8_t dst[3] = {0x51, 0xE3, 0x03};
+  ASSERT_TRUE(create_unsubscribe_event(frame, own, dst, EVENT_LOCAL_SENSOR, /*low_power=*/true));
+  uint8_t bytes[64] = {0};
+  const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+  ASSERT_EQ(len, 12);
+  EXPECT_EQ(bytes[8], CMD_SUBSCRIBE_EVENT);
+  EXPECT_EQ(bytes[9], 0x00) << "the unsubscribe action";
+  EXPECT_EQ(bytes[10], 0x20);
+  EXPECT_EQ(bytes[11], 0x05);
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0);
+}
+
+TEST(ProtoCommandsProbeBuilders, UnsubscribeEventRefusesEveryIdOutsideTheAllowlist) {
+  IoFrame frame{};
+  for (const uint16_t event : {0x0000, 0x2002, 0x2006, 0xFFFF}) {
+    EXPECT_FALSE(create_unsubscribe_event(frame, test::OWN_ID, test::DST_ID, event, false))
+        << "event 0x" << std::hex << event;
+  }
+}
+
 TEST(ProtoCommandsProbeBuilders, GeneralInfo3NoPayload) {
   IoFrame frame{};
   ASSERT_TRUE(create_general_info3(frame, test::OWN_ID, test::DST_ID, true));

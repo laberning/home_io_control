@@ -122,6 +122,7 @@ bool is_known_io_command(uint8_t cmd) {
     case CMD_GET_GENERAL_INFO3_RESP:
     case CMD_SET_CONFIG1:
     case CMD_SET_CONFIG1_RESP:
+    case CMD_SUBSCRIBE_EVENT:
     case CMD_STATUS_UPDATE:
     case CMD_STATUS_UPDATE_RESP:
     case CMD_ERROR_RESP:

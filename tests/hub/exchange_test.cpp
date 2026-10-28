@@ -484,6 +484,27 @@ IoFrame stop_request() {
 
 }  // namespace
 
+TEST(Exchange, AcceptedSubscribeEventIsSentOnce) {
+  // The subscribe probe stores state in the device: once a try was challenged (accepted), silence
+  // after it ends the exchange instead of spending the other tries on further copies.
+  ResendRig rig;
+  rig.queue_challenge();  // challenged, then the final wait stays silent
+  IoFrame request{};
+  ASSERT_TRUE(create_subscribe_event(request, test::OWN_ID, test::DST_ID, EVENT_LOCAL_SENSOR, false));
+
+  EXPECT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  EXPECT_EQ(rig.radio.get_send_count(), 2) << "the request and our 0x3D, no second request";
+}
+
+TEST(Exchange, UnansweredSubscribeEventKeepsTheNormalRetryBudget) {
+  ResendRig rig;  // nothing queued: the device never answers at all
+  IoFrame request{};
+  ASSERT_TRUE(create_subscribe_event(request, test::OWN_ID, test::DST_ID, EVENT_LOCAL_SENSOR, false));
+
+  EXPECT_EQ(rig.send(request), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_RETRY_COUNT);
+}
+
 TEST(Exchange, UnconfirmedExecuteToAConfirmingDeviceIsResentAndCanSucceed) {
   ResendRig rig;
   rig.queue_challenge();                  // try 1: challenged, then the final wait stays silent

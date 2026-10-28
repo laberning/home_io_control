@@ -44,7 +44,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0006](0006-management-actions-as-native-api-actions.md) | Admin ops as native API actions | Rarely-used operations get no permanent entity |
 | [0016](0016-sender-events-are-opt-in-by-allowlist.md) | Sender events are opt-in | The radio has no ownership marker, so nothing fires until named |
 | [0017](0017-device-poll-hint-shortens-but-never-stretches.md) | Poll hint shortens, never stretches | The configured interval is a ceiling, not a target |
-| [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
+| [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated (amended by 0060) | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
 | [0030](0030-predictions-are-kept-apart-from-observations.md) | Predictions are kept apart from observations | An optimistic guess lives in its own overlay, withdrawn on failure and superseded per-axis by real data — never written into a reported field |
 | [0031](0031-oneway-vendor-wire-behaviour-is-driven-by-manufacturer.md) | 1W vendor wire behaviour is driven by `manufacturer:` | `manufacturer:` selects the 1W `CMD_EXECUTE` ACEI byte (`0x43` Somfy / `0x61` Velux); `execute_broadcast: typed\|all` is a separate handheld-vs-class-bound axis, not a vendor one |
 | [0032](0032-oneway-velux-enrollment-gesture.md) | 1W enrollment follows the gesture the target's `manufacturer:` expects | `velux` → `0x39` broadcast, a `0x30` sweep across `{roller_shutter, vertical_exterior_awning, dual_roller_shutter}` under one sequence, then STOP+DOWN; `somfy` path unchanged; `enrollment_classes:` overrides the sweep list |
@@ -75,6 +75,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) | Device types follow the IO node-type and subtype table | A 16-bit `DeviceType` and one (type, subtype) table drive names, entity class, platform and behaviour flags; six YAML names change and the old ones fail with the replacement |
 | [0053](0053-a-device-may-carry-its-own-system-key.md) | A device may carry its own system key | An optional `system_key:` on any device entity; the exchange engine picks the key per frame from the peer's node, falling back to the hub key; Scan Paired Devices sweeps once per distinct key |
 | [0059](0059-device-capabilities-come-from-the-type-table.md) | Device capabilities come from the type table | One capability word per (type, subtype) row, resolved once per device; the subtype-58 rule is one function; named positions are one table; the Python mirror is sync-tested; keys a kind cannot use fail validation; unconfirmed kinds are marked experimental and warned about |
+| [0060](0060-a-state-changing-diagnostic-probe.md) | A state-changing diagnostic probe (amends 0024) | `subscribe_event` is allowlisted to two events, not sweepable, never re-sent after the device accepted it; reports are recorded on a diagnostic sensor and never applied to device state |
 
 ### Security
 
@@ -162,6 +163,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0057: Temperature setpoints travel in the main parameter](0057-temperature-setpoints-travel-in-the-main-parameter.md)
 - [ADR 0058: Pairing reads the heater behind an Atlantic pairing node directly](0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md)
 - [ADR 0059: Device capabilities come from the type table](0059-device-capabilities-come-from-the-type-table.md)
+- [ADR 0060: A state-changing diagnostic probe](0060-a-state-changing-diagnostic-probe.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

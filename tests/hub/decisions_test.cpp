@@ -540,6 +540,14 @@ TEST(Decisions, UnconfirmedNonExecuteAlwaysKeepsItsRetryBudget) {
   EXPECT_TRUE(decisions::retry_after_unconfirmed_accept_is_safe(poll, false, 3));
 }
 
+TEST(Decisions, UnconfirmedSubscribeEventIsNeverResent) {
+  IoFrame subscribe{};
+  ASSERT_TRUE(create_subscribe_event(subscribe, OWN_ID, DST_ID, EVENT_LOCAL_SENSOR, false));
+  EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(subscribe, false, 1))
+      << "a try the device authenticated has stored the subscription; a second copy has no use";
+  EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(subscribe, true, 1));
+}
+
 TEST(Decisions, UnconfirmedExecuteIsResentOnceOnlyToADeviceThatConfirms) {
   const IoFrame stop = execute_frame(build_stop);
   EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(stop, false, 1))

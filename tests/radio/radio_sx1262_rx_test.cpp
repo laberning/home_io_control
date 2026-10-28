@@ -222,6 +222,13 @@ TEST(RadioSX1262, UartProbeAcceptsEveryKnownIoCommand) {
   }
 }
 
+TEST(RadioSX1262, KnownIoCommandsIncludeTheDeviceEventPair) {
+  // The subscribe request and the frame a subscribed device reports with must pass the soft-PHY
+  // filter, or a CRC-valid report would be dropped before the device-event recorder sees it.
+  EXPECT_TRUE(is_known_io_command(CMD_SUBSCRIBE_EVENT));
+  EXPECT_TRUE(is_known_io_command(CMD_SET_CONFIG1_RESP));
+}
+
 TEST(RadioSX1262, UartProbeAcceptsLimitationStatusFramesAsHeardOnAir) {
   // The request/reply pair a VELUX KLF 200 exchanges with a window (issue #98): 12-byte request
   // (CTRL0 0x4B) and 14-byte reply (CTRL0 0x8D). The CRC matches, but before the two opcodes

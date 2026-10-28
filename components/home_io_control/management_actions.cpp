@@ -76,6 +76,13 @@ constexpr const char *PROBE_NAME_LIMITATION =
 /// (LimitationType numbering). The index is never the on-air selector byte.
 constexpr uint8_t PROBE_LIMITATION_MAX_INDEX = 1;
 constexpr uint8_t PROBE_LIMITATION_INDEX_MINIMUM = 0;  ///< `limitation` index that reads the resulting minimum.
+constexpr const char *PROBE_NAME_SUBSCRIBE_EVENT =
+    "subscribe_event";  ///< create_subscribe_event(); index 0 = battery level event, 1 = local sensor event.
+/// Highest `subscribe_event` index: one per allowlisted event id. The index is never the on-air event id.
+constexpr uint8_t PROBE_SUBSCRIBE_EVENT_MAX_INDEX = 1;
+constexpr uint8_t PROBE_SUBSCRIBE_EVENT_INDEX_BATTERY = 0;  ///< `subscribe_event` index for EVENT_BATTERY_LEVEL_CHANGE.
+constexpr const char *PROBE_NAME_UNSUBSCRIBE_EVENT =
+    "unsubscribe_event";  ///< create_unsubscribe_event(); same index mapping as `subscribe_event`.
 /// Function IDs the extended-shape probes hold fixed. Production software elsewhere describes
 /// these two as a battery read; on real hardware (17 solar devices plus our own mains motors)
 /// the *short* 3-byte form at these IDs returned position-family values, never a charge value.
@@ -146,6 +153,24 @@ bool build_probe_limitation(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
   return create_limitation_status_read(f, own, dst, type, low_power);
 }
 
+/// Maps the `subscribe_event` index onto an allowlisted event id; the id itself is checked again by
+/// create_subscribe_event().
+bool build_probe_subscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  if (index > PROBE_SUBSCRIBE_EVENT_MAX_INDEX)
+    return false;  // Unreachable through probe_device(), which gates on max_index.
+  const uint16_t event = index == PROBE_SUBSCRIBE_EVENT_INDEX_BATTERY ? EVENT_BATTERY_LEVEL_CHANGE : EVENT_LOCAL_SENSOR;
+  return create_subscribe_event(f, own, dst, event, low_power);
+}
+
+/// The `subscribe_event` index mapping, for the unsubscribe request; create_unsubscribe_event()
+/// checks the id again.
+bool build_probe_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  if (index > PROBE_SUBSCRIBE_EVENT_MAX_INDEX)
+    return false;  // Unreachable through probe_device(), which gates on max_index.
+  const uint16_t event = index == PROBE_SUBSCRIBE_EVENT_INDEX_BATTERY ? EVENT_BATTERY_LEVEL_CHANGE : EVENT_LOCAL_SENSOR;
+  return create_unsubscribe_event(f, own, dst, event, low_power);
+}
+
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
 struct ProbeDescriptor {
   const char *name;
@@ -154,6 +179,7 @@ struct ProbeDescriptor {
   bool needs_index;   ///< False for the probes whose builders take no index/selector ("general_info3", "get_info1",
                       ///< "get_info2", "status_mp_fp").
   uint8_t max_index;  ///< Highest index the probe accepts; the full byte range when index_help is null.
+  bool sweepable;     ///< False for a probe that changes state in the device: probe_sweep() refuses it.
 };
 
 /// @brief The full set of probes probe_device()/probe_sweep() can dispatch to.
@@ -162,19 +188,27 @@ struct ProbeDescriptor {
 /// change here rather than a change to both probe_device()'s dispatch and its "index must be..."
 /// error message. Deliberately has no "unknown4a" row -- see ADR 0024.
 constexpr ProbeDescriptor PROBE_TABLE[] = {
-    {PROBE_NAME_PRIVATE_FN, build_probe_private_fn, nullptr, true, UINT8_MAX},
-    {PROBE_NAME_PRIVATE_FN_SUB, build_probe_private_fn_sub, nullptr, true, UINT8_MAX},
-    {PROBE_NAME_STATUS_EXT, build_probe_status_ext, nullptr, true, UINT8_MAX},
-    {PROBE_NAME_STATUS_EXT_FN6, build_probe_status_ext_fn6, nullptr, true, UINT8_MAX},
-    {PROBE_NAME_STATUS_EXT_FN9, build_probe_status_ext_fn9, nullptr, true, UINT8_MAX},
-    {PROBE_NAME_GET_INFO1, build_probe_get_info1, nullptr, false, UINT8_MAX},
-    {PROBE_NAME_GET_INFO2, build_probe_get_info2, nullptr, false, UINT8_MAX},
-    {PROBE_NAME_GENERAL_INFO3, build_probe_general_info3, nullptr, false, UINT8_MAX},
-    {PROBE_NAME_PRIVATE2, build_probe_private2_long, nullptr, true, UINT8_MAX},
-    {PROBE_NAME_PRIVATE2_SHORT, build_probe_private2_short, nullptr, true, UINT8_MAX},
-    {PROBE_NAME_STATUS_MP_FP, build_probe_status_mp_fp, nullptr, false, UINT8_MAX},
+    {PROBE_NAME_PRIVATE_FN, build_probe_private_fn, nullptr, true, UINT8_MAX, true},
+    {PROBE_NAME_PRIVATE_FN_SUB, build_probe_private_fn_sub, nullptr, true, UINT8_MAX, true},
+    {PROBE_NAME_STATUS_EXT, build_probe_status_ext, nullptr, true, UINT8_MAX, true},
+    {PROBE_NAME_STATUS_EXT_FN6, build_probe_status_ext_fn6, nullptr, true, UINT8_MAX, true},
+    {PROBE_NAME_STATUS_EXT_FN9, build_probe_status_ext_fn9, nullptr, true, UINT8_MAX, true},
+    {PROBE_NAME_GET_INFO1, build_probe_get_info1, nullptr, false, UINT8_MAX, true},
+    {PROBE_NAME_GET_INFO2, build_probe_get_info2, nullptr, false, UINT8_MAX, true},
+    {PROBE_NAME_GENERAL_INFO3, build_probe_general_info3, nullptr, false, UINT8_MAX, true},
+    {PROBE_NAME_PRIVATE2, build_probe_private2_long, nullptr, true, UINT8_MAX, true},
+    {PROBE_NAME_PRIVATE2_SHORT, build_probe_private2_short, nullptr, true, UINT8_MAX, true},
+    {PROBE_NAME_STATUS_MP_FP, build_probe_status_mp_fp, nullptr, false, UINT8_MAX, true},
     {PROBE_NAME_LIMITATION, build_probe_limitation, "index 0 (minimum) or 1 (maximum)", true,
-     PROBE_LIMITATION_MAX_INDEX},
+     PROBE_LIMITATION_MAX_INDEX, true},
+    // The two probes that change device state (ADR 0060): one stores a subscription, the other is an
+    // untested guess at removing one. Hence the two-event allowlist behind the index, and no sweeping.
+    {PROBE_NAME_SUBSCRIBE_EVENT, build_probe_subscribe_event,
+     "index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)", true, PROBE_SUBSCRIBE_EVENT_MAX_INDEX,
+     false},
+    {PROBE_NAME_UNSUBSCRIBE_EVENT, build_probe_unsubscribe_event,
+     "index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)", true, PROBE_SUBSCRIBE_EVENT_MAX_INDEX,
+     false},
 };
 constexpr uint8_t PROBE_TABLE_SIZE = sizeof(PROBE_TABLE) / sizeof(PROBE_TABLE[0]);
 
@@ -1147,6 +1181,12 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     result.message = "failed to build probe request";
     return result;
   }
+  if (request.cmd == CMD_SUBSCRIBE_EVENT && request.data_len == 3) {
+    ESP_LOGI(detail::TAG, "%s %s %s event 0x%02X%02X (diagnostic)",
+             request.data[0] == EVENT_SUBSCRIPTION_UNSUBSCRIBE ? "Unsubscribing" : "Subscribing",
+             result.device_id.c_str(), request.data[0] == EVENT_SUBSCRIPTION_UNSUBSCRIBE ? "from" : "to",
+             request.data[1], request.data[2]);
+  }
 
   IoFrame response;
   // A probe exists to read back a payload, so -- like a status poll or name read, and unlike a
@@ -1225,6 +1265,10 @@ ManagementActionResult ManagementActions::probe_sweep(const std::string &device_
   const ProbeDescriptor *descriptor = resolve_probe_descriptor(probe, result);
   if (descriptor == nullptr)
     return result;
+  if (!descriptor->sweepable) {
+    result.message = "probe \"" + probe + "\" cannot be swept; use probe_device";
+    return result;
+  }
   if (!descriptor->needs_index) {
     result.message = "probe \"" + probe + "\" takes no index; use probe_device";
     return result;

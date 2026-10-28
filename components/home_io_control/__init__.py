@@ -70,10 +70,12 @@ from .oneway_controllers import (
     oneway_controller_expression,
 )
 from .hub_entities import (
+    create_device_event_sensor,
     create_discover_and_pair_button,
     create_hub_arming_switch,
     create_scan_paired_devices_button,
     inject_accept_foreign_pairing_switch_id,
+    inject_device_event_sensor_id,
     inject_discover_and_pair_button_id,
     inject_discover_and_pair_result_sensor_id,
     inject_recover_oneway_key_switch_id,
@@ -153,6 +155,7 @@ CONFIG_SCHEMA = cv.All(
     inject_scan_paired_devices_button_id,
     inject_discover_and_pair_button_id,
     inject_discover_and_pair_result_sensor_id,
+    inject_device_event_sensor_id,
     validate_oneway_controllers,
     validate_lr1121_firmware_update,
     validate_radio_transport,
@@ -253,6 +256,8 @@ async def to_code(config):
         await create_discover_and_pair_button(config, var)
 
     cg.add(var.set_diagnostic_probes_enabled(config[CONF_DIAGNOSTIC_PROBES]))
+    if config[CONF_DIAGNOSTIC_PROBES]:
+        await create_device_event_sensor(config, var)
 
     if CONF_LR1121_FIRMWARE_UPDATE in config:
         await create_lr1121_firmware_update(config, var)

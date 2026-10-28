@@ -58,5 +58,24 @@ void IOHomePairingResultTextSensor::on_pairing_result_() {
   this->publish_state(this->parent_->pairing_telemetry().result_sensor_string());
 }
 
+void IOHomeDeviceEventTextSensor::setup() {
+  if (this->parent_ == nullptr)
+    return;
+
+  this->parent_->set_device_event_callback([this]() { this->on_device_event_(); });
+}
+
+void IOHomeDeviceEventTextSensor::dump_config() {
+  // [[maybe_unused]]: see IOHomePairingResultTextSensor::dump_config().
+  [[maybe_unused]] static const char *const TAG = "home_io_control.device_event";
+  LOG_TEXT_SENSOR("", "IO-Homecontrol Last Device Event", this);
+}
+
+void IOHomeDeviceEventTextSensor::on_device_event_() {
+  if (this->parent_ == nullptr)
+    return;
+  this->publish_state(this->parent_->last_device_event());
+}
+
 }  // namespace home_io_control
 }  // namespace esphome

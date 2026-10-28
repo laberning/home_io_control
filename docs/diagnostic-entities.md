@@ -26,7 +26,8 @@ Other diagnostic sensors belong to specific features and are documented with the
 1W controller identity gets
 ([Sending 1W commands](configuration/oneway-transmit.md#the-last-1w-command-sensor)), and the
 battery sensors a cover gets with `battery: true`
-([Battery level](configuration/cover.md#battery-level)).
+([Battery level](configuration/cover.md#battery-level)), and the "Last Device Event" sensor that
+`diagnostic_probes: true` adds ([Last Device Event](diagnostic-probes.md#last-device-event)).
 
 ## Device Name
 

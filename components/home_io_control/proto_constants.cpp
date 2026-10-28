@@ -99,6 +99,8 @@ const char *command_name(uint8_t cmd) {
       return "SET_CONFIG1";
     case CMD_SET_CONFIG1_RESP:
       return "SET_CONFIG1_RESP";
+    case CMD_SUBSCRIBE_EVENT:
+      return "SUBSCRIBE_EVENT";
     case CMD_STATUS_UPDATE:
       return "STATUS_UPDATE";
     case CMD_STATUS_UPDATE_RESP:
