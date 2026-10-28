@@ -161,6 +161,14 @@ struct ForeignTraffic {
   uint32_t pending_due_ms{0};     ///< When the armed poll is due; 0 = none pending.
 };
 
+/// @brief What the hub does with a status report that reads as moving.
+enum class MovingReportAction : uint8_t {
+  FOLLOW,  ///< A window is open: schedule the next poll as usual.
+  OPEN,    ///< No window: one was opened now; schedule the next poll as usual.
+  END,     ///< The window ran out: it is closed and reported ended; no further poll.
+  NONE,    ///< No window and none may be opened: no poll.
+};
+
 /// @brief Per-hub poll scheduling and failure-backoff policy.
 ///
 /// Maintains a PollTracking entry per device; all hub poll bookkeeping lives
@@ -181,6 +189,17 @@ class StatusPollPolicy {
   void begin_tracking(const std::string &device_id, uint32_t initial_delay_ms, uint32_t now);
   /// Stop all polling for a device and reset failure counts. Preserves interval_ms.
   void clear(const std::string &device_id);
+
+  /// Decide what a status report that reads as moving means for the follow-up window.
+  ///
+  /// An open window is followed and its deadline stays: a later report never extends it. A window
+  /// whose deadline has passed is closed and reported ended (see pop_ended_device()); the report
+  /// that finds it expired does not reopen it, so a poll the hub scheduled itself cannot chain
+  /// windows. Without a window, the report opens one at @p now when @p may_open allows it.
+  /// @param device_id Device the report belongs to.
+  /// @param now Current millis().
+  /// @param may_open True when this kind of device may start tracking from a report alone.
+  MovingReportAction on_moving_report(const std::string &device_id, uint32_t now, bool may_open);
 
   // --- Next-update scheduling ---
   /// Schedule the next poll at an absolute millis() timestamp.

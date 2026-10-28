@@ -257,7 +257,13 @@ interior venetian blind keeps its tilt slider. No two-way device of either kind 
 - **A cover whose device goes quiet after a move goes idle once the hub stops polling.** If the
   device never reports again after a move, the cover shows idle at the last position it reported
   when the hub gives up polling, about 7 to 8 minutes after the move. The hub retries a missed poll
-  at growing gaps and stops once the next gap would end more than 10 minutes after the move.
+  at growing gaps and stops once the next gap would end more than 10 minutes after the move. The
+  same holds for a move the hub found by reading the device.
+- **A cover found moving by a read is followed until it reports stopped.** A read that finds the
+  device moving starts the same bounded polling as a command does. That covers a reboot in the
+  middle of a move and a move by a remote the hub did not hear. A reply that arrives after the
+  10 minutes ran out ends the polling and shows the cover at rest at its last reported position;
+  the next read that finds it moving starts polling again.
 
 A lambda that respects the position contract:
 

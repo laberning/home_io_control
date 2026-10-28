@@ -215,6 +215,22 @@ bool reports_stopped(const IoDevice &dev, uint8_t flags) {
   return device_has_no_motion(dev.type, dev.subtype) || (flags & STATUS_STOPPED) != 0;
 }
 
+/// @brief Decide whether a report that reads as moving schedules a follow-up poll.
+///
+/// A moving report opens the follow-up window when none is open, for device kinds that report
+/// motion through status; a report that finds the window expired closes it and schedules nothing.
+/// @param id Device ID for policy lookup and the log line.
+/// @param dev Device record whose last_status stamps the report.
+/// @param policy Poll policy owning the window.
+/// @return True when the caller schedules the next poll.
+bool follow_moving_report(const std::string &id, const IoDevice &dev, StatusPollPolicy &policy) {
+  const MovingReportAction action =
+      policy.on_moving_report(id, dev.last_status, detail::known_device_reports_motion_through_status(dev));
+  if (action == MovingReportAction::OPEN)
+    ESP_LOGD(detail::TAG, "Device %s: reports moving with no poll planned: following it", id.c_str());
+  return action == MovingReportAction::FOLLOW || action == MovingReportAction::OPEN;
+}
+
 /// @brief Apply a private-response frame to the device record.
 /// @param id Device ID for policy lookup.
 /// @param dev Device record to update.
@@ -262,10 +278,12 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   if (remaining_s.has_value() && *remaining_s == 0 && (reported_stopped || !dev.reports_remaining_time))
     remaining_s.reset();
 
-  if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
+  if (effective_is_stopped(dev)) {
     policy.clear(id);
     return;
   }
+  if (!follow_moving_report(id, dev, policy))
+    return;
 
   uint32_t const delay_ms = compute_private_response_delay_ms(dev, remaining_s, policy, id);
   ESP_LOGD(detail::TAG,
@@ -295,10 +313,12 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
   // The device's own flag, as on the poll path (apply_private_response_status()).
   track_motion_evidence(dev, !reported_stopped, dev.last_status);
 
-  if (effective_is_stopped(dev) || !policy.is_tracking_active(id, dev.last_status)) {
+  if (effective_is_stopped(dev)) {
     policy.clear(id);
     return;
   }
+  if (!follow_moving_report(id, dev, policy))
+    return;
 
   policy.set_next_update(id, dev.last_status + compute_status_update_delay_ms(dev, policy, id));
 }
@@ -390,13 +410,14 @@ void IOHomeControlComponent::settle_ended_status_tracking_() {
       ESP_LOGD(detail::TAG, "Device %s: no poll left to confirm its stop at %.2f%%, target %.2f%%: taken as at rest",
                ended->c_str(), static_cast<double>(dev->position), static_cast<double>(dev->target));
     } else if (!effective_is_stopped(*dev) && detail::known_device_reports_motion_through_status(*dev)) {
-      // The device was last seen (or commanded) moving and no report has followed; with no poll left
-      // the cover would show movement for good. Position and target stay as last reported.
+      // The device was last seen (or commanded) moving and has not reported a stop: no report came,
+      // or the last one still read moving after the window ran out. With no poll left the cover would
+      // show movement for good. Position and target stay as last reported.
       if (dev->position == UNKNOWN_POSITION) {
-        ESP_LOGI(detail::TAG, "Device %s: no status report since its move; shown at rest at an unknown position",
+        ESP_LOGI(detail::TAG, "Device %s: no stop reported since its move; shown at rest at an unknown position",
                  ended->c_str());
       } else {
-        ESP_LOGI(detail::TAG, "Device %s: no status report since its move; shown at rest at %.0f%%", ended->c_str(),
+        ESP_LOGI(detail::TAG, "Device %s: no stop reported since its move; shown at rest at %.0f%%", ended->c_str(),
                  static_cast<double>(dev->position));
       }
       dev->optimistic.clear_position();
