@@ -292,6 +292,16 @@ class ManagementActions {
   ///     resulting minimum, 1 = resulting maximum (any other index is rejected, a sweep reaching
   ///     past 1 is rejected whole). The reply is reported raw plus a decode labelled "assumed
   ///     layout" in `ManagementActionResult::decoded`; it is never applied to the device record.
+  ///   - "subscribe_event": create_subscribe_event() (CMD_SUBSCRIBE_EVENT 0x73), `index` 0 = battery
+  ///     level event 0x2001, 1 = local sensor event 0x2005 (any other index is rejected). It changes
+  ///     device state: it stores a subscription with no confirmed way to remove it, so it is not
+  ///     sweepable and the builder accepts only those two events (ADR 0060). It is sent
+  ///     once: a try the device authenticated is never repeated, so silence after acceptance is
+  ///     reported as "accepted but no response". Whatever the device reports afterwards is recorded
+  ///     by the device-event recorder, never applied to the device record.
+  ///   - "unsubscribe_event": create_unsubscribe_event(), the same request with action byte 0x00,
+  ///     same index mapping and the same guards. An untested guess at undoing a subscription; whether
+  ///     it works shows only in whether the device's reports stop.
   /// There is deliberately no "unknown4a" probe and no builder for CMD_UNKNOWN4A_REQ (0x4A)
   /// anywhere in this codebase — see ADR 0024 for the standing safety decision.
   ///

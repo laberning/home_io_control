@@ -149,9 +149,9 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
 
 /// Whether an authenticated-but-unanswered request may be sent again.
 ///
-/// Every request except CMD_EXECUTE is idempotent (status polls, name reads, management actions,
-/// config writes) and keeps its full retry budget when the device authenticates but never closes
-/// the exchange.
+/// Every request except CMD_EXECUTE and CMD_SUBSCRIBE_EVENT is idempotent (status polls, name
+/// reads, management actions, config writes) and keeps its full retry budget when the device
+/// authenticates but never closes the exchange.
 ///
 /// CMD_EXECUTE moves something, and a missing closing reply means two different things depending
 /// on the device. Some devices never close an EXECUTE exchange within the response window and
@@ -161,6 +161,10 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
 /// that left an awning moving). So an EXECUTE is sent again only to a device known to confirm,
 /// only when repeating it is harmless (is_repeatable_execute()), and at most
 /// UNCONFIRMED_EXECUTE_MAX_RESENDS times per exchange.
+///
+/// CMD_SUBSCRIBE_EVENT stores a subscription in the device. A try the device authenticated is
+/// enough to have stored it, and a second accepted copy has no use, so it is never sent again.
+///
 /// @param request                  Outbound request frame.
 /// @param target_confirms_execute  The target has closed an EXECUTE exchange with a reply before
 ///                                 (TargetEvidence::confirms_execute).
@@ -169,6 +173,8 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
 /// @return true when the exchange should spend another try.
 [[nodiscard]] inline bool retry_after_unconfirmed_accept_is_safe(const IoFrame &request, bool target_confirms_execute,
                                                                  uint8_t unconfirmed_tries) {
+  if (request.cmd == CMD_SUBSCRIBE_EVENT)
+    return false;
   if (request.cmd != CMD_EXECUTE)
     return true;
   return target_confirms_execute && is_repeatable_execute(request) &&

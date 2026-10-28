@@ -60,6 +60,7 @@ home_io_control:
   recover_oneway_key: true
   scan_paired_devices_button: true
   discover_and_pair_button: true
+  diagnostic_probes: true  # compiles the probes and the Last Device Event sensor
   # Two identities: one inheriting the hub system_key with a derived node_id, one with its own
   # key and an explicit address — the two shapes the schema has to support.
   oneway_controllers:

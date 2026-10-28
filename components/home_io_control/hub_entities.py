@@ -5,7 +5,8 @@
 ## Declares their IDs during validation (ADR 0009: an ID first created in to_code() is
 ## silently dropped at runtime) and creates them in to_code(): the foreign-pairing and
 ## 1W-key-recovery arming switches, the Scan Paired Devices button, and the Discover &
-## Pair button with its Last Pairing Result sensor.
+## Pair button with its Last Pairing Result sensor, and (with diagnostic_probes) the Last Device
+## Event sensor.
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -24,6 +25,8 @@ from esphome.core import ID
 from .hub_names import (
     CONF_ACCEPT_FOREIGN_PAIRING,
     CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID,
+    CONF_DEVICE_EVENT_SENSOR_ID,
+    CONF_DIAGNOSTIC_PROBES,
     CONF_DISCOVER_AND_PAIR_BUTTON,
     CONF_DISCOVER_AND_PAIR_BUTTON_ID,
     CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID,
@@ -32,6 +35,7 @@ from .hub_names import (
     CONF_SCAN_PAIRED_DEVICES_BUTTON,
     CONF_SCAN_PAIRED_DEVICES_BUTTON_ID,
     IOHomeAcceptForeignPairingSwitch,
+    IOHomeDeviceEventTextSensor,
     IOHomeDiscoverButton,
     IOHomePairingResultTextSensor,
     IOHomeRecoverOneWayKeySwitch,
@@ -109,6 +113,19 @@ def inject_discover_and_pair_result_sensor_id(config):
     )
 
 
+def inject_device_event_sensor_id(config):
+    """The "Last Device Event" sensor exists only with `diagnostic_probes: true`: it shows what the
+    device-event recorder saw, and that recorder is a diagnostic tool of the probe build.
+    """
+    return _inject_hub_entity_id(
+        config,
+        flag_key=CONF_DIAGNOSTIC_PROBES,
+        id_key=CONF_DEVICE_EVENT_SENSOR_ID,
+        suffix="device_event_sensor",
+        cls=IOHomeDeviceEventTextSensor,
+    )
+
+
 async def _create_hub_entity(schema, new_entity, entity_id, name, var):
     """Create one hub-level entity from its declared ID and a fixed name, bound to the hub.
 
@@ -174,5 +191,25 @@ async def create_discover_and_pair_button(config, var):
         text_sensor_component.new_text_sensor,
         config[CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID],
         "Last Pairing Result",
+        var,
+    )
+
+
+async def create_device_event_sensor(config, var):
+    """Create the hub-level "Last Device Event" diagnostic text sensor.
+
+    The value is `#<n> t=<uptime s> <SRC> <cmd> <payload hex>`; the counter makes a repeated
+    identical report a new state, which Home Assistant's history needs.
+    """
+    sensor_schema = text_sensor_component.text_sensor_schema(
+        IOHomeDeviceEventTextSensor,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        icon="mdi:radio-tower",
+    )
+    await _create_hub_entity(
+        sensor_schema,
+        text_sensor_component.new_text_sensor,
+        config[CONF_DEVICE_EVENT_SENSOR_ID],
+        "Last Device Event",
         var,
     )

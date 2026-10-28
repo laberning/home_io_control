@@ -250,6 +250,8 @@ def hub_entity_ids_are_declared_at_validation_time():
          n.CONF_DISCOVER_AND_PAIR_BUTTON_ID, "discover_and_pair_button"),
         (e.inject_discover_and_pair_result_sensor_id, n.CONF_DISCOVER_AND_PAIR_BUTTON,
          n.CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID, "pairing_result_sensor"),
+        (e.inject_device_event_sensor_id, n.CONF_DIAGNOSTIC_PROBES,
+         n.CONF_DEVICE_EVENT_SENSOR_ID, "device_event_sensor"),
     ]
     for inject, flag, id_key, suffix in injectors:
         explicit = inject({CONF_ID: ID("my_hub", is_declaration=True), flag: True})

@@ -620,6 +620,32 @@ bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst
 bool create_limitation_status_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, LimitationType type,
                                    bool low_power);
 
+/// Build a subscribe-to-event request (0x73) for the `subscribe_event` diagnostic probe. The payload
+/// is `01 <event hi> <event lo>`. This is the one builder here whose request changes state in the
+/// device (a stored subscription), so it accepts only the two allowlisted ids,
+/// EVENT_BATTERY_LEVEL_CHANGE and EVENT_LOCAL_SENSOR, and returns false for anything else.
+/// \todo The request shape is unconfirmed on hardware: no device has been captured answering it.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param event_id EVENT_BATTERY_LEVEL_CHANGE or EVENT_LOCAL_SENSOR.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @return true on success, false for an event id outside the allowlist.
+bool create_subscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint16_t event_id, bool low_power);
+
+/// Build an unsubscribe request for the `unsubscribe_event` diagnostic probe: CMD_SUBSCRIBE_EVENT
+/// (0x73) with payload `00 <event hi> <event lo>`, the subscribe request with its action byte
+/// cleared. Same two-id allowlist as create_subscribe_event().
+/// \todo The action value 0x00 is a guess from the frame's shape: no device has been seen to stop
+/// reporting after it. It exists to test whether a subscription can be undone.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param event_id EVENT_BATTERY_LEVEL_CHANGE or EVENT_LOCAL_SENSOR.
+/// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @return true on success, false for an event id outside the allowlist.
+bool create_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint16_t event_id, bool low_power);
+
 /// Build a tilt‑aware get‑status request (0x03 with extended payload) that returns
 /// the 16‑byte tilt block in the response.
 /// @param f IoFrame to populate.

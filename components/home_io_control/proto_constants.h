@@ -214,10 +214,11 @@ static constexpr uint8_t CMD_SET_NAME_RESP = 0x53;  ///< Device-name write respo
 static constexpr uint8_t CMD_GET_INFO1 =
     0x54;  ///< Request device general info 1. Sent by the `get_info1` diagnostic probe
            ///< (docs/diagnostic-probes.md, ADR 0024); field-observed on air from a real hub.
-static constexpr uint8_t CMD_GET_INFO1_RESP = 0x55;  ///< Device general info 1 response. Still never captured on our
-                                                     ///< wire or in any field log, and nothing decodes it — accepted by
-                                                     ///< the soft-PHY only so a probe reply is not dropped as an
-                                                     ///< unknown command.
+static constexpr uint8_t CMD_GET_INFO1_RESP =
+    0x55;  ///< Device general info 1 response. One capture in the corpus
+           ///< (tests/corpus/captures/probe/velux_window_probe_metadata_replies.yaml);
+           ///< nothing decodes it. Accepted by the soft-PHY so a probe reply is
+           ///< not dropped as an unknown command.
 static constexpr uint8_t CMD_GET_INFO2 = 0x56;       ///< Request device type/model info. The only thing that sends
                                                      ///< it is the `get_info2` diagnostic probe; the corpus has no
                                                      ///< fixture for the request itself -- every 0x57 capture on
@@ -236,11 +237,36 @@ static constexpr uint8_t CMD_GET_GENERAL_INFO3_RESP =
 // Configuration and status update commands
 static constexpr uint8_t CMD_SET_CONFIG1 = 0x6F;  ///< Configure device to auto-send status updates
 static constexpr uint8_t CMD_SET_CONFIG1_RESP =
-    0x70;  ///< Config response, otherwise undocumented. Never observed in our corpus or in any
-           ///< field log, and not sent or handled anywhere in this codebase beyond the generic
-           ///< "is this a known command byte" check in radio_soft_phy.cpp.
+    0x70;  ///< Config response; meaning undecoded. A device that was subscribed to an event
+           ///< (CMD_SUBSCRIBE_EVENT) is expected to report with this command. Never applied to device
+           ///< state: the device-event recorder (IOHomeControlComponent::record_device_event_()) logs
+           ///< it raw. Logged under the name SET_CONFIG1_RESP whatever it carries.
+static constexpr uint8_t CMD_SUBSCRIBE_EVENT =
+    0x73;  ///< Subscribe a device to one event: payload `<action> <event hi> <event lo>`, action
+           ///< EVENT_SUBSCRIPTION_SUBSCRIBE or EVENT_SUBSCRIPTION_UNSUBSCRIBE. Sent only by the
+           ///< `subscribe_event` / `unsubscribe_event` diagnostic probes (docs/diagnostic-probes.md,
+           ///< ADR 0060).
+           ///< \todo Needs confirmation on hardware: no captured device has answered one yet.
 static constexpr uint8_t CMD_STATUS_UPDATE = 0x71;       ///< Device-initiated status update (needs auth)
 static constexpr uint8_t CMD_STATUS_UPDATE_RESP = 0x72;  ///< Acknowledge status update
+
+/// @name Subscription action (first CMD_SUBSCRIBE_EVENT payload byte)
+/// @{
+static constexpr uint8_t EVENT_SUBSCRIPTION_SUBSCRIBE = 0x01;  ///< Ask the device to report the event.
+/// Ask the device to stop reporting the event. \todo A guess from the frame's shape: no device has
+/// been seen to act on it. Kept only to test whether a subscription can be undone.
+static constexpr uint8_t EVENT_SUBSCRIPTION_UNSUBSCRIBE = 0x00;
+/// @}
+
+/// @name Subscribable device events (CMD_SUBSCRIBE_EVENT payload)
+/// The only two event ids the `subscribe_event` probe can send; create_subscribe_event() refuses every other id.
+/// \todo Both need confirmation on hardware: no device has been seen to accept or report either yet.
+/// @{
+static constexpr uint16_t EVENT_BATTERY_LEVEL_CHANGE =
+    0x2001;  ///< A battery-powered device reports its charge level changing.
+static constexpr uint16_t EVENT_LOCAL_SENSOR =
+    0x2005;  ///< A device reports a change on a sensor wired to it (sun, window, ...).
+/// @}
 
 static constexpr uint8_t CMD_SEND_RAW_MESSAGE =
     0xF0;  ///< Named "Send Raw Message" / "Find Hardware" — two candidate names, neither settled.

@@ -118,6 +118,9 @@ CONF_DISCOVER_AND_PAIR_BUTTON_ID = "_discover_and_pair_button_id"
 # window (see button.py) both exist, keying different config dicts -- the hub block here, vs. a
 # legacy button: entry there.
 CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID = "_discover_and_pair_result_sensor_id"
+# Internal config key for the "Last Device Event" diagnostic sensor ID (injected by post-validator,
+# gated on `diagnostic_probes: true`; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
+CONF_DEVICE_EVENT_SENSOR_ID = "_device_event_sensor_id"
 # Internal config key for the "Allow LR1121 Bootloader Rewrite (Irreversible)" companion switch ID
 # (injected by post-validator; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above --
 # only present when lr1121_firmware_update.bootloader: is configured).
@@ -168,6 +171,10 @@ IOHomeDiscoverButton = home_io_control_ns.class_(
 )
 IOHomePairingResultTextSensor = home_io_control_ns.class_(
     "IOHomePairingResultTextSensor", text_sensor_component.TextSensor, cg.Component
+)
+# Hub-level diagnostic text sensor showing the last recorded device event (platform_hub_controls.h).
+IOHomeDeviceEventTextSensor = home_io_control_ns.class_(
+    "IOHomeDeviceEventTextSensor", text_sensor_component.TextSensor, cg.Component
 )
 # Generated 1W command buttons and their per-identity diagnostic sensor
 # (platform_oneway_entities.h). Created from the `oneway_controllers:` block, never a `button:`

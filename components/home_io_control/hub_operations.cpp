@@ -161,6 +161,27 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
     this->poll_policy_.mark_stop_settle(device_id);
 }
 
+// A device event (0x70) from the very device we asked can arrive while we listen for the reply, and
+// classify_exchange_first_response() accepts any endpoint-matching frame as that reply. It answers
+// none of our requests, so it is recorded and never applied. The device is awake and transmitting,
+// so the request is asked once more rather than counted as a timeout (which would start the poll
+// backoff for a device that did answer, just with something else). An EXECUTE that is not safe to
+// repeat is not sent again: it ends as unanswered, like any lost exchange.
+ExchangeOutcome IOHomeControlComponent::exchange_past_device_event_(const IoFrame &request, IoFrame &response,
+                                                                    uint8_t max_tries) {
+  ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
+  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || response.cmd != CMD_SET_CONFIG1_RESP)
+    return outcome;
+  this->record_device_event_(response);
+  if (request.cmd == CMD_EXECUTE && !decisions::is_repeatable_execute(request))
+    return ExchangeOutcome::FAILED;
+  outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
+  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || response.cmd != CMD_SET_CONFIG1_RESP)
+    return outcome;
+  this->record_device_event_(response);
+  return ExchangeOutcome::FAILED;
+}
+
 // Run an authenticated request on the standard command channel and do the per-outcome bookkeeping
 // every caller shares; what the reply means is left to the caller.
 IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_record_(const std::string &device_id,
@@ -169,7 +190,7 @@ IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_recor
                                                                                    const RequestOptions &options) {
   const bool warn_on_no_response = options.warn_on_no_response;
   const uint32_t retry_after_fail_ms = options.retry_after_fail_ms;
-  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, options.max_tries);
+  const ExchangeOutcome outcome = this->exchange_past_device_event_(request, response, options.max_tries);
   // An unconfirmed acceptance means the device authenticated the request but never closed the
   // exchange. Whether that counts as success depends entirely on what the request was *for*:
   //   - a command (CMD_EXECUTE) is treated as done. The device has it, and most devices that end
