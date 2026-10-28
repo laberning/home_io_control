@@ -76,6 +76,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0053](0053-a-device-may-carry-its-own-system-key.md) | A device may carry its own system key | An optional `system_key:` on any device entity; the exchange engine picks the key per frame from the peer's node, falling back to the hub key; Scan Paired Devices sweeps once per distinct key |
 | [0059](0059-device-capabilities-come-from-the-type-table.md) | Device capabilities come from the type table | One capability word per (type, subtype) row, resolved once per device; the subtype-58 rule is one function; named positions are one table; the Python mirror is sync-tested; keys a kind cannot use fail validation; unconfirmed kinds are marked experimental and warned about |
 | [0060](0060-a-state-changing-diagnostic-probe.md) | A state-changing diagnostic probe (amends 0024) | `subscribe_event` is allowlisted to two events, not sweepable, never re-sent after the device accepted it; reports are recorded on a diagnostic sensor and never applied to device state |
+| [0061](0061-a-moving-status-report-opens-the-follow-up-window.md) | A moving status report opens the follow-up window | A report that reads as moving opens the window when none is open; a report that finds it expired ends it instead of reopening it; only kinds that report motion through status may open one |
 
 ### Security
 
@@ -164,6 +165,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0058: Pairing reads the heater behind an Atlantic pairing node directly](0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md)
 - [ADR 0059: Device capabilities come from the type table](0059-device-capabilities-come-from-the-type-table.md)
 - [ADR 0060: A state-changing diagnostic probe](0060-a-state-changing-diagnostic-probe.md)
+- [ADR 0061: A moving status report opens the follow-up window](0061-a-moving-status-report-opens-the-follow-up-window.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

@@ -45,6 +45,21 @@ void StatusPollPolicy::clear(const std::string &device_id) {
   // interval_ms is configuration — NOT cleared; remains set for future tracking cycles.
 }
 
+MovingReportAction StatusPollPolicy::on_moving_report(const std::string &device_id, uint32_t now, bool may_open) {
+  if (is_tracking_active(device_id, now))
+    return MovingReportAction::FOLLOW;
+  if (get_poll_deadline(device_id) != 0) {
+    // The window ran out before this report: a final outcome, so it is closed rather than reopened.
+    note_ended_(device_id);
+    clear(device_id);
+    return MovingReportAction::END;
+  }
+  if (!may_open)
+    return MovingReportAction::NONE;
+  begin_tracking(device_id, 0, now);
+  return MovingReportAction::OPEN;
+}
+
 void StatusPollPolicy::set_next_update(const std::string &device_id, uint32_t abs_time) {
   tracking_[device_id].next_update = abs_time;
 }

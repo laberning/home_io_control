@@ -635,3 +635,64 @@ TEST(StatusPollPolicyForeign, MillisWrapAround) {
   EXPECT_EQ(p.on_foreign_frame("DEV", CHAL, "A", CMD_CHALLENGE_REQ, before_wrap + 1000 + 50, 0), ForeignAction::IGNORE)
       << "challenge 50 ms after a read, across the wrap";
 }
+
+// ============================================================================
+// A "moving" status report and the follow-up window (on_moving_report)
+// ============================================================================
+
+TEST(StatusPollPolicy, OnMovingReportFollowsAnOpenWindow) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  const uint32_t deadline = policy.get_poll_deadline("DEV");
+
+  EXPECT_EQ(policy.on_moving_report("DEV", T0 + 60000, true), MovingReportAction::FOLLOW);
+  EXPECT_EQ(policy.get_poll_deadline("DEV"), deadline) << "a later answer never extends the window";
+  EXPECT_EQ(policy.on_moving_report("DEV", T0 + 60000, false), MovingReportAction::FOLLOW)
+      << "an open window is followed whatever the permission to open one";
+}
+
+TEST(StatusPollPolicy, OnMovingReportOpensAWindowWhenNoneExists) {
+  StatusPollPolicy policy;
+
+  EXPECT_EQ(policy.on_moving_report("DEV", T0, true), MovingReportAction::OPEN);
+  EXPECT_EQ(policy.get_poll_deadline("DEV"), T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+  EXPECT_EQ(policy.get_next_update("DEV"), 0u) << "the caller schedules the poll";
+  EXPECT_TRUE(policy.is_tracking_active("DEV", T0));
+}
+
+TEST(StatusPollPolicy, OnMovingReportEndsAnExpiredWindowAndReportsIt) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+
+  EXPECT_EQ(policy.on_moving_report("DEV", T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS + 1, true), MovingReportAction::END);
+  EXPECT_EQ(policy.get_poll_deadline("DEV"), 0u) << "the window is closed";
+  EXPECT_EQ(policy.pop_ended_device(), std::optional<std::string>("DEV"));
+}
+
+TEST(StatusPollPolicy, OnMovingReportAfterAnEndedWindowOpensAFreshOne) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  const uint32_t late = T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS + 1;
+  ASSERT_EQ(policy.on_moving_report("DEV", late, true), MovingReportAction::END);
+
+  EXPECT_EQ(policy.on_moving_report("DEV", late + 1000, true), MovingReportAction::OPEN);
+  EXPECT_EQ(policy.get_poll_deadline("DEV"), late + 1000 + MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+}
+
+TEST(StatusPollPolicy, OnMovingReportWithoutPermissionNeverOpens) {
+  StatusPollPolicy policy;
+
+  EXPECT_EQ(policy.on_moving_report("DEV", T0, false), MovingReportAction::NONE);
+  EXPECT_EQ(policy.get_poll_deadline("DEV"), 0u);
+  EXPECT_EQ(policy.pop_ended_device(), std::nullopt);
+}
+
+TEST(StatusPollPolicy, OnMovingReportUnknownDeviceIdOpensAndKeepsAKnownDevicesInterval) {
+  StatusPollPolicy policy;
+  policy.set_interval("KNOWN", 2000);
+
+  EXPECT_EQ(policy.on_moving_report("NEW", T0, true), MovingReportAction::OPEN) << "an entry is created";
+  EXPECT_EQ(policy.on_moving_report("KNOWN", T0, true), MovingReportAction::OPEN);
+  EXPECT_EQ(policy.get_interval("KNOWN"), 2000u) << "opening a window keeps the configured cadence";
+  EXPECT_EQ(policy.get_interval("NEW"), 0u);
+}

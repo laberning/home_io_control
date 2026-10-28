@@ -400,6 +400,141 @@ TEST(HubStatus, StoppedOffTargetWithoutAFollowUpPollIsAtRest) {
   EXPECT_TRUE(dev->is_stopped) << "the device's own flag stands when no poll can confirm it";
 }
 
+TEST(HubStatus, UntrackedMovingReadOpensTheWindowAndFollowsTheMoveToItsEnd) {
+  // The read shortly after start-up has no window: the moving answer opens one, so the cover is
+  // followed until the device reports stopped.
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  ASSERT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x3200));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->is_stopped);
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "the next poll is scheduled";
+
+  esphome::test_clock::advance_ms(3000);
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0xC800));
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubStatus, UntrackedMovingStatusUpdateSchedulesAPoll) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("054E17");
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("054E17", esphome::millis()));
+  EXPECT_NE(comp.poll_policy_.get_next_update("054E17"), 0u);
+}
+
+TEST(HubStatus, MovingReplyAfterTheWindowExpiredSchedulesNoPollAndTheCoverIsAtRest) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  const float position = dev->position;
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS + 1000);
+
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "no further poll";
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  comp.settle_ended_status_tracking_();
+  EXPECT_TRUE(dev->is_stopped);
+  EXPECT_FLOAT_EQ(dev->position, position);
+  EXPECT_EQ(comp.poll_policy_.pop_ended_device(), std::nullopt) << "settled once";
+}
+
+TEST(HubStatus, StuckMovingDeviceIsAtRestWhenItsWindowRunsOutAndAFreshReadOpensANewOne) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));  // a read opens the window
+  ASSERT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  const uint32_t deadline = comp.poll_policy_.get_poll_deadline("ABC123");
+  for (int i = 0; i < 5; i++) {
+    esphome::test_clock::advance_ms(60000);
+    comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));  // every reply still moving
+  }
+  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), deadline) << "replies never extend the window";
+
+  esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+  comp.settle_ended_status_tracking_();
+  EXPECT_TRUE(dev->is_stopped) << "at rest at expiry";
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u);
+
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));  // a fresh read, not an own follow-up
+  EXPECT_FALSE(dev->is_stopped);
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubStatus, MovingReportOpensNoWindowForAHeater) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0);
+
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubStatus, MovingReportOpensNoWindowForAKindWithoutAnExecutePosition) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::BEACON, 0);
+  ASSERT_FALSE(detail::known_device_reports_motion_through_status(*dev));
+
+  comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));
+
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubStatus, UntrackedStoppedOffTargetReportOpensNoWindow) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->is_stopped) << "a stopped answer is final";
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  EXPECT_EQ(comp.poll_policy_.get_poll_deadline("ABC123"), 0u);
+}
+
 TEST(HubStatus, MovingReportForgetsTheStopCandidate) {
   esphome::test_clock::ManualClock clock(50000);
   TestableHubComponent comp;
