@@ -423,6 +423,13 @@ class IOHomeControlComponent : public Component,
   /// value, which Home Assistant's history needs (it records state changes only).
   [[nodiscard]] const std::string &last_device_event() const { return this->last_device_event_; }
 
+  /// Record a diagnostic probe's reply on the "Last Device Event" sensor when it is a device event
+  /// report (decisions::is_device_event_report()), such as the event a `subscribe_event` probe draws
+  /// at once. The reply is only recorded, never applied.
+  /// @param reply The probe's reply frame.
+  /// @return true when it was recorded.
+  bool record_probe_reply_event(const IoFrame &reply);
+
   /// Register a callback invoked after every recorded device event, used by the "Last Device Event"
   /// text sensor. Single-slot, mirrors set_pairing_result_callback().
   /// @param cb Callable with no arguments.
@@ -864,18 +871,27 @@ class IOHomeControlComponent : public Component,
   /// @param packet Raw radio packet containing a parsed IoFrame.
   void process_received_packet_(const RadioRxPacket &packet);
 
+  /// Handle an authenticated CMD_STATUS_UPDATE from a registered device: a device event report
+  /// (decisions::is_device_event_report()) is recorded, any other 0x71 is applied as a position update.
+  /// @param id The device's node ID string.
+  /// @param dev The device record.
+  /// @param frame The status update.
+  void apply_status_update_(const std::string &id, IoDevice &dev, const IoFrame &frame);
+
   /// Record @p frame as a device event when it qualifies: its source is a registered device and it is
-  /// either a CMD_SET_CONFIG1_RESP (the frame a subscription is expected to produce), or any frame
-  /// that reached the unhandled-command fallback while `diagnostic_probes` is on.
+  /// either a device event report (decisions::is_device_event_report()), or any frame that reached
+  /// the unhandled-command fallback while `diagnostic_probes` is on.
   /// @param frame The received frame.
   /// @param reached_unhandled_fallback True from the fallback after every other handler declined.
   /// @return true when the frame was recorded.
   bool record_if_device_event_(const IoFrame &frame, bool reached_unhandled_fallback);
 
-  /// Record a frame from a registered device that nothing else here handles: log it raw, count it,
-  /// and publish it on the "Last Device Event" sensor. The frame is unauthenticated data (ADR 0022):
-  /// it is never answered, never transmitted to and never applied to the device record, whatever it
-  /// claims to carry. Logs at INFO with `diagnostic_probes: true` and at DEBUG otherwise, since a
+  /// Record a device event report, or a frame from a registered device that nothing else here
+  /// handles: log it raw, count it, and publish it on the "Last Device Event" sensor. The recording
+  /// never answers the frame and never applies it to the device record, whatever it claims to carry
+  /// (ADR 0022, ADR 0060). The one acknowledgement is the ordinary one: a CMD_STATUS_UPDATE addressed
+  /// to this hub is authenticated and acknowledged with CMD_STATUS_UPDATE_RESP before it gets here,
+  /// whatever event it carries. Logs at INFO with `diagnostic_probes: true` and at DEBUG otherwise, since a
   /// subscription outlives the build that made it and must not fill a normal build's log.
   /// @param frame The received frame; its source is a registered device.
   void record_device_event_(const IoFrame &frame);
@@ -1047,11 +1063,12 @@ class IOHomeControlComponent : public Component,
     uint8_t max_tries;             ///< Transmit-attempt cap forwarded to send_and_receive_().
   };
 
-  /// send_and_receive_() on the command channel, except that a device event (0x70) taken as the reply
-  /// is recorded (record_device_event_()) and the request asked once more; a second event in a row,
-  /// or one answering an EXECUTE that is not safe to repeat, ends it as FAILED.
+  /// send_and_receive_() on the command channel, except that a device event report
+  /// (decisions::is_device_event_report()) taken as the reply is recorded (record_device_event_())
+  /// and the request asked once more; a second report in a row, or one answering an EXECUTE that is
+  /// not safe to repeat, ends it as FAILED.
   /// @param request Outbound request frame.
-  /// @param response Filled with the reply on SUCCESS_WITH_RESPONSE; never a 0x70 then.
+  /// @param response Filled with the reply on SUCCESS_WITH_RESPONSE; never a device event report then.
   /// @param max_tries Try budget per send, as for send_and_receive_().
   /// @return The exchange outcome.
   ExchangeOutcome exchange_past_device_event_(const IoFrame &request, IoFrame &response, uint8_t max_tries);

@@ -1,0 +1,38 @@
+id: somfy_rs100_probe_subscribe_event_sx1262
+description: >
+  An RS100 Solar io awning motor (node 24635F) answering the `subscribe_event` diagnostic probe at
+  index 1, i.e. CMD_SUBSCRIBE_EVENT (0x73) with payload 01 20 05 (subscribe to the local-sensor
+  event 0x2005). Captured by the reporter's own Heltec V3.2 (SX1262) hub on issue #156,
+  2026-10-28 21:53 local time, after dark. The request went out behind a 1024-byte preamble
+  (`low_power: true`), drew a 0x3C challenge on the first try, and the authenticated answer is the
+  frame below. The request frame and the challenge were not logged.
+
+  The answer is a CMD_STATUS_UPDATE (0x71), not a 0x70. Its payload has the header every captured
+  0x71 has (flags, status, event id, length, event data; see decode_status_update_event()):
+    - data[0] = 05: flags, at rest (the same values as in position updates).
+    - data[1] = 60: status byte, battery bits 5-6 = 3 (full), as in this motor's status replies.
+    - data[2..3] = 20 05: the subscribed event, EVENT_LOCAL_SENSOR.
+    - data[4] = 05: five event-data bytes follow, which is exactly the rest of the frame.
+    - data[5] = 06: first event-data byte (a sensor type is the working reading; unconfirmed).
+    - data[6..9] = 00 00 00 00: the value, all zero at night; width and scale undecoded.
+  Position updates carry 10 0A (EVENT_STATUS_CHANGE) at data[2..3] with 0B data bytes instead, e.g.
+  somfy_rs100_statuspoll_kig300_sx1276.
+
+  The destination A1B2C3 is the hub address as posted by the reporter. Community capture: no system
+  key, HMAC not verifiable.
+source:
+  device: "Somfy RS100 Solar io awning motor (node 24635F)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3.2, main after 1cd1b2e, diagnostic_probes: true"
+  date: 2026-10-28
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/156"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "92 00 A1 B2 C3 24 63 5F 71 05 60 20 05 05 06 00 00 00 00"
+    crc: absent
+    note: >
+      cmd=STATUS_UPDATE(0x71), answer to 0x73 01 20 05. Event 0x2005, 5 data bytes: 06 00 00 00 00.
+      Battery bits read full. Logged by the probe (stage=probe_rx), after the 0x3C/0x3D handshake.

@@ -58,6 +58,20 @@ inline const corpus::CorpusCapture *capture_by_id(const char *id) {
   return nullptr;
 }
 
+/// Id of the RS100 Solar io's answer to a subscription: a 0x71 carrying EVENT_LOCAL_SENSOR.
+inline constexpr const char *SENSOR_EVENT_REPORT_CAPTURE = "somfy_rs100_probe_subscribe_event_sx1262";
+
+/// The captured sensor event report (SENSOR_EVENT_REPORT_CAPTURE), re-addressed to the given
+/// endpoints so a test hub that registers other node IDs takes it as its own device's report.
+inline IoFrame sensor_event_report(const uint8_t src[NODE_ID_SIZE], const uint8_t dst[NODE_ID_SIZE]) {
+  const corpus::CorpusCapture *capture = capture_by_id(SENSOR_EVENT_REPORT_CAPTURE);
+  EXPECT_NE(capture, nullptr) << SENSOR_EVENT_REPORT_CAPTURE << " is missing from the corpus";
+  IoFrame frame = capture != nullptr ? parse_capture_frame(capture->frames[0]) : IoFrame{};
+  set_src(frame, src);
+  set_dst(frame, dst);
+  return frame;
+}
+
 /// gtest instantiation name generator: uses the capture's own `id` as the test name.
 inline std::string capture_name_generator(const ::testing::TestParamInfo<const corpus::CorpusCapture *> &info) {
   return std::string(info.param->id);

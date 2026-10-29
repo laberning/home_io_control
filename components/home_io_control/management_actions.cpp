@@ -78,6 +78,8 @@ constexpr uint8_t PROBE_LIMITATION_MAX_INDEX = 1;
 constexpr uint8_t PROBE_LIMITATION_INDEX_MINIMUM = 0;  ///< `limitation` index that reads the resulting minimum.
 constexpr const char *PROBE_NAME_SUBSCRIBE_EVENT =
     "subscribe_event";  ///< create_subscribe_event(); index 0 = battery level event, 1 = local sensor event.
+/// "event 0xNNNN, NNN data bytes" plus the terminator.
+constexpr size_t PROBE_EVENT_HEADER_BUFFER_SIZE = 40;
 /// Highest `subscribe_event` index: one per allowlisted event id. The index is never the on-air event id.
 constexpr uint8_t PROBE_SUBSCRIBE_EVENT_MAX_INDEX = 1;
 constexpr uint8_t PROBE_SUBSCRIBE_EVENT_INDEX_BATTERY = 0;  ///< `subscribe_event` index for EVENT_BATTERY_LEVEL_CHANGE.
@@ -1232,6 +1234,17 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
   if (response.cmd == CMD_ERROR_RESP && apply_error_response(response, result)) {
     result.message += " [" + std::string(command_result_name(result.result_code)) + ": " +
                       command_result_description(result.result_code) + "]";
+  }
+  // A device event report (the answer a `subscribe_event` probe draws) is the first report of the
+  // subscription: it goes on the "Last Device Event" sensor next to the later ones, and its header is
+  // named. The event data stays raw: it is what the probe exists to collect.
+  StatusUpdateEvent event;
+  if (hub_->record_probe_reply_event(response) && decode_status_update_event(response, event)) {
+    char header[PROBE_EVENT_HEADER_BUFFER_SIZE];
+    snprintf(header, sizeof(header), "event 0x%04X, %u data bytes", static_cast<unsigned>(event.event_id),
+             static_cast<unsigned>(event.data_len));
+    result.decoded = header;
+    result.message += " [" + result.decoded + "]";
   }
   // The decode depends on the reply, not on which probe drew it, so any probe that happens to
   // draw a limitation reply reports it. Rendered, never applied: the device record is untouched.

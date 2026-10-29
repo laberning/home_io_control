@@ -462,6 +462,19 @@ LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base)
   return record;
 }
 
+bool decode_status_update_event(const IoFrame &frame, StatusUpdateEvent &out) {
+  if (frame.cmd != CMD_STATUS_UPDATE || frame.data_len < STATUS_UPDATE_EVENT_DATA_OFFSET)
+    return false;
+  const uint8_t data_len = frame.data[STATUS_UPDATE_EVENT_LENGTH_OFFSET];
+  if (data_len != frame.data_len - STATUS_UPDATE_EVENT_DATA_OFFSET)
+    return false;
+  out.event_id = static_cast<uint16_t>((frame.data[STATUS_UPDATE_EVENT_ID_OFFSET] << BITS_PER_BYTE) |
+                                       frame.data[STATUS_UPDATE_EVENT_ID_OFFSET + 1]);
+  out.data_offset = STATUS_UPDATE_EVENT_DATA_OFFSET;
+  out.data_len = data_len;
+  return true;
+}
+
 bool decode_limitation_status(const IoFrame &f, LimitationStatus &out) {
   if (f.cmd != CMD_LIMITATION_STATUS_RESP || f.data_len != LIMITATION_RESP_DATA_SIZE)
     return false;

@@ -237,17 +237,22 @@ static constexpr uint8_t CMD_GET_GENERAL_INFO3_RESP =
 // Configuration and status update commands
 static constexpr uint8_t CMD_SET_CONFIG1 = 0x6F;  ///< Configure device to auto-send status updates
 static constexpr uint8_t CMD_SET_CONFIG1_RESP =
-    0x70;  ///< Config response; meaning undecoded. A device that was subscribed to an event
-           ///< (CMD_SUBSCRIBE_EVENT) is expected to report with this command. Never applied to device
-           ///< state: the device-event recorder (IOHomeControlComponent::record_device_event_()) logs
-           ///< it raw. Logged under the name SET_CONFIG1_RESP whatever it carries.
+    0x70;  ///< Config response; meaning undecoded, never captured. Never applied to device state:
+           ///< the device-event recorder (IOHomeControlComponent::record_device_event_()) logs it raw.
+           ///< Logged under the name SET_CONFIG1_RESP whatever it carries.
 static constexpr uint8_t CMD_SUBSCRIBE_EVENT =
     0x73;  ///< Subscribe a device to one event: payload `<action> <event hi> <event lo>`, action
            ///< EVENT_SUBSCRIPTION_SUBSCRIBE or EVENT_SUBSCRIPTION_UNSUBSCRIBE. Sent only by the
            ///< `subscribe_event` / `unsubscribe_event` diagnostic probes (docs/diagnostic-probes.md,
-           ///< ADR 0060).
-           ///< \todo Needs confirmation on hardware: no captured device has answered one yet.
-static constexpr uint8_t CMD_STATUS_UPDATE = 0x71;       ///< Device-initiated status update (needs auth)
+           ///< ADR 0060). An RS100 Solar io answered a subscription to EVENT_LOCAL_SENSOR with a
+           ///< CMD_STATUS_UPDATE carrying that event
+           ///< (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml).
+/// Device status update, sent by the device on its own (authenticated, acknowledged with
+/// CMD_STATUS_UPDATE_RESP) or as the answer to a CMD_SUBSCRIBE_EVENT. The payload is a flags byte,
+/// a status byte (battery in STATUS_BATTERY_MASK), a big-endian event id, the length of the event
+/// data, then the event data: see decode_status_update_event(). Position updates carry
+/// EVENT_STATUS_CHANGE.
+static constexpr uint8_t CMD_STATUS_UPDATE = 0x71;
 static constexpr uint8_t CMD_STATUS_UPDATE_RESP = 0x72;  ///< Acknowledge status update
 
 /// @name Subscription action (first CMD_SUBSCRIBE_EVENT payload byte)
@@ -258,14 +263,23 @@ static constexpr uint8_t EVENT_SUBSCRIPTION_SUBSCRIBE = 0x01;  ///< Ask the devi
 static constexpr uint8_t EVENT_SUBSCRIPTION_UNSUBSCRIBE = 0x00;
 /// @}
 
+/// The event a position-bearing CMD_STATUS_UPDATE carries (every captured one, e.g.
+/// tests/corpus/captures/statuspoll/somfy_rs100_statuspoll_kig300_sx1276.yaml). The same two bytes
+/// follow the first byte of the CMD_SET_CONFIG1 payload the hub sends at the end of pairing.
+/// A CMD_STATUS_UPDATE carrying any other event is a device event report, never a position update.
+static constexpr uint16_t EVENT_STATUS_CHANGE = 0x100A;
+
 /// @name Subscribable device events (CMD_SUBSCRIBE_EVENT payload)
 /// The only two event ids the `subscribe_event` probe can send; create_subscribe_event() refuses every other id.
-/// \todo Both need confirmation on hardware: no device has been seen to accept or report either yet.
 /// @{
-static constexpr uint16_t EVENT_BATTERY_LEVEL_CHANGE =
-    0x2001;  ///< A battery-powered device reports its charge level changing.
-static constexpr uint16_t EVENT_LOCAL_SENSOR =
-    0x2005;  ///< A device reports a change on a sensor wired to it (sun, window, ...).
+/// A battery-powered device reports its charge level changing.
+/// \todo Needs confirmation on hardware: no device has been seen to accept or report it yet.
+static constexpr uint16_t EVENT_BATTERY_LEVEL_CHANGE = 0x2001;
+/// A device reports a sensor built into it (sun, window, ...). An RS100 Solar io accepted the
+/// subscription and answered with this event, first data byte 0x06, then four value bytes
+/// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml).
+/// \todo The value bytes are undecoded: the only report captured is all zero, at night.
+static constexpr uint16_t EVENT_LOCAL_SENSOR = 0x2005;
 /// @}
 
 static constexpr uint8_t CMD_SEND_RAW_MESSAGE =

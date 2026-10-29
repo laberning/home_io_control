@@ -1,0 +1,29 @@
+id: somfy_rs100_probe_get_info1_sx1262
+description: >
+  An RS100 Solar io awning motor (node 24635F) answering the `get_info1` diagnostic probe,
+  CMD_GET_INFO1 (0x54) without payload, with CMD_GET_INFO1_RESP (0x55). Captured by the reporter's
+  own Heltec V3.2 (SX1262) hub on issue #156, 2026-10-28 21:54, behind a 1024-byte preamble, answered
+  on the first try without a challenge. The reporter ran the probe twice; only one answer was posted.
+
+  Payload (14 bytes), undecoded beyond these observations:
+    - data[0..9] = 35 31 36 33 33 34 31 45 30 32: ASCII "5163341E02".
+    - data[10] = 04, data[11] = 00, data[12..13] = FF FF.
+  The only other 0x55 in the corpus (velux_window_probe_metadata_replies) has zeros in data[0..8]
+  and 03 in data[10]. data[10] is the working candidate for a protocol version; unconfirmed.
+
+  The destination A1B2C3 is the hub address as posted by the reporter. Community capture: no system
+  key.
+source:
+  device: "Somfy RS100 Solar io awning motor (node 24635F)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3.2, main after 1cd1b2e, diagnostic_probes: true"
+  date: 2026-10-28
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/156"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "96 00 A1 B2 C3 24 63 5F 55 35 31 36 33 33 34 31 45 30 32 04 00 FF FF"
+    crc: absent
+    note: "cmd=GET_INFO1_RESP(0x55). ASCII 5163341E02, then 04 00 FF FF."
