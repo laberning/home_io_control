@@ -32,7 +32,7 @@ namespace {
 /// Minimum payload length for 0x04 position-bearing replies: bytes 0-5 (stopped flag, target,
 /// current) are mandatory; bytes 6-7 (remaining time) are optional and checked separately.
 constexpr uint8_t PRIVATE_RESPONSE_MIN_DATA_LEN = 6;
-constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for 0x71 device-initiated updates.
+constexpr uint8_t STATUS_UPDATE_MIN_DATA_LEN = 11;       ///< Minimum payload length for a 0x71 position update.
 constexpr uint8_t GET_NAME_RESPONSE_MIN_DATA_LEN = 1;    ///< Minimum payload length for 0x51 name-bearing replies.
 constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload length for 0x57 type/subtype metadata.
 constexpr uint8_t ERROR_RESPONSE_MIN_DATA_LEN = 1;       ///< Minimum payload length for 0xFE result-bearing replies.
@@ -57,11 +57,16 @@ constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;    ///< Target-position MS
 constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;   ///< Current-position MSB offset in 0x04 replies.
 constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;       ///< Target-position MSB offset in 0x71 updates.
 constexpr uint8_t STATUS_UPDATE_CURRENT_OFFSET = 7;      ///< Current-position MSB offset in 0x71 updates.
-constexpr uint8_t GET_INFO2_TYPE_OFFSET = 10;            ///< Packed device type byte in 0x57 replies.
-constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;    ///< Packed type low bits plus subtype byte in 0x57 replies.
-constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;    ///< Selector byte announcing extended tilt payload.
-constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;         ///< Tilt-position MSB within extended replies.
-constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;         ///< Tilt-position LSB within extended replies.
+// The 0x71 position fields sit inside the EVENT_STATUS_CHANGE event data (decode_status_update_event()).
+static_assert(STATUS_UPDATE_TARGET_OFFSET == STATUS_UPDATE_EVENT_DATA_OFFSET,
+              "the target position is the first byte of the status-change event data");
+static_assert(STATUS_UPDATE_LAST_COMMAND_OFFSET > STATUS_UPDATE_EVENT_DATA_OFFSET,
+              "the last-command record is part of the status-change event data");
+constexpr uint8_t GET_INFO2_TYPE_OFFSET = 10;          ///< Packed device type byte in 0x57 replies.
+constexpr uint8_t GET_INFO2_TYPE_SUBTYPE_OFFSET = 11;  ///< Packed type low bits plus subtype byte in 0x57 replies.
+constexpr uint8_t EXTENDED_TILT_SELECTOR_OFFSET = 12;  ///< Selector byte announcing extended tilt payload.
+constexpr uint8_t EXTENDED_TILT_MSB_OFFSET = 13;       ///< Tilt-position MSB within extended replies.
+constexpr uint8_t EXTENDED_TILT_LSB_OFFSET = 14;       ///< Tilt-position LSB within extended replies.
 constexpr uint8_t PRIVATE_RESPONSE_REMAINING_TIME_MIN_DATA_LEN =
     8;  ///< A status reply shorter than this (a 6-byte VELUX reply) carries no remaining time.
 constexpr uint16_t PRIVATE_RESPONSE_REMAINING_TIME_NONE = 0xFFFF;    ///< All bits set: no remaining time provided.
@@ -597,6 +602,46 @@ void IOHomeControlComponent::maybe_fire_sender_event_(const OneWayFrameInfo &inf
   this->fire_homeassistant_event(detail::ONEWAY_SENDER_EVENT, detail::build_sender_event_data(info, linked));
 }
 
+void IOHomeControlComponent::apply_status_update_(const std::string &id, IoDevice &dev, const IoFrame &frame) {
+  // A 0x71 carrying another event than EVENT_STATUS_CHANGE is a subscribed report (EVENT_LOCAL_SENSOR,
+  // tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml), not a position
+  // update: its event data does not hold the fields decoded below.
+  if (decisions::is_device_event_report(frame)) {
+    this->record_device_event_(frame);
+    return;
+  }
+  if (frame.data_len < STATUS_UPDATE_MIN_DATA_LEN) {
+    detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+    return;
+  }
+
+  // Status-update frames come from the device itself rather than from a direct controller poll.
+  // They use different offsets for the target/current fields and do not carry reliable tilt data.
+  const float predicted_target = dev.optimistic.target;
+  apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
+  const LastCommandRecord record = decode_last_command_record(frame, STATUS_UPDATE_LAST_COMMAND_OFFSET);
+  detail::apply_last_command_record(dev, record);
+  detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
+  apply_battery_state(id, dev, frame);
+  detail::clear_command_result(dev);
+
+  // What caused the device to move (wind sensor, timer, a remote). Empty when the payload is
+  // too short to carry the byte — a 11-14 byte 0x71 is still applied for its position fields,
+  // it just has no originator to report. This reads the same data[14] byte the last-command
+  // record above just decoded, but through a separate, older, unguarded accessor kept for its
+  // own pinned test (StatusUpdateOriginatorIsAtOffset14AndDecodePathUndisturbed) — it can render
+  // a byte here that the "Last Command Source" sensor leaves empty, on the one payload shape
+  // that differs between them: an all-zero commander (which apply_last_command_record() above
+  // treats as "no record", see decode_last_command_record()'s doc comment) paired with a
+  // populated originator byte. No capture has shown that combination in practice.
+  const std::string originator = detail::describe_status_update_originator(frame);
+  if (!originator.empty())
+    ESP_LOGD(detail::TAG, "Device %s: status update originator=%s", id.c_str(), originator.c_str());
+
+  detail::log_status_update(id, dev, " (status update)");
+  this->notify_device_update_(id);
+}
+
 void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool trust_position) {
   const std::string id = node_id_to_string(frame.src);
   IoDevice *device_ptr = this->registry_.get(id);
@@ -640,36 +685,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
   }
 
   if (frame.cmd == CMD_STATUS_UPDATE) {
-    if (frame.data_len < STATUS_UPDATE_MIN_DATA_LEN) {
-      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
-      return;
-    }
-
-    // Status-update frames come from the device itself rather than from a direct controller poll.
-    // They use different offsets for the target/current fields and do not carry reliable tilt data.
-    const float predicted_target = dev.optimistic.target;
-    apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
-    const LastCommandRecord record = decode_last_command_record(frame, STATUS_UPDATE_LAST_COMMAND_OFFSET);
-    detail::apply_last_command_record(dev, record);
-    detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
-    apply_battery_state(id, dev, frame);
-    detail::clear_command_result(dev);
-
-    // What caused the device to move (wind sensor, timer, a remote). Empty when the payload is
-    // too short to carry the byte — a 11-14 byte 0x71 is still applied for its position fields,
-    // it just has no originator to report. This reads the same data[14] byte the last-command
-    // record above just decoded, but through a separate, older, unguarded accessor kept for its
-    // own pinned test (StatusUpdateOriginatorIsAtOffset14AndDecodePathUndisturbed) — it can render
-    // a byte here that the "Last Command Source" sensor leaves empty, on the one payload shape
-    // that differs between them: an all-zero commander (which apply_last_command_record() above
-    // treats as "no record", see decode_last_command_record()'s doc comment) paired with a
-    // populated originator byte. No capture has shown that combination in practice.
-    const std::string originator = detail::describe_status_update_originator(frame);
-    if (!originator.empty())
-      ESP_LOGD(detail::TAG, "Device %s: status update originator=%s", id.c_str(), originator.c_str());
-
-    detail::log_status_update(id, dev, " (status update)");
-    this->notify_device_update_(id);
+    this->apply_status_update_(id, dev, frame);
     return;
   }
 
@@ -756,14 +772,17 @@ constexpr uint32_t DEVICE_EVENT_MS_PER_SECOND = 1000;
 bool IOHomeControlComponent::record_if_device_event_(const IoFrame &frame, bool reached_unhandled_fallback) {
   if (this->get_device(node_id_to_string(frame.src)) == nullptr)
     return false;
-  // A 0x70 is the one frame a subscription is expected to produce; any other frame is recorded only
-  // with probes on, once nothing else here claimed it, because what a subscribed device reports with
-  // is inferred, not known.
-  const bool is_report = frame.cmd == CMD_SET_CONFIG1_RESP;
-  if (!is_report && !(reached_unhandled_fallback && this->diagnostic_probes_enabled_))
+  // A device event report (decisions::is_device_event_report()) is always recorded; any other frame
+  // only with probes on, once nothing else here claimed it, so a report of an unexpected shape is
+  // not lost.
+  if (!decisions::is_device_event_report(frame) && !(reached_unhandled_fallback && this->diagnostic_probes_enabled_))
     return false;
   this->record_device_event_(frame);
   return true;
+}
+
+bool IOHomeControlComponent::record_probe_reply_event(const IoFrame &reply) {
+  return this->record_if_device_event_(reply, /*reached_unhandled_fallback=*/false);
 }
 
 void IOHomeControlComponent::record_device_event_(const IoFrame &frame) {
@@ -901,6 +920,10 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   }
 
   if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE) {
+    // An event report from a registered device to another controller is recorded like a 0x70 below:
+    // recording only, nothing is transmitted or applied.
+    if (this->record_if_device_event_(frame, /*reached_unhandled_fallback=*/false))
+      return;
     // Passive receive mode can still observe replies/status from other exchanges (another
     // controller sharing a device, or an attacker who knows the device's node ID -- node IDs
     // travel in the clear, see README.md's "Reporting Unsupported Devices"). Nothing here proves

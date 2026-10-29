@@ -174,7 +174,8 @@ INSTANTIATE_TEST_SUITE_P(CorpusDecode, CorpusDecode, ::testing::ValuesIn(corpus_
 // STATUS_UPDATE_ORIGINATOR_OFFSET is the codec constant (proto_codecs.h). hub_status_test.cpp
 // covers the production call site (detail::describe_status_update_originator); what this test adds
 // is the corpus-wide evidence for the offset — data[14] names a real originator on every captured
-// 0x71, data[1] never does.
+// 0x71 position update (event EVENT_STATUS_CHANGE), data[1] never does. A 0x71 carrying another
+// event (a subscribed sensor report) has no originator; corpus_status_update_event_test.cpp covers it.
 TEST(CorpusStatusUpdateOriginator, OriginatorLivesAtOffset14NotOffset1) {
   int frames_seen = 0;
   for (const corpus::CorpusCapture *capture :
@@ -185,7 +186,9 @@ TEST(CorpusStatusUpdateOriginator, OriginatorLivesAtOffset14NotOffset1) {
       // No corpus fixture attaches a `cmd:` expectation to its 0x71 frames, so filter on the
       // parsed command byte rather than cf.has_cmd/cf.cmd (which would match nothing).
       IoFrame frame = corpus_test::parse_capture_frame(cf);
-      if (frame.cmd != CMD_STATUS_UPDATE)
+      StatusUpdateEvent event;
+      if (frame.cmd != CMD_STATUS_UPDATE ||
+          (decode_status_update_event(frame, event) && event.event_id != EVENT_STATUS_CHANGE))
         continue;
       frames_seen++;
       ASSERT_GT(frame.data_len, STATUS_UPDATE_ORIGINATOR_OFFSET)

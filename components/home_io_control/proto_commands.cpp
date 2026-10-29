@@ -136,7 +136,10 @@ constexpr size_t PRIVATE2_LONG_PAYLOAD_SIZE = 6;
 /// but a distinct field on a distinct command. EXECUTE_POSITION_LAYOUT_FLAG above is CMD_EXECUTE's
 /// unrelated data[4] flag and must not be reused here even though it is also 0x80.
 constexpr uint8_t PRIVATE2_EXTENDED_BLOCK_FLAG = 0x80;
-/// Status-update acknowledgement payload matched from controller traffic.
+/// Status-update acknowledgement payload, as another controller sends it to an RS100 Solar's 0x71
+/// (tests/corpus/captures/exchange/somfy_rs100_exchange_far_sx1262.yaml, frame `72 05 00`).
+/// Only an unsolicited 0x71 is acknowledged; the 0x71 that answers a CMD_SUBSCRIBE_EVENT is the
+/// reply to the hub's own request and gets none.
 constexpr uint8_t STATUS_UPDATE_ACK_PAYLOAD[] = {0x05, 0x00};
 /// Set-config payload that enables automatic status updates from the device.
 constexpr uint8_t SET_CONFIG1_STATUS_BROADCAST_PAYLOAD[] = {0xE0, 0x10, 0x0A, 0x08, 0x00};
@@ -1033,7 +1036,6 @@ bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *ds
   init_frame(f, true, false, true, true);
   set_dst(f, dst);
   set_src(f, own);
-  // Status update acknowledgment payload matched from working controller captures.
   return set_cmd(f, CMD_STATUS_UPDATE_RESP, STATUS_UPDATE_ACK_PAYLOAD, sizeof(STATUS_UPDATE_ACK_PAYLOAD));
 }
 

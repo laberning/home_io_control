@@ -2482,7 +2482,7 @@ TEST(HubStatusForeign, KlfStyleRoundRobinPollsEachDeviceOncePerTenMinutes) {
 }
 
 // ============================================================================
-// Device events (0x70 and other unhandled frames from a registered device)
+// Device events (event reports: 0x70 or a 0x71 with a subscribed event; and other unhandled frames)
 // ============================================================================
 // record_device_event_() logs, counts and publishes a frame; it never transmits and never touches
 // device state (ADR 0022, ADR 0060).
@@ -2623,6 +2623,116 @@ TEST(HubStatus, DeviceEventInsideAPollExchangeIsRecordedAndThePollAskedAgain) {
   ASSERT_TRUE(create_get_status(request, comp.node_id_, EVENT_DEVICE_ID, false));
   radio.queue_rx(make_rx_packet(device_event_frame(EVENT_DEVICE_ID, comp.node_id_)));
   // The real status reply answers the second ask: stopped at 50 %.
+  IoFrame reply{};
+  init_frame(reply, true, false, false, false);
+  set_src(reply, EVENT_DEVICE_ID);
+  set_dst(reply, comp.node_id_);
+  const uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
+  ASSERT_TRUE(set_cmd(reply, CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  radio.queue_rx_hold_until_sent(2);
+  radio.queue_rx(make_rx_packet(reply));
+
+  EXPECT_TRUE(comp.execute_request_and_update_("054E17", request, false, 0, 1));
+
+  EXPECT_EQ(radio.get_send_count(), 2) << "the poll is sent once more after the report";
+  EXPECT_EQ(comp.device_event_count(), 1u);
+  EXPECT_FLOAT_EQ(dev->position, 50.0F) << "the real reply is applied";
+}
+
+TEST(HubStatus, SensorEventStatusUpdateIsRecordedNotDecodedAsAPosition) {
+  // The authenticated path: update_device_status_() is what a 0x71 addressed to the hub reaches
+  // after its challenge. A 10-byte sensor report used to be dropped as too short for a position.
+  EventTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.set_diagnostic_probes_enabled(true);
+  IoDevice *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  dev->position = 42.0F;
+  dev->target = 42.0F;
+  dev->is_stopped = true;
+
+  comp.update_device_status_(corpus_test::sensor_event_report(EVENT_DEVICE_ID, comp.node_id_));
+
+  EXPECT_EQ(comp.device_event_count(), 1u);
+  EXPECT_NE(comp.last_device_event().find(" 054E17 0x71 05 60 20 05 05 06 00 00 00 00"), std::string::npos)
+      << comp.last_device_event();
+  EXPECT_FLOAT_EQ(dev->position, 42.0F);
+  EXPECT_FLOAT_EQ(dev->target, 42.0F);
+  EXPECT_TRUE(dev->is_stopped);
+}
+
+TEST(HubStatus, LongSensorEventStatusUpdateIsNeverReadAsAPosition) {
+  // A report long enough for the position offsets must still not be decoded as one.
+  EventTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  IoDevice *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  dev->position = 42.0F;
+  dev->target = 42.0F;
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  set_src(f, EVENT_DEVICE_ID);
+  set_dst(f, comp.node_id_);
+  const uint8_t payload[16] = {0x05, 0x60, 0x20, 0x05, 0x0B, 0x06, 0x00, 0x00,
+                               0x64, 0x00, 0x00, 0x64, 0x00, 0x00, 0x01, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(comp.device_event_count(), 1u);
+  EXPECT_FLOAT_EQ(dev->position, 42.0F);
+  EXPECT_FLOAT_EQ(dev->target, 42.0F);
+}
+
+TEST(HubStatus, PositionStatusUpdateIsStillAppliedAndNotRecorded) {
+  // Event EVENT_STATUS_CHANGE with 11 data bytes: the corpus shape of every position update.
+  EventTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.set_diagnostic_probes_enabled(true);
+  IoDevice *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  set_src(f, EVENT_DEVICE_ID);
+  set_dst(f, comp.node_id_);
+  const uint8_t payload[16] = {STATUS_STOPPED, 0x60, 0x10, 0x0A, 0x0B, 0x64, 0x00, 0x64,
+                               0x00,           0x00, 0x00, 0xBE, 0xFE, 0xDB, 0x01, 0x00};
+  set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
+
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(comp.device_event_count(), 0u);
+  EXPECT_FLOAT_EQ(dev->position, 50.0F);
+}
+
+TEST(HubStatus, OverheardSensorEventStatusUpdateIsRecordedWithoutTransmitting) {
+  EventTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  comp.set_diagnostic_probes_enabled(true);
+
+  comp.process_received_packet_(make_rx_packet(corpus_test::sensor_event_report(EVENT_DEVICE_ID, EVENT_OTHER_ID)));
+
+  EXPECT_EQ(comp.device_event_count(), 1u);
+  EXPECT_NE(comp.last_device_event().find("054E17 0x71"), std::string::npos) << comp.last_device_event();
+  EXPECT_EQ(radio.get_send_count(), 0);
+}
+
+TEST(HubStatus, SensorEventStatusUpdateInsideAPollExchangeIsRecordedAndThePollAskedAgain) {
+  EventTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  IoDevice *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  dev->position = 42.0F;
+  dev->target = 42.0F;
+  dev->is_stopped = true;
+  IoFrame request{};
+  ASSERT_TRUE(create_get_status(request, comp.node_id_, EVENT_DEVICE_ID, false));
+  radio.queue_rx(make_rx_packet(corpus_test::sensor_event_report(EVENT_DEVICE_ID, comp.node_id_)));
   IoFrame reply{};
   init_frame(reply, true, false, false, false);
   set_src(reply, EVENT_DEVICE_ID);

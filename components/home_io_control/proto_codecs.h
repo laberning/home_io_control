@@ -361,6 +361,39 @@ struct LastCommandRecord {
 LastCommandRecord decode_last_command_record(const IoFrame &frame, uint8_t base);
 
 // ============================================================================
+// Status-update event header (CMD_STATUS_UPDATE)
+// ============================================================================
+
+/// @name CMD_STATUS_UPDATE (0x71) payload header
+/// A 0x71 payload is `<flags> <status> <event hi> <event lo> <length> <event data...>`. Every captured
+/// position update carries EVENT_STATUS_CHANGE with 11 data bytes (the target/current/record offsets
+/// above sit inside them), and the one other report captured carries EVENT_LOCAL_SENSOR with 5
+/// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml). The length byte
+/// matches the frame exactly in all of them.
+/// @{
+inline constexpr uint8_t STATUS_UPDATE_EVENT_ID_OFFSET = 2;      ///< Event id, big-endian, 2 bytes.
+inline constexpr uint8_t STATUS_UPDATE_EVENT_LENGTH_OFFSET = 4;  ///< Number of event-data bytes that follow.
+inline constexpr uint8_t STATUS_UPDATE_EVENT_DATA_OFFSET = 5;    ///< First event-data byte.
+/// @}
+
+/// @brief The event header of a well-formed CMD_STATUS_UPDATE payload.
+struct StatusUpdateEvent {
+  uint16_t event_id{0};    ///< EVENT_STATUS_CHANGE for a position update, any other id for a device event report.
+  uint8_t data_offset{0};  ///< Payload offset of the first event-data byte (STATUS_UPDATE_EVENT_DATA_OFFSET).
+  uint8_t data_len{0};     ///< Number of event-data bytes; equals the payload length minus the header.
+};
+
+/// @brief Decode the event header of a CMD_STATUS_UPDATE.
+///
+/// Well formed means: long enough for the header, and its length byte names exactly the bytes that
+/// follow. A payload that is not well formed is left to the caller's older fixed-offset handling, so
+/// a 0x71 of a shape never captured is not reinterpreted.
+/// @param frame A parsed frame.
+/// @param out Receives the header on success.
+/// @return false unless `frame` is a well-formed CMD_STATUS_UPDATE.
+bool decode_status_update_event(const IoFrame &frame, StatusUpdateEvent &out);
+
+// ============================================================================
 // Limitation read (0x25 / 0x26)
 // ============================================================================
 

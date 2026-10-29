@@ -77,6 +77,17 @@ enum class PairingKeyConfirmDisposition : uint8_t {
 /// devices on the network, but contain only ephemeral cryptographic data.
 inline bool is_exchange_internal_command(uint8_t cmd) { return cmd == CMD_CHALLENGE_REQ || cmd == CMD_CHALLENGE_RESP; }
 
+/// Returns true for a frame that reports a device event rather than a status: a CMD_SET_CONFIG1_RESP,
+/// or a well-formed CMD_STATUS_UPDATE whose event is not EVENT_STATUS_CHANGE (a subscribed sensor
+/// report, see decode_status_update_event()). Such a frame is recorded on the "Last Device Event"
+/// sensor and never decoded as a position, whether it arrives on its own or inside an exchange.
+inline bool is_device_event_report(const IoFrame &frame) {
+  if (frame.cmd == CMD_SET_CONFIG1_RESP)
+    return true;
+  StatusUpdateEvent event;
+  return decode_status_update_event(frame, event) && event.event_id != EVENT_STATUS_CHANGE;
+}
+
 /// Returns true for the commands that write to a device: an execute, a mode activation or a private
 /// register write. A heard write changes the device's state, so this hub's view of it is stale; a heard
 /// read (any other command) changes nothing on the device. Deliberately a short list of writes rather

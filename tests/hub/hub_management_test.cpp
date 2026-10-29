@@ -2803,6 +2803,32 @@ TEST(HubManagement, ProbeDeviceSubscribeEventReportsA0x70ReplyRawAndNeverApplies
   EXPECT_EQ(dev->battery, battery_before);
 }
 
+TEST(HubManagement, ProbeDeviceSubscribeEventRecordsAStatusUpdateAnswerAsTheFirstReport) {
+  // The RS100 Solar io answers a subscription with a 0x71 carrying the event (the captured answer).
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->position = 42.0F;
+  dev->target = 42.0F;
+  dev->is_stopped = true;
+  radio.queue_rx(frame_to_packet(corpus_test::sensor_event_report(PROBE_DEVICE_NODE_ID, component.node_id_)));
+
+  const auto result = component.probe_device("ABC123", "subscribe_event", "1");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.response_cmd, CMD_STATUS_UPDATE);
+  EXPECT_EQ(result.decoded, "event 0x2005, 5 data bytes");
+  EXPECT_NE(result.message.find("[event 0x2005, 5 data bytes]"), std::string::npos) << result.message;
+  EXPECT_EQ(component.device_event_count(), 1u);
+  EXPECT_NE(component.last_device_event().find("ABC123 0x71 05 60 20 05 05 06 00 00 00 00"), std::string::npos)
+      << component.last_device_event();
+  EXPECT_FLOAT_EQ(dev->position, 42.0F);
+  EXPECT_FLOAT_EQ(dev->target, 42.0F);
+  EXPECT_TRUE(dev->is_stopped);
+}
+
 TEST(HubManagement, ProbeDeviceSubscribeEventAcceptedWithoutAReplyIsReportedAndSentOnce) {
   TestableManagementComponent component;
   MockRadio radio;

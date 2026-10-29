@@ -74,3 +74,20 @@ the reports cannot be decoded yet; they can only be recorded.
   that need captured reports first.
 - The recorder is a general tool: any frame a registered device sends that nothing handles shows up
   on the diagnostic sensor, so it also surfaces commands this project has not met yet.
+
+## Amendment (2026-10): reports arrive as `0x71`
+
+The Decision above expects a subscribed device to report with `0x70`. The first device to take a
+subscription, an RS100 Solar io in issue #156, answered `0x73 01 20 05` with a `0x71` instead:
+`05 60 20 05 05 06 00 00 00 00` (corpus `somfy_rs100_probe_subscribe_event_sx1262`). Every `0x71`
+in the corpus has the same header: a flags byte, a status byte, a two-byte event id, the length of
+the event data, then the event data. Position updates carry event `0x100A`, this answer carries the
+subscribed `0x2005`. Before this change the hub decoded every `0x71` as a position and dropped this
+one as too short, so a report would never have reached the sensor.
+
+A device event report is therefore a `0x70`, or a `0x71` whose length byte matches the frame and
+whose event is not `0x100A`. Point 5 applies to it unchanged with one difference: a `0x71` addressed
+to the hub is authenticated and acknowledged with `0x72`, as every status update is, before it is
+recorded. It is still never applied to device state. A `0x71` of any other shape keeps the position
+path, so a layout never captured is not reinterpreted. The probe's own answer is recorded as the
+first report.

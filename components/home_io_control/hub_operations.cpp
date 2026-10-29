@@ -161,7 +161,8 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
     this->poll_policy_.mark_stop_settle(device_id);
 }
 
-// A device event (0x70) from the very device we asked can arrive while we listen for the reply, and
+// A device event report (decisions::is_device_event_report(): a 0x70, or a 0x71 carrying a
+// subscribed event) from the very device we asked can arrive while we listen for the reply, and
 // classify_exchange_first_response() accepts any endpoint-matching frame as that reply. It answers
 // none of our requests, so it is recorded and never applied. The device is awake and transmitting,
 // so the request is asked once more rather than counted as a timeout (which would start the poll
@@ -170,13 +171,13 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
 ExchangeOutcome IOHomeControlComponent::exchange_past_device_event_(const IoFrame &request, IoFrame &response,
                                                                     uint8_t max_tries) {
   ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
-  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || response.cmd != CMD_SET_CONFIG1_RESP)
+  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || !decisions::is_device_event_report(response))
     return outcome;
   this->record_device_event_(response);
   if (request.cmd == CMD_EXECUTE && !decisions::is_repeatable_execute(request))
     return ExchangeOutcome::FAILED;
   outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
-  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || response.cmd != CMD_SET_CONFIG1_RESP)
+  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || !decisions::is_device_event_report(response))
     return outcome;
   this->record_device_event_(response);
   return ExchangeOutcome::FAILED;

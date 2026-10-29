@@ -176,9 +176,10 @@ class IOHomePairingResultTextSensor : public text_sensor::TextSensor, public Com
 /// @brief Diagnostic text sensor that publishes IOHomeControlComponent::last_device_event() after
 /// every recorded device event.
 ///
-/// Only created with `diagnostic_probes: true`. The value is unauthenticated raw data from a
-/// registered device, shown for diagnosis and never applied to device state (ADR 0022). Nothing is
-/// published before the first event of this boot.
+/// Only created with `diagnostic_probes: true`. The value is raw data from a registered device,
+/// shown for diagnosis and never applied to device state (ADR 0022, ADR 0060); only a status update
+/// addressed to the hub is authenticated before it is shown. Nothing is published before the first
+/// event of this boot.
 /// @ingroup hioc_platforms
 class IOHomeDeviceEventTextSensor : public text_sensor::TextSensor, public Component, public HubBoundEntity {
  public:

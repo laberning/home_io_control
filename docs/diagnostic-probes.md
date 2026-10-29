@@ -97,14 +97,14 @@ data:
 | `status_ext` | Extended `CMD_PRIVATE` at selector `0x80` | The block/`N` value | `0x00` and `0x01` | Field-observed: real hubs send exactly these two values to real motors. |
 | `status_ext_fn6` | Extended `CMD_PRIVATE` at selector `0x80`, function ID `0x06` | The block/`N` value | `0x00`, then `0x80` | The 4-byte extended **shape** is field-observed: a real hub sends `03 80 00 00` and `03 80 01 00` to real motors (40 frames across two logs), and the `0x80` at `data[1]` is what makes the `0x04` reply carry its trailing extended block. The **function ID** `0x06` in that shape is *not* field-observed — no hub has ever been seen sending it. `probe_sweep` caps a run at 16 consecutive indices, so `0x80` is out of reach of a sweep starting at 0 — send it with `probe_device` (or sweep `0x80`–`0x8F` explicitly). |
 | `status_ext_fn9` | Extended `CMD_PRIVATE` at selector `0x80`, function ID `0x09` | The block/`N` value | `0x00`, then `0x01` | Same shape evidence as `status_ext_fn6`; the function ID `0x09` in this shape is not field-observed. On the ordinary 3-byte form, `0x09` returned a stored position on every device tested — not a battery value. |
-| `get_info1` | `CMD_GET_INFO1` (0x54), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | Field-observed: a real hub sends `0x54` on air. One `0x55` answer is in the corpus (`velux_window_probe_metadata_replies`); its layout is not decoded. A device may also draw an `0xFE` "opcode not supported" or nothing at all — that is itself a result worth recording. |
+| `get_info1` | `CMD_GET_INFO1` (0x54), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | Field-observed: a real hub sends `0x54` on air. Two `0x55` answers are in the corpus (`velux_window_probe_metadata_replies`, `somfy_rs100_probe_get_info1_sx1262`); their layout is not decoded. A device may also draw an `0xFE` "opcode not supported" or nothing at all — that is itself a result worth recording. |
 | `get_info2` | `CMD_GET_INFO2` (0x56), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | The **request** has never been captured; it rests on the protocol's even=request / odd=answer pairing rule. The **answer** `0x57` is captured and carries a leading ASCII reference string followed by the packed type/subtype bytes this component already decodes. Reply strings are wire-observable and citable as-is; do not attempt to resolve one to a model name from any non-public source. |
 | `general_info3` | `CMD_GET_GENERAL_INFO3` (0x58), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | — |
 | `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte | `0x06`, then `0x05`, `0x09` | Field-observed: a real hub sends exactly these modifier bytes in the long form to real motors (e.g. request data `D4 00 80 D8 06 00`). This component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` values (`0x00`/`0x03`) are not what a hub sends, and never draw the extended block described below. |
 | `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | `0x03`, then `0x09` | Field-observed: a real hub sends the short form with these modifiers (e.g. request data `D8 03 00 00`). |
 | `status_mp_fp` | `CMD_PRIVATE` (0x03) function `0x01`, FPI mask `0xFE` (main parameter plus FP1-FP7), no index | — (`probe_device` only; `probe_sweep` rejects it) | — | The same read-only status request a VELUX KLF 200 gateway sends to its devices (public KLF 200 API specification v3.18, section 10.3.1.4), heard on air at 868 MHz and 2.4 GHz. This is the gateway's position and status poll: it does not read a limitation, so it cannot show rain protection (use `limitation` for that). The reply layout is not decoded: flags `2D`, the main parameter, then the parameter values. |
 | `limitation` | `CMD_LIMITATION_STATUS_REQ` (0x25) with data `{selector, 00, 00}` | `0` = resulting minimum, `1` = resulting maximum (any other value is rejected; `probe_sweep` accepts `0` to `1`) | `0`, then `1` | The request pair a VELUX KLF 200 gateway sends to its windows every five minutes, heard on air at 868 MHz in issue #98 (selector `80`, then `C0`). Its purpose follows the KLF 200 API specification v3.18, section 10.5 (get limitation: resulting minimum and maximum). The value layout is confirmed on a VELUX window dry and under rain; the originator and remaining-time bytes are unverified. |
-| `subscribe_event` | `CMD_SUBSCRIBE_EVENT` (0x73) with data `01 <event hi> <event lo>` | `0` = battery level event `0x2001`, `1` = local sensor event `0x2005` (any other value is rejected; `probe_sweep` refuses this probe) | `1` | **Unconfirmed: no device has been seen to accept or report either event.** The one probe that changes a device: it asks the device to report the event from now on, and no way to cancel that is known. Only those two events can be sent. A try the device authenticated is not repeated, so a device that takes the subscription and says nothing back ends as "accepted but no response". Reports are recorded, not decoded: see "Last Device Event" below. |
+| `subscribe_event` | `CMD_SUBSCRIBE_EVENT` (0x73) with data `01 <event hi> <event lo>` | `0` = battery level event `0x2001`, `1` = local sensor event `0x2005` (any other value is rejected; `probe_sweep` refuses this probe) | `1` | **Index `1` accepted by an RS100 Solar io** ([issue #156](https://github.com/laberning/home_io_control/issues/156)); index `0` is untested. The one probe that changes a device: it asks the device to report the event from now on, and no way to cancel that is known. Only those two events can be sent. A try the device authenticated is not repeated, so a device that takes the subscription and says nothing back ends as "accepted but no response". The RS100 answered at once with its first report, which the probe result names (`[event 0x2005, 5 data bytes]`) and puts on the "Last Device Event" sensor. Reports are recorded, not decoded: see "Last Device Event" below. |
 | `unsubscribe_event` | `CMD_SUBSCRIBE_EVENT` (0x73) with data `00 <event hi> <event lo>` | Same as `subscribe_event` (`probe_sweep` refuses it too) | `1` | **Untested guess.** The subscribe request with its first byte cleared, as an attempt to undo a subscription. Whether it works shows only in whether the device's reports stop on "Last Device Event" afterwards; an answer to the request alone proves nothing. Same guards and one-accepted-try rule as `subscribe_event`. |
 
 **There is deliberately no probe for `0x4A`.** It reads a buffer in chunks between two controllers
@@ -129,8 +129,8 @@ A running record of what these frames actually draw back — as much as is under
 | `status_ext_fn6`, index = block | `data[2..3]` zeroed, same as `private_fn` fn `0x06`. Walking past the last block the device implements draws `ERROR_RESP` result code `0x58` (`TOTAL_INCOHERENCE`) — seen cross-vendor (Somfy Sunea awning + dimmer at block `0x80`; a Velux window at block `0x0F` and every block `0x80`–`0x8F`). Read it as "that index does not exist on this device". |
 | `private_fn_sub` (fn `0x09`), index = `data[1]` | Byte-identical to the `private_fn` fn `0x09` reply on both mains devices — the non-zero second payload byte changed nothing. On a Velux window a non-zero `data[1]` flipped the reply's `data[0]` to `0x2D` and, at an irregular set of sub-indices, appended a `00 20` field — both undecoded. |
 | `get_info2` (`0x56`) | `0x57` reply: 10 printable ASCII bytes (`5143802A06`, `5071662B09`, `5165948A01`) — a Somfy-internal reference / sw-version code, **not** a public catalogue number. The next two bytes (`data[10..11]`) are the packed device type/subtype this component already decodes via `decode_packed_device_type()` — verified: dimmer → `LIGHT`, awning → `HORIZONTAL_AWNING`, Velux window → `WINDOW_OPENER`. `data[12..15]` undecoded. |
-| `get_info1` (`0x54`) | A VELUX window answered `0x55` with `00 00 00 00 00 00 00 00 00 30 03 00 00 00` (corpus `velux_window_probe_metadata_replies`); nothing decodes it yet. No other device has been probed. |
-| `subscribe_event` (`0x73`) | Not yet sent to a device. The answer is expected to be an `0xFE` refusal, silence after the device accepts, or a report frame; record which. |
+| `get_info1` (`0x54`) | A VELUX window answered `0x55` with `00 00 00 00 00 00 00 00 00 30 03 00 00 00` (corpus `velux_window_probe_metadata_replies`). An RS100 Solar io answered with the ASCII bytes `5163341E02` and then `04 00 FF FF` (corpus `somfy_rs100_probe_get_info1_sx1262`). Nothing decodes either yet. |
+| `subscribe_event` (`0x73`) | Index `1` on an RS100 Solar io: accepted behind a challenge, answered with a `0x71` carrying event `0x2005` and five data bytes, `06 00 00 00 00`, at night (corpus `somfy_rs100_probe_subscribe_event_sx1262`). The value bytes are not decoded yet. Index `0` has not been sent. |
 | `unsubscribe_event` (`0x73`, action `00`) | Not yet sent to a device. Run it only after `subscribe_event` drew reports, then record whether they stop. |
 | `general_info3` (`0x58`) | Dimmer answered a real `0x59`; a Somfy awning and a Velux window both replied `ERROR_RESP` result `0x08` (`COMMAND_UNKNOWN`: the device does not implement the command). Device-dependent. |
 | `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices, and byte-identical between two window positions on a Velux window (a stored parameter, not a live reading) — its short form at modifier `0x03` read back the stored ventilation position (`BA 00`). See "Reading a `private2` reply" below. |
@@ -147,10 +147,11 @@ sensor value (battery, charge, luminance, temperature). Out-of-range indices ans
 ## Last Device Event
 
 With `diagnostic_probes: true` the hub adds a diagnostic text sensor, **Last Device Event**. It shows
-the most recent frame a paired device sent that nothing else in this component handles, in the form
+the most recent event report from a paired device, or frame from one that nothing else in this
+component handles, in the form
 
 ```text
-#3 t=5421 054E17 0x70 20 05 06 2A
+#3 t=5421 24635F 0x71 05 60 20 05 05 06 00 00 00 00
 ```
 
 That is a running counter, the hub's uptime in seconds, the device, the command byte and the payload
@@ -158,15 +159,17 @@ in hex. The counter makes two identical reports two different states, which Home
 keep both in its history. The log carries the same frame at INFO level as `Device event from ...`;
 a build without `diagnostic_probes: true` logs it at DEBUG only.
 
-- A frame with command `0x70` is recorded whatever its destination. A subscribed device is expected
-  to report with it. The log names the command `SET_CONFIG1_RESP` whatever the frame carries, since
-  its meaning is not decoded.
+- A device event report is recorded whatever its destination. A report is a `0x71` whose event is
+  not the position event `0x100A`, or a `0x70`. A `0x71` payload is a flags byte, a status byte, a
+  two-byte event id, the length of the event data and the event data. The RS100 Solar io answered a
+  subscription to the local sensor event with event `0x2005`; ordinary position updates carry `0x100A`.
 - With probes on, any other frame from a paired device that nothing handles is recorded too, so a
   report with an unexpected command byte is not lost.
-- A recorded frame is never answered and never changes a device's position, state or battery. It is
-  unauthenticated data and the entity only shows it (see
-  [ADR 0060](adr/0060-a-state-changing-diagnostic-probe.md)).
-- A `0x70` that arrives while the hub waits for the reply to its own request is recorded, and the
+- A recorded frame never changes a device's position, state or battery; the entity only shows it
+  (see [ADR 0060](adr/0060-a-state-changing-diagnostic-probe.md)). A `0x71` addressed to the hub is
+  authenticated and acknowledged like every status update before it is recorded; any other recorded
+  frame is never answered.
+- A report that arrives while the hub waits for the reply to its own request is recorded, and the
   hub asks once more for the reply it was waiting for.
 
 Paste the `Device event` log lines and the sensor's history into an issue; they are what lets the
