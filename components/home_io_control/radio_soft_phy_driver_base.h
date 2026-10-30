@@ -248,6 +248,8 @@ class SoftPhyDriverBase : public RadioDriver {
   void set_post_tx_settle_us_(uint16_t delay_us) { this->post_tx_settle_us_ = delay_us; }
   /// @brief Current @ref wait_busy_ timeout, in milliseconds.
   [[nodiscard]] uint32_t get_busy_timeout_ms_() const { return this->busy_timeout_ms_; }
+  /// @brief Number of @ref wait_busy_ calls that ran past their timeout and still found the chip ready.
+  [[nodiscard]] uint32_t get_busy_overruns_() const { return this->busy_overruns_; }
   /// @brief Set the @ref wait_busy_ timeout, in milliseconds.
   ///
   /// Exposed so a concrete driver can widen it around a bring-up step that legitimately holds BUSY
@@ -260,7 +262,11 @@ class SoftPhyDriverBase : public RadioDriver {
   /// willing to wait (`busy_timeout_ms_`). A call short-circuits once the driver has latched
   /// `failed_`: without that guard, every remaining `configure_radio_()` step after the first
   /// failure would re-run the full timeout, turning one bad boot into tens of seconds of hang at
-  /// the LR1121's 3000 ms timeout (harmless but still pointless at the SX1262's 10 ms one).
+  /// the LR1121's 3000 ms timeout (harmless but still pointless at the SX1262's 25 ms one).
+  ///
+  /// The timeout is judged on a BUSY sample read after the deadline, so a task preempted for longer
+  /// than the timeout never fails a chip that is ready; such overruns are counted in
+  /// `busy_overruns_`.
   void wait_busy_();
   /// @brief Keep the device-error word read at the end of `configure_radio_()` and warn if it is
   ///        non-zero.
@@ -471,6 +477,11 @@ class SoftPhyDriverBase : public RadioDriver {
   uint16_t response_preamble_;
   uint16_t post_tx_settle_us_;
   uint32_t busy_timeout_ms_;
+  /// @brief How many @ref wait_busy_ calls ran past `busy_timeout_ms_` and still found the chip ready.
+  ///
+  /// Each one is a task preemption (Wi-Fi, flash) that outlasted the timeout while the chip was
+  /// already ready; the diagnostic dump prints it so a field report shows how often it happens.
+  uint32_t busy_overruns_{0};
 
   /// @brief Whether `PreambleDetected` was latched at the exact moment a dwell's
   /// `poll_until_activity_()` gave up waiting, captured before `reset_rx_state_()` wipes the IRQ

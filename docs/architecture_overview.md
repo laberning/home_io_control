@@ -98,6 +98,7 @@ How to call each action from Home Assistant, with its fields and result event, i
 - LR1121 driver: [radio_lr1121.h](../components/home_io_control/radio_lr1121.h)
 - Shared software PHY (UART framing for chips without hardware IoHomeOn): [radio_soft_phy.h](../components/home_io_control/radio_soft_phy.h)
 - Shared software-PHY driver flow (IRQ-driven RX/TX orchestration base class for SX1262/LR1121): [radio_soft_phy_driver_base.h](../components/home_io_control/radio_soft_phy_driver_base.h)
+- Preemption-safe poll helper for blocking radio waits (decides on a sample read after the deadline): [radio_poll.h](../components/home_io_control/radio_poll.h)
 - Protocol frame model: [proto_frame.h](../components/home_io_control/proto_frame.h)
 - Device capability bits (what a node type and subtype can do): [proto_device_features.h](../components/home_io_control/proto_device_features.h); the rows, the lookup and the named-position table are in [proto_device_types.h](../components/home_io_control/proto_device_types.h); the Python mirror of the capability word and the experimental marker is `DEVICE_FEATURES` / `KIND_EXPERIMENTAL` in [hub_validators.py](../components/home_io_control/hub_validators.py)
 - Runtime tuning config: [tuning_config.h](../components/home_io_control/tuning_config.h)

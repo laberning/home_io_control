@@ -9,6 +9,7 @@
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
 
+#include "radio_poll.h"
 #include "esphome/core/application.h"
 
 #include <algorithm>
@@ -80,13 +81,7 @@ Lr1121FirmwareUpdater::Lr1121FirmwareUpdater(SpiAccess *spi, InternalGPIOPin *rs
 }
 
 bool Lr1121FirmwareUpdater::wait_busy_(uint32_t timeout_ms) {
-  uint32_t const start = millis();
-  while (this->busy_pin_->digital_read()) {
-    if (millis() - start > timeout_ms)
-      return false;
-    App.feed_wdt();
-  }
-  return true;
+  return poll_until([this] { return !this->busy_pin_->digital_read(); }, timeout_ms).ready;
 }
 
 bool Lr1121FirmwareUpdater::write_command_(uint16_t opcode, const uint8_t *params, size_t len,

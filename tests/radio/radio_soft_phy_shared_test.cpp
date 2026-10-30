@@ -52,8 +52,8 @@ struct Sx1262Traits {
   static uint8_t rx_buffer_base() { return SX1262_RX_BUFFER_BASE; }
 
   // The host millis() stub is a +1-per-call counter, so a full BUSY timeout costs
-  // ~SX1262_BUSY_TIMEOUT_MS+1 counts to reach and a short-circuited call costs 0. This slack is
-  // safely below "ran the loop" and above "returned immediately"; LR1121's own timeout is longer.
+  // ~SX1262_BUSY_TIMEOUT_MS+1 counts (26) to reach and a short-circuited call costs 0. This slack
+  // is safely below "ran the loop" and above "returned immediately"; LR1121's own timeout is longer.
   static uint32_t busy_short_circuit_slack() { return 5; }
 
   static bool saw_standby(const ScriptedSpi &spi) {
@@ -360,6 +360,47 @@ TYPED_TEST(SoftPhyDriver, WaitBusyShortCircuitsAfterFailure) {
   EXPECT_LT(t_after - t_before, TypeParam::busy_short_circuit_slack())
       << "a failed driver must not re-run the BUSY timeout on every subsequent command";
   EXPECT_EQ(radio.failure_reason(), first_reason);
+}
+
+namespace {
+
+/// BUSY pin that models a task preempted between the pin sample and the clock sample: the first
+/// read reports "still busy" and then the whole system stalls for `stall_ms` (Wi-Fi scan, flash
+/// write) before the chip, which went ready during the stall, is sampled again.
+class PreemptingBusyPin : public MockPin {
+ public:
+  explicit PreemptingBusyPin(uint32_t stall_ms) : MockPin(true), stall_ms_(stall_ms) {}
+  void set_stall_ms(uint32_t stall_ms) { this->stall_ms_ = stall_ms; }
+  bool digital_read() override {
+    if (this->reads_++ > 0)
+      return false;
+    esphome::test_clock::advance_ms(this->stall_ms_);
+    return true;
+  }
+
+ private:
+  uint32_t stall_ms_;
+  uint32_t reads_{0};
+};
+
+}  // namespace
+
+TYPED_TEST(SoftPhyDriver, PreemptedBusyWaitDoesNotFailAReadyChip) {
+  // ManualClock is safe although hal.h advises against it for driver loops: the pin itself moves
+  // the clock, and every later read reports ready, so no loop can spin without time advancing.
+  esphome::test_clock::ManualClock clock;
+  MockSpi spi;
+  MockPin rst, dio1;
+  // The stall is set after construction because the timeout is per chip (LR1121's is far longer).
+  PreemptingBusyPin busy(0);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  busy.set_stall_ms(radio.busy_timeout_ms_for_test() + 10);
+
+  radio.set_mode_standby();
+
+  EXPECT_FALSE(radio.is_failed()) << "a chip that went ready during a preemption longer than the BUSY timeout "
+                                     "must not be declared dead on the stale sample";
+  EXPECT_EQ(radio.busy_overruns_for_test(), 1u) << "the overrun must be counted for the diagnostic dump";
 }
 
 // ---------------------------------------------------------------------------

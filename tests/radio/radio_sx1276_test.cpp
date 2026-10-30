@@ -6,6 +6,7 @@
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
+#include <functional>
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <deque>
@@ -95,6 +96,16 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
     this->stuck_active_ = true;
   }
 
+  // Run `hook` on the `nth` (1-based) read of `reg` and answer that read with 0, then behave
+  // normally. Models a task that stalls between the driver's register sample and its clock sample
+  // (the hook advances the clock; the 0 is the stale sample the stalled task then acts on).
+  void on_nth_read(uint8_t reg, uint32_t nth, std::function<void()> hook) {
+    this->hook_reg_ = reg & 0x7F;
+    this->hook_nth_ = nth;
+    this->hook_reads_ = 0;
+    this->hook_ = std::move(hook);
+  }
+
  private:
   static constexpr uint8_t kRegFifo = 0x00;
   static constexpr uint8_t kRegIrqFlags2 = 0x3F;
@@ -115,6 +126,12 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
   }
 
   uint8_t handle_read_byte_() {
+    if (this->hook_ && this->addr_ == this->hook_reg_ && ++this->hook_reads_ == this->hook_nth_) {
+      auto hook = std::move(this->hook_);
+      this->hook_ = nullptr;
+      hook();
+      return 0;
+    }
     if (this->stuck_active_ && this->addr_ == this->stuck_reg_)
       return this->stuck_value_;
     if (this->addr_ == kRegFifo) {
@@ -140,6 +157,11 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
   bool have_addr_{false};
   bool write_dir_{false};
   uint8_t addr_{0};
+
+  std::function<void()> hook_;
+  uint8_t hook_reg_{0};
+  uint32_t hook_nth_{0};
+  uint32_t hook_reads_{0};
 
   bool stuck_active_{false};
   uint8_t stuck_reg_{0};
@@ -265,6 +287,21 @@ TEST(RadioSX1276, FirstFailureReasonSurvivesALaterFailure) {
 
   EXPECT_EQ(radio.failure_reason(), root_cause);
   EXPECT_NE(std::string(radio.failure_reason()).find("operating mode"), std::string::npos);
+}
+
+TEST(RadioSX1276, SetModeSurvivesPreemptionBeforeTheModeReadsBack) {
+  // ManualClock is safe here: the hook moves the clock once, and the register model reflects the
+  // mode write on every later read, so the poll cannot spin without time advancing.
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  // Read 1 is set_mode_()'s read-modify-write; read 2 is the first poll sample, which reports a
+  // stale mode while the task stalls far past the 50 ms timeout.
+  spi.on_nth_read(REG_OP_MODE, 2, [&] { esphome::test_clock::advance_ms(500); });
+  radio.set_mode_standby();
+
+  EXPECT_FALSE(radio.is_failed()) << "a chip that reached the mode during the stall must not be failed";
 }
 
 TEST(RadioSX1276, RunImageCalTimesOutWhenCalBitNeverClears) {

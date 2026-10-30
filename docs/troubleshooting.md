@@ -231,8 +231,10 @@ you connected to the log after the boot.
   32. Fix the two keys in your `home_io_control:` block.
 - **A `Radio setup failed:` line** names the cause. Use the table below.
 - **A `Radio failed after setup:` line** means the radio started, then stopped responding
-  (typically a BUSY timeout). The component is not marked failed in that case, but nothing the
-  radio does works any more. Use the same table, and reset the board.
+  (typically a BUSY timeout). A short Wi-Fi stall or roam scan does not cause this, because the
+  radio wait is judged on a fresh reading once the stall is over. A line like this therefore points
+  at the chip, its wiring or its power. The component is not marked failed in that case, but
+  nothing the radio does works any more. Use the same table, and reset the board.
 
 | Reason in the log | What to check |
 |---|---|

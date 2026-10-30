@@ -12,6 +12,7 @@
 
 #include "radio_soft_phy_driver_base.h"
 #include "log_frame.h"
+#include "radio_poll.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
@@ -53,14 +54,18 @@ void SoftPhyDriverBase::wait_busy_() {
   // already known-unresponsive, so there's nothing to wait for.
   if (this->failed_)
     return;
-  uint32_t const start = millis();
-  while (this->busy_pin_->digital_read()) {
-    if (millis() - start > this->busy_timeout_ms_) {
-      ESP_LOGE(TAG, "BUSY timeout");
-      this->fail_("BUSY pin stayed high -- check busy_pin, the SPI wiring and tcxo_voltage");
-      return;
-    }
-    App.feed_wdt();
+  // Decide on a sample taken after the deadline (see poll_until): a task preempted past the
+  // timeout between the pin read and the clock read must not turn a chip that went ready meanwhile
+  // into a latched failure.
+  PollResult const r = poll_until([this] { return !this->busy_pin_->digital_read(); }, this->busy_timeout_ms_);
+  if (!r.ready) {
+    ESP_LOGE(TAG, "BUSY timeout after %" PRIu32 " ms", r.elapsed_ms);
+    this->fail_("BUSY pin stayed high -- check busy_pin, the SPI wiring and tcxo_voltage");
+    return;
+  }
+  if (r.elapsed_ms > this->busy_timeout_ms_) {
+    this->busy_overruns_++;
+    ESP_LOGD(TAG, "BUSY wait overran to %" PRIu32 " ms; chip ready (task preempted)", r.elapsed_ms);
   }
 }
 
