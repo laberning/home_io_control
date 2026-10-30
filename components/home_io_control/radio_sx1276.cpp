@@ -9,6 +9,7 @@
 
 #include "radio_sx1276.h"
 #include "log_frame.h"
+#include "radio_poll.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
@@ -41,17 +42,17 @@ void RadioSX1276::write_register_(uint8_t reg, uint8_t value) {
 void RadioSX1276::set_mode_(uint8_t mode) {
   uint8_t const current = this->read_register_(REG_OP_MODE);
   this->write_register_(REG_OP_MODE, (current & ~MODE_MASK) | (mode & MODE_MASK));
-  uint32_t const start = millis();
-  while (true) {
-    uint8_t const cur_mode = this->read_register_(REG_OP_MODE) & MODE_MASK;
-    if (cur_mode == mode || (mode == MODE_RX && cur_mode == 0x04))
-      break;
-    if (millis() - start > 50) {
-      ESP_LOGE(TAG, "Radio mode change timeout");
-      this->fail_("SX1276 never reached the requested operating mode");
-      return;
-    }
-    App.feed_wdt();
+  // Judged on a register sample taken after the deadline (see poll_until), so a task preempted past
+  // the timeout cannot fail a chip that has already reached the mode.
+  PollResult const r = poll_until(
+      [this, mode] {
+        uint8_t const cur_mode = this->read_register_(REG_OP_MODE) & MODE_MASK;
+        return cur_mode == mode || (mode == MODE_RX && cur_mode == 0x04);
+      },
+      50);
+  if (!r.ready) {
+    ESP_LOGE(TAG, "Radio mode change timeout");
+    this->fail_("SX1276 never reached the requested operating mode");
   }
 }
 
@@ -61,14 +62,10 @@ void RadioSX1276::set_mode_standby() { this->set_mode_(MODE_STDBY); }
 void RadioSX1276::run_image_cal_() {
   this->set_mode_(MODE_STDBY);
   this->write_register_(REG_IMAGE_CAL, 0x40);
-  uint32_t const start = millis();
-  while ((this->read_register_(REG_IMAGE_CAL) & 0x20) != 0) {
-    if (millis() - start > 20) {
-      ESP_LOGE(TAG, "Image calibration timeout");
-      this->fail_("SX1276 image calibration never completed");
-      return;
-    }
-    App.feed_wdt();
+  PollResult const r = poll_until([this] { return (this->read_register_(REG_IMAGE_CAL) & 0x20) == 0; }, 20);
+  if (!r.ready) {
+    ESP_LOGE(TAG, "Image calibration timeout");
+    this->fail_("SX1276 image calibration never completed");
   }
 }
 

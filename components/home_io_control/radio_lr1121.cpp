@@ -297,6 +297,7 @@ void RadioLR1121::dump_debug() {
                   LR1121_KNOWN_LATEST_FW_MAJOR, LR1121_KNOWN_LATEST_FW_MINOR);
   }
   ESP_LOGCONFIG(TAG, "    BUSY=%d IRQ=%d", this->busy_pin_->digital_read(), this->irq_pin_->digital_read());
+  ESP_LOGCONFIG(TAG, "    BUSY wait overruns (task preempted, chip ready): %" PRIu32, this->get_busy_overruns_());
   ESP_LOGCONFIG(TAG, "    IRQ status: 0x%08" PRIX32, irq);
   char errbuf[DEVICE_ERROR_STR_SIZE];
   lr1121_format_device_errors(errors, errbuf, sizeof(errbuf));

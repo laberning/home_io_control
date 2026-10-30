@@ -156,10 +156,12 @@ static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 
-/// How long SoftPhyDriverBase::wait_busy_() waits for BUSY to drop before declaring the chip
-/// failed. Short: this chip's RC-oscillator-clocked commands settle quickly, unlike LR1121's
-/// post-reset boot ROM (see LR1121_BUSY_TIMEOUT_MS in radio_lr1121.h).
-static constexpr uint32_t SX1262_BUSY_TIMEOUT_MS = 10;
+/// Ceiling on how long SoftPhyDriverBase::wait_busy_() waits for BUSY to drop before declaring the
+/// chip failed. A healthy chip never waits for it, and the wait is judged on a fresh sample, so a
+/// task preemption cannot trip it; this is headroom for the RC-oscillator-clocked commands (unlike
+/// LR1121's post-reset boot ROM, see LR1121_BUSY_TIMEOUT_MS in radio_lr1121.h). It must stay below
+/// the smallest TCXO bring-up rung budget (30 ms) so every rung still widens it.
+static constexpr uint32_t SX1262_BUSY_TIMEOUT_MS = 25;
 
 // ============================================================================
 // SX1262 Radio Driver

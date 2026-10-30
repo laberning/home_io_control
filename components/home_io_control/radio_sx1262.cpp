@@ -479,6 +479,7 @@ void RadioSX1262::dump_debug() {
   ESP_LOGCONFIG(TAG, "    TCXO voltage: %s", tcxo_voltage_label(this->tcxo_voltage_));
   ESP_LOGCONFIG(TAG, "    Chip status: 0x%02X (mode=%s, cmd=%u)", chip_status, mode_str, cmd_status);
   ESP_LOGCONFIG(TAG, "    BUSY=%d DIO1=%d", this->busy_pin_->digital_read(), this->dio1_pin_->digital_read());
+  ESP_LOGCONFIG(TAG, "    BUSY wait overruns (task preempted, chip ready): %" PRIu32, this->get_busy_overruns_());
   ESP_LOGCONFIG(TAG, "    Sync word: %02X %02X %02X (expect 57 FD 99)", sync[0], sync[1], sync[2]);
   ESP_LOGCONFIG(TAG, "    IRQ status: 0x%04X", irq);
   char errbuf[DEVICE_ERROR_STR_SIZE];
@@ -523,7 +524,7 @@ void RadioSX1262::configure_tcxo_() {
 
   // The chip holds BUSY through the whole programmed TCXO startup window (up to 50 ms on the last
   // rung) plus calibration before it can latch XOSC_START_ERR. wait_busy_()'s normal
-  // SX1262_BUSY_TIMEOUT_MS (10 ms, sized for RC-oscillator timing) is far shorter than that, so a
+  // SX1262_BUSY_TIMEOUT_MS (25 ms, sized for RC-oscillator timing) is far shorter than that, so a
   // slow TCXO would trip a BUSY timeout, latch failed_, and brick the component in exactly the
   // case this retry exists to rescue. Widen the budget for the bring-up and restore it after.
   const uint32_t saved_busy_timeout_ms = this->get_busy_timeout_ms_();
