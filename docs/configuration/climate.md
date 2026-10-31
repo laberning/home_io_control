@@ -45,7 +45,7 @@ What the card shows for each heater kind:
 |---|---|---|
 | Control path | Private registers | Heating level in the standard EXECUTE |
 | Modes | `off`, `heat` (manual), `auto` | `off`, `heat` (comfort level) |
-| Presets | `home`, `away` (presence); custom `Program` (the heater's own schedule) | `away` (frost protection), `eco`, `comfort`, `boost`; custom `Comfort -1`, `Comfort -2`; custom `Secured`, shown when the heater reports it and never set |
+| Presets | custom `Program` and `Auto` (the heater's own automatic modes) | `away` (frost protection), `eco`, `comfort`, `boost`; custom `Comfort -1`, `Comfort -2`; custom `Secured`, shown when the heater reports it and never set |
 | Target temperature | 7.0 °C up to the heater's own maximum (28.0 °C until it reports one), 0.5 °C step | None: the card shows a setpoint control that the entity ignores |
 | Current temperature | Yes | No |
 | Action | `heating`, `idle`, `off` | No |
@@ -66,12 +66,10 @@ What the card shows for each heater kind:
   poll interval. After a
   level write to a plain heater (experimental), the next status read shows the level. Until the first read
   succeeds the card shows the last commanded mode, setpoint or preset.
-- A change made outside Home Assistant shows up at the next poll. The program mode of
-  a heater with an adjustable setpoint appears as `auto` with the `Program` preset, and its external
-  mode as `heat`. Open-window detection is read once, at the first poll, so a change made at the
-  heater's panel appears after a reboot.
-- The `home` / `away` presets of a heater with an adjustable setpoint write a register that cannot be
-  read back, so they show the last command.
+- A change made outside Home Assistant shows up at the next poll. A heater with an adjustable
+  setpoint shows its program mode as `auto` with the `Program` preset, its AUTO mode as `auto` with
+  the `Auto` preset, and its external mode as `heat`. Open-window detection is read once, at the
+  first poll, so a change made at the heater's panel appears after a reboot.
 
 ## Heating temperature interface and heat pump
 
@@ -147,7 +145,7 @@ the heater took the frame, and the climate entity reads the register back to sho
 | `power_on` | *(ignored)* | Wake / retrieve paired devices. |
 | `set_temperature` | float °C, `7.0`–`28.0` | Setpoint. |
 | `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
-| `set_presence` | `on` \| `off` | Presence / absence. |
+| `set_presence` | `on` \| `off` | Presence / absence. The AGILIA IO acknowledges it; no visible effect observed. |
 | `set_open_window_detection` | `on` \| `off` | Switches the heater's open-window detection on or off (register `0x0106`). |
 | `window_open` | *(ignored)* | Reads the heater's window sensor (register `0x010E`) and reports `window open` or `window closed` in the result `message`. |
 | `midnight_sync` | *(ignored)* | Reads register `0x0130` (the comfort/eco/auto setpoint block). Despite the name, the payload is a `0x60` **read**, not a clock-set — the device's clock register is `0x010F` and this component never writes it. Provided for protocol exploration; the ACK payload is logged at DEBUG. |

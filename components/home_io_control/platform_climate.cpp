@@ -38,8 +38,9 @@ struct ClimatePresetMapping {
   climate::ClimatePreset preset;
 };
 constexpr ClimatePresetMapping CLIMATE_PRESET_MAP[] = {
-    {HeatingPresetId::HOME, climate::CLIMATE_PRESET_HOME},       {HeatingPresetId::AWAY, climate::CLIMATE_PRESET_AWAY},
-    {HeatingPresetId::COMFORT, climate::CLIMATE_PRESET_COMFORT}, {HeatingPresetId::ECO, climate::CLIMATE_PRESET_ECO},
+    {HeatingPresetId::AWAY, climate::CLIMATE_PRESET_AWAY},
+    {HeatingPresetId::COMFORT, climate::CLIMATE_PRESET_COMFORT},
+    {HeatingPresetId::ECO, climate::CLIMATE_PRESET_ECO},
     {HeatingPresetId::BOOST, climate::CLIMATE_PRESET_BOOST},
 };
 
@@ -62,15 +63,6 @@ climate::ClimatePreset to_climate_preset(HeatingPresetId id) {
       return mapping.preset;
   }
   return climate::CLIMATE_PRESET_NONE;
-}
-
-/// @return true when the profile has a standard preset that a device reading decides (not presence).
-bool has_observed_standard_preset(const HeatingProfile &profile) {
-  for (size_t i = 0; i < profile.preset_count; i++) {
-    if (profile.presets[i].id != HeatingPresetId::CUSTOM && profile.presets[i].observed)
-      return true;
-  }
-  return false;
 }
 
 }  // namespace
@@ -167,7 +159,7 @@ void IOHomeClimate::control(const climate::ClimateCall &call) {
   const bool temperature_changed = this->apply_target_temperature_(*profile, call);
 
   // A read-back publishes through on_device_update_(); this publishes what a write advanced when no
-  // read-back has confirmed anything yet, and the presence preset, which has no register to read.
+  // read-back has confirmed anything yet.
   if (mode_changed || custom_preset_changed || preset_changed || temperature_changed)
     this->publish_state();
 }
@@ -250,8 +242,7 @@ bool IOHomeClimate::apply_mode_(const HeatingProfile &profile, const climate::Cl
       // preset follows its status reply instead.
       if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE) {
         this->clear_custom_preset_();
-        if (has_observed_standard_preset(profile))
-          this->preset.reset();
+        this->preset.reset();
       }
     }
     if (profile.path == HeatingControlPath::PRIVATE_REGISTERS) {
@@ -271,21 +262,7 @@ bool IOHomeClimate::apply_custom_preset_(const HeatingProfile &profile, const cl
     const HeatingPresetEntry &entry = profile.presets[i];
     if (entry.id != HeatingPresetId::CUSTOM || custom != entry.custom_name)
       continue;
-    if (!entry.commandable) {
-      ESP_LOGW(TAG, "Device %s: preset '%s' is reported by the device and cannot be set", this->device_id_.c_str(),
-               entry.custom_name);
-      return false;
-    }
-    if (!this->write_preset_(profile, entry))
-      return false;
-    const bool commanded = !this->observed_ || !entry.observed;
-    if (commanded)
-      this->set_custom_preset_(entry.custom_name);
-    if (profile.path == HeatingControlPath::PRIVATE_REGISTERS && entry.observed) {
-      this->confirm_write_(entry.write_fn);
-      return commanded && !this->observed_;
-    }
-    return commanded;
+    return this->commit_preset_(profile, entry);
   }
   return false;
 }
@@ -299,23 +276,36 @@ bool IOHomeClimate::apply_preset_(const HeatingProfile &profile, const climate::
     const HeatingPresetEntry &entry = profile.presets[i];
     if (entry.id == HeatingPresetId::CUSTOM || to_climate_preset(entry.id) != requested)
       continue;
-    if (!entry.commandable || !this->write_preset_(profile, entry))
-      return false;
-    // A preset no register reports (presence) stays "last commanded" for good.
-    const bool commanded = !this->observed_ || !entry.observed;
-    if (commanded) {
-      this->preset = requested;
-      this->clear_custom_preset_();  // a standard preset supersedes a custom one
-      if (profile.path != HeatingControlPath::PRIVATE_REGISTERS && !this->observed_)
-        this->mode = climate::CLIMATE_MODE_HEAT;  // every level or alias preset heats
-    }
-    if (profile.path == HeatingControlPath::PRIVATE_REGISTERS && entry.observed) {
-      this->confirm_write_(entry.write_fn);
-      return commanded && !this->observed_;
-    }
-    return commanded;
+    return this->commit_preset_(profile, entry);
   }
   return false;
+}
+
+bool IOHomeClimate::commit_preset_(const HeatingProfile &profile, const HeatingPresetEntry &entry) {
+  if (!entry.commandable) {
+    ESP_LOGW(TAG, "Device %s: preset '%s' is reported by the device and cannot be set", this->device_id_.c_str(),
+             entry.custom_name != nullptr ? entry.custom_name : "(standard)");
+    return false;
+  }
+  if (!this->write_preset_(profile, entry))
+    return false;
+  // Once a read has succeeded the card follows the read-back, not the command.
+  const bool commanded = !this->observed_;
+  if (commanded) {
+    if (profile.features.mode_observed) {
+      // The read-back uses the same table, so a commanded preset looks like a read one.
+      this->apply_observed_state_(profile, entry.wire);
+    } else if (entry.id == HeatingPresetId::CUSTOM) {
+      this->set_custom_preset_(entry.custom_name);
+    } else {
+      this->preset = to_climate_preset(entry.id);
+      this->clear_custom_preset_();             // a standard preset supersedes a custom one
+      this->mode = climate::CLIMATE_MODE_HEAT;  // every alias preset heats
+    }
+  }
+  if (profile.path == HeatingControlPath::PRIVATE_REGISTERS)
+    this->confirm_write_(entry.write_fn);
+  return commanded;
 }
 
 bool IOHomeClimate::apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call) {
@@ -469,8 +459,8 @@ bool IOHomeClimate::apply_observed_state_(const HeatingProfile &profile, uint8_t
         this->preset = preset;
         changed = true;
       }
-    } else if (has_observed_standard_preset(profile) && this->preset.has_value()) {
-      // The device reports it is on no preset; presence presets are last-commanded and stay.
+    } else if (this->preset.has_value()) {
+      // The device reports it is on no preset.
       this->preset.reset();
       changed = true;
     }
@@ -500,7 +490,7 @@ void IOHomeClimate::dump_config() {
   const HeatingProfile *profile = this->profile_();
   const bool confirmed = profile != nullptr && profile->path == HeatingControlPath::PRIVATE_REGISTERS;
   ESP_LOGCONFIG(TAG, "  Status: %s",
-                confirmed ? "confirmed on hardware (setpoint, mode, read-back); Home/Away presets untested"
+                confirmed ? "confirmed on hardware (setpoint, mode, presets, read-back)"
                           : "experimental, unvalidated on hardware");
 }
 

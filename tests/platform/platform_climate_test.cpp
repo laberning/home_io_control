@@ -111,18 +111,14 @@ TEST(PlatformClimate, TraitsAdvertiseRangeModesAndPresets) {
   EXPECT_TRUE(traits.supports_mode(CLIMATE_MODE_HEAT));
   EXPECT_TRUE(traits.supports_mode(CLIMATE_MODE_AUTO));
   EXPECT_FALSE(traits.supports_mode(CLIMATE_MODE_COOL));
-
-  EXPECT_TRUE(traits.supports_preset(CLIMATE_PRESET_HOME));
-  EXPECT_TRUE(traits.supports_preset(CLIMATE_PRESET_AWAY));
 }
 
-TEST(PlatformClimate, SetupRegistersProgramCustomPreset) {
+TEST(PlatformClimate, SetupRegistersTheProgramAndAutoCustomPresets) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
 
-  ASSERT_EQ(entity.get_supported_custom_presets().size(), 1u);
-  EXPECT_EQ(entity.get_supported_custom_presets().front(), "Program");
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Program", "Auto"}));
   EXPECT_FALSE(entity.is_failed());
 }
 
@@ -164,38 +160,30 @@ TEST(PlatformClimate, TargetTemperatureSendsSetTemperature) {
   EXPECT_EQ(entity.publish_count_, 1);
 }
 
-TEST(PlatformClimate, ProgramCustomPresetSendsProgMode) {
-  MockHubClimate hub;
-  IOHomeClimate entity = make_bound_climate(hub);
-  entity.setup();
+TEST(PlatformClimate, AutomaticModePresetsSendTheirModeAndShowAtOnce) {
+  const struct {
+    const char *name;
+    HeatingMode mode;
+  } cases[] = {{"Program", HeatingMode::PROG}, {"Auto", HeatingMode::AUTO}};
+  for (const auto &c : cases) {
+    MockHubClimate hub;
+    IOHomeClimate entity = make_bound_climate(hub);
+    entity.setup();
 
-  auto call = entity.make_call();
-  call.set_preset(std::string("Program"));
-  call.perform();
+    auto call = entity.make_call();
+    call.set_preset(std::string(c.name));
+    call.perform();
 
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_MODE);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::PROG));
-  EXPECT_EQ(entity.get_custom_preset(), "Program");
-  EXPECT_EQ(entity.publish_count_, 1);
-}
-
-TEST(PlatformClimate, HomeAndAwayPresetsSendPresence) {
-  MockHubClimate hub;
-  IOHomeClimate entity = make_bound_climate(hub);
-
-  auto home = entity.make_call();
-  home.set_preset(CLIMATE_PRESET_HOME);
-  home.perform();
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_PRESENCE);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, 1.0F);
-
-  auto away = entity.make_call();
-  away.set_preset(CLIMATE_PRESET_AWAY);
-  away.perform();
-  EXPECT_EQ(hub.calls.back().fn, HeatingFunction::SET_PRESENCE);
-  EXPECT_FLOAT_EQ(hub.calls.back().value, 0.0F);
+    ASSERT_EQ(hub.calls.size(), 1u) << c.name;
+    EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_MODE) << c.name;
+    EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(c.mode)) << c.name;
+    EXPECT_EQ(hub.reads, (std::vector<HeatingFunction>{HeatingFunction::SET_MODE})) << c.name << ": confirm read";
+    // Nothing has been read yet, so the command stands in: both modes show as HVAC auto.
+    EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << c.name;
+    ASSERT_TRUE(entity.has_custom_preset()) << c.name;
+    EXPECT_EQ(entity.get_custom_preset(), c.name);
+    EXPECT_EQ(entity.publish_count_, 1) << c.name;
+  }
 }
 
 TEST(PlatformClimate, FailedSendDoesNotPublishOrUpdateState) {
@@ -221,9 +209,9 @@ TEST(PlatformClimate, FailedSendDoesNotAdvanceTemperatureOrPreset) {
   EXPECT_TRUE(std::isnan(entity.target_temperature)) << "target must not advance past a failed send";
 
   auto preset = entity.make_call();
-  preset.set_preset(CLIMATE_PRESET_AWAY);
+  preset.set_preset(std::string("Auto"));
   preset.perform();
-  EXPECT_FALSE(entity.preset.has_value()) << "preset must not advance past a failed send";
+  EXPECT_FALSE(entity.has_custom_preset()) << "preset must not advance past a failed send";
 
   EXPECT_EQ(entity.publish_count_, 0) << "no publish on any failed send";
 }
@@ -299,29 +287,6 @@ TEST(PlatformClimate, UnknownDeviceTypeIsToleratedInSetup) {
   EXPECT_FALSE(entity.is_failed()) << "an unknown type is left for discovery to resolve";
 }
 
-TEST(PlatformClimate, HomeAwayPresetClearsProgramCustomPreset) {
-  MockHubClimate hub;
-  IOHomeClimate entity = make_bound_climate(hub);
-  entity.setup();
-
-  // Select the "Program" custom preset (= SET_MODE prog).
-  auto program = entity.make_call();
-  program.set_preset(std::string("Program"));
-  program.perform();
-  ASSERT_TRUE(entity.has_custom_preset());
-  EXPECT_EQ(entity.get_custom_preset(), "Program");
-
-  // Now select AWAY. Real ESPHome republishes a still-set custom preset alongside the enum
-  // preset, so apply_preset_() must clear it — mirroring apply_mode_().
-  auto away = entity.make_call();
-  away.set_preset(CLIMATE_PRESET_AWAY);
-  away.perform();
-
-  EXPECT_FALSE(entity.has_custom_preset()) << "a HOME/AWAY preset supersedes the Program custom preset";
-  ASSERT_TRUE(entity.preset.has_value());
-  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_AWAY);
-}
-
 // ========================================================================================
 // State comes from the heater's replies
 // ========================================================================================
@@ -370,14 +335,15 @@ TEST(PlatformClimate, MaximumSetpointIsNeverPastWhatCanBeEncoded) {
   EXPECT_FLOAT_EQ(entity.traits().get_visual_max_temperature(), HEATING_TEMP_MAX_C);
 }
 
-TEST(PlatformClimate, ObservedModesMapToHvacModesAndTheProgramPreset) {
+TEST(PlatformClimate, ObservedModesMapToHvacModesAndTheAutomaticPresets) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
 
   deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::AUTO); });
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
-  EXPECT_FALSE(entity.has_custom_preset());
+  EXPECT_TRUE(entity.has_custom_preset());
+  EXPECT_EQ(entity.get_custom_preset(), "Auto");
 
   deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::PROG); });
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
@@ -507,18 +473,51 @@ TEST(PlatformClimate, NothingIsReadBackAfterAFailedWrite) {
   EXPECT_TRUE(hub.reads.empty());
 }
 
-TEST(PlatformClimate, PresenceStaysLastCommandedAndIsNotReadBack) {
+TEST(PlatformClimate, ObservedProgramThenAutoPresetWaitsForTheReadBack) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
-  auto away = entity.make_call();
-  away.set_preset(CLIMATE_PRESET_AWAY);
-  away.perform();
+  deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::PROG); });
+  const int published = entity.publish_count_;
 
-  EXPECT_TRUE(hub.reads.empty()) << "the presence register has no readable value";
-  ASSERT_TRUE(entity.preset.has_value());
-  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_AWAY);
-  EXPECT_EQ(entity.publish_count_, 1);
+  auto call = entity.make_call();
+  call.set_preset(std::string("Auto"));
+  call.perform();
+  ASSERT_EQ(hub.calls.size(), 1u);
+  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::AUTO));
+  EXPECT_EQ(entity.get_custom_preset(), "Program") << "a read has succeeded: the card waits for the read-back";
+  EXPECT_EQ(entity.publish_count_, published);
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::AUTO); });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
+  EXPECT_EQ(entity.get_custom_preset(), "Auto");
+}
+
+TEST(PlatformClimate, ReadBackReplacesTheAutoPresetWithProgram) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();
+  deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::AUTO); });
+  ASSERT_EQ(entity.get_custom_preset(), "Auto");
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::PROG); });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
+  EXPECT_EQ(entity.get_custom_preset(), "Program");
+}
+
+TEST(PlatformClimate, ObservedProgramThenHeatDropsThePresetOnTheReadBack) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();
+  deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::PROG); });
+
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << "the card waits for the read-back";
+  EXPECT_EQ(entity.get_custom_preset(), "Program");
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.mode = static_cast<int16_t>(HeatingMode::MANUAL); });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+  EXPECT_FALSE(entity.has_custom_preset());
 }
 
 TEST(PlatformClimate, SetupPollsTheHeaterLikeTheOtherPlatforms) {
@@ -570,8 +569,8 @@ TEST(PlatformClimate, SetpointHeaterTraitsAreExactlyTheProfile) {
 
   EXPECT_EQ(supported_modes(traits),
             (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT, CLIMATE_MODE_AUTO}));
-  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_HOME, CLIMATE_PRESET_AWAY}));
-  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Program"}));
+  EXPECT_TRUE(supported_presets(traits).empty());
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Program", "Auto"}));
   EXPECT_TRUE(traits.get_supports_current_temperature());
   EXPECT_TRUE(traits.get_supports_action());
 }
@@ -641,6 +640,20 @@ TEST(PlatformClimate, LevelHeaterPresetsSendTheirLevels) {
                                               heating_level::COMFORT, heating_level::BOOST,
                                               heating_level::COMFORT_MINUS_1, heating_level::COMFORT_MINUS_2}));
   EXPECT_EQ(entity.get_custom_preset(), "Comfort -2");
+}
+
+TEST(PlatformClimate, ACommandedLevelPresetShowsAsTheReadBackWould) {
+  // Before the first read, a preset stands in the way its level is read back: mode heat plus the preset.
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.setup();
+
+  auto call = entity.make_call();
+  call.set_preset(std::string("Comfort -1"));
+  call.perform();
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+  EXPECT_EQ(entity.get_custom_preset(), "Comfort -1");
+  EXPECT_EQ(entity.publish_count_, 1);
 }
 
 TEST(PlatformClimate, TheSecuredPresetIsShownButNeverCommanded) {

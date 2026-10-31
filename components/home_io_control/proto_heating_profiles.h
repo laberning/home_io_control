@@ -44,7 +44,6 @@ enum class HeatingHvacMode : uint8_t {
 
 /// @brief Presets a profile can offer. CUSTOM entries carry their own name.
 enum class HeatingPresetId : uint8_t {
-  HOME,     ///< Someone is in the room.
   AWAY,     ///< Nobody is in the room (the frost-protection level on a level heater).
   COMFORT,  ///< Comfort level.
   ECO,      ///< Economy level.
@@ -136,13 +135,11 @@ struct HeatingModeEntry {
 
 /// @brief One preset the card offers.
 struct HeatingPresetEntry {
-  HeatingPresetId id;        ///< Standard preset, or CUSTOM.
   const char *custom_name;   ///< Name of a CUSTOM preset; nullptr otherwise.
+  HeatingPresetId id;        ///< Standard preset, or CUSTOM.
   HeatingFunction write_fn;  ///< PRIVATE_REGISTERS: register the preset writes. Unused for levels.
   uint8_t wire;              ///< Value written: register value, or the low byte of a level or alias.
   bool commandable;          ///< False for a preset the device only reports (secured).
-  bool observed;             ///< False when no register reports it back (presence): the card then
-                             ///< shows the last command.
   HeatingFp fp{};            ///< TEMPERATURE_EXECUTE: the functional parameter sent with the alias.
 };
 

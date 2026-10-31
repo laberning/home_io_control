@@ -19,8 +19,9 @@
 /// proto_commands.h's create_write_private() frames a payload.
 ///
 /// Confirmed on that radiator: the setpoint, mode (all four writable values), room temperature,
-/// regulator and maximum-setpoint registers. The presence register has not been written on hardware,
-/// and the window and open-window-detection registers have only been read at rest.
+/// regulator and maximum-setpoint registers. The presence register has been written and acknowledged,
+/// with no visible effect observed; the window and open-window-detection registers have only been read
+/// at rest.
 
 #include "proto_frame.h"
 
