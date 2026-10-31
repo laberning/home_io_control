@@ -191,20 +191,62 @@ static constexpr uint8_t CMD_CHALLENGE_RESP =
            ///< recomputed under that installation's recovered key and confirmed before the
            ///< capture was re-keyed, so it is measured, not assumed by symmetry.
 
-// File/blob management block (0x48-0x4B)
+// Data transport block (0x46-0x4B)
+static constexpr uint8_t CMD_TRANSFER_OPEN =
+    0x46;  ///< Opens a read of one object: nine payload bytes `<originator> <class> 00 <id hi> <id lo>
+           ///< 00 00 00 00`. A Somfy Izymo answered it unauthenticated and challenged the block reads. Sent only by the
+           ///< `read_object` diagnostic probe (ADR 0062) and only for the objects in TRANSFER_OBJECT_*;
+           ///< create_transfer_open() refuses every other id. The sibling 0x48 opens a write and has no builder
+           ///< anywhere in this codebase.
+static constexpr uint8_t CMD_TRANSFER_OPEN_RESP =
+    0x47;  ///< Answer to CMD_TRANSFER_OPEN: `<handle> <status> <length u16 BE>`. Status 0 = accepted,
+           ///< 1 = adapted, anything else an error; length 0 means there is nothing to read.
 static constexpr uint8_t CMD_UNKNOWN4A_REQ =
-    0x4A;  ///< Reads chunk `<handle><chunk u16>` of a buffer opened by a 0x46/0x47 exchange; seen
-           ///< on air between two controllers in a VELUX KLR 200 copy session. What it does to an
-           ///< actuator is unknown, and the surrounding 0x46-0x4B block includes write commands.
-           ///< This constant exists solely so a received 0x4A frame renders by name in the log
-           ///< instead of as UNKNOWN_CMD; it must never be sent, and no builder for it exists
-           ///< anywhere in this codebase — see CMD_ONEWAY_ADD_CONTROLLER for the same "named but
-           ///< never sent" precedent, and docs/adr/ for the standing decision not to add one.
+    0x4A;  ///< Reads chunk `<handle><chunk u16>` of a buffer opened by CMD_TRANSFER_OPEN, counting down
+           ///< from ceil(length/18) to 1, then `<handle> 00 00` closes it. Seen on air between two VELUX
+           ///< KLR 200 controllers in a copy session. Sent only by the `read_object` probe, through
+           ///< create_transfer_read(), whose payload is exactly these three bytes: a 0x4A that carries
+           ///< data is the write direction of the block and cannot be built here (ADR 0062).
 static constexpr uint8_t CMD_UNKNOWN4A_RESP =
-    0x4B;  ///< Echoes `<handle><chunk>` followed by up to 18 bytes of data. Observed on the wire
-           ///< (tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml) answering an
-           ///< ON_OFF_SWITCH-type device's traffic; the `01 00 00` payload there has the shape of a
-           ///< close echo. Not sent or handled anywhere in this codebase.
+    0x4B;  ///< Echoes `<handle><chunk>` followed by up to 18 bytes of data (none in the close echo). Also
+           ///< seen answering an ON_OFF_SWITCH-type device's traffic
+           ///< (tests/corpus/captures/probe/velux_kig300_probe_capability_burst.yaml), where the `01 00 00`
+           ///< payload has the shape of a close echo.
+
+/// @name Objects the `read_object` probe can open (CMD_TRANSFER_OPEN)
+/// Object class 0 ids. Allowlisted: create_transfer_open() refuses every other id.
+/// @{
+/// The actuator capacity record a Somfy controller reads after pairing (protocol version 4 or higher).
+/// \todo Byte layout unknown: it names the events the device can report, the sensor types it
+/// carries and its radio channels. Read to learn it.
+static constexpr uint16_t TRANSFER_OBJECT_ACTUATOR_CAPACITY = 0x8100;
+/// The actuator state record read beside the capacity record. \todo Byte layout unknown.
+static constexpr uint16_t TRANSFER_OBJECT_ACTUATOR_STATE = 0x8103;
+/// A 16-byte name record: on a Somfy Izymo dimmer `00` followed by the ASCII text "MODULE DIMMER" and
+/// zero padding, read behind an authenticated block read. Whether it always equals the CMD_GET_NAME text
+/// is not established. It is the object that shows the open/read/close flow works on a device before the
+/// two records above are read.
+static constexpr uint16_t TRANSFER_OBJECT_NAME = 0x8003;
+/// Two further class-0 records beside the name record. A Somfy Izymo dimmer returned the same bytes
+/// from them as from CMD_GET_INFO1 (0x8001, 14 bytes) and CMD_GET_INFO2 (0x8002, 16 bytes), so they
+/// are the object-transport form of those two answers.
+/// @{
+static constexpr uint16_t TRANSFER_OBJECT_GENERAL_INFO1 = 0x8001;
+static constexpr uint16_t TRANSFER_OBJECT_GENERAL_INFO2 = 0x8002;
+/// @}
+/// @}
+
+/// @name Data transport payload layout (CMD_TRANSFER_OPEN .. CMD_UNKNOWN4A_RESP)
+/// @{
+static constexpr uint8_t TRANSFER_OPEN_DATA_SIZE = 9;       ///< CMD_TRANSFER_OPEN payload bytes.
+static constexpr uint8_t TRANSFER_OBJECT_CLASS_DEVICE = 0;  ///< Object class of the TRANSFER_OBJECT_* ids.
+static constexpr uint8_t TRANSFER_OPEN_RESP_DATA_SIZE = 4;  ///< CMD_TRANSFER_OPEN_RESP payload bytes.
+static constexpr uint8_t TRANSFER_READ_REQ_DATA_SIZE = 3;   ///< CMD_UNKNOWN4A_REQ payload bytes: handle + chunk.
+static constexpr uint8_t TRANSFER_BLOCK_SIZE = 18;  ///< Data bytes per CMD_UNKNOWN4A_RESP; 18 fills a 32-byte frame.
+static constexpr uint8_t TRANSFER_STATUS_ACCEPTED = 0;  ///< CMD_TRANSFER_OPEN_RESP status: request accepted.
+static constexpr uint8_t TRANSFER_STATUS_ADAPTED = 1;   ///< CMD_TRANSFER_OPEN_RESP status: accepted with changes.
+static constexpr uint16_t TRANSFER_CHUNK_CLOSE = 0;     ///< Chunk number of the closing CMD_UNKNOWN4A_REQ.
+/// @}
 
 // Device info commands
 static constexpr uint8_t CMD_GET_NAME = 0x50;       ///< Request device name

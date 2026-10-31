@@ -4,6 +4,7 @@
 Sending opcodes this project has not fully decoded yet, to learn what a device answers. This is a
 deliberately gated feature. Every probe but two is read-only reconnaissance; the exceptions,
 `subscribe_event` and `unsubscribe_event`, change the device and are marked as such below.
+`read_object` reads a device object in several frames and is described in [Reading a device object](#reading-a-device-object).
 
 
 > [!WARNING]
@@ -106,11 +107,7 @@ data:
 | `limitation` | `CMD_LIMITATION_STATUS_REQ` (0x25) with data `{selector, 00, 00}` | `0` = resulting minimum, `1` = resulting maximum (any other value is rejected; `probe_sweep` accepts `0` to `1`) | `0`, then `1` | The request pair a VELUX KLF 200 gateway sends to its windows every five minutes, heard on air at 868 MHz in issue #98 (selector `80`, then `C0`). Its purpose follows the KLF 200 API specification v3.18, section 10.5 (get limitation: resulting minimum and maximum). The value layout is confirmed on a VELUX window dry and under rain; the originator and remaining-time bytes are unverified. |
 | `subscribe_event` | `CMD_SUBSCRIBE_EVENT` (0x73) with data `01 <event hi> <event lo>` | `0` = battery level event `0x2001`, `1` = local sensor event `0x2005` (any other value is rejected; `probe_sweep` refuses this probe) | `1` | **Index `1` accepted by an RS100 Solar io** ([issue #156](https://github.com/laberning/home_io_control/issues/156)); index `0` is untested. The one probe that changes a device: it asks the device to report the event from now on, and no way to cancel that is known. Only those two events can be sent. A try the device authenticated is not repeated, so a device that takes the subscription and says nothing back ends as "accepted but no response". The RS100 answered at once with its first report, which the probe result names (`[event 0x2005, 5 data bytes]`) and puts on the "Last Device Event" sensor. Reports are recorded, not decoded: see "Last Device Event" below. |
 | `unsubscribe_event` | `CMD_SUBSCRIBE_EVENT` (0x73) with data `00 <event hi> <event lo>` | Same as `subscribe_event` (`probe_sweep` refuses it too) | `1` | **Untested guess.** The subscribe request with its first byte cleared, as an attempt to undo a subscription. Whether it works shows only in whether the device's reports stop on "Last Device Event" afterwards; an answer to the request alone proves nothing. Same guards and one-accepted-try rule as `subscribe_event`. |
-
-**There is deliberately no probe for `0x4A`.** It reads a buffer in chunks between two controllers
-and has been seen on air in a VELUX KLR 200 copy session. What it does to an actuator is unknown,
-and the command block around it includes write commands, so sending it is not worth the risk. See
-[ADR 0024](adr/0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md).
+| `read_object` | `CMD_TRANSFER_OPEN` (0x46), then `CMD_UNKNOWN4A_REQ` (0x4A) blocks, then a close | `0` = actuator capacity record `0x8100`, `1` = actuator state record `0x8103`, `2` = name record `0x8003`, `3` = general info 1 `0x8001`, `4` = general info 2 `0x8002` (any other value is rejected; `probe_sweep` refuses this probe) | `2` first, then `3`, `4`, `0`, `1` | Reads, never writes. See [Reading a device object](#reading-a-device-object). |
 
 A `get_info2` reply (`0x57`) leads with printable ASCII: paste the raw hex into the corpus and
 read the string off it, but record only what the wire shows — do not resolve it to a model name
@@ -132,6 +129,7 @@ A running record of what these frames actually draw back — as much as is under
 | `get_info1` (`0x54`) | A VELUX window answered `0x55` with `00 00 00 00 00 00 00 00 00 30 03 00 00 00` (corpus `velux_window_probe_metadata_replies`). An RS100 Solar io answered with the ASCII bytes `5163341E02` and then `04 00 FF FF` (corpus `somfy_rs100_probe_get_info1_sx1262`). Nothing decodes either yet. |
 | `subscribe_event` (`0x73`) | Index `1` on an RS100 Solar io: accepted behind a challenge, answered with a `0x71` carrying event `0x2005` and five data bytes, `06 00 00 00 00`, at night (corpus `somfy_rs100_probe_subscribe_event_sx1262`). The value bytes are not decoded yet. Index `0` has not been sent. |
 | `unsubscribe_event` (`0x73`, action `00`) | Not yet sent to a device. Run it only after `subscribe_event` drew reports, then record whether they stop. |
+| `read_object` (`0x46`/`0x4A`) | Somfy Izymo dimmer, protocol version 3 (`get_info1` byte 11 = `03`): index `2` opened plainly (`47` accepted, 16 bytes), the block reads were challenged and answered, and the record is `00` + "MODULE DIMMER" + padding. Indexes `0` and `1` were refused with status 3 and length 0. Index `3` returned the 14 bytes of the `get_info1` answer and index `4` the 16 bytes of the `get_info2` answer, byte for byte. |
 | `general_info3` (`0x58`) | Dimmer answered a real `0x59`; a Somfy awning and a Velux window both replied `ERROR_RESP` result `0x08` (`COMMAND_UNKNOWN`: the device does not implement the command). Device-dependent. |
 | `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices, and byte-identical between two window positions on a Velux window (a stored parameter, not a live reading) — its short form at modifier `0x03` read back the stored ventilation position (`BA 00`). See "Reading a `private2` reply" below. |
 | `status_mp_fp` | Unauthenticated, answered with a `0x04` and no challenge. A reply heard from a window: `04 2D 60 00 00 80 00 00 00`. The main parameter is `00 00` for open and `C8 00` for closed, followed by `80 00 00 00`. Nothing is applied to the device record. |
@@ -143,6 +141,33 @@ solar, day and night — the only things recovered are position/target data and,
 sensor value (battery, charge, luminance, temperature). Out-of-range indices answer result code
 `0x58` (`TOTAL_INCOHERENCE`). The remaining non-position unknowns — `data[0] = 0x2D` framing, the `00 20`
 `private_fn_sub` field, `get_info2` `data[12..15]` — have no decode and no external source.
+
+## Reading a device object
+
+`read_object` asks a device for one of its stored objects and prints the bytes. Somfy controllers
+read the two records at index `0` and `1` from every new actuator right after pairing; they list the
+events the actuator can report and the sensor types it carries. Nobody has published their byte
+layout, so this probe exists to capture it.
+
+One call does three things: it opens the object, pulls it in blocks of up to 18 bytes, and closes the
+transfer. Index `2` is a 16-byte name record; indexes `3` and `4` read the object form of the two info answers (`get_info1`, `get_info2`); on a Somfy Izymo they return the same bytes. Use index `2` first to check that the whole flow works on your device
+before you read the records.
+
+```yaml
+action: esphome.<your_node>_probe_device
+data:
+  device_id: "ABC123"
+  probe: read_object
+  index: "2"
+```
+
+The result carries the object id, the transfer's length and the bytes in `response_hex`; the log prints
+them 24 bytes to a line. The probe stops without reading when the device answers with an error, refuses
+the open, reports a length of 0, or announces more than 288 bytes. It never writes to the device and
+never changes the device's state in Home Assistant.
+
+Expect devices to answer in different ways. An error answer or no reply at all means the device does
+not offer that object. Post the log lines, including a refusal, when you report a result.
 
 ## Last Device Event
 

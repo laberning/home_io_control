@@ -475,6 +475,36 @@ bool decode_status_update_event(const IoFrame &frame, StatusUpdateEvent &out) {
   return true;
 }
 
+bool decode_transfer_open_reply(const IoFrame &f, TransferOpenReply &out) {
+  if (f.cmd != CMD_TRANSFER_OPEN_RESP || f.data_len != TRANSFER_OPEN_RESP_DATA_SIZE)
+    return false;
+  out.handle = f.data[0];
+  out.status = f.data[1];
+  out.length = static_cast<uint16_t>((f.data[2] << BITS_PER_BYTE) | f.data[3]);
+  return true;
+}
+
+uint16_t transfer_chunk_count(uint16_t length) {
+  return static_cast<uint16_t>((length + TRANSFER_BLOCK_SIZE - 1) / TRANSFER_BLOCK_SIZE);
+}
+
+bool decode_transfer_block(const IoFrame &f, uint8_t handle, uint16_t chunk, const uint8_t *&out, uint8_t &out_len) {
+  if (f.cmd != CMD_UNKNOWN4A_RESP || f.data_len < TRANSFER_READ_REQ_DATA_SIZE ||
+      f.data_len > TRANSFER_READ_REQ_DATA_SIZE + TRANSFER_BLOCK_SIZE)
+    return false;
+  // The first byte is compared on its low seven bits only, as the vendor stack does: the top bit is
+  // not part of the handle.
+  constexpr uint8_t handle_mask = 0x7F;
+  constexpr uint16_t chunk_low_byte_mask = 0x00FF;
+  if ((f.data[0] & handle_mask) != (handle & handle_mask) ||
+      f.data[1] != static_cast<uint8_t>(chunk >> BITS_PER_BYTE) ||
+      f.data[2] != static_cast<uint8_t>(chunk & chunk_low_byte_mask))
+    return false;
+  out = f.data + TRANSFER_READ_REQ_DATA_SIZE;
+  out_len = static_cast<uint8_t>(f.data_len - TRANSFER_READ_REQ_DATA_SIZE);
+  return true;
+}
+
 bool decode_limitation_status(const IoFrame &f, LimitationStatus &out) {
   if (f.cmd != CMD_LIMITATION_STATUS_RESP || f.data_len != LIMITATION_RESP_DATA_SIZE)
     return false;

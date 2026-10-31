@@ -73,11 +73,11 @@ uint8_t decode_uart_probe(const uint8_t *raw, uint8_t raw_len, uint8_t bit_offse
 /// affecting the already-shipped identify_device() action (and climate writes) on SX1262/LR1121.
 /// Add every new opcode this codebase sends a request for, or expects a reply to, here as well as
 /// in proto_constants.h. Deliberately
-/// excludes CMD_UNKNOWN4A_REQ (0x4A, see ADR 0024) — recognizing a *received* 0x4A would not
-/// violate the "never transmitted" rule, but nothing in this codebase currently sends anything
-/// that would draw one, so there is no exchange for it to unblock; CMD_UNKNOWN4A_RESP (0x4B) is
-/// included because it is a plausible reply to CMD_GET_GENERAL_INFO3 (0x58), which this codebase
-/// does send. Declared in radio_soft_phy.h so tests can enumerate every accepted command directly.
+/// excludes CMD_TRANSFER_OPEN (0x46) and CMD_UNKNOWN4A_REQ (0x4A): this codebase only sends them, and
+/// nothing it sends draws one back, so there is no exchange for a received one to unblock. Their
+/// replies CMD_TRANSFER_OPEN_RESP (0x47) and CMD_UNKNOWN4A_RESP (0x4B) are included (the `read_object`
+/// probe, ADR 0062; 0x4B also answers CMD_GET_GENERAL_INFO3 on some devices). Declared in
+/// radio_soft_phy.h so tests can enumerate every accepted command directly.
 bool is_known_io_command(uint8_t cmd) {
   switch (cmd) {
     case CMD_EXECUTE:
@@ -109,6 +109,7 @@ bool is_known_io_command(uint8_t cmd) {
     case CMD_NODE_VERIFY_RESP:
     case CMD_CHALLENGE_REQ:
     case CMD_CHALLENGE_RESP:
+    case CMD_TRANSFER_OPEN_RESP:
     case CMD_UNKNOWN4A_RESP:
     case CMD_GET_NAME:
     case CMD_GET_NAME_RESP:

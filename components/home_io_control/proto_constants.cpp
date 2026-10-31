@@ -67,6 +67,10 @@ const char *command_name(uint8_t cmd) {
       return "NODE_VERIFY_RESP";
     case CMD_LAUNCH_KEY_TRANSFER:
       return "LAUNCH_KEY_TRANSFER";
+    case CMD_TRANSFER_OPEN:
+      return "TRANSFER_OPEN";
+    case CMD_TRANSFER_OPEN_RESP:
+      return "TRANSFER_OPEN_RESP";
     case CMD_UNKNOWN4A_REQ:
       return "UNKNOWN4A_REQ";
     case CMD_UNKNOWN4A_RESP:

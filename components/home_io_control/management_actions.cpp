@@ -78,6 +78,24 @@ constexpr uint8_t PROBE_LIMITATION_MAX_INDEX = 1;
 constexpr uint8_t PROBE_LIMITATION_INDEX_MINIMUM = 0;  ///< `limitation` index that reads the resulting minimum.
 constexpr const char *PROBE_NAME_SUBSCRIBE_EVENT =
     "subscribe_event";  ///< create_subscribe_event(); index 0 = battery level event, 1 = local sensor event.
+constexpr const char *PROBE_NAME_READ_OBJECT =
+    "read_object";  ///< Data-transport read of one device object (ADR 0062); index 0/1/2 picks the object.
+/// Highest `read_object` index: capacity record (0), state record (1), name record (2), then general info 1 (3, 0x8001)
+/// and general info 2 (4, 0x8002).
+constexpr uint8_t PROBE_READ_OBJECT_MAX_INDEX = 4;
+constexpr uint8_t PROBE_READ_OBJECT_INDEX_CAPACITY = 0;  ///< `read_object` index for TRANSFER_OBJECT_ACTUATOR_CAPACITY.
+constexpr uint8_t PROBE_READ_OBJECT_INDEX_GENERAL_INFO1 =
+    3;  ///< `read_object` index for TRANSFER_OBJECT_GENERAL_INFO1.
+constexpr uint8_t PROBE_READ_OBJECT_INDEX_GENERAL_INFO2 =
+    4;                                                ///< `read_object` index for TRANSFER_OBJECT_GENERAL_INFO2.
+constexpr uint8_t PROBE_READ_OBJECT_INDEX_STATE = 1;  ///< `read_object` index for TRANSFER_OBJECT_ACTUATOR_STATE.
+/// Longest object `read_object` pulls: 16 blocks. A device announcing more is closed again unread, so a
+/// misreading cannot turn into a long run of transmissions on the shared band.
+constexpr uint16_t PROBE_READ_OBJECT_MAX_BYTES = 16 * TRANSFER_BLOCK_SIZE;
+/// Data bytes per log line when `read_object` prints what it read (short enough for the log's line limit).
+constexpr uint8_t PROBE_READ_OBJECT_LOG_BYTES_PER_LINE = 24;
+/// "object 0xNNNN handle 0xNN status NNN length NNNNN" plus the terminator.
+constexpr size_t PROBE_READ_OBJECT_HEADER_BUFFER_SIZE = 64;
 /// "event 0xNNNN, NNN data bytes" plus the terminator.
 constexpr size_t PROBE_EVENT_HEADER_BUFFER_SIZE = 40;
 /// Highest `subscribe_event` index: one per allowlisted event id. The index is never the on-air event id.
@@ -173,6 +191,29 @@ bool build_probe_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t
   return create_unsubscribe_event(f, own, dst, event, low_power);
 }
 
+/// The object id a `read_object` index selects (the log and message name it).
+uint16_t read_object_id_for_index(uint8_t index) {
+  switch (index) {
+    case PROBE_READ_OBJECT_INDEX_CAPACITY:
+      return TRANSFER_OBJECT_ACTUATOR_CAPACITY;
+    case PROBE_READ_OBJECT_INDEX_STATE:
+      return TRANSFER_OBJECT_ACTUATOR_STATE;
+    case PROBE_READ_OBJECT_INDEX_GENERAL_INFO1:
+      return TRANSFER_OBJECT_GENERAL_INFO1;
+    case PROBE_READ_OBJECT_INDEX_GENERAL_INFO2:
+      return TRANSFER_OBJECT_GENERAL_INFO2;
+    default:
+      return TRANSFER_OBJECT_NAME;
+  }
+}
+
+/// Maps the `read_object` index onto an allowlisted object id; create_transfer_open() checks the id again.
+bool build_probe_read_object(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  if (index > PROBE_READ_OBJECT_MAX_INDEX)
+    return false;  // Unreachable through probe_device(), which gates on max_index.
+  return create_transfer_open(f, own, dst, read_object_id_for_index(index), low_power);
+}
+
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
 struct ProbeDescriptor {
   const char *name;
@@ -182,6 +223,7 @@ struct ProbeDescriptor {
                       ///< "get_info2", "status_mp_fp").
   uint8_t max_index;  ///< Highest index the probe accepts; the full byte range when index_help is null.
   bool sweepable;     ///< False for a probe that changes state in the device: probe_sweep() refuses it.
+  bool reads_blocks{false};  ///< True for `read_object`: an accepted first reply is followed by block reads.
 };
 
 /// @brief The full set of probes probe_device()/probe_sweep() can dispatch to.
@@ -211,6 +253,12 @@ constexpr ProbeDescriptor PROBE_TABLE[] = {
     {PROBE_NAME_UNSUBSCRIBE_EVENT, build_probe_unsubscribe_event,
      "index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)", true, PROBE_SUBSCRIBE_EVENT_MAX_INDEX,
      false},
+    // The data-transport read (ADR 0062): a multi-frame session, so it is not swept; it changes nothing in
+    // the device but a transfer handle that the probe closes again.
+    {PROBE_NAME_READ_OBJECT, build_probe_read_object,
+     "index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name record 0x8003), 3 (general info 1, "
+     "0x8001) or 4 (general info 2, 0x8002)",
+     true, PROBE_READ_OBJECT_MAX_INDEX, false, true},
 };
 constexpr uint8_t PROBE_TABLE_SIZE = sizeof(PROBE_TABLE) / sizeof(PROBE_TABLE[0]);
 
@@ -375,6 +423,17 @@ static std::string format_hex_byte(uint8_t value) {
   std::array<char, RESULT_CODE_BUFFER_SIZE> buffer{};
   std::snprintf(buffer.data(), buffer.size(), "%02X", value);
   return std::string(buffer.data());
+}
+
+/// Space-separated hex of data[first, end).
+static std::string hex_range(const uint8_t *data, uint16_t first, uint16_t end) {
+  std::string out;
+  for (uint16_t i = first; i < end; i++) {
+    if (i > first)
+      out += ' ';
+    out += format_hex_byte(data[i]);
+  }
+  return out;
 }
 
 static ManagementActionResult make_management_result(const std::string &action, const std::string &device_id) {
@@ -1246,6 +1305,9 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     result.decoded = header;
     result.message += " [" + result.decoded + "]";
   }
+  // The data-transport read continues past its first answer; everything it reports is raw bytes.
+  if (descriptor->reads_blocks)
+    read_object_blocks_(*dev, response, read_object_id_for_index(index_byte), result);
   // The decode depends on the reply, not on which probe drew it, so any probe that happens to
   // draw a limitation reply reports it. Rendered, never applied: the device record is untouched.
   if (response.cmd == CMD_LIMITATION_STATUS_RESP) {
@@ -1253,6 +1315,82 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     result.message += " [" + result.decoded + "]";
   }
   return result;
+}
+
+void ManagementActions::read_object_blocks_(const IoDevice &dev, const IoFrame &open_reply, uint16_t object_id,
+                                            ManagementActionResult &result) {
+  // Anything but an open answer (an error frame, say) is already reported by the caller.
+  if (open_reply.cmd != CMD_TRANSFER_OPEN_RESP)
+    return;
+  TransferOpenReply open;
+  if (!decode_transfer_open_reply(open_reply, open)) {
+    result.message += " [not a well-formed transfer-open answer]";
+    return;
+  }
+  char head[PROBE_READ_OBJECT_HEADER_BUFFER_SIZE];
+  snprintf(head, sizeof(head), "object 0x%04X handle 0x%02X status %u length %u", static_cast<unsigned>(object_id),
+           static_cast<unsigned>(open.handle), static_cast<unsigned>(open.status), static_cast<unsigned>(open.length));
+  result.decoded = head;
+  result.message += " [" + result.decoded + "]";
+  if (!open.ok()) {
+    result.message += " [device refused the read]";
+    return;
+  }
+  if (open.length == 0) {
+    result.message += " [object is empty]";
+    return;
+  }
+
+  // Close the transfer on every path past this point: the device holds a handle until told otherwise.
+  const auto close_transfer = [&]() {
+    IoFrame close_request;
+    IoFrame close_reply;
+    if (create_transfer_read(close_request, node_id_, dev.node_id, open.handle, TRANSFER_CHUNK_CLOSE, dev.low_power))
+      engine_.send_and_receive(close_request, close_reply, FREQ_CH2);
+  };
+  if (open.length > PROBE_READ_OBJECT_MAX_BYTES) {
+    close_transfer();
+    result.message += " [longer than " + std::to_string(PROBE_READ_OBJECT_MAX_BYTES) + " bytes, closed unread]";
+    return;
+  }
+
+  uint8_t data[PROBE_READ_OBJECT_MAX_BYTES] = {0};
+  uint16_t have = 0;
+  const uint16_t chunks = transfer_chunk_count(open.length);
+  bool complete = true;
+  for (uint16_t chunk = chunks; chunk >= 1; chunk--) {
+    IoFrame request;
+    IoFrame reply;
+    if (!create_transfer_read(request, node_id_, dev.node_id, open.handle, chunk, dev.low_power) ||
+        engine_.send_and_receive(request, reply, FREQ_CH2) != ExchangeOutcome::SUCCESS_WITH_RESPONSE) {
+      complete = false;
+      break;
+    }
+    const uint8_t *block = nullptr;
+    uint8_t block_len = 0;
+    // The blocks arrive counting down but their data runs forward; a block that echoes another chunk
+    // is a late answer and ends the read rather than being spliced in.
+    if (!decode_transfer_block(reply, open.handle, chunk, block, block_len) ||
+        have + block_len > PROBE_READ_OBJECT_MAX_BYTES) {
+      complete = false;
+      break;
+    }
+    std::memcpy(data + have, block, block_len);
+    have = static_cast<uint16_t>(have + block_len);
+  }
+  close_transfer();
+
+  const std::string hex = hex_range(data, 0, have);
+  result.response_hex = hex;
+  ESP_LOGI(detail::TAG, "read_object %s object 0x%04X: %u of %u bytes%s", result.device_id.c_str(),
+           static_cast<unsigned>(object_id), static_cast<unsigned>(have), static_cast<unsigned>(open.length),
+           complete ? "" : " (incomplete)");
+  // One log line per few bytes: the logger truncates long lines (512 bytes on hardware).
+  for (uint16_t i = 0; i < have; i += PROBE_READ_OBJECT_LOG_BYTES_PER_LINE) {
+    ESP_LOGI(detail::TAG, "  +%03X: %s", static_cast<unsigned>(i),
+             hex_range(data, i, std::min<uint16_t>(have, i + PROBE_READ_OBJECT_LOG_BYTES_PER_LINE)).c_str());
+  }
+  result.message += (complete ? " data=" : " incomplete, data so far=") + hex;
 }
 
 void ManagementActions::api_probe_sweep(const std::string &device_id, const std::string &probe,

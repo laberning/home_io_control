@@ -394,6 +394,38 @@ struct StatusUpdateEvent {
 bool decode_status_update_event(const IoFrame &frame, StatusUpdateEvent &out);
 
 // ============================================================================
+// Data transport read (0x46 / 0x47 / 0x4A / 0x4B)
+// ============================================================================
+
+/// @brief One decoded CMD_TRANSFER_OPEN_RESP payload.
+struct TransferOpenReply {
+  uint8_t handle{0};   ///< data[0]; the first byte of every CMD_UNKNOWN4A_REQ that follows.
+  uint8_t status{0};   ///< data[1]; TRANSFER_STATUS_ACCEPTED / _ADAPTED, anything else is an error.
+  uint16_t length{0};  ///< data[2..3] big-endian: bytes available to read; 0 means nothing to read.
+  [[nodiscard]] bool ok() const { return status == TRANSFER_STATUS_ACCEPTED || status == TRANSFER_STATUS_ADAPTED; }
+};
+
+/// @brief Decode a transfer-open reply (layout verified against a VELUX KLR 200 copy session).
+/// @return false unless `f` is a CMD_TRANSFER_OPEN_RESP of exactly TRANSFER_OPEN_RESP_DATA_SIZE bytes.
+bool decode_transfer_open_reply(const IoFrame &f, TransferOpenReply &out);
+
+/// @brief Number of CMD_UNKNOWN4A_REQ chunks that cover `length` bytes: ceil(length / TRANSFER_BLOCK_SIZE).
+uint16_t transfer_chunk_count(uint16_t length);
+
+/// @brief Decode one CMD_UNKNOWN4A_RESP data block.
+///
+/// The reply echoes `<handle> <chunk>` and appends up to TRANSFER_BLOCK_SIZE data bytes; it is
+/// accepted only when the echo equals what was asked for, so a late reply to an earlier chunk is never
+/// taken for the current one.
+/// @param f A parsed frame.
+/// @param handle Handle the request carried.
+/// @param chunk Chunk number the request carried.
+/// @param out Receives a pointer into `f.data` (valid while `f` lives); may be empty for the close echo.
+/// @param out_len Receives the data byte count.
+/// @return false unless `f` is a CMD_UNKNOWN4A_RESP echoing exactly `handle` and `chunk`.
+bool decode_transfer_block(const IoFrame &f, uint8_t handle, uint16_t chunk, const uint8_t *&out, uint8_t &out_len);
+
+// ============================================================================
 // Limitation read (0x25 / 0x26)
 // ============================================================================
 
