@@ -2153,7 +2153,7 @@ TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
   EXPECT_EQ(result.message,
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
             "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, limitation, "
-            "subscribe_event, or unsubscribe_event)");
+            "subscribe_event, unsubscribe_event, or read_object)");
   EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
                                            "not by looping until this flag stops it";
 }
@@ -2581,7 +2581,7 @@ TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
   EXPECT_EQ(result.message,
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
             "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, limitation, "
-            "subscribe_event, or unsubscribe_event)");
+            "subscribe_event, unsubscribe_event, or read_object)");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an invalid probe name must not enter the per-index loop at all: " << result.message;
 }
@@ -2846,4 +2846,203 @@ TEST(HubManagement, ProbeDeviceSubscribeEventAcceptedWithoutAReplyIsReportedAndS
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device accepted the probe request but sent no response");
   EXPECT_EQ(radio.get_send_count(), 2) << "the subscribe once, plus our challenge answer";
+}
+
+// --- read_object: the data-transport read (ADR 0062) ----------------------------------------------
+
+namespace {
+
+/// A frame from the probe device to the hub with the given command and payload.
+IoFrame make_transfer_reply(const uint8_t dst[3], uint8_t cmd, const std::vector<uint8_t> &payload) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  set_dst(frame, dst);
+  set_src(frame, PROBE_DEVICE_NODE_ID);
+  EXPECT_TRUE(set_cmd(frame, cmd, payload.data(), static_cast<uint8_t>(payload.size())));
+  return frame;
+}
+
+/// The 18-byte block `first, first+1, ...` of a transfer, echoing handle and chunk.
+IoFrame make_block(const uint8_t dst[3], uint8_t handle, uint16_t chunk, uint8_t first, uint8_t count) {
+  std::vector<uint8_t> payload = {handle, static_cast<uint8_t>(chunk >> 8), static_cast<uint8_t>(chunk & 0xFF)};
+  for (uint8_t i = 0; i < count; i++)
+    payload.push_back(static_cast<uint8_t>(first + i));
+  return make_transfer_reply(dst, CMD_UNKNOWN4A_RESP, payload);
+}
+
+/// The `index`-th transmitted frame from its command byte on (command and payload).
+std::vector<uint8_t> sent_from_cmd(const MockRadio &radio, size_t index) {
+  const auto bytes = sent_frame_bytes(radio, index);
+  return std::vector<uint8_t>(bytes.begin() + 8, bytes.end());
+}
+
+/// The command byte of the `index`-th transmitted frame.
+uint8_t sent_cmd(const MockRadio &radio, size_t index) {
+  const auto bytes = sent_frame_bytes(radio, index);
+  return bytes.at(8);
+}
+
+}  // namespace
+
+TEST(HubManagement, ReadObjectOpensPullsEveryBlockAndClosesTheTransfer) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  // 40 bytes = 3 blocks (18 + 18 + 4), requested counting down from 3.
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x28})));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 3, 0, 18)));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 2, 18, 18)));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 1, 36, 4)));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 0, 0, 0)));
+
+  const auto result = component.probe_device("ABC123", "read_object", "0");
+  ASSERT_TRUE(result.success) << result.message;
+  ASSERT_EQ(radio.get_sent_data().size(), 5u);
+  // Open for object 0x8100: SAAC originator, class 0, 00, 81 00, four zero bytes.
+  EXPECT_EQ(sent_frame_bytes(radio, 0), (std::vector<uint8_t>{0x51, 0x00, 0xAB, 0xC1, 0x23, 0xC0, 0xFF, 0xEE, 0x46,
+                                                              0x08, 0x00, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00}));
+  // Blocks counting down, then the close.
+  EXPECT_EQ(sent_from_cmd(radio, 1), (std::vector<uint8_t>{0x4A, 0x10, 0x00, 0x03}));
+  EXPECT_EQ(sent_from_cmd(radio, 2), (std::vector<uint8_t>{0x4A, 0x10, 0x00, 0x02}));
+  EXPECT_EQ(sent_from_cmd(radio, 3), (std::vector<uint8_t>{0x4A, 0x10, 0x00, 0x01}));
+  EXPECT_EQ(sent_from_cmd(radio, 4), (std::vector<uint8_t>{0x4A, 0x10, 0x00, 0x00}));
+  // The data runs forward across blocks.
+  std::string expected;
+  for (int i = 0; i < 40; i++) {
+    char buf[4];
+    snprintf(buf, sizeof(buf), i == 0 ? "%02X" : " %02X", i);
+    expected += buf;
+  }
+  EXPECT_EQ(result.response_hex, expected);
+  EXPECT_NE(result.message.find("data=" + expected), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("object 0x8100 handle 0x10 status 0 length 40"), std::string::npos) << result.message;
+}
+
+TEST(HubManagement, ReadObjectIndexPicksTheObject) {
+  struct Case {
+    const char *index;
+    uint8_t hi;
+    uint8_t lo;
+  };
+  for (const Case &c : {Case{"0", 0x81, 0x00}, Case{"1", 0x81, 0x03}, Case{"2", 0x80, 0x03}, Case{"3", 0x80, 0x01},
+                        Case{"4", 0x80, 0x02}}) {
+    SCOPED_TRACE(c.index);
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_COMMAND_UNKNOWN)));
+    component.probe_device("ABC123", "read_object", c.index);
+    ASSERT_FALSE(radio.get_sent_data().empty());
+    const auto bytes = sent_frame_bytes(radio, 0);
+    EXPECT_EQ(bytes[8], CMD_TRANSFER_OPEN);
+    EXPECT_EQ(bytes[12], c.hi);
+    EXPECT_EQ(bytes[13], c.lo);
+  }
+}
+
+TEST(HubManagement, ReadObjectReportsAnErrorAnswerWithoutReadingOn) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  const auto result = component.probe_device("ABC123", "read_object", "0");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.response_cmd, CMD_ERROR_RESP);
+  EXPECT_EQ(radio.get_sent_data().size(), 1u) << "no block request after an error answer";
+  EXPECT_TRUE(result.response_hex.find("FE") != std::string::npos);
+}
+
+TEST(HubManagement, ReadObjectStopsAtARefusedOpenAndAtAnEmptyObject) {
+  {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    radio.queue_rx(
+        frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x02, 0x00, 0x28})));
+    const auto result = component.probe_device("ABC123", "read_object", "0");
+    EXPECT_NE(result.message.find("device refused the read"), std::string::npos) << result.message;
+    EXPECT_EQ(radio.get_sent_data().size(), 1u);
+  }
+  {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    radio.queue_rx(
+        frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x00})));
+    const auto result = component.probe_device("ABC123", "read_object", "0");
+    EXPECT_NE(result.message.find("object is empty"), std::string::npos) << result.message;
+    EXPECT_EQ(radio.get_sent_data().size(), 1u) << "length 0 ends the session; nothing to close";
+  }
+}
+
+TEST(HubManagement, ReadObjectClosesWithoutReadingAnObjectLongerThanTheCap) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  // 0x0190 = 400 bytes, above the 288-byte cap.
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x01, 0x90})));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 0, 0, 0)));
+
+  const auto result = component.probe_device("ABC123", "read_object", "0");
+  EXPECT_NE(result.message.find("closed unread"), std::string::npos) << result.message;
+  ASSERT_EQ(radio.get_sent_data().size(), 2u);
+  EXPECT_EQ(sent_cmd(radio, 0), CMD_TRANSFER_OPEN);
+  EXPECT_EQ(sent_cmd(radio, 1), CMD_UNKNOWN4A_REQ);
+}
+
+TEST(HubManagement, ReadObjectClosesTheTransferAfterAFailedBlock) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x28})));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 3, 0, 18)));
+  // The block for chunk 2 echoes chunk 7: a late answer to something else, not spliced in.
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 7, 99, 18)));
+
+  const auto result = component.probe_device("ABC123", "read_object", "0");
+  EXPECT_NE(result.message.find("incomplete"), std::string::npos) << result.message;
+  EXPECT_EQ(result.response_hex.find("63"), std::string::npos) << "the stray block's bytes must not appear";
+  const size_t sent = radio.get_sent_data().size();
+  ASSERT_GE(sent, 4u);
+  const auto last = sent_frame_bytes(radio, sent - 1);
+  EXPECT_EQ(last[8], CMD_UNKNOWN4A_REQ);
+  EXPECT_EQ(last[11], 0x00) << "the last frame sent is the close (chunk 0)";
+  EXPECT_EQ(last[10], 0x00);
+}
+
+TEST(HubManagement, ReadObjectIsGatedLikeEveryProbeAndIndexBounded) {
+  {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    const auto result = component.probe_device("ABC123", "read_object", "0");
+    EXPECT_FALSE(result.success);
+    EXPECT_NE(result.message.find("diagnostic probes are not enabled"), std::string::npos);
+    EXPECT_TRUE(radio.get_sent_data().empty());
+  }
+  {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    EXPECT_FALSE(component.probe_device("ABC123", "read_object", "5").success);
+    EXPECT_FALSE(component.probe_device("ABC123", "read_object", "0x8100").success);
+    EXPECT_EQ(component.probe_device("ABC123", "read_object", "5").message,
+              "probe \"read_object\" takes index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name "
+              "record 0x8003), 3 (general info 1, 0x8001) or 4 (general info 2, 0x8002)");
+    EXPECT_EQ(component.probe_sweep("ABC123", "read_object", "0", "2").message,
+              "probe \"read_object\" cannot be swept; use probe_device");
+    EXPECT_TRUE(radio.get_sent_data().empty());
+  }
 }

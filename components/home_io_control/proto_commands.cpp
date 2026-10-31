@@ -692,6 +692,40 @@ bool create_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst
   return create_event_subscription(f, own, dst, EVENT_SUBSCRIPTION_UNSUBSCRIBE, event_id, low_power);
 }
 
+/// Build the transfer-open request (see the header for the allowlist and the byte layout).
+bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint16_t object_id, bool low_power) {
+  if (object_id != TRANSFER_OBJECT_ACTUATOR_CAPACITY && object_id != TRANSFER_OBJECT_ACTUATOR_STATE &&
+      object_id != TRANSFER_OBJECT_NAME && object_id != TRANSFER_OBJECT_GENERAL_INFO1 &&
+      object_id != TRANSFER_OBJECT_GENERAL_INFO2)
+    return false;
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  // Originator, object class, a zero byte, the object id big-endian, then two zero words (offset and
+  // length of the part wanted, left zero to ask for the whole object).
+  const uint8_t d[TRANSFER_OPEN_DATA_SIZE] = {ORIGINATOR_SAAC,
+                                              TRANSFER_OBJECT_CLASS_DEVICE,
+                                              0x00,
+                                              static_cast<uint8_t>(object_id >> 8),
+                                              static_cast<uint8_t>(object_id & 0xFF),
+                                              0x00,
+                                              0x00,
+                                              0x00,
+                                              0x00};
+  return set_cmd(f, CMD_TRANSFER_OPEN, d, sizeof(d));
+}
+
+/// Build the transfer-read request (see the header: exactly handle and chunk, no data).
+bool create_transfer_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t handle, uint16_t chunk,
+                          bool low_power) {
+  init_frame(f, true, true, false, low_power);
+  set_dst(f, dst);
+  set_src(f, own);
+  const uint8_t d[TRANSFER_READ_REQ_DATA_SIZE] = {handle, static_cast<uint8_t>(chunk >> 8),
+                                                  static_cast<uint8_t>(chunk & 0xFF)};
+  return set_cmd(f, CMD_UNKNOWN4A_REQ, d, sizeof(d));
+}
+
 /// Build a tilt-aware get-status request (0x03) that returns the extended 16-byte tilt payload.
 bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
   return create_get_status_extended(f, own, dst, low_power, STATUS_TILT_SELECTOR, 0x01);

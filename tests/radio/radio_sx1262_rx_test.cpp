@@ -305,15 +305,17 @@ TEST(RadioSX1262, NamedCommandsAreEitherKnownOrDocumentedNeverReceived) {
   //     not a gap -- both are actively received and handled (oneway_key_adoption.cpp's
   //     OnewayKeyAdoption::try_adopt(), pairing_advisor.cpp), just never through is_known_io_command().
   //   - CMD_PRIORITY_LEVEL_REQ / CMD_PRIORITY_LEVEL_RESP: zero references anywhere outside proto_constants.*.
-  //   - CMD_UNKNOWN4A_REQ: deliberately excluded, see ADR 0024 -- nothing this codebase sends
-  //     would ever draw a reply carrying this opcode.
+  //   - CMD_TRANSFER_OPEN / CMD_UNKNOWN4A_REQ: only ever sent (the `read_object` probe, ADR 0062);
+  //     nothing this codebase sends would draw a reply carrying either opcode.
   //   - CMD_SEND_RAW_MESSAGE / CMD_READ_GROUPS / CMD_REBOOT / CMD_SERVICE_STATUS_ACK: never
   //     observed in corpus or field log, not sent or handled anywhere in this codebase -- named
   //     purely so a future capture of one of them has a symbol to log against.
   static constexpr uint8_t NEVER_RECEIVED_ALLOWLIST[] = {
-      CMD_ACTIVATE_MODE,      CMD_ONEWAY_ADD_CONTROLLER, CMD_ONEWAY_REMOVE,
-      CMD_PRIORITY_LEVEL_REQ, CMD_PRIORITY_LEVEL_RESP,   CMD_UNKNOWN4A_REQ,
-      CMD_SEND_RAW_MESSAGE,   CMD_READ_GROUPS,           CMD_REBOOT,
+      CMD_ACTIVATE_MODE,       CMD_ONEWAY_ADD_CONTROLLER,
+      CMD_ONEWAY_REMOVE,       CMD_PRIORITY_LEVEL_REQ,
+      CMD_PRIORITY_LEVEL_RESP, CMD_UNKNOWN4A_REQ,
+      CMD_TRANSFER_OPEN,       CMD_SEND_RAW_MESSAGE,
+      CMD_READ_GROUPS,         CMD_REBOOT,
       CMD_SERVICE_STATUS_ACK,
   };
 

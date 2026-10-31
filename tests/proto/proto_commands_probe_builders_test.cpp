@@ -461,3 +461,59 @@ TEST(ProtoCommandsProbeBuilders, PrivateFunctionCarriesChosenSubIndex) {
   const uint8_t want[3] = {0x09, 0x01, 0x00};
   EXPECT_EQ(0, std::memcmp(f.data, want, 3));
 }
+
+// --- Data transport read (ADR 0062) --------------------------------------------------------------
+
+TEST(ProtoCommandsProbeBuilders, TransferOpenBuildsTheKizboxBytesForEachAllowlistedObject) {
+  IoFrame frame{};
+  const uint8_t own[3] = {0x97, 0xDE, 0x1A};
+  const uint8_t dst[3] = {0x51, 0xE3, 0x03};
+  struct Case {
+    uint16_t object;
+    uint8_t hi;
+    uint8_t lo;
+  };
+  for (const Case &c :
+       {Case{TRANSFER_OBJECT_ACTUATOR_CAPACITY, 0x81, 0x00}, Case{TRANSFER_OBJECT_ACTUATOR_STATE, 0x81, 0x03},
+        Case{TRANSFER_OBJECT_NAME, 0x80, 0x03}, Case{TRANSFER_OBJECT_GENERAL_INFO1, 0x80, 0x01},
+        Case{TRANSFER_OBJECT_GENERAL_INFO2, 0x80, 0x02}}) {
+    ASSERT_TRUE(create_transfer_open(frame, own, dst, c.object, /*low_power=*/false));
+    uint8_t bytes[64] = {0};
+    const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+    // CTRL0 0x51 = start+end, 2W, 9 data bytes (18 bytes on the wire). Payload: SAAC originator, class 0, 00, object
+    // id, 4 zero bytes.
+    const std::vector<uint8_t> expected = {0x51, 0x00, 0x51, 0xE3, 0x03, 0x97, 0xDE, 0x1A, 0x46,
+                                           0x08, 0x00, 0x00, c.hi, c.lo, 0x00, 0x00, 0x00, 0x00};
+    ASSERT_EQ(len, expected.size());
+    EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+  }
+}
+
+TEST(ProtoCommandsProbeBuilders, TransferOpenRefusesEveryObjectOutsideTheAllowlist) {
+  IoFrame frame{};
+  for (uint16_t object : {0x0000, 0x8000, 0x8004, 0x8101, 0x8102, 0xA607, 0xFFFF})
+    EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, object, false)) << std::hex << object;
+}
+
+TEST(ProtoCommandsProbeBuilders, TransferOpenSetsLowPowerFlag) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, TRANSFER_OBJECT_NAME, true));
+  EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0);
+}
+
+TEST(ProtoCommandsProbeBuilders, TransferReadCarriesExactlyHandleAndChunk) {
+  IoFrame frame{};
+  const uint8_t own[3] = {0x97, 0xDE, 0x1A};
+  const uint8_t dst[3] = {0x51, 0xE3, 0x03};
+  ASSERT_TRUE(create_transfer_read(frame, own, dst, 0x10, 0x0102, false));
+  uint8_t bytes[64] = {0};
+  const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+  // CTRL0 0x4B = start+end, 2W, 3 data bytes. No room for a data block: a write cannot be built here.
+  const std::vector<uint8_t> expected = {0x4B, 0x00, 0x51, 0xE3, 0x03, 0x97, 0xDE, 0x1A, 0x4A, 0x10, 0x01, 0x02};
+  ASSERT_EQ(len, expected.size());
+  EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+  ASSERT_TRUE(create_transfer_read(frame, own, dst, 0x10, TRANSFER_CHUNK_CLOSE, false));
+  EXPECT_EQ(frame.data_len, TRANSFER_READ_REQ_DATA_SIZE);
+  EXPECT_EQ(frame.data[1], 0x00);
+  EXPECT_EQ(frame.data[2], 0x00);
+}

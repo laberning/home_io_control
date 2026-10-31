@@ -302,8 +302,13 @@ class ManagementActions {
   ///   - "unsubscribe_event": create_unsubscribe_event(), the same request with action byte 0x00,
   ///     same index mapping and the same guards. An untested guess at undoing a subscription; whether
   ///     it works shows only in whether the device's reports stop.
-  /// There is deliberately no "unknown4a" probe and no builder for CMD_UNKNOWN4A_REQ (0x4A)
-  /// anywhere in this codebase — see ADR 0024 for the standing safety decision.
+  ///   - "read_object": the data-transport read of ADR 0062. `index` 0 = actuator capacity record
+  ///     (object 0x8100), 1 = actuator state record (0x8103), 2 = name record (0x8003, there to prove
+  ///     the flow before the other two are trusted), 3 = general info 1 (0x8001), 4 = general info 2 (0x8002). One call
+  ///     opens the object (CMD_TRANSFER_OPEN), pulls its blocks (CMD_UNKNOWN4A_REQ, counting down) and closes it; the
+  ///     bytes are reported raw in `response_hex` and logged, never interpreted or applied to the device record. Not
+  ///     sweepable; an object announced longer than PROBE_READ_OBJECT_MAX_BYTES is closed unread. The write twin of the
+  ///     block (0x48, and a 0x4A that carries data) has no builder.
   ///
   /// `index` is a string, not an int, because ManagementServiceDescriptor::
   /// encode_list_service_response() hardcodes every native-API action argument as
@@ -381,6 +386,20 @@ class ManagementActions {
   void publish_result(const ManagementActionResult &result);
 
  private:
+  /// @brief Second half of the `read_object` probe: given the device's accepted CMD_TRANSFER_OPEN
+  /// answer, pull every block, close the transfer and report what was read.
+  ///
+  /// Always closes a transfer the device opened, also after a failed block, so the device is not left
+  /// holding an open handle. Writes the outcome into `result` (`response_hex`, `decoded`, `message`);
+  /// the bytes are never decoded further and never reach the device record.
+  /// @param dev The probed device.
+  /// @param open_reply The device's answer to the open; anything but a CMD_TRANSFER_OPEN_RESP is left to
+  ///                   the caller's own report and ends the read here.
+  /// @param object_id The object that was opened (for the log and the message).
+  /// @param result Receives the outcome appended to the first-exchange text already in it.
+  void read_object_blocks_(const IoDevice &dev, const IoFrame &open_reply, uint16_t object_id,
+                           ManagementActionResult &result);
+
   /// @brief Shared preamble for every management action: validate the hub and device ID,
   /// then resolve the target device.
   ///
