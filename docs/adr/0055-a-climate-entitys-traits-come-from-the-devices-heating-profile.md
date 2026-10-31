@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0055 -->
 
-**Status:** Accepted, amended by [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (point 6: the window companions read a capability bit) · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (point 6: the window companions read a capability bit) and amended 2026-10 (see [Amendment](#amendment-every-preset-is-observed)) · **Recorded:** 2026-10
 
 ## Context
 
@@ -74,3 +74,11 @@ may bind" can no longer also mean "the private register protocol may be sent".
   panel appears after a reboot.
 - Adding a heater kind is a profile row, a type-table row with a platform, and, if it has the window
   companions, the `WINDOW_COMPANIONS` bit on its type-table row.
+
+## Amendment: every preset is observed
+
+**Recorded:** 2026-10. Point 4's last-commanded preset (presence) is gone with the presence preset
+(see [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md)): every preset a
+profile offers has a row in its observed-state table, and the profile carries no such marker. A
+commanded preset on a profile whose mode is observed is shown through that same table, so a
+commanded preset and a read-back preset look alike.

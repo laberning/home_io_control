@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <string>
 
 using namespace esphome::home_io_control;
 
@@ -83,15 +84,16 @@ TEST(HeatingProfiles, SetpointHeaterOffersTheCardItsRegistersCanDrive) {
   EXPECT_EQ(p.modes[2].hvac, HeatingHvacMode::AUTO);
   EXPECT_EQ(p.modes[2].wire, 0);
 
-  ASSERT_EQ(p.preset_count, 3u);
-  EXPECT_EQ(p.presets[0].id, HeatingPresetId::HOME);
-  EXPECT_EQ(p.presets[0].write_fn, HeatingFunction::SET_PRESENCE);
-  EXPECT_FALSE(p.presets[0].observed) << "presence has no register to read back";
-  EXPECT_EQ(p.presets[1].id, HeatingPresetId::AWAY);
-  EXPECT_EQ(p.presets[2].id, HeatingPresetId::CUSTOM);
-  EXPECT_STREQ(p.presets[2].custom_name, "Program");
-  EXPECT_EQ(p.presets[2].write_fn, HeatingFunction::SET_MODE);
-  EXPECT_EQ(p.presets[2].wire, 2);
+  // Both automatic modes are custom presets that write the mode register.
+  ASSERT_EQ(p.preset_count, 2u);
+  EXPECT_EQ(p.presets[0].id, HeatingPresetId::CUSTOM);
+  EXPECT_STREQ(p.presets[0].custom_name, "Program");
+  EXPECT_EQ(p.presets[0].write_fn, HeatingFunction::SET_MODE);
+  EXPECT_EQ(p.presets[0].wire, 2);
+  EXPECT_EQ(p.presets[1].id, HeatingPresetId::CUSTOM);
+  EXPECT_STREQ(p.presets[1].custom_name, "Auto");
+  EXPECT_EQ(p.presets[1].write_fn, HeatingFunction::SET_MODE);
+  EXPECT_EQ(p.presets[1].wire, 0);
 
   ASSERT_EQ(p.poll_register_count, 5u);
   EXPECT_EQ(p.poll_registers[0], HeatingFunction::ROOM_TEMPERATURE);
@@ -106,11 +108,12 @@ TEST(HeatingProfiles, SetpointHeaterModeRegisterMapsBackToTheCard) {
   const auto *auto_mode = find_observed_state(p, 0);
   ASSERT_NE(auto_mode, nullptr);
   EXPECT_EQ(auto_mode->hvac, HeatingHvacMode::AUTO);
-  EXPECT_EQ(auto_mode->preset, -1);
+  ASSERT_GE(auto_mode->preset, 0);
+  EXPECT_STREQ(p.presets[auto_mode->preset].custom_name, "Auto");
   EXPECT_EQ(find_observed_state(p, 1)->hvac, HeatingHvacMode::HEAT);
   const auto *program = find_observed_state(p, 2);
   ASSERT_NE(program, nullptr);
-  EXPECT_EQ(program->hvac, HeatingHvacMode::AUTO) << "the schedule has no HVAC mode of its own";
+  EXPECT_EQ(program->hvac, HeatingHvacMode::AUTO) << "AUTO and PROG both show as HVAC auto";
   ASSERT_GE(program->preset, 0);
   EXPECT_STREQ(p.presets[program->preset].custom_name, "Program");
   EXPECT_EQ(find_observed_state(p, 3)->hvac, HeatingHvacMode::HEAT) << "external is shown as heat";
@@ -162,11 +165,36 @@ TEST(HeatingProfiles, EveryLevelTheProfileCanCommandIsReadBackAsItself) {
   EXPECT_EQ(find_observed_state(p, 0x06), nullptr) << "a level nobody defined";
 }
 
-TEST(HeatingProfiles, EveryPresetIndexPointsInsideItsProfile) {
-  for (const uint8_t subtype : {0, 1}) {
-    const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, subtype);
-    for (size_t i = 0; i < p.observed_count; i++)
-      EXPECT_LT(p.observed[i].preset, static_cast<int8_t>(p.preset_count)) << +subtype << " entry " << i;
+TEST(HeatingProfiles, ObservedTablesAndPresetsAgreeInEveryProfile) {
+  const struct {
+    DeviceType type;
+    uint8_t subtype;
+  } profiles[] = {{DeviceType::ELECTRICAL_HEATER, 0},
+                  {DeviceType::ELECTRICAL_HEATER, 1},
+                  {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0},
+                  {DeviceType::HEAT_PUMP, 0}};
+  for (const auto &kind : profiles) {
+    const std::string where = std::to_string(static_cast<unsigned>(kind.type)) + "/" + std::to_string(+kind.subtype);
+    const HeatingProfile *p = find_heating_profile(kind.type, kind.subtype);
+    ASSERT_NE(p, nullptr) << where;
+    for (size_t r = 0; r < p->observed_count; r++) {
+      const HeatingObservedState &row = p->observed[r];
+      ASSERT_LT(row.preset, static_cast<int8_t>(p->preset_count)) << where << " row " << r;
+      if (row.preset >= 0) {
+        EXPECT_EQ(p->presets[row.preset].wire, row.wire) << where << " row " << r << ": names a preset of its wire";
+      }
+    }
+    // A commanded preset is shown through the observed table, so each one needs exactly one row naming it.
+    for (size_t i = 0; i < p->preset_count; i++) {
+      size_t rows = 0;
+      for (size_t r = 0; r < p->observed_count; r++) {
+        if (p->observed[r].wire == p->presets[i].wire) {
+          rows++;
+          EXPECT_EQ(p->observed[r].preset, static_cast<int8_t>(i)) << where << " preset " << i << " row " << r;
+        }
+      }
+      EXPECT_EQ(rows, 1u) << where << " preset " << i;
+    }
   }
 }
 

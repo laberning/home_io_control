@@ -145,7 +145,7 @@ TEST(CorpusHeating, EveryWritableModeIsTheEncodedWriteAndReadsBack) {
 
 // === Presence ===
 
-TEST(CorpusHeating, HomeAndAwayAreTheEncodedPresenceWritesAndAreAcknowledged) {
+TEST(CorpusHeating, PresenceWritesAreEncodedAndAcknowledged) {
   using namespace corpus;
   EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_presence_write_frame0_bytes, HeatingFunction::SET_PRESENCE, 1.0F));
   EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_presence_write_frame2_bytes, HeatingFunction::SET_PRESENCE, 0.0F));

@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0054 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted, amended 2026-10 (see [Amendment](#amendment-the-setpoint-heater-offers-no-presence-preset)) · **Recorded:** 2026-10
 
 ## Context
 
@@ -84,3 +84,17 @@ capability predicate gating every entry point, no use of `execute_request_and_up
   cannot cancel it.
 - Every poll spends radio time on a device that may be silent; the failure ladder bounds it, and
   `status_poll_interval` lets a user lengthen it.
+
+## Amendment: the setpoint heater offers no presence preset
+
+**Recorded:** 2026-10. Issue #165: an Atlantic AGILIA IO radiator (type 52, subtype 1). The radiator
+acknowledged the presence write (register 0x0110) in two field tests and showed no effect: with the
+room empty all day and the radiator already stepped down, "home" did not bring comfort back. A preset
+that does nothing visible is worse than none, so point 3's last-commanded presence preset does not
+exist: the setpoint heater offers no `home` / `away` preset, and every preset on the card is one a
+register reports back. Register 0x0110 stays reachable through the `set_presence` setting of the
+heating action.
+
+The two automatic modes (AUTO and PROG) both show as HVAC `auto`, which leaves the card with no way
+to switch between them. The profile offers them as the custom presets `Auto` and `Program`; each
+writes the mode register and is confirmed by the read-back like any other mode write.

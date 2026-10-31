@@ -28,21 +28,20 @@ constexpr HeatingModeEntry SETPOINT_HEATER_MODES[] = {
 };
 
 /// Index of the "Program" entry in SETPOINT_HEATER_PRESETS, named by SETPOINT_HEATER_OBSERVED.
-constexpr int8_t SETPOINT_HEATER_PROGRAM_PRESET = 2;
+constexpr int8_t SETPOINT_HEATER_PROGRAM_PRESET = 0;
+/// Index of the "Auto" entry in SETPOINT_HEATER_PRESETS, named by SETPOINT_HEATER_OBSERVED.
+constexpr int8_t SETPOINT_HEATER_AUTO_PRESET = 1;
 
+/// Both automatic modes show as HVAC auto; these presets are how a user picks between them.
 constexpr HeatingPresetEntry SETPOINT_HEATER_PRESETS[] = {
-    // Presence is written to a register nothing reads back, so these show the last command.
-    {HeatingPresetId::HOME, nullptr, HeatingFunction::SET_PRESENCE, 1, true, false},
-    {HeatingPresetId::AWAY, nullptr, HeatingFunction::SET_PRESENCE, 0, true, false},
-    // The device's own weekly schedule is a mode of its own, not a presence.
-    {HeatingPresetId::CUSTOM, "Program", HeatingFunction::SET_MODE, static_cast<uint8_t>(HeatingMode::PROG), true,
-     true},
+    {"Program", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, static_cast<uint8_t>(HeatingMode::PROG), true},
+    {"Auto", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, static_cast<uint8_t>(HeatingMode::AUTO), true},
 };
 
 constexpr HeatingObservedState SETPOINT_HEATER_OBSERVED[] = {
-    {static_cast<uint8_t>(HeatingMode::AUTO), HeatingHvacMode::AUTO, -1},
+    {static_cast<uint8_t>(HeatingMode::AUTO), HeatingHvacMode::AUTO, SETPOINT_HEATER_AUTO_PRESET},
     {static_cast<uint8_t>(HeatingMode::MANUAL), HeatingHvacMode::HEAT, -1},
-    // The schedule has no HVAC mode: auto, with the preset naming it.
+    // AUTO and PROG both show as HVAC auto; the preset tells them apart.
     {static_cast<uint8_t>(HeatingMode::PROG), HeatingHvacMode::AUTO, SETPOINT_HEATER_PROGRAM_PRESET},
     // The setpoint comes from another controller; heat is the nearest mode. Never written here.
     {static_cast<uint8_t>(HeatingMode::EXTERNAL_SETPOINT), HeatingHvacMode::HEAT, -1},
@@ -71,14 +70,14 @@ constexpr HeatingModeEntry LEVEL_HEATER_MODES[] = {
 
 constexpr HeatingPresetEntry LEVEL_HEATER_PRESETS[] = {
     // write_fn is unused on this path; SET_MODE is a placeholder that is never sent.
-    {HeatingPresetId::AWAY, nullptr, HeatingFunction::SET_MODE, heating_level::FROST_PROTECTION, true, true},
-    {HeatingPresetId::ECO, nullptr, HeatingFunction::SET_MODE, heating_level::ECO, true, true},
-    {HeatingPresetId::COMFORT, nullptr, HeatingFunction::SET_MODE, heating_level::COMFORT, true, true},
-    {HeatingPresetId::BOOST, nullptr, HeatingFunction::SET_MODE, heating_level::BOOST, true, true},
-    {HeatingPresetId::CUSTOM, "Comfort -1", HeatingFunction::SET_MODE, heating_level::COMFORT_MINUS_1, true, true},
-    {HeatingPresetId::CUSTOM, "Comfort -2", HeatingFunction::SET_MODE, heating_level::COMFORT_MINUS_2, true, true},
+    {nullptr, HeatingPresetId::AWAY, HeatingFunction::SET_MODE, heating_level::FROST_PROTECTION, true},
+    {nullptr, HeatingPresetId::ECO, HeatingFunction::SET_MODE, heating_level::ECO, true},
+    {nullptr, HeatingPresetId::COMFORT, HeatingFunction::SET_MODE, heating_level::COMFORT, true},
+    {nullptr, HeatingPresetId::BOOST, HeatingFunction::SET_MODE, heating_level::BOOST, true},
+    {"Comfort -1", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_level::COMFORT_MINUS_1, true},
+    {"Comfort -2", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_level::COMFORT_MINUS_2, true},
     // The device reports it, a controller cannot set it.
-    {HeatingPresetId::CUSTOM, "Secured", HeatingFunction::SET_MODE, heating_level::SECURED, false, true},
+    {"Secured", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_level::SECURED, false},
 };
 
 constexpr HeatingObservedState LEVEL_HEATER_OBSERVED[] = {
@@ -111,9 +110,9 @@ constexpr HeatingModeEntry TEMPERATURE_INTERFACE_MODES[] = {
 
 /// A setpoint alias is selected by its main parameter alone, with no functional parameter.
 constexpr HeatingPresetEntry TEMPERATURE_INTERFACE_PRESETS[] = {
-    {HeatingPresetId::COMFORT, nullptr, HeatingFunction::SET_MODE, heating_alias::COMFORT, true, true, NO_FP},
-    {HeatingPresetId::ECO, nullptr, HeatingFunction::SET_MODE, heating_alias::THERMOSTAT_ECO, true, true, NO_FP},
-    {HeatingPresetId::CUSTOM, "Secured", HeatingFunction::SET_MODE, heating_alias::SECURED, true, true, NO_FP},
+    {nullptr, HeatingPresetId::COMFORT, HeatingFunction::SET_MODE, heating_alias::COMFORT, true, NO_FP},
+    {nullptr, HeatingPresetId::ECO, HeatingFunction::SET_MODE, heating_alias::THERMOSTAT_ECO, true, NO_FP},
+    {"Secured", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_alias::SECURED, true, NO_FP},
 };
 
 /// The mode is the last command (nothing reads it back), so the hvac column is not consulted; the rows
@@ -133,12 +132,11 @@ constexpr HeatingModeEntry HEAT_PUMP_MODES[] = {
 };
 
 constexpr HeatingPresetEntry HEAT_PUMP_PRESETS[] = {
-    {HeatingPresetId::COMFORT, nullptr, HeatingFunction::SET_MODE, heating_alias::COMFORT, true, true, HEAT_PUMP_ON},
-    {HeatingPresetId::ECO, nullptr, HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_ECO, true, true, HEAT_PUMP_ON},
-    {HeatingPresetId::CUSTOM, "Setback", HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_SETBACK, true, true,
+    {nullptr, HeatingPresetId::COMFORT, HeatingFunction::SET_MODE, heating_alias::COMFORT, true, HEAT_PUMP_ON},
+    {nullptr, HeatingPresetId::ECO, HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_ECO, true, HEAT_PUMP_ON},
+    {"Setback", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_SETBACK, true,
      HEAT_PUMP_ON},
-    {HeatingPresetId::CUSTOM, "Halted", HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_HALTED, true, true,
-     HEAT_PUMP_ON},
+    {"Halted", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_HALTED, true, HEAT_PUMP_ON},
 };
 
 constexpr HeatingObservedState HEAT_PUMP_OBSERVED[] = {

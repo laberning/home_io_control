@@ -16,7 +16,6 @@ platform; see [Heating and climate](../configuration/climate.md) for every optio
 | Room temperature | ✅ Confirmed |
 | Heating / idle | ✅ Confirmed; follows a change from Home Assistant at the poll 45 seconds later, other changes at the regular poll (every 5 minutes by default) |
 | Maximum setpoint | ✅ Confirmed — the radiator reports 28.0 °C |
-| `home` / `away` presets | ⚠️ The radiator acknowledges both; no visible change on the display yet (in AUTO, the manual describes a gradual reduction after half an hour away) |
 | `Window` sensor | ✅ Confirmed — turns on when a window near the radiator is opened |
 | `Open Window Detection` switch | ⚠️ Reads back the radiator's setting; switching detection off from Home Assistant is not tested yet |
 
@@ -24,17 +23,18 @@ platform; see [Heating and climate](../configuration/climate.md) for every optio
 
 The radiator has three operating modes, described in its
 [installation manual](https://www.atlanticheat.co.uk/assets/uploads/general/Agilia_IO_Digital_Installation_Manual_no-lines.pdf).
-Home Assistant has no mode for a weekly program, so the program mode appears as `auto` with the
-`Program` preset:
+Home Assistant has no separate mode for the two automatic modes, so both appear as `auto`, with a
+preset that tells them apart:
 
 | Radiator display | Home Assistant |
 |---|---|
 | BASIC — holds the set temperature, smart functions off | `heat` |
-| AUTO — learns when the room is used and adjusts the temperature | `auto`, no preset |
+| AUTO — learns when the room is used and adjusts the temperature | `auto` with the `Auto` preset |
 | PROG — follows the radiator's weekly program | `auto` with the `Program` preset |
 | Off | `off` |
 
-Choosing the `Program` preset switches the radiator to PROG; choosing `heat` or `off` leaves it.
+Choose `Program` or `Auto` to switch between the radiator's automatic modes; `heat` or `off` leaves
+them.
 The weekly program itself is edited on the radiator.
 
 ## How a radiator appears on the radio

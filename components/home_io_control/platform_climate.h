@@ -15,18 +15,16 @@
 /// entity publishes from IoDevice::heating, which only a decoded reply changes. After an accepted
 /// register write the register is read back; after a level write the hub's settle poll reads the
 /// level. Until the first read succeeds the entity shows the last commanded mode, setpoint or preset,
-/// and nothing else. A preset that no register reports back (presence) stays "last commanded". The
-/// entity deliberately does NOT use the OptimisticState overlay (ADR 0030) — there is never a
-/// prediction to keep apart from an observation (ADR 0054, ADR 0055).
+/// and nothing else. The entity deliberately does NOT use the OptimisticState overlay (ADR 0030) —
+/// there is never a prediction to keep apart from an observation (ADR 0054, ADR 0055).
 ///
 /// The register path is confirmed on an Atlantic AGILIA IO radiator: setpoint and mode writes, their
 /// read-back, and the poll's room temperature and regulator readings
 /// ([issue #165](https://github.com/laberning/home_io_control/issues/165), corpus
 /// tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml).
 ///
-/// @todo The heating-level and temperature EXECUTE paths, and the presence write behind the Home / Away
-///       presets, are unconfirmed on hardware; confirm with a capture from a plain heater, a heating
-///       temperature interface or a heat pump.
+/// @todo The heating-level and temperature EXECUTE paths are unconfirmed on hardware; confirm with a
+///       capture from a plain heater, a heating temperature interface or a heat pump.
 ///
 /// @warning The EXECUTE-commanded profiles are unvalidated on hardware. See
 ///          docs/configuration/climate.md.
@@ -159,6 +157,12 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   bool apply_custom_preset_(const HeatingProfile &profile, const climate::ClimateCall &call);
   /// @brief Apply a standard preset, if present. @return true if published.
   bool apply_preset_(const HeatingProfile &profile, const climate::ClimateCall &call);
+  /// @brief Send one preset and show it: the tail both preset paths share.
+  /// @details Refuses a preset the device only reports. Until a read has succeeded, a profile whose mode
+  ///          is observed shows the preset through apply_observed_state_(); a temperature profile shows
+  ///          the preset and, for a standard one, mode heat. A register write is read back.
+  /// @return true if the card changed and must be published.
+  bool commit_preset_(const HeatingProfile &profile, const HeatingPresetEntry &entry);
   /// @brief Apply the target temperature, if present. @return true if published.
   bool apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call);
 
