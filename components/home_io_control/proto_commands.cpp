@@ -693,18 +693,21 @@ bool create_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst
 }
 
 /// Build the transfer-open request (see the header for the allowlist and the byte layout).
-bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint16_t object_id, bool low_power) {
-  if (object_id != TRANSFER_OBJECT_ACTUATOR_CAPACITY && object_id != TRANSFER_OBJECT_ACTUATOR_STATE &&
-      object_id != TRANSFER_OBJECT_NAME && object_id != TRANSFER_OBJECT_GENERAL_INFO1 &&
-      object_id != TRANSFER_OBJECT_GENERAL_INFO2)
+bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, const TransferObject &object,
+                          bool low_power) {
+  bool allowed = false;
+  for (const TransferObject &entry : TRANSFER_READABLE_OBJECTS)
+    allowed = allowed || (entry.object_class == object.object_class && entry.id == object.id);
+  if (!allowed)
     return false;
+  const uint16_t object_id = object.id;
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
   // Originator, object class, a zero byte, the object id big-endian, then two zero words (offset and
   // length of the part wanted, left zero to ask for the whole object).
   const uint8_t d[TRANSFER_OPEN_DATA_SIZE] = {ORIGINATOR_SAAC,
-                                              TRANSFER_OBJECT_CLASS_DEVICE,
+                                              object.object_class,
                                               0x00,
                                               static_cast<uint8_t>(object_id >> 8),
                                               static_cast<uint8_t>(object_id & 0xFF),

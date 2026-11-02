@@ -20,9 +20,8 @@ read it from a device.
 ADR 0024 kept `0x4A` out of the probes because the reference documentation names it "Delete File"
 and the block it belongs to (`0x46` to `0x4B`) contains writes. Two things changed. A decoded VELUX
 copy session shows `0x4A` as a chunked read of a buffer that a `0x46`/`0x47` exchange opens, and the
-source keeps its data. And the layouts of `0x46`, `0x47`, `0x4A` and `0x4B` are read from two
-independent stacks, with the exact bytes a Kizbox sends for these objects reproduced in emulation of
-its radio firmware.
+source keeps its data. And the layouts of `0x46`, `0x47`, `0x4A` and `0x4B` are known well enough to
+build a plain whole-object read.
 
 ## Decision
 
@@ -32,6 +31,10 @@ its radio firmware.
    name record, which shows that the flow works before the other two are trusted, and 3 and 4 read
    `0x8001` and `0x8002`, the object form of the general info 1 and 2 answers. `create_transfer_open()` checks the id against that list itself, independent of the
    probe table. The index is never an on-air value.
+   *Amended 2026-11:* the list is the table `TRANSFER_READABLE_OBJECTS`, a class byte and an id per
+   row, and the index is the row. Rows 5 to 9 are the other class-0 ids an RS100 Solar io names in its
+   own capacity record; rows 10 to 29 are Somfy objects of class 2 (issue #156). The table is still the
+   only way to name an object, rows are only appended, and every row is a whole-object read.
 3. **Read direction only, by construction.** `create_transfer_read()` builds exactly handle and chunk,
    three payload bytes, so a `0x4A` that carries data (the write direction) cannot be built from it.
    There is no builder for `0x48`, the opening of a write.
@@ -39,13 +42,16 @@ its radio firmware.
    `ceil(length / 18)`, and closes the transfer with chunk `00 00`. A transfer the device opened is
    closed again on every path, including after a failed block and when the announced length is above
    the 288-byte cap (16 blocks), in which case nothing is read.
-5. **A block counts only if it echoes the request** (handle on its low seven bits, chunk in full), so a
+5. **A pause before each block request and the close** (650 ms, *added 2026-11*). An RS100 Solar io
+   missed every block request sent straight after its previous answer and answered every repeat
+   (issue #156); waiting first saves one long-preamble transmission per block.
+6. **A block counts only if it echoes the request** (handle on its low seven bits, chunk in full), so a
    late answer to an earlier chunk is never spliced into the data.
-6. **Raw bytes, never applied.** The data goes to the result (`response_hex`), to the log in short
+7. **Raw bytes, never applied.** The data goes to the result (`response_hex`), to the log in short
    lines and to nothing else; it is not decoded and never reaches the device record. The decode comes
    after captures.
-7. **Not sweepable.** The probe is a multi-frame session and the sweep machinery is one request per index.
-8. **Plain request, as the vendor sends it.** The open carries the originator `SAAC` and is sent
+8. **Not sweepable.** The probe is a multi-frame session and the sweep machinery is one request per index.
+9. **Plain request, as the vendor sends it.** The open carries the originator `SAAC` and is sent
    without a challenge. A device may challenge any request; the ordinary exchange answers. A Somfy
    Izymo accepted the open plainly and challenged every block read and the close.
 
