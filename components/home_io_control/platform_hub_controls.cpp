@@ -29,7 +29,7 @@ void HubArmingSwitch::write_state(bool state) {
 void IOHomeAcceptForeignPairingSwitch::dump_config() {
   static const char *const TAG = "home_io_control.key_extraction_switch";
   LOG_SWITCH("", "IO-Homecontrol Recover System Key (Key Extraction)", this);
-  ESP_LOGCONFIG(TAG, "  Status: hardware-confirmed protocol; not yet confirmed against a third-party hub");
+  ESP_LOGCONFIG(TAG, "  Arms for 10 minutes: start your existing hub's add-device search while it is on");
 }
 
 void IOHomeRecoverOneWayKeySwitch::dump_config() {

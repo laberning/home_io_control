@@ -648,18 +648,18 @@ bool create_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst
 
 /// Build the request that opens a read of one device object (CMD_TRANSFER_OPEN 0x46) for the
 /// `read_object` diagnostic probe (ADR 0062). The payload is
-/// `<ORIGINATOR_SAAC> <TRANSFER_OBJECT_CLASS_DEVICE> 00 <id hi> <id lo> 00 00 00 00`: the bytes a
-/// Somfy Kizbox sends to read the same objects, verified in emulation of its radio firmware. Only the
-/// five TRANSFER_OBJECT_* ids are accepted, so this builder cannot name any other object, and there
+/// `<ORIGINATOR_SAAC> <class> 00 <id hi> <id lo> 00 00 00 00`, the form Somfy controllers use to read
+/// a whole object; Somfy actuators answered it for class-0 objects (issue #156). Only the class/id pairs
+/// in TRANSFER_READABLE_OBJECTS are accepted, so this builder cannot name any other object, and there
 /// is no builder for the write twin (0x48).
-/// \todo No actuator has been captured answering it yet.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param dst Target device's 3-byte node ID.
-/// @param object_id One of the TRANSFER_OBJECT_* ids.
+/// @param object The class and id to open; must be an entry of TRANSFER_READABLE_OBJECTS.
 /// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
-/// @return true on success, false for an object id outside the allowlist.
-bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint16_t object_id, bool low_power);
+/// @return true on success, false for an object outside the allowlist.
+bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, const TransferObject &object,
+                          bool low_power);
 
 /// Build the request that reads one chunk of an opened transfer (CMD_UNKNOWN4A_REQ 0x4A):
 /// `<handle> <chunk hi> <chunk lo>`, nothing else. Chunk numbers count down from ceil(length/18) to 1;

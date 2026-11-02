@@ -48,7 +48,9 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
    matters: a "Smoove"-type control point makes the hub send a real discovery broadcast at once,
    while "remote control" makes it wait to *receive* a key instead, which this feature cannot
    answer. If the switch stays armed with nothing in the log, cancel and re-add the product with a
-   different control-point choice before concluding the extraction failed (issue #27).
+   different control-point choice before concluding the extraction failed (issue #27). On a VELUX
+   KLF 200, press **SEARCH FOR PRODUCTS** on the Products page of its web interface, and press it
+   again while the switch is armed if it reports "No product was found" (issue #195).
 4. Watch the ESPHome log. Within a few seconds of the hub's discovery you get a clearly delimited
    block with your installation's real `node_id` and `system_key`.
 5. Leave the switch alone until it turns itself off. Some hubs (the VELUX KLR200 and KLR300, confirmed) follow

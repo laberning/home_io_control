@@ -240,6 +240,9 @@ static constexpr uint16_t TRANSFER_OBJECT_GENERAL_INFO2 = 0x8002;
 /// @{
 static constexpr uint8_t TRANSFER_OPEN_DATA_SIZE = 9;       ///< CMD_TRANSFER_OPEN payload bytes.
 static constexpr uint8_t TRANSFER_OBJECT_CLASS_DEVICE = 0;  ///< Object class of the TRANSFER_OBJECT_* ids.
+/// Object class of the Somfy manufacturer objects in TRANSFER_READABLE_OBJECTS.
+/// \todo No device has been captured answering an open of this class yet.
+static constexpr uint8_t TRANSFER_OBJECT_CLASS_SOMFY = 2;
 static constexpr uint8_t TRANSFER_OPEN_RESP_DATA_SIZE = 4;  ///< CMD_TRANSFER_OPEN_RESP payload bytes.
 static constexpr uint8_t TRANSFER_READ_REQ_DATA_SIZE = 3;   ///< CMD_UNKNOWN4A_REQ payload bytes: handle + chunk.
 static constexpr uint8_t TRANSFER_BLOCK_SIZE = 18;  ///< Data bytes per CMD_UNKNOWN4A_RESP; 18 fills a 32-byte frame.
@@ -247,6 +250,60 @@ static constexpr uint8_t TRANSFER_STATUS_ACCEPTED = 0;  ///< CMD_TRANSFER_OPEN_R
 static constexpr uint8_t TRANSFER_STATUS_ADAPTED = 1;   ///< CMD_TRANSFER_OPEN_RESP status: accepted with changes.
 static constexpr uint16_t TRANSFER_CHUNK_CLOSE = 0;     ///< Chunk number of the closing CMD_UNKNOWN4A_REQ.
 /// @}
+
+/// @brief One object a CMD_TRANSFER_OPEN can name: its class byte and its 16-bit id.
+struct TransferObject {
+  uint8_t object_class{TRANSFER_OBJECT_CLASS_DEVICE};  ///< TRANSFER_OBJECT_CLASS_DEVICE or TRANSFER_OBJECT_CLASS_SOMFY.
+  uint16_t id{0};                                      ///< Object id, sent big-endian.
+};
+
+/// @brief Every object the `read_object` probe can open, in probe-index order (ADR 0062).
+///
+/// create_transfer_open() refuses any class/id pair not in this table, so the table is the allowlist.
+/// Indexes 0 to 4 are the five named objects above. Indexes 5 to 9 are the other class-0 ids a Somfy
+/// RS100 Solar io lists in its own capacity record (issue #156); they have not been read yet. Indexes
+/// 10 to 29 are Somfy manufacturer objects to read on the same motor; a device that does not keep an
+/// object refuses the open (status 3, length 0) and nothing more is sent. Every entry is a plain read
+/// of a whole object. Appending keeps the existing indexes stable; never reorder.
+/// \todo The layouts of entries 5 to 29 are unknown: read them to learn what they hold.
+static constexpr TransferObject TRANSFER_READABLE_OBJECTS[] = {
+    // 0-4: the named class-0 objects.
+    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_ACTUATOR_CAPACITY},
+    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_ACTUATOR_STATE},
+    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_NAME},
+    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_GENERAL_INFO1},
+    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_GENERAL_INFO2},
+    // 5-9: further class-0 ids from the RS100 Solar's capacity record.
+    {TRANSFER_OBJECT_CLASS_DEVICE, 0x8000},
+    {TRANSFER_OBJECT_CLASS_DEVICE, 0x8005},
+    {TRANSFER_OBJECT_CLASS_DEVICE, 0x8102},
+    {TRANSFER_OBJECT_CLASS_DEVICE, 0x8104},
+    {TRANSFER_OBJECT_CLASS_DEVICE, 0xC001},
+    // 10-29: Somfy manufacturer objects.
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0x6103},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0x6104},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0x6105},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA601},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA602},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA603},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA604},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA606},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA607},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA609},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA60B},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA60D},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA610},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA611},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA612},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA613},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA614},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA615},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA617},
+    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA618},
+};
+/// Number of entries in TRANSFER_READABLE_OBJECTS.
+static constexpr uint8_t TRANSFER_READABLE_OBJECT_COUNT =
+    sizeof(TRANSFER_READABLE_OBJECTS) / sizeof(TRANSFER_READABLE_OBJECTS[0]);
 
 // Device info commands
 static constexpr uint8_t CMD_GET_NAME = 0x50;       ///< Request device name

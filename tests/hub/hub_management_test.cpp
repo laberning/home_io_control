@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstring>
+#include <algorithm>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -2917,17 +2918,41 @@ TEST(HubManagement, ReadObjectOpensPullsEveryBlockAndClosesTheTransfer) {
   }
   EXPECT_EQ(result.response_hex, expected);
   EXPECT_NE(result.message.find("data=" + expected), std::string::npos) << result.message;
-  EXPECT_NE(result.message.find("object 0x8100 handle 0x10 status 0 length 40"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("object 0x8100 class 0 handle 0x10 status 0 length 40"), std::string::npos)
+      << result.message;
+}
+
+TEST(HubManagement, ReadObjectPausesBeforeEveryBlockRequestAndTheClose) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  // 20 bytes = 2 blocks, then the close: three pauses.
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x14})));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 2, 0, 18)));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 1, 18, 2)));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 0, 0, 0)));
+  esphome::test_hal::reset_delays();
+
+  const auto result = component.probe_device("ABC123", "read_object", "0");
+  ASSERT_TRUE(result.success) << result.message;
+  ASSERT_EQ(radio.get_sent_data().size(), 4u);
+  const auto &delays = esphome::test_hal::recorded_delays();
+  EXPECT_EQ(std::count(delays.begin(), delays.end(), 650u), 3) << "one 650 ms pause per block request and the close";
 }
 
 TEST(HubManagement, ReadObjectIndexPicksTheObject) {
   struct Case {
     const char *index;
+    uint8_t object_class;
     uint8_t hi;
     uint8_t lo;
   };
-  for (const Case &c : {Case{"0", 0x81, 0x00}, Case{"1", 0x81, 0x03}, Case{"2", 0x80, 0x03}, Case{"3", 0x80, 0x01},
-                        Case{"4", 0x80, 0x02}}) {
+  for (const Case &c : {Case{"0", 0x00, 0x81, 0x00}, Case{"1", 0x00, 0x81, 0x03}, Case{"2", 0x00, 0x80, 0x03},
+                        Case{"3", 0x00, 0x80, 0x01}, Case{"4", 0x00, 0x80, 0x02}, Case{"5", 0x00, 0x80, 0x00},
+                        Case{"9", 0x00, 0xC0, 0x01}, Case{"10", 0x02, 0x61, 0x03}, Case{"13", 0x02, 0xA6, 0x01},
+                        Case{"29", 0x02, 0xA6, 0x18}}) {
     SCOPED_TRACE(c.index);
     TestableManagementComponent component;
     MockRadio radio;
@@ -2938,6 +2963,7 @@ TEST(HubManagement, ReadObjectIndexPicksTheObject) {
     ASSERT_FALSE(radio.get_sent_data().empty());
     const auto bytes = sent_frame_bytes(radio, 0);
     EXPECT_EQ(bytes[8], CMD_TRANSFER_OPEN);
+    EXPECT_EQ(bytes[10], c.object_class);
     EXPECT_EQ(bytes[12], c.hi);
     EXPECT_EQ(bytes[13], c.lo);
   }
@@ -3036,11 +3062,12 @@ TEST(HubManagement, ReadObjectIsGatedLikeEveryProbeAndIndexBounded) {
     MockRadio radio;
     setup_component(component, radio);
     component.set_diagnostic_probes_enabled(true);
-    EXPECT_FALSE(component.probe_device("ABC123", "read_object", "5").success);
+    EXPECT_FALSE(component.probe_device("ABC123", "read_object", "30").success);
     EXPECT_FALSE(component.probe_device("ABC123", "read_object", "0x8100").success);
-    EXPECT_EQ(component.probe_device("ABC123", "read_object", "5").message,
+    EXPECT_EQ(component.probe_device("ABC123", "read_object", "30").message,
               "probe \"read_object\" takes index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name "
-              "record 0x8003), 3 (general info 1, 0x8001) or 4 (general info 2, 0x8002)");
+              "record 0x8003), 3 (general info 1, 0x8001), 4 (general info 2, 0x8002), or 5 to 29 (further objects, "
+              "see the diagnostic probes documentation)");
     EXPECT_EQ(component.probe_sweep("ABC123", "read_object", "0", "2").message,
               "probe \"read_object\" cannot be swept; use probe_device");
     EXPECT_TRUE(radio.get_sent_data().empty());

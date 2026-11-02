@@ -464,40 +464,81 @@ TEST(ProtoCommandsProbeBuilders, PrivateFunctionCarriesChosenSubIndex) {
 
 // --- Data transport read (ADR 0062) --------------------------------------------------------------
 
-TEST(ProtoCommandsProbeBuilders, TransferOpenBuildsTheKizboxBytesForEachAllowlistedObject) {
+TEST(ProtoCommandsProbeBuilders, TransferOpenBuildsTheReadBytesForEveryAllowlistedObject) {
   IoFrame frame{};
   const uint8_t own[3] = {0x97, 0xDE, 0x1A};
   const uint8_t dst[3] = {0x51, 0xE3, 0x03};
-  struct Case {
-    uint16_t object;
-    uint8_t hi;
-    uint8_t lo;
-  };
-  for (const Case &c :
-       {Case{TRANSFER_OBJECT_ACTUATOR_CAPACITY, 0x81, 0x00}, Case{TRANSFER_OBJECT_ACTUATOR_STATE, 0x81, 0x03},
-        Case{TRANSFER_OBJECT_NAME, 0x80, 0x03}, Case{TRANSFER_OBJECT_GENERAL_INFO1, 0x80, 0x01},
-        Case{TRANSFER_OBJECT_GENERAL_INFO2, 0x80, 0x02}}) {
-    ASSERT_TRUE(create_transfer_open(frame, own, dst, c.object, /*low_power=*/false));
+  for (const TransferObject &object : TRANSFER_READABLE_OBJECTS) {
+    SCOPED_TRACE(object.id);
+    ASSERT_TRUE(create_transfer_open(frame, own, dst, object, /*low_power=*/false));
     uint8_t bytes[64] = {0};
     const uint8_t len = serialize(frame, bytes, sizeof(bytes));
-    // CTRL0 0x51 = start+end, 2W, 9 data bytes (18 bytes on the wire). Payload: SAAC originator, class 0, 00, object
+    // CTRL0 0x51 = start+end, 2W, 9 data bytes (18 bytes on the wire). Payload: SAAC originator, class, 00, object
     // id, 4 zero bytes.
-    const std::vector<uint8_t> expected = {0x51, 0x00, 0x51, 0xE3, 0x03, 0x97, 0xDE, 0x1A, 0x46,
-                                           0x08, 0x00, 0x00, c.hi, c.lo, 0x00, 0x00, 0x00, 0x00};
+    const std::vector<uint8_t> expected = {0x51,
+                                           0x00,
+                                           0x51,
+                                           0xE3,
+                                           0x03,
+                                           0x97,
+                                           0xDE,
+                                           0x1A,
+                                           0x46,
+                                           0x08,
+                                           object.object_class,
+                                           0x00,
+                                           static_cast<uint8_t>(object.id >> 8),
+                                           static_cast<uint8_t>(object.id & 0xFF),
+                                           0x00,
+                                           0x00,
+                                           0x00,
+                                           0x00};
     ASSERT_EQ(len, expected.size());
     EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
   }
 }
 
+TEST(ProtoCommandsProbeBuilders, TransferOpenTableKeepsItsFirstIndexesAndClasses) {
+  // The probe index is a row of this table and is published, so existing rows never move.
+  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[0].id, TRANSFER_OBJECT_ACTUATOR_CAPACITY);
+  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[1].id, TRANSFER_OBJECT_ACTUATOR_STATE);
+  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[2].id, TRANSFER_OBJECT_NAME);
+  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[3].id, TRANSFER_OBJECT_GENERAL_INFO1);
+  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[4].id, TRANSFER_OBJECT_GENERAL_INFO2);
+  for (uint8_t i = 0; i < 10; i++)
+    EXPECT_EQ(TRANSFER_READABLE_OBJECTS[i].object_class, TRANSFER_OBJECT_CLASS_DEVICE) << int(i);
+  ASSERT_EQ(TRANSFER_READABLE_OBJECT_COUNT, 30) << "indexes are public: append rows, never remove one";
+  for (uint8_t i = 10; i < TRANSFER_READABLE_OBJECT_COUNT; i++)
+    EXPECT_EQ(TRANSFER_READABLE_OBJECTS[i].object_class, TRANSFER_OBJECT_CLASS_SOMFY) << int(i);
+  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[13].id, 0xA601);
+  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[29].id, 0xA618);
+  // No pair appears twice.
+  for (uint8_t i = 0; i < TRANSFER_READABLE_OBJECT_COUNT; i++)
+    for (uint8_t j = i + 1; j < TRANSFER_READABLE_OBJECT_COUNT; j++)
+      EXPECT_FALSE(TRANSFER_READABLE_OBJECTS[i].object_class == TRANSFER_READABLE_OBJECTS[j].object_class &&
+                   TRANSFER_READABLE_OBJECTS[i].id == TRANSFER_READABLE_OBJECTS[j].id)
+          << int(i) << " " << int(j);
+}
+
 TEST(ProtoCommandsProbeBuilders, TransferOpenRefusesEveryObjectOutsideTheAllowlist) {
   IoFrame frame{};
-  for (uint16_t object : {0x0000, 0x8000, 0x8004, 0x8101, 0x8102, 0xA607, 0xFFFF})
-    EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, object, false)) << std::hex << object;
+  // Ids outside the table, in either class.
+  for (uint16_t object : {0x0000, 0x8004, 0x8101, 0xA60C, 0xA60E, 0xA60F, 0xFFFF}) {
+    EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_DEVICE, object}, false))
+        << std::hex << object;
+    EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_SOMFY, object}, false))
+        << std::hex << object;
+  }
+  // A listed id in the wrong class, and a class nothing uses.
+  EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_SOMFY, 0x8100}, false));
+  EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_DEVICE, 0xA601}, false));
+  EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {0x0C, 0x8100}, false));
 }
 
 TEST(ProtoCommandsProbeBuilders, TransferOpenSetsLowPowerFlag) {
   IoFrame frame{};
-  ASSERT_TRUE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, TRANSFER_OBJECT_NAME, true));
+  ASSERT_TRUE(create_transfer_open(frame, test::OWN_ID, test::DST_ID,
+                                   {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_NAME}, true));
   EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0);
 }
 
