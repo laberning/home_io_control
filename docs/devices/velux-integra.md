@@ -11,6 +11,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | INTEGRA roof-window actuator | ✅ Confirmed — open, close, position, ventilation |
 | KLR 200 two-way control pad | ✅ Confirmed as a key-extraction source |
 | KLR 300 two-way control pad | ✅ Confirmed as a key-extraction source (one community tester) |
+| KLF 200 gateway | ✅ Key extraction succeeded (one reporter) — use **SEARCH FOR PRODUCTS**, and repeat it while armed if it finds nothing |
 | KIG 300 hub | ⚠️ Partial — one extraction succeeded, one stalled |
 | Devices behind an extracted key | ✅ Confirmed, with `low_power: true` |
 | MSU 100100 solar awning screen | ⚠️ Partial — open and close work; `stop` has no effect while it moves |
@@ -24,6 +25,13 @@ and hubs that make good key sources, the wired bridges, and the products control
 **Key extraction, essentially always — when there's a two-way hub.** VELUX installations almost
 all have a control pad or hub already, and that hub is what you extract from. Against a KLR 200
 this succeeded end to end on the first attempt, including the node verification round that follows it.
+
+On a **KLF 200** gateway, arm the hub's **Recover System Key** switch, then open the KLF 200 web
+interface, go to the Products page and press **SEARCH FOR PRODUCTS**. The gateway also checks the
+products it already knows during that search, so it can end with "No product was found" without
+taking the ESP. Press the search again while the switch is still armed: in issue #195 the third
+search delivered the key. **COPY PRODUCTS** is not a route: the gateway sends nothing a Discover &
+Pair could answer.
 
 Once you hold the key, press **Scan Paired Devices** rather than pairing each device. Every device
 that trusts the key answers with a ready-to-paste snippet.
@@ -214,7 +222,7 @@ with the long preamble ignored and the short one answered; a set-position ack; a
 polls that go unanswered while it moves).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter and KLI 312 blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
-screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter).
+screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction).
 
 ## See also
 
